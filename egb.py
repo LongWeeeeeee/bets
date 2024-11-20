@@ -1,9 +1,10 @@
 import json
 import time
 import requests
+import re
 import id_to_name
 from functions import if_unique, send_message
-from keys import api_token
+from keys import api_token_17 as api_token
 
 url = "https://egb.com/bets"
 params = {
@@ -23,51 +24,46 @@ headers = {
     "Sec-GPC": "1",}
 
 players_to_add = set()
-def get_players(bet):
+def get_players(bet, blacklist):
     dire_and_radiant = {}
-    players = [player for player in bet['game_label'].lower().replace(' team', '').split(' vs ')]
+    players = [re.sub(r'\bteam\s+|\s+team\b', '', player) for player in bet['game_label'].lower().split(' vs ')]
     player_names = [player.replace("'s", '') for player in players if 'enemy' not in player]
     dire_and_radiant['radiant'] = players[0]
     dire_and_radiant['dire'] = players[1]
-    print(bet['game_label'])
+
+
     players_ids = []
     if len(player_names) == 2:
         if player_names[0] not in id_to_name.blacklist_players and player_names[1] not in id_to_name.blacklist_players:
-            if player_names[0] in id_to_name.egb.values():
-                for player_id in id_to_name.egb:
-                    if player_names[0] in id_to_name.egb[player_id]:
-                        players_ids.append(player_id)
-            elif player_names[1] in id_to_name.egb.values():
-                for player_id in id_to_name.egb:
-                    if player_names[1] in id_to_name.egb[player_id]:
-                        players_ids.append(player_id)
+            if player_names[0] in id_to_name.egb:
+                    players_ids.append(id_to_name.egb[player_names[0]])
+            elif player_names[1] in id_to_name.egb:
+                players_ids.append(id_to_name.egb[player_names[1]])
             else:
-                data = players_to_add
-                if any(player not in data for player in player_names):
-                    if player_names[0] not in players_to_add:
-                        players_to_add.add(player_names[0])
-                        send_message(f'{player_names[0]} не найден')
-                    if player_names[1] not in players_to_add:
-                        players_to_add.add(player_names[1])
-                        send_message(f'{player_names[1]} не найден')
-                    return
+                if not all(player in blacklist for player in player_names):
+                    blacklist.append(player_names[0])
+                    send_message(f'{player_names[0]} не найден')
+                    blacklist.append(player_names[1])
+                    send_message(f'{player_names[1]} не найден')
+                    return blacklist
+                return
         else:
             print('blacklisted')
             return True
     elif len(player_names) == 1:
         if player_names[0] not in id_to_name.blacklist_players:
-            if player_names[0] in id_to_name.egb.values():
-                for player_id in id_to_name.egb:
-                    if player_names[0] in id_to_name.egb[player_id]:
-                        players_ids.append(player_id)
+            if player_names[0] in id_to_name.egb:
+                players_ids.append(id_to_name.egb[player_names[0]])
             else:
-                if player_names[0] not in players_to_add:
-                    players_to_add.add(player_names[0])
+                if player_names[0] not in blacklist:
+                    blacklist.append(player_names[0])
                     send_message(f'{player_names[0]} не найден')
-                    return
+                    return blacklist
+                return
         else:
             print('blacklisted')
             return
+    print(bet['game_label'])
     return players_ids, dire_and_radiant, bet['game_label']
 
 
@@ -151,18 +147,33 @@ def get_strats_graph_match(map_id=None):
   }
 }
         '''%map_id
-    headers = {"Authorization": f"Bearer {api_token}"}
-    response = requests.post('https://api.stratz.com/graphql', json={"query": query}, headers=headers)
-    return response
+
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Origin": "https://api.stratz.com",
+        "User-Agent": "STRATZ_API",
+        "Authorization": f"Bearer {api_token}"
+    }
+    response = requests.post('https://api.stratz.com/graphql?key=jE1M9jZk28iOXJs2LBfrN3gxWeqfgR2B', json={"query": query}, headers=headers)
+    if response.status_code == 200:
+        return response
+    else:
+        print(response.status_code)
+        pass
 
 
 def get_exac_match(response, players_ids, exac_match=None):
     data = json.loads(response.text).get('data', {}).get('live', {}).get('matches', {})
-    for match in data:
-        for player in match['players']:
-            if player['steamAccountId'] in players_ids:
-                exac_match = match
-                return exac_match
+    if data:
+        for match in data:
+            for player in match['players']:
+                if player['steamAccountId'] in players_ids:
+                    exac_match = match
+                    return exac_match
+    else:
+        return False
 
 def know_the_position(radiant_safe, check_time, radiant_hard, radiant_mid, dire_safe, dire_hard, dire_mid, heroes_left, radiant, dire, output_message):
     if len(radiant_safe) == 2:
@@ -336,6 +347,8 @@ def get_picks(check_time, players):
     radiant_hard, radiant_safe, dire_hard, dire_safe, radiant_mid, dire_mid = [], [], [], [], [], []
     for player in players:
         coordinates = player['playbackData']['positionEvents']
+        if coordinates[1]['time'] >= 600:
+            return
         for time in coordinates:
             if time['time'] >= check_time:
                 if time['x'] > 90 and time['x'] < 150 and time['y'] > 110 and time['y'] < 150:
@@ -405,15 +418,19 @@ def get_picks_and_pos(match_id):
     response = get_strats_graph_match(match_id)
     players = json.loads(response.text)['data']['live']['match']['players']
     check_time = 75
-    while check_time < 400:
-        radiant, dire, output_message = get_picks(check_time, players)
+    limit = 600
+    while check_time < limit:
+        result = get_picks(check_time, players)
+        if result is not None:
+            radiant, dire, output_message = result
+        else:
+            return False
         radiant_heroes = set([item['hero_name'] for pos, item, in radiant.items()])
         dire_heroes = set([item['hero_name'] for pos, item, in dire.items()])
         if len(radiant_heroes) == 5 and len(dire_heroes) == 5:
             return radiant, dire, match_id, output_message
         else:
             check_time += 15
-    print('неудалось выяснить пики')
 
 
 def check_players_skill(radiant_heroes_and_pos, dire_heroes_and_pos, output_message=''):
@@ -454,7 +471,14 @@ def check_players_skill(radiant_heroes_and_pos, dire_heroes_and_pos, output_mess
           }
         }
          '''% (steam_account_ids, hero_ids)
-        headers = {"Authorization": f"Bearer {api_token}"}
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Origin": "https://api.stratz.com",
+            "User-Agent": "STRATZ_API",
+            "Authorization": f"Bearer {api_token}"
+        }
         response = requests.post('https://api.stratz.com/graphql',
                                  json={"query": player_query}, headers=headers)
         data = json.loads(response.text)
