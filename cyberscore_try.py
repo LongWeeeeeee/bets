@@ -3,11 +3,13 @@ import time
 from bs4 import BeautifulSoup
 import requests
 import traceback
-from id_to_name import translate
+from id_to_name import translate, name_to_id
 from functions import get_team_positions, tm_kills_teams, tm_kills, send_message, add_url, get_map_id, \
     calculate_over40, calculate_lanes, synergy_and_counterpick_new
 from maps_research import update_all_teams, update_pro, update_my_protracker
+import urllib3
 
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def general(match_list=None, radiant_team_name='radiant', dire_team_name='dire', tier=None, draft=False):
     if match_list is None:
@@ -47,7 +49,7 @@ def general(match_list=None, radiant_team_name='radiant', dire_team_name='dire',
                     continue
                 elif status.text == 'Draft...':
                     draft = True
-                    continue
+                    # continue
                 divs = bodies[i].find_all('div', class_='match__item-team__score')
                 if any(div.text == '-' for div in divs):
                     continue
@@ -103,7 +105,6 @@ def general(match_list=None, radiant_team_name='radiant', dire_team_name='dire',
 
 
 def get_map_players(data, match, soup, name_to_pos):
-    try:
         radiant_pick = match.find('div', class_='picks__new-picks__picks radiant').find('div',
                                                                                       class_='items').find_all(
             'div', class_='pick player')
@@ -132,7 +133,10 @@ def get_map_players(data, match, soup, name_to_pos):
         for team in teams:
             players = team.find_all('div', class_='player')
             for player in players:
-                role = player.find('div', class_='player__role').find('span').text
+                role_data = player.find('div', class_='player__role')
+                if not role_data:
+                    return
+                role = role_data.find('span').text
                 role = name_to_pos[role]
                 name = player.find('div', class_='player__name').find('div',
                                                                       class_='player__name-name').text.lower()
@@ -143,6 +147,8 @@ def get_map_players(data, match, soup, name_to_pos):
         roles = ['pos1', 'pos2', 'pos3', 'pos4', 'pos5']
         for player in data['radiant']:
             if 'role' in player:
+                if player['role'] not in roles:
+                    return
                 roles.remove(player['role'])
         if len(roles) == 1:
             for player in data['radiant']:
@@ -151,6 +157,8 @@ def get_map_players(data, match, soup, name_to_pos):
         roles = ['pos1', 'pos2', 'pos3', 'pos4', 'pos5']
         for player in data['dire']:
             if 'role' in player:
+                if player['role'] not in roles:
+                    return
                 roles.remove(player['role'])
         if len(roles) == 1:
             for player in data['dire']:
@@ -166,14 +174,11 @@ def get_map_players(data, match, soup, name_to_pos):
 
         if len(radiant_heroes_and_pos) != 5 or len(dire_heroes_and_pos) != 5:
             return
-        radiant_team_name = data['teams']['radiant']
-        dire_team_name = data['teams']['dire']
+        radiant_team_name = data['teams']['radiant'].lower()
+        dire_team_name = data['teams']['dire'].lower()
         radiant_heroes_and_pos = radiant_heroes_and_pos
         dire_heroes_and_pos = dire_heroes_and_pos
         return radiant_team_name, dire_team_name, radiant_heroes_and_pos, dire_heroes_and_pos
-    except Exception as e:
-        print(e)
-        return True
 
 
 def proceed_map(url, radiant_team_name, dire_team_name, tier=1, radiant_heroes_and_pos=None,
@@ -185,27 +190,28 @@ def proceed_map(url, radiant_team_name, dire_team_name, tier=1, radiant_heroes_a
     #     radiant_heroes_and_pos, dire_heroes_and_pos = result
         for pos in radiant_heroes_and_pos:
             hero_name = radiant_heroes_and_pos[pos]['hero_name'].lower()
-            for hero_id in translate:
-                if translate[hero_id].lower() == hero_name:
-                    radiant_heroes_and_pos[pos]['hero_id'] = hero_id
+            for hero in name_to_id:
+                if hero.lower() == hero_name:
+                    radiant_heroes_and_pos[pos]['hero_id'] = name_to_id[hero]
         for pos in dire_heroes_and_pos:
             hero_name = dire_heroes_and_pos[pos]['hero_name'].lower()
-            for hero_id in translate:
-                if translate[hero_id].lower() == hero_name:
-                    dire_heroes_and_pos[pos]['hero_id'] = hero_id
+            for hero in name_to_id:
+                if hero.lower() == hero_name:
+                    dire_heroes_and_pos[pos]['hero_id'] = name_to_id[hero]
         output_message += f'{radiant_team_name} VS {dire_team_name}\nСчет: {score}\n{url}\n'
         print(f'{radiant_team_name} VS {dire_team_name}\nСчет: {score}\n')
-        # avg_kills, avg_time, solo_kills, solo_time = tm_kills_teams(radiant_heroes_and_pos=radiant_heroes_and_pos,
-        #                        dire_heroes_and_pos=dire_heroes_and_pos,
-        #                        radiant_team_name=radiant_team_name,
-        #                        dire_team_name=dire_team_name, min_len=2)
-        # if all(kills is not None and kills >= 48 for kills in [solo_kills, avg_kills]) or \
-        #         all(kills is not None and kills <= 42 for kills in [solo_kills, avg_kills]):
-        #     kills = (solo_kills + avg_kills)/2
-        # if all(kills is not None and time >= 38 for time in [solo_time, avg_time]) or \
-        #         all(kills is not None and kills <= 32 for kills in [solo_time, avg_time]):
-        #     time = (solo_time + avg_time)/2
-        output_message += f'avg_kills: {kills}\nAvg time: {time}\n\n'
+        if url != '':
+            avg_kills, avg_time, solo_kills, solo_time = tm_kills_teams(radiant_heroes_and_pos=radiant_heroes_and_pos,
+                                   dire_heroes_and_pos=dire_heroes_and_pos,
+                                   radiant_team_name=radiant_team_name,
+                                   dire_team_name=dire_team_name, min_len=2)
+            if all(kills is not None and kills >= 48 for kills in [solo_kills, avg_kills]) or \
+                    all(kills is not None and kills <= 42 for kills in [solo_kills, avg_kills]):
+                kills = (solo_kills + avg_kills)/2
+            if all(kills is not None and time >= 38 for time in [solo_time, avg_time]) or \
+                    all(kills is not None and kills <= 32 for kills in [solo_time, avg_time]):
+                time = (solo_time + avg_time)/2
+            output_message += f'avg_kills: {kills}\nAvg time: {time}\n\n'
         output_message += calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos)
         output_message += calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos)
         output_message += synergy_and_counterpick_new(
@@ -254,21 +260,20 @@ def proceed_map(url, radiant_team_name, dire_team_name, tier=1, radiant_heroes_a
 if __name__ == "__main__":
     # update_pro(show_prints=True)
     # update_all_teams(show_prints=True)
-    update_my_protracker(show_prints=True)
+    # update_my_protracker(show_prints=True)
     # update_all_teams(show_prints=True, only_in_ids=['BetBoom Team', 'Team Liquid'])
     # general(['https://cyberscore.live/en/matches/112515/'], radiant_team_name='Aurora Gaming', dire_team_name='Beastcoast', tier=1)
     #
-    # #
     # proceed_map(url='', radiant_team_name='ame Team', dire_team_name='spiky team', score=[0, 0], tier=1,
-    #             radiant_heroes_and_pos={'pos1': {'hero_name': "luna"}, 'pos2': {'hero_name': "queen of pain"},
-    #                                      'pos3': {'hero_name': 'mars'}, 'pos4': {'hero_name': 'nyx assassin'},
-    #                                      'pos5': {'hero_name': 'tusk'}},
-    #             dire_heroes_and_pos= {'pos1': {'hero_name': "morphling"}, 'pos2': {'hero_name': "invoker"},
-    #                                     'pos3': {'hero_name': 'dawnbreaker'}, 'pos4': {'hero_name': 'bounty hunter'},
-    #                                     'pos5': {'hero_name': "clockwerk"}},
+    #             radiant_heroes_and_pos={'pos1': {'hero_name': "spectre"}, 'pos2': {'hero_name': "earthshaker"},
+    #                                      'pos3': {'hero_name': 'kez'}, 'pos4': {'hero_name': 'lich'},
+    #                                      'pos5': {'hero_name': 'lion'}},
+    #             dire_heroes_and_pos= {'pos1': {'hero_name': "dragon knight"}, 'pos2': {'hero_name': "invoker"},
+    #                                     'pos3': {'hero_name': 'primal beast'}, 'pos4': {'hero_name': 'nyx assassin'},
+    #                                     'pos5': {'hero_name': "pugna"}},
     #             output_message='')
-
-
+    #
+    # #
     while True:
         try:
             draft = general()

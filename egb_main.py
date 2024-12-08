@@ -5,10 +5,12 @@ import json
 import traceback
 import requests
 import time
-from fuckkk import dota2protracker_gpt
 import id_to_name
-from egb import get_players, get_picks_and_pos, get_exac_match, get_strats_graph_match,\
-    check_players_skill
+from keys import api_token_3, api_token_4, api_token_5, api_token_2, api_token_1, api_token_6, api_token_7, \
+                      api_token_8, api_token_9, api_token_10, api_token_11, api_token_12, api_token_13, \
+                      api_token_14, api_token_15, api_token_16, api_token_17
+from egb import get_players, get_picks_and_pos, get_strats_graph_match
+
 url = "https://egb.com/bets"
 params = {
     "active": "true",
@@ -28,7 +30,12 @@ headers = {
 }
 
 
-def main(match=False):
+def main(match=False, lags=False):
+    tokens = [api_token_3, api_token_4, api_token_5, api_token_2, api_token_1, api_token_6, api_token_7,
+              api_token_8, api_token_9, api_token_10, api_token_11, api_token_12, api_token_13,
+              api_token_14,
+              api_token_15, api_token_16, api_token_17]
+    api_token = tokens.pop(0)
     # for name in id_to_name.egb:
     #
     # egb_player =
@@ -38,12 +45,25 @@ def main(match=False):
     with open('./egb/blacklist.txt', 'r+') as f:
         blacklist = json.load(f)
     importlib.reload(id_to_name)
-    response = requests.get(url, params=params, headers=headers)
-    data = json.loads(response.text)
+    proxies = {
+        'https': 'http://90gwi7LEfz:aKI0jgSViq@77.221.150.248:42037',
+    }
+    try:
+        response = requests.get(url, params=params, headers=headers, proxies=proxies)
+        data = json.loads(response.text)
+    except Exception as e:
+        print(e)
+        return True, lags
+
+    uniq = set()
     for bet in data['bets']:
         if ('map ' not in bet['gamer_1']['nick'].lower() or 'map '
                 not in bet['gamer_2']['nick'].lower())\
                 and bet['streams_enabled'] and bet['game'] == 'Dota 2':
+            if bet['game_label'] not in uniq:
+                uniq.add(bet['game_label'])
+            else:
+                continue
             if bet['id'] not in foo:
                 foo.setdefault(bet['id'], {}).setdefault('counter', 0)
             answer = get_players(bet, blacklist)
@@ -55,39 +75,48 @@ def main(match=False):
             elif answer == True:
                 continue
             players_ids, dire_and_radiant, title = answer
-            response = get_strats_graph_match()
-            if response is None:
-                continue
-            exact_match = get_exac_match(response, players_ids)
-            if exact_match is None:
+            answer = get_strats_graph_match(players_ids=players_ids, tokens=tokens,
+                                            api_token=api_token, proxies=proxies)
+            if answer is None:
                 print('Карта не найдена, вероятно матч только начался')
                 match = True
                 foo[bet['id']]['counter'] = foo[bet['id']]['counter'] + 1
                 if foo[bet['id']]['counter'] > 10:
                     print('stratz залагал')
-                    return False
+                    lags = True
+                    continue
                 else:
                     continue
-            elif exact_match == False:
+            elif answer == False:
                 print('stratz залагал')
-                return False
-
-            match_id = exact_match['matchId']
-            if not if_unique(match_id, score):
+                lags = True
+                continue
+            else:
+                exac_match_id, api_token = answer
+                if exac_match_id not in foo:
+                    foo[exac_match_id] = 1
+            if not if_unique(exac_match_id, score):
                 print('Матч уже рассчитан')
                 continue
-
-            answer = get_picks_and_pos(match_id)
+            if foo[exac_match_id] > 10:
+                print('stratz залагал')
+                lags = True
+                continue
+            answer = get_picks_and_pos(match_id=exac_match_id, tokens=tokens, api_token=api_token, proxies=proxies)
             if answer is None:
                 print('Не удалось выяснить пики')
                 match = True
+                foo[exac_match_id] = foo[exac_match_id] + 1
                 continue
             elif answer == False:
-                add_url(url=match_id, score=[0, 0])
+                add_url(url=exac_match_id, score=[0, 0])
                 return
+            elif answer == True:
+                print('stratz залагал')
+                continue
             radiant_heroes_and_pos, dire_heroes_and_pos, match_id, output_message = answer
-            output_message += f"{title}\nhttps://stratz.com/matches/{exact_match['matchId']}/live\n\n"
-            output_message += check_players_skill(radiant_heroes_and_pos, dire_heroes_and_pos)
+            output_message += f"{title}\nhttps://stratz.com/matches/{exac_match_id}/live\n\n"
+            # output_message += check_players_skill(radiant_heroes_and_pos, dire_heroes_and_pos)
             output_message += calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos)
             output_message += calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos)
             output_message += synergy_and_counterpick_new(
@@ -98,21 +127,26 @@ def main(match=False):
             add_url(url=match_id, score=[0,0])
     with open('./egb/blacklist.txt', 'r+') as f:
         json.dump(blacklist, f)
-    if match:
-        print('сплю 60 секунд')
-        time.sleep(60)
-    else:
-        print('сплю 5 минут')
-        time.sleep(300)
+    return match, lags
 
 
 if __name__ == "__main__":
     while True:
         try:
             response = main()
-            if response == False:
+            match, lags = response
+            if match == False:
                 print('сплю 5 минут')
                 time.sleep(300)
+            else:
+                match, lags = response
+                if match == True:
+                    print('сплю 60 секунд')
+                    time.sleep(60)
+                if lags == True:
+                    print('сплю 5 минут')
+                    time.sleep(300)
+
         except:
             error_traceback = traceback.format_exc()
             print(error_traceback)

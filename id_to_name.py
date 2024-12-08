@@ -52,7 +52,7 @@ def get_players(top, region, players_dict, skipAnon, count=0, skip=0):
                 api_token = tokens.pop()
                 print('токены обновлены')
     return players_dict
-egb = {'ark': 96189126, 'nikobaby': 412753955, 'butterfly': 1044002267, 'imbach4': 38672293, 'ggwplanaya': 110819366, 'awf': 91064780, 'arteezysbastark': 170834508, 'svg': 47434686, 'admiralbulldog': 76482434, 'lens': 241501414, 'fn': 5150808, 'Lyrical': 193673646, 'ainkrad': 196482746, 'bb3px': 93526520, 'nefrit': 116249155, 'alberkaaa': 363739653, 'copy': 115651292, 'Kataomi': 196878136, 'adzantick': 208181197, 'thiolicor': 105045291, 'Larl': 106305042, 'Mo13ei': 106755427, 'malik': 203351055, 'SkyLark': 27178898, 'kitrak': 187824320, 'yopaj': 324277900, 'stonebank': 412413765, 'xibbe': 50580004, 'Riddys': 130991304, 'omar': 152168157, 'insania': 54580962, '4nalog': 131303632, 'fly': 94155156, 'lil pleb': 103910993, 'respect': 123787715, 'SLATEM$': 383867949, 'Seleri': 91730177, 'kidaro': 104334048, 'pablo': 117015167, '4IVAN': 191066225, 'daxak': 177411785, 'K1': 164685175, 'otaker': 193564777, 'retsu': 165110440, 'yuma': 177203952, 'pma': 835864135, 'skem': 100594231, 'ряф^^': 163458082, 'laise': 117514269, 'MieRo`': 165564598, 'daze': 919735867, 'cloud': 168126336, 'miposhka': 113331514, 'zayac': 111030315, 'wisper': 292921272, 'crystallize': 114619230, 'gotthejuice': 957204049, 'skiter': 100058342, 'Shad': 164962869, 'malady': 93817671, 'Davai Lama': 138880576, 'tobi': 140288368, 'ari': 346412363, 'v1olent': 125445069, 'kordan': 262838756, 'shigetsu': 194979527, 'mellojul': 40805086, 'Nicky`Cool': 294135421, 'Ori': 107803494, '33': 86698277, 'dream': 241519559, 'Nande': 171097887, 'rincyq': 418942836, 'antares': 161839895, 'kaori': 320219866, 'darklord': 879017980, 'Bengan': 48823667, 'Sanctity-': 392169957, 'swedenstrong': 175311897, 'Stormstormer': 96803083, 'Lorenof': 210053851, 'tofu': 16497807, 'ame': 898754153, 'CHIRA_JUNIOR': 312436974, 'Munkushi~': 904131336, 'dm': 56351509, 'onejey': 181267255, 'collapse': 302214028, 'noone': 106573901, 'no!ob': 140297552, 'supream^': 58513047, 'atf': 183719386, 'bzm': 93618577, 'v-tune': 152455523, 'crystallis': 127617979, 'dyrachyo': 116934015, 'ulnit': 109757023, 'fath_bian': 118134220, 'lowskill': 98885811, 'gunnar': 126238768, 'xakoda': 217472313, 'cr1t': 25907144, 'phantomem': 108958769, 'quinn': 221666230, 'antoha': 178692606, 'cooman': 175463659, 'lil_nickdota': 114585639, 'resolut1on': 86725175, 'sonneiko': 369342470, 'monkeys-forever': 86811043, 'xcalibur': 245373129, 'gorgc': 56939869, 'krylat': 150748346, 'desire': 115464954, 'sclkoma': 165671428, 'leBron': 35504297, 'taiga': 401792574, 'yapzor': 89117038, 'yuragi': 167976729, 'fng': 94049589, 'ghostik': 92847434, 'ramzes': 132851371, 'abed': 154715080, 'noticed': 195108598, 'stariy_bog': 393024955, 'speedmanq': 1060164724, 'iltw': 113995822, 'watson': 171262902, '9class': 164199202, 'mason': 315657960, 'dukalis': 73401082, 'iannihilate': 92706637, 'yamich': 9403474, 'saberlight': 126212866, '23savage': 375507918, 'natsumi': 355168766, 'sneyking': 10366616, 'qojqva': 86738694, 'ceb': 88271237, 'kiritych': 172099728, 'shiishak': 190100004, 'nightfall': 124801257, 'limitlessqt': 1675023758, 'dnm': 361688848, 'baxadoto': 999961232, 'raven': 132309493, 'y0nd': 404150207, 'save': 317880638, 'torontotokyo': 431770905, 'dubu': 145550466, 'squad1x': 123023873, 'layme': 368917218, 'reira': 208407289, 'gpk': 480412663, 'illidanstr': 26316691, 'hellscream': 241884166, 'saksa': 103735745, 're1bl': 439345730, 'bsj': 105178768, 'zitraks': 133558180, 'moo': 84429681, 'malr1ne': 898455820, 'shergarat': 372801387, 'timado': 97658618, 'ar1se': 96169991, 'dinozavrik': 165390194, 'sketcher_8': 173480718, 'yatoro': 321580662, 'w33haa': 86700461, 'dendi': 70388657, 'kiyotaka': 858106446, 'iceberg': 250114507, '7jesu': 293731272, 'parker': 1171243748, 'cancel': 141690233, 'immersion': 295697470, 'pure': 331855530, 'rodjer': 159020918, 'poshliy_vladik': 148612029, 'jabz': 100471531, 'lelis': 87063175, 'lukiluki': 117311875, 'topson': 94054712, 'azimovdota': 1159912962, '420jenkins': 95145869, 'smilling knight': 155162307, 'boxi': 77490514, 'mira': 256156323, 'afganistan_doto': 858200619, 'iceiceice': 84772440, 'dj': 102099826, 'Timadofun': 1150772339, 'yamichc': 335437141, 'inhuman': 195415954, 'roflmao': 121870008, 'not me': 218231587, 'Fraser': 92487440, 'mitrofanushka': 130123201, 'daylight': 320017600, 'volshebnik': 309345956, 'dr.bum': 47977302, 'worick': 72393079, 'hduo': 185059559, 'afterlife': 86785083, 'malady(smurf)': 889201734, 'sayuw': 145065875, 'setsu': 139822354, 'fy': 101695162, 'stojkov': 262476000, 'mks': 220154695, 'planet': 150961567, 'Ws': 126842529, 'Aq': 196493853, '1D3E': 205226309, 'NothingToSay': 173978074, 'Emo': 202217968, 'Mikoto': 301750126, 'b a b': 145957968, 'JaCkky': 392565237, 'Ghost': 206642367, 'Xm': 137129583, 'lou': 185908355, 'Pangpang': 126064542, 'Zeal': 147767183, 'YSR-04E': 170896543, '五年两年多少年': 145358275, 'TraVins': 140411011, 'jhocam': 152859296, 'BEEBIE': 282359850, 'dstones': 134711350, 'flyfly': 168028715, '458': 196931374, 'x123': 458287006, 'blood': 315272623, 'yang': 139937922, 'jing': 219755398, 'undyne_': 191597529, 'bdz': 156029808, 'player3': 148880949, 'player4': 171874354, 'htz': 372105535, 'gan': 116837520, 'player5': 287966898, 'cdr': 206379758, 'Allen': 137092505, '': 371876003, 'wayne': 293904640, 'gabbi': 152545459, 'pyw': 138543123, '哦？': 199953095, '狠': 129958758, '千雪ちゆき': 80929738, '大葡萄dy95087': 150960169, 'iroha': 320252024, 'Flyicu': 162126721, '绝世高手': 286279456, '无相': 470392491, 'Arc Drive': 373667079, '雨季不再来': 489696354, '构式': 396462897, 'Myut': 398896331, '灰原 哀': 122586792, 'LeMao': 219950601, 'Griffith': 353498499, 'Q': 193815691, 'Krish`-': 349495318, ':)': 363724571, '))))))))))))))))))': 277835316, '匿名的': 153727297, '。': 135656964, '4': 100598959, 'BLESSED CHINA LOW RANK': 394071544, 'Guts': 118305301, 'ni': 158847773, '哥白尼': 128398556, 'Kaiju No.16': 193884241, 'Manic': 164948665, 'Yellow': 201826550, 'Steins Gate': 181145703, 'pos 1 ty': 1114778241, '君とONE LOVE永遠に2 hearts': 139268745, 'Ignite me': 252551173, 'cml': 100616105, '心碎小子': 141398569, 'LYcHee': 158401119, 'bwiset': 155447692, '86 pancakes ^-^': 99983413, 'Obsession': 108717482, '☁️1/22yearsold': 241107899, 'ChYuaN': 113435203, 'Xiang': 139031324, '.-.': 285319482, '134882858(Bnlvdn)': 1066782497, 'Twitch.tv/micedoto': 134357466, '谢谢': 199222238, 'mid': 207945924, 'NOOB': 195072449, 'Jigi Prime': 286985748, '-': 333351042, 'Like a child waiting for X`mas': 135673679, 'winkwell': 311360822, '45': 100406744, '影': 257694165, 'KNP♥': 285770518, 'RAYUM': 101460882, 'king bob': 173378701, '< blank >': 911977148, '.': 388905349, 'core player': 142991995, 'Bagnaia^': 134665319, '正': 130416036, 'Murasaki-': 184138153, '混': 174081158, '蛊心': 252716815, '偷感大王': 363029497, 'ahchin': 76904792, 'Sky Striker Mobilize - Engage!': 228517469, 'WAITING FOR HUMAN TEAM (EN/CN)': 130040732, '隔壁老王': 1029352973, '#NotLikeThis MODE: Oli~ Comeback': 135607261, 'dream on': 162274034, 'Stuck in reverse LFT': 836325393, 'dx': 336937491, 'enjoy': 126397214, 'ZZZ': 356343152, '0.0': 149259389, 'Cliché': 902424411, 'Peter Griefing': 399862798, '-.-': 430337036, '龙': 318286721, 'Bot (2)': 215121858, '1974': 89423756, 'nice': 147267417, '烛影斧声': 484759837, 'B-RABBIT': 1129118044, '问剑': 106863163, 'Reverie for Another Sphere': 230487729, '-O-O-': 140251702, 'Dendi 2009': 185590374, 'Rerise': 405351356, 'rue': 847565596, 'NARMAN': 343084576, 'Matson': 972243573, 'blackpink': 333700720, 'Force': 146711951, 'arcane fantasy': 152285172, 'aik~': 1202267677, 'Miracle---': 101356886, 'patient zero': 122817493, '2ls': 184620877, 'диф': 1062148399, 'Wuiter': 93845249, 'Kiseki': 450454900, "these percs' they heaven sent": 256444993, 'xsvamp1re': 326327879, 'what if i fall?': 392006194, "teydo;tlikewinnin'": 1286226756, 'nn_': 113112046, 'Stewie2K': 917319178, 'Kyzko': 84385735, 'tv/lukas_doto': 345509021, 'b0t': 223382342, 'Pensils': 351836036, '=/': 234119750, 'Speeed': 191362875, 'CLOWNFIESTA': 995397364, 'мистер мораль': 383788462, 'Aquariano nato': 84853828, 'MC HAMMSTER': 135403353, 'so bad': 107023378, 'rostislav999': 1677766292, 'lantana': 349569834, 'LESHA-KILLER_52': 851178649, 'I will be the best': 92601861, 'onlywinmatter': 872008996, 'Actor': 860414909, '90210': 190826739, "what's ok": 168291251, 'NongMon': 136829091, 'К о т': 199666759, 'крeкep': 1048617659, 'so close but so far': 296702734, '神': 917164766, 'ботик': 1001714951, 'Sae': 1673586483, 'y:<': 127530803, 'p~love.心の平和': 860264647, 'lucker': 123213918, '536': 175350492, 'Ruling Days': 147408273, 'losing every lane': 1224667851, 'Мамонтенок': 364698744, 'Лузаю с кайфом))': 402583877, 'Gamer': 126127817, 'marmelad bear': 170809075, 'Megoway-': 164090265, 'LLF': 232281409, 'Mistake': 1031547092, 'dininizi sikiyim': 123717676, 'Limbo🔴': 457637739, 'Midnight': 1172719712, 'Blaze': 133682196, 'NLineは': 151669649, 'JANTER': 285282252, 'Fishman': 127565532, 'Mr. Luck': 891521610, "raison d'etre": 383361785, 'johnnupro': 891566317, 'swaga': 257921351, '@SaintsMike': 215308703, 'maybe win maybe no': 158072796, 'Seishiro Nagi': 352545711, '3 pos dif': 312051473, 'Ankou ♡': 1675517497, 'goomoonryong': 185202677, 'Makunouchi': 401902808, 'Brutal-': 1004229172, 'fiend': 899495504, 'Double jump': 90423751, 'any?': 847783992, '-/': 175891708, 'CHAD': 108928414, 'MTD)': 112426916, ',': 179266369, 'tg3': 114162163, 'Abo Prime': 857788254, '>^)#--': 1150028510, 'hardmode gameplay enj': 405499625, 'Mny': 250199344, 'Nagato': 1010173059, 'catching up': 1016676974, 'Focus': 196490133, 'hAze._.': 192981126, 'Hitogami 裏切りの神': 196481318, 'Котакбас': 124286163, 'single down': 118370366, 'あちこち': 135513713, 'no bs': 117483894, '≠)≠': 398747760, '-.,.,.-': 902207238, 'Stormy': 179684293, 'all good': 221532774, 'mm warrior': 146383297, 'DRT': 195516068, 'Suiiiiiiiiiiiiii': 1052101649, '9m': 325697153, 'player1': 147130490, 'OuiSaki (LFT)': 113926403, 'Solo que enjoyer (Fun)': 123561201, '当当GOD': 242072548, 'LAY DOWN MY LIFE': 417235485, 'Marceline': 165040324}
+egb = {'sketcher': 173480718, 'wagamama': 32995405, 'avice': 191734430, 'mtd': 112426916, 'asakuratwins': 176001885, 'attackerdota': 118305301, 'lyrical': 193673646, 'ark': 96189126, 'nikobaby': 412753955, 'butterfly': 1044002267, 'imbach4': 38672293, 'ggwplanaya': 110819366, 'awf': 91064780, 'arteezysbastark': 170834508, 'svg': 47434686, 'admiralbulldog': 76482434, 'lens': 241501414, 'fn': 5150808, 'Lyrical': 193673646, 'ainkrad': 196482746, 'bb3px': 93526520, 'nefrit': 116249155, 'alberkaaa': 363739653, 'copy': 115651292, 'Kataomi': 196878136, 'adzantick': 208181197, 'thiolicor': 105045291, 'Larl': 106305042, 'Mo13ei': 106755427, 'malik': 203351055, 'SkyLark': 27178898, 'kitrak': 187824320, 'yopaj': 324277900, 'stonebank': 412413765, 'xibbe': 50580004, 'Riddys': 130991304, 'omar': 152168157, 'insania': 54580962, '4nalog': 131303632, 'fly': 94155156, 'lil pleb': 103910993, 'respect': 123787715, 'SLATEM$': 383867949, 'Seleri': 91730177, 'kidaro': 104334048, 'pablo': 117015167, '4IVAN': 191066225, 'daxak': 177411785, 'K1': 164685175, 'otaker': 193564777, 'retsu': 165110440, 'yuma': 177203952, 'pma': 835864135, 'skem': 100594231, 'ряф^^': 163458082, 'laise': 117514269, 'MieRo`': 165564598, 'daze': 919735867, 'cloud': 168126336, 'miposhka': 113331514, 'zayac': 111030315, 'wisper': 292921272, 'crystallize': 114619230, 'gotthejuice': 957204049, 'skiter': 100058342, 'Shad': 164962869, 'malady': 93817671, 'Davai Lama': 138880576, 'tobi': 140288368, 'ari': 346412363, 'v1olent': 125445069, 'kordan': 262838756, 'shigetsu': 194979527, 'mellojul': 40805086, 'Nicky`Cool': 294135421, 'Ori': 107803494, '33': 86698277, 'dream': 241519559, 'Nande': 171097887, 'rincyq': 418942836, 'antares': 161839895, 'kaori': 320219866, 'darklord': 879017980, 'Bengan': 48823667, 'Sanctity-': 392169957, 'swedenstrong': 175311897, 'Stormstormer': 96803083, 'Lorenof': 210053851, 'tofu': 16497807, 'ame': 898754153, 'CHIRA_JUNIOR': 312436974, 'Munkushi~': 904131336, 'dm': 56351509, 'onejey': 181267255, 'collapse': 302214028, 'noone': 106573901, 'no!ob': 140297552, 'supream^': 58513047, 'atf': 183719386, 'bzm': 93618577, 'v-tune': 152455523, 'crystallis': 127617979, 'dyrachyo': 116934015, 'ulnit': 109757023, 'fath_bian': 118134220, 'lowskill': 98885811, 'gunnar': 126238768, 'xakoda': 217472313, 'cr1t': 25907144, 'phantomem': 108958769, 'quinn': 221666230, 'antoha': 178692606, 'cooman': 175463659, 'lil_nickdota': 114585639, 'resolut1on': 86725175, 'sonneiko': 369342470, 'monkeys-forever': 86811043, 'xcalibur': 245373129, 'gorgc': 56939869, 'krylat': 150748346, 'desire': 115464954, 'sclkoma': 165671428, 'leBron': 35504297, 'taiga': 401792574, 'yapzor': 89117038, 'yuragi': 167976729, 'fng': 94049589, 'ghostik': 92847434, 'ramzes': 132851371, 'abed': 154715080, 'noticed': 195108598, 'stariy_bog': 393024955, 'speedmanq': 1060164724, 'iltw': 113995822, 'watson': 171262902, '9class': 164199202, 'mason': 315657960, 'dukalis': 73401082, 'iannihilate': 92706637, 'yamich': 9403474, 'saberlight': 126212866, '23savage': 375507918, 'natsumi': 355168766, 'sneyking': 10366616, 'qojqva': 86738694, 'ceb': 88271237, 'kiritych': 172099728, 'shiishak': 190100004, 'nightfall': 124801257, 'limitlessqt': 1675023758, 'dnm': 361688848, 'baxadoto': 999961232, 'raven': 132309493, 'y0nd': 404150207, 'save': 317880638, 'torontotokyo': 431770905, 'dubu': 145550466, 'squad1x': 123023873, 'layme': 368917218, 'reira': 208407289, 'gpk': 480412663, 'illidanstr': 26316691, 'hellscream': 241884166, 'saksa': 103735745, 're1bl': 439345730, 'bsj': 105178768, 'zitraks': 133558180, 'moo': 84429681, 'malr1ne': 898455820, 'shergarat': 372801387, 'timado': 97658618, 'ar1se': 96169991, 'dinozavrik': 165390194, 'sketcher_8': 173480718, 'yatoro': 321580662, 'w33haa': 86700461, 'dendi': 70388657, 'kiyotaka': 858106446, 'iceberg': 250114507, '7jesu': 293731272, 'parker': 1171243748, 'cancel': 141690233, 'immersion': 295697470, 'pure': 331855530, 'rodjer': 159020918, 'poshliy_vladik': 148612029, 'jabz': 100471531, 'lelis': 87063175, 'lukiluki': 117311875, 'topson': 94054712, 'azimovdota': 1159912962, '420jenkins': 95145869, 'smilling knight': 155162307, 'boxi': 77490514, 'mira': 256156323, 'afganistan_doto': 858200619, 'iceiceice': 84772440, 'dj': 102099826, 'Timadofun': 1150772339, 'yamichc': 335437141, 'inhuman': 195415954, 'roflmao': 121870008, 'not me': 218231587, 'Fraser': 92487440, 'mitrofanushka': 130123201, 'daylight': 320017600, 'volshebnik': 309345956, 'dr.bum': 47977302, 'worick': 72393079, 'hduo': 185059559, 'afterlife': 86785083, 'malady(smurf)': 889201734, 'sayuw': 145065875, 'setsu': 139822354, 'fy': 101695162, 'stojkov': 262476000, 'mks': 220154695, 'planet': 150961567, 'Ws': 126842529, 'Aq': 196493853, '1D3E': 205226309, 'NothingToSay': 173978074, 'Emo': 202217968, 'Mikoto': 301750126, 'b a b': 145957968, 'JaCkky': 392565237, 'Ghost': 206642367, 'Xm': 137129583, 'lou': 185908355, 'Pangpang': 126064542, 'Zeal': 147767183, 'YSR-04E': 170896543, '五年两年多少年': 145358275, 'TraVins': 140411011, 'jhocam': 152859296, 'BEEBIE': 282359850, 'dstones': 134711350, 'flyfly': 168028715, '458': 196931374, 'x123': 458287006, 'blood': 315272623, 'yang': 139937922, 'jing': 219755398, 'undyne_': 191597529, 'bdz': 156029808, 'player3': 148880949, 'player4': 171874354, 'htz': 372105535, 'gan': 116837520, 'player5': 287966898, 'cdr': 206379758, 'Allen': 137092505, '': 371876003, 'wayne': 293904640, 'gabbi': 152545459, 'pyw': 138543123, '哦？': 199953095, '狠': 129958758, '千雪ちゆき': 80929738, '大葡萄dy95087': 150960169, 'iroha': 320252024, 'Flyicu': 162126721, '绝世高手': 286279456, '无相': 470392491, 'Arc Drive': 373667079, '雨季不再来': 489696354, '构式': 396462897, 'Myut': 398896331, '灰原 哀': 122586792, 'LeMao': 219950601, 'Griffith': 353498499, 'Q': 193815691, 'Krish`-': 349495318, ':)': 363724571, '))))))))))))))))))': 277835316, '匿名的': 153727297, '。': 135656964, '4': 100598959, 'BLESSED CHINA LOW RANK': 394071544, 'Guts': 118305301, 'ni': 158847773, '哥白尼': 128398556, 'Kaiju No.16': 193884241, 'Manic': 164948665, 'Yellow': 201826550, 'Steins Gate': 181145703, 'pos 1 ty': 1114778241, '君とONE LOVE永遠に2 hearts': 139268745, 'Ignite me': 252551173, 'cml': 100616105, '心碎小子': 141398569, 'LYcHee': 158401119, 'bwiset': 155447692, '86 pancakes ^-^': 99983413, 'Obsession': 108717482, '☁️1/22yearsold': 241107899, 'ChYuaN': 113435203, 'Xiang': 139031324, '.-.': 285319482, '134882858(Bnlvdn)': 1066782497, 'Twitch.tv/micedoto': 134357466, '谢谢': 199222238, 'mid': 207945924, 'NOOB': 195072449, 'Jigi Prime': 286985748, '-': 333351042, 'Like a child waiting for X`mas': 135673679, 'winkwell': 311360822, '45': 100406744, '影': 257694165, 'KNP♥': 285770518, 'RAYUM': 101460882, 'king bob': 173378701, '< blank >': 911977148, '.': 388905349, 'core player': 142991995, 'Bagnaia^': 134665319, '正': 130416036, 'Murasaki-': 184138153, '混': 174081158, '蛊心': 252716815, '偷感大王': 363029497, 'ahchin': 76904792, 'Sky Striker Mobilize - Engage!': 228517469, 'WAITING FOR HUMAN TEAM (EN/CN)': 130040732, '隔壁老王': 1029352973, '#NotLikeThis MODE: Oli~ Comeback': 135607261, 'dream on': 162274034, 'Stuck in reverse LFT': 836325393, 'dx': 336937491, 'enjoy': 126397214, 'ZZZ': 356343152, '0.0': 149259389, 'Cliché': 902424411, 'Peter Griefing': 399862798, '-.-': 430337036, '龙': 318286721, 'Bot (2)': 215121858, '1974': 89423756, 'nice': 147267417, '烛影斧声': 484759837, 'B-RABBIT': 1129118044, '问剑': 106863163, 'Reverie for Another Sphere': 230487729, '-O-O-': 140251702, 'Dendi 2009': 185590374, 'Rerise': 405351356, 'rue': 847565596, 'NARMAN': 343084576, 'Matson': 972243573, 'blackpink': 333700720, 'Force': 146711951, 'arcane fantasy': 152285172, 'aik~': 1202267677, 'Miracle---': 101356886, 'patient zero': 122817493, '2ls': 184620877, 'диф': 1062148399, 'Wuiter': 93845249, 'Kiseki': 450454900, "these percs' they heaven sent": 256444993, 'xsvamp1re': 326327879, 'what if i fall?': 392006194, "teydo;tlikewinnin'": 1286226756, 'nn_': 113112046, 'Stewie2K': 917319178, 'Kyzko': 84385735, 'tv/lukas_doto': 345509021, 'b0t': 223382342, 'Pensils': 351836036, '=/': 234119750, 'Speeed': 191362875, 'CLOWNFIESTA': 995397364, 'мистер мораль': 383788462, 'Aquariano nato': 84853828, 'MC HAMMSTER': 135403353, 'so bad': 107023378, 'rostislav999': 1677766292, 'lantana': 349569834, 'LESHA-KILLER_52': 851178649, 'I will be the best': 92601861, 'onlywinmatter': 872008996, 'Actor': 860414909, '90210': 190826739, "what's ok": 168291251, 'NongMon': 136829091, 'К о т': 199666759, 'крeкep': 1048617659, 'so close but so far': 296702734, '神': 917164766, 'ботик': 1001714951, 'Sae': 1673586483, 'y:<': 127530803, 'p~love.心の平和': 860264647, 'lucker': 123213918, '536': 175350492, 'Ruling Days': 147408273, 'losing every lane': 1224667851, 'Мамонтенок': 364698744, 'Лузаю с кайфом))': 402583877, 'Gamer': 126127817, 'marmelad bear': 170809075, 'Megoway-': 164090265, 'LLF': 232281409, 'Mistake': 1031547092, 'dininizi sikiyim': 123717676, 'Limbo🔴': 457637739, 'Midnight': 1172719712, 'Blaze': 133682196, 'NLineは': 151669649, 'JANTER': 285282252, 'Fishman': 127565532, 'Mr. Luck': 891521610, "raison d'etre": 383361785, 'johnnupro': 891566317, 'swaga': 257921351, '@SaintsMike': 215308703, 'maybe win maybe no': 158072796, 'Seishiro Nagi': 352545711, '3 pos dif': 312051473, 'Ankou ♡': 1675517497, 'goomoonryong': 185202677, 'Makunouchi': 401902808, 'Brutal-': 1004229172, 'fiend': 899495504, 'Double jump': 90423751, 'any?': 847783992, '-/': 175891708, 'CHAD': 108928414, 'MTD)': 112426916, ',': 179266369, 'tg3': 114162163, 'Abo Prime': 857788254, '>^)#--': 1150028510, 'hardmode gameplay enj': 405499625, 'Mny': 250199344, 'Nagato': 1010173059, 'catching up': 1016676974, 'Focus': 196490133, 'hAze._.': 192981126, 'Hitogami 裏切りの神': 196481318, 'Котакбас': 124286163, 'single down': 118370366, 'あちこち': 135513713, 'no bs': 117483894, '≠)≠': 398747760, '-.,.,.-': 902207238, 'Stormy': 179684293, 'all good': 221532774, 'mm warrior': 146383297, 'DRT': 195516068, 'Suiiiiiiiiiiiiii': 1052101649, '9m': 325697153, 'player1': 147130490, 'OuiSaki (LFT)': 113926403, 'Solo que enjoyer (Fun)': 123561201, '当当GOD': 242072548, 'LAY DOWN MY LIFE': 417235485, 'Marceline': 165040324}
 
 all_teams = {
     "yakult's brothers": {
@@ -6940,135 +6940,8 @@ all_teams = {
         "id": 3477030
     }
 }
-translate = {
-    1: "Anti-Mage",
-    2: "Axe",
-    3: "Bane",
-    4: "Bloodseeker",
-    5: "Crystal Maiden",
-    6: "Drow Ranger",
-    7: "Earthshaker",
-    8: "Juggernaut",
-    9: "Mirana",
-    11: "Shadow Fiend",
-    10: "Morphling",
-    12: "Phantom Lancer",
-    13: "Puck",
-    14: "Pudge",
-    15: "Razor",
-    16: "Sand King",
-    17: "Storm Spirit",
-    18: "Sven",
-    19: "Tiny",
-    20: "Vengeful Spirit",
-    21: "Windranger",
-    22: "Zeus",
-    23: "Kunkka",
-    25: "Lina",
-    31: "Lich",
-    26: "Lion",
-    27: "Shadow Shaman",
-    28: "Slardar",
-    29: "Tidehunter",
-    30: "Witch Doctor",
-    32: "Riki",
-    33: "Enigma",
-    34: "Tinker",
-    35: "Sniper",
-    36: "Necrophos",
-    37: "Warlock",
-    38: "Beastmaster",
-    39: "Queen of Pain",
-    40: "Venomancer",
-    41: "Faceless Void",
-    42: "Wraith King",
-    43: "Death Prophet",
-    44: "Phantom Assassin",
-    45: "Pugna",
-    46: "Templar Assassin",
-    47: "Viper",
-    48: "Luna",
-    49: "Dragon Knight",
-    50: "Dazzle",
-    51: "Clockwerk",
-    52: "Leshrac",
-    53: "Nature's Prophet",
-    54: "Lifestealer",
-    55: "Dark Seer",
-    56: "Clinkz",
-    57: "Omniknight",
-    58: "Enchantress",
-    59: "Huskar",
-    60: "Night Stalker",
-    61: "Broodmother",
-    62: "Bounty Hunter",
-    63: "Weaver",
-    64: "Jakiro",
-    65: "Batrider",
-    66: "Chen",
-    67: "Spectre",
-    69: "Doom",
-    68: "Ancient Apparition",
-    70: "Ursa",
-    71: "Spirit Breaker",
-    72: "Gyrocopter",
-    73: "Alchemist",
-    74: "Invoker",
-    75: "Silencer",
-    76: "Outworld Destroyer",
-    77: "Lycan",
-    78: "Brewmaster",
-    79: "Shadow Demon",
-    80: "Lone Druid",
-    81: "Chaos Knight",
-    82: "Meepo",
-    83: "Treant Protector",
-    84: "Ogre Magi",
-    85: "Undying",
-    86: "Rubick",
-    87: "Disruptor",
-    88: "Nyx Assassin",
-    89: "Naga Siren",
-    90: "Keeper of the Light",
-    91: "Io",
-    92: "Visage",
-    93: "Slark",
-    94: "Medusa",
-    95: "Troll Warlord",
-    96: "Centaur Warrunner",
-    97: "Magnus",
-    98: "Timbersaw",
-    99: "Bristleback",
-    100: "Tusk",
-    101: "Skywrath Mage",
-    102: "Abaddon",
-    103: "Elder Titan",
-    104: "Legion Commander",
-    105: "Techies",
-    106: "Ember Spirit",
-    107: "Earth Spirit",
-    108: "Underlord",
-    109: "Terrorblade",
-    110: "Phoenix",
-    111: "Oracle",
-    112: "Winter Wyvern",
-    113: "Arc Warden",
-    114: 'Monkey King',
-    119: 'Dark Willow',
-    120: "Pangolier",
-    121: 'Grimstroke',
-    123: "Hoodwink",
-    126: 'Void Spirit',
-    128: 'Snapfire',
-    129: 'Mars',
-    131: 'Ringmaster',
-    135: 'Dawnbreaker',
-    136: 'Marci',
-    137: "Primal Beast",
-    138: "Muerta",
-    145: 'Kez',
-}
-
+name_to_id = {'Anti-Mage': 1, 'Axe': 2, 'Bane': 3, 'Bloodseeker': 4, 'Crystal Maiden': 5, 'Drow Ranger': 6, 'Earthshaker': 7, 'Juggernaut': 8, 'Mirana': 9, 'Shadow Fiend': 11, 'Morphling': 10, 'Phantom Lancer': 12, 'Puck': 13, 'Pudge': 14, 'Razor': 15, 'Sand King': 16, 'Storm Spirit': 17, 'Sven': 18, 'Tiny': 19, 'Vengeful Spirit': 20, 'Windranger': 21, 'Zeus': 22, 'Kunkka': 23, 'Lina': 25, 'Lich': 31, 'Lion': 26, 'Shadow Shaman': 27, 'Slardar': 28, 'Tidehunter': 29, 'Witch Doctor': 30, 'Riki': 32, 'Enigma': 33, 'Tinker': 34, 'Sniper': 35, 'Necrophos': 36, 'Warlock': 37, 'Beastmaster': 38, 'Queen of Pain': 39, 'Venomancer': 40, 'Faceless Void': 41, 'Wraith King': 42, 'Death Prophet': 43, 'Phantom Assassin': 44, 'Pugna': 45, 'Templar Assassin': 46, 'Viper': 47, 'Luna': 48, 'Dragon Knight': 49, 'Dazzle': 50, 'Clockwerk': 51, 'Leshrac': 52, "Nature's Prophet": 53, 'Lifestealer': 54, 'Dark Seer': 55, 'Clinkz': 56, 'Omniknight': 57, 'Enchantress': 58, 'Huskar': 59, 'Night Stalker': 60, 'Broodmother': 61, 'Bounty Hunter': 62, 'Weaver': 63, 'Jakiro': 64, 'Batrider': 65, 'Chen': 66, 'Spectre': 67, 'Doom': 69, 'Ancient Apparition': 68, 'Ursa': 70, 'Spirit Breaker': 71, 'Gyrocopter': 72, 'Alchemist': 73, 'Invoker': 74, 'Silencer': 75, 'Outworld Destroyer': 76, 'Lycan': 77, 'Brewmaster': 78, 'Shadow Demon': 79, 'Lone Druid': 80, 'Chaos Knight': 81, 'Meepo': 82, 'Treant Protector': 83, 'Ogre Magi': 84, 'Undying': 85, 'Rubick': 86, 'Disruptor': 87, 'Nyx Assassin': 88, 'Naga Siren': 89, 'Keeper of the Light': 90, 'Io': 91, 'Visage': 92, 'Slark': 93, 'Medusa': 94, 'Troll Warlord': 95, 'Centaur Warrunner': 96, 'Magnus': 97, 'Timbersaw': 98, 'Bristleback': 99, 'Tusk': 100, 'Skywrath Mage': 101, 'Abaddon': 102, 'Elder Titan': 103, 'Legion Commander': 104, 'Techies': 105, 'Ember Spirit': 106, 'Earth Spirit': 107, 'Underlord': 108, 'Terrorblade': 109, 'Phoenix': 110, 'Oracle': 111, 'Winter Wyvern': 112, 'Arc Warden': 113, 'Monkey King': 114, 'Dark Willow': 119, 'Pangolier': 120, 'Grimstroke': 121, 'Hoodwink': 123, 'Void Spirit': 126, 'Snapfire': 128, 'Mars': 129, 'Ring master': 131, 'Ringmaster': 131, 'Dawnbreaker': 135, 'Marci': 136, 'Primal Beast': 137, 'Muerta': 138, 'Kez': 145}
+translate = {1: 'Anti-Mage', 2: 'Axe', 3: 'Bane', 4: 'Bloodseeker', 5: 'Crystal Maiden', 6: 'Drow Ranger', 7: 'Earthshaker', 8: 'Juggernaut', 9: 'Mirana', 11: 'Shadow Fiend', 10: 'Morphling', 12: 'Phantom Lancer', 13: 'Puck', 14: 'Pudge', 15: 'Razor', 16: 'Sand King', 17: 'Storm Spirit', 18: 'Sven', 19: 'Tiny', 20: 'Vengeful Spirit', 21: 'Windranger', 22: 'Zeus', 23: 'Kunkka', 25: 'Lina', 31: 'Lich', 26: 'Lion', 27: 'Shadow Shaman', 28: 'Slardar', 29: 'Tidehunter', 30: 'Witch Doctor', 32: 'Riki', 33: 'Enigma', 34: 'Tinker', 35: 'Sniper', 36: 'Necrophos', 37: 'Warlock', 38: 'Beastmaster', 39: 'Queen of Pain', 40: 'Venomancer', 41: 'Faceless Void', 42: 'Wraith King', 43: 'Death Prophet', 44: 'Phantom Assassin', 45: 'Pugna', 46: 'Templar Assassin', 47: 'Viper', 48: 'Luna', 49: 'Dragon Knight', 50: 'Dazzle', 51: 'Clockwerk', 52: 'Leshrac', 53: "Nature's Prophet", 54: 'Lifestealer', 55: 'Dark Seer', 56: 'Clinkz', 57: 'Omniknight', 58: 'Enchantress', 59: 'Huskar', 60: 'Night Stalker', 61: 'Broodmother', 62: 'Bounty Hunter', 63: 'Weaver', 64: 'Jakiro', 65: 'Batrider', 66: 'Chen', 67: 'Spectre', 69: 'Doom', 68: 'Ancient Apparition', 70: 'Ursa', 71: 'Spirit Breaker', 72: 'Gyrocopter', 73: 'Alchemist', 74: 'Invoker', 75: 'Silencer', 76: 'Outworld Destroyer', 77: 'Lycan', 78: 'Brewmaster', 79: 'Shadow Demon', 80: 'Lone Druid', 81: 'Chaos Knight', 82: 'Meepo', 83: 'Treant Protector', 84: 'Ogre Magi', 85: 'Undying', 86: 'Rubick', 87: 'Disruptor', 88: 'Nyx Assassin', 89: 'Naga Siren', 90: 'Keeper of the Light', 91: 'Io', 92: 'Visage', 93: 'Slark', 94: 'Medusa', 95: 'Troll Warlord', 96: 'Centaur Warrunner', 97: 'Magnus', 98: 'Timbersaw', 99: 'Bristleback', 100: 'Tusk', 101: 'Skywrath Mage', 102: 'Abaddon', 103: 'Elder Titan', 104: 'Legion Commander', 105: 'Techies', 106: 'Ember Spirit', 107: 'Earth Spirit', 108: 'Underlord', 109: 'Terrorblade', 110: 'Phoenix', 111: 'Oracle', 112: 'Winter Wyvern', 113: 'Arc Warden', 114: 'Monkey King', 119: 'Dark Willow', 120: 'Pangolier', 121: 'Grimstroke', 123: 'Hoodwink', 126: 'Void Spirit', 128: 'Snapfire', 129: 'Mars', 131: 'Ringmaster', 135: 'Dawnbreaker', 136: 'Marci', 137: 'Primal Beast', 138: 'Muerta', 145: 'Kez'}
 blacklist_players = {
     'qsonya',
     'fritterus',
@@ -7415,10 +7288,13 @@ if __name__ == "__main__":
     # pass
     #SE_ASIA
     # pro_ids = get_pro_players_ids()
-    new_egb = dict()
-    for user_id in egb:
-        name = egb[user_id]
-        new_egb[name] = user_id
+    # new_egb = dict()
+    # for user_id in egb:
+    #     name = egb[user_id]
+    #     new_egb[name] = user_id
+    # pass
+    new_d = dict()
+    for name in name_to_id:
+        new_d[name_to_id[name]] = name
     pass
-
 

@@ -1,10 +1,13 @@
 import json
 import time
+import random
 import requests
 import re
 import id_to_name
 from functions import if_unique, send_message
-from keys import api_token_17 as api_token
+from keys import api_token_3, api_token_4, api_token_5, api_token_2, api_token_1, api_token_6, api_token_7, \
+                      api_token_8, api_token_9, api_token_10, api_token_11, api_token_12, api_token_13, \
+                      api_token_14, api_token_15, api_token_16, api_token_17
 
 url = "https://egb.com/bets"
 params = {
@@ -30,39 +33,20 @@ def get_players(bet, blacklist):
     player_names = [player.replace("'s", '') for player in players if 'enemy' not in player]
     dire_and_radiant['radiant'] = players[0]
     dire_and_radiant['dire'] = players[1]
-
-
     players_ids = []
-    if len(player_names) == 2:
-        if player_names[0] not in id_to_name.blacklist_players and player_names[1] not in id_to_name.blacklist_players:
-            if player_names[0] in id_to_name.egb:
-                    players_ids.append(id_to_name.egb[player_names[0]])
-            elif player_names[1] in id_to_name.egb:
-                players_ids.append(id_to_name.egb[player_names[1]])
-            else:
-                if not all(player in blacklist for player in player_names):
-                    blacklist.append(player_names[0])
-                    send_message(f'{player_names[0]} не найден')
-                    blacklist.append(player_names[1])
-                    send_message(f'{player_names[1]} не найден')
-                    return blacklist
-                return
+    if any(p in id_to_name.egb for p in player_names) and not any(player in id_to_name.blacklist_players or player in blacklist for player in player_names):
+        for p in player_names:
+            if p in id_to_name.egb:
+                players_ids.append(id_to_name.egb[p])
+    else:
+        if not all(p in blacklist for p in player_names):
+            for p in player_names:
+                blacklist.append(p)
+                send_message(f'{p} не найден')
+            return blacklist
         else:
-            print('blacklisted')
-            return True
-    elif len(player_names) == 1:
-        if player_names[0] not in id_to_name.blacklist_players:
-            if player_names[0] in id_to_name.egb:
-                players_ids.append(id_to_name.egb[player_names[0]])
-            else:
-                if player_names[0] not in blacklist:
-                    blacklist.append(player_names[0])
-                    send_message(f'{player_names[0]} не найден')
-                    return blacklist
-                return
-        else:
-            print('blacklisted')
             return
+
     print(bet['game_label'])
     return players_ids, dire_and_radiant, bet['game_label']
 
@@ -86,94 +70,102 @@ def spread_heroes_left(heroes_left, radiant_hard, radiant_safe, radiant_mid, dir
     return radiant_hard, radiant_safe, radiant_mid, dire_hard, dire_safe, dire_mid
 
 
-def get_strats_graph_match(map_id=None):
-    if map_id is None:
-        query = '''{
-          live{
-            matches(request:{gameStates:GAME_IN_PROGRESS, isParsing:true, isCompleted: false, orderBy:SPECTATOR_COUNT, take: 100}){
-              matchId
-              players{
-                numLastHits
-                playbackData{
-                  positionEvents{
-                    time
-                    x
-                    y
+def get_strats_graph_match(tokens, api_token, proxies, players_ids=None, map_id=None, check=True, skip=0):
+    while check:
+        if map_id is None:
+            query = '''{
+              live{
+                matches(request:{isCompleted: false, take: 100, skip:%s}){
+                  matchId
+                  players{
+                    steamAccountId
                   }
-                }
-                heroId
-                steamAccountId
-                position
-                isRadiant
-                steamAccount{
-                  name
+    
                 }
               }
-
             }
-
-
-          }
-        }
-
-        '''
-    else:
-        query = '''{
-          live{
-            match(id:%s){
-              players{
-              steamAccountId
-            heroId
-            isRadiant
-            networth
-            playbackData{
-            goldEvents{
-            networth
-            time
-          }
-          csEvents{
-            time
-          }
-          positionEvents{
-            time
-            x
-            y
-          }
-        }
-      }
+    
+            '''% skip
+        else:
+            query = '''{
+              live{
+                match(id:%s){
+                  matchId
+                  players{
+                    networth
+                    numLastHits
+                    playbackData{
+                      goldEvents{
+                          networth
+                          time
+                        }
+                        csEvents{
+                          time
+                        }
+                      positionEvents{
+                        time
+                        x
+                        y
+                      }
+                    }
+                    heroId
+                    steamAccountId
+                    position
+                    isRadiant
+                    steamAccount{
+                      name
+                    }
+                }
+              }
+            }
     }
+            '''%map_id
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Origin": "https://api.stratz.com",
+            "User-Agent": "STRATZ_API",
+            "Authorization": f"Bearer {api_token}"
+        }
+        try:
+            response = requests.post('https://api.stratz.com/graphql?key=jE1M9jZk28iOXJs2LBfrN3gxWeqfgR2B',
+                                     json={"query": query}, headers=headers, proxies=proxies)
+        except:
+            return
+        if response.status_code == 200:
+            if map_id is None:
+                data = json.loads(response.text).get('data', {}).get('live', {}).get('matches', {})
+                if data:
+                    for match in data:
+                        for player in match['players']:
+                            try:
+                                if player['steamAccountId'] in players_ids:
+                                    exac_match_id = match['matchId']
+                                    return exac_match_id, api_token
+                            except:
+                                pass
+                    if len(data) > 50:
+                        skip += 100
+                    else:
+                        return
+                else:
+                    return
+            else:
+                return response
+        else:
+            if tokens:
+                api_token = tokens.pop(0)
+                print('меняю токен')
 
+            else:
+                tokens = [api_token_3, api_token_4, api_token_5, api_token_2, api_token_1, api_token_6, api_token_7,
+                          api_token_8, api_token_9, api_token_10, api_token_11, api_token_12, api_token_13,
+                          api_token_14,
+                          api_token_15, api_token_16, api_token_17]
+                api_token = tokens.pop(0)
+                print('обновляю токены')
 
-  }
-}
-        '''%map_id
-
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip, deflate, br, zstd",
-        "Origin": "https://api.stratz.com",
-        "User-Agent": "STRATZ_API",
-        "Authorization": f"Bearer {api_token}"
-    }
-    response = requests.post('https://api.stratz.com/graphql?key=jE1M9jZk28iOXJs2LBfrN3gxWeqfgR2B', json={"query": query}, headers=headers)
-    if response.status_code == 200:
-        return response
-    else:
-        print(response.status_code)
-        pass
-
-
-def get_exac_match(response, players_ids, exac_match=None):
-    data = json.loads(response.text).get('data', {}).get('live', {}).get('matches', {})
-    if data:
-        for match in data:
-            for player in match['players']:
-                if player['steamAccountId'] in players_ids:
-                    exac_match = match
-                    return exac_match
-    else:
-        return False
 
 def know_the_position(radiant_safe, check_time, radiant_hard, radiant_mid, dire_safe, dire_hard, dire_mid, heroes_left, radiant, dire, output_message):
     if len(radiant_safe) == 2:
@@ -347,6 +339,8 @@ def get_picks(check_time, players):
     radiant_hard, radiant_safe, dire_hard, dire_safe, radiant_mid, dire_mid = [], [], [], [], [], []
     for player in players:
         coordinates = player['playbackData']['positionEvents']
+        if len(coordinates) < 2:
+            break
         if coordinates[1]['time'] >= 600:
             return
         for time in coordinates:
@@ -414,9 +408,15 @@ def check_player(player, isRadiant, hero_id, pos, radiant_impact, dire_impact, s
                     flag = True
     return radiant_impact, dire_impact, flag
 
-def get_picks_and_pos(match_id):
-    response = get_strats_graph_match(match_id)
-    players = json.loads(response.text)['data']['live']['match']['players']
+def get_picks_and_pos(match_id, tokens, api_token, proxies):
+    response = get_strats_graph_match(map_id=match_id, tokens=tokens, api_token=api_token, proxies=proxies)
+    if response is None:
+        return
+    match = json.loads(response.text)['data']['live']['match']
+    players = match['players']
+    if all(player['heroId'] == 0 for player in players):
+
+        return True
     check_time = 75
     limit = 600
     while check_time < limit:
@@ -433,139 +433,139 @@ def get_picks_and_pos(match_id):
             check_time += 15
 
 
-def check_players_skill(radiant_heroes_and_pos, dire_heroes_and_pos, output_message=''):
-    start_time = time.time()
-
-    with open('./egb/players_imp_data.txt', 'r') as f3:
-        players_data = json.load(f3)
-
-    R_pos_strng, D_pos_strng = dict(), dict()
-    radiant_hidden, dire_hidden, radiant_hidden_found, dire_hidden_found = 0, 0, 0, 0
-    radiant_steam_account_ids = [player['steamAccountId'] for player in radiant_heroes_and_pos.values()]
-    dire_steam_account_ids = [player['steamAccountId'] for player in dire_heroes_and_pos.values()]
-    radiant_hero_ids = [player['hero_id'] for player in radiant_heroes_and_pos.values()]
-    dire_hero_ids = [player['hero_id'] for player in dire_heroes_and_pos.values()]
-    #radiant
-    radiant_impact, dire_impact, players_check = {},{},False
-    for hero_ids, steam_account_ids in zip([radiant_hero_ids, dire_hero_ids], [radiant_steam_account_ids, dire_steam_account_ids]):
-        player_query = '''
-        {
-          players(steamAccountIds:%s){
-            steamAccount{
-              isAnonymous
-              id
-            }
-            heroesPerformance(request:{startDateTime:1716508800, take: 100,gameModeIds:[22,2], heroIds:%s,positionIds:[POSITION_1, POSITION_2, POSITION_3, POSITION_4, POSITION_5]}){
-              positionScore{
-                matchCount
-                id
-                imp
-              }
-              hero{
-                id
-              }
-        
-            }
-        
-        
-          }
-        }
-         '''% (steam_account_ids, hero_ids)
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip, deflate, br, zstd",
-            "Origin": "https://api.stratz.com",
-            "User-Agent": "STRATZ_API",
-            "Authorization": f"Bearer {api_token}"
-        }
-        response = requests.post('https://api.stratz.com/graphql',
-                                 json={"query": player_query}, headers=headers)
-        data = json.loads(response.text)
-        for player in data['data']['players']:
-            steam_account_id = str(player['steamAccount']['id'])
-            if int(steam_account_id) in radiant_steam_account_ids:
-                isRadiant = True
-                for position in radiant_heroes_and_pos:
-                    if radiant_heroes_and_pos[position]['steamAccountId'] == int(steam_account_id):
-                        hero_id = str(dire_heroes_and_pos[position]['hero_id'])
-                        pos = position.replace('POSITION_', 'pos')
-            else:
-                isRadiant = False
-                for position in dire_heroes_and_pos:
-                    if dire_heroes_and_pos[position]['steamAccountId'] == int(steam_account_id):
-                        hero_id = str(dire_heroes_and_pos[position]['hero_id'])
-                        pos = position.replace('POSITION_', 'pos')
-            if player['steamAccount']['isAnonymous']:
-                if isRadiant: radiant_hidden += 1
-                else: dire_hidden += 1
-                player_data = players_data.get(steam_account_id, {}).get(hero_id, {}).get(pos.replace('pos', 'POSITION_'), {})
-                if len(player_data) > 2:
-                    avg_imp = sum(player_data)/len(player_data)
-                    if isRadiant:
-                        radiant_hidden_found += 1
-                        radiant_impact[steam_account_id] = avg_imp
-                    else:
-                        dire_hidden_found += 1
-                        dire_impact[steam_account_id] = avg_imp
-                else:
-                    if isRadiant:
-                        R_pos_strng[
-                            steam_account_id] = f'{id_to_name.translate[int(hero_id)]} {pos}' \
-                                                f' не играл на этом герое за последний месяц '
-                    else:
-                        D_pos_strng[
-                            steam_account_id] = f'{id_to_name.translate[int(hero_id)]} {pos}' \
-                                                f' не играл на этом герое за последний месяц'
-
-            else:
-                radiant_impact, dire_impact, flag = check_player(player, isRadiant, hero_id, pos,
-                                                                 radiant_impact, dire_impact, steam_account_id)
-                if flag is True:
-                    continue
-                if isRadiant:
-                    R_pos_strng[steam_account_id] = f'{id_to_name.translate[int(hero_id)]} {pos}' \
-                                                    f' не играл на этом герое за последний месяц'
-                else:
-                    D_pos_strng[steam_account_id] = f'{id_to_name.translate[int(hero_id)]} {pos}' \
-                                                    f' не играл на этом герое за последний месяц'
-
-
-    if 0 not in [len(dire_impact), len(radiant_impact)]:
-        output_message =(f'Radiant:\n· Найдено {len(radiant_impact)}/5 игроков,'
-                         f' Найдено: {radiant_hidden_found}/{radiant_hidden} скрытых\n'
-                         f'Dire:\n· Найдено {len(dire_impact)}/5 игроков,'
-                         f' Найдено: {dire_hidden_found}/{dire_hidden} скрытых\n')
-
-        radiant_average_impact = sum(radiant_impact.values())/len(radiant_impact)
-        dire_average_impact = sum(dire_impact.values())/len(dire_impact)
-        if radiant_average_impact > dire_average_impact:
-            impact_diff = radiant_average_impact - dire_average_impact
-            output_message += (f'\nRadiant impact лучше в среднем на {impact_diff}\n\n')
-            if len(R_pos_strng) < len(D_pos_strng):
-                radiant_impactandplayers = True
-                if impact_diff < 0: impact_diff *= -1
-                if impact_diff >= 10:
-                    radiant_players_check = True
-            elif len(R_pos_strng) <= len(D_pos_strng):
-                radiant_impactandplayers = True
-
-        elif radiant_average_impact < dire_average_impact:
-            impact_diff = dire_average_impact - radiant_average_impact
-            output_message += (f'\nDire impact лучше в среднем на {impact_diff}\n\n')
-            if len(D_pos_strng) < len(R_pos_strng):
-                dire_impactandplayers = True
-                if impact_diff < 0: impact_diff *= -1
-                if impact_diff >= 10:
-                    dire_players_check = True
-            elif len(D_pos_strng) <= len(R_pos_strng):
-                dire_impactandplayers = True
-
-        else:
-            impact_diff = 0
-    else:
-        impact_diff = None
-    end_time = time.time()
-    execution_time = end_time - start_time
-    print(f"Время выполнения функции check_players_skill: {execution_time} секунд")
-    return output_message
+# def check_players_skill(radiant_heroes_and_pos, dire_heroes_and_pos, output_message=''):
+#     start_time = time.time()
+#
+#     with open('./egb/players_imp_data.txt', 'r') as f3:
+#         players_data = json.load(f3)
+#
+#     R_pos_strng, D_pos_strng = dict(), dict()
+#     radiant_hidden, dire_hidden, radiant_hidden_found, dire_hidden_found = 0, 0, 0, 0
+#     radiant_steam_account_ids = [player['steamAccountId'] for player in radiant_heroes_and_pos.values()]
+#     dire_steam_account_ids = [player['steamAccountId'] for player in dire_heroes_and_pos.values()]
+#     radiant_hero_ids = [player['hero_id'] for player in radiant_heroes_and_pos.values()]
+#     dire_hero_ids = [player['hero_id'] for player in dire_heroes_and_pos.values()]
+#     #radiant
+#     radiant_impact, dire_impact, players_check = {},{},False
+#     for hero_ids, steam_account_ids in zip([radiant_hero_ids, dire_hero_ids], [radiant_steam_account_ids, dire_steam_account_ids]):
+#         player_query = '''
+#         {
+#           players(steamAccountIds:%s){
+#             steamAccount{
+#               isAnonymous
+#               id
+#             }
+#             heroesPerformance(request:{startDateTime:1716508800, take: 100,gameModeIds:[22,2], heroIds:%s,positionIds:[POSITION_1, POSITION_2, POSITION_3, POSITION_4, POSITION_5]}){
+#               positionScore{
+#                 matchCount
+#                 id
+#                 imp
+#               }
+#               hero{
+#                 id
+#               }
+#
+#             }
+#
+#
+#           }
+#         }
+#          '''% (steam_account_ids, hero_ids)
+#         headers = {
+#             "Content-Type": "application/json",
+#             "Accept": "application/json",
+#             "Accept-Encoding": "gzip, deflate, br, zstd",
+#             "Origin": "https://api.stratz.com",
+#             "User-Agent": "STRATZ_API",
+#             "Authorization": f"Bearer {api_token}"
+#         }
+#         response = requests.post('https://api.stratz.com/graphql',
+#                                  json={"query": player_query}, headers=headers)
+#         data = json.loads(response.text)
+#         for player in data['data']['players']:
+#             steam_account_id = str(player['steamAccount']['id'])
+#             if int(steam_account_id) in radiant_steam_account_ids:
+#                 isRadiant = True
+#                 for position in radiant_heroes_and_pos:
+#                     if radiant_heroes_and_pos[position]['steamAccountId'] == int(steam_account_id):
+#                         hero_id = str(dire_heroes_and_pos[position]['hero_id'])
+#                         pos = position.replace('POSITION_', 'pos')
+#             else:
+#                 isRadiant = False
+#                 for position in dire_heroes_and_pos:
+#                     if dire_heroes_and_pos[position]['steamAccountId'] == int(steam_account_id):
+#                         hero_id = str(dire_heroes_and_pos[position]['hero_id'])
+#                         pos = position.replace('POSITION_', 'pos')
+#             if player['steamAccount']['isAnonymous']:
+#                 if isRadiant: radiant_hidden += 1
+#                 else: dire_hidden += 1
+#                 player_data = players_data.get(steam_account_id, {}).get(hero_id, {}).get(pos.replace('pos', 'POSITION_'), {})
+#                 if len(player_data) > 2:
+#                     avg_imp = sum(player_data)/len(player_data)
+#                     if isRadiant:
+#                         radiant_hidden_found += 1
+#                         radiant_impact[steam_account_id] = avg_imp
+#                     else:
+#                         dire_hidden_found += 1
+#                         dire_impact[steam_account_id] = avg_imp
+#                 else:
+#                     if isRadiant:
+#                         R_pos_strng[
+#                             steam_account_id] = f'{id_to_name.translate[int(hero_id)]} {pos}' \
+#                                                 f' не играл на этом герое за последний месяц '
+#                     else:
+#                         D_pos_strng[
+#                             steam_account_id] = f'{id_to_name.translate[int(hero_id)]} {pos}' \
+#                                                 f' не играл на этом герое за последний месяц'
+#
+#             else:
+#                 radiant_impact, dire_impact, flag = check_player(player, isRadiant, hero_id, pos,
+#                                                                  radiant_impact, dire_impact, steam_account_id)
+#                 if flag is True:
+#                     continue
+#                 if isRadiant:
+#                     R_pos_strng[steam_account_id] = f'{id_to_name.translate[int(hero_id)]} {pos}' \
+#                                                     f' не играл на этом герое за последний месяц'
+#                 else:
+#                     D_pos_strng[steam_account_id] = f'{id_to_name.translate[int(hero_id)]} {pos}' \
+#                                                     f' не играл на этом герое за последний месяц'
+#
+#
+#     if 0 not in [len(dire_impact), len(radiant_impact)]:
+#         output_message =(f'Radiant:\n· Найдено {len(radiant_impact)}/5 игроков,'
+#                          f' Найдено: {radiant_hidden_found}/{radiant_hidden} скрытых\n'
+#                          f'Dire:\n· Найдено {len(dire_impact)}/5 игроков,'
+#                          f' Найдено: {dire_hidden_found}/{dire_hidden} скрытых\n')
+#
+#         radiant_average_impact = sum(radiant_impact.values())/len(radiant_impact)
+#         dire_average_impact = sum(dire_impact.values())/len(dire_impact)
+#         if radiant_average_impact > dire_average_impact:
+#             impact_diff = radiant_average_impact - dire_average_impact
+#             output_message += (f'\nRadiant impact лучше в среднем на {impact_diff}\n\n')
+#             if len(R_pos_strng) < len(D_pos_strng):
+#                 radiant_impactandplayers = True
+#                 if impact_diff < 0: impact_diff *= -1
+#                 if impact_diff >= 10:
+#                     radiant_players_check = True
+#             elif len(R_pos_strng) <= len(D_pos_strng):
+#                 radiant_impactandplayers = True
+#
+#         elif radiant_average_impact < dire_average_impact:
+#             impact_diff = dire_average_impact - radiant_average_impact
+#             output_message += (f'\nDire impact лучше в среднем на {impact_diff}\n\n')
+#             if len(D_pos_strng) < len(R_pos_strng):
+#                 dire_impactandplayers = True
+#                 if impact_diff < 0: impact_diff *= -1
+#                 if impact_diff >= 10:
+#                     dire_players_check = True
+#             elif len(D_pos_strng) <= len(R_pos_strng):
+#                 dire_impactandplayers = True
+#
+#         else:
+#             impact_diff = 0
+#     else:
+#         impact_diff = None
+#     end_time = time.time()
+#     execution_time = end_time - start_time
+#     print(f"Время выполнения функции check_players_skill: {execution_time} секунд")
+#     return output_message
