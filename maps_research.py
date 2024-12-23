@@ -1,6 +1,6 @@
 import json
 import asyncio
-from id_to_name import all_teams, top5000EU
+from id_to_name import top5000EU
 import json
 import shutil
 from urllib.parse import quote
@@ -40,8 +40,8 @@ def get_maps_new(game_mods, maps_to_save, ids,
     api_token = api_token_16
     ids_to_graph, total_map_ids, output_data = [], [], []
     for check_id in set(ids):
-        # if check_id == 9545759:
-        #     pass
+        if check_id == 9467224:
+            pass
         count += 1
         ids_to_graph.append(check_id)
 
@@ -119,14 +119,15 @@ def proceed_get_maps(skip, ids, only_in_ids, output_data, tokens, api_token, ids
                 else:
                     check = False
             else:
+                check = False
                 for team in data['data']['teams']:
                     for match in team['matches']:
                         if only_in_ids:
-                            if match['radiantTeam']['id'] in ids and match['direTeam']['id'] in ids:
+                            if all(team_id in ids for team_id in [match['radiantTeam']['id'], match['direTeam']['id']]):
                                 output_data.append(match['id'])
                         else:
                             output_data.append(match['id'])
-                        check = False
+
         except Exception as e:
             print(f"Unexpected error: {e}")
             if tokens:
@@ -279,7 +280,7 @@ def research_map_proceed(maps_to_explore, file_data, file_name, mkdir, counter=0
                 try_counter += 1
                 pass
 
-    # save_temp_file(new_data, mkdir, another_counter)
+    save_temp_file(new_data, mkdir, another_counter)
     # eat_temp_files(mkdir, file_data, file_name)
 
 
@@ -445,12 +446,7 @@ def analyze_database(database, players_imp_data, over40_dict, used_maps=None,
 
 
 def update_pro(show_prints=None, game_mods=None, only_in_ids=None):
-    if only_in_ids is not None:
-        team_ids = set()
-        for name in only_in_ids:
-            team_ids.add(all_teams[name.lower()]['id'])
-    else:
-        team_ids = [pro_teams[team]['id'] for team in pro_teams]
+    team_ids = set([pro_teams[team]['id'] for team in pro_teams])
     get_maps_new(maps_to_save='./pro_heroes_data/pro_maps', show_prints=show_prints,
                  ids=team_ids, game_mods=game_mods, only_in_ids=True)
     research_maps(maps_to_explore='pro_maps', file_name='pro_output', mkdir='pro_heroes_data', show_prints=show_prints)
@@ -458,19 +454,19 @@ def update_pro(show_prints=None, game_mods=None, only_in_ids=None):
                      time_kills=True, total_time_kills_teams=True)
 
 
-def update_all_teams(show_prints=None, only_in_ids=None):
-    team_ids = set()
-    if only_in_ids is not None:
-        for name in only_in_ids:
-            team_ids.add(all_teams[name.lower()]['id'])
-    else:
-        for team in all_teams:
-            team_ids.add(all_teams[team]['id'])
-    get_maps_new(maps_to_save='./all_teams/maps', game_mods=[2],
-                 show_prints=show_prints, ids=team_ids, only_in_ids=only_in_ids)
-    research_maps(maps_to_explore='maps', file_name='output', mkdir='all_teams', show_prints=show_prints)
-    explore_database(mkdir='all_teams', file_name='output', pro=True,
-                     time_kills=True, total_time_kills_teams=True)
+# def update_all_teams(show_prints=None, only_in_ids=None):
+#     team_ids = set()
+#     if only_in_ids is not None:
+#         for name in only_in_ids:
+#             team_ids.add(all_teams[name.lower()]['id'])
+#     else:
+#         for team in all_teams:
+#             team_ids.add(all_teams[team]['id'])
+#     get_maps_new(maps_to_save='./all_teams/maps', game_mods=[2],
+#                  show_prints=show_prints, ids=team_ids, only_in_ids=only_in_ids)
+#     research_maps(maps_to_explore='maps', file_name='output', mkdir='all_teams', show_prints=show_prints)
+#     explore_database(mkdir='all_teams', file_name='output', pro=True,
+#                      time_kills=True, total_time_kills_teams=True)
 
 
 def update_my_protracker(show_prints=None):
