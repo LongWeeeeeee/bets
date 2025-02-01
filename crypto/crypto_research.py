@@ -8,7 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 import json
 def get_orgs_name():
-    with open('org_names.txt', 'r+') as f:
+    with open('new_org_names.txt', 'r+') as f:
         org_names = json.load(f)
     for i in range(1, 11):
         page_url = f'https://coinmarketcap.com/?page={i}'
@@ -18,8 +18,12 @@ def get_orgs_name():
         # Find the GitHub link
         coin_links = soup.find_all('a', href=lambda href: href and '/currencies/' in href and '/#markets' not in href)
         for counter, link in enumerate(coin_links):
+            security_rating, high_percents, low_percents = None, None, None
             print(f"{counter}/{len(coin_links)}")
             coin_page = link['href']
+            if coin_page in ['/sitemap/currencies/']:
+                continue
+
             coin_name = coin_page.replace('/currencies/', '').replace('/', '').lower()
             if coin_name in org_names:
                 continue
@@ -32,17 +36,33 @@ def get_orgs_name():
             soup = BeautifulSoup(response.text, 'lxml')
 
             # Find the GitHub link
+            # low_high = soup.find_all('div', class_='sc-65e7f566-0 bWZaRS')
+            # for i in low_high:
+            #     foo = i.text.split('-')
+            #     if len(foo) == 2:
+            #         low_x = 1/(100 - float(foo[1].replace('%', '')))
+            #     else:
+            #         foo = i.text.split('+')
+            #         high_x = 1/(100 - float(foo[1].replace('%', '')))
+            # pass
+            volume = soup.find_all('div', class_='BasePopover_base__T5yOf popover-base')[3].text
+            foo = soup.find('div', class_='RatingSection_wrapper__T_YeR')
+            if foo: security_rating = foo.text
+            try:
+                market_place = soup.find('div', class_='BasePopover_base__T5yOf popover-base').find('span').text.replace('#', '')
+            except:
+                pass
             github_link = soup.find('a', href=lambda href: href and 'github.com/' in href)
             if github_link:
-                main_repo_url = github_link['href'].replace('//github.com/orgs/', '').replace('//github.com/', '').replace('//www.github.com/')
+                main_repo_url = github_link['href'].replace('//github.com/orgs/', '').replace('//github.com/', '').replace('//www.github.com/', '')
                 main_repo_url = re.sub(r'/$', '', main_repo_url)
                 github_org_name = main_repo_url.split('/')[0]
                 if not github_org_name:
                     github_org_name = github_link['href'].replace('//www.github.com/', '')
                 if github_org_name:
-                    org_names[coin_name] = {'org_name': github_org_name, 'main_repo': main_repo_url}
-    with open('org_names.txt', 'w') as f:
-        json.dump(org_names, f)
+                    org_names[coin_name] = {'org_name': github_org_name, 'main_repo': main_repo_url, 'security_rating': security_rating, 'market_place': market_place, 'volume': volume}
+        with open('new_org_names.txt', 'w') as f:
+            json.dump(org_names, f)
 
 
 
@@ -89,7 +109,8 @@ async def fetch(session, url, api, tokens):
                 except:
                     return
 
-async def get_num_commits_in_all_repos(repo_list, api, tokens, session, date, other_langs_counter=0, typescript_counter=0):
+async def get_num_commits_in_all_repos(repo_list, api, tokens, session, date, other_langs_counter=0,
+                                       issues=0, pulls=0, typescript_counter=0):
     for counter, repo in enumerate(repo_list):
         try:
             repo_url = repo['url']
@@ -106,37 +127,36 @@ async def get_num_commits_in_all_repos(repo_list, api, tokens, session, date, ot
             continue
 
         result = await run_query(session, repo, api, tokens)
-        issues = result['data']['repository']['issues']['totalCount']
-        pulls = result['data']['repository']['pullRequests']['totalCount']
+        issues += result.get('data', {}).get('repository', {}).get('issues', {}).get('totalCount', 0)
+        pulls += result.get('data', {}).get('repository', {}).get('pullRequests', {}).get('totalCount', 0)
         i = 1
         branches = True
         while branches:
             branches_url = f"{repo_url}/branches?per_page=100&page={i}"
-            async with aiohttp.ClientSession() as session:
-                answer = await fetch(session, branches_url, api, tokens)
+            answer = await fetch(session, branches_url, api, tokens)
+            if answer is None:
+                break
+            branches, api, tokens = answer
+            if branches:
+                i +=1
+            for branch_counter, branch in enumerate(branches):
+                try:
+                    branch_name = branch['name']
+                except:
+                    pass
+                    continue
+
+                commits_url = f"{repo_url}/commits?sha={branch_name}&since={date}"
+                answer = await fetch(session, commits_url, api, tokens)
                 if answer is None:
                     break
-                branches, api, tokens = answer
-                if branches:
-                    i +=1
-                for branch_counter, branch in enumerate(branches):
-                    try:
-                        branch_name = branch['name']
-                    except:
-                        pass
-                        continue
-
-                    commits_url = f"{repo_url}/commits?sha={branch_name}&since={date}"
-                    answer = await fetch(session, commits_url, api, tokens)
-                    if answer is None:
-                        break
-                    if answer is True:
-                        break
-                    commits, api, tokens = answer
-                    if commits:
-                        if 'typescript' == repo['language'].lower():
-                            typescript_counter += len(commits)
-                        other_langs_counter += len(commits)
+                if answer is True:
+                    break
+                commits, api, tokens = answer
+                if commits:
+                    if 'typescript' == repo['language'].lower():
+                        typescript_counter += len(commits)
+                    other_langs_counter += len(commits)
     return other_langs_counter, typescript_counter, issues, pulls
 
 with open('org_names.txt', 'r+') as f:
@@ -149,10 +169,17 @@ async def main(file_name):
         tokens_data = json.load(f)
     async with aiohttp.ClientSession() as session:
         for counter, coin_name in enumerate(coin_names_repo_names):
-            c = 0
-            typescript_counter = 0
+            if coin_name == 'starknet-token':
+                pass
+            typescript_counter, other_langs_counter, issues, pulls = 0, 0, 0, 0
             org_name = coin_names_repo_names[coin_name]['org_name']
-            if org_name in tokens_data:
+            security_rating = coin_names_repo_names[coin_name]['security_rating']
+            market_place = coin_names_repo_names[coin_name]['market_place']
+            try:
+                tweeter = coin_names_repo_names[coin_name]['tweeter_score']
+            except:
+                tweeter = None
+            if coin_name in tokens_data:
                 continue
             main_repo = coin_names_repo_names[coin_name]['main_repo'].replace('//www.github.com/', '')
             main_repo = re.sub(r'/$', '', main_repo)
@@ -161,12 +188,13 @@ async def main(file_name):
                 url = f'https://github.com/{main_repo}'
                 answer = await fetch(session, url, api, tokens)
                 if answer is not None:
-                    try:
-                        org_name = answer.split('/')[3]
-                        if org_name in tokens_data:
+                    if answer is True:
+                        pass
+                    else:
+                        try:
+                            org_name = answer.split('/')[3]
+                        except:
                             continue
-                    except:
-                        continue
             print(f'Coin name: {coin_name}, {counter}/{len(coin_names_repo_names)}')
             #getting repos
             foo, all_repos, flag = 1, [], True
@@ -186,7 +214,7 @@ async def main(file_name):
                     except:
                         pass
                     today = datetime.utcnow()  # Используйте UTC, чтобы корректно сравнить даты в одном формате
-                    final_date = today - timedelta(days=60)
+                    final_date = today - timedelta(days=90)
                     if commit_date < final_date:
                         flag = False
                         break
@@ -194,18 +222,20 @@ async def main(file_name):
                 foo +=1
             if all_repos:
                 other_langs_counter, typescript_counter, issues, pulls = await get_num_commits_in_all_repos(repo_list=all_repos, api=api, tokens=tokens, session=session, date=final_date)
-            tokens_data.setdefault(org_name, {}).setdefault('repo_counter_others', []).append(other_langs_counter)
-            tokens_data[org_name]['issues'] = issues
-            tokens_data[org_name]['pulls'] = pulls
-            tokens_data[org_name]['repo_counter_no_typescript'] = other_langs_counter+typescript_counter
-
+            tokens_data.setdefault(coin_name, {}).setdefault('repo_counter_others', other_langs_counter)
+            tokens_data[coin_name]['issues'] = issues
+            tokens_data[coin_name]['pulls'] = pulls
+            tokens_data[coin_name]['repo_counter_no_typescript'] = other_langs_counter+typescript_counter
+            tokens_data[coin_name]['security_rating'] = security_rating
+            tokens_data[coin_name]['market_place'] = market_place
+            tokens_data[coin_name]['tweeter_score'] = tweeter
             with open(file_name + '.txt', 'r+') as f:
-                sorted_commits_data = dict(sorted(tokens_data.items(), key=lambda item: item[1]["repo_counter_no_typescript"][0], reverse=True))
+                sorted_commits_data = dict(sorted(tokens_data.items(), key=lambda item: item[1]["repo_counter_no_typescript"], reverse=True))
                 json.dump(sorted_commits_data, f)
 
 async def run_query(session, repo, api, tokens):
     today = datetime.utcnow()
-    final_date = (today - timedelta(days=365)).isoformat() + "Z"
+    final_date = (today - timedelta(days=180)).isoformat() + "Z"
     variables = {
         "owner": repo['owner']['login'],
         "name": repo['name'],
@@ -251,7 +281,7 @@ async def run_query(session, repo, api, tokens):
           first: 100,
           after: $pullsAfter,
           orderBy: {field: CREATED_AT, direction: DESC},
-          states: [OPEN, MERGED]
+          states: [OPEN, MERGED, CLOSED]
         ) {
           totalCount
           edges {
@@ -263,10 +293,6 @@ async def run_query(session, repo, api, tokens):
               mergedAt
             }
             cursor
-          }
-          pageInfo {
-            endCursor
-            hasNextPage
           }
         }
       }
@@ -284,5 +310,5 @@ async def run_query(session, repo, api, tokens):
         return await response.json()
 
 if __name__ == '__main__':
-    # get_orgs_name()
-    asyncio.run(main('tokens_data'))
+    get_orgs_name()
+    # asyncio.run(main('tokens_data_180'))

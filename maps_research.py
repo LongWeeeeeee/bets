@@ -1,6 +1,7 @@
 import json
 import asyncio
-from id_to_name import top5000EU
+import aiohttp
+from id_to_name import top5000EU, all_teams
 import json
 import shutil
 from urllib.parse import quote
@@ -13,7 +14,7 @@ from keys import api_token_3, api_token_4, api_token_5, api_token_2, api_token_1
     api_token_15, api_token_16, api_token_17, api_token_18
 
 proxies = {
-        'https': 'http://90gwi7LEfz:aKI0jgSViq@77.221.150.248:42037',
+        'https': 'http://imck8yUs12:f7Ju2idQDx@193.168.224.157:63201',
     }
 
 def load_json_file(filepath, default):
@@ -29,30 +30,29 @@ def load_and_process_json_files(mkdir, **kwargs):
         if flag:
             result[key] = load_json_file(f'./{mkdir}/{key}', {})
         else:
-            result[key] = {}
+            result[key] = None
     return result
 
-def get_maps_new(game_mods, maps_to_save, ids,
+async def get_maps_new(game_mods, maps_to_save, ids,
                  show_prints=None, skip=0, count=0, only_in_ids=False):
     tokens = [api_token_3, api_token_4, api_token_5, api_token_2, api_token_1, api_token_6, api_token_7,
               api_token_8, api_token_9, api_token_10, api_token_11, api_token_12, api_token_13, api_token_14,
               api_token_15, api_token_16, api_token_17, api_token_18]
     api_token = api_token_16
-    ids_to_graph, total_map_ids, output_data = [], [], []
-    for check_id in set(ids):
-        if check_id == 9467224:
-            pass
-        count += 1
-        ids_to_graph.append(check_id)
+    ids_to_graph, total_map_ids, output_data, all_teams = [], [], [], {}
+    async with aiohttp.ClientSession() as session:
+        for check_id in set(ids):
+            count += 1
+            ids_to_graph.append(check_id)
 
-        if show_prints:
-            print(f'{count}/{len(ids)}')
+            if show_prints:
+                print(f'{count}/{len(ids)}')
 
-        if len(ids_to_graph) == 5 or count == len(ids):
-            api_token, tokens = proceed_get_maps(ids=ids, skip=skip, game_mods=game_mods, only_in_ids=only_in_ids,
-                                                 output_data=output_data, ids_to_graph=ids_to_graph, tokens=tokens,
-                                                 api_token=api_token)
-            ids_to_graph = []  # Очистка после обработки
+            if len(ids_to_graph) == 5 or count == len(ids):
+                api_token, tokens = await proceed_get_maps(skip=skip, game_mods=game_mods, only_in_ids=only_in_ids,
+                                                     output_data=output_data, ids_to_graph=ids_to_graph, tokens=tokens,
+                                                     api_token=api_token, all_teams=all_teams, session=session)
+                ids_to_graph = []  # Очистка после обработки
 
     if len(output_data) > 0:
         try:
@@ -64,9 +64,12 @@ def get_maps_new(game_mods, maps_to_save, ids,
         except FileNotFoundError:
             with open(f'{maps_to_save}.txt', 'w') as f:
                 json.dump(list(set(output_data)), f)
+        with open('all_teams.txt', 'w') as f:
+            json.dump(all_teams, f)
 
 
-def proceed_get_maps(skip, ids, only_in_ids, output_data, tokens, api_token, ids_to_graph=None, game_mods=None,
+
+async def proceed_get_maps(skip, session, only_in_ids, output_data, tokens, api_token, all_teams=None, ids_to_graph=None, game_mods=None,
                      check=True):
     while check:
         if game_mods == [2, 22]:
@@ -74,7 +77,7 @@ def proceed_get_maps(skip, ids, only_in_ids, output_data, tokens, api_token, ids
             {
               players(steamAccountIds: %s) {
                 steamAccountId
-                matches(request: {startDateTime: 1727827200,
+                matches(request: {startDateTime: 1732147200,
                  take: 100, skip: %s, gameModeIds: %s, isStats:true}) {
                   id
               }}
@@ -83,7 +86,7 @@ def proceed_get_maps(skip, ids, only_in_ids, output_data, tokens, api_token, ids
             query = '''
             {
               teams(teamIds: %s) {
-                matches(request: {startDateTime: 1729296000, take: 100, skip: %s, isStats:true}) {
+                matches(request: {startDateTime: 1732147200, take: 100, skip: %s, isStats:true}) {
                   id
                   radiantTeam {
                     name
@@ -107,26 +110,32 @@ def proceed_get_maps(skip, ids, only_in_ids, output_data, tokens, api_token, ids
             "Authorization": f"Bearer {api_token}"
         }
         try:
-            response = requests.post('https://api.stratz.com/graphql', json={"query": query}, headers=headers, proxies=proxies)
-            data = json.loads(response.text)
-            if game_mods == [2, 22]:
-                if any(player['matches'] for player in data['data']['players']):
-                    skip += 100
-                    for player in data['data']['players']:
-                        for match in player['matches']:
-                            output_data.append(match['id'])
-
+            async with session.post('https://api.stratz.com/graphql',
+                                   json={"query": query},
+                                   headers=headers,
+                                   proxy='http://imck8yUs12:f7Ju2idQDx@193.168.224.157:63201', ssl=False) as response:
+                data = await response.json()
+                if game_mods == [2, 22]:
+                    if any(player['matches'] for player in data['data']['players']):
+                        skip += 100
+                        for player in data['data']['players']:
+                            for match in player['matches']:
+                                output_data.append(match['id'])
+                    else:
+                        check = False
                 else:
                     check = False
-            else:
-                check = False
-                for team in data['data']['teams']:
-                    for match in team['matches']:
-                        if only_in_ids:
-                            if all(team_id in ids for team_id in [match['radiantTeam']['id'], match['direTeam']['id']]):
+                    for team in data['data']['teams']:
+                        for match in team['matches']:
+                            if match['radiantTeam']['name'] not in all_teams:
+                                all_teams[match['radiantTeam']['name']] = match['radiantTeam']['id']
+                            elif match['direTeam']['name'] not in all_teams:
+                                all_teams[match['direTeam']['name']] = match['direTeam']['id']
+                            if only_in_ids:
                                 output_data.append(match['id'])
-                        else:
-                            output_data.append(match['id'])
+
+                            else:
+                                output_data.append(match['id'])
 
         except Exception as e:
             print(f"Unexpected error: {e}")
@@ -165,7 +174,7 @@ def eat_temp_files(mkdir, file_data, file_name):
         return file_data
 
 
-def research_map_proceed(maps_to_explore, file_data, file_name, mkdir, counter=0, another_counter=0,
+async def research_map_proceed(maps_to_explore, file_data, file_name, mkdir, another_counter=0,
                          show_prints=None):
     tokens = [api_token_3, api_token_4, api_token_5, api_token_2, api_token_1, api_token_6, api_token_7,
               api_token_8, api_token_9, api_token_10, api_token_11, api_token_12, api_token_13, api_token_14,
@@ -179,92 +188,100 @@ def research_map_proceed(maps_to_explore, file_data, file_name, mkdir, counter=0
 
     new_maps = [map_id for map_id in maps_to_explore if str(map_id) not in file_data]
     # Основной цикл по картам
-    for map_id in new_maps:
-        # Проверка, если данные по карте уже есть
-        another_counter += 1
-        if show_prints:
-            print(f'{another_counter}/{len(new_maps)}')
-        # Сохраняем данные каждые 300 итераций
-        if another_counter % 300 == 0:
-            save_temp_file(new_data, mkdir, another_counter)
-            new_data = {}
+    async with aiohttp.ClientSession() as session:
+        for map_id in new_maps:
+            # Проверка, если данные по карте уже есть
+            another_counter += 1
+            if show_prints:
+                print(f'{another_counter}/{len(new_maps)}')
+            # Сохраняем данные каждые 300 итераций
+            if another_counter % 300 == 0:
+                save_temp_file(new_data, mkdir, another_counter)
+                new_data = {}
 
-        query = '''
-        {
-          match(id:%s){
-            startDateTime
-            league{
-              id
-              tier
-              region
-              basePrizePool
-              prizePool
-              tournamentUrl
-              displayName
-            }
-            direTeam{
-              id
-              name
-            }
-            radiantTeam{
-              id
-              name
-            }
-            id
-            direKills
-            radiantKills
-            bottomLaneOutcome
-            topLaneOutcome
-            midLaneOutcome
-            radiantNetworthLeads
-            didRadiantWin
-            durationSeconds
-            players{
-              steamAccount{
+            query = '''
+            {
+              match(id:%s){
+                startDateTime
+                radiantNetworthLeads
+                league{
+                  id
+                  tier
+                  region
+                  basePrizePool
+                  prizePool
+                  tournamentUrl
+                  displayName
+                }
+                direTeam{
+                  id
+                  name
+                }
+                radiantTeam{
+                  id
+                  name
+                }
                 id
-                isAnonymous
+                direKills
+                radiantKills
+                bottomLaneOutcome
+                topLaneOutcome
+                midLaneOutcome
+                radiantNetworthLeads
+                didRadiantWin
+                durationSeconds
+                players{
+                  intentionalFeeding
+                  steamAccount{
+                    smurfFlag
+                    id
+                    isAnonymous
+                  }
+                  imp
+                  position
+                  isRadiant
+                  hero{
+                    id
+                  }
+                }
               }
-              imp
-              position
-              isRadiant
-              hero{
-                id
-              }
+            }''' % map_id
+
+            encoded_query = quote(query, safe='')
+            referer = f"https://api.stratz.com/graphiql?query={encoded_query}"
+
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip, deflate, br, zstd",
+                "Origin": "https://api.stratz.com",
+                "Referer": f'{referer}',
+                "User-Agent": "STRATZ_API",
+                "Authorization": f"Bearer {api_token}"
             }
-          }
-        }''' % map_id
+            try_counter = 0
+            check = True
+            while check == True:
+                if try_counter >= 3:
+                    break
+                try:
+                    async with session.post('https://api.stratz.com/graphql',
+                                            json={"query": query},
+                                            headers=headers,
+                                            proxy='http://imck8yUs12:f7Ju2idQDx@193.168.224.157:63201',
+                                            ssl=False, timeout=10) as response:
 
-        encoded_query = quote(query, safe='')
-        referer = f"https://api.stratz.com/graphiql?query={encoded_query}"
+                        data = await response.json()
+                        data = data['data']['match']
+                        check = False
+                        if data['direKills'] is not None and \
+                                all(None not in [player['position'], player['hero']['id'], player['steamAccount']] for
+                                    player in data['players']) and all(player['intentionalFeeding'] is False for player in data['players'])\
+                                and all(player['steamAccount']['smurfFlag'] == 0 for player in data['players']):
+                            new_data[map_id] = data
 
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Accept-Encoding": "gzip, deflate, br, zstd",
-            "Origin": "https://api.stratz.com",
-            "Referer": f'{referer}',
-            "User-Agent": "STRATZ_API",
-            "Authorization": f"Bearer {api_token}"
-        }
-        try_counter = 0
-        check = True
-        while check == True:
-            if try_counter >= 3:
-                break
-            try:
-                response = requests.post('https://api.stratz.com/graphql', json={"query": query},
-                                         headers=headers, timeout=10, proxies=proxies)
-                if response.status_code == 200:
-                    check = False
-                    data = response.json()['data']['match']
-
-                    if data['direKills'] is not None and \
-                            all(None not in [player['position'], player['hero']['id'], player['steamAccount']] for
-                                player in data['players']):
-                        new_data[map_id] = data
-                else:
+                except Exception as e:
                     try_counter += 1
-                    print(response.status_code)
                     if tokens:
                         api_token = tokens.pop(0)
                         print('меняю токен')
@@ -276,9 +293,6 @@ def research_map_proceed(maps_to_explore, file_data, file_name, mkdir, counter=0
                                   api_token_16, api_token_17]
                         api_token = tokens.pop(0)
                         print('обновляю токены')
-            except Exception as e:
-                try_counter += 1
-                pass
 
     save_temp_file(new_data, mkdir, another_counter)
     # eat_temp_files(mkdir, file_data, file_name)
@@ -319,90 +333,74 @@ def research_maps(maps_to_explore, file_name, mkdir, show_prints=None):
         with open(f'./{mkdir}/{file_name}.txt', 'w') as f:
             pass
         file_data = {}
-    # asyncio.run(research_map_proceed_async(maps_to_explore, file_data, file_name, mkdir, show_prints))
-    research_map_proceed(
+    asyncio.run(research_map_proceed(
         maps_to_explore=maps_to_explore, file_data=file_data,
-        file_name=file_name, mkdir=mkdir, show_prints=True)
+        file_name=file_name, mkdir=mkdir, show_prints=True))
 
 
 
 
 
-def normalize_team_name(team_name):
-    translate = {
-        'g2 x ig': 'g2.invictus gaming',
-        'lava esports ': 'lava uphone',
-        'infinity': 'infinity esports',
-        'fusion esports': 'fusion',
-        'team hryvnia': 'passion.ua',
-        'bocajuniors': 'team waska',
-        'cuyes e-sports': 'cuyes esports',
-        'boom esports': 'team waska',
-        'entity': 'cloud9',
-        'tea': 'avulus',
-        'team tea': 'avulus',
-        'wbg.xg': 'xtreme gaming',
-        'talon': 'talon esports',
-        'invictus gaming': "yakult's brothers",
-        'Waska': 'team waska'
-    }
-    return translate.get(team_name.lower(), team_name.lower())
 
 
 def explore_database(mkdir, file_name, pro=False, lane=None,
                      over40=None, total_time_kills_teams=None, time_kills=None,
-                     counterpick1vs2=None, counterpick1vs3=None, synergy=None, counterpick1vs1=None):
+                     counterpick1vs2=None, synergy=None, counterpick1vs1=None):
     database = load_json_file(f'./{mkdir}/{file_name}.txt', {})
     answer = eat_temp_files(mkdir, database, file_name)
     if answer is not None:
         database = answer
-    players_imp_data = load_json_file(f'./egb/players_imp_data.txt', {'used_maps': []})
 
     # Загрузка всех необходимых файлов
     data_files = load_and_process_json_files(
         mkdir, total_time_kills_dict=time_kills,
         over40_dict=over40, lane_dict=lane,
         total_time_kills_dict_teams=total_time_kills_teams,
-        counterpick1vs3=counterpick1vs3, counterpick1vs2=counterpick1vs2,
+        counterpick1vs2=counterpick1vs2,
         counterpick1vs1=counterpick1vs1, synergy=synergy)
 
-    used_maps = load_json_file(f'./{mkdir}/used_maps', [])
+    used_maps = load_json_file(f'./{mkdir}/used_maps.txt', [])
 
     result = analyze_database(
-        database=database, players_imp_data=players_imp_data,
+        database=database,
         total_time_kills_dict=data_files['total_time_kills_dict'], over40_dict=data_files['over40_dict'],
         lane_dict=data_files['lane_dict'], pro=pro, used_maps=used_maps,
         total_time_kills_dict_teams=data_files['total_time_kills_dict_teams'],
-        counterpick1vs2=data_files['counterpick1vs2'], counterpick1vs3=data_files['counterpick1vs3'],
+        counterpick1vs2=data_files['counterpick1vs2'],
         synergy=data_files['synergy'], counterpick1vs1=data_files['counterpick1vs1'])
 
     if result is not None:
-        lane_dict, players_imp_data, total_time_kills_dict, synergy, counterpick, \
-            over40_dict, total_time_kills_dict_teams, counterpick1vs2, counterpick1vs3, used_maps = result
+        lane_dict, total_time_kills_dict, synergy, counterpick1vs1, \
+            over40_dict, total_time_kills_dict_teams, counterpick1vs2, used_maps = result
 
         print('Сохранение обновленных данных')
 
-        save_json_file(f'./egb/players_imp_data.txt', players_imp_data)
         save_json_file(f'./{mkdir}/used_maps.txt', used_maps)
         if total_time_kills_teams:
             save_json_file(f'./{mkdir}/total_time_kills_dict.txt', total_time_kills_dict)
             save_json_file(f'./{mkdir}/total_time_kills_dict_teams.txt', total_time_kills_dict_teams)
         if counterpick1vs2:
             save_json_file(f'./{mkdir}/synergy.txt', synergy)
-            save_json_file(f'./{mkdir}/counterpick1vs1.txt', counterpick)
-            save_json_file(f'./{mkdir}/lane_dict.txt', lane_dict)
+            save_json_file(f'./{mkdir}/counterpick1vs1.txt', counterpick1vs1)
             save_json_file(f'./{mkdir}/over40_dict.txt', over40_dict)
             save_json_file(f'./{mkdir}/counterpick1vs2.txt', counterpick1vs2)
-            save_json_file(f'./{mkdir}/counterpick1vs3.txt', counterpick1vs3)
+        if lane_dict:
+            save_json_file(f'./{mkdir}/lane_dict.txt', lane_dict)
+
+
+def check_match(match):
+
+    if match['startDateTime'] >= 1732147200 and match['direKills'] is not None and all(player['intentionalFeeding'] is False and player['steamAccount']['smurfFlag'] == 0
+                and None not in [player['position'], player['hero']['id'], player['steamAccount']]
+                for player in match['players']) and len(match['radiantNetworthLeads']) >= 16:
+        return True
 
 
 
-
-
-def analyze_database(database, players_imp_data, over40_dict, used_maps=None,
+def analyze_database(database, over40_dict, used_maps=None,
                      total_time_kills_dict=None, pro=False,
-                     synergy_and_counterpick_dict=None, lane_dict=None, check=False,
-                     total_time_kills_dict_teams=None, counterpick1vs2=None, counterpick1vs3=None,
+                     lane_dict=None, check=False,
+                     total_time_kills_dict_teams=None, counterpick1vs2=None,
                      counterpick1vs1=None, synergy=None):
     counter = []
     new_maps = [str(map_id) for map_id in database if str(map_id) not in used_maps]
@@ -416,39 +414,37 @@ def analyze_database(database, players_imp_data, over40_dict, used_maps=None,
         if pro:
             if all(name in match and match[name] is not None for name in ['direTeam', 'radiantTeam']):
                 counter.append(map_id)
-                radiant_team_name = normalize_team_name(match['radiantTeam']['name'])
-                dire_team_name = normalize_team_name(match['direTeam']['name'])
+                radiant_team_name = match['radiantTeam']['name'].lower()
+                dire_team_name = match['direTeam']['name'].lower()
 
                 result = new_proceed_map(
-                    match=match, map_id=map_id, players_imp_data=players_imp_data,
+                    match=match,
                     total_time_kills_dict=total_time_kills_dict,
                     total_time_kills_dict_teams=total_time_kills_dict_teams,
                     radiant_team_name=radiant_team_name, dire_team_name=dire_team_name,
                 )
-                lane_dict, players_imp_data, total_time_kills_dict, synergy, counterpick1vs1, \
-                    over40_dict, total_time_kills_dict_teams, counterpick1vs2, counterpick1vs3 = result
+                lane_dict, total_time_kills_dict, synergy, counterpick1vs1, \
+                    over40_dict, total_time_kills_dict_teams, counterpick1vs2 = result
         else:
-            if all(None not in [player['position'], player['hero']['id']] for player in match['players']) \
-                    and match['startDateTime'] >= 1727827200 \
-                    and (match['durationSeconds'] / 60) >= 26:
+            if check_match(match=match):
                 counter.append(map_id)
                 result = new_proceed_map(
-                    match=match, map_id=map_id, players_imp_data=players_imp_data,
+                    match=match,
                     lane_dict=lane_dict, synergy=synergy, counterpick1vs1=counterpick1vs1,
-                    over40_dict=over40_dict, counterpick1vs2=counterpick1vs2, counterpick1vs3=counterpick1vs3)
-                lane_dict, players_imp_data, total_time_kills_dict, synergy, counterpick1vs1, \
-                    over40_dict, total_time_kills_dict_teams, counterpick1vs2, counterpick1vs3 = result
+                    over40_dict=over40_dict, counterpick1vs2=counterpick1vs2)
+                lane_dict, total_time_kills_dict, synergy, counterpick1vs1, \
+                    over40_dict, total_time_kills_dict_teams, counterpick1vs2 = result
 
     if check:
         used_maps = counter
-        return lane_dict, players_imp_data, total_time_kills_dict, synergy, counterpick1vs1, \
-            over40_dict, total_time_kills_dict_teams, counterpick1vs2, counterpick1vs3, used_maps
+        return lane_dict, total_time_kills_dict, synergy, counterpick1vs1, \
+            over40_dict, total_time_kills_dict_teams, counterpick1vs2, used_maps
 
 
 def update_pro(show_prints=None, game_mods=None, only_in_ids=None):
-    team_ids = set([pro_teams[team]['id'] for team in pro_teams])
-    get_maps_new(maps_to_save='./pro_heroes_data/pro_maps', show_prints=show_prints,
-                 ids=team_ids, game_mods=game_mods, only_in_ids=True)
+    team_ids = set([all_teams[team] for team in all_teams])
+    asyncio.run(get_maps_new(maps_to_save='./pro_heroes_data/pro_maps', show_prints=show_prints,
+                 ids=team_ids, game_mods=game_mods, only_in_ids=True))
     research_maps(maps_to_explore='pro_maps', file_name='pro_output', mkdir='pro_heroes_data', show_prints=show_prints)
     explore_database(mkdir='pro_heroes_data', file_name='pro_output', pro=True,
                      time_kills=True, total_time_kills_teams=True)
@@ -469,16 +465,18 @@ def update_pro(show_prints=None, game_mods=None, only_in_ids=None):
 #                      time_kills=True, total_time_kills_teams=True)
 
 
-def update_my_protracker(show_prints=None):
-    get_maps_new(maps_to_save='./1722505765_top600_heroes_data/1722505765_top600_maps', game_mods=[2, 22],
-                 show_prints=show_prints, ids=top5000EU.keys())
-    research_maps(mkdir='1722505765_top600_heroes_data', maps_to_explore='1722505765_top600_maps',
-                  file_name='1722505765_top600_output', show_prints=show_prints)
+def update_my_protracker(show_prints=True):
+    # from id_to_name import get_players
+    # players_dict = dict()
+    # regions = [[2500, 'SE_ASIA'], [5000, 'EUROPE'], [500, 'CHINA']]
+    # for top, region in regions:
+    #     players_dict = get_players(top=top, region=region, players_dict=players_dict, skipAnon=True, skip=0)
+    # asyncio.run(get_maps_new(maps_to_save='./1722505765_top600_heroes_data/1722505765_top600_maps', game_mods=[2, 22],
+    #              show_prints=show_prints, ids=players_dict))
+    # research_maps(mkdir='1722505765_top600_heroes_data', maps_to_explore='1722505765_top600_maps',
+    #               file_name='1722505765_top600_output', show_prints=show_prints)
     explore_database(mkdir='1722505765_top600_heroes_data', file_name='1722505765_top600_output',
-                     lane=True, over40=True, counterpick1vs2=True,
-                     counterpick1vs3=True, counterpick1vs1=True, synergy=True)
-    # explore_database(mkdir='1722505765_top600_heroes_data', file_name='1722505765_top600_output',
-    #                  lane=True)
+                     over40=True, counterpick1vs2=True, synergy=True, counterpick1vs1=True, lane=True)
 
 
 # def update_heroes_data(database_list=None, mkdir=None):
@@ -497,12 +495,13 @@ if __name__ == "__main__":
     #         teams_ids.add(id)
     # set(teams_ids)
     # pass
-    with open('./all_teams/1722505765_top600_output.txt', 'r+') as f:
-        data = json.load(f)
-    with open('./pro_heroes_data/pro_output.txt', 'r') as f:
-        to_be_merged = json.load(f)
-    for map_id in to_be_merged:
-        if map_id not in data:
-            data[map_id] = to_be_merged[map_id]
-    with open('./all_teams/1722505765_top600_output.txt', 'w') as f:
-        json.dump(data, f)
+    # with open('./all_teams/1722505765_top600_output.txt', 'r+') as f:
+    #     data = json.load(f)
+    # with open('./pro_heroes_data/pro_output.txt', 'r') as f:
+    #     to_be_merged = json.load(f)
+    # for map_id in to_be_merged:
+    #     if map_id not in data:
+    #         data[map_id] = to_be_merged[map_id]
+    # with open('./all_teams/1722505765_top600_output.txt', 'w') as f:
+    #     json.dump(data, f)
+    update_my_protracker(show_prints=True)
