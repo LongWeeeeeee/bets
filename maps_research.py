@@ -14,7 +14,7 @@ from keys import api_token_3, api_token_4, api_token_5, api_token_2, api_token_1
     api_token_15, api_token_16, api_token_17, api_token_18
 
 proxies = {
-        'https': 'http://imck8yUs12:f7Ju2idQDx@193.168.224.157:63201',
+        'https': 'https://SitSyNrlyk:yz3ozbojdu@77.221.150.201:49566',
     }
 
 def load_json_file(filepath, default):
@@ -113,7 +113,7 @@ async def proceed_get_maps(skip, session, only_in_ids, output_data, tokens, api_
             async with session.post('https://api.stratz.com/graphql',
                                    json={"query": query},
                                    headers=headers,
-                                   proxy='http://imck8yUs12:f7Ju2idQDx@193.168.224.157:63201', ssl=False) as response:
+                                   proxy='http://SitSyNrlyk:yz3ozbojdu@77.221.150.201:49566', ssl=False) as response:
                 data = await response.json()
                 if game_mods == [2, 22]:
                     if any(player['matches'] for player in data['data']['players']):
@@ -268,7 +268,7 @@ async def research_map_proceed(maps_to_explore, file_data, file_name, mkdir, ano
                     async with session.post('https://api.stratz.com/graphql',
                                             json={"query": query},
                                             headers=headers,
-                                            proxy='http://imck8yUs12:f7Ju2idQDx@193.168.224.157:63201',
+                                            proxy='http://SitSyNrlyk:yz3ozbojdu@77.221.150.201:49566',
                                             ssl=False, timeout=10) as response:
 
                         data = await response.json()
@@ -392,7 +392,8 @@ def check_match(match):
 
     if match['startDateTime'] >= 1732147200 and match['direKills'] is not None and all(player['intentionalFeeding'] is False and player['steamAccount']['smurfFlag'] == 0
                 and None not in [player['position'], player['hero']['id'], player['steamAccount']]
-                for player in match['players']) and len(match['radiantNetworthLeads']) >= 16:
+                for player in match['players']) and len(match['radiantNetworthLeads']) >= 16 and\
+                match.get('durationSeconds', 0) / 60 >= 18:
         return True
 
 
@@ -442,12 +443,12 @@ def analyze_database(database, over40_dict, used_maps=None,
 
 
 def update_pro(show_prints=None, game_mods=None, only_in_ids=None):
-    team_ids = set([all_teams[team] for team in all_teams])
-    asyncio.run(get_maps_new(maps_to_save='./pro_heroes_data/pro_maps', show_prints=show_prints,
-                 ids=team_ids, game_mods=game_mods, only_in_ids=True))
+    # team_ids = set([all_teams[team] for team in all_teams])
+    # asyncio.run(get_maps_new(maps_to_save='./pro_heroes_data/pro_maps', show_prints=show_prints,
+    #              ids=team_ids, game_mods=game_mods, only_in_ids=True))
     research_maps(maps_to_explore='pro_maps', file_name='pro_output', mkdir='pro_heroes_data', show_prints=show_prints)
-    explore_database(mkdir='pro_heroes_data', file_name='pro_output', pro=True,
-                     time_kills=True, total_time_kills_teams=True)
+    # explore_database(mkdir='pro_heroes_data', file_name='pro_output', pro=True,
+    #                  time_kills=True, total_time_kills_teams=True)
 
 
 # def update_all_teams(show_prints=None, only_in_ids=None):
@@ -505,3 +506,4 @@ if __name__ == "__main__":
     # with open('./all_teams/1722505765_top600_output.txt', 'w') as f:
     #     json.dump(data, f)
     update_my_protracker(show_prints=True)
+    # update_pro(show_prints=True)

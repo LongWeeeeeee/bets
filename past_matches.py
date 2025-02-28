@@ -16,7 +16,7 @@ def get_past_matches():
 
     # Loop to print each date from start_date to target_date
     database = []
-    while current_date >= target_date_obj:
+    while current_date == target_date_obj:
         print(current_date.strftime('%Y-%m-%d'))
         current_date -= timedelta(days=1)
         ip_address = "46.229.214.49"
@@ -63,6 +63,10 @@ def get_past_matches():
             soup = BeautifulSoup(response.text, 'lxml')
             maps = soup.find_all('div', class_='map__finished-v2')
             for game_map in maps:
+                match_id = game_map.find('small')
+                if not match_id:
+                    continue
+                match_id = match_id.text.replace('Match ID: ', '')
                 radiant_heroes_and_pos, dire_heroes_and_pos, winner_side, break_flag  = {}, {}, None, False
                 picks = game_map.find('div', class_='map__finished-v2__pick')
                 teams = game_map.find_all('div', class_='team')
@@ -94,15 +98,14 @@ def get_past_matches():
                     dire_heroes_and_pos[pos] = {'hero_name': hero_name}
                 if break_flag: break
                 if winner_side and radiant_heroes_and_pos and dire_heroes_and_pos:
-                    database.append({'winner': winner_side, 'radiant_heroes_and_pos': radiant_heroes_and_pos, 'dire_heroes_and_pos': dire_heroes_and_pos})
+                    database.append({'winner': winner_side, 'radiant_heroes_and_pos': radiant_heroes_and_pos, 'dire_heroes_and_pos': dire_heroes_and_pos, 'match_id': match_id})
         with open('past_matches_maps.txt', 'w') as f:
             json.dump(database, f)
 
 
-def check_from_output(data):
+def check_lines(data):
     for percentage in range(33, 100):
         bot_loose, bot_win, top_loose, top_win, mid_loose, mid_win = 0, 0, 0, 0, 0, 0
-        print(percentage)
     # percentage = 99
         # investigation = 'support_dif'
         # second_inv = 'bot_key'
@@ -124,7 +127,7 @@ def check_from_output(data):
             bot_result, top_result, mid_result = match['bottomLaneOutcome'], match['topLaneOutcome'], match['midLaneOutcome']
             if match is None:
                 continue
-            if 'None' not in match['bot_message'] and bot_value > percentage:
+            if 'None' not in match['bot_message'] and bot_value == percentage:
                 if bot_result == 'TIE' and bot_key == 'draw':
                     bot_win += 1
                 elif bot_result in ['RADIANT_VICTORY', 'RADIANT_STOMP'] and bot_key == 'win':
@@ -133,7 +136,7 @@ def check_from_output(data):
                     bot_win += 1
                 else:
                     bot_loose +=1
-            if 'None' not in match['top_message'] and top_value > percentage:
+            if 'None' not in match['top_message'] and top_value == percentage:
                 if top_result == 'TIE' and top_key == 'draw':
                     top_win += 1
                 elif top_result in ['RADIANT_VICTORY', 'RADIANT_STOMP'] and top_key == 'win':
@@ -142,7 +145,7 @@ def check_from_output(data):
                     top_win += 1
                 else:
                     top_loose += 1
-            if 'None' not in match['mid_message'] and mid_value > percentage:
+            if 'None' not in match['mid_message'] and mid_value == percentage:
                 if mid_result == 'TIE' and mid_key == 'draw':
                     mid_win += 1
                 elif mid_result in ['RADIANT_VICTORY', 'RADIANT_STOMP'] and mid_key == 'win':
@@ -151,18 +154,20 @@ def check_from_output(data):
                     mid_win += 1
                 else:
                     mid_loose += 1
-        if (bot_loose + bot_win != 0) and (top_win + top_loose != 0):
+        if (bot_loose + bot_win != 0) and (top_win + top_loose != 0) and mid_win + mid_loose != 0:
             print(
-                f'Bot winrate: {(bot_win / (bot_loose + bot_win)) * 100}\n'
-                f'Top winrate: {(top_win / (top_win + top_loose)) * 100}\n'
-                f'Mid winrate: {(mid_win / (mid_win + mid_loose)) * 100}')
+                f'Percentage: {percentage}\n'
+                f'Bot winrate: {(bot_win / (bot_loose + bot_win)) * 100} всего: {bot_loose+bot_win}\n'
+                f'Top winrate: {(top_win / (top_win + top_loose)) * 100} всего: {top_win + top_loose}\n'
+                f'Mid winrate: {(mid_win / (mid_win + mid_loose)) * 100} всего: {mid_win + mid_loose}')
 
 
 def check_winrate(data):
     for investigation in [
-        # 'synergy_duo','radiant_synergy_trio',
-        # 'duo_diff', 'radiant_counterpick_1vs2',
-        # , 'pos1_matchup'
+        'support_dif',
+        'synergy_duo','radiant_synergy_trio',
+        'duo_diff', 'radiant_counterpick_1vs2',
+        'pos1_matchup',
         "over40_duo", 'over40_duo_counterpick',
         'over40_1vs2', 'over40_solo',
         'over40_trio']:
@@ -170,17 +175,16 @@ def check_winrate(data):
             win = 0
             loose = 0
             for match in data:
-
                 if 'over40' in investigation:
                     if match['duration'] < 40:
                         continue
-                if match[investigation] is not None and match[investigation] >= index and match['didRadiantWin'] == True:
+                if match[investigation] is not None and match[investigation] == index and match['didRadiantWin'] == True:
                     win += 1
-                elif match[investigation] is not None and match[investigation] <= -index and match['didRadiantWin'] == False:
+                elif match[investigation] is not None and match[investigation] == -index and match['didRadiantWin'] == False:
                     win += 1
-                elif match[investigation] is not None and match[investigation] <= -index and match['didRadiantWin'] == True:
+                elif match[investigation] is not None and match[investigation] == -index and match['didRadiantWin'] == True:
                     loose += 1
-                elif match[investigation] is not None and match[investigation] >= index and match['didRadiantWin'] == False:
+                elif match[investigation] is not None and match[investigation] == index and match['didRadiantWin'] == False:
                     loose += 1
             if win + loose > 0:
                 if win == 0:
@@ -189,36 +193,71 @@ def check_winrate(data):
                     print(
                         f'Index: {index} {investigation} winrate: {win / (win + loose) * 100} Всего: {win + loose}')
             # if match[investigation] == 'win' and match[investigation+'_value'] > index and match['winner'] == 'radiant'\
-            #         and match[second_inv] == 'win' and match[second_inv+'_value'] > index \
+            #         and match[second_inv] is not None and match[second_inv] == 'win' and match[second_inv+'_value'] > index \
             #         and match[third_inv] == 'win' and match[third_inv + '_value'] > index:
             #
             #     win += 1
             # elif match[investigation] == 'win' and match[investigation+'_value'] > index and match['winner'] == 'dire'\
-            #         and match[second_inv] == 'win' and match[second_inv + '_value'] > index \
+            #         and match[second_inv] is not None and match[second_inv] == 'win' and match[second_inv + '_value'] > index \
             #         and match[third_inv] == 'win' and match[third_inv + '_value'] > index:
             #
             #     loose += 1
             # elif match[investigation] == 'loose' and match[investigation+'_value'] > index and match['winner'] == 'dire'\
-            #         and match[second_inv] == 'loose' and match[second_inv + '_value'] > index \
+            #         and match[second_inv] is not None and match[second_inv] == 'loose' and match[second_inv + '_value'] > index \
             #         and match[third_inv] == 'loose' and match[third_inv + '_value'] > index:
             #
             #     win += 1
             # elif match[investigation] == 'loose' and match[investigation+'_value'] > index and match['winner'] == 'radiant'\
-            #         and match[second_inv] == 'loose' and match[second_inv + '_value'] > index \
+            #         and match[second_inv] is not None and match[second_inv] == 'loose' and match[second_inv + '_value'] > index \
             #         and match[third_inv] == 'loose' and match[third_inv + '_value'] > index:
             #
             #     loose += 1
+
+def check_two_winrates(data):
+    investigation = 'radiant_counterpick_1vs2'
+    second_inv = 'pos1_matchup'
+    second_index = 14
+    third_inv = 'pos1_matchup'
+    third_index = 14
+    for index in range(1, 101, 1):
+        win = 0
+        loose = 0
+        for match in data:
+            if 'over40' in investigation:
+                if match['duration'] < 40:
+                    continue
+            if match[investigation] is not None and match[investigation] == index and match['didRadiantWin'] == True:
+                if match[second_inv] is not None and match[second_inv] == -second_index:
+                        win += 1
+            elif match[investigation] is not None and match[investigation] == -index and match[
+                'didRadiantWin'] == False:
+                if match[second_inv] is not None and match[second_inv] == second_index:
+                        win += 1
+            elif match[investigation] is not None and match[investigation] == -index and match['didRadiantWin'] == True:
+                if match[second_inv] is not None and match[second_inv] == second_index:
+                        loose += 1
+            elif match[investigation] is not None and match[investigation] == index and match['didRadiantWin'] == False:
+                if match[second_inv] is not None and match[second_inv] == -second_index:
+                        loose += 1
+        if win + loose > 0:
+            if win == 0:
+                print(f'Index: {index} {investigation} winrate: 0, Всего: {win + loose}')
+            else:
+                print(
+                    f'Index: {index} {investigation} winrate: {win / (win + loose) * 100} Всего: {win + loose}')
+
+
 def analyse_winrates():
-    with open('analysed_maps_output.txt', 'r') as f:
+    with open('dltv_analysed_maps_output.txt', 'r') as f:
         data = json.load(f)
-        check_winrate(data)
-    # with open('analysed_maps_output_lanes.txt', 'r') as f:
-    #     data = json.load(f)
-    #     check_from_output(data)
+        # check_two_winrates(data)
+        # check_winrate(data)
+        check_lines(data)
 
 
 
 
 
 
+# get_past_matches()
 analyse_winrates()

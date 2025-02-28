@@ -33,7 +33,7 @@ def get_players(top, region, players_dict, skipAnon, count=0, skip=0):
             "Authorization": f"Bearer {api_token}"
         }
         proxies = {
-            'https': 'http://imck8yUs12:f7Ju2idQDx@193.168.224.157:63201',
+            'https': 'http://SitSyNrlyk:yz3ozbojdu@77.221.150.201:49566',
         }
         response = requests.post('https://api.stratz.com/graphql', json={"query": query}, headers=headers, proxies=proxies)
         if response.status_code == 200:
