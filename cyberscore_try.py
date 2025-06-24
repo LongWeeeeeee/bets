@@ -2,11 +2,10 @@ import json
 import time
 from bs4 import BeautifulSoup
 import requests
-from functions import send_message, get_map_players, proceed_map, check_old_maps, one_match, sleep_until_morning, is_moscow_night
-import urllib3
 from maps_research import update_my_protracker
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from functions import (send_message, get_map_players, proceed_map, format_output_dict,
+                       check_old_maps, one_match, sleep_until_morning, is_moscow_night)
+from keys import proxies
 
 
 from urllib.parse import urlparse  # Добавьте импорт
@@ -39,15 +38,11 @@ def add_url(url):
 def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.214.49", path = "/matches"):
     try:
         url = f"https://{ip_address}{path}"
-        proxies = {
-            'https': 'http://SitSyNrlyk:yz3ozbojdu@77.221.150.201:49566',
-        }
         for attempt in range(MAX_RETRIES):
             try:
                 response = requests.get(
                     url,
                     headers=headers,
-                    proxies=proxies,
                     verify=False,  # ВНИМАНИЕ: отключена проверка SSL
                     timeout=10
                 )
@@ -62,7 +57,15 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
         live_matches = soup.find('div', class_='live__matches')
         heads = live_matches.find_all('div', class_='live__matches-item__head')
         bodies = live_matches.find_all('div', class_='live__matches-item__body')
-        return heads, bodies
+        heads_copy, bodies_copy = heads.copy(), bodies.copy()
+        for i in range(len(heads)):
+            title = heads[i].find('div', class_='event__name').find('div').text
+            if not any(i in title.lower() for i in ['dreamleague', 'blast', 'betboom',
+                                                    'fissure', 'pgl', 'esports', 'international',
+                                                    'european', 'epl', 'esl', 'cct']):
+                heads_copy.remove(heads[i])
+                bodies_copy.remove(bodies[i])
+        return heads_copy, bodies_copy
     except Exception as e:
         print(f'ошибка при выяснении heads {e}')
 
@@ -70,7 +73,6 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
 def check_head(heads, bodies, i, maps_data):
         # Константы вынесены в начало
         IP_ADDRESS = "46.229.214.49"
-        PROXIES = {'https': 'http://SitSyNrlyk:yz3ozbojdu@77.221.150.201:49566'}
         MAX_RETRIES = 5
         RETRY_DELAY = 5
 
@@ -110,7 +112,6 @@ def check_head(heads, bodies, i, maps_data):
                 response = requests.get(
                     url,
                     headers=headers,
-                    proxies=PROXIES,
                     verify=False,  # ВНИМАНИЕ: отключена проверка SSL
                     timeout=10
                 )
@@ -138,6 +139,7 @@ def check_head(heads, bodies, i, maps_data):
 
         # Извлечение данных команд
         team_data = {'teams': {}}
+
         teams = soup.find_all('span', class_='team__title-name')
         if len(teams) < 2:
             return status
@@ -172,35 +174,42 @@ def check_head(heads, bodies, i, maps_data):
                 data1vs1=data1vs1,
                 data1vs2=data1vs2,
                 lane_data=lane_data,
-                over40_data=over40_data,
-                synergy_data=synergy_data
+                over35_data=over35_data,
+                synergy_data=synergy_data,
+                data1vs3=data1vs3,
+                synergy4=synergy4
             )
 
+
+            if format_output_dict(output_dict):
             # Формирование сообщения
-            send_message(
-                f'ПОМНИ: ЛЮБОЙ ПИК МОЖЕТ ПРОИГРАТЬ\n'
+                send_message(
+                    f'ПОМНИ: \nКОМАНДА ВАЖНЕЕ ПИКА\nЛЮБОЙ ПИК МОЖЕТ ПРОИГРАТЬ\n'
                 f"{radiant_team_name} VS {dire_team_name}\n"
                 f"Счет: {score}\n"
-                f"Kills: Median: {output_dict.get('kills_mediana', 'N/A')} "
-                f"| Avg: {output_dict.get('kills_average', 'N/A')}\n"
-                # f"over40_solo: {output_dict.get('over40_solo', None)}\n"
-                f"over40_duo_counterpick: {output_dict.get('over40_duo_counterpick', 'N/A')}\n"
-                f"over40_trio: {output_dict.get('over40_trio', 'N/A')}\n"
-                f"over40_1vs2: {output_dict.get('over40_1vs2',None)}\n"
-                f"over40_duo: {output_dict.get('over40_duo', None)}\n"
-                # f"Lanes:\n{output_dict.get('top_message', '')}"
-                # f"{output_dict.get('mid_message', '')}"
-                # f"{output_dict.get('bot_message', '')}"
+                # f"Kills: Median: {output_dict.get('kills_mediana', 'N/A')} "
+                # f"| Avg: {output_dict.get('kills_average', 'N/A')}\n"
+                # f"over35_solo: {output_dict.get('over35_solo', None)}\n"
+                f"over40_duo_counterpick: {output_dict['over35_duo_counterpick']}\n"
+                f"over40_trio: {output_dict['over35_trio']}\n"
+                f"over40_1vs2: {output_dict['over35_1vs2']}\n"
+                f"over40_duo: {output_dict['over35_duo']}\n"
+                f"Lanes:\n{output_dict.get('top_message', '')}"
+                f"{output_dict.get('mid_message', '')}"
+                f"{output_dict.get('bot_message', '')}"
                 f"Synergy_and_counterpick:\n"
-                # f"support_dif: {output_dict.get('support_dif', None)}\n"
-                # f"pos1_matchup: {output_dict.get('pos1_matchup', 'N/A')}\n"
-                # f"Synergy_duo: {output_dict.get('synergy_duo', 'N/A')}\n"
-                f"Synergy_trio: {output_dict.get('radiant_synergy_trio', 'N/A')}\n"
-                # f"Counterpick_duo: {output_dict.get('duo_diff', 'N/A')}\n"
-                f"1vs2_counterpick: {output_dict.get('radiant_counterpick_1vs2', 'N/A')}\n"
-                f'ПОМНИ: ЛЮБОЙ ПИК МОЖЕТ ПРОИГРАТЬ'
-            )
-
+                f"support_dif: {output_dict['support_dif']}\n"
+                f"pos1_matchup: {output_dict['pos1_matchup']}\n"
+                f"Synergy_duo: {output_dict['synergy_duo']}\n"
+                f"Synergy_trio: {output_dict['radiant_synergy_trio']}\n"
+                f"Counterpick_duo: {output_dict['duo_diff']}\n"
+                f"1vs2_counterpick: {output_dict['radiant_counterpick_1vs2']}\n"
+                f'ПОМНИ: ЛЮБОЙ ПИК МОЖЕТ ПРОИГРАТЬ')
+            else:
+                send_message(
+                    'Плохая ставка'
+                    f"{radiant_team_name} VS {dire_team_name}\n"
+                    f"Счет: {score}\n")
             add_url(check_uniq_url)
         return status
 
@@ -224,40 +233,41 @@ def general(status=None):
 
 if __name__ == "__main__":
     # update_my_protracker(show_prints=True)
-    with open('1722505765_top600_heroes_data/synergy.txt', 'r') as f:
+    with open('count_synergy_10th_2000/synergy.txt', 'r') as f:
         synergy_data = json.load(f)
-    with open('1722505765_top600_heroes_data/counterpick1vs1.txt', 'r') as f2:
+    with open('count_synergy_10th_2000/counterpick1vs1.txt', 'r') as f2:
         data1vs1 = json.load(f2)
-    with open('1722505765_top600_heroes_data/counterpick1vs2.txt', 'r') as f3:
+    with open('count_synergy_10th_2000/counterpick1vs2.txt', 'r') as f3:
         data1vs2 = json.load(f3)
-    with open('1722505765_top600_heroes_data/over40_dict.txt', 'r') as f:
-        over40_data = json.load(f)
-    with open('1722505765_top600_heroes_data/lane_dict.txt', 'r') as f:
+    with open('count_synergy_10th_2000/over35_dict.txt', 'r') as f:
+        over35_data = json.load(f)
+    with open('count_synergy_10th_2000/lane_dict.txt', 'r') as f:
         lane_data = json.load(f)
-    # over40_data, lane_data, data1vs2, data1vs1, synergy_data = {}, {}, {}, {}, {}
-    # lane_data = {}
-    #
-    # one_match(radiant_heroes_and_pos={'pos1': {'hero_name': "gyrocopter"}, 'pos2': {'hero_name': "puck"},
-    #                                   'pos3': {'hero_name': 'dawnbreaker'}, 'pos4': {'hero_name': 'shadow shaman'},
-    #                                   'pos5': {'hero_name': 'pudge'}},
-    #           dire_heroes_and_pos={'pos1': {'hero_name': "phantom assassin"}, 'pos2': {'hero_name': "lina"},
-    #                                'pos3': {'hero_name': 'timbersaw'}, 'pos4': {'hero_name': 'lion'},
-    #                                'pos5': {'hero_name': "elder titan"}},
-    #           lane_data=lane_data, data1vs2=data1vs2, data1vs1=data1vs1, over40_data=over40_data,
-    #           synergy_data=synergy_data,
-    #           radiant_team_name='radiant Team', dire_team_name='Team dire')
-    while True:
-        if is_moscow_night():
-            sleep_until_morning()
-        status = general()
-        if status == 'draft':
-            print('Сплю 20 секунд')
-            time.sleep(20)
-        elif status == 'finished':
-            print('Сплю 5 минут')
-            time.sleep(300)
-        else:
-            print('Сплю 10 минут')
-            time.sleep(600)
-    # check_old_maps(data1vs1=data1vs1, data1vs2=data1vs2,
-    #                 lane_data=lane_data, over40_data=over40_data, synergy_data=synergy_data)
+    # synergy_data, data1vs1, data1vs2, over35_data, lane_data = {}, {}, {}, {}, {}
+    synergy4, data1vs3 = {}, {}
+    # one_match(radiant_heroes_and_pos={'pos1': {'hero_name': "templar assassin"}, 'pos2': {'hero_name': "pangolier"},
+    #                                'pos3': {'hero_name': 'timbersaw'}, 'pos4': {'hero_name': 'slark'},
+    #                                'pos5': {'hero_name': "shadow shaman"}},
+    #           dire_heroes_and_pos={'pos1': {'hero_name': "terrorblade"}, 'pos2': {'hero_name': "slardar"},
+    #                                   'pos3': {'hero_name': 'dawnbreaker'}, 'pos4': {'hero_name': 'lion'},
+    #                                   'pos5': {'hero_name': 'jakiro'}},
+    #           lane_data=lane_data, data1vs2=data1vs2, data1vs1=data1vs1, over35_data=over35_data,
+    #           synergy_data=synergy_data, data1vs3=data1vs3, synergy4=synergy4,
+    #           radiant_team_name='Yakult  Team', dire_team_name='Talon dire')
+
+    # while True:
+    #     if is_moscow_night():
+    #         sleep_until_morning()
+    #     status = general()
+    #     if status == 'draft':
+    #         print('Сплю 20 секунд')
+    #         time.sleep(20)
+    #     elif status == 'finished':
+    #         print('Сплю 5 минут')
+    #         time.sleep(300)
+    #     else:
+    #         print('Сплю 5 минут')
+    #         time.sleep(300)
+    check_old_maps(data1vs1=data1vs1, data1vs2=data1vs2,
+                    lane_data=lane_data, over35_data=over35_data, synergy_data=synergy_data,
+                   data1vs3=data1vs3, synergy4=synergy4)

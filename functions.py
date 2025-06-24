@@ -10,9 +10,8 @@ import pytz
 import id_to_name
 import keys
 from id_to_name import pro_teams, translate
-from keys import api_token_5
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+from keys import api_token_5, proxies
+from maps_research import update_my_protracker
 
 
 
@@ -469,6 +468,48 @@ def dota2protracker_old(radiant_heroes_and_positions, dire_heroes_and_positions,
     return f'\ndota2protracker_old:\nSynergy: {synergy}\nCounterpick: {counterpick}\n'
 
 
+def format_output_dict(output_dict):
+    over35_trio = output_dict.get('over35_trio', None)
+    over35_1vs2 = output_dict.get('over35_1vs2', None)
+    over35_duo = output_dict.get('over35_duo', None)
+    over35_duo_counterpick = output_dict.get('over35_duo_counterpick', None)
+    radiant_counterpick_1vs2 = output_dict.get('radiant_counterpick_1vs2', None)
+    duo_diff = output_dict.get('duo_diff', None)
+    radiant_synergy_trio = output_dict.get('radiant_synergy_trio', None)
+    synergy_duo = output_dict.get('synergy_duo', None)
+    pos1_matchup = output_dict.get('pos1_matchup', None)
+    support_dif = output_dict.get('support_dif', None)
+    if over35_trio and over35_trio < 7 and over35_trio > -7:
+        over35_trio = None
+    if over35_1vs2 and over35_1vs2 > -7 and over35_1vs2 < 7:
+        over35_1vs2 = None
+    if over35_duo and over35_duo < 10 and over35_duo > -10:
+        over35_duo = None
+    if over35_duo_counterpick and over35_duo_counterpick < 6 and over35_duo_counterpick > -6:
+        over35_duo_counterpick = None
+    if radiant_counterpick_1vs2 and radiant_counterpick_1vs2 < 5 and radiant_counterpick_1vs2 > -5:
+        radiant_counterpick_1vs2 = None
+    if duo_diff and duo_diff > -11 and duo_diff < 11:
+        duo_diff = None
+    if radiant_synergy_trio and radiant_synergy_trio < 6 and radiant_synergy_trio > -6:
+        radiant_synergy_trio = None
+    if synergy_duo and synergy_duo > -8 and synergy_duo < 8:
+        synergy_duo = None
+    if pos1_matchup and pos1_matchup > -21 and pos1_matchup < 21:
+        pos1_matchup = None
+    if support_dif and support_dif > -18 and support_dif < 18:
+        support_dif = None
+    if any(i is not None for i in [support_dif, pos1_matchup, synergy_duo, radiant_synergy_trio, duo_diff,
+            radiant_counterpick_1vs2, over35_duo_counterpick, over35_duo, over35_1vs2, over35_trio]):
+        if None not in [radiant_synergy_trio, radiant_counterpick_1vs2]:
+            if (radiant_synergy_trio > 0 and radiant_counterpick_1vs2 > 0) or (radiant_counterpick_1vs2 < 0 and radiant_synergy_trio < 0):
+                return True
+        if None not in [over35_1vs2, over35_trio]:
+            if (over35_1vs2 > 0 and over35_trio > 0) or (over35_1vs2 < 0 and over35_trio < 0):
+                return True
+        else:
+            return True
+
 
 def get_map_players(data, match, soup, name_to_pos):
     radiant_pick = match.find('div', class_='picks__new-picks__picks radiant').find('div',
@@ -659,9 +700,10 @@ def synergy_team(heroes_and_pos, output, mkdir, data):
                         output[f'{mkdir}_trio'].append(value)
 
 
-def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, data1vs1, data1vs2, pos1_matchup=None):
+def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, data1vs1, data1vs2, data1vs3, pos1_matchup=None):
     unique_combinations = set()
     for pos in heroes_and_pos:
+        # if pos in ['pos4', 'pos5']: continue
         hero_id = str(heroes_and_pos[pos]['hero_id'])
         for enemy_pos in heroes_and_pos_opposite:
             enemy_hero_id = str(heroes_and_pos_opposite[enemy_pos]['hero_id'])
@@ -676,19 +718,40 @@ def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, dat
                 second_enemy_id = str(heroes_and_pos_opposite[second_enemy_pos]['hero_id'])
                 if enemy_hero_id == second_enemy_id:
                     continue
-
-                key = f"{hero_id}{pos},{enemy_hero_id}{enemy_pos}," \
+                key = f"{hero_id}{pos},{enemy_hero_id}{enemy_pos}"
+                foo = data1vs1.get(key, {})
+                if len(foo) >= 15:
+                    combo = tuple(sorted([hero_id, enemy_hero_id]))
+                    unique_combinations.add(combo)
+                    value = foo.count(1) / (foo.count(1) + foo.count(0))
+                    output[f'{mkdir}_1vs1'].append(value)
+                key = f"{hero_id}{pos}_vs_{enemy_hero_id}{enemy_pos}," \
                       f"{second_enemy_id}{second_enemy_pos}"
                 foo = data1vs2.get(key, {})
-                if len(foo) >= 10:
+                if len(foo) >= 15:
                     combo = (hero_id,) + tuple(sorted([enemy_hero_id, second_enemy_id]))
                     if combo not in unique_combinations:
                         unique_combinations.add(combo)
                         value = foo.count(1) / (foo.count(1) + foo.count(0))
+                        if pos in ['pos4', 'pos5']: continue
+                        if value >= 0.7 or value <= 0.3:
+                            print('yes')
                         output[f'{mkdir}_1vs2'].append(value)
+                # for third_enemy_pos in heroes_and_pos_opposite:
+                #     third_enemy_id = str(heroes_and_pos_opposite[third_enemy_pos]['hero_id'])
+                #     if third_enemy_id in [enemy_hero_id, second_enemy_id]:
+                #         continue
+                #     key = f"{hero_id}{pos},{enemy_hero_id}{enemy_pos}," \
+                #           f"{second_enemy_id}{second_enemy_pos},{third_enemy_id}{third_enemy_pos}"
+                #     foo = data1vs3.get(key, {})
+                #     if len(foo) >= 6:
+                #         combo = (hero_id,) + tuple(sorted([enemy_hero_id, second_enemy_id, third_enemy_id]))
+                #         if combo not in unique_combinations:
+                #             unique_combinations.add(combo)
+                #             value = foo.count(1) / (foo.count(1) + foo.count(0))
+                #             output[f'{mkdir}_1vs3'].append(value)
 
-
-def synergy_and_counterpick_new(radiant_heroes_and_pos, dire_heroes_and_pos, synergy_data, data1vs2, data1vs1):
+def synergy_and_counterpick_new(radiant_heroes_and_pos, dire_heroes_and_pos, synergy_data, data1vs2, data1vs1, data1vs3):
     synergy_duo, duo_diff, pos1_matchup, pos1_matchup_out, support_dif = None, None, None, None, None
     output = {'radiant_synergy_duo': [], 'dire_synergy_duo': [], 'radiant_synergy_trio': [], 'dire_synergy_trio': [],
               'radiant_counterpick_duo': [], 'dire_counterpick_duo': [], 'radiant_counterpick_1vs2': [],
@@ -700,46 +763,24 @@ def synergy_and_counterpick_new(radiant_heroes_and_pos, dire_heroes_and_pos, syn
 
     counterpick_team(heroes_and_pos=radiant_heroes_and_pos, heroes_and_pos_opposite=dire_heroes_and_pos,
                      output=output, mkdir='radiant_counterpick', data1vs2=data1vs2,
-                     data1vs1=data1vs1)
+                     data1vs1=data1vs1, data1vs3=data1vs3)
     counterpick_team(heroes_and_pos=dire_heroes_and_pos, heroes_and_pos_opposite=radiant_heroes_and_pos,
                      output=output, mkdir='dire_counterpick', data1vs2=data1vs2,
-                     data1vs1=data1vs1)
+                     data1vs1=data1vs1, data1vs3=data1vs3)
     def get_diff(radiant, dire):
-        if any(len(foo) > 2 for foo in [radiant, dire]):
-            if len(radiant) > 2 and len(dire) > 2:
-                return round((sum(radiant)/len(radiant) - sum(dire)/len(dire))*100)
-            else:
-                if len(radiant) > 2:
-                    radiant = round(sum(radiant) / len(radiant) * 100) - 50
-                elif len(dire) > 2:
-                    dire = round(sum(dire) / len(dire) * 100)
-                    radiant = 50 - dire
-                return radiant
+        if None not in [radiant, dire]:
+            if any(len(foo) > 3 for foo in [radiant, dire]):
+                if len(radiant) > 2 and len(dire) > 2:
+                    return round((sum(radiant)/len(radiant) - sum(dire)/len(dire))*100)
 
     radiant_counterpick_1vs2 = get_diff(output['radiant_counterpick_1vs2'], output['dire_counterpick_1vs2'])
-    if radiant_counterpick_1vs2 is None and len(output['radiant_counterpick_duo']) > 2:
-        duo_diff = round((sum(output['radiant_counterpick_duo'])/len(output['radiant_counterpick_duo'])
-                    - sum(output['dire_counterpick_duo'])/len(output['dire_counterpick_duo']))*100)
-        if duo_diff > -5 and duo_diff < 5:
-            duo_diff = None
-    if radiant_counterpick_1vs2 is not None and radiant_counterpick_1vs2 < 4 and radiant_counterpick_1vs2 > -4:
-        radiant_counterpick_1vs2 = None
     radiant_synergy_trio = get_diff(output['radiant_synergy_trio'], output['dire_synergy_trio'])
-    if radiant_synergy_trio is None:
-        synergy_duo = get_diff(output['radiant_synergy_duo'], output['dire_synergy_duo'])
-        if synergy_duo is not None and synergy_duo > -4 and synergy_duo < 4:
-            synergy_duo = None
-
-    if output['pos1_matchup'] is not None:
-        pos1_matchup = round(output['pos1_matchup']*100-50)
-        if pos1_matchup > -14 and pos1_matchup < 14:
-            pos1_matchup = None
-        output['pos1_matchup'] = pos1_matchup
-    if None not in [output['radiant_synergy_support_duo'], output['dire_synergy_support_duo']]:
-        support_dif = round((output['radiant_synergy_support_duo'] - output['dire_synergy_support_duo'])*100)
-        if support_dif > -18 and support_dif < 18:
-            support_dif = None
-    return synergy_duo, radiant_synergy_trio, duo_diff, radiant_counterpick_1vs2, output['pos1_matchup'], support_dif
+    duo_diff = get_diff(output['radiant_counterpick_duo'], output['dire_counterpick_duo'])
+    synergy_duo = get_diff(output['radiant_synergy_duo'], output['dire_synergy_duo'])
+    if output['pos1_matchup']:
+        pos1_matchup = round(output['pos1_matchup'] * 100 - 50)
+    support_dif = get_diff(output['radiant_synergy_support_duo'], output['dire_synergy_support_duo'])
+    return synergy_duo, radiant_synergy_trio, duo_diff, radiant_counterpick_1vs2, pos1_matchup, support_dif
 
 
 def get_multiplied_results(radiant, dire, radiant_new=1, dire_new =1):
@@ -755,66 +796,55 @@ def get_multiplied_results(radiant, dire, radiant_new=1, dire_new =1):
 def get_ordinar_results(radiant, dire):
     if all(foo is not None and len(foo) > 2 for foo in (radiant, dire)):
         return round((sum(radiant)/len(radiant) - sum(dire)/len(dire))*100)
-    elif any(len(foo) > 2 for foo in [radiant, dire]):
-        if len(radiant) > 2:
-            radiant = round(sum(radiant) / len(radiant) * 100)-50
-        elif len(dire) > 2:
-            dire = round(sum(dire) / len(dire) * 100)
-            radiant = 50 - dire
-        return radiant
 
-def calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, data, over40_duo=None, over40_duo_counterpick=None):
+def calculate_over35(radiant_heroes_and_pos, dire_heroes_and_pos, data, over35_duo=None, over35_duo_counterpick=None, over35_solo=None):
     radiant_counterpick_duo, r_winrate_1vs2 =\
-        over40_counter(radiant_heroes_and_pos, dire_heroes_and_pos, data)
+        over35_counter(radiant_heroes_and_pos, dire_heroes_and_pos, data)
     dire_counterpick_duo, d_winrate_1vs2 =\
-        over40_counter(dire_heroes_and_pos, radiant_heroes_and_pos, data)
-    radiant_over40_duo, r_solo, r_trio = avg_over40(radiant_heroes_and_pos, data)
-    dire_over40_duo, d_solo, d_trio = avg_over40(dire_heroes_and_pos, data)
+        over35_counter(dire_heroes_and_pos, radiant_heroes_and_pos, data)
+    radiant_over35_duo, r_solo, r_trio = avg_over35(radiant_heroes_and_pos, data)
+    dire_over35_duo, d_solo, d_trio = avg_over35(dire_heroes_and_pos, data)
 
-    over40_trio = get_ordinar_results(radiant=r_trio, dire=d_trio)
-    if over40_trio is not None and over40_trio < 2 and over40_trio > -2:
-        over40_trio = None
-    over40_solo = get_ordinar_results(radiant=r_solo, dire=d_solo)
-    if over40_solo is not None and over40_solo > -2 and over40_solo < 2:
-        over40_solo=None
-    over40_1vs2 = get_ordinar_results(radiant=r_winrate_1vs2, dire=d_winrate_1vs2)
-    if over40_trio is None:
-        over40_duo = get_ordinar_results(radiant=radiant_over40_duo, dire=dire_over40_duo)
-        if over40_duo <2 and over40_duo > -2:
-            over40_duo = None
-    if over40_1vs2 is None:
-        over40_duo_counterpick = get_ordinar_results(radiant=radiant_counterpick_duo, dire=dire_counterpick_duo)
-        if over40_duo_counterpick <2 and over40_duo_counterpick > -2:
-            over40_duo_counterpick = None
-    return over40_duo, over40_duo_counterpick, over40_1vs2, over40_solo, over40_trio
+    over35_trio = get_ordinar_results(radiant=r_trio, dire=d_trio)
+    over35_1vs2 = get_ordinar_results(radiant=r_winrate_1vs2, dire=d_winrate_1vs2)
+    over35_duo = get_ordinar_results(radiant=radiant_over35_duo, dire=dire_over35_duo)
+    over35_duo_counterpick = get_ordinar_results(radiant=radiant_counterpick_duo, dire=dire_counterpick_duo)
+    return over35_duo, over35_duo_counterpick, over35_1vs2, over35_solo, over35_trio
 
-def over40_counter(my_team, enemy_team, data):
-    uniq_combo, duo_winrate, winrate1vs2 = set(), [], []
-    for pos in my_team:
-        hero_id = str(my_team[pos]['hero_id'])
-        hero_data = data['value'].get(hero_id, {}).get(pos, {}).get('over40_counterpick_duo', {})
-        for enemy_pos in enemy_team:
-            enemy_hero_id = str(enemy_team[enemy_pos]['hero_id'])
-            duo_data = hero_data.get(enemy_hero_id, {}).get(enemy_pos, {})
-            foo = duo_data.get('value', {})
-            if len(foo) >= 15:
-                combo = tuple(sorted([hero_id, enemy_hero_id]))
-                if combo in uniq_combo:
+
+def over35_counter(heroes_and_pos, heroes_and_pos_opposite, data):
+    unique_combinations = set()
+    duo_winrate, winrate1vs2_cores, winrate1vs2_sups = [], [], []
+    for pos in heroes_and_pos:
+        # if pos in ['pos4', 'pos5']: continue
+        hero_id = str(heroes_and_pos[pos]['hero_id'])
+        for enemy_pos in heroes_and_pos_opposite:
+            enemy_hero_id = str(heroes_and_pos_opposite[enemy_pos]['hero_id'])
+            for second_enemy_pos in heroes_and_pos_opposite:
+                second_enemy_id = str(heroes_and_pos_opposite[second_enemy_pos]['hero_id'])
+                if enemy_hero_id == second_enemy_id:
                     continue
-                uniq_combo.add(combo)
-                duo_winrate.append(foo.count(1) / (foo.count(0) + foo.count(1)))
-            for another_enemy_pos in enemy_team:
-                if another_enemy_pos == enemy_pos:
-                    continue
-                another_enemy_hero_id = str(enemy_team[another_enemy_pos]['hero_id'])
-                one_vs_two_data = duo_data.get('1vs2', {}).get(another_enemy_hero_id, {}).get(another_enemy_pos, {}).get('value', [])
-                if len(one_vs_two_data) >= 10:
-                    combo = (hero_id,) + tuple(sorted([enemy_hero_id, another_enemy_hero_id]))
-                    if combo in uniq_combo:
-                        continue
-                    uniq_combo.add(combo)
-                    winrate1vs2.append(one_vs_two_data.count(1) / (one_vs_two_data.count(0) + one_vs_two_data.count(1)))
-    return duo_winrate, winrate1vs2
+
+                key = f"{hero_id}{pos}_vs_{enemy_hero_id}{enemy_pos},{second_enemy_id}{second_enemy_pos}"
+                foo = data.get(key, {})
+
+                if len(foo) >= 14:
+                    if pos == 'pos1':
+                        print('as')
+                    combo = (hero_id,) + tuple(sorted([enemy_hero_id, second_enemy_id]))
+                    if combo not in unique_combinations:
+                        unique_combinations.add(combo)
+                        value = foo.count(1) / (foo.count(1) + foo.count(0))
+                        if any(p for p in [pos] if p in ['pos4', 'pos5']):
+                            if value >= 0.65 or value <= 0.35:
+                                print('ye')
+                            winrate1vs2_sups.append(value)
+                        else:
+
+                            if value >= 0.65 or value <= 0.35:
+                                print('ye')
+                            winrate1vs2_cores.append(value)
+    return duo_winrate, winrate1vs2_cores
 
 
 def check_bad_map(match, maps_data=None, break_flag=False):
@@ -869,8 +899,8 @@ def check_bad_map(match, maps_data=None, break_flag=False):
         return radiant_heroes_and_pos, dire_heroes_and_pos
 
 
-def proceed_map(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data, synergy_data, lane_data,
-                data1vs2, data1vs1, radiant_team_name=None, dire_team_name=None,
+def proceed_map(radiant_heroes_and_pos, dire_heroes_and_pos, over35_data, synergy_data, lane_data,
+                data1vs2, data1vs1, data1vs3, synergy4, radiant_team_name=None, dire_team_name=None,
                 url=None):
     output_dict = {}
     # if radiant_team_name is not None:
@@ -888,9 +918,9 @@ def proceed_map(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data, synerg
     output_dict['kills_mediana'], output_dict['time_mediana'], output_dict['kills_average'], \
                     output_dict['time_average'] = None, None, None, None
 
-    output_dict['over40_duo'], output_dict['over40_duo_counterpick'], output_dict['over40_1vs2'],\
-        output_dict['over40_solo'], output_dict['over40_trio'] =\
-    calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data)
+    output_dict['over35_duo'], output_dict['over35_duo_counterpick'], output_dict['over35_1vs2'],\
+        output_dict['over35_solo'], output_dict['over35_trio'] =\
+    calculate_over35(radiant_heroes_and_pos, dire_heroes_and_pos, over35_data)
 
     output_dict['top_message'], output_dict['bot_message'], output_dict['mid_message'] =\
         calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data)
@@ -900,11 +930,11 @@ def proceed_map(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data, synerg
         synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
                                     dire_heroes_and_pos=dire_heroes_and_pos,
                                     synergy_data=synergy_data, data1vs2=data1vs2,
-                                    data1vs1=data1vs1)
+                                    data1vs1=data1vs1, data1vs3=data1vs3)
     return output_dict
 
 def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, data1vs1,
-              data1vs2, over40_data, synergy_data, radiant_team_name=None, dire_team_name=None):
+              data1vs2, over35_data, synergy_data, data1vs3, synergy4, radiant_team_name=None, dire_team_name=None):
     for key in dire_heroes_and_pos:
         hero_name = dire_heroes_and_pos[key]['hero_name'].lower()
         for hero in name_to_id:
@@ -920,111 +950,111 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, data1vs1,
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
                 dire_heroes_and_pos=dire_heroes_and_pos,
                 data1vs1=data1vs1, data1vs2=data1vs2,
-                lane_data=lane_data, over40_data=over40_data, synergy_data=synergy_data,
-                radiant_team_name=radiant_team_name, dire_team_name=dire_team_name)
+                lane_data=lane_data, over35_data=over35_data, synergy_data=synergy_data,
+                radiant_team_name=radiant_team_name, dire_team_name=dire_team_name,
+                synergy4=synergy4, data1vs3=data1vs3)
+    if format_output_dict(output_dict):
+        # Формирование сообщения
+        send_message(
+            f'ПОМНИ: ЛЮБОЙ ПИК МОЖЕТ ПРОИГРАТЬ\n'
+            f"{radiant_team_name} VS {dire_team_name}\n"
+            # f"Kills: Median: {output_dict.get('kills_mediana', 'N/A')} "
+            # f"| Avg: {output_dict.get('kills_average', 'N/A')}\n"
+            # f"over35_solo: {output_dict.get('over35_solo', None)}\n"
+            f"over35_duo_counterpick: {output_dict['over35_duo_counterpick']}\n"
+            f"over35_trio: {output_dict['over35_trio']}\n"
+            f"over35_1vs2: {output_dict['over35_1vs2']}\n"
+            f"over35_duo: {output_dict['over35_duo']}\n"
+            f"Lanes:\n{output_dict.get('top_message', '')}"
+            f"{output_dict.get('mid_message', '')}"
+            f"{output_dict.get('bot_message', '')}"
+            f"Synergy_and_counterpick:\n"
+            f"support_dif: {output_dict['support_dif']}\n"
+            f"pos1_matchup: {output_dict['pos1_matchup']}\n"
+            f"Synergy_duo: {output_dict['synergy_duo']}\n"
+            f"Synergy_trio: {output_dict['radiant_synergy_trio']}\n"
+            f"Counterpick_duo: {output_dict['duo_diff']}\n"
+            f"1vs2_counterpick: {output_dict['radiant_counterpick_1vs2']}\n"
+            f'ПОМНИ: ЛЮБОЙ ПИК МОЖЕТ ПРОИГРАТЬ')
+    else:
+        send_message(
+            'Плохая ставка'
+            f"{radiant_team_name} VS {dire_team_name}\n")
 
-    send_message(
-        f'ПОМНИ: ЛЮБОЙ ПИК МОЖЕТ ПРОИГРАТЬ\n'
-        f"{radiant_team_name} VS {dire_team_name}\n"
-        # f"Счет: {score}\n"
-        f"Kills: Median: {output_dict.get('kills_mediana', 'N/A')} "
-        f"| Avg: {output_dict.get('kills_average', 'N/A')}\n"
-        # f"over40_solo: {output_dict.get('over40_solo', None)}\n"
-        f"over40_duo_counterpick: {output_dict.get('over40_duo_counterpick', 'N/A')}\n"
-        f"over40_trio: {output_dict.get('over40_trio', 'N/A')}\n"
-        f"over40_1vs2: {output_dict.get('over40_1vs2', None)}\n"
-        # f"Lanes:\n{output_dict.get('top_message', '')}"
-        # f"{output_dict.get('mid_message', '')}"
-        # f"{output_dict.get('bot_message', '')}"
-        f"Synergy_and_counterpick:\n"
-        # f"support_dif: {output_dict.get('support_dif', None)}\n"
-        # f"pos1_matchup: {output_dict.get('pos1_matchup', 'N/A')}\n"
-        # f"Synergy_duo: {output_dict.get('synergy_duo', 'N/A')}\n"
-        f"Synergy_trio: {output_dict.get('radiant_synergy_trio', 'N/A')}\n"
-        # f"Counterpick_duo: {output_dict.get('duo_diff', 'N/A')}\n"
-        f"1vs2_counterpick: {output_dict.get('radiant_counterpick_1vs2', 'N/A')}\n"
-        f'ПОМНИ: ЛЮБОЙ ПИК МОЖЕТ ПРОИГРАТЬ'
-    )
 
 
-
-def check_old_maps(data1vs1, data1vs2, lane_data, over40_data, synergy_data):
-    with open ('./heroes_data/1722505765_top600_output.txt', 'r') as f:
+def check_old_maps(data1vs1, data1vs2, lane_data, over35_data, synergy_data, data1vs3, synergy4):
+    # update_my_protracker(mkdir='dltv', maps_to_explore='past_matches_maps', file_name='dltv.output')
+    with open ('dltv/dltv_output.txt', 'r') as f:
         maps_data = json.load(f)
     output_data = []
-    for counter, match in enumerate(maps_data):
+    for counter, match_id in enumerate(maps_data):
+        # if match_id not in ['8282387426', '8229824447', '8294320784', '8240445160', '8237260669', '8293352062', '8264802865', '8287784252', '8240343319', '8251240991', '8275958633', '8272023319', '8271451356', '8264766445', '8283543442', '8239319375', '8251371199', '8264710589', '8232230272', '8253666074', '8253754681', '8244413837', '8238154240', '8292516360', '8246265232', '8283402383', '8275848044', '8252576577', '8277010600', '8275958633', '8269054498', '8251494401', '8239331701', '8239110442', '8239973335', '8238154240', '8234111232', '8245996562', '8239830730', '8299323927', '8293807031', '8292115530', '8269883556', '8264082163', '8239807884', '8241353789', '8275050403', '8251371199', '8245743444', '8276953038', '8239410626', '8238273105', '8234597527', '8244413837']:
+        if match_id != '8269883556':
+            continue
 
         print(f'{counter} | {len(maps_data)}')
-        result = check_bad_map(match=match, maps_data=maps_data)
+        result = check_bad_map(match=match_id, maps_data=maps_data)
         if result is None:
             continue
         radiant_heroes_and_pos, dire_heroes_and_pos = result
         output_dict = proceed_map(dire_heroes_and_pos=dire_heroes_and_pos,
                     radiant_heroes_and_pos=radiant_heroes_and_pos,
                     data1vs1=data1vs1, data1vs2=data1vs2,
-                    lane_data=lane_data, over40_data=over40_data, synergy_data=synergy_data)
+                    lane_data=lane_data, over35_data=over35_data, synergy_data=synergy_data,
+                    data1vs3=data1vs3, synergy4=synergy4)
+        if 'winner' in maps_data[match_id]:
+            didradiantwin = True if maps_data[match_id]['winner'] == 'radiant' else False
+        else:
+            didradiantwin = maps_data[match_id]['didRadiantWin']
 
         output_data.append({
+            'match_id' : match_id,
             'top_message': output_dict['top_message'], 'bot_message': output_dict['bot_message'], 'mid_message': output_dict['mid_message'],
             'synergy_duo': output_dict['synergy_duo'], 'radiant_synergy_trio': output_dict['radiant_synergy_trio'],
             'support_dif': output_dict['support_dif'], 'duo_diff': output_dict['duo_diff'],
             'radiant_counterpick_1vs2': output_dict['radiant_counterpick_1vs2'],
-            "over40_duo": output_dict['over40_duo'], 'over40_duo_counterpick': output_dict['over40_duo_counterpick'],
-            'over40_1vs2': output_dict['over40_1vs2'], 'over40_solo': output_dict['over40_solo'],
-            'over40_trio': output_dict['over40_trio'],
-            'pos1_matchup': output_dict['pos1_matchup'],
-            'bottomLaneOutcome': maps_data[match]['bottomLaneOutcome'],
-            'topLaneOutcome': maps_data[match]['topLaneOutcome'], 'midLaneOutcome': maps_data[match]['midLaneOutcome'],
-            'duration' : maps_data[match]['durationSeconds'] / 60, 'didRadiantWin':maps_data[match]['didRadiantWin']
+            "over35_duo": output_dict['over35_duo'], 'over35_duo_counterpick': output_dict['over35_duo_counterpick'],
+            'over35_1vs2': output_dict['over35_1vs2'], 'over35_solo': output_dict['over35_solo'],
+            'over35_trio': output_dict['over35_trio'],
+            'pos1_matchup': output_dict['pos1_matchup'], 'didRadiantWin': didradiantwin,
+            'duration': maps_data[match_id]['durationSeconds'], 'bottomLaneOutcome' : maps_data[match_id]['bottomLaneOutcome'],
+            'topLaneOutcome': maps_data[match_id]['topLaneOutcome'], 'midLaneOutcome': maps_data[match_id]['midLaneOutcome']
         })
+        pass
 
-    with open('dltv_analysed_maps_output.txt', 'w') as f:
+    with open('dltv/cyberscore_ouput_classic.txt', 'w') as f:
         json.dump(output_data, f)
 
 
-def avg_over40(heroes_and_positions, data):
-    over40_duo, over40_trio, time_duo, kills_duo, kills_trio, time_trio, radiant_lane_report_unique_combinations, \
+def avg_over35(heroes_and_positions, data):
+    over35_duo, over35_trio, time_duo, kills_duo, kills_trio, time_trio, radiant_lane_report_unique_combinations, \
         dire_lane_report_unique_combinations, solo_list = [], [], [], [], [], [], [], [], []
-    over40_unique_combinations = set()
-    for pos, item in heroes_and_positions.items():
-        hero_id = str(item['hero_id'])
-        hero_data = data['value'].get(hero_id, {}).get(pos, {})
-        solo = hero_data.get('over40_solo', {}).get('value', None)
-        if solo is not None and len(solo) >= 15:
-            solo = solo.count(1)/(solo.count(1)+solo.count(0))
-
-            solo_list.append(solo)
-        hero_data = hero_data.get('over40_duo_synergy', {})
-
-        for pos2, item2 in heroes_and_positions.items():
-            second_hero_id = str(item2['hero_id'])
-            if second_hero_id == hero_id:
+    unique_combinations = set()
+    for pos in heroes_and_positions:
+        hero_id = str(heroes_and_positions[pos]['hero_id'])
+        for second_pos in heroes_and_positions:
+            second_hero_id = str(heroes_and_positions[second_pos]['hero_id'])
+            if hero_id == second_hero_id:
                 continue
-            duo_data = hero_data.get(second_hero_id, {}).get(pos2, {})
-            combo = tuple(sorted([hero_id, second_hero_id]))
-            if len(duo_data.get('value', {})) >= 15:
-                if combo not in over40_unique_combinations:
-                    over40_unique_combinations.add(combo)
-                    value = duo_data['value'].count(1) / (duo_data['value'].count(1) + duo_data['value'].count(0))
-                    over40_duo.append(value)
-            for pos3, item3 in heroes_and_positions.items():
-                third_hero_id = str(item3['hero_id'])
+            for third_pos in heroes_and_positions:
+                third_hero_id = str(heroes_and_positions[third_pos]['hero_id'])
                 if third_hero_id in [second_hero_id, hero_id]:
                     continue
-                key = hero_id+pos+','+second_hero_id+pos2+','+third_hero_id+pos3
-                trio_data = data.get(key, {})
-                if len(trio_data) >= 10:
+                third_hero_id = str(heroes_and_positions[third_pos]['hero_id'])
+                key = f"{hero_id + pos},{second_hero_id + second_pos},{third_hero_id + third_pos}"
+                foo = data.get(key, [])
+                if len(foo) >= 15:
                     combo = tuple(sorted([hero_id, second_hero_id, third_hero_id]))
-                    if combo in over40_unique_combinations:
-                        continue
-                    over40_unique_combinations.add(combo)
-                    value = trio_data.count(1) / (trio_data.count(1) + trio_data.count(0))
-                    over40_trio.append(value)
+                    if combo not in unique_combinations:
+                        unique_combinations.add(combo)
+                        value = foo.count(1) / (foo.count(1) + foo.count(0))
+                        over35_trio.append(value)
 
-    return over40_duo, solo_list, over40_trio
+    return over35_duo, solo_list, over35_trio
 
 
-def find_biggest_param(data):
+def find_biggest_param(data, mid=False):
     data = {'draw': data['draw'], 'loose': data['loose'], 'win': data['win']}
     sorted_keys = sorted(data, key=lambda k: data[k], reverse=True)
     second_max_key = sorted_keys[1]
@@ -1036,8 +1066,12 @@ def find_biggest_param(data):
             key = 'draw'
         elif 'draw' in [key, second_max_key]:
             key = 'draw'
-    if first_key_max_value < 51:
-        first_key_max_value = None
+    if mid:
+        if first_key_max_value < 50:
+            first_key_max_value = None
+    else:
+        if first_key_max_value < 50:
+            first_key_max_value = None
     return key, first_key_max_value
 
 
@@ -1147,32 +1181,51 @@ def both_found(lane, data, output):
         return bot_key, bot_key_value
 
 
-def none_found(heroes_data, output, radiant_keys, dire_keys, side):
-    heroes_data = heroes_data['1v1_lanes']
-    loose, draw, win = [], [], []
-    for radiant_key in radiant_keys:
-        for dire_key in dire_keys:
-            value = heroes_data.get(f'{radiant_key}_vs_{dire_key}', {}).get('value', [])
-            if len(value) >= 6:
-                loose.append(value.count(-1) / (len(value)))
-                draw.append(value.count(0) / (len(value)))
-                win.append(value.count(1) / (len(value)))
-    if all(len(i) > 0 for i in [loose, draw, win]):
-        loose, win, draw = multiply_list(loose),\
-            multiply_list(win), multiply_list(draw)
+def synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane):
+    heroes_data = heroes_data['1_with_1_lanes']
+    if lane == 'bot':
+        radiant_key = f"{radiant_heroes_and_pos['pos1']['hero_id']}pos1_with_{radiant_heroes_and_pos['pos5']['hero_id']}pos5"
+        dire_key = f"{dire_heroes_and_pos['pos3']['hero_id']}pos3_with_{dire_heroes_and_pos['pos4']['hero_id']}pos4"
+        radiant_value = heroes_data.get(radiant_key, {}).get('value', [])
+        dire_value = heroes_data.get(dire_key, {}).get('value', [])
+        if len(radiant_value) > 9 and len(dire_value) > 9:
+            radiant_win = radiant_value.count(1) / len(radiant_value)
+            radiant_loose = radiant_value.count(-1) / len(radiant_value)
+            radiant_tie = radiant_value.count(0) / len(radiant_value)
+            dire_win = dire_value.count(1) / len(dire_value)
+            dire_loose = dire_value.count(-1) / len(dire_value)
+            dire_tie = dire_value.count(0) / len(dire_value)
+            win = radiant_win * dire_loose
+            draw = radiant_tie * dire_tie
+            loose = radiant_loose * dire_win
+            total = sum([win, draw, loose])
+            win = win / total * 100
+            draw = draw / total * 100
+            loose = loose / total * 100
+            key, first_key_max_value = find_biggest_param({'win': win, 'draw': draw, 'loose': loose})
+            return key, first_key_max_value
 
-        output.setdefault(side, {}).setdefault('win', []).append(win)
-        output.setdefault(side, {}).setdefault('loose', []).append(loose)
-        output.setdefault(side, {}).setdefault('draw', []).append(draw)
-        output[side]['draw'] = multiply_list(output[side]['draw'])
-        output[side]['win'] = multiply_list(output[side]['win'])
-        output[side]['loose'] = multiply_list(output[side]['loose'])
-        del output[side]['not_used_hero_pos']
-    else:
-        output[side]['draw'] = None
-        output[side]['win'] = None
-        output[side]['loose'] = None
-        del output[side]['not_used_hero_pos']
+    elif lane == 'top':
+        radiant_key = f"{radiant_heroes_and_pos['pos3']['hero_id']}pos3_with_{radiant_heroes_and_pos['pos4']['hero_id']}pos4"
+        dire_key = f"{dire_heroes_and_pos['pos1']['hero_id']}pos1_with_{dire_heroes_and_pos['pos5']['hero_id']}pos5"
+        radiant_value = heroes_data.get(radiant_key, {}).get('value', [])
+        dire_value = heroes_data.get(dire_key, {}).get('value', [])
+        if len(radiant_value) > 9 and len(dire_value) > 9:
+            radiant_win = radiant_value.count(1)/len(radiant_value)
+            radiant_loose = radiant_value.count(-1)/len(radiant_value)
+            radiant_tie = radiant_value.count(0)/len(radiant_value)
+            dire_win = dire_value.count(1)/len(dire_value)
+            dire_loose = dire_value.count(-1)/len(dire_value)
+            dire_tie = dire_value.count(0)/len(dire_value)
+            win = radiant_win * dire_loose
+            draw = radiant_tie * dire_tie
+            loose = radiant_loose * dire_win
+            total = sum([win, draw, loose])
+            win = win/total*100
+            draw = draw/total*100
+            loose = loose/total*100
+            key, first_key_max_value = find_biggest_param({'win': win, 'draw': draw, 'loose': loose})
+            return key, first_key_max_value
 
 
 
@@ -1183,8 +1236,6 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data):
     output, bot_key, bot_key_value, top_key, top_key_value, mid_key, mid_key_value = {}, None, None, None, None, None, None
     lane_2vs2(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, output)
     if 'top' not in output:
-        radiant_keys = [f"{radiant_heroes_and_pos['pos3']['hero_id']}pos3",
-                        f"{radiant_heroes_and_pos['pos4']['hero_id']}pos4"]
         top2vs1 = lane_2vs1(radiant=radiant_heroes_and_pos, dire=dire_heroes_and_pos,
                             heroes_data=heroes_data, lane='top')
         if all(len(line) == 2 for line in
@@ -1193,43 +1244,15 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data):
             if result is not None:
                 top_key, top_key_value = result
             else: top_key_value = None
-        # if True:
-        #     top2vs1_copy = top2vs1.copy()
-        #     for lane in top2vs1:
-        #         if 'not_used_hero_pos' in top2vs1[lane]:
-        #             if lane == 'top_radiant':
-        #                 dire_keys = top2vs1[lane]['not_used_hero_pos']
-        #             elif lane == 'top_dire':
-        #                 dire_keys = [f"{dire_heroes_and_pos['pos1']['hero_id']}pos1",
-        #                                 f"{dire_heroes_and_pos['pos5']['hero_id']}pos5"]
-        #                 radiant_keys = top2vs1[lane]['not_used_hero_pos']
-        #             none_found(heroes_data=heroes_data, output=top2vs1_copy,
-        #                        radiant_keys=radiant_keys, dire_keys=dire_keys, side=lane)
-        #         else:
-        #             top2vs1_copy[lane]['win'] = multiply_list(top2vs1_copy[lane]['win'])
-        #             top2vs1_copy[lane]['loose'] = multiply_list(top2vs1_copy[lane]['loose'])
-        #             top2vs1_copy[lane]['draw'] = multiply_list(top2vs1_copy[lane]['draw'])
-        #     if all(top2vs1_copy['top_radiant'][i] is not None for i in top2vs1_copy[f'top_radiant']) and all(
-        #             top2vs1_copy['top_dire'][i] is not None for i in top2vs1_copy[f'top_dire']):
-        #         win = (top2vs1_copy[f'top_radiant']['win'] + top2vs1_copy[f'top_dire']['win']) / 2
-        #         loose = (top2vs1_copy[f'top_radiant']['loose'] + top2vs1_copy[f'top_dire']['loose']) / 2
-        #         draw = (top2vs1_copy[f'top_radiant']['draw'] + top2vs1_copy[f'top_dire']['draw']) / 2
-        #         total = win+loose+draw
-        #         if total not in [0.0, 0]:
-        #             win, loose, draw = win/total*100, loose/total*100, draw/total*100
-        #             output.setdefault(f'top', {}).setdefault('win', win)
-        #             output.setdefault(f'top', {}).setdefault('loose', loose)
-        #             output.setdefault(f'top', {}).setdefault('draw', draw)
-        #             top_key, top_key_value = find_biggest_param(output[f'top'])
-        #         else:
-        #             top_key, top_key_value = None, None
-        #     else:
-        #         top_key, top_key_value = None, None
+        else:
+            answer = synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, 'top')
+            if answer is None:
+                top_key_value = None
+            else:
+                top_key, top_key_value = answer
     else:
         top_key, top_key_value = find_biggest_param(output['top'])
     if 'bot' not in output:
-        radiant_keys = [f"{radiant_heroes_and_pos['pos1']['hero_id']}pos1",
-                        f"{radiant_heroes_and_pos['pos5']['hero_id']}pos5"]
         bot2vs1 = lane_2vs1(radiant=radiant_heroes_and_pos, dire=dire_heroes_and_pos,
                             heroes_data=heroes_data, lane='bot')
         if all(len(line) == 2 for line in [bot2vs1.get('bot_radiant', {}).get('win', {}), bot2vs1.get('bot_dire', {}).get('win', {})]):
@@ -1238,39 +1261,12 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data):
                 bot_key, bot_key_value = result
             else: bot_key_value = None
 
-        # if True:
-        #     bot2vs1_copy = bot2vs1.copy()
-        #     for lane in bot2vs1:
-        #         if 'not_used_hero_pos' in bot2vs1[lane]:
-        #             if lane == 'bot_radiant':
-        #                 dire_keys = bot2vs1[lane]['not_used_hero_pos']
-        #             elif lane == 'bot_dire':
-        #                 dire_keys = [f"{dire_heroes_and_pos['pos3']['hero_id']}pos3",
-        #                                 f"{dire_heroes_and_pos['pos4']['hero_id']}pos4"]
-        #                 radiant_keys = bot2vs1[lane]['not_used_hero_pos']
-        #             none_found(heroes_data=heroes_data, output=bot2vs1_copy,
-        #                        radiant_keys=radiant_keys, dire_keys=dire_keys, side=lane)
-        #         else:
-        #             bot2vs1_copy[lane]['win'] = multiply_list(bot2vs1_copy[lane]['win'])
-        #             bot2vs1_copy[lane]['loose'] = multiply_list(bot2vs1_copy[lane]['loose'])
-        #             bot2vs1_copy[lane]['draw'] = multiply_list(bot2vs1_copy[lane]['draw'])
-        #
-        #     if all(bot2vs1_copy['bot_radiant'][i] is not None for i in bot2vs1_copy[f'bot_radiant'])\
-        #             and all(bot2vs1_copy['bot_dire'][i] is not None for i in bot2vs1_copy[f'bot_dire']):
-        #         win = (bot2vs1_copy[f'bot_radiant']['win'] + bot2vs1_copy[f'bot_dire']['win'])/2
-        #         loose = (bot2vs1_copy[f'bot_radiant']['loose'] + bot2vs1_copy[f'bot_dire']['loose'])/2
-        #         draw = (bot2vs1_copy[f'bot_radiant']['draw'] + bot2vs1_copy[f'bot_dire']['draw'])/2
-        #         total = win + loose + draw
-        #         if total not in [0.0, 0]:
-        #             win, loose, draw = win / total * 100, loose / total * 100, draw / total * 100
-        #             output.setdefault(f'bot', {}).setdefault('win', win)
-        #             output.setdefault(f'bot', {}).setdefault('loose', loose)
-        #             output.setdefault(f'bot', {}).setdefault('draw', draw)
-        #             bot_key, bot_key_value = find_biggest_param(output[f'bot'])
-        #         else:
-        #             bot_key, bot_key_value = None, None
-        #     else:
-        #         bot_key, bot_key_value = None, None
+        else:
+            answer = synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, 'bot')
+            if answer is None:
+                bot_key_value = None
+            else:
+                bot_key, bot_key_value = answer
     else:
         bot_key, bot_key_value = find_biggest_param(output['bot'])
 
@@ -1280,7 +1276,7 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data):
                            heroes_data=heroes_data, lane='mid')
     if mid_output:
         mid_key, mid_key_value = find_biggest_param(
-            mid_output['mid_radiant'])
+            mid_output['mid_radiant'], mid=True)
 
 
 

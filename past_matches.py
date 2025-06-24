@@ -1,58 +1,52 @@
 import time, requests, json
+from multiprocessing.connection import answer_challenge
+import os
+
 from bs4 import BeautifulSoup
 import urllib3
 from datetime import datetime, timedelta
+from maps_research import research_maps, eat_temp_files
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+os.environ['HTTPS'] = 'localhost,127.0.0.1'
+os.environ['HTTPS'] = "http://FdZ59jIXvS:pS11ypMDJG@193.168.224.92:46203"
+os.environ['NO_PROXY'] = "http://FdZ59jIXvS:pS11ypMDJG@193.168.224.92:46203"
 def get_past_matches():
+
 # Today's date in the format YYYY-MM-DD
-    start_date = datetime.now().strftime('%Y-%m-%d')
+    def get_matches():
 
-    # Target date to stop the loop
-    target_date = '2024-11-20'
+        start_date = datetime.now().strftime('%Y-%m-%d')
 
-    # Convert start_date and target_date to datetime objects
-    current_date = datetime.strptime(start_date, '%Y-%m-%d')
-    target_date_obj = datetime.strptime(target_date, '%Y-%m-%d')
 
-    # Loop to print each date from start_date to target_date
-    database = []
-    while current_date == target_date_obj:
-        print(current_date.strftime('%Y-%m-%d'))
-        current_date -= timedelta(days=1)
-        ip_address = "46.229.214.49"
-        path = f"/results?date={current_date}"  # Desired path
+        # Target date to stop the loop
+        target_date = '2025-05-31'
 
-        # URL with the IP address and the specific path
-        url = f"https://{ip_address}{path}"
-        proxies = {
-            'https': 'http://90gwi7LEfz:aKI0jgSViq@77.221.150.248:42037',
-        }
-        headers = {
-                    "Host": "dltv.org",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                    "Accept-Encoding": "gzip, deflate, br, zstd",
-                    "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
-                    "Referer": 'https://dltv.org/results',
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                                  "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                  "Chrome/130.0.0.0 Safari/537.36",}
-        for i in range(3):
-            response = requests.get(url, headers=headers, verify=False)
-            if response.status_code == 200:
-                break
-            else:
-                time.sleep(60)
-        if response.status_code != 200:
-            print(response.status_code)
-            break
-        soup = BeautifulSoup(response.text, 'lxml')
-        matches_blocks = soup.find_all('div', class_='result__matches-item__body')
+        # Convert start_date and target_date to datetime objects
+        current_date = datetime.strptime(start_date, '%Y-%m-%d')
+        target_date_obj = datetime.strptime(target_date, '%Y-%m-%d')
+        formatted_date = current_date.strftime('%Y-%m-%d')
+        # Loop to print each date from start_date to target_date
+        database = {}
+        while current_date > target_date_obj:
+            print(current_date.strftime('%Y-%m-%d'))
+            current_date -= timedelta(days=1)
+            ip_address = "46.229.214.49"
+            path = f"/results?date={current_date}"  # Desired path
 
-        for match in matches_blocks:
-            path = match.find('a')['href'].replace('https://dltv.org', '')
-            match_url = f"https://{ip_address}{path}"
+            # URL with the IP address and the specific path
+            url = f"https://{ip_address}{path}"
+            headers = {
+                "Host": "dltv.org",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                "Accept-Encoding": "gzip, deflate, br, zstd",
+                "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
+                "Referer": 'https://dltv.org/results',
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                              "AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/130.0.0.0 Safari/537.36", }
             for i in range(3):
-                response = requests.get(match_url, headers=headers, verify=False)
+                response = requests.get(url, headers=headers, verify=False)
                 if response.status_code == 200:
                     break
                 else:
@@ -61,46 +55,87 @@ def get_past_matches():
                 print(response.status_code)
                 break
             soup = BeautifulSoup(response.text, 'lxml')
-            maps = soup.find_all('div', class_='map__finished-v2')
-            for game_map in maps:
-                match_id = game_map.find('small')
-                if not match_id:
-                    continue
-                match_id = match_id.text.replace('Match ID: ', '')
-                radiant_heroes_and_pos, dire_heroes_and_pos, winner_side, break_flag  = {}, {}, None, False
-                picks = game_map.find('div', class_='map__finished-v2__pick')
-                teams = game_map.find_all('div', class_='team')
-                for team in teams:
-                    winner = team.find('div', class_='winner')
-                    side = team.find('span', class_='side').text
-                    if winner:
-                        winner_side = side.lower()
-                heroes = picks.find_all('div', class_="heroes__player")
-                if len(heroes) != 10:
-                    break
-                for i in range(0,5):
-                    hero_name = heroes[i].find('div', class_='pick')['data-tippy-content']
-                    pos = heroes[i].find('div', class_="pick__role")
-                    if not pos:
-                        break_flag = True
-                        break
-                    pos = 'pos' + pos.get('class')[1].replace('role__bg-', '')
+            matches_blocks = soup.find_all('div', class_='result__matches-item__body')
 
-                    radiant_heroes_and_pos[pos] = {'hero_name': hero_name}
-                if break_flag: break
-                for i in range(5, 10):
-                    hero_name = heroes[i].find('div', class_='pick')['data-tippy-content']
-                    pos = heroes[i].find('div', class_="pick__role")
-                    if not pos:
-                        break_flag = True
+            for match in matches_blocks:
+                path = match.find('a')['href'].replace('https://dltv.org', '')
+                match_url = f"https://{ip_address}{path}"
+                for i in range(3):
+                    response = requests.get(match_url, headers=headers, verify=False)
+                    if response.status_code == 200:
                         break
-                    pos = 'pos' + pos.get('class')[1].replace('role__bg-', '')
-                    dire_heroes_and_pos[pos] = {'hero_name': hero_name}
-                if break_flag: break
-                if winner_side and radiant_heroes_and_pos and dire_heroes_and_pos:
-                    database.append({'winner': winner_side, 'radiant_heroes_and_pos': radiant_heroes_and_pos, 'dire_heroes_and_pos': dire_heroes_and_pos, 'match_id': match_id})
-        with open('past_matches_maps.txt', 'w') as f:
+                    else:
+                        time.sleep(60)
+                if response.status_code != 200:
+                    print(response.status_code)
+                    break
+                soup = BeautifulSoup(response.text, 'lxml')
+                title = soup.find('section', class_='event__title').find('a').text
+                if not any(i in title.lower() for i in ['dreamleague', 'blast', 'betboom',
+                                                        'fissure', 'pgl', 'esports', 'international',
+                                                        'european', 'epl', 'esl', 'cct']):
+                    continue
+                maps = soup.find_all('div', class_='map__finished-v2')
+                for game_map in maps:
+
+                    match_id = game_map.find('small')
+                    if not match_id:
+                        continue
+
+                    match_id = match_id.text.replace('Match ID: ', '')
+                    radiant_heroes_and_pos, dire_heroes_and_pos, winner_side, break_flag = {}, {}, None, False
+                    # picks = game_map.find('div', class_='map__finished-v2__pick')
+                    teams = game_map.find_all('div', class_='team')
+                    for team in teams:
+                        winner = team.find('div', class_='winner')
+                        side = team.find('span', class_='side').text
+                        if winner:
+                            winner_side = side.lower()
+                    if winner_side:
+                        if match_id not in database:
+                            database.setdefault(formatted_date, {}).setdefault(match_id, {'winner': winner_side})
+        with open('dltv/past_matches_maps.txt', 'w') as f:
             json.dump(database, f)
+
+
+    get_matches()
+    mkdir='dltv'
+    maps_to_explore='past_matches_maps'
+    file_name='dltv_output'
+    maps = []
+    with open(f'./{mkdir}/{maps_to_explore}.txt') as f:
+        data = json.load(f)
+    for date in data:
+        for map_id in data[date]:
+            maps.append(map_id)
+    research_maps(mkdir='dltv', maps_to_explore=maps,
+                  file_name='dltv_output', pro=True)
+    path = f'./{mkdir}/{maps_to_explore}.txt'
+    with open(path, 'r+') as f:
+        maps_to_explore = json.load(f)
+    try:
+        with open(f'./{mkdir}/{file_name}.txt', 'r+') as f:
+            file_data = json.load(f)
+    except FileNotFoundError:
+        with open(f'./{mkdir}/{file_name}.txt', 'w') as f:
+            json.dump([], f)
+        file_data = {}
+    answer = eat_temp_files(mkdir='dltv', file_data=file_data, file_name=file_name)
+    with open('./dltv/dltv_output.txt', 'r+') as f:
+        answer = json.load(f)
+    with open('./dltv/dltv_output.txt', 'r') as f:
+        dltv_data = json.load(f)
+    with open('./dltv/past_matches_maps.txt', 'r') as f:
+        answer = json.load(f)
+    for date in answer:
+        for match_id in answer[date]:
+            winner = answer[date][match_id]['winner']
+            for foo in dltv_data:
+                if match_id == foo:
+                    dltv_data[foo]['winner'] = winner
+    with open('./dltv/dltv_output.txt', 'w') as f:
+        json.dump(dltv_data, f)
+
 
 
 def check_lines(data):
@@ -163,30 +198,32 @@ def check_lines(data):
 
 
 def check_winrate(data):
-    for investigation in [
-        'support_dif',
-        'synergy_duo','radiant_synergy_trio',
-        'duo_diff', 'radiant_counterpick_1vs2',
-        'pos1_matchup',
-        "over40_duo", 'over40_duo_counterpick',
-        'over40_1vs2', 'over40_solo',
-        'over40_trio']:
+    wrong_maps = []
+    for investigation in ['over35_1vs2', 'over35_duo', 'over35_duo_counterpick', 'over35_solo', 'over35_trio', 'pos1_matchup', 'radiant_counterpick_1vs2', 'radiant_synergy_trio', 'support_dif', 'synergy_duo']:
         for index in range(1, 101, 1):
             win = 0
             loose = 0
             for match in data:
-                if 'over40' in investigation:
-                    if match['duration'] < 40:
+                if match[investigation] is None:
+                    continue
+                if 'over35' in investigation:
+                    if match['duration'] < 35:
                         continue
-                if match[investigation] is not None and match[investigation] == index and match['didRadiantWin'] == True:
+                if match[investigation] == index and match['didRadiantWin'] == True:
                     win += 1
-                elif match[investigation] is not None and match[investigation] == -index and match['didRadiantWin'] == False:
+                elif match[investigation] == -index and match['didRadiantWin'] == False:
                     win += 1
-                elif match[investigation] is not None and match[investigation] == -index and match['didRadiantWin'] == True:
+                elif match[investigation] == -index and match['didRadiantWin'] == True:
                     loose += 1
-                elif match[investigation] is not None and match[investigation] == index and match['didRadiantWin'] == False:
+                    if index >= 15:
+                        print(f'{index}, {match["match_id"]}')
+                        wrong_maps.append(match["match_id"])
+                elif match[investigation] == index and match['didRadiantWin'] == False:
                     loose += 1
-            if win + loose > 0:
+                    if index >= 15:
+                        print(f'{index}, {match["match_id"]}')
+                        wrong_maps.append(match["match_id"])
+            if win + loose > 2:
                 if win == 0:
                     print(f'Index: {index} {investigation} winrate: 0, Всего: {win + loose}')
                 else:
@@ -212,34 +249,31 @@ def check_winrate(data):
             #         and match[third_inv] == 'loose' and match[third_inv + '_value'] > index:
             #
             #     loose += 1
-
+    return wrong_maps
 def check_two_winrates(data):
     investigation = 'radiant_counterpick_1vs2'
-    second_inv = 'pos1_matchup'
-    second_index = 14
-    third_inv = 'pos1_matchup'
-    third_index = 14
+    second_inv = 'radiant_synergy_trio'
     for index in range(1, 101, 1):
         win = 0
         loose = 0
         for match in data:
-            if 'over40' in investigation:
-                if match['duration'] < 40:
+            if 'over35' in investigation:
+                if match['duration'] < 35:
                     continue
-            if match[investigation] is not None and match[investigation] == index and match['didRadiantWin'] == True:
-                if match[second_inv] is not None and match[second_inv] == -second_index:
-                        win += 1
-            elif match[investigation] is not None and match[investigation] == -index and match[
+            if match[investigation] is not None and match[investigation] <= -index and match['didRadiantWin'] == True:
+                if match[second_inv] is not None and match[second_inv] <= -index:
+                        loose += 1
+            elif match[investigation] is not None and match[investigation] <= -index and match[
                 'didRadiantWin'] == False:
-                if match[second_inv] is not None and match[second_inv] == second_index:
+                if match[second_inv] is not None and match[second_inv] <= -index:
                         win += 1
-            elif match[investigation] is not None and match[investigation] == -index and match['didRadiantWin'] == True:
-                if match[second_inv] is not None and match[second_inv] == second_index:
+            elif match[investigation] is not None and match[investigation] >= index and match['didRadiantWin'] == True:
+                if match[second_inv] is not None and match[second_inv] >= index:
+                        win += 1
+            elif match[investigation] is not None and match[investigation] >= index and match['didRadiantWin'] == False:
+                if match[second_inv] is not None and match[second_inv] >= index:
                         loose += 1
-            elif match[investigation] is not None and match[investigation] == index and match['didRadiantWin'] == False:
-                if match[second_inv] is not None and match[second_inv] == -second_index:
-                        loose += 1
-        if win + loose > 0:
+        if win + loose > 5:
             if win == 0:
                 print(f'Index: {index} {investigation} winrate: 0, Всего: {win + loose}')
             else:
@@ -248,16 +282,18 @@ def check_two_winrates(data):
 
 
 def analyse_winrates():
-    with open('dltv_analysed_maps_output.txt', 'r') as f:
+    with open('dltv/cyberscore_ouput_classic.txt', 'r') as f:
         data = json.load(f)
         # check_two_winrates(data)
-        # check_winrate(data)
-        check_lines(data)
+        wrong_maps = check_winrate(data)
+        # check_lines(data)
+        print(wrong_maps)
 
 
 
 
 
+get_past_matches()
+# analyse_winrates()
 
-# get_past_matches()
-analyse_winrates()
+
