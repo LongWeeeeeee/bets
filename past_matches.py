@@ -27,7 +27,7 @@ def get_past_matches():
         target_date_obj = datetime.strptime(target_date, '%Y-%m-%d')
         formatted_date = current_date.strftime('%Y-%m-%d')
         # Loop to print each date from start_date to target_date
-        database = {}
+        database = []
         while current_date > target_date_obj:
             print(current_date.strftime('%Y-%m-%d'))
             current_date -= timedelta(days=1)
@@ -83,31 +83,19 @@ def get_past_matches():
                         continue
 
                     match_id = match_id.text.replace('Match ID: ', '')
-                    radiant_heroes_and_pos, dire_heroes_and_pos, winner_side, break_flag = {}, {}, None, False
-                    # picks = game_map.find('div', class_='map__finished-v2__pick')
-                    teams = game_map.find_all('div', class_='team')
-                    for team in teams:
-                        winner = team.find('div', class_='winner')
-                        side = team.find('span', class_='side').text
-                        if winner:
-                            winner_side = side.lower()
-                    if winner_side:
-                        if match_id not in database:
-                            database.setdefault(formatted_date, {}).setdefault(match_id, {'winner': winner_side})
+                    if match_id not in database:
+                        database.append(match_id)
         with open('dltv/past_matches_maps.txt', 'w') as f:
             json.dump(database, f)
 
 
-    get_matches()
+    # get_matches()
     mkdir='dltv'
     maps_to_explore='past_matches_maps'
     file_name='dltv_output'
     maps = []
     with open(f'./{mkdir}/{maps_to_explore}.txt') as f:
-        data = json.load(f)
-    for date in data:
-        for map_id in data[date]:
-            maps.append(map_id)
+        maps = json.load(f)
     research_maps(mkdir='dltv', maps_to_explore=maps,
                   file_name='dltv_output', pro=True)
     path = f'./{mkdir}/{maps_to_explore}.txt'
@@ -120,21 +108,7 @@ def get_past_matches():
         with open(f'./{mkdir}/{file_name}.txt', 'w') as f:
             json.dump([], f)
         file_data = {}
-    answer = eat_temp_files(mkdir='dltv', file_data=file_data, file_name=file_name)
-    with open('./dltv/dltv_output.txt', 'r+') as f:
-        answer = json.load(f)
-    with open('./dltv/dltv_output.txt', 'r') as f:
-        dltv_data = json.load(f)
-    with open('./dltv/past_matches_maps.txt', 'r') as f:
-        answer = json.load(f)
-    for date in answer:
-        for match_id in answer[date]:
-            winner = answer[date][match_id]['winner']
-            for foo in dltv_data:
-                if match_id == foo:
-                    dltv_data[foo]['winner'] = winner
-    with open('./dltv/dltv_output.txt', 'w') as f:
-        json.dump(dltv_data, f)
+    eat_temp_files(mkdir='dltv', file_data=file_data, file_name=file_name)
 
 
 
@@ -199,7 +173,7 @@ def check_lines(data):
 
 def check_winrate(data):
     wrong_maps = []
-    for investigation in ['over35_1vs2', 'over35_duo', 'over35_duo_counterpick', 'over35_solo', 'over35_trio', 'pos1_matchup', 'radiant_counterpick_1vs2', 'radiant_synergy_trio', 'support_dif', 'synergy_duo']:
+    for investigation in ['over35_1vs2', 'over35_duo', 'over35_duo_counterpick', 'over35_solo', 'over35_trio', 'pos1_matchup', 'duo_diff', 'radiant_counterpick_1vs2', 'radiant_synergy_trio', 'support_dif', 'synergy_duo']:
         for index in range(1, 101, 1):
             win = 0
             loose = 0
@@ -207,7 +181,21 @@ def check_winrate(data):
                 if match[investigation] is None:
                     continue
                 if 'over35' in investigation:
-                    if match['duration'] < 35:
+                    if (match.get('radiantNetworthLeads') is not None and
+                            (((len(match['radiantNetworthLeads']) >= 41 and (match['radiantNetworthLeads'][35] <= 15000
+                                                                             and match['radiantNetworthLeads'][
+                                                                                 35] >= -15000)) or len(
+                                match['radiantNetworthLeads']) >= 64 or (len(match['radiantNetworthLeads']) >= 46 and (
+                                    match['radiantNetworthLeads'][40] <= 20000
+                                    and match['radiantNetworthLeads'][40] >= -20000))))):
+                            pass
+                    else:
+                        continue
+                else:
+                    if (match.get('radiantNetworthLeads') is not None and (-3000 <= match['radiantNetworthLeads'][10] and match['radiantNetworthLeads'][
+                                10] <= 3000 and len(match.get('radiantNetworthLeads', [])) <= 41)):
+                            pass
+                    else:
                         continue
                 if match[investigation] == index and match['didRadiantWin'] == True:
                     win += 1
@@ -215,15 +203,15 @@ def check_winrate(data):
                     win += 1
                 elif match[investigation] == -index and match['didRadiantWin'] == True:
                     loose += 1
-                    if index >= 15:
-                        print(f'{index}, {match["match_id"]}')
-                        wrong_maps.append(match["match_id"])
+                    # if index >= 20:
+                    #     print(f'{index}, {match["match_id"]}')
+                    #     wrong_maps.append(match["match_id"])
                 elif match[investigation] == index and match['didRadiantWin'] == False:
                     loose += 1
-                    if index >= 15:
-                        print(f'{index}, {match["match_id"]}')
-                        wrong_maps.append(match["match_id"])
-            if win + loose > 2:
+                    # if index >= 20:
+                    #     print(f'{index}, {match["match_id"]}')
+                    #     wrong_maps.append(match["match_id"])
+            if win + loose > 5:
                 if win == 0:
                     print(f'Index: {index} {investigation} winrate: 0, Всего: {win + loose}')
                 else:
@@ -252,26 +240,32 @@ def check_winrate(data):
     return wrong_maps
 def check_two_winrates(data):
     investigation = 'radiant_counterpick_1vs2'
-    second_inv = 'radiant_synergy_trio'
+    second_inv = 'duo_diff'
+    second_index = 10
     for index in range(1, 101, 1):
         win = 0
         loose = 0
         for match in data:
             if 'over35' in investigation:
-                if match['duration'] < 35:
+                if match['duration'] / 60 < 35:
                     continue
+            else:
+                if match.get('radiantNetworthLeads') is not None and len(
+                        match.get('radiantNetworthLeads', [])) >= 24:
+                    if not -2999 < match['radiantNetworthLeads'][10] < 2999:
+                        continue
             if match[investigation] is not None and match[investigation] <= -index and match['didRadiantWin'] == True:
-                if match[second_inv] is not None and match[second_inv] <= -index:
+                if match[second_inv] is not None and match[second_inv] <= -second_index:
                         loose += 1
             elif match[investigation] is not None and match[investigation] <= -index and match[
                 'didRadiantWin'] == False:
-                if match[second_inv] is not None and match[second_inv] <= -index:
+                if match[second_inv] is not None and match[second_inv] <= -second_index:
                         win += 1
             elif match[investigation] is not None and match[investigation] >= index and match['didRadiantWin'] == True:
-                if match[second_inv] is not None and match[second_inv] >= index:
+                if match[second_inv] is not None and match[second_inv] >= second_index:
                         win += 1
             elif match[investigation] is not None and match[investigation] >= index and match['didRadiantWin'] == False:
-                if match[second_inv] is not None and match[second_inv] >= index:
+                if match[second_inv] is not None and match[second_inv] >= second_index:
                         loose += 1
         if win + loose > 5:
             if win == 0:
@@ -287,13 +281,12 @@ def analyse_winrates():
         # check_two_winrates(data)
         wrong_maps = check_winrate(data)
         # check_lines(data)
-        print(wrong_maps)
 
 
 
 
 
-get_past_matches()
-# analyse_winrates()
+# get_past_matches()
+analyse_winrates()
 
 
