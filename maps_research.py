@@ -11,9 +11,7 @@ from id_to_name import pro_teams
 import requests
 from aiohttp_socks import ProxyConnector
 import os
-from keys import api_token_3, api_token_4, api_token_5, api_token_2, api_token_1, api_token_6, api_token_7, \
-    api_token_8, api_token_9, api_token_10, api_token_11, api_token_12, api_token_13, api_token_14, \
-    api_token_15, api_token_16, api_token_17, api_token_18, start_date_time
+from keys import orig_tokens, start_date_time
 
 CONCURRENCY_LIMIT = 20 # EXPERIMENT with this value (e.g., 10, 25, 50)
 semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
@@ -33,10 +31,8 @@ def load_and_process_json_files(mkdir, **kwargs):
 
 async def get_maps_new(game_mods, maps_to_save, ids,
                  show_prints=None, skip=0, count=0, only_in_ids=False):
-    tokens = [api_token_3, api_token_4, api_token_5, api_token_2, api_token_1, api_token_6, api_token_7,
-              api_token_8, api_token_9, api_token_10, api_token_11, api_token_12, api_token_13, api_token_14,
-              api_token_15, api_token_16, api_token_17, api_token_18]
-    api_token = api_token_16
+    tokens = orig_tokens
+    api_token = tokens.pop(0)
     ids_to_graph, total_map_ids, output_data, all_teams, player_ids = [], [], [], {}, set()
     # connector = ProxyConnector.from_url(socks5_proxy)
     async with aiohttp.ClientSession() as session:
@@ -248,10 +244,7 @@ async def proceed_get_maps(skip, session, only_in_ids, output_data, tokens, api_
                 print('меняю токен')
 
             else:
-                tokens = [api_token_3, api_token_4, api_token_5, api_token_2, api_token_1, api_token_6, api_token_7,
-                          api_token_8, api_token_9, api_token_10, api_token_11, api_token_12, api_token_13,
-                          api_token_14,
-                          api_token_15, api_token_16, api_token_17]
+                tokens = orig_tokens
                 api_token = tokens.pop(0)
                 print('обновляю токены')
     if player_ids_check:
@@ -283,9 +276,7 @@ def eat_temp_files(mkdir, file_data, file_name):
 
 async def research_map_proceed(maps_to_explore, mkdir, another_counter=0,
                          show_prints=True, pro=False):
-    tokens = [api_token_3, api_token_4, api_token_5, api_token_2, api_token_1, api_token_6, api_token_7,
-              api_token_8, api_token_9, api_token_10, api_token_11, api_token_12, api_token_13, api_token_14,
-              api_token_15, api_token_16, api_token_17]
+    tokens = orig_tokens
     api_token = tokens.pop()
     new_data, error_maps = {}, set()
     # Попытка загрузить временные данные
@@ -423,9 +414,7 @@ async def research_map_proceed(maps_to_explore, mkdir, another_counter=0,
                         print(f'меняю токен {try_counter}/{len(tokens)}')
 
                     else:
-                        tokens = [api_token_3, api_token_4, api_token_5, api_token_2, api_token_1,
-                                  api_token_6, api_token_7, api_token_8, api_token_9, api_token_10,
-                                  api_token_11, api_token_12, api_token_13, api_token_14,api_token_15, api_token_16, api_token_17]
+                        tokens = orig_tokens
                         api_token = tokens.pop(0)
                         print('обновляю токены')
             if len(new_data) == data_len:
