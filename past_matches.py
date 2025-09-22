@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 from maps_research import research_maps, eat_temp_files
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-os.environ['HTTPS'] = 'localhost,127.0.0.1'
-os.environ['HTTPS'] = "http://FdZ59jIXvS:pS11ypMDJG@193.168.224.92:46203"
-os.environ['NO_PROXY'] = "http://FdZ59jIXvS:pS11ypMDJG@193.168.224.92:46203"
+# os.environ['HTTPS'] = 'localhost,127.0.0.1'
+# os.environ['HTTPS'] = "http://FdZ59jIXvS:pS11ypMDJG@193.168.224.92:46203"
+# os.environ['NO_PROXY'] = "http://FdZ59jIXvS:pS11ypMDJG@193.168.224.92:46203"
 def get_past_matches():
 
 # Today's date in the format YYYY-MM-DD
@@ -48,9 +48,12 @@ def get_past_matches():
             for i in range(3):
                 response = requests.get(url, headers=headers, verify=False)
                 if response.status_code == 200:
+
                     break
+                elif response.status_code == 429:
+                    time.sleep(15)
                 else:
-                    time.sleep(60)
+                    print(response.status_code)
             if response.status_code != 200:
                 print(response.status_code)
                 break
@@ -72,8 +75,8 @@ def get_past_matches():
                 soup = BeautifulSoup(response.text, 'lxml')
                 title = soup.find('section', class_='event__title').find('a').text
                 if not any(i in title.lower() for i in ['dreamleague', 'blast', 'betboom',
-                                                        'fissure', 'pgl', 'esports', 'international',
-                                                        'european', 'epl', 'esl', 'cct']):
+                                                        'fissure', 'pgl', 'esports world', 'international',
+                                                        'esl', 'clavision']):
                     continue
                 maps = soup.find_all('div', class_='map__finished-v2')
                 for game_map in maps:
@@ -89,7 +92,7 @@ def get_past_matches():
             json.dump(database, f)
 
 
-    # get_matches()
+    get_matches()
     mkdir='dltv'
     maps_to_explore='past_matches_maps'
     file_name='dltv_output'
@@ -173,27 +176,20 @@ def check_lines(data):
 
 def check_winrate(data):
     wrong_maps = []
-    for investigation in ['over35_1vs2', 'over35_duo', 'over35_duo_counterpick', 'over35_solo', 'over35_trio', 'pos1_matchup', 'duo_diff', 'radiant_counterpick_1vs2', 'radiant_synergy_trio', 'support_dif', 'synergy_duo']:
+    for investigation in ['over40_1vs2', 'over40_duo_synergy', 'over40_duo_counterpick', 'over40_solo', 'over40_trio', 'pos1_matchup', 'duo_diff', 'radiant_counterpick_1vs2', 'radiant_synergy_trio', 'support_dif', 'synergy_duo']:
         for index in range(1, 101, 1):
             win = 0
             loose = 0
             for match in data:
                 if match[investigation] is None:
                     continue
-                if 'over35' in investigation:
-                    if (match.get('radiantNetworthLeads') is not None and
-                            (((len(match['radiantNetworthLeads']) >= 41 and (match['radiantNetworthLeads'][35] <= 15000
-                                                                             and match['radiantNetworthLeads'][
-                                                                                 35] >= -15000)) or len(
-                                match['radiantNetworthLeads']) >= 64 or (len(match['radiantNetworthLeads']) >= 46 and (
-                                    match['radiantNetworthLeads'][40] <= 20000
-                                    and match['radiantNetworthLeads'][40] >= -20000))))):
+                if 'over40' in investigation:
+                    if match.get('radiantNetworthLeads') is not None and len(match['radiantNetworthLeads']) >= 41:
                             pass
                     else:
                         continue
                 else:
-                    if (match.get('radiantNetworthLeads') is not None and (-3000 <= match['radiantNetworthLeads'][10] and match['radiantNetworthLeads'][
-                                10] <= 3000 and len(match.get('radiantNetworthLeads', [])) <= 41)):
+                    if len(match.get('radiantNetworthLeads', [])) <= 40:
                             pass
                     else:
                         continue
@@ -203,14 +199,12 @@ def check_winrate(data):
                     win += 1
                 elif match[investigation] == -index and match['didRadiantWin'] == True:
                     loose += 1
-                    # if index >= 20:
-                    #     print(f'{index}, {match["match_id"]}')
-                    #     wrong_maps.append(match["match_id"])
+                    if index >= 17 and investigation == 'pos1_matchup':
+                        print(f'{index}, {match["match_id"]}')
                 elif match[investigation] == index and match['didRadiantWin'] == False:
                     loose += 1
-                    # if index >= 20:
-                    #     print(f'{index}, {match["match_id"]}')
-                    #     wrong_maps.append(match["match_id"])
+                    if index >= 17 and investigation == 'pos1_matchup':
+                        print(f'{index}, {match["match_id"]}')
             if win + loose > 5:
                 if win == 0:
                     print(f'Index: {index} {investigation} winrate: 0, Всего: {win + loose}')
@@ -246,7 +240,7 @@ def check_two_winrates(data):
         win = 0
         loose = 0
         for match in data:
-            if 'over35' in investigation:
+            if 'over40' in investigation:
                 if match['duration'] / 60 < 35:
                     continue
             else:

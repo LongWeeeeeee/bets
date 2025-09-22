@@ -1,13 +1,11 @@
 import json
 import asyncio
 import aiohttp
-from id_to_name import top5000EU, all_teams
 import json
 import shutil
 from urllib.parse import quote
-from analyze_maps import new_proceed_map
+from analyze_maps import new_proceed_map, send_message
 import ijson
-from id_to_name import pro_teams
 import requests
 from aiohttp_socks import ProxyConnector
 import os
@@ -467,7 +465,7 @@ def research_maps(maps_to_explore, file_name, mkdir, show_prints=None, pro=False
 
 
 def explore_database(mkdir, file_name, pro=False, lane=None,
-                     over35=None, total_time_kills_teams=None, time_kills=None,
+                     over40=None, total_time_kills_teams=None, time_kills=None,
                      counterpick1vs2=None, synergy=None, counterpick1vs1=None, counterpick1vs3=None,
                      synergy4=None):
     # database = open(f'./{mkdir}/{file_name}.txt')
@@ -488,7 +486,7 @@ def explore_database(mkdir, file_name, pro=False, lane=None,
     # Загрузка всех необходимых файлов
     data_files = load_and_process_json_files(
         mkdir, total_time_kills_dict=time_kills,
-        over35_dict=over35, lane_dict=lane,
+        over40_dict=over40, lane_dict=lane,
         total_time_kills_dict_teams=total_time_kills_teams,
         counterpick1vs2=counterpick1vs2,
         counterpick1vs1=counterpick1vs1, synergy=synergy,
@@ -500,7 +498,7 @@ def explore_database(mkdir, file_name, pro=False, lane=None,
 
     result = analyze_database(
         database=database,
-        total_time_kills_dict=data_files['total_time_kills_dict'], over35_dict=data_files['over35_dict'],
+        total_time_kills_dict=data_files['total_time_kills_dict'], over40_dict=data_files['over40_dict'],
         lane_dict=data_files['lane_dict'], pro=pro, used_maps=used_maps,
         total_time_kills_dict_teams=data_files['total_time_kills_dict_teams'],
         counterpick1vs2=data_files['counterpick1vs2'],
@@ -510,7 +508,7 @@ def explore_database(mkdir, file_name, pro=False, lane=None,
 
     if result is not None:
         lane_dict, total_time_kills_dict, synergy, counterpick1vs1, \
-            over35_dict, total_time_kills_dict_teams, counterpick1vs2, \
+            over40_dict, total_time_kills_dict_teams, counterpick1vs2, \
             counterpick1vs3, synergy4, used_maps = result
 
         print('Сохранение обновленных данных')
@@ -522,7 +520,7 @@ def explore_database(mkdir, file_name, pro=False, lane=None,
         if counterpick1vs2:
             save_json_file(f'./{mkdir}/synergy.txt', synergy)
             save_json_file(f'./{mkdir}/counterpick1vs1.txt', counterpick1vs1)
-            save_json_file(f'./{mkdir}/over35_dict.txt', over35_dict)
+            save_json_file(f'./{mkdir}/over40_dict.txt', over40_dict)
             save_json_file(f'./{mkdir}/counterpick1vs2.txt', counterpick1vs2)
             save_json_file(f'./{mkdir}/counterpick1vs3.txt', counterpick1vs3)
             save_json_file(f'./{mkdir}/synergy4.txt', synergy4)
@@ -531,14 +529,15 @@ def explore_database(mkdir, file_name, pro=False, lane=None,
 
 
 def check_match(match):
-    if match['startDateTime'] >= int(start_date_time) and match['direKills'] is not None and all(player['intentionalFeeding'] is False and player['steamAccount']['smurfFlag'] in [0, 2]
+    #match['startDateTime'] >= int(start_date_time) and
+    if match['direKills'] is not None and all(player['intentionalFeeding'] is False and player['steamAccount']['smurfFlag'] in [0, 2]
                 and None not in [player['position'], player['hero']['id'], player['steamAccount']]
                 for player in match['players']) and len(match['radiantNetworthLeads']) >= 20:
         return True
 
 
 
-def analyze_database(database, over35_dict, used_maps=None,
+def analyze_database(database, over40_dict, used_maps=None,
                      total_time_kills_dict=None, pro=False,
                      lane_dict=None, check=False,
                      total_time_kills_dict_teams=None, counterpick1vs2=None,
@@ -548,7 +547,7 @@ def analyze_database(database, over35_dict, used_maps=None,
                      ):
     counter = []
     # new_maps = [str(map_id) for map_id in database if str(map_id) not in used_maps]
-
+    win_loose = {}
     # Инициализируем итоговые словари для накопления данных
     for count, map_id in enumerate(database):
         check = True
@@ -570,24 +569,24 @@ def analyze_database(database, over35_dict, used_maps=None,
                     synergy4=synergy4
                 )
                 lane_dict, total_time_kills_dict, synergy, counterpick1vs1, \
-                    over35_dict, total_time_kills_dict_teams, counterpick1vs2 = result
+                    over40_dict, total_time_kills_dict_teams, counterpick1vs2 = result
         else:
             if check_match(match=match):
                 counter.append(map_id)
-                result = new_proceed_map(
+                win_loose = new_proceed_map(
                     match=match,
                     lane_dict=lane_dict, synergy=synergy, counterpick1vs1=counterpick1vs1,
-                    over35_dict=over35_dict, counterpick1vs2=counterpick1vs2, counterpick1vs3=counterpick1vs3,
-                    synergy4=synergy4
+                    over40_dict=over40_dict, counterpick1vs2=counterpick1vs2, counterpick1vs3=counterpick1vs3,
+                    synergy4=synergy4, win_loose=win_loose
                 )
-                lane_dict, total_time_kills_dict, synergy, counterpick1vs1, \
-                    over35_dict, total_time_kills_dict_teams, counterpick1vs2, \
-                    counterpick1vs3, synergy4 = result
-
+                # lane_dict, total_time_kills_dict, synergy, counterpick1vs1, \
+                #     over40_dict, total_time_kills_dict_teams, counterpick1vs2, \
+                #     counterpick1vs3, synergy4 = result
+    send_message(win_loose)
     if check:
         used_maps = counter
         return lane_dict, total_time_kills_dict, synergy, counterpick1vs1, \
-                    over35_dict, total_time_kills_dict_teams, counterpick1vs2, \
+                    over40_dict, total_time_kills_dict_teams, counterpick1vs2, \
                     counterpick1vs3, synergy4, used_maps
 
 
@@ -626,11 +625,11 @@ def update_my_protracker(show_prints=True):
     # players_dict = {25907144, 34505203, 72393079, 73401082, 74371974, 76904792, 81475303, 84385735, 86698277, 86738694, 87231335, 89654154, 90137663, 91369376, 91663166, 92487440, 92601861, 92949094, 93526520, 93618577, 93817671, 93845249, 94054712, 94281932, 94738847, 97658618, 99611577, 99983413, 100594231, 100598959, 100616105, 101325470, 101356886, 101446572, 101695162, 103126502, 103802963, 104185879, 104334048, 104758571, 105920571, 106305042, 106863163, 107023378, 108928414, 109757023, 111114687, 112426916, 112531417, 112696656, 113112046, 113152484, 113435203, 113826617, 113926403, 114047775, 114619230, 116837520, 117005046, 117514269, 118078153, 118305301, 118559150, 120613892, 120840516, 121870008, 121885658, 122817493, 123213918, 123717676, 123787715, 124286163, 124936122, 125189164, 126842529, 127565532, 127961011, 128398556, 128958133, 129958758, 130416036, 131303632, 133558180, 134357466, 134659079, 135607261, 135673679, 136003052, 136342177, 136353896, 136535226, 136552946, 136829091, 137092505, 137129583, 137645683, 138237476, 138543123, 139031324, 139301882, 139937922, 140141752, 140178149, 140251702, 140411011, 141153841, 142139318, 142991995, 143278997, 143693439, 144048558, 144174966, 145065875, 145550466, 146711951, 147767183, 148180390, 148520614, 148612029, 149486894, 150960169, 150961567, 150982730, 151669649, 152168157, 152285172, 152455523, 152545459, 152859296, 153836240, 154259887, 154715080, 155447692, 155564702, 156029808, 158072796, 158425391, 158847773, 162126721, 162274034, 162421742, 162641196, 163458082, 164506534, 164749789, 165110440, 165110447, 165390194, 167488455, 167976729, 168028715, 169025618, 169416589, 169516760, 170809075, 170834508, 170896543, 171097887, 171262902, 172099728, 173118561, 173378701, 173476224, 173978074, 175061340, 175350492, 177203952, 177953305, 178692606, 179266369, 179313961, 179684293, 181145703, 181987328, 183378746, 183719386, 184298001, 184620877, 185059559, 185202677, 185590374, 186837494, 187123736, 187949640, 188317959, 188551857, 188711567, 188962397, 190100004, 190789329, 190826739, 191066225, 191116892, 191362875, 191597529, 192981126, 193418507, 193815691, 193884241, 194353328, 194555122, 194720582, 194979527, 195415954, 195522403, 196481318, 196490133, 196493853, 196867605, 196931374, 197737818, 197849259, 197913112, 199162825, 199222238, 199666759, 199833749, 199953095, 201826550, 202217968, 202691456, 206379758, 206642367, 207945924, 209103998, 211287099, 216763662, 217472313, 218231587, 218675899, 219755398, 219950601, 221532774, 223342537, 223382342, 225163338, 228517469, 229311481, 230487729, 235505993, 235549078, 238509899, 241107899, 245373129, 249043309, 249101305, 250353613, 252551173, 252716815, 252737052, 255787643, 255788703, 255882036, 256444993, 257694165, 257921351, 262476000, 263721816, 276102642, 276449590, 279460864, 282317658, 282359850, 285282252, 285319482, 285770518, 286985748, 287966898, 288775038, 292921272, 293731272, 293904640, 294369286, 295697470, 296702734, 301750126, 302214028, 303615577, 306482761, 307173570, 307291170, 308163407, 311360822, 311534425, 312039559, 312436974, 312542697, 315272623, 317880638, 318286721, 319292743, 320017600, 320252024, 321554723, 321580662, 322442240, 323266527, 326327879, 333700720, 335539055, 336937491, 337575662, 339768501, 340421206, 341923347, 343084576, 345509021, 346412363, 349495318, 349569834, 353084091, 353424606, 354160772, 355168766, 356343152, 359536546, 360648679, 363724571, 363758022, 365381070, 369967285, 371876003, 372105535, 373066595, 373667079, 373706861, 375507918, 383361785, 383788462, 383867949, 386383012, 386449078, 388407304, 388905349, 389022189, 391072386, 392006194, 392565237, 394071544, 394879200, 399804216, 399862798, 399920568, 401077718, 401902808, 402583877, 402611144, 405351356, 405499625, 410590632, 411804252, 412413765, 417235485, 418942836, 422748003, 425584844, 445291085, 450493225, 457637739, 458287006, 466792903, 469412275, 475522685, 480412663, 489696354, 835864135, 836056780, 836325393, 838174509, 847565596, 847783992, 850487736, 851178649, 851295431, 857788254, 858106446, 858781190, 860145568, 860264647, 860414909, 872008996, 875096848, 879017980, 881155636, 881332966, 885187787, 886742476, 889201734, 890035185, 891566317, 893135754, 898455820, 909004503, 917164766, 917319178, 919735867, 935495351, 968550668, 972243573, 997587648, 999961232, 1001714951, 1004229172, 1004763817, 1010173059, 1031547092, 1035994292, 1041276674, 1044002267, 1054936816, 1060164724, 1061076986, 1062148399, 1079923091, 1092267175, 1095157609, 1095600726, 1101855381, 1110152099, 1114778241, 1125296112, 1125860552, 1133388674, 1142230743, 1171243748, 1172719712, 1202267677, 1220993352, 1281944743, 1286226756, 1302599438, 1305619263, 1519044617, 1619169848, 1657135701, 1673586483, 1674334778, 1674613696, 1675023758, 1675517497, 1682179459, 1806010772}
     # asyncio.run(get_maps_new(maps_to_save='./count_synergy_10th_2000/1722505765_top600_maps', game_mods=[2, 22],
     #              show_prints=show_prints, ids=players_dict))
-    research_maps(mkdir='count_synergy_10th_2000', maps_to_explore='1722505765_top600_maps',
-                  file_name='winrate_check_output', show_prints=show_prints)
-    # explore_database(mkdir='count_synergy_10th_2000', file_name='1722505765_top600_output',
-    #                  over35=True, counterpick1vs2=True, synergy=True, counterpick1vs1=True, lane=True,
-    #                  counterpick1vs3=True, synergy4=True)
+    # research_maps(mkdir='count_synergy_10th_2000', maps_to_explore='1722505765_top600_maps',
+    #               file_name='winrate_check_output', show_prints=show_prints)
+    explore_database(mkdir='count_synergy_10th_2000', file_name='1722505765_top600_output',
+                     over40=True, counterpick1vs2=True, synergy=True, counterpick1vs1=True, lane=True,
+                     counterpick1vs3=True, synergy4=True)
 
 
 # def update_heroes_data(database_list=None, mkdir=None):

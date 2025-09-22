@@ -5,15 +5,23 @@ import re
 import time
 import requests
 from bs4 import BeautifulSoup
-from id_to_name import translate, name_to_id
 import pytz
 import id_to_name
 import keys
-from id_to_name import pro_teams, translate
-from keys import api_token_5
+# from id_to_name import pro_teams, translate
+# from keys import api_token_5
 from maps_research import update_my_protracker
-
-
+import keys, requests
+def send_message(message):
+    bot_token = f'{keys.Token}'
+    chat_id = f'{keys.Chat_id}'
+    url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
+    payload = {
+        'chat_id': chat_id,
+        'text': message
+    }
+    requests.post(url, json=payload)
+name_to_id = {'abaddon': 102, 'alchemist': 73, 'ancient apparition': 68, 'anti-mage': 1, 'arc warden': 113, 'axe': 2, 'bane': 3, 'batrider': 65, 'beastmaster': 38, 'bloodseeker': 4, 'bounty hunter': 62, 'brewmaster': 78, 'bristleback': 99, 'broodmother': 61, 'centaur warrunner': 96, 'chaos knight': 81, 'chen': 66, 'clinkz': 56, 'clockwerk': 51, 'crystal maiden': 5, 'dark seer': 55, 'dark willow': 119, 'dawnbreaker': 135, 'dazzle': 50, 'death prophet': 43, 'disruptor': 87, 'doom': 69, 'dragon knight': 49, 'drow ranger': 6, 'earth spirit': 107, 'earthshaker': 7, 'elder titan': 103, 'ember spirit': 106, 'enchantress': 58, 'enigma': 33, 'faceless void': 41, 'grimstroke': 121, 'gyrocopter': 72, 'hoodwink': 123, 'huskar': 59, 'invoker': 74, 'io': 91, 'jakiro': 64, 'juggernaut': 8, 'keeper of the light': 90, 'kez': 145, 'kunkka': 23, 'legion commander': 104, 'leshrac': 52, 'lich': 31, 'lifestealer': 54, 'lina': 25, 'lion': 26, 'lone druid': 80, 'luna': 48, 'lycan': 77, 'magnus': 97, 'marci': 136, 'mars': 129, 'medusa': 94, 'meepo': 82, 'mirana': 9, 'monkey king': 114, 'morphling': 10, 'muerta': 138, 'naga siren': 89, "nature's prophet": 53, 'necrophos': 36, 'night stalker': 60, 'nyx assassin': 88, 'ogre magi': 84, 'omniknight': 57, 'oracle': 111, 'outworld destroyer': 76, 'pangolier': 120, 'phantom assassin': 44, 'phantom lancer': 12, 'phoenix': 110, 'primal beast': 137, 'puck': 13, 'pudge': 14, 'pugna': 45, 'queen of pain': 39, 'razor': 15, 'riki': 32, 'ring master': 131, 'ringmaster': 131, 'rubick': 86, 'sand king': 16, 'shadow demon': 79, 'shadow fiend': 11, 'shadow shaman': 27, 'silencer': 75, 'skywrath mage': 101, 'slardar': 28, 'slark': 93, 'snapfire': 128, 'sniper': 35, 'spectre': 67, 'spirit breaker': 71, 'storm spirit': 17, 'sven': 18, 'techies': 105, 'templar assassin': 46, 'terrorblade': 109, 'tidehunter': 29, 'timbersaw': 98, 'tinker': 34, 'tiny': 19, 'treant protector': 83, 'troll warlord': 95, 'tusk': 100, 'underlord': 108, 'undying': 85, 'ursa': 70, 'vengeful spirit': 20, 'venomancer': 40, 'viper': 47, 'visage': 92, 'void spirit': 126, 'warlock': 37, 'weaver': 63, 'windranger': 21, 'winter wyvern': 112, 'witch doctor': 30, 'wraith king': 42, 'zeus': 22}
 
 def get_team_names(soup):
     tags_block = soup.find('div', class_='plus__stats-details desktop-none')
@@ -81,7 +89,7 @@ def get_team_positions(url):
 
         return radiant_heroes_and_pos, dire_heroes_and_pos
     else:
-        print('нету live матчей')
+        print('РЅРµС‚Сѓ live РјР°С‚С‡РµР№')
 
 
 
@@ -132,7 +140,7 @@ def get_map_id(match):
         match_name = match['tournament']['name'].lower()
         tier = match['tournament']['tier']
 
-        # Проверка наличия имени в словаре и обновление значения tier
+        # РџСЂРѕРІРµСЂРєР° РЅР°Р»РёС‡РёСЏ РёРјРµРЅРё РІ СЃР»РѕРІР°СЂРµ Рё РѕР±РЅРѕРІР»РµРЅРёРµ Р·РЅР°С‡РµРЅРёСЏ tier
         for name in dic:
             if name in match_name:
                 tier = dic[name]
@@ -209,48 +217,13 @@ def clean_up(inp, length=0):
         return inp
 
 
-def send_message(message):
-    bot_token = f'{keys.Token}'
-    chat_id = f'{keys.Chat_id}'
-    url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
-    payload = {
-        'chat_id': chat_id,
-        'text': message
-    }
-    requests.post(url, json=payload)
 
 
-def str_to_json(input_data):
-    text = input_data.replace(':', '":').replace('#', '').replace('{', '{"')
-    data = re.sub(r",(?=[a-zA-Z])", ',"', text)
-    data = re.sub(r'\.(\d{2})(\d{2})', r'\1.\2', data, flags=re.MULTILINE)
-    data = re.sub(r'\.(\d{2})(\d1)', r'\1.\2', data, flags=re.MULTILINE)
-    data = re.sub(r':0(?=[0-9])', ':', data)
-    data = re.sub(r'[\x00-\x1F]+', '', data)
-
-    def multiply_by_10(match):
-        number = int(match.group(1))
-        return ':' + str(number * 10) + ','
-
-    data = re.sub(r':\.(\d1),', multiply_by_10, data).replace(':.', ':')
-    data = re.sub(r':(0)([0-9])', r':\2', data, flags=re.MULTILINE)
-    return data
 
 
-def fetch_hero_data(hero_name):
-    hero_url = hero_name.replace(' ', '%20')
-    url = f'https://dota2protracker.com/hero/{hero_url}'
-    response = requests.get(url)
-    if response.status_code != 200:
-        print(f'Error fetching data for {hero_name}: {url}')
-        return None
-    soup = BeautifulSoup(response.text, 'lxml')
-    stats = soup.find_all('script')
-    matchups = re.search(r'matchups:(\[.*?])', stats[5].text, re.DOTALL)
-    synergies = re.search(r'synergies:(\[.*?])', stats[5].text, re.DOTALL)
-    matchups = json.loads(str_to_json(matchups.group(1)).strip())
-    synergies = json.loads(str_to_json(synergies.group(1)).strip())
-    return matchups, synergies
+
+
+
 
 
 def process_synergy_data(position, synergies, team_positions):
@@ -281,234 +254,50 @@ def process_matchup_data(position, matchups, opposing_team_positions):
     return wr_list
 
 
-def dota2protracker_old(radiant_heroes_and_positions, dire_heroes_and_positions, synergy=None,
-                        counterpick=None):
-    start_time = time.time()
-    radiant_pos1_with_team, radiant_pos2_with_team, radiant_pos3_with_team, dire_pos1_with_team, \
-        dire_pos2_with_team, dire_pos3_with_team = [], [], [], [], [], []
-    radiant_wr_with, dire_wr_with, radiant_pos3_vs_team, dire_pos3_vs_team, radiant_wr_against, \
-        dire_wr_against, radiant_pos1_vs_team, dire_pos1_vs_team, radiant_pos2_vs_team, dire_pos2_vs_team, \
-        radiant_pos4_with_pos5, dire_pos4_with_pos5 = [], [], [], [], [], [], [], [], [], [], None, None
-    for position in radiant_heroes_and_positions:
-        if position != 'pos5':
-            hero_url = radiant_heroes_and_positions[position]['hero_name'].replace(' ', '%20')
-            url = f'https://dota2protracker.com/hero/{hero_url}'
-            response = requests.get(url)
-            if response.status_code != 200:
-                print(f'Ошибка dota2protracker\n{url}')
-            soup = BeautifulSoup(response.text, 'lxml')
-            stats = soup.find_all('script')
-            matchups = re.search(r'matchups:(\[.*?])', stats[5].text, re.DOTALL)
-            synergies = re.search(r'synergies:(\[.*?])', stats[5].text, re.DOTALL)
-            matchups, synergies = json.loads(str_to_json(matchups.group(1)).strip()), json.loads(
-                str_to_json(synergies.group(1)).strip())
-            for synergy in synergies:
-                tracker_position = synergy['position'].replace('pos ', 'pos')
-                data_pos = synergy['other_pos'].replace('pos ', 'pos')
-                data_hero = synergy['other_hero']
-                data_wr = synergy['win_rate']
-                if synergy['num_matches'] >= 15:
-                    # Extract the values of 'data-hero', 'data-wr', and 'data-pos' attributes
-                    if position == 'pos1':
-                        if 'pos2' in data_pos and data_hero == radiant_heroes_and_positions['pos2'][
-                                'hero_name'] and tracker_position == position:
-                            radiant_pos1_with_team.append(data_wr)
-                        elif 'pos3' in data_pos and data_hero == radiant_heroes_and_positions['pos3'][
-                                'hero_name'] and tracker_position == position:
-                            radiant_pos1_with_team.append(data_wr)
-                        elif 'pos4' in data_pos and data_hero == radiant_heroes_and_positions['pos4'][
-                                'hero_name'] and tracker_position == position:
-                            radiant_pos1_with_team.append(data_wr)
-                        elif 'pos5' in data_pos and data_hero == radiant_heroes_and_positions['pos5'][
-                                'hero_name'] and tracker_position == position:
-                            radiant_pos1_with_team.append(data_wr)
 
-                    if position == 'pos2':
-                        if 'pos3' in data_pos and data_hero == radiant_heroes_and_positions['pos3'][
-                                'hero_name'] and tracker_position == position:
-                            radiant_pos2_with_team.append(data_wr)
-                        elif 'pos4' in data_pos and data_hero == radiant_heroes_and_positions['pos4'][
-                                'hero_name'] and tracker_position == position:
-                            radiant_pos2_with_team.append(data_wr)
-                        elif 'pos5' in data_pos and data_hero == radiant_heroes_and_positions['pos5'][
-                                'hero_name'] and tracker_position == position:
-                            radiant_pos2_with_team.append(data_wr)
-
-                    if position == 'pos3':
-                        if 'pos4' in data_pos and data_hero == radiant_heroes_and_positions['pos4'][
-                                'hero_name'] and tracker_position == position:
-                            radiant_pos3_with_team.append(data_wr)
-                        elif 'pos5' in data_pos and data_hero == radiant_heroes_and_positions['pos5'][
-                                'hero_name'] and tracker_position == position:
-                            radiant_pos3_with_team.append(data_wr)
-                    if position == 'pos4':
-                        if radiant_pos4_with_pos5 is not None:
-                            break
-                        if 'pos5' in data_pos and data_hero == radiant_heroes_and_positions['pos5'][
-                                'hero_name'] and tracker_position == position:
-                            radiant_pos4_with_pos5 = data_wr
-    if radiant_pos4_with_pos5 is not None:
-        radiant_wr_with += [radiant_pos4_with_pos5]
-    radiant_wr_with += radiant_pos3_with_team + radiant_pos2_with_team + radiant_pos1_with_team
-    for position in dire_heroes_and_positions:
-
-        if position != 'pos5':
-            hero_url = dire_heroes_and_positions[position]['hero_name'].replace(' ', '%20')
-            url = f'https://dota2protracker.com/hero/{hero_url}'
-            response = requests.get(url)
-            if response.status_code != 200:
-                print(f'Ошибка dota2protracker\n{url}')
-            soup = BeautifulSoup(response.text, 'lxml')
-            stats = soup.find_all('script')
-            matchups = re.search(r'matchups:(\[.*?])', stats[5].text, re.DOTALL)
-            synergies = re.search(r'synergies:(\[.*?])', stats[5].text, re.DOTALL)
-            matchups, synergies = json.loads(str_to_json(matchups.group(1)).strip()), json.loads(
-                str_to_json(synergies.group(1)).strip())
-            for synergy in synergies:
-                tracker_position = synergy['position'].replace('pos ', 'pos')
-                data_pos = synergy['other_pos'].replace('pos ', 'pos')
-                data_hero = synergy['other_hero']
-                data_wr = synergy['win_rate']
-                if synergy['num_matches'] >= 15:
-                    if position == 'pos1':
-                        if 'pos2' in data_pos and data_hero == dire_heroes_and_positions['pos2'][
-                                'hero_name'] and tracker_position == position:
-                            dire_pos1_with_team.append(data_wr)
-                        elif 'pos3' in data_pos and data_hero == dire_heroes_and_positions['pos3'][
-                                'hero_name'] and tracker_position == position:
-                            dire_pos1_with_team.append(data_wr)
-                        elif 'pos4' in data_pos and data_hero == dire_heroes_and_positions['pos4'][
-                                'hero_name'] and tracker_position == position:
-                            dire_pos1_with_team.append(data_wr)
-                        elif 'pos5' in data_pos and data_hero == dire_heroes_and_positions['pos5'][
-                                'hero_name'] and tracker_position == position:
-                            dire_pos1_with_team.append(data_wr)
-
-                    if position == 'pos2':
-                        if 'pos3' in data_pos and data_hero == dire_heroes_and_positions['pos3'][
-                                'hero_name'] and tracker_position == position:
-                            dire_pos2_with_team.append(data_wr)
-                        elif 'pos4' in data_pos and data_hero == dire_heroes_and_positions['pos4'][
-                                'hero_name'] and tracker_position == position:
-                            dire_pos2_with_team.append(data_wr)
-                        elif 'pos5' in data_pos and data_hero == dire_heroes_and_positions['pos5'][
-                                'hero_name'] and tracker_position == position:
-                            dire_pos2_with_team.append(data_wr)
-
-                    if position == 'pos3':
-                        if 'pos4' in data_pos and data_hero == dire_heroes_and_positions['pos4'][
-                                'hero_name'] and tracker_position == position:
-                            dire_pos3_with_team.append(data_wr)
-                        elif 'pos5' in data_pos and data_hero == dire_heroes_and_positions['pos5'][
-                                'hero_name'] and tracker_position == position:
-                            dire_pos3_with_team.append(data_wr)
-                    if position == 'pos4':
-                        if dire_pos4_with_pos5 is not None:
-                            break
-                        if 'pos5' in data_pos and data_hero == dire_heroes_and_positions['pos5'][
-                                'hero_name'] and tracker_position == position:
-                            dire_pos4_with_pos5 = data_wr
-    if dire_pos4_with_pos5 is not None:
-        dire_wr_with += [dire_pos4_with_pos5]
-    dire_wr_with += dire_pos3_with_team + dire_pos2_with_team + dire_pos1_with_team
-    for position in radiant_heroes_and_positions:
-
-        hero_url = radiant_heroes_and_positions[position]['hero_name'].replace(' ', '%20')
-        url = f'https://dota2protracker.com/hero/{hero_url}'
-        response = requests.get(url)
-        if response.status_code != 200:
-            print(f'Ошибка dota2protracker\n{url}')
-        soup = BeautifulSoup(response.text, 'lxml')
-        stats = soup.find_all('script')
-        matchups = re.search(r'matchups:(\[.*?])', stats[5].text, re.DOTALL)
-        synergies = re.search(r'synergies:(\[.*?])', stats[5].text, re.DOTALL)
-        matchups, synergies = json.loads(str_to_json(matchups.group(1)).strip()), json.loads(
-            str_to_json(synergies.group(1)).strip())
-        for matchup in matchups:
-            tracker_position = matchup['position'].replace('pos ', 'pos')
-            data_pos = matchup['other_pos'].replace('pos ', 'pos')
-            data_hero = matchup['other_hero']
-            data_wr = matchup['win_rate']
-            if matchup['num_matches'] >= 15 and data_pos in radiant_heroes_and_positions:
-                if position == 'pos1' and tracker_position == 'pos1' and data_hero == \
-                        dire_heroes_and_positions[data_pos]['hero_name']:
-                    radiant_pos1_vs_team.append(data_wr)
-                elif position == 'pos2' and tracker_position == 'pos2' and data_hero == \
-                        dire_heroes_and_positions[data_pos]['hero_name']:
-                    radiant_pos2_vs_team.append(data_wr)
-                elif position == 'pos3' and tracker_position == 'pos3' and data_hero == \
-                        dire_heroes_and_positions[data_pos]['hero_name']:
-                    radiant_pos3_vs_team.append(data_wr)
-                elif position == 'pos4' and tracker_position == 'pos4' and data_hero == \
-                        dire_heroes_and_positions[data_pos]['hero_name']:
-                    radiant_wr_against.append(data_wr)
-                elif position == 'pos5' and tracker_position == 'pos5' and data_hero == \
-                        dire_heroes_and_positions[data_pos]['hero_name']:
-                    radiant_wr_against.append(data_wr)
-
-                if 'pos1' in data_pos and data_hero == dire_heroes_and_positions['pos1'][
-                        'hero_name'] and tracker_position == position:
-                    dire_pos1_vs_team.append(100 - data_wr)
-                elif 'pos2' in data_pos and data_hero == dire_heroes_and_positions['pos2'][
-                        'hero_name'] and tracker_position == position:
-                    dire_pos2_vs_team.append(100 - data_wr)
-                elif 'pos3' in data_pos and data_hero == dire_heroes_and_positions['pos3'][
-                        'hero_name'] and tracker_position == position:
-                    dire_pos3_vs_team.append(100 - data_wr)
-    radiant_wr_against += radiant_pos3_vs_team + radiant_pos2_vs_team + radiant_pos1_vs_team
-    dire_wr_against += dire_pos3_vs_team + dire_pos2_vs_team + dire_pos1_vs_team
-    if len(radiant_wr_with) > 0 and len(dire_wr_with) > 0:
-        synergy = round((sum(radiant_wr_with) / len(radiant_wr_with)) - (sum(dire_wr_with) / len(dire_wr_with)), 2)
-    if len(radiant_wr_against) > 0:
-        counterpick = round((sum(radiant_wr_against) / len(radiant_wr_against)) - (
-                sum(dire_wr_against) / len(dire_wr_against)), 2)
-    end_time = time.time()
-    execution_time = end_time - start_time
-    print(f'dota2protracker_old time: {execution_time}s')
-    return f'\ndota2protracker_old:\nSynergy: {synergy}\nCounterpick: {counterpick}\n'
 
 
 def format_output_dict(output_dict):
-    over35_trio = output_dict.get('over35_trio', None)
-    over35_1vs2 = output_dict.get('over35_1vs2', None)
-    over35_duo = output_dict.get('over35_duo', None)
-    over35_duo_counterpick = output_dict.get('over35_duo_counterpick', None)
+    over40_trio = output_dict.get('over40_trio', None)
+    over40_1vs2 = output_dict.get('over40_1vs2', None)
+    over40_duo = output_dict.get('over40_duo', None)
+    over40_duo_counterpick = output_dict.get('over40_duo_counterpick', None)
     radiant_counterpick_1vs2 = output_dict.get('radiant_counterpick_1vs2', None)
     duo_diff = output_dict.get('duo_diff', None)
     radiant_synergy_trio = output_dict.get('radiant_synergy_trio', None)
     synergy_duo = output_dict.get('synergy_duo', None)
     pos1_matchup = output_dict.get('pos1_matchup', None)
     support_dif = output_dict.get('support_dif', None)
-    over35_solo = output_dict.get('support_dif', None)
-    if over35_solo and over35_solo < 3 and over35_solo > -3:
-        over35_trio = None
-    if over35_trio and over35_trio < 7 and over35_trio > -7:
-        over35_trio = None
-    if over35_1vs2 and over35_1vs2 > -8 and over35_1vs2 < 8:
-        over35_1vs2 = None
-    if over35_duo and over35_duo < 5 and over35_duo > -5:
-        over35_duo = None
-    if over35_duo_counterpick and over35_duo_counterpick < 6 and over35_duo_counterpick > -6:
-        over35_duo_counterpick = None
-    if radiant_counterpick_1vs2 and radiant_counterpick_1vs2 < 6 and radiant_counterpick_1vs2 > -6:
+    over40_solo = output_dict.get('support_dif', None)
+    if over40_solo and 3 > over40_solo > -3:
+        over40_trio = None
+    if over40_trio and over40_trio < 7 and over40_trio > -7:
+        over40_trio = None
+    if over40_1vs2 and -8 < over40_1vs2 < 8:
+        over40_1vs2 = None
+    if over40_duo and 5 > over40_duo > -5:
+        over40_duo = None
+    if over40_duo_counterpick and 6 > over40_duo_counterpick > -6:
+        over40_duo_counterpick = None
+    if radiant_counterpick_1vs2 and 6 > radiant_counterpick_1vs2 > -6:
         radiant_counterpick_1vs2 = None
-    if duo_diff and duo_diff > -8 and duo_diff < 8:
+    if duo_diff and -8 < duo_diff < 8:
         duo_diff = None
-    if radiant_synergy_trio and radiant_synergy_trio < 5 and radiant_synergy_trio > -5:
+    if radiant_synergy_trio and 5 > radiant_synergy_trio > -5:
         radiant_synergy_trio = None
-    if synergy_duo and synergy_duo > -13 and synergy_duo < 13:
+    if synergy_duo and -13 < synergy_duo < 13:
         synergy_duo = None
-    if pos1_matchup and pos1_matchup > -21 and pos1_matchup < 21:
+    if pos1_matchup and -21 < pos1_matchup < 21:
         pos1_matchup = None
-    if support_dif and support_dif > -14 and support_dif < 14:
+    if support_dif and -14 < support_dif < 14:
         support_dif = None
     if any(i is not None for i in [support_dif, pos1_matchup, synergy_duo, radiant_synergy_trio, duo_diff,
-            radiant_counterpick_1vs2, over35_duo_counterpick, over35_duo, over35_1vs2, over35_trio]):
+            radiant_counterpick_1vs2, over40_duo_counterpick, over40_duo, over40_1vs2, over40_trio]):
         if None not in [radiant_synergy_trio, radiant_counterpick_1vs2]:
             if (radiant_synergy_trio > 0 and radiant_counterpick_1vs2 > 0) or (radiant_counterpick_1vs2 < 0 and radiant_synergy_trio < 0):
                 return True
-        if None not in [over35_1vs2, over35_trio]:
-            if (over35_1vs2 > 0 and over35_trio > 0) or (over35_1vs2 < 0 and over35_trio < 0):
+        if None not in [over40_1vs2, over40_trio]:
+            if (over40_1vs2 > 0 and over40_trio > 0) or (over40_1vs2 < 0 and over40_trio < 0):
                 return True
         else:
             return True
@@ -603,55 +392,55 @@ def some_func():
         json.dump(sorted_data, f, indent=4)
 
 
-def get_pro_players_ids(counter=0):
-    bottle, pro_ids = set(), set()
-    for name in pro_teams:
-        counter += 1
-        print(f'{counter}/{len(pro_teams)}')
-        bottle.add(pro_teams[name]['id'])
-        if len(bottle) == 5 or counter == len(pro_teams):
-            query = '''
-                    {teams(teamIds: %s){
-                        members{
-                            lastMatchDateTime
-                        steamAccount{
-                          id
-                          name
-
-                        }
-                        team {
-                          id
-                          name
-                        }
-                      }
-                    }}''' % list(bottle)
-            headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "Accept-Encoding": "gzip, deflate, br, zstd",
-                "Origin": "https://api.stratz.com",
-                "Referer": "https://api.stratz.com/graphiql",
-                "User-Agent": "STRATZ_API",
-                "Authorization": f"Bearer {api_token_5}"
-            }
-            response = requests.post('https://api.stratz.com/graphql', json={"query": query}, headers=headers)
-            teams = json.loads(response.text)['data']['teams']
-            for team in teams:
-                last_date = 0
-                for member in team['members']:
-                    if last_date < member['lastMatchDateTime']:
-                        last_date = member['lastMatchDateTime']
-                for member in team['members']:
-                    if member['lastMatchDateTime'] == last_date:
-                        pro_ids.add(member['steamAccount']['id'])
-            bottle = set()
-    return pro_ids
+# def get_pro_players_ids(counter=0):
+#     bottle, pro_ids = set(), set()
+#     for name in pro_teams:
+#         counter += 1
+#         print(f'{counter}/{len(pro_teams)}')
+#         bottle.add(pro_teams[name]['id'])
+#         if len(bottle) == 5 or counter == len(pro_teams):
+#             query = '''
+#                     {teams(teamIds: %s){
+#                         members{
+#                             lastMatchDateTime
+#                         steamAccount{
+#                           id
+#                           name
+#
+#                         }
+#                         team {
+#                           id
+#                           name
+#                         }
+#                       }
+#                     }}''' % list(bottle)
+#             headers = {
+#                 "Content-Type": "application/json",
+#                 "Accept": "application/json",
+#                 "Accept-Encoding": "gzip, deflate, br, zstd",
+#                 "Origin": "https://api.stratz.com",
+#                 "Referer": "https://api.stratz.com/graphiql",
+#                 "User-Agent": "STRATZ_API",
+#                 "Authorization": f"Bearer {api_token_5}"
+#             }
+#             response = requests.post('https://api.stratz.com/graphql', json={"query": query}, headers=headers)
+#             teams = json.loads(response.text)['data']['teams']
+#             for team in teams:
+#                 last_date = 0
+#                 for member in team['members']:
+#                     if last_date < member['lastMatchDateTime']:
+#                         last_date = member['lastMatchDateTime']
+#                 for member in team['members']:
+#                     if member['lastMatchDateTime'] == last_date:
+#                         pro_ids.add(member['steamAccount']['id'])
+#             bottle = set()
+#     return pro_ids
 
 
 def merge_dicts(dict1, dict2):
     """
-    Функция для объединения двух словарей. Если ключи пересекаются, значения объединяются.
-    Если ключ уникален, он просто добавляется.
+    Р¤СѓРЅРєС†РёСЏ РґР»СЏ РѕР±СЉРµРґРёРЅРµРЅРёСЏ РґРІСѓС… СЃР»РѕРІР°СЂРµР№. Р•СЃР»Рё РєР»СЋС‡Рё РїРµСЂРµСЃРµРєР°СЋС‚СЃСЏ, Р·РЅР°С‡РµРЅРёСЏ РѕР±СЉРµРґРёРЅСЏСЋС‚СЃСЏ.
+    Р•СЃР»Рё РєР»СЋС‡ СѓРЅРёРєР°Р»РµРЅ, РѕРЅ РїСЂРѕСЃС‚Рѕ РґРѕР±Р°РІР»СЏРµС‚СЃСЏ.
     """
     for key, value in dict2.items():
         if key in dict1:
@@ -680,7 +469,7 @@ def synergy_team(heroes_and_pos, output, mkdir, data):
                 continue
             key = f"{hero_id + pos}_with_{second_hero_id + second_pos}"
             foo = data.get(key, [])
-            if len(foo) >= 30:
+            if len(foo) >= 15:
                 combo = tuple(sorted([hero_id, second_hero_id]))
                 if combo not in unique_combinations:
                     unique_combinations.add(combo)
@@ -695,7 +484,7 @@ def synergy_team(heroes_and_pos, output, mkdir, data):
                 third_hero_id = str(heroes_and_pos[third_pos]['hero_id'])
                 key = f"{hero_id + pos},{second_hero_id + second_pos},{third_hero_id + third_pos}"
                 foo = data.get(key, [])
-                if len(foo) >= 15:
+                if len(foo) >= 10:
                     combo = tuple(sorted([hero_id, second_hero_id, third_hero_id]))
                     if combo not in unique_combinations:
                         unique_combinations.add(combo)
@@ -712,11 +501,11 @@ def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, dat
             enemy_hero_id = str(heroes_and_pos_opposite[enemy_pos]['hero_id'])
             key = f"{hero_id}{pos}_vs_{enemy_hero_id}{enemy_pos}"
             foo = data1vs1.get(key, {})
-            if len(foo) >= 30:
+            if len(foo) >= 15:
                 value = foo.count(1) / (foo.count(1) + foo.count(0))
                 if enemy_pos == 'pos1' and pos == 'pos1' and mkdir == 'radiant_counterpick':
                     output['pos1_matchup']=value
-                output[f'{mkdir}_1vs1'].append(value)
+                output[f'{mkdir}_1vs1'].setdefault(pos, []).append(value)
             for second_enemy_pos in heroes_and_pos_opposite:
                 second_enemy_id = str(heroes_and_pos_opposite[second_enemy_pos]['hero_id'])
                 if enemy_hero_id == second_enemy_id:
@@ -729,8 +518,7 @@ def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, dat
                     if combo not in unique_combinations:
                         unique_combinations.add(combo)
                         value = foo.count(1) / (foo.count(1) + foo.count(0))
-                        if pos in ['pos4', 'pos5']: continue
-                        output[f'{mkdir}_1vs2'].append(value)
+                        output[f'{mkdir}_1vs2'].setdefault(pos, []).append(value)
                 # for third_enemy_pos in heroes_and_pos_opposite:
                 #     third_enemy_id = str(heroes_and_pos_opposite[third_enemy_pos]['hero_id'])
                 #     if third_enemy_id in [enemy_hero_id, second_enemy_id]:
@@ -745,11 +533,39 @@ def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, dat
                 #             value = foo.count(1) / (foo.count(1) + foo.count(0))
                 #             output[f'{mkdir}_1vs3'].append(value)
 
+
+
+def get_diff(radiant, dire, _1vs2=False):
+    if None not in [radiant, dire]:
+        if not _1vs2:
+            if any(len(foo) > 3 for foo in [radiant, dire]):
+                if len(radiant) > 2 and len(dire) > 2:
+                    return round((sum(radiant) / len(radiant) - sum(dire) / len(dire)) * 100)
+            return  # РЅРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РґР°РЅРЅС‹С…
+        weights = {'pos1': 2.5, 'pos2': 2.0, 'pos3': 1.8, 'pos4': 1.0, 'pos5': 1.0}
+
+        def wmean(side):
+            num, den = 0.0, 0.0
+            for pos, w in weights.items():
+                vals = side.get(pos, [])
+                if vals:
+                    m = sum(vals) / len(vals)
+                    num += m * w
+                    den += w
+            return (num / den) if den else None
+
+        r = wmean(radiant)
+        d = wmean(dire)
+        if r is not None and d is not None:
+            return round((r - d) * 100)
+        # РёРЅР°С‡Рµ РґР°РЅРЅС‹С… РЅРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ
+
+
 def synergy_and_counterpick_new(radiant_heroes_and_pos, dire_heroes_and_pos, synergy_data, data1vs2, data1vs1, data1vs3):
     synergy_duo, duo_diff, pos1_matchup, pos1_matchup_out, support_dif = None, None, None, None, None
     output = {'radiant_synergy_duo': [], 'dire_synergy_duo': [], 'radiant_synergy_trio': [], 'dire_synergy_trio': [],
-              'radiant_counterpick_1vs1': [], 'dire_counterpick_1vs1': [], 'radiant_counterpick_1vs2': [],
-              'dire_counterpick_1vs2': [], 'pos1_matchup': None, 'radiant_synergy_support_duo': None,
+              'radiant_counterpick_1vs1': {}, 'dire_counterpick_1vs1': {}, 'radiant_counterpick_1vs2': {},
+              'dire_counterpick_1vs2': {}, 'pos1_matchup': None, 'radiant_synergy_support_duo': None,
               'dire_synergy_support_duo': None}
 
     synergy_team(radiant_heroes_and_pos, output, 'radiant_synergy', synergy_data)
@@ -761,20 +577,27 @@ def synergy_and_counterpick_new(radiant_heroes_and_pos, dire_heroes_and_pos, syn
     counterpick_team(heroes_and_pos=dire_heroes_and_pos, heroes_and_pos_opposite=radiant_heroes_and_pos,
                      output=output, mkdir='dire_counterpick', data1vs2=data1vs2,
                      data1vs1=data1vs1, data1vs3=data1vs3)
-    def get_diff(radiant, dire):
-        if None not in [radiant, dire]:
-            if any(len(foo) > 3 for foo in [radiant, dire]):
-                if len(radiant) > 2 and len(dire) > 2:
-                    return round((sum(radiant)/len(radiant) - sum(dire)/len(dire))*100)
 
-    radiant_counterpick_1vs2 = get_diff(output['radiant_counterpick_1vs2'], output['dire_counterpick_1vs2'])
+    radiant_counterpick_1vs2 = None
+    if all(len(output['radiant_counterpick_1vs2'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
+            all(len(output['dire_counterpick_1vs2'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']):
+        radiant_counterpick_1vs2 = get_diff(output['radiant_counterpick_1vs2'],
+                                            output['dire_counterpick_1vs2'], _1vs2=True)
+    if all(len(output['radiant_counterpick_1vs1'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
+            all(len(output['dire_counterpick_1vs1'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']):
+        duo_diff = get_diff(output['radiant_counterpick_1vs1'],
+                                            output['dire_counterpick_1vs1'], _1vs2=True)
     radiant_synergy_trio = get_diff(output['radiant_synergy_trio'], output['dire_synergy_trio'])
-    duo_diff = get_diff(output['radiant_counterpick_1vs1'], output['dire_counterpick_1vs1'])
     synergy_duo = get_diff(output['radiant_synergy_duo'], output['dire_synergy_duo'])
+
+    pos1_matchup = None
     if output['pos1_matchup']:
         pos1_matchup = round(output['pos1_matchup'] * 100 - 50)
+
+    support_dif = None
     if all(i is not None for i in [output['radiant_synergy_support_duo'], output['dire_synergy_support_duo']]):
-        support_dif = round((output['radiant_synergy_support_duo'] - output['dire_synergy_support_duo'])*100)
+        support_dif = round((output['radiant_synergy_support_duo'] - output['dire_synergy_support_duo']) * 100)
+
     return synergy_duo, radiant_synergy_trio, duo_diff, radiant_counterpick_1vs2, pos1_matchup, support_dif
 
 
@@ -792,25 +615,37 @@ def get_ordinar_results(radiant, dire):
     if all(foo is not None and len(foo) > 2 for foo in (radiant, dire)):
         return round((sum(radiant)/len(radiant) - sum(dire)/len(dire))*100)
 
-def calculate_over35(radiant_heroes_and_pos, dire_heroes_and_pos, data, over35_duo=None, over35_duo_counterpick=None, over35_solo=None):
-    radiant_counterpick_duo, r_winrate_1vs2 =\
-        over35_counter(radiant_heroes_and_pos, dire_heroes_and_pos, data)
-    dire_counterpick_duo, d_winrate_1vs2 =\
-        over35_counter(dire_heroes_and_pos, radiant_heroes_and_pos, data)
-    radiant_over35_duo, r_solo, r_trio = avg_over35(radiant_heroes_and_pos, data)
-    dire_over35_duo, d_solo, d_trio = avg_over35(dire_heroes_and_pos, data)
+def calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, data, over40_1vs2=None, over40_duo_synergy=None,
+                     over40_duo=None, over40_duo_counterpick=None, over40_solo=None, over40_trio=None):
+    output = {}
+    over40_counter(radiant_heroes_and_pos, dire_heroes_and_pos, data, output, mkdir='radiant')
+    over40_counter(dire_heroes_and_pos, radiant_heroes_and_pos, data, output, mkdir='dire')
+    synergy_over40(radiant_heroes_and_pos, data, output, mkdir='radiant')
+    synergy_over40(dire_heroes_and_pos, data, output, mkdir='dire')
+    if all(len(output['radiant_winrate1vs1'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
+            all(len(output['dire_winrate1vs1'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']):
+        over40_duo_counterpick = get_diff(output['radiant_winrate1vs1'],
+                                            output['dire_winrate1vs1'], _1vs2=True)
+    if all(i in output for i in['radiant_winrate1vs2', 'dire_winrate1vs2']) and all(len(output['radiant_winrate1vs2'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
+            all(len(output['dire_winrate1vs2'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']):
+        over40_1vs2 = get_diff(output['radiant_winrate1vs2'], output['dire_winrate1vs2'], _1vs2=True)
+    if all(len(output['radiant_over40_solo'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
+            all(len(output['dire_over40_solo'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']):
+        over40_solo = get_diff(output['radiant_over40_solo'], output['dire_over40_solo'], _1vs2=True)
+    if all(len(output['radiant_over40_solo'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
+            all(len(output['dire_over40_solo'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']):
+        over40_solo = get_diff(output['radiant_over40_solo'], output['dire_over40_solo'], _1vs2=True)
+    if all(len(output['radiant_over40_duo_synergy'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
+            all(len(output['dire_over40_duo_synergy'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']):
+        over40_duo_synergy = get_diff(output['radiant_over40_duo_synergy'], output['dire_over40_duo_synergy'], _1vs2=True)
+    if all(i in output for i in ['radiant_over40_trio', 'dire_over40_trio']):
+        over40_trio = get_ordinar_results(radiant=output['radiant_over40_trio'], dire=output['dire_over40_trio'])
+    return over40_duo, over40_duo_counterpick, over40_1vs2, over40_solo, over40_duo_synergy, over40_trio
 
-    over35_solo = get_ordinar_results(radiant=r_solo, dire=d_solo)
-    over35_trio = get_ordinar_results(radiant=r_trio, dire=d_trio)
-    over35_1vs2 = get_ordinar_results(radiant=r_winrate_1vs2, dire=d_winrate_1vs2)
-    over35_duo = get_ordinar_results(radiant=radiant_over35_duo, dire=dire_over35_duo)
-    over35_duo_counterpick = get_ordinar_results(radiant=radiant_counterpick_duo, dire=dire_counterpick_duo)
-    return over35_duo, over35_duo_counterpick, over35_1vs2, over35_solo, over35_trio
 
-
-def over35_counter(heroes_and_pos, heroes_and_pos_opposite, data):
+def over40_counter(heroes_and_pos, heroes_and_pos_opposite, data, output, mkdir):
     unique_combinations = set()
-    winrate_1vs1, winrate1vs2_cores, winrate1vs2_sups, winrate1vs2 = [], [], [], []
+    winrate_1vs1, winrate1vs2_cores, winrate1vs2_sups, winrate1vs2 = {}, {}, {}, {}
     for pos in heroes_and_pos:
         # if pos in ['pos4', 'pos5']: continue
         hero_id = str(heroes_and_pos[pos]['hero_id'])
@@ -818,9 +653,9 @@ def over35_counter(heroes_and_pos, heroes_and_pos_opposite, data):
             enemy_hero_id = str(heroes_and_pos_opposite[enemy_pos]['hero_id'])
             key = f"{hero_id}{pos}_vs_{enemy_hero_id}{enemy_pos}"
             foo = data.get(key, {})
-            if len(foo) >= 20:
+            if len(foo) >= 10:
                 value = foo.count(1) / (foo.count(1) + foo.count(0))
-                winrate_1vs1.append(value)
+                output.setdefault(f'{mkdir}_winrate1vs1', {}).setdefault(pos, []).append(value)
             for second_enemy_pos in heroes_and_pos_opposite:
                 second_enemy_id = str(heroes_and_pos_opposite[second_enemy_pos]['hero_id'])
                 if enemy_hero_id == second_enemy_id:
@@ -829,12 +664,12 @@ def over35_counter(heroes_and_pos, heroes_and_pos_opposite, data):
                 key = f"{hero_id}{pos}_vs_{enemy_hero_id}{enemy_pos},{second_enemy_id}{second_enemy_pos}"
                 foo = data.get(key, {})
 
-                if len(foo) >= 15:
+                if len(foo) >= 10:
                     combo = (hero_id,) + tuple(sorted([enemy_hero_id, second_enemy_id]))
                     if combo not in unique_combinations:
                         unique_combinations.add(combo)
                         value = foo.count(1) / (foo.count(1) + foo.count(0))
-                        winrate1vs2.append(value)
+                        output.setdefault(f'{mkdir}_winrate1vs2', {}).setdefault(pos, []).append(value)
 
     return winrate_1vs1, winrate1vs2
 
@@ -891,10 +726,45 @@ def check_bad_map(match, maps_data=None, break_flag=False):
         return radiant_heroes_and_pos, dire_heroes_and_pos
 
 
-def proceed_map(radiant_heroes_and_pos, dire_heroes_and_pos, over35_data, synergy_data, lane_data,
+def proceed_map(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data, synergy_data, lane_data,
                 data1vs2, data1vs1, data1vs3, synergy4, radiant_team_name=None, dire_team_name=None,
                 url=None):
-    output_dict = {}
+    output_dict = {'kills_mediana': None, 'time_mediana': None, 'kills_average': None, 'time_average': None,
+                   'over40_duo': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[0],
+                   'over40_duo_counterpick':
+                       (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[1],
+                   'over40_1vs2': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[2],
+                   'over40_solo': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[3],
+                   'over40_duo_synergy': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[4],
+                   'over40_trio': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[5],
+                   'top_message': (calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data))[0],
+                   'bot_message': (calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data))[1],
+                   'mid_message': (calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data))[2],
+                   'synergy_duo': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
+                                                               dire_heroes_and_pos=dire_heroes_and_pos,
+                                                               synergy_data=synergy_data, data1vs2=data1vs2,
+                                                               data1vs1=data1vs1, data1vs3=data1vs3))[0],
+                   'radiant_synergy_trio': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
+                                                                        dire_heroes_and_pos=dire_heroes_and_pos,
+                                                                        synergy_data=synergy_data, data1vs2=data1vs2,
+                                                                        data1vs1=data1vs1, data1vs3=data1vs3))[1],
+                   'duo_diff': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
+                                                            dire_heroes_and_pos=dire_heroes_and_pos,
+                                                            synergy_data=synergy_data, data1vs2=data1vs2,
+                                                            data1vs1=data1vs1, data1vs3=data1vs3))[2],
+                   'radiant_counterpick_1vs2':
+                       (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
+                                                    dire_heroes_and_pos=dire_heroes_and_pos,
+                                                    synergy_data=synergy_data, data1vs2=data1vs2,
+                                                    data1vs1=data1vs1, data1vs3=data1vs3))[3],
+                   'pos1_matchup': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
+                                                                dire_heroes_and_pos=dire_heroes_and_pos,
+                                                                synergy_data=synergy_data, data1vs2=data1vs2,
+                                                                data1vs1=data1vs1, data1vs3=data1vs3))[4],
+                   'support_dif': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
+                                                               dire_heroes_and_pos=dire_heroes_and_pos,
+                                                               synergy_data=synergy_data, data1vs2=data1vs2,
+                                                               data1vs1=data1vs1, data1vs3=data1vs3))[5]}
     # if radiant_team_name is not None:
     #     answer = \
     #         tm_kills_teams(radiant_heroes_and_pos=radiant_heroes_and_pos,
@@ -907,75 +777,65 @@ def proceed_map(radiant_heroes_and_pos, dire_heroes_and_pos, over35_data, synerg
     #     else:
     #         output_dict['kills_mediana'], output_dict['time_mediana'], output_dict['kills_average'],\
     #             output_dict['time_average'] = None, None, None, None
-    output_dict['kills_mediana'], output_dict['time_mediana'], output_dict['kills_average'], \
-                    output_dict['time_average'] = None, None, None, None
 
-    output_dict['over35_duo'], output_dict['over35_duo_counterpick'], output_dict['over35_1vs2'],\
-        output_dict['over35_solo'], output_dict['over35_trio'] =\
-    calculate_over35(radiant_heroes_and_pos, dire_heroes_and_pos, over35_data)
-
-    output_dict['top_message'], output_dict['bot_message'], output_dict['mid_message'] =\
-        calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data)
-
-    output_dict['synergy_duo'], output_dict['radiant_synergy_trio'], output_dict['duo_diff'],\
-        output_dict['radiant_counterpick_1vs2'], output_dict['pos1_matchup'], output_dict['support_dif'] =\
-        synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
-                                    dire_heroes_and_pos=dire_heroes_and_pos,
-                                    synergy_data=synergy_data, data1vs2=data1vs2,
-                                    data1vs1=data1vs1, data1vs3=data1vs3)
     return output_dict
 
 def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, data1vs1,
-              data1vs2, over35_data, synergy_data, data1vs3, synergy4, radiant_team_name=None, dire_team_name=None):
+              data1vs2, over40_data, synergy_data, data1vs3, synergy4, radiant_team_name=None, dire_team_name=None):
     for key in dire_heroes_and_pos:
         hero_name = dire_heroes_and_pos[key]['hero_name'].lower()
-        for hero in name_to_id:
-            if hero.lower() == hero_name:
-                dire_heroes_and_pos[key]['hero_id'] = name_to_id[hero]
+        if hero_name in name_to_id:
+            dire_heroes_and_pos[key]['hero_id'] = name_to_id[hero_name]
+        else:
+            print(f'Error handling name {hero_name}')
+            return
     for key in radiant_heroes_and_pos:
         hero_name = radiant_heroes_and_pos[key]['hero_name'].lower()
-        for hero in name_to_id:
-            if hero.lower() == hero_name:
-                radiant_heroes_and_pos[key]['hero_id'] = name_to_id[hero]
+        if hero_name in name_to_id:
+            radiant_heroes_and_pos[key]['hero_id'] = name_to_id[hero_name]
+        else:
+            print(f'Error handling name {hero_name}')
+            return
 
     output_dict = proceed_map(url=None,
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
                 dire_heroes_and_pos=dire_heroes_and_pos,
                 data1vs1=data1vs1, data1vs2=data1vs2,
-                lane_data=lane_data, over35_data=over35_data, synergy_data=synergy_data,
+                lane_data=lane_data, over40_data=over40_data, synergy_data=synergy_data,
                 radiant_team_name=radiant_team_name, dire_team_name=dire_team_name,
                 synergy4=synergy4, data1vs3=data1vs3)
-    if format_output_dict(output_dict):
-        # Формирование сообщения
+    # if format_output_dict(output_dict):
+    if True:
+        # Р¤РѕСЂРјРёСЂРѕРІР°РЅРёРµ СЃРѕРѕР±С‰РµРЅРёСЏ
         send_message(
-            f'ПОМНИ: ЛЮБОЙ ПИК МОЖЕТ ПРОИГРАТЬ\n'
+            f'РџРћРњРќР: Р›Р®Р‘РћР™ РџРРљ РњРћР–Р•Рў РџР РћРР“Р РђРўР¬\n'
             f"{radiant_team_name} VS {dire_team_name}\n"
             # f"Kills: Median: {output_dict.get('kills_mediana', 'N/A')} "
             # f"| Avg: {output_dict.get('kills_average', 'N/A')}\n"
-            f"over35_solo: {output_dict.get('over35_solo', None)}\n"
-            f"over35_duo_counterpick: {output_dict['over35_duo_counterpick']}\n"
-            f"over35_trio: {output_dict['over35_trio']}\n"
-            f"over35_1vs2: {output_dict['over35_1vs2']}\n"
-            f"over35_duo: {output_dict['over35_duo']}\n"
+            f"over40_solo: {output_dict.get('over40_solo', None)}\n"
+            f"over40_duo_counterpick: {output_dict['over40_duo_counterpick']}\n"
+            f"over40_trio: {output_dict['over40_trio']}\n"
+            f"over40_1vs2: {output_dict['over40_1vs2']}\n"
+            f"over40_duo: {output_dict['over40_duo']}\n"
             f"Lanes:\n{output_dict.get('top_message', '')}"
             f"{output_dict.get('mid_message', '')}"
             f"{output_dict.get('bot_message', '')}"
             f"Synergy_and_counterpick:\n"
-            f"support_dif: {output_dict['support_dif']}\n"
-            f"pos1_matchup: {output_dict['pos1_matchup']}\n"
-            f"Synergy_duo: {output_dict['synergy_duo']}\n"
-            f"Synergy_trio: {output_dict['radiant_synergy_trio']}\n"
+            # f"support_dif: {output_dict['support_dif']}\n"
+            # f"pos1_matchup: {output_dict['pos1_matchup']}\n"
+            # f"Synergy_duo: {output_dict['synergy_duo']}\n"
+            # f"Synergy_trio: {output_dict['radiant_synergy_trio']}\n"
             f"Counterpick_duo: {output_dict['duo_diff']}\n"
             f"1vs2_counterpick: {output_dict['radiant_counterpick_1vs2']}\n"
-            f'ПОМНИ: ЛЮБОЙ ПИК МОЖЕТ ПРОИГРАТЬ')
+            f'РџРћРњРќР: Р›Р®Р‘РћР™ РџРРљ РњРћР–Р•Рў РџР РћРР“Р РђРўР¬')
     else:
         send_message(
-            'Плохая ставка'
+            'РџР»РѕС…Р°СЏ СЃС‚Р°РІРєР°'
             f"{radiant_team_name} VS {dire_team_name}\n")
 
 
 
-def check_old_maps(data1vs1, data1vs2, lane_data, over35_data, synergy_data, data1vs3, synergy4):
+def check_old_maps(data1vs1, data1vs2, lane_data, over40_data, synergy_data, data1vs3, synergy4):
     # update_my_protracker(mkdir='dltv', maps_to_explore='past_matches_maps', file_name='dltv.output')
     with open ('dltv/dltv_output.txt', 'r') as f:
         maps_data = json.load(f)
@@ -990,19 +850,18 @@ def check_old_maps(data1vs1, data1vs2, lane_data, over35_data, synergy_data, dat
         output_dict = proceed_map(dire_heroes_and_pos=dire_heroes_and_pos,
                     radiant_heroes_and_pos=radiant_heroes_and_pos,
                     data1vs1=data1vs1, data1vs2=data1vs2,
-                    lane_data=lane_data, over35_data=over35_data, synergy_data=synergy_data,
+                    lane_data=lane_data, over40_data=over40_data, synergy_data=synergy_data,
                     data1vs3=data1vs3, synergy4=synergy4)
         didradiantwin = maps_data[match_id]['didRadiantWin']
-
         output_data.append({
             'match_id' : match_id, 'radiantNetworthLeads': maps_data[match_id]['radiantNetworthLeads'],
             'top_message': output_dict['top_message'], 'bot_message': output_dict['bot_message'], 'mid_message': output_dict['mid_message'],
             'synergy_duo': output_dict['synergy_duo'], 'radiant_synergy_trio': output_dict['radiant_synergy_trio'],
             'support_dif': output_dict['support_dif'], 'duo_diff': output_dict['duo_diff'],
             'radiant_counterpick_1vs2': output_dict['radiant_counterpick_1vs2'],
-            "over35_duo": output_dict['over35_duo'], 'over35_duo_counterpick': output_dict['over35_duo_counterpick'],
-            'over35_1vs2': output_dict['over35_1vs2'], 'over35_solo': output_dict['over35_solo'],
-            'over35_trio': output_dict['over35_trio'],
+            'over40_duo_synergy': output_dict['over40_duo_synergy'], 'over40_duo_counterpick': output_dict['over40_duo_counterpick'],
+            'over40_1vs2': output_dict['over40_1vs2'], 'over40_solo': output_dict['over40_solo'],
+            'over40_trio': output_dict['over40_trio'],
             'pos1_matchup': output_dict['pos1_matchup'], 'didRadiantWin': didradiantwin,
             'duration': maps_data[match_id]['durationSeconds'], 'bottomLaneOutcome' : maps_data[match_id]['bottomLaneOutcome'],
             'topLaneOutcome': maps_data[match_id]['topLaneOutcome'], 'midLaneOutcome': maps_data[match_id]['midLaneOutcome']
@@ -1013,26 +872,25 @@ def check_old_maps(data1vs1, data1vs2, lane_data, over35_data, synergy_data, dat
         json.dump(output_data, f)
 
 
-def avg_over35(heroes_and_positions, data):
-    over35_duo, over35_trio, time_duo, kills_duo, kills_trio, time_trio, radiant_lane_report_unique_combinations, \
-        dire_lane_report_unique_combinations, over35_solo = [], [], [], [], [], [], [], [], []
-    unique_combinations = set()
+def synergy_over40(heroes_and_positions, data, output, mkdir):
+    over40_duo, over40_trio, time_duo, kills_duo, kills_trio, time_trio, over40_solo = {}, {}, {}, {}, {}, {}, {}
+    unique_combinations, dire_lane_report_unique_combinations, radiant_lane_report_unique_combinations = set(), set(), set()
     for pos in heroes_and_positions:
         hero_id = str(heroes_and_positions[pos]['hero_id'])
         key = f"{hero_id + pos}"
         foo = data.get(key, [])
-        if len(foo) >= 30:
+        if len(foo) >= 15:
             value = foo.count(1) / (foo.count(1) + foo.count(0))
-            over35_solo.append(value)
+            output.setdefault(f'{mkdir}_over40_solo', {}).setdefault(pos, []).append(value)
         for second_pos in heroes_and_positions:
             second_hero_id = str(heroes_and_positions[second_pos]['hero_id'])
             if hero_id == second_hero_id:
                 continue
             key = f"{hero_id + pos}_with_{second_hero_id + second_pos}"
             foo = data.get(key, [])
-            if len(foo) >= 20:
+            if len(foo) >= 15:
                 value = foo.count(1) / (foo.count(1) + foo.count(0))
-                over35_duo.append(value)
+                output.setdefault(f'{mkdir}_over40_duo_synergy', {}).setdefault(pos, []).append(value)
             for third_pos in heroes_and_positions:
                 third_hero_id = str(heroes_and_positions[third_pos]['hero_id'])
                 if third_hero_id in [second_hero_id, hero_id]:
@@ -1045,9 +903,8 @@ def avg_over35(heroes_and_positions, data):
                     if combo not in unique_combinations:
                         unique_combinations.add(combo)
                         value = foo.count(1) / (foo.count(1) + foo.count(0))
-                        over35_trio.append(value)
+                        output.setdefault(f'{mkdir}_over40_trio', []).append(value)
 
-    return over35_duo, over35_solo, over35_trio
 
 
 def find_biggest_param(data, mid=False):
@@ -1302,21 +1159,21 @@ def sleep_until_morning():
 
     while True:
         now = datetime.datetime.now(moscow_tz)
-        # Формируем время 07:00 текущего дня
+        # Р¤РѕСЂРјРёСЂСѓРµРј РІСЂРµРјСЏ 07:00 С‚РµРєСѓС‰РµРіРѕ РґРЅСЏ
         morning = now.replace(hour=6, minute=0, second=0, microsecond=0)
 
-        # Если текущее время уже 07:00 или позже, выходим из цикла
+        # Р•СЃР»Рё С‚РµРєСѓС‰РµРµ РІСЂРµРјСЏ СѓР¶Рµ 07:00 РёР»Рё РїРѕР·Р¶Рµ, РІС‹С…РѕРґРёРј РёР· С†РёРєР»Р°
         if now >= morning:
-            print("Наступило утро!")
+            print("РќР°СЃС‚СѓРїРёР»Рѕ СѓС‚СЂРѕ!")
             break
 
-        # Вычисляем оставшиеся секунды до 07:00
+        # Р’С‹С‡РёСЃР»СЏРµРј РѕСЃС‚Р°РІС€РёРµСЃСЏ СЃРµРєСѓРЅРґС‹ РґРѕ 07:00
         remaining_seconds = (morning - now).total_seconds()
-        # Будем спать не больше 60 секунд за раз, чтобы часто проверять время
+        # Р‘СѓРґРµРј СЃРїР°С‚СЊ РЅРµ Р±РѕР»СЊС€Рµ 60 СЃРµРєСѓРЅРґ Р·Р° СЂР°Р·, С‡С‚РѕР±С‹ С‡Р°СЃС‚Рѕ РїСЂРѕРІРµСЂСЏС‚СЊ РІСЂРµРјСЏ
         sleep_interval = min(remaining_seconds, 60)
 
         print(
-            f"Сейчас {now.strftime('%H:%M:%S')} по Москве. До 06:00 осталось {int(remaining_seconds)} секунд. Засыпаем на {int(sleep_interval)} секунд.")
+            f"РЎРµР№С‡Р°СЃ {now.strftime('%H:%M:%S')} РїРѕ РњРѕСЃРєРІРµ. Р”Рѕ 06:00 РѕСЃС‚Р°Р»РѕСЃСЊ {int(remaining_seconds)} СЃРµРєСѓРЅРґ. Р—Р°СЃС‹РїР°РµРј РЅР° {int(sleep_interval)} СЃРµРєСѓРЅРґ.")
         time.sleep(sleep_interval)
 
 
@@ -1353,11 +1210,11 @@ def tm_kills(radiant_heroes_and_positions, dire_heroes_and_positions):
                             radiant_kills_unique_combinations.add(combo)
                             value = sum(duo_data['value']) / len(duo_data['value'])
                             output_data['radiant_kills_duo'].append(value)
-                    # Третий герой
+                    # РўСЂРµС‚РёР№ РіРµСЂРѕР№
                     for pos3, item3 in radiant_heroes_and_positions.items():
                         third_hero_id = str(item3['hero_id'])
                         if third_hero_id not in [second_hero_id, hero_id]:
-                            # Создаём отсортированный кортеж идентификаторов героев для уникальности
+                            # РЎРѕР·РґР°С‘Рј РѕС‚СЃРѕСЂС‚РёСЂРѕРІР°РЅРЅС‹Р№ РєРѕСЂС‚РµР¶ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂРѕРІ РіРµСЂРѕРµРІ РґР»СЏ СѓРЅРёРєР°Р»СЊРЅРѕСЃС‚Рё
                             combo = tuple(sorted([hero_id, second_hero_id, third_hero_id]))
                             if hero_data == time_data:
                                 if combo not in radiant_time_unique_combinations:
@@ -1545,4 +1402,3 @@ def tm_kills_teams(radiant_heroes_and_pos, dire_heroes_and_pos, radiant_team_nam
         time_mediana = time_mediana/60
 
     return kills_mediana, time_mediana, kills_average, time_average
-
