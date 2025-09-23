@@ -492,7 +492,7 @@ def synergy_team(heroes_and_pos, output, mkdir, data):
                         output[f'{mkdir}_trio'].append(value)
 
 
-def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, data1vs1, data1vs2, data1vs3, pos1_matchup=None):
+def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, data_1vs1, data_1vs2, data_1vs3, pos1_matchup=None):
     unique_combinations = set()
     for pos in heroes_and_pos:
         # if pos in ['pos4', 'pos5']: continue
@@ -500,7 +500,7 @@ def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, dat
         for enemy_pos in heroes_and_pos_opposite:
             enemy_hero_id = str(heroes_and_pos_opposite[enemy_pos]['hero_id'])
             key = f"{hero_id}{pos}_vs_{enemy_hero_id}{enemy_pos}"
-            foo = data1vs1.get(key, {})
+            foo = data_1vs1.get(key, {})
             if len(foo) >= 15:
                 value = foo.count(1) / (foo.count(1) + foo.count(0))
                 if enemy_pos == 'pos1' and pos == 'pos1' and mkdir == 'radiant_counterpick':
@@ -512,7 +512,7 @@ def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, dat
                     continue
                 key = f"{hero_id}{pos}_vs_{enemy_hero_id}{enemy_pos}," \
                       f"{second_enemy_id}{second_enemy_pos}"
-                foo = data1vs2.get(key, {})
+                foo = data_1vs2.get(key, {})
                 if len(foo) >= 15:
                     combo = (hero_id,) + tuple(sorted([enemy_hero_id, second_enemy_id]))
                     if combo not in unique_combinations:
@@ -525,7 +525,7 @@ def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, dat
                 #         continue
                 #     key = f"{hero_id}{pos},{enemy_hero_id}{enemy_pos}," \
                 #           f"{second_enemy_id}{second_enemy_pos},{third_enemy_id}{third_enemy_pos}"
-                #     foo = data1vs3.get(key, {})
+                #     foo = data_1vs3.get(key, {})
                 #     if len(foo) >= 6:
                 #         combo = (hero_id,) + tuple(sorted([enemy_hero_id, second_enemy_id, third_enemy_id]))
                 #         if combo not in unique_combinations:
@@ -561,7 +561,7 @@ def get_diff(radiant, dire, _1vs2=False):
         # РёРЅР°С‡Рµ РґР°РЅРЅС‹С… РЅРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ
 
 
-def synergy_and_counterpick_new(radiant_heroes_and_pos, dire_heroes_and_pos, synergy_data, data1vs2, data1vs1, data1vs3):
+def synergy_and_counterpick_new(radiant_heroes_and_pos, dire_heroes_and_pos, synergy_data, data_1vs2, data_1vs1, data_1vs3):
     synergy_duo, duo_diff, pos1_matchup, pos1_matchup_out, support_dif = None, None, None, None, None
     output = {'radiant_synergy_duo': [], 'dire_synergy_duo': [], 'radiant_synergy_trio': [], 'dire_synergy_trio': [],
               'radiant_counterpick_1vs1': {}, 'dire_counterpick_1vs1': {}, 'radiant_counterpick_1vs2': {},
@@ -572,11 +572,11 @@ def synergy_and_counterpick_new(radiant_heroes_and_pos, dire_heroes_and_pos, syn
     synergy_team(dire_heroes_and_pos, output, 'dire_synergy', synergy_data)
 
     counterpick_team(heroes_and_pos=radiant_heroes_and_pos, heroes_and_pos_opposite=dire_heroes_and_pos,
-                     output=output, mkdir='radiant_counterpick', data1vs2=data1vs2,
-                     data1vs1=data1vs1, data1vs3=data1vs3)
+                     output=output, mkdir='radiant_counterpick', data_1vs2=data_1vs2,
+                     data_1vs1=data_1vs1, data_1vs3=data_1vs3)
     counterpick_team(heroes_and_pos=dire_heroes_and_pos, heroes_and_pos_opposite=radiant_heroes_and_pos,
-                     output=output, mkdir='dire_counterpick', data1vs2=data1vs2,
-                     data1vs1=data1vs1, data1vs3=data1vs3)
+                     output=output, mkdir='dire_counterpick', data_1vs2=data_1vs2,
+                     data_1vs1=data_1vs1, data_1vs3=data_1vs3)
 
     radiant_counterpick_1vs2 = None
     if all(len(output['radiant_counterpick_1vs2'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
@@ -727,7 +727,7 @@ def check_bad_map(match, maps_data=None, break_flag=False):
 
 
 def proceed_map(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data, synergy_data, lane_data,
-                data1vs2, data1vs1, data1vs3, synergy4, radiant_team_name=None, dire_team_name=None,
+                data_1vs2, data_1vs1, data_1vs3, synergy4, radiant_team_name=None, dire_team_name=None,
                 url=None):
     output_dict = {'kills_mediana': None, 'time_mediana': None, 'kills_average': None, 'time_average': None,
                    'over40_duo': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[0],
@@ -742,29 +742,29 @@ def proceed_map(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data, synerg
                    'mid_message': (calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data))[2],
                    'synergy_duo': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
                                                                dire_heroes_and_pos=dire_heroes_and_pos,
-                                                               synergy_data=synergy_data, data1vs2=data1vs2,
-                                                               data1vs1=data1vs1, data1vs3=data1vs3))[0],
+                                                               synergy_data=synergy_data, data_1vs2=data_1vs2,
+                                                               data_1vs1=data_1vs1, data_1vs3=data_1vs3))[0],
                    'radiant_synergy_trio': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
                                                                         dire_heroes_and_pos=dire_heroes_and_pos,
-                                                                        synergy_data=synergy_data, data1vs2=data1vs2,
-                                                                        data1vs1=data1vs1, data1vs3=data1vs3))[1],
+                                                                        synergy_data=synergy_data, data_1vs2=data_1vs2,
+                                                                        data_1vs1=data_1vs1, data_1vs3=data_1vs3))[1],
                    'duo_diff': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
                                                             dire_heroes_and_pos=dire_heroes_and_pos,
-                                                            synergy_data=synergy_data, data1vs2=data1vs2,
-                                                            data1vs1=data1vs1, data1vs3=data1vs3))[2],
+                                                            synergy_data=synergy_data, data_1vs2=data_1vs2,
+                                                            data_1vs1=data_1vs1, data_1vs3=data_1vs3))[2],
                    'radiant_counterpick_1vs2':
                        (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
                                                     dire_heroes_and_pos=dire_heroes_and_pos,
-                                                    synergy_data=synergy_data, data1vs2=data1vs2,
-                                                    data1vs1=data1vs1, data1vs3=data1vs3))[3],
+                                                    synergy_data=synergy_data, data_1vs2=data_1vs2,
+                                                    data_1vs1=data_1vs1, data_1vs3=data_1vs3))[3],
                    'pos1_matchup': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
                                                                 dire_heroes_and_pos=dire_heroes_and_pos,
-                                                                synergy_data=synergy_data, data1vs2=data1vs2,
-                                                                data1vs1=data1vs1, data1vs3=data1vs3))[4],
+                                                                synergy_data=synergy_data, data_1vs2=data_1vs2,
+                                                                data_1vs1=data_1vs1, data_1vs3=data_1vs3))[4],
                    'support_dif': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
                                                                dire_heroes_and_pos=dire_heroes_and_pos,
-                                                               synergy_data=synergy_data, data1vs2=data1vs2,
-                                                               data1vs1=data1vs1, data1vs3=data1vs3))[5]}
+                                                               synergy_data=synergy_data, data_1vs2=data_1vs2,
+                                                               data_1vs1=data_1vs1, data_1vs3=data_1vs3))[5]}
     # if radiant_team_name is not None:
     #     answer = \
     #         tm_kills_teams(radiant_heroes_and_pos=radiant_heroes_and_pos,
@@ -780,8 +780,8 @@ def proceed_map(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data, synerg
 
     return output_dict
 
-def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, data1vs1,
-              data1vs2, over40_data, synergy_data, data1vs3, synergy4, radiant_team_name=None, dire_team_name=None):
+def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, data_1vs1,
+              data_1vs2, over40_data, synergy_data, data_1vs3, synergy4, radiant_team_name=None, dire_team_name=None):
     for key in dire_heroes_and_pos:
         hero_name = dire_heroes_and_pos[key]['hero_name'].lower()
         if hero_name in name_to_id:
@@ -800,10 +800,10 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, data1vs1,
     output_dict = proceed_map(url=None,
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
                 dire_heroes_and_pos=dire_heroes_and_pos,
-                data1vs1=data1vs1, data1vs2=data1vs2,
+                data_1vs1=data_1vs1, data_1vs2=data_1vs2,
                 lane_data=lane_data, over40_data=over40_data, synergy_data=synergy_data,
                 radiant_team_name=radiant_team_name, dire_team_name=dire_team_name,
-                synergy4=synergy4, data1vs3=data1vs3)
+                synergy4=synergy4, data_1vs3=data_1vs3)
     # if format_output_dict(output_dict):
     if True:
         # Р¤РѕСЂРјРёСЂРѕРІР°РЅРёРµ СЃРѕРѕР±С‰РµРЅРёСЏ
@@ -835,7 +835,7 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, data1vs1,
 
 
 
-def check_old_maps(data1vs1, data1vs2, lane_data, over40_data, synergy_data, data1vs3, synergy4):
+def check_old_maps(data_1vs1, data_1vs2, lane_data, over40_data, synergy_data, data_1vs3, synergy4):
     # update_my_protracker(mkdir='dltv', maps_to_explore='past_matches_maps', file_name='dltv.output')
     with open ('dltv/dltv_output.txt', 'r') as f:
         maps_data = json.load(f)
@@ -849,9 +849,9 @@ def check_old_maps(data1vs1, data1vs2, lane_data, over40_data, synergy_data, dat
         radiant_heroes_and_pos, dire_heroes_and_pos = result
         output_dict = proceed_map(dire_heroes_and_pos=dire_heroes_and_pos,
                     radiant_heroes_and_pos=radiant_heroes_and_pos,
-                    data1vs1=data1vs1, data1vs2=data1vs2,
+                    data_1vs1=data_1vs1, data_1vs2=data_1vs2,
                     lane_data=lane_data, over40_data=over40_data, synergy_data=synergy_data,
-                    data1vs3=data1vs3, synergy4=synergy4)
+                    data_1vs3=data_1vs3, synergy4=synergy4)
         didradiantwin = maps_data[match_id]['didRadiantWin']
         output_data.append({
             'match_id' : match_id, 'radiantNetworthLeads': maps_data[match_id]['radiantNetworthLeads'],
