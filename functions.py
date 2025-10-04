@@ -260,47 +260,35 @@ def process_matchup_data(position, matchups, opposing_team_positions):
 def format_output_dict(output_dict):
     over40_trio = output_dict.get('over40_trio', None)
     over40_1vs2 = output_dict.get('over40_1vs2', None)
-    over40_duo = output_dict.get('over40_duo', None)
+    over40_duo_synergy = output_dict.get('over40_duo_synergy', None)
     over40_duo_counterpick = output_dict.get('over40_duo_counterpick', None)
+    over40_solo = output_dict.get('over40_solo', None)
+    over40_pos1_matchup = output_dict.get('over40_pos1_matchup', None)
     radiant_counterpick_1vs2 = output_dict.get('radiant_counterpick_1vs2', None)
     duo_diff = output_dict.get('duo_diff', None)
     radiant_synergy_trio = output_dict.get('radiant_synergy_trio', None)
     synergy_duo = output_dict.get('synergy_duo', None)
     pos1_matchup = output_dict.get('pos1_matchup', None)
     support_dif = output_dict.get('support_dif', None)
-    over40_solo = output_dict.get('support_dif', None)
     if over40_solo and 3 > over40_solo > -3:
-        over40_trio = None
-    if over40_trio and over40_trio < 7 and over40_trio > -7:
-        over40_trio = None
-    if over40_1vs2 and -8 < over40_1vs2 < 8:
-        over40_1vs2 = None
-    if over40_duo and 5 > over40_duo > -5:
-        over40_duo = None
-    if over40_duo_counterpick and 6 > over40_duo_counterpick > -6:
-        over40_duo_counterpick = None
-    if radiant_counterpick_1vs2 and 6 > radiant_counterpick_1vs2 > -6:
-        radiant_counterpick_1vs2 = None
-    if duo_diff and -8 < duo_diff < 8:
-        duo_diff = None
-    if radiant_synergy_trio and 5 > radiant_synergy_trio > -5:
-        radiant_synergy_trio = None
-    if synergy_duo and -13 < synergy_duo < 13:
-        synergy_duo = None
-    if pos1_matchup and -21 < pos1_matchup < 21:
-        pos1_matchup = None
-    if support_dif and -14 < support_dif < 14:
-        support_dif = None
-    if any(i is not None for i in [support_dif, pos1_matchup, synergy_duo, radiant_synergy_trio, duo_diff,
-            radiant_counterpick_1vs2, over40_duo_counterpick, over40_duo, over40_1vs2, over40_trio]):
-        if None not in [radiant_synergy_trio, radiant_counterpick_1vs2]:
-            if (radiant_synergy_trio > 0 and radiant_counterpick_1vs2 > 0) or (radiant_counterpick_1vs2 < 0 and radiant_synergy_trio < 0):
-                return True
-        if None not in [over40_1vs2, over40_trio]:
-            if (over40_1vs2 > 0 and over40_trio > 0) or (over40_1vs2 < 0 and over40_trio < 0):
-                return True
-        else:
-            return True
+        output_dict['over40_solo'] = None
+    if over40_trio and 13 > over40_trio > -13:
+        output_dict['over40_trio'] = None
+    if over40_duo_synergy and 2 > over40_duo_synergy > -2:
+        output_dict['over40_duo'] = None
+    if over40_duo_counterpick and 2 > over40_duo_counterpick > -2:
+        output_dict['over40_duo_counterpick'] = None
+    if over40_pos1_matchup and 10 > over40_pos1_matchup > -10:
+        output_dict['over40_pos1_matchup'] = None
+    if duo_diff and 4 > duo_diff > -4:
+        output_dict['duo_diff'] = None
+    if radiant_synergy_trio and 4 > radiant_synergy_trio > -4:
+        output_dict['radiant_synergy_trio'] = None
+    if synergy_duo and 8 > synergy_duo > -8:
+        output_dict['synergy_duo'] = None
+    if support_dif and 15 > support_dif > -15:
+        output_dict['support_dif'] = None
+    return output_dict
 
 
 def get_map_players(data, match, soup, name_to_pos):
@@ -469,7 +457,7 @@ def synergy_team(heroes_and_pos, output, mkdir, data):
                 continue
             key = f"{hero_id + pos}_with_{second_hero_id + second_pos}"
             foo = data.get(key, [])
-            if len(foo) >= 15:
+            if len(foo) >= 50:
                 combo = tuple(sorted([hero_id, second_hero_id]))
                 if combo not in unique_combinations:
                     unique_combinations.add(combo)
@@ -484,7 +472,7 @@ def synergy_team(heroes_and_pos, output, mkdir, data):
                 third_hero_id = str(heroes_and_pos[third_pos]['hero_id'])
                 key = f"{hero_id + pos},{second_hero_id + second_pos},{third_hero_id + third_pos}"
                 foo = data.get(key, [])
-                if len(foo) >= 10:
+                if len(foo) >= 30:
                     combo = tuple(sorted([hero_id, second_hero_id, third_hero_id]))
                     if combo not in unique_combinations:
                         unique_combinations.add(combo)
@@ -501,7 +489,7 @@ def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, dat
             enemy_hero_id = str(heroes_and_pos_opposite[enemy_pos]['hero_id'])
             key = f"{hero_id}{pos}_vs_{enemy_hero_id}{enemy_pos}"
             foo = data_1vs1.get(key, {})
-            if len(foo) >= 15:
+            if len(foo) >= 50:
                 value = foo.count(1) / (foo.count(1) + foo.count(0))
                 if enemy_pos == 'pos1' and pos == 'pos1' and mkdir == 'radiant_counterpick':
                     output['pos1_matchup']=value
@@ -513,7 +501,7 @@ def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, dat
                 key = f"{hero_id}{pos}_vs_{enemy_hero_id}{enemy_pos}," \
                       f"{second_enemy_id}{second_enemy_pos}"
                 foo = data_1vs2.get(key, {})
-                if len(foo) >= 15:
+                if len(foo) >= 30:
                     combo = (hero_id,) + tuple(sorted([enemy_hero_id, second_enemy_id]))
                     if combo not in unique_combinations:
                         unique_combinations.add(combo)
@@ -535,30 +523,32 @@ def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, dat
 
 
 
+# functions.py
 def get_diff(radiant, dire, _1vs2=False):
-    if None not in [radiant, dire]:
-        if not _1vs2:
-            if any(len(foo) > 3 for foo in [radiant, dire]):
-                if len(radiant) > 2 and len(dire) > 2:
-                    return round((sum(radiant) / len(radiant) - sum(dire) / len(dire)) * 100)
-            return  # РЅРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ РґР°РЅРЅС‹С…
-        weights = {'pos1': 2.5, 'pos2': 2.0, 'pos3': 1.8, 'pos4': 1.0, 'pos5': 1.0}
-
-        def wmean(side):
-            num, den = 0.0, 0.0
-            for pos, w in weights.items():
-                vals = side.get(pos, [])
-                if vals:
-                    m = sum(vals) / len(vals)
-                    num += m * w
-                    den += w
-            return (num / den) if den else None
-
-        r = wmean(radiant)
-        d = wmean(dire)
-        if r is not None and d is not None:
+    if radiant is None or dire is None:
+        return
+    if not _1vs2:
+        # Было: if any(len(foo) > 3 for foo in [radiant, dire]): ...
+        # и затем требование >2 на обеих сторонах
+        if len(radiant) >= 2 and len(dire) >= 2:
+            r = sum(radiant) / len(radiant)
+            d = sum(dire) / len(dire)
             return round((r - d) * 100)
-        # РёРЅР°С‡Рµ РґР°РЅРЅС‹С… РЅРµРґРѕСЃС‚Р°С‚РѕС‡РЅРѕ
+        return
+    weights = {'pos1': 2.5, 'pos2': 2.0, 'pos3': 1.8, 'pos4': 1.0, 'pos5': 1.0}
+    def wmean(side):
+        num, den = 0.0, 0.0
+        for pos, w in weights.items():
+            vals = side.get(pos, [])
+            if vals:
+                m = sum(vals) / len(vals)
+                num += m * w
+                den += w
+        return (num / den) if den else None
+    r = wmean(radiant)
+    d = wmean(dire)
+    if r is not None and d is not None:
+        return round((r - d) * 100)
 
 
 def synergy_and_counterpick_new(radiant_heroes_and_pos, dire_heroes_and_pos, synergy_data, data_1vs2, data_1vs1, data_1vs3):
@@ -616,31 +606,30 @@ def get_ordinar_results(radiant, dire):
         return round((sum(radiant)/len(radiant) - sum(dire)/len(dire))*100)
 
 def calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, data, over40_1vs2=None, over40_duo_synergy=None,
-                     over40_duo=None, over40_duo_counterpick=None, over40_solo=None, over40_trio=None):
+                     over40_duo_counterpick=None, over40_solo=None, over40_trio=None, over40_pos1_matchup=None):
     output = {}
     over40_counter(radiant_heroes_and_pos, dire_heroes_and_pos, data, output, mkdir='radiant')
     over40_counter(dire_heroes_and_pos, radiant_heroes_and_pos, data, output, mkdir='dire')
     synergy_over40(radiant_heroes_and_pos, data, output, mkdir='radiant')
     synergy_over40(dire_heroes_and_pos, data, output, mkdir='dire')
-    if all(len(output['radiant_winrate1vs1'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
+    if 'radiant_pos1_matchup' in output:
+        over40_pos1_matchup = round((output['radiant_pos1_matchup'] - 0.50)*100)
+    if all(i in output for i in ['dire_winrate1vs1', 'radiant_winrate1vs1']) and all(len(output['radiant_winrate1vs1'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
             all(len(output['dire_winrate1vs1'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']):
         over40_duo_counterpick = get_diff(output['radiant_winrate1vs1'],
                                             output['dire_winrate1vs1'], _1vs2=True)
-    if all(i in output for i in['radiant_winrate1vs2', 'dire_winrate1vs2']) and all(len(output['radiant_winrate1vs2'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
+    if all(i in output for i in ['radiant_winrate1vs2', 'dire_winrate1vs2']) and all(len(output['radiant_winrate1vs2'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
             all(len(output['dire_winrate1vs2'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']):
         over40_1vs2 = get_diff(output['radiant_winrate1vs2'], output['dire_winrate1vs2'], _1vs2=True)
-    if all(len(output['radiant_over40_solo'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
+    if all(i in output for i in ['radiant_over40_solo', 'dire_over40_solo']) and all(len(output['radiant_over40_solo'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
             all(len(output['dire_over40_solo'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']):
         over40_solo = get_diff(output['radiant_over40_solo'], output['dire_over40_solo'], _1vs2=True)
-    if all(len(output['radiant_over40_solo'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
-            all(len(output['dire_over40_solo'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']):
-        over40_solo = get_diff(output['radiant_over40_solo'], output['dire_over40_solo'], _1vs2=True)
-    if all(len(output['radiant_over40_duo_synergy'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
+    if all(i in output for i in ['radiant_over40_trio', 'dire_over40_trio']):
+        over40_trio = get_diff(output['radiant_over40_trio'], output['dire_over40_trio'])
+    if all(i in output for i in ['radiant_over40_duo_synergy', 'dire_over40_duo_synergy']) and all(len(output['radiant_over40_duo_synergy'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and \
             all(len(output['dire_over40_duo_synergy'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']):
         over40_duo_synergy = get_diff(output['radiant_over40_duo_synergy'], output['dire_over40_duo_synergy'], _1vs2=True)
-    if all(i in output for i in ['radiant_over40_trio', 'dire_over40_trio']):
-        over40_trio = get_ordinar_results(radiant=output['radiant_over40_trio'], dire=output['dire_over40_trio'])
-    return over40_duo, over40_duo_counterpick, over40_1vs2, over40_solo, over40_duo_synergy, over40_trio
+    return over40_duo_synergy, over40_duo_counterpick, over40_1vs2, over40_solo, over40_duo_synergy, over40_trio, over40_pos1_matchup
 
 
 def over40_counter(heroes_and_pos, heroes_and_pos_opposite, data, output, mkdir):
@@ -653,8 +642,10 @@ def over40_counter(heroes_and_pos, heroes_and_pos_opposite, data, output, mkdir)
             enemy_hero_id = str(heroes_and_pos_opposite[enemy_pos]['hero_id'])
             key = f"{hero_id}{pos}_vs_{enemy_hero_id}{enemy_pos}"
             foo = data.get(key, {})
-            if len(foo) >= 10:
+            if len(foo) >= 15:
                 value = foo.count(1) / (foo.count(1) + foo.count(0))
+                if pos == 'pos1' and enemy_pos == 'pos1':
+                    output.setdefault(f'{mkdir}_pos1_matchup', value)
                 output.setdefault(f'{mkdir}_winrate1vs1', {}).setdefault(pos, []).append(value)
             for second_enemy_pos in heroes_and_pos_opposite:
                 second_enemy_id = str(heroes_and_pos_opposite[second_enemy_pos]['hero_id'])
@@ -670,8 +661,6 @@ def over40_counter(heroes_and_pos, heroes_and_pos_opposite, data, output, mkdir)
                         unique_combinations.add(combo)
                         value = foo.count(1) / (foo.count(1) + foo.count(0))
                         output.setdefault(f'{mkdir}_winrate1vs2', {}).setdefault(pos, []).append(value)
-
-    return winrate_1vs1, winrate1vs2
 
 
 def check_bad_map(match, maps_data=None, break_flag=False):
@@ -726,59 +715,96 @@ def check_bad_map(match, maps_data=None, break_flag=False):
         return radiant_heroes_and_pos, dire_heroes_and_pos
 
 
+# functions.py
 def proceed_map(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data, synergy_data, lane_data,
                 data_1vs2, data_1vs1, data_1vs3, synergy4, radiant_team_name=None, dire_team_name=None,
                 url=None):
-    output_dict = {'kills_mediana': None, 'time_mediana': None, 'kills_average': None, 'time_average': None,
-                   'over40_duo': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[0],
-                   'over40_duo_counterpick':
-                       (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[1],
-                   'over40_1vs2': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[2],
-                   'over40_solo': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[3],
-                   'over40_duo_synergy': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[4],
-                   'over40_trio': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[5],
-                   'top_message': (calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data))[0],
-                   'bot_message': (calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data))[1],
-                   'mid_message': (calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data))[2],
-                   'synergy_duo': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
-                                                               dire_heroes_and_pos=dire_heroes_and_pos,
-                                                               synergy_data=synergy_data, data_1vs2=data_1vs2,
-                                                               data_1vs1=data_1vs1, data_1vs3=data_1vs3))[0],
-                   'radiant_synergy_trio': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
-                                                                        dire_heroes_and_pos=dire_heroes_and_pos,
-                                                                        synergy_data=synergy_data, data_1vs2=data_1vs2,
-                                                                        data_1vs1=data_1vs1, data_1vs3=data_1vs3))[1],
-                   'duo_diff': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
-                                                            dire_heroes_and_pos=dire_heroes_and_pos,
-                                                            synergy_data=synergy_data, data_1vs2=data_1vs2,
-                                                            data_1vs1=data_1vs1, data_1vs3=data_1vs3))[2],
-                   'radiant_counterpick_1vs2':
-                       (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
-                                                    dire_heroes_and_pos=dire_heroes_and_pos,
-                                                    synergy_data=synergy_data, data_1vs2=data_1vs2,
-                                                    data_1vs1=data_1vs1, data_1vs3=data_1vs3))[3],
-                   'pos1_matchup': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
-                                                                dire_heroes_and_pos=dire_heroes_and_pos,
-                                                                synergy_data=synergy_data, data_1vs2=data_1vs2,
-                                                                data_1vs1=data_1vs1, data_1vs3=data_1vs3))[4],
-                   'support_dif': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
-                                                               dire_heroes_and_pos=dire_heroes_and_pos,
-                                                               synergy_data=synergy_data, data_1vs2=data_1vs2,
-                                                               data_1vs1=data_1vs1, data_1vs3=data_1vs3))[5]}
-    # if radiant_team_name is not None:
-    #     answer = \
-    #         tm_kills_teams(radiant_heroes_and_pos=radiant_heroes_and_pos,
-    #                            dire_heroes_and_pos=dire_heroes_and_pos,
-    #                            radiant_team_name=radiant_team_name,
-    #                            dire_team_name=dire_team_name, min_len=2)
-    #     if answer is not None:
-    #         output_dict['kills_mediana'], output_dict['time_mediana'], output_dict['kills_average'],\
-    #             output_dict['time_average'] = answer
-    #     else:
-    #         output_dict['kills_mediana'], output_dict['time_mediana'], output_dict['kills_average'],\
-    #             output_dict['time_average'] = None, None, None, None
+    # ...
+    over40 = calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data)
+    top, bot, mid = calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data)
+    s = synergy_and_counterpick_new(
+        radiant_heroes_and_pos=radiant_heroes_and_pos,
+        dire_heroes_and_pos=dire_heroes_and_pos,
+        synergy_data=synergy_data, data_1vs2=data_1vs2, data_1vs1=data_1vs1, data_1vs3=data_1vs3
+    )
+    synergy_duo, radiant_synergy_trio, duo_diff, radiant_counterpick_1vs2, pos1_matchup, support_dif = s
 
+    output_dict = {
+        'kills_mediana': None, 'time_mediana': None, 'kills_average': None, 'time_average': None,
+        'over40_duo': over40[0],
+        'over40_duo_counterpick': over40[1],
+        'over40_1vs2': over40[2],
+        'over40_solo': over40[3],
+        'over40_duo_synergy': over40[4],
+        'over40_trio': over40[5],
+        'over40_pos1_matchup': over40[6],
+        'top_message': top,
+        'bot_message': bot,
+        'mid_message': mid,
+        'synergy_duo': synergy_duo,
+        'radiant_synergy_trio': radiant_synergy_trio,
+        'duo_diff': duo_diff,
+        'radiant_counterpick_1vs2': radiant_counterpick_1vs2,
+        'pos1_matchup': pos1_matchup,
+        'support_dif': support_dif,
+    }
     return output_dict
+
+
+
+# def proceed_map(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data, synergy_data, lane_data,
+#                 data_1vs2, data_1vs1, data_1vs3, synergy4, radiant_team_name=None, dire_team_name=None,
+#                 url=None):
+#     output_dict = {'kills_mediana': None, 'time_mediana': None, 'kills_average': None, 'time_average': None,
+#                    'over40_duo': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[0],
+#                    'over40_duo_counterpick':
+#                        (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[1],
+#                    'over40_1vs2': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[2],
+#                    'over40_solo': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[3],
+#                    'over40_duo_synergy': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[4],
+#                    'over40_trio': (calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data))[5],
+#                    'top_message': (calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data))[0],
+#                    'bot_message': (calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data))[1],
+#                    'mid_message': (calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data))[2],
+#                    'synergy_duo': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
+#                                                                dire_heroes_and_pos=dire_heroes_and_pos,
+#                                                                synergy_data=synergy_data, data_1vs2=data_1vs2,
+#                                                                data_1vs1=data_1vs1, data_1vs3=data_1vs3))[0],
+#                    'radiant_synergy_trio': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
+#                                                                         dire_heroes_and_pos=dire_heroes_and_pos,
+#                                                                         synergy_data=synergy_data, data_1vs2=data_1vs2,
+#                                                                         data_1vs1=data_1vs1, data_1vs3=data_1vs3))[1],
+#                    'duo_diff': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
+#                                                             dire_heroes_and_pos=dire_heroes_and_pos,
+#                                                             synergy_data=synergy_data, data_1vs2=data_1vs2,
+#                                                             data_1vs1=data_1vs1, data_1vs3=data_1vs3))[2],
+#                    'radiant_counterpick_1vs2':
+#                        (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
+#                                                     dire_heroes_and_pos=dire_heroes_and_pos,
+#                                                     synergy_data=synergy_data, data_1vs2=data_1vs2,
+#                                                     data_1vs1=data_1vs1, data_1vs3=data_1vs3))[3],
+#                    'pos1_matchup': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
+#                                                                 dire_heroes_and_pos=dire_heroes_and_pos,
+#                                                                 synergy_data=synergy_data, data_1vs2=data_1vs2,
+#                                                                 data_1vs1=data_1vs1, data_1vs3=data_1vs3))[4],
+#                    'support_dif': (synergy_and_counterpick_new(radiant_heroes_and_pos=radiant_heroes_and_pos,
+#                                                                dire_heroes_and_pos=dire_heroes_and_pos,
+#                                                                synergy_data=synergy_data, data_1vs2=data_1vs2,
+#                                                                data_1vs1=data_1vs1, data_1vs3=data_1vs3))[5]}
+#     # if radiant_team_name is not None:
+#     #     answer = \
+#     #         tm_kills_teams(radiant_heroes_and_pos=radiant_heroes_and_pos,
+#     #                            dire_heroes_and_pos=dire_heroes_and_pos,
+#     #                            radiant_team_name=radiant_team_name,
+#     #                            dire_team_name=dire_team_name, min_len=2)
+#     #     if answer is not None:
+#     #         output_dict['kills_mediana'], output_dict['time_mediana'], output_dict['kills_average'],\
+#     #             output_dict['time_average'] = answer
+#     #     else:
+#     #         output_dict['kills_mediana'], output_dict['time_mediana'], output_dict['kills_average'],\
+#     #             output_dict['time_average'] = None, None, None, None
+#
+#     return output_dict
 
 def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, data_1vs1,
               data_1vs2, over40_data, synergy_data, data_1vs3, synergy4, radiant_team_name=None, dire_team_name=None):
@@ -787,14 +813,14 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, data_1vs1,
         if hero_name in name_to_id:
             dire_heroes_and_pos[key]['hero_id'] = name_to_id[hero_name]
         else:
-            print(f'Error handling name {hero_name}')
+            send_message(f'Error handling name {hero_name}')
             return
     for key in radiant_heroes_and_pos:
         hero_name = radiant_heroes_and_pos[key]['hero_name'].lower()
         if hero_name in name_to_id:
             radiant_heroes_and_pos[key]['hero_id'] = name_to_id[hero_name]
         else:
-            print(f'Error handling name {hero_name}')
+            send_message(f'Error handling name {hero_name}')
             return
 
     output_dict = proceed_map(url=None,
@@ -804,11 +830,11 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, data_1vs1,
                 lane_data=lane_data, over40_data=over40_data, synergy_data=synergy_data,
                 radiant_team_name=radiant_team_name, dire_team_name=dire_team_name,
                 synergy4=synergy4, data_1vs3=data_1vs3)
-    # if format_output_dict(output_dict):
-    if True:
+    if format_output_dict(output_dict):
+    # if True:
         # Р¤РѕСЂРјРёСЂРѕРІР°РЅРёРµ СЃРѕРѕР±С‰РµРЅРёСЏ
         send_message(
-            f'РџРћРњРќР: Р›Р®Р‘РћР™ РџРРљ РњРћР–Р•Рў РџР РћРР“Р РђРўР¬\n'
+            f'ПОМНИ: КОМАНДА ВАЖНЕЕ ПИКА\n'
             f"{radiant_team_name} VS {dire_team_name}\n"
             # f"Kills: Median: {output_dict.get('kills_mediana', 'N/A')} "
             # f"| Avg: {output_dict.get('kills_average', 'N/A')}\n"
@@ -816,18 +842,18 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, data_1vs1,
             f"over40_duo_counterpick: {output_dict['over40_duo_counterpick']}\n"
             f"over40_trio: {output_dict['over40_trio']}\n"
             f"over40_1vs2: {output_dict['over40_1vs2']}\n"
-            f"over40_duo: {output_dict['over40_duo']}\n"
+            f"over40_duo_synergy: {output_dict['over40_duo_synergy']}\n"
+            f"over40_pos1_matchup: {output_dict['over40_pos1_matchup']}\n"
             f"Lanes:\n{output_dict.get('top_message', '')}"
             f"{output_dict.get('mid_message', '')}"
             f"{output_dict.get('bot_message', '')}"
             f"Synergy_and_counterpick:\n"
             # f"support_dif: {output_dict['support_dif']}\n"
-            # f"pos1_matchup: {output_dict['pos1_matchup']}\n"
-            # f"Synergy_duo: {output_dict['synergy_duo']}\n"
-            # f"Synergy_trio: {output_dict['radiant_synergy_trio']}\n"
+            f"Synergy_duo: {output_dict['synergy_duo']}\n"
+            f"Synergy_trio: {output_dict['radiant_synergy_trio']}\n"
             f"Counterpick_duo: {output_dict['duo_diff']}\n"
             f"1vs2_counterpick: {output_dict['radiant_counterpick_1vs2']}\n"
-            f'РџРћРњРќР: Р›Р®Р‘РћР™ РџРРљ РњРћР–Р•Рў РџР РћРР“Р РђРўР¬')
+            f'ПОМНИ: КОМАНДА ВАЖНЕЕ ПИКА')
     else:
         send_message(
             'РџР»РѕС…Р°СЏ СЃС‚Р°РІРєР°'
@@ -841,7 +867,6 @@ def check_old_maps(data_1vs1, data_1vs2, lane_data, over40_data, synergy_data, d
         maps_data = json.load(f)
     output_data = []
     for counter, match_id in enumerate(maps_data):
-        # if match_id not in ['8282387426', '8229824447', '8294320784', '8240445160', '8237260669', '8293352062', '8264802865', '8287784252', '8240343319', '8251240991', '8275958633', '8272023319', '8271451356', '8264766445', '8283543442', '8239319375', '8251371199', '8264710589', '8232230272', '8253666074', '8253754681', '8244413837', '8238154240', '8292516360', '8246265232', '8283402383', '8275848044', '8252576577', '8277010600', '8275958633', '8269054498', '8251494401', '8239331701', '8239110442', '8239973335', '8238154240', '8234111232', '8245996562', '8239830730', '8299323927', '8293807031', '8292115530', '8269883556', '8264082163', '8239807884', '8241353789', '8275050403', '8251371199', '8245743444', '8276953038', '8239410626', '8238273105', '8234597527', '8244413837']:
         print(f'{counter} | {len(maps_data)}')
         result = check_bad_map(match=match_id, maps_data=maps_data)
         if result is None:
@@ -862,7 +887,7 @@ def check_old_maps(data_1vs1, data_1vs2, lane_data, over40_data, synergy_data, d
             'over40_duo_synergy': output_dict['over40_duo_synergy'], 'over40_duo_counterpick': output_dict['over40_duo_counterpick'],
             'over40_1vs2': output_dict['over40_1vs2'], 'over40_solo': output_dict['over40_solo'],
             'over40_trio': output_dict['over40_trio'],
-            'pos1_matchup': output_dict['pos1_matchup'], 'didRadiantWin': didradiantwin,
+            'over40_pos1_matchup': output_dict['over40_pos1_matchup'], 'didRadiantWin': didradiantwin,
             'duration': maps_data[match_id]['durationSeconds'], 'bottomLaneOutcome' : maps_data[match_id]['bottomLaneOutcome'],
             'topLaneOutcome': maps_data[match_id]['topLaneOutcome'], 'midLaneOutcome': maps_data[match_id]['midLaneOutcome']
         })
@@ -873,7 +898,6 @@ def check_old_maps(data_1vs1, data_1vs2, lane_data, over40_data, synergy_data, d
 
 
 def synergy_over40(heroes_and_positions, data, output, mkdir):
-    over40_duo, over40_trio, time_duo, kills_duo, kills_trio, time_trio, over40_solo = {}, {}, {}, {}, {}, {}, {}
     unique_combinations, dire_lane_report_unique_combinations, radiant_lane_report_unique_combinations = set(), set(), set()
     for pos in heroes_and_positions:
         hero_id = str(heroes_and_positions[pos]['hero_id'])
@@ -1402,3 +1426,13 @@ def tm_kills_teams(radiant_heroes_and_pos, dire_heroes_and_pos, radiant_team_nam
         time_mediana = time_mediana/60
 
     return kills_mediana, time_mediana, kills_average, time_average
+
+
+if __name__ == '__main__':
+    a = ['batrider', 'beastmaster', 'clockwerk', 'dawnbreaker', 'enigma', 'faceless void', 'magnus', 'puck', 'pudge', 'slardar', 'spirit breaker', 'tusk', 'vengeful spirit', 'warlock', 'winter wyvern']
+    ids = []
+    for name in name_to_id:
+        if name in a:
+            ids.append(name_to_id[name])
+    pass
+

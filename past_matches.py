@@ -176,7 +176,8 @@ def check_lines(data):
 
 def check_winrate(data):
     wrong_maps = []
-    for investigation in ['over40_1vs2', 'over40_duo_synergy', 'over40_duo_counterpick', 'over40_solo', 'over40_trio', 'pos1_matchup', 'duo_diff', 'radiant_counterpick_1vs2', 'radiant_synergy_trio', 'support_dif', 'synergy_duo']:
+
+    for investigation in ['over40_1vs2', 'over40_duo_synergy', 'over40_duo_counterpick', 'over40_solo', 'over40_trio', 'over40_pos1_matchup', 'duo_diff', 'radiant_counterpick_1vs2', 'radiant_synergy_trio', 'support_dif', 'synergy_duo']:
         for index in range(1, 101, 1):
             win = 0
             loose = 0
