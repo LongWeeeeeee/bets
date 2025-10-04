@@ -274,7 +274,7 @@ def format_output_dict(output_dict):
         output_dict['over40_solo'] = None
     if over40_trio and 13 > over40_trio > -13:
         output_dict['over40_trio'] = None
-    if over40_duo_synergy and 2 > over40_duo_synergy > -2:
+    if over40_duo_synergy and 6 > over40_duo_synergy > -6:
         output_dict['over40_duo'] = None
     if over40_duo_counterpick and 2 > over40_duo_counterpick > -2:
         output_dict['over40_duo_counterpick'] = None
