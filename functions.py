@@ -12,6 +12,22 @@ import keys
 # from keys import api_token_5
 from maps_research import update_my_protracker
 import keys, requests
+
+# ИМПОРТ УЛУЧШЕННЫХ ФУНКЦИЙ
+# Заменяет старые функции с проверкой статистической значимости
+from functions_improved import (
+    synergy_team as synergy_team_improved,
+    counterpick_team as counterpick_team_improved,
+    get_diff as get_diff_improved,
+    synergy_and_counterpick_new as synergy_and_counterpick_new_improved,
+    over40_counter as over40_counter_improved,
+    synergy_over40 as synergy_over40_improved,
+    calculate_over40 as calculate_over40_improved,
+    weighted_winrate_mean,
+    wilson_confidence_interval,
+    z_test_two_proportions
+)
+
 def send_message(message):
     bot_token = f'{keys.Token}'
     chat_id = f'{keys.Chat_id}'
@@ -258,36 +274,72 @@ def process_matchup_data(position, matchups, opposing_team_positions):
 
 
 def format_output_dict(output_dict):
-    over40_trio = output_dict.get('over40_trio', None)
-    over40_1vs2 = output_dict.get('over40_1vs2', None)
-    over40_duo_synergy = output_dict.get('over40_duo_synergy', None)
-    over40_duo_counterpick = output_dict.get('over40_duo_counterpick', None)
-    over40_solo = output_dict.get('over40_solo', None)
-    over40_pos1_matchup = output_dict.get('over40_pos1_matchup', None)
-    radiant_counterpick_1vs2 = output_dict.get('radiant_counterpick_1vs2', None)
-    duo_diff = output_dict.get('duo_diff', None)
-    radiant_synergy_trio = output_dict.get('radiant_synergy_trio', None)
-    synergy_duo = output_dict.get('synergy_duo', None)
-    pos1_matchup = output_dict.get('pos1_matchup', None)
-    support_dif = output_dict.get('support_dif', None)
-    if over40_solo and 3 > over40_solo > -3:
-        output_dict['over40_solo'] = None
-    if over40_trio and 13 > over40_trio > -13:
-        output_dict['over40_trio'] = None
-    if over40_duo_synergy and 6 > over40_duo_synergy > -6:
-        output_dict['over40_duo'] = None
-    if over40_duo_counterpick and 2 > over40_duo_counterpick > -2:
-        output_dict['over40_duo_counterpick'] = None
-    if over40_pos1_matchup and 10 > over40_pos1_matchup > -10:
-        output_dict['over40_pos1_matchup'] = None
-    if duo_diff and 4 > duo_diff > -4:
+    """
+    Фильтрует метрики на основе анализа past_matches.
+    
+    Правила:
+    1. Убираем все негативные значения (преимущество Dire)
+    2. Устанавливаем минимальные пороги на основе статистики
+    3. Убираем ненадежные метрики (over40_pos1_matchup)
+    """
+    
+    # Убираем over40_pos1_matchup полностью (ненадежная метрика)
+    output_dict['over40_pos1_matchup'] = None
+    
+    # pos1_matchup (обычный, не over40) - оставляем как есть (обрабатывается выше)
+    # Это carry vs carry matchup, может быть полезен
+    
+    # Топовые метрики (высокая точность)
+    # radiant_counterpick_1vs2: 81%+ WR при ≥4, 87%+ при ≥7
+    val = output_dict.get('radiant_counterpick_1vs2')
+    if val is not None and val < 4:
+        output_dict['radiant_counterpick_1vs2'] = None
+    
+    # duo_diff: 65%+ WR при ≥5, 80% при ≥7
+    val = output_dict.get('duo_diff')
+    if val is not None and val < 4:
         output_dict['duo_diff'] = None
-    if radiant_synergy_trio and 4 > radiant_synergy_trio > -4:
+    
+    # synergy_trio: 83%+ WR при ≥7
+    val = output_dict.get('radiant_synergy_trio')
+    if val is not None and val < 7:
         output_dict['radiant_synergy_trio'] = None
-    if synergy_duo and 8 > synergy_duo > -8:
+    
+    # over40_duo_counterpick: 65%+ WR при ≥5, 70%+ при ≥7
+    val = output_dict.get('over40_duo_counterpick')
+    if val is not None and val < 5:
+        output_dict['over40_duo_counterpick'] = None
+    
+    # over40_1vs2: 71%+ WR при ≥5, 85%+ при ≥7
+    val = output_dict.get('over40_1vs2')
+    if val is not None and val < 5:
+        output_dict['over40_1vs2'] = None
+    
+    # over40_trio: 80% WR при ≥8
+    val = output_dict.get('over40_trio')
+    if val is not None and val < 8:
+        output_dict['over40_trio'] = None
+    
+    # synergy_duo: 63%+ WR при ≥6
+    val = output_dict.get('synergy_duo')
+    if val is not None and val < 6:
         output_dict['synergy_duo'] = None
-    if support_dif and 15 > support_dif > -15:
+    
+    # over40_duo (duo_synergy): 70%+ WR при ≥4
+    val = output_dict.get('over40_duo')
+    if val is not None and val < 4:
+        output_dict['over40_duo'] = None
+    
+    # over40_solo: слабая корреляция, высокий порог
+    val = output_dict.get('over40_solo')
+    if val is not None and val < 4:
+        output_dict['over40_solo'] = None
+    
+    # support_dif: слабая метрика, не фильтруем строго
+    val = output_dict.get('support_dif')
+    if val is not None and val < 11:
         output_dict['support_dif'] = None
+    
     return output_dict
 
 
@@ -719,10 +771,10 @@ def check_bad_map(match, maps_data=None, break_flag=False):
 def proceed_map(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data, synergy_data, lane_data,
                 data_1vs2, data_1vs1, data_1vs3, synergy4, radiant_team_name=None, dire_team_name=None,
                 url=None):
-    # ...
-    over40 = calculate_over40(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data)
+    # ИСПОЛЬЗУЕМ УЛУЧШЕННЫЕ ФУНКЦИИ
+    over40 = calculate_over40_improved(radiant_heroes_and_pos, dire_heroes_and_pos, over40_data)
     top, bot, mid = calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data)
-    s = synergy_and_counterpick_new(
+    s = synergy_and_counterpick_new_improved(
         radiant_heroes_and_pos=radiant_heroes_and_pos,
         dire_heroes_and_pos=dire_heroes_and_pos,
         synergy_data=synergy_data, data_1vs2=data_1vs2, data_1vs1=data_1vs1, data_1vs3=data_1vs3
@@ -830,29 +882,55 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, data_1vs1,
                 lane_data=lane_data, over40_data=over40_data, synergy_data=synergy_data,
                 radiant_team_name=radiant_team_name, dire_team_name=dire_team_name,
                 synergy4=synergy4, data_1vs3=data_1vs3)
+    
+    # Подсчет статистически значимых метрик
+    significant_metrics = sum([
+        output_dict.get('over40_solo') is not None,
+        output_dict.get('over40_duo_counterpick') is not None,
+        output_dict.get('over40_trio') is not None,
+        output_dict.get('over40_1vs2') is not None,
+        output_dict.get('over40_duo_synergy') is not None,
+        output_dict.get('over40_pos1_matchup') is not None,
+        output_dict.get('pos1_matchup') is not None,
+        output_dict.get('synergy_duo') is not None,
+        output_dict.get('radiant_synergy_trio') is not None,
+        output_dict.get('duo_diff') is not None,
+        output_dict.get('radiant_counterpick_1vs2') is not None
+    ])
+    
+    # Определение уровня уверенности
+    if significant_metrics < 3:
+        confidence_warning = "⚠️ МАЛО ДАННЫХ - высокая неопределенность!"
+    elif significant_metrics < 5:
+        confidence_warning = f"⚠️ СРЕДНЯЯ уверенность ({significant_metrics}/10 метрик)"
+    else:
+        confidence_warning = f"✓ Хорошая уверенность ({significant_metrics}/10 метрик)"
+    
     if format_output_dict(output_dict):
     # if True:
-        # Р¤РѕСЂРјРёСЂРѕРІР°РЅРёРµ СЃРѕРѕР±С‰РµРЅРёСЏ
+        # Формирование сообщения
         send_message(
+            f'{confidence_warning}\n'
             f'ПОМНИ: КОМАНДА ВАЖНЕЕ ПИКА\n'
             f"{radiant_team_name} VS {dire_team_name}\n"
             # f"Kills: Median: {output_dict.get('kills_mediana', 'N/A')} "
             # f"| Avg: {output_dict.get('kills_average', 'N/A')}\n"
-            f"over40_solo: {output_dict.get('over40_solo', None)}\n"
-            f"over40_duo_counterpick: {output_dict['over40_duo_counterpick']}\n"
-            f"over40_trio: {output_dict['over40_trio']}\n"
-            f"over40_1vs2: {output_dict['over40_1vs2']}\n"
-            f"over40_duo_synergy: {output_dict['over40_duo_synergy']}\n"
-            f"over40_pos1_matchup: {output_dict['over40_pos1_matchup']}\n"
+            f"over40_solo: {output_dict.get('over40_solo', 'N/A')}\n"
+            f"over40_duo_counterpick: {output_dict.get('over40_duo_counterpick', 'N/A')}\n"
+            f"over40_trio: {output_dict.get('over40_trio', 'N/A')}\n"
+            f"over40_1vs2: {output_dict.get('over40_1vs2', 'N/A')}\n"
+            f"over40_duo_synergy: {output_dict.get('over40_duo_synergy', 'N/A')}\n"
+            f"over40_pos1_matchup: {output_dict.get('over40_pos1_matchup', 'N/A')}\n"
+            f"pos1_matchup: {output_dict.get('pos1_matchup', 'N/A')}\n"
             f"Lanes:\n{output_dict.get('top_message', '')}"
             f"{output_dict.get('mid_message', '')}"
             f"{output_dict.get('bot_message', '')}"
             f"Synergy_and_counterpick:\n"
             # f"support_dif: {output_dict['support_dif']}\n"
-            f"Synergy_duo: {output_dict['synergy_duo']}\n"
-            f"Synergy_trio: {output_dict['radiant_synergy_trio']}\n"
-            f"Counterpick_duo: {output_dict['duo_diff']}\n"
-            f"1vs2_counterpick: {output_dict['radiant_counterpick_1vs2']}\n"
+            f"Synergy_duo: {output_dict.get('synergy_duo', 'N/A')}\n"
+            f"Synergy_trio: {output_dict.get('radiant_synergy_trio', 'N/A')}\n"
+            f"Counterpick_duo: {output_dict.get('duo_diff', 'N/A')}\n"
+            f"1vs2_counterpick: {output_dict.get('radiant_counterpick_1vs2', 'N/A')}\n"
             f'ПОМНИ: КОМАНДА ВАЖНЕЕ ПИКА')
     else:
         send_message(
@@ -886,7 +964,7 @@ def check_old_maps(data_1vs1, data_1vs2, lane_data, over40_data, synergy_data, d
             'radiant_counterpick_1vs2': output_dict['radiant_counterpick_1vs2'],
             'over40_duo_synergy': output_dict['over40_duo_synergy'], 'over40_duo_counterpick': output_dict['over40_duo_counterpick'],
             'over40_1vs2': output_dict['over40_1vs2'], 'over40_solo': output_dict['over40_solo'],
-            'over40_trio': output_dict['over40_trio'],
+            'over40_trio': output_dict['over40_trio'], 'pos1_matchup': output_dict['pos1_matchup'],
             'over40_pos1_matchup': output_dict['over40_pos1_matchup'], 'didRadiantWin': didradiantwin,
             'duration': maps_data[match_id]['durationSeconds'], 'bottomLaneOutcome' : maps_data[match_id]['bottomLaneOutcome'],
             'topLaneOutcome': maps_data[match_id]['topLaneOutcome'], 'midLaneOutcome': maps_data[match_id]['midLaneOutcome']

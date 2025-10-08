@@ -177,7 +177,7 @@ def check_lines(data):
 def check_winrate(data):
     wrong_maps = []
 
-    for investigation in ['over40_1vs2', 'over40_duo_synergy', 'over40_duo_counterpick', 'over40_solo', 'over40_trio', 'over40_pos1_matchup', 'duo_diff', 'radiant_counterpick_1vs2', 'radiant_synergy_trio', 'support_dif', 'synergy_duo']:
+    for investigation in ['over40_1vs2', 'over40_duo_synergy', 'over40_duo_counterpick', 'over40_solo', 'over40_trio', 'over40_pos1_matchup', 'pos1_matchup', 'duo_diff', 'radiant_counterpick_1vs2', 'radiant_synergy_trio', 'support_dif', 'synergy_duo']:
         for index in range(1, 101, 1):
             win = 0
             loose = 0
@@ -200,12 +200,8 @@ def check_winrate(data):
                     win += 1
                 elif match[investigation] == -index and match['didRadiantWin'] == True:
                     loose += 1
-                    if index >= 17 and investigation == 'pos1_matchup':
-                        print(f'{index}, {match["match_id"]}')
                 elif match[investigation] == index and match['didRadiantWin'] == False:
                     loose += 1
-                    if index >= 17 and investigation == 'pos1_matchup':
-                        print(f'{index}, {match["match_id"]}')
             if win + loose > 5:
                 if win == 0:
                     print(f'Index: {index} {investigation} winrate: 0, Всего: {win + loose}')
@@ -242,12 +238,10 @@ def check_two_winrates(data):
         loose = 0
         for match in data:
             if 'over40' in investigation:
-                if match['duration'] / 60 < 35:
+                if match['duration'] / 60 < 40:
                     continue
             else:
-                if match.get('radiantNetworthLeads') is not None and len(
-                        match.get('radiantNetworthLeads', [])) >= 24:
-                    if not -2999 < match['radiantNetworthLeads'][10] < 2999:
+                if (match.get('radiantNetworthLeads') is not None and len(match.get('radiantNetworthLeads', [])) < 35):
                         continue
             if match[investigation] is not None and match[investigation] <= -index and match['didRadiantWin'] == True:
                 if match[second_inv] is not None and match[second_inv] <= -second_index:

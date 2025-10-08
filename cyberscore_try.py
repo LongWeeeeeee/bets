@@ -242,27 +242,54 @@ def check_head(heads, bodies, i, maps_data, return_status=None, leftover=None):
         )
 
         output_dict = format_output_dict(output_dict)
+        
+        # Подсчет статистически значимых метрик
+        significant_metrics = sum([
+            output_dict.get('over40_solo') is not None,
+            output_dict.get('over40_duo_counterpick') is not None,
+            output_dict.get('over40_trio') is not None,
+            output_dict.get('over40_1vs2') is not None,
+            output_dict.get('over40_duo') is not None,
+            output_dict.get('over40_pos1_matchup') is not None,
+            output_dict.get('pos1_matchup') is not None,
+            output_dict.get('synergy_duo') is not None,
+            output_dict.get('radiant_synergy_trio') is not None,
+            output_dict.get('duo_diff') is not None,
+            output_dict.get('radiant_counterpick_1vs2') is not None
+        ])
+        
+        # Определение уровня уверенности
+        if significant_metrics < 3:
+            confidence_warning = "⚠️ МАЛО ДАННЫХ - высокая неопределенность!"
+        elif significant_metrics < 5:
+            confidence_warning = f"⚠️ СРЕДНЯЯ уверенность ({significant_metrics}/10 метрик)"
+        else:
+            confidence_warning = f"✓ Хорошая уверенность ({significant_metrics}/10 метрик)"
+        
         send_message(
+            f'{confidence_warning}\n'
             f'ПОМНИ: КОМАНДА ВАЖНЕЕ ПИКА\n'
             f"               Счет: [{score}]\n"
             f"{radiant_team_name} VS {dire_team_name}\n"
             # f"Kills: Median: {output_dict.get('kills_mediana', 'N/A')} "
             # f"| Avg: {output_dict.get('kills_average', 'N/A')}\n"
-            f"over40_solo: {output_dict.get('over40_solo', None)}\n"
-            f"over40_duo_counterpick: {output_dict['over40_duo_counterpick']}\n"
-            f"over40_trio: {output_dict['over40_trio']}\n"
-            f"over40_1vs2: {output_dict['over40_1vs2']}\n"
-            f"over40_duo: {output_dict['over40_duo']}\n"
-            f"over40_pos1_matchup: {output_dict['over40_pos1_matchup']}\n\n"
+            f"over40_solo: {output_dict.get('over40_solo', 'N/A')}\n"
+            f"over40_duo_counterpick: {output_dict.get('over40_duo_counterpick', 'N/A')}\n"
+            f"over40_trio: {output_dict.get('over40_trio', 'N/A')}\n"
+            f"over40_1vs2: {output_dict.get('over40_1vs2', 'N/A')}\n"
+            f"over40_duo: {output_dict.get('over40_duo', 'N/A')}\n"
+            f"over40_pos1_matchup: {output_dict.get('over40_pos1_matchup', 'N/A')}\n"
+            f"pos1_matchup: {output_dict.get('pos1_matchup', 'N/A')}\n\n"
             f"Lanes:\n{output_dict.get('top_message', '')}"
             f"{output_dict.get('mid_message', '')}"
             f"{output_dict.get('bot_message', '')}"
             f"Synergy_and_counterpick:\n"
+            
             # f"support_dif: {output_dict['support_dif']}\n"
-            f"Synergy_duo: {output_dict['synergy_duo']}\n"
-            f"Synergy_trio: {output_dict['radiant_synergy_trio']}\n"
-            f"Counterpick_duo: {output_dict['duo_diff']}\n"
-            f"1vs2_counterpick: {output_dict['radiant_counterpick_1vs2']}\n"
+            f"Synergy_duo: {output_dict.get('synergy_duo', 'N/A')}\n"
+            f"Synergy_trio: {output_dict.get('radiant_synergy_trio', 'N/A')}\n"
+            f"Counterpick_duo: {output_dict.get('duo_diff', 'N/A')}\n"
+            f"1vs2_counterpick: {output_dict.get('radiant_counterpick_1vs2', 'N/A')}\n"
             f'ПОМНИ: КОМАНДА ВАЖНЕЕ ПИКА')
         add_url(check_uniq_url)
 
@@ -287,21 +314,22 @@ def general(return_status=None):
 
 
 if __name__ == "__main__":
-    # update_my_protracker(show_prints=True)
-        with open('count_synergy_10th_2000/synergy.txt', 'r') as f:
-            synergy_data = json.load(f)
-        with open('count_synergy_10th_2000/counterpick1vs1.txt', 'r') as f2:
-            data_1vs1 = json.load(f2)
-        with open('count_synergy_10th_2000/counterpick1vs2.txt', 'r') as f3:
-            data_1vs2 = json.load(f3)
-        with open('count_synergy_10th_2000/over40_dict.txt', 'r') as f:
-            over40_data = json.load(f)
-        with open('count_synergy_10th_2000/lane_dict.txt', 'r') as f:
-            lane_data = json.load(f)
+        update_my_protracker(show_prints=True)
+        import orjson
+        from pathlib import Path
+
+        base_path = Path('count_synergy_10th_2000')
+
+        # Вариант 1: Через orjson (самый быстрый)
+        synergy_data = orjson.loads((base_path / 'synergy.txt').read_bytes())
+        data_1vs1 = orjson.loads((base_path / 'counterpick1vs1.txt').read_bytes())
+        data_1vs2 = orjson.loads((base_path / 'counterpick1vs2.txt').read_bytes())
+        over40_data = orjson.loads((base_path / 'over40_dict.txt').read_bytes())
+        lane_data = orjson.loads((base_path / 'lane_dict.txt').read_bytes())
         synergy4, data_1vs3 = {}, {}
-        check_old_maps(data_1vs1=data_1vs1, data_1vs2=data_1vs2,
-                      lane_data=lane_data, over40_data=over40_data, synergy_data=synergy_data,
-                      data_1vs3=data_1vs3, synergy4=synergy4)
+        # check_old_maps(data_1vs1=data_1vs1, data_1vs2=data_1vs2,
+        #               lane_data=lane_data, over40_data=over40_data, synergy_data=synergy_data,
+        #               data_1vs3=data_1vs3, synergy4=synergy4)
         # one_match(radiant_heroes_and_pos={'pos1': {'hero_name': "faceless void"}, 'pos2': {'hero_name': "nature's prophet"},
         #                                   'pos3': {'hero_name': 'mars'}, 'pos4': {'hero_name': "snapfire"},
         #                                   'pos5': {'hero_name': "bane"}},
@@ -321,13 +349,13 @@ if __name__ == "__main__":
         #           synergy_data=synergy_data, data_1vs3=data_1vs3, synergy4=synergy4,
         #           radiant_team_name='Kalamycha Team', dire_team_name='dire')
 
-        # while True:
-        #     # if is_moscow_night():
-        #     #     sleep_until_morning()
-        #     status = general()
-        #     if status is None:
-        #         print('Сплю 5 минут')
-        #         time.sleep(300)
-        #     else:
-        #         print('Сплю 20 секунд')
-        #         time.sleep(20)
+        while True:
+            # if is_moscow_night():
+            #     sleep_until_morning()
+            status = general()
+            if status is None:
+                print('Сплю 5 минут')
+                time.sleep(300)
+            else:
+                print('Сплю 20 секунд')
+                time.sleep(20)
