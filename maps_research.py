@@ -342,9 +342,11 @@ async def retry_request_with_proxy_rotation(request_func, *args, max_retries=Non
     Args:
         request_func: асинхронная функция для выполнения запроса
         max_retries: максимальное количество попыток (None = бесконечно)
-        sleep_time: время сна в секундах при исчерпании всех прокси
+        sleep_time: время сна в секундах при исчерпании всех прокси (по умолчанию 5 минут)
     """
     attempt = 0
+    proxies_tried_in_cycle = 0
+    total_proxies = len(proxy_pool.trackers) if hasattr(proxy_pool, 'trackers') else 1
     
     while max_retries is None or attempt < max_retries:
         try:
@@ -352,25 +354,32 @@ async def retry_request_with_proxy_rotation(request_func, *args, max_retries=Non
             return result
         except Exception as e:
             attempt += 1
-            print(f"⚠️ Ошибка при запросе (попытка {attempt}): {e}")
+            proxies_tried_in_cycle += 1
+            print(f"⚠️ Ошибка при запросе (попытка {attempt}, прокси {proxies_tried_in_cycle}/{total_proxies}): {e}")
             
             # Пробуем переключиться на следующий прокси
             if hasattr(proxy_pool, 'trackers') and len(proxy_pool.trackers) > 0:
-                # Проверяем есть ли доступные прокси
-                available_trackers = [t for t in proxy_pool.trackers if not t.is_rate_limited]
+                # Принудительно переключаемся на следующий прокси
+                proxy_pool.current_index = (proxy_pool.current_index + 1) % len(proxy_pool.trackers)
+                next_tracker = proxy_pool.trackers[proxy_pool.current_index]
+                proxy_short = next_tracker.proxy_url.split('@')[-1] if '@' in next_tracker.proxy_url else next_tracker.proxy_url[:30]
+                print(f"🔄 Переключение на прокси #{proxy_pool.current_index + 1}: {proxy_short}")
                 
-                if not available_trackers:
-                    print(f"❌ Все прокси исчерпаны, спим {sleep_time} секунд...")
+                # Если перепробовали все прокси в цикле
+                if proxies_tried_in_cycle >= total_proxies:
+                    print(f"❌ Все {total_proxies} прокси были перепробованы, спим {sleep_time} секунд (5 минут)...")
                     await asyncio.sleep(sleep_time)
                     
                     # Сбрасываем rate limits для всех прокси
                     for tracker in proxy_pool.trackers:
                         tracker.is_rate_limited = False
-                        tracker.rate_limit_time = None
-                    print("🔄 Rate limits сброшены, продолжаем...")
+                        tracker.rate_limit_time = 0
+                    
+                    proxies_tried_in_cycle = 0  # Сбрасываем счетчик для нового цикла
+                    print("⏰ Пробуждение! Сбросили rate limits, продолжаем с первого прокси...")
                 else:
-                    print(f"🔄 Переключаемся на следующий прокси (доступно {len(available_trackers)})...")
-                    await asyncio.sleep(2)  # Небольшая задержка перед повторной попыткой
+                    # Небольшая задержка перед повторной попыткой
+                    await asyncio.sleep(2)
             else:
                 # Если нет информации о прокси, просто ждем
                 await asyncio.sleep(5)
@@ -386,7 +395,7 @@ async def get_maps_new(game_mods, maps_to_save, ids, mkdir='count_synergy_10th_2
     """
     # Загрузка trash_maps
     try:
-        with open('./trash_maps.txt', 'r') as f:
+        with open(f'{mkdir}/trash_maps.txt', 'r') as f:
             trash_maps = set(json.load(f))
         print(f"📋 Загружено {len(trash_maps)} trash maps")
     except:
@@ -400,7 +409,7 @@ async def get_maps_new(game_mods, maps_to_save, ids, mkdir='count_synergy_10th_2
     processed_graph_ids = set()
     if os.path.exists(processed_graph_ids_file):
         try:
-            with open(processed_graph_ids_file, 'r', encoding='utf-8') as f:
+            with open(processed_graph_ids_file, 'r') as f:
                 processed_graph_ids = set(json.load(f))
             print(f"📋 Загружено {len(processed_graph_ids)} уже обработанных IDs из ids_to_graph")
         except Exception as e:
@@ -484,7 +493,7 @@ async def get_maps_new(game_mods, maps_to_save, ids, mkdir='count_synergy_10th_2
                     output_data = {}  # Очищаем после сохранения
 
                 # Сохраняем trash_maps
-                with open('./trash_maps.txt', 'w') as f:
+                with open('count_synergy_10th_2000/trash_maps.txt', 'w') as f:
                     json.dump(list(trash_maps), f)
 
                 # Сохраняем обработанные ID из ids_to_graph
@@ -570,7 +579,7 @@ async def get_maps_new(game_mods, maps_to_save, ids, mkdir='count_synergy_10th_2
                     output_data = {}
 
                 # Сохраняем trash_maps
-                with open('./trash_maps.txt', 'w') as f:
+                with open('count_synergy_10th_2000/trash_maps.txt', 'w') as f:
                     json.dump(list(trash_maps), f)
 
                 # Сохраняем обработанные ID из ids_to_graph
@@ -596,7 +605,7 @@ async def get_maps_new(game_mods, maps_to_save, ids, mkdir='count_synergy_10th_2
     with open('all_teams.txt', 'w') as f:
         json.dump(all_teams, f)
 
-    with open('./trash_maps.txt', 'w') as f:
+    with open('count_synergy_10th_2000/trash_maps.txt', 'w') as f:
         json.dump(list(trash_maps), f)
 
     # Финальное сохранение обработанных ID из ids_to_graph
@@ -814,7 +823,8 @@ async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=Non
 
     except Exception as e:
         print(f"Unexpected error in proceed_get_maps_with_data: {e}")
-        check = False
+        # Пробрасываем ошибку дальше для retry логики
+        raise
 
     return matches, player_ids
 
@@ -1128,7 +1138,7 @@ async def research_map_proceed(maps_to_explore, mkdir, another_counter=0,
     new_data, error_maps = {}, set()
     # Попытка загрузить временные данные
     try:
-        with open(f'./trash_maps.txt', 'r') as f1:
+        with open(f'count_synergy_10th_2000/trash_maps.txt', 'r') as f1:
             trash_maps = set(json.load(f1))
     except:
         trash_maps = set()
@@ -1155,7 +1165,7 @@ async def research_map_proceed(maps_to_explore, mkdir, another_counter=0,
                 save_temp_file(new_data, mkdir, another_counter)
                 new_data = {}
             if len(trash_maps) % 499 == 0:
-                with open(f'./trash_maps.txt', 'w') as f1:
+                with open(f'count_synergy_10th_2000/trash_maps.txt', 'w') as f1:
                     json.dump(list(trash_maps), f1)
 
 
@@ -1526,17 +1536,17 @@ def update_my_protracker(show_prints=True):
     # regions = [[5000, 'EUROPE'],[2500, 'SEA_ASIA']]
     # for top, region in regions:
     #     players_dict = get_players(top=top, region=region, players_dict=players_dict, skip=0)
-    # ids = set()
-    # database = collect_all_maps(folder_path='count_synergy_10th_2000/json_parts_split_from_object', output=True)
-    # for map_id in database:
-    #     for player in database[map_id]['players']:
-    #         ids.add(player['steamAccount']['id'])
-    # asyncio.run(get_maps_new(maps_to_save='./count_synergy_10th_2000/1722505765_top600_maps', game_mods=[2, 22],
-    #              show_prints=show_prints, ids=ids))
+    ids = set()
+    database = collect_all_maps(folder_path='count_synergy_10th_2000/json_parts_split_from_object', output=True)
+    for map_id in database:
+        for player in database[map_id]['players']:
+            ids.add(player['steamAccount']['id'])
+    asyncio.run(get_maps_new(maps_to_save='./count_synergy_10th_2000/1722505765_top600_maps', game_mods=[2, 22],
+                 show_prints=show_prints, ids=ids))
 
-    explore_database(mkdir='count_synergy_10th_2000', file_name='1722505765_top600_output',
-                     over40=True, counterpick1vs2=True, synergy=True, counterpick1vs1=True, lane=True,
-                     counterpick1vs3=True, synergy4=True)
+    # explore_database(mkdir='count_synergy_10th_2000', file_name='1722505765_top600_output',
+    #                  over40=True, counterpick1vs2=True, synergy=True, counterpick1vs1=True, lane=True,
+    #                  counterpick1vs3=True, synergy4=True)
     #
 
 # def update_heroes_data(database_list=None, mkdir=None):

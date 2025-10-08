@@ -27,7 +27,7 @@ headers = {
                       "Chrome/130.0.0.0 Safari/537.36", }
 
 def add_url(url):
-    with open('map_id_check.txt', 'r+') as f:
+    with open('count_synergy_10th_2000/map_id_check.txt', 'r+') as f:
         data = json.load(f)
         data.append(url)
         f.truncate()
@@ -299,7 +299,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None, leftover=None):
 
 
 def general(return_status=None):
-    with open('./map_id_check.txt', 'r+') as f:
+    with open('count_synergy_10th_2000/map_id_check.txt', 'r+') as f:
         maps_data = json.load(f)
     answer = get_heads()
     if not answer:

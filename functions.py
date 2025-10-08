@@ -172,7 +172,7 @@ def get_map_id(match):
 
 def if_unique(url, score):
     check_uniq_url = str(url) + '.' + str(int(score[0]) + int(score[1]))
-    with open('map_id_check.txt', 'r+') as f:
+    with open('count_synergy_10th_2000/map_id_check.txt', 'r+') as f:
         data = json.load(f)
         if check_uniq_url not in data:
             # data.append(url)
@@ -183,7 +183,7 @@ def if_unique(url, score):
 
 
 def add_url(url):
-    with open('map_id_check.txt', 'r+') as f:
+    with open('count_synergy_10th_2000/map_id_check.txt', 'r+') as f:
         data = json.load(f)
         data.append(url)
         f.truncate()
