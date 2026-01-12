@@ -1,0 +1,11 @@
+{
+  "feature_cols": [
+    "kills_prob",
+    "duration_pred",
+    "kpm_pred",
+    "kills_formula"
+  ],
+  "meta_size": 1000,
+  "base_train_size": 6405,
+  "test_size": 500
+}

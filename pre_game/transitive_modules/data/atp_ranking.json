@@ -1,0 +1,6676 @@
+{
+  "generated": "2025-11-30 17:45",
+  "period_days": 365,
+  "decay_half_life": 90,
+  "rankings": [
+    {
+      "rank": 1,
+      "team_id": 9247354,
+      "name": "Team Falcons",
+      "points": 3191,
+      "raw_points": 10300,
+      "tournaments_count": 14,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 1106,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 941,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 18375,
+          "name": "League_18375",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 427,
+          "date": "2025-07-19",
+          "days_ago": 133
+        },
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 44,
+          "date": "2025-06-01",
+          "days_ago": 181
+        },
+        {
+          "league_id": 17418,
+          "name": "League_17418",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 251,
+          "date": "2025-05-11",
+          "days_ago": 202
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 67,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 17795,
+          "name": "League_17795",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 60,
+          "date": "2025-04-14",
+          "days_ago": 230
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 27,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 24,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 44,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 118,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 17509,
+          "name": "League_17509",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 24,
+          "date": "2024-12-15",
+          "days_ago": 350
+        },
+        {
+          "league_id": 17414,
+          "name": "League_17414",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 21,
+          "date": "2024-12-01",
+          "days_ago": 363
+        },
+        {
+          "league_id": 17417,
+          "name": "League_17417",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 37,
+          "date": "2025-02-09",
+          "days_ago": 293
+        }
+      ]
+    },
+    {
+      "rank": 2,
+      "team_id": 9572001,
+      "name": "PARIVISION",
+      "points": 2807,
+      "raw_points": 13440,
+      "tournaments_count": 15,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 398,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 338,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 492,
+          "date": "2025-06-01",
+          "days_ago": 181
+        },
+        {
+          "league_id": 17418,
+          "name": "League_17418",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 150,
+          "date": "2025-05-11",
+          "days_ago": 202
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 225,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 17795,
+          "name": "League_17795",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 338,
+          "date": "2025-04-14",
+          "days_ago": 230
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 54,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 89,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 17,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 17509,
+          "name": "League_17509",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 134,
+          "date": "2024-12-15",
+          "days_ago": 350
+        },
+        {
+          "league_id": 17414,
+          "name": "League_17414",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 21,
+          "date": "2024-12-01",
+          "days_ago": 363
+        },
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 25,
+          "date": "2024-12-22",
+          "days_ago": 342
+        },
+        {
+          "league_id": 18359,
+          "name": "League_18359",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 71,
+          "date": "2025-08-03",
+          "days_ago": 119
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 381,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 17417,
+          "name": "League_17417",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 74,
+          "date": "2025-02-09",
+          "days_ago": 293
+        }
+      ]
+    },
+    {
+      "rank": 3,
+      "team_id": 2163,
+      "name": "Team Liquid",
+      "points": 2544,
+      "raw_points": 12240,
+      "tournaments_count": 17,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 199,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 338,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 18375,
+          "name": "League_18375",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 128,
+          "date": "2025-07-19",
+          "days_ago": 133
+        },
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 54,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 88,
+          "date": "2025-06-01",
+          "days_ago": 181
+        },
+        {
+          "league_id": 17418,
+          "name": "League_17418",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 75,
+          "date": "2025-05-11",
+          "days_ago": 202
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 376,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 17795,
+          "name": "League_17795",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 60,
+          "date": "2025-04-14",
+          "days_ago": 230
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 54,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 272,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 44,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 71,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 17509,
+          "name": "League_17509",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 80,
+          "date": "2024-12-15",
+          "days_ago": 350
+        },
+        {
+          "league_id": 17414,
+          "name": "League_17414",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 21,
+          "date": "2024-12-01",
+          "days_ago": 363
+        },
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-22",
+          "days_ago": 342
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 635,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 17417,
+          "name": "League_17417",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 37,
+          "date": "2025-02-09",
+          "days_ago": 293
+        }
+      ]
+    },
+    {
+      "rank": 4,
+      "team_id": 7119388,
+      "name": "Team Spirit",
+      "points": 2425,
+      "raw_points": 10855,
+      "tournaments_count": 15,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 90,
+          "decayed_points": 49,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 564,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 18375,
+          "name": "League_18375",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 712,
+          "date": "2025-07-19",
+          "days_ago": 133
+        },
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 219,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17418,
+          "name": "League_17418",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 75,
+          "date": "2025-05-11",
+          "days_ago": 202
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 33,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 17795,
+          "name": "League_17795",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 203,
+          "date": "2025-04-14",
+          "days_ago": 230
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 109,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 98,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 248,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 17,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 17509,
+          "name": "League_17509",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 48,
+          "date": "2024-12-15",
+          "days_ago": 350
+        },
+        {
+          "league_id": 17414,
+          "name": "League_17414",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 21,
+          "date": "2024-12-01",
+          "days_ago": 363
+        },
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 25,
+          "date": "2024-12-22",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 5,
+      "team_id": 8291895,
+      "name": "Tundra Esports",
+      "points": 2403,
+      "raw_points": 13590,
+      "tournaments_count": 15,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 99,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 18375,
+          "name": "League_18375",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 256,
+          "date": "2025-07-19",
+          "days_ago": 133
+        },
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 109,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17418,
+          "name": "League_17418",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 419,
+          "date": "2025-05-11",
+          "days_ago": 202
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 67,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 17795,
+          "name": "League_17795",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 121,
+          "date": "2025-04-14",
+          "days_ago": 230
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 54,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 163,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 148,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 197,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 17414,
+          "name": "League_17414",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 72,
+          "date": "2024-12-01",
+          "days_ago": 363
+        },
+        {
+          "league_id": 18359,
+          "name": "League_18359",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 479,
+          "date": "2025-08-03",
+          "days_ago": 119
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17417,
+          "name": "League_17417",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 208,
+          "date": "2025-02-09",
+          "days_ago": 293
+        }
+      ]
+    },
+    {
+      "rank": 6,
+      "team_id": 8261500,
+      "name": "Xtreme Gaming",
+      "points": 2361,
+      "raw_points": 8845,
+      "tournaments_count": 16,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 663,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 18375,
+          "name": "League_18375",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 128,
+          "date": "2025-07-19",
+          "days_ago": 133
+        },
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 54,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 44,
+          "date": "2025-06-01",
+          "days_ago": 181
+        },
+        {
+          "league_id": 17418,
+          "name": "League_17418",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 150,
+          "date": "2025-05-11",
+          "days_ago": 202
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 33,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 24,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 44,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 17,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 17414,
+          "name": "League_17414",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 21,
+          "date": "2024-12-01",
+          "days_ago": 363
+        },
+        {
+          "league_id": 18359,
+          "name": "League_18359",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 143,
+          "date": "2025-08-03",
+          "days_ago": 119
+        },
+        {
+          "league_id": 17417,
+          "name": "League_17417",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 37,
+          "date": "2025-02-09",
+          "days_ago": 293
+        },
+        {
+          "league_id": 18306,
+          "name": "League_18306",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 535,
+          "date": "2025-06-12",
+          "days_ago": 171
+        },
+        {
+          "league_id": 17875,
+          "name": "League_17875",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 434,
+          "date": "2025-05-16",
+          "days_ago": 198
+        },
+        {
+          "league_id": 18046,
+          "name": "League_18046",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 30,
+          "date": "2025-04-12",
+          "days_ago": 232
+        }
+      ]
+    },
+    {
+      "rank": 7,
+      "team_id": 8255888,
+      "name": "BetBoom Team",
+      "points": 2092,
+      "raw_points": 10980,
+      "tournaments_count": 14,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 199,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 84,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 610,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 295,
+          "date": "2025-06-01",
+          "days_ago": 181
+        },
+        {
+          "league_id": 17418,
+          "name": "League_17418",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 75,
+          "date": "2025-05-11",
+          "days_ago": 202
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 67,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 17795,
+          "name": "League_17795",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 121,
+          "date": "2025-04-14",
+          "days_ago": 230
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 303,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 44,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 17,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 17509,
+          "name": "League_17509",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 48,
+          "date": "2024-12-15",
+          "days_ago": 350
+        },
+        {
+          "league_id": 17414,
+          "name": "League_17414",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 121,
+          "date": "2024-12-01",
+          "days_ago": 363
+        },
+        {
+          "league_id": 18359,
+          "name": "League_18359",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 71,
+          "date": "2025-08-03",
+          "days_ago": 119
+        },
+        {
+          "league_id": 17417,
+          "name": "League_17417",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 37,
+          "date": "2025-02-09",
+          "days_ago": 293
+        }
+      ]
+    },
+    {
+      "rank": 8,
+      "team_id": 9640842,
+      "name": "Team Tidebound",
+      "points": 1873,
+      "raw_points": 7070,
+      "tournaments_count": 13,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 90,
+          "decayed_points": 49,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 84,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 109,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 16,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17628,
+          "name": "League_17628",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 14,
+          "date": "2025-01-11",
+          "days_ago": 322
+        },
+        {
+          "league_id": 17418,
+          "name": "League_17418",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 75,
+          "date": "2025-05-11",
+          "days_ago": 202
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 135,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 17795,
+          "name": "League_17795",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 60,
+          "date": "2025-04-14",
+          "days_ago": 230
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 109,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 49,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 18359,
+          "name": "League_18359",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 799,
+          "date": "2025-08-03",
+          "days_ago": 119
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 114,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 17875,
+          "name": "League_17875",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 260,
+          "date": "2025-05-16",
+          "days_ago": 198
+        }
+      ]
+    },
+    {
+      "rank": 9,
+      "team_id": 8599101,
+      "name": "Gaimin Gladiators",
+      "points": 1631,
+      "raw_points": 8285,
+      "tournaments_count": 18,
+      "tournaments": [
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 84,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 18375,
+          "name": "League_18375",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 128,
+          "date": "2025-07-19",
+          "days_ago": 133
+        },
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 366,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 8,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 177,
+          "date": "2025-06-01",
+          "days_ago": 181
+        },
+        {
+          "league_id": 17418,
+          "name": "League_17418",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 75,
+          "date": "2025-05-11",
+          "days_ago": 202
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 181,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 49,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 44,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 35,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 17414,
+          "name": "League_17414",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 21,
+          "date": "2024-12-01",
+          "days_ago": 363
+        },
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-22",
+          "days_ago": 342
+        },
+        {
+          "league_id": 18359,
+          "name": "League_18359",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 143,
+          "date": "2025-08-03",
+          "days_ago": 119
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 114,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 17775,
+          "name": "League_17775",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-14",
+          "days_ago": 288
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17417,
+          "name": "League_17417",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 124,
+          "date": "2025-02-09",
+          "days_ago": 293
+        },
+        {
+          "league_id": 17768,
+          "name": "League_17768",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 54,
+          "date": "2025-02-15",
+          "days_ago": 287
+        }
+      ]
+    },
+    {
+      "rank": 10,
+      "team_id": 9467224,
+      "name": "Aurora Gaming",
+      "points": 1448,
+      "raw_points": 5630,
+      "tournaments_count": 15,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 199,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 169,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 18375,
+          "name": "League_18375",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 128,
+          "date": "2025-07-19",
+          "days_ago": 133
+        },
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 219,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 88,
+          "date": "2025-06-01",
+          "days_ago": 181
+        },
+        {
+          "league_id": 17418,
+          "name": "League_17418",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 75,
+          "date": "2025-05-11",
+          "days_ago": 202
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 135,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 54,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 98,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 17,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 114,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 18304,
+          "name": "League_18304",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 129,
+          "date": "2025-06-08",
+          "days_ago": 174
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17326,
+          "name": "League_17326",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-15",
+          "days_ago": 350
+        }
+      ]
+    },
+    {
+      "rank": 11,
+      "team_id": 9303484,
+      "name": "Heroic",
+      "points": 1363,
+      "raw_points": 5485,
+      "tournaments_count": 14,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 398,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 18375,
+          "name": "League_18375",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 128,
+          "date": "2025-07-19",
+          "days_ago": 133
+        },
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 54,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 18305,
+          "name": "League_18305",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 130,
+          "date": "2025-06-09",
+          "days_ago": 174
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 33,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 17795,
+          "name": "League_17795",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 60,
+          "date": "2025-04-14",
+          "days_ago": 230
+        },
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 24,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 44,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 35,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 17414,
+          "name": "League_17414",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 43,
+          "date": "2024-12-01",
+          "days_ago": 363
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 135,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 228,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 47,
+          "date": "2025-04-04",
+          "days_ago": 240
+        }
+      ]
+    },
+    {
+      "rank": 12,
+      "team_id": 7554697,
+      "name": "Nigma Galaxy",
+      "points": 1217,
+      "raw_points": 6540,
+      "tournaments_count": 20,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 99,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 54,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 44,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17628,
+          "name": "League_17628",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 24,
+          "date": "2025-01-11",
+          "days_ago": 322
+        },
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 88,
+          "date": "2025-06-01",
+          "days_ago": 181
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 33,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 17795,
+          "name": "League_17795",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 60,
+          "date": "2025-04-14",
+          "days_ago": 230
+        },
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 24,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 17509,
+          "name": "League_17509",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 24,
+          "date": "2024-12-15",
+          "days_ago": 350
+        },
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 25,
+          "date": "2024-12-22",
+          "days_ago": 342
+        },
+        {
+          "league_id": 18359,
+          "name": "League_18359",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 287,
+          "date": "2025-08-03",
+          "days_ago": 119
+        },
+        {
+          "league_id": 18309,
+          "name": "League_18309",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 139,
+          "date": "2025-06-17",
+          "days_ago": 165
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 12,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 114,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 17775,
+          "name": "League_17775",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 54,
+          "date": "2025-02-14",
+          "days_ago": 288
+        },
+        {
+          "league_id": 17673,
+          "name": "League_17673",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 25,
+          "date": "2025-01-15",
+          "days_ago": 318
+        },
+        {
+          "league_id": 17524,
+          "name": "League_17524",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 21,
+          "date": "2024-12-23",
+          "days_ago": 342
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17417,
+          "name": "League_17417",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 74,
+          "date": "2025-02-09",
+          "days_ago": 293
+        },
+        {
+          "league_id": 17768,
+          "name": "League_17768",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-15",
+          "days_ago": 287
+        }
+      ]
+    },
+    {
+      "rank": 13,
+      "team_id": 9351740,
+      "name": "Invictus Gaming",
+      "points": 1128,
+      "raw_points": 5725,
+      "tournaments_count": 14,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 199,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 88,
+          "date": "2025-06-01",
+          "days_ago": 181
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 44,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 35,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 18359,
+          "name": "League_18359",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 71,
+          "date": "2025-08-03",
+          "days_ago": 119
+        },
+        {
+          "league_id": 17775,
+          "name": "League_17775",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 19,
+          "date": "2025-02-14",
+          "days_ago": 288
+        },
+        {
+          "league_id": 17417,
+          "name": "League_17417",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 37,
+          "date": "2025-02-09",
+          "days_ago": 293
+        },
+        {
+          "league_id": 17768,
+          "name": "League_17768",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 32,
+          "date": "2025-02-15",
+          "days_ago": 287
+        },
+        {
+          "league_id": 18306,
+          "name": "League_18306",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 321,
+          "date": "2025-06-12",
+          "days_ago": 171
+        },
+        {
+          "league_id": 17875,
+          "name": "League_17875",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 156,
+          "date": "2025-05-16",
+          "days_ago": 198
+        },
+        {
+          "league_id": 17766,
+          "name": "League_17766",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 16388,
+          "name": "League_16388",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 50,
+          "date": "2025-02-06",
+          "days_ago": 296
+        },
+        {
+          "league_id": 17326,
+          "name": "League_17326",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 20,
+          "date": "2024-12-15",
+          "days_ago": 350
+        }
+      ]
+    },
+    {
+      "rank": 14,
+      "team_id": 9758040,
+      "name": "Runa Team",
+      "points": 889,
+      "raw_points": 2895,
+      "tournaments_count": 8,
+      "tournaments": [
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 169,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 17367,
+          "name": "League_17367",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 38,
+          "date": "2025-08-13",
+          "days_ago": 108
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 12,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 228,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 18304,
+          "name": "League_18304",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 46,
+          "date": "2025-06-08",
+          "days_ago": 174
+        },
+        {
+          "league_id": 18182,
+          "name": "League_18182",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 124,
+          "date": "2025-06-03",
+          "days_ago": 180
+        },
+        {
+          "league_id": 18242,
+          "name": "League_18242",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 140,
+          "date": "2025-06-18",
+          "days_ago": 165
+        },
+        {
+          "league_id": 18201,
+          "name": "League_18201",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 132,
+          "date": "2025-06-10",
+          "days_ago": 172
+        }
+      ]
+    },
+    {
+      "rank": 15,
+      "team_id": 9498970,
+      "name": "AVULUS",
+      "points": 745,
+      "raw_points": 4285,
+      "tournaments_count": 18,
+      "tournaments": [
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 84,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 54,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 44,
+          "date": "2025-06-01",
+          "days_ago": 181
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 33,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 17795,
+          "name": "League_17795",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 60,
+          "date": "2025-04-14",
+          "days_ago": 230
+        },
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 24,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 44,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 35,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 17509,
+          "name": "League_17509",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 24,
+          "date": "2024-12-15",
+          "days_ago": 350
+        },
+        {
+          "league_id": 18396,
+          "name": "League_18396",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 70,
+          "date": "2025-07-31",
+          "days_ago": 121
+        },
+        {
+          "league_id": 18309,
+          "name": "League_18309",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 50,
+          "date": "2025-06-17",
+          "days_ago": 165
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 12,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 114,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 17673,
+          "name": "League_17673",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 42,
+          "date": "2025-01-15",
+          "days_ago": 318
+        },
+        {
+          "league_id": 17524,
+          "name": "League_17524",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 35,
+          "date": "2024-12-23",
+          "days_ago": 342
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17767,
+          "name": "League_17767",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-10",
+          "days_ago": 292
+        }
+      ]
+    },
+    {
+      "rank": 16,
+      "team_id": 9255039,
+      "name": "1win",
+      "points": 739,
+      "raw_points": 3910,
+      "tournaments_count": 17,
+      "tournaments": [
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 169,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 8,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17628,
+          "name": "League_17628",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 3,
+          "date": "2025-01-11",
+          "days_ago": 322
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 90,
+          "decayed_points": 13,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 51,
+          "date": "2024-12-22",
+          "days_ago": 342
+        },
+        {
+          "league_id": 18396,
+          "name": "League_18396",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 70,
+          "date": "2025-07-31",
+          "days_ago": 121
+        },
+        {
+          "league_id": 18309,
+          "name": "League_18309",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 50,
+          "date": "2025-06-17",
+          "days_ago": 165
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 12,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 28,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17766,
+          "name": "League_17766",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 18374,
+          "name": "League_18374",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 58,
+          "date": "2025-07-08",
+          "days_ago": 145
+        },
+        {
+          "league_id": 17782,
+          "name": "League_17782",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 37,
+          "date": "2025-03-06",
+          "days_ago": 268
+        },
+        {
+          "league_id": 18181,
+          "name": "League_18181",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 124,
+          "date": "2025-06-02",
+          "days_ago": 180
+        },
+        {
+          "league_id": 18046,
+          "name": "League_18046",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 30,
+          "date": "2025-04-12",
+          "days_ago": 232
+        },
+        {
+          "league_id": 17774,
+          "name": "League_17774",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 19,
+          "date": "2025-02-13",
+          "days_ago": 289
+        },
+        {
+          "league_id": 17767,
+          "name": "League_17767",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17523,
+          "name": "League_17523",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 6,
+          "date": "2024-12-27",
+          "days_ago": 337
+        }
+      ]
+    },
+    {
+      "rank": 17,
+      "team_id": 2586976,
+      "name": "OG",
+      "points": 685,
+      "raw_points": 3540,
+      "tournaments_count": 17,
+      "tournaments": [
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 84,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 54,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17984,
+          "name": "League_17984",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 29,
+          "date": "2025-04-10",
+          "days_ago": 234
+        },
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 49,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 17414,
+          "name": "League_17414",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 43,
+          "date": "2024-12-01",
+          "days_ago": 363
+        },
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-22",
+          "days_ago": 342
+        },
+        {
+          "league_id": 18396,
+          "name": "League_18396",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 70,
+          "date": "2025-07-31",
+          "days_ago": 121
+        },
+        {
+          "league_id": 18309,
+          "name": "League_18309",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 83,
+          "date": "2025-06-17",
+          "days_ago": 165
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 12,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 114,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 17775,
+          "name": "League_17775",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-14",
+          "days_ago": 288
+        },
+        {
+          "league_id": 17673,
+          "name": "League_17673",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 7,
+          "date": "2025-01-15",
+          "days_ago": 318
+        },
+        {
+          "league_id": 17768,
+          "name": "League_17768",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-15",
+          "days_ago": 287
+        },
+        {
+          "league_id": 18374,
+          "name": "League_18374",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 58,
+          "date": "2025-07-08",
+          "days_ago": 145
+        },
+        {
+          "league_id": 18046,
+          "name": "League_18046",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 30,
+          "date": "2025-04-12",
+          "days_ago": 232
+        },
+        {
+          "league_id": 16925,
+          "name": "League_16925",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 18,
+          "date": "2025-02-10",
+          "days_ago": 292
+        }
+      ]
+    },
+    {
+      "rank": 18,
+      "team_id": 9651185,
+      "name": "Wildcard",
+      "points": 644,
+      "raw_points": 2255,
+      "tournaments_count": 10,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 90,
+          "decayed_points": 49,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 84,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 109,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 27,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 24,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 17,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 114,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 18374,
+          "name": "League_18374",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 163,
+          "date": "2025-07-08",
+          "days_ago": 145
+        },
+        {
+          "league_id": 18242,
+          "name": "League_18242",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 50,
+          "date": "2025-06-18",
+          "days_ago": 165
+        }
+      ]
+    },
+    {
+      "rank": 19,
+      "team_id": 9303383,
+      "name": "L1GA TEAM",
+      "points": 635,
+      "raw_points": 3230,
+      "tournaments_count": 13,
+      "tournaments": [
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 169,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17628,
+          "name": "League_17628",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 3,
+          "date": "2025-01-11",
+          "days_ago": 322
+        },
+        {
+          "league_id": 17381,
+          "name": "League_17381",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 69,
+          "date": "2025-10-27",
+          "days_ago": 34
+        },
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 1200,
+          "decayed_points": 85,
+          "date": "2024-12-22",
+          "days_ago": 342
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 24,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 114,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 18304,
+          "name": "League_18304",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 46,
+          "date": "2025-06-08",
+          "days_ago": 174
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 14,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 18046,
+          "name": "League_18046",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 83,
+          "date": "2025-04-12",
+          "days_ago": 232
+        },
+        {
+          "league_id": 17774,
+          "name": "League_17774",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-13",
+          "days_ago": 289
+        },
+        {
+          "league_id": 17767,
+          "name": "League_17767",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17523,
+          "name": "League_17523",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 6,
+          "date": "2024-12-27",
+          "days_ago": 337
+        }
+      ]
+    },
+    {
+      "rank": 20,
+      "team_id": 9586122,
+      "name": "4Pirates",
+      "points": 625,
+      "raw_points": 4300,
+      "tournaments_count": 15,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 18396,
+          "name": "League_18396",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 117,
+          "date": "2025-07-31",
+          "days_ago": 121
+        },
+        {
+          "league_id": 18309,
+          "name": "League_18309",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 50,
+          "date": "2025-06-17",
+          "days_ago": 165
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 48,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 17637,
+          "name": "League_17637",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 28,
+          "date": "2025-01-29",
+          "days_ago": 304
+        },
+        {
+          "league_id": 17646,
+          "name": "League_17646",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-10",
+          "days_ago": 323
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17766,
+          "name": "League_17766",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 16388,
+          "name": "League_16388",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 50,
+          "date": "2025-02-06",
+          "days_ago": 296
+        },
+        {
+          "league_id": 17782,
+          "name": "League_17782",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 11,
+          "date": "2025-03-06",
+          "days_ago": 268
+        },
+        {
+          "league_id": 17520,
+          "name": "League_17520",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 34,
+          "date": "2024-12-19",
+          "days_ago": 345
+        },
+        {
+          "league_id": 18181,
+          "name": "League_18181",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 124,
+          "date": "2025-06-02",
+          "days_ago": 180
+        },
+        {
+          "league_id": 17774,
+          "name": "League_17774",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 19,
+          "date": "2025-02-13",
+          "days_ago": 289
+        },
+        {
+          "league_id": 17767,
+          "name": "League_17767",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 18,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17523,
+          "name": "League_17523",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 22,
+          "date": "2024-12-27",
+          "days_ago": 337
+        }
+      ]
+    },
+    {
+      "rank": 21,
+      "team_id": 7732977,
+      "name": "BOOM Esports",
+      "points": 620,
+      "raw_points": 3610,
+      "tournaments_count": 15,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 99,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17628,
+          "name": "League_17628",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 7,
+          "date": "2025-01-11",
+          "days_ago": 322
+        },
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 44,
+          "date": "2025-06-01",
+          "days_ago": 181
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 27,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 44,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17509,
+          "name": "League_17509",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 24,
+          "date": "2024-12-15",
+          "days_ago": 350
+        },
+        {
+          "league_id": 18359,
+          "name": "League_18359",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 71,
+          "date": "2025-08-03",
+          "days_ago": 119
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 24,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 18308,
+          "name": "League_18308",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 139,
+          "date": "2025-06-17",
+          "days_ago": 166
+        },
+        {
+          "league_id": 17776,
+          "name": "League_17776",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 32,
+          "date": "2025-02-14",
+          "days_ago": 289
+        },
+        {
+          "league_id": 17771,
+          "name": "League_17771",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 293
+        },
+        {
+          "league_id": 17671,
+          "name": "League_17671",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 25,
+          "date": "2025-01-15",
+          "days_ago": 319
+        },
+        {
+          "league_id": 17526,
+          "name": "League_17526",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 21,
+          "date": "2024-12-22",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 22,
+      "team_id": 9600141,
+      "name": "Zero Tenacity",
+      "points": 616,
+      "raw_points": 3560,
+      "tournaments_count": 17,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17381,
+          "name": "League_17381",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 34,
+          "date": "2025-10-27",
+          "days_ago": 34
+        },
+        {
+          "league_id": 17984,
+          "name": "League_17984",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 82,
+          "date": "2025-04-10",
+          "days_ago": 234
+        },
+        {
+          "league_id": 18396,
+          "name": "League_18396",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 70,
+          "date": "2025-07-31",
+          "days_ago": 121
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 12,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 17775,
+          "name": "League_17775",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-14",
+          "days_ago": 288
+        },
+        {
+          "league_id": 17637,
+          "name": "League_17637",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 8,
+          "date": "2025-01-29",
+          "days_ago": 304
+        },
+        {
+          "league_id": 17673,
+          "name": "League_17673",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 7,
+          "date": "2025-01-15",
+          "days_ago": 318
+        },
+        {
+          "league_id": 17524,
+          "name": "League_17524",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-23",
+          "days_ago": 342
+        },
+        {
+          "league_id": 17646,
+          "name": "League_17646",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-10",
+          "days_ago": 323
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17768,
+          "name": "League_17768",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 19,
+          "date": "2025-02-15",
+          "days_ago": 287
+        },
+        {
+          "league_id": 18374,
+          "name": "League_18374",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 58,
+          "date": "2025-07-08",
+          "days_ago": 145
+        },
+        {
+          "league_id": 18242,
+          "name": "League_18242",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 84,
+          "date": "2025-06-18",
+          "days_ago": 165
+        },
+        {
+          "league_id": 17782,
+          "name": "League_17782",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 11,
+          "date": "2025-03-06",
+          "days_ago": 268
+        },
+        {
+          "league_id": 17520,
+          "name": "League_17520",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 34,
+          "date": "2024-12-19",
+          "days_ago": 345
+        },
+        {
+          "league_id": 18181,
+          "name": "League_18181",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 124,
+          "date": "2025-06-02",
+          "days_ago": 180
+        }
+      ]
+    },
+    {
+      "rank": 23,
+      "team_id": 8494848,
+      "name": "Winter Bear",
+      "points": 615,
+      "raw_points": 3360,
+      "tournaments_count": 11,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17381,
+          "name": "League_17381",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 69,
+          "date": "2025-10-27",
+          "days_ago": 34
+        },
+        {
+          "league_id": 17984,
+          "name": "League_17984",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 14,
+          "date": "2025-04-10",
+          "days_ago": 234
+        },
+        {
+          "league_id": 17524,
+          "name": "League_17524",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 6,
+          "date": "2024-12-23",
+          "days_ago": 342
+        },
+        {
+          "league_id": 17646,
+          "name": "League_17646",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-10",
+          "days_ago": 323
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17766,
+          "name": "League_17766",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 16388,
+          "name": "League_16388",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 50,
+          "date": "2025-02-06",
+          "days_ago": 296
+        },
+        {
+          "league_id": 18201,
+          "name": "League_18201",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 132,
+          "date": "2025-06-10",
+          "days_ago": 172
+        },
+        {
+          "league_id": 17969,
+          "name": "League_17969",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 116,
+          "date": "2025-05-26",
+          "days_ago": 188
+        },
+        {
+          "league_id": 18181,
+          "name": "League_18181",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 124,
+          "date": "2025-06-02",
+          "days_ago": 180
+        }
+      ]
+    },
+    {
+      "rank": 24,
+      "team_id": 8597976,
+      "name": "Talon",
+      "points": 599,
+      "raw_points": 4460,
+      "tournaments_count": 13,
+      "tournaments": [
+        {
+          "league_id": 18375,
+          "name": "League_18375",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 128,
+          "date": "2025-07-19",
+          "days_ago": 133
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 33,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 17795,
+          "name": "League_17795",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 60,
+          "date": "2025-04-14",
+          "days_ago": 230
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 90,
+          "decayed_points": 13,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 71,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17417,
+          "name": "League_17417",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 37,
+          "date": "2025-02-09",
+          "days_ago": 293
+        },
+        {
+          "league_id": 17326,
+          "name": "League_17326",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 33,
+          "date": "2024-12-15",
+          "days_ago": 350
+        },
+        {
+          "league_id": 18308,
+          "name": "League_18308",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 83,
+          "date": "2025-06-17",
+          "days_ago": 166
+        },
+        {
+          "league_id": 17776,
+          "name": "League_17776",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 53,
+          "date": "2025-02-14",
+          "days_ago": 289
+        },
+        {
+          "league_id": 17671,
+          "name": "League_17671",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 42,
+          "date": "2025-01-15",
+          "days_ago": 319
+        },
+        {
+          "league_id": 17526,
+          "name": "League_17526",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 35,
+          "date": "2024-12-22",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 25,
+      "team_id": 8254145,
+      "name": "Execration",
+      "points": 586,
+      "raw_points": 3300,
+      "tournaments_count": 15,
+      "tournaments": [
+        {
+          "league_id": 18375,
+          "name": "League_18375",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 128,
+          "date": "2025-07-19",
+          "days_ago": 133
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17628,
+          "name": "League_17628",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 3,
+          "date": "2025-01-11",
+          "days_ago": 322
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 24,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 17659,
+          "name": "League_17659",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 129,
+          "date": "2025-10-18",
+          "days_ago": 43
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 14,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17766,
+          "name": "League_17766",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17520,
+          "name": "League_17520",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 34,
+          "date": "2024-12-19",
+          "days_ago": 345
+        },
+        {
+          "league_id": 18308,
+          "name": "League_18308",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 50,
+          "date": "2025-06-17",
+          "days_ago": 166
+        },
+        {
+          "league_id": 18105,
+          "name": "League_18105",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 42,
+          "date": "2025-05-27",
+          "days_ago": 187
+        },
+        {
+          "league_id": 17776,
+          "name": "League_17776",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-14",
+          "days_ago": 289
+        },
+        {
+          "league_id": 16925,
+          "name": "League_16925",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17771,
+          "name": "League_17771",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 18,
+          "date": "2025-02-10",
+          "days_ago": 293
+        },
+        {
+          "league_id": 17671,
+          "name": "League_17671",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 15,
+          "date": "2025-01-15",
+          "days_ago": 319
+        },
+        {
+          "league_id": 17526,
+          "name": "League_17526",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-22",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 26,
+      "team_id": 9131584,
+      "name": "BB Team",
+      "points": 543,
+      "raw_points": 1440,
+      "tournaments_count": 2,
+      "tournaments": [
+        {
+          "league_id": 18375,
+          "name": "League_18375",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 256,
+          "date": "2025-07-19",
+          "days_ago": 133
+        },
+        {
+          "league_id": 18359,
+          "name": "League_18359",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 287,
+          "date": "2025-08-03",
+          "days_ago": 119
+        }
+      ]
+    },
+    {
+      "rank": 27,
+      "team_id": 7917893,
+      "name": "InterActive Philippines",
+      "points": 539,
+      "raw_points": 1550,
+      "tournaments_count": 8,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 12,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 17659,
+          "name": "League_17659",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 215,
+          "date": "2025-10-18",
+          "days_ago": 43
+        },
+        {
+          "league_id": 18331,
+          "name": "League_18331",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 188,
+          "date": "2025-07-27",
+          "days_ago": 126
+        },
+        {
+          "league_id": 18308,
+          "name": "League_18308",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 25,
+          "date": "2025-06-17",
+          "days_ago": 166
+        },
+        {
+          "league_id": 18105,
+          "name": "League_18105",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 70,
+          "date": "2025-05-27",
+          "days_ago": 187
+        },
+        {
+          "league_id": 16925,
+          "name": "League_16925",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 18,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17671,
+          "name": "League_17671",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 7,
+          "date": "2025-01-15",
+          "days_ago": 319
+        }
+      ]
+    },
+    {
+      "rank": 28,
+      "team_id": 5014799,
+      "name": "Nemiga Gaming",
+      "points": 523,
+      "raw_points": 2400,
+      "tournaments_count": 11,
+      "tournaments": [
+        {
+          "league_id": 17367,
+          "name": "League_17367",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 38,
+          "date": "2025-08-13",
+          "days_ago": 108
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17381,
+          "name": "League_17381",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 138,
+          "date": "2025-10-27",
+          "days_ago": 34
+        },
+        {
+          "league_id": 17637,
+          "name": "League_17637",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 8,
+          "date": "2025-01-29",
+          "days_ago": 304
+        },
+        {
+          "league_id": 18304,
+          "name": "League_18304",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 46,
+          "date": "2025-06-08",
+          "days_ago": 174
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17766,
+          "name": "League_17766",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 18374,
+          "name": "League_18374",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 58,
+          "date": "2025-07-08",
+          "days_ago": 145
+        },
+        {
+          "league_id": 18201,
+          "name": "League_18201",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 132,
+          "date": "2025-06-10",
+          "days_ago": 172
+        },
+        {
+          "league_id": 17520,
+          "name": "League_17520",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 34,
+          "date": "2024-12-19",
+          "days_ago": 345
+        },
+        {
+          "league_id": 17523,
+          "name": "League_17523",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 6,
+          "date": "2024-12-27",
+          "days_ago": 337
+        }
+      ]
+    },
+    {
+      "rank": 29,
+      "team_id": 9338413,
+      "name": "MOUZ",
+      "points": 504,
+      "raw_points": 1850,
+      "tournaments_count": 10,
+      "tournaments": [
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 84,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 18396,
+          "name": "League_18396",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 195,
+          "date": "2025-07-31",
+          "days_ago": 121
+        },
+        {
+          "league_id": 18309,
+          "name": "League_18309",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 50,
+          "date": "2025-06-17",
+          "days_ago": 165
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 12,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 114,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 17775,
+          "name": "League_17775",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-14",
+          "days_ago": 288
+        },
+        {
+          "league_id": 17637,
+          "name": "League_17637",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 17,
+          "date": "2025-01-29",
+          "days_ago": 304
+        },
+        {
+          "league_id": 17673,
+          "name": "League_17673",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 7,
+          "date": "2025-01-15",
+          "days_ago": 318
+        },
+        {
+          "league_id": 17524,
+          "name": "League_17524",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-23",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 30,
+      "team_id": 8376696,
+      "name": "One Move",
+      "points": 495,
+      "raw_points": 2535,
+      "tournaments_count": 16,
+      "tournaments": [
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 84,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17628,
+          "name": "League_17628",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 14,
+          "date": "2025-01-11",
+          "days_ago": 322
+        },
+        {
+          "league_id": 17984,
+          "name": "League_17984",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 14,
+          "date": "2025-04-10",
+          "days_ago": 234
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 90,
+          "decayed_points": 13,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 12,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 114,
+          "date": "2025-07-04",
+          "days_ago": 148
+        },
+        {
+          "league_id": 17637,
+          "name": "League_17637",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 17,
+          "date": "2025-01-29",
+          "days_ago": 304
+        },
+        {
+          "league_id": 18304,
+          "name": "League_18304",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 46,
+          "date": "2025-06-08",
+          "days_ago": 174
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 18374,
+          "name": "League_18374",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 58,
+          "date": "2025-07-08",
+          "days_ago": 145
+        },
+        {
+          "league_id": 18242,
+          "name": "League_18242",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 25,
+          "date": "2025-06-18",
+          "days_ago": 165
+        },
+        {
+          "league_id": 17782,
+          "name": "League_17782",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 11,
+          "date": "2025-03-06",
+          "days_ago": 268
+        },
+        {
+          "league_id": 17774,
+          "name": "League_17774",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 32,
+          "date": "2025-02-13",
+          "days_ago": 289
+        },
+        {
+          "league_id": 17767,
+          "name": "League_17767",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 31,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17523,
+          "name": "League_17523",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 13,
+          "date": "2024-12-27",
+          "days_ago": 337
+        }
+      ]
+    },
+    {
+      "rank": 31,
+      "team_id": 9677513,
+      "name": "Excel Esports",
+      "points": 415,
+      "raw_points": 1620,
+      "tournaments_count": 3,
+      "tournaments": [
+        {
+          "league_id": 18331,
+          "name": "League_18331",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 67,
+          "date": "2025-07-27",
+          "days_ago": 126
+        },
+        {
+          "league_id": 18306,
+          "name": "League_18306",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 192,
+          "date": "2025-06-12",
+          "days_ago": 171
+        },
+        {
+          "league_id": 17875,
+          "name": "League_17875",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 156,
+          "date": "2025-05-16",
+          "days_ago": 198
+        }
+      ]
+    },
+    {
+      "rank": 32,
+      "team_id": 9741253,
+      "name": "Edge",
+      "points": 412,
+      "raw_points": 1560,
+      "tournaments_count": 5,
+      "tournaments": [
+        {
+          "league_id": 18358,
+          "name": "League_18358",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 109,
+          "date": "2025-06-29",
+          "days_ago": 153
+        },
+        {
+          "league_id": 18305,
+          "name": "League_18305",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 78,
+          "date": "2025-06-09",
+          "days_ago": 174
+        },
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 44,
+          "date": "2025-06-01",
+          "days_ago": 181
+        },
+        {
+          "league_id": 18058,
+          "name": "League_18058",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 67,
+          "date": "2025-04-27",
+          "days_ago": 216
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 114,
+          "date": "2025-07-04",
+          "days_ago": 148
+        }
+      ]
+    },
+    {
+      "rank": 33,
+      "team_id": 9634742,
+      "name": "Chimera Esports",
+      "points": 408,
+      "raw_points": 4880,
+      "tournaments_count": 8,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 26,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17628,
+          "name": "League_17628",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-11",
+          "days_ago": 322
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 89,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17588,
+          "name": "League_17588",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 17,
+          "date": "2025-02-03",
+          "days_ago": 300
+        },
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 2000,
+          "decayed_points": 142,
+          "date": "2024-12-22",
+          "days_ago": 342
+        },
+        {
+          "league_id": 17673,
+          "name": "League_17673",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 15,
+          "date": "2025-01-15",
+          "days_ago": 318
+        },
+        {
+          "league_id": 17646,
+          "name": "League_17646",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-10",
+          "days_ago": 323
+        },
+        {
+          "league_id": 17523,
+          "name": "League_17523",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 37,
+          "date": "2024-12-27",
+          "days_ago": 337
+        }
+      ]
+    },
+    {
+      "rank": 34,
+      "team_id": 9790546,
+      "name": "TEAM NEXT LEVEL",
+      "points": 392,
+      "raw_points": 1265,
+      "tournaments_count": 6,
+      "tournaments": [
+        {
+          "league_id": 17381,
+          "name": "League_17381",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 34,
+          "date": "2025-10-27",
+          "days_ago": 34
+        },
+        {
+          "league_id": 18396,
+          "name": "League_18396",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 70,
+          "date": "2025-07-31",
+          "days_ago": 121
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 48,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 18374,
+          "name": "League_18374",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 58,
+          "date": "2025-07-08",
+          "days_ago": 145
+        },
+        {
+          "league_id": 18242,
+          "name": "League_18242",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 50,
+          "date": "2025-06-18",
+          "days_ago": 165
+        },
+        {
+          "league_id": 18201,
+          "name": "League_18201",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 132,
+          "date": "2025-06-10",
+          "days_ago": 172
+        }
+      ]
+    },
+    {
+      "rank": 35,
+      "team_id": 9823272,
+      "name": "Team Yandex",
+      "points": 385,
+      "raw_points": 1080,
+      "tournaments_count": 3,
+      "tournaments": [
+        {
+          "league_id": 18375,
+          "name": "League_18375",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 128,
+          "date": "2025-07-19",
+          "days_ago": 133
+        },
+        {
+          "league_id": 18359,
+          "name": "League_18359",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 143,
+          "date": "2025-08-03",
+          "days_ago": 119
+        },
+        {
+          "league_id": 18107,
+          "name": "League_18107",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 114,
+          "date": "2025-07-04",
+          "days_ago": 148
+        }
+      ]
+    },
+    {
+      "rank": 36,
+      "team_id": 9872667,
+      "name": "Pipsqueak+4",
+      "points": 384,
+      "raw_points": 500,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17381,
+          "name": "League_17381",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 384,
+          "date": "2025-10-27",
+          "days_ago": 34
+        }
+      ]
+    },
+    {
+      "rank": 37,
+      "team_id": 9865903,
+      "name": "Veroja",
+      "points": 358,
+      "raw_points": 500,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17659,
+          "name": "League_17659",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 358,
+          "date": "2025-10-18",
+          "days_ago": 43
+        }
+      ]
+    },
+    {
+      "rank": 38,
+      "team_id": 1838315,
+      "name": "Team Secret",
+      "points": 355,
+      "raw_points": 2560,
+      "tournaments_count": 11,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 16,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 25,
+          "date": "2024-12-22",
+          "days_ago": 342
+        },
+        {
+          "league_id": 18309,
+          "name": "League_18309",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 50,
+          "date": "2025-06-17",
+          "days_ago": 165
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 12,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 17775,
+          "name": "League_17775",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 32,
+          "date": "2025-02-14",
+          "days_ago": 288
+        },
+        {
+          "league_id": 17524,
+          "name": "League_17524",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 6,
+          "date": "2024-12-23",
+          "days_ago": 342
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17768,
+          "name": "League_17768",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 19,
+          "date": "2025-02-15",
+          "days_ago": 287
+        },
+        {
+          "league_id": 17766,
+          "name": "League_17766",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17326,
+          "name": "League_17326",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-15",
+          "days_ago": 350
+        },
+        {
+          "league_id": 18181,
+          "name": "League_18181",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 124,
+          "date": "2025-06-02",
+          "days_ago": 180
+        }
+      ]
+    },
+    {
+      "rank": 39,
+      "team_id": 9753675,
+      "name": "20Twice",
+      "points": 354,
+      "raw_points": 800,
+      "tournaments_count": 2,
+      "tournaments": [
+        {
+          "league_id": 17381,
+          "name": "League_17381",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 230,
+          "date": "2025-10-27",
+          "days_ago": 34
+        },
+        {
+          "league_id": 18182,
+          "name": "League_18182",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 124,
+          "date": "2025-06-03",
+          "days_ago": 180
+        }
+      ]
+    },
+    {
+      "rank": 40,
+      "team_id": 9691969,
+      "name": "Team Nemesis",
+      "points": 313,
+      "raw_points": 905,
+      "tournaments_count": 5,
+      "tournaments": [
+        {
+          "league_id": 18324,
+          "name": "League_18324",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 99,
+          "date": "2025-09-14",
+          "days_ago": 76
+        },
+        {
+          "league_id": 17659,
+          "name": "League_17659",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 64,
+          "date": "2025-10-18",
+          "days_ago": 43
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 18308,
+          "name": "League_18308",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 25,
+          "date": "2025-06-17",
+          "days_ago": 166
+        },
+        {
+          "league_id": 18105,
+          "name": "League_18105",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 118,
+          "date": "2025-05-27",
+          "days_ago": 187
+        }
+      ]
+    },
+    {
+      "rank": 41,
+      "team_id": 9081369,
+      "name": "Infamous Gaming",
+      "points": 312,
+      "raw_points": 1270,
+      "tournaments_count": 4,
+      "tournaments": [
+        {
+          "league_id": 17367,
+          "name": "League_17367",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 216,
+          "date": "2025-08-13",
+          "days_ago": 108
+        },
+        {
+          "league_id": 18305,
+          "name": "League_18305",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 46,
+          "date": "2025-06-09",
+          "days_ago": 174
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 8,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17670,
+          "name": "League_17670",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 42,
+          "date": "2025-01-13",
+          "days_ago": 320
+        }
+      ]
+    },
+    {
+      "rank": 42,
+      "team_id": 2576071,
+      "name": "Yellow Submarine",
+      "points": 302,
+      "raw_points": 840,
+      "tournaments_count": 4,
+      "tournaments": [
+        {
+          "league_id": 18433,
+          "name": "League_18433",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 84,
+          "date": "2025-08-24",
+          "days_ago": 97
+        },
+        {
+          "league_id": 18396,
+          "name": "League_18396",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 70,
+          "date": "2025-07-31",
+          "days_ago": 121
+        },
+        {
+          "league_id": 18309,
+          "name": "League_18309",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 50,
+          "date": "2025-06-17",
+          "days_ago": 165
+        },
+        {
+          "league_id": 18374,
+          "name": "League_18374",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 98,
+          "date": "2025-07-08",
+          "days_ago": 145
+        }
+      ]
+    },
+    {
+      "rank": 43,
+      "team_id": 9824702,
+      "name": "PVISION",
+      "points": 271,
+      "raw_points": 720,
+      "tournaments_count": 2,
+      "tournaments": [
+        {
+          "league_id": 18375,
+          "name": "League_18375",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 128,
+          "date": "2025-07-19",
+          "days_ago": 133
+        },
+        {
+          "league_id": 18359,
+          "name": "League_18359",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 143,
+          "date": "2025-08-03",
+          "days_ago": 119
+        }
+      ]
+    },
+    {
+      "rank": 44,
+      "team_id": 9677721,
+      "name": "AIM POSSIBLE",
+      "points": 270,
+      "raw_points": 1090,
+      "tournaments_count": 3,
+      "tournaments": [
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 14,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 18182,
+          "name": "League_18182",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 124,
+          "date": "2025-06-03",
+          "days_ago": 180
+        },
+        {
+          "league_id": 18201,
+          "name": "League_18201",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 132,
+          "date": "2025-06-10",
+          "days_ago": 172
+        }
+      ]
+    },
+    {
+      "rank": 45,
+      "team_id": 9664713,
+      "name": "Team Lynx",
+      "points": 248,
+      "raw_points": 1135,
+      "tournaments_count": 4,
+      "tournaments": [
+        {
+          "league_id": 17367,
+          "name": "League_17367",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 38,
+          "date": "2025-08-13",
+          "days_ago": 108
+        },
+        {
+          "league_id": 17381,
+          "name": "League_17381",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 34,
+          "date": "2025-10-27",
+          "days_ago": 34
+        },
+        {
+          "league_id": 17766,
+          "name": "League_17766",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 18182,
+          "name": "League_18182",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 124,
+          "date": "2025-06-03",
+          "days_ago": 180
+        }
+      ]
+    },
+    {
+      "rank": 46,
+      "team_id": 9600432,
+      "name": "Call911",
+      "points": 248,
+      "raw_points": 1390,
+      "tournaments_count": 4,
+      "tournaments": [
+        {
+          "league_id": 17659,
+          "name": "League_17659",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 64,
+          "date": "2025-10-18",
+          "days_ago": 43
+        },
+        {
+          "league_id": 17646,
+          "name": "League_17646",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-10",
+          "days_ago": 323
+        },
+        {
+          "league_id": 18331,
+          "name": "League_18331",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 113,
+          "date": "2025-07-27",
+          "days_ago": 126
+        },
+        {
+          "league_id": 17458,
+          "name": "League_17458",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 30,
+          "date": "2024-12-04",
+          "days_ago": 361
+        }
+      ]
+    },
+    {
+      "rank": 47,
+      "team_id": 9546449,
+      "name": "Yangon Galacticos",
+      "points": 245,
+      "raw_points": 1310,
+      "tournaments_count": 7,
+      "tournaments": [
+        {
+          "league_id": 17659,
+          "name": "League_17659",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 64,
+          "date": "2025-10-18",
+          "days_ago": 43
+        },
+        {
+          "league_id": 17646,
+          "name": "League_17646",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-10",
+          "days_ago": 323
+        },
+        {
+          "league_id": 18331,
+          "name": "League_18331",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 67,
+          "date": "2025-07-27",
+          "days_ago": 126
+        },
+        {
+          "league_id": 18105,
+          "name": "League_18105",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 42,
+          "date": "2025-05-27",
+          "days_ago": 187
+        },
+        {
+          "league_id": 16925,
+          "name": "League_16925",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 18,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17671,
+          "name": "League_17671",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 7,
+          "date": "2025-01-15",
+          "days_ago": 319
+        },
+        {
+          "league_id": 17526,
+          "name": "League_17526",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 6,
+          "date": "2024-12-22",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 48,
+      "team_id": 7422789,
+      "name": "9Pandas",
+      "points": 223,
+      "raw_points": 2395,
+      "tournaments_count": 7,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 44,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 51,
+          "date": "2024-12-22",
+          "days_ago": 342
+        },
+        {
+          "league_id": 17637,
+          "name": "League_17637",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 47,
+          "date": "2025-01-29",
+          "days_ago": 304
+        },
+        {
+          "league_id": 17774,
+          "name": "League_17774",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 53,
+          "date": "2025-02-13",
+          "days_ago": 289
+        },
+        {
+          "league_id": 17767,
+          "name": "League_17767",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 18,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17523,
+          "name": "League_17523",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 6,
+          "date": "2024-12-27",
+          "days_ago": 337
+        }
+      ]
+    },
+    {
+      "rank": 49,
+      "team_id": 9586396,
+      "name": "Caterpillar",
+      "points": 211,
+      "raw_points": 1360,
+      "tournaments_count": 4,
+      "tournaments": [
+        {
+          "league_id": 17659,
+          "name": "League_17659",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 129,
+          "date": "2025-10-18",
+          "days_ago": 43
+        },
+        {
+          "league_id": 17520,
+          "name": "League_17520",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 34,
+          "date": "2024-12-19",
+          "days_ago": 345
+        },
+        {
+          "league_id": 17458,
+          "name": "League_17458",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 30,
+          "date": "2024-12-04",
+          "days_ago": 361
+        },
+        {
+          "league_id": 16925,
+          "name": "League_16925",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 18,
+          "date": "2025-02-10",
+          "days_ago": 292
+        }
+      ]
+    },
+    {
+      "rank": 50,
+      "team_id": 9538558,
+      "name": "The MongolZ",
+      "points": 207,
+      "raw_points": 1745,
+      "tournaments_count": 9,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17659,
+          "name": "League_17659",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 64,
+          "date": "2025-10-18",
+          "days_ago": 43
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 28,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17326,
+          "name": "League_17326",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-15",
+          "days_ago": 350
+        },
+        {
+          "league_id": 17458,
+          "name": "League_17458",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 30,
+          "date": "2024-12-04",
+          "days_ago": 361
+        },
+        {
+          "league_id": 17776,
+          "name": "League_17776",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 19,
+          "date": "2025-02-14",
+          "days_ago": 289
+        },
+        {
+          "league_id": 16925,
+          "name": "League_16925",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 31,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17671,
+          "name": "League_17671",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 7,
+          "date": "2025-01-15",
+          "days_ago": 319
+        },
+        {
+          "league_id": 17526,
+          "name": "League_17526",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-22",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 51,
+      "team_id": 9600331,
+      "name": "Zetta Games",
+      "points": 193,
+      "raw_points": 680,
+      "tournaments_count": 2,
+      "tournaments": [
+        {
+          "league_id": 17367,
+          "name": "League_17367",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 77,
+          "date": "2025-08-13",
+          "days_ago": 108
+        },
+        {
+          "league_id": 17969,
+          "name": "League_17969",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 116,
+          "date": "2025-05-26",
+          "days_ago": 188
+        }
+      ]
+    },
+    {
+      "rank": 52,
+      "team_id": 8574561,
+      "name": "Azure Ray",
+      "points": 192,
+      "raw_points": 720,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 18306,
+          "name": "League_18306",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 192,
+          "date": "2025-06-12",
+          "days_ago": 171
+        }
+      ]
+    },
+    {
+      "rank": 53,
+      "team_id": 726228,
+      "name": "Vici Gaming",
+      "points": 192,
+      "raw_points": 720,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 18306,
+          "name": "League_18306",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 192,
+          "date": "2025-06-12",
+          "days_ago": 171
+        }
+      ]
+    },
+    {
+      "rank": 54,
+      "team_id": 9678463,
+      "name": "Estar Backs",
+      "points": 185,
+      "raw_points": 725,
+      "tournaments_count": 4,
+      "tournaments": [
+        {
+          "league_id": 17367,
+          "name": "League_17367",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 38,
+          "date": "2025-08-13",
+          "days_ago": 108
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 24,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17969,
+          "name": "League_17969",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 116,
+          "date": "2025-05-26",
+          "days_ago": 188
+        }
+      ]
+    },
+    {
+      "rank": 55,
+      "team_id": 9710443,
+      "name": "AllStars",
+      "points": 182,
+      "raw_points": 525,
+      "tournaments_count": 3,
+      "tournaments": [
+        {
+          "league_id": 17367,
+          "name": "League_17367",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 129,
+          "date": "2025-08-13",
+          "days_ago": 108
+        },
+        {
+          "league_id": 18305,
+          "name": "League_18305",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 46,
+          "date": "2025-06-09",
+          "days_ago": 174
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        }
+      ]
+    },
+    {
+      "rank": 56,
+      "team_id": 8588969,
+      "name": "HYDRA",
+      "points": 178,
+      "raw_points": 1225,
+      "tournaments_count": 4,
+      "tournaments": [
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 18182,
+          "name": "League_18182",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 124,
+          "date": "2025-06-03",
+          "days_ago": 180
+        },
+        {
+          "league_id": 17520,
+          "name": "League_17520",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 34,
+          "date": "2024-12-19",
+          "days_ago": 345
+        },
+        {
+          "league_id": 17523,
+          "name": "League_17523",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 13,
+          "date": "2024-12-27",
+          "days_ago": 337
+        }
+      ]
+    },
+    {
+      "rank": 57,
+      "team_id": 9766941,
+      "name": "FLIPSTER TALON",
+      "points": 177,
+      "raw_points": 720,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 720,
+          "decayed_points": 177,
+          "date": "2025-06-01",
+          "days_ago": 181
+        }
+      ]
+    },
+    {
+      "rank": 58,
+      "team_id": 9699533,
+      "name": "Mosquito Clan",
+      "points": 177,
+      "raw_points": 1160,
+      "tournaments_count": 3,
+      "tournaments": [
+        {
+          "league_id": 17891,
+          "name": "League_17891",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 49,
+          "date": "2025-03-16",
+          "days_ago": 258
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 78,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 18046,
+          "name": "League_18046",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 50,
+          "date": "2025-04-12",
+          "days_ago": 232
+        }
+      ]
+    },
+    {
+      "rank": 59,
+      "team_id": 8718594,
+      "name": "Young Blood",
+      "points": 172,
+      "raw_points": 1450,
+      "tournaments_count": 5,
+      "tournaments": [
+        {
+          "league_id": 17659,
+          "name": "League_17659",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 64,
+          "date": "2025-10-18",
+          "days_ago": 43
+        },
+        {
+          "league_id": 17646,
+          "name": "League_17646",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-10",
+          "days_ago": 323
+        },
+        {
+          "league_id": 17520,
+          "name": "League_17520",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 34,
+          "date": "2024-12-19",
+          "days_ago": 345
+        },
+        {
+          "league_id": 17771,
+          "name": "League_17771",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 18,
+          "date": "2025-02-10",
+          "days_ago": 293
+        },
+        {
+          "league_id": 17671,
+          "name": "League_17671",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 15,
+          "date": "2025-01-15",
+          "days_ago": 319
+        }
+      ]
+    },
+    {
+      "rank": 60,
+      "team_id": 9780800,
+      "name": "OG.LATAM",
+      "points": 171,
+      "raw_points": 660,
+      "tournaments_count": 3,
+      "tournaments": [
+        {
+          "league_id": 18305,
+          "name": "League_18305",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 46,
+          "date": "2025-06-09",
+          "days_ago": 174
+        },
+        {
+          "league_id": 18111,
+          "name": "League_18111",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 44,
+          "date": "2025-06-01",
+          "days_ago": 181
+        },
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 81,
+          "date": "2025-06-14",
+          "days_ago": 169
+        }
+      ]
+    },
+    {
+      "rank": 61,
+      "team_id": 9373270,
+      "name": "Night Pulse",
+      "points": 171,
+      "raw_points": 1675,
+      "tournaments_count": 8,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 27,
+          "date": "2025-03-30",
+          "days_ago": 244
+        },
+        {
+          "league_id": 17775,
+          "name": "League_17775",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 19,
+          "date": "2025-02-14",
+          "days_ago": 288
+        },
+        {
+          "league_id": 17637,
+          "name": "League_17637",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 8,
+          "date": "2025-01-29",
+          "days_ago": 304
+        },
+        {
+          "league_id": 17646,
+          "name": "League_17646",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-10",
+          "days_ago": 323
+        },
+        {
+          "league_id": 17768,
+          "name": "League_17768",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-15",
+          "days_ago": 287
+        },
+        {
+          "league_id": 17766,
+          "name": "League_17766",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17782,
+          "name": "League_17782",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 11,
+          "date": "2025-03-06",
+          "days_ago": 268
+        }
+      ]
+    },
+    {
+      "rank": 62,
+      "team_id": 9641323,
+      "name": "Y5",
+      "points": 168,
+      "raw_points": 1680,
+      "tournaments_count": 6,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17984,
+          "name": "League_17984",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 14,
+          "date": "2025-04-10",
+          "days_ago": 234
+        },
+        {
+          "league_id": 17646,
+          "name": "League_17646",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-10",
+          "days_ago": 323
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17766,
+          "name": "League_17766",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 16388,
+          "name": "League_16388",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 50,
+          "date": "2025-02-06",
+          "days_ago": 296
+        }
+      ]
+    },
+    {
+      "rank": 63,
+      "team_id": 9678064,
+      "name": "Moodeng Warriors",
+      "points": 146,
+      "raw_points": 1340,
+      "tournaments_count": 4,
+      "tournaments": [
+        {
+          "league_id": 17765,
+          "name": "League_17765",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 44,
+          "date": "2025-03-04",
+          "days_ago": 270
+        },
+        {
+          "league_id": 17766,
+          "name": "League_17766",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17776,
+          "name": "League_17776",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 19,
+          "date": "2025-02-14",
+          "days_ago": 289
+        },
+        {
+          "league_id": 17771,
+          "name": "League_17771",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 31,
+          "date": "2025-02-10",
+          "days_ago": 293
+        }
+      ]
+    },
+    {
+      "rank": 64,
+      "team_id": 9602168,
+      "name": "Blade Breakers",
+      "points": 145,
+      "raw_points": 845,
+      "tournaments_count": 3,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17670,
+          "name": "League_17670",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 25,
+          "date": "2025-01-13",
+          "days_ago": 320
+        },
+        {
+          "league_id": 17969,
+          "name": "League_17969",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 116,
+          "date": "2025-05-26",
+          "days_ago": 188
+        }
+      ]
+    },
+    {
+      "rank": 65,
+      "team_id": 9885130,
+      "name": "Perú Rejects",
+      "points": 138,
+      "raw_points": 180,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17381,
+          "name": "League_17381",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 138,
+          "date": "2025-10-27",
+          "days_ago": 34
+        }
+      ]
+    },
+    {
+      "rank": 66,
+      "team_id": 9098294,
+      "name": "Carstensz Esports",
+      "points": 138,
+      "raw_points": 315,
+      "tournaments_count": 3,
+      "tournaments": [
+        {
+          "league_id": 17659,
+          "name": "League_17659",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 64,
+          "date": "2025-10-18",
+          "days_ago": 43
+        },
+        {
+          "league_id": 18331,
+          "name": "League_18331",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 67,
+          "date": "2025-07-27",
+          "days_ago": 126
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        }
+      ]
+    },
+    {
+      "rank": 67,
+      "team_id": 9572608,
+      "name": "Blue Submarine",
+      "points": 131,
+      "raw_points": 1360,
+      "tournaments_count": 5,
+      "tournaments": [
+        {
+          "league_id": 17984,
+          "name": "League_17984",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 14,
+          "date": "2025-04-10",
+          "days_ago": 234
+        },
+        {
+          "league_id": 17766,
+          "name": "League_17766",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17782,
+          "name": "League_17782",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 22,
+          "date": "2025-03-06",
+          "days_ago": 268
+        },
+        {
+          "league_id": 17520,
+          "name": "League_17520",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 34,
+          "date": "2024-12-19",
+          "days_ago": 345
+        },
+        {
+          "league_id": 17767,
+          "name": "League_17767",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-10",
+          "days_ago": 292
+        }
+      ]
+    },
+    {
+      "rank": 68,
+      "team_id": 9538207,
+      "name": "Myth Avenue Gaming",
+      "points": 128,
+      "raw_points": 1090,
+      "tournaments_count": 3,
+      "tournaments": [
+        {
+          "league_id": 17659,
+          "name": "League_17659",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 64,
+          "date": "2025-10-18",
+          "days_ago": 43
+        },
+        {
+          "league_id": 17520,
+          "name": "League_17520",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 34,
+          "date": "2024-12-19",
+          "days_ago": 345
+        },
+        {
+          "league_id": 17458,
+          "name": "League_17458",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 30,
+          "date": "2024-12-04",
+          "days_ago": 361
+        }
+      ]
+    },
+    {
+      "rank": 69,
+      "team_id": 9781353,
+      "name": "Castawake Esports",
+      "points": 126,
+      "raw_points": 315,
+      "tournaments_count": 3,
+      "tournaments": [
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 12,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 17659,
+          "name": "League_17659",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 64,
+          "date": "2025-10-18",
+          "days_ago": 43
+        },
+        {
+          "league_id": 18308,
+          "name": "League_18308",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 50,
+          "date": "2025-06-17",
+          "days_ago": 166
+        }
+      ]
+    },
+    {
+      "rank": 70,
+      "team_id": 9256405,
+      "name": "Level UP esports",
+      "points": 119,
+      "raw_points": 815,
+      "tournaments_count": 4,
+      "tournaments": [
+        {
+          "league_id": 17367,
+          "name": "League_17367",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 38,
+          "date": "2025-08-13",
+          "days_ago": 108
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17766,
+          "name": "League_17766",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        },
+        {
+          "league_id": 17782,
+          "name": "League_17782",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 22,
+          "date": "2025-03-06",
+          "days_ago": 268
+        }
+      ]
+    },
+    {
+      "rank": 71,
+      "team_id": 9671463,
+      "name": "Apple City Gang",
+      "points": 112,
+      "raw_points": 800,
+      "tournaments_count": 2,
+      "tournaments": [
+        {
+          "league_id": 17984,
+          "name": "League_17984",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 49,
+          "date": "2025-04-10",
+          "days_ago": 234
+        },
+        {
+          "league_id": 17782,
+          "name": "League_17782",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 63,
+          "date": "2025-03-06",
+          "days_ago": 268
+        }
+      ]
+    },
+    {
+      "rank": 72,
+      "team_id": 9450071,
+      "name": "Fusion Esports",
+      "points": 110,
+      "raw_points": 1085,
+      "tournaments_count": 6,
+      "tournaments": [
+        {
+          "league_id": 17367,
+          "name": "League_17367",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 38,
+          "date": "2025-08-13",
+          "days_ago": 108
+        },
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17670,
+          "name": "League_17670",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 15,
+          "date": "2025-01-13",
+          "days_ago": 320
+        },
+        {
+          "league_id": 17628,
+          "name": "League_17628",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 7,
+          "date": "2025-01-11",
+          "days_ago": 322
+        },
+        {
+          "league_id": 17525,
+          "name": "League_17525",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-23",
+          "days_ago": 342
+        },
+        {
+          "league_id": 17520,
+          "name": "League_17520",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 34,
+          "date": "2024-12-19",
+          "days_ago": 345
+        }
+      ]
+    },
+    {
+      "rank": 73,
+      "team_id": 8697185,
+      "name": "Fantasy Gaming",
+      "points": 89,
+      "raw_points": 360,
+      "tournaments_count": 2,
+      "tournaments": [
+        {
+          "league_id": 17367,
+          "name": "League_17367",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 77,
+          "date": "2025-08-13",
+          "days_ago": 108
+        },
+        {
+          "league_id": 17525,
+          "name": "League_17525",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-23",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 74,
+      "team_id": 9798195,
+      "name": "Cyber Goose",
+      "points": 89,
+      "raw_points": 345,
+      "tournaments_count": 2,
+      "tournaments": [
+        {
+          "league_id": 18210,
+          "name": "League_18210",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 12,
+          "date": "2025-06-14",
+          "days_ago": 169
+        },
+        {
+          "league_id": 18304,
+          "name": "League_18304",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 77,
+          "date": "2025-06-08",
+          "days_ago": 174
+        }
+      ]
+    },
+    {
+      "rank": 75,
+      "team_id": 9216247,
+      "name": "Team Klee",
+      "points": 81,
+      "raw_points": 770,
+      "tournaments_count": 5,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17628,
+          "name": "League_17628",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 7,
+          "date": "2025-01-11",
+          "days_ago": 322
+        },
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        },
+        {
+          "league_id": 17782,
+          "name": "League_17782",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 11,
+          "date": "2025-03-06",
+          "days_ago": 268
+        },
+        {
+          "league_id": 17767,
+          "name": "League_17767",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 52,
+          "date": "2025-02-10",
+          "days_ago": 292
+        }
+      ]
+    },
+    {
+      "rank": 76,
+      "team_id": 8737621,
+      "name": "Lava Esports ",
+      "points": 75,
+      "raw_points": 635,
+      "tournaments_count": 3,
+      "tournaments": [
+        {
+          "league_id": 17367,
+          "name": "League_17367",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 38,
+          "date": "2025-08-13",
+          "days_ago": 108
+        },
+        {
+          "league_id": 17628,
+          "name": "League_17628",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 3,
+          "date": "2025-01-11",
+          "days_ago": 322
+        },
+        {
+          "league_id": 17520,
+          "name": "League_17520",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 34,
+          "date": "2024-12-19",
+          "days_ago": 345
+        }
+      ]
+    },
+    {
+      "rank": 77,
+      "team_id": 9381678,
+      "name": "Apex Genesis",
+      "points": 73,
+      "raw_points": 590,
+      "tournaments_count": 2,
+      "tournaments": [
+        {
+          "league_id": 17367,
+          "name": "League_17367",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 38,
+          "date": "2025-08-13",
+          "days_ago": 108
+        },
+        {
+          "league_id": 17525,
+          "name": "League_17525",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 35,
+          "date": "2024-12-23",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 78,
+      "team_id": 9906058,
+      "name": "Balaclavas",
+      "points": 69,
+      "raw_points": 90,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17381,
+          "name": "League_17381",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 69,
+          "date": "2025-10-27",
+          "days_ago": 34
+        }
+      ]
+    },
+    {
+      "rank": 79,
+      "team_id": 9872558,
+      "name": "VP.Prodigy",
+      "points": 69,
+      "raw_points": 90,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17381,
+          "name": "League_17381",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 69,
+          "date": "2025-10-27",
+          "days_ago": 34
+        }
+      ]
+    },
+    {
+      "rank": 80,
+      "team_id": 9646485,
+      "name": "Jigglin",
+      "points": 64,
+      "raw_points": 770,
+      "tournaments_count": 3,
+      "tournaments": [
+        {
+          "league_id": 17637,
+          "name": "League_17637",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 8,
+          "date": "2025-01-29",
+          "days_ago": 304
+        },
+        {
+          "league_id": 17673,
+          "name": "League_17673",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 15,
+          "date": "2025-01-15",
+          "days_ago": 318
+        },
+        {
+          "league_id": 17646,
+          "name": "League_17646",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-10",
+          "days_ago": 323
+        }
+      ]
+    },
+    {
+      "rank": 81,
+      "team_id": 9433140,
+      "name": "Team Türkiye",
+      "points": 56,
+      "raw_points": 680,
+      "tournaments_count": 3,
+      "tournaments": [
+        {
+          "league_id": 17637,
+          "name": "League_17637",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 8,
+          "date": "2025-01-29",
+          "days_ago": 304
+        },
+        {
+          "league_id": 17673,
+          "name": "League_17673",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 7,
+          "date": "2025-01-15",
+          "days_ago": 318
+        },
+        {
+          "league_id": 17646,
+          "name": "League_17646",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-10",
+          "days_ago": 323
+        }
+      ]
+    },
+    {
+      "rank": 82,
+      "team_id": 9635124,
+      "name": "M80",
+      "points": 53,
+      "raw_points": 615,
+      "tournaments_count": 4,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 4,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 17670,
+          "name": "League_17670",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 15,
+          "date": "2025-01-13",
+          "days_ago": 320
+        },
+        {
+          "league_id": 17525,
+          "name": "League_17525",
+          "tier": "tier2",
+          "points": 300,
+          "decayed_points": 21,
+          "date": "2024-12-23",
+          "days_ago": 342
+        },
+        {
+          "league_id": 17907,
+          "name": "League_17907",
+          "tier": "tier1",
+          "points": 90,
+          "decayed_points": 13,
+          "date": "2025-03-30",
+          "days_ago": 244
+        }
+      ]
+    },
+    {
+      "rank": 83,
+      "team_id": 9425620,
+      "name": "Belgium",
+      "points": 41,
+      "raw_points": 500,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17646,
+          "name": "League_17646",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-10",
+          "days_ago": 323
+        }
+      ]
+    },
+    {
+      "rank": 84,
+      "team_id": 8713814,
+      "name": "Aurum",
+      "points": 41,
+      "raw_points": 500,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17646,
+          "name": "League_17646",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 41,
+          "date": "2025-01-10",
+          "days_ago": 323
+        }
+      ]
+    },
+    {
+      "rank": 85,
+      "team_id": 9403748,
+      "name": "Dragon Esports Club",
+      "points": 40,
+      "raw_points": 590,
+      "tournaments_count": 2,
+      "tournaments": [
+        {
+          "league_id": 17524,
+          "name": "League_17524",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 6,
+          "date": "2024-12-23",
+          "days_ago": 342
+        },
+        {
+          "league_id": 17520,
+          "name": "League_17520",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 34,
+          "date": "2024-12-19",
+          "days_ago": 345
+        }
+      ]
+    },
+    {
+      "rank": 86,
+      "team_id": 8254400,
+      "name": "beastcoast",
+      "points": 36,
+      "raw_points": 540,
+      "tournaments_count": 2,
+      "tournaments": [
+        {
+          "league_id": 17509,
+          "name": "League_17509",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 24,
+          "date": "2024-12-15",
+          "days_ago": 350
+        },
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-22",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 87,
+      "team_id": 9850944,
+      "name": "Kallmychata",
+      "points": 34,
+      "raw_points": 45,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17381,
+          "name": "League_17381",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 34,
+          "date": "2025-10-27",
+          "days_ago": 34
+        }
+      ]
+    },
+    {
+      "rank": 88,
+      "team_id": 9634632,
+      "name": "Team Essence",
+      "points": 34,
+      "raw_points": 500,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17520,
+          "name": "League_17520",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 34,
+          "date": "2024-12-19",
+          "days_ago": 345
+        }
+      ]
+    },
+    {
+      "rank": 89,
+      "team_id": 9730797,
+      "name": "Paseka",
+      "points": 30,
+      "raw_points": 180,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 18046,
+          "name": "League_18046",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 30,
+          "date": "2025-04-12",
+          "days_ago": 232
+        }
+      ]
+    },
+    {
+      "rank": 90,
+      "team_id": 9461007,
+      "name": "Evil Rabbit",
+      "points": 30,
+      "raw_points": 500,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17458,
+          "name": "League_17458",
+          "tier": "tier2",
+          "points": 500,
+          "decayed_points": 30,
+          "date": "2024-12-04",
+          "days_ago": 361
+        }
+      ]
+    },
+    {
+      "rank": 91,
+      "team_id": 9716756,
+      "name": "END GAME",
+      "points": 29,
+      "raw_points": 180,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17984,
+          "name": "League_17984",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 29,
+          "date": "2025-04-10",
+          "days_ago": 234
+        }
+      ]
+    },
+    {
+      "rank": 92,
+      "team_id": 9593895,
+      "name": "Gaozu",
+      "points": 24,
+      "raw_points": 360,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17509,
+          "name": "League_17509",
+          "tier": "tier1",
+          "points": 360,
+          "decayed_points": 24,
+          "date": "2024-12-15",
+          "days_ago": 350
+        }
+      ]
+    },
+    {
+      "rank": 93,
+      "team_id": 8724984,
+      "name": "Virtus.pro",
+      "points": 20,
+      "raw_points": 270,
+      "tournaments_count": 2,
+      "tournaments": [
+        {
+          "league_id": 17629,
+          "name": "League_17629",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 8,
+          "date": "2025-01-20",
+          "days_ago": 313
+        },
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-22",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 94,
+      "team_id": 9545759,
+      "name": "Waska",
+      "points": 19,
+      "raw_points": 270,
+      "tournaments_count": 2,
+      "tournaments": [
+        {
+          "league_id": 17628,
+          "name": "League_17628",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 7,
+          "date": "2025-01-11",
+          "days_ago": 322
+        },
+        {
+          "league_id": 17525,
+          "name": "League_17525",
+          "tier": "tier2",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-23",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 95,
+      "team_id": 9723691,
+      "name": "CDUB Esports",
+      "points": 14,
+      "raw_points": 90,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 14,
+          "date": "2025-04-04",
+          "days_ago": 240
+        }
+      ]
+    },
+    {
+      "rank": 96,
+      "team_id": 8894818,
+      "name": "PSG.Quest",
+      "points": 12,
+      "raw_points": 180,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-22",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 97,
+      "team_id": 8605863,
+      "name": "Entity",
+      "points": 12,
+      "raw_points": 180,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 16427,
+          "name": "League_16427",
+          "tier": "tier1",
+          "points": 180,
+          "decayed_points": 12,
+          "date": "2024-12-22",
+          "days_ago": 342
+        }
+      ]
+    },
+    {
+      "rank": 98,
+      "team_id": 9601305,
+      "name": "Team Mansaf",
+      "points": 9,
+      "raw_points": 90,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17768,
+          "name": "League_17768",
+          "tier": "tier2",
+          "points": 90,
+          "decayed_points": 9,
+          "date": "2025-02-15",
+          "days_ago": 287
+        }
+      ]
+    },
+    {
+      "rank": 99,
+      "team_id": 9658086,
+      "name": "The Bug",
+      "points": 7,
+      "raw_points": 45,
+      "tournaments_count": 1,
+      "tournaments": [
+        {
+          "league_id": 17874,
+          "name": "League_17874",
+          "tier": "tier2",
+          "points": 45,
+          "decayed_points": 7,
+          "date": "2025-04-04",
+          "days_ago": 240
+        }
+      ]
+    }
+  ]
+}

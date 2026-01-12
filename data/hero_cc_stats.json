@@ -1,0 +1,672 @@
+{
+  "1": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "2": {
+    "stun_duration": 3.5,
+    "is_initiator": true,
+    "cc_score": 5.0
+  },
+  "3": {
+    "stun_duration": 2.5,
+    "is_initiator": false,
+    "cc_score": 2.5
+  },
+  "4": {
+    "stun_duration": 1.5,
+    "is_initiator": false,
+    "cc_score": 1.5
+  },
+  "5": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "6": {
+    "stun_duration": 1.5,
+    "is_initiator": false,
+    "cc_score": 1.5
+  },
+  "7": {
+    "stun_duration": 2.5,
+    "is_initiator": true,
+    "cc_score": 4.0
+  },
+  "8": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "9": {
+    "stun_duration": 1.5,
+    "is_initiator": false,
+    "cc_score": 1.5
+  },
+  "10": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "11": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  },
+  "12": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "13": {
+    "stun_duration": 1.5,
+    "is_initiator": false,
+    "cc_score": 1.5
+  },
+  "14": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  },
+  "15": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "16": {
+    "stun_duration": 2.5,
+    "is_initiator": false,
+    "cc_score": 2.5
+  },
+  "17": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "18": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "19": {
+    "stun_duration": 2.5,
+    "is_initiator": true,
+    "cc_score": 4.0
+  },
+  "20": {
+    "stun_duration": 1.5,
+    "is_initiator": false,
+    "cc_score": 1.5
+  },
+  "21": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "22": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "23": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "24": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "25": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "26": {
+    "stun_duration": 4.0,
+    "is_initiator": false,
+    "cc_score": 4.0
+  },
+  "27": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "28": {
+    "stun_duration": 3.0,
+    "is_initiator": true,
+    "cc_score": 4.5
+  },
+  "29": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  },
+  "30": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "31": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "32": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "33": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  },
+  "34": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "35": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "36": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "37": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "38": {
+    "stun_duration": 3.5,
+    "is_initiator": true,
+    "cc_score": 5.0
+  },
+  "39": {
+    "stun_duration": 1.5,
+    "is_initiator": false,
+    "cc_score": 1.5
+  },
+  "40": {
+    "stun_duration": 3.5,
+    "is_initiator": false,
+    "cc_score": 3.5
+  },
+  "41": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  },
+  "42": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "43": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "44": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "45": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "46": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "47": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "48": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "49": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "50": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "51": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  },
+  "52": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "53": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "54": {
+    "stun_duration": 3.5,
+    "is_initiator": false,
+    "cc_score": 3.5
+  },
+  "55": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "56": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "57": {
+    "stun_duration": 2.5,
+    "is_initiator": false,
+    "cc_score": 2.5
+  },
+  "58": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "59": {
+    "stun_duration": 3.0,
+    "is_initiator": false,
+    "cc_score": 3.0
+  },
+  "60": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "61": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "62": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "63": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "64": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "65": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  },
+  "66": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "67": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "68": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "69": {
+    "stun_duration": 3.0,
+    "is_initiator": false,
+    "cc_score": 3.0
+  },
+  "70": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "71": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  },
+  "72": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "73": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "74": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "75": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "76": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "77": {
+    "stun_duration": 1.5,
+    "is_initiator": false,
+    "cc_score": 1.5
+  },
+  "78": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  },
+  "79": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "80": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "81": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "82": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "83": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "84": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "85": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "86": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "87": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "88": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "89": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "90": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "91": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "92": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "93": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "94": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "95": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "96": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  },
+  "97": {
+    "stun_duration": 4.0,
+    "is_initiator": true,
+    "cc_score": 5.5
+  },
+  "98": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "99": {
+    "stun_duration": 3.0,
+    "is_initiator": false,
+    "cc_score": 3.0
+  },
+  "100": {
+    "stun_duration": 3.0,
+    "is_initiator": true,
+    "cc_score": 4.5
+  },
+  "101": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "102": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "103": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  },
+  "104": {
+    "stun_duration": 2.5,
+    "is_initiator": true,
+    "cc_score": 4.0
+  },
+  "105": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "106": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "107": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  },
+  "108": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "109": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "110": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "111": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "112": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "113": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "114": {
+    "stun_duration": 3.5,
+    "is_initiator": true,
+    "cc_score": 5.0
+  },
+  "115": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "116": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "117": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "118": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "119": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "120": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  },
+  "121": {
+    "stun_duration": 3.0,
+    "is_initiator": false,
+    "cc_score": 3.0
+  },
+  "122": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "123": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "124": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "125": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "126": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "127": {
+    "stun_duration": 1.0,
+    "is_initiator": true,
+    "cc_score": 2.5
+  },
+  "128": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "129": {
+    "stun_duration": 3.5,
+    "is_initiator": true,
+    "cc_score": 5.0
+  },
+  "130": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "131": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "132": {
+    "stun_duration": 1.0,
+    "is_initiator": false,
+    "cc_score": 1.0
+  },
+  "136": {
+    "stun_duration": 2.0,
+    "is_initiator": false,
+    "cc_score": 2.0
+  },
+  "137": {
+    "stun_duration": 2.0,
+    "is_initiator": true,
+    "cc_score": 3.5
+  }
+}

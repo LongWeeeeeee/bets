@@ -1,0 +1,78 @@
+{
+  "odds": 1.8,
+  "networth_mode": "on",
+  "low_rule": {
+    "type": "low_prob",
+    "prob_threshold": 0.7,
+    "selection": {
+      "bets": 70,
+      "wins": 46,
+      "losses": 24,
+      "profit": 12.8,
+      "low_bets": 11,
+      "high_bets": 59,
+      "ev": 0.1828571428571429
+    },
+    "final_window": {
+      "bets": 82,
+      "wins": 57,
+      "losses": 25,
+      "profit": 20.6,
+      "ev": 0.25121951219512195,
+      "low_bets": 19,
+      "high_bets": 63,
+      "leak_check_profit": -35.2
+    }
+  },
+  "high_rule": {
+    "type": "high_prob",
+    "prob_threshold": 0.6,
+    "selection": {
+      "bets": 70,
+      "wins": 46,
+      "losses": 24,
+      "profit": 12.8,
+      "low_bets": 11,
+      "high_bets": 59,
+      "ev": 0.1828571428571429
+    },
+    "final_window": {
+      "bets": 82,
+      "wins": 57,
+      "losses": 25,
+      "profit": 20.6,
+      "ev": 0.25121951219512195,
+      "low_bets": 19,
+      "high_bets": 63,
+      "leak_check_profit": -35.2
+    }
+  },
+  "patch_overrides": {
+    "7.40": {
+      "low_rule": {
+        "type": "reg_all_low",
+        "pred_threshold": 40
+      },
+      "high_rule": {
+        "type": "high_prob",
+        "prob_threshold": 0.6
+      },
+      "team_predictability_filter": {
+        "enabled": true,
+        "min_matches": 20,
+        "max_mae": 12.0,
+        "min_stable_rate": 0.88,
+        "block_new_team": true,
+        "block_if_unknown": true
+      }
+    }
+  },
+  "min_bets_low": 8,
+  "min_bets_high": 8,
+  "test_window": {
+    "size": 200,
+    "start_time_min": 1757683223,
+    "start_time_max": 1761667843
+  },
+  "notes": "Fixed-mode profit objective on last 400 matches (networth OFF)."
+}

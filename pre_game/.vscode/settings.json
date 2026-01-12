@@ -1,0 +1,153 @@
+{
+  // ПОЛНОЕ ОТКЛЮЧЕНИЕ ИНДЕКСАЦИИ - исключить ВСЕ директории с кодом
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/.DS_Store": true,
+    "**/combined*.json": true,
+    "**/test_set_pub_matches.json": true,
+    "**/test_pub_matches.json": true,
+    "**/*_raw.json": true,
+    "**/*_backup*.json": true,
+    "**/player_hero_matchups.json": true,
+    "**/winrates_check.txt": true,
+    "**/backup_*/**": true,
+    "**/final_backup_*/**": true,
+    "**/cleanup_backup_*/**": true,
+    "**/analise_pub_matches/json_parts_split_from_object/**": true,
+    "**/pro_heroes_data/**": true,
+    "**/claude_enhanced_kills_time_model/stats/**": true,
+    "**/claude_enhanced_kills_time_model/pro_stats/**": true,
+    "**/claude_enhanced_kills_time_model/generated_files/**": true,
+    "**/winrate_model/**": true,
+    "**/*.pkl": true,
+    "**/*.model": true,
+    "**/*.joblib": true,
+    "**/nohup.out": true,
+    "**/json_parts_split_from_object/**": true,
+    "**/temp_files/**": true,
+    "**/generated_files/**": true,
+    "**/models/**": true,
+    "**/experiments/**": true,
+    "**/late_dict_raw.json": true,
+    "**/early_dict_raw.json": true,
+    "**/comeback_dict_raw.json": true,
+    "**/lane_dict_raw.json": true,
+    "**/pub_stats.json": true,
+    "**/tier1_train_date_based.json": true
+  },
+  
+  // Исключить из поиска - ВСЕ директории с кодом
+  "search.exclude": {
+    "**/__pycache__": true,
+    "**/node_modules": true,
+    "**/*.pkl": true,
+    "**/*.model": true,
+    "**/*.joblib": true,
+    "**/combined*.json": true,
+    "**/test_set_pub_matches.json": true,
+    "**/test_pub_matches.json": true,
+    "**/*_raw.json": true,
+    "**/*_backup*.json": true,
+    "**/player_hero_matchups.json": true,
+    "**/winrates_check.txt": true,
+    "**/backup_*/**": true,
+    "**/final_backup_*/**": true,
+    "**/cleanup_backup_*/**": true,
+    "**/analise_pub_matches/**": true,
+    "**/pro_heroes_data/**": true,
+    "**/claude_enhanced_kills_time_model/**": true,
+    "**/winrate_model/**": true,
+    "**/json_parts_split_from_object/**": true,
+    "**/temp_files/**": true,
+    "**/generated_files/**": true,
+    "**/models/**": true,
+    "**/experiments/**": true,
+    "**/nohup.out": true
+  },
+  
+  // Не следить за изменениями - исключить ВСЕ директории с кодом
+  "files.watcherExclude": {
+    "**/__pycache__/**": true,
+    "**/*.pkl": true,
+    "**/*.model": true,
+    "**/*.joblib": true,
+    "**/combined*.json": true,
+    "**/test_set_pub_matches.json": true,
+    "**/test_pub_matches.json": true,
+    "**/*_raw.json": true,
+    "**/player_hero_matchups.json": true,
+    "**/winrates_check.txt": true,
+    "**/backup_*/**": true,
+    "**/final_backup_*/**": true,
+    "**/cleanup_backup_*/**": true,
+    "**/analise_pub_matches/**": true,
+    "**/pro_heroes_data/**": true,
+    "**/claude_enhanced_kills_time_model/**": true,
+    "**/winrate_model/**": true,
+    "**/json_parts_split_from_object/**": true,
+    "**/temp_files/**": true,
+    "**/generated_files/**": true,
+    "**/models/**": true,
+    "**/experiments/**": true,
+    "**/nohup.out": true
+  },
+  
+  // Ограничение размера файла для открытия (50MB - защита от огромных JSON)
+  "files.maxFileSizeMB": 50,
+  
+  // ПОЛНОСТЬЮ ОТКЛЮЧИТЬ Python Language Server (Pylance) - это главное!
+  "python.languageServer": "None",
+  "python.analysis.indexing": false,
+  "python.analysis.autoImportCompletions": false,
+  "python.analysis.diagnosticMode": "off",
+  "python.analysis.typeCheckingMode": "off",
+  "python.analysis.autoSearchPaths": false,
+  "python.analysis.userFileIndexingLimit": 0,
+  "python.analysis.diagnosticSeverityOverrides": {},
+  "python.analysis.stubPath": "",
+  "python.analysis.logLevel": "Error",
+  "python.analysis.exclude": [
+    "**/*"
+  ],
+  "python.analysis.ignore": [
+    "**/*"
+  ],
+  
+  // ОТКЛЮЧИТЬ индексацию TypeScript/JavaScript
+  "typescript.disableAutomaticTypeAcquisition": true,
+  "typescript.preferences.includePackageJsonAutoImports": "off",
+  "javascript.preferences.includePackageJsonAutoImports": "off",
+  "typescript.suggest.autoImports": false,
+  "javascript.suggest.autoImports": false,
+  
+  // Отключить индексацию символов
+  "search.smartCase": false,
+  "search.useIgnoreFiles": true,
+  "search.useGlobalIgnoreFiles": true,
+  "search.followSymlinks": false,
+  
+  // Отключить авто-сохранение (чтобы не создавать индексы)
+  "files.autoSave": "off",
+  
+  // ПОЛНОСТЬЮ ОТКЛЮЧИТЬ индексацию через Cursor AI
+  "cursor.cpp.disabledLanguages": ["*"],
+  "cursor.chat.indexingEnabled": false,
+  "cursor.ai.enableIndexing": false,
+  "cursor.ai.indexing.enabled": false,
+  "cursor.indexing.enabled": false,
+  "cursor.codebaseIndexing.enabled": false,
+  
+  // Отключить индексацию символов (Go to Symbol)
+  "editor.gotoLocation.multipleDefinitions": "goto",
+  "editor.gotoLocation.multipleReferences": "goto",
+  "editor.gotoLocation.multipleImplementations": "goto",
+  
+  // Отключить автоопределение проектов
+  "python.analysis.disabled": [
+    "**/*"
+  ],
+  
+  // Автоматически использовать виртуальное окружение
+  "python.defaultInterpreterPath": "${workspaceFolder}/venv/bin/python"
+}

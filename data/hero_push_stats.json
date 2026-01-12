@@ -1,0 +1,1010 @@
+{
+  "113": {
+    "avg_tower_damage": 6362.7,
+    "avg_duration": 40.5,
+    "push_rate": 157.62,
+    "push_score": 1.702,
+    "is_defense_hero": false,
+    "games": 25182
+  },
+  "96": {
+    "avg_tower_damage": 2128.1,
+    "avg_duration": 40.4,
+    "push_rate": 53.08,
+    "push_score": 0.573,
+    "is_defense_hero": false,
+    "games": 76631
+  },
+  "97": {
+    "avg_tower_damage": 1179.6,
+    "avg_duration": 40.3,
+    "push_rate": 31.21,
+    "push_score": 0.337,
+    "is_defense_hero": false,
+    "games": 245747
+  },
+  "8": {
+    "avg_tower_damage": 9517.1,
+    "avg_duration": 40.0,
+    "push_rate": 241.87,
+    "push_score": 2.612,
+    "is_defense_hero": false,
+    "games": 169601
+  },
+  "5": {
+    "avg_tower_damage": 461.5,
+    "avg_duration": 39.9,
+    "push_rate": 12.22,
+    "push_score": 0.132,
+    "is_defense_hero": false,
+    "games": 109331
+  },
+  "19": {
+    "avg_tower_damage": 6378.2,
+    "avg_duration": 39.7,
+    "push_rate": 164.72,
+    "push_score": 1.778,
+    "is_defense_hero": false,
+    "games": 174076
+  },
+  "75": {
+    "avg_tower_damage": 638.8,
+    "avg_duration": 40.4,
+    "push_rate": 16.67,
+    "push_score": 0.18,
+    "is_defense_hero": false,
+    "games": 256777
+  },
+  "131": {
+    "avg_tower_damage": 341.5,
+    "avg_duration": 40.4,
+    "push_rate": 9.14,
+    "push_score": 0.099,
+    "is_defense_hero": false,
+    "games": 103739
+  },
+  "2": {
+    "avg_tower_damage": 1125.4,
+    "avg_duration": 40.9,
+    "push_rate": 29.16,
+    "push_score": 0.315,
+    "is_defense_hero": false,
+    "games": 213483
+  },
+  "137": {
+    "avg_tower_damage": 1924.6,
+    "avg_duration": 40.4,
+    "push_rate": 49.22,
+    "push_score": 0.531,
+    "is_defense_hero": false,
+    "games": 42306
+  },
+  "68": {
+    "avg_tower_damage": 359.4,
+    "avg_duration": 41.5,
+    "push_rate": 9.25,
+    "push_score": 0.1,
+    "is_defense_hero": true,
+    "games": 188726
+  },
+  "33": {
+    "avg_tower_damage": 3802.2,
+    "avg_duration": 40.4,
+    "push_rate": 99.12,
+    "push_score": 1.07,
+    "is_defense_hero": false,
+    "games": 28574
+  },
+  "13": {
+    "avg_tower_damage": 3441.7,
+    "avg_duration": 40.2,
+    "push_rate": 87.22,
+    "push_score": 0.942,
+    "is_defense_hero": false,
+    "games": 183436
+  },
+  "67": {
+    "avg_tower_damage": 4092.5,
+    "avg_duration": 41.0,
+    "push_rate": 96.94,
+    "push_score": 1.047,
+    "is_defense_hero": false,
+    "games": 67813
+  },
+  "14": {
+    "avg_tower_damage": 898.8,
+    "avg_duration": 40.0,
+    "push_rate": 23.71,
+    "push_score": 0.256,
+    "is_defense_hero": false,
+    "games": 399255
+  },
+  "27": {
+    "avg_tower_damage": 3575.0,
+    "avg_duration": 39.7,
+    "push_rate": 90.63,
+    "push_score": 0.979,
+    "is_defense_hero": true,
+    "games": 234338
+  },
+  "39": {
+    "avg_tower_damage": 2309.6,
+    "avg_duration": 40.8,
+    "push_rate": 58.59,
+    "push_score": 0.633,
+    "is_defense_hero": true,
+    "games": 288340
+  },
+  "40": {
+    "avg_tower_damage": 1537.1,
+    "avg_duration": 40.6,
+    "push_rate": 40.18,
+    "push_score": 0.434,
+    "is_defense_hero": false,
+    "games": 105887
+  },
+  "12": {
+    "avg_tower_damage": 7665.5,
+    "avg_duration": 40.9,
+    "push_rate": 186.34,
+    "push_score": 2.012,
+    "is_defense_hero": false,
+    "games": 55841
+  },
+  "100": {
+    "avg_tower_damage": 415.3,
+    "avg_duration": 39.3,
+    "push_rate": 11.35,
+    "push_score": 0.123,
+    "is_defense_hero": false,
+    "games": 93909
+  },
+  "69": {
+    "avg_tower_damage": 1498.8,
+    "avg_duration": 40.7,
+    "push_rate": 37.16,
+    "push_score": 0.401,
+    "is_defense_hero": false,
+    "games": 81344
+  },
+  "64": {
+    "avg_tower_damage": 2096.7,
+    "avg_duration": 40.1,
+    "push_rate": 55.85,
+    "push_score": 0.603,
+    "is_defense_hero": false,
+    "games": 193287
+  },
+  "1": {
+    "avg_tower_damage": 8125.1,
+    "avg_duration": 40.1,
+    "push_rate": 199.23,
+    "push_score": 2.151,
+    "is_defense_hero": false,
+    "games": 147682
+  },
+  "94": {
+    "avg_tower_damage": 8914.6,
+    "avg_duration": 41.2,
+    "push_rate": 217.57,
+    "push_score": 2.349,
+    "is_defense_hero": false,
+    "games": 140215
+  },
+  "135": {
+    "avg_tower_damage": 1965.8,
+    "avg_duration": 40.0,
+    "push_rate": 50.95,
+    "push_score": 0.55,
+    "is_defense_hero": false,
+    "games": 200532
+  },
+  "119": {
+    "avg_tower_damage": 621.4,
+    "avg_duration": 40.6,
+    "push_rate": 16.09,
+    "push_score": 0.174,
+    "is_defense_hero": false,
+    "games": 100478
+  },
+  "26": {
+    "avg_tower_damage": 368.8,
+    "avg_duration": 40.6,
+    "push_rate": 9.54,
+    "push_score": 0.103,
+    "is_defense_hero": false,
+    "games": 250143
+  },
+  "20": {
+    "avg_tower_damage": 2621.0,
+    "avg_duration": 39.9,
+    "push_rate": 67.33,
+    "push_score": 0.727,
+    "is_defense_hero": false,
+    "games": 128619
+  },
+  "30": {
+    "avg_tower_damage": 413.4,
+    "avg_duration": 40.8,
+    "push_rate": 10.73,
+    "push_score": 0.116,
+    "is_defense_hero": false,
+    "games": 144185
+  },
+  "53": {
+    "avg_tower_damage": 7130.5,
+    "avg_duration": 40.1,
+    "push_rate": 181.86,
+    "push_score": 1.964,
+    "is_defense_hero": false,
+    "games": 295275
+  },
+  "11": {
+    "avg_tower_damage": 6314.4,
+    "avg_duration": 40.3,
+    "push_rate": 165.74,
+    "push_score": 1.789,
+    "is_defense_hero": false,
+    "games": 194832
+  },
+  "42": {
+    "avg_tower_damage": 6272.4,
+    "avg_duration": 40.1,
+    "push_rate": 159.37,
+    "push_score": 1.721,
+    "is_defense_hero": false,
+    "games": 152045
+  },
+  "86": {
+    "avg_tower_damage": 777.6,
+    "avg_duration": 40.7,
+    "push_rate": 20.45,
+    "push_score": 0.221,
+    "is_defense_hero": true,
+    "games": 280454
+  },
+  "128": {
+    "avg_tower_damage": 1461.7,
+    "avg_duration": 40.9,
+    "push_rate": 37.17,
+    "push_score": 0.401,
+    "is_defense_hero": false,
+    "games": 104139
+  },
+  "48": {
+    "avg_tower_damage": 10972.5,
+    "avg_duration": 39.6,
+    "push_rate": 285.9,
+    "push_score": 3.087,
+    "is_defense_hero": false,
+    "games": 66368
+  },
+  "105": {
+    "avg_tower_damage": 879.9,
+    "avg_duration": 42.2,
+    "push_rate": 21.47,
+    "push_score": 0.232,
+    "is_defense_hero": false,
+    "games": 61810
+  },
+  "25": {
+    "avg_tower_damage": 5413.8,
+    "avg_duration": 40.7,
+    "push_rate": 134.82,
+    "push_score": 1.456,
+    "is_defense_hero": true,
+    "games": 64937
+  },
+  "22": {
+    "avg_tower_damage": 558.2,
+    "avg_duration": 40.7,
+    "push_rate": 14.19,
+    "push_score": 0.153,
+    "is_defense_hero": true,
+    "games": 192097
+  },
+  "74": {
+    "avg_tower_damage": 3985.5,
+    "avg_duration": 40.7,
+    "push_rate": 99.76,
+    "push_score": 1.077,
+    "is_defense_hero": true,
+    "games": 236159
+  },
+  "87": {
+    "avg_tower_damage": 295.1,
+    "avg_duration": 40.3,
+    "push_rate": 7.93,
+    "push_score": 0.086,
+    "is_defense_hero": true,
+    "games": 155336
+  },
+  "99": {
+    "avg_tower_damage": 4422.2,
+    "avg_duration": 39.8,
+    "push_rate": 109.29,
+    "push_score": 1.18,
+    "is_defense_hero": false,
+    "games": 70075
+  },
+  "3": {
+    "avg_tower_damage": 441.0,
+    "avg_duration": 40.2,
+    "push_rate": 11.8,
+    "push_score": 0.127,
+    "is_defense_hero": false,
+    "games": 46295
+  },
+  "93": {
+    "avg_tower_damage": 5092.1,
+    "avg_duration": 39.8,
+    "push_rate": 127.36,
+    "push_score": 1.375,
+    "is_defense_hero": false,
+    "games": 147490
+  },
+  "31": {
+    "avg_tower_damage": 398.1,
+    "avg_duration": 41.1,
+    "push_rate": 10.44,
+    "push_score": 0.113,
+    "is_defense_hero": true,
+    "games": 106534
+  },
+  "84": {
+    "avg_tower_damage": 945.7,
+    "avg_duration": 40.0,
+    "push_rate": 25.16,
+    "push_score": 0.272,
+    "is_defense_hero": false,
+    "games": 128714
+  },
+  "138": {
+    "avg_tower_damage": 3645.2,
+    "avg_duration": 40.8,
+    "push_rate": 88.99,
+    "push_score": 0.961,
+    "is_defense_hero": false,
+    "games": 85660
+  },
+  "85": {
+    "avg_tower_damage": 999.0,
+    "avg_duration": 40.2,
+    "push_rate": 26.14,
+    "push_score": 0.282,
+    "is_defense_hero": false,
+    "games": 136582
+  },
+  "23": {
+    "avg_tower_damage": 2228.9,
+    "avg_duration": 41.1,
+    "push_rate": 56.63,
+    "push_score": 0.611,
+    "is_defense_hero": false,
+    "games": 85707
+  },
+  "36": {
+    "avg_tower_damage": 1816.4,
+    "avg_duration": 39.8,
+    "push_rate": 47.18,
+    "push_score": 0.509,
+    "is_defense_hero": false,
+    "games": 127207
+  },
+  "101": {
+    "avg_tower_damage": 532.3,
+    "avg_duration": 40.9,
+    "push_rate": 13.92,
+    "push_score": 0.15,
+    "is_defense_hero": true,
+    "games": 110362
+  },
+  "34": {
+    "avg_tower_damage": 481.7,
+    "avg_duration": 40.8,
+    "push_rate": 12.38,
+    "push_score": 0.134,
+    "is_defense_hero": true,
+    "games": 127382
+  },
+  "37": {
+    "avg_tower_damage": 2167.6,
+    "avg_duration": 39.7,
+    "push_rate": 55.14,
+    "push_score": 0.595,
+    "is_defense_hero": false,
+    "games": 121763
+  },
+  "104": {
+    "avg_tower_damage": 3133.7,
+    "avg_duration": 40.2,
+    "push_rate": 80.76,
+    "push_score": 0.872,
+    "is_defense_hero": false,
+    "games": 182773
+  },
+  "109": {
+    "avg_tower_damage": 11939.6,
+    "avg_duration": 39.5,
+    "push_rate": 311.52,
+    "push_score": 3.363,
+    "is_defense_hero": false,
+    "games": 120900
+  },
+  "77": {
+    "avg_tower_damage": 9024.4,
+    "avg_duration": 39.0,
+    "push_rate": 244.49,
+    "push_score": 2.64,
+    "is_defense_hero": false,
+    "games": 29003
+  },
+  "70": {
+    "avg_tower_damage": 6185.1,
+    "avg_duration": 40.9,
+    "push_rate": 151.75,
+    "push_score": 1.639,
+    "is_defense_hero": false,
+    "games": 193900
+  },
+  "49": {
+    "avg_tower_damage": 8118.6,
+    "avg_duration": 39.1,
+    "push_rate": 214.35,
+    "push_score": 2.314,
+    "is_defense_hero": false,
+    "games": 98958
+  },
+  "47": {
+    "avg_tower_damage": 4112.3,
+    "avg_duration": 40.8,
+    "push_rate": 105.17,
+    "push_score": 1.136,
+    "is_defense_hero": true,
+    "games": 37930
+  },
+  "114": {
+    "avg_tower_damage": 4534.2,
+    "avg_duration": 40.2,
+    "push_rate": 112.79,
+    "push_score": 1.218,
+    "is_defense_hero": false,
+    "games": 139574
+  },
+  "71": {
+    "avg_tower_damage": 683.5,
+    "avg_duration": 39.6,
+    "push_rate": 17.77,
+    "push_score": 0.192,
+    "is_defense_hero": false,
+    "games": 116557
+  },
+  "59": {
+    "avg_tower_damage": 6157.6,
+    "avg_duration": 38.3,
+    "push_rate": 174.86,
+    "push_score": 1.888,
+    "is_defense_hero": false,
+    "games": 103248
+  },
+  "123": {
+    "avg_tower_damage": 645.1,
+    "avg_duration": 40.9,
+    "push_rate": 16.53,
+    "push_score": 0.178,
+    "is_defense_hero": false,
+    "games": 74596
+  },
+  "35": {
+    "avg_tower_damage": 5180.8,
+    "avg_duration": 41.1,
+    "push_rate": 132.94,
+    "push_score": 1.435,
+    "is_defense_hero": true,
+    "games": 136540
+  },
+  "10": {
+    "avg_tower_damage": 12100.2,
+    "avg_duration": 38.6,
+    "push_rate": 322.56,
+    "push_score": 3.483,
+    "is_defense_hero": true,
+    "games": 168995
+  },
+  "54": {
+    "avg_tower_damage": 8303.0,
+    "avg_duration": 40.0,
+    "push_rate": 207.63,
+    "push_score": 2.242,
+    "is_defense_hero": false,
+    "games": 152584
+  },
+  "72": {
+    "avg_tower_damage": 7502.3,
+    "avg_duration": 40.1,
+    "push_rate": 189.45,
+    "push_score": 2.046,
+    "is_defense_hero": false,
+    "games": 81630
+  },
+  "76": {
+    "avg_tower_damage": 2431.8,
+    "avg_duration": 40.3,
+    "push_rate": 61.42,
+    "push_score": 0.663,
+    "is_defense_hero": false,
+    "games": 101100
+  },
+  "120": {
+    "avg_tower_damage": 1744.1,
+    "avg_duration": 40.3,
+    "push_rate": 44.7,
+    "push_score": 0.483,
+    "is_defense_hero": false,
+    "games": 74770
+  },
+  "106": {
+    "avg_tower_damage": 2338.5,
+    "avg_duration": 39.7,
+    "push_rate": 61.75,
+    "push_score": 0.667,
+    "is_defense_hero": false,
+    "games": 150877
+  },
+  "21": {
+    "avg_tower_damage": 2295.5,
+    "avg_duration": 40.7,
+    "push_rate": 57.37,
+    "push_score": 0.619,
+    "is_defense_hero": false,
+    "games": 160568
+  },
+  "38": {
+    "avg_tower_damage": 5675.9,
+    "avg_duration": 38.9,
+    "push_rate": 158.26,
+    "push_score": 1.709,
+    "is_defense_hero": false,
+    "games": 93024
+  },
+  "92": {
+    "avg_tower_damage": 8713.8,
+    "avg_duration": 38.3,
+    "push_rate": 238.83,
+    "push_score": 2.579,
+    "is_defense_hero": false,
+    "games": 26840
+  },
+  "45": {
+    "avg_tower_damage": 5144.5,
+    "avg_duration": 39.7,
+    "push_rate": 137.75,
+    "push_score": 1.487,
+    "is_defense_hero": false,
+    "games": 80357
+  },
+  "52": {
+    "avg_tower_damage": 1411.5,
+    "avg_duration": 40.3,
+    "push_rate": 36.6,
+    "push_score": 0.395,
+    "is_defense_hero": false,
+    "games": 119021
+  },
+  "43": {
+    "avg_tower_damage": 5863.1,
+    "avg_duration": 40.3,
+    "push_rate": 152.23,
+    "push_score": 1.644,
+    "is_defense_hero": true,
+    "games": 55132
+  },
+  "79": {
+    "avg_tower_damage": 706.6,
+    "avg_duration": 40.9,
+    "push_rate": 17.9,
+    "push_score": 0.193,
+    "is_defense_hero": false,
+    "games": 44348
+  },
+  "6": {
+    "avg_tower_damage": 8849.7,
+    "avg_duration": 41.2,
+    "push_rate": 218.47,
+    "push_score": 2.359,
+    "is_defense_hero": false,
+    "games": 117502
+  },
+  "29": {
+    "avg_tower_damage": 2563.7,
+    "avg_duration": 39.3,
+    "push_rate": 66.22,
+    "push_score": 0.715,
+    "is_defense_hero": false,
+    "games": 122042
+  },
+  "17": {
+    "avg_tower_damage": 2498.6,
+    "avg_duration": 39.8,
+    "push_rate": 63.75,
+    "push_score": 0.688,
+    "is_defense_hero": false,
+    "games": 144021
+  },
+  "129": {
+    "avg_tower_damage": 1350.3,
+    "avg_duration": 40.5,
+    "push_rate": 34.57,
+    "push_score": 0.373,
+    "is_defense_hero": false,
+    "games": 174246
+  },
+  "63": {
+    "avg_tower_damage": 3535.3,
+    "avg_duration": 40.2,
+    "push_rate": 87.82,
+    "push_score": 0.948,
+    "is_defense_hero": false,
+    "games": 161792
+  },
+  "126": {
+    "avg_tower_damage": 2573.9,
+    "avg_duration": 40.2,
+    "push_rate": 65.53,
+    "push_score": 0.708,
+    "is_defense_hero": false,
+    "games": 67898
+  },
+  "121": {
+    "avg_tower_damage": 502.4,
+    "avg_duration": 40.6,
+    "push_rate": 12.53,
+    "push_score": 0.135,
+    "is_defense_hero": false,
+    "games": 43297
+  },
+  "44": {
+    "avg_tower_damage": 5458.1,
+    "avg_duration": 39.6,
+    "push_rate": 136.67,
+    "push_score": 1.476,
+    "is_defense_hero": false,
+    "games": 119045
+  },
+  "28": {
+    "avg_tower_damage": 2162.3,
+    "avg_duration": 39.6,
+    "push_rate": 55.71,
+    "push_score": 0.601,
+    "is_defense_hero": false,
+    "games": 90475
+  },
+  "18": {
+    "avg_tower_damage": 8477.0,
+    "avg_duration": 40.5,
+    "push_rate": 211.63,
+    "push_score": 2.285,
+    "is_defense_hero": false,
+    "games": 124768
+  },
+  "82": {
+    "avg_tower_damage": 9611.1,
+    "avg_duration": 37.3,
+    "push_rate": 266.04,
+    "push_score": 2.873,
+    "is_defense_hero": false,
+    "games": 32706
+  },
+  "57": {
+    "avg_tower_damage": 1918.3,
+    "avg_duration": 39.8,
+    "push_rate": 50.27,
+    "push_score": 0.543,
+    "is_defense_hero": false,
+    "games": 31281
+  },
+  "73": {
+    "avg_tower_damage": 3333.6,
+    "avg_duration": 39.4,
+    "push_rate": 85.19,
+    "push_score": 0.92,
+    "is_defense_hero": false,
+    "games": 59350
+  },
+  "55": {
+    "avg_tower_damage": 1386.5,
+    "avg_duration": 39.6,
+    "push_rate": 36.56,
+    "push_score": 0.395,
+    "is_defense_hero": false,
+    "games": 69011
+  },
+  "51": {
+    "avg_tower_damage": 381.7,
+    "avg_duration": 40.2,
+    "push_rate": 10.26,
+    "push_score": 0.111,
+    "is_defense_hero": false,
+    "games": 113913
+  },
+  "110": {
+    "avg_tower_damage": 832.1,
+    "avg_duration": 40.6,
+    "push_rate": 21.89,
+    "push_score": 0.236,
+    "is_defense_hero": false,
+    "games": 105016
+  },
+  "41": {
+    "avg_tower_damage": 5454.5,
+    "avg_duration": 40.6,
+    "push_rate": 131.59,
+    "push_score": 1.421,
+    "is_defense_hero": false,
+    "games": 83527
+  },
+  "60": {
+    "avg_tower_damage": 3297.2,
+    "avg_duration": 39.5,
+    "push_rate": 85.3,
+    "push_score": 0.921,
+    "is_defense_hero": false,
+    "games": 104623
+  },
+  "90": {
+    "avg_tower_damage": 695.2,
+    "avg_duration": 40.0,
+    "push_rate": 18.78,
+    "push_score": 0.203,
+    "is_defense_hero": false,
+    "games": 39143
+  },
+  "7": {
+    "avg_tower_damage": 1539.6,
+    "avg_duration": 41.3,
+    "push_rate": 38.18,
+    "push_score": 0.412,
+    "is_defense_hero": false,
+    "games": 271135
+  },
+  "102": {
+    "avg_tower_damage": 3893.7,
+    "avg_duration": 39.1,
+    "push_rate": 102.87,
+    "push_score": 1.111,
+    "is_defense_hero": false,
+    "games": 144713
+  },
+  "65": {
+    "avg_tower_damage": 2738.7,
+    "avg_duration": 39.9,
+    "push_rate": 71.0,
+    "push_score": 0.767,
+    "is_defense_hero": false,
+    "games": 50243
+  },
+  "46": {
+    "avg_tower_damage": 9608.8,
+    "avg_duration": 39.6,
+    "push_rate": 250.19,
+    "push_score": 2.701,
+    "is_defense_hero": false,
+    "games": 151500
+  },
+  "81": {
+    "avg_tower_damage": 4835.1,
+    "avg_duration": 40.2,
+    "push_rate": 121.08,
+    "push_score": 1.307,
+    "is_defense_hero": false,
+    "games": 31890
+  },
+  "98": {
+    "avg_tower_damage": 1483.6,
+    "avg_duration": 40.4,
+    "push_rate": 37.75,
+    "push_score": 0.408,
+    "is_defense_hero": false,
+    "games": 96023
+  },
+  "95": {
+    "avg_tower_damage": 10141.5,
+    "avg_duration": 39.8,
+    "push_rate": 259.04,
+    "push_score": 2.797,
+    "is_defense_hero": false,
+    "games": 35157
+  },
+  "9": {
+    "avg_tower_damage": 1104.3,
+    "avg_duration": 39.8,
+    "push_rate": 28.37,
+    "push_score": 0.306,
+    "is_defense_hero": false,
+    "games": 60344
+  },
+  "136": {
+    "avg_tower_damage": 3680.6,
+    "avg_duration": 39.3,
+    "push_rate": 98.7,
+    "push_score": 1.066,
+    "is_defense_hero": false,
+    "games": 130382
+  },
+  "4": {
+    "avg_tower_damage": 5529.5,
+    "avg_duration": 41.2,
+    "push_rate": 136.0,
+    "push_score": 1.468,
+    "is_defense_hero": false,
+    "games": 22379
+  },
+  "16": {
+    "avg_tower_damage": 813.0,
+    "avg_duration": 41.5,
+    "push_rate": 20.04,
+    "push_score": 0.216,
+    "is_defense_hero": false,
+    "games": 82553
+  },
+  "83": {
+    "avg_tower_damage": 699.7,
+    "avg_duration": 39.8,
+    "push_rate": 18.52,
+    "push_score": 0.2,
+    "is_defense_hero": false,
+    "games": 29404
+  },
+  "50": {
+    "avg_tower_damage": 1224.1,
+    "avg_duration": 39.4,
+    "push_rate": 33.62,
+    "push_score": 0.363,
+    "is_defense_hero": false,
+    "games": 89067
+  },
+  "111": {
+    "avg_tower_damage": 285.1,
+    "avg_duration": 39.3,
+    "push_rate": 7.95,
+    "push_score": 0.086,
+    "is_defense_hero": false,
+    "games": 81540
+  },
+  "88": {
+    "avg_tower_damage": 632.1,
+    "avg_duration": 40.5,
+    "push_rate": 16.23,
+    "push_score": 0.175,
+    "is_defense_hero": false,
+    "games": 56958
+  },
+  "66": {
+    "avg_tower_damage": 3664.3,
+    "avg_duration": 37.8,
+    "push_rate": 103.38,
+    "push_score": 1.116,
+    "is_defense_hero": false,
+    "games": 11878
+  },
+  "58": {
+    "avg_tower_damage": 3047.7,
+    "avg_duration": 39.9,
+    "push_rate": 78.96,
+    "push_score": 0.853,
+    "is_defense_hero": true,
+    "games": 18758
+  },
+  "107": {
+    "avg_tower_damage": 898.9,
+    "avg_duration": 40.5,
+    "push_rate": 23.15,
+    "push_score": 0.25,
+    "is_defense_hero": false,
+    "games": 43495
+  },
+  "15": {
+    "avg_tower_damage": 3956.3,
+    "avg_duration": 40.8,
+    "push_rate": 97.19,
+    "push_score": 1.049,
+    "is_defense_hero": false,
+    "games": 55244
+  },
+  "78": {
+    "avg_tower_damage": 4444.4,
+    "avg_duration": 40.3,
+    "push_rate": 109.76,
+    "push_score": 1.185,
+    "is_defense_hero": false,
+    "games": 21242
+  },
+  "62": {
+    "avg_tower_damage": 734.6,
+    "avg_duration": 39.0,
+    "push_rate": 19.89,
+    "push_score": 0.215,
+    "is_defense_hero": false,
+    "games": 85510
+  },
+  "145": {
+    "avg_tower_damage": 4978.7,
+    "avg_duration": 40.3,
+    "push_rate": 126.33,
+    "push_score": 1.364,
+    "is_defense_hero": false,
+    "games": 62647
+  },
+  "32": {
+    "avg_tower_damage": 1984.1,
+    "avg_duration": 41.0,
+    "push_rate": 48.18,
+    "push_score": 0.52,
+    "is_defense_hero": false,
+    "games": 50038
+  },
+  "108": {
+    "avg_tower_damage": 3119.4,
+    "avg_duration": 40.4,
+    "push_rate": 81.76,
+    "push_score": 0.883,
+    "is_defense_hero": false,
+    "games": 52758
+  },
+  "91": {
+    "avg_tower_damage": 1020.9,
+    "avg_duration": 37.7,
+    "push_rate": 29.31,
+    "push_score": 0.316,
+    "is_defense_hero": false,
+    "games": 33511
+  },
+  "56": {
+    "avg_tower_damage": 10419.0,
+    "avg_duration": 40.3,
+    "push_rate": 265.74,
+    "push_score": 2.869,
+    "is_defense_hero": false,
+    "games": 48130
+  },
+  "112": {
+    "avg_tower_damage": 422.8,
+    "avg_duration": 40.3,
+    "push_rate": 11.37,
+    "push_score": 0.123,
+    "is_defense_hero": false,
+    "games": 88189
+  },
+  "89": {
+    "avg_tower_damage": 3392.6,
+    "avg_duration": 39.9,
+    "push_rate": 83.84,
+    "push_score": 0.905,
+    "is_defense_hero": false,
+    "games": 11827
+  },
+  "103": {
+    "avg_tower_damage": 1234.6,
+    "avg_duration": 41.6,
+    "push_rate": 31.28,
+    "push_score": 0.338,
+    "is_defense_hero": false,
+    "games": 27361
+  },
+  "80": {
+    "avg_tower_damage": 10185.3,
+    "avg_duration": 38.3,
+    "push_rate": 279.21,
+    "push_score": 3.015,
+    "is_defense_hero": true,
+    "games": 21548
+  },
+  "61": {
+    "avg_tower_damage": 10253.4,
+    "avg_duration": 37.6,
+    "push_rate": 286.83,
+    "push_score": 3.097,
+    "is_defense_hero": false,
+    "games": 34095
+  }
+}

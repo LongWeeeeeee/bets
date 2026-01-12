@@ -1,0 +1,62 @@
+{
+  "feature_cols": [
+    "r_pos1",
+    "d_pos1",
+    "r_pos2",
+    "d_pos2",
+    "r_pos3",
+    "d_pos3",
+    "r_pos4",
+    "d_pos4",
+    "r_pos5",
+    "d_pos5",
+    "matchup_pos1",
+    "matchup_pos2",
+    "matchup_pos3",
+    "matchup_pos4",
+    "matchup_pos5"
+  ],
+  "cat_features": [
+    "r_pos1",
+    "d_pos1",
+    "r_pos2",
+    "d_pos2",
+    "r_pos3",
+    "d_pos3",
+    "r_pos4",
+    "d_pos4",
+    "r_pos5",
+    "d_pos5",
+    "matchup_pos1",
+    "matchup_pos2",
+    "matchup_pos3",
+    "matchup_pos4",
+    "matchup_pos5"
+  ],
+  "cat_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14
+  ],
+  "threshold": 0.5700000000000001,
+  "metrics": {
+    "auc": 0.5858190587150012,
+    "accuracy": 0.5611,
+    "auc_sym": 0.58445247,
+    "accuracy_sym": 0.55975,
+    "winrate_at_threshold": 0.6115951211785206,
+    "coverage_at_threshold": 0.31565
+  }
+}

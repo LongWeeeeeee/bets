@@ -1,0 +1,1215 @@
+{
+  "teams": {
+    "8255888": {
+      "rating": 1780.1,
+      "rd": 61.6,
+      "vol": 0.06,
+      "name": "Team_8255888",
+      "matches": 321,
+      "wins": 183,
+      "winrate": 0.57
+    },
+    "9255706": {
+      "rating": 1576.8,
+      "rd": 137.3,
+      "vol": 0.06,
+      "name": "Team_9255706",
+      "matches": 9,
+      "wins": 5,
+      "winrate": 0.556
+    },
+    "8574561": {
+      "rating": 1510.0,
+      "rd": 64.1,
+      "vol": 0.06,
+      "name": "Team_8574561",
+      "matches": 104,
+      "wins": 49,
+      "winrate": 0.471
+    },
+    "9303484": {
+      "rating": 1696.6,
+      "rd": 62.5,
+      "vol": 0.06,
+      "name": "Team_9303484",
+      "matches": 275,
+      "wins": 144,
+      "winrate": 0.524
+    },
+    "8291895": {
+      "rating": 1683.9,
+      "rd": 61.4,
+      "vol": 0.0601,
+      "name": "Team_8291895",
+      "matches": 403,
+      "wins": 243,
+      "winrate": 0.603
+    },
+    "8261500": {
+      "rating": 1853.4,
+      "rd": 60.9,
+      "vol": 0.06,
+      "name": "Team_8261500",
+      "matches": 303,
+      "wins": 167,
+      "winrate": 0.551
+    },
+    "8599101": {
+      "rating": 1690.2,
+      "rd": 62.0,
+      "vol": 0.06,
+      "name": "Team_8599101",
+      "matches": 311,
+      "wins": 163,
+      "winrate": 0.524
+    },
+    "9247354": {
+      "rating": 1893.7,
+      "rd": 61.1,
+      "vol": 0.06,
+      "name": "Team_9247354",
+      "matches": 380,
+      "wins": 230,
+      "winrate": 0.605
+    },
+    "8724984": {
+      "rating": 1437.1,
+      "rd": 64.9,
+      "vol": 0.06,
+      "name": "Team_8724984",
+      "matches": 68,
+      "wins": 28,
+      "winrate": 0.412
+    },
+    "7554697": {
+      "rating": 1681.9,
+      "rd": 62.2,
+      "vol": 0.0601,
+      "name": "Team_7554697",
+      "matches": 275,
+      "wins": 131,
+      "winrate": 0.476
+    },
+    "1838315": {
+      "rating": 1442.1,
+      "rd": 63.6,
+      "vol": 0.06,
+      "name": "Team_1838315",
+      "matches": 95,
+      "wins": 40,
+      "winrate": 0.421
+    },
+    "2586976": {
+      "rating": 1471.4,
+      "rd": 62.1,
+      "vol": 0.0601,
+      "name": "Team_2586976",
+      "matches": 223,
+      "wins": 101,
+      "winrate": 0.453
+    },
+    "9338413": {
+      "rating": 1440.6,
+      "rd": 62.8,
+      "vol": 0.06,
+      "name": "Team_9338413",
+      "matches": 252,
+      "wins": 114,
+      "winrate": 0.452
+    },
+    "7732977": {
+      "rating": 1548.9,
+      "rd": 62.9,
+      "vol": 0.06,
+      "name": "Team_7732977",
+      "matches": 207,
+      "wins": 101,
+      "winrate": 0.488
+    },
+    "8605863": {
+      "rating": 1742.0,
+      "rd": 63.9,
+      "vol": 0.06,
+      "name": "Team_8605863",
+      "matches": 85,
+      "wins": 58,
+      "winrate": 0.682
+    },
+    "9432799": {
+      "rating": 1402.5,
+      "rd": 70.3,
+      "vol": 0.06,
+      "name": "Team_9432799",
+      "matches": 48,
+      "wins": 24,
+      "winrate": 0.5
+    },
+    "8737621": {
+      "rating": 1147.8,
+      "rd": 76.0,
+      "vol": 0.06,
+      "name": "Team_8737621",
+      "matches": 53,
+      "wins": 13,
+      "winrate": 0.245
+    },
+    "8588969": {
+      "rating": 1404.4,
+      "rd": 62.7,
+      "vol": 0.06,
+      "name": "Team_8588969",
+      "matches": 117,
+      "wins": 57,
+      "winrate": 0.487
+    },
+    "8376696": {
+      "rating": 1376.5,
+      "rd": 62.4,
+      "vol": 0.0601,
+      "name": "Team_8376696",
+      "matches": 222,
+      "wins": 100,
+      "winrate": 0.45
+    },
+    "8214850": {
+      "rating": 1418.1,
+      "rd": 118.0,
+      "vol": 0.06,
+      "name": "Team_8214850",
+      "matches": 14,
+      "wins": 5,
+      "winrate": 0.357
+    },
+    "8668460": {
+      "rating": 1437.5,
+      "rd": 161.7,
+      "vol": 0.06,
+      "name": "Team_8668460",
+      "matches": 6,
+      "wins": 2,
+      "winrate": 0.333
+    },
+    "9303383": {
+      "rating": 1435.0,
+      "rd": 63.7,
+      "vol": 0.0601,
+      "name": "Team_9303383",
+      "matches": 220,
+      "wins": 116,
+      "winrate": 0.527
+    },
+    "5014799": {
+      "rating": 1408.1,
+      "rd": 64.9,
+      "vol": 0.0601,
+      "name": "Team_5014799",
+      "matches": 190,
+      "wins": 76,
+      "winrate": 0.4
+    },
+    "9255039": {
+      "rating": 1635.8,
+      "rd": 62.4,
+      "vol": 0.06,
+      "name": "Team_9255039",
+      "matches": 255,
+      "wins": 150,
+      "winrate": 0.588
+    },
+    "2576071": {
+      "rating": 1415.5,
+      "rd": 61.6,
+      "vol": 0.06,
+      "name": "Team_2576071",
+      "matches": 124,
+      "wins": 70,
+      "winrate": 0.565
+    },
+    "9081007": {
+      "rating": 1294.4,
+      "rd": 77.0,
+      "vol": 0.06,
+      "name": "Team_9081007",
+      "matches": 35,
+      "wins": 17,
+      "winrate": 0.486
+    },
+    "8597976": {
+      "rating": 1587.8,
+      "rd": 62.6,
+      "vol": 0.06,
+      "name": "Team_8597976",
+      "matches": 190,
+      "wins": 94,
+      "winrate": 0.495
+    },
+    "8728920": {
+      "rating": 1557.5,
+      "rd": 62.4,
+      "vol": 0.06,
+      "name": "Team_8728920",
+      "matches": 135,
+      "wins": 65,
+      "winrate": 0.481
+    },
+    "9388293": {
+      "rating": 1350.6,
+      "rd": 198.7,
+      "vol": 0.06,
+      "name": "Team_9388293",
+      "matches": 7,
+      "wins": 1,
+      "winrate": 0.143
+    },
+    "9381678": {
+      "rating": 1436.5,
+      "rd": 67.3,
+      "vol": 0.06,
+      "name": "Team_9381678",
+      "matches": 59,
+      "wins": 27,
+      "winrate": 0.458
+    },
+    "9247046": {
+      "rating": 1070.2,
+      "rd": 136.4,
+      "vol": 0.06,
+      "name": "Team_9247046",
+      "matches": 12,
+      "wins": 1,
+      "winrate": 0.083
+    },
+    "9403748": {
+      "rating": 1385.6,
+      "rd": 62.5,
+      "vol": 0.0601,
+      "name": "Team_9403748",
+      "matches": 148,
+      "wins": 60,
+      "winrate": 0.405
+    },
+    "9280056": {
+      "rating": 1223.1,
+      "rd": 80.9,
+      "vol": 0.06,
+      "name": "Team_9280056",
+      "matches": 36,
+      "wins": 10,
+      "winrate": 0.278
+    },
+    "9368468": {
+      "rating": 1407.7,
+      "rd": 79.4,
+      "vol": 0.06,
+      "name": "Team_9368468",
+      "matches": 30,
+      "wins": 19,
+      "winrate": 0.633
+    },
+    "8254400": {
+      "rating": 1533.9,
+      "rd": 63.7,
+      "vol": 0.06,
+      "name": "Team_8254400",
+      "matches": 136,
+      "wins": 55,
+      "winrate": 0.404
+    },
+    "9373270": {
+      "rating": 1569.2,
+      "rd": 63.1,
+      "vol": 0.0601,
+      "name": "Team_9373270",
+      "matches": 155,
+      "wins": 87,
+      "winrate": 0.561
+    },
+    "9360651": {
+      "rating": 1415.8,
+      "rd": 71.7,
+      "vol": 0.06,
+      "name": "Team_9360651",
+      "matches": 41,
+      "wins": 17,
+      "winrate": 0.415
+    },
+    "15": {
+      "rating": 1590.3,
+      "rd": 69.7,
+      "vol": 0.06,
+      "name": "Team_15",
+      "matches": 47,
+      "wins": 22,
+      "winrate": 0.468
+    },
+    "8894818": {
+      "rating": 1629.6,
+      "rd": 64.6,
+      "vol": 0.0601,
+      "name": "Team_8894818",
+      "matches": 73,
+      "wins": 42,
+      "winrate": 0.575
+    },
+    "9080405": {
+      "rating": 1474.8,
+      "rd": 66.7,
+      "vol": 0.06,
+      "name": "Team_9080405",
+      "matches": 58,
+      "wins": 25,
+      "winrate": 0.431
+    },
+    "5": {
+      "rating": 1595.6,
+      "rd": 65.6,
+      "vol": 0.06,
+      "name": "Team_5",
+      "matches": 57,
+      "wins": 26,
+      "winrate": 0.456
+    },
+    "7422789": {
+      "rating": 1431.4,
+      "rd": 64.9,
+      "vol": 0.06,
+      "name": "Team_7422789",
+      "matches": 112,
+      "wins": 51,
+      "winrate": 0.455
+    },
+    "8697185": {
+      "rating": 1182.1,
+      "rd": 90.5,
+      "vol": 0.06,
+      "name": "Team_8697185",
+      "matches": 23,
+      "wins": 6,
+      "winrate": 0.261
+    },
+    "9449748": {
+      "rating": 1370.8,
+      "rd": 64.4,
+      "vol": 0.06,
+      "name": "Team_9449748",
+      "matches": 82,
+      "wins": 44,
+      "winrate": 0.537
+    },
+    "9450071": {
+      "rating": 1430.5,
+      "rd": 64.9,
+      "vol": 0.06,
+      "name": "Team_9450071",
+      "matches": 85,
+      "wins": 41,
+      "winrate": 0.482
+    },
+    "8254145": {
+      "rating": 1497.9,
+      "rd": 63.6,
+      "vol": 0.06,
+      "name": "Team_8254145",
+      "matches": 139,
+      "wins": 63,
+      "winrate": 0.453
+    },
+    "9081369": {
+      "rating": 1198.2,
+      "rd": 80.4,
+      "vol": 0.06,
+      "name": "Team_9081369",
+      "matches": 34,
+      "wins": 12,
+      "winrate": 0.353
+    },
+    "8494848": {
+      "rating": 1184.6,
+      "rd": 68.9,
+      "vol": 0.06,
+      "name": "Team_8494848",
+      "matches": 76,
+      "wins": 20,
+      "winrate": 0.263
+    },
+    "9461007": {
+      "rating": 1193.0,
+      "rd": 81.0,
+      "vol": 0.06,
+      "name": "Team_9461007",
+      "matches": 33,
+      "wins": 7,
+      "winrate": 0.212
+    },
+    "7119388": {
+      "rating": 1789.9,
+      "rd": 62.5,
+      "vol": 0.06,
+      "name": "Team_7119388",
+      "matches": 353,
+      "wins": 217,
+      "winrate": 0.615
+    },
+    "9366989": {
+      "rating": 1384.3,
+      "rd": 75.8,
+      "vol": 0.06,
+      "name": "Team_9366989",
+      "matches": 32,
+      "wins": 19,
+      "winrate": 0.594
+    },
+    "9467430": {
+      "rating": 1652.6,
+      "rd": 85.6,
+      "vol": 0.06,
+      "name": "Team_9467430",
+      "matches": 22,
+      "wins": 11,
+      "winrate": 0.5
+    },
+    "9467224": {
+      "rating": 1741.0,
+      "rd": 62.3,
+      "vol": 0.06,
+      "name": "Team_9467224",
+      "matches": 270,
+      "wins": 137,
+      "winrate": 0.507
+    },
+    "2163": {
+      "rating": 1750.7,
+      "rd": 62.1,
+      "vol": 0.06,
+      "name": "Team_2163",
+      "matches": 380,
+      "wins": 214,
+      "winrate": 0.563
+    },
+    "9131584": {
+      "rating": 1721.7,
+      "rd": 66.2,
+      "vol": 0.06,
+      "name": "Team_9131584",
+      "matches": 48,
+      "wins": 26,
+      "winrate": 0.542
+    },
+    "9488084": {
+      "rating": 1677.4,
+      "rd": 249.3,
+      "vol": 0.06,
+      "name": "Team_9488084",
+      "matches": 1,
+      "wins": 1,
+      "winrate": 1.0
+    },
+    "9256405": {
+      "rating": 1381.6,
+      "rd": 63.0,
+      "vol": 0.0601,
+      "name": "Team_9256405",
+      "matches": 104,
+      "wins": 48,
+      "winrate": 0.462
+    },
+    "9498970": {
+      "rating": 1507.3,
+      "rd": 63.8,
+      "vol": 0.06,
+      "name": "Team_9498970",
+      "matches": 293,
+      "wins": 151,
+      "winrate": 0.515
+    },
+    "9504575": {
+      "rating": 1320.5,
+      "rd": 98.7,
+      "vol": 0.06,
+      "name": "Team_9504575",
+      "matches": 14,
+      "wins": 5,
+      "winrate": 0.357
+    },
+    "9248240": {
+      "rating": 1590.1,
+      "rd": 98.4,
+      "vol": 0.06,
+      "name": "Team_9248240",
+      "matches": 16,
+      "wins": 10,
+      "winrate": 0.625
+    },
+    "9216247": {
+      "rating": 1355.0,
+      "rd": 63.2,
+      "vol": 0.06,
+      "name": "Team_9216247",
+      "matches": 81,
+      "wins": 38,
+      "winrate": 0.469
+    },
+    "8769201": {
+      "rating": 1161.2,
+      "rd": 167.7,
+      "vol": 0.06,
+      "name": "Team_8769201",
+      "matches": 4,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "9530947": {
+      "rating": 1222.4,
+      "rd": 70.8,
+      "vol": 0.06,
+      "name": "Team_9530947",
+      "matches": 54,
+      "wins": 18,
+      "winrate": 0.333
+    },
+    "9530783": {
+      "rating": 905.8,
+      "rd": 123.5,
+      "vol": 0.06,
+      "name": "Team_9530783",
+      "matches": 14,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "9545759": {
+      "rating": 1496.6,
+      "rd": 65.7,
+      "vol": 0.06,
+      "name": "Team_9545759",
+      "matches": 68,
+      "wins": 31,
+      "winrate": 0.456
+    },
+    "9351740": {
+      "rating": 1562.1,
+      "rd": 62.4,
+      "vol": 0.06,
+      "name": "Team_9351740",
+      "matches": 187,
+      "wins": 78,
+      "winrate": 0.417
+    },
+    "9545732": {
+      "rating": 1100.6,
+      "rd": 191.0,
+      "vol": 0.06,
+      "name": "Team_9545732",
+      "matches": 4,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "9098294": {
+      "rating": 1359.2,
+      "rd": 66.9,
+      "vol": 0.06,
+      "name": "Team_9098294",
+      "matches": 47,
+      "wins": 20,
+      "winrate": 0.426
+    },
+    "9538207": {
+      "rating": 1392.0,
+      "rd": 85.6,
+      "vol": 0.06,
+      "name": "Team_9538207",
+      "matches": 24,
+      "wins": 11,
+      "winrate": 0.458
+    },
+    "111474": {
+      "rating": 1546.7,
+      "rd": 97.7,
+      "vol": 0.06,
+      "name": "Team_111474",
+      "matches": 16,
+      "wins": 8,
+      "winrate": 0.5
+    },
+    "9572001": {
+      "rating": 1868.0,
+      "rd": 62.9,
+      "vol": 0.06,
+      "name": "Team_9572001",
+      "matches": 292,
+      "wins": 192,
+      "winrate": 0.658
+    },
+    "9586396": {
+      "rating": 1319.6,
+      "rd": 78.2,
+      "vol": 0.06,
+      "name": "Team_9586396",
+      "matches": 29,
+      "wins": 10,
+      "winrate": 0.345
+    },
+    "9586122": {
+      "rating": 1394.5,
+      "rd": 62.1,
+      "vol": 0.0601,
+      "name": "Team_9586122",
+      "matches": 182,
+      "wins": 94,
+      "winrate": 0.516
+    },
+    "9572608": {
+      "rating": 1297.6,
+      "rd": 68.4,
+      "vol": 0.06,
+      "name": "Team_9572608",
+      "matches": 52,
+      "wins": 21,
+      "winrate": 0.404
+    },
+    "9600141": {
+      "rating": 1473.0,
+      "rd": 62.0,
+      "vol": 0.06,
+      "name": "Team_9600141",
+      "matches": 253,
+      "wins": 124,
+      "winrate": 0.49
+    },
+    "9600432": {
+      "rating": 1205.6,
+      "rd": 75.8,
+      "vol": 0.06,
+      "name": "Team_9600432",
+      "matches": 34,
+      "wins": 8,
+      "winrate": 0.235
+    },
+    "9593895": {
+      "rating": 1635.6,
+      "rd": 91.5,
+      "vol": 0.06,
+      "name": "Team_9593895",
+      "matches": 18,
+      "wins": 8,
+      "winrate": 0.444
+    },
+    "9601305": {
+      "rating": 1048.8,
+      "rd": 156.2,
+      "vol": 0.06,
+      "name": "Team_9601305",
+      "matches": 7,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "9538558": {
+      "rating": 1567.8,
+      "rd": 64.3,
+      "vol": 0.06,
+      "name": "Team_9538558",
+      "matches": 92,
+      "wins": 51,
+      "winrate": 0.554
+    },
+    "8718594": {
+      "rating": 1525.1,
+      "rd": 69.8,
+      "vol": 0.06,
+      "name": "Team_8718594",
+      "matches": 38,
+      "wins": 23,
+      "winrate": 0.605
+    },
+    "9634632": {
+      "rating": 1196.2,
+      "rd": 187.7,
+      "vol": 0.06,
+      "name": "Team_9634632",
+      "matches": 4,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "9546449": {
+      "rating": 1448.8,
+      "rd": 67.3,
+      "vol": 0.06,
+      "name": "Team_9546449",
+      "matches": 50,
+      "wins": 24,
+      "winrate": 0.48
+    },
+    "9634742": {
+      "rating": 1680.8,
+      "rd": 63.1,
+      "vol": 0.06,
+      "name": "Team_9634742",
+      "matches": 87,
+      "wins": 52,
+      "winrate": 0.598
+    },
+    "9635124": {
+      "rating": 1372.5,
+      "rd": 77.7,
+      "vol": 0.06,
+      "name": "Team_9635124",
+      "matches": 34,
+      "wins": 13,
+      "winrate": 0.382
+    },
+    "9587118": {
+      "rating": 1284.8,
+      "rd": 253.4,
+      "vol": 0.06,
+      "name": "Team_9587118",
+      "matches": 1,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "9602168": {
+      "rating": 1085.4,
+      "rd": 111.2,
+      "vol": 0.06,
+      "name": "Team_9602168",
+      "matches": 12,
+      "wins": 3,
+      "winrate": 0.25
+    },
+    "9641323": {
+      "rating": 1334.8,
+      "rd": 101.0,
+      "vol": 0.06,
+      "name": "Team_9641323",
+      "matches": 13,
+      "wins": 6,
+      "winrate": 0.462
+    },
+    "9425620": {
+      "rating": 1112.5,
+      "rd": 288.0,
+      "vol": 0.06,
+      "name": "Team_9425620",
+      "matches": 1,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "9646485": {
+      "rating": 1445.0,
+      "rd": 87.2,
+      "vol": 0.06,
+      "name": "Team_9646485",
+      "matches": 22,
+      "wins": 9,
+      "winrate": 0.409
+    },
+    "9640842": {
+      "rating": 1746.1,
+      "rd": 61.2,
+      "vol": 0.06,
+      "name": "Team_9640842",
+      "matches": 158,
+      "wins": 82,
+      "winrate": 0.519
+    },
+    "9433140": {
+      "rating": 1177.8,
+      "rd": 96.3,
+      "vol": 0.06,
+      "name": "Team_9433140",
+      "matches": 20,
+      "wins": 5,
+      "winrate": 0.25
+    },
+    "8713814": {
+      "rating": 1269.6,
+      "rd": 255.1,
+      "vol": 0.06,
+      "name": "Team_8713814",
+      "matches": 1,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "7917893": {
+      "rating": 1309.0,
+      "rd": 63.8,
+      "vol": 0.06,
+      "name": "Team_7917893",
+      "matches": 75,
+      "wins": 31,
+      "winrate": 0.413
+    },
+    "9651185": {
+      "rating": 1391.8,
+      "rd": 66.2,
+      "vol": 0.06,
+      "name": "Team_9651185",
+      "matches": 113,
+      "wins": 43,
+      "winrate": 0.381
+    },
+    "9678064": {
+      "rating": 1570.4,
+      "rd": 75.6,
+      "vol": 0.06,
+      "name": "Team_9678064",
+      "matches": 31,
+      "wins": 13,
+      "winrate": 0.419
+    },
+    "9664713": {
+      "rating": 1355.2,
+      "rd": 67.8,
+      "vol": 0.06,
+      "name": "Team_9664713",
+      "matches": 72,
+      "wins": 26,
+      "winrate": 0.361
+    },
+    "9671463": {
+      "rating": 1370.5,
+      "rd": 63.4,
+      "vol": 0.06,
+      "name": "Team_9671463",
+      "matches": 74,
+      "wins": 41,
+      "winrate": 0.554
+    },
+    "9678463": {
+      "rating": 1534.6,
+      "rd": 90.4,
+      "vol": 0.06,
+      "name": "Team_9678463",
+      "matches": 27,
+      "wins": 18,
+      "winrate": 0.667
+    },
+    "9699533": {
+      "rating": 1434.5,
+      "rd": 96.7,
+      "vol": 0.06,
+      "name": "Team_9699533",
+      "matches": 17,
+      "wins": 6,
+      "winrate": 0.353
+    },
+    "9710443": {
+      "rating": 1407.5,
+      "rd": 84.2,
+      "vol": 0.06,
+      "name": "Team_9710443",
+      "matches": 31,
+      "wins": 15,
+      "winrate": 0.484
+    },
+    "9716756": {
+      "rating": 1182.9,
+      "rd": 95.3,
+      "vol": 0.06,
+      "name": "Team_9716756",
+      "matches": 17,
+      "wins": 5,
+      "winrate": 0.294
+    },
+    "9658086": {
+      "rating": 1315.1,
+      "rd": 185.5,
+      "vol": 0.06,
+      "name": "Team_9658086",
+      "matches": 4,
+      "wins": 1,
+      "winrate": 0.25
+    },
+    "9723691": {
+      "rating": 1433.1,
+      "rd": 260.5,
+      "vol": 0.06,
+      "name": "Team_9723691",
+      "matches": 2,
+      "wins": 1,
+      "winrate": 0.5
+    },
+    "9677721": {
+      "rating": 1137.3,
+      "rd": 94.8,
+      "vol": 0.06,
+      "name": "Team_9677721",
+      "matches": 20,
+      "wins": 3,
+      "winrate": 0.15
+    },
+    "9730797": {
+      "rating": 1105.4,
+      "rd": 143.7,
+      "vol": 0.06,
+      "name": "Team_9730797",
+      "matches": 10,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "9741253": {
+      "rating": 1509.5,
+      "rd": 69.3,
+      "vol": 0.06,
+      "name": "Team_9741253",
+      "matches": 50,
+      "wins": 17,
+      "winrate": 0.34
+    },
+    "9600331": {
+      "rating": 1244.5,
+      "rd": 149.7,
+      "vol": 0.06,
+      "name": "Team_9600331",
+      "matches": 7,
+      "wins": 3,
+      "winrate": 0.429
+    },
+    "9691969": {
+      "rating": 1491.6,
+      "rd": 71.2,
+      "vol": 0.06,
+      "name": "Team_9691969",
+      "matches": 35,
+      "wins": 17,
+      "winrate": 0.486
+    },
+    "9758040": {
+      "rating": 1405.2,
+      "rd": 63.2,
+      "vol": 0.06,
+      "name": "Team_9758040",
+      "matches": 103,
+      "wins": 55,
+      "winrate": 0.534
+    },
+    "9759367": {
+      "rating": 1270.4,
+      "rd": 100.0,
+      "vol": 0.06,
+      "name": "Team_9759367",
+      "matches": 14,
+      "wins": 6,
+      "winrate": 0.429
+    },
+    "9677513": {
+      "rating": 1554.2,
+      "rd": 95.8,
+      "vol": 0.06,
+      "name": "Team_9677513",
+      "matches": 17,
+      "wins": 8,
+      "winrate": 0.471
+    },
+    "9780800": {
+      "rating": 1424.9,
+      "rd": 82.5,
+      "vol": 0.06,
+      "name": "Team_9780800",
+      "matches": 24,
+      "wins": 7,
+      "winrate": 0.292
+    },
+    "9766941": {
+      "rating": 1785.7,
+      "rd": 67.8,
+      "vol": 0.06,
+      "name": "Team_9766941",
+      "matches": 39,
+      "wins": 22,
+      "winrate": 0.564
+    },
+    "8971308": {
+      "rating": 1252.5,
+      "rd": 153.4,
+      "vol": 0.06,
+      "name": "Team_8971308",
+      "matches": 7,
+      "wins": 1,
+      "winrate": 0.143
+    },
+    "726228": {
+      "rating": 1337.0,
+      "rd": 170.2,
+      "vol": 0.06,
+      "name": "Team_726228",
+      "matches": 5,
+      "wins": 1,
+      "winrate": 0.2
+    },
+    "9798195": {
+      "rating": 1677.0,
+      "rd": 106.4,
+      "vol": 0.06,
+      "name": "Team_9798195",
+      "matches": 14,
+      "wins": 10,
+      "winrate": 0.714
+    },
+    "9781353": {
+      "rating": 1379.5,
+      "rd": 117.5,
+      "vol": 0.06,
+      "name": "Team_9781353",
+      "matches": 10,
+      "wins": 3,
+      "winrate": 0.3
+    },
+    "9790546": {
+      "rating": 1479.2,
+      "rd": 64.0,
+      "vol": 0.06,
+      "name": "Team_9790546",
+      "matches": 84,
+      "wins": 46,
+      "winrate": 0.548
+    },
+    "9818935": {
+      "rating": 1269.2,
+      "rd": 212.9,
+      "vol": 0.06,
+      "name": "Team_9818935",
+      "matches": 2,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "9823272": {
+      "rating": 1570.8,
+      "rd": 85.9,
+      "vol": 0.06,
+      "name": "Team_9823272",
+      "matches": 24,
+      "wins": 7,
+      "winrate": 0.292
+    },
+    "9753675": {
+      "rating": 1397.5,
+      "rd": 106.5,
+      "vol": 0.06,
+      "name": "Team_9753675",
+      "matches": 12,
+      "wins": 6,
+      "winrate": 0.5
+    },
+    "9824702": {
+      "rating": 1748.3,
+      "rd": 78.3,
+      "vol": 0.06,
+      "name": "Team_9824702",
+      "matches": 26,
+      "wins": 15,
+      "winrate": 0.577
+    },
+    "9850944": {
+      "rating": 1500.7,
+      "rd": 81.5,
+      "vol": 0.06,
+      "name": "Team_9850944",
+      "matches": 29,
+      "wins": 19,
+      "winrate": 0.655
+    },
+    "9844911": {
+      "rating": 1426.3,
+      "rd": 111.5,
+      "vol": 0.06,
+      "name": "Team_9844911",
+      "matches": 12,
+      "wins": 7,
+      "winrate": 0.583
+    },
+    "9865903": {
+      "rating": 1161.3,
+      "rd": 180.9,
+      "vol": 0.06,
+      "name": "Team_9865903",
+      "matches": 4,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "9872667": {
+      "rating": 1523.4,
+      "rd": 94.7,
+      "vol": 0.06,
+      "name": "Team_9872667",
+      "matches": 21,
+      "wins": 14,
+      "winrate": 0.667
+    },
+    "9872558": {
+      "rating": 1259.5,
+      "rd": 125.9,
+      "vol": 0.06,
+      "name": "Team_9872558",
+      "matches": 10,
+      "wins": 2,
+      "winrate": 0.2
+    },
+    "9895544": {
+      "rating": 1162.0,
+      "rd": 213.1,
+      "vol": 0.06,
+      "name": "Team_9895544",
+      "matches": 2,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "9906058": {
+      "rating": 1214.7,
+      "rd": 133.0,
+      "vol": 0.06,
+      "name": "Team_9906058",
+      "matches": 7,
+      "wins": 2,
+      "winrate": 0.286
+    },
+    "9886393": {
+      "rating": 1085.4,
+      "rd": 163.5,
+      "vol": 0.06,
+      "name": "Team_9886393",
+      "matches": 7,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "9928746": {
+      "rating": 1745.6,
+      "rd": 114.0,
+      "vol": 0.06,
+      "name": "Team_9928746",
+      "matches": 13,
+      "wins": 11,
+      "winrate": 0.846
+    },
+    "9885667": {
+      "rating": 1578.7,
+      "rd": 166.4,
+      "vol": 0.06,
+      "name": "Team_9885667",
+      "matches": 5,
+      "wins": 4,
+      "winrate": 0.8
+    },
+    "9906663": {
+      "rating": 1162.6,
+      "rd": 190.4,
+      "vol": 0.06,
+      "name": "Team_9906663",
+      "matches": 4,
+      "wins": 0,
+      "winrate": 0.0
+    },
+    "9885130": {
+      "rating": 1446.9,
+      "rd": 114.9,
+      "vol": 0.06,
+      "name": "Team_9885130",
+      "matches": 13,
+      "wins": 8,
+      "winrate": 0.615
+    }
+  },
+  "meta": {
+    "total_teams": 134,
+    "total_matches": 5444,
+    "initial_rating": 1500.0
+  }
+}

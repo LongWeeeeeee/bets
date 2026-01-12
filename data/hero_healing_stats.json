@@ -1,0 +1,758 @@
+{
+  "113": {
+    "avg_healing_per_min": 0.19,
+    "healing_score": 0.005,
+    "is_save_hero": false,
+    "games": 25182
+  },
+  "96": {
+    "avg_healing_per_min": 0.46,
+    "healing_score": 0.013,
+    "is_save_hero": false,
+    "games": 76631
+  },
+  "97": {
+    "avg_healing_per_min": 1.47,
+    "healing_score": 0.042,
+    "is_save_hero": false,
+    "games": 245747
+  },
+  "8": {
+    "avg_healing_per_min": 187.39,
+    "healing_score": 5.3,
+    "is_save_hero": false,
+    "games": 169601
+  },
+  "5": {
+    "avg_healing_per_min": 2.45,
+    "healing_score": 0.069,
+    "is_save_hero": false,
+    "games": 109331
+  },
+  "19": {
+    "avg_healing_per_min": 0.72,
+    "healing_score": 0.02,
+    "is_save_hero": false,
+    "games": 174076
+  },
+  "75": {
+    "avg_healing_per_min": 2.73,
+    "healing_score": 0.077,
+    "is_save_hero": false,
+    "games": 256777
+  },
+  "131": {
+    "avg_healing_per_min": 20.58,
+    "healing_score": 0.582,
+    "is_save_hero": false,
+    "games": 103739
+  },
+  "2": {
+    "avg_healing_per_min": 0.73,
+    "healing_score": 0.021,
+    "is_save_hero": false,
+    "games": 213483
+  },
+  "137": {
+    "avg_healing_per_min": 0.47,
+    "healing_score": 0.013,
+    "is_save_hero": false,
+    "games": 42306
+  },
+  "68": {
+    "avg_healing_per_min": 3.46,
+    "healing_score": 0.098,
+    "is_save_hero": false,
+    "games": 188726
+  },
+  "33": {
+    "avg_healing_per_min": 12.6,
+    "healing_score": 0.356,
+    "is_save_hero": false,
+    "games": 28574
+  },
+  "13": {
+    "avg_healing_per_min": 0.73,
+    "healing_score": 0.021,
+    "is_save_hero": false,
+    "games": 183436
+  },
+  "67": {
+    "avg_healing_per_min": 0.5,
+    "healing_score": 0.014,
+    "is_save_hero": false,
+    "games": 67813
+  },
+  "14": {
+    "avg_healing_per_min": 2.19,
+    "healing_score": 0.062,
+    "is_save_hero": false,
+    "games": 399255
+  },
+  "27": {
+    "avg_healing_per_min": 1.86,
+    "healing_score": 0.053,
+    "is_save_hero": false,
+    "games": 234338
+  },
+  "39": {
+    "avg_healing_per_min": 1.5,
+    "healing_score": 0.042,
+    "is_save_hero": false,
+    "games": 288340
+  },
+  "40": {
+    "avg_healing_per_min": 36.98,
+    "healing_score": 1.046,
+    "is_save_hero": false,
+    "games": 105887
+  },
+  "12": {
+    "avg_healing_per_min": 0.93,
+    "healing_score": 0.026,
+    "is_save_hero": false,
+    "games": 55841
+  },
+  "100": {
+    "avg_healing_per_min": 3.3,
+    "healing_score": 0.093,
+    "is_save_hero": false,
+    "games": 93909
+  },
+  "69": {
+    "avg_healing_per_min": 1.08,
+    "healing_score": 0.031,
+    "is_save_hero": false,
+    "games": 81344
+  },
+  "64": {
+    "avg_healing_per_min": 8.25,
+    "healing_score": 0.233,
+    "is_save_hero": false,
+    "games": 193287
+  },
+  "1": {
+    "avg_healing_per_min": 0.28,
+    "healing_score": 0.008,
+    "is_save_hero": false,
+    "games": 147682
+  },
+  "94": {
+    "avg_healing_per_min": 0.31,
+    "healing_score": 0.009,
+    "is_save_hero": false,
+    "games": 140215
+  },
+  "135": {
+    "avg_healing_per_min": 143.3,
+    "healing_score": 4.053,
+    "is_save_hero": false,
+    "games": 200532
+  },
+  "119": {
+    "avg_healing_per_min": 4.75,
+    "healing_score": 0.134,
+    "is_save_hero": false,
+    "games": 100478
+  },
+  "26": {
+    "avg_healing_per_min": 1.47,
+    "healing_score": 0.042,
+    "is_save_hero": false,
+    "games": 250143
+  },
+  "20": {
+    "avg_healing_per_min": 6.87,
+    "healing_score": 0.194,
+    "is_save_hero": false,
+    "games": 128619
+  },
+  "30": {
+    "avg_healing_per_min": 123.97,
+    "healing_score": 3.506,
+    "is_save_hero": false,
+    "games": 144185
+  },
+  "53": {
+    "avg_healing_per_min": 31.6,
+    "healing_score": 0.894,
+    "is_save_hero": false,
+    "games": 295275
+  },
+  "11": {
+    "avg_healing_per_min": 0.54,
+    "healing_score": 0.015,
+    "is_save_hero": false,
+    "games": 194832
+  },
+  "42": {
+    "avg_healing_per_min": 0.29,
+    "healing_score": 0.008,
+    "is_save_hero": false,
+    "games": 152045
+  },
+  "86": {
+    "avg_healing_per_min": 12.3,
+    "healing_score": 0.348,
+    "is_save_hero": false,
+    "games": 280454
+  },
+  "128": {
+    "avg_healing_per_min": 35.44,
+    "healing_score": 1.002,
+    "is_save_hero": false,
+    "games": 104139
+  },
+  "48": {
+    "avg_healing_per_min": 0.15,
+    "healing_score": 0.004,
+    "is_save_hero": false,
+    "games": 66368
+  },
+  "105": {
+    "avg_healing_per_min": 5.53,
+    "healing_score": 0.156,
+    "is_save_hero": false,
+    "games": 61810
+  },
+  "25": {
+    "avg_healing_per_min": 0.66,
+    "healing_score": 0.019,
+    "is_save_hero": false,
+    "games": 64937
+  },
+  "22": {
+    "avg_healing_per_min": 1.56,
+    "healing_score": 0.044,
+    "is_save_hero": false,
+    "games": 192097
+  },
+  "74": {
+    "avg_healing_per_min": 1.42,
+    "healing_score": 0.04,
+    "is_save_hero": false,
+    "games": 236159
+  },
+  "87": {
+    "avg_healing_per_min": 3.33,
+    "healing_score": 0.094,
+    "is_save_hero": false,
+    "games": 155336
+  },
+  "99": {
+    "avg_healing_per_min": 0.6,
+    "healing_score": 0.017,
+    "is_save_hero": false,
+    "games": 70075
+  },
+  "3": {
+    "avg_healing_per_min": 2.19,
+    "healing_score": 0.062,
+    "is_save_hero": false,
+    "games": 46295
+  },
+  "93": {
+    "avg_healing_per_min": 0.4,
+    "healing_score": 0.011,
+    "is_save_hero": false,
+    "games": 147490
+  },
+  "31": {
+    "avg_healing_per_min": 3.04,
+    "healing_score": 0.086,
+    "is_save_hero": false,
+    "games": 106534
+  },
+  "84": {
+    "avg_healing_per_min": 9.25,
+    "healing_score": 0.262,
+    "is_save_hero": false,
+    "games": 128714
+  },
+  "138": {
+    "avg_healing_per_min": 1.52,
+    "healing_score": 0.043,
+    "is_save_hero": false,
+    "games": 85660
+  },
+  "85": {
+    "avg_healing_per_min": 111.36,
+    "healing_score": 3.149,
+    "is_save_hero": false,
+    "games": 136582
+  },
+  "23": {
+    "avg_healing_per_min": 0.69,
+    "healing_score": 0.019,
+    "is_save_hero": false,
+    "games": 85707
+  },
+  "36": {
+    "avg_healing_per_min": 145.36,
+    "healing_score": 4.111,
+    "is_save_hero": false,
+    "games": 127207
+  },
+  "101": {
+    "avg_healing_per_min": 1.55,
+    "healing_score": 0.044,
+    "is_save_hero": false,
+    "games": 110362
+  },
+  "34": {
+    "avg_healing_per_min": 136.39,
+    "healing_score": 3.857,
+    "is_save_hero": false,
+    "games": 127382
+  },
+  "37": {
+    "avg_healing_per_min": 224.25,
+    "healing_score": 6.342,
+    "is_save_hero": true,
+    "games": 121763
+  },
+  "104": {
+    "avg_healing_per_min": 48.72,
+    "healing_score": 1.378,
+    "is_save_hero": false,
+    "games": 182773
+  },
+  "109": {
+    "avg_healing_per_min": 0.54,
+    "healing_score": 0.015,
+    "is_save_hero": false,
+    "games": 120900
+  },
+  "77": {
+    "avg_healing_per_min": 13.52,
+    "healing_score": 0.382,
+    "is_save_hero": false,
+    "games": 29003
+  },
+  "70": {
+    "avg_healing_per_min": 0.2,
+    "healing_score": 0.006,
+    "is_save_hero": false,
+    "games": 193900
+  },
+  "49": {
+    "avg_healing_per_min": 0.19,
+    "healing_score": 0.005,
+    "is_save_hero": false,
+    "games": 98958
+  },
+  "47": {
+    "avg_healing_per_min": 2.73,
+    "healing_score": 0.077,
+    "is_save_hero": false,
+    "games": 37930
+  },
+  "114": {
+    "avg_healing_per_min": 0.3,
+    "healing_score": 0.009,
+    "is_save_hero": false,
+    "games": 139574
+  },
+  "71": {
+    "avg_healing_per_min": 3.48,
+    "healing_score": 0.099,
+    "is_save_hero": false,
+    "games": 116557
+  },
+  "59": {
+    "avg_healing_per_min": 0.07,
+    "healing_score": 0.002,
+    "is_save_hero": false,
+    "games": 103248
+  },
+  "123": {
+    "avg_healing_per_min": 5.49,
+    "healing_score": 0.155,
+    "is_save_hero": false,
+    "games": 74596
+  },
+  "35": {
+    "avg_healing_per_min": 0.32,
+    "healing_score": 0.009,
+    "is_save_hero": false,
+    "games": 136540
+  },
+  "10": {
+    "avg_healing_per_min": 31.29,
+    "healing_score": 0.885,
+    "is_save_hero": false,
+    "games": 168995
+  },
+  "54": {
+    "avg_healing_per_min": 44.96,
+    "healing_score": 1.272,
+    "is_save_hero": false,
+    "games": 152584
+  },
+  "72": {
+    "avg_healing_per_min": 2.56,
+    "healing_score": 0.072,
+    "is_save_hero": false,
+    "games": 81630
+  },
+  "76": {
+    "avg_healing_per_min": 0.08,
+    "healing_score": 0.002,
+    "is_save_hero": true,
+    "games": 101100
+  },
+  "120": {
+    "avg_healing_per_min": 1.78,
+    "healing_score": 0.05,
+    "is_save_hero": false,
+    "games": 74770
+  },
+  "106": {
+    "avg_healing_per_min": 1.13,
+    "healing_score": 0.032,
+    "is_save_hero": false,
+    "games": 150877
+  },
+  "21": {
+    "avg_healing_per_min": 5.81,
+    "healing_score": 0.164,
+    "is_save_hero": false,
+    "games": 160568
+  },
+  "38": {
+    "avg_healing_per_min": 1.76,
+    "healing_score": 0.05,
+    "is_save_hero": false,
+    "games": 93024
+  },
+  "92": {
+    "avg_healing_per_min": 34.49,
+    "healing_score": 0.975,
+    "is_save_hero": false,
+    "games": 26840
+  },
+  "45": {
+    "avg_healing_per_min": 165.59,
+    "healing_score": 4.683,
+    "is_save_hero": false,
+    "games": 80357
+  },
+  "52": {
+    "avg_healing_per_min": 1.33,
+    "healing_score": 0.038,
+    "is_save_hero": false,
+    "games": 119021
+  },
+  "43": {
+    "avg_healing_per_min": 3.62,
+    "healing_score": 0.102,
+    "is_save_hero": false,
+    "games": 55132
+  },
+  "79": {
+    "avg_healing_per_min": 18.96,
+    "healing_score": 0.536,
+    "is_save_hero": true,
+    "games": 44348
+  },
+  "6": {
+    "avg_healing_per_min": 0.48,
+    "healing_score": 0.013,
+    "is_save_hero": false,
+    "games": 117502
+  },
+  "29": {
+    "avg_healing_per_min": 57.15,
+    "healing_score": 1.616,
+    "is_save_hero": false,
+    "games": 122042
+  },
+  "17": {
+    "avg_healing_per_min": 0.39,
+    "healing_score": 0.011,
+    "is_save_hero": false,
+    "games": 144021
+  },
+  "129": {
+    "avg_healing_per_min": 9.33,
+    "healing_score": 0.264,
+    "is_save_hero": false,
+    "games": 174246
+  },
+  "63": {
+    "avg_healing_per_min": 8.33,
+    "healing_score": 0.236,
+    "is_save_hero": false,
+    "games": 161792
+  },
+  "126": {
+    "avg_healing_per_min": 2.28,
+    "healing_score": 0.065,
+    "is_save_hero": false,
+    "games": 67898
+  },
+  "121": {
+    "avg_healing_per_min": 11.7,
+    "healing_score": 0.331,
+    "is_save_hero": false,
+    "games": 43297
+  },
+  "44": {
+    "avg_healing_per_min": 0.17,
+    "healing_score": 0.005,
+    "is_save_hero": false,
+    "games": 119045
+  },
+  "28": {
+    "avg_healing_per_min": 0.39,
+    "healing_score": 0.011,
+    "is_save_hero": false,
+    "games": 90475
+  },
+  "18": {
+    "avg_healing_per_min": 0.13,
+    "healing_score": 0.004,
+    "is_save_hero": false,
+    "games": 124768
+  },
+  "82": {
+    "avg_healing_per_min": 0.11,
+    "healing_score": 0.003,
+    "is_save_hero": false,
+    "games": 32706
+  },
+  "57": {
+    "avg_healing_per_min": 131.73,
+    "healing_score": 3.726,
+    "is_save_hero": true,
+    "games": 31281
+  },
+  "73": {
+    "avg_healing_per_min": 2.13,
+    "healing_score": 0.06,
+    "is_save_hero": false,
+    "games": 59350
+  },
+  "55": {
+    "avg_healing_per_min": 53.6,
+    "healing_score": 1.516,
+    "is_save_hero": false,
+    "games": 69011
+  },
+  "51": {
+    "avg_healing_per_min": 6.16,
+    "healing_score": 0.174,
+    "is_save_hero": false,
+    "games": 113913
+  },
+  "110": {
+    "avg_healing_per_min": 72.92,
+    "healing_score": 2.062,
+    "is_save_hero": true,
+    "games": 105016
+  },
+  "41": {
+    "avg_healing_per_min": 0.71,
+    "healing_score": 0.02,
+    "is_save_hero": false,
+    "games": 83527
+  },
+  "60": {
+    "avg_healing_per_min": 0.86,
+    "healing_score": 0.024,
+    "is_save_hero": false,
+    "games": 104623
+  },
+  "90": {
+    "avg_healing_per_min": 224.82,
+    "healing_score": 6.358,
+    "is_save_hero": true,
+    "games": 39143
+  },
+  "7": {
+    "avg_healing_per_min": 1.01,
+    "healing_score": 0.028,
+    "is_save_hero": false,
+    "games": 271135
+  },
+  "102": {
+    "avg_healing_per_min": 121.72,
+    "healing_score": 3.443,
+    "is_save_hero": true,
+    "games": 144713
+  },
+  "65": {
+    "avg_healing_per_min": 0.88,
+    "healing_score": 0.025,
+    "is_save_hero": false,
+    "games": 50243
+  },
+  "46": {
+    "avg_healing_per_min": 0.16,
+    "healing_score": 0.005,
+    "is_save_hero": false,
+    "games": 151500
+  },
+  "81": {
+    "avg_healing_per_min": 0.62,
+    "healing_score": 0.018,
+    "is_save_hero": false,
+    "games": 31890
+  },
+  "98": {
+    "avg_healing_per_min": 1.21,
+    "healing_score": 0.034,
+    "is_save_hero": false,
+    "games": 96023
+  },
+  "95": {
+    "avg_healing_per_min": 0.21,
+    "healing_score": 0.006,
+    "is_save_hero": false,
+    "games": 35157
+  },
+  "9": {
+    "avg_healing_per_min": 25.99,
+    "healing_score": 0.735,
+    "is_save_hero": false,
+    "games": 60344
+  },
+  "136": {
+    "avg_healing_per_min": 9.72,
+    "healing_score": 0.275,
+    "is_save_hero": false,
+    "games": 130382
+  },
+  "4": {
+    "avg_healing_per_min": 0.43,
+    "healing_score": 0.012,
+    "is_save_hero": false,
+    "games": 22379
+  },
+  "16": {
+    "avg_healing_per_min": 0.71,
+    "healing_score": 0.02,
+    "is_save_hero": false,
+    "games": 82553
+  },
+  "83": {
+    "avg_healing_per_min": 214.68,
+    "healing_score": 6.072,
+    "is_save_hero": true,
+    "games": 29404
+  },
+  "50": {
+    "avg_healing_per_min": 284.43,
+    "healing_score": 8.044,
+    "is_save_hero": true,
+    "games": 89067
+  },
+  "111": {
+    "avg_healing_per_min": 374.11,
+    "healing_score": 10.58,
+    "is_save_hero": true,
+    "games": 81540
+  },
+  "88": {
+    "avg_healing_per_min": 1.94,
+    "healing_score": 0.055,
+    "is_save_hero": false,
+    "games": 56958
+  },
+  "66": {
+    "avg_healing_per_min": 253.93,
+    "healing_score": 7.181,
+    "is_save_hero": true,
+    "games": 11878
+  },
+  "58": {
+    "avg_healing_per_min": 79.28,
+    "healing_score": 2.242,
+    "is_save_hero": false,
+    "games": 18758
+  },
+  "107": {
+    "avg_healing_per_min": 9.37,
+    "healing_score": 0.265,
+    "is_save_hero": false,
+    "games": 43495
+  },
+  "15": {
+    "avg_healing_per_min": 0.66,
+    "healing_score": 0.019,
+    "is_save_hero": false,
+    "games": 55244
+  },
+  "78": {
+    "avg_healing_per_min": 8.59,
+    "healing_score": 0.243,
+    "is_save_hero": false,
+    "games": 21242
+  },
+  "62": {
+    "avg_healing_per_min": 13.43,
+    "healing_score": 0.38,
+    "is_save_hero": false,
+    "games": 85510
+  },
+  "145": {
+    "avg_healing_per_min": 0.97,
+    "healing_score": 0.027,
+    "is_save_hero": false,
+    "games": 62647
+  },
+  "32": {
+    "avg_healing_per_min": 0.84,
+    "healing_score": 0.024,
+    "is_save_hero": false,
+    "games": 50038
+  },
+  "108": {
+    "avg_healing_per_min": 19.51,
+    "healing_score": 0.552,
+    "is_save_hero": false,
+    "games": 52758
+  },
+  "91": {
+    "avg_healing_per_min": 441.99,
+    "healing_score": 12.5,
+    "is_save_hero": true,
+    "games": 33511
+  },
+  "56": {
+    "avg_healing_per_min": 0.34,
+    "healing_score": 0.009,
+    "is_save_hero": false,
+    "games": 48130
+  },
+  "112": {
+    "avg_healing_per_min": 296.39,
+    "healing_score": 8.382,
+    "is_save_hero": true,
+    "games": 88189
+  },
+  "89": {
+    "avg_healing_per_min": 12.88,
+    "healing_score": 0.364,
+    "is_save_hero": false,
+    "games": 11827
+  },
+  "103": {
+    "avg_healing_per_min": 4.3,
+    "healing_score": 0.122,
+    "is_save_hero": false,
+    "games": 27361
+  },
+  "80": {
+    "avg_healing_per_min": 1.21,
+    "healing_score": 0.034,
+    "is_save_hero": false,
+    "games": 21548
+  },
+  "61": {
+    "avg_healing_per_min": 0.39,
+    "healing_score": 0.011,
+    "is_save_hero": false,
+    "games": 34095
+  }
+}

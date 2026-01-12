@@ -1,0 +1,6719 @@
+{
+  "query_type": "DotaQuery",
+  "query_fields": {
+    "name": "DotaQuery",
+    "fields": [
+      {
+        "name": "match",
+        "description": "Find match details by the match id. id is a required input field.",
+        "args": [
+          {
+            "name": "id",
+            "description": "The id of the Dota match to include in this query, excluding all results that do not include this id.",
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "SCALAR",
+                "name": "Long",
+                "ofType": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "matches",
+        "description": "Find match details for each match id. ids is a required input field.",
+        "args": [
+          {
+            "name": "ids",
+            "description": "An array of Dota match ids to include in this query.",
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "LIST",
+                "name": null,
+                "ofType": {
+                  "kind": "SCALAR",
+                  "name": "Long"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "player",
+        "description": "Find player details by steam account id. id is a required input field.",
+        "args": [
+          {
+            "name": "steamAccountId",
+            "description": "The steam account id to include in this query, excluding all results that do not have this steam account id.",
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "SCALAR",
+                "name": "Long",
+                "ofType": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "players",
+        "description": "Find player details for each steam account id. ids is a required input field.",
+        "args": [
+          {
+            "name": "steamAccountIds",
+            "description": "An array of steam account ids to limit the query to only return matches with these steam account ids.",
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "LIST",
+                "name": null,
+                "ofType": {
+                  "kind": "SCALAR",
+                  "name": "Long"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "team",
+        "description": "Find player details for each steam account id. ids is a required input field.",
+        "args": [
+          {
+            "name": "teamId",
+            "description": "A team id to include in this query, excluding all results that do not have this team id.",
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "SCALAR",
+                "name": "Int",
+                "ofType": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "teams",
+        "description": "Results in a list of team objects that contain data about them and their players.",
+        "args": [
+          {
+            "name": "teamIds",
+            "description": "A team id to include in this query, excluding all results that do not have this team id.",
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "LIST",
+                "name": null,
+                "ofType": {
+                  "kind": "SCALAR",
+                  "name": "Int"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "league",
+        "description": "Find league details by league Id. Id is a required field.",
+        "args": [
+          {
+            "name": "id",
+            "description": "A league id to include in this query, excluding all results that do not have this league id.",
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "SCALAR",
+                "name": "Int",
+                "ofType": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "leagues",
+        "description": "Find league details by searching for leagues using a LeagueRequest.",
+        "args": [
+          {
+            "name": "request",
+            "description": null,
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "INPUT_OBJECT",
+                "name": "LeagueRequestType",
+                "ofType": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "guild",
+        "description": "For getting access to one specific Guild which was used at the start of TI10 Compendium.",
+        "args": [
+          {
+            "name": "id",
+            "description": "A guild id to include in this query, excluding all results that do not have this guild id.",
+            "type": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "SCALAR",
+                "name": "Int",
+                "ofType": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "yogurt",
+        "description": "Queries used for Stratz Yogurt - users won't be able to access these calls until they have access to the app.",
+        "args": []
+      },
+      {
+        "name": "plus",
+        "description": "Queries used to populate Stratz Plus.",
+        "args": []
+      },
+      {
+        "name": "stratz",
+        "description": "Stratz specific queries.",
+        "args": []
+      },
+      {
+        "name": "heroStats",
+        "description": "Queries used to gain insights into hero data and statistics.",
+        "args": []
+      },
+      {
+        "name": "constants",
+        "description": "Queries used to query constants in Dota.",
+        "args": []
+      },
+      {
+        "name": "leaderboard",
+        "description": "Queries used to get leaderboard information.",
+        "args": []
+      },
+      {
+        "name": "live",
+        "description": "Queries used to find live match data.",
+        "args": []
+      },
+      {
+        "name": "vendor",
+        "description": "Queries used by 3rd party applications.",
+        "args": []
+      }
+    ]
+  },
+  "types": {
+    "MatchType": {
+      "name": "MatchType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "didRadiantWin",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "durationSeconds",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "startDateTime",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "endDateTime",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "towerStatusRadiant",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "towerStatusDire",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "barracksStatusRadiant",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "barracksStatusDire",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "clusterId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "firstBloodTime",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "lobbyType",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "LobbyTypeEnum",
+            "ofType": null
+          }
+        },
+        {
+          "name": "numHumanPlayers",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gameMode",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "GameModeEnumType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "replaySalt",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isStats",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "tournamentId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "tournamentRound",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "actualRank",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "averageRank",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "averageImp",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "parsedDateTime",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "statsDateTime",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "leagueId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "league",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "LeagueType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "radiantTeamId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "radiantTeam",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "TeamType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "direTeamId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "direTeam",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "TeamType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "seriesId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "series",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SeriesType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gameVersionId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "regionId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Byte",
+            "ofType": null
+          }
+        },
+        {
+          "name": "sequenceNum",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "rank",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "bracket",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Byte",
+            "ofType": null
+          }
+        },
+        {
+          "name": "analysisOutcome",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "MatchAnalysisOutcomeType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "predictedOutcomeWeight",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Byte",
+            "ofType": null
+          }
+        },
+        {
+          "name": "players",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "radiantNetworthLeads",
+          "description": "This begins at -60 to 0 seconds (Index 0).",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "radiantExperienceLeads",
+          "description": "This begins at -60 to 0 seconds (Index 0).",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "radiantKills",
+          "description": "This begins at -60 to 0 seconds (Index 0).",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "direKills",
+          "description": "This begins at -60 to 0 seconds (Index 0).",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "pickBans",
+          "description": "This begins at -60 to 0 seconds (Index 0).",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchStatsPickBanType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "towerStatus",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchStatsTowerReportType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "laneReport",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchStatsLaneReportType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "winRates",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Decimal",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "predictedWinRates",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Decimal",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "chatEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchStatsChatEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "towerDeaths",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchStatsTowerDeathType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "playbackData",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlaybackDataType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "spectators",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerSpectatorType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "bottomLaneOutcome",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "LaneOutcomeEnums",
+            "ofType": null
+          }
+        },
+        {
+          "name": "midLaneOutcome",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "LaneOutcomeEnums",
+            "ofType": null
+          }
+        },
+        {
+          "name": "topLaneOutcome",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "LaneOutcomeEnums",
+            "ofType": null
+          }
+        },
+        {
+          "name": "didRequestDownload",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerType": {
+      "name": "MatchPlayerType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "matchId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "match",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "playerSlot",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Byte",
+            "ofType": null
+          }
+        },
+        {
+          "name": "steamAccountId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "steamAccount",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SteamAccountType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isRadiant",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isVictory",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "heroId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gameVersionId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "hero",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "HeroType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "kills",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Byte",
+            "ofType": null
+          }
+        },
+        {
+          "name": "deaths",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Byte",
+            "ofType": null
+          }
+        },
+        {
+          "name": "assists",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Byte",
+            "ofType": null
+          }
+        },
+        {
+          "name": "leaverStatus",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "LeaverStatusEnum",
+            "ofType": null
+          }
+        },
+        {
+          "name": "numLastHits",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "numDenies",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "goldPerMinute",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "networth",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "experiencePerMinute",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "level",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Byte",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gold",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "goldSpent",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "heroDamage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "towerDamage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "heroHealing",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "partyId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Byte",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isRandom",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "lane",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "MatchLaneType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "position",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "MatchPlayerPositionType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "streakPrediction",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "intentionalFeeding",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "role",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "MatchPlayerRoleType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "roleBasic",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "MatchPlayerRoleType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "imp",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "award",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "MatchPlayerAward",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item0Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item1Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item2Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item3Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item4Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item5Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backpack0Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backpack1Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backpack2Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "neutral0Id",
+          "description": "The item id of the dedicated neutral item slot (7.24 and after). From game versions 7.23 to 7.24, this was the BackPack3Id (the 4th backpack slot item id).",
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "behavior",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "stats",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerStatsType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "playbackData",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerPlaybackDataType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "heroAverage",
+          "description": "Detailed output of data per minute for each hero.",
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "HeroPositionTimeDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "additionalUnit",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerAdditionalUnitType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "dotaPlus",
+          "description": "Gets the players of Dota which have DotaPlus and have a high level hero.",
+          "type": {
+            "kind": "OBJECT",
+            "name": "HeroDotaPlusLeaderboardRankType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "abilities",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "PlayerAbilityType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "invisibleSeconds",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "dotaPlusHeroXp",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "variant",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Byte",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsType": {
+      "name": "MatchPlayerStatsType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "matchId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "steamAccountId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gameVersionId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "level",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "killEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsKillEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "deathEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsDeathEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "assistEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsAssistEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "lastHitsPerMinute",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "goldPerMinute",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "experiencePerMinute",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "healPerMinute",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "heroDamagePerMinute",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "towerDamagePerMinute",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "towerDamageReport",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsTowerDamageReportType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "courierKills",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsCourierKillEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "wards",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsWardEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "itemPurchases",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerItemPurchaseEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "itemUsed",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsItemUsedEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "allTalks",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsAllTalkEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "chatWheels",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsChatWheelEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "actionsPerMinute",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "actionReport",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerStatsActionReportType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "locationReport",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsLocationReportType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "farmDistributionReport",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerStatsFarmDistributionReportType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "runes",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsRuneEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "abilityCastReport",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsAbilityCastReportType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "heroDamageReport",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerStatsHeroDamageReportType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "inventoryReport",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerInventoryType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "networthPerMinute",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "campStack",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "matchPlayerBuffEvent",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsBuffEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "deniesPerMinute",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "impPerMinute",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "tripsFountainPerMinute",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "spiritBearInventoryReport",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerSpiritBearInventoryType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "heroDamageReceivedPerMinute",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "wardDestruction",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerWardDestuctionObjectType",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "MatchPlayerPlaybackDataType": {
+      "name": "MatchPlayerPlaybackDataType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "abilityLearnEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "AbilityLearnEventsType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "abilityUsedEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "AbilityUsedEventsType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "abilityActiveLists",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "AbilityActiveListType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "itemUsedEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "ItemUsedEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "playerUpdatePositionEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "PlayerUpdatePositionDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "playerUpdateGoldEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "PlayerUpdateGoldDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "playerUpdateAttributeEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "PlayerUpdateAttributeDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "playerUpdateLevelEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "PlayerUpdateLevelDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "playerUpdateHealthEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "PlayerUpdateHealthDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "playerUpdateBattleEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "PlayerUpdateBattleDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "killEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "KillDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "deathEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "DeathDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "assistEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "AssistDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "csEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "LastHitDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "goldEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "GoldDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "experienceEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "ExperienceDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "healEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "HealDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "heroDamageEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "HeroDamageDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "towerDamageEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "TowerDamageDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "inventoryEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "InventoryType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "purchaseEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "ItemPurchaseType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "buyBackEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "BuyBackDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "streakEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "StreakEventType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "runeEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "PlayerRuneDetailType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "spiritBearInventoryEvents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "SpiritBearInventoryType",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "HeroPositionTimeDetailType": {
+      "name": "HeroPositionTimeDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "heroId",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Short",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "week",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "position",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "MatchPlayerPositionType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "bracketBasicIds",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "RankBracketBasicEnum",
+            "ofType": null
+          }
+        },
+        {
+          "name": "matchCount",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "remainingMatchCount",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "winCount",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "mvp",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "topCore",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "topSupport",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "courierKills",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "apm",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "casts",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "abilityCasts",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "kills",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "deaths",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "assists",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "networth",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "xp",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "cs",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "dn",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "neutrals",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "heroDamage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "towerDamage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "physicalDamage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "magicalDamage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "physicalDamageReceived",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "magicalDamageReceived",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "tripleKill",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "ultraKill",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "rampage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "godLike",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "goldPerMinute",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "disableCount",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "disableDuration",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "stunCount",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "stunDuration",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "slowCount",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "slowDuration",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "healingSelf",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "healingAllies",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "invisibleCount",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "runePower",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "runeBounty",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "level",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "campsStacked",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "supportGold",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "purgeModifiers",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "ancients",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "teamKills",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "goldLost",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "goldFed",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "buybackCount",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "weakenCount",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "weakenDuration",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "physicalItemDamage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "magicalItemDamage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "healingItemSelf",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "healingItemAllies",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "xpFed",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "pureDamageReceived",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "attackDamage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "attackCount",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "castDamage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "damageReceived",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "damage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "pureDamage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "kDAAverage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "killContributionAverage",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "stompWon",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "stompLost",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "comeBackWon",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        },
+        {
+          "name": "comeBackLost",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Decimal",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerAdditionalUnitType": {
+      "name": "MatchPlayerAdditionalUnitType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "item0Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item1Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item2Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item3Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item4Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item5Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backpack0Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backpack1Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backpack2Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "neutral0Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "HeroDotaPlusLeaderboardRankType": {
+      "name": "HeroDotaPlusLeaderboardRankType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "heroId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "steamAccountId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "level",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Byte",
+            "ofType": null
+          }
+        },
+        {
+          "name": "totalActions",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "createdDateTime",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Long",
+            "ofType": null
+          }
+        },
+        {
+          "name": "steamAccount",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SteamAccountType",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "PlayerAbilityType": {
+      "name": "PlayerAbilityType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "abilityId",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "level",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "gameVersionId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "abilityType",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "AbilityType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isTalent",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerAward": {
+      "name": "MatchPlayerAward",
+      "kind": "ENUM",
+      "description": null,
+      "fields": null
+    },
+    "AbilityActiveListType": {
+      "name": "AbilityActiveListType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "ability0",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "ability1",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "ability2",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "ability3",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "ability4",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "ability5",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "ability6",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "ability7",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "AbilityLearnEventsType": {
+      "name": "AbilityLearnEventsType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "abilityId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "levelObtained",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "level",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "isUltimate",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isTalent",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isMaxLevel",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "AbilityUsedEventsType": {
+      "name": "AbilityUsedEventsType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "abilityId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "attacker",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "target",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "AssistDetailType": {
+      "name": "AssistDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "attacker",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "target",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gold",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "xp",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "subTime",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionX",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionY",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "BuyBackDetailType": {
+      "name": "BuyBackDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "heroId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "deathTimeRemaining",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "cost",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "DeathDetailType": {
+      "name": "DeathDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "attacker",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isFromIllusion",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "target",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byAbility",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byItem",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "goldFed",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "xpFed",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "timeDead",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "reliableGold",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "unreliableGold",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionX",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionY",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "goldLost",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "assist",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "isWardWalkThrough",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isAttemptTpOut",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isDieBack",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isBurst",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isEngagedOnDeath",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "hasHealAvailable",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isTracked",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isFeed",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "ExperienceDetailType": {
+      "name": "ExperienceDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "amount",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "reason",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "XpReason",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionX",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionY",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "GoldDetailType": {
+      "name": "GoldDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "amount",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "reason",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "GoldReason",
+            "ofType": null
+          }
+        },
+        {
+          "name": "npcId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isValidForStats",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "HealDetailType": {
+      "name": "HealDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "attacker",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "target",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "value",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byAbility",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byItem",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "HeroDamageDetailType": {
+      "name": "HeroDamageDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "attacker",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "target",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "value",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "byAbility",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byItem",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "damageType",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "Damage",
+            "ofType": null
+          }
+        },
+        {
+          "name": "fromNpc",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "toNpc",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "fromIllusion",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "toIllusion",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isPhysicalAttack",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isSourceMainHero",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isTargetMainHero",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "InventoryType": {
+      "name": "InventoryType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "item0",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "InventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item1",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "InventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item2",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "InventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item3",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "InventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item4",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "InventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item5",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "InventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backPack0",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "InventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backPack1",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "InventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backPack2",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "InventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "teleport0",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "InventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "neutral0",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "InventoryObjectType",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "ItemPurchaseType": {
+      "name": "ItemPurchaseType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "itemId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "ItemUsedEventType": {
+      "name": "ItemUsedEventType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "itemId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "attacker",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "target",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "KillDetailType": {
+      "name": "KillDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "attacker",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isFromIllusion",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "target",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byAbility",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byItem",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gold",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "xp",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionX",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionY",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "assist",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "isSolo",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isGank",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isInvisible",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isSmoke",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isTpRecently",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isRuneEffected",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "LastHitDetailType": {
+      "name": "LastHitDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "attacker",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isFromIllusion",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "npcId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byAbility",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byItem",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gold",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "xp",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionX",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionY",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isCreep",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isNeutral",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isAncient",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "mapLocation",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "MapLocationEnums",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerInventoryType": {
+      "name": "MatchPlayerInventoryType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "item0",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item1",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item2",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item3",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item4",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item5",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backPack0",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backPack1",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backPack2",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "neutral0",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerInventoryObjectType",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerItemPurchaseEventType": {
+      "name": "MatchPlayerItemPurchaseEventType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "itemId",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "MatchPlayerSpiritBearInventoryType": {
+      "name": "MatchPlayerSpiritBearInventoryType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "item0Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item1Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item2Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item3Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item4Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item5Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backPack0Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backPack1Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backPack2Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "neutral0Id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsAbilityCastReportType": {
+      "name": "MatchPlayerStatsAbilityCastReportType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "abilityId",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "count",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "targets",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsAbilityCastObjectType",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsActionReportType": {
+      "name": "MatchPlayerStatsActionReportType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "moveToPosition",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "moveToTarget",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "attackPosition",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "attackTarget",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "castPosition",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "castTarget",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "castNoTarget",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "heldPosition",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "glyphCast",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "scanUsed",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "pingUsed",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsAllTalkEventType": {
+      "name": "MatchPlayerStatsAllTalkEventType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "message",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "pausedTick",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsAssistEventType": {
+      "name": "MatchPlayerStatsAssistEventType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "target",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gold",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "xp",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionX",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionY",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsBuffEventType": {
+      "name": "MatchPlayerStatsBuffEventType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "abilityId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "itemId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "stackCount",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsChatWheelEventType": {
+      "name": "MatchPlayerStatsChatWheelEventType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "chatWheelId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "pauseTick",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsCourierKillEventType": {
+      "name": "MatchPlayerStatsCourierKillEventType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "positionX",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionY",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsDeathEventType": {
+      "name": "MatchPlayerStatsDeathEventType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "attacker",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "target",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byAbility",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byItem",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "goldFed",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "xpFed",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "timeDead",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionX",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionY",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "goldLost",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "assist",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "SCALAR",
+                "name": "Short"
+              }
+            }
+          }
+        },
+        {
+          "name": "isWardWalkThrough",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isAttemptTpOut",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isDieBack",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isBurst",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isEngagedOnDeath",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "hasHealAvailable",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isTracked",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsFarmDistributionReportType": {
+      "name": "MatchPlayerStatsFarmDistributionReportType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "creepType",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsFarmDistributionObjectType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "creepLocation",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsFarmDistributionObjectType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "neutralLocation",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsFarmDistributionObjectType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "ancientLocation",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsFarmDistributionObjectType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "buildings",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsFarmDistributionObjectType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "buyBackGold",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "abandonGold",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "bountyGold",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerStatsFarmDistributionObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "other",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerStatsFarmDistributionObjectType",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsHeroDamageReportType": {
+      "name": "MatchPlayerStatsHeroDamageReportType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "dealtTotal",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerHeroDamageTotalReportObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "receivedTotal",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "MatchPlayerHeroDamageTotalRecievedReportObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "dealtTargets",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerHeroDamageTargetReportObjectType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "receivedTargets",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerHeroDamageTargetReportObjectType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "dealtSourceAbility",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerHeroDamageSourceAbilityReportObjectType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "receivedSourceAbility",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerHeroDamageSourceAbilityReportObjectType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "dealtSourceItem",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerHeroDamageSourceItemReportObjectType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "receivedSourceItem",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "MatchPlayerHeroDamageSourceItemReportObjectType",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsItemUsedEventType": {
+      "name": "MatchPlayerStatsItemUsedEventType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "itemId",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "count",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsKillEventType": {
+      "name": "MatchPlayerStatsKillEventType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "target",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byAbility",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byItem",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gold",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "xp",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionX",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionY",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "assist",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "NON_NULL",
+              "name": null,
+              "ofType": {
+                "kind": "SCALAR",
+                "name": "Int"
+              }
+            }
+          }
+        },
+        {
+          "name": "isSolo",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isGank",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isInvisible",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isSmoke",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isTpRecently",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsLocationReportType": {
+      "name": "MatchPlayerStatsLocationReportType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "positionX",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "positionY",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsRuneEventType": {
+      "name": "MatchPlayerStatsRuneEventType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "rune",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "RuneEnums",
+            "ofType": null
+          }
+        },
+        {
+          "name": "action",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "RuneAction",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gold",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionX",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionY",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsTowerDamageReportType": {
+      "name": "MatchPlayerStatsTowerDamageReportType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "npcId",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "damage",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "damageCreeps",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "damageFromAbility",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "MatchPlayerStatsWardEventType": {
+      "name": "MatchPlayerStatsWardEventType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "type",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "positionX",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionY",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "MatchPlayerWardDestuctionObjectType": {
+      "name": "MatchPlayerWardDestuctionObjectType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "gold",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "experience",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "isWard",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Boolean",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "PlayerRuneDetailType": {
+      "name": "PlayerRuneDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "rune",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "RuneEnums",
+            "ofType": null
+          }
+        },
+        {
+          "name": "action",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "RuneAction",
+            "ofType": null
+          }
+        },
+        {
+          "name": "gold",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionX",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        },
+        {
+          "name": "positionY",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Int",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "PlayerUpdateAttributeDetailType": {
+      "name": "PlayerUpdateAttributeDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "agi",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "int",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "str",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "PlayerUpdateBattleDetailType": {
+      "name": "PlayerUpdateBattleDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "damageMinMax",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "damageBonus",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "hpRegen",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "mpRegen",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "PlayerUpdateGoldDetailType": {
+      "name": "PlayerUpdateGoldDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "gold",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "unreliableGold",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "networth",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "networthDifference",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "PlayerUpdateHealthDetailType": {
+      "name": "PlayerUpdateHealthDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "hp",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "maxHp",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "mp",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "maxMp",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "PlayerUpdateLevelDetailType": {
+      "name": "PlayerUpdateLevelDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "level",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "PlayerUpdatePositionDetailType": {
+      "name": "PlayerUpdatePositionDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "x",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "y",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "SpiritBearInventoryType": {
+      "name": "SpiritBearInventoryType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "item0",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SpiritBearInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item1",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SpiritBearInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item2",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SpiritBearInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item3",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SpiritBearInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item4",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SpiritBearInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "item5",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SpiritBearInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backPack0",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SpiritBearInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backPack1",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SpiritBearInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "backPack2",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SpiritBearInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "teleport0",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SpiritBearInventoryObjectType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "neutral0",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "SpiritBearInventoryObjectType",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "StreakEventType": {
+      "name": "StreakEventType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "heroId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "type",
+          "description": null,
+          "type": {
+            "kind": "ENUM",
+            "name": "Streak",
+            "ofType": null
+          }
+        },
+        {
+          "name": "value",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        }
+      ]
+    },
+    "TowerDamageDetailType": {
+      "name": "TowerDamageDetailType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "time",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "attacker",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "npcId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "damage",
+          "description": null,
+          "type": {
+            "kind": "NON_NULL",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "Int",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "byAbility",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "byItem",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "fromNpc",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        }
+      ]
+    },
+    "HeroType": {
+      "name": "HeroType",
+      "kind": "OBJECT",
+      "description": null,
+      "fields": [
+        {
+          "name": "id",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "name",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "displayName",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "shortName",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "String",
+            "ofType": null
+          }
+        },
+        {
+          "name": "aliases",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "SCALAR",
+              "name": "String",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "gameVersionId",
+          "description": null,
+          "type": {
+            "kind": "SCALAR",
+            "name": "Short",
+            "ofType": null
+          }
+        },
+        {
+          "name": "abilities",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "HeroAbilityType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "roles",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "HeroRoleType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "language",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "HeroLanguageType",
+            "ofType": null
+          }
+        },
+        {
+          "name": "talents",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "HeroTalentType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "facets",
+          "description": null,
+          "type": {
+            "kind": "LIST",
+            "name": null,
+            "ofType": {
+              "kind": "OBJECT",
+              "name": "HeroFacetType",
+              "ofType": null
+            }
+          }
+        },
+        {
+          "name": "stats",
+          "description": null,
+          "type": {
+            "kind": "OBJECT",
+            "name": "HeroStatType",
+            "ofType": null
+          }
+        }
+      ]
+    }
+  }
+}

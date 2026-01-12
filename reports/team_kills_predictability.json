@@ -1,0 +1,1742 @@
+[
+  {
+    "team_id": 8291895,
+    "team_name": "tundra",
+    "matches": 450,
+    "mae": 7.3461251306,
+    "median_abs_error": 5.276418891,
+    "stable_rate": 0.9933333333,
+    "avg_shared_recent": 4.9621380846,
+    "new_team_rate": 0.0066666667
+  },
+  {
+    "team_id": 9247798,
+    "team_name": "teamhryvnia",
+    "matches": 447,
+    "mae": 8.5848385624,
+    "median_abs_error": 6.1309513873,
+    "stable_rate": 0.9977628635,
+    "avg_shared_recent": 4.9372197309,
+    "new_team_rate": 0.0022371365
+  },
+  {
+    "team_id": 2163,
+    "team_name": "liquid",
+    "matches": 420,
+    "mae": 7.4294050381,
+    "median_abs_error": 5.4644131615,
+    "stable_rate": 0.9976190476,
+    "avg_shared_recent": 4.9713603819,
+    "new_team_rate": 0.0023809524
+  },
+  {
+    "team_id": 9247354,
+    "team_name": "falcons",
+    "matches": 416,
+    "mae": 7.3827237812,
+    "median_abs_error": 5.1715548527,
+    "stable_rate": 0.9975961538,
+    "avg_shared_recent": 4.9903614458,
+    "new_team_rate": 0.0024038462
+  },
+  {
+    "team_id": 7119388,
+    "team_name": "spirit",
+    "matches": 401,
+    "mae": 7.4363000683,
+    "median_abs_error": 5.3394899282,
+    "stable_rate": 0.9950124688,
+    "avg_shared_recent": 4.9775,
+    "new_team_rate": 0.0049875312
+  },
+  {
+    "team_id": 9498970,
+    "team_name": "avulus",
+    "matches": 363,
+    "mae": 7.8402830334,
+    "median_abs_error": 5.6815405878,
+    "stable_rate": 0.9944903581,
+    "avg_shared_recent": 4.9226519337,
+    "new_team_rate": 0.0055096419
+  },
+  {
+    "team_id": 8261500,
+    "team_name": "xtreme",
+    "matches": 360,
+    "mae": 6.9472976934,
+    "median_abs_error": 5.2037492999,
+    "stable_rate": 0.9916666667,
+    "avg_shared_recent": 4.9554317549,
+    "new_team_rate": 0.0083333333
+  },
+  {
+    "team_id": 8255888,
+    "team_name": "betboom",
+    "matches": 356,
+    "mae": 7.3307933553,
+    "median_abs_error": 5.6060271508,
+    "stable_rate": 0.9943820225,
+    "avg_shared_recent": 4.9577464789,
+    "new_team_rate": 0.0056179775
+  },
+  {
+    "team_id": 9600141,
+    "team_name": "zerotenacity",
+    "matches": 353,
+    "mae": 8.4470852099,
+    "median_abs_error": 6.4137964748,
+    "stable_rate": 0.9943342776,
+    "avg_shared_recent": 4.9460227273,
+    "new_team_rate": 0.0056657224
+  },
+  {
+    "team_id": 9255039,
+    "team_name": "1win",
+    "matches": 346,
+    "mae": 7.6031455645,
+    "median_abs_error": 5.781423107,
+    "stable_rate": 0.9971098266,
+    "avg_shared_recent": 4.968115942,
+    "new_team_rate": 0.0028901734
+  },
+  {
+    "team_id": 9338413,
+    "team_name": "mouz",
+    "matches": 333,
+    "mae": 7.1067003893,
+    "median_abs_error": 5.2364499724,
+    "stable_rate": 0.975975976,
+    "avg_shared_recent": 4.8584337349,
+    "new_team_rate": 0.024024024
+  },
+  {
+    "team_id": 7554697,
+    "team_name": "nigmagalaxy",
+    "matches": 332,
+    "mae": 6.6650966854,
+    "median_abs_error": 4.4233405901,
+    "stable_rate": 0.9939759036,
+    "avg_shared_recent": 4.9637462236,
+    "new_team_rate": 0.0060240964
+  },
+  {
+    "team_id": 9467224,
+    "team_name": "aurora",
+    "matches": 329,
+    "mae": 7.9560360918,
+    "median_abs_error": 5.5282255433,
+    "stable_rate": 0.990881459,
+    "avg_shared_recent": 4.9390243902,
+    "new_team_rate": 0.009118541
+  },
+  {
+    "team_id": 9572001,
+    "team_name": "parivision",
+    "matches": 329,
+    "mae": 8.0440307369,
+    "median_abs_error": 6.0038092489,
+    "stable_rate": 0.9969604863,
+    "avg_shared_recent": 4.9908536585,
+    "new_team_rate": 0.0030395137
+  },
+  {
+    "team_id": 8599101,
+    "team_name": "gaimingladiators",
+    "matches": 325,
+    "mae": 6.4095853744,
+    "median_abs_error": 4.545222759,
+    "stable_rate": 0.9969230769,
+    "avg_shared_recent": 4.9907407407,
+    "new_team_rate": 0.0030769231
+  },
+  {
+    "team_id": 9303383,
+    "team_name": "l1ga",
+    "matches": 325,
+    "mae": 8.3866122841,
+    "median_abs_error": 6.2546371987,
+    "stable_rate": 0.9876923077,
+    "avg_shared_recent": 4.9043209877,
+    "new_team_rate": 0.0123076923
+  },
+  {
+    "team_id": 9303484,
+    "team_name": "heroic",
+    "matches": 313,
+    "mae": 8.1306269401,
+    "median_abs_error": 5.7583646074,
+    "stable_rate": 0.9968051118,
+    "avg_shared_recent": 4.9775641026,
+    "new_team_rate": 0.0031948882
+  },
+  {
+    "team_id": 8376696,
+    "team_name": "onemove",
+    "matches": 301,
+    "mae": 7.5299046599,
+    "median_abs_error": 5.483254594,
+    "stable_rate": 0.9833887043,
+    "avg_shared_recent": 4.8533333333,
+    "new_team_rate": 0.0166112957
+  },
+  {
+    "team_id": 9017006,
+    "team_name": "navijunior",
+    "matches": 293,
+    "mae": 6.6705497409,
+    "median_abs_error": 5.1659087013,
+    "stable_rate": 0.9965870307,
+    "avg_shared_recent": 4.9691780822,
+    "new_team_rate": 0.0034129693
+  },
+  {
+    "team_id": 2586976,
+    "team_name": "og",
+    "matches": 278,
+    "mae": 8.0677909803,
+    "median_abs_error": 5.7782605305,
+    "stable_rate": 0.9856115108,
+    "avg_shared_recent": 4.9025270758,
+    "new_team_rate": 0.0143884892
+  },
+  {
+    "team_id": 36,
+    "team_name": "natusvincere",
+    "matches": 249,
+    "mae": 8.3728617453,
+    "median_abs_error": 5.9894314616,
+    "stable_rate": 0.9879518072,
+    "avg_shared_recent": 4.9233870968,
+    "new_team_rate": 0.0120481928
+  },
+  {
+    "team_id": 5014799,
+    "team_name": "nemigagaming",
+    "matches": 249,
+    "mae": 8.4075524226,
+    "median_abs_error": 6.9956497243,
+    "stable_rate": 0.9879518072,
+    "avg_shared_recent": 4.810483871,
+    "new_team_rate": 0.0120481928
+  },
+  {
+    "team_id": 9586122,
+    "team_name": "4pirates",
+    "matches": 244,
+    "mae": 8.179005734,
+    "median_abs_error": 5.8186800847,
+    "stable_rate": 0.9918032787,
+    "avg_shared_recent": 4.9670781893,
+    "new_team_rate": 0.0081967213
+  },
+  {
+    "team_id": 7732977,
+    "team_name": "boom",
+    "matches": 235,
+    "mae": 6.3423110555,
+    "median_abs_error": 4.4135695633,
+    "stable_rate": 0.9914893617,
+    "avg_shared_recent": 4.9401709402,
+    "new_team_rate": 0.0085106383
+  },
+  {
+    "team_id": 9351740,
+    "team_name": "invictus",
+    "matches": 216,
+    "mae": 7.9482959237,
+    "median_abs_error": 6.1167633495,
+    "stable_rate": 0.9861111111,
+    "avg_shared_recent": 4.9302325581,
+    "new_team_rate": 0.0138888889
+  },
+  {
+    "team_id": 8597976,
+    "team_name": "talon",
+    "matches": 212,
+    "mae": 6.681235082,
+    "median_abs_error": 4.4024993683,
+    "stable_rate": 0.9952830189,
+    "avg_shared_recent": 4.971563981,
+    "new_team_rate": 0.0047169811
+  },
+  {
+    "team_id": 9373270,
+    "team_name": "nightpulse",
+    "matches": 210,
+    "mae": 8.6692826575,
+    "median_abs_error": 5.6755253345,
+    "stable_rate": 0.9857142857,
+    "avg_shared_recent": 4.9186602871,
+    "new_team_rate": 0.0142857143
+  },
+  {
+    "team_id": 9403748,
+    "team_name": "dragonesportsclub",
+    "matches": 199,
+    "mae": 7.7822400952,
+    "median_abs_error": 5.9098614376,
+    "stable_rate": 0.9899497487,
+    "avg_shared_recent": 4.8888888889,
+    "new_team_rate": 0.0100502513
+  },
+  {
+    "team_id": 39,
+    "team_name": "shopifyrebellion",
+    "matches": 196,
+    "mae": 7.7412212164,
+    "median_abs_error": 5.3618532002,
+    "stable_rate": 0.9897959184,
+    "avg_shared_recent": 4.9538461538,
+    "new_team_rate": 0.0102040816
+  },
+  {
+    "team_id": 9640842,
+    "team_name": "tidebound",
+    "matches": 194,
+    "mae": 6.7722181179,
+    "median_abs_error": 5.1524279249,
+    "stable_rate": 0.9948453608,
+    "avg_shared_recent": 4.9896373057,
+    "new_team_rate": 0.0051546392
+  },
+  {
+    "team_id": 8254145,
+    "team_name": "execration",
+    "matches": 181,
+    "mae": 7.8677961241,
+    "median_abs_error": 6.4677934115,
+    "stable_rate": 0.9944751381,
+    "avg_shared_recent": 4.9555555556,
+    "new_team_rate": 0.0055248619
+  },
+  {
+    "team_id": 2576071,
+    "team_name": "yellowsubmarine",
+    "matches": 167,
+    "mae": 8.3627603705,
+    "median_abs_error": 6.3100089291,
+    "stable_rate": 0.9880239521,
+    "avg_shared_recent": 4.8855421687,
+    "new_team_rate": 0.0119760479
+  },
+  {
+    "team_id": 9545782,
+    "team_name": "ivory",
+    "matches": 165,
+    "mae": 6.9754675258,
+    "median_abs_error": 5.3204077292,
+    "stable_rate": 0.9878787879,
+    "avg_shared_recent": 4.9451219512,
+    "new_team_rate": 0.0121212121
+  },
+  {
+    "team_id": 8588969,
+    "team_name": "hydra",
+    "matches": 160,
+    "mae": 8.1078425313,
+    "median_abs_error": 5.9546150894,
+    "stable_rate": 0.975,
+    "avg_shared_recent": 4.7295597484,
+    "new_team_rate": 0.025
+  },
+  {
+    "team_id": 8728920,
+    "team_name": "nouns",
+    "matches": 160,
+    "mae": 6.3847125083,
+    "median_abs_error": 4.8048315378,
+    "stable_rate": 0.99375,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.00625
+  },
+  {
+    "team_id": 9651185,
+    "team_name": "wildcard",
+    "matches": 159,
+    "mae": 7.2410220211,
+    "median_abs_error": 5.0629362088,
+    "stable_rate": 0.9937106918,
+    "avg_shared_recent": 4.9493670886,
+    "new_team_rate": 0.0062893082
+  },
+  {
+    "team_id": 8254400,
+    "team_name": "beastcoast",
+    "matches": 154,
+    "mae": 5.7148109628,
+    "median_abs_error": 4.3084128203,
+    "stable_rate": 0.9935064935,
+    "avg_shared_recent": 4.9738562092,
+    "new_team_rate": 0.0064935065
+  },
+  {
+    "team_id": 9758040,
+    "team_name": "runa",
+    "matches": 146,
+    "mae": 9.8143160028,
+    "median_abs_error": 7.2647789928,
+    "stable_rate": 0.9931506849,
+    "avg_shared_recent": 4.9586206897,
+    "new_team_rate": 0.0068493151
+  },
+  {
+    "team_id": 7917893,
+    "team_name": "interactivephilippines",
+    "matches": 140,
+    "mae": 8.0619638114,
+    "median_abs_error": 5.2591890155,
+    "stable_rate": 0.9857142857,
+    "avg_shared_recent": 4.8920863309,
+    "new_team_rate": 0.0142857143
+  },
+  {
+    "team_id": 7422789,
+    "team_name": "9pandas",
+    "matches": 133,
+    "mae": 5.922979069,
+    "median_abs_error": 4.0971348275,
+    "stable_rate": 0.992481203,
+    "avg_shared_recent": 4.9166666667,
+    "new_team_rate": 0.007518797
+  },
+  {
+    "team_id": 9420570,
+    "team_name": "quantum",
+    "matches": 131,
+    "mae": 7.0941953538,
+    "median_abs_error": 5.0004532595,
+    "stable_rate": 0.9694656489,
+    "avg_shared_recent": 4.7461538462,
+    "new_team_rate": 0.0305343511
+  },
+  {
+    "team_id": 9256405,
+    "team_name": "levelup",
+    "matches": 129,
+    "mae": 7.1755973947,
+    "median_abs_error": 6.1950015209,
+    "stable_rate": 0.9224806202,
+    "avg_shared_recent": 4.53125,
+    "new_team_rate": 0.0775193798
+  },
+  {
+    "team_id": 9449748,
+    "team_name": "dms",
+    "matches": 126,
+    "mae": 7.3834812916,
+    "median_abs_error": 5.4436284136,
+    "stable_rate": 0.9920634921,
+    "avg_shared_recent": 4.856,
+    "new_team_rate": 0.0079365079
+  },
+  {
+    "team_id": 9538558,
+    "team_name": "themongolz",
+    "matches": 126,
+    "mae": 7.6381139356,
+    "median_abs_error": 4.8452653891,
+    "stable_rate": 0.9841269841,
+    "avg_shared_recent": 4.92,
+    "new_team_rate": 0.0158730159
+  },
+  {
+    "team_id": 9790546,
+    "team_name": "teamnextlevel",
+    "matches": 117,
+    "mae": 8.0505013751,
+    "median_abs_error": 4.8976199036,
+    "stable_rate": 0.9914529915,
+    "avg_shared_recent": 4.9655172414,
+    "new_team_rate": 0.0085470085
+  },
+  {
+    "team_id": 9664713,
+    "team_name": "teamlynx",
+    "matches": 114,
+    "mae": 8.4593634183,
+    "median_abs_error": 6.2790284436,
+    "stable_rate": 0.9824561404,
+    "avg_shared_recent": 4.8938053097,
+    "new_team_rate": 0.0175438596
+  },
+  {
+    "team_id": 1838315,
+    "team_name": "secret",
+    "matches": 111,
+    "mae": 6.6914170678,
+    "median_abs_error": 4.7382431097,
+    "stable_rate": 0.954954955,
+    "avg_shared_recent": 4.8363636364,
+    "new_team_rate": 0.045045045
+  },
+  {
+    "team_id": 8574561,
+    "team_name": "azureray",
+    "matches": 111,
+    "mae": 5.8306190071,
+    "median_abs_error": 4.6407496244,
+    "stable_rate": 0.981981982,
+    "avg_shared_recent": 4.9181818182,
+    "new_team_rate": 0.018018018
+  },
+  {
+    "team_id": 9729720,
+    "team_name": "virtuspro",
+    "matches": 106,
+    "mae": 7.2607590164,
+    "median_abs_error": 5.9690517391,
+    "stable_rate": 0.9811320755,
+    "avg_shared_recent": 4.8666666667,
+    "new_team_rate": 0.0188679245
+  },
+  {
+    "team_id": 9450071,
+    "team_name": "fusionesports",
+    "matches": 103,
+    "mae": 7.3307119286,
+    "median_abs_error": 5.4611971554,
+    "stable_rate": 0.9902912621,
+    "avg_shared_recent": 4.9019607843,
+    "new_team_rate": 0.0097087379
+  },
+  {
+    "team_id": 8494848,
+    "team_name": "winterbear",
+    "matches": 100,
+    "mae": 8.0950920821,
+    "median_abs_error": 5.6661440072,
+    "stable_rate": 0.94,
+    "avg_shared_recent": 4.595959596,
+    "new_team_rate": 0.06
+  },
+  {
+    "team_id": 8724984,
+    "team_name": "virtuspro",
+    "matches": 97,
+    "mae": 6.5590913584,
+    "median_abs_error": 4.7783154198,
+    "stable_rate": 0.9793814433,
+    "avg_shared_recent": 4.90625,
+    "new_team_rate": 0.0206185567
+  },
+  {
+    "team_id": 9216247,
+    "team_name": "teamklee",
+    "matches": 94,
+    "mae": 6.576937223,
+    "median_abs_error": 4.7848451762,
+    "stable_rate": 0.9787234043,
+    "avg_shared_recent": 4.8494623656,
+    "new_team_rate": 0.0212765957
+  },
+  {
+    "team_id": 9671463,
+    "team_name": "applecitygang",
+    "matches": 94,
+    "mae": 9.5305251988,
+    "median_abs_error": 6.4609908445,
+    "stable_rate": 0.9893617021,
+    "avg_shared_recent": 4.9462365591,
+    "new_team_rate": 0.0106382979
+  },
+  {
+    "team_id": 9098294,
+    "team_name": "carstensz",
+    "matches": 93,
+    "mae": 7.3917185697,
+    "median_abs_error": 4.3168348199,
+    "stable_rate": 0.935483871,
+    "avg_shared_recent": 4.4673913043,
+    "new_team_rate": 0.064516129
+  },
+  {
+    "team_id": 9634742,
+    "team_name": "chimera",
+    "matches": 87,
+    "mae": 6.5793654072,
+    "median_abs_error": 5.3398368182,
+    "stable_rate": 0.9885057471,
+    "avg_shared_recent": 4.976744186,
+    "new_team_rate": 0.0114942529
+  },
+  {
+    "team_id": 8605863,
+    "team_name": "entity",
+    "matches": 85,
+    "mae": 4.9105931272,
+    "median_abs_error": 3.1169073573,
+    "stable_rate": 0.9882352941,
+    "avg_shared_recent": 4.9761904762,
+    "new_team_rate": 0.0117647059
+  },
+  {
+    "team_id": 9381678,
+    "team_name": "apexgenesis",
+    "matches": 85,
+    "mae": 7.1612749854,
+    "median_abs_error": 5.5880372281,
+    "stable_rate": 0.9882352941,
+    "avg_shared_recent": 4.9404761905,
+    "new_team_rate": 0.0117647059
+  },
+  {
+    "team_id": 9895247,
+    "team_name": "kalmychata",
+    "matches": 83,
+    "mae": 10.2673123968,
+    "median_abs_error": 8.226291274,
+    "stable_rate": 0.9759036145,
+    "avg_shared_recent": 4.8658536585,
+    "new_team_rate": 0.0240963855
+  },
+  {
+    "team_id": 8375259,
+    "team_name": "infinity",
+    "matches": 80,
+    "mae": 7.2079366316,
+    "median_abs_error": 5.2937487234,
+    "stable_rate": 0.9375,
+    "avg_shared_recent": 4.7341772152,
+    "new_team_rate": 0.0625
+  },
+  {
+    "team_id": 9466943,
+    "team_name": "tea",
+    "matches": 80,
+    "mae": 8.7799177966,
+    "median_abs_error": 5.8845110016,
+    "stable_rate": 0.9875,
+    "avg_shared_recent": 4.9240506329,
+    "new_team_rate": 0.0125
+  },
+  {
+    "team_id": 9545759,
+    "team_name": "waska",
+    "matches": 80,
+    "mae": 6.6536627313,
+    "median_abs_error": 5.3663999869,
+    "stable_rate": 0.975,
+    "avg_shared_recent": 4.8987341772,
+    "new_team_rate": 0.025
+  },
+  {
+    "team_id": 9546449,
+    "team_name": "yangongalacticos",
+    "matches": 79,
+    "mae": 7.7668082719,
+    "median_abs_error": 6.5275792848,
+    "stable_rate": 0.9873417722,
+    "avg_shared_recent": 4.9230769231,
+    "new_team_rate": 0.0126582278
+  },
+  {
+    "team_id": 8894818,
+    "team_name": "psgquest",
+    "matches": 78,
+    "mae": 6.5848465547,
+    "median_abs_error": 4.6269549267,
+    "stable_rate": 0.9871794872,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0128205128
+  },
+  {
+    "team_id": 9530947,
+    "team_name": "palianytsia",
+    "matches": 75,
+    "mae": 7.4809509813,
+    "median_abs_error": 5.681975429,
+    "stable_rate": 0.9866666667,
+    "avg_shared_recent": 4.8378378378,
+    "new_team_rate": 0.0133333333
+  },
+  {
+    "team_id": 9572608,
+    "team_name": "bluesubmarine",
+    "matches": 74,
+    "mae": 7.6196844425,
+    "median_abs_error": 4.6273714935,
+    "stable_rate": 0.9864864865,
+    "avg_shared_recent": 4.904109589,
+    "new_team_rate": 0.0135135135
+  },
+  {
+    "team_id": 8737621,
+    "team_name": "lavaesports",
+    "matches": 68,
+    "mae": 5.844316321,
+    "median_abs_error": 3.1848944761,
+    "stable_rate": 0.9264705882,
+    "avg_shared_recent": 4.5373134328,
+    "new_team_rate": 0.0735294118
+  },
+  {
+    "team_id": 9360651,
+    "team_name": "dandelions",
+    "matches": 67,
+    "mae": 7.6668571966,
+    "median_abs_error": 5.4837340474,
+    "stable_rate": 0.9850746269,
+    "avg_shared_recent": 4.9545454545,
+    "new_team_rate": 0.0149253731
+  },
+  {
+    "team_id": 9872667,
+    "team_name": "pipsqueak+4",
+    "matches": 65,
+    "mae": 9.6827128646,
+    "median_abs_error": 6.8083053179,
+    "stable_rate": 0.9692307692,
+    "avg_shared_recent": 4.828125,
+    "new_team_rate": 0.0307692308
+  },
+  {
+    "team_id": 9691969,
+    "team_name": "teamnemesis",
+    "matches": 62,
+    "mae": 8.1398637794,
+    "median_abs_error": 7.0075632556,
+    "stable_rate": 0.9516129032,
+    "avg_shared_recent": 4.8032786885,
+    "new_team_rate": 0.0483870968
+  },
+  {
+    "team_id": 5,
+    "team_name": "g2xig",
+    "matches": 61,
+    "mae": 5.872026171,
+    "median_abs_error": 3.8691124218,
+    "stable_rate": 0.9836065574,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0163934426
+  },
+  {
+    "team_id": 9080405,
+    "team_name": "teamzero",
+    "matches": 61,
+    "mae": 5.7116423561,
+    "median_abs_error": 5.194115488,
+    "stable_rate": 0.9836065574,
+    "avg_shared_recent": 4.9833333333,
+    "new_team_rate": 0.0163934426
+  },
+  {
+    "team_id": 9366989,
+    "team_name": "asakura",
+    "matches": 60,
+    "mae": 6.5311281787,
+    "median_abs_error": 4.9814144793,
+    "stable_rate": 0.9666666667,
+    "avg_shared_recent": 4.7627118644,
+    "new_team_rate": 0.0333333333
+  },
+  {
+    "team_id": 9814008,
+    "team_name": "espoiled",
+    "matches": 60,
+    "mae": 8.9707759827,
+    "median_abs_error": 6.9511239182,
+    "stable_rate": 0.9833333333,
+    "avg_shared_recent": 4.8644067797,
+    "new_team_rate": 0.0166666667
+  },
+  {
+    "team_id": 8718594,
+    "team_name": "youngblood",
+    "matches": 58,
+    "mae": 9.2895780548,
+    "median_abs_error": 8.261995781,
+    "stable_rate": 0.9827586207,
+    "avg_shared_recent": 4.9824561404,
+    "new_team_rate": 0.0172413793
+  },
+  {
+    "team_id": 9081007,
+    "team_name": "sibeteam",
+    "matches": 55,
+    "mae": 8.1435014432,
+    "median_abs_error": 4.013273463,
+    "stable_rate": 0.9818181818,
+    "avg_shared_recent": 4.8888888889,
+    "new_team_rate": 0.0181818182
+  },
+  {
+    "team_id": 9432799,
+    "team_name": "cuyese-sports",
+    "matches": 55,
+    "mae": 5.5847330414,
+    "median_abs_error": 4.131067707,
+    "stable_rate": 0.9636363636,
+    "avg_shared_recent": 4.8333333333,
+    "new_team_rate": 0.0363636364
+  },
+  {
+    "team_id": 9280056,
+    "team_name": "justbetter",
+    "matches": 54,
+    "mae": 7.8516612943,
+    "median_abs_error": 5.7743526806,
+    "stable_rate": 0.962962963,
+    "avg_shared_recent": 4.8867924528,
+    "new_team_rate": 0.037037037
+  },
+  {
+    "team_id": 9600432,
+    "team_name": "call911",
+    "matches": 54,
+    "mae": 7.9820531097,
+    "median_abs_error": 6.916974165,
+    "stable_rate": 0.9814814815,
+    "avg_shared_recent": 4.8301886792,
+    "new_team_rate": 0.0185185185
+  },
+  {
+    "team_id": 9741253,
+    "team_name": "edge",
+    "matches": 54,
+    "mae": 7.3025652636,
+    "median_abs_error": 5.1215009071,
+    "stable_rate": 0.9814814815,
+    "avg_shared_recent": 4.9622641509,
+    "new_team_rate": 0.0185185185
+  },
+  {
+    "team_id": 15,
+    "team_name": "lgd",
+    "matches": 53,
+    "mae": 6.8338888829,
+    "median_abs_error": 5.0350023965,
+    "stable_rate": 0.9811320755,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0188679245
+  },
+  {
+    "team_id": 9823272,
+    "team_name": "yandex",
+    "matches": 53,
+    "mae": 8.7456797334,
+    "median_abs_error": 7.4896892565,
+    "stable_rate": 0.9622641509,
+    "avg_shared_recent": 4.9423076923,
+    "new_team_rate": 0.0377358491
+  },
+  {
+    "team_id": 9928746,
+    "team_name": "mostwanted",
+    "matches": 51,
+    "mae": 10.1536416739,
+    "median_abs_error": 8.0255714398,
+    "stable_rate": 0.9803921569,
+    "avg_shared_recent": 4.84,
+    "new_team_rate": 0.0196078431
+  },
+  {
+    "team_id": 9131584,
+    "team_name": "bb",
+    "matches": 48,
+    "mae": 6.4295175583,
+    "median_abs_error": 4.7649142652,
+    "stable_rate": 0.9791666667,
+    "avg_shared_recent": 4.9574468085,
+    "new_team_rate": 0.0208333333
+  },
+  {
+    "team_id": 9651814,
+    "team_name": "banyapivosamogon",
+    "matches": 46,
+    "mae": 6.5697657891,
+    "median_abs_error": 4.4816642096,
+    "stable_rate": 0.9782608696,
+    "avg_shared_recent": 4.9111111111,
+    "new_team_rate": 0.0217391304
+  },
+  {
+    "team_id": 9593627,
+    "team_name": "titan",
+    "matches": 45,
+    "mae": 6.2323179177,
+    "median_abs_error": 3.6612076227,
+    "stable_rate": 0.9777777778,
+    "avg_shared_recent": 4.9090909091,
+    "new_team_rate": 0.0222222222
+  },
+  {
+    "team_id": 9449532,
+    "team_name": "kalmychata",
+    "matches": 44,
+    "mae": 7.1909456961,
+    "median_abs_error": 6.1162201004,
+    "stable_rate": 0.9772727273,
+    "avg_shared_recent": 4.9302325581,
+    "new_team_rate": 0.0227272727
+  },
+  {
+    "team_id": 8944230,
+    "team_name": "yangongalacticos",
+    "matches": 42,
+    "mae": 7.3355359047,
+    "median_abs_error": 6.7744916267,
+    "stable_rate": 0.9761904762,
+    "avg_shared_recent": 4.9268292683,
+    "new_team_rate": 0.0238095238
+  },
+  {
+    "team_id": 9368468,
+    "team_name": "twistedminds",
+    "matches": 42,
+    "mae": 7.981166083,
+    "median_abs_error": 5.9561582272,
+    "stable_rate": 0.9761904762,
+    "avg_shared_recent": 4.9512195122,
+    "new_team_rate": 0.0238095238
+  },
+  {
+    "team_id": 9586396,
+    "team_name": "caterpillar",
+    "matches": 42,
+    "mae": 8.2894293017,
+    "median_abs_error": 6.603838613,
+    "stable_rate": 0.9523809524,
+    "avg_shared_recent": 4.7804878049,
+    "new_team_rate": 0.0476190476
+  },
+  {
+    "team_id": 9461007,
+    "team_name": "evilrabbit",
+    "matches": 41,
+    "mae": 6.2621566549,
+    "median_abs_error": 5.7514031734,
+    "stable_rate": 0.8780487805,
+    "avg_shared_recent": 4.65,
+    "new_team_rate": 0.1219512195
+  },
+  {
+    "team_id": 9766941,
+    "team_name": "flipstertalon",
+    "matches": 41,
+    "mae": 8.9452696249,
+    "median_abs_error": 6.5726831809,
+    "stable_rate": 0.9756097561,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0243902439
+  },
+  {
+    "team_id": 9081369,
+    "team_name": "infamousgaming",
+    "matches": 40,
+    "mae": 8.0112610099,
+    "median_abs_error": 5.2353911724,
+    "stable_rate": 0.925,
+    "avg_shared_recent": 4.5897435897,
+    "new_team_rate": 0.075
+  },
+  {
+    "team_id": 9872558,
+    "team_name": "vpprodigy",
+    "matches": 40,
+    "mae": 8.522721736,
+    "median_abs_error": 5.1420152651,
+    "stable_rate": 0.95,
+    "avg_shared_recent": 4.7948717949,
+    "new_team_rate": 0.05
+  },
+  {
+    "team_id": 9303665,
+    "team_name": "NextUp",
+    "matches": 39,
+    "mae": 6.4983144037,
+    "median_abs_error": 4.3431314403,
+    "stable_rate": 0.9487179487,
+    "avg_shared_recent": 4.8684210526,
+    "new_team_rate": 0.0512820513
+  },
+  {
+    "team_id": 9677721,
+    "team_name": "aimpossible",
+    "matches": 39,
+    "mae": 6.1944854566,
+    "median_abs_error": 4.9360458401,
+    "stable_rate": 0.9230769231,
+    "avg_shared_recent": 4.5789473684,
+    "new_team_rate": 0.0769230769
+  },
+  {
+    "team_id": 9538207,
+    "team_name": "mythavenuegaming",
+    "matches": 38,
+    "mae": 7.9565067581,
+    "median_abs_error": 5.6143211443,
+    "stable_rate": 0.9473684211,
+    "avg_shared_recent": 4.6486486486,
+    "new_team_rate": 0.0526315789
+  },
+  {
+    "team_id": 9798854,
+    "team_name": "kalmychata",
+    "matches": 38,
+    "mae": 8.1890845209,
+    "median_abs_error": 6.4524209954,
+    "stable_rate": 0.9473684211,
+    "avg_shared_recent": 4.6756756757,
+    "new_team_rate": 0.0526315789
+  },
+  {
+    "team_id": 9678463,
+    "team_name": "estarbacks",
+    "matches": 36,
+    "mae": 8.5812570171,
+    "median_abs_error": 6.7124980797,
+    "stable_rate": 0.8888888889,
+    "avg_shared_recent": 4.6285714286,
+    "new_team_rate": 0.1111111111
+  },
+  {
+    "team_id": 9828897,
+    "team_name": "REKONIX",
+    "matches": 36,
+    "mae": 7.0723743641,
+    "median_abs_error": 4.8911736659,
+    "stable_rate": 0.9722222222,
+    "avg_shared_recent": 4.9714285714,
+    "new_team_rate": 0.0277777778
+  },
+  {
+    "team_id": 9850944,
+    "team_name": "kallmychata",
+    "matches": 35,
+    "mae": 8.3203928459,
+    "median_abs_error": 7.0508450887,
+    "stable_rate": 0.9714285714,
+    "avg_shared_recent": 4.9117647059,
+    "new_team_rate": 0.0285714286
+  },
+  {
+    "team_id": 9499402,
+    "team_name": "essence",
+    "matches": 34,
+    "mae": 9.2399573319,
+    "median_abs_error": 8.3161271891,
+    "stable_rate": 0.8529411765,
+    "avg_shared_recent": 4.3333333333,
+    "new_team_rate": 0.1470588235
+  },
+  {
+    "team_id": 9635124,
+    "team_name": "m80",
+    "matches": 34,
+    "mae": 6.6380259386,
+    "median_abs_error": 4.9454203564,
+    "stable_rate": 0.9705882353,
+    "avg_shared_recent": 4.9696969697,
+    "new_team_rate": 0.0294117647
+  },
+  {
+    "team_id": 9678064,
+    "team_name": "moodengwarriors",
+    "matches": 33,
+    "mae": 7.0335947673,
+    "median_abs_error": 6.5078930328,
+    "stable_rate": 0.9696969697,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0303030303
+  },
+  {
+    "team_id": 9814016,
+    "team_name": "levelup",
+    "matches": 33,
+    "mae": 7.0606506605,
+    "median_abs_error": 5.092913879,
+    "stable_rate": 0.9696969697,
+    "avg_shared_recent": 4.84375,
+    "new_team_rate": 0.0303030303
+  },
+  {
+    "team_id": 9710443,
+    "team_name": "allstars",
+    "matches": 32,
+    "mae": 9.0502435822,
+    "median_abs_error": 6.3129286698,
+    "stable_rate": 0.9375,
+    "avg_shared_recent": 4.4838709677,
+    "new_team_rate": 0.0625
+  },
+  {
+    "team_id": 9677513,
+    "team_name": "excel",
+    "matches": 31,
+    "mae": 8.7161604904,
+    "median_abs_error": 9.2084284126,
+    "stable_rate": 0.9677419355,
+    "avg_shared_recent": 4.8666666667,
+    "new_team_rate": 0.0322580645
+  },
+  {
+    "team_id": 9716756,
+    "team_name": "endgame",
+    "matches": 29,
+    "mae": 7.0345928588,
+    "median_abs_error": 5.4230788478,
+    "stable_rate": 0.9655172414,
+    "avg_shared_recent": 4.9642857143,
+    "new_team_rate": 0.0344827586
+  },
+  {
+    "team_id": 9717281,
+    "team_name": "bikinibottom",
+    "matches": 28,
+    "mae": 12.8145717875,
+    "median_abs_error": 10.12387891,
+    "stable_rate": 0.9642857143,
+    "avg_shared_recent": 4.8888888889,
+    "new_team_rate": 0.0357142857
+  },
+  {
+    "team_id": 9824702,
+    "team_name": "pvision",
+    "matches": 28,
+    "mae": 6.7597829341,
+    "median_abs_error": 4.6023932063,
+    "stable_rate": 0.9642857143,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0357142857
+  },
+  {
+    "team_id": 9248240,
+    "team_name": "bocajuniors",
+    "matches": 27,
+    "mae": 7.9476874615,
+    "median_abs_error": 9.4638536079,
+    "stable_rate": 0.962962963,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.037037037
+  },
+  {
+    "team_id": 9646485,
+    "team_name": "jigglin",
+    "matches": 27,
+    "mae": 8.8458075087,
+    "median_abs_error": 8.2367003023,
+    "stable_rate": 0.962962963,
+    "avg_shared_recent": 4.9230769231,
+    "new_team_rate": 0.037037037
+  },
+  {
+    "team_id": 9780014,
+    "team_name": "espoiled",
+    "matches": 27,
+    "mae": 7.255551499,
+    "median_abs_error": 5.6742628166,
+    "stable_rate": 0.962962963,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.037037037
+  },
+  {
+    "team_id": 9798195,
+    "team_name": "cybergoose",
+    "matches": 27,
+    "mae": 5.6789001919,
+    "median_abs_error": 4.0144423997,
+    "stable_rate": 0.962962963,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.037037037
+  },
+  {
+    "team_id": 9885130,
+    "team_name": "perúrejects",
+    "matches": 27,
+    "mae": 11.7152933134,
+    "median_abs_error": 6.9035302113,
+    "stable_rate": 0.8888888889,
+    "avg_shared_recent": 4.6923076923,
+    "new_team_rate": 0.1111111111
+  },
+  {
+    "team_id": 9895392,
+    "team_name": "virtuspro",
+    "matches": 27,
+    "mae": 10.2061487366,
+    "median_abs_error": 9.8648468045,
+    "stable_rate": 0.962962963,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.037037037
+  },
+  {
+    "team_id": 9753675,
+    "team_name": "20twice",
+    "matches": 26,
+    "mae": 7.8357988754,
+    "median_abs_error": 5.2758864089,
+    "stable_rate": 0.9230769231,
+    "avg_shared_recent": 4.56,
+    "new_team_rate": 0.0769230769
+  },
+  {
+    "team_id": 9780800,
+    "team_name": "oglatam",
+    "matches": 26,
+    "mae": 7.8541434967,
+    "median_abs_error": 7.9432323941,
+    "stable_rate": 0.9615384615,
+    "avg_shared_recent": 4.96,
+    "new_team_rate": 0.0384615385
+  },
+  {
+    "team_id": 111474,
+    "team_name": "alliance",
+    "matches": 24,
+    "mae": 6.5233406689,
+    "median_abs_error": 3.9154041723,
+    "stable_rate": 0.9583333333,
+    "avg_shared_recent": 4.9565217391,
+    "new_team_rate": 0.0416666667
+  },
+  {
+    "team_id": 9433140,
+    "team_name": "teamtürkiye",
+    "matches": 24,
+    "mae": 6.2909933104,
+    "median_abs_error": 3.9336637513,
+    "stable_rate": 0.9583333333,
+    "avg_shared_recent": 4.7391304348,
+    "new_team_rate": 0.0416666667
+  },
+  {
+    "team_id": 9641323,
+    "team_name": "y5",
+    "matches": 24,
+    "mae": 6.0980608241,
+    "median_abs_error": 3.695829804,
+    "stable_rate": 0.9583333333,
+    "avg_shared_recent": 4.8260869565,
+    "new_team_rate": 0.0416666667
+  },
+  {
+    "team_id": 9865903,
+    "team_name": "veroja",
+    "matches": 24,
+    "mae": 11.0286017667,
+    "median_abs_error": 9.3204901798,
+    "stable_rate": 0.9583333333,
+    "avg_shared_recent": 4.9565217391,
+    "new_team_rate": 0.0416666667
+  },
+  {
+    "team_id": 8697185,
+    "team_name": "fantasygaming",
+    "matches": 23,
+    "mae": 7.313590509,
+    "median_abs_error": 4.3994727495,
+    "stable_rate": 0.9130434783,
+    "avg_shared_recent": 4.5909090909,
+    "new_team_rate": 0.0869565217
+  },
+  {
+    "team_id": 9664724,
+    "team_name": "ITB.Shuffle",
+    "matches": 23,
+    "mae": 9.0945051204,
+    "median_abs_error": 6.3267711367,
+    "stable_rate": 0.9565217391,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0434782609
+  },
+  {
+    "team_id": 9467430,
+    "team_name": "blacklistinternational",
+    "matches": 22,
+    "mae": 7.5861041626,
+    "median_abs_error": 5.8543294812,
+    "stable_rate": 0.9545454545,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0454545455
+  },
+  {
+    "team_id": 9948367,
+    "team_name": "spirit academy",
+    "matches": 22,
+    "mae": 8.4534575528,
+    "median_abs_error": 4.2424086102,
+    "stable_rate": 0.9545454545,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0454545455
+  },
+  {
+    "team_id": 9530783,
+    "team_name": "hryvnia",
+    "matches": 21,
+    "mae": 5.8156930596,
+    "median_abs_error": 4.5236923497,
+    "stable_rate": 0.8095238095,
+    "avg_shared_recent": 4.05,
+    "new_team_rate": 0.1904761905
+  },
+  {
+    "team_id": 9699533,
+    "team_name": "mosquitoclan",
+    "matches": 21,
+    "mae": 8.4658396625,
+    "median_abs_error": 5.9894314616,
+    "stable_rate": 0.9523809524,
+    "avg_shared_recent": 4.75,
+    "new_team_rate": 0.0476190476
+  },
+  {
+    "team_id": 9593895,
+    "team_name": "gaozu",
+    "matches": 20,
+    "mae": 7.3899115026,
+    "median_abs_error": 4.2535448588,
+    "stable_rate": 0.95,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.05
+  },
+  {
+    "team_id": 9470838,
+    "team_name": "infinity",
+    "matches": 19,
+    "mae": 6.6931851872,
+    "median_abs_error": 5.2940003257,
+    "stable_rate": 0.9473684211,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0526315789
+  },
+  {
+    "team_id": 8214850,
+    "team_name": "bleed",
+    "matches": 18,
+    "mae": 4.1869639948,
+    "median_abs_error": 1.2144085795,
+    "stable_rate": 0.9444444444,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0555555556
+  },
+  {
+    "team_id": 9885667,
+    "team_name": "teamtea",
+    "matches": 18,
+    "mae": 9.3934965999,
+    "median_abs_error": 5.3727529537,
+    "stable_rate": 0.8888888889,
+    "avg_shared_recent": 4.8235294118,
+    "new_team_rate": 0.1111111111
+  },
+  {
+    "team_id": 9781353,
+    "team_name": "castawake",
+    "matches": 17,
+    "mae": 9.3187911681,
+    "median_abs_error": 8.6799161162,
+    "stable_rate": 0.9411764706,
+    "avg_shared_recent": 4.8125,
+    "new_team_rate": 0.0588235294
+  },
+  {
+    "team_id": 9602168,
+    "team_name": "bladebreakers",
+    "matches": 16,
+    "mae": 13.0313783344,
+    "median_abs_error": 11.001912022,
+    "stable_rate": 0.75,
+    "avg_shared_recent": 4.2,
+    "new_team_rate": 0.25
+  },
+  {
+    "team_id": 9844911,
+    "team_name": "odium",
+    "matches": 15,
+    "mae": 9.7159963238,
+    "median_abs_error": 4.1590209007,
+    "stable_rate": 0.9333333333,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0666666667
+  },
+  {
+    "team_id": 9504575,
+    "team_name": "fivebeavers",
+    "matches": 14,
+    "mae": 10.9938281687,
+    "median_abs_error": 13.8273335772,
+    "stable_rate": 0.9285714286,
+    "avg_shared_recent": 4.8461538462,
+    "new_team_rate": 0.0714285714
+  },
+  {
+    "team_id": 9759367,
+    "team_name": "wwteam",
+    "matches": 14,
+    "mae": 10.2321051811,
+    "median_abs_error": 8.5080088248,
+    "stable_rate": 0.9285714286,
+    "avg_shared_recent": 4.7692307692,
+    "new_team_rate": 0.0714285714
+  },
+  {
+    "team_id": 9964962,
+    "team_name": "gamerlegion",
+    "matches": 13,
+    "mae": 5.7808735195,
+    "median_abs_error": 3.2095858417,
+    "stable_rate": 0.9230769231,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0769230769
+  },
+  {
+    "team_id": 9005019,
+    "team_name": "ihc",
+    "matches": 12,
+    "mae": 1.8014545094,
+    "median_abs_error": 1.2459015499,
+    "stable_rate": 0.9166666667,
+    "avg_shared_recent": 4.8181818182,
+    "new_team_rate": 0.0833333333
+  },
+  {
+    "team_id": 9247046,
+    "team_name": "darkhorse",
+    "matches": 12,
+    "mae": 6.0844410373,
+    "median_abs_error": 4.3863740082,
+    "stable_rate": 0.9166666667,
+    "avg_shared_recent": 4.7272727273,
+    "new_team_rate": 0.0833333333
+  },
+  {
+    "team_id": 9352634,
+    "team_name": "acatsuki",
+    "matches": 12,
+    "mae": 5.2548639235,
+    "median_abs_error": 1.8016153233,
+    "stable_rate": 0.75,
+    "avg_shared_recent": 4.2727272727,
+    "new_team_rate": 0.25
+  },
+  {
+    "team_id": 9730797,
+    "team_name": "paseka",
+    "matches": 12,
+    "mae": 5.9562947626,
+    "median_abs_error": 4.300890324,
+    "stable_rate": 0.9166666667,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.0833333333
+  },
+  {
+    "team_id": 9448501,
+    "team_name": "turtle",
+    "matches": 11,
+    "mae": 3.738488519,
+    "median_abs_error": 3.8098874015,
+    "stable_rate": 0.9090909091,
+    "avg_shared_recent": 4.8,
+    "new_team_rate": 0.0909090909
+  },
+  {
+    "team_id": 726228,
+    "team_name": "vici",
+    "matches": 10,
+    "mae": 12.1842184527,
+    "median_abs_error": 9.0948739964,
+    "stable_rate": 0.8,
+    "avg_shared_recent": 4.4444444444,
+    "new_team_rate": 0.2
+  },
+  {
+    "team_id": 9906058,
+    "team_name": "balaclavas",
+    "matches": 10,
+    "mae": 13.6494333323,
+    "median_abs_error": 8.2878285629,
+    "stable_rate": 0.9,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.1
+  },
+  {
+    "team_id": 9255706,
+    "team_name": "aurora.1xbet",
+    "matches": 9,
+    "mae": 4.5524059783,
+    "median_abs_error": 3.2161863737,
+    "stable_rate": 0.8888888889,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.1111111111
+  },
+  {
+    "team_id": 9600331,
+    "team_name": "zettagames",
+    "matches": 9,
+    "mae": 11.6606948188,
+    "median_abs_error": 9.3372781246,
+    "stable_rate": 0.8888888889,
+    "avg_shared_recent": 4.625,
+    "new_team_rate": 0.1111111111
+  },
+  {
+    "team_id": 9886393,
+    "team_name": "navijunior",
+    "matches": 9,
+    "mae": 8.1544080683,
+    "median_abs_error": 7.7297603371,
+    "stable_rate": 0.8888888889,
+    "avg_shared_recent": 4.875,
+    "new_team_rate": 0.1111111111
+  },
+  {
+    "team_id": 8668460,
+    "team_name": "blacklistrivalry",
+    "matches": 8,
+    "mae": 5.552508294,
+    "median_abs_error": 1.7393605179,
+    "stable_rate": 0.875,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.125
+  },
+  {
+    "team_id": 8971308,
+    "team_name": "x5gaming",
+    "matches": 8,
+    "mae": 7.9261532832,
+    "median_abs_error": 3.3312041771,
+    "stable_rate": 0.75,
+    "avg_shared_recent": 3.8571428571,
+    "new_team_rate": 0.25
+  },
+  {
+    "team_id": 9828954,
+    "team_name": "natusvincere",
+    "matches": 8,
+    "mae": 8.4646169648,
+    "median_abs_error": 6.5062187831,
+    "stable_rate": 0.875,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.125
+  },
+  {
+    "team_id": 9906663,
+    "team_name": "robloxmafia",
+    "matches": 8,
+    "mae": 14.1038277321,
+    "median_abs_error": 11.7714638456,
+    "stable_rate": 0.875,
+    "avg_shared_recent": 4.8571428571,
+    "new_team_rate": 0.125
+  },
+  {
+    "team_id": 9388293,
+    "team_name": "4amigos",
+    "matches": 7,
+    "mae": 5.0544750004,
+    "median_abs_error": 2.7890107899,
+    "stable_rate": 0.8571428571,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.1428571429
+  },
+  {
+    "team_id": 9445138,
+    "team_name": "Twisted Minds",
+    "matches": 7,
+    "mae": 4.7764837765,
+    "median_abs_error": 2.4506064051,
+    "stable_rate": 0.8571428571,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.1428571429
+  },
+  {
+    "team_id": 9601305,
+    "team_name": "teammansaf",
+    "matches": 7,
+    "mae": 3.979665125,
+    "median_abs_error": 3.4250887218,
+    "stable_rate": 0.8571428571,
+    "avg_shared_recent": 4.6666666667,
+    "new_team_rate": 0.1428571429
+  },
+  {
+    "team_id": 9885310,
+    "team_name": "roar",
+    "matches": 7,
+    "mae": 9.2858361835,
+    "median_abs_error": 8.3624669799,
+    "stable_rate": 0.8571428571,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.1428571429
+  },
+  {
+    "team_id": 8769201,
+    "team_name": "havu",
+    "matches": 6,
+    "mae": 5.3777724331,
+    "median_abs_error": 2.9011688055,
+    "stable_rate": 0.8333333333,
+    "avg_shared_recent": 4.6,
+    "new_team_rate": 0.1666666667
+  },
+  {
+    "team_id": 9658086,
+    "team_name": "thebug",
+    "matches": 5,
+    "mae": 7.3303181624,
+    "median_abs_error": 6.2575307688,
+    "stable_rate": 0.8,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.2
+  },
+  {
+    "team_id": 9815118,
+    "team_name": "teamhryvnia",
+    "matches": 5,
+    "mae": 3.1041743538,
+    "median_abs_error": 3.5280592118,
+    "stable_rate": 0.8,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.2
+  },
+  {
+    "team_id": 9818935,
+    "team_name": "kalmychataa",
+    "matches": 5,
+    "mae": 3.0888261106,
+    "median_abs_error": 3.0615640946,
+    "stable_rate": 0.8,
+    "avg_shared_recent": 4.25,
+    "new_team_rate": 0.2
+  },
+  {
+    "team_id": 9895544,
+    "team_name": "innercircle",
+    "matches": 5,
+    "mae": 20.3538539336,
+    "median_abs_error": 19.691017428,
+    "stable_rate": 0.8,
+    "avg_shared_recent": 4.75,
+    "new_team_rate": 0.2
+  },
+  {
+    "team_id": 9545732,
+    "team_name": "teamn1ntendo",
+    "matches": 4,
+    "mae": 4.6853075612,
+    "median_abs_error": 3.7026471164,
+    "stable_rate": 0.75,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.25
+  },
+  {
+    "team_id": 9634632,
+    "team_name": "essence",
+    "matches": 4,
+    "mae": 3.6583351556,
+    "median_abs_error": 3.5966532484,
+    "stable_rate": 0.75,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.25
+  },
+  {
+    "team_id": 9723691,
+    "team_name": "cdub",
+    "matches": 4,
+    "mae": 6.8501598515,
+    "median_abs_error": 5.5138947029,
+    "stable_rate": 0.5,
+    "avg_shared_recent": 3.6666666667,
+    "new_team_rate": 0.5
+  },
+  {
+    "team_id": 9724713,
+    "team_name": "ToLight",
+    "matches": 4,
+    "mae": 8.6705022427,
+    "median_abs_error": 9.2441675146,
+    "stable_rate": 0.5,
+    "avg_shared_recent": 3.3333333333,
+    "new_team_rate": 0.5
+  },
+  {
+    "team_id": 8713814,
+    "team_name": "aurum",
+    "matches": 3,
+    "mae": 1.0784708082,
+    "median_abs_error": 0.5133212711,
+    "stable_rate": 0.6666666667,
+    "avg_shared_recent": 4.5,
+    "new_team_rate": 0.3333333333
+  },
+  {
+    "team_id": 8718483,
+    "team_name": "levelup",
+    "matches": 3,
+    "mae": 2.4657809322,
+    "median_abs_error": 1.7750209098,
+    "stable_rate": 0.6666666667,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.3333333333
+  },
+  {
+    "team_id": 9824144,
+    "team_name": "quantum",
+    "matches": 2,
+    "mae": 8.4281394624,
+    "median_abs_error": 8.4281394624,
+    "stable_rate": 0.5,
+    "avg_shared_recent": 5.0,
+    "new_team_rate": 0.5
+  },
+  {
+    "team_id": 7979851,
+    "team_name": "akatsuki",
+    "matches": 1,
+    "mae": 0.4591788762,
+    "median_abs_error": 0.4591788762,
+    "stable_rate": 0.0,
+    "avg_shared_recent": null,
+    "new_team_rate": 1.0
+  },
+  {
+    "team_id": 9103923,
+    "team_name": "bikinibottom",
+    "matches": 1,
+    "mae": 11.0280472638,
+    "median_abs_error": 11.0280472638,
+    "stable_rate": 0.0,
+    "avg_shared_recent": null,
+    "new_team_rate": 1.0
+  },
+  {
+    "team_id": 9279457,
+    "team_name": "vpprodigy",
+    "matches": 1,
+    "mae": 0.5089494117,
+    "median_abs_error": 0.5089494117,
+    "stable_rate": 0.0,
+    "avg_shared_recent": null,
+    "new_team_rate": 1.0
+  },
+  {
+    "team_id": 9425620,
+    "team_name": "belgium",
+    "matches": 1,
+    "mae": 0.8150485997,
+    "median_abs_error": 0.8150485997,
+    "stable_rate": 0.0,
+    "avg_shared_recent": null,
+    "new_team_rate": 1.0
+  },
+  {
+    "team_id": 9488084,
+    "team_name": "shopifyrebellion",
+    "matches": 1,
+    "mae": 1.0181339838,
+    "median_abs_error": 1.0181339838,
+    "stable_rate": 0.0,
+    "avg_shared_recent": null,
+    "new_team_rate": 1.0
+  },
+  {
+    "team_id": 9587118,
+    "team_name": "cska",
+    "matches": 1,
+    "mae": 16.2068654972,
+    "median_abs_error": 16.2068654972,
+    "stable_rate": 0.0,
+    "avg_shared_recent": null,
+    "new_team_rate": 1.0
+  }
+]
