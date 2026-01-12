@@ -235,16 +235,15 @@ def _determine_match_tier(radiant_team_id: int, dire_team_id: int) -> int:
     if r_tier <= 2 and d_tier <= 2:
         return min(r_tier, d_tier)
     
-    # One or both unknown → default to Tier 1
+    # One or both unknown → use known tier if possible, else mark unknown
     if r_tier == 3 or d_tier == 3:
-        # If one is known, use that
         if r_tier <= 2:
             return r_tier
         if d_tier <= 2:
             return d_tier
-        return 1  # Both unknown, default to Tier 1
-    
-    return 1
+        return 3  # Both unknown
+
+    return 3
 
 
 _PATCH_SCHEDULE = [

@@ -219,9 +219,11 @@ def main() -> None:
     parser.add_argument("--use-selected", action="store_true")
     parser.add_argument("--selected-features-path", type=str, default=str(tkr.SELECTED_FEATURES_PATH))
     parser.add_argument("--drop-networth", action="store_true")
+    parser.add_argument("--drop-xp", action="store_true")
     parser.add_argument("--iterations", type=int, default=2500)
     parser.add_argument("--depth", type=int, default=7)
     parser.add_argument("--learning-rate", type=float, default=0.04)
+    parser.add_argument("--max-kill-series-diff", type=float, default=None)
     parser.add_argument("--by-patch", action="store_true", help="Train per-patch major models")
     parser.add_argument("--by-tier", action="store_true", help="Train per-tier models")
     parser.add_argument("--focus-patch", type=str, default=None)
@@ -241,7 +243,7 @@ def main() -> None:
         pub_priors = tkr.build_pub_hero_priors(tkr.PUB_PLAYERS_DIR, tkr.PUB_PRIORS_PATH)
 
     logger.info("Building dataset (time-aware features)...")
-    df = tkr.build_dataset(matches, pub_priors)
+    df = tkr.build_dataset(matches, pub_priors, max_kill_series_diff=args.max_kill_series_diff)
     logger.info("Dataset rows: %d", len(df))
 
     if args.focus_patch:
@@ -274,6 +276,8 @@ def main() -> None:
     feature_cols = tkr.select_feature_cols(feature_cols, args.use_selected, Path(args.selected_features_path))
     if args.drop_networth:
         feature_cols = tkr.drop_networth_features(feature_cols)
+    if args.drop_xp:
+        feature_cols = tkr.drop_xp_features(feature_cols)
     cat_cols = [
         c
         for c in feature_cols

@@ -260,6 +260,21 @@ def drop_networth_features(cols: List[str]) -> List[str]:
     return kept
 
 
+def drop_xp_features(cols: List[str]) -> List[str]:
+    dropped = []
+    kept = []
+    for c in cols:
+        lc = c.lower()
+        if lc.startswith("xpm") or "_xpm" in lc:
+            kept.append(c)
+            continue
+        if lc.startswith("xp"):
+            dropped.append(c)
+            continue
+        kept.append(c)
+    return kept
+
+
 def _coerce_int(v: Any) -> int:
     try:
         if v is None:
@@ -322,7 +337,7 @@ def _get_team_tier(team_id: int) -> int:
 def _determine_match_tier(
     radiant_team_id: int,
     dire_team_id: int,
-    default_unknown: int = 1,
+    default_unknown: int = 3,
 ) -> int:
     """
     Determine tournament tier for a match based on team tiers.
@@ -525,6 +540,7 @@ def _linear_slope(values: List[float]) -> float:
 def build_dataset(
     matches: List[Tuple[int, str, Dict[str, Any]]],
     pub_priors: Dict[int, Dict[str, float]],
+    max_kill_series_diff: Optional[float] = None,
 ) -> pd.DataFrame:
     records: List[Dict[str, Any]] = []
 
@@ -1386,6 +1402,10 @@ def build_dataset(
 
         # Target
         total_kills = sum(p.get("kills", 0) for p in players)
+        if max_kill_series_diff is not None and rad_list and dire_list:
+            series_total = sum(_coerce_float(v) for v in rad_list) + sum(_coerce_float(v) for v in dire_list)
+            if abs(series_total - total_kills) > max_kill_series_diff:
+                continue
 
         team_vs_avg_kills = 0.0
         team_vs_avg_kpm = 0.0
@@ -2979,6 +2999,9 @@ def main() -> None:
     parser.add_argument("--use-selected", action="store_true")
     parser.add_argument("--selected-features-path", type=str, default=str(SELECTED_FEATURES_PATH))
     parser.add_argument("--drop-networth", action="store_true")
+    parser.add_argument("--drop-xp", action="store_true")
+    parser.add_argument("--require-full-early", action="store_true", help="Use only matches with full 10-min series")
+    parser.add_argument("--max-kill-series-diff", type=float, default=None)
     parser.add_argument("--fast", action="store_true", help="Use a smaller, faster config grid")
     parser.add_argument("--by-patch", action="store_true", help="Train per-patch major models")
     parser.add_argument("--by-tier", action="store_true", help="Train per-tier models")
@@ -2999,8 +3022,13 @@ def main() -> None:
         pub_priors = build_pub_hero_priors(PUB_PLAYERS_DIR, PUB_PRIORS_PATH)
 
     logger.info("Building dataset (time-aware features)...")
-    df = build_dataset(matches, pub_priors)
+    df = build_dataset(matches, pub_priors, max_kill_series_diff=args.max_kill_series_diff)
     logger.info("Dataset rows: %d", len(df))
+
+    if args.require_full_early:
+        before = len(df)
+        df = df[df.get("has_full_early", 0) == 1].copy()
+        logger.info("Filtered full-early rows: %d -> %d", before, len(df))
 
     if args.focus_patch:
         try:
@@ -3032,6 +3060,8 @@ def main() -> None:
     feature_cols = select_feature_cols(feature_cols, args.use_selected, Path(args.selected_features_path))
     if args.drop_networth:
         feature_cols = drop_networth_features(feature_cols)
+    if args.drop_xp:
+        feature_cols = drop_xp_features(feature_cols)
 
     cat_cols = [
         c
