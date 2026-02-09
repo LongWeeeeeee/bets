@@ -2098,6 +2098,9 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
             heroes_data=structured_lane_data,
             baseline_messages=baseline_msgs,
             player_stats={},
+            pair_stats={},
+            pair_hero_stats={},
+            team_lane_history={},
         )
         if lc_res:
             corrected, _ = lc_res
@@ -2386,10 +2389,60 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
         lane_corrector_enabled = env_lc.strip().lower() not in ("0", "false", "off", "no")
     lane_corrector_enabled = lane_corrector_enabled and bool(_lc_load_models(models_dir=lane_corrector_dir).get("models"))
     player_stats = {} if lane_corrector_enabled else None
+    pair_stats = {} if lane_corrector_enabled else None
+    pair_hero_stats = {} if lane_corrector_enabled else None
+    team_lane_history = {} if lane_corrector_enabled else None
 
     items = list(maps_data.items())
     if lane_corrector_enabled:
         items.sort(key=lambda kv: (_lc_coerce_int(kv[1].get("startDateTime")), _lc_coerce_int(kv[1].get("id"))))
+        warmup_path = (os.getenv("LANE_CORRECTOR_WARMUP_MAPS_PATH") or "").strip()
+        if warmup_path:
+            try:
+                with open(warmup_path, "r") as wf:
+                    warm_raw = json.load(wf)
+                if isinstance(warm_raw, dict):
+                    warm_items = list(warm_raw.items())
+                elif isinstance(warm_raw, list):
+                    warm_items = [(str(_lc_coerce_int(m.get("id"))), m) for m in warm_raw if isinstance(m, dict)]
+                else:
+                    warm_items = []
+                first_main_ts = 0
+                if items:
+                    first_main_ts = min(_lc_coerce_int(v.get("startDateTime")) for _, v in items)
+                warm_items.sort(key=lambda kv: (_lc_coerce_int(kv[1].get("startDateTime")), _lc_coerce_int(kv[1].get("id"))))
+                warmed = 0
+                for _, warm_match in warm_items:
+                    warm_ts = _lc_coerce_int(warm_match.get("startDateTime"))
+                    if first_main_ts > 0 and warm_ts >= first_main_ts:
+                        continue
+                    warm_bad = check_bad_map(match=warm_match, start_date_time=0)
+                    if warm_bad is None:
+                        continue
+                    warm_radiant, warm_dire = warm_bad
+                    warm_top, warm_bot, warm_mid = calculate_lanes(
+                        radiant_heroes_and_pos=warm_radiant,
+                        dire_heroes_and_pos=warm_dire,
+                        heroes_data=structured_lane_data,
+                        merge_side_lanes=merge_side_lanes,
+                    )
+                    warm_base_preds = {
+                        "top": _lc_parse_lane_prediction(warm_top),
+                        "mid": _lc_parse_lane_prediction(warm_mid),
+                        "bot": _lc_parse_lane_prediction(warm_bot),
+                    }
+                    _lc_update_stats_after_match(
+                        warm_match,
+                        warm_base_preds,
+                        player_stats,
+                        pair_stats,
+                        pair_hero_stats,
+                        team_lane_history,
+                    )
+                    warmed += 1
+                print(f"  ✓ Lane corrector warmup: {warmed} матчей из {len(warm_items)}", flush=True)
+            except Exception as warm_exc:
+                print(f"  ⚠️ Lane corrector warmup skipped: {warm_exc}", flush=True)
     total_matches = len(items)
     
     for idx, (match_id, match) in enumerate(items, 1):
@@ -2459,6 +2512,9 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
                     heroes_data=structured_lane_data,
                     baseline_messages=baseline_msgs,
                     player_stats=player_stats,
+                    pair_stats=pair_stats,
+                    pair_hero_stats=pair_hero_stats,
+                    team_lane_history=team_lane_history,
                     models_dir=lane_corrector_dir,
                 )
                 if lc_res:
@@ -2466,7 +2522,14 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
                     base_top = _lc_format_lane_message("top", *corrected.get("top", (None, None)))
                     base_mid = _lc_format_lane_message("mid", *corrected.get("mid", (None, None)))
                     base_bot = _lc_format_lane_message("bot", *corrected.get("bot", (None, None)))
-                    _lc_update_stats_after_match(match, base_preds, player_stats)
+                    _lc_update_stats_after_match(
+                        match,
+                        base_preds,
+                        player_stats,
+                        pair_stats,
+                        pair_hero_stats,
+                        team_lane_history,
+                    )
             s['top'], s['bot'], s['mid'] = base_top, base_bot, base_mid
         s['radiantTeam'] = match.get('radiantTeam')
         s['direTeam'] = match.get('direTeam')
@@ -3347,7 +3410,9 @@ def _single_side_2v1_prediction(lane_data, lane_name):
 _LC_LANES = ("top", "mid", "bot")
 _LC_CAT_COLS = (
     "lane",
+    "patch_bucket",
     "pred_outcome",
+    "base_out",
     "raw2v1_status",
     "raw2v2_outcome",
     "raw2v1_outcome",
@@ -3355,6 +3420,15 @@ _LC_CAT_COLS = (
     "rawsy_outcome",
 )
 _LC_MODEL_CACHE = {"loaded": False, "models": {}, "error": None}
+_LC_DEC_MODEL_CACHE = {"loaded": False, "models": {}, "error": None}
+_LC_PATCH_TS_736 = 1716498000
+_LC_PATCH_TS_738 = 1740096000
+_LC_PATCH_TS_739 = 1747872000
+_LC_DEC_SWITCH_DEFAULT = {
+    "top": 0.00,
+    "mid": 0.04,
+    "bot": 0.08,
+}
 
 
 class _LCHeroStats:
@@ -3390,6 +3464,22 @@ class _LCPlayerStats:
         self.pred = {l: _LCPredStats() for l in _LC_LANES}
 
 
+class _LCH2HStats:
+    __slots__ = ("games", "score_sum")
+
+    def __init__(self):
+        self.games = 0
+        self.score_sum = 0.0
+
+
+class _LCTeamLaneEntry:
+    __slots__ = ("roster", "lane_scores")
+
+    def __init__(self, roster, lane_scores):
+        self.roster = roster
+        self.lane_scores = lane_scores
+
+
 def _lc_coerce_int(v):
     try:
         if v is None:
@@ -3423,6 +3513,17 @@ def _lc_parse_pos(position):
         return n if 1 <= n <= 5 else None
     except Exception:
         return None
+
+
+def _lc_patch_bucket(start_ts):
+    ts = _lc_coerce_int(start_ts)
+    if ts >= _LC_PATCH_TS_739:
+        return "p739_plus"
+    if ts >= _LC_PATCH_TS_738:
+        return "p738"
+    if ts >= _LC_PATCH_TS_736:
+        return "p736"
+    return "pre736"
 
 
 def _lc_smooth_rate(num, den, prior=0.5, prior_weight=10.0):
@@ -3577,6 +3678,140 @@ def _lc_collect_lane_players(side_pos, is_radiant, lane):
         if pos in side_pos:
             out.append(side_pos[pos])
     return out
+
+
+def _lc_team_id(raw):
+    if isinstance(raw, dict):
+        return _lc_coerce_int(raw.get("id"))
+    return _lc_coerce_int(raw)
+
+
+def _lc_lane_score(outcome):
+    if outcome == "win":
+        return 1.0
+    if outcome == "lose":
+        return 0.0
+    if outcome == "draw":
+        return 0.5
+    return None
+
+
+def _lc_h2h_feature_pack(prefix, wr_values, games_values, known_pairs, total_pairs):
+    if not wr_values:
+        return {
+            f"{prefix}_wr_mean": 0.5,
+            f"{prefix}_wr_min": 0.5,
+            f"{prefix}_wr_max": 0.5,
+            f"{prefix}_wr_weighted": 0.5,
+            f"{prefix}_games_mean": 0.0,
+            f"{prefix}_games_min": 0.0,
+            f"{prefix}_games_max": 0.0,
+            f"{prefix}_coverage": 0.0,
+        }
+    weighted_pairs = list(zip(wr_values, games_values))
+    return {
+        f"{prefix}_wr_mean": float(sum(wr_values) / len(wr_values)),
+        f"{prefix}_wr_min": float(min(wr_values)),
+        f"{prefix}_wr_max": float(max(wr_values)),
+        f"{prefix}_wr_weighted": float(_lc_weighted_mean([(v, g) for v, g in weighted_pairs], 0.5)),
+        f"{prefix}_games_mean": float(sum(games_values) / len(games_values)),
+        f"{prefix}_games_min": float(min(games_values)),
+        f"{prefix}_games_max": float(max(games_values)),
+        f"{prefix}_coverage": float(known_pairs / max(1, total_pairs)),
+    }
+
+
+def _lc_lane_h2h_features(lane, rad_players, dire_players, pair_stats, pair_hero_stats):
+    total_pairs = len(rad_players) * len(dire_players)
+    if total_pairs <= 0:
+        out = _lc_h2h_feature_pack("h2h_pvp", [], [], 0, 1)
+        out.update(_lc_h2h_feature_pack("h2h_hero", [], [], 0, 1))
+        return out
+
+    pvp_wr = []
+    pvp_games = []
+    pvp_known = 0
+    hero_wr = []
+    hero_games = []
+    hero_known = 0
+
+    for rp in rad_players:
+        rpid = _lc_coerce_int(rp.get("account_id"))
+        rhid = _lc_coerce_int(rp.get("hero_id"))
+        for dp in dire_players:
+            dpid = _lc_coerce_int(dp.get("account_id"))
+            dhid = _lc_coerce_int(dp.get("hero_id"))
+
+            pvp_st = pair_stats.get((lane, rpid, dpid))
+            pvp_g = int(pvp_st.games) if pvp_st else 0
+            pvp_s = float(pvp_st.score_sum) if pvp_st else 0.0
+            if pvp_g > 0:
+                pvp_known += 1
+            pvp_wr.append(float(_lc_smooth_rate(pvp_s, float(pvp_g), prior=0.5, prior_weight=5.0)))
+            pvp_games.append(float(pvp_g))
+
+            hero_st = pair_hero_stats.get((lane, rpid, dpid, rhid, dhid))
+            hero_g = int(hero_st.games) if hero_st else 0
+            hero_s = float(hero_st.score_sum) if hero_st else 0.0
+            if hero_g > 0:
+                hero_known += 1
+            hero_wr.append(float(_lc_smooth_rate(hero_s, float(hero_g), prior=0.5, prior_weight=3.0)))
+            hero_games.append(float(hero_g))
+
+    out = _lc_h2h_feature_pack("h2h_pvp", pvp_wr, pvp_games, pvp_known, total_pairs)
+    out.update(_lc_h2h_feature_pack("h2h_hero", hero_wr, hero_games, hero_known, total_pairs))
+    return out
+
+
+def _lc_team_lane_overlap_features(team_history, team_id, lane, roster, min_overlap=4, max_scan=80, max_hits=20):
+    out = {
+        "team_o4_games": 0.0,
+        "team_o4_score": 0.5,
+        "team_o4_win_rate": 0.5,
+        "team_o4_draw_rate": 0.0,
+        "team_o4_decisive_rate": 0.0,
+    }
+    if team_id <= 0 or not roster:
+        return out
+    hist = team_history.get(team_id)
+    if not hist:
+        return out
+
+    scores = []
+    scanned = 0
+    for entry in reversed(hist):
+        scanned += 1
+        if scanned > max_scan or len(scores) >= max_hits:
+            break
+        if len(roster.intersection(entry.roster)) < min_overlap:
+            continue
+        score = entry.lane_scores.get(lane)
+        if score is None:
+            continue
+        scores.append(float(score))
+
+    games = len(scores)
+    if games <= 0:
+        return out
+    wins = sum(1 for s in scores if s > 0.75)
+    draws = sum(1 for s in scores if 0.25 < s < 0.75)
+    score_sum = float(sum(scores))
+
+    out["team_o4_games"] = float(games)
+    out["team_o4_score"] = float(_lc_smooth_rate(score_sum, float(games), prior=0.5, prior_weight=3.0))
+    out["team_o4_win_rate"] = float(_lc_smooth_rate(float(wins), float(games), prior=0.5, prior_weight=3.0))
+    out["team_o4_draw_rate"] = float(draws / float(games))
+    out["team_o4_decisive_rate"] = float((games - draws) / float(games))
+    return out
+
+
+def _lc_update_matchup_stats(table, key, score):
+    item = table.get(key)
+    if item is None:
+        item = _LCH2HStats()
+        table[key] = item
+    item.games += 1
+    item.score_sum += float(score)
 
 
 def _lc_entry_counts(entry, invert=False):
@@ -3823,6 +4058,67 @@ def _lc_load_models(models_dir=None):
     return _LC_MODEL_CACHE
 
 
+def _lc_load_decisive_models(models_dir=None):
+    if _LC_DEC_MODEL_CACHE.get("loaded"):
+        return _LC_DEC_MODEL_CACHE
+    models_dir = models_dir or "/Users/alex/Documents/ingame/ml-models"
+    try:
+        from catboost import CatBoostClassifier  # type: ignore
+    except Exception as exc:
+        _LC_DEC_MODEL_CACHE["loaded"] = True
+        _LC_DEC_MODEL_CACHE["error"] = f"catboost import failed: {exc}"
+        return _LC_DEC_MODEL_CACHE
+
+    models = {}
+    for lane in _LC_LANES:
+        model_path = os.path.join(models_dir, f"lane_corrector_decisive_{lane}.cbm")
+        meta_path = os.path.join(models_dir, f"lane_corrector_decisive_{lane}_meta.json")
+        if not os.path.exists(model_path) or not os.path.exists(meta_path):
+            continue
+        try:
+            model = CatBoostClassifier()
+            model.load_model(model_path)
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+            feature_cols = meta.get("feature_cols") or []
+            raw_label_map = meta.get("label_map") or {0: "lose", 1: "win"}
+            label_map = {}
+            if isinstance(raw_label_map, dict):
+                for k, v in raw_label_map.items():
+                    try:
+                        idx = int(k)
+                    except Exception:
+                        continue
+                    if v in ("lose", "win"):
+                        label_map[idx] = v
+            if 0 not in label_map:
+                label_map[0] = "lose"
+            if 1 not in label_map:
+                label_map[1] = "win"
+            raw_cat_idx = meta.get("cat_idx")
+            if isinstance(raw_cat_idx, list) and raw_cat_idx:
+                cat_idx = []
+                for idx in raw_cat_idx:
+                    try:
+                        cat_idx.append(int(idx))
+                    except Exception:
+                        continue
+            else:
+                cat_idx = [feature_cols.index(c) for c in _LC_CAT_COLS if c in feature_cols]
+            models[lane] = {
+                "model": model,
+                "feature_cols": feature_cols,
+                "cat_idx": cat_idx,
+                "label_map": label_map,
+            }
+        except Exception as exc:
+            _LC_DEC_MODEL_CACHE["error"] = f"lane_corrector_decisive load failed: {exc}"
+            continue
+    _LC_DEC_MODEL_CACHE["models"] = models
+    _LC_DEC_MODEL_CACHE["loaded"] = True
+    return _LC_DEC_MODEL_CACHE
+
+
 def _lc_predict_from_row(lane, row, model_cache):
     info = (model_cache or {}).get("models", {}).get(lane)
     if not info:
@@ -3866,16 +4162,88 @@ def _lc_predict_from_row(lane, row, model_cache):
     return outcome, conf
 
 
+def _lc_predict_decisive_from_row(lane, row, dec_model_cache):
+    info = (dec_model_cache or {}).get("models", {}).get(lane)
+    if not info:
+        return None, None, None
+    try:
+        from catboost import Pool  # type: ignore
+    except Exception:
+        return None, None, None
+
+    cols = info.get("feature_cols") or []
+    if not cols:
+        return None, None, None
+    values = []
+    for c in cols:
+        v = row.get(c)
+        if v is None:
+            v = "none" if c in _LC_CAT_COLS else 0.0
+        values.append(v)
+    pool = Pool([values], cat_features=info.get("cat_idx") or [])
+    try:
+        probs = info["model"].predict_proba(pool)
+    except Exception:
+        return None, None, None
+    if probs is None:
+        return None, None, None
+    try:
+        if len(probs) == 0:
+            return None, None, None
+    except Exception:
+        return None, None, None
+    p = probs[0]
+    try:
+        if p is None or len(p) == 0:
+            return None, None, None
+    except Exception:
+        return None, None, None
+    label_map = info.get("label_map") or {0: "lose", 1: "win"}
+    win_idx = None
+    lose_idx = None
+    for idx, label in label_map.items():
+        if label == "win":
+            win_idx = idx
+        elif label == "lose":
+            lose_idx = idx
+    if win_idx is None:
+        win_idx = 1 if len(p) > 1 else 0
+    if lose_idx is None:
+        lose_idx = 0
+    try:
+        p_win = float(p[win_idx])
+        p_lose = float(p[lose_idx])
+    except Exception:
+        return None, None, None
+    if p_win >= p_lose:
+        outcome = "win"
+        prob = p_win
+    else:
+        outcome = "lose"
+        prob = p_lose
+    conf = int(round(prob * 100))
+    delta = abs(float(p_win) - 0.5)
+    return outcome, conf, delta
+
+
 def _lc_build_lane_row(
     lane,
     radiant_heroes_and_pos,
     dire_heroes_and_pos,
     heroes_data,
+    match_start_time,
     baseline_outcome,
     baseline_conf,
     rad_pos,
     dire_pos,
     player_stats,
+    pair_stats,
+    pair_hero_stats,
+    team_lane_history,
+    rad_team_id,
+    dire_team_id,
+    rad_roster,
+    dire_roster,
 ):
     solo_data = heroes_data.get("solo_lanes", {}) if isinstance(heroes_data, dict) else {}
     v1_data = heroes_data.get("1v1_lanes", {}) if isinstance(heroes_data, dict) else {}
@@ -3908,10 +4276,31 @@ def _lc_build_lane_row(
 
     rad_agg = _lc_aggregate_players(rad_feats)
     dire_agg = _lc_aggregate_players(dire_feats)
+    h2h_feats = _lc_lane_h2h_features(
+        lane=lane,
+        rad_players=rad_players,
+        dire_players=dire_players,
+        pair_stats=pair_stats,
+        pair_hero_stats=pair_hero_stats,
+    )
+    rad_team_feats = _lc_team_lane_overlap_features(
+        team_history=team_lane_history,
+        team_id=rad_team_id,
+        lane=lane,
+        roster=rad_roster,
+    )
+    dire_team_feats = _lc_team_lane_overlap_features(
+        team_history=team_lane_history,
+        team_id=dire_team_id,
+        lane=lane,
+        roster=dire_roster,
+    )
 
     row = {
         "lane": lane,
+        "patch_bucket": _lc_patch_bucket(match_start_time),
         "pred_outcome": baseline_outcome or "none",
+        "base_out": baseline_outcome or "none",
         "pred_conf": float(baseline_conf) if baseline_conf is not None else 0.0,
         "pred_p_win": float(p_win),
         "pred_p_draw": float(p_draw),
@@ -4010,6 +4399,15 @@ def _lc_build_lane_row(
     for k in rad_agg:
         if k.endswith("_mean") and k in dire_agg:
             row[f"diff_{k}"] = float(rad_agg[k] - dire_agg[k])
+    for k, v in h2h_feats.items():
+        row[k] = float(v)
+    for k, v in rad_team_feats.items():
+        row[f"rad_{k}"] = float(v)
+    for k, v in dire_team_feats.items():
+        row[f"dire_{k}"] = float(v)
+    for k in rad_team_feats:
+        if k in dire_team_feats:
+            row[f"diff_{k}"] = float(rad_team_feats[k] - dire_team_feats[k])
 
     return row
 
@@ -4031,11 +4429,32 @@ def _lc_env_int(name, default):
         return int(default)
 
 
+def _lc_env_float(name, default):
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return float(default)
+    try:
+        return float(raw)
+    except Exception:
+        return float(default)
+
+
 def _lc_gate_param_int(base_name, lane, default):
     lane_key = f"{base_name}_{str(lane).upper()}"
     if os.getenv(lane_key) is not None:
         return _lc_env_int(lane_key, default)
     return _lc_env_int(base_name, default)
+
+
+def _lc_dec_switch_delta(lane):
+    lane = str(lane or "").lower()
+    lane_default = _LC_DEC_SWITCH_DEFAULT.get(lane, 0.08)
+    lane_key = f"LANE_CORRECTOR_DECISIVE_SWITCH_DELTA_{lane.upper()}"
+    if os.getenv(lane_key) is not None:
+        return _lc_env_float(lane_key, lane_default)
+    if os.getenv("LANE_CORRECTOR_DECISIVE_SWITCH_DELTA") is not None:
+        return _lc_env_float("LANE_CORRECTOR_DECISIVE_SWITCH_DELTA", lane_default)
+    return lane_default
 
 
 def _lc_apply_rule_b(lane, base_outcome, base_conf, model_outcome, model_conf):
@@ -4085,7 +4504,14 @@ def _lc_format_lane_message(lane_name, outcome, conf):
     return f"Bot: {outcome} {conf}%\n\n"
 
 
-def _lc_update_stats_after_match(match, baseline_preds, player_stats):
+def _lc_update_stats_after_match(
+    match,
+    baseline_preds,
+    player_stats,
+    pair_stats,
+    pair_hero_stats,
+    team_lane_history,
+):
     players = match.get("players") or []
     lane_outcomes = {
         "top": _lc_lane_label_from_outcome(match.get("topLaneOutcome")),
@@ -4146,15 +4572,104 @@ def _lc_update_stats_after_match(match, baseline_preds, player_stats):
                 pst.actual_sum += float(act_score)
                 pst.conf_sum += float(pred_conf)
 
+    rad_pos, dire_pos = _lc_build_player_maps(players)
+    if rad_pos is None or dire_pos is None:
+        return
 
-def _lc_predict_lanes_for_match(match, radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, baseline_messages, player_stats, models_dir=None):
+    # Update player-vs-player and hero matchup history after current match is processed.
+    for lane in _LC_LANES:
+        lane_actual = lane_outcomes.get(lane)
+        score_rad = _lc_lane_score(lane_actual)
+        if score_rad is None:
+            continue
+        score_dire = _lc_lane_score(_lc_invert_outcome(lane_actual))
+        if score_dire is None:
+            continue
+        rad_lane_players = _lc_collect_lane_players(rad_pos, True, lane)
+        dire_lane_players = _lc_collect_lane_players(dire_pos, False, lane)
+        for rp in rad_lane_players:
+            rpid = _lc_coerce_int(rp.get("account_id"))
+            rhid = _lc_coerce_int(rp.get("hero_id"))
+            if rpid <= 0 or rhid <= 0:
+                continue
+            for dp in dire_lane_players:
+                dpid = _lc_coerce_int(dp.get("account_id"))
+                dhid = _lc_coerce_int(dp.get("hero_id"))
+                if dpid <= 0 or dhid <= 0:
+                    continue
+                _lc_update_matchup_stats(pair_stats, (lane, rpid, dpid), score_rad)
+                _lc_update_matchup_stats(pair_stats, (lane, dpid, rpid), score_dire)
+                _lc_update_matchup_stats(pair_hero_stats, (lane, rpid, dpid, rhid, dhid), score_rad)
+                _lc_update_matchup_stats(pair_hero_stats, (lane, dpid, rpid, dhid, rhid), score_dire)
+
+    # Update team history snapshots for overlap>=4 features.
+    rad_team_id = _lc_team_id(match.get("radiantTeam"))
+    dire_team_id = _lc_team_id(match.get("direTeam"))
+    rad_roster = frozenset(
+        _lc_coerce_int(v.get("account_id")) for v in rad_pos.values() if _lc_coerce_int(v.get("account_id")) > 0
+    )
+    dire_roster = frozenset(
+        _lc_coerce_int(v.get("account_id")) for v in dire_pos.values() if _lc_coerce_int(v.get("account_id")) > 0
+    )
+    if rad_team_id > 0 and rad_roster:
+        lane_scores = {
+            lane: score
+            for lane, score in (
+                (ln, _lc_lane_score(outcome))
+                for ln, outcome in lane_outcomes.items()
+            )
+            if score is not None
+        }
+        if lane_scores:
+            hist = team_lane_history.setdefault(rad_team_id, [])
+            hist.append(_LCTeamLaneEntry(rad_roster, lane_scores))
+            if len(hist) > 400:
+                del hist[:-400]
+    if dire_team_id > 0 and dire_roster:
+        lane_scores = {
+            lane: score
+            for lane, score in (
+                (ln, _lc_lane_score(_lc_invert_outcome(outcome)))
+                for ln, outcome in lane_outcomes.items()
+            )
+            if score is not None
+        }
+        if lane_scores:
+            hist = team_lane_history.setdefault(dire_team_id, [])
+            hist.append(_LCTeamLaneEntry(dire_roster, lane_scores))
+            if len(hist) > 400:
+                del hist[:-400]
+
+
+def _lc_predict_lanes_for_match(
+    match,
+    radiant_heroes_and_pos,
+    dire_heroes_and_pos,
+    heroes_data,
+    baseline_messages,
+    player_stats,
+    pair_stats,
+    pair_hero_stats,
+    team_lane_history,
+    models_dir=None,
+):
     model_cache = _lc_load_models(models_dir=models_dir)
     if not model_cache.get("models"):
         return None
+    dec_model_cache = _lc_load_decisive_models(models_dir=models_dir)
+    use_decisive = _lc_env_bool("LANE_CORRECTOR_USE_DECISIVE", False)
 
     rad_pos, dire_pos = _lc_build_player_maps(match.get("players"))
     if rad_pos is None or dire_pos is None:
         return None
+    rad_team_id = _lc_team_id(match.get("radiantTeam"))
+    dire_team_id = _lc_team_id(match.get("direTeam"))
+    rad_roster = frozenset(
+        _lc_coerce_int(v.get("account_id")) for v in rad_pos.values() if _lc_coerce_int(v.get("account_id")) > 0
+    )
+    dire_roster = frozenset(
+        _lc_coerce_int(v.get("account_id")) for v in dire_pos.values() if _lc_coerce_int(v.get("account_id")) > 0
+    )
 
     base_preds = {
         "top": _lc_parse_lane_prediction(baseline_messages.get("top")),
@@ -4163,6 +4678,7 @@ def _lc_predict_lanes_for_match(match, radiant_heroes_and_pos, dire_heroes_and_p
     }
 
     corrected = {}
+    match_start_time = _lc_coerce_int(match.get("startDateTime"))
     for lane in _LC_LANES:
         base_out, base_conf = base_preds.get(lane, (None, None))
         row = _lc_build_lane_row(
@@ -4170,15 +4686,31 @@ def _lc_predict_lanes_for_match(match, radiant_heroes_and_pos, dire_heroes_and_p
             radiant_heroes_and_pos=radiant_heroes_and_pos,
             dire_heroes_and_pos=dire_heroes_and_pos,
             heroes_data=heroes_data,
+            match_start_time=match_start_time,
             baseline_outcome=base_out,
             baseline_conf=base_conf,
             rad_pos=rad_pos,
             dire_pos=dire_pos,
             player_stats=player_stats,
+            pair_stats=pair_stats,
+            pair_hero_stats=pair_hero_stats,
+            team_lane_history=team_lane_history,
+            rad_team_id=rad_team_id,
+            dire_team_id=dire_team_id,
+            rad_roster=rad_roster,
+            dire_roster=dire_roster,
         )
         if row is None:
             corrected[lane] = (base_out, base_conf)
             continue
+        if use_decisive and base_out in ("win", "lose"):
+            dec_out, _dec_conf, dec_delta = _lc_predict_decisive_from_row(lane, row, dec_model_cache)
+            if dec_out in ("win", "lose") and dec_delta is not None:
+                if dec_delta >= _lc_dec_switch_delta(lane):
+                    corrected[lane] = (dec_out, base_conf)
+                else:
+                    corrected[lane] = (base_out, base_conf)
+                continue
         model_out, model_conf = _lc_predict_from_row(lane, row, model_cache)
         final_out, final_conf = _lc_apply_rule_b(lane, base_out, base_conf, model_out, model_conf)
         corrected[lane] = (final_out, final_conf)
