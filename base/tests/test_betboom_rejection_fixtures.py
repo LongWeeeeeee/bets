@@ -94,9 +94,9 @@ def test_betboom_match_level_rejected_fixture(monkeypatch) -> None:
     assert "2-я карта" in result.details
 
 
-def test_betboom_map_market_missing_fixture(monkeypatch) -> None:
+def test_betboom_map_market_closed_fixture(monkeypatch) -> None:
     _patch_no_sleep(monkeypatch)
-    fixture = _load_fixture("betboom_map_market_missing.json")
+    fixture = _load_fixture("betboom_map_market_closed.json")
     driver = _FakeDriver(
         page_source=f"<html><body>{fixture['body_text']}</body></html>",
         body_text=fixture["body_text"],
@@ -135,5 +135,51 @@ def test_betboom_map_market_missing_fixture(monkeypatch) -> None:
 
     assert result.match_found is True
     assert result.odds == []
-    assert result.source == "betboom_map_market_missing"
+    assert result.source == "betboom_map_market_closed"
     assert result.market_closed is True
+
+
+def test_betboom_map_market_missing_fixture(monkeypatch) -> None:
+    _patch_no_sleep(monkeypatch)
+    fixture = _load_fixture("betboom_map_market_missing.json")
+    driver = _FakeDriver(
+        page_source=f"<html><body>{fixture['body_text']}</body></html>",
+        body_text=fixture["body_text"],
+    )
+
+    monkeypatch.setattr(
+        odds_parser,
+        "_parse_map_market_on_current_page",
+        lambda *_args, **_kwargs: ([], fixture["body_text"]),
+    )
+    monkeypatch.setattr(
+        odds_parser,
+        "_is_map_market_closed",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        odds_parser,
+        "_iter_request_texts",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        odds_parser,
+        "_find_from_sources",
+        lambda *_args, **_kwargs: (True, [], "dom_visible_text", fixture["body_text"]),
+    )
+
+    result = odds_parser.parse_site(
+        driver,
+        fixture["site"],
+        fixture["url"],
+        fixture["team1"],
+        fixture["team2"],
+        mode="live",
+        forced_map_num=fixture["forced_map_num"],
+    )
+
+    assert result.match_found is True
+    assert result.odds == []
+    assert result.source == "betboom_map_market_missing"
+    assert result.source != "betboom_map_market_closed"
+    assert result.market_closed is False
