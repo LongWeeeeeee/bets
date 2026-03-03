@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import inspect
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Tuple
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
 
 import pytest
+from bs4 import BeautifulSoup
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -16,370 +17,370 @@ if str(BASE_DIR) not in sys.path:
 import cyberscore_try as runtime  # noqa: E402
 
 
-def _runtime_has_networth_dispatch_logic() -> bool:
-    try:
-        source = inspect.getsource(runtime.check_head)
-    except (OSError, TypeError):
-        return False
-    probe = source.lower()
-    required_tokens = (
-        "target_networth_diff",
-        "800",
-        "1000",
-        "3000",
-        "1500",
-    )
-    return all(token in probe for token in required_tokens)
+REQUIRED_STATUS_CONSTS = (
+    "NETWORTH_STATUS_PRE4_BLOCK",
+    "NETWORTH_STATUS_4_10_SEND_800",
+    "NETWORTH_STATUS_MIN10_LOSS_LE1500_SEND",
+    "NETWORTH_STATUS_LATE_MONITOR_WAIT_1000",
+    "NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000",
+    "NETWORTH_STATUS_LATE_FALLBACK_21_SEND",
+)
 
-
-if not _runtime_has_networth_dispatch_logic():
+if not all(hasattr(runtime, attr) for attr in REQUIRED_STATUS_CONSTS):
     pytestmark = pytest.mark.skip(
         reason=(
-            "Runtime networth-gated dispatch logic is not present yet in base/cyberscore_try.py "
-            "(dependency: task b205acba)."
+            "Runtime networth-gated status labels are not available in base/cyberscore_try.py "
+            "(dependency task b205acba)."
         )
     )
 
 
 @dataclass(frozen=True)
-class Scenario:
+class BranchScenario:
     name: str
     game_time_seconds: int
+    target_side: str
     target_networth_diff: int
     has_early_star: bool
     early_sign: int
     has_late_star: bool
     late_sign: int
-    expected_send: bool
-    expected_reason_token_groups: Tuple[Tuple[str, ...], ...]
+    expected_send_calls: int
+    expected_wait_token: Optional[str] = None
+    expected_add_url_reason: Optional[str] = None
+    expected_release_reason: Optional[str] = None
+    expected_queue: bool = False
+    expected_monitor_threshold: Optional[float] = None
 
 
-@dataclass(frozen=True)
-class Decision:
-    send: bool
-    reason: str
-    action: str
+@dataclass
+class BranchResult:
+    sent_messages: List[str]
+    add_url_calls: List[Dict[str, Any]]
+    queued_payload: Optional[Dict[str, Any]]
 
 
-def _safe_source(fn: Any) -> str:
-    try:
-        return inspect.getsource(fn)
-    except (OSError, TypeError):
-        return ""
+class _FakeTextResponse:
+    def __init__(self, text: str, status_code: int = 200) -> None:
+        self.text = text
+        self.status_code = status_code
 
 
-def _resolve_networth_dispatch_helper() -> Any:
-    preferred_names = (
-        "_evaluate_networth_gated_dispatch",
-        "_decide_networth_gated_dispatch",
-        "_compute_networth_dispatch_decision",
-        "_decide_late_dispatch_by_networth",
-        "_resolve_networth_dispatch_decision",
-    )
-    for name in preferred_names:
-        fn = getattr(runtime, name, None)
-        if callable(fn):
-            return fn
+class _FakeJsonResponse:
+    def __init__(self, payload: Dict[str, Any], status_code: int = 200) -> None:
+        self._payload = payload
+        self.status_code = status_code
+        self.text = "{}"
 
-    candidates = []
-    for name, fn in inspect.getmembers(runtime, inspect.isfunction):
-        if name == "check_head":
-            continue
-        source = _safe_source(fn).lower()
-        if not source:
-            continue
-        if "networth" not in source:
-            continue
-        if "reason" not in source:
-            continue
-        if not any(token in source for token in ("800", "1000", "3000", "1500")):
-            continue
-        if not any(token in source for token in ("game_time", "minute")):
-            continue
-        candidates.append((name, fn, len(source)))
-
-    if not candidates:
-        pytest.skip(
-            "Unable to find a callable networth dispatch decision helper in runtime "
-            "(dependency task b205acba still in progress)."
-        )
-
-    candidates.sort(key=lambda item: item[2])
-    return candidates[0][1]
+    def json(self) -> Dict[str, Any]:
+        return self._payload
 
 
-def _build_context(case: Scenario) -> Dict[str, Any]:
-    target_sign = case.late_sign if case.has_late_star else case.early_sign
-    radiant_lead = case.target_networth_diff if target_sign == 1 else -case.target_networth_diff
-    minute = float(case.game_time_seconds) / 60.0
+def _build_heads_and_bodies():
+    html = """
+    <div class="head">
+      <div class="event__info-info__time">live</div>
+    </div>
+    <div class="body">
+      <div class="match__item-team__score">0</div>
+      <div class="match__item-team__score">0</div>
+      <a href="https://dltv.org/matches/test-match"></a>
+    </div>
+    """
+    soup = BeautifulSoup(html, "lxml")
+    head = soup.find("div", class_="head")
+    body = soup.find("div", class_="body")
+    assert head is not None and body is not None
+    return [head], [body]
+
+
+def _radiant_lead_for_target(target_side: str, target_diff: float) -> float:
+    return float(target_diff) if target_side == "radiant" else -float(target_diff)
+
+
+def _star_diagnostics_for_case(
+    case: BranchScenario,
+    section: str,
+) -> Dict[str, Any]:
+    if section == "early_output":
+        if case.has_early_star:
+            return {
+                "valid": True,
+                "status": "ok",
+                "sign": case.early_sign,
+                "hit_metrics": ["solo"],
+                "conflict_metric": None,
+            }
+        return {
+            "valid": False,
+            "status": "no_hits",
+            "sign": None,
+            "hit_metrics": [],
+            "conflict_metric": None,
+        }
+    if section == "mid_output":
+        if case.has_late_star:
+            return {
+                "valid": True,
+                "status": "ok",
+                "sign": case.late_sign,
+                "hit_metrics": ["solo"],
+                "conflict_metric": None,
+            }
+        return {
+            "valid": False,
+            "status": "no_hits",
+            "sign": None,
+            "hit_metrics": [],
+            "conflict_metric": None,
+        }
     return {
+        "valid": False,
+        "status": "no_hits",
+        "sign": None,
+        "hit_metrics": [],
+        "conflict_metric": None,
+    }
+
+
+def _run_branch_scenario(monkeypatch, case: BranchScenario) -> BranchResult:
+    heads, bodies = _build_heads_and_bodies()
+    sent_messages: List[str] = []
+    add_url_calls: List[Dict[str, Any]] = []
+
+    with runtime.monitored_matches_lock:
+        runtime.monitored_matches.clear()
+
+    monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", False, raising=False)
+    monkeypatch.setattr(runtime, "FORCE_ODDS_SIGNAL_TEST", False, raising=False)
+    monkeypatch.setattr(runtime, "STAR_ALLOW_TIER1_EARLY_STAR_LATE_SAME_OR_ZERO", False, raising=False)
+    monkeypatch.setattr(runtime, "STAR_ALLOW_LATE_STAR_EARLY_SAME_OR_ZERO", False, raising=False)
+
+    monkeypatch.setattr(runtime, "_ensure_delayed_sender_started", lambda: None)
+    monkeypatch.setattr(runtime, "_is_url_processed", lambda _url: False)
+    monkeypatch.setattr(runtime, "_drop_delayed_match", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(runtime, "_skip_dispatch_for_processed_url", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(runtime, "_acquire_signal_send_slot", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(runtime, "_release_signal_send_slot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runtime, "_mark_url_processed", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runtime, "_log_bookmaker_source_snapshot", lambda *_args, **_kwargs: None)
+
+    monkeypatch.setattr(runtime, "send_message", lambda message: sent_messages.append(str(message)))
+
+    def _record_add_url(url: str, reason: str = "unspecified", details: Any = None):
+        add_url_calls.append(
+            {
+                "url": url,
+                "reason": reason,
+                "details": dict(details) if isinstance(details, dict) else details,
+            }
+        )
+
+    monkeypatch.setattr(runtime, "add_url", _record_add_url)
+
+    page_html = "<html><script>$.get('/live/test.json')</script></html>"
+    monkeypatch.setattr(
+        runtime,
+        "make_request_with_retry",
+        lambda *_args, **_kwargs: _FakeTextResponse(page_html, status_code=200),
+    )
+
+    live_data = {
+        "fast_picks": [1],
+        "db": {
+            "first_team": {"is_radiant": True, "title": "Radiant Team", "team_id": 1001, "id": 1001},
+            "second_team": {"title": "Dire Team", "team_id": 2002, "id": 2002},
+        },
+        "live_league_data": {
+            "match": {},
+            "radiant_team": {"team_id": 1001},
+            "dire_team": {"team_id": 2002},
+        },
+        "radiant_lead": _radiant_lead_for_target(case.target_side, case.target_networth_diff),
         "game_time": float(case.game_time_seconds),
-        "game_time_seconds": float(case.game_time_seconds),
-        "current_game_time": float(case.game_time_seconds),
-        "minute": minute,
-        "current_minute": minute,
-        "game_minute": minute,
-        "target_networth_diff": float(case.target_networth_diff),
-        "target_side_networth_diff": float(case.target_networth_diff),
-        "networth_diff": float(case.target_networth_diff),
-        "radiant_lead": float(radiant_lead),
-        "lead": float(radiant_lead),
-        "has_early_star": case.has_early_star,
-        "has_late_star": case.has_late_star,
-        "selected_early_star": case.has_early_star,
-        "selected_late_star": case.has_late_star,
-        "no_early_star": (not case.has_early_star),
-        "early_sign": case.early_sign,
-        "late_sign": case.late_sign,
-        "selected_early_sign": case.early_sign,
-        "selected_late_sign": case.late_sign,
-        "target_sign": target_sign,
-        "target_team_sign": target_sign,
-        "target_is_radiant": target_sign == 1,
-        "target_is_dire": target_sign == -1,
-        "early_and_late_same_sign": (
-            case.has_early_star and case.has_late_star and case.early_sign == case.late_sign
-        ),
-        "early_opposite_late_target": (
-            case.has_early_star and case.has_late_star and case.early_sign != case.late_sign
-        ),
-        "late_only_target": case.has_late_star and not case.has_early_star,
-        "target_game_time": float(runtime.DELAYED_SIGNAL_TARGET_GAME_TIME),
-        "delayed_target_game_time": float(runtime.DELAYED_SIGNAL_TARGET_GAME_TIME),
-        "early_diag": {
-            "valid": case.has_early_star,
-            "sign": case.early_sign if case.has_early_star else None,
-        },
-        "late_diag": {
-            "valid": case.has_late_star,
-            "sign": case.late_sign if case.has_late_star else None,
-        },
     }
+    monkeypatch.setattr(
+        runtime.requests,
+        "get",
+        lambda *_args, **_kwargs: _FakeJsonResponse(live_data, status_code=200),
+    )
+
+    team_id_calls = {"count": 0}
+
+    def _extract_candidate_team_ids(*_args, **_kwargs):
+        team_id_calls["count"] += 1
+        return [1001] if team_id_calls["count"] == 1 else [2002]
+
+    monkeypatch.setattr(runtime, "_extract_candidate_team_ids", _extract_candidate_team_ids)
+    monkeypatch.setattr(
+        runtime,
+        "_ensure_known_team_or_add_to_tier2",
+        lambda team_ids, _team_name, _match_key: (True, int(team_ids[0])),
+    )
+    monkeypatch.setattr(runtime, "_determine_star_signal_match_tier", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(
+        runtime,
+        "parse_draft_and_positions",
+        lambda *_args, **_kwargs: (
+            {"r1": "pos1", "r2": "pos2"},
+            {"d1": "pos1", "d2": "pos2"},
+            None,
+            "",
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "synergy_and_counterpick",
+        lambda *_args, **_kwargs: {"early_output": {"solo": 0}, "mid_output": {"solo": 0}},
+    )
+    monkeypatch.setattr(runtime, "calculate_lanes", lambda *_args, **_kwargs: ("", "", ""))
+    monkeypatch.setattr(runtime, "format_output_dict", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        runtime,
+        "_star_block_diagnostics",
+        lambda *, raw_block, target_wr, section: _star_diagnostics_for_case(case, section),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_block_signs_same_or_zero",
+        lambda *_args, **_kwargs: {"valid": False, "status": "conflict_signs"},
+    )
+    monkeypatch.setattr(runtime, "_format_raw_star_block_metrics", lambda *_args, **_kwargs: "none")
+    monkeypatch.setattr(runtime, "_decorate_star_block_for_display", lambda raw_block, **_kwargs: dict(raw_block or {}))
+    monkeypatch.setattr(runtime.time, "time", lambda: 1_700_000_000.0)
+
+    runtime.check_head(
+        heads=heads,
+        bodies=bodies,
+        i=0,
+        maps_data=set(),
+        return_status=None,
+    )
+
+    queued_payload: Optional[Dict[str, Any]] = None
+    with runtime.monitored_matches_lock:
+        if runtime.monitored_matches:
+            queued_payload = dict(next(iter(runtime.monitored_matches.values())))
+        runtime.monitored_matches.clear()
+
+    return BranchResult(
+        sent_messages=sent_messages,
+        add_url_calls=add_url_calls,
+        queued_payload=queued_payload,
+    )
 
 
-def _match_param_value(param_name: str, context: Dict[str, Any]) -> Tuple[bool, Any]:
-    if param_name in context:
-        return True, context[param_name]
-
-    key = param_name.lower()
-    aliases = {
-        "target_networth_diff": ("target_networth_diff", "target_side_networth_diff", "networth_diff"),
-        "networth_diff": ("target_networth_diff", "target_side_networth_diff", "networth_diff"),
-        "radiant_lead": ("radiant_lead", "lead"),
-        "lead": ("lead", "radiant_lead"),
-        "game_time": ("game_time", "current_game_time", "game_time_seconds"),
-        "current_game_time": ("current_game_time", "game_time", "game_time_seconds"),
-        "game_time_seconds": ("game_time_seconds", "game_time", "current_game_time"),
-        "minute": ("minute", "game_minute", "current_minute"),
-        "game_minute": ("game_minute", "minute", "current_minute"),
-        "current_minute": ("current_minute", "minute", "game_minute"),
-        "early_sign": ("early_sign", "selected_early_sign"),
-        "late_sign": ("late_sign", "selected_late_sign"),
-        "selected_early_sign": ("selected_early_sign", "early_sign"),
-        "selected_late_sign": ("selected_late_sign", "late_sign"),
-        "has_early_star": ("has_early_star", "selected_early_star"),
-        "has_late_star": ("has_late_star", "selected_late_star"),
-        "target_game_time": ("target_game_time", "delayed_target_game_time"),
-        "delayed_target_game_time": ("delayed_target_game_time", "target_game_time"),
-        "target_sign": ("target_sign", "target_team_sign"),
-        "target_team_sign": ("target_team_sign", "target_sign"),
-        "early_diag": ("early_diag",),
-        "late_diag": ("late_diag",),
-    }
-    if key in aliases:
-        for alias in aliases[key]:
-            if alias in context:
-                return True, context[alias]
-
-    if "networth" in key:
-        return True, context["target_networth_diff"]
-    if "game_time" in key:
-        return True, context["game_time"]
-    if "minute" in key:
-        return True, context["minute"]
-    if key.endswith("lead"):
-        return True, context["radiant_lead"]
-    if "early" in key and "sign" in key:
-        return True, context["early_sign"]
-    if "late" in key and "sign" in key:
-        return True, context["late_sign"]
-    if "early" in key and "star" in key:
-        return True, context["has_early_star"]
-    if "late" in key and "star" in key:
-        return True, context["has_late_star"]
-    return False, None
-
-
-def _normalize_decision(raw: Any) -> Decision:
-    if isinstance(raw, dict):
-        action = str(raw.get("action") or raw.get("decision") or raw.get("status") or "")
-        reason = str(
-            raw.get("reason")
-            or raw.get("dispatch_reason")
-            or raw.get("wait_reason")
-            or raw.get("status_reason")
-            or raw.get("label")
-            or ""
-        )
-        send_value = None
-        for key in ("send_now", "should_send", "send", "allow_send", "is_send", "send_immediately"):
-            if key in raw:
-                send_value = raw[key]
-                break
-        if send_value is None and action:
-            send_value = action.lower() in {"send", "allow", "dispatch_now", "sent", "queue_send"}
-        if send_value is None:
-            raise AssertionError(f"Unsupported decision dict payload (no send flag): {raw!r}")
-        return Decision(send=bool(send_value), reason=reason, action=action)
-
-    if isinstance(raw, (tuple, list)):
-        if len(raw) >= 2 and isinstance(raw[0], bool):
-            return Decision(send=bool(raw[0]), reason=str(raw[1]), action="")
-        if len(raw) >= 2 and isinstance(raw[0], str) and isinstance(raw[1], bool):
-            action = str(raw[0])
-            reason = str(raw[2]) if len(raw) >= 3 else ""
-            return Decision(send=bool(raw[1]), reason=reason, action=action)
-        raise AssertionError(f"Unsupported decision tuple payload: {raw!r}")
-
-    raise AssertionError(f"Unsupported decision return type: {type(raw)!r}, value={raw!r}")
-
-
-def _invoke_decision(case: Scenario) -> Decision:
-    helper = _resolve_networth_dispatch_helper()
-    context = _build_context(case)
-    signature = inspect.signature(helper)
-    kwargs: Dict[str, Any] = {}
-    missing = []
-    for name, param in signature.parameters.items():
-        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-            continue
-        found, value = _match_param_value(name, context)
-        if found:
-            kwargs[name] = value
-            continue
-        if param.default is inspect.Parameter.empty:
-            missing.append(name)
-    if missing:
-        raise AssertionError(
-            f"Cannot call {helper.__name__} for networth tests; missing required args: {missing}"
-        )
-    raw = helper(**kwargs)
-    return _normalize_decision(raw)
-
-
-def _assert_reason_tokens(decision: Decision, token_groups: Iterable[Tuple[str, ...]]) -> None:
-    haystack = f"{decision.reason} {decision.action}".lower()
-    assert haystack.strip(), "Branch decision must expose a non-empty reason/action label"
-    for group in token_groups:
-        assert any(token in haystack for token in group), (
-            f"Expected one of tokens {group} in reason/action, got: "
-            f"reason={decision.reason!r}, action={decision.action!r}"
-        )
+def test_networth_status_labels_are_pinned() -> None:
+    assert runtime.NETWORTH_STATUS_PRE4_BLOCK == "pre4_block"
+    assert runtime.NETWORTH_STATUS_4_10_SEND_800 == "4_10_send_800"
+    assert runtime.NETWORTH_STATUS_MIN10_LOSS_LE1500_SEND == "minute10_loss_le1500_send"
+    assert runtime.NETWORTH_STATUS_LATE_MONITOR_WAIT_1000 == "late_monitor_wait_1000"
+    assert runtime.NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000 == "late_conflict_wait_3000"
+    assert runtime.NETWORTH_STATUS_LATE_FALLBACK_21_SEND == "late_fallback_21_send"
 
 
 SCENARIOS = (
-    Scenario(
-        name="blocked_before_4m",
-        game_time_seconds=(3 * 60) + 59,
-        target_networth_diff=4000,
+    BranchScenario(
+        name="pre4_block_wait",
+        game_time_seconds=(3 * 60) + 30,
+        target_side="radiant",
+        target_networth_diff=5000,
         has_early_star=True,
         early_sign=1,
         has_late_star=True,
         late_sign=1,
-        expected_send=False,
-        expected_reason_token_groups=(
-            ("4", "pre4", "before_4", "lt4", "under4"),
-            ("wait", "block", "hold", "gate"),
-        ),
+        expected_send_calls=0,
+        expected_wait_token="pre4_block",
     ),
-    Scenario(
-        name="send_4_to_10_at_plus_800",
+    BranchScenario(
+        name="send_4_10_at_800",
         game_time_seconds=6 * 60,
+        target_side="radiant",
         target_networth_diff=800,
-        has_early_star=True,
+        has_early_star=False,
         early_sign=1,
         has_late_star=True,
         late_sign=1,
-        expected_send=True,
-        expected_reason_token_groups=(
-            ("4_10", "4to10", "4-10", "early_window"),
-            ("800", "+800", "ge800"),
-            ("send", "dispatch", "allow", "release"),
-        ),
+        expected_send_calls=1,
+        expected_add_url_reason="star_signal_sent_now_networth_gate",
+        expected_release_reason="4_10_send_800",
     ),
-    Scenario(
-        name="minute_10_send_when_not_worse_than_minus_1500",
+    BranchScenario(
+        name="minute10_loss_le1500_send",
         game_time_seconds=10 * 60,
+        target_side="radiant",
         target_networth_diff=-1500,
         has_early_star=True,
         early_sign=1,
         has_late_star=True,
         late_sign=1,
-        expected_send=True,
-        expected_reason_token_groups=(
-            ("10", "minute10", "at10"),
-            ("1500", "-1500", "lose1500", "within1500"),
-            ("send", "dispatch", "allow", "release"),
-        ),
+        expected_send_calls=1,
+        expected_add_url_reason="star_signal_sent_now",
     ),
-    Scenario(
-        name="late_monitor_without_early_stars_send_at_plus_1000",
-        game_time_seconds=15 * 60,
-        target_networth_diff=1000,
+    BranchScenario(
+        name="late_monitor_wait_1000",
+        game_time_seconds=12 * 60,
+        target_side="radiant",
+        target_networth_diff=999,
         has_early_star=False,
         early_sign=1,
         has_late_star=True,
         late_sign=1,
-        expected_send=True,
-        expected_reason_token_groups=(
-            ("monitor", "late_monitor", "no_early", "late_only"),
-            ("1000", "+1000", "ge1000"),
-            ("send", "dispatch", "allow", "release"),
-        ),
+        expected_send_calls=0,
+        expected_queue=True,
+        expected_monitor_threshold=1000.0,
     ),
-    Scenario(
-        name="opposite_early_late_send_at_plus_3000",
-        game_time_seconds=15 * 60,
-        target_networth_diff=3000,
+    BranchScenario(
+        name="late_conflict_wait_3000",
+        game_time_seconds=12 * 60,
+        target_side="radiant",
+        target_networth_diff=2999,
         has_early_star=True,
         early_sign=-1,
         has_late_star=True,
         late_sign=1,
-        expected_send=True,
-        expected_reason_token_groups=(
-            ("opposite", "conflict", "early_opposite"),
-            ("3000", "+3000", "ge3000"),
-            ("send", "dispatch", "allow", "release"),
-        ),
+        expected_send_calls=0,
+        expected_queue=True,
+        expected_monitor_threshold=3000.0,
     ),
-    Scenario(
-        name="fallback_send_at_21_when_early_thresholds_unmet",
+    BranchScenario(
+        name="late_fallback_21_send",
         game_time_seconds=21 * 60,
-        target_networth_diff=200,
+        target_side="radiant",
+        target_networth_diff=100,
         has_early_star=False,
         early_sign=1,
         has_late_star=True,
         late_sign=1,
-        expected_send=True,
-        expected_reason_token_groups=(
-            ("21", "21m", "fallback", "delayed"),
-            ("send", "dispatch", "target_reached", "release"),
-        ),
+        expected_send_calls=1,
+        expected_add_url_reason="star_signal_sent_now_target_reached",
     ),
 )
 
 
 @pytest.mark.parametrize("case", SCENARIOS, ids=[case.name for case in SCENARIOS])
-def test_networth_dispatch_scenarios(case: Scenario) -> None:
-    first = _invoke_decision(case)
-    second = _invoke_decision(case)
+def test_networth_dispatch_branches(monkeypatch, capsys, case: BranchScenario) -> None:
+    result = _run_branch_scenario(monkeypatch, case)
+    output = capsys.readouterr().out
 
-    assert first == second, (
-        "Decision helper must be deterministic for identical inputs: "
-        f"first={first!r}, second={second!r}"
-    )
-    assert first.send is case.expected_send, (
-        f"Unexpected send verdict for case={case.name}: got={first.send}, "
-        f"expected={case.expected_send}, reason={first.reason!r}, action={first.action!r}"
-    )
-    _assert_reason_tokens(first, case.expected_reason_token_groups)
+    assert len(result.sent_messages) == case.expected_send_calls
+    if case.expected_wait_token is not None:
+        assert case.expected_wait_token in output
+
+    if case.expected_add_url_reason is not None:
+        assert result.add_url_calls, "Expected add_url call but got none"
+        assert result.add_url_calls[-1]["reason"] == case.expected_add_url_reason
+
+    if case.expected_release_reason is not None:
+        assert result.add_url_calls, "Expected add_url details with release_reason"
+        details = result.add_url_calls[-1]["details"]
+        assert isinstance(details, dict)
+        assert details.get("release_reason") == case.expected_release_reason
+
+    if case.expected_queue:
+        assert result.queued_payload is not None, "Expected delayed queue payload"
+        if case.expected_monitor_threshold is not None:
+            assert float(result.queued_payload.get("networth_monitor_threshold")) == case.expected_monitor_threshold
+    else:
+        assert result.queued_payload is None
