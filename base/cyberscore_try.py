@@ -141,6 +141,12 @@ NETWORTH_GATE_4_TO_10_MIN_DIFF = 800.0
 NETWORTH_GATE_10_MIN_MAX_LOSS = -1500.0
 NETWORTH_GATE_LATE_NO_EARLY_DIFF = 1000.0
 NETWORTH_GATE_LATE_OPPOSITE_DIFF = 3000.0
+NETWORTH_STATUS_PRE4_BLOCK = "pre4_block"
+NETWORTH_STATUS_4_10_SEND_800 = "4_10_send_800"
+NETWORTH_STATUS_MIN10_LOSS_LE1500_SEND = "minute10_loss_le1500_send"
+NETWORTH_STATUS_LATE_MONITOR_WAIT_1000 = "late_monitor_wait_1000"
+NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000 = "late_conflict_wait_3000"
+NETWORTH_STATUS_LATE_FALLBACK_21_SEND = "late_fallback_21_send"
 # В live-режиме late-only star должен уметь попасть в delayed очередь (по умолчанию gate выключен).
 LIVE_STAR_LATE_SIGNAL_GATE_ENABLED = _safe_bool_env("STAR_LATE_SIGNAL_GATE_ENABLED", False)
 
@@ -971,6 +977,9 @@ def _drain_due_delayed_signals_once() -> None:
             send_message(payload.get('message', ''))
             _mark_url_processed(match_key)
             reason = payload.get('reason', 'unknown')
+            fallback_send_status_label = str(
+                payload.get("fallback_send_status_label") or NETWORTH_STATUS_LATE_FALLBACK_21_SEND
+            )
             if monitor_ready and monitor_threshold is not None and monitor_target_diff is not None:
                 print(
                     f"⏱️ Отложенный сигнал отправлен раньше fallback: {match_key} "
@@ -981,7 +990,7 @@ def _drain_due_delayed_signals_once() -> None:
             else:
                 print(
                     f"⏱️ Отложенный сигнал отправлен: {match_key} "
-                    f"(reason={reason}, game_time={int(current_game_time)})"
+                    f"(reason={reason}, status={fallback_send_status_label}, game_time={int(current_game_time)})"
                 )
             add_url_reason = str(payload.get('add_url_reason') or 'star_signal_sent_delayed')
             add_url_details = payload.get('add_url_details')
@@ -993,6 +1002,8 @@ def _drain_due_delayed_signals_once() -> None:
                 add_url_details.setdefault("networth_monitor_early_release", True)
                 add_url_details.setdefault("networth_monitor_threshold", float(monitor_threshold))
                 add_url_details.setdefault("target_networth_diff", float(monitor_target_diff))
+            else:
+                add_url_details.setdefault("dispatch_status_label", fallback_send_status_label)
             add_url(match_key, reason=add_url_reason, details=add_url_details)
         except Exception as e:
             print(f"⚠️ Ошибка отправки отложенного сигнала {match_key}: {e}")
@@ -6820,6 +6831,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 except (TypeError, ValueError):
                     last_game_time_human = "n/a"
                 queue_reason = str(delayed_payload.get('reason', 'unknown'))
+                queue_status_label = str(delayed_payload.get("dispatch_status_label") or "")
                 monitor_threshold_raw = delayed_payload.get("networth_monitor_threshold")
                 monitor_suffix = ""
                 try:
@@ -6831,7 +6843,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 print(
                     "   ⏳ Матч уже в delayed-очереди - пропускаем повторный расчет "
                     f"(target={target_human}, last_game_time={last_game_time_human}, "
-                    f"reason={queue_reason}{monitor_suffix})"
+                    f"reason={queue_reason}, status={queue_status_label or 'n/a'}{monitor_suffix})"
                 )
                 return return_status
 
@@ -7515,6 +7527,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             target_sign = selected_late_sign if has_selected_late_star else selected_early_sign
             target_side = _target_side_from_sign(target_sign)
             target_networth_diff = _target_networth_diff_from_radiant_lead(lead, target_side)
+            networth_send_status_label: Optional[str] = None
             if not force_odds_signal_test_active:
                 if target_networth_diff is None or target_side is None:
                     print(
@@ -7524,32 +7537,29 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     return return_status
                 if current_game_time < NETWORTH_GATE_HARD_BLOCK_SECONDS:
                     print(
-                        "   ⏳ Ожидание dispatch: hard_block_before_04:00 "
+                        f"   ⏳ Ожидание dispatch: {NETWORTH_STATUS_PRE4_BLOCK} "
                         f"(now={_format_game_clock(current_game_time)}, "
                         f"target_side={target_side}, target_diff={int(target_networth_diff)})"
                     )
                     return return_status
-                if (
-                    current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS
-                    and target_networth_diff < NETWORTH_GATE_4_TO_10_MIN_DIFF
-                ):
-                    print(
-                        "   ⏳ Ожидание dispatch: networth_gate_04_10 "
-                        f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
-                        f"need>={int(NETWORTH_GATE_4_TO_10_MIN_DIFF)})"
-                    )
-                    return return_status
-                if (
-                    current_game_time >= NETWORTH_GATE_EARLY_WINDOW_END_SECONDS
-                    and send_now_full_star
-                    and target_networth_diff < NETWORTH_GATE_10_MIN_MAX_LOSS
-                ):
-                    print(
-                        "   ⏳ Ожидание dispatch: networth_gate_10plus_early_late_same_sign "
-                        f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
-                        f"need>={int(NETWORTH_GATE_10_MIN_MAX_LOSS)})"
-                    )
-                    return return_status
+                if current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
+                    if target_networth_diff < NETWORTH_GATE_4_TO_10_MIN_DIFF:
+                        print(
+                            "   ⏳ Ожидание dispatch: networth_gate_04_10 "
+                            f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                            f"need>={int(NETWORTH_GATE_4_TO_10_MIN_DIFF)})"
+                        )
+                        return return_status
+                    networth_send_status_label = NETWORTH_STATUS_4_10_SEND_800
+                elif send_now_full_star:
+                    if target_networth_diff < NETWORTH_GATE_10_MIN_MAX_LOSS:
+                        print(
+                            "   ⏳ Ожидание dispatch: networth_gate_10plus_early_late_same_sign "
+                            f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                            f"need>={int(NETWORTH_GATE_10_MIN_MAX_LOSS)})"
+                        )
+                        return return_status
+                    networth_send_status_label = NETWORTH_STATUS_MIN10_LOSS_LE1500_SEND
             if not send_now_immediate:
                 delay_reason = "late_only_no_early_same_sign"
                 if has_selected_early_star and selected_early_sign != selected_late_sign:
@@ -7569,10 +7579,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 target_game_time = float(DELAYED_SIGNAL_TARGET_GAME_TIME)
                 target_human = _format_game_clock(target_game_time)
                 monitor_threshold: Optional[float] = None
+                monitor_wait_status_label: Optional[str] = None
                 if not has_selected_early_star and has_selected_late_star:
                     monitor_threshold = NETWORTH_GATE_LATE_NO_EARLY_DIFF
+                    monitor_wait_status_label = NETWORTH_STATUS_LATE_MONITOR_WAIT_1000
                 elif has_selected_early_star and has_selected_late_star and selected_early_sign != selected_late_sign:
                     monitor_threshold = NETWORTH_GATE_LATE_OPPOSITE_DIFF
+                    monitor_wait_status_label = NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000
                 release_4_10_now = bool(
                     (not force_odds_signal_test_active)
                     and target_networth_diff is not None
@@ -7589,13 +7602,22 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
                 if release_4_10_now or monitor_ready_now:
                     release_reason = (
-                        "networth_gate_04_10"
+                        NETWORTH_STATUS_4_10_SEND_800
                         if release_4_10_now
                         else f"networth_monitor_{int(monitor_threshold or 0)}"
                     )
+                    release_status_label = (
+                        NETWORTH_STATUS_4_10_SEND_800
+                        if release_4_10_now
+                        else (
+                            NETWORTH_STATUS_LATE_MONITOR_WAIT_1000
+                            if monitor_threshold == NETWORTH_GATE_LATE_NO_EARLY_DIFF
+                            else NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000
+                        )
+                    )
                     print(
                         "   ✅ ВЕРДИКТ: Сигнал отправлен раньше 21:00 "
-                        f"(reason={release_reason}, target_side={target_side}, "
+                        f"(reason={release_reason}, status={release_status_label}, target_side={target_side}, "
                         f"target_diff={int(target_networth_diff or 0)})"
                     )
                     if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки (networth_gate)"):
@@ -7617,6 +7639,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "dispatch_mode": dispatch_mode,
                                 "delay_reason": delay_reason,
                                 "release_reason": release_reason,
+                                "dispatch_status_label": release_status_label,
                                 "game_time": int(current_game_time),
                                 "target_side": target_side,
                                 "target_networth_diff": float(target_networth_diff or 0.0),
@@ -7692,6 +7715,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     "status": status,
                     "dispatch_mode": dispatch_mode,
                     "delay_reason": delay_reason,
+                    "dispatch_status_label": monitor_wait_status_label,
                     "queued_game_time": int(current_game_time),
                     "target_game_time": int(target_game_time),
                     "json_retry_errors": json_retry_errors,
@@ -7712,8 +7736,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         'queued_game_time': current_game_time,
                         'last_game_time': current_game_time,
                         'last_progress_at': queued_ts,
+                        'dispatch_status_label': monitor_wait_status_label,
                         'add_url_reason': 'star_signal_sent_delayed',
                         'add_url_details': delayed_add_url_details,
+                        'fallback_send_status_label': NETWORTH_STATUS_LATE_FALLBACK_21_SEND,
                     }
                     if monitor_threshold is not None:
                         monitored_matches[check_uniq_url]['networth_monitor_threshold'] = float(monitor_threshold)
@@ -7727,6 +7753,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 if monitor_threshold is not None and target_side is not None:
                     print(
                         "   🔎 Delayed monitoring включен: "
+                        f"status={monitor_wait_status_label}, "
                         f"target_side={target_side}, "
                         f"target_diff={int(target_networth_diff or 0)}, "
                         f"threshold={int(monitor_threshold)}, "
@@ -7751,6 +7778,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     details={
                         "status": status,
                         "dispatch_mode": dispatch_mode,
+                        "dispatch_status_label": networth_send_status_label,
                         "selected_star_wr": selected_star_wr,
                         "selected_star_mode": selected_star_mode,
                         "json_retry_errors": json_retry_errors,
