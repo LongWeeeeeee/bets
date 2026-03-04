@@ -29,6 +29,15 @@ if not (
     )
 
 
+def test_tier_threshold_constants_and_labels_are_pinned() -> None:
+    assert runtime.TIER_SIGNAL_MIN_THRESHOLD_TIER1 == 60
+    assert runtime.TIER_SIGNAL_MIN_THRESHOLD_TIER2 == 65
+    assert runtime.TIER_THRESHOLD_STATUS_TIER1_MIN60_BLOCK == "tier1_min60_block"
+    assert runtime.TIER_THRESHOLD_STATUS_TIER2_MIN65_BLOCK == "tier2_min65_block"
+    assert runtime.TIER_THRESHOLD_REASON_TIER1_MIN60_BLOCK == "below_tier1_min60"
+    assert runtime.TIER_THRESHOLD_REASON_TIER2_MIN65_BLOCK == "below_tier2_min65"
+
+
 class _FakeTextResponse:
     def __init__(self, text: str, status_code: int = 200) -> None:
         self.text = text
@@ -210,6 +219,7 @@ def test_tier1_uses_threshold_60(monkeypatch) -> None:
 
     assert result["requested_thresholds"]
     assert result["requested_thresholds"][0] == 60
+    assert 65 not in result["requested_thresholds"]
     assert len(result["sent_messages"]) == 1
     assert result["add_url_calls"]
     assert result["add_url_calls"][-1]["reason"] in {
@@ -223,6 +233,7 @@ def test_any_tier2_uses_threshold_65(monkeypatch) -> None:
 
     assert result["requested_thresholds"]
     assert result["requested_thresholds"][0] == 65
+    assert 60 not in result["requested_thresholds"]
     assert len(result["sent_messages"]) == 1
     assert result["add_url_calls"]
     assert result["add_url_calls"][-1]["reason"] in {
@@ -239,3 +250,8 @@ def test_any_tier2_below_65_is_rejected(monkeypatch) -> None:
     assert len(result["sent_messages"]) == 0
     assert result["add_url_calls"]
     assert result["add_url_calls"][-1]["reason"] == "star_signal_rejected_no_star_signal"
+    details = result["add_url_calls"][-1]["details"]
+    assert isinstance(details, dict)
+    assert details["dispatch_status_label"] == runtime.TIER_THRESHOLD_STATUS_TIER2_MIN65_BLOCK
+    assert details["threshold_block_reason_label"] == runtime.TIER_THRESHOLD_REASON_TIER2_MIN65_BLOCK
+    assert details["threshold_min_wr"] == 65
