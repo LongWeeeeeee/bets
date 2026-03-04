@@ -147,6 +147,12 @@ NETWORTH_STATUS_MIN10_LOSS_LE1500_SEND = "minute10_loss_le1500_send"
 NETWORTH_STATUS_LATE_MONITOR_WAIT_1000 = "late_monitor_wait_1000"
 NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000 = "late_conflict_wait_3000"
 NETWORTH_STATUS_LATE_FALLBACK_21_SEND = "late_fallback_21_send"
+TIER_SIGNAL_MIN_THRESHOLD_TIER1 = 60
+TIER_SIGNAL_MIN_THRESHOLD_TIER2 = 65
+TIER_THRESHOLD_STATUS_TIER1_MIN60_BLOCK = "tier1_min60_block"
+TIER_THRESHOLD_STATUS_TIER2_MIN65_BLOCK = "tier2_min65_block"
+TIER_THRESHOLD_REASON_TIER1_MIN60_BLOCK = "below_tier1_min60"
+TIER_THRESHOLD_REASON_TIER2_MIN65_BLOCK = "below_tier2_min65"
 # В live-режиме late-only star должен уметь попасть в delayed очередь (по умолчанию gate выключен).
 LIVE_STAR_LATE_SIGNAL_GATE_ENABLED = _safe_bool_env("STAR_LATE_SIGNAL_GATE_ENABLED", False)
 
@@ -7092,7 +7098,21 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
             return return_status
 
-        star_target_wr = STAR_THRESHOLD_WR_TIER2 if star_match_tier == 2 else STAR_THRESHOLD_WR_TIER1
+        star_target_wr = (
+            TIER_SIGNAL_MIN_THRESHOLD_TIER2
+            if star_match_tier == 2
+            else TIER_SIGNAL_MIN_THRESHOLD_TIER1
+        )
+        tier_threshold_block_status_label = (
+            TIER_THRESHOLD_STATUS_TIER2_MIN65_BLOCK
+            if star_match_tier == 2
+            else TIER_THRESHOLD_STATUS_TIER1_MIN60_BLOCK
+        )
+        tier_threshold_block_reason_label = (
+            TIER_THRESHOLD_REASON_TIER2_MIN65_BLOCK
+            if star_match_tier == 2
+            else TIER_THRESHOLD_REASON_TIER1_MIN60_BLOCK
+        )
         print(f"   🧭 Star tier mode: tier={star_match_tier}, min_wr={star_target_wr}%")
 
         lead = data['radiant_lead']
@@ -7182,39 +7202,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 selected_star_candidate = cand_base
             elif base_reason != "ok":
                 star_filter_rejections.append(f"base_wr_{star_target_wr}:{base_reason}")
-        if (
-            not has_valid_star_signal
-            and
-            star_match_tier == 2
-            and STAR_ALLOW_TIER2_FALLBACK_TO_TIER1
-            and star_target_wr != STAR_THRESHOLD_WR_TIER1
-        ):
-            has_star_fallback, cand_fallback = _build_star_candidate(STAR_THRESHOLD_WR_TIER1)
-            if has_star_fallback:
-                fallback_passed, fallback_reason = _candidate_passes_extra_filters(
-                    cand_fallback,
-                    star_match_tier,
-                    STAR_THRESHOLD_WR_TIER1,
-                )
-                if fallback_passed:
-                    has_valid_star_signal = True
-                    selected_star_candidate = cand_fallback
-                    selected_star_wr = STAR_THRESHOLD_WR_TIER1
-                    selected_star_mode = "tier2_fallback_tier1_wr"
-                elif fallback_reason != "ok":
-                    star_filter_rejections.append(
-                        f"tier2_fallback_tier1_wr:{fallback_reason}"
-                    )
-
-        star_fallback_wr = (
-            STAR_THRESHOLD_WR_TIER1
-            if (
-                star_match_tier == 2
-                and STAR_ALLOW_TIER2_FALLBACK_TO_TIER1
-                and star_target_wr != STAR_THRESHOLD_WR_TIER1
-            )
-            else None
-        )
+        # Strict tier min-threshold rule: Tier2 matches must keep min WR=65.
+        star_fallback_wr = None
         raw_star_early_summary = _format_raw_star_block_metrics(
             raw_block=star_base_early_output,
             section="early_output",
@@ -7797,6 +7786,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"late[{raw_star_late_summary}]"
             )
             print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
+            print(
+                "   📉 Threshold block: "
+                f"reason={tier_threshold_block_reason_label}, "
+                f"status={tier_threshold_block_status_label}, "
+                f"min_wr={int(star_target_wr)}%"
+            )
             if star_filter_rejections:
                 print(f"   📉 Star filter reject: {'; '.join(star_filter_rejections)}")
             add_url(
@@ -7804,6 +7799,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 reason="star_signal_rejected_no_star_signal",
                 details={
                     "status": status,
+                    "dispatch_status_label": tier_threshold_block_status_label,
+                    "threshold_block_reason_label": tier_threshold_block_reason_label,
+                    "threshold_min_wr": int(star_target_wr),
                     "selected_star_wr": selected_star_wr,
                     "selected_star_mode": selected_star_mode,
                     "star_filter_rejections": star_filter_rejections,
