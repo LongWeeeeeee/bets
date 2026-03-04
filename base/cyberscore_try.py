@@ -192,9 +192,9 @@ try:
 except ValueError:
     STAR_THRESHOLD_WR_TIER1 = 60
 try:
-    STAR_THRESHOLD_WR_TIER2 = int(os.getenv("STAR_THRESHOLD_WR_TIER2", "60"))
+    STAR_THRESHOLD_WR_TIER2 = int(os.getenv("STAR_THRESHOLD_WR_TIER2", "65"))
 except ValueError:
-    STAR_THRESHOLD_WR_TIER2 = 60
+    STAR_THRESHOLD_WR_TIER2 = 65
 
 # Global/Tier filters for star signal qualification.
 STAR_REQUIRE_EARLY_WITH_LATE_SAME_SIGN = _safe_bool_env(
