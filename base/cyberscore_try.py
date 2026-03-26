@@ -3,9 +3,13 @@ import json
 import ast
 import atexit
 import contextlib
-from collections import deque
+from collections import deque, OrderedDict
 import io
 import orjson
+try:
+    import ijson
+except Exception:
+    ijson = None
 import time
 import random
 import sys
@@ -161,6 +165,185 @@ def _get_tempo_helpers():
     _tempo_build_tempo_draft_metrics = _build_tempo_draft_metrics
     _tempo_load_tempo_dicts = _load_tempo_dicts
     return _tempo_build_tempo_draft_metrics, _tempo_load_tempo_dicts
+
+
+def _detect_total_memory_bytes() -> Optional[int]:
+    try:
+        page_size = int(os.sysconf("SC_PAGE_SIZE"))
+        phys_pages = int(os.sysconf("SC_PHYS_PAGES"))
+        total = page_size * phys_pages
+        if total > 0:
+            return total
+    except Exception:
+        return None
+    return None
+
+
+def _stats_sharded_mode_enabled(label: str) -> bool:
+    if label not in {"early", "late"}:
+        return False
+    mode = STATS_SHARDED_LOOKUP_MODE
+    if mode in {"1", "true", "yes", "on", "always"}:
+        return True
+    if mode in {"0", "false", "no", "off", "never"}:
+        return False
+    total_memory_bytes = _detect_total_memory_bytes()
+    if total_memory_bytes is None:
+        return False
+    total_memory_gb = float(total_memory_bytes) / float(1024 ** 3)
+    return total_memory_gb <= float(STATS_SHARDED_LOOKUP_MAX_RAM_GB)
+
+
+def _stats_key_leading_hero_id(key: Any) -> str:
+    try:
+        key_str = str(key)
+    except Exception:
+        return "misc"
+    match = re.match(r"^(\d+)pos[1-5]", key_str)
+    if match:
+        return match.group(1)
+    return "misc"
+
+
+class _ShardedStatsLookup(dict):
+    def __init__(self, shard_dir: Path, *, label: str, max_cached_shards: int = 24):
+        super().__init__()
+        self.shard_dir = Path(shard_dir)
+        self.label = str(label)
+        self.max_cached_shards = max(1, int(max_cached_shards))
+        self._shards: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+
+    def __bool__(self) -> bool:
+        return True
+
+    def _load_shard(self, shard_id: str) -> Dict[str, Any]:
+        shard_id = str(shard_id or "misc")
+        cached = self._shards.get(shard_id)
+        if cached is not None:
+            self._shards.move_to_end(shard_id)
+            return cached
+
+        shard_path = self.shard_dir / f"{shard_id}.jsonl"
+        shard_data: Dict[str, Any] = {}
+        if shard_path.exists():
+            with shard_path.open("rb") as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    key, value = orjson.loads(line)
+                    shard_data[str(key)] = value
+        self._shards[shard_id] = shard_data
+        self._shards.move_to_end(shard_id)
+        while len(self._shards) > self.max_cached_shards:
+            self._shards.popitem(last=False)
+        return shard_data
+
+    def warm_hero_ids(self, hero_ids: List[Any]) -> None:
+        for hero_id in hero_ids:
+            try:
+                shard_id = str(int(hero_id))
+            except (TypeError, ValueError):
+                continue
+            self._load_shard(shard_id)
+
+    def get(self, key: Any, default=None):
+        shard_id = _stats_key_leading_hero_id(key)
+        shard = self._load_shard(shard_id)
+        return shard.get(str(key), default)
+
+
+def _prepare_sharded_stats_lookup(source_path: str, label: str) -> _ShardedStatsLookup:
+    source = Path(source_path)
+    shard_dir = source.parent / f"{source.stem}.shards"
+    meta_path = shard_dir / "_meta.json"
+    complete_path = shard_dir / "_complete"
+    source_stat = source.stat()
+    expected_meta = {
+        "format_version": 1,
+        "source_name": source.name,
+        "source_size": int(source_stat.st_size),
+        "source_mtime_ns": int(source_stat.st_mtime_ns),
+    }
+
+    rebuild_required = True
+    if shard_dir.exists() and meta_path.exists() and complete_path.exists():
+        try:
+            current_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            rebuild_required = any(current_meta.get(k) != v for k, v in expected_meta.items())
+        except Exception:
+            rebuild_required = True
+
+    if rebuild_required:
+        if ijson is None:
+            raise RuntimeError(f"ijson is required to build sharded stats for {label}")
+
+        temp_dir = shard_dir.parent / f"{shard_dir.name}.tmp"
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir)
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        file_handles: Dict[str, Any] = {}
+        entries = 0
+        print(f"🧱 Building sharded {label} stats from {source}")
+        try:
+            with source.open("rb") as f:
+                for key, value in ijson.kvitems(f, ""):
+                    shard_id = _stats_key_leading_hero_id(key)
+                    handle = file_handles.get(shard_id)
+                    if handle is None:
+                        handle = (temp_dir / f"{shard_id}.jsonl").open("ab")
+                        file_handles[shard_id] = handle
+                    handle.write(orjson.dumps([key, value]))
+                    handle.write(b"\n")
+                    entries += 1
+                    if STATS_SHARD_BUILD_PROGRESS_EVERY > 0 and entries % STATS_SHARD_BUILD_PROGRESS_EVERY == 0:
+                        print(f"   📚 {label} shards progress: {entries:,} rows")
+        finally:
+            for handle in file_handles.values():
+                try:
+                    handle.close()
+                except Exception:
+                    pass
+
+        meta_payload = dict(expected_meta)
+        meta_payload["entries"] = int(entries)
+        meta_path_tmp = temp_dir / "_meta.json"
+        meta_path_tmp.write_text(json.dumps(meta_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        complete_path_tmp = temp_dir / "_complete"
+        complete_path_tmp.write_text("ok\n", encoding="utf-8")
+
+        if shard_dir.exists():
+            shutil.rmtree(shard_dir)
+        temp_dir.rename(shard_dir)
+        print(f"✅ Built sharded {label} stats: {entries:,} rows -> {shard_dir}")
+
+    print(f"🧠 Using sharded {label} stats backend: {shard_dir}")
+    return _ShardedStatsLookup(
+        shard_dir,
+        label=label,
+        max_cached_shards=STATS_SHARD_CACHE_MAX,
+    )
+
+
+def _warm_draft_stats_shards(radiant_heroes_and_pos: dict, dire_heroes_and_pos: dict) -> None:
+    hero_ids: List[int] = []
+    for side in (radiant_heroes_and_pos, dire_heroes_and_pos):
+        if not isinstance(side, dict):
+            continue
+        for pos in ("pos1", "pos2", "pos3", "pos4", "pos5"):
+            hero_payload = side.get(pos) or {}
+            try:
+                hero_id = int(hero_payload.get("hero_id"))
+            except (TypeError, ValueError):
+                continue
+            if hero_id > 0:
+                hero_ids.append(hero_id)
+    if not hero_ids:
+        return
+    unique_hero_ids = sorted(set(hero_ids))
+    for stats_obj in (early_dict, late_dict):
+        if isinstance(stats_obj, _ShardedStatsLookup):
+            stats_obj.warm_hero_ids(unique_hero_ids)
 
 
 def _safe_bool_env(name: str, default: bool) -> bool:
@@ -2768,6 +2951,10 @@ late_comeback_ceiling_thresholds = None
 late_comeback_ceiling_max_minute = None
 STATS_SEQUENTIAL_WARMUP_ENABLED = _safe_bool_env("STATS_SEQUENTIAL_WARMUP_ENABLED", True)
 STATS_WARMUP_STEP_DELAY_SECONDS = _safe_float_env("STATS_WARMUP_STEP_DELAY_SECONDS", 45.0)
+STATS_SHARDED_LOOKUP_MODE = str(os.getenv("STATS_SHARDED_LOOKUP_MODE", "auto")).strip().lower() or "auto"
+STATS_SHARDED_LOOKUP_MAX_RAM_GB = _safe_float_env("STATS_SHARDED_LOOKUP_MAX_RAM_GB", 8.0)
+STATS_SHARD_CACHE_MAX = _safe_int_env("STATS_SHARD_CACHE_MAX", 24)
+STATS_SHARD_BUILD_PROGRESS_EVERY = _safe_int_env("STATS_SHARD_BUILD_PROGRESS_EVERY", 500000)
 stats_warmup_last_heavy_load_ts = 0.0
 
 # Настройка прокси
@@ -9333,6 +9520,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     f"winner_slot={applied_winner_slot}, "
                     f"radiant_win={applied_radiant_win}"
                 )
+        _warm_draft_stats_shards(radiant_heroes_and_pos, dire_heroes_and_pos)
         # Отправляем только "сырые" сигналы без wrapper.
         prev_wrapper_enabled = os.getenv("SIGNAL_WRAPPER_ENABLED")
         os.environ["SIGNAL_WRAPPER_ENABLED"] = "0"
@@ -11377,12 +11565,18 @@ def _load_stats_dicts():
 
     if not STATS_SEQUENTIAL_WARMUP_ENABLED:
         if early_dict is None:
-            print(f"📦 Loading early stats: {early_path}")
-            early_dict = _load_json_object(early_path, "early_dict_raw")
+            if _stats_sharded_mode_enabled("early"):
+                early_dict = _prepare_sharded_stats_lookup(early_path, "early")
+            else:
+                print(f"📦 Loading early stats: {early_path}")
+                early_dict = _load_json_object(early_path, "early_dict_raw")
             gc.collect()
         if late_dict is None:
-            print(f"📦 Loading late stats: {late_path}")
-            late_dict = _load_json_object(late_path, "late_dict_raw")
+            if _stats_sharded_mode_enabled("late"):
+                late_dict = _prepare_sharded_stats_lookup(late_path, "late")
+            else:
+                print(f"📦 Loading late stats: {late_path}")
+                late_dict = _load_json_object(late_path, "late_dict_raw")
             gc.collect()
         return (
             lane_data is not None
@@ -11410,8 +11604,11 @@ def _load_stats_dicts():
         return False
 
     next_label, next_path = remaining_heavy[0]
-    print(f"📦 Warmup loading {next_label} stats: {next_path}")
-    next_payload = _load_json_object(next_path, f"{next_label}_dict_raw")
+    if _stats_sharded_mode_enabled(next_label):
+        next_payload = _prepare_sharded_stats_lookup(next_path, next_label)
+    else:
+        print(f"📦 Warmup loading {next_label} stats: {next_path}")
+        next_payload = _load_json_object(next_path, f"{next_label}_dict_raw")
     if next_label == "early":
         early_dict = next_payload
     else:
