@@ -1,8 +1,13 @@
 import datetime
 import html
 import json
+import logging
+import math
 import os
 import re
+import shutil
+import subprocess
+import threading
 import time
 from pathlib import Path
 from itertools import chain, permutations
@@ -17,6 +22,20 @@ except ImportError:
     BeautifulSoup = None
 
 import keys
+try:
+    from signal_wrappers import apply_early_signal_wrapper, apply_late_signal_wrapper
+except ImportError:
+    apply_early_signal_wrapper = None
+    apply_late_signal_wrapper = None
+
+
+logger = logging.getLogger(__name__)
+
+
+class TelegramSendError(RuntimeError):
+    def __init__(self, message: str, *, delivery_uncertain: bool = False) -> None:
+        super().__init__(message)
+        self.delivery_uncertain = bool(delivery_uncertain)
 
 
 # Заглушка для устаревшей функции get_team_positions
@@ -129,18 +148,63 @@ SYNERGY_DUO_REQUIRE_CP_ALIGN = False
 
 # Позиционные веса по умолчанию (разные для early/late)
 EARLY_POSITION_WEIGHTS = {
-    'pos1': 1.2,
-    'pos2': 1.2,
-    'pos3': 1.0,
-    'pos4': 0.9,
+    'pos1': 1.4,
+    'pos2': 1.6,
+    'pos3': 1.4,
+    'pos4': 1.2,
     'pos5': 0.8,
 }
 LATE_POSITION_WEIGHTS = {
-    'pos1': 3.0,
+    'pos1': 2.4,
     'pos2': 2.2,
-    'pos3': 1.6,
-    'pos4': 0.9,
-    'pos5': 0.7,
+    'pos3': 1.4,
+    'pos4': 1.2,
+    'pos5': 0.6,
+}
+# Dedicated late counterpick_1vs1 profile.
+# Currently kept equal to common late weights by request.
+LATE_COUNTERPICK_1VS1_POSITION_WEIGHTS = {
+    'pos1': 2.4,
+    'pos2': 2.2,
+    'pos3': 1.4,
+    'pos4': 1.2,
+    'pos5': 0.6,
+}
+# Late cp1vs1 pair filter (validated on 200k):
+# non-core pairs fallback to 1.0 via get_diff default.
+LATE_COUNTERPICK_1VS1_PAIR_WEIGHTS = {
+    ('pos1', 'pos1'): 1.8,
+    ('pos1', 'pos2'): 1.98,
+    ('pos2', 'pos1'): 1.98,
+    ('pos1', 'pos3'): 1.05,
+    ('pos3', 'pos1'): 1.05,
+    ('pos2', 'pos2'): 2.64,
+    ('pos2', 'pos3'): 1.05,
+    ('pos3', 'pos2'): 1.05,
+    ('pos3', 'pos3'): 1.05,
+}
+
+# Pair-weights for counterpick_1vs1:
+# differentiate core-vs-core interactions; all combinations involving pos4/pos5 default to 1.0.
+# Symmetric by design: (pos1,pos2) == (pos2,pos1).
+COUNTERPICK_1VS1_PAIR_WEIGHTS = {
+    ('pos1', 'pos1'): 3.0,
+    ('pos1', 'pos2'): 2.2,
+    ('pos2', 'pos1'): 2.2,
+    ('pos1', 'pos3'): 1.6,
+    ('pos3', 'pos1'): 1.6,
+    ('pos2', 'pos2'): 2.2,
+    ('pos2', 'pos3'): 1.6,
+    ('pos3', 'pos2'): 1.6,
+    ('pos3', 'pos3'): 1.6,
+}
+# For cp1 we now apply pair-weights directly, so per-pos envelope is neutral.
+COUNTERPICK_1VS1_POSITION_WEIGHTS = {
+    'pos1': 1.0,
+    'pos2': 1.0,
+    'pos3': 1.0,
+    'pos4': 1.0,
+    'pos5': 1.0,
 }
 
 
@@ -200,8 +264,16 @@ def structure_lane_dict(flat_lane_dict):
     return structured
 
 
-def get_diff(radiant, dire, _1vs2=False, min_confidence=0.95, skip_significance_check=False,
-             custom_position_weights=None, use_max_for_synergy=False):
+def get_diff(
+    radiant,
+    dire,
+    _1vs2=False,
+    min_confidence=0.95,
+    skip_significance_check=False,
+    custom_position_weights=None,
+    use_max_for_synergy=False,
+    pair_weights=None,
+):
     """
     ИСПРАВЛЕННАЯ ВЕРСИЯ v4 - ПРЯМОЕ СРАВНЕНИЕ RADIANT VS DIRE
 
@@ -303,12 +375,19 @@ def get_diff(radiant, dire, _1vs2=False, min_confidence=0.95, skip_significance_
             w = w ** float(GET_DIFF_WEIGHT_POWER)
         return w
 
-    def _normalize_items(items):
+    def _normalize_items(items, own_pos=None):
         normalized = []
         for it in items:
+            pair_weight = 1.0
             if isinstance(it, (tuple, list)) and len(it) >= 1:
                 val = float(it[0])
                 weight = float(it[1]) if len(it) >= 2 else 1.0
+                # Optional 3rd tuple field (enemy position) allows pair-specific weighting
+                # for counterpick_1vs1: (value, games, enemy_pos).
+                if pair_weights and own_pos and len(it) >= 3:
+                    enemy_pos = it[2]
+                    if isinstance(enemy_pos, str):
+                        pair_weight = float(pair_weights.get((own_pos, enemy_pos), 1.0))
             else:
                 try:
                     val = float(it)
@@ -323,6 +402,7 @@ def get_diff(radiant, dire, _1vs2=False, min_confidence=0.95, skip_significance_
                 val = apply_bayesian_smoothing(val, weight)
 
             weight = _transform_weight(weight)
+            weight *= max(0.0, pair_weight)
             if weight <= 0:
                 continue
             normalized.append((val, weight))
@@ -370,8 +450,8 @@ def get_diff(radiant, dire, _1vs2=False, min_confidence=0.95, skip_significance_
                 break
         return _weighted_mean(kept)
 
-    def _aggregate_items(items):
-        normalized = _normalize_items(items)
+    def _aggregate_items(items, own_pos=None):
+        normalized = _normalize_items(items, own_pos=own_pos)
         if not normalized:
             return None, 0.0
         if GET_DIFF_VARIANT == 'median':
@@ -477,7 +557,7 @@ def get_diff(radiant, dire, _1vs2=False, min_confidence=0.95, skip_significance_
             if not matchups:
                 continue
 
-            pos_avg, total_weight = _aggregate_items(matchups)
+            pos_avg, total_weight = _aggregate_items(matchups, own_pos=pos)
             if pos_avg is None or total_weight <= 0:
                 continue
 
@@ -511,15 +591,677 @@ def set_get_diff_variant(variant):
     else:
         raise ValueError(f"Unknown get_diff variant: {variant}")
 
-def send_message(message):
+try:
+    TELEGRAM_SEND_TIMEOUT_SECONDS = max(1.0, float(os.getenv("TELEGRAM_SEND_TIMEOUT_SECONDS", "10")))
+except (TypeError, ValueError):
+    TELEGRAM_SEND_TIMEOUT_SECONDS = 10.0
+TELEGRAM_UPDATES_FETCH_ENABLED = str(
+    os.getenv("TELEGRAM_UPDATES_FETCH_ENABLED", "1")
+).strip().lower() in {"1", "true", "yes", "y", "on"}
+try:
+    TELEGRAM_UPDATES_FETCH_LIMIT = max(1, int(os.getenv("TELEGRAM_UPDATES_FETCH_LIMIT", "100")))
+except (TypeError, ValueError):
+    TELEGRAM_UPDATES_FETCH_LIMIT = 100
+TELEGRAM_SUBSCRIBERS_STATE_PATH = Path(
+    str(os.getenv("TELEGRAM_SUBSCRIBERS_STATE_PATH", "runtime/telegram_subscribers_state.json")).strip()
+    or "runtime/telegram_subscribers_state.json"
+)
+TELEGRAM_SEND_PROXY_FALLBACK_ENABLED = str(
+    os.getenv("TELEGRAM_SEND_PROXY_FALLBACK_ENABLED", "1")
+).strip().lower() in {"1", "true", "yes", "y", "on"}
+TELEGRAM_SEND_CURL_FALLBACK_ENABLED = str(
+    os.getenv("TELEGRAM_SEND_CURL_FALLBACK_ENABLED", "1")
+).strip().lower() in {"1", "true", "yes", "y", "on"}
+try:
+    TELEGRAM_SEND_CURL_TIMEOUT_SECONDS = max(
+        TELEGRAM_SEND_TIMEOUT_SECONDS,
+        float(os.getenv("TELEGRAM_SEND_CURL_TIMEOUT_SECONDS", str(TELEGRAM_SEND_TIMEOUT_SECONDS + 2.0))),
+    )
+except (TypeError, ValueError):
+    TELEGRAM_SEND_CURL_TIMEOUT_SECONDS = TELEGRAM_SEND_TIMEOUT_SECONDS + 2.0
+TELEGRAM_SUBSCRIBERS_LOCK = threading.Lock()
+
+
+def _telegram_raise_delivery_error(
+    message: str,
+    *,
+    require_delivery: bool,
+    delivery_uncertain: bool,
+) -> bool:
+    if require_delivery:
+        raise TelegramSendError(message, delivery_uncertain=delivery_uncertain)
+    return False
+
+
+def _telegram_validate_response_payload(response_payload) -> tuple[bool, str]:
+    if isinstance(response_payload, dict) and bool(response_payload.get("ok")):
+        return True, ""
+    description = ""
+    if isinstance(response_payload, dict):
+        description = str(response_payload.get("description") or "").strip()
+    return False, description
+
+
+def _telegram_normalize_chat_id(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _get_default_telegram_chat_ids() -> list[str]:
+    chat_ids = []
+    primary = _telegram_normalize_chat_id(getattr(keys, "Chat_id", None))
+    if primary:
+        chat_ids.append(primary)
+    extra_env = str(os.getenv("TELEGRAM_CHAT_IDS", "")).strip()
+    if extra_env:
+        for item in extra_env.split(","):
+            normalized = _telegram_normalize_chat_id(item)
+            if normalized:
+                chat_ids.append(normalized)
+    extra_keys = getattr(keys, "Chat_ids", None)
+    if isinstance(extra_keys, (list, tuple, set)):
+        for item in extra_keys:
+            normalized = _telegram_normalize_chat_id(item)
+            if normalized:
+                chat_ids.append(normalized)
+    seen = set()
+    ordered = []
+    for chat_id in chat_ids:
+        if chat_id in seen:
+            continue
+        seen.add(chat_id)
+        ordered.append(chat_id)
+    return ordered
+
+
+def _write_json_atomic(path: Path, payload) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp_path, path)
+
+
+def _load_telegram_subscribers_state() -> dict:
+    defaults = _get_default_telegram_chat_ids()
+    state = {"chat_ids": defaults, "last_update_id": 0}
+    try:
+        raw = TELEGRAM_SUBSCRIBERS_STATE_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return state
+    except OSError as exc:
+        logger.warning("Failed to read Telegram subscribers state: %s", exc)
+        return state
+    if not raw.strip():
+        return state
+    try:
+        data = json.loads(raw)
+    except ValueError as exc:
+        logger.warning("Failed to parse Telegram subscribers state: %s", exc)
+        return state
+    if not isinstance(data, dict):
+        return state
+    raw_chat_ids = []
+    chat_ids = []
+    for item in data.get("chat_ids", []):
+        normalized = _telegram_normalize_chat_id(item)
+        if normalized:
+            raw_chat_ids.append(normalized)
+            chat_ids.append(normalized)
+    for item in defaults:
+        if item not in chat_ids:
+            chat_ids.append(item)
+    try:
+        last_update_id = int(data.get("last_update_id") or 0)
+    except (TypeError, ValueError):
+        last_update_id = 0
+    return {
+        "chat_ids": chat_ids,
+        "last_update_id": last_update_id,
+        "_needs_persist": raw_chat_ids != chat_ids,
+    }
+
+
+def _save_telegram_subscribers_state(state: dict) -> None:
+    chat_ids = []
+    seen = set()
+    for item in state.get("chat_ids", []):
+        normalized = _telegram_normalize_chat_id(item)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        chat_ids.append(normalized)
+    try:
+        last_update_id = int(state.get("last_update_id") or 0)
+    except (TypeError, ValueError):
+        last_update_id = 0
+    _write_json_atomic(
+        TELEGRAM_SUBSCRIBERS_STATE_PATH,
+        {"chat_ids": chat_ids, "last_update_id": last_update_id},
+    )
+
+
+def _extract_chat_ids_from_telegram_update(update) -> list[str]:
+    if not isinstance(update, dict):
+        return []
+    chat_ids = []
+
+    def _append(container, *path):
+        current = container
+        for key in path:
+            if not isinstance(current, dict):
+                return
+            current = current.get(key)
+        normalized = _telegram_normalize_chat_id(current)
+        if normalized:
+            chat_ids.append(normalized)
+
+    for key in ("message", "edited_message", "channel_post", "edited_channel_post"):
+        payload = update.get(key)
+        _append(payload, "chat", "id")
+        _append(payload, "from", "id")
+
+    callback_query = update.get("callback_query")
+    _append(callback_query, "from", "id")
+    _append(callback_query, "message", "chat", "id")
+
+    for key in ("my_chat_member", "chat_member"):
+        payload = update.get(key)
+        _append(payload, "chat", "id")
+        _append(payload, "from", "id")
+
+    seen = set()
+    ordered = []
+    for chat_id in chat_ids:
+        if chat_id in seen:
+            continue
+        seen.add(chat_id)
+        ordered.append(chat_id)
+    return ordered
+
+
+def _should_try_telegram_network_fallback(exc: Exception) -> bool:
+    if isinstance(exc, requests.exceptions.ConnectTimeout):
+        return True
+    if isinstance(exc, requests.exceptions.SSLError):
+        return True
+    if not isinstance(exc, requests.exceptions.ConnectionError):
+        return False
+    message = str(exc).lower()
+    return any(
+        token in message
+        for token in (
+            "ssl",
+            "ssleoferror",
+            "eof occurred in violation of protocol",
+            "tls",
+            "handshake",
+            "wrong version number",
+        )
+    )
+
+
+def _get_telegram_proxy_fallback() -> dict:
+    if not TELEGRAM_SEND_PROXY_FALLBACK_ENABLED:
+        return {}
+    raw_proxies = getattr(keys, "BOOKMAKER_PROXIES", None)
+    if not isinstance(raw_proxies, dict):
+        return {}
+    http_proxy = str(raw_proxies.get("http") or raw_proxies.get("https") or "").strip()
+    https_proxy = str(raw_proxies.get("https") or raw_proxies.get("http") or "").strip()
+    proxies = {}
+    if http_proxy:
+        proxies["http"] = http_proxy
+    if https_proxy:
+        proxies["https"] = https_proxy
+    return proxies
+
+
+def _should_try_telegram_curl_fallback(exc: Exception) -> bool:
+    if not TELEGRAM_SEND_CURL_FALLBACK_ENABLED:
+        return False
+    if shutil.which("curl") is None:
+        return False
+    return _should_try_telegram_network_fallback(exc)
+
+
+def _send_message_via_curl_to_chat(chat_id, message) -> bool:
+    curl_path = shutil.which("curl")
+    if not curl_path:
+        raise TelegramSendError(
+            "Telegram curl fallback unavailable: curl not found",
+            delivery_uncertain=True,
+        )
+    bot_token = f"{keys.Token}"
+    chat_id = _telegram_normalize_chat_id(chat_id)
+    if not chat_id:
+        raise TelegramSendError(
+            "Telegram curl fallback requires explicit chat_id",
+            delivery_uncertain=True,
+        )
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    command = [
+        curl_path,
+        "-sS",
+        "--show-error",
+        "--max-time",
+        str(int(math.ceil(TELEGRAM_SEND_CURL_TIMEOUT_SECONDS))),
+        url,
+        "--data-urlencode",
+        f"chat_id={chat_id}",
+        "--data-urlencode",
+        "text@-",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            input=str(message),
+            text=True,
+            capture_output=True,
+            timeout=max(1.0, TELEGRAM_SEND_CURL_TIMEOUT_SECONDS + 1.0),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TelegramSendError(
+            f"Telegram curl fallback timed out: {exc}",
+            delivery_uncertain=True,
+        ) from exc
+    except OSError as exc:
+        raise TelegramSendError(
+            f"Telegram curl fallback failed: {exc}",
+            delivery_uncertain=True,
+        ) from exc
+
+    stdout = str(result.stdout or "").strip()
+    stderr = str(result.stderr or "").strip()
+    if result.returncode != 0:
+        error_suffix = stderr or stdout or f"exit_code={result.returncode}"
+        raise TelegramSendError(
+            f"Telegram curl fallback failed: {error_suffix}",
+            delivery_uncertain=True,
+        )
+
+    try:
+        response_payload = json.loads(stdout) if stdout else {}
+    except ValueError as exc:
+        raise TelegramSendError(
+            f"Telegram curl fallback invalid JSON response: {exc}",
+            delivery_uncertain=True,
+        ) from exc
+
+    ok, description = _telegram_validate_response_payload(response_payload)
+    if not ok:
+        raise TelegramSendError(
+            "Telegram send rejected response"
+            + (f": {description}" if description else ""),
+            delivery_uncertain=False,
+        )
+    logger.warning("Telegram send recovered via curl fallback for chat_id=%s", chat_id)
+    return True
+
+
+def _send_message_via_proxy_request(url, payload):
+    proxies = _get_telegram_proxy_fallback()
+    if not proxies:
+        raise TelegramSendError(
+            "Telegram proxy fallback unavailable: no proxy configured",
+            delivery_uncertain=True,
+        )
+    response = requests.post(
+        url,
+        json=payload,
+        timeout=TELEGRAM_SEND_TIMEOUT_SECONDS,
+        proxies=proxies,
+    )
+    logger.warning("Telegram send recovered via proxy fallback")
+    return response
+
+
+def _recover_telegram_network_send(
+    *,
+    exc: Exception,
+    url,
+    payload,
+    message,
+    require_delivery: bool,
+    error_message: str,
+    delivery_uncertain: bool,
+):
+    if _should_try_telegram_network_fallback(exc):
+        try:
+            logger.warning("%s; trying proxy fallback", error_message)
+            return _send_message_via_proxy_request(url, payload)
+        except requests.exceptions.RequestException as proxy_exc:
+            logger.error("Telegram proxy fallback failed: %s", proxy_exc)
+            if _should_try_telegram_curl_fallback(proxy_exc):
+                logger.warning("Telegram proxy fallback failed; trying curl fallback")
+                chat_id = payload.get("chat_id") if isinstance(payload, dict) else None
+                return _send_message_via_curl_to_chat(chat_id, message)
+            return _telegram_raise_delivery_error(
+                f"{error_message}: {proxy_exc}",
+                require_delivery=require_delivery,
+                delivery_uncertain=isinstance(
+                    proxy_exc,
+                    (
+                        requests.exceptions.ReadTimeout,
+                        requests.exceptions.ConnectionError,
+                        requests.exceptions.SSLError,
+                    ),
+                ),
+            )
+        except TelegramSendError:
+            if _should_try_telegram_curl_fallback(exc):
+                logger.warning("Telegram proxy unavailable; trying curl fallback")
+                chat_id = payload.get("chat_id") if isinstance(payload, dict) else None
+                return _send_message_via_curl_to_chat(chat_id, message)
+    return _telegram_raise_delivery_error(
+        f"{error_message}: {exc}",
+        require_delivery=require_delivery,
+        delivery_uncertain=delivery_uncertain,
+    )
+
+
+def _send_message_to_chat_id(chat_id, message, *, require_delivery: bool = False):
     bot_token = f'{keys.Token}'
-    chat_id = f'{keys.Chat_id}'
+    chat_id = _telegram_normalize_chat_id(chat_id)
+    if not chat_id:
+        return _telegram_raise_delivery_error(
+            "Telegram send failed: empty chat_id",
+            require_delivery=require_delivery,
+            delivery_uncertain=False,
+        )
     url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
     payload = {
         'chat_id': chat_id,
         'text': message,
     }
-    requests.post(url, json=payload)
+    try:
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=TELEGRAM_SEND_TIMEOUT_SECONDS,
+        )
+    except requests.exceptions.ConnectTimeout as exc:
+        logger.error("Telegram send connect-timeout failed: %s", exc)
+        recovered = _recover_telegram_network_send(
+            exc=exc,
+            url=url,
+            payload=payload,
+            message=message,
+            require_delivery=require_delivery,
+            error_message="Telegram send failed",
+            delivery_uncertain=False,
+        )
+        if isinstance(recovered, bool):
+            return recovered
+        response = recovered
+    except requests.exceptions.ReadTimeout as exc:
+        logger.error("Telegram send read-timeout failed: %s", exc)
+        return _telegram_raise_delivery_error(
+            f"Telegram send read-timeout failed: {exc}",
+            require_delivery=require_delivery,
+            delivery_uncertain=True,
+        )
+    except requests.exceptions.SSLError as exc:
+        logger.error("Telegram send SSL error: %s", exc)
+        recovered = _recover_telegram_network_send(
+            exc=exc,
+            url=url,
+            payload=payload,
+            message=message,
+            require_delivery=require_delivery,
+            error_message="Telegram send SSL error",
+            delivery_uncertain=True,
+        )
+        if isinstance(recovered, bool):
+            return recovered
+        response = recovered
+    except requests.exceptions.ConnectionError as exc:
+        logger.error("Telegram send connection error: %s", exc)
+        recovered = _recover_telegram_network_send(
+            exc=exc,
+            url=url,
+            payload=payload,
+            message=message,
+            require_delivery=require_delivery,
+            error_message="Telegram send connection error",
+            delivery_uncertain=True,
+        )
+        if isinstance(recovered, bool):
+            return recovered
+        response = recovered
+    except requests.exceptions.RequestException as exc:
+        logger.error("Telegram send failed: %s", exc)
+        return _telegram_raise_delivery_error(
+            f"Telegram send failed: {exc}",
+            require_delivery=require_delivery,
+            delivery_uncertain=False,
+        )
+
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError as exc:
+        logger.error("Telegram send HTTP error: %s", exc)
+        return _telegram_raise_delivery_error(
+            f"Telegram send failed: {exc}",
+            require_delivery=require_delivery,
+            delivery_uncertain=False,
+        )
+
+    try:
+        response_payload = response.json()
+    except ValueError as exc:
+        logger.error("Telegram send invalid JSON response: %s", exc)
+        return _telegram_raise_delivery_error(
+            f"Telegram send invalid JSON response: {exc}",
+            require_delivery=require_delivery,
+            delivery_uncertain=True,
+        )
+
+    ok, description = _telegram_validate_response_payload(response_payload)
+    if not ok:
+        logger.error(
+            "Telegram send rejected response: status=%s description=%s payload=%s",
+            getattr(response, "status_code", "n/a"),
+            description,
+            response_payload,
+        )
+        return _telegram_raise_delivery_error(
+            "Telegram send rejected response"
+            + (f": {description}" if description else ""),
+            require_delivery=require_delivery,
+            delivery_uncertain=False,
+        )
+    return True
+
+
+def _fetch_telegram_updates_from_api(offset: int) -> tuple[list[dict], int]:
+    bot_token = f"{keys.Token}"
+    url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
+    payload = {
+        "offset": int(offset),
+        "limit": int(TELEGRAM_UPDATES_FETCH_LIMIT),
+        "timeout": 0,
+    }
+    try:
+        response = requests.post(url, json=payload, timeout=TELEGRAM_SEND_TIMEOUT_SECONDS)
+    except requests.exceptions.RequestException as exc:
+        if _should_try_telegram_network_fallback(exc):
+            response = _send_message_via_proxy_request(url, payload)
+        else:
+            raise
+    response.raise_for_status()
+    response_payload = response.json()
+    ok, description = _telegram_validate_response_payload(response_payload)
+    if not ok:
+        raise RuntimeError("Telegram getUpdates rejected" + (f": {description}" if description else ""))
+    updates = response_payload.get("result")
+    if not isinstance(updates, list):
+        return [], offset - 1
+    max_update_id = offset - 1
+    normalized_updates = []
+    for item in updates:
+        if not isinstance(item, dict):
+            continue
+        normalized_updates.append(item)
+        try:
+            update_id = int(item.get("update_id"))
+        except (TypeError, ValueError):
+            continue
+        if update_id > max_update_id:
+            max_update_id = update_id
+    return normalized_updates, max_update_id
+
+
+def _refresh_telegram_subscribers() -> list[str]:
+    with TELEGRAM_SUBSCRIBERS_LOCK:
+        state = _load_telegram_subscribers_state()
+        chat_ids = list(state.get("chat_ids", []))
+        last_update_id = int(state.get("last_update_id") or 0)
+        changed = bool(state.get("_needs_persist"))
+        if not TELEGRAM_UPDATES_FETCH_ENABLED:
+            if changed:
+                try:
+                    _save_telegram_subscribers_state(state)
+                except OSError as exc:
+                    logger.warning("Failed to persist Telegram subscribers state: %s", exc)
+            return chat_ids
+
+        offset = last_update_id + 1 if last_update_id > 0 else 0
+        max_update_id = last_update_id
+        extracted = []
+        try:
+            while True:
+                updates, batch_max_update_id = _fetch_telegram_updates_from_api(offset)
+                if batch_max_update_id > max_update_id:
+                    max_update_id = batch_max_update_id
+                if not updates:
+                    break
+                for update in updates:
+                    extracted.extend(_extract_chat_ids_from_telegram_update(update))
+                if batch_max_update_id < offset:
+                    break
+                offset = batch_max_update_id + 1
+                if len(updates) < TELEGRAM_UPDATES_FETCH_LIMIT:
+                    break
+        except Exception as exc:
+            logger.warning("Failed to refresh Telegram subscribers from getUpdates: %s", exc)
+            return chat_ids
+
+        for chat_id in extracted:
+            if chat_id not in chat_ids:
+                chat_ids.append(chat_id)
+                changed = True
+        if max_update_id != last_update_id:
+            changed = True
+        if changed:
+            state["chat_ids"] = chat_ids
+            state["last_update_id"] = max_update_id
+            try:
+                _save_telegram_subscribers_state(state)
+            except OSError as exc:
+                logger.warning("Failed to persist Telegram subscribers state: %s", exc)
+        return chat_ids
+
+
+def _is_terminal_telegram_chat_error(exc: TelegramSendError) -> bool:
+    message = str(exc).lower()
+    return any(
+        token in message
+        for token in (
+            "bot was blocked by the user",
+            "chat not found",
+            "user is deactivated",
+            "bot was kicked",
+            "forbidden",
+        )
+    )
+
+
+def _remove_telegram_subscribers(chat_ids_to_remove: list[str]) -> None:
+    if not chat_ids_to_remove:
+        return
+    with TELEGRAM_SUBSCRIBERS_LOCK:
+        state = _load_telegram_subscribers_state()
+        existing = list(state.get("chat_ids", []))
+        filtered = [chat_id for chat_id in existing if chat_id not in set(chat_ids_to_remove)]
+        if filtered == existing:
+            return
+        state["chat_ids"] = filtered
+        try:
+            _save_telegram_subscribers_state(state)
+        except OSError as exc:
+            logger.warning("Failed to remove Telegram subscribers %s: %s", chat_ids_to_remove, exc)
+
+
+def send_message(message, *, require_delivery: bool = False):
+    target_chat_ids = _refresh_telegram_subscribers()
+    if not target_chat_ids:
+        target_chat_ids = _get_default_telegram_chat_ids()
+
+    delivered = []
+    uncertain_errors = []
+    terminal_chat_errors = []
+    hard_errors = []
+
+    for chat_id in target_chat_ids:
+        try:
+            result = _send_message_to_chat_id(chat_id, message, require_delivery=require_delivery)
+            if result:
+                delivered.append(chat_id)
+        except TelegramSendError as exc:
+            if _is_terminal_telegram_chat_error(exc):
+                terminal_chat_errors.append((chat_id, exc))
+                logger.warning("Removing Telegram subscriber %s after terminal error: %s", chat_id, exc)
+                continue
+            if exc.delivery_uncertain:
+                uncertain_errors.append((chat_id, exc))
+            else:
+                hard_errors.append((chat_id, exc))
+        except Exception as exc:
+            hard_errors.append((chat_id, exc))
+
+    if terminal_chat_errors:
+        _remove_telegram_subscribers([chat_id for chat_id, _ in terminal_chat_errors])
+
+    if delivered:
+        if uncertain_errors:
+            logger.warning(
+                "Telegram broadcast partial uncertain delivery: delivered=%s uncertain=%s",
+                delivered,
+                [chat_id for chat_id, _ in uncertain_errors],
+            )
+        if hard_errors:
+            logger.warning(
+                "Telegram broadcast partial hard failures: delivered=%s failed=%s",
+                delivered,
+                [chat_id for chat_id, _ in hard_errors],
+            )
+        return True
+
+    if uncertain_errors:
+        first_chat_id, first_exc = uncertain_errors[0]
+        return _telegram_raise_delivery_error(
+            f"Telegram broadcast uncertain for chat_id={first_chat_id}: {first_exc}",
+            require_delivery=require_delivery,
+            delivery_uncertain=True,
+        )
+    if hard_errors:
+        first_chat_id, first_exc = hard_errors[0]
+        return _telegram_raise_delivery_error(
+            f"Telegram broadcast failed for chat_id={first_chat_id}: {first_exc}",
+            require_delivery=require_delivery,
+            delivery_uncertain=False,
+        )
+    if terminal_chat_errors:
+        first_chat_id, first_exc = terminal_chat_errors[0]
+        return _telegram_raise_delivery_error(
+            f"Telegram broadcast failed for chat_id={first_chat_id}: {first_exc}",
+            require_delivery=require_delivery,
+            delivery_uncertain=False,
+        )
+    return False
 name_to_id = {'abaddon': 102, 'alchemist': 73, 'ancient apparition': 68, 'anti-mage': 1, 'arc warden': 113, 'axe': 2, 'bane': 3, 'batrider': 65, 'beastmaster': 38, 'bloodseeker': 4, 'bounty hunter': 62, 'brewmaster': 78, 'bristleback': 99, 'broodmother': 61, 'centaur warrunner': 96, 'chaos knight': 81, 'chen': 66, 'clinkz': 56, 'clockwerk': 51, 'crystal maiden': 5, 'dark seer': 55, 'dark willow': 119, 'dawnbreaker': 135, 'dazzle': 50, 'death prophet': 43, 'disruptor': 87, 'doom': 69, 'dragon knight': 49, 'drow ranger': 6, 'earth spirit': 107, 'earthshaker': 7, 'elder titan': 103, 'ember spirit': 106, 'enchantress': 58, 'enigma': 33, 'faceless void': 41, 'grimstroke': 121, 'gyrocopter': 72, 'hoodwink': 123, 'huskar': 59, 'invoker': 74, 'io': 91, 'jakiro': 64, 'juggernaut': 8, 'keeper of the light': 90, 'kez': 145, 'kunkka': 23, 'legion commander': 104, 'leshrac': 52, 'lich': 31, 'lifestealer': 54, 'lina': 25, 'lion': 26, 'lone druid': 80, 'luna': 48, 'lycan': 77, 'magnus': 97, 'marci': 136, 'mars': 129, 'medusa': 94, 'meepo': 82, 'mirana': 9, 'monkey king': 114, 'morphling': 10, 'muerta': 138, 'naga siren': 89, "nature's prophet": 53, 'necrophos': 36, 'night stalker': 60, 'nyx assassin': 88, 'ogre magi': 84, 'omniknight': 57, 'oracle': 111, 'outworld destroyer': 76, 'pangolier': 120, 'phantom assassin': 44, 'phantom lancer': 12, 'phoenix': 110, 'primal beast': 137, 'puck': 13, 'pudge': 14, 'pugna': 45, 'queen of pain': 39, 'razor': 15, 'riki': 32, 'ring master': 131, 'ringmaster': 131, 'rubick': 86, 'sand king': 16, 'shadow demon': 79, 'shadow fiend': 11, 'shadow shaman': 27, 'silencer': 75, 'skywrath mage': 101, 'slardar': 28, 'slark': 93, 'snapfire': 128, 'sniper': 35, 'spectre': 67, 'spirit breaker': 71, 'storm spirit': 17, 'sven': 18, 'techies': 105, 'templar assassin': 46, 'terrorblade': 109, 'tidehunter': 29, 'timbersaw': 98, 'tinker': 34, 'tiny': 19, 'treant protector': 83, 'troll warlord': 95, 'tusk': 100, 'underlord': 108, 'undying': 85, 'ursa': 70, 'vengeful spirit': 20, 'venomancer': 40, 'viper': 47, 'visage': 92, 'void spirit': 126, 'warlock': 37, 'weaver': 63, 'windranger': 21, 'winter wyvern': 112, 'witch doctor': 30, 'wraith king': 42, 'zeus': 22}
 
 def get_team_names(soup):
@@ -669,12 +1411,10 @@ def if_unique(url, score):
 
 
 def add_url(url):
-    with open('count_synergy_10th_2000/map_id_check.txt', 'r+') as f:
-        data = json.load(f)
-        data.append(url)
-        f.truncate()
-        f.seek(0)
-        json.dump(data, f)
+    raise RuntimeError(
+        "Legacy functions.add_url() is disabled. "
+        "Use cyberscore_try.add_url() with the runtime state pipeline."
+    )
 
 
 def find_in_radiant(radiant_players, nick_name, translate, position, radiant_pick, radiant_lst):
@@ -769,6 +1509,7 @@ _STAR_THRESHOLDS_FALLBACK = {
     60: {
         'early_output': [
             ('counterpick_1vs1', 4),
+            ('pos1_vs_pos1', 20),
             ('counterpick_1vs2', 7),
             ('synergy_duo', 7),
             ('solo', 3),
@@ -776,6 +1517,7 @@ _STAR_THRESHOLDS_FALLBACK = {
         ],
         'mid_output': [
             ('counterpick_1vs1', 5),
+            ('pos1_vs_pos1', 20),
             ('counterpick_1vs2', 8),
             ('synergy_duo', 8),
             ('synergy_trio', 6),
@@ -786,6 +1528,15 @@ _STAR_THRESHOLDS_FALLBACK = {
 
 
 def _load_star_thresholds() -> dict:
+    def _copy_block(block: dict) -> dict:
+        out = {}
+        for section in ('early_output', 'mid_output'):
+            rows = block.get(section) or []
+            out[section] = [(str(metric), int(threshold)) for metric, threshold in rows]
+        return out
+
+    fallback60 = _copy_block(_STAR_THRESHOLDS_FALLBACK.get(60, {}))
+
     if STAR_THRESHOLDS_PATH.exists():
         try:
             data = json.loads(STAR_THRESHOLDS_PATH.read_text(encoding='utf-8'))
@@ -801,22 +1552,111 @@ def _load_star_thresholds() -> dict:
                     block = {}
                     for section in ('early_output', 'mid_output'):
                         items = v.get(section) or []
-                        block[section] = [(m, int(t)) for m, t in items]
+                        rows = []
+                        if isinstance(items, list):
+                            for item in items:
+                                if not isinstance(item, (list, tuple)) or len(item) != 2:
+                                    continue
+                                metric, threshold = item
+                                try:
+                                    rows.append((str(metric), int(threshold)))
+                                except (TypeError, ValueError):
+                                    continue
+                        block[section] = rows
                     parsed[key] = block
             if parsed:
-                return parsed
-        except Exception:
-            pass
-    return _STAR_THRESHOLDS_FALLBACK.copy()
+                hydrated = {}
+                for wr, block in parsed.items():
+                    out_block = {}
+                    for section in ('early_output', 'mid_output'):
+                        section_rows = list(block.get(section) or [])
+                        if not section_rows and int(wr) == 60:
+                            logger.warning(
+                                "STAR thresholds missing WR60 section=%s in %s; using hardcoded fallback60",
+                                section,
+                                STAR_THRESHOLDS_PATH,
+                            )
+                            section_rows = list(fallback60.get(section, []))
+                        elif not section_rows:
+                            logger.warning(
+                                "STAR thresholds missing WR%s section=%s in %s; section disabled",
+                                wr,
+                                section,
+                                STAR_THRESHOLDS_PATH,
+                            )
+                        out_block[section] = section_rows
+                    hydrated[int(wr)] = out_block
+                if 60 not in hydrated:
+                    logger.warning(
+                        "STAR thresholds missing WR60 in %s; using hardcoded fallback60",
+                        STAR_THRESHOLDS_PATH,
+                    )
+                    hydrated[60] = _copy_block(fallback60)
+                return hydrated
+            raise RuntimeError(
+                f"STAR thresholds file {STAR_THRESHOLDS_PATH} contains no valid WR entries"
+            )
+        except Exception as exc:
+            logger.exception("Failed to load STAR thresholds from %s", STAR_THRESHOLDS_PATH)
+            raise RuntimeError(
+                f"Failed to load STAR thresholds from {STAR_THRESHOLDS_PATH}"
+            ) from exc
+    return {int(k): _copy_block(v) for k, v in _STAR_THRESHOLDS_FALLBACK.items()}
 
 
 STAR_THRESHOLDS_BY_WR = _load_star_thresholds()
+STAR_LATE_SIGNAL_GATE_ENABLED = os.getenv('STAR_LATE_SIGNAL_GATE_ENABLED', '1') == '1'
+STAR_LATE_SIGNAL_GATE_SOLO_MIN = int(os.getenv('STAR_LATE_SIGNAL_GATE_SOLO_MIN', '6'))
+STAR_LATE_SIGNAL_GATE_TRIO_MIN = int(os.getenv('STAR_LATE_SIGNAL_GATE_TRIO_MIN', '7'))
+STAR_LATE_STRONG_PAIR_ENABLED = os.getenv('STAR_LATE_STRONG_PAIR_ENABLED', '1') == '1'
+STAR_LATE_STRONG_PAIR_REQUIRED = os.getenv('STAR_LATE_STRONG_PAIR_REQUIRED', '0') == '1'
+STAR_LATE_STRONG_PAIR_TRIO_MIN = int(os.getenv('STAR_LATE_STRONG_PAIR_TRIO_MIN', '7'))
+STAR_LATE_STRONG_PAIR_POS1_MIN = int(os.getenv('STAR_LATE_STRONG_PAIR_POS1_MIN', '6'))
 
 
-def format_output_dict(output_dict, flag=False, none_trashold=None):
+def format_output_dict(
+    output_dict,
+    flag=False,
+    none_trashold=None,
+    target_wr=None,
+    late_signal_gate_enabled=None,
+):
+    def _coerce_metric_value(raw):
+        if raw is None:
+            return None
+        if isinstance(raw, str):
+            value = raw.strip()
+            if not value:
+                return None
+            if value.endswith('*'):
+                value = value[:-1]
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        if isinstance(raw, (int, float)):
+            return float(raw)
+        return None
+
+    def _metric_sign(raw):
+        value = _coerce_metric_value(raw)
+        if value is None or value == 0:
+            return None
+        return 1 if value > 0 else -1
+
+    def _matches_sign_and_abs(data, key, sign, min_abs):
+        value = _coerce_metric_value(data.get(key))
+        if value is None:
+            return False
+        if sign > 0 and value <= 0:
+            return False
+        if sign < 0 and value >= 0:
+            return False
+        return abs(value) >= float(min_abs)
+
     def mark_if_exceeds(data, key, threshold):
-        val = data.get(key)
-        if val is None or isinstance(val, str):
+        val = _coerce_metric_value(data.get(key))
+        if val is None:
             return False, None
         if abs(val) >= threshold:
             data[key] = f"{val}*"
@@ -824,12 +1664,28 @@ def format_output_dict(output_dict, flag=False, none_trashold=None):
             return True, sign
         return False, None
     # Пороговые наборы (подбирались по pro_new_holdout_200kfiles.txt).
-    # Выбор набора: STAR_THRESHOLD_WR (проценты, например 70). По умолчанию 65.
-    try:
-        target_wr = int(os.getenv('STAR_THRESHOLD_WR', '60'))
-    except ValueError:
-        target_wr = 60
-    thresholds = STAR_THRESHOLDS_BY_WR.get(target_wr, STAR_THRESHOLDS_BY_WR[60])
+    # Можно передать target_wr явно (например 60/65), иначе берётся STAR_THRESHOLD_WR.
+    if target_wr is None:
+        try:
+            target_wr = int(os.getenv('STAR_THRESHOLD_WR', '60'))
+        except ValueError:
+            target_wr = 60
+    else:
+        try:
+            target_wr = int(target_wr)
+        except (TypeError, ValueError):
+            target_wr = 60
+    thresholds = STAR_THRESHOLDS_BY_WR.get(target_wr)
+    if not isinstance(thresholds, dict):
+        if int(target_wr) != 60:
+            return False
+        thresholds = STAR_THRESHOLDS_BY_WR.get(60, _STAR_THRESHOLDS_FALLBACK[60])
+    if not (thresholds.get('early_output') or thresholds.get('mid_output')):
+        if int(target_wr) != 60:
+            return False
+        thresholds = STAR_THRESHOLDS_BY_WR.get(60, _STAR_THRESHOLDS_FALLBACK[60])
+    if late_signal_gate_enabled is None:
+        late_signal_gate_enabled = STAR_LATE_SIGNAL_GATE_ENABLED
 
     any_valid_block = False
     for section, metrics in thresholds.items():
@@ -837,10 +1693,13 @@ def format_output_dict(output_dict, flag=False, none_trashold=None):
         block_star_count = 0
         block_sign = None
         block_conflict = False
+        starred_original_values = {}
         for key, threshold in metrics:
+            original_value = data.get(key)
             hit, sign = mark_if_exceeds(data, key, threshold)
             if not hit:
                 continue
+            starred_original_values[key] = original_value
             block_star_count += 1
             if sign is None:
                 continue
@@ -848,6 +1707,48 @@ def format_output_dict(output_dict, flag=False, none_trashold=None):
                 block_sign = sign
             elif block_sign != sign:
                 block_conflict = True
+        if block_star_count > 0 and block_conflict:
+            for key, original_value in starred_original_values.items():
+                data[key] = original_value
+        if (
+            block_star_count > 0
+            and not block_conflict
+            and section == 'mid_output'
+            and late_signal_gate_enabled
+            and block_sign is not None
+        ):
+            has_late_anchor = (
+                _coerce_metric_value(data.get('solo')) is not None
+                or _coerce_metric_value(data.get('synergy_trio')) is not None
+            )
+            if has_late_anchor:
+                late_gate_ok = (
+                    _matches_sign_and_abs(data, 'solo', block_sign, STAR_LATE_SIGNAL_GATE_SOLO_MIN)
+                    or _matches_sign_and_abs(data, 'synergy_trio', block_sign, STAR_LATE_SIGNAL_GATE_TRIO_MIN)
+                )
+                if not late_gate_ok:
+                    for key, original_value in starred_original_values.items():
+                        data[key] = original_value
+                    continue
+        if section == 'mid_output':
+            data.pop('trio_pos1_strong', None)
+        if (
+            block_star_count > 0
+            and not block_conflict
+            and section == 'mid_output'
+            and STAR_LATE_STRONG_PAIR_ENABLED
+            and block_sign is not None
+        ):
+            has_strong_pair = (
+                _matches_sign_and_abs(data, 'synergy_trio', block_sign, STAR_LATE_STRONG_PAIR_TRIO_MIN)
+                and _matches_sign_and_abs(data, 'pos1_vs_pos1', block_sign, STAR_LATE_STRONG_PAIR_POS1_MIN)
+            )
+            if has_strong_pair:
+                data['trio_pos1_strong'] = int(block_sign)
+            elif STAR_LATE_STRONG_PAIR_REQUIRED:
+                for key, original_value in starred_original_values.items():
+                    data[key] = original_value
+                continue
         if block_star_count > 0 and not block_conflict:
             any_valid_block = True
     return any_valid_block
@@ -1142,8 +2043,11 @@ def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, dat
                 if not hero_left:
                     value = 1 - value
 
-                # Сохраняем (winrate, count) для взвешивания в get_diff
-                output.setdefault(f'{mkdir}_1vs1', {}).setdefault(pos, []).append((value, games))
+                # Сохраняем (winrate, count, enemy_pos) для pair-weights в get_diff.
+                output.setdefault(f'{mkdir}_1vs1', {}).setdefault(pos, []).append((value, games, enemy_pos))
+                if pos == 'pos1' and enemy_pos == 'pos1':
+                    # Отдельно сохраняем carry-vs-carry матчап для отдельной метрики.
+                    output.setdefault(f'{mkdir}_pos1_vs_pos1', []).append((value, games))
 
                 # Core vs Core matchups (pos1-3 vs pos1-3)
                 if pos in CORE_POSITIONS and enemy_pos in CORE_POSITIONS:
@@ -1479,9 +2383,1100 @@ def check_bad_map(match, maps_data=None, break_flag=False, start_date_time=None)
     return radiant_heroes_and_pos, dire_heroes_and_pos
 
 
+def _ids_from_names(*hero_names):
+    """Convert hero names to id set, ignoring unknown names."""
+    out = set()
+    for hero_name in hero_names:
+        hero_id = name_to_id.get(hero_name)
+        if hero_id is not None:
+            out.add(int(hero_id))
+    return out
+
+
+# Separate hybrid counterplay metric:
+# 1) hero-vs profiles for known fragile heroes;
+# 2) capability matching (root -> dispel/manta, escape -> lock, passive-core -> break, commit-ult -> save)
+#    using local hero features built from dota2.com parsing pipeline.
+
+COUNTERPLAY_HERO_FEATURES_PATH = Path(
+    os.getenv(
+        "COUNTERPLAY_HERO_FEATURES_PATH",
+        os.getenv("HERO_FEATURES_FILE", "/Users/alex/Documents/ingame/data/hero_features_processed.json"),
+    )
+)
+
+_COUNTERPLAY_HERO_FEATURES_CACHE = None
+
+# Counter tools (enemy side)
+COUNTERPLAY_DISPEL_HERO_IDS = _ids_from_names(
+    "legion commander",
+    "abaddon",
+    "oracle",
+    "omniknight",
+    "slark",
+    "naga siren",
+    "juggernaut",
+    "lifestealer",
+    "ursa",
+)
+COUNTERPLAY_STRONG_DISPEL_HERO_IDS = _ids_from_names(
+    "legion commander",
+    "oracle",
+    "abaddon",
+)
+COUNTERPLAY_SAVE_HERO_IDS = _ids_from_names(
+    "abaddon",
+    "dazzle",
+    "oracle",
+    "shadow demon",
+    "omniknight",
+    "pugna",
+    "io",
+    "winter wyvern",
+    "vengeful spirit",
+    "outworld destroyer",
+    "tusk",
+)
+COUNTERPLAY_LATE_SAVE_HERO_IDS = _ids_from_names("centaur warrunner")
+COUNTERPLAY_SILENCE_HERO_IDS = _ids_from_names(
+    "silencer",
+    "death prophet",
+    "skywrath mage",
+    "disruptor",
+    "night stalker",
+    "riki",
+    "grimstroke",
+    "drow ranger",
+    "puck",
+)
+COUNTERPLAY_ROOT_LOCK_HERO_IDS = _ids_from_names(
+    "treant protector",
+    "ember spirit",
+    "underlord",
+    "dark willow",
+    "naga siren",
+    "medusa",
+    "troll warlord",
+    "oracle",
+)
+COUNTERPLAY_STUN_LOCK_HERO_IDS = _ids_from_names(
+    "lion",
+    "shadow shaman",
+    "bane",
+    "nyx assassin",
+    "axe",
+    "legion commander",
+    "beastmaster",
+    "doom",
+    "faceless void",
+    "magnus",
+    "slardar",
+    "pudge",
+    "enigma",
+    "mars",
+    "tidehunter",
+    "earthshaker",
+    "sven",
+)
+COUNTERPLAY_MANTA_HOLDER_HERO_IDS = _ids_from_names(
+    "morphling",
+    "luna",
+    "medusa",
+    "naga siren",
+    "terrorblade",
+    "phantom lancer",
+    "spectre",
+    "drow ranger",
+    "sniper",
+)
+COUNTERPLAY_BREAK_ABILITY_HERO_IDS = _ids_from_names(
+    "hoodwink",
+    "shadow demon",
+    "shadow shaman",
+    "doom",
+    "viper",
+    "primal beast",
+)
+COUNTERPLAY_SILVER_EDGE_HOLDER_HERO_IDS = _ids_from_names(
+    "dragon knight",
+    "kunkka",
+    "tiny",
+    "slark",
+    "sniper",
+    "drow ranger",
+    "templar assassin",
+    "phantom assassin",
+    "sven",
+    "monkey king",
+    "troll warlord",
+    "gyrocopter",
+    "wraith king",
+    "lifestealer",
+    "luna",
+    "medusa",
+    "morphling",
+    "shadow fiend",
+    "windranger",
+    "legion commander",
+)
+COUNTERPLAY_NATURAL_INVIS_HERO_IDS = _ids_from_names(
+    "clinkz",
+    "riki",
+    "bounty hunter",
+    "nyx assassin",
+    "weaver",
+)
+COUNTERPLAY_INSTANT_LOCK_HERO_IDS = _ids_from_names(
+    "lion",
+    "shadow shaman",
+    "bane",
+    "nyx assassin",
+    "axe",
+    "legion commander",
+    "beastmaster",
+    "doom",
+    "faceless void",
+    "magnus",
+    "slardar",
+    "batrider",
+)
+COUNTERPLAY_MARS_FOLLOWUP_HERO_IDS = _ids_from_names(
+    "skywrath mage",
+    "lina",
+    "leshrac",
+    "invoker",
+    "shadow fiend",
+    "drow ranger",
+    "templar assassin",
+    "ursa",
+    "viper",
+    "slark",
+)
+HERO_MARS_ID = name_to_id.get("mars")
+
+# Vulnerable archetypes (own side)
+COUNTERPLAY_ROOT_RELIANT_HERO_IDS = _ids_from_names(
+    "treant protector",
+    "underlord",
+    "dark willow",
+    "naga siren",
+)
+COUNTERPLAY_ESCAPE_HERO_IDS = _ids_from_names(
+    "storm spirit",
+    "ember spirit",
+    "void spirit",
+    "puck",
+    "queen of pain",
+    "morphling",
+    "anti-mage",
+    "weaver",
+)
+COUNTERPLAY_PASSIVE_TANK_HERO_IDS = _ids_from_names(
+    "bristleback",
+    "timbersaw",
+    "tidehunter",
+)
+COUNTERPLAY_COMMIT_HERO_IDS = _ids_from_names(
+    "legion commander",
+    "axe",
+    "doom",
+    "huskar",
+    "troll warlord",
+    "bane",
+    "beastmaster",
+    "batrider",
+)
+COUNTERPLAY_SAVE_SENSITIVE_DAMAGE_HERO_IDS = _ids_from_names(
+    "snapfire",
+    "skywrath mage",
+    "disruptor",
+)
+COUNTERPLAY_EGG_TOMB_VULNERABLE_HERO_IDS = _ids_from_names(
+    "phoenix",
+    "undying",
+)
+COUNTERPLAY_HEALER_HERO_IDS = _ids_from_names(
+    "dazzle",
+    "oracle",
+    "io",
+    "omniknight",
+    "warlock",
+    "treant protector",
+    "chen",
+    "necrophos",
+)
+COUNTERPLAY_BKB_PIERCE_VULNERABLE_HERO_IDS = _ids_from_names(
+    "primal beast",
+    "enigma",
+)
+COUNTERPLAY_LONG_ULT_VULNERABLE_HERO_IDS = _ids_from_names(
+    "sven",
+    "enigma",
+    "faceless void",
+    "warlock",
+    "magnus",
+)
+COUNTERPLAY_LATE_CARRY_VULNERABLE_HERO_IDS = _ids_from_names(
+    "faceless void",
+    "spectre",
+    "medusa",
+    "anti-mage",
+    "naga siren",
+    "terrorblade",
+)
+COUNTERPLAY_BURST_VULNERABLE_HERO_IDS = _ids_from_names(
+    "morphling",
+)
+COUNTERPLAY_BACKLINE_VULNERABLE_HERO_IDS = _ids_from_names(
+    "sniper",
+)
+COUNTERPLAY_ARMOR_SENSITIVE_HERO_IDS = _ids_from_names(
+    "templar assassin",
+)
+COUNTERPLAY_INITIATION_VULNERABLE_HERO_IDS = _ids_from_names(
+    "tinker",
+)
+COUNTERPLAY_DISPEL_VULNERABLE_HERO_IDS = _ids_from_names(
+    "necrophos",
+)
+
+# Additional enemy pressure archetypes.
+COUNTERPLAY_RAPID_HIT_HERO_IDS = _ids_from_names(
+    "snapfire",
+    "meepo",
+    "drow ranger",
+    "luna",
+    "naga siren",
+    "phantom lancer",
+    "terrorblade",
+    "troll warlord",
+    "ursa",
+    "slark",
+    "monkey king",
+    "faceless void",
+    "gyrocopter",
+    "sniper",
+    "templar assassin",
+    "clinkz",
+)
+COUNTERPLAY_ANTI_HEAL_HERO_IDS = _ids_from_names(
+    "ancient apparition",
+    "broodmother",
+)
+COUNTERPLAY_BKB_PIERCE_DISABLE_HERO_IDS = _ids_from_names(
+    "clockwerk",
+    "beastmaster",
+    "bane",
+    "doom",
+    "legion commander",
+    "axe",
+    "faceless void",
+    "batrider",
+    "enigma",
+)
+COUNTERPLAY_NO_CD_TEMPO_HERO_IDS = _ids_from_names(
+    "bristleback",
+    "zeus",
+    "leshrac",
+    "lina",
+    "death prophet",
+    "viper",
+    "shadow fiend",
+    "tinker",
+    "queen of pain",
+    "puck",
+    "ember spirit",
+    "pangolier",
+)
+COUNTERPLAY_PUSH_HERO_IDS = _ids_from_names(
+    "broodmother",
+    "lycan",
+    "chen",
+    "beastmaster",
+    "death prophet",
+    "pugna",
+    "dragon knight",
+    "lone druid",
+    "shadow shaman",
+    "nature's prophet",
+    "visage",
+    "luna",
+)
+COUNTERPLAY_BURST_HERO_IDS = _ids_from_names(
+    "zeus",
+    "lina",
+    "lion",
+    "skywrath mage",
+    "leshrac",
+    "invoker",
+    "queen of pain",
+    "tiny",
+    "nyx assassin",
+    "tinker",
+    "ancient apparition",
+    "shadow fiend",
+)
+COUNTERPLAY_REACH_HERO_IDS = _ids_from_names(
+    "spirit breaker",
+    "storm spirit",
+    "ember spirit",
+    "void spirit",
+    "clockwerk",
+    "axe",
+    "centaur warrunner",
+    "tusk",
+    "earth spirit",
+    "pangolier",
+    "spectre",
+    "slark",
+    "primal beast",
+    "mars",
+    "magnus",
+    "faceless void",
+    "batrider",
+)
+COUNTERPLAY_HIGH_ARMOR_HERO_IDS = _ids_from_names(
+    "dragon knight",
+    "tidehunter",
+    "terrorblade",
+    "naga siren",
+    "medusa",
+    "morphling",
+    "tiny",
+    "omniknight",
+    "treant protector",
+)
+HERO_TIMBERSAW_ID = name_to_id.get("timbersaw")
+
+# Hero-vs overlay (kept explicit for clarity and tuning).
+COUNTERPLAY_HERO_VS_PROFILES = {
+    name_to_id.get("treant protector"): {"dispel": 1.8, "manta": 1.4},
+    name_to_id.get("storm spirit"): {"lock": 1.5, "silence": 1.1},
+    name_to_id.get("ember spirit"): {"lock": 1.4, "silence": 1.0},
+    name_to_id.get("void spirit"): {"lock": 1.1, "silence": 0.9},
+    name_to_id.get("snapfire"): {"save": 1.5},
+    name_to_id.get("skywrath mage"): {"save": 1.8, "dispel": 0.7},
+    name_to_id.get("disruptor"): {"save": 1.9, "dispel": 0.8},
+    name_to_id.get("bristleback"): {"break": 2.1, "mars_combo": 1.1},
+    name_to_id.get("timbersaw"): {"break": 1.8, "mars_combo": 0.8},
+    name_to_id.get("tidehunter"): {"break": 1.6},
+    name_to_id.get("legion commander"): {"save": 1.3},
+    name_to_id.get("axe"): {"save": 1.2},
+    name_to_id.get("doom"): {"save": 1.2},
+    name_to_id.get("huskar"): {"save": 1.0},
+    name_to_id.get("troll warlord"): {"save": 0.9},
+    name_to_id.get("bane"): {"save": 1.4},
+    name_to_id.get("beastmaster"): {"save": 1.2},
+    name_to_id.get("batrider"): {"save": 1.2},
+    name_to_id.get("phoenix"): {"rapid_hit": 1.5},
+    name_to_id.get("undying"): {"rapid_hit": 1.1},
+    name_to_id.get("primal beast"): {"bkb_pierce_disable": 1.4},
+    name_to_id.get("enigma"): {"bkb_pierce_disable": 1.8},
+    name_to_id.get("sven"): {"tempo_no_cd": 1.0},
+    name_to_id.get("faceless void"): {"tempo_no_cd": 0.6, "push": 0.8},
+    name_to_id.get("morphling"): {"burst": 1.6},
+    name_to_id.get("sniper"): {"reach": 1.8, "initiation": 0.8},
+    name_to_id.get("templar assassin"): {"high_armor": 1.3},
+    name_to_id.get("tinker"): {"initiation": 1.8, "reach": 0.7},
+    name_to_id.get("necrophos"): {"dispel": 1.5},
+}
+COUNTERPLAY_HERO_VS_PROFILES = {
+    int(hero_id): profile
+    for hero_id, profile in COUNTERPLAY_HERO_VS_PROFILES.items()
+    if hero_id is not None
+}
+
+def _counterplay_as_float(value, default=0.0):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if value != value:  # NaN guard
+        return float(default)
+    return value
+
+
+def _load_counterplay_hero_features():
+    global _COUNTERPLAY_HERO_FEATURES_CACHE
+    if _COUNTERPLAY_HERO_FEATURES_CACHE is not None:
+        return _COUNTERPLAY_HERO_FEATURES_CACHE
+    if not COUNTERPLAY_HERO_FEATURES_PATH.exists():
+        _COUNTERPLAY_HERO_FEATURES_CACHE = {}
+        return _COUNTERPLAY_HERO_FEATURES_CACHE
+    try:
+        data = json.loads(COUNTERPLAY_HERO_FEATURES_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    _COUNTERPLAY_HERO_FEATURES_CACHE = data if isinstance(data, dict) else {}
+    return _COUNTERPLAY_HERO_FEATURES_CACHE
+
+
+def _counterplay_feature(hero_id, key):
+    feats = _load_counterplay_hero_features()
+    row = feats.get(str(int(hero_id)), {})
+    if not isinstance(row, dict):
+        return 0.0
+    return _counterplay_as_float(row.get(key), 0.0)
+
+
+def _counterplay_primary_attr(hero_id):
+    feats = _load_counterplay_hero_features()
+    row = feats.get(str(int(hero_id)), {})
+    if not isinstance(row, dict):
+        return None
+    attr = row.get("primary_attr")
+    if isinstance(attr, (int, float)):
+        attr_i = int(attr)
+        if attr_i == 0:
+            return "str"
+        if attr_i == 1:
+            return "agi"
+        if attr_i == 2:
+            return "int"
+    return str(attr).strip().lower() if isinstance(attr, str) else None
+
+
+def _counterplay_starting_armor(hero_id):
+    # hero_features_processed.json doesn't expose base armor directly.
+    # Use agility gain as a lightweight draft-time proxy.
+    agi_gain = _counterplay_feature(hero_id, "agi_gain")
+    if agi_gain >= 3.2:
+        return 6.5
+    if agi_gain >= 2.8:
+        return 5.0
+    return 0.0
+
+
+def _counterplay_has_ability_tag(hero_id, tag):
+    hero_id = int(hero_id)
+    if tag == "dispel":
+        return (
+            hero_id in COUNTERPLAY_DISPEL_HERO_IDS
+            or _counterplay_feature(hero_id, "strong_dispel_count") > 0
+        )
+    if tag == "silence":
+        return (
+            _counterplay_feature(hero_id, "has_silence") > 0
+            or _counterplay_feature(hero_id, "silence_count") > 0
+        )
+    if tag == "root_control":
+        return (
+            _counterplay_feature(hero_id, "has_root") > 0
+            or _counterplay_feature(hero_id, "has_leash") > 0
+            or _counterplay_feature(hero_id, "root_count") > 0
+            or _counterplay_feature(hero_id, "leash_count") > 0
+        )
+    if tag == "stun_control":
+        return (
+            _counterplay_feature(hero_id, "has_stun") > 0
+            or _counterplay_feature(hero_id, "has_hex") > 0
+            or _counterplay_feature(hero_id, "has_hard_disable") > 0
+            or _counterplay_feature(hero_id, "stun_count") > 0
+            or _counterplay_feature(hero_id, "hard_disable_count") > 0
+        )
+    if tag == "break":
+        return (
+            hero_id in COUNTERPLAY_BREAK_ABILITY_HERO_IDS
+            or _counterplay_feature(hero_id, "has_break") > 0
+            or _counterplay_feature(hero_id, "break_count") > 0
+        )
+    if tag == "save":
+        return (
+            hero_id in COUNTERPLAY_SAVE_HERO_IDS
+            or hero_id in COUNTERPLAY_LATE_SAVE_HERO_IDS
+            or _counterplay_feature(hero_id, "save_count") > 0
+            or _counterplay_feature(hero_id, "has_banish") > 0
+        )
+    if tag == "escape":
+        return (
+            _counterplay_feature(hero_id, "has_escape") > 0
+            or _counterplay_feature(hero_id, "escape_count") > 0
+        )
+    if tag == "target_lock":
+        return (
+            hero_id in COUNTERPLAY_INSTANT_LOCK_HERO_IDS
+            or hero_id in COUNTERPLAY_BKB_PIERCE_DISABLE_HERO_IDS
+            or (
+                _counterplay_feature(hero_id, "channeling_ult_count") > 0
+                and _counterplay_feature(hero_id, "has_hard_disable") > 0
+            )
+        )
+    return False
+
+
+COUNTERPLAY_ROLE_IMPACT_WEIGHTS = {
+    "pos1": 1.8,
+    "pos2": 1.35,
+    "pos3": 1.0,
+    "pos4": 0.62,
+    "pos5": 0.5,
+}
+COUNTERPLAY_DAMAGE_POS_BASE = {
+    "pos1": 2.25,
+    "pos2": 1.45,
+    "pos3": 0.8,
+    "pos4": 0.35,
+    "pos5": 0.25,
+}
+COUNTERPLAY_STRONG_EDGE_THRESHOLD = int(os.getenv("COUNTERPLAY_STRONG_EDGE_THRESHOLD", "14"))
+COUNTERPLAY_STRONG_OPP_DEP_MIN = float(os.getenv("COUNTERPLAY_STRONG_OPP_DEP_MIN", "0.48"))
+
+
+def _counterplay_role_weight(pos):
+    return float(COUNTERPLAY_ROLE_IMPACT_WEIGHTS.get(pos, 1.0))
+
+
+def _team_counterplay_entries(team_side_or_ids):
+    entries = []
+    if isinstance(team_side_or_ids, dict):
+        for pos in ("pos1", "pos2", "pos3", "pos4", "pos5"):
+            hero_id = team_side_or_ids.get(pos, {}).get("hero_id")
+            try:
+                hero_id = int(hero_id)
+            except (TypeError, ValueError):
+                continue
+            if hero_id > 0:
+                entries.append((pos, hero_id))
+        return entries
+    for item in team_side_or_ids or []:
+        if isinstance(item, (tuple, list)) and len(item) >= 2:
+            pos = item[0]
+            hero_id = item[1]
+            try:
+                hero_id = int(hero_id)
+            except (TypeError, ValueError):
+                continue
+            if hero_id > 0:
+                entries.append((pos, hero_id))
+            continue
+        hero_id = item
+        try:
+            hero_id = int(hero_id)
+        except (TypeError, ValueError):
+            continue
+        if hero_id > 0:
+            entries.append((None, hero_id))
+    return entries
+
+
+def _counterplay_profile_score(hero_id, enemy_pressures):
+    profile = COUNTERPLAY_HERO_VS_PROFILES.get(int(hero_id))
+    if not profile:
+        return 0.0
+    return sum(float(weight) * float(enemy_pressures.get(axis, 0.0)) for axis, weight in profile.items())
+
+
+def _counterplay_damage_source_score(pos, hero_id):
+    score = float(COUNTERPLAY_DAMAGE_POS_BASE.get(pos, 1.0))
+    score += 0.9 * _counterplay_feature(hero_id, "hard_carry")
+    score += 0.4 * _counterplay_feature(hero_id, "has_pusher_late")
+    score += 0.2 * _counterplay_feature(hero_id, "late_push")
+    score += 0.12 * _counterplay_feature(hero_id, "teamfight_ult_count")
+    attack_range = _counterplay_feature(hero_id, "attack_range")
+    if attack_range >= 625:
+        score += 0.25
+    elif attack_range >= 450:
+        score += 0.12
+    # Utility-heavy supports should not be treated as key damage win conditions.
+    if pos in ("pos4", "pos5") and _counterplay_feature(hero_id, "hard_carry") <= 0:
+        score *= 0.7
+    return max(0.0, score)
+
+
+def _counterplay_primary_carry_exposure(pos, hero_id, enemy_pressures):
+    exposure = _counterplay_profile_score(hero_id, enemy_pressures)
+    hard_carry = _counterplay_feature(hero_id, "hard_carry")
+    pos_factor = 1.0 if pos == "pos1" else (0.78 if pos == "pos2" else 0.52)
+    exposure += pos_factor * (
+        0.6 * enemy_pressures.get("lock", 0.0)
+        + 0.55 * enemy_pressures.get("burst", 0.0)
+        + 0.45 * enemy_pressures.get("push", 0.0)
+    )
+    exposure += hard_carry * (
+        0.4 * enemy_pressures.get("tempo_no_cd", 0.0)
+        + 0.35 * enemy_pressures.get("reach", 0.0)
+    )
+    if hero_id in COUNTERPLAY_BURST_VULNERABLE_HERO_IDS:
+        exposure += 0.35 * enemy_pressures.get("burst", 0.0)
+    return max(0.0, float(exposure))
+
+
+def _counterplay_top_damage_dependency_and_exposure(team_side_or_ids, enemy_pressures):
+    entries = _team_counterplay_entries(team_side_or_ids)
+    if not entries:
+        return 0.0, 0.0
+    rows = []
+    for pos, hero_id in entries:
+        dmg_score = _counterplay_damage_source_score(pos, hero_id)
+        exposure = _counterplay_primary_carry_exposure(pos, hero_id, enemy_pressures)
+        rows.append((dmg_score, pos, hero_id, exposure))
+    rows.sort(key=lambda row: row[0], reverse=True)
+    total_damage = sum(row[0] for row in rows)
+    if total_damage <= 0:
+        return 0.0, 0.0
+    top_damage, _, _, top_exposure = rows[0]
+    dependency = float(top_damage / total_damage)
+    return dependency, float(top_exposure)
+
+
+def _team_hero_ids_for_counterplay(side):
+    hero_ids = []
+    if not isinstance(side, dict):
+        return hero_ids
+    for pos in ("pos1", "pos2", "pos3", "pos4", "pos5"):
+        hero_id = side.get(pos, {}).get("hero_id")
+        try:
+            hero_int = int(hero_id)
+        except (TypeError, ValueError):
+            continue
+        if hero_int > 0:
+            hero_ids.append(hero_int)
+    return hero_ids
+
+
+def _count_overlap(hero_ids, id_set):
+    return sum(1 for hero_id in hero_ids if hero_id in id_set)
+
+
+def _compute_enemy_counterplay_pressures(enemy_hero_ids):
+    enemy_ids = list(enemy_hero_ids or [])
+    dispel_pressure = 0.0
+    save_pressure = 0.0
+    silence_pressure = 0.0
+    root_pressure = 0.0
+    stun_pressure = 0.0
+    break_pressure = 0.0
+    manta_pressure = 0.0
+    rapid_hit_pressure = 0.0
+    anti_heal_pressure = 0.0
+    bkb_pierce_disable_pressure = 0.0
+    tempo_no_cd_pressure = 0.0
+    push_pressure = 0.0
+    burst_pressure = 0.0
+    reach_pressure = 0.0
+    high_armor_pressure = 0.0
+    initiation_pressure = 0.0
+    timber_pressure = 0.0
+
+    for hero_id in enemy_ids:
+        dispel_pressure += 1.0 if hero_id in COUNTERPLAY_DISPEL_HERO_IDS else 0.0
+        dispel_pressure += 0.8 if hero_id in COUNTERPLAY_STRONG_DISPEL_HERO_IDS else 0.0
+        dispel_pressure += 0.35 * _counterplay_feature(hero_id, "strong_dispel_count")
+        dispel_pressure += 0.2 if _counterplay_has_ability_tag(hero_id, "dispel") else 0.0
+
+        save_pressure += 1.0 if hero_id in COUNTERPLAY_SAVE_HERO_IDS else 0.0
+        # Centaur is mostly a late save pattern (Hitch A Ride / Stampede usage).
+        save_pressure += 0.45 if hero_id in COUNTERPLAY_LATE_SAVE_HERO_IDS else 0.0
+        save_pressure += 0.35 * _counterplay_feature(hero_id, "save_count")
+        save_pressure += 0.3 if _counterplay_has_ability_tag(hero_id, "save") else 0.0
+
+        silence_pressure += 1.0 if hero_id in COUNTERPLAY_SILENCE_HERO_IDS else 0.0
+        silence_pressure += 0.3 * _counterplay_feature(hero_id, "silence_count")
+        silence_pressure += 0.2 if _counterplay_has_ability_tag(hero_id, "silence") else 0.0
+
+        root_pressure += 0.9 if hero_id in COUNTERPLAY_ROOT_LOCK_HERO_IDS else 0.0
+        root_pressure += 0.3 * _counterplay_feature(hero_id, "root_count")
+        root_pressure += 0.25 if _counterplay_has_ability_tag(hero_id, "root_control") else 0.0
+
+        stun_pressure += 0.9 if hero_id in COUNTERPLAY_STUN_LOCK_HERO_IDS else 0.0
+        stun_pressure += 0.25 * _counterplay_feature(hero_id, "stun_count")
+        stun_pressure += 0.2 * _counterplay_feature(hero_id, "hard_disable_count")
+        stun_pressure += 0.2 if _counterplay_has_ability_tag(hero_id, "stun_control") else 0.0
+
+        if hero_id in COUNTERPLAY_BREAK_ABILITY_HERO_IDS:
+            break_pressure += 1.5
+        if _counterplay_has_ability_tag(hero_id, "break"):
+            break_pressure += 0.8
+        if hero_id in COUNTERPLAY_SILVER_EDGE_HOLDER_HERO_IDS:
+            break_pressure += 0.55 if hero_id in COUNTERPLAY_NATURAL_INVIS_HERO_IDS else 0.9
+
+        if hero_id in COUNTERPLAY_MANTA_HOLDER_HERO_IDS:
+            manta_pressure += 1.0
+
+        if hero_id in COUNTERPLAY_RAPID_HIT_HERO_IDS:
+            rapid_hit_pressure += 1.0
+        rapid_hit_pressure += max(0.0, _counterplay_feature(hero_id, "agi_gain") - 2.8) * 0.22
+
+        if hero_id in COUNTERPLAY_ANTI_HEAL_HERO_IDS:
+            anti_heal_pressure += 1.2
+            if hero_id == name_to_id.get("ancient apparition"):
+                anti_heal_pressure += 0.4
+
+        if hero_id in COUNTERPLAY_BKB_PIERCE_DISABLE_HERO_IDS:
+            bkb_pierce_disable_pressure += 0.9
+        bkb_pierce_disable_pressure += 0.45 * _counterplay_feature(hero_id, "bkb_pierce_ability_count")
+        if _counterplay_has_ability_tag(hero_id, "target_lock"):
+            bkb_pierce_disable_pressure += 0.2
+
+        if hero_id in COUNTERPLAY_NO_CD_TEMPO_HERO_IDS:
+            tempo_no_cd_pressure += 1.0
+        ult_cd = _counterplay_feature(hero_id, "ult_cd_lvl3_mean")
+        if 0 < ult_cd <= 55:
+            tempo_no_cd_pressure += 0.35
+        elif 55 < ult_cd <= 80:
+            tempo_no_cd_pressure += 0.15
+        if _counterplay_feature(hero_id, "big_ult_80s_lvl3") > 0:
+            tempo_no_cd_pressure -= 0.08
+
+        if hero_id in COUNTERPLAY_PUSH_HERO_IDS:
+            push_pressure += 0.9
+        push_pressure += 0.32 * _counterplay_feature(hero_id, "has_pusher")
+        push_pressure += 0.2 * _counterplay_feature(hero_id, "push")
+        push_pressure += 0.15 * _counterplay_feature(hero_id, "late_push")
+
+        if hero_id in COUNTERPLAY_BURST_HERO_IDS:
+            burst_pressure += 1.0
+        burst_pressure += 0.18 * _counterplay_feature(hero_id, "teamfight_ult_count")
+
+        if hero_id in COUNTERPLAY_REACH_HERO_IDS:
+            reach_pressure += 1.0
+        reach_pressure += 0.45 * _counterplay_feature(hero_id, "has_initiator")
+        reach_pressure += 0.12 * _counterplay_feature(hero_id, "escape_count")
+
+        if hero_id in COUNTERPLAY_REACH_HERO_IDS:
+            initiation_pressure += 0.45
+        if hero_id in COUNTERPLAY_INSTANT_LOCK_HERO_IDS:
+            initiation_pressure += 0.55
+        initiation_pressure += 0.35 * _counterplay_feature(hero_id, "has_initiator")
+        initiation_pressure += 0.2 * _counterplay_feature(hero_id, "hard_disable_count")
+
+        if hero_id in COUNTERPLAY_HIGH_ARMOR_HERO_IDS:
+            high_armor_pressure += 0.9
+        starting_armor = _counterplay_starting_armor(hero_id)
+        if starting_armor >= 7.0:
+            high_armor_pressure += 0.8
+        elif starting_armor >= 5.0:
+            high_armor_pressure += 0.5
+
+        if HERO_TIMBERSAW_ID is not None and hero_id == HERO_TIMBERSAW_ID:
+            timber_pressure += 1.4
+
+    instant_lock_pressure = float(_count_overlap(enemy_ids, COUNTERPLAY_INSTANT_LOCK_HERO_IDS))
+    lock_pressure = (
+        0.4 * silence_pressure
+        + 0.35 * root_pressure
+        + 0.35 * stun_pressure
+        + 1.0 * instant_lock_pressure
+        + 0.25 * reach_pressure
+    )
+
+    mars_combo_pressure = 0.0
+    if HERO_MARS_ID is not None and HERO_MARS_ID in enemy_ids:
+        has_followup = any(hero_id in COUNTERPLAY_MARS_FOLLOWUP_HERO_IDS for hero_id in enemy_ids)
+        mars_combo_pressure = 0.25 + (0.9 if has_followup else 0.0)
+        if break_pressure >= 1.2:
+            mars_combo_pressure += 0.35
+
+    return {
+        "save": float(save_pressure),
+        "dispel": float(dispel_pressure),
+        "silence": float(silence_pressure),
+        "root": float(root_pressure),
+        "stun": float(stun_pressure),
+        "lock": float(lock_pressure),
+        "manta": float(manta_pressure),
+        "break": float(break_pressure),
+        "mars_combo": float(mars_combo_pressure),
+        "rapid_hit": float(max(0.0, rapid_hit_pressure)),
+        "anti_heal": float(max(0.0, anti_heal_pressure)),
+        "bkb_pierce_disable": float(max(0.0, bkb_pierce_disable_pressure)),
+        "tempo_no_cd": float(max(0.0, tempo_no_cd_pressure)),
+        "push": float(max(0.0, push_pressure)),
+        "burst": float(max(0.0, burst_pressure)),
+        "reach": float(max(0.0, reach_pressure)),
+        "high_armor": float(max(0.0, high_armor_pressure)),
+        "initiation": float(max(0.0, initiation_pressure)),
+        "timber": float(max(0.0, timber_pressure)),
+    }
+
+
+def _team_counterplay_traits(team_side_or_ids):
+    entries = _team_counterplay_entries(team_side_or_ids)
+    traits = {
+        "root_reliant": 0.0,
+        "escape_reliant": 0.0,
+        "passive_core": 0.0,
+        "single_target_commit": 0.0,
+        "save_sensitive_damage": 0.0,
+        "egg_tomb_reliant": 0.0,
+        "healer_reliant": 0.0,
+        "bkb_channel_reliant": 0.0,
+        "long_ult_reliant": 0.0,
+        "strength_core": 0.0,
+        "late_carry_reliant": 0.0,
+        "burst_fragile": 0.0,
+        "backline_static": 0.0,
+        "armor_sensitive": 0.0,
+        "init_vulnerable": 0.0,
+        "dispel_sensitive": 0.0,
+        "space_deficit_late": 0.0,
+    }
+    space_tools = 0.0
+    for pos, hero_id in entries:
+        role_w = _counterplay_role_weight(pos)
+        core_w = 1.0 if pos in ("pos1", "pos2", "pos3", None) else 0.55
+        spacer_w = 1.0 if pos in ("pos2", "pos3", "pos4", None) else 0.8
+
+        space_tools += (
+            0.7 * _counterplay_feature(hero_id, "has_initiator")
+            + 0.18 * _counterplay_feature(hero_id, "hard_disable_count")
+            + 0.35 * _counterplay_feature(hero_id, "save_count")
+            + 0.2 * _counterplay_feature(hero_id, "has_pusher")
+        ) * spacer_w
+
+        if hero_id in COUNTERPLAY_ROOT_RELIANT_HERO_IDS:
+            traits["root_reliant"] += role_w * 1.1
+        root_count = _counterplay_feature(hero_id, "root_count")
+        if root_count > 0:
+            traits["root_reliant"] += role_w * min(0.6, 0.25 * root_count)
+        if _counterplay_has_ability_tag(hero_id, "root_control"):
+            traits["root_reliant"] += role_w * 0.2
+
+        if hero_id in COUNTERPLAY_ESCAPE_HERO_IDS:
+            traits["escape_reliant"] += role_w * 1.0
+        escape_count = _counterplay_feature(hero_id, "escape_count")
+        if escape_count > 0:
+            traits["escape_reliant"] += role_w * min(0.7, 0.25 * escape_count)
+        if _counterplay_has_ability_tag(hero_id, "escape"):
+            traits["escape_reliant"] += role_w * 0.25
+
+        if hero_id in COUNTERPLAY_PASSIVE_TANK_HERO_IDS:
+            traits["passive_core"] += role_w * 1.2
+
+        if hero_id in COUNTERPLAY_COMMIT_HERO_IDS:
+            traits["single_target_commit"] += role_w * 1.0
+        if _counterplay_has_ability_tag(hero_id, "target_lock"):
+            traits["single_target_commit"] += role_w * 0.6
+
+        if hero_id in COUNTERPLAY_SAVE_SENSITIVE_DAMAGE_HERO_IDS:
+            traits["save_sensitive_damage"] += role_w * 1.0
+
+        if hero_id in COUNTERPLAY_EGG_TOMB_VULNERABLE_HERO_IDS:
+            traits["egg_tomb_reliant"] += role_w * 1.2
+        if hero_id in COUNTERPLAY_HEALER_HERO_IDS:
+            traits["healer_reliant"] += role_w * 1.0
+        if hero_id in COUNTERPLAY_BKB_PIERCE_VULNERABLE_HERO_IDS:
+            traits["bkb_channel_reliant"] += role_w * 1.2
+        if hero_id in COUNTERPLAY_LONG_ULT_VULNERABLE_HERO_IDS:
+            traits["long_ult_reliant"] += role_w * 1.0
+        if _counterplay_feature(hero_id, "big_ult_100s_lvl3") > 0:
+            traits["long_ult_reliant"] += role_w * 0.4
+        if hero_id in COUNTERPLAY_LATE_CARRY_VULNERABLE_HERO_IDS:
+            traits["late_carry_reliant"] += role_w * 1.1
+        if _counterplay_feature(hero_id, "hard_carry") > 0 and _counterplay_feature(hero_id, "ult_cd_lvl3_mean") >= 90:
+            traits["late_carry_reliant"] += role_w * 0.3
+        if hero_id in COUNTERPLAY_BURST_VULNERABLE_HERO_IDS:
+            traits["burst_fragile"] += role_w * 1.2
+        if hero_id in COUNTERPLAY_BACKLINE_VULNERABLE_HERO_IDS:
+            traits["backline_static"] += role_w * 1.4
+        if hero_id in COUNTERPLAY_ARMOR_SENSITIVE_HERO_IDS:
+            traits["armor_sensitive"] += role_w * 1.1
+        if hero_id in COUNTERPLAY_INITIATION_VULNERABLE_HERO_IDS:
+            traits["init_vulnerable"] += role_w * 1.3
+        if hero_id in COUNTERPLAY_DISPEL_VULNERABLE_HERO_IDS:
+            traits["dispel_sensitive"] += role_w * 1.0
+        if _counterplay_primary_attr(hero_id) == "str":
+            traits["strength_core"] += role_w * core_w * 0.75
+
+    traits["space_deficit_late"] = max(0.0, traits["late_carry_reliant"] - 0.45 * space_tools)
+    return traits
+
+
+def _team_counterplay_vulnerability_score(team_side_or_ids, enemy_pressures):
+    entries = _team_counterplay_entries(team_side_or_ids)
+    traits = _team_counterplay_traits(entries)
+    score = 0.0
+
+    # capability-driven vulnerability (hybrid axis matching)
+    score += traits["root_reliant"] * (
+        0.75 * enemy_pressures.get("dispel", 0.0)
+        + 0.55 * enemy_pressures.get("manta", 0.0)
+    )
+    score += traits["escape_reliant"] * (
+        0.65 * enemy_pressures.get("lock", 0.0)
+        + 0.25 * enemy_pressures.get("silence", 0.0)
+    )
+    score += traits["passive_core"] * (
+        0.95 * enemy_pressures.get("break", 0.0)
+        + 0.45 * enemy_pressures.get("mars_combo", 0.0)
+    )
+    score += traits["single_target_commit"] * (0.9 * enemy_pressures.get("save", 0.0))
+    score += traits["save_sensitive_damage"] * (
+        1.1 * enemy_pressures.get("save", 0.0)
+        + 0.2 * enemy_pressures.get("dispel", 0.0)
+    )
+    score += traits["egg_tomb_reliant"] * (
+        0.95 * enemy_pressures.get("rapid_hit", 0.0)
+        + 0.2 * enemy_pressures.get("burst", 0.0)
+    )
+    score += traits["healer_reliant"] * (1.15 * enemy_pressures.get("anti_heal", 0.0))
+    score += traits["bkb_channel_reliant"] * (
+        1.0 * enemy_pressures.get("bkb_pierce_disable", 0.0)
+        + 0.2 * enemy_pressures.get("initiation", 0.0)
+    )
+    score += traits["long_ult_reliant"] * (
+        0.7 * enemy_pressures.get("tempo_no_cd", 0.0)
+        + 0.25 * enemy_pressures.get("push", 0.0)
+    )
+    score += traits["strength_core"] * (1.05 * enemy_pressures.get("timber", 0.0))
+    score += traits["late_carry_reliant"] * (
+        0.8 * enemy_pressures.get("push", 0.0)
+        + 0.45 * enemy_pressures.get("tempo_no_cd", 0.0)
+        + 0.35 * enemy_pressures.get("burst", 0.0)
+    )
+    score += traits["space_deficit_late"] * (
+        0.8 * enemy_pressures.get("push", 0.0)
+        + 0.45 * enemy_pressures.get("tempo_no_cd", 0.0)
+    )
+    score += traits["burst_fragile"] * (
+        0.95 * enemy_pressures.get("burst", 0.0)
+        + 0.2 * enemy_pressures.get("tempo_no_cd", 0.0)
+    )
+    score += traits["backline_static"] * (
+        0.95 * enemy_pressures.get("reach", 0.0)
+        + 0.35 * enemy_pressures.get("initiation", 0.0)
+    )
+    score += traits["armor_sensitive"] * (0.85 * enemy_pressures.get("high_armor", 0.0))
+    score += traits["init_vulnerable"] * (
+        1.0 * enemy_pressures.get("initiation", 0.0)
+        + 0.3 * enemy_pressures.get("reach", 0.0)
+    )
+    score += traits["dispel_sensitive"] * (0.95 * enemy_pressures.get("dispel", 0.0))
+
+    # explicit hero-vs overlay (for known fragile interactions), weighted by role impact.
+    for pos, hero_id in entries:
+        score += _counterplay_role_weight(pos) * _counterplay_profile_score(hero_id, enemy_pressures)
+
+    # Win-condition dependency:
+    # if one hero carries most of team's damage burden and gets countered,
+    # the whole draft should be penalized more than support-friendly matchups.
+    damage_rows = []
+    for pos, hero_id in entries:
+        dmg_score = _counterplay_damage_source_score(pos, hero_id)
+        damage_rows.append((dmg_score, pos, hero_id))
+    total_damage = sum(row[0] for row in damage_rows)
+    if total_damage > 0:
+        damage_rows.sort(key=lambda row: row[0], reverse=True)
+        top_score, top_pos, top_hero = damage_rows[0]
+        second_score = damage_rows[1][0] if len(damage_rows) > 1 else 0.0
+        concentration = top_score / total_damage
+        dependency = max(0.0, concentration - 0.5)
+        if second_score < 1.15:
+            dependency *= 1.25
+        carry_exposure = _counterplay_primary_carry_exposure(top_pos, top_hero, enemy_pressures)
+        score += dependency * carry_exposure * 1.4
+        if concentration <= 0.44 and second_score >= 1.1:
+            # Distributed damage profile: less fragile to single-core shutdown.
+            score -= 0.12 * carry_exposure
+
+    return max(0.0, float(score))
+
+
+def _compute_counterplay_vulnerability_edge(radiant_side, dire_side):
+    """
+    Return signed edge:
+    > 0 means radiant draft is less vulnerable to enemy counterplay patterns.
+    < 0 means dire draft is less vulnerable.
+    """
+    radiant_ids = _team_hero_ids_for_counterplay(radiant_side)
+    dire_ids = _team_hero_ids_for_counterplay(dire_side)
+    if not radiant_ids or not dire_ids:
+        return None
+
+    radiant_enemy_pressures = _compute_enemy_counterplay_pressures(dire_ids)
+    dire_enemy_pressures = _compute_enemy_counterplay_pressures(radiant_ids)
+
+    radiant_vulnerability = _team_counterplay_vulnerability_score(radiant_side, radiant_enemy_pressures)
+    dire_vulnerability = _team_counterplay_vulnerability_score(dire_side, dire_enemy_pressures)
+    radiant_dep, radiant_top_exp = _counterplay_top_damage_dependency_and_exposure(
+        team_side_or_ids=radiant_side,
+        enemy_pressures=radiant_enemy_pressures,
+    )
+    dire_dep, dire_top_exp = _counterplay_top_damage_dependency_and_exposure(
+        team_side_or_ids=dire_side,
+        enemy_pressures=dire_enemy_pressures,
+    )
+
+    # Higher is better for radiant: enemy vulnerability minus own vulnerability.
+    # Use soft-saturation to keep extreme drafts informative without hard clipping too often.
+    carry_focus_delta = (dire_dep * dire_top_exp) - (radiant_dep * radiant_top_exp)
+    carry_dep_delta = dire_dep - radiant_dep
+    base_raw_delta = dire_vulnerability - radiant_vulnerability
+    base_edge = 30.0 * (base_raw_delta / (abs(base_raw_delta) + 30.0))
+    carry_adjustment = 3.0 * carry_focus_delta + 0.8 * carry_dep_delta
+    raw_edge = base_edge + carry_adjustment
+    clipped = max(-30.0, min(30.0, raw_edge))
+    return int(round(clipped))
+
+
+def _compute_counterplay_vulnerability_signal_meta(radiant_side, dire_side):
+    radiant_ids = _team_hero_ids_for_counterplay(radiant_side)
+    dire_ids = _team_hero_ids_for_counterplay(dire_side)
+    if not radiant_ids or not dire_ids:
+        return None
+
+    radiant_enemy_pressures = _compute_enemy_counterplay_pressures(dire_ids)
+    dire_enemy_pressures = _compute_enemy_counterplay_pressures(radiant_ids)
+
+    radiant_vulnerability = _team_counterplay_vulnerability_score(radiant_side, radiant_enemy_pressures)
+    dire_vulnerability = _team_counterplay_vulnerability_score(dire_side, dire_enemy_pressures)
+
+    radiant_dep, radiant_top_exp = _counterplay_top_damage_dependency_and_exposure(
+        team_side_or_ids=radiant_side,
+        enemy_pressures=radiant_enemy_pressures,
+    )
+    dire_dep, dire_top_exp = _counterplay_top_damage_dependency_and_exposure(
+        team_side_or_ids=dire_side,
+        enemy_pressures=dire_enemy_pressures,
+    )
+
+    carry_focus_delta = (dire_dep * dire_top_exp) - (radiant_dep * radiant_top_exp)
+    carry_dep_delta = dire_dep - radiant_dep
+    base_raw_delta = dire_vulnerability - radiant_vulnerability
+    base_edge = 30.0 * (base_raw_delta / (abs(base_raw_delta) + 30.0))
+    carry_adjustment = 3.0 * carry_focus_delta + 0.8 * carry_dep_delta
+    raw_edge = base_edge + carry_adjustment
+    edge = int(round(max(-30.0, min(30.0, raw_edge))))
+
+    predicted_side = None
+    if edge > 0:
+        predicted_side = "radiant"
+    elif edge < 0:
+        predicted_side = "dire"
+
+    predicted_opp_dep = None
+    predicted_opp_exp = None
+    if predicted_side == "radiant":
+        predicted_opp_dep = float(dire_dep)
+        predicted_opp_exp = float(dire_top_exp)
+    elif predicted_side == "dire":
+        predicted_opp_dep = float(radiant_dep)
+        predicted_opp_exp = float(radiant_top_exp)
+
+    strong_edge = None
+    if (
+        edge != 0
+        and abs(edge) >= COUNTERPLAY_STRONG_EDGE_THRESHOLD
+        and predicted_opp_dep is not None
+        and predicted_opp_dep >= COUNTERPLAY_STRONG_OPP_DEP_MIN
+    ):
+        strong_edge = edge
+
+    return {
+        "edge": edge,
+        "strong_edge": strong_edge,
+        "predicted_side": predicted_side,
+        "predicted_opp_dep": predicted_opp_dep,
+        "predicted_opp_exp": predicted_opp_exp,
+        "radiant_dep": float(radiant_dep),
+        "dire_dep": float(dire_dep),
+        "base_edge": float(base_edge),
+        "carry_adjustment": float(carry_adjustment),
+    }
+
+
 def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_dict, mid_dict, match=None, custom_weights=None,
                               early_trio_threshold=SYNERGY_TRIO_MIN_MATCHES, mid_trio_threshold=SYNERGY_TRIO_MIN_MATCHES,
-                              comeback_dict=None, comeback_trio_threshold=SYNERGY_TRIO_MIN_MATCHES,
                               synergy_duo_use_max=False, early_position_weights=None, late_position_weights=None):
     """
     Основная функция анализа синергии и контрпиков
@@ -1495,13 +3490,11 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
         custom_weights: кастомные веса позиций (опционально)
         early_trio_threshold: минимум матчей для early trio (по умолчанию 20)
         mid_trio_threshold: минимум матчей для mid trio (по умолчанию 20)
-        comeback_dict: данные для comeback фазы (опционально)
-        comeback_trio_threshold: минимум матчей для comeback trio (по умолчанию 20)
         synergy_duo_use_max: если True, берёт лучший duo по winrate (без учёта количества матчей);
                              если False, использует взвешенное среднее по матчам (по умолчанию)
     """
     return_dict = {}
-    early_output, mid_output, comeback_output = {}, {}, {}
+    early_output, mid_output = {}, {}
     early_weights = early_position_weights or custom_weights or _ENV_POS_WEIGHTS_EARLY or _ENV_POS_WEIGHTS or EARLY_POSITION_WEIGHTS
     late_weights = late_position_weights or custom_weights or _ENV_POS_WEIGHTS_LATE or _ENV_POS_WEIGHTS or LATE_POSITION_WEIGHTS
     def _all_heroes_known(radiant, dire):
@@ -1643,16 +3636,25 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
     all_heroes_known = _all_heroes_known(radiant_heroes_and_pos, dire_heroes_and_pos)
     radiant_team = _team_list(radiant_heroes_and_pos)
     dire_team = _team_list(dire_heroes_and_pos)
+    counterplay_signal_meta = _compute_counterplay_vulnerability_signal_meta(
+        radiant_side=radiant_heroes_and_pos,
+        dire_side=dire_heroes_and_pos,
+    )
+    counterplay_vulnerability_edge = (
+        counterplay_signal_meta.get("edge") if isinstance(counterplay_signal_meta, dict) else None
+    )
+    counterplay_vulnerability_strong = (
+        counterplay_signal_meta.get("strong_edge") if isinstance(counterplay_signal_meta, dict) else None
+    )
+    if counterplay_vulnerability_edge is not None:
+        return_dict['counterplay_vulnerability'] = counterplay_vulnerability_edge
+    if counterplay_vulnerability_strong is not None:
+        return_dict['counterplay_vulnerability_strong'] = counterplay_vulnerability_strong
 
     synergy_team(radiant_heroes_and_pos, early_output, 'radiant_synergy', early_dict, min_matches_trio=early_trio_threshold)
     synergy_team(dire_heroes_and_pos, early_output, 'dire_synergy', early_dict, min_matches_trio=early_trio_threshold)
     synergy_team(radiant_heroes_and_pos, mid_output, 'radiant_synergy', mid_dict, min_matches_trio=mid_trio_threshold)
     synergy_team(dire_heroes_and_pos, mid_output, 'dire_synergy', mid_dict, min_matches_trio=mid_trio_threshold)
-    
-    # Обработка comeback словаря
-    if comeback_dict is not None:
-        synergy_team(radiant_heroes_and_pos, comeback_output, 'radiant_synergy', comeback_dict, min_matches_trio=comeback_trio_threshold)
-        synergy_team(dire_heroes_and_pos, comeback_output, 'dire_synergy', comeback_dict, min_matches_trio=comeback_trio_threshold)
     
     # Анализ контрпиков
     counterpick_team(radiant_heroes_and_pos, dire_heroes_and_pos, early_output, 'radiant_counterpick', early_dict, check_solo=True)
@@ -1660,20 +3662,18 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
     counterpick_team(radiant_heroes_and_pos, dire_heroes_and_pos, mid_output, 'radiant_counterpick', mid_dict, check_solo=True)
     counterpick_team(dire_heroes_and_pos, radiant_heroes_and_pos, mid_output, 'dire_counterpick', mid_dict, check_solo=True)
     
-    # Обработка comeback контрпиков
-    if comeback_dict is not None:
-        counterpick_team(radiant_heroes_and_pos, dire_heroes_and_pos, comeback_output, 'radiant_counterpick', comeback_dict, check_solo=True)
-        counterpick_team(dire_heroes_and_pos, radiant_heroes_and_pos, comeback_output, 'dire_counterpick', comeback_dict, check_solo=True)
     # # Вычисление разниц с проверкой значимости
     outputs_to_process = [
         (early_output, 'early_output', early_dict, early_trio_threshold),
         (mid_output, 'mid_output', mid_dict, mid_trio_threshold),
     ]
-    if comeback_dict is not None:
-        outputs_to_process.append((comeback_output, 'comeback_output', comeback_dict, comeback_trio_threshold))
     
     for output, name, data_dict, trio_threshold in outputs_to_process:
         phase_bucket = return_dict.setdefault(name, {})
+        if counterplay_vulnerability_edge is not None:
+            phase_bucket['counterplay_vulnerability'] = counterplay_vulnerability_edge
+        if counterplay_vulnerability_strong is not None:
+            phase_bucket['counterplay_vulnerability_strong'] = counterplay_vulnerability_strong
         phase_weights = early_weights if name == 'early_output' else late_weights
         # Требуем, чтобы у всех 10 героев были известны данные для соответствующей метрики
         has_all_solo = all_heroes_known and _covers_solo(data_dict, radiant_team) and _covers_solo(data_dict, dire_team)
@@ -1743,7 +3743,12 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     output['radiant_counterpick_1vs1'],
                     output['dire_counterpick_1vs1'],
                     _1vs2=True,
-                    custom_position_weights=phase_weights,
+                    custom_position_weights=(
+                        COUNTERPICK_1VS1_POSITION_WEIGHTS if name == 'mid_output' else phase_weights
+                    ),
+                    pair_weights=(
+                        LATE_COUNTERPICK_1VS1_PAIR_WEIGHTS if name == 'mid_output' else None
+                    ),
                 )
                 if cp_1vs1 is not None and abs(cp_1vs1) >= COUNTERPICK_1VS1_MIN_ABS:
                     phase_bucket['counterpick_1vs1'] = cp_1vs1
@@ -1751,6 +3756,16 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                 d_games = _sum_games_dict(output.get('dire_counterpick_1vs1'))
                 if r_games and d_games:
                     phase_bucket['counterpick_1vs1_games'] = min(r_games, d_games)
+
+        r_pos1_vs_pos1 = output.get('radiant_counterpick_pos1_vs_pos1')
+        d_pos1_vs_pos1 = output.get('dire_counterpick_pos1_vs_pos1')
+        if all_heroes_known and r_pos1_vs_pos1 and d_pos1_vs_pos1:
+            phase_bucket['pos1_vs_pos1'] = get_diff(r_pos1_vs_pos1, d_pos1_vs_pos1)
+            r_games = _sum_games_list(r_pos1_vs_pos1)
+            d_games = _sum_games_list(d_pos1_vs_pos1)
+            if r_games and d_games:
+                phase_bucket['pos1_vs_pos1_games'] = min(r_games, d_games)
+
         if has_all_solo and all(f'{side}_counterpick_solo' in output for side in ['radiant', 'dire']):
             # Для solo НЕ проверяем значимость (слишком мало данных)
             # ВНИМАНИЕ: solo теперь хранится по позициям и использует веса позиций
@@ -1839,7 +3854,109 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
         if pair_one is not None and SYNERGY_DUO_REQUIRE_CP_ALIGN:
             # Усиливаем synergy_duo, когда она подтверждена counterpick_1vs1
             phase_bucket['synergy_duo'] = round(pair_one)
+
+        # Фазовые ML-обертки (early и late отдельно).
+        # Late-обертка применяется к mid, так как это поздняя стадия.
+        phase_context = {
+            'early_output': return_dict.get('early_output', {}),
+            'mid_output': return_dict.get('mid_output', {}),
+        }
+        # Wrapper disabled by default: only apply when explicitly enabled via env.
+        wrapper_enabled = os.getenv('SIGNAL_WRAPPER_ENABLED', '0').strip().lower() in {
+            '1', 'true', 'yes', 'on'
+        }
+        if wrapper_enabled:
+            if name == 'early_output' and apply_early_signal_wrapper is not None:
+                apply_early_signal_wrapper(
+                    phase_bucket=phase_bucket,
+                    radiant_heroes_and_pos=radiant_heroes_and_pos,
+                    dire_heroes_and_pos=dire_heroes_and_pos,
+                    phase_context=phase_context,
+                )
+            elif name == 'mid_output' and apply_late_signal_wrapper is not None:
+                apply_late_signal_wrapper(
+                    phase_bucket=phase_bucket,
+                    radiant_heroes_and_pos=radiant_heroes_and_pos,
+                    dire_heroes_and_pos=dire_heroes_and_pos,
+                    phase_context=phase_context,
+                )
     return return_dict
+
+
+def calculate_comeback_solo_metrics(
+    radiant_heroes_and_pos,
+    dire_heroes_and_pos,
+    comeback_dict,
+    baseline_wr_pct,
+    late_position_weights=None,
+):
+    if not isinstance(comeback_dict, dict) or not comeback_dict:
+        return None
+
+    weights = late_position_weights or _ENV_POS_WEIGHTS_LATE or _ENV_POS_WEIGHTS or LATE_POSITION_WEIGHTS
+    ordered_positions = ("pos1", "pos2", "pos3", "pos4", "pos5")
+
+    def _side_metrics(side):
+        weighted_wr = 0.0
+        total_weight = 0.0
+        missing_positions = []
+        games_by_pos = {}
+        wr_by_pos = {}
+
+        for pos in ordered_positions:
+            hero_id = side.get(pos, {}).get("hero_id")
+            try:
+                hero_int = int(hero_id)
+            except (TypeError, ValueError):
+                missing_positions.append(pos)
+                continue
+            if hero_int <= 0:
+                missing_positions.append(pos)
+                continue
+
+            key = f"{hero_int}{pos}"
+            stats = comeback_dict.get(key) or {}
+            games = int(stats.get("games", 0) or 0)
+            wins = int(stats.get("wins", 0) or 0)
+            if games < SOLO_MIN_MATCHES:
+                missing_positions.append(pos)
+                continue
+
+            wr = wins / games
+            weight = float(weights.get(pos, 1.0))
+            weighted_wr += wr * weight
+            total_weight += weight
+            games_by_pos[pos] = games
+            wr_by_pos[pos] = round(wr * 100, 2)
+
+        if total_weight <= 0:
+            return {
+                "complete": False,
+                "wr_pct": None,
+                "delta_pp": None,
+                "missing_positions": missing_positions,
+                "games_by_pos": games_by_pos,
+                "wr_by_pos": wr_by_pos,
+            }
+
+        wr_pct = (weighted_wr / total_weight) * 100.0
+        delta_pp = wr_pct - float(baseline_wr_pct)
+        return {
+            "complete": len(missing_positions) == 0,
+            "wr_pct": round(wr_pct, 2),
+            "delta_pp": round(delta_pp, 2),
+            "missing_positions": missing_positions,
+            "games_by_pos": games_by_pos,
+            "wr_by_pos": wr_by_pos,
+        }
+
+    radiant = _side_metrics(radiant_heroes_and_pos)
+    dire = _side_metrics(dire_heroes_and_pos)
+    return {
+        "baseline_wr_pct": round(float(baseline_wr_pct), 2),
+        "radiant": radiant,
+        "dire": dire,
+    }
 
 
 # functions.py
@@ -2025,7 +4142,7 @@ def determine_game_dominance(match):
 
 
 def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict, late_dict,
-              radiant_team_name=None, dire_team_name=None, match=None, comeback_dict=None):
+              radiant_team_name=None, dire_team_name=None, match=None):
 
     for key in dire_heroes_and_pos:
         hero_name = dire_heroes_and_pos[key]['hero_name'].lower()
@@ -2062,7 +4179,7 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
     s = synergy_and_counterpick(
         radiant_heroes_and_pos=radiant_heroes_and_pos,
         dire_heroes_and_pos=dire_heroes_and_pos,
-        early_dict=early_dict, mid_dict=late_dict, comeback_dict=comeback_dict)
+        early_dict=early_dict, mid_dict=late_dict)
     base_top, base_bot, base_mid = calculate_lanes(
         radiant_heroes_and_pos, dire_heroes_and_pos, structured_lane_data
     )
@@ -2089,6 +4206,7 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
         except Exception:
             match_obj = None
 
+    lane_rows = None
     if lane_corrector_enabled and match_obj:
         baseline_msgs = {"top": base_top, "bot": base_bot, "mid": base_mid}
         lc_res = _lc_predict_lanes_for_match(
@@ -2100,15 +4218,31 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
             player_stats={},
             pair_stats={},
             pair_hero_stats={},
+            player_vs_hero_stats={},
+            player_hero_vs_hero_stats={},
             team_lane_history={},
         )
         if lc_res:
-            corrected, _ = lc_res
+            if isinstance(lc_res, (tuple, list)) and len(lc_res) >= 3:
+                corrected, _, lane_rows = lc_res
+            else:
+                corrected, _ = lc_res
             base_top = _lc_format_lane_message("top", *corrected.get("top", (None, None)))
             base_mid = _lc_format_lane_message("mid", *corrected.get("mid", (None, None)))
             base_bot = _lc_format_lane_message("bot", *corrected.get("bot", (None, None)))
 
     s['top'], s['bot'], s['mid'] = base_top, base_bot, base_mid
+    lw_out, lw_conf, lw_probs = _lc_predict_laning_winner_rich(lane_rows=lane_rows)
+    if lw_out is None:
+        lw_out, lw_conf, lw_probs = _lc_predict_laning_winner(
+            top_message=base_top,
+            mid_message=base_mid,
+            bot_message=base_bot,
+            match_start_time=_lc_coerce_int((match_obj or {}).get("startDateTime")),
+        )
+    s["laning_winner"] = lw_out
+    s["laning_winner_conf"] = lw_conf
+    s["laning_winner_probs"] = lw_probs
 
     # if format_output_dict(s):
     if True:
@@ -2122,7 +4256,11 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
             return any(value is not None for value in data.values()) if isinstance(data, dict) else False
 
         metric_list = [
+            ('counterplay_vulnerability', 'Counterplay_vulnerability'),
+            ('counterplay_vulnerability_strong', 'Counterplay_vulnerability_strong'),
+            ('trio_pos1_strong', 'Trio_pos1_strong'),
             ('counterpick_1vs1', 'Counterpick_1vs1'),
+            ('pos1_vs_pos1', 'Pos1_vs_pos1'),
             ('counterpick_1vs2', 'Counterpick_1vs2'),
             ('solo', 'Solo'),
             ('synergy_duo', 'Synergy_duo'),
@@ -2131,22 +4269,21 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
 
         early_output = s.get('early_output', {})
         mid_output = s.get('mid_output', {})
-        comeback_output = s.get('comeback_output', {})
+        laning_winner_line = _lc_format_laning_winner_message(
+            s.get("laning_winner"),
+            s.get("laning_winner_conf"),
+        )
 
         early_block = _format_metrics("10-28 Minute:", early_output, metric_list)
         mid_block = _format_metrics("Mid (25-50 min):", mid_output, metric_list)
-        comeback_block = ""
-        if _has_any_metric(comeback_output):
-            comeback_block = _format_metrics("Comeback:", comeback_output, metric_list)
 
         # Формирование сообщения
         send_message(
             f'ПОМНИ: КОМАНДА ВАЖНЕЕ ПИКА\n'
             f"{radiant_team_name} VS {dire_team_name}\n"
-            f"Lanes:\n{s.get('top')}{s.get('mid')}{s.get('bot')}"
+            f"Lanes:\n{s.get('top')}{s.get('mid')}{s.get('bot')}{laning_winner_line}"
             f"{early_block}"
             f"{mid_block}"
-            f"{comeback_block}"
             f'ПОМНИ: КОМАНДА ВАЖНЕЕ ПИКА')
 
 
@@ -2331,7 +4468,7 @@ def evaluate_winrate_check_old_maps(matches):
     return avg_wr, winrates_by_index
 
 
-def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weights=None, write_to_file=True, start_date_time=1747872000, comeback_dict=None, maps_path=None, output_path=None, merge_side_lanes: bool = False, disable_lanes: bool = False, max_matches: int = None, autoload_dicts: bool = True, use_lane_corrector: bool = True, lane_corrector_dir: str = None):
+def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weights=None, write_to_file=True, start_date_time=1747872000, maps_path=None, output_path=None, merge_side_lanes: bool = False, disable_lanes: bool = False, max_matches: int = None, autoload_dicts: bool = True, use_lane_corrector: bool = True, lane_corrector_dir: str = None):
     import sys
     import time
     start_time = time.time()
@@ -2339,7 +4476,7 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
     print("CHECK_OLD_MAPS: Начало обработки", flush=True)
     print("="*80, flush=True)
     if maps_path is None:
-        maps_path = '/Users/alex/Documents/ingame/pro_heroes_data/json_parts_split_from_object/combined1.json'
+        maps_path = '/Users/alex/Documents/ingame/bets_data/analise_pub_matches/json_parts_split_from_object/combined1.json'
     with open(maps_path) as f:
         maps_data = json.load(f)
     
@@ -2363,10 +4500,6 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
                 with open(stats_dir / "late_dict_raw.json", "r") as f:
                     late_dict = json.load(f)
                 print("  ✓ Загружен late_dict по умолчанию")
-            if comeback_dict is None and (stats_dir / "comeback_dict_raw.json").exists():
-                with open(stats_dir / "comeback_dict_raw.json", "r") as f:
-                    comeback_dict = json.load(f)
-                print("  ✓ Загружен comeback_dict по умолчанию")
             if (not lane_data) and (stats_dir / "lane_dict_raw.json").exists():
                 with open(stats_dir / "lane_dict_raw.json", "r") as f:
                     lane_data = json.load(f)
@@ -2391,6 +4524,8 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
     player_stats = {} if lane_corrector_enabled else None
     pair_stats = {} if lane_corrector_enabled else None
     pair_hero_stats = {} if lane_corrector_enabled else None
+    player_vs_hero_stats = {} if lane_corrector_enabled else None
+    player_hero_vs_hero_stats = {} if lane_corrector_enabled else None
     team_lane_history = {} if lane_corrector_enabled else None
 
     items = list(maps_data.items())
@@ -2437,6 +4572,8 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
                         player_stats,
                         pair_stats,
                         pair_hero_stats,
+                        player_vs_hero_stats,
+                        player_hero_vs_hero_stats,
                         team_lane_history,
                     )
                     warmed += 1
@@ -2479,7 +4616,6 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
             dire_heroes_and_pos=dire_heroes_and_pos,
             early_dict=early_dict,
             mid_dict=late_dict,
-            comeback_dict=comeback_dict,
             custom_weights=custom_weights,
         ) or {}
         # Совместимость: старые пайплайны ожидают late_output
@@ -2495,7 +4631,6 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
         _strip_games_metrics(s.get('early_output'))
         _strip_games_metrics(s.get('mid_output'))
         _strip_games_metrics(s.get('late_output'))
-        _strip_games_metrics(s.get('comeback_output'))
         if not disable_lanes:
             base_top, base_bot, base_mid = calculate_lanes(
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
@@ -2503,6 +4638,7 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
                 heroes_data=structured_lane_data,
                 merge_side_lanes=merge_side_lanes,
             )
+            lane_rows = None
             if lane_corrector_enabled:
                 baseline_msgs = {"top": base_top, "bot": base_bot, "mid": base_mid}
                 lc_res = _lc_predict_lanes_for_match(
@@ -2514,11 +4650,16 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
                     player_stats=player_stats,
                     pair_stats=pair_stats,
                     pair_hero_stats=pair_hero_stats,
+                    player_vs_hero_stats=player_vs_hero_stats,
+                    player_hero_vs_hero_stats=player_hero_vs_hero_stats,
                     team_lane_history=team_lane_history,
                     models_dir=lane_corrector_dir,
                 )
                 if lc_res:
-                    corrected, base_preds = lc_res
+                    if isinstance(lc_res, (tuple, list)) and len(lc_res) >= 3:
+                        corrected, base_preds, lane_rows = lc_res
+                    else:
+                        corrected, base_preds = lc_res
                     base_top = _lc_format_lane_message("top", *corrected.get("top", (None, None)))
                     base_mid = _lc_format_lane_message("mid", *corrected.get("mid", (None, None)))
                     base_bot = _lc_format_lane_message("bot", *corrected.get("bot", (None, None)))
@@ -2528,9 +4669,30 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
                         player_stats,
                         pair_stats,
                         pair_hero_stats,
+                        player_vs_hero_stats,
+                        player_hero_vs_hero_stats,
                         team_lane_history,
                     )
             s['top'], s['bot'], s['mid'] = base_top, base_bot, base_mid
+            lw_out, lw_conf, lw_probs = _lc_predict_laning_winner_rich(
+                lane_rows=lane_rows,
+                models_dir=lane_corrector_dir,
+            )
+            if lw_out is None:
+                lw_out, lw_conf, lw_probs = _lc_predict_laning_winner(
+                    top_message=base_top,
+                    mid_message=base_mid,
+                    bot_message=base_bot,
+                    match_start_time=_lc_coerce_int(match.get("startDateTime")),
+                    models_dir=lane_corrector_dir,
+                )
+            s["laning_winner"] = lw_out
+            s["laning_winner_conf"] = lw_conf
+            s["laning_winner_probs"] = lw_probs
+        else:
+            s["laning_winner"] = None
+            s["laning_winner_conf"] = None
+            s["laning_winner_probs"] = {"radiant": 0.0, "dire": 0.0, "none": 1.0}
         s['radiantTeam'] = match.get('radiantTeam')
         s['direTeam'] = match.get('direTeam')
         s['didRadiantWin'] = maps_data[match_id]['didRadiantWin']
@@ -2569,7 +4731,7 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
 
 
 
-def check_old_maps_weights(early_dict, mid_dict, lane_data, custom_weights=None, comeback_dict=None):
+def check_old_maps_weights(early_dict, mid_dict, lane_data, custom_weights=None):
     """
     Оптимизация весов позиций для метрик counterpick_1vs2 и counterpick_1vs1.
     Перебирает комбинации весов и находит лучшую по винрейту.
@@ -2638,7 +4800,6 @@ def check_old_maps_weights(early_dict, mid_dict, lane_data, custom_weights=None,
                 early_dict=early_dict,
                 mid_dict=mid_dict,
                 custom_weights=current_weights,
-                comeback_dict=comeback_dict,
             )
 
             s['didRadiantWin'] = maps_data[match_id]['didRadiantWin']
@@ -2742,18 +4903,18 @@ def find_biggest_param(data, mid=False):
     lose_val = data.get('lose')
     if lose_val is None:
         lose_val = data.get('loose', 0)
-    data = {'draw': draw_val, 'lose': lose_val, 'win': win_val}
-    if abs(win_val - lose_val) < 5:
-        return 'draw', int(round(draw_val))
-    sorted_keys = sorted(data, key=lambda k: data[k], reverse=True)
-    second_max_key = sorted_keys[1]
-    second_max_value = int(round(data[second_max_key]))
-    key = sorted_keys[0]
-    first_key_max_value = int(round(data[key]))
-    if first_key_max_value == second_max_value:
-        if all(i in ['win', 'lose'] for i in (key, second_max_key)) or 'draw' in [key, second_max_key]:
-            key = 'draw'
-    return key, first_key_max_value
+    data = {
+        'draw': float(draw_val or 0),
+        'lose': float(lose_val or 0),
+        'win': float(win_val or 0),
+    }
+    sorted_items = sorted(data.items(), key=lambda item: item[1], reverse=True)
+    key, first_val = sorted_items[0]
+    second_key, second_val = sorted_items[1]
+    if abs(first_val - second_val) < 0.5:
+        if all(i in ['win', 'lose'] for i in (key, second_key)) or 'draw' in [key, second_key]:
+            return 'draw', int(round(max(data['draw'], first_val, second_val)))
+    return key, int(round(first_val))
 
 
 def _canon_vs(left, right):
@@ -2813,6 +4974,146 @@ def _apply_stomp_weighted_counts(wins, draws, losses, stats, invert=False):
     return (float(wins) + weight * sw, float(draws), float(losses) + weight * sl)
 
 
+LANE_2V2_MIN_GAMES = 6
+LANE_2V1_MIN_GAMES = 20
+LANE_1V1_MIN_GAMES = 50
+LANE_SYNERGY_MIN_GAMES = 30
+LANE_SOLO_MIN_GAMES = 10
+
+
+def _lane_stats_to_counts(stats, invert=False):
+    if not isinstance(stats, dict):
+        return None
+    if 'games' in stats:
+        games = int(stats.get('games', 0) or 0)
+        if games <= 0:
+            return None
+        wins = int(stats.get('wins', 0) or 0)
+        draws = int(stats.get('draws', 0) or 0)
+        losses = max(0, games - wins - draws)
+    else:
+        value = stats.get('value', [])
+        if not value:
+            return None
+        games = len(value)
+        wins = value.count(1)
+        draws = value.count(0)
+        losses = value.count(-1)
+    if invert:
+        wins, losses = losses, wins
+    wins, draws, losses = _apply_stomp_weighted_counts(wins, draws, losses, stats, invert=invert)
+    return wins, draws, losses, games
+
+
+def _lane_probs_from_counts(wins, draws, losses, games, alpha=1.0):
+    if games <= 0:
+        return None
+    denom = games + 3.0 * alpha
+    if denom <= 0:
+        return None
+    win = (wins + alpha) / denom
+    draw = (draws + alpha) / denom
+    lose = (losses + alpha) / denom
+    total = win + draw + lose
+    if total <= 0:
+        return None
+    return {
+        'win': win / total * 100,
+        'draw': draw / total * 100,
+        'lose': lose / total * 100,
+        'games': float(games),
+    }
+
+
+def _lane_probs_from_stats(stats, min_games, invert=False):
+    counts = _lane_stats_to_counts(stats, invert=invert)
+    if not counts:
+        return None
+    wins, draws, losses, games = counts
+    if games < min_games:
+        return None
+    return _lane_probs_from_counts(wins, draws, losses, games)
+
+
+def _lane_prediction_from_probs(probs):
+    if not isinstance(probs, dict):
+        return None, None
+    if not all(k in probs for k in ('win', 'draw', 'lose')):
+        return None, None
+    return find_biggest_param(probs)
+
+
+def _lane_probs_weighted_average(prob_entries, default_games=0.0):
+    if not prob_entries:
+        return None
+    total_games = 0.0
+    win = draw = lose = 0.0
+    for probs, weight_scale in prob_entries:
+        if not isinstance(probs, dict):
+            continue
+        games = float(probs.get('games', default_games) or default_games or 0.0)
+        weight = max(0.0, games) * float(weight_scale)
+        if weight <= 0:
+            continue
+        win += float(probs.get('win', 0.0)) * weight
+        draw += float(probs.get('draw', 0.0)) * weight
+        lose += float(probs.get('lose', 0.0)) * weight
+        total_games += weight
+    if total_games <= 0:
+        return None
+    return {
+        'win': win / total_games,
+        'draw': draw / total_games,
+        'lose': lose / total_games,
+        'games': total_games,
+    }
+
+
+def _lane_strength_logit(win_rate):
+    win_rate = min(max(float(win_rate), 1e-6), 1.0 - 1e-6)
+    return math.log(win_rate / (1.0 - win_rate))
+
+
+def _lane_sigmoid(value):
+    return 1.0 / (1.0 + math.exp(-float(value)))
+
+
+def _predict_matchup_probs_from_side_probs(radiant_probs, dire_probs, shrink_games=40.0):
+    if not radiant_probs or not dire_probs:
+        return None
+    r_win = float(radiant_probs.get('win', 0.0)) / 100.0
+    r_draw = float(radiant_probs.get('draw', 0.0)) / 100.0
+    r_lose = float(radiant_probs.get('lose', 0.0)) / 100.0
+    d_win = float(dire_probs.get('win', 0.0)) / 100.0
+    d_draw = float(dire_probs.get('draw', 0.0)) / 100.0
+    d_lose = float(dire_probs.get('lose', 0.0)) / 100.0
+    r_non_draw = r_win + r_lose
+    d_non_draw = d_win + d_lose
+    if r_non_draw <= 0 or d_non_draw <= 0:
+        return None
+
+    r_strength = _lane_strength_logit(r_win / r_non_draw)
+    d_strength = _lane_strength_logit(d_win / d_non_draw)
+    sample_games = min(float(radiant_probs.get('games', 0.0) or 0.0), float(dire_probs.get('games', 0.0) or 0.0))
+    shrink = sample_games / (sample_games + float(shrink_games)) if sample_games > 0 else 0.0
+    nondraw_radiant_win = _lane_sigmoid((r_strength - d_strength) * shrink)
+
+    draw = (r_draw + d_draw) / 2.0
+    draw = max(0.0, min(0.6, draw))
+    remaining = max(0.0, 1.0 - draw)
+    win = remaining * nondraw_radiant_win
+    lose = remaining * (1.0 - nondraw_radiant_win)
+    total = win + draw + lose
+    if total <= 0:
+        return None
+    return {
+        'win': win / total * 100,
+        'draw': draw / total * 100,
+        'lose': lose / total * 100,
+        'games': sample_games,
+    }
+
+
 def lane_2vs2(radiant, dire, heroes_data, output):
     data_2vs2 = heroes_data['2v2_lanes']
 
@@ -2821,76 +5122,10 @@ def lane_2vs2(radiant, dire, heroes_data, output):
     top_lane = f'{radiant["pos3"]["hero_id"]}pos3,{radiant["pos4"]["hero_id"]}pos4_vs_' \
                f'{dire["pos1"]["hero_id"]}pos1,{dire["pos5"]["hero_id"]}pos5'
     for lane, key in [[top_lane, 'top'], [bot_lane, 'bot']]:
-        parts = lane.split('_vs_')
-        left_raw, right_raw = parts if len(parts) == 2 else (None, None)
-        left_parts = left_raw.split(',') if left_raw else []
-        right_parts = right_raw.split(',') if right_raw else []
-        left_sorted = ",".join(sorted(left_parts)) if left_parts else None
-        right_sorted = ",".join(sorted(right_parts)) if right_parts else None
-
-        wins = draws = losses = games = 0
-
-        def _add_counts(s, invert=False):
-            nonlocal wins, draws, losses, games
-            if isinstance(s, dict) and 'games' in s:
-                g = int(s.get('games', 0) or 0)
-                if g <= 0:
-                    return
-                w = int(s.get('wins', 0) or 0)
-                d = int(s.get('draws', 0) or 0)
-                l = max(0, g - w - d)
-            else:
-                value = s.get('value', []) if isinstance(s, dict) else []
-                if not value:
-                    return
-                g = len(value)
-                w = value.count(1)
-                d = value.count(0)
-                l = value.count(-1)
-            if invert:
-                w, l = l, w
-            w, d, l = _apply_stomp_weighted_counts(w, d, l, s, invert=invert)
-            wins += w
-            draws += d
-            losses += l
-            games += g
-
-        candidates = []
-        if left_raw and right_raw:
-            candidates.extend([
-                (f'{left_raw}_vs_{right_raw}', False),
-                (f'{right_raw}_vs_{left_raw}', True),
-            ])
-        if left_sorted and right_sorted:
-            candidates.extend([
-                (f'{left_sorted}_vs_{right_sorted}', False),
-                (f'{right_sorted}_vs_{left_sorted}', True),
-            ])
-
-        seen = set()
-        for key_candidate, invert in candidates:
-            if key_candidate in seen:
-                continue
-            seen.add(key_candidate)
-            stats = data_2vs2.get(key_candidate, {})
-            _add_counts(stats, invert=invert)
-
-        if games >= 6:
-            alpha = 1.0
-            denom = games + 3.0 * alpha
-            win = (wins + alpha) / denom if denom > 0 else 0
-            draw = (draws + alpha) / denom if denom > 0 else 0
-            lose = (losses + alpha) / denom if denom > 0 else 0
-
-            total = lose + win + draw
-            if total > 0:
-                lose = lose / total * 100
-                draw = draw / total * 100
-                win = win / total * 100
-
-                output.setdefault(key, {}).setdefault('lose', lose)
-                output.setdefault(key, {}).setdefault('draw', draw)
-                output.setdefault(key, {}).setdefault('win', win)
+        stats, invert, _, _ = _get_lane_stats_for_key(lane, data_2vs2)
+        probs = _lane_probs_from_stats(stats, LANE_2V2_MIN_GAMES, invert=invert)
+        if probs:
+            output.setdefault(key, {}).update(probs)
 
 
 def multiply_list(lst, result=1):
@@ -2924,77 +5159,28 @@ def multiply_list(lst, result=1):
 
 
 def get_values(lane_side, key, heroes_data, output):
-    # Новая структура: {'wins': N, 'draws': M, 'games': K}
     stats, invert, left_parts, right_parts = _get_lane_stats_for_key(key, heroes_data)
-    
-    if isinstance(stats, dict) and 'games' in stats:
-        games = stats.get('games', 0)
-        if games >= 20:  # Поднято для очистки шумных 2v1 матчапов
-            wins = stats.get('wins', 0)
-            draws = stats.get('draws', 0)
-            losses = max(0, games - wins - draws)
-            if invert:
-                wins, losses = losses, wins
-            wins, draws, losses = _apply_stomp_weighted_counts(wins, draws, losses, stats, invert=invert)
+    probs = _lane_probs_from_stats(stats, LANE_2V1_MIN_GAMES, invert=invert)
+    if probs:
+        games = float(probs.get('games', 0.0) or 0.0)
+        output.setdefault(lane_side, {}).setdefault('lose', []).append((float(probs['lose']) / 100.0, games))
+        output.setdefault(lane_side, {}).setdefault('draw', []).append((float(probs['draw']) / 100.0, games))
+        output.setdefault(lane_side, {}).setdefault('win', []).append((float(probs['win']) / 100.0, games))
+        return
 
-            alpha = 1.0
-            denom = games + 3.0 * alpha
-            win = (wins + alpha) / denom if denom > 0 else 0
-            draw = (draws + alpha) / denom if denom > 0 else 0
-            lose = (losses + alpha) / denom if denom > 0 else 0
-
-            output.setdefault(lane_side, {}).setdefault('lose', []).append((lose, games))
-            output.setdefault(lane_side, {}).setdefault('draw', []).append((draw, games))
-            output.setdefault(lane_side, {}).setdefault('win', []).append((win, games))
-        else:
-            solo = None
-            if left_parts is not None and right_parts is not None:
-                if len(left_parts) == 1:
-                    solo = left_parts[0]
-                elif len(right_parts) == 1:
-                    solo = right_parts[0]
-            if solo is None:
-                foo = key.split('_vs_')
-                to_be_appended = [i for i in foo if len(i.split(',')) == 1]
-                if to_be_appended:
-                    solo = to_be_appended[0]
-            if solo is not None:
-                output.setdefault(lane_side, {}).setdefault('not_used_hero_pos', []).append(solo)
-    else:
-        # Старая структура для обратной совместимости
-        value = stats.get('value', [])
-        if len(value) >= 10:
-            games = len(value)
-            wins = value.count(1)
-            draws = value.count(0)
-            losses = value.count(-1)
-            if invert:
-                wins, losses = losses, wins
-            wins, draws, losses = _apply_stomp_weighted_counts(wins, draws, losses, stats, invert=invert)
-
-            alpha = 1.0
-            denom = games + 3.0 * alpha
-            win = (wins + alpha) / denom if denom > 0 else 0
-            draw = (draws + alpha) / denom if denom > 0 else 0
-            lose = (losses + alpha) / denom if denom > 0 else 0
-
-            output.setdefault(lane_side, {}).setdefault('lose', []).append((lose, games))
-            output.setdefault(lane_side, {}).setdefault('draw', []).append((draw, games))
-            output.setdefault(lane_side, {}).setdefault('win', []).append((win, games))
-        else:
-            solo = None
-            if left_parts is not None and right_parts is not None:
-                if len(left_parts) == 1:
-                    solo = left_parts[0]
-                elif len(right_parts) == 1:
-                    solo = right_parts[0]
-            if solo is None:
-                foo = key.split('_vs_')
-                to_be_appended = [i for i in foo if len(i.split(',')) == 1]
-                if to_be_appended:
-                    solo = to_be_appended[0]
-            if solo is not None:
-                output.setdefault(lane_side, {}).setdefault('not_used_hero_pos', []).append(solo)
+    solo = None
+    if left_parts is not None and right_parts is not None:
+        if len(left_parts) == 1:
+            solo = left_parts[0]
+        elif len(right_parts) == 1:
+            solo = right_parts[0]
+    if solo is None:
+        foo = key.split('_vs_')
+        to_be_appended = [i for i in foo if len(i.split(',')) == 1]
+        if to_be_appended:
+            solo = to_be_appended[0]
+    if solo is not None:
+        output.setdefault(lane_side, {}).setdefault('not_used_hero_pos', []).append(solo)
 
 
 def lane_2vs1(radiant, dire, heroes_data, lane):
@@ -3027,55 +5213,46 @@ def lane_2vs1(radiant, dire, heroes_data, lane):
     elif lane == 'mid':
         key = f'{radiant["pos2"]["hero_id"]}pos2_vs_{dire["pos2"]["hero_id"]}pos2'
         stats, invert, _, _ = _get_lane_stats_for_key(key, heroes_data)
-        
-        # Новая структура: {'wins': N, 'draws': M, 'games': K}
-        if isinstance(stats, dict) and 'games' in stats:
-            games = stats.get('games', 0)
-            if games >= 20:  # Поднято, чтобы убрать шум mid 1v1
-                wins = stats.get('wins', 0)
-                draws = stats.get('draws', 0)
-                losses = max(0, games - wins - draws)
-                if invert:
-                    wins, losses = losses, wins
-                wins, draws, losses = _apply_stomp_weighted_counts(wins, draws, losses, stats, invert=invert)
-
-                alpha = 1.0
-                denom = games + 3.0 * alpha
-                win = ((wins + alpha) / denom) * 100 if denom > 0 else 0
-                draw = ((draws + alpha) / denom) * 100 if denom > 0 else 0
-                lose = ((losses + alpha) / denom) * 100 if denom > 0 else 0
-
-                output.setdefault('mid_radiant', {}).setdefault('lose', lose)
-                output.setdefault('mid_radiant', {}).setdefault('draw', draw)
-                output.setdefault('mid_radiant', {}).setdefault('win', win)
+        probs = _lane_probs_from_stats(stats, LANE_2V1_MIN_GAMES, invert=invert)
+        if probs:
+            output.setdefault('mid_radiant', {}).update(probs)
     return output
 
 
-def both_found(lane, data, output):
-    data[f'{lane}_dire']['draw'] = multiply_list(data[f'{lane}_dire']['draw'])
-    data[f'{lane}_dire']['win'] = multiply_list(data[f'{lane}_dire']['win'])
-    data[f'{lane}_dire']['lose'] = multiply_list(data[f'{lane}_dire']['lose'])
+def both_found(lane, data, output=None, return_probs=False):
+    combined_entries = {k: [] for k in ('win', 'draw', 'lose')}
+    total_games = 0.0
+    for side in (f'{lane}_radiant', f'{lane}_dire'):
+        side_data = data.get(side, {})
+        win_entries = side_data.get('win', [])
+        if win_entries:
+            total_games += sum(float(item[1]) for item in win_entries if isinstance(item, (tuple, list)) and len(item) >= 2)
+        for metric in ('win', 'draw', 'lose'):
+            vals = side_data.get(metric, [])
+            if vals:
+                combined_entries[metric].extend(vals)
 
-    data[f'{lane}_radiant']['draw'] = multiply_list(data[f'{lane}_radiant']['draw'])
-    data[f'{lane}_radiant']['win'] = multiply_list(data[f'{lane}_radiant']['win'])
-    data[f'{lane}_radiant']['lose'] = multiply_list(data[f'{lane}_radiant']['lose'])
+    probs = {}
+    for metric, entries in combined_entries.items():
+        if entries:
+            probs[metric] = multiply_list(entries, result=0.0) * 100.0
+    total = sum(float(probs.get(metric, 0.0)) for metric in ('win', 'draw', 'lose'))
+    if total <= 0:
+        return None
+    probs = {
+        'win': float(probs.get('win', 0.0)) / total * 100.0,
+        'draw': float(probs.get('draw', 0.0)) / total * 100.0,
+        'lose': float(probs.get('lose', 0.0)) / total * 100.0,
+        'games': total_games,
+    }
+    if output is not None:
+        output.setdefault(f'{lane}', {}).update(probs)
+    if return_probs:
+        return probs
+    return _lane_prediction_from_probs(probs)
 
-    radiant_draw = (data[f'{lane}_radiant']['draw'] + data[f'{lane}_dire']['draw'])/2
-    radiant_win = (data[f'{lane}_radiant']['win'] + data[f'{lane}_dire']['win'])/2
-    radiant_lose = (data[f'{lane}_radiant']['lose'] + data[f'{lane}_dire']['lose'])/2
 
-    total = radiant_lose + radiant_draw + radiant_win
-    if total not in [0, 0.0]:
-        output.setdefault(f'{lane}', {}).setdefault('win', round(radiant_win / total * 100))
-        output.setdefault(f'{lane}', {}).setdefault('lose', round(radiant_lose / total * 100))
-        output.setdefault(f'{lane}', {}).setdefault('draw', round(radiant_draw / total * 100))
-
-        bot_key, bot_key_value = find_biggest_param(output[f'{lane}'])
-        return bot_key, bot_key_value
-    return None
-
-
-def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane):
+def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane, return_probs=False):
     """Анализ индивидуальных 1v1 матчапов на лайне (контрпики)"""
     heroes_data_1v1 = heroes_data.get('1v1_lanes', {})
 
@@ -3083,61 +5260,16 @@ def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, 
         buckets = []
         for matchup_key in matchups:
             stats, invert, _, _ = _get_lane_stats_for_key(matchup_key, heroes_data_1v1)
-
-            if isinstance(stats, dict) and 'games' in stats:
-                games = stats.get('games', 0)
-                if games >= 50:
-                    wins = stats.get('wins', 0)
-                    draws = stats.get('draws', 0)
-                    losses = max(0, games - wins - draws)
-                    if invert:
-                        wins, losses = losses, wins
-                    wins, draws, losses = _apply_stomp_weighted_counts(wins, draws, losses, stats, invert=invert)
-
-                    alpha = 1.0
-                    denom = games + 3.0 * alpha
-                    win = (wins + alpha) / denom if denom > 0 else 0
-                    draw = (draws + alpha) / denom if denom > 0 else 0
-                    lose = (losses + alpha) / denom if denom > 0 else 0
-                    buckets.append((win, draw, lose, games))
-                continue
-
-            value = stats.get('value', [])
-            if len(value) >= 50:
-                games = len(value)
-                wins = value.count(1)
-                draws = value.count(0)
-                losses = value.count(-1)
-                if invert:
-                    wins, losses = losses, wins
-                wins, draws, losses = _apply_stomp_weighted_counts(wins, draws, losses, stats, invert=invert)
-
-                alpha = 1.0
-                denom = games + 3.0 * alpha
-                win = (wins + alpha) / denom if denom > 0 else 0
-                draw = (draws + alpha) / denom if denom > 0 else 0
-                lose = (losses + alpha) / denom if denom > 0 else 0
-                buckets.append((win, draw, lose, games))
+            probs = _lane_probs_from_stats(stats, LANE_1V1_MIN_GAMES, invert=invert)
+            if probs:
+                buckets.append(probs)
 
         if len(buckets) < 2:
             return None
-
-        total_w = sum(float(b[3]) for b in buckets)
-        if total_w <= 0:
-            return None
-
-        win_avg = sum(float(b[0]) * float(b[3]) for b in buckets) / total_w
-        draw_avg = sum(float(b[1]) * float(b[3]) for b in buckets) / total_w
-        lose_avg = sum(float(b[2]) * float(b[3]) for b in buckets) / total_w
-
-        total = win_avg + draw_avg + lose_avg
-        if total <= 0:
-            return None
-
-        win = win_avg / total * 100
-        draw = draw_avg / total * 100
-        lose = lose_avg / total * 100
-        return find_biggest_param({'win': win, 'draw': draw, 'lose': lose})
+        aggregated = _lane_probs_weighted_average([(bucket, 1.0) for bucket in buckets])
+        if return_probs:
+            return aggregated
+        return _lane_prediction_from_probs(aggregated)
 
     if lane == 'bot':
         # Все возможные 1v1 матчапы на бот лайне
@@ -3166,7 +5298,7 @@ def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, 
     return None
 
 
-def synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane):
+def synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane, return_probs=False):
     heroes_data = heroes_data['1_with_1_lanes']
     if lane == 'bot':
         radiant_pair = sorted([
@@ -3177,75 +5309,6 @@ def synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane
             f"{dire_heroes_and_pos['pos3']['hero_id']}pos3",
             f"{dire_heroes_and_pos['pos4']['hero_id']}pos4",
         ])
-        radiant_key = f"{radiant_pair[0]}_with_{radiant_pair[1]}"
-        dire_key = f"{dire_pair[0]}_with_{dire_pair[1]}"
-        
-        radiant_stats = heroes_data.get(radiant_key, {})
-        dire_stats = heroes_data.get(dire_key, {})
-        
-        # Новая структура: {'wins': N, 'draws': M, 'games': K}
-        if isinstance(radiant_stats, dict) and 'games' in radiant_stats and isinstance(dire_stats, dict) and 'games' in dire_stats:
-            radiant_games = radiant_stats.get('games', 0)
-            dire_games = dire_stats.get('games', 0)
-            
-            if radiant_games >= 30 and dire_games >= 30:
-                radiant_wins = radiant_stats.get('wins', 0)
-                radiant_draws = radiant_stats.get('draws', 0)
-                radiant_losses = max(0, radiant_games - radiant_wins - radiant_draws)
-                
-                dire_wins = dire_stats.get('wins', 0)
-                dire_draws = dire_stats.get('draws', 0)
-                dire_losses = max(0, dire_games - dire_wins - dire_draws)
-                radiant_wins, radiant_draws, radiant_losses = _apply_stomp_weighted_counts(
-                    radiant_wins, radiant_draws, radiant_losses, radiant_stats, invert=False
-                )
-                dire_wins, dire_draws, dire_losses = _apply_stomp_weighted_counts(
-                    dire_wins, dire_draws, dire_losses, dire_stats, invert=False
-                )
-
-                alpha = 1.0
-                r_denom = radiant_games + 3.0 * alpha
-                d_denom = dire_games + 3.0 * alpha
-
-                radiant_win = (radiant_wins + alpha) / r_denom if r_denom > 0 else 0
-                radiant_lose = (radiant_losses + alpha) / r_denom if r_denom > 0 else 0
-                radiant_tie = (radiant_draws + alpha) / r_denom if r_denom > 0 else 0
-
-                dire_win = (dire_wins + alpha) / d_denom if d_denom > 0 else 0
-                dire_lose = (dire_losses + alpha) / d_denom if d_denom > 0 else 0
-                dire_tie = (dire_draws + alpha) / d_denom if d_denom > 0 else 0
-                
-                win = radiant_win * dire_lose
-                draw = radiant_tie * dire_tie
-                lose = radiant_lose * dire_win
-                total = sum([win, draw, lose])
-                if total > 0:
-                    win = win / total * 100
-                    draw = draw / total * 100
-                    lose = lose / total * 100
-                    key, first_key_max_value = find_biggest_param({'win': win, 'draw': draw, 'lose': lose})
-                    return key, first_key_max_value
-        else:
-            # Старая структура для обратной совместимости
-            radiant_value = radiant_stats.get('value', [])
-            dire_value = dire_stats.get('value', [])
-            if len(radiant_value) >= 30 and len(dire_value) >= 30:
-                radiant_win = radiant_value.count(1) / len(radiant_value)
-                radiant_lose = radiant_value.count(-1) / len(radiant_value)
-                radiant_tie = radiant_value.count(0) / len(radiant_value)
-                dire_win = dire_value.count(1) / len(dire_value)
-                dire_lose = dire_value.count(-1) / len(dire_value)
-                dire_tie = dire_value.count(0) / len(dire_value)
-                win = radiant_win * dire_lose
-                draw = radiant_tie * dire_tie
-                lose = radiant_lose * dire_win
-                total = sum([win, draw, lose])
-                win = win / total * 100
-                draw = draw / total * 100
-                lose = lose / total * 100
-                key, first_key_max_value = find_biggest_param({'win': win, 'draw': draw, 'lose': lose})
-                return key, first_key_max_value
-
     elif lane == 'top':
         radiant_pair = sorted([
             f"{radiant_heroes_and_pos['pos3']['hero_id']}pos3",
@@ -3255,79 +5318,22 @@ def synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane
             f"{dire_heroes_and_pos['pos1']['hero_id']}pos1",
             f"{dire_heroes_and_pos['pos5']['hero_id']}pos5",
         ])
-        radiant_key = f"{radiant_pair[0]}_with_{radiant_pair[1]}"
-        dire_key = f"{dire_pair[0]}_with_{dire_pair[1]}"
-        
-        radiant_stats = heroes_data.get(radiant_key, {})
-        dire_stats = heroes_data.get(dire_key, {})
-        
-        # Новая структура: {'wins': N, 'draws': M, 'games': K}
-        if isinstance(radiant_stats, dict) and 'games' in radiant_stats and isinstance(dire_stats, dict) and 'games' in dire_stats:
-            radiant_games = radiant_stats.get('games', 0)
-            dire_games = dire_stats.get('games', 0)
-            
-            if radiant_games >= 30 and dire_games >= 30:
-                radiant_wins = radiant_stats.get('wins', 0)
-                radiant_draws = radiant_stats.get('draws', 0)
-                radiant_losses = max(0, radiant_games - radiant_wins - radiant_draws)
-                
-                dire_wins = dire_stats.get('wins', 0)
-                dire_draws = dire_stats.get('draws', 0)
-                dire_losses = max(0, dire_games - dire_wins - dire_draws)
-                radiant_wins, radiant_draws, radiant_losses = _apply_stomp_weighted_counts(
-                    radiant_wins, radiant_draws, radiant_losses, radiant_stats, invert=False
-                )
-                dire_wins, dire_draws, dire_losses = _apply_stomp_weighted_counts(
-                    dire_wins, dire_draws, dire_losses, dire_stats, invert=False
-                )
+    else:
+        return None
 
-                alpha = 1.0
-                r_denom = radiant_games + 3.0 * alpha
-                d_denom = dire_games + 3.0 * alpha
-
-                radiant_win = (radiant_wins + alpha) / r_denom if r_denom > 0 else 0
-                radiant_lose = (radiant_losses + alpha) / r_denom if r_denom > 0 else 0
-                radiant_tie = (radiant_draws + alpha) / r_denom if r_denom > 0 else 0
-
-                dire_win = (dire_wins + alpha) / d_denom if d_denom > 0 else 0
-                dire_lose = (dire_losses + alpha) / d_denom if d_denom > 0 else 0
-                dire_tie = (dire_draws + alpha) / d_denom if d_denom > 0 else 0
-                
-                win = radiant_win * dire_lose
-                draw = radiant_tie * dire_tie
-                lose = radiant_lose * dire_win
-                total = sum([win, draw, lose])
-                if total > 0:
-                    win = win / total * 100
-                    draw = draw / total * 100
-                    lose = lose / total * 100
-                    key, first_key_max_value = find_biggest_param({'win': win, 'draw': draw, 'lose': lose})
-                    return key, first_key_max_value
-        else:
-            # Старая структура для обратной совместимости
-            radiant_value = radiant_stats.get('value', [])
-            dire_value = dire_stats.get('value', [])
-            if len(radiant_value) >= 30 and len(dire_value) >= 30:
-                radiant_win = radiant_value.count(1)/len(radiant_value)
-                radiant_lose = radiant_value.count(-1)/len(radiant_value)
-                radiant_tie = radiant_value.count(0)/len(radiant_value)
-                dire_win = dire_value.count(1)/len(dire_value)
-                dire_lose = dire_value.count(-1)/len(dire_value)
-                dire_tie = dire_value.count(0)/len(dire_value)
-                win = radiant_win * dire_lose
-                draw = radiant_tie * dire_tie
-                lose = radiant_lose * dire_win
-                total = sum([win, draw, lose])
-                win = win/total*100
-                draw = draw/total*100
-                lose = lose/total*100
-                key, first_key_max_value = find_biggest_param({'win': win, 'draw': draw, 'lose': lose})
-                return key, first_key_max_value
-    return None
+    radiant_key = f"{radiant_pair[0]}_with_{radiant_pair[1]}"
+    dire_key = f"{dire_pair[0]}_with_{dire_pair[1]}"
+    radiant_probs = _lane_probs_from_stats(heroes_data.get(radiant_key, {}), LANE_SYNERGY_MIN_GAMES, invert=False)
+    dire_probs = _lane_probs_from_stats(heroes_data.get(dire_key, {}), LANE_SYNERGY_MIN_GAMES, invert=False)
+    matchup_probs = _predict_matchup_probs_from_side_probs(radiant_probs, dire_probs)
+    if return_probs:
+        return matchup_probs
+    return _lane_prediction_from_probs(matchup_probs)
 
 
 def _merge_lane_predictions(counterpick_res, synergy_res, counterpick_weight=0.55,
-                            draw_floor=52, draw_cap=62, strong_gap=6, hard_take=60, soft_block=55):
+                            draw_floor=52, draw_cap=62, strong_gap=6, hard_take=60, soft_block=55,
+                            return_probs=False):
     """
     Смешивает сигнал контрпика лайна (1v1/1v2) с синергией дуо на лайне.
     coverage не приоритет: если есть явный сильный сигнал — берём его даже при расхождении,
@@ -3344,37 +5350,73 @@ def _merge_lane_predictions(counterpick_res, synergy_res, counterpick_weight=0.5
         except (TypeError, ValueError):
             return None
 
+    def _normalize_probs(res):
+        if not isinstance(res, dict):
+            return None
+        if not all(k in res for k in ('win', 'draw', 'lose')):
+            return None
+        return {
+            'win': float(res.get('win', 0.0)),
+            'draw': float(res.get('draw', 0.0)),
+            'lose': float(res.get('lose', 0.0)),
+            'games': float(res.get('games', 0.0) or 0.0),
+        }
+
+    cp_probs = _normalize_probs(counterpick_res)
+    sy_probs = _normalize_probs(synergy_res)
+    if cp_probs or sy_probs:
+        merged_probs = _lane_probs_weighted_average([
+            (cp_probs, counterpick_weight),
+            (sy_probs, 1.0 - counterpick_weight),
+        ])
+        if merged_probs is not None:
+            if return_probs:
+                return merged_probs
+            return _lane_prediction_from_probs(merged_probs)
+
     cp = _normalize(counterpick_res)
     sy = _normalize(synergy_res)
 
     if not cp and not sy:
         return None, None
     if cp and not sy:
+        if return_probs:
+            return None
         return cp
     if sy and not cp:
+        if return_probs:
+            return None
         return sy
 
     cp_key, cp_val = cp
     sy_key, sy_val = sy
 
     if cp_key == sy_key:
+        if return_probs:
+            return None
         blended = cp_val * counterpick_weight + sy_val * (1 - counterpick_weight)
         return cp_key, round(blended)
 
     # Источники расходятся: если один сильно уверен, берём его, иначе draw
     if abs(cp_val - sy_val) >= strong_gap:
+        if return_probs:
+            return None
         chosen = cp if cp_val > sy_val else sy
         return chosen[0], round(chosen[1])
     if (cp_val >= hard_take and sy_val <= soft_block) or (sy_val >= hard_take and cp_val <= soft_block):
+        if return_probs:
+            return None
         chosen = cp if cp_val > sy_val else sy
         return chosen[0], round(chosen[1])
 
+    if return_probs:
+        return None
     confidence = (cp_val + sy_val) / 2
     confidence = max(draw_floor, min(draw_cap, confidence))
     return 'draw', round(confidence)
 
 
-def _single_side_2v1_prediction(lane_data, lane_name):
+def _single_side_2v1_prediction(lane_data, lane_name, return_probs=False):
     """
     Делает предсказание по одному найденному боксу 2v1 (radiant/dire),
     если второй отсутствует. Возвращает (key, value) в процентах или None.
@@ -3385,25 +5427,31 @@ def _single_side_2v1_prediction(lane_data, lane_name):
         if not side_data:
             continue
         agg = {}
+        games_used = 0.0
         for k in ('win', 'draw', 'lose'):
             vals = side_data.get(k, [])
             if vals:
-                agg[k] = multiply_list(vals) * 100
+                agg[k] = multiply_list(vals, result=0.0) * 100.0
+                if k == 'win':
+                    games_used = sum(float(item[1]) for item in vals if isinstance(item, (tuple, list)) and len(item) >= 2)
         if not agg:
             continue
-        key, val = find_biggest_param(agg)
-        # Инвертируем перспективу, если данные со стороны Dire
         if side.endswith('_dire'):
-            if key == 'win':
-                key = 'lose'
-            elif key == 'lose':
-                key = 'win'
-        predictions.append((key, val))
+            agg = {
+                'win': float(agg.get('lose', 0.0)),
+                'draw': float(agg.get('draw', 0.0)),
+                'lose': float(agg.get('win', 0.0)),
+                'games': games_used,
+            }
+        else:
+            agg['games'] = games_used
+        predictions.append(agg)
 
     if not predictions:
         return None
-    # Берём самый уверенный
-    return max(predictions, key=lambda x: x[1])
+    if return_probs:
+        return _lane_probs_weighted_average([(prediction, 1.0) for prediction in predictions])
+    return _lane_prediction_from_probs(_lane_probs_weighted_average([(prediction, 1.0) for prediction in predictions]))
 
 
 # === Lane corrector (ML) helpers ===
@@ -3421,9 +5469,26 @@ _LC_CAT_COLS = (
 )
 _LC_MODEL_CACHE = {"loaded": False, "models": {}, "error": None}
 _LC_DEC_MODEL_CACHE = {"loaded": False, "models": {}, "error": None}
+_LC_LW_MODEL_CACHE = {"loaded": False, "model": None, "feature_cols": [], "cat_idx": [], "label_map": {}, "error": None}
+_LC_LW_RICH_MODEL_CACHE = {
+    "loaded": False,
+    "model": None,
+    "feature_cols": [],
+    "cat_idx": [],
+    "label_map": {},
+    "side_gap_threshold": None,
+    "error": None,
+}
 _LC_PATCH_TS_736 = 1716498000
 _LC_PATCH_TS_738 = 1740096000
 _LC_PATCH_TS_739 = 1747872000
+_LC_LW_CAT_COLS = (
+    "patch_bucket",
+    "top_outcome",
+    "mid_outcome",
+    "bot_outcome",
+    "winner_hint",
+)
 _LC_DEC_SWITCH_DEFAULT = {
     "top": 0.00,
     "mid": 0.04,
@@ -3763,6 +5828,70 @@ def _lc_lane_h2h_features(lane, rad_players, dire_players, pair_stats, pair_hero
     return out
 
 
+def _lc_lane_player_vs_hero_features(
+    lane,
+    rad_players,
+    dire_players,
+    player_vs_hero_stats,
+    player_hero_vs_hero_stats,
+):
+    total_pairs = len(rad_players) * len(dire_players)
+    if total_pairs <= 0:
+        out = _lc_h2h_feature_pack("rad_pvh", [], [], 0, 1)
+        out.update(_lc_h2h_feature_pack("dire_pvh", [], [], 0, 1))
+        out.update(_lc_h2h_feature_pack("rad_phvh", [], [], 0, 1))
+        out.update(_lc_h2h_feature_pack("dire_phvh", [], [], 0, 1))
+        for metric in ("wr_mean", "wr_weighted", "games_mean", "coverage"):
+            out[f"diff_pvh_{metric}"] = 0.0
+            out[f"diff_phvh_{metric}"] = 0.0
+        return out
+
+    def _collect(side_players, enemy_players):
+        pvh_wr = []
+        pvh_games = []
+        pvh_known = 0
+        phvh_wr = []
+        phvh_games = []
+        phvh_known = 0
+        for sp in side_players:
+            spid = _lc_coerce_int(sp.get("account_id"))
+            shid = _lc_coerce_int(sp.get("hero_id"))
+            if spid <= 0 or shid <= 0:
+                continue
+            for ep in enemy_players:
+                ehid = _lc_coerce_int(ep.get("hero_id"))
+                if ehid <= 0:
+                    continue
+                st = player_vs_hero_stats.get((lane, spid, ehid))
+                g = int(st.games) if st else 0
+                s = float(st.score_sum) if st else 0.0
+                if g > 0:
+                    pvh_known += 1
+                pvh_wr.append(float(_lc_smooth_rate(s, float(g), prior=0.5, prior_weight=10.0)))
+                pvh_games.append(float(g))
+
+                hst = player_hero_vs_hero_stats.get((lane, spid, shid, ehid))
+                hg = int(hst.games) if hst else 0
+                hs = float(hst.score_sum) if hst else 0.0
+                if hg > 0:
+                    phvh_known += 1
+                phvh_wr.append(float(_lc_smooth_rate(hs, float(hg), prior=0.5, prior_weight=8.0)))
+                phvh_games.append(float(hg))
+        return pvh_wr, pvh_games, pvh_known, phvh_wr, phvh_games, phvh_known
+
+    r_pvh_wr, r_pvh_games, r_pvh_known, r_phvh_wr, r_phvh_games, r_phvh_known = _collect(rad_players, dire_players)
+    d_pvh_wr, d_pvh_games, d_pvh_known, d_phvh_wr, d_phvh_games, d_phvh_known = _collect(dire_players, rad_players)
+
+    out = _lc_h2h_feature_pack("rad_pvh", r_pvh_wr, r_pvh_games, r_pvh_known, total_pairs)
+    out.update(_lc_h2h_feature_pack("dire_pvh", d_pvh_wr, d_pvh_games, d_pvh_known, total_pairs))
+    out.update(_lc_h2h_feature_pack("rad_phvh", r_phvh_wr, r_phvh_games, r_phvh_known, total_pairs))
+    out.update(_lc_h2h_feature_pack("dire_phvh", d_phvh_wr, d_phvh_games, d_phvh_known, total_pairs))
+    for metric in ("wr_mean", "wr_weighted", "games_mean", "coverage"):
+        out[f"diff_pvh_{metric}"] = float(out[f"rad_pvh_{metric}"] - out[f"dire_pvh_{metric}"])
+        out[f"diff_phvh_{metric}"] = float(out[f"rad_phvh_{metric}"] - out[f"dire_phvh_{metric}"])
+    return out
+
+
 def _lc_team_lane_overlap_features(team_history, team_id, lane, roster, min_overlap=4, max_scan=80, max_hits=20):
     out = {
         "team_o4_games": 0.0,
@@ -3802,6 +5931,86 @@ def _lc_team_lane_overlap_features(team_history, team_id, lane, roster, min_over
     out["team_o4_win_rate"] = float(_lc_smooth_rate(float(wins), float(games), prior=0.5, prior_weight=3.0))
     out["team_o4_draw_rate"] = float(draws / float(games))
     out["team_o4_decisive_rate"] = float((games - draws) / float(games))
+    return out
+
+
+def _lc_team_style_features(team_history, team_id, roster, min_overlap=4, max_scan=120, max_hits=30):
+    out = {
+        "style_games": 0.0,
+        "style_score": 0.5,
+        "style_decisive_rate": 0.5,
+        "style_sweep_rate": 0.5,
+        "style_collapse_rate": 0.5,
+        "style_draw_heavy_rate": 0.33,
+        "style_top_bias": 0.0,
+        "style_mid_bias": 0.0,
+        "style_volatility": 0.25,
+    }
+    if team_id <= 0 or not roster:
+        return out
+    hist = team_history.get(team_id)
+    if not hist:
+        return out
+
+    entries = []
+    scanned = 0
+    for entry in reversed(hist):
+        scanned += 1
+        if scanned > max_scan or len(entries) >= max_hits:
+            break
+        if len(roster.intersection(entry.roster)) < min_overlap:
+            continue
+        top = entry.lane_scores.get("top")
+        mid = entry.lane_scores.get("mid")
+        bot = entry.lane_scores.get("bot")
+        if top is None or mid is None or bot is None:
+            continue
+        entries.append((float(top), float(mid), float(bot)))
+
+    games = len(entries)
+    if games <= 0:
+        return out
+
+    total_score = 0.0
+    decisive_count = 0
+    sweep_count = 0
+    collapse_count = 0
+    draw_heavy_count = 0
+    top_bias_sum = 0.0
+    mid_bias_sum = 0.0
+    volatility_sum = 0.0
+    for top, mid, bot in entries:
+        vals = (top, mid, bot)
+        wins = sum(1 for v in vals if v > 0.75)
+        loses = sum(1 for v in vals if v < 0.25)
+        draws = 3 - wins - loses
+        decisive_count += (wins + loses)
+        total_score += (top + mid + bot)
+        if wins >= 2:
+            sweep_count += 1
+        if loses >= 2:
+            collapse_count += 1
+        if draws >= 2:
+            draw_heavy_count += 1
+        top_bias_sum += (top - bot)
+        mid_bias_sum += (mid - ((top + bot) / 2.0))
+        volatility_sum += (abs(top - 0.5) + abs(mid - 0.5) + abs(bot - 0.5))
+
+    out["style_games"] = float(games)
+    out["style_score"] = float(_lc_smooth_rate(total_score, float(3 * games), prior=0.5, prior_weight=4.0))
+    out["style_decisive_rate"] = float(
+        _lc_smooth_rate(float(decisive_count), float(3 * games), prior=0.5, prior_weight=4.0)
+    )
+    out["style_sweep_rate"] = float(_lc_smooth_rate(float(sweep_count), float(games), prior=0.5, prior_weight=3.0))
+    out["style_collapse_rate"] = float(
+        _lc_smooth_rate(float(collapse_count), float(games), prior=0.5, prior_weight=3.0)
+    )
+    out["style_draw_heavy_rate"] = float(
+        _lc_smooth_rate(float(draw_heavy_count), float(games), prior=0.33, prior_weight=3.0)
+    )
+    out["style_top_bias"] = float(top_bias_sum / float(games))
+    out["style_mid_bias"] = float(mid_bias_sum / float(games))
+    out["style_volatility"] = float(volatility_sum / float(3 * games))
     return out
 
 
@@ -3957,6 +6166,155 @@ def _lc_add_pred_features(row, prefix, outcome, conf):
     row[f"{prefix}_p_draw"] = float(p_draw)
     row[f"{prefix}_p_lose"] = float(p_lose)
     row[f"{prefix}_score"] = float(_lc_expected_score(p_win, p_lose))
+
+
+def _lc_clamp(value, lo, hi):
+    try:
+        v = float(value)
+    except Exception:
+        return float(lo)
+    if v < lo:
+        return float(lo)
+    if v > hi:
+        return float(hi)
+    return float(v)
+
+
+def _lc_winner_hint_from_score(sum_score, draw_mass, decisive_count):
+    # Conservative side prediction when lanes are uncertain or draw-heavy.
+    threshold = 0.30 + max(0.0, float(draw_mass) - 1.10) * 0.35
+    if float(decisive_count) < 2.0:
+        threshold += 0.08
+    score = float(sum_score)
+    if abs(score) < threshold:
+        conf = int(round(_lc_clamp((float(draw_mass) / 3.0) * 100.0, 34.0, 85.0)))
+        return "none", conf
+    conf = int(round(_lc_clamp(50.0 + abs(score) / 3.0 * 50.0, 50.0, 99.0)))
+    return ("radiant" if score > 0 else "dire"), conf
+
+
+def _lc_build_laning_winner_row(top_message, mid_message, bot_message, match_start_time=0):
+    import math
+
+    row = {"patch_bucket": _lc_patch_bucket(match_start_time)}
+    lane_messages = {"top": top_message, "mid": mid_message, "bot": bot_message}
+
+    sum_win = 0.0
+    sum_draw = 0.0
+    sum_lose = 0.0
+    sum_score = 0.0
+    abs_scores = []
+    confs = []
+    decisive_count = 0
+    draw_pred_count = 0
+    none_count = 0
+    win_pred_count = 0
+    lose_pred_count = 0
+
+    for lane in ("top", "mid", "bot"):
+        outcome, conf = _lc_parse_lane_prediction(lane_messages.get(lane))
+        conf_val = float(conf) if conf is not None else 0.0
+        p_win, p_draw, p_lose = _lc_pred_probs(outcome, conf)
+        score = float(_lc_expected_score(p_win, p_lose))
+
+        row[f"{lane}_outcome"] = outcome or "none"
+        row[f"{lane}_conf"] = conf_val
+        row[f"{lane}_p_win"] = float(p_win)
+        row[f"{lane}_p_draw"] = float(p_draw)
+        row[f"{lane}_p_lose"] = float(p_lose)
+        row[f"{lane}_score"] = score
+        row[f"{lane}_abs_score"] = abs(score)
+        row[f"{lane}_is_decisive"] = 1.0 if outcome in ("win", "lose") else 0.0
+        row[f"{lane}_is_draw_pred"] = 1.0 if outcome == "draw" else 0.0
+        row[f"{lane}_is_none_pred"] = 1.0 if outcome is None else 0.0
+
+        sum_win += float(p_win)
+        sum_draw += float(p_draw)
+        sum_lose += float(p_lose)
+        sum_score += score
+        abs_scores.append(abs(score))
+        confs.append(conf_val)
+        if outcome in ("win", "lose"):
+            decisive_count += 1
+        if outcome == "draw":
+            draw_pred_count += 1
+        if outcome is None:
+            none_count += 1
+        if outcome == "win":
+            win_pred_count += 1
+        if outcome == "lose":
+            lose_pred_count += 1
+
+    mean_abs = float(sum(abs_scores) / len(abs_scores)) if abs_scores else 0.0
+    variance = 0.0
+    if abs_scores:
+        variance = float(sum((v - mean_abs) ** 2 for v in abs_scores) / len(abs_scores))
+
+    row["sum_win_prob"] = float(sum_win)
+    row["sum_draw_prob"] = float(sum_draw)
+    row["sum_lose_prob"] = float(sum_lose)
+    row["sum_score"] = float(sum_score)
+    row["sum_abs_score"] = float(sum(abs_scores))
+    row["mean_abs_score"] = float(mean_abs)
+    row["std_abs_score"] = float(math.sqrt(max(0.0, variance)))
+    row["max_abs_score"] = float(max(abs_scores) if abs_scores else 0.0)
+    row["min_abs_score"] = float(min(abs_scores) if abs_scores else 0.0)
+    row["score_gap_win_lose"] = float(sum_win - sum_lose)
+    row["score_gap_draw_side"] = float(sum_draw - max(sum_win, sum_lose))
+    row["decisive_count"] = float(decisive_count)
+    row["draw_pred_count"] = float(draw_pred_count)
+    row["none_pred_count"] = float(none_count)
+    row["win_pred_count"] = float(win_pred_count)
+    row["lose_pred_count"] = float(lose_pred_count)
+    row["conf_mean"] = float(sum(confs) / len(confs)) if confs else 0.0
+    row["conf_max"] = float(max(confs) if confs else 0.0)
+    row["conf_min"] = float(min(confs) if confs else 0.0)
+    row["top_mid_score_diff"] = float(row["top_score"] - row["mid_score"])
+    row["top_bot_score_diff"] = float(row["top_score"] - row["bot_score"])
+    row["mid_bot_score_diff"] = float(row["mid_score"] - row["bot_score"])
+    row["strong_lane_count"] = float(sum(1 for v in abs_scores if v >= 0.40))
+    row["ultra_strong_lane_count"] = float(sum(1 for v in abs_scores if v >= 0.60))
+
+    hint, hint_conf = _lc_winner_hint_from_score(sum_score, sum_draw, decisive_count)
+    row["winner_hint"] = hint
+    row["winner_hint_conf"] = float(hint_conf)
+    return row
+
+
+def _lc_laning_winner_heuristic_from_row(row):
+    if not isinstance(row, dict):
+        return "none", 50, {"radiant": 1.0 / 3.0, "dire": 1.0 / 3.0, "none": 1.0 / 3.0}
+
+    sum_score = float(row.get("sum_score", 0.0))
+    sum_draw = float(row.get("sum_draw_prob", 1.0))
+    decisive_count = float(row.get("decisive_count", 0.0))
+    winner, conf = _lc_winner_hint_from_score(sum_score, sum_draw, decisive_count)
+
+    rad_strength = max(0.0, float(row.get("sum_win_prob", 0.0)))
+    dire_strength = max(0.0, float(row.get("sum_lose_prob", 0.0)))
+    none_strength = max(0.0, float(row.get("sum_draw_prob", 0.0)))
+    if winner == "none":
+        none_strength += max(0.0, 1.2 - abs(sum_score))
+    elif winner == "radiant":
+        rad_strength += max(0.0, abs(sum_score))
+    elif winner == "dire":
+        dire_strength += max(0.0, abs(sum_score))
+
+    total = rad_strength + dire_strength + none_strength
+    if total <= 0:
+        probs = {"radiant": 1.0 / 3.0, "dire": 1.0 / 3.0, "none": 1.0 / 3.0}
+    else:
+        probs = {
+            "radiant": float(rad_strength / total),
+            "dire": float(dire_strength / total),
+            "none": float(none_strength / total),
+        }
+
+    if winner not in probs:
+        winner = max(probs, key=lambda k: probs[k])
+    conf = max(int(conf), int(round(100.0 * float(probs.get(winner, 0.0)))))
+    conf = int(round(_lc_clamp(conf, 1.0, 99.0)))
+    return winner, conf, probs
 
 
 def _lc_lane_label_from_outcome(raw):
@@ -4119,6 +6477,126 @@ def _lc_load_decisive_models(models_dir=None):
     return _LC_DEC_MODEL_CACHE
 
 
+def _lc_load_laning_winner_model(models_dir=None):
+    if _LC_LW_MODEL_CACHE.get("loaded"):
+        return _LC_LW_MODEL_CACHE
+    models_dir = models_dir or "/Users/alex/Documents/ingame/ml-models"
+    try:
+        from catboost import CatBoostClassifier  # type: ignore
+    except Exception as exc:
+        _LC_LW_MODEL_CACHE["loaded"] = True
+        _LC_LW_MODEL_CACHE["error"] = f"catboost import failed: {exc}"
+        return _LC_LW_MODEL_CACHE
+
+    model_path = os.path.join(models_dir, "laning_winner_from_lanes.cbm")
+    meta_path = os.path.join(models_dir, "laning_winner_from_lanes_meta.json")
+    if not os.path.exists(model_path) or not os.path.exists(meta_path):
+        _LC_LW_MODEL_CACHE["loaded"] = True
+        _LC_LW_MODEL_CACHE["error"] = "laning winner model files not found"
+        return _LC_LW_MODEL_CACHE
+
+    try:
+        model = CatBoostClassifier()
+        model.load_model(model_path)
+        with open(meta_path, "r") as f:
+            meta = json.load(f)
+        feature_cols = meta.get("feature_cols") or []
+        raw_label_map = meta.get("label_map") or {0: "dire", 1: "none", 2: "radiant"}
+        label_map = {}
+        if isinstance(raw_label_map, dict):
+            for k, v in raw_label_map.items():
+                try:
+                    idx = int(k)
+                except Exception:
+                    continue
+                if v in ("radiant", "dire", "none"):
+                    label_map[idx] = v
+        for idx, label in ((0, "dire"), (1, "none"), (2, "radiant")):
+            if idx not in label_map:
+                label_map[idx] = label
+        raw_cat_idx = meta.get("cat_idx")
+        if isinstance(raw_cat_idx, list) and raw_cat_idx:
+            cat_idx = []
+            for idx in raw_cat_idx:
+                try:
+                    cat_idx.append(int(idx))
+                except Exception:
+                    continue
+        else:
+            cat_idx = [feature_cols.index(c) for c in _LC_LW_CAT_COLS if c in feature_cols]
+        _LC_LW_MODEL_CACHE["model"] = model
+        _LC_LW_MODEL_CACHE["feature_cols"] = feature_cols
+        _LC_LW_MODEL_CACHE["cat_idx"] = cat_idx
+        _LC_LW_MODEL_CACHE["label_map"] = label_map
+    except Exception as exc:
+        _LC_LW_MODEL_CACHE["error"] = f"laning winner load failed: {exc}"
+    _LC_LW_MODEL_CACHE["loaded"] = True
+    return _LC_LW_MODEL_CACHE
+
+
+def _lc_load_laning_winner_rich_model(models_dir=None):
+    if _LC_LW_RICH_MODEL_CACHE.get("loaded"):
+        return _LC_LW_RICH_MODEL_CACHE
+    models_dir = models_dir or "/Users/alex/Documents/ingame/ml-models"
+    try:
+        from catboost import CatBoostClassifier  # type: ignore
+    except Exception as exc:
+        _LC_LW_RICH_MODEL_CACHE["loaded"] = True
+        _LC_LW_RICH_MODEL_CACHE["error"] = f"catboost import failed: {exc}"
+        return _LC_LW_RICH_MODEL_CACHE
+
+    model_path = os.path.join(models_dir, "laning_winner_rich.cbm")
+    meta_path = os.path.join(models_dir, "laning_winner_rich_meta.json")
+    if not os.path.exists(model_path) or not os.path.exists(meta_path):
+        _LC_LW_RICH_MODEL_CACHE["loaded"] = True
+        _LC_LW_RICH_MODEL_CACHE["error"] = "laning winner rich model files not found"
+        return _LC_LW_RICH_MODEL_CACHE
+
+    try:
+        model = CatBoostClassifier()
+        model.load_model(model_path)
+        with open(meta_path, "r") as f:
+            meta = json.load(f)
+        feature_cols = meta.get("feature_cols") or []
+        raw_label_map = meta.get("label_map") or {0: "dire", 1: "none", 2: "radiant"}
+        label_map = {}
+        if isinstance(raw_label_map, dict):
+            for k, v in raw_label_map.items():
+                try:
+                    idx = int(k)
+                except Exception:
+                    continue
+                if v in ("radiant", "dire", "none"):
+                    label_map[idx] = v
+        for idx, label in ((0, "dire"), (1, "none"), (2, "radiant")):
+            if idx not in label_map:
+                label_map[idx] = label
+        raw_cat_idx = meta.get("cat_idx")
+        if isinstance(raw_cat_idx, list) and raw_cat_idx:
+            cat_idx = []
+            for idx in raw_cat_idx:
+                try:
+                    cat_idx.append(int(idx))
+                except Exception:
+                    continue
+        else:
+            cat_idx = []
+        side_gap_threshold = None
+        try:
+            side_gap_threshold = float(meta.get("side_gap_threshold"))
+        except Exception:
+            side_gap_threshold = None
+        _LC_LW_RICH_MODEL_CACHE["model"] = model
+        _LC_LW_RICH_MODEL_CACHE["feature_cols"] = feature_cols
+        _LC_LW_RICH_MODEL_CACHE["cat_idx"] = cat_idx
+        _LC_LW_RICH_MODEL_CACHE["label_map"] = label_map
+        _LC_LW_RICH_MODEL_CACHE["side_gap_threshold"] = side_gap_threshold
+    except Exception as exc:
+        _LC_LW_RICH_MODEL_CACHE["error"] = f"laning winner rich load failed: {exc}"
+    _LC_LW_RICH_MODEL_CACHE["loaded"] = True
+    return _LC_LW_RICH_MODEL_CACHE
+
+
 def _lc_predict_from_row(lane, row, model_cache):
     info = (model_cache or {}).get("models", {}).get(lane)
     if not info:
@@ -4226,6 +6704,151 @@ def _lc_predict_decisive_from_row(lane, row, dec_model_cache):
     return outcome, conf, delta
 
 
+def _lc_predict_laning_winner(top_message, mid_message, bot_message, match_start_time=0, models_dir=None):
+    row = _lc_build_laning_winner_row(top_message, mid_message, bot_message, match_start_time=match_start_time)
+    heur_out, heur_conf, heur_probs = _lc_laning_winner_heuristic_from_row(row)
+
+    use_model = _lc_env_bool("LANING_WINNER_USE_MODEL", True)
+    if not use_model:
+        return heur_out, heur_conf, heur_probs
+
+    model_cache = _lc_load_laning_winner_model(models_dir=models_dir)
+    model = model_cache.get("model")
+    feature_cols = model_cache.get("feature_cols") or []
+    if model is None or not feature_cols:
+        return heur_out, heur_conf, heur_probs
+
+    try:
+        from catboost import Pool  # type: ignore
+    except Exception:
+        return heur_out, heur_conf, heur_probs
+
+    values = []
+    for c in feature_cols:
+        v = row.get(c)
+        if v is None:
+            v = "none" if c in _LC_LW_CAT_COLS else 0.0
+        values.append(v)
+
+    try:
+        pool = Pool([values], cat_features=model_cache.get("cat_idx") or [])
+        probs = model.predict_proba(pool)
+        if probs is None or len(probs) == 0:
+            return heur_out, heur_conf, heur_probs
+        p = probs[0]
+    except Exception:
+        return heur_out, heur_conf, heur_probs
+
+    label_map = model_cache.get("label_map") or {0: "dire", 1: "none", 2: "radiant"}
+    model_probs = {"radiant": 0.0, "dire": 0.0, "none": 0.0}
+    try:
+        for idx, prob in enumerate(p):
+            label = label_map.get(idx)
+            if label in model_probs:
+                model_probs[label] = float(prob)
+    except Exception:
+        return heur_out, heur_conf, heur_probs
+
+    total_prob = model_probs["radiant"] + model_probs["dire"] + model_probs["none"]
+    if total_prob > 0:
+        for k in model_probs:
+            model_probs[k] = float(model_probs[k] / total_prob)
+    else:
+        return heur_out, heur_conf, heur_probs
+
+    ranked = sorted(model_probs.items(), key=lambda kv: kv[1], reverse=True)
+    model_out = ranked[0][0]
+    model_conf = int(round(ranked[0][1] * 100.0))
+    margin = float(ranked[0][1] - ranked[1][1]) if len(ranked) > 1 else float(ranked[0][1])
+
+    min_conf = _lc_env_int("LANING_WINNER_MIN_CONF", 40)
+    min_margin = _lc_env_float("LANING_WINNER_MIN_MARGIN", 0.0)
+    if model_conf < min_conf or margin < min_margin:
+        low_conf_mode = str(os.getenv("LANING_WINNER_LOW_CONF_MODE", "none")).strip().lower()
+        if low_conf_mode == "none":
+            conf = max(50, model_conf)
+            return "none", conf, model_probs
+        return heur_out, heur_conf, heur_probs
+
+    return model_out, model_conf, model_probs
+
+
+def _lc_build_laning_winner_rich_row(lane_rows):
+    if not isinstance(lane_rows, dict):
+        return None
+    out = {}
+    for lane in _LC_LANES:
+        lr = lane_rows.get(lane)
+        if not isinstance(lr, dict):
+            return None
+        for k, v in lr.items():
+            out[f"{lane}_{k}"] = v
+    return out
+
+
+def _lc_predict_laning_winner_rich(lane_rows, models_dir=None):
+    use_rich = _lc_env_bool("LANING_WINNER_USE_RICH", True)
+    if not use_rich:
+        return None, None, None
+    row = _lc_build_laning_winner_rich_row(lane_rows)
+    if row is None:
+        return None, None, None
+
+    cache = _lc_load_laning_winner_rich_model(models_dir=models_dir)
+    model = cache.get("model")
+    feature_cols = cache.get("feature_cols") or []
+    if model is None or not feature_cols:
+        return None, None, None
+    try:
+        from catboost import Pool  # type: ignore
+    except Exception:
+        return None, None, None
+
+    values = []
+    for c in feature_cols:
+        v = row.get(c)
+        if v is None:
+            if isinstance(c, str) and (c.endswith("_lane") or c.endswith("_outcome") or c.endswith("_status") or c.endswith("_out")):
+                v = "none"
+            else:
+                v = 0.0
+        values.append(v)
+    try:
+        probs = model.predict_proba(Pool([values], cat_features=cache.get("cat_idx") or []))
+        if probs is None or len(probs) == 0:
+            return None, None, None
+        p = probs[0]
+    except Exception:
+        return None, None, None
+
+    label_map = cache.get("label_map") or {0: "dire", 1: "none", 2: "radiant"}
+    out_probs = {"radiant": 0.0, "dire": 0.0, "none": 0.0}
+    for idx, prob in enumerate(p):
+        label = label_map.get(idx)
+        if label in out_probs:
+            out_probs[label] = float(prob)
+    total = out_probs["radiant"] + out_probs["dire"] + out_probs["none"]
+    if total > 0:
+        for k in out_probs:
+            out_probs[k] = float(out_probs[k] / total)
+    else:
+        return None, None, None
+
+    gap = abs(float(out_probs["radiant"]) - float(out_probs["dire"]))
+    # Tuned for ~70% side coverage on the latest 500-match holdout.
+    gap_threshold = _lc_env_float("LANING_WINNER_RICH_GAP_THRESHOLD", 0.0850)
+
+    if gap < gap_threshold:
+        conf = int(round(max(float(out_probs["none"]), 0.5) * 100.0))
+        conf = int(round(_lc_clamp(conf, 1.0, 99.0)))
+        return "none", conf, out_probs
+
+    side_out = "radiant" if out_probs["radiant"] >= out_probs["dire"] else "dire"
+    side_conf = int(round(max(float(out_probs["radiant"]), float(out_probs["dire"])) * 100.0))
+    side_conf = int(round(_lc_clamp(side_conf, 1.0, 99.0)))
+    return side_out, side_conf, out_probs
+
+
 def _lc_build_lane_row(
     lane,
     radiant_heroes_and_pos,
@@ -4239,6 +6862,8 @@ def _lc_build_lane_row(
     player_stats,
     pair_stats,
     pair_hero_stats,
+    player_vs_hero_stats,
+    player_hero_vs_hero_stats,
     team_lane_history,
     rad_team_id,
     dire_team_id,
@@ -4283,6 +6908,13 @@ def _lc_build_lane_row(
         pair_stats=pair_stats,
         pair_hero_stats=pair_hero_stats,
     )
+    pvh_feats = _lc_lane_player_vs_hero_features(
+        lane=lane,
+        rad_players=rad_players,
+        dire_players=dire_players,
+        player_vs_hero_stats=player_vs_hero_stats,
+        player_hero_vs_hero_stats=player_hero_vs_hero_stats,
+    )
     rad_team_feats = _lc_team_lane_overlap_features(
         team_history=team_lane_history,
         team_id=rad_team_id,
@@ -4293,6 +6925,16 @@ def _lc_build_lane_row(
         team_history=team_lane_history,
         team_id=dire_team_id,
         lane=lane,
+        roster=dire_roster,
+    )
+    rad_style_feats = _lc_team_style_features(
+        team_history=team_lane_history,
+        team_id=rad_team_id,
+        roster=rad_roster,
+    )
+    dire_style_feats = _lc_team_style_features(
+        team_history=team_lane_history,
+        team_id=dire_team_id,
         roster=dire_roster,
     )
 
@@ -4401,6 +7043,8 @@ def _lc_build_lane_row(
             row[f"diff_{k}"] = float(rad_agg[k] - dire_agg[k])
     for k, v in h2h_feats.items():
         row[k] = float(v)
+    for k, v in pvh_feats.items():
+        row[k] = float(v)
     for k, v in rad_team_feats.items():
         row[f"rad_{k}"] = float(v)
     for k, v in dire_team_feats.items():
@@ -4408,6 +7052,13 @@ def _lc_build_lane_row(
     for k in rad_team_feats:
         if k in dire_team_feats:
             row[f"diff_{k}"] = float(rad_team_feats[k] - dire_team_feats[k])
+    for k, v in rad_style_feats.items():
+        row[f"rad_{k}"] = float(v)
+    for k, v in dire_style_feats.items():
+        row[f"dire_{k}"] = float(v)
+    for k in rad_style_feats:
+        if k in dire_style_feats:
+            row[f"diff_{k}"] = float(rad_style_feats[k] - dire_style_feats[k])
 
     return row
 
@@ -4504,12 +7155,20 @@ def _lc_format_lane_message(lane_name, outcome, conf):
     return f"Bot: {outcome} {conf}%\n\n"
 
 
+def _lc_format_laning_winner_message(outcome, conf):
+    if outcome is None or conf is None:
+        return "Laning winner: None\n"
+    return f"Laning winner: {outcome} {conf}%\n"
+
+
 def _lc_update_stats_after_match(
     match,
     baseline_preds,
     player_stats,
     pair_stats,
     pair_hero_stats,
+    player_vs_hero_stats,
+    player_hero_vs_hero_stats,
     team_lane_history,
 ):
     players = match.get("players") or []
@@ -4601,6 +7260,10 @@ def _lc_update_stats_after_match(
                 _lc_update_matchup_stats(pair_stats, (lane, dpid, rpid), score_dire)
                 _lc_update_matchup_stats(pair_hero_stats, (lane, rpid, dpid, rhid, dhid), score_rad)
                 _lc_update_matchup_stats(pair_hero_stats, (lane, dpid, rpid, dhid, rhid), score_dire)
+                _lc_update_matchup_stats(player_vs_hero_stats, (lane, rpid, dhid), score_rad)
+                _lc_update_matchup_stats(player_hero_vs_hero_stats, (lane, rpid, rhid, dhid), score_rad)
+                _lc_update_matchup_stats(player_vs_hero_stats, (lane, dpid, rhid), score_dire)
+                _lc_update_matchup_stats(player_hero_vs_hero_stats, (lane, dpid, dhid, rhid), score_dire)
 
     # Update team history snapshots for overlap>=4 features.
     rad_team_id = _lc_team_id(match.get("radiantTeam"))
@@ -4650,6 +7313,8 @@ def _lc_predict_lanes_for_match(
     player_stats,
     pair_stats,
     pair_hero_stats,
+    player_vs_hero_stats,
+    player_hero_vs_hero_stats,
     team_lane_history,
     models_dir=None,
 ):
@@ -4678,6 +7343,7 @@ def _lc_predict_lanes_for_match(
     }
 
     corrected = {}
+    lane_rows = {}
     match_start_time = _lc_coerce_int(match.get("startDateTime"))
     for lane in _LC_LANES:
         base_out, base_conf = base_preds.get(lane, (None, None))
@@ -4694,6 +7360,8 @@ def _lc_predict_lanes_for_match(
             player_stats=player_stats,
             pair_stats=pair_stats,
             pair_hero_stats=pair_hero_stats,
+            player_vs_hero_stats=player_vs_hero_stats,
+            player_hero_vs_hero_stats=player_hero_vs_hero_stats,
             team_lane_history=team_lane_history,
             rad_team_id=rad_team_id,
             dire_team_id=dire_team_id,
@@ -4702,7 +7370,9 @@ def _lc_predict_lanes_for_match(
         )
         if row is None:
             corrected[lane] = (base_out, base_conf)
+            lane_rows[lane] = None
             continue
+        lane_rows[lane] = row
         if use_decisive and base_out in ("win", "lose"):
             dec_out, _dec_conf, dec_delta = _lc_predict_decisive_from_row(lane, row, dec_model_cache)
             if dec_out in ("win", "lose") and dec_delta is not None:
@@ -4715,7 +7385,7 @@ def _lc_predict_lanes_for_match(
         final_out, final_conf = _lc_apply_rule_b(lane, base_out, base_conf, model_out, model_conf)
         corrected[lane] = (final_out, final_conf)
 
-    return corrected, base_preds
+    return corrected, base_preds, lane_rows
 
 def calculate_lanes_old(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data):
 
@@ -5063,7 +7733,7 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
         bucket = {}
         lane_2vs2(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, bucket)
         if lane_name in bucket and bucket[lane_name]:
-            key, val = find_biggest_param(bucket[lane_name])
+            key, val = _lane_prediction_from_probs(bucket[lane_name])
             return _apply_stomp(lane_name, key, val, "2v2")
         return None, None
 
@@ -5220,59 +7890,22 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
         single_prediction = _single_side_2v1_prediction(layer, lane_name)
         return single_prediction if single_prediction is not None else (None, None), ('single' if single_prediction else None)
 
-    def from_solo(lane_name):
+    def from_solo(lane_name, return_probs=False):
         solo_data = heroes_data.get('solo_lanes', {}) if isinstance(heroes_data, dict) else {}
         if not solo_data:
-            return None, None
-
-        alpha = 1.0
+            return None if return_probs else (None, None)
 
         def _side_probs(keys):
-            win_vals = []
-            draw_vals = []
-            lose_vals = []
+            prob_entries = []
 
             for k in keys:
-                stats = solo_data.get(k, {})
+                probs = _lane_probs_from_stats(solo_data.get(k, {}), LANE_SOLO_MIN_GAMES, invert=False)
+                if probs:
+                    prob_entries.append((probs, 1.0))
 
-                if isinstance(stats, dict) and 'games' in stats:
-                    games = int(stats.get('games', 0) or 0)
-                    if games < 10:
-                        continue
-                    wins = int(stats.get('wins', 0) or 0)
-                    draws = int(stats.get('draws', 0) or 0)
-                    losses = max(0, games - wins - draws)
-                else:
-                    value = stats.get('value', []) if isinstance(stats, dict) else []
-                    if len(value) < 10:
-                        continue
-                    games = len(value)
-                    wins = value.count(1)
-                    draws = value.count(0)
-                    losses = value.count(-1)
-
-                denom = games + 3.0 * alpha
-                if denom <= 0:
-                    continue
-
-                win = (wins + alpha) / denom
-                draw = (draws + alpha) / denom
-                lose = (losses + alpha) / denom
-
-                win_vals.append((win, games))
-                draw_vals.append((draw, games))
-                lose_vals.append((lose, games))
-
-            if not win_vals:
+            if not prob_entries:
                 return None
-
-            win = multiply_list(win_vals, result=0.0)
-            draw = multiply_list(draw_vals, result=0.0)
-            lose = multiply_list(lose_vals, result=0.0)
-            total = win + draw + lose
-            if total <= 0:
-                return None
-            return win / total, draw / total, lose / total
+            return _lane_probs_weighted_average(prob_entries)
 
         if lane_name == 'top':
             r_keys = [
@@ -5301,20 +7934,12 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
         r = _side_probs(r_keys)
         d = _side_probs(d_keys)
         if r is None or d is None:
-            return None, None
+            return None if return_probs else (None, None)
 
-        win = r[0] * d[2]
-        draw = r[1] * d[1]
-        lose = r[2] * d[0]
-        total = win + draw + lose
-        if total <= 0:
-            return None, None
-
-        return find_biggest_param({
-            'win': win / total * 100,
-            'draw': draw / total * 100,
-            'lose': lose / total * 100,
-        })
+        probs = _predict_matchup_probs_from_side_probs(r, d)
+        if return_probs:
+            return probs
+        return _lane_prediction_from_probs(probs)
 
     def process_lane(lane_name):
         CONSENSUS_MIN_CONF = 55
@@ -5330,9 +7955,13 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
             primary_outcome, primary_conf = primary
             if primary_outcome not in ('win', 'lose'):
                 return _strip(primary)
-            lane_1v1 = counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name)
-            duo_synergy = synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name)
-            fallback = _merge_lane_predictions(lane_1v1, duo_synergy)
+            lane_1v1_probs = counterpick_lanes(
+                radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name, return_probs=True
+            )
+            duo_synergy_probs = synergy_lanes(
+                radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name, return_probs=True
+            )
+            fallback = _merge_lane_predictions(lane_1v1_probs, duo_synergy_probs)
             if not fallback or fallback[1] is None:
                 return _strip(primary)
             fb_outcome, fb_conf = fallback
@@ -5372,24 +8001,37 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
             return _finalize(_consensus_gate(counterpick_res))
 
         if status == 'single' and counterpick_conf is not None:
-            duo_synergy = synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name)
-            merged = _merge_lane_predictions(counterpick_res, duo_synergy)
-            base = merged if merged[1] is not None else (counterpick_outcome, counterpick_conf)
-            lane_1v1 = counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name)
-            boosted = _merge_lane_predictions(base, lane_1v1)
-            res = boosted if boosted[1] is not None else base
-            return _finalize(res)
+            single_layer = lane_2vs1(
+                radiant=radiant_heroes_and_pos,
+                dire=dire_heroes_and_pos,
+                heroes_data=heroes_data,
+                lane=lane_name,
+            )
+            single_probs = _single_side_2v1_prediction(single_layer, lane_name, return_probs=True)
+            duo_synergy_probs = synergy_lanes(
+                radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name, return_probs=True
+            )
+            base_probs = _merge_lane_predictions(single_probs, duo_synergy_probs, return_probs=True) or single_probs
+            lane_1v1_probs = counterpick_lanes(
+                radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name, return_probs=True
+            )
+            res_probs = _merge_lane_predictions(base_probs, lane_1v1_probs, return_probs=True) or base_probs
+            return _finalize(_lane_prediction_from_probs(res_probs))
 
         # 3) Фолбэк 1v1 + синергия
-        lane_1v1 = counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name)
-        duo_synergy = synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name)
-        merged = _merge_lane_predictions(lane_1v1, duo_synergy)
-        if merged[1] is not None:
-            return _finalize(merged)
+        lane_1v1_probs = counterpick_lanes(
+            radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name, return_probs=True
+        )
+        duo_synergy_probs = synergy_lanes(
+            radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name, return_probs=True
+        )
+        merged_probs = _merge_lane_predictions(lane_1v1_probs, duo_synergy_probs, return_probs=True)
+        if merged_probs is not None:
+            return _finalize(_lane_prediction_from_probs(merged_probs))
 
-        solo = from_solo(lane_name)
-        if solo[1] is not None:
-            return _finalize(solo)
+        solo_probs = from_solo(lane_name, return_probs=True)
+        if solo_probs is not None:
+            return _finalize(_lane_prediction_from_probs(solo_probs))
         return (None, None)
 
     top_key, top_val = process_lane('top')

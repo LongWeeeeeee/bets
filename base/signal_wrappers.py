@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pickle
 from functools import lru_cache
@@ -12,11 +13,22 @@ from typing import Any, Dict, Tuple
 
 DEFAULT_HERO_FEATURES_PATH = Path("/Users/alex/Documents/ingame/data/hero_features_processed.json")
 DEFAULT_WRAPPER_CONFIG_PATH = Path("/Users/alex/Documents/ingame/data/hero_signal_wrappers.json")
-DEFAULT_ML_EARLY_MODEL_PATH = Path("/Users/alex/Documents/ingame/ml-models/phase_signal_wrapper_early.pkl")
-DEFAULT_ML_LATE_MODEL_PATH = Path("/Users/alex/Documents/ingame/ml-models/phase_signal_wrapper_late.pkl")
+DEFAULT_ML_MODEL_SET_DIR = Path("/Users/alex/Documents/ingame/ml-models/phase_models_early66_latebase")
+DEFAULT_ML_EARLY_MODEL_PATH = DEFAULT_ML_MODEL_SET_DIR / "phase_signal_wrapper_early.pkl"
+DEFAULT_ML_LATE_MODEL_PATH = DEFAULT_ML_MODEL_SET_DIR / "phase_signal_wrapper_late.pkl"
+LEGACY_ML_EARLY_MODEL_PATH = Path("/Users/alex/Documents/ingame/ml-models/phase_signal_wrapper_early.pkl")
+LEGACY_ML_LATE_MODEL_PATH = Path("/Users/alex/Documents/ingame/ml-models/phase_signal_wrapper_late.pkl")
+DEFAULT_REQUIRED_SKLEARN_VERSION = "1.6.1"
+DEFAULT_RUNTIME_REQUIREMENTS_PATH = Path("/Users/alex/Documents/ingame/data/ml_wrapper_runtime_requirements.json")
+STAR_THRESHOLDS_PATH = Path(
+    os.getenv("STAR_THRESHOLDS_PATH", "/Users/alex/Documents/ingame/data/star_thresholds_by_wr.json")
+)
+_SKLEARN_VERSION_WARNED: set[str] = set()
+logger = logging.getLogger(__name__)
 
 TARGET_METRICS = (
     "counterpick_1vs1",
+    "pos1_vs_pos1",
     "counterpick_1vs2",
     "solo",
     "synergy_duo",
@@ -42,6 +54,26 @@ DEFAULT_HARD_CARRY_IDS = (
     109,  # Terrorblade
     114,  # Monkey King
 )
+_STAR_THRESHOLDS_FALLBACK = {
+    60: {
+        "early_output": [
+            ("counterpick_1vs1", 4),
+            ("pos1_vs_pos1", 20),
+            ("counterpick_1vs2", 7),
+            ("synergy_duo", 7),
+            ("solo", 3),
+            ("synergy_trio", 7),
+        ],
+        "mid_output": [
+            ("counterpick_1vs1", 5),
+            ("pos1_vs_pos1", 20),
+            ("counterpick_1vs2", 8),
+            ("synergy_duo", 8),
+            ("synergy_trio", 6),
+            ("solo", 3),
+        ],
+    },
+}
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "guardrails": {
@@ -124,6 +156,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         },
         "metric_gains": {
             "counterpick_1vs1": 1.00,
+            "pos1_vs_pos1": 0.80,
             "counterpick_1vs2": 0.95,
             "solo": 0.65,
             "synergy_duo": 0.55,
@@ -202,6 +235,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         },
         "metric_gains": {
             "counterpick_1vs1": 0.80,
+            "pos1_vs_pos1": 0.80,
             "counterpick_1vs2": 0.90,
             "solo": 0.50,
             "synergy_duo": 0.85,
@@ -237,6 +271,242 @@ def _is_enabled(env_name: str, default: bool = True) -> bool:
     if value is None:
         return default
     return value.strip().lower() not in {"0", "false", "off", "no"}
+
+
+def _runtime_sklearn_version() -> str:
+    try:
+        import sklearn  # type: ignore
+
+        return str(getattr(sklearn, "__version__", "") or "").strip()
+    except Exception:
+        return ""
+
+
+@lru_cache(maxsize=1)
+def _required_sklearn_version_default() -> str:
+    path = DEFAULT_RUNTIME_REQUIREMENTS_PATH
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            raw = payload.get("required_sklearn_version")
+            if raw is not None:
+                val = str(raw).strip()
+                if val:
+                    return val
+    except Exception:
+        pass
+    return DEFAULT_REQUIRED_SKLEARN_VERSION
+
+
+def _warn_sklearn_mismatch(path: Path, required: str, artifact: str) -> None:
+    req = str(required or "").strip()
+    if not req:
+        return
+    runtime = _runtime_sklearn_version()
+    if not runtime or runtime == req:
+        return
+    key = f"{path}|{req}|{runtime}|{artifact}"
+    if key in _SKLEARN_VERSION_WARNED:
+        return
+    _SKLEARN_VERSION_WARNED.add(key)
+    art = str(artifact or "n/a")
+    print(
+        "⚠️ SIGNAL_WRAPPER sklearn mismatch: "
+        f"runtime={runtime}, required={req}, artifact={art}, model={path}"
+    )
+
+
+@lru_cache(maxsize=1)
+def _load_star_thresholds() -> Dict[int, Dict[str, list[tuple[str, int]]]]:
+    if STAR_THRESHOLDS_PATH.exists():
+        try:
+            data = json.loads(STAR_THRESHOLDS_PATH.read_text(encoding="utf-8"))
+            parsed: Dict[int, Dict[str, list[tuple[str, int]]]] = {}
+            if isinstance(data, dict):
+                for raw_wr, payload in data.items():
+                    try:
+                        wr = int(raw_wr)
+                    except (TypeError, ValueError):
+                        continue
+                    if not isinstance(payload, dict):
+                        continue
+                    block: Dict[str, list[tuple[str, int]]] = {}
+                    for section in ("early_output", "mid_output"):
+                        items = payload.get(section) or []
+                        rows: list[tuple[str, int]] = []
+                        if isinstance(items, list):
+                            for row in items:
+                                if not isinstance(row, (list, tuple)) or len(row) != 2:
+                                    continue
+                                metric = str(row[0]).strip()
+                                try:
+                                    thr = int(row[1])
+                                except (TypeError, ValueError):
+                                    continue
+                                if metric:
+                                    rows.append((metric, thr))
+                        block[section] = rows
+                    parsed[wr] = block
+            if parsed:
+                hydrated: Dict[int, Dict[str, list[tuple[str, int]]]] = {}
+                fallback60 = {
+                    section: list(_STAR_THRESHOLDS_FALLBACK[60].get(section, []))
+                    for section in ("early_output", "mid_output")
+                }
+                for wr, block in parsed.items():
+                    out_block: Dict[str, list[tuple[str, int]]] = {}
+                    for section in ("early_output", "mid_output"):
+                        section_rows = list(block.get(section) or [])
+                        if not section_rows and int(wr) == 60:
+                            logger.warning(
+                                "SIGNAL_WRAPPER thresholds missing WR60 section=%s in %s; using hardcoded fallback60",
+                                section,
+                                STAR_THRESHOLDS_PATH,
+                            )
+                            section_rows = list(fallback60.get(section, []))
+                        elif not section_rows:
+                            logger.warning(
+                                "SIGNAL_WRAPPER thresholds missing WR%s section=%s in %s; section disabled",
+                                wr,
+                                section,
+                                STAR_THRESHOLDS_PATH,
+                            )
+                        out_block[section] = section_rows
+                    hydrated[int(wr)] = out_block
+                if 60 not in hydrated:
+                    logger.warning(
+                        "SIGNAL_WRAPPER thresholds missing WR60 in %s; using hardcoded fallback60",
+                        STAR_THRESHOLDS_PATH,
+                    )
+                    hydrated[60] = fallback60
+                return hydrated
+            raise RuntimeError(
+                f"SIGNAL_WRAPPER thresholds file {STAR_THRESHOLDS_PATH} contains no valid WR entries"
+            )
+        except Exception as exc:
+            logger.exception("Failed to load SIGNAL_WRAPPER thresholds from %s", STAR_THRESHOLDS_PATH)
+            raise RuntimeError(
+                f"Failed to load SIGNAL_WRAPPER thresholds from {STAR_THRESHOLDS_PATH}"
+            ) from exc
+    return {int(k): dict(v) for k, v in _STAR_THRESHOLDS_FALLBACK.items()}
+
+
+def _star_target_wr() -> int:
+    raw = os.getenv("STAR_THRESHOLD_WR", "60")
+    try:
+        wr = int(str(raw).strip())
+    except (TypeError, ValueError):
+        wr = 60
+    return wr
+
+
+def _coerce_metric_value(raw: Any) -> float | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        if text.endswith("*"):
+            text = text[:-1]
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    return None
+
+
+def _metric_sign(raw: Any) -> int | None:
+    value = _coerce_metric_value(raw)
+    if value is None or value == 0.0:
+        return None
+    return 1 if value > 0.0 else -1
+
+
+def _block_star_sign(block: Dict[str, Any], metric_thresholds: list[tuple[str, int]]) -> int | None:
+    if not isinstance(block, dict) or not metric_thresholds:
+        return None
+    block_star_count = 0
+    block_sign: int | None = None
+    block_conflict = False
+    for metric, threshold in metric_thresholds:
+        value = _coerce_metric_value(block.get(metric))
+        if value is None:
+            continue
+        if abs(value) < float(threshold):
+            continue
+        block_star_count += 1
+        if value == 0.0:
+            continue
+        sign = 1 if value > 0.0 else -1
+        if block_sign is None:
+            block_sign = sign
+        elif block_sign != sign:
+            block_conflict = True
+    if block_star_count > 0 and not block_conflict and block_sign is not None:
+        for metric, _ in metric_thresholds:
+            sign = _metric_sign(block.get(metric))
+            if sign is not None and sign != block_sign:
+                block_conflict = True
+                break
+    if block_star_count == 0 or block_conflict or block_sign is None:
+        return None
+    return int(block_sign)
+
+
+def _runtime_pro_star_features(
+    phase: str,
+    phase_bucket: Dict[str, Any],
+    phase_context: Dict[str, Any] | None,
+) -> Dict[str, float]:
+    context = phase_context if isinstance(phase_context, dict) else {}
+    early_block = context.get("early_output")
+    late_block = context.get("mid_output")
+    if not isinstance(early_block, dict):
+        early_block = phase_bucket if phase == "early" else {}
+    if not isinstance(late_block, dict):
+        late_block = phase_bucket if phase == "late" else {}
+
+    all_thresholds = _load_star_thresholds()
+    target_wr = _star_target_wr()
+    threshold_set = all_thresholds.get(target_wr)
+    if not isinstance(threshold_set, dict):
+        threshold_set = all_thresholds.get(60) if target_wr == 60 else {}
+    early_thresholds = threshold_set.get("early_output") or []
+    late_thresholds = threshold_set.get("mid_output") or []
+
+    early_sign = _block_star_sign(early_block, early_thresholds)
+    late_sign = _block_star_sign(late_block, late_thresholds)
+    early_features = {
+        "pro_early_has_star": 1.0 if early_sign in (-1, 1) else 0.0,
+        "pro_early_star_sign": float(early_sign or 0),
+    }
+    late_features = {
+        "pro_late_has_star": 1.0 if late_sign in (-1, 1) else 0.0,
+        "pro_late_star_sign": float(late_sign or 0),
+    }
+    if _is_enabled("SIGNAL_WRAPPER_CROSS_PHASE_STAR_FEATURES", default=False):
+        # Compatibility mode for legacy artifacts trained with cross-phase star features.
+        return {
+            **early_features,
+            **late_features,
+            "pro_star_same_sign": (
+                1.0 if early_sign in (-1, 1) and late_sign in (-1, 1) and early_sign == late_sign else 0.0
+            ),
+        }
+    if phase == "early":
+        return early_features
+    if phase == "late":
+        return late_features
+    return {
+        **early_features,
+        **late_features,
+        "pro_star_same_sign": (
+            1.0 if early_sign in (-1, 1) and late_sign in (-1, 1) and early_sign == late_sign else 0.0
+        ),
+    }
 
 
 def _softsign(value: float, scale: float) -> float:
@@ -303,8 +573,18 @@ def _wrapper_debug_enabled() -> bool:
 
 def _ml_model_path_for_phase(phase: str) -> Path:
     if phase == "early":
-        return Path(os.getenv("SIGNAL_WRAPPER_ML_EARLY_PATH", str(DEFAULT_ML_EARLY_MODEL_PATH)))
-    return Path(os.getenv("SIGNAL_WRAPPER_ML_LATE_PATH", str(DEFAULT_ML_LATE_MODEL_PATH)))
+        env_path = os.getenv("SIGNAL_WRAPPER_ML_EARLY_PATH")
+        if env_path:
+            return Path(env_path)
+        if DEFAULT_ML_EARLY_MODEL_PATH.exists():
+            return DEFAULT_ML_EARLY_MODEL_PATH
+        return LEGACY_ML_EARLY_MODEL_PATH
+    env_path = os.getenv("SIGNAL_WRAPPER_ML_LATE_PATH")
+    if env_path:
+        return Path(env_path)
+    if DEFAULT_ML_LATE_MODEL_PATH.exists():
+        return DEFAULT_ML_LATE_MODEL_PATH
+    return LEGACY_ML_LATE_MODEL_PATH
 
 
 @lru_cache(maxsize=2)
@@ -324,13 +604,34 @@ def _load_ml_wrapper_artifact(phase: str) -> Dict[str, Any]:
     target_metrics = payload.get("target_metrics")
     if model is None or not isinstance(feature_names, list) or not feature_names:
         return {}
-    if not isinstance(target_metrics, list) or not target_metrics:
+    if not isinstance(target_metrics, list):
         target_metrics = list(TARGET_METRICS)
+    else:
+        target_metrics = [str(x) for x in target_metrics if str(x) in TARGET_METRICS]
+    model_type = str(payload.get("model_type") or "logreg").strip().lower()
+    ensemble_models = payload.get("ensemble_models")
+    if not isinstance(ensemble_models, dict):
+        ensemble_models = {}
+    ensemble_weights_raw = payload.get("ensemble_weights")
+    if isinstance(ensemble_weights_raw, dict):
+        ensemble_weights = {str(k): _as_float(v, 0.0) for k, v in ensemble_weights_raw.items()}
+    else:
+        ensemble_weights = {}
+    required_sklearn_version = (
+        str(payload.get("required_sklearn_version") or "").strip()
+        or str(os.getenv("SIGNAL_WRAPPER_REQUIRED_SKLEARN_VERSION") or "").strip()
+        or _required_sklearn_version_default()
+    )
+    artifact_sklearn_version = str(payload.get("sklearn_version") or "").strip()
+    _warn_sklearn_mismatch(path, required_sklearn_version, artifact_sklearn_version)
     out: Dict[str, Any] = {
         "phase": payload.get("phase", phase),
         "model": model,
+        "model_type": model_type,
+        "ensemble_models": ensemble_models,
+        "ensemble_weights": ensemble_weights,
         "feature_names": [str(x) for x in feature_names],
-        "target_metrics": [str(x) for x in target_metrics],
+        "target_metrics": list(target_metrics),
         "edge_feature_keys": [str(x) for x in (payload.get("edge_feature_keys") or [])],
         "threshold": _as_float(payload.get("threshold"), 0.5),
         "threshold_mode": str(payload.get("threshold_mode", "phase_metric")),
@@ -339,6 +640,8 @@ def _load_ml_wrapper_artifact(phase: str) -> Dict[str, Any]:
         },
         "boost_strength": _as_float(payload.get("boost_strength"), 0.0),
         "include_hero_id_features": _as_bool(payload.get("include_hero_id_features"), False),
+        "sklearn_version": artifact_sklearn_version,
+        "required_sklearn_version": required_sklearn_version,
         "path": str(path),
     }
     return out
@@ -461,6 +764,7 @@ def _build_ml_feature_vector(
     metric: str,
     metric_value: float,
     edge_diff: Dict[str, float],
+    runtime_pro_features: Dict[str, float] | None = None,
 ) -> list[float]:
     sign = 1 if metric_value > 0 else -1
     abs_idx = max(1, min(int(round(abs(metric_value))), 99))
@@ -522,11 +826,46 @@ def _build_ml_feature_vector(
         feat[name] = float(signed_edges.get(left, 0.0) * signed_edges.get(right, 0.0))
 
     # Neutral priors at inference time (runtime does not carry train split priors).
-    feat["prior_wr"] = 0.5
-    feat["prior_logit"] = 0.0
-    feat["prior_conf"] = 0.0
+    feat.setdefault("prior_wr", 0.5)
+    feat.setdefault("prior_logit", 0.0)
+    feat.setdefault("prior_conf", 0.0)
+    if runtime_pro_features:
+        for key, value in runtime_pro_features.items():
+            feat[str(key)] = float(value)
 
     return [float(feat.get(name, 0.0)) for name in artifact.get("feature_names", [])]
+
+
+def _predict_single_model_prob(model: Any, vec: list[float]) -> float | None:
+    if model is None:
+        return None
+    try:
+        pred = model.predict_proba([vec])
+        return float(pred[0][1])
+    except Exception:
+        return None
+
+
+def _predict_artifact_prob(artifact: Dict[str, Any], vec: list[float]) -> float | None:
+    model_type = str(artifact.get("model_type") or "logreg").strip().lower()
+    if model_type == "ensemble":
+        models = artifact.get("ensemble_models")
+        weights = artifact.get("ensemble_weights")
+        if isinstance(models, dict) and isinstance(weights, dict):
+            p_sum = 0.0
+            w_sum = 0.0
+            for name, model in models.items():
+                w = _as_float(weights.get(name), 0.0)
+                if w <= 0.0:
+                    continue
+                p = _predict_single_model_prob(model, vec)
+                if p is None:
+                    continue
+                p_sum += w * p
+                w_sum += w
+            if w_sum > 0.0:
+                return p_sum / w_sum
+    return _predict_single_model_prob(artifact.get("model"), vec)
 
 
 def _apply_phase_ml_wrapper(
@@ -534,6 +873,7 @@ def _apply_phase_ml_wrapper(
     phase_bucket: Dict[str, Any],
     radiant_heroes_and_pos: Dict[str, Any],
     dire_heroes_and_pos: Dict[str, Any],
+    phase_context: Dict[str, Any] | None = None,
 ) -> Dict[str, Any] | None:
     artifact = _load_ml_wrapper_artifact(phase)
     if not artifact:
@@ -542,8 +882,16 @@ def _apply_phase_ml_wrapper(
     if not feature_rows:
         return None
     edge_diff = _edge_diff_for_model(artifact, feature_rows, radiant_heroes_and_pos, dire_heroes_and_pos)
-    model = artifact.get("model")
-    if model is None:
+    runtime_pro_features = _runtime_pro_star_features(
+        phase=phase,
+        phase_bucket=phase_bucket,
+        phase_context=phase_context,
+    )
+    model_pro_features = [
+        str(name) for name in (artifact.get("feature_names") or []) if str(name).startswith("pro_")
+    ]
+    unsupported_pro = [name for name in model_pro_features if name not in runtime_pro_features]
+    if artifact.get("model") is None and not artifact.get("ensemble_models"):
         return None
 
     updates = 0
@@ -559,10 +907,16 @@ def _apply_phase_ml_wrapper(
         value = _phase_bucket_value(phase_bucket, metric)
         if value == 0.0:
             continue
-        vec = _build_ml_feature_vector(artifact, phase_bucket, metric, value, edge_diff)
-        try:
-            prob = float(model.predict_proba([vec])[0][1])
-        except Exception:
+        vec = _build_ml_feature_vector(
+            artifact,
+            phase_bucket,
+            metric,
+            value,
+            edge_diff,
+            runtime_pro_features=runtime_pro_features,
+        )
+        prob = _predict_artifact_prob(artifact, vec)
+        if prob is None:
             continue
         probs[metric] = prob
         threshold = _as_float(thresholds_by_metric.get(metric), base_thr)
@@ -582,11 +936,15 @@ def _apply_phase_ml_wrapper(
     return {
         "mode": "ml",
         "model_path": artifact.get("path"),
+        "model_type": artifact.get("model_type"),
         "updated": updates,
         "zeroed": zeroed,
         "boosted": boosted,
         "edge_diff": edge_diff,
         "probs": probs,
+        "runtime_pro_features": runtime_pro_features,
+        "unsupported_pro_feature_count": len(unsupported_pro),
+        "unsupported_pro_features": unsupported_pro[:10],
     }
 
 
@@ -1555,8 +1913,9 @@ def _apply_phase_wrapper(
     radiant_heroes_and_pos: Dict[str, Any],
     dire_heroes_and_pos: Dict[str, Any],
     enabled_env_name: str,
+    phase_context: Dict[str, Any] | None = None,
 ) -> None:
-    if not _is_enabled("SIGNAL_WRAPPER_ENABLED", default=True):
+    if not _is_enabled("SIGNAL_WRAPPER_ENABLED", default=False):
         return
     if not _is_enabled(enabled_env_name, default=True):
         return
@@ -1570,6 +1929,7 @@ def _apply_phase_wrapper(
             phase_bucket=phase_bucket,
             radiant_heroes_and_pos=radiant_heroes_and_pos,
             dire_heroes_and_pos=dire_heroes_and_pos,
+            phase_context=phase_context,
         )
         if ml_info is not None:
             # Keep compact ML metadata available for runtime decision logic.
@@ -1652,6 +2012,7 @@ def apply_early_signal_wrapper(
     phase_bucket: Dict[str, Any],
     radiant_heroes_and_pos: Dict[str, Any],
     dire_heroes_and_pos: Dict[str, Any],
+    phase_context: Dict[str, Any] | None = None,
 ) -> None:
     _apply_phase_wrapper(
         phase="early",
@@ -1659,6 +2020,7 @@ def apply_early_signal_wrapper(
         radiant_heroes_and_pos=radiant_heroes_and_pos,
         dire_heroes_and_pos=dire_heroes_and_pos,
         enabled_env_name="SIGNAL_WRAPPER_EARLY_ENABLED",
+        phase_context=phase_context,
     )
 
 
@@ -1666,6 +2028,7 @@ def apply_late_signal_wrapper(
     phase_bucket: Dict[str, Any],
     radiant_heroes_and_pos: Dict[str, Any],
     dire_heroes_and_pos: Dict[str, Any],
+    phase_context: Dict[str, Any] | None = None,
 ) -> None:
     _apply_phase_wrapper(
         phase="late",
@@ -1673,4 +2036,5 @@ def apply_late_signal_wrapper(
         radiant_heroes_and_pos=radiant_heroes_and_pos,
         dire_heroes_and_pos=dire_heroes_and_pos,
         enabled_env_name="SIGNAL_WRAPPER_LATE_ENABLED",
+        phase_context=phase_context,
     )
