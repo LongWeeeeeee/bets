@@ -42,9 +42,11 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 try:
-    from tempo_analise_database_experiment import build_tempo_draft_metrics, load_tempo_dicts
+    from tempo_analise_database_experiment import build_tempo_draft_metrics as _tempo_build_tempo_draft_metrics
+    from tempo_analise_database_experiment import load_tempo_dicts as _tempo_load_tempo_dicts
 except ImportError:
-    from base.tempo_analise_database_experiment import build_tempo_draft_metrics, load_tempo_dicts
+    _tempo_build_tempo_draft_metrics = None
+    _tempo_load_tempo_dicts = None
 
 try:
     import fcntl
@@ -55,10 +57,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Импорт для обновления про матчей
-from maps_research import get_pros
+BASE_DIR = PROJECT_ROOT / "base"
+DATA_DIR = PROJECT_ROOT / "data"
+SRC_DIR = PROJECT_ROOT / "src"
+ML_MODELS_DIR = PROJECT_ROOT / "ml-models"
+REPORTS_DIR = PROJECT_ROOT / "reports"
+ANALYSE_PUB_DIR = PROJECT_ROOT / "bets_data" / "analise_pub_matches"
+TEMPO_EXPERIMENT_DIR = PROJECT_ROOT / "bets_data" / "tempo_pub_experiment"
+PRO_HEROES_DIR = PROJECT_ROOT / "pro_heroes_data"
+
 # Импорт Ultimate Inference предсказателя
-sys.path.insert(0, '/Users/alex/Documents/ingame/src')
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 try:
     from live_predictor import predict_live_match
     LIVE_PREDICTOR_AVAILABLE = True
@@ -136,6 +146,21 @@ def _safe_float_env(name: str, default: float) -> float:
         return float(os.getenv(name, str(default)))
     except (TypeError, ValueError):
         return float(default)
+
+
+def _get_tempo_helpers():
+    global _tempo_build_tempo_draft_metrics, _tempo_load_tempo_dicts
+    if _tempo_build_tempo_draft_metrics is not None and _tempo_load_tempo_dicts is not None:
+        return _tempo_build_tempo_draft_metrics, _tempo_load_tempo_dicts
+    try:
+        from tempo_analise_database_experiment import build_tempo_draft_metrics as _build_tempo_draft_metrics
+        from tempo_analise_database_experiment import load_tempo_dicts as _load_tempo_dicts
+    except ImportError:
+        from base.tempo_analise_database_experiment import build_tempo_draft_metrics as _build_tempo_draft_metrics
+        from base.tempo_analise_database_experiment import load_tempo_dicts as _load_tempo_dicts
+    _tempo_build_tempo_draft_metrics = _build_tempo_draft_metrics
+    _tempo_load_tempo_dicts = _load_tempo_dicts
+    return _tempo_build_tempo_draft_metrics, _tempo_load_tempo_dicts
 
 
 def _safe_bool_env(name: str, default: bool) -> bool:
@@ -268,7 +293,7 @@ BOOKMAKER_PREFETCH_SITES = tuple(
 # - optionally use separate MAP_ID_CHECK_PATH
 # - optionally disable add_url persistence to keep matches re-analysed every cycle
 MAP_ID_CHECK_PATH = str(os.getenv("MAP_ID_CHECK_PATH", "map_id_check.txt")).strip() or "map_id_check.txt"
-MAP_ID_CHECK_PATH_ODDS_DEFAULT = "/Users/alex/Documents/ingame/map_id_check_test.txt"
+MAP_ID_CHECK_PATH_ODDS_DEFAULT = str(PROJECT_ROOT / "map_id_check_test.txt")
 DELAYED_QUEUE_PATH = str(
     os.getenv("DELAYED_QUEUE_PATH", "runtime/delayed_signal_queue.json")
 ).strip() or "runtime/delayed_signal_queue.json"
@@ -283,8 +308,8 @@ TEMPO_OVER_FALLBACK_ENABLED = _safe_bool_env("TEMPO_OVER_FALLBACK_ENABLED", True
 TEMPO_OVER_SCORE_THRESHOLD = _safe_float_env("TEMPO_OVER_SCORE_THRESHOLD", 0.9965)
 TEMPO_OVER_SCORE_LABEL = str(os.getenv("TEMPO_OVER_SCORE_LABEL", "Ставка >=48")).strip() or "Ставка >=48"
 TEMPO_STATS_DIR_DEFAULT = str(
-    os.getenv("TEMPO_STATS_DIR", "/Users/alex/Documents/ingame/bets_data/tempo_pub_experiment")
-).strip() or "/Users/alex/Documents/ingame/bets_data/tempo_pub_experiment"
+    os.getenv("TEMPO_STATS_DIR", str(TEMPO_EXPERIMENT_DIR))
+).strip() or str(TEMPO_EXPERIMENT_DIR)
 
 try:
     STAR_THRESHOLD_WR_TIER1 = int(os.getenv("STAR_THRESHOLD_WR_TIER1", "60"))
@@ -336,7 +361,7 @@ STAR_ALLOW_LATE_STAR_EARLY_SAME_OR_ZERO = _safe_bool_env(
 STAR_CONFIDENCE_CALIBRATION_PATH = Path(
     os.getenv(
         "STAR_CONFIDENCE_CALIBRATION_PATH",
-        "/Users/alex/Documents/ingame/data/star_confidence_calibration.json",
+        str(DATA_DIR / "star_confidence_calibration.json"),
     )
 )
 
@@ -2655,10 +2680,10 @@ def _stop_bookmaker_prefetch_worker() -> None:
     bookmaker_prefetch_thread = None
     print("🧵 Bookmaker prefetch worker stopped")
 
-with open('/Users/alex/Documents/ingame/base/hero_valid_positions_simple.json', 'r') as f:
+with (BASE_DIR / 'hero_valid_positions_simple.json').open('r', encoding='utf-8') as f:
     HERO_VALID_POSITIONS_DICT = json.load(f)
 try:
-    with open('/Users/alex/Documents/ingame/base/hero_valid_positions_counts_500k.json', 'r', encoding='utf-8') as f:
+    with (BASE_DIR / 'hero_valid_positions_counts_500k.json').open('r', encoding='utf-8') as f:
         _raw_counts = json.load(f)
     HERO_POSITION_COUNTS = {
         str(k): v for k, v in _raw_counts.items()
@@ -2668,7 +2693,7 @@ except Exception as e:
     HERO_POSITION_COUNTS = {}
     print(f"⚠️ Не удалось загрузить hero_valid_positions_counts_500k.json: {e}")
 try:
-    with open('/Users/alex/Documents/ingame/base/hero_valid_positions_counts_500k.json', 'r', encoding='utf-8') as f:
+    with (BASE_DIR / 'hero_valid_positions_counts_500k.json').open('r', encoding='utf-8') as f:
         HERO_ID_TO_NAME = json.load(f)
 except Exception as e:
     HERO_ID_TO_NAME = {}
@@ -2726,7 +2751,7 @@ KILLS_CAT_COLS = None
 KILLS_DRAFT_PREDICTOR = None
 TEAM_PREDICTABILITY_CACHE = None
 TEAM_PREDICTABILITY_MTIME = None
-KILLS_PRIORS_CACHE_PATH = Path("/Users/alex/Documents/ingame/ml-models/pro_kills_priors.json")
+KILLS_PRIORS_CACHE_PATH = ML_MODELS_DIR / "pro_kills_priors.json"
 
 # Ленивая загрузка словарей
 lane_data = None
@@ -11253,7 +11278,7 @@ def _load_stats_dicts():
             with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
                 return orjson.loads(memoryview(mm))
 
-    default_stats_dir = "/Users/alex/Documents/ingame/bets_data/analise_pub_matches"
+    default_stats_dir = str(ANALYSE_PUB_DIR)
     stats_dir = os.getenv("STATS_DIR", default_stats_dir)
     lane_path = os.getenv("STATS_LANE_PATH", f"{stats_dir}/lane_dict_raw.json")
     early_path = os.getenv("STATS_EARLY_PATH", f"{stats_dir}/early_dict_raw.json")
@@ -11268,7 +11293,7 @@ def _load_stats_dicts():
     )
     late_comeback_ceiling_path = os.getenv(
         "STATS_LATE_COMEBACK_CEILING_PATH",
-        "/Users/alex/Documents/ingame/base/tier1_no_alchemist_comeback_ceiling_by_minute.json",
+        str(BASE_DIR / "tier1_no_alchemist_comeback_ceiling_by_minute.json"),
     )
 
     # If test stats folder has no lane dict, fallback to baseline lane dict.
@@ -11335,6 +11360,7 @@ def _load_tempo_stats_dicts() -> bool:
         return True
     try:
         base_dir = Path(TEMPO_STATS_DIR_DEFAULT)
+        _, load_tempo_dicts = _get_tempo_helpers()
         tempo_solo_dict, tempo_duo_dict, tempo_cp1v1_dict = load_tempo_dicts(base_dir)
         return True
     except Exception as exc:
@@ -11409,6 +11435,7 @@ def _compute_tempo_over_fallback_diagnostics(
         return normalized
 
     try:
+        build_tempo_draft_metrics, _ = _get_tempo_helpers()
         tempo_metrics = build_tempo_draft_metrics(
             _normalize_team_payload(radiant_heroes_and_pos),
             _normalize_team_payload(dire_heroes_and_pos),
@@ -11667,7 +11694,7 @@ if __name__ == "__main__":
         print(f"🗺️ MAP_ID_CHECK_PATH defaulted for --odds: {MAP_ID_CHECK_PATH}")
 
     # Абсолютные пути к данным (вынесены за пределы проекта для оптимизации Cursor)
-    STATS_DIR = "/Users/alex/Documents/ingame/bets_data/analise_pub_matches"
+    STATS_DIR = str(ANALYSE_PUB_DIR)
 
     # Ленивая загрузка словарей (использует STATS_DIR или STATS_DIR из env)
     _load_stats_dicts()

@@ -2,20 +2,13 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from itertools import combinations
 from pathlib import Path
 from typing import Iterable, Optional
 
-try:
-    from analise_database import is_pro_match
-    from explore_database import PATCH_739_RELEASE_TS
-    from maps_research import check_match_quality
-except ImportError:  # package import for tests
-    from base.analise_database import is_pro_match
-    from base.explore_database import PATCH_739_RELEASE_TS
-    from base.maps_research import check_match_quality
-
 MAX_DURATION_SECONDS = 34 * 60
+PATCH_739_RELEASE_TS = int(os.getenv("PATCH_739_RELEASE_TS", "1747785600"))
 TEMPO_RATE_FIELDS = ("kills_pm", "deaths_pm", "assists_pm", "hero_damage_pm")
 TEMPO_INDEX_SCALES = {
     "kills_pm": 10.0,
@@ -157,6 +150,13 @@ def process_tempo_pub_match(
     min_start_ts: int = PATCH_739_RELEASE_TS,
     strict_positions: bool = True,
 ) -> bool:
+    try:
+        from analise_database import is_pro_match
+        from maps_research import check_match_quality
+    except ImportError:  # package import for tests
+        from base.analise_database import is_pro_match
+        from base.maps_research import check_match_quality
+
     if not isinstance(match, dict):
         return False
     if is_pro_match(match):
