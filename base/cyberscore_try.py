@@ -1,7 +1,10 @@
 import argparse
 import json
 import ast
+import atexit
+import contextlib
 from collections import deque
+import io
 import orjson
 import time
 import random
@@ -17,6 +20,7 @@ import mmap
 import gc
 import subprocess
 import re
+import tempfile
 import numpy as np
 from datetime import datetime
 from pathlib import Path
@@ -28,12 +32,28 @@ from functions import (
     send_message,
     synergy_and_counterpick,
     calculate_lanes,
+    calculate_comeback_solo_metrics,
     format_output_dict,
     STAR_THRESHOLDS_BY_WR,
+    TelegramSendError,
 )
 from keys import api_to_proxy, BOOKMAKER_PROXY_URL
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+try:
+    from tempo_analise_database_experiment import build_tempo_draft_metrics, load_tempo_dicts
+except ImportError:
+    from base.tempo_analise_database_experiment import build_tempo_draft_metrics, load_tempo_dicts
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # Импорт для обновления про матчей
 from maps_research import get_pros
@@ -48,6 +68,34 @@ except ImportError:
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
+
+_python_executable = str(sys.executable)
+_python_executable_resolved = str(Path(sys.executable).resolve())
+if "venv_catboost" not in _python_executable and "venv_catboost" not in _python_executable_resolved:
+    logger.warning(
+        "cyberscore_try.py is running outside venv_catboost: executable=%s resolved=%s",
+        _python_executable,
+        _python_executable_resolved,
+    )
+
+try:
+    from ELO.domain import LeagueTier as _elo_live_LeagueTier, MatchRecord as _elo_live_MatchRecord
+    from ELO.live_team_strength import (
+        DEFAULT_RUNTIME_PROGRESS_PATH as _elo_live_default_progress_path,
+        finalize_live_series_from_scores as _elo_live_finalize_series_from_scores,
+        get_matchup_summary as _elo_live_get_matchup_summary,
+        register_live_map_context as _elo_live_register_map_context,
+    )
+    ELO_LIVE_SNAPSHOT_AVAILABLE = True
+except Exception as _elo_live_import_error:
+    ELO_LIVE_SNAPSHOT_AVAILABLE = False
+    _elo_live_default_progress_path = PROJECT_ROOT / "runtime" / "live_elo_progress.json"
+    _elo_live_finalize_series_from_scores = None
+    _elo_live_get_matchup_summary = None
+    _elo_live_register_map_context = None
+    _elo_live_LeagueTier = None
+    _elo_live_MatchRecord = None
+    logger.warning("Live ELO snapshot helper disabled: %s", _elo_live_import_error)
 
 try:
     try:
@@ -75,6 +123,12 @@ def _safe_int_env(name: str, default: int) -> int:
         return int(os.getenv(name, str(default)))
     except (TypeError, ValueError):
         return int(default)
+
+
+LIVE_ELO_ORPHAN_PENDING_MIN_AGE_SECONDS = _safe_int_env(
+    "LIVE_ELO_ORPHAN_PENDING_MIN_AGE_SECONDS",
+    120,
+)
 
 
 def _safe_float_env(name: str, default: float) -> float:
@@ -130,7 +184,7 @@ ML_CONFIDENCE_SOURCE_LATE = _normalize_ml_confidence_source(
     os.getenv("ML_CONFIDENCE_SOURCE_LATE"),
     "model_only",
 )
-DELAYED_SIGNAL_TARGET_GAME_TIME = 21 * 60
+DELAYED_SIGNAL_TARGET_GAME_TIME = (20 * 60) + 20
 DELAYED_SIGNAL_POLL_SECONDS = 15
 DELAYED_SIGNAL_NO_PROGRESS_TIMEOUT_SECONDS = 2 * 60 * 60
 DELAYED_SIGNAL_NO_DATA_TIMEOUT_SECONDS = 4 * 60 * 60
@@ -139,20 +193,51 @@ NETWORTH_GATE_HARD_BLOCK_SECONDS = 4 * 60
 NETWORTH_GATE_EARLY_WINDOW_END_SECONDS = 10 * 60
 NETWORTH_GATE_4_TO_10_MIN_DIFF = 800.0
 NETWORTH_GATE_10_MIN_MAX_LOSS = -1500.0
-NETWORTH_GATE_LATE_NO_EARLY_DIFF = 1000.0
+NETWORTH_GATE_EARLY_CORE_LOW_WR_MIN_LEAD = 800.0
+NETWORTH_GATE_TIER1_EARLY65_WINDOW_END_SECONDS = 13 * 60
+NETWORTH_GATE_TIER1_EARLY65_4_TO_10_MIN_DIFF = 600.0
+NETWORTH_GATE_TIER1_EARLY65_10_TO_13_MAX_LOSS = -1500.0
+NETWORTH_GATE_STRONG_SAME_SIGN_MAX_LOSS = -800.0
+NETWORTH_GATE_EARLY_CORE_MONITOR_DIFF = 1500.0
+NETWORTH_GATE_LATE_NO_EARLY_DIFF = 1500.0
 NETWORTH_GATE_LATE_OPPOSITE_DIFF = 3000.0
+NETWORTH_GATE_LATE_OPPOSITE_EARLY90_4_TO_10_DIFF = 2000.0
+NETWORTH_GATE_LATE_OPPOSITE_EARLY90_UNDERDOG_10_TO_20_DIFF = 1500.0
+NETWORTH_GATE_LATE_COMEBACK_LARGE_DEFICIT = 14000.0
 NETWORTH_STATUS_PRE4_BLOCK = "pre4_block"
 NETWORTH_STATUS_4_10_SEND_800 = "4_10_send_800"
+NETWORTH_STATUS_MIN10_LOSS_LE800_SEND = "minute10_loss_le800_send"
 NETWORTH_STATUS_MIN10_LOSS_LE1500_SEND = "minute10_loss_le1500_send"
-NETWORTH_STATUS_LATE_MONITOR_WAIT_1000 = "late_monitor_wait_1000"
+NETWORTH_STATUS_MIN10_LEAD_GE800_SEND = "minute10_lead_ge800_send"
+NETWORTH_STATUS_TIER1_EARLY65_4_10_SEND_600 = "early65_4_10_send_600"
+NETWORTH_STATUS_TIER1_EARLY65_10_13_LOSS_LE1500_SEND = "early65_10_13_loss_le1500_send"
+NETWORTH_STATUS_STRONG_SAME_SIGN_MONITOR_WAIT_800 = "strong_same_sign_monitor_wait_800"
+NETWORTH_STATUS_EARLY_CORE_MONITOR_WAIT_1500 = "early_core_monitor_wait_1500"
+NETWORTH_STATUS_EARLY_CORE_MONITOR_WAIT_800 = "early_core_monitor_wait_800"
+NETWORTH_STATUS_EARLY_CORE_FALLBACK_20_20_SEND = "early_core_fallback_20_20_send"
+NETWORTH_STATUS_EARLY_CORE_TIMEOUT_NO_SEND = "early_core_timeout_no_send"
+NETWORTH_STATUS_LATE_CORE_MONITOR_WAIT_800 = "late_core_monitor_wait_800"
+NETWORTH_STATUS_LATE_CORE_TIMEOUT_NO_SEND = "late_core_timeout_no_send"
+NETWORTH_STATUS_LATE_MONITOR_WAIT_1500 = "late_monitor_wait_1500"
+NETWORTH_STATUS_LATE_CONFLICT_WAIT_1500 = "late_conflict_wait_1500"
+NETWORTH_STATUS_LATE_CONFLICT_WAIT_2000 = "late_conflict_wait_2000"
 NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000 = "late_conflict_wait_3000"
-NETWORTH_STATUS_LATE_FALLBACK_21_SEND = "late_fallback_21_send"
-TIER_SIGNAL_MIN_THRESHOLD_TIER1 = 60
-TIER_SIGNAL_MIN_THRESHOLD_TIER2 = 65
+NETWORTH_STATUS_LATE_FALLBACK_20_20_SEND = "late_fallback_20_20_send"
+NETWORTH_STATUS_LATE_FALLBACK_20_20_DEFICIT_NO_SEND = "late_fallback_20_20_deficit_no_send"
+NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT = "late_comeback_monitor_wait"
+NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND = "late_comeback_timeout_no_send"
+TIER_SIGNAL_MIN_THRESHOLD_TIER1_BASE = 60
+TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE = 60
+ELO_UNDERDOG_GUARD_FAVORITE_EDGE_PP = 15.0
+ELO_UNDERDOG_GUARD_MIN_SIGNAL_WR = 70.0
+ELO_BLOCK_WR_MIN_AFTER_PENALTY = 60.0
+EARLY_STAR_LATE_CORE_HIGH_CONFIDENCE_WR = 70.0
+OPPOSITE_SIGNS_EARLY90_TRIGGER_WR = 90.0
+OPPOSITE_SIGNS_EARLY90_ELO_GAP_PP = 15.0
 TIER_THRESHOLD_STATUS_TIER1_MIN60_BLOCK = "tier1_min60_block"
-TIER_THRESHOLD_STATUS_TIER2_MIN65_BLOCK = "tier2_min65_block"
+TIER_THRESHOLD_STATUS_TIER2_MIN60_BLOCK = "tier2_min60_block"
 TIER_THRESHOLD_REASON_TIER1_MIN60_BLOCK = "below_tier1_min60"
-TIER_THRESHOLD_REASON_TIER2_MIN65_BLOCK = "below_tier2_min65"
+TIER_THRESHOLD_REASON_TIER2_MIN60_BLOCK = "below_tier2_min60"
 # В live-режиме late-only star должен уметь попасть в delayed очередь (по умолчанию gate выключен).
 LIVE_STAR_LATE_SIGNAL_GATE_ENABLED = _safe_bool_env("STAR_LATE_SIGNAL_GATE_ENABLED", False)
 
@@ -180,35 +265,69 @@ BOOKMAKER_PREFETCH_SITES = tuple(
 ) or ("betboom", "pari", "winline")
 
 # Testing helpers:
-# - use separate processed URL file
+# - optionally use separate MAP_ID_CHECK_PATH
 # - optionally disable add_url persistence to keep matches re-analysed every cycle
 MAP_ID_CHECK_PATH = str(os.getenv("MAP_ID_CHECK_PATH", "map_id_check.txt")).strip() or "map_id_check.txt"
 MAP_ID_CHECK_PATH_ODDS_DEFAULT = "/Users/alex/Documents/ingame/map_id_check_test.txt"
+DELAYED_QUEUE_PATH = str(
+    os.getenv("DELAYED_QUEUE_PATH", "runtime/delayed_signal_queue.json")
+).strip() or "runtime/delayed_signal_queue.json"
+RUNTIME_INSTANCE_LOCK_PATH = str(
+    os.getenv("RUNTIME_INSTANCE_LOCK_PATH", "runtime/cyberscore_try.instance.lock")
+).strip() or "runtime/cyberscore_try.instance.lock"
 TEST_DISABLE_ADD_URL = _safe_bool_env("TEST_DISABLE_ADD_URL", False)
 FORCE_ODDS_SIGNAL_TEST = _safe_bool_env("FORCE_ODDS_SIGNAL_TEST", False)
+DELAYED_SIGNAL_RETRY_BACKOFF_BASE_SECONDS = _safe_int_env("DELAYED_SIGNAL_RETRY_BACKOFF_BASE_SECONDS", 60)
+DELAYED_SIGNAL_RETRY_BACKOFF_MAX_SECONDS = _safe_int_env("DELAYED_SIGNAL_RETRY_BACKOFF_MAX_SECONDS", 15 * 60)
+TEMPO_OVER_FALLBACK_ENABLED = _safe_bool_env("TEMPO_OVER_FALLBACK_ENABLED", True)
+TEMPO_OVER_SCORE_THRESHOLD = _safe_float_env("TEMPO_OVER_SCORE_THRESHOLD", 0.9965)
+TEMPO_OVER_SCORE_LABEL = str(os.getenv("TEMPO_OVER_SCORE_LABEL", "Ставка >=48")).strip() or "Ставка >=48"
+TEMPO_STATS_DIR_DEFAULT = str(
+    os.getenv("TEMPO_STATS_DIR", "/Users/alex/Documents/ingame/bets_data/tempo_pub_experiment")
+).strip() or "/Users/alex/Documents/ingame/bets_data/tempo_pub_experiment"
 
 try:
     STAR_THRESHOLD_WR_TIER1 = int(os.getenv("STAR_THRESHOLD_WR_TIER1", "60"))
 except ValueError:
     STAR_THRESHOLD_WR_TIER1 = 60
 try:
-    STAR_THRESHOLD_WR_TIER2 = int(os.getenv("STAR_THRESHOLD_WR_TIER2", "65"))
+    STAR_THRESHOLD_WR_TIER2 = int(os.getenv("STAR_THRESHOLD_WR_TIER2", "60"))
 except ValueError:
-    STAR_THRESHOLD_WR_TIER2 = 65
+    STAR_THRESHOLD_WR_TIER2 = 60
+
+TIER_SIGNAL_MIN_THRESHOLD_TIER1 = max(
+    TIER_SIGNAL_MIN_THRESHOLD_TIER1_BASE,
+    STAR_THRESHOLD_WR_TIER1,
+)
+TIER_SIGNAL_MIN_THRESHOLD_TIER2 = max(
+    TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE,
+    STAR_THRESHOLD_WR_TIER2,
+)
+if STAR_THRESHOLD_WR_TIER2 < TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE:
+    logger.warning(
+        "STAR_THRESHOLD_WR_TIER2=%s is below %s; clamped for Tier2 signals",
+        STAR_THRESHOLD_WR_TIER2,
+        TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE,
+    )
 
 # Global/Tier filters for star signal qualification.
 STAR_REQUIRE_EARLY_WITH_LATE_SAME_SIGN = _safe_bool_env(
     "STAR_REQUIRE_EARLY_WITH_LATE_SAME_SIGN",
-    True,
+    False,
 )
 # Если early/late star в разных знаках, не отбрасываем сигнал, а переводим в delayed до target game_time.
 STAR_DELAY_ON_OPPOSITE_SIGNS = _safe_bool_env("STAR_DELAY_ON_OPPOSITE_SIGNS", True)
-STAR_ALLOW_TIER2_FALLBACK_TO_TIER1 = _safe_bool_env("STAR_ALLOW_TIER2_FALLBACK_TO_TIER1", True)
+# По умолчанию Tier2 использует тот же min WR=60; fallback до Tier1 больше не нужен.
+STAR_ALLOW_TIER2_FALLBACK_TO_TIER1 = _safe_bool_env("STAR_ALLOW_TIER2_FALLBACK_TO_TIER1", False)
 STAR_REQUIRE_TIER2_LATE_STAR = _safe_bool_env("STAR_REQUIRE_TIER2_LATE_STAR", True)
 STAR_REQUIRE_TIER2_SAME_SIGN = _safe_bool_env("STAR_REQUIRE_TIER2_SAME_SIGN", False)
 STAR_ALLOW_TIER1_EARLY_STAR_LATE_SAME_OR_ZERO = _safe_bool_env(
     "STAR_ALLOW_TIER1_EARLY_STAR_LATE_SAME_OR_ZERO",
     True,
+)
+STAR_ALLOW_IMMEDIATE_EARLY_STAR65 = _safe_bool_env(
+    "STAR_ALLOW_IMMEDIATE_EARLY_STAR65",
+    False,
 )
 STAR_ALLOW_LATE_STAR_EARLY_SAME_OR_ZERO = _safe_bool_env(
     "STAR_ALLOW_LATE_STAR_EARLY_SAME_OR_ZERO",
@@ -302,7 +421,16 @@ class _Tee:
 def _setup_run_logging():
     root_dir = Path(__file__).resolve().parent.parent
     log_path = root_dir / "log.txt"
-    log_file = open(log_path, "w", encoding="utf-8", buffering=1)
+    log_file = open(log_path, "a", encoding="utf-8", buffering=1)
+    session_started_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+    log_file.write(
+        "\n"
+        + "=" * 24
+        + f" RUN START {session_started_at} pid={os.getpid()} "
+        + "=" * 24
+        + "\n"
+    )
+    log_file.flush()
 
     stdout = sys.stdout
     stderr = sys.stderr
@@ -322,6 +450,156 @@ def _setup_run_logging():
             if isinstance(handler, logging.StreamHandler):
                 handler.setStream(sys.stderr)
     logger.info("Logging to %s", log_path)
+
+
+def _release_runtime_instance_lock() -> None:
+    global runtime_instance_lock_handle
+    handle = globals().get("runtime_instance_lock_handle")
+    runtime_instance_lock_handle = None
+    if handle is None:
+        return
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
+    try:
+        handle.close()
+    except Exception:
+        pass
+
+
+def _odds_requested_flag(raw_odds: Any) -> bool:
+    if raw_odds is None:
+        return _safe_bool_env("BOOKMAKER_PREFETCH_ENABLED", False)
+    if isinstance(raw_odds, str):
+        return raw_odds.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(raw_odds)
+
+
+def _runtime_instance_mode_label(raw_odds: Any) -> str:
+    return "odds" if _odds_requested_flag(raw_odds) else "no_odds"
+
+
+def _mode_specific_runtime_path(base_path_raw: str, mode_label: str) -> Path:
+    base_path = Path(base_path_raw)
+    if not mode_label:
+        return base_path
+    if base_path.suffix:
+        return base_path.with_name(f"{base_path.stem}.{mode_label}{base_path.suffix}")
+    return base_path.with_name(f"{base_path.name}.{mode_label}")
+
+
+def _runtime_instance_lock_path_for_mode(mode_label: str) -> Path:
+    return _mode_specific_runtime_path(RUNTIME_INSTANCE_LOCK_PATH, mode_label)
+
+
+def _delayed_queue_path_for_mode(mode_label: str) -> Path:
+    return _mode_specific_runtime_path(DELAYED_QUEUE_PATH, mode_label)
+
+
+def _try_acquire_runtime_instance_lock(*, mode_label: str) -> bool:
+    global runtime_instance_lock_handle
+    current_handle = globals().get("runtime_instance_lock_handle")
+    if current_handle is not None:
+        runtime_instance_lock_handle = current_handle
+        return True
+    if fcntl is None:
+        logger.warning("fcntl is unavailable; runtime single-instance lock is disabled")
+        return True
+
+    lock_path = _runtime_instance_lock_path_for_mode(mode_label)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_path.open("a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        owner_info = ""
+        try:
+            handle.seek(0)
+            owner_info = handle.read().strip()
+        except Exception:
+            owner_info = ""
+        try:
+            handle.close()
+        except Exception:
+            pass
+        owner_suffix = f" owner={owner_info}" if owner_info else ""
+        logger.error("Runtime lock is already held for mode=%s: %s%s", mode_label, lock_path, owner_suffix)
+        print(
+            f"⛔ Второй процесс запрещен: runtime lock уже занят "
+            f"(mode={mode_label}): {lock_path}{owner_suffix}"
+        )
+        return False
+
+    runtime_instance_lock_handle = handle
+    payload = {
+        "pid": os.getpid(),
+        "started_at": datetime.now().isoformat(timespec="seconds"),
+        "cwd": os.getcwd(),
+        "mode": mode_label,
+    }
+    try:
+        handle.seek(0)
+        handle.truncate()
+        handle.write(json.dumps(payload, ensure_ascii=False))
+        handle.flush()
+        os.fsync(handle.fileno())
+    except Exception:
+        logger.exception("Failed to write runtime lock payload into %s", lock_path)
+    return True
+
+
+def _clear_journal_file(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "wb") as temp_file:
+            temp_file.write(b"")
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, path)
+    finally:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+
+
+def _append_journal_entry_to_path(path: Path, entry: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = orjson.dumps(entry) + b"\n"
+    with path.open("ab") as fh:
+        fh.write(payload)
+        fh.flush()
+        os.fsync(fh.fileno())
+
+
+def _write_json_atomic(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    try:
+        with os.fdopen(fd, "wb") as temp_file:
+            temp_file.write(orjson.dumps(data))
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, path)
+    finally:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+
+
+atexit.register(_release_runtime_instance_lock)
 
 
 def _coerce_metric_value(value: Any) -> Optional[float]:
@@ -405,7 +683,7 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
         if not thresholds_by_metric:
             return None
 
-        # Консервативно: ориентируемся на самый слабый starred-индекс, а не на самый сильный.
+        # Ориентируемся на самый сильный starred-индекс.
         metric_ratios: List[float] = []
         for metric, value in star_only_data.items():
             threshold = thresholds_by_metric.get(metric)
@@ -415,13 +693,13 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
         if not metric_ratios:
             return None
 
-        weakest_ratio = min(metric_ratios)
-        if weakest_ratio < 1.0:
+        strongest_ratio = max(metric_ratios)
+        if strongest_ratio < 1.0:
             return None
 
         best_level = 60
         for min_ratio, wr_level in _STAR_INDEX_WR_MULTIPLIER_TO_LEVEL:
-            if weakest_ratio >= min_ratio:
+            if strongest_ratio >= min_ratio:
                 best_level = int(wr_level)
                 break
         best_level = max(STAR_LEVEL_MIN, min(STAR_LEVEL_MAX, best_level))
@@ -453,13 +731,13 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
                 continue
         if not threshold_map:
             continue
-        # Консервативно: уровень WR валиден только если КАЖДАЯ STAR-метрика
-        # проходит порог своего индекса на этом WR-уровне.
-        level_ok = True
+        # Уровень WR валиден, если хотя бы одна STAR-метрика проходит порог
+        # своего индекса на этом WR-уровне.
+        level_ok = False
         for metric, value in star_only_data.items():
             threshold = threshold_map.get(metric)
-            if threshold is None or abs(value) < threshold:
-                level_ok = False
+            if threshold is not None and abs(value) >= threshold:
+                level_ok = True
                 break
         if level_ok:
             best_level = level
@@ -502,7 +780,14 @@ def _extract_ml_block_confidence_pct(data: dict, phase: str) -> Optional[float]:
     alive_metrics = {
         key
         for key, raw in data.items()
-        if key in {"counterpick_1vs1", "counterpick_1vs2", "solo", "synergy_duo", "synergy_trio"}
+        if key in {
+            "counterpick_1vs1",
+            "pos1_vs_pos1",
+            "counterpick_1vs2",
+            "solo",
+            "synergy_duo",
+            "synergy_trio",
+        }
         and _coerce_metric_value(raw) not in (None, 0.0)
     }
     if not alive_metrics:
@@ -560,13 +845,24 @@ def _star_block_sign(block: Optional[dict]) -> Optional[int]:
 
 _STAR_METRIC_ORDER = (
     "counterpick_1vs1",
+    "pos1_vs_pos1",
     "counterpick_1vs2",
     "solo",
     "synergy_duo",
     "synergy_trio",
 )
+_STAR_SUPPORT_METRIC_ORDER = (
+    "counterpick_1vs1",
+    "solo",
+)
+_STAR_LATE_CORE_METRIC_ORDER = (
+    "counterpick_1vs1",
+    "counterpick_1vs2",
+    "solo",
+)
 _STAR_METRIC_SHORT = {
     "counterpick_1vs1": "cp1v1",
+    "pos1_vs_pos1": "pos1vpos1",
     "counterpick_1vs2": "cp1v2",
     "solo": "solo",
     "synergy_duo": "duo",
@@ -579,7 +875,9 @@ def _star_thresholds_for_wr(target_wr: int, section: str) -> Dict[str, int]:
         wr_level = int(target_wr)
     except (TypeError, ValueError):
         wr_level = 60
-    payload = STAR_THRESHOLDS_BY_WR.get(wr_level) or STAR_THRESHOLDS_BY_WR.get(60, {})
+    payload = STAR_THRESHOLDS_BY_WR.get(wr_level)
+    if not isinstance(payload, dict):
+        payload = STAR_THRESHOLDS_BY_WR.get(60, {}) if wr_level == 60 else {}
     raw = payload.get(section, []) if isinstance(payload, dict) else []
     out: Dict[str, int] = {}
     for metric, threshold in raw:
@@ -630,20 +928,31 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
         }
 
     block_sign = next(iter(hit_signs)) if hit_signs else None
-    if block_sign in (-1, 1):
-        for metric in thresholds:
-            value = _coerce_metric_value(block.get(metric))
-            if value is None or value == 0:
-                continue
-            sign = 1 if value > 0 else -1
-            if sign != block_sign:
-                return {
-                    "valid": False,
-                    "status": "conflict_sign",
-                    "sign": block_sign,
-                    "hit_metrics": hit_metrics,
-                    "conflict_metric": metric,
-                }
+    support_diag = _block_signs_same_or_zero(
+        raw_block=block,
+        expected_sign=block_sign,
+        metrics=_STAR_SUPPORT_METRIC_ORDER,
+        allow_zero=False,
+    )
+    support_present = [
+        metric
+        for metric in _STAR_SUPPORT_METRIC_ORDER
+        if _coerce_metric_value(block.get(metric)) is not None
+    ]
+    support_missing = [metric for metric in _STAR_SUPPORT_METRIC_ORDER if metric not in support_present]
+    if not bool(support_diag.get("valid")) or support_missing:
+        return {
+            "valid": False,
+            "status": "support_invalid",
+            "sign": block_sign,
+            "hit_metrics": hit_metrics,
+            "conflict_metric": None,
+            "support_status": str(support_diag.get("status") or "unknown"),
+            "support_nonzero_metrics": list(support_diag.get("nonzero_metrics") or []),
+            "support_conflicting_metrics": list(support_diag.get("conflicting_metrics") or []),
+            "support_zero_metrics": list(support_diag.get("zero_metrics") or []),
+            "support_missing_metrics": support_missing,
+        }
 
     return {
         "valid": block_sign in (-1, 1),
@@ -651,6 +960,11 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
         "sign": block_sign,
         "hit_metrics": hit_metrics,
         "conflict_metric": None,
+        "support_status": str(support_diag.get("status") or "unknown"),
+        "support_nonzero_metrics": list(support_diag.get("nonzero_metrics") or []),
+        "support_conflicting_metrics": list(support_diag.get("conflicting_metrics") or []),
+        "support_zero_metrics": list(support_diag.get("zero_metrics") or []),
+        "support_missing_metrics": [],
     }
 
 
@@ -658,6 +972,15 @@ def _format_star_block_status(diag: Dict[str, Any]) -> str:
     status = str(diag.get("status") or "unknown")
     if status == "ok":
         return "ok"
+    if status == "elo_wr_below_min60":
+        adjusted_wr_pct = diag.get("elo_adjusted_wr_pct")
+        penalty_pp = diag.get("elo_wr_penalty_pp")
+        if adjusted_wr_pct is not None and penalty_pp is not None:
+            return (
+                f"elo_wr_below_min60(adj={float(adjusted_wr_pct):.1f},"
+                f"penalty={float(penalty_pp):.1f})"
+            )
+        return "elo_wr_below_min60"
     if status == "no_hits":
         return "no_hits"
     if status == "conflict_hits":
@@ -666,6 +989,21 @@ def _format_star_block_status(diag: Dict[str, Any]) -> str:
         metric = str(diag.get("conflict_metric") or "")
         short = _STAR_METRIC_SHORT.get(metric, metric or "?")
         return f"conflict_sign({short})"
+    if status == "support_invalid":
+        support_status = str(diag.get("support_status") or "unknown")
+        support_parts: List[str] = []
+        for key in (
+            "support_conflicting_metrics",
+            "support_zero_metrics",
+            "support_missing_metrics",
+        ):
+            for metric in diag.get(key) or []:
+                short = _STAR_METRIC_SHORT.get(str(metric), str(metric))
+                if short and short not in support_parts:
+                    support_parts.append(short)
+        if support_parts:
+            return f"support_invalid({support_status}:{','.join(support_parts)})"
+        return f"support_invalid({support_status})"
     return status
 
 
@@ -676,37 +1014,63 @@ def _star_match_status_from_diags(early_diag: Dict[str, Any], late_diag: Dict[st
         return "skip_no_late_star"
     early_sign = early_diag.get("sign") if has_early_star else None
     late_sign = late_diag.get("sign") if has_late_star else None
+    if match_tier == 2 and STAR_REQUIRE_TIER2_SAME_SIGN:
+        if not (has_early_star and early_sign == late_sign):
+            return "skip_tier2_same_sign_required"
     if has_early_star and early_sign == late_sign:
         return "send_now_same_sign"
     if has_early_star and early_sign != late_sign:
+        if not STAR_DELAY_ON_OPPOSITE_SIGNS:
+            return "skip_opposite_signs_disabled"
         return "delay_late_only_opposite_signs"
+    if STAR_REQUIRE_EARLY_WITH_LATE_SAME_SIGN:
+        return "skip_early_required"
     return "delay_late_only_no_early"
 
 
-def _block_signs_same_or_zero(raw_block: Optional[dict], expected_sign: Optional[int]) -> Dict[str, Any]:
+def _block_signs_same_or_zero(
+    raw_block: Optional[dict],
+    expected_sign: Optional[int],
+    metrics: Optional[Tuple[str, ...]] = None,
+    allow_zero: bool = True,
+) -> Dict[str, Any]:
     if expected_sign not in (-1, 1):
         return {
             "valid": False,
             "status": "no_expected_sign",
             "nonzero_metrics": [],
             "conflicting_metrics": [],
+            "zero_metrics": [],
         }
     block = raw_block if isinstance(raw_block, dict) else {}
+    metric_order = tuple(metrics) if metrics else _STAR_METRIC_ORDER
     nonzero_metrics: List[str] = []
     conflicting_metrics: List[str] = []
-    for metric in _STAR_METRIC_ORDER:
+    zero_metrics: List[str] = []
+    for metric in metric_order:
         value = _coerce_metric_value(block.get(metric))
-        if value is None or value == 0:
+        if value is None:
+            continue
+        if value == 0:
+            if not allow_zero:
+                zero_metrics.append(metric)
             continue
         nonzero_metrics.append(metric)
         sign = 1 if value > 0 else -1
         if sign != expected_sign:
             conflicting_metrics.append(metric)
+    valid = len(conflicting_metrics) == 0 and len(zero_metrics) == 0
+    status = "ok"
+    if conflicting_metrics:
+        status = "conflict_signs"
+    elif zero_metrics:
+        status = "zero_not_allowed"
     return {
-        "valid": len(conflicting_metrics) == 0,
-        "status": "ok" if len(conflicting_metrics) == 0 else "conflict_signs",
+        "valid": valid,
+        "status": status,
         "nonzero_metrics": nonzero_metrics,
         "conflicting_metrics": conflicting_metrics,
+        "zero_metrics": zero_metrics,
     }
 
 
@@ -741,6 +1105,39 @@ def _format_raw_star_block_metrics(
         tokens.append(f"{metric_short}={_format_metric_value(value)}[{';'.join(checks)}]")
 
     return ", ".join(tokens) if tokens else "none"
+
+
+def _build_star_metrics_snapshot(
+    *,
+    early_block_log: str,
+    mid_block_log: str,
+    raw_star_early_summary: str,
+    raw_star_late_summary: str,
+    star_diag_lines: list[str],
+) -> Dict[str, Any]:
+    return {
+        "early_block_log": str(early_block_log or ""),
+        "mid_block_log": str(mid_block_log or ""),
+        "raw_star_early_summary": str(raw_star_early_summary or ""),
+        "raw_star_late_summary": str(raw_star_late_summary or ""),
+        "star_diag_lines": [str(line) for line in (star_diag_lines or []) if str(line)],
+    }
+
+
+def _print_star_metrics_snapshot(snapshot: Optional[dict], label: str = "delayed") -> None:
+    if not isinstance(snapshot, dict):
+        return
+    title = "   📊 STAR метрики:" if not label else f"   📊 STAR метрики ({label}):"
+    print(title)
+    early_block_log = str(snapshot.get("early_block_log") or "")
+    mid_block_log = str(snapshot.get("mid_block_log") or "")
+    if early_block_log:
+        print("      " + early_block_log.rstrip().replace("\n", "\n      "))
+    if mid_block_log:
+        print("      " + mid_block_log.rstrip().replace("\n", "\n      "))
+    star_diag_lines = [str(line) for line in (snapshot.get("star_diag_lines") or []) if str(line)]
+    if star_diag_lines:
+        print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
 
 
 def _decorate_star_block_for_display(
@@ -823,12 +1220,420 @@ def _target_networth_diff_from_radiant_lead(
     return lead_value if target_side == "radiant" else -lead_value
 
 
+def _fallback_max_deficit_abs_for_delay_reason(
+    delay_reason: Optional[str],
+    *,
+    monitor_threshold: Optional[float] = None,
+) -> Optional[float]:
+    if monitor_threshold is not None:
+        try:
+            return abs(float(monitor_threshold))
+        except (TypeError, ValueError):
+            return None
+    reason = str(delay_reason or "").strip().lower()
+    if reason in {"late_only_no_early_star_wait_1500", "late_only_no_early_same_sign"}:
+        return abs(float(NETWORTH_GATE_LATE_NO_EARLY_DIFF))
+    if reason == "late_only_opposite_signs":
+        return abs(float(NETWORTH_GATE_LATE_OPPOSITE_DIFF))
+    if reason == "early_star_late_core_wait_1500":
+        return abs(float(NETWORTH_GATE_EARLY_CORE_MONITOR_DIFF))
+    if reason == "early_star_late_core_low_wr_wait_800":
+        return abs(float(NETWORTH_GATE_EARLY_CORE_LOW_WR_MIN_LEAD))
+    if reason == "late_star_early_core_wait_800":
+        return abs(float(NETWORTH_GATE_4_TO_10_MIN_DIFF))
+    if reason == "strong_same_sign_wait_800_then_comeback_ceiling":
+        return abs(float(NETWORTH_GATE_STRONG_SAME_SIGN_MAX_LOSS))
+    return None
+
+
+def _fallback_networth_deficit_guard_decision(
+    *,
+    target_networth_diff: Optional[float],
+    max_deficit_abs: Optional[float],
+) -> Dict[str, Any]:
+    try:
+        threshold_abs = float(max_deficit_abs) if max_deficit_abs is not None else None
+    except (TypeError, ValueError):
+        threshold_abs = None
+    try:
+        target_diff = float(target_networth_diff) if target_networth_diff is not None else None
+    except (TypeError, ValueError):
+        target_diff = None
+    deficit = abs(target_diff) if target_diff is not None and target_diff < 0 else 0.0
+    return {
+        "reject": bool(
+            threshold_abs is not None
+            and target_diff is not None
+            and target_diff < -threshold_abs
+        ),
+        "threshold_abs": threshold_abs,
+        "target_diff": target_diff,
+        "deficit": deficit,
+    }
+
+
+def _resolve_signal_wr_for_elo_guard(
+    *,
+    target_side: Optional[str],
+    has_selected_early_star: bool,
+    has_selected_late_star: bool,
+    selected_early_sign: Optional[int],
+    selected_late_sign: Optional[int],
+    early_wr_pct: Optional[float],
+    late_wr_pct: Optional[float],
+) -> Optional[Dict[str, Any]]:
+    candidates: List[Tuple[str, float]] = []
+    early_side = _target_side_from_sign(selected_early_sign) if has_selected_early_star else None
+    late_side = _target_side_from_sign(selected_late_sign) if has_selected_late_star else None
+    if (
+        has_selected_early_star
+        and early_wr_pct is not None
+        and early_side == target_side
+    ):
+        candidates.append(("early", float(early_wr_pct)))
+    if (
+        has_selected_late_star
+        and late_wr_pct is not None
+        and late_side == target_side
+    ):
+        candidates.append(("late", float(late_wr_pct)))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[1], reverse=True)
+    best_source, best_wr_pct = candidates[0]
+    if len(candidates) > 1:
+        best_source = "best_of_early_late"
+    return {
+        "wr_pct": float(best_wr_pct),
+        "source": best_source,
+        "candidates": {label: float(value) for label, value in candidates},
+    }
+
+
+def _elo_underdog_guard_decision(
+    *,
+    team_elo_meta: Optional[Dict[str, Any]],
+    target_side: Optional[str],
+    signal_wr_pct: Optional[float],
+    favorite_edge_pp: float = ELO_UNDERDOG_GUARD_FAVORITE_EDGE_PP,
+    min_signal_wr: float = ELO_UNDERDOG_GUARD_MIN_SIGNAL_WR,
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(team_elo_meta, dict):
+        return None
+    if target_side not in {"radiant", "dire"}:
+        return None
+    try:
+        radiant_wr = float(team_elo_meta.get("adjusted_radiant_wr"))
+        dire_wr = float(team_elo_meta.get("adjusted_dire_wr"))
+    except (TypeError, ValueError):
+        return None
+
+    favorite_side = "radiant" if radiant_wr >= dire_wr else "dire"
+    favorite_wr = max(radiant_wr, dire_wr)
+    target_elo_wr = radiant_wr if target_side == "radiant" else dire_wr
+    edge_from_even_pp = favorite_wr - 50.0
+    if target_side == favorite_side:
+        return None
+    if edge_from_even_pp < float(favorite_edge_pp):
+        return None
+
+    reject = signal_wr_pct is None or float(signal_wr_pct) < float(min_signal_wr)
+    return {
+        "reject": bool(reject),
+        "favorite_side": favorite_side,
+        "favorite_wr": float(favorite_wr),
+        "target_side": target_side,
+        "target_elo_wr": float(target_elo_wr),
+        "signal_wr_pct": float(signal_wr_pct) if signal_wr_pct is not None else None,
+        "favorite_edge_pp": float(edge_from_even_pp),
+        "min_signal_wr": float(min_signal_wr),
+    }
+
+
+def _team_elo_wr_for_side(
+    team_elo_meta: Optional[Dict[str, Any]],
+    side: Optional[str],
+) -> Optional[float]:
+    if not isinstance(team_elo_meta, dict):
+        return None
+    if side == "radiant":
+        key = "adjusted_radiant_wr"
+    elif side == "dire":
+        key = "adjusted_dire_wr"
+    else:
+        return None
+    try:
+        return float(team_elo_meta.get(key))
+    except (TypeError, ValueError):
+        return None
+
+
+def _elo_block_wr_penalty_pp(
+    team_elo_meta: Optional[Dict[str, Any]],
+    target_side: Optional[str],
+) -> float:
+    side_wr = _team_elo_wr_for_side(team_elo_meta, target_side)
+    if side_wr is None:
+        return 0.0
+    return max(0.0, 50.0 - float(side_wr))
+
+
+def _apply_elo_block_wr_guard(
+    *,
+    diag: Dict[str, Any],
+    block_wr_pct: Optional[float],
+    team_elo_meta: Optional[Dict[str, Any]],
+    min_adjusted_wr: float = ELO_BLOCK_WR_MIN_AFTER_PENALTY,
+) -> Dict[str, Any]:
+    out = dict(diag or {})
+    raw_valid = bool(out.get("valid"))
+    out["raw_valid"] = raw_valid
+    out["raw_status"] = str(out.get("status") or "unknown")
+    target_side = _target_side_from_sign(out.get("sign"))
+    target_elo_wr = _team_elo_wr_for_side(team_elo_meta, target_side)
+    penalty_pp = _elo_block_wr_penalty_pp(team_elo_meta, target_side)
+    adjusted_wr_pct: Optional[float]
+    try:
+        adjusted_wr_pct = (
+            float(block_wr_pct) - float(penalty_pp)
+            if block_wr_pct is not None
+            else None
+        )
+    except (TypeError, ValueError):
+        adjusted_wr_pct = None
+
+    out["block_wr_pct"] = float(block_wr_pct) if block_wr_pct is not None else None
+    out["elo_target_side"] = target_side
+    out["elo_target_wr"] = float(target_elo_wr) if target_elo_wr is not None else None
+    out["elo_wr_penalty_pp"] = float(penalty_pp)
+    out["elo_adjusted_wr_pct"] = float(adjusted_wr_pct) if adjusted_wr_pct is not None else None
+    out["elo_block_min_wr"] = float(min_adjusted_wr)
+
+    if not raw_valid or adjusted_wr_pct is None:
+        return out
+    if float(adjusted_wr_pct) >= float(min_adjusted_wr):
+        return out
+
+    out["valid"] = False
+    out["status"] = "elo_wr_below_min60"
+    return out
+
+
+def _opposite_signs_early90_monitor_config(
+    *,
+    team_elo_meta: Optional[Dict[str, Any]],
+    early_wr_pct: Optional[float],
+    selected_early_sign: Optional[int],
+    selected_late_sign: Optional[int],
+) -> Optional[Dict[str, Any]]:
+    try:
+        early_wr_value = float(early_wr_pct) if early_wr_pct is not None else None
+    except (TypeError, ValueError):
+        early_wr_value = None
+    if early_wr_value is None or early_wr_value < float(OPPOSITE_SIGNS_EARLY90_TRIGGER_WR):
+        return None
+    early_side = _target_side_from_sign(selected_early_sign)
+    late_side = _target_side_from_sign(selected_late_sign)
+    if early_side not in {"radiant", "dire"} or late_side not in {"radiant", "dire"}:
+        return None
+    if early_side == late_side:
+        return None
+
+    early_elo_wr = _team_elo_wr_for_side(team_elo_meta, early_side)
+    late_elo_wr = _team_elo_wr_for_side(team_elo_meta, late_side)
+    elo_gap_pp = None
+    early_is_elo_underdog_by_gap = False
+    if early_elo_wr is not None and late_elo_wr is not None:
+        elo_gap_pp = float(late_elo_wr - early_elo_wr)
+        early_is_elo_underdog_by_gap = bool(
+            late_elo_wr > early_elo_wr and elo_gap_pp >= float(OPPOSITE_SIGNS_EARLY90_ELO_GAP_PP)
+        )
+
+    threshold_10_to_20 = (
+        float(NETWORTH_GATE_LATE_OPPOSITE_EARLY90_UNDERDOG_10_TO_20_DIFF)
+        if early_is_elo_underdog_by_gap
+        else float(NETWORTH_GATE_LATE_OPPOSITE_DIFF)
+    )
+    status_10_to_20 = (
+        NETWORTH_STATUS_LATE_CONFLICT_WAIT_1500
+        if early_is_elo_underdog_by_gap
+        else NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000
+    )
+    return {
+        "enabled": True,
+        "profile": "late_only_opposite_signs_early90",
+        "early_side": early_side,
+        "late_side": late_side,
+        "early_wr_pct": float(early_wr_value),
+        "early_elo_wr": float(early_elo_wr) if early_elo_wr is not None else None,
+        "late_elo_wr": float(late_elo_wr) if late_elo_wr is not None else None,
+        "elo_gap_pp": float(elo_gap_pp) if elo_gap_pp is not None else None,
+        "early_is_elo_underdog_by_gap": bool(early_is_elo_underdog_by_gap),
+        "threshold_4_to_10": float(NETWORTH_GATE_LATE_OPPOSITE_EARLY90_4_TO_10_DIFF),
+        "threshold_10_to_20": float(threshold_10_to_20),
+        "status_4_to_10": NETWORTH_STATUS_LATE_CONFLICT_WAIT_2000,
+        "status_10_to_20": status_10_to_20,
+    }
+
+
+def _dynamic_monitor_snapshot_for_payload(
+    payload: Optional[Dict[str, Any]],
+    game_time_seconds: Optional[float],
+) -> Dict[str, Any]:
+    threshold_raw = None
+    status_label = ""
+    if isinstance(payload, dict):
+        threshold_raw = payload.get("networth_monitor_threshold")
+        status_label = str(payload.get("dispatch_status_label") or "")
+    try:
+        threshold_value = float(threshold_raw) if threshold_raw is not None else None
+    except (TypeError, ValueError):
+        threshold_value = None
+    snapshot = {
+        "threshold": threshold_value,
+        "status_label": status_label,
+        "profile": str((payload or {}).get("dynamic_monitor_profile") or ""),
+    }
+    if not isinstance(payload, dict):
+        return snapshot
+    if snapshot["profile"] != "late_only_opposite_signs_early90":
+        return snapshot
+    try:
+        current_game_time = float(game_time_seconds) if game_time_seconds is not None else None
+    except (TypeError, ValueError):
+        current_game_time = None
+    if current_game_time is None:
+        return snapshot
+
+    threshold_key = (
+        "networth_monitor_threshold_4_to_10"
+        if current_game_time < float(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS)
+        else "networth_monitor_threshold_10_to_20"
+    )
+    status_key = (
+        "networth_monitor_status_4_to_10"
+        if current_game_time < float(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS)
+        else "networth_monitor_status_10_to_20"
+    )
+    next_threshold_raw = payload.get(threshold_key)
+    try:
+        next_threshold = float(next_threshold_raw) if next_threshold_raw is not None else None
+    except (TypeError, ValueError):
+        next_threshold = None
+    next_status_label = str(payload.get(status_key) or snapshot["status_label"] or "")
+    snapshot["threshold"] = next_threshold
+    snapshot["status_label"] = next_status_label
+    return snapshot
+
+
 def _format_game_clock(game_time_seconds: Any) -> str:
     try:
         sec = max(0.0, float(game_time_seconds or 0.0))
     except (TypeError, ValueError):
         sec = 0.0
     return f"{int(sec // 60):02d}:{int(sec % 60):02d}"
+
+
+def _comeback_delta_pp_for_side(
+    comeback_metrics: Optional[dict],
+    side: Optional[str],
+) -> Optional[float]:
+    if side not in {"radiant", "dire"} or not isinstance(comeback_metrics, dict):
+        return None
+    side_metrics = comeback_metrics.get(side)
+    if not isinstance(side_metrics, dict):
+        return None
+    value = side_metrics.get("delta_pp")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _late_comeback_monitor_entry_for_game_time(
+    game_time_seconds: Any,
+) -> tuple[Optional[int], Optional[float]]:
+    if not isinstance(late_comeback_ceiling_thresholds, dict) or not late_comeback_ceiling_thresholds:
+        return None, None
+    try:
+        minute = int(max(0.0, float(game_time_seconds or 0.0)) // 60)
+    except (TypeError, ValueError):
+        return None, None
+    threshold_raw = late_comeback_ceiling_thresholds.get(str(minute))
+    try:
+        threshold = float(threshold_raw) if threshold_raw is not None else None
+    except (TypeError, ValueError):
+        threshold = None
+    return minute, threshold
+
+
+def _late_comeback_monitor_deadline_seconds() -> Optional[float]:
+    try:
+        max_minute = int(late_comeback_ceiling_max_minute)
+    except (TypeError, ValueError):
+        return None
+    return float((max_minute + 1) * 60)
+
+
+def _late_comeback_monitor_check(
+    *,
+    game_time_seconds: Any,
+    target_networth_diff: Optional[float],
+) -> Dict[str, Any]:
+    minute, threshold = _late_comeback_monitor_entry_for_game_time(game_time_seconds)
+    try:
+        target_diff = float(target_networth_diff) if target_networth_diff is not None else None
+    except (TypeError, ValueError):
+        target_diff = None
+    deficit = None
+    if target_diff is not None:
+        deficit = abs(target_diff) if target_diff < 0 else 0.0
+    ready = bool(deficit is not None and threshold is not None and deficit <= threshold)
+    return {
+        "minute": minute,
+        "threshold": threshold,
+        "deficit": deficit,
+        "ready": ready,
+    }
+
+
+def _post_target_comeback_ceiling_decision(
+    *,
+    game_time_seconds: Any,
+    target_networth_diff: Optional[float],
+) -> Dict[str, Any]:
+    check = _late_comeback_monitor_check(
+        game_time_seconds=game_time_seconds,
+        target_networth_diff=target_networth_diff,
+    )
+    deadline_game_time = _late_comeback_monitor_deadline_seconds()
+    try:
+        current_game_time = float(game_time_seconds or 0.0)
+    except (TypeError, ValueError):
+        current_game_time = None
+    threshold = check.get("threshold")
+    ready = bool(check.get("ready"))
+    should_monitor = bool(
+        threshold is not None
+        and not ready
+        and deadline_game_time is not None
+        and current_game_time is not None
+        and current_game_time < deadline_game_time
+    )
+    should_timeout = bool(
+        threshold is not None
+        and not ready
+        and deadline_game_time is not None
+        and current_game_time is not None
+        and current_game_time >= deadline_game_time
+    )
+    return {
+        **check,
+        "available": bool(threshold is not None),
+        "deadline_game_time": deadline_game_time,
+        "should_monitor": should_monitor,
+        "should_timeout": should_timeout,
+    }
 
 
 def _fetch_delayed_match_state(json_url: Optional[str]) -> Optional[Dict[str, Optional[float]]]:
@@ -903,14 +1708,20 @@ def _drain_due_delayed_signals_once() -> None:
         if _is_url_processed(match_key):
             _drop_delayed_match(match_key, reason="already_processed")
             continue
+        next_retry_at_raw = payload.get("next_retry_at")
+        try:
+            next_retry_at = float(next_retry_at_raw) if next_retry_at_raw is not None else 0.0
+        except (TypeError, ValueError):
+            next_retry_at = 0.0
+        if next_retry_at > now_ts:
+            continue
         target_game_time = float(payload.get('target_game_time', DELAYED_SIGNAL_TARGET_GAME_TIME))
         delayed_state = _fetch_delayed_match_state(payload.get('json_url'))
         if not isinstance(delayed_state, dict):
             queued_at = float(payload.get('queued_at', now_ts))
             # После 4 часов без game_time считаем сигнал устаревшим.
             if now_ts - queued_at > DELAYED_SIGNAL_NO_DATA_TIMEOUT_SECONDS:
-                with monitored_matches_lock:
-                    monitored_matches.pop(match_key, None)
+                _drop_delayed_match(match_key, reason="no_data_timeout")
                 print(f"⚠️ Delayed сигнал устарел и удален: {match_key}")
             continue
         current_game_time_raw = delayed_state.get("game_time")
@@ -928,44 +1739,236 @@ def _drain_due_delayed_signals_once() -> None:
             last_progress_at = float(current_payload.get('last_progress_at', current_payload.get('queued_at', now_ts)))
             if current_game_time > prev_game_time + 1:
                 last_progress_at = now_ts
-            current_payload['last_game_time'] = current_game_time
-            current_payload['last_checked_at'] = now_ts
-            current_payload['last_progress_at'] = last_progress_at
+        _update_delayed_match(
+            match_key,
+            last_game_time=float(current_game_time),
+            last_checked_at=float(now_ts),
+            last_progress_at=float(last_progress_at),
+        )
 
+        monitor_snapshot = _dynamic_monitor_snapshot_for_payload(payload, current_game_time)
         monitor_threshold: Optional[float] = None
-        monitor_threshold_raw = payload.get("networth_monitor_threshold")
+        monitor_threshold_raw = monitor_snapshot.get("threshold", payload.get("networth_monitor_threshold"))
         if monitor_threshold_raw is not None:
             try:
                 monitor_threshold = float(monitor_threshold_raw)
             except (TypeError, ValueError):
                 monitor_threshold = None
+        fallback_max_deficit_abs = _fallback_max_deficit_abs_for_delay_reason(
+            payload.get("reason"),
+            monitor_threshold=monitor_threshold,
+        )
+        fallback_max_deficit_raw = payload.get("fallback_max_deficit_abs")
+        if fallback_max_deficit_raw is not None:
+            try:
+                fallback_max_deficit_abs = abs(float(fallback_max_deficit_raw))
+            except (TypeError, ValueError):
+                fallback_max_deficit_abs = fallback_max_deficit_abs
         monitor_target_side = str(payload.get("networth_target_side") or "").strip().lower()
+        if monitor_target_side not in {"radiant", "dire"}:
+            payload_details = payload.get("add_url_details")
+            if isinstance(payload_details, dict):
+                monitor_target_side = str(payload_details.get("target_side") or "").strip().lower()
         monitor_deadline_raw = payload.get("networth_monitor_deadline_game_time", target_game_time)
         try:
             monitor_deadline_game_time = float(monitor_deadline_raw)
         except (TypeError, ValueError):
             monitor_deadline_game_time = float(target_game_time)
+        dynamic_status_label = str(monitor_snapshot.get("status_label") or payload.get("dispatch_status_label") or "")
+        if dynamic_status_label and (
+            payload.get("dispatch_status_label") != dynamic_status_label
+            or payload.get("networth_monitor_threshold") != monitor_threshold
+        ):
+            _update_delayed_match(
+                match_key,
+                dispatch_status_label=dynamic_status_label,
+                networth_monitor_threshold=monitor_threshold,
+            )
+        late_comeback_monitor_active = bool(payload.get("late_comeback_monitor_active"))
+        late_comeback_monitor_candidate = bool(payload.get("late_comeback_monitor_candidate"))
+        late_comeback_force_after_target = bool(payload.get("late_comeback_force_after_target"))
+        late_comeback_deadline_raw = payload.get(
+            "late_comeback_monitor_deadline_game_time",
+            _late_comeback_monitor_deadline_seconds(),
+        )
+        try:
+            late_comeback_deadline_game_time = (
+                float(late_comeback_deadline_raw)
+                if late_comeback_deadline_raw is not None
+                else None
+            )
+        except (TypeError, ValueError):
+            late_comeback_deadline_game_time = None
+        late_comeback_delta_raw = payload.get("late_comeback_delta_pp")
+        try:
+            late_comeback_delta_pp = (
+                float(late_comeback_delta_raw)
+                if late_comeback_delta_raw is not None
+                else None
+            )
+        except (TypeError, ValueError):
+            late_comeback_delta_pp = None
         monitor_ready = False
         monitor_target_diff: Optional[float] = None
+        late_comeback_check: Optional[Dict[str, Any]] = None
+        if monitor_target_side in {"radiant", "dire"}:
+            monitor_target_diff = _target_networth_diff_from_radiant_lead(
+                current_radiant_lead,
+                monitor_target_side,
+            )
+        if late_comeback_monitor_active:
+            late_comeback_check = _late_comeback_monitor_check(
+                game_time_seconds=current_game_time,
+                target_networth_diff=monitor_target_diff,
+            )
+            if late_comeback_check.get("ready"):
+                monitor_ready = True
+            elif (
+                late_comeback_deadline_game_time is not None
+                and current_game_time >= late_comeback_deadline_game_time
+            ):
+                monitor_ready = False
+        elif (
+            late_comeback_force_after_target
+            and current_game_time >= target_game_time
+            and monitor_target_diff is not None
+        ):
+            late_comeback_check = _late_comeback_monitor_check(
+                game_time_seconds=current_game_time,
+                target_networth_diff=monitor_target_diff,
+            )
+            if late_comeback_check.get("ready"):
+                monitor_ready = True
+                late_comeback_monitor_active = True
+            elif (
+                late_comeback_deadline_game_time is not None
+                and current_game_time < late_comeback_deadline_game_time
+            ):
+                _update_delayed_match(
+                    match_key,
+                    late_comeback_monitor_active=True,
+                    late_comeback_force_after_target=False,
+                    late_comeback_monitor_deadline_game_time=float(late_comeback_deadline_game_time),
+                    target_game_time=float(late_comeback_deadline_game_time),
+                    send_on_target_game_time=False,
+                    dispatch_status_label=NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT,
+                )
+                minute_label = late_comeback_check.get("minute")
+                threshold_label = late_comeback_check.get("threshold")
+                print(
+                    "⏳ Late comeback monitor activated: "
+                    f"{match_key} (source=strong_same_sign, game_time={int(current_game_time)}, "
+                    f"target_diff={int(monitor_target_diff)}, "
+                    f"minute={minute_label}, "
+                    f"ceiling={int(threshold_label) if threshold_label is not None else 'n/a'}, "
+                    f"deadline={_format_game_clock(late_comeback_deadline_game_time)})"
+                )
+                continue
+        elif (
+            late_comeback_monitor_candidate
+            and late_comeback_delta_pp is not None
+            and late_comeback_delta_pp > 0
+            and current_game_time >= target_game_time
+            and monitor_target_diff is not None
+            and monitor_target_diff <= -NETWORTH_GATE_LATE_COMEBACK_LARGE_DEFICIT
+        ):
+            late_comeback_check = _late_comeback_monitor_check(
+                game_time_seconds=current_game_time,
+                target_networth_diff=monitor_target_diff,
+            )
+            if late_comeback_check.get("ready"):
+                monitor_ready = True
+                late_comeback_monitor_active = True
+            elif (
+                late_comeback_deadline_game_time is not None
+                and current_game_time < late_comeback_deadline_game_time
+            ):
+                _update_delayed_match(
+                    match_key,
+                    late_comeback_monitor_active=True,
+                    late_comeback_monitor_deadline_game_time=float(late_comeback_deadline_game_time),
+                    target_game_time=float(late_comeback_deadline_game_time),
+                    send_on_target_game_time=False,
+                    dispatch_status_label=NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT,
+                )
+                minute_label = late_comeback_check.get("minute")
+                threshold_label = late_comeback_check.get("threshold")
+                print(
+                    "⏳ Late comeback monitor activated: "
+                    f"{match_key} (game_time={int(current_game_time)}, "
+                    f"target_diff={int(monitor_target_diff)}, "
+                    f"comeback_delta={late_comeback_delta_pp:+.2f} pp, "
+                    f"minute={minute_label}, "
+                    f"ceiling={int(threshold_label) if threshold_label is not None else 'n/a'}, "
+                    f"deadline={_format_game_clock(late_comeback_deadline_game_time)})"
+                )
+                continue
+        elif (
+            late_comeback_monitor_candidate
+            and current_game_time >= target_game_time
+            and monitor_target_diff is not None
+        ):
+            post_target_comeback = _post_target_comeback_ceiling_decision(
+                game_time_seconds=current_game_time,
+                target_networth_diff=monitor_target_diff,
+            )
+            if post_target_comeback.get("ready"):
+                monitor_ready = True
+                late_comeback_monitor_active = True
+                late_comeback_check = post_target_comeback
+                late_comeback_deadline_game_time = post_target_comeback.get("deadline_game_time")
+            elif post_target_comeback.get("should_monitor"):
+                late_comeback_deadline_game_time = post_target_comeback.get("deadline_game_time")
+                updated_add_url_details = dict(payload.get("add_url_details") or {})
+                updated_add_url_details.update(
+                    {
+                        "dispatch_status_label": NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT,
+                        "target_game_time": int(late_comeback_deadline_game_time or target_game_time),
+                        "networth_target_side": monitor_target_side,
+                        "target_networth_diff": float(monitor_target_diff),
+                        "late_comeback_monitor_minute": post_target_comeback.get("minute"),
+                        "late_comeback_monitor_threshold": post_target_comeback.get("threshold"),
+                    }
+                )
+                _update_delayed_match(
+                    match_key,
+                    reason="post_target_comeback_ceiling_monitor",
+                    dispatch_status_label=NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT,
+                    add_url_details=updated_add_url_details,
+                    target_game_time=float(late_comeback_deadline_game_time or target_game_time),
+                    send_on_target_game_time=False,
+                    late_comeback_monitor_active=True,
+                    late_comeback_force_after_target=False,
+                    late_comeback_monitor_deadline_game_time=float(late_comeback_deadline_game_time or target_game_time),
+                )
+                print(
+                    "⏳ Post-target comeback monitor activated: "
+                    f"{match_key} (game_time={int(current_game_time)}, "
+                    f"target_diff={int(monitor_target_diff)}, "
+                    f"minute={post_target_comeback.get('minute')}, "
+                    f"ceiling={int(post_target_comeback.get('threshold') or 0)}, "
+                    f"deadline={_format_game_clock(late_comeback_deadline_game_time)})"
+                )
+                continue
+            elif post_target_comeback.get("should_timeout"):
+                late_comeback_monitor_active = True
+                late_comeback_check = post_target_comeback
+                late_comeback_deadline_game_time = post_target_comeback.get("deadline_game_time")
         if (
             monitor_threshold is not None
             and monitor_target_side in {"radiant", "dire"}
             and current_game_time < monitor_deadline_game_time
         ):
-            monitor_target_diff = _target_networth_diff_from_radiant_lead(
-                current_radiant_lead,
-                monitor_target_side,
-            )
-            if (
-                monitor_target_diff is not None
-                and monitor_target_diff >= monitor_threshold
-            ):
-                monitor_ready = True
+            if monitor_target_diff is not None:
+                if (
+                    monitor_threshold is not None
+                    and monitor_target_diff >= monitor_threshold
+                ):
+                    monitor_ready = True
 
         if not monitor_ready and current_game_time < target_game_time:
             if now_ts - last_progress_at > DELAYED_SIGNAL_NO_PROGRESS_TIMEOUT_SECONDS:
-                with monitored_matches_lock:
-                    monitored_matches.pop(match_key, None)
+                _drop_delayed_match(match_key, reason="no_progress_timeout")
                 print(
                     f"⚠️ Delayed сигнал удален (нет прогресса game_time): "
                     f"{match_key}, last_game_time={int(current_game_time)}"
@@ -980,39 +1983,166 @@ def _drain_due_delayed_signals_once() -> None:
         try:
             if _skip_dispatch_for_processed_url(match_key, "delayed отправки после lock", indent=""):
                 continue
-            send_message(payload.get('message', ''))
-            _mark_url_processed(match_key)
             reason = payload.get('reason', 'unknown')
             fallback_send_status_label = str(
-                payload.get("fallback_send_status_label") or NETWORTH_STATUS_LATE_FALLBACK_21_SEND
+                payload.get("fallback_send_status_label") or NETWORTH_STATUS_LATE_FALLBACK_20_20_SEND
             )
-            if monitor_ready and monitor_threshold is not None and monitor_target_diff is not None:
-                print(
-                    f"⏱️ Отложенный сигнал отправлен раньше fallback: {match_key} "
-                    f"(reason={reason}, game_time={int(current_game_time)}, "
-                    f"target_networth_diff={int(monitor_target_diff)}, "
-                    f"threshold={int(monitor_threshold)})"
-                )
-            else:
-                print(
-                    f"⏱️ Отложенный сигнал отправлен: {match_key} "
-                    f"(reason={reason}, status={fallback_send_status_label}, game_time={int(current_game_time)})"
-                )
+            send_on_target_game_time = bool(payload.get("send_on_target_game_time", True))
             add_url_reason = str(payload.get('add_url_reason') or 'star_signal_sent_delayed')
             add_url_details = payload.get('add_url_details')
             if not isinstance(add_url_details, dict):
                 add_url_details = {}
             add_url_details = dict(add_url_details)
+            star_metrics_snapshot = payload.get("star_metrics_snapshot")
+            if late_comeback_monitor_active and not monitor_ready:
+                timeout_status_label = NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND
+                if (
+                    late_comeback_deadline_game_time is not None
+                    and current_game_time >= late_comeback_deadline_game_time
+                ):
+                    add_url_details.setdefault("dispatch_status_label", timeout_status_label)
+                    add_url_details.setdefault("sent_game_time", int(current_game_time))
+                    add_url_details.setdefault(
+                        "late_comeback_monitor_reached",
+                        False,
+                    )
+                    if late_comeback_check:
+                        add_url_details.setdefault(
+                            "late_comeback_monitor_minute",
+                            late_comeback_check.get("minute"),
+                        )
+                        add_url_details.setdefault(
+                            "late_comeback_monitor_threshold",
+                            late_comeback_check.get("threshold"),
+                        )
+                        add_url_details.setdefault(
+                            "target_networth_diff",
+                            float(monitor_target_diff or 0.0),
+                        )
+                    add_url(
+                        match_key,
+                        reason="star_signal_rejected_late_comeback_monitor_timeout",
+                        details=add_url_details,
+                    )
+                    _drop_delayed_match(match_key, reason="late_comeback_timeout")
+                    print(
+                        f"⏱️ Отложенный сигнал отменен без отправки: {match_key} "
+                        f"(reason=late_comeback_monitor, status={timeout_status_label}, "
+                        f"game_time={int(current_game_time)})"
+                    )
+                    continue
+            if not monitor_ready and not send_on_target_game_time:
+                timeout_add_url_reason = str(
+                    payload.get("timeout_add_url_reason") or "star_signal_rejected_delayed_timeout"
+                )
+                timeout_status_label = str(
+                    payload.get("timeout_status_label") or "delayed_timeout_no_send"
+                )
+                add_url_details.setdefault("dispatch_status_label", timeout_status_label)
+                add_url_details.setdefault("sent_game_time", int(current_game_time))
+                add_url_details.setdefault("target_game_time", int(target_game_time))
+                add_url_details.setdefault("networth_monitor_reached", False)
+                add_url(
+                    match_key,
+                    reason=timeout_add_url_reason,
+                    details=add_url_details,
+                )
+                _drop_delayed_match(match_key, reason="target_reached_no_send")
+                print(
+                    f"⏱️ Отложенный сигнал отменен без отправки: {match_key} "
+                    f"(reason={reason}, status={timeout_status_label}, game_time={int(current_game_time)})"
+                )
+                continue
+            fallback_guard = _fallback_networth_deficit_guard_decision(
+                target_networth_diff=monitor_target_diff,
+                max_deficit_abs=fallback_max_deficit_abs,
+            )
+            if not monitor_ready and bool(fallback_guard.get("reject")):
+                timeout_status_label = NETWORTH_STATUS_LATE_FALLBACK_20_20_DEFICIT_NO_SEND
+                add_url_details.setdefault("dispatch_status_label", timeout_status_label)
+                add_url_details.setdefault("sent_game_time", int(current_game_time))
+                add_url_details.setdefault("target_game_time", int(target_game_time))
+                add_url_details.setdefault("networth_monitor_reached", False)
+                if fallback_guard.get("threshold_abs") is not None:
+                    add_url_details.setdefault(
+                        "fallback_max_deficit_abs",
+                        float(fallback_guard.get("threshold_abs") or 0.0),
+                    )
+                if fallback_guard.get("target_diff") is not None:
+                    add_url_details.setdefault(
+                        "target_networth_diff",
+                        float(fallback_guard.get("target_diff") or 0.0),
+                    )
+                add_url(
+                    match_key,
+                    reason="star_signal_rejected_fallback_networth_guard",
+                    details=add_url_details,
+                )
+                _drop_delayed_match(match_key, reason="fallback_deficit_guard_no_send")
+                print(
+                    f"⏱️ Отложенный сигнал отменен без отправки: {match_key} "
+                    f"(reason={reason}, status={timeout_status_label}, "
+                    f"game_time={int(current_game_time)}, "
+                    f"target_networth_diff={int(fallback_guard.get('target_diff') or 0)}, "
+                    f"max_deficit={int(fallback_guard.get('threshold_abs') or 0)})"
+                )
+                continue
             add_url_details.setdefault('sent_game_time', int(current_game_time))
-            if monitor_ready and monitor_threshold is not None and monitor_target_diff is not None:
+            if late_comeback_monitor_active and monitor_ready and monitor_target_diff is not None:
+                add_url_details.setdefault("late_comeback_monitor_reached", True)
+                add_url_details.setdefault("target_networth_diff", float(monitor_target_diff))
+                if late_comeback_check:
+                    add_url_details.setdefault(
+                        "late_comeback_monitor_minute",
+                        late_comeback_check.get("minute"),
+                    )
+                    add_url_details.setdefault(
+                        "late_comeback_monitor_threshold",
+                        late_comeback_check.get("threshold"),
+                    )
+            elif monitor_ready and monitor_target_diff is not None:
                 add_url_details.setdefault("networth_monitor_early_release", True)
-                add_url_details.setdefault("networth_monitor_threshold", float(monitor_threshold))
+                if monitor_threshold is not None:
+                    add_url_details.setdefault("networth_monitor_threshold", float(monitor_threshold))
                 add_url_details.setdefault("target_networth_diff", float(monitor_target_diff))
             else:
                 add_url_details.setdefault("dispatch_status_label", fallback_send_status_label)
-            add_url(match_key, reason=add_url_reason, details=add_url_details)
+            _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+            delivery_confirmed = _deliver_and_persist_signal(
+                match_key,
+                payload.get('message', ''),
+                add_url_reason=add_url_reason,
+                add_url_details=add_url_details,
+            )
+            if delivery_confirmed:
+                if late_comeback_monitor_active and monitor_ready and monitor_target_diff is not None:
+                    print(
+                        f"⏱️ Отложенный сигнал отправлен по comeback ceiling: {match_key} "
+                        f"(game_time={int(current_game_time)}, "
+                        f"target_networth_diff={int(monitor_target_diff)}, "
+                        f"minute={late_comeback_check.get('minute') if late_comeback_check else 'n/a'}, "
+                        f"ceiling={int(late_comeback_check.get('threshold')) if late_comeback_check and late_comeback_check.get('threshold') is not None else 'n/a'})"
+                    )
+                elif monitor_ready and monitor_target_diff is not None:
+                    monitor_desc = (
+                        f"threshold={int(monitor_threshold)}"
+                        if monitor_threshold is not None
+                        else "monitor=unknown"
+                    )
+                    print(
+                        f"⏱️ Отложенный сигнал отправлен раньше fallback: {match_key} "
+                        f"(reason={reason}, game_time={int(current_game_time)}, "
+                        f"target_networth_diff={int(monitor_target_diff)}, "
+                        f"{monitor_desc})"
+                    )
+                else:
+                    print(
+                        f"⏱️ Отложенный сигнал отправлен: {match_key} "
+                        f"(reason={reason}, status={fallback_send_status_label}, game_time={int(current_game_time)})"
+                    )
         except Exception as e:
             print(f"⚠️ Ошибка отправки отложенного сигнала {match_key}: {e}")
+            _schedule_delayed_retry(match_key, e, now_ts=now_ts)
         finally:
             _release_signal_send_slot(match_key)
 
@@ -1224,16 +2354,22 @@ def _bookmaker_format_odds_block(match_key: str) -> Tuple[str, bool, str]:
         if not isinstance(site_payload, dict):
             lines.append(f"{site_label}: —")
             continue
-        if bool(site_payload.get("market_closed")):
-            lines.append(f"{site_label}: —")
-            continue
         odds = site_payload.get("odds")
-        if isinstance(odds, list) and len(odds) >= 2:
+        match_odds = site_payload.get("match_odds")
+        if not bool(site_payload.get("market_closed")) and isinstance(odds, list) and len(odds) >= 2:
             try:
                 p1 = float(odds[0])
                 p2 = float(odds[1])
                 lines.append(f"{site_label}: П1 {p1:.2f} | П2 {p2:.2f}")
                 has_numeric_odds = True
+                continue
+            except (TypeError, ValueError):
+                pass
+        if isinstance(match_odds, list) and len(match_odds) >= 2:
+            try:
+                p1 = float(match_odds[0])
+                p2 = float(match_odds[1])
+                lines.append(f"{site_label} (матч): П1 {p1:.2f} | П2 {p2:.2f}")
                 continue
             except (TypeError, ValueError):
                 pass
@@ -1353,6 +2489,7 @@ def _bookmaker_prefetch_fetch_subprocess(
             "status": str(item.get("status") or ""),
             "match_found": bool(item.get("match_found", False)),
             "odds": list(item.get("odds") or []),
+            "match_odds": list(item.get("match_odds") or []),
             "source": str(item.get("source") or ""),
             "details": str(item.get("details") or "")[:500],
             "market_closed": bool(item.get("market_closed", False)),
@@ -1426,6 +2563,7 @@ def _bookmaker_prefetch_loop() -> None:
                         "status": str(getattr(site_result, "status", "")),
                         "match_found": bool(getattr(site_result, "match_found", False)),
                         "odds": list(getattr(site_result, "odds", []) or []),
+                        "match_odds": list(getattr(site_result, "match_odds", []) or []),
                         "source": str(getattr(site_result, "source", "")),
                         "details": str(getattr(site_result, "details", ""))[:500],
                         "market_closed": bool(getattr(site_result, "market_closed", False)),
@@ -1517,11 +2655,6 @@ def _stop_bookmaker_prefetch_worker() -> None:
     bookmaker_prefetch_thread = None
     print("🧵 Bookmaker prefetch worker stopped")
 
-
-if __name__ == "__main__":
-    _setup_run_logging()
-
-
 with open('/Users/alex/Documents/ingame/base/hero_valid_positions_simple.json', 'r') as f:
     HERO_VALID_POSITIONS_DICT = json.load(f)
 try:
@@ -1560,8 +2693,17 @@ bookmaker_prefetch_condition = threading.Condition(bookmaker_prefetch_lock)
 bookmaker_prefetch_results = {}
 processed_urls_cache = set()
 processed_urls_lock = threading.Lock()
+verbose_match_log_cache = set()
+verbose_match_log_lock = threading.Lock()
+uncertain_delivery_urls_cache = set()
+uncertain_delivery_urls_lock = threading.Lock()
+map_id_check_lock = threading.Lock()
+delayed_queue_lock = threading.Lock()
+sent_signal_journal_lock = threading.Lock()
+uncertain_delivery_lock = threading.Lock()
 signal_send_guard = set()
 signal_send_guard_lock = threading.Lock()
+runtime_instance_lock_handle = None
 
 # Extreme predictor singleton
 extreme_predictor = None
@@ -1584,11 +2726,21 @@ KILLS_CAT_COLS = None
 KILLS_DRAFT_PREDICTOR = None
 TEAM_PREDICTABILITY_CACHE = None
 TEAM_PREDICTABILITY_MTIME = None
+KILLS_PRIORS_CACHE_PATH = Path("/Users/alex/Documents/ingame/ml-models/pro_kills_priors.json")
 
 # Ленивая загрузка словарей
 lane_data = None
 early_dict = None
 late_dict = None
+comeback_dict = None
+comeback_meta = None
+comeback_baseline_wr_pct = None
+tempo_solo_dict = None
+tempo_duo_dict = None
+tempo_cp1v1_dict = None
+late_comeback_ceiling_data = None
+late_comeback_ceiling_thresholds = None
+late_comeback_ceiling_max_minute = None
 
 # Настройка прокси
 USE_BOOKMAKER_PROXY_FOR_MATCHES = _safe_bool_env("USE_BOOKMAKER_PROXY_FOR_MATCHES", True)
@@ -1600,6 +2752,9 @@ CURRENT_PROXY_INDEX = 0
 CURRENT_PROXY = None
 PROXIES = {}
 USE_PROXY = None
+GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES = "live_matches_missing_after_all_proxies"
+GET_HEADS_FAILURE_REASON_REQUEST_FAILED = "request_failed"
+GET_HEADS_LAST_FAILURE_REASON = None
 
 
 def _env_use_proxy_default() -> bool:
@@ -1647,6 +2802,23 @@ def rotate_proxy():
     
     logger.info(f"🔄 СМЕНА ПРОКСИ: {CURRENT_PROXY} (индекс {CURRENT_PROXY_INDEX}/{len(PROXY_LIST)-1})")
     print(f"🔄 Переключен прокси: {CURRENT_PROXY}")
+
+
+def _get_current_proxy_marker() -> str:
+    if USE_PROXY and CURRENT_PROXY:
+        return str(CURRENT_PROXY)
+    return "__direct__"
+
+
+def _rotate_to_untried_proxy(tried_markers: set[str]) -> bool:
+    if not PROXY_LIST or not USE_PROXY:
+        return False
+    for _ in range(len(PROXY_LIST)):
+        rotate_proxy()
+        marker = _get_current_proxy_marker()
+        if marker not in tried_markers:
+            return True
+    return False
 
 
 # Cache for team context data
@@ -1914,7 +3086,7 @@ def _append_team_to_tier2_file(team_name: str, team_id: int) -> tuple[bool, str]
 def _ensure_known_team_or_add_to_tier2(team_ids, team_name: str, match_url: str) -> tuple[bool, int]:
     """
     Гарантирует, что команда находится в Tier1/2 и возвращает (ok, resolved_team_id).
-    Если неизвестна — автоматически добавляет в Tier2 и уведомляет в Telegram.
+    Если неизвестна — автоматически добавляет в Tier2 без уведомления в Telegram.
     Если имя уже известно, но пришёл другой team_id, используем уже известный id по имени.
     """
     candidate_ids = _extract_candidate_team_ids(team_ids)
@@ -1957,7 +3129,6 @@ def _ensure_known_team_or_add_to_tier2(team_ids, team_name: str, match_url: str)
                 f"{match_url}"
             )
             print(f"   {msg}")
-            send_message(msg)
             return True, candidate_id
         if reason == "already_known":
             return True, candidate_id
@@ -3023,7 +4194,7 @@ def _load_kills_group_models(kind: str, key: Any) -> Optional[Dict[str, Any]]:
 
 
 def _build_kills_priors() -> Dict[str, Any]:
-    cache_path = Path("/Users/alex/Documents/ingame/ml-models/pro_kills_priors.json")
+    cache_path = KILLS_PRIORS_CACHE_PATH
     if cache_path.exists():
         with cache_path.open("r", encoding="utf-8") as f:
             cached = json.load(f)
@@ -3838,6 +5009,550 @@ def _load_kills_priors() -> Dict[str, Any]:
     if KILLS_PRIORS is None:
         KILLS_PRIORS = _build_kills_priors()
     return KILLS_PRIORS
+
+
+def _load_kills_priors_from_cache_only() -> Optional[Dict[str, Any]]:
+    global KILLS_PRIORS
+    if isinstance(KILLS_PRIORS, dict):
+        return KILLS_PRIORS
+    if not KILLS_PRIORS_CACHE_PATH.exists():
+        return None
+    try:
+        with KILLS_PRIORS_CACHE_PATH.open("r", encoding="utf-8") as f:
+            cached = json.load(f)
+    except Exception:
+        logger.exception("Failed to load kills priors cache for telegram ELO block")
+        return None
+    if cached.get("priors_version") != 8:
+        return None
+    KILLS_PRIORS = cached
+    return cached
+
+
+def _build_team_elo_matchup_summary_from_live_snapshot(
+    radiant_team_id: Optional[int],
+    dire_team_id: Optional[int],
+    radiant_team_name: Optional[str] = None,
+    dire_team_name: Optional[str] = None,
+    radiant_account_ids: Optional[List[int]] = None,
+    dire_account_ids: Optional[List[int]] = None,
+    match_tier: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    if not ELO_LIVE_SNAPSHOT_AVAILABLE or _elo_live_get_matchup_summary is None:
+        return None
+    try:
+        summary = _elo_live_get_matchup_summary(
+            radiant_team_id=radiant_team_id,
+            dire_team_id=dire_team_id,
+            radiant_team_name=str(radiant_team_name or ""),
+            dire_team_name=str(dire_team_name or ""),
+            radiant_account_ids=list(radiant_account_ids or []),
+            dire_account_ids=list(dire_account_ids or []),
+            match_tier=match_tier,
+            rebuild_if_missing=True,
+        )
+    except Exception:
+        logger.exception("Failed to load live ELO snapshot for telegram signal")
+        return None
+    return summary if isinstance(summary, dict) else None
+
+
+def _register_completed_live_map_for_elo(
+    *,
+    series_key: Any,
+    series_url: str,
+    map_key: str,
+    first_team_score: Any,
+    second_team_score: Any,
+    first_team_is_radiant: bool,
+    map_match_id: Any,
+    observed_timestamp: Any,
+    radiant_team_id: Optional[int],
+    dire_team_id: Optional[int],
+    radiant_team_name: str,
+    dire_team_name: str,
+    radiant_account_ids: Optional[List[int]],
+    dire_account_ids: Optional[List[int]],
+    league_id: Any,
+    league_name: str,
+    series_type: Any,
+    match_tier: Optional[int],
+) -> Optional[Dict[str, Any]]:
+    if (
+        not ELO_LIVE_SNAPSHOT_AVAILABLE
+        or _elo_live_register_map_context is None
+        or _elo_live_MatchRecord is None
+        or _elo_live_LeagueTier is None
+    ):
+        return None
+
+    normalized_series_key = str(series_key or "").strip() or str(series_url or "").strip()
+    normalized_map_key = str(map_key or "").strip()
+    if not normalized_series_key or not normalized_map_key:
+        return None
+
+    first_score = _coerce_int(first_team_score)
+    second_score = _coerce_int(second_team_score)
+    if first_score < 0 or second_score < 0:
+        return None
+
+    radiant_player_ids = tuple(
+        int(pid) for pid in (radiant_account_ids or []) if _coerce_int(pid) > 0
+    )
+    dire_player_ids = tuple(
+        int(pid) for pid in (dire_account_ids or []) if _coerce_int(pid) > 0
+    )
+    if len(radiant_player_ids) < 5 or len(dire_player_ids) < 5:
+        return None
+
+    try:
+        tier_enum = _elo_live_LeagueTier(f"TIER{int(match_tier or 3)}")
+    except Exception:
+        tier_enum = _elo_live_LeagueTier.TIER3
+
+    map_timestamp = _coerce_int(observed_timestamp) or int(time.time())
+    series_id_value = _coerce_int(series_key)
+    league_id_value = _coerce_int(league_id)
+    map_match_id_value = _coerce_int(map_match_id)
+
+    match_record = _elo_live_MatchRecord(
+        match_id=map_match_id_value if map_match_id_value > 0 else map_timestamp,
+        timestamp=map_timestamp,
+        radiant_win=False,
+        radiant_team_id=radiant_team_id,
+        radiant_team_name=str(radiant_team_name or ""),
+        dire_team_id=dire_team_id,
+        dire_team_name=str(dire_team_name or ""),
+        radiant_player_ids=radiant_player_ids,
+        dire_player_ids=dire_player_ids,
+        league_id=league_id_value if league_id_value > 0 else None,
+        league_name=str(league_name or ""),
+        source_league_tier=tier_enum.value,
+        series_id=series_id_value if series_id_value > 0 else None,
+        series_type=str(series_type) if series_type is not None else None,
+        derived_league_tier=tier_enum,
+    )
+    try:
+        result = _elo_live_register_map_context(
+            series_key=normalized_series_key,
+            series_url=str(series_url or ""),
+            map_key=normalized_map_key,
+            first_team_score=first_score,
+            second_team_score=second_score,
+            first_team_is_radiant=bool(first_team_is_radiant),
+            match_record=match_record,
+        )
+    except Exception:
+        logger.exception("Failed to register live ELO map context for %s", normalized_map_key)
+        return None
+    return result if isinstance(result, dict) else None
+
+
+def _finalize_finished_live_series_for_elo(
+    *,
+    series_key: Any,
+    series_url: str,
+    first_team_score: Any,
+    second_team_score: Any,
+) -> Optional[Dict[str, Any]]:
+    if (
+        not ELO_LIVE_SNAPSHOT_AVAILABLE
+        or _elo_live_finalize_series_from_scores is None
+    ):
+        return None
+
+    normalized_series_key = str(series_key or "").strip() or str(series_url or "").strip()
+    if not normalized_series_key:
+        return None
+
+    first_score = _coerce_int(first_team_score)
+    second_score = _coerce_int(second_team_score)
+    if first_score < 0 or second_score < 0:
+        return None
+
+    try:
+        result = _elo_live_finalize_series_from_scores(
+            series_key=normalized_series_key,
+            series_url=str(series_url or ""),
+            first_team_score=first_score,
+            second_team_score=second_score,
+        )
+    except Exception:
+        logger.exception("Failed to finalize live ELO series context for %s", normalized_series_key)
+        return None
+    return result if isinstance(result, dict) else None
+
+
+def _winner_slot_from_series_scores(
+    previous_scores: Optional[Dict[str, Any]],
+    current_scores: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    prev_first = _coerce_int((previous_scores or {}).get("first"))
+    prev_second = _coerce_int((previous_scores or {}).get("second"))
+    cur_first = _coerce_int((current_scores or {}).get("first"))
+    cur_second = _coerce_int((current_scores or {}).get("second"))
+    if min(prev_first, prev_second, cur_first, cur_second) < 0:
+        return None
+    if cur_first == prev_first + 1 and cur_second == prev_second:
+        return "first"
+    if cur_second == prev_second + 1 and cur_first == prev_first:
+        return "second"
+    return None
+
+
+def _fetch_finished_series_scores_from_page(series_url: str) -> Optional[Tuple[int, int]]:
+    normalized = str(series_url or "").strip()
+    if not normalized:
+        return None
+
+    from urllib.parse import urlparse
+
+    parsed = urlparse(normalized if "://" in normalized else f"https://{normalized}")
+    path = str(parsed.path or "").strip()
+    if not path:
+        return None
+    if not re.search(r"/matches/\d+(?:/|$)", path):
+        return None
+
+    response = make_request_with_retry(f"https://46.229.214.49{path}", max_retries=3, retry_delay=2)
+    if not response or response.status_code != 200:
+        return None
+
+    soup = BeautifulSoup(response.text or "", "lxml")
+    title_candidates: List[str] = []
+    if soup.title and soup.title.text:
+        title_candidates.append(str(soup.title.text))
+    og_title = soup.find("meta", property="og:title")
+    if og_title and og_title.get("content"):
+        title_candidates.append(str(og_title.get("content")))
+    for candidate in title_candidates:
+        if "final score" not in candidate.lower():
+            continue
+        match = re.search(r"\b(\d+)\s*-\s*(\d+)\b", candidate)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def _extract_live_match_id(payload: Optional[dict]) -> Optional[int]:
+    data = payload if isinstance(payload, dict) else {}
+    for candidate in (
+        data.get("match_id"),
+        data.get("id"),
+    ):
+        value = _coerce_int(candidate)
+        if value > 0:
+            return value
+
+    live_league = data.get("live_league_data")
+    if isinstance(live_league, dict):
+        for source in (
+            live_league,
+            live_league.get("match") if isinstance(live_league.get("match"), dict) else {},
+        ):
+            for candidate in (
+                source.get("match_id"),
+                source.get("id"),
+            ):
+                value = _coerce_int(candidate)
+                if value > 0:
+                    return value
+    return None
+
+
+def _find_stale_live_map_payload(
+    *,
+    series_key: Any,
+    map_key: str,
+    live_match_id: Any,
+) -> Optional[Dict[str, Any]]:
+    normalized_series_key = str(series_key or "").strip()
+    normalized_map_key = str(map_key or "").strip()
+    current_match_id = _coerce_int(live_match_id)
+    if not normalized_series_key or not normalized_map_key or current_match_id <= 0:
+        return None
+
+    progress_path = Path(_elo_live_default_progress_path)
+    if not progress_path.exists():
+        return None
+
+    try:
+        payload = json.loads(progress_path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.exception("Failed to inspect live ELO progress for stale map payload detection")
+        return None
+
+    applied_maps = payload.get("applied_maps")
+    if not isinstance(applied_maps, dict):
+        return None
+
+    for applied_map_key, raw_state in applied_maps.items():
+        if not isinstance(raw_state, dict):
+            continue
+        if str(raw_state.get("series_key") or "").strip() != normalized_series_key:
+            continue
+        if str(applied_map_key or "").strip() == normalized_map_key:
+            continue
+        applied_match_id = _coerce_int(raw_state.get("match_id"))
+        if applied_match_id <= 0 or applied_match_id != current_match_id:
+            continue
+        return {
+            "series_key": normalized_series_key,
+            "current_map_key": normalized_map_key,
+            "duplicate_of_map_key": str(applied_map_key or "").strip(),
+            "match_id": int(current_match_id),
+        }
+    return None
+
+
+def _finalize_orphaned_live_elo_series(seen_series_keys: set[str]) -> List[Dict[str, Any]]:
+    if not ELO_LIVE_SNAPSHOT_AVAILABLE or _elo_live_finalize_series_from_scores is None:
+        return []
+
+    progress_path = Path(_elo_live_default_progress_path)
+    if not progress_path.exists():
+        return []
+
+    try:
+        payload = json.loads(progress_path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.exception("Failed to read live ELO progress snapshot for orphan sweep")
+        return []
+
+    pending_series = payload.get("pending_series")
+    if not isinstance(pending_series, dict) or not pending_series:
+        return []
+
+    seen = {str(item).strip() for item in seen_series_keys if str(item).strip()}
+    now_ts = int(time.time())
+    finalized: List[Dict[str, Any]] = []
+
+    for raw_series_key, raw_state in list(pending_series.items()):
+        if not isinstance(raw_state, dict):
+            continue
+        series_key = str(raw_state.get("series_key") or raw_series_key or "").strip()
+        series_url = str(raw_state.get("series_url") or "").strip()
+        if not series_key:
+            continue
+        if series_key in seen or (series_url and series_url in seen):
+            continue
+
+        pending_map = raw_state.get("pending_map") if isinstance(raw_state.get("pending_map"), dict) else {}
+        registered_at = _coerce_int(pending_map.get("registered_at"))
+        updated_at = _coerce_int(raw_state.get("updated_at"))
+        age_seconds = now_ts - max(registered_at, updated_at, 0)
+        if age_seconds < LIVE_ELO_ORPHAN_PENDING_MIN_AGE_SECONDS:
+            continue
+
+        finished_scores = _fetch_finished_series_scores_from_page(series_url)
+        if finished_scores is None:
+            continue
+
+        current_scores = {"first": int(finished_scores[0]), "second": int(finished_scores[1])}
+        previous_scores = raw_state.get("last_scores") if isinstance(raw_state.get("last_scores"), dict) else {}
+        winner_slot = _winner_slot_from_series_scores(previous_scores, current_scores)
+        if winner_slot is None:
+            continue
+
+        result = _finalize_finished_live_series_for_elo(
+            series_key=series_key,
+            series_url=series_url,
+            first_team_score=current_scores["first"],
+            second_team_score=current_scores["second"],
+        )
+        if not isinstance(result, dict):
+            continue
+        applied_update = result.get("applied_update") if isinstance(result.get("applied_update"), dict) else None
+        applied_map_key = str((applied_update or {}).get("map_key") or "")
+        if applied_map_key:
+            _drop_delayed_match(applied_map_key, reason="orphan_series_finished_live_elo_applied")
+        finalized.append(
+            {
+                "series_key": series_key,
+                "series_url": series_url,
+                "current_scores": current_scores,
+                "winner_slot": winner_slot,
+                "applied_update": applied_update,
+                "age_seconds": age_seconds,
+            }
+        )
+
+    return finalized
+
+
+def _build_team_elo_matchup_summary_from_kills_priors(
+    radiant_team_id: Optional[int],
+    dire_team_id: Optional[int],
+    radiant_team_name: Optional[str] = None,
+    dire_team_name: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    priors = _load_kills_priors_from_cache_only()
+    if not isinstance(priors, dict):
+        return None
+
+    team_elo = priors.get("team_elo", {})
+    team_elo_games = priors.get("team_elo_games", {})
+    if not isinstance(team_elo, dict) or not isinstance(team_elo_games, dict):
+        return None
+
+    def _resolve_snapshot(team_id: Optional[int], team_name: Optional[str]) -> Dict[str, Any]:
+        candidate_ids: List[int] = []
+        seen: set[int] = set()
+        _collect_candidate_team_ids(team_id, candidate_ids, seen)
+        try:
+            for known_team_id in sorted(_find_known_team_ids_by_name(str(team_name or ""))):
+                _collect_candidate_team_ids(known_team_id, candidate_ids, seen)
+        except Exception:
+            pass
+
+        matched_ids: List[int] = []
+        total_games = 0
+        weighted_rating_sum = 0.0
+        total_weight = 0.0
+        for candidate_id in candidate_ids:
+            key = str(int(candidate_id))
+            if key not in team_elo and key not in team_elo_games:
+                continue
+            rating = float(team_elo.get(key, 1500.0))
+            games = int(team_elo_games.get(key, 0) or 0)
+            weight = float(max(games, 1))
+            matched_ids.append(int(candidate_id))
+            total_games += games
+            weighted_rating_sum += rating * weight
+            total_weight += weight
+
+        if total_weight <= 0.0:
+            return {
+                "rating": 1500.0,
+                "games": 0,
+                "candidate_ids": candidate_ids,
+                "matched_ids": [],
+            }
+
+        return {
+            "rating": weighted_rating_sum / total_weight,
+            "games": total_games,
+            "candidate_ids": candidate_ids,
+            "matched_ids": matched_ids,
+        }
+
+    radiant_snapshot = _resolve_snapshot(radiant_team_id, radiant_team_name)
+    dire_snapshot = _resolve_snapshot(dire_team_id, dire_team_name)
+    if int(radiant_snapshot.get("games", 0) or 0) <= 0 and int(dire_snapshot.get("games", 0) or 0) <= 0:
+        return None
+
+    radiant_rating = float(radiant_snapshot.get("rating", 1500.0))
+    dire_rating = float(dire_snapshot.get("rating", 1500.0))
+    radiant_win_prob = 1.0 / (1.0 + 10 ** ((dire_rating - radiant_rating) / 400.0))
+
+    return {
+        "radiant": radiant_snapshot,
+        "dire": dire_snapshot,
+        "radiant_win_prob": radiant_win_prob,
+        "dire_win_prob": 1.0 - radiant_win_prob,
+        "elo_diff": radiant_rating - dire_rating,
+    }
+
+
+def _build_team_elo_matchup_summary(
+    radiant_team_id: Optional[int],
+    dire_team_id: Optional[int],
+    radiant_team_name: Optional[str] = None,
+    dire_team_name: Optional[str] = None,
+    radiant_account_ids: Optional[List[int]] = None,
+    dire_account_ids: Optional[List[int]] = None,
+    match_tier: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    summary = _build_team_elo_matchup_summary_from_live_snapshot(
+        radiant_team_id=radiant_team_id,
+        dire_team_id=dire_team_id,
+        radiant_team_name=radiant_team_name,
+        dire_team_name=dire_team_name,
+        radiant_account_ids=radiant_account_ids,
+        dire_account_ids=dire_account_ids,
+        match_tier=match_tier,
+    )
+    if isinstance(summary, dict):
+        return summary
+    return _build_team_elo_matchup_summary_from_kills_priors(
+        radiant_team_id=radiant_team_id,
+        dire_team_id=dire_team_id,
+        radiant_team_name=radiant_team_name,
+        dire_team_name=dire_team_name,
+    )
+
+
+def _elo_probability_from_ratings(radiant_rating: float, dire_rating: float) -> float:
+    return 1.0 / (1.0 + 10 ** ((dire_rating - radiant_rating) / 400.0))
+
+
+def _format_team_elo_block(
+    summary: Optional[Dict[str, Any]],
+    *,
+    radiant_team_name: str,
+    dire_team_name: str,
+) -> Tuple[str, Optional[Dict[str, Any]]]:
+    if not isinstance(summary, dict):
+        return "", None
+
+    radiant_payload = summary.get("radiant") or {}
+    dire_payload = summary.get("dire") or {}
+    radiant_rating = float(radiant_payload.get("rating", 1500.0))
+    dire_rating = float(dire_payload.get("rating", 1500.0))
+    radiant_base_rating = float(radiant_payload.get("base_rating", radiant_rating))
+    dire_base_rating = float(dire_payload.get("base_rating", dire_rating))
+    radiant_snapshot_base_rating = float(radiant_payload.get("snapshot_base_rating", radiant_base_rating))
+    dire_snapshot_base_rating = float(dire_payload.get("snapshot_base_rating", dire_base_rating))
+    radiant_live_base_delta = float(radiant_payload.get("live_base_delta", radiant_base_rating - radiant_snapshot_base_rating))
+    dire_live_base_delta = float(dire_payload.get("live_base_delta", dire_base_rating - dire_snapshot_base_rating))
+    adjusted_radiant_wr = float(summary.get("radiant_win_prob", _elo_probability_from_ratings(radiant_rating, dire_rating))) * 100.0
+    adjusted_dire_wr = float(summary.get("dire_win_prob", 1.0 - (adjusted_radiant_wr / 100.0))) * 100.0
+    adjusted_diff = float(summary.get("elo_diff", radiant_rating - dire_rating))
+    raw_diff = radiant_base_rating - dire_base_rating
+    raw_radiant_wr = _elo_probability_from_ratings(radiant_base_rating, dire_base_rating) * 100.0
+    raw_dire_wr = 100.0 - raw_radiant_wr
+    tier_gap_bonus = float(summary.get("tier_gap_bonus", 0.0) or 0.0)
+    tier_gap_key = str(summary.get("tier_gap_key") or "").strip()
+    lineup_used = bool(radiant_payload.get("lineup_used")) or bool(dire_payload.get("lineup_used"))
+
+    lines = [
+        "Командный ELO (текущий состав):" if lineup_used else "Командный ELO:",
+        f"{radiant_team_name}: {radiant_base_rating:.0f}",
+        f"{dire_team_name}: {dire_base_rating:.0f}",
+    ]
+    if abs(radiant_live_base_delta) >= 0.5 or abs(dire_live_base_delta) >= 0.5:
+        lines.append(f"Δ live vs snapshot: {radiant_live_base_delta:+.0f} / {dire_live_base_delta:+.0f}")
+    if abs(radiant_base_rating - radiant_rating) < 0.5 and abs(dire_base_rating - dire_rating) < 0.5:
+        lines.append(f"ELO WR≈{adjusted_radiant_wr:.1f}% / {adjusted_dire_wr:.1f}% (ΔELO {adjusted_diff:+.0f})")
+    else:
+        lines.append(f"Raw WR≈{raw_radiant_wr:.1f}% / {raw_dire_wr:.1f}% (ΔELO {raw_diff:+.0f})")
+        adj_suffix = ""
+        if abs(tier_gap_bonus) >= 0.5:
+            adj_suffix = f", tier bonus {tier_gap_bonus:+.0f}"
+            if tier_gap_key:
+                adj_suffix += f" {tier_gap_key}"
+        lines.append(f"Adj WR≈{adjusted_radiant_wr:.1f}% / {adjusted_dire_wr:.1f}% (ΔELO {adjusted_diff:+.0f}{adj_suffix})")
+
+    return "\n".join(lines) + "\n", {
+        "radiant_rating": radiant_rating,
+        "dire_rating": dire_rating,
+        "radiant_base_rating": radiant_base_rating,
+        "dire_base_rating": dire_base_rating,
+        "radiant_snapshot_base_rating": radiant_snapshot_base_rating,
+        "dire_snapshot_base_rating": dire_snapshot_base_rating,
+        "radiant_live_base_delta": radiant_live_base_delta,
+        "dire_live_base_delta": dire_live_base_delta,
+        "adjusted_radiant_wr": adjusted_radiant_wr,
+        "adjusted_dire_wr": adjusted_dire_wr,
+        "raw_radiant_wr": raw_radiant_wr,
+        "raw_dire_wr": raw_dire_wr,
+        "adjusted_diff": adjusted_diff,
+        "raw_diff": raw_diff,
+        "tier_gap_bonus": tier_gap_bonus,
+        "tier_gap_key": tier_gap_key,
+        "lineup_used": lineup_used,
+        "source": str(summary.get("source") or ""),
+    }
 
 
 def _avg_stat(stats: Dict[str, Dict[str, float]], key: str, stat_key: str, global_stats: Dict[str, float]) -> float:
@@ -5915,37 +7630,249 @@ headers = {
                       "Chrome/130.0.0.0 Safari/537.36", }
 
 def _sync_processed_urls_cache(urls: Any) -> None:
-    if not isinstance(urls, list):
+    return
+
+
+def _sync_uncertain_delivery_urls_cache(urls: Any) -> None:
+    return
+
+
+def _should_emit_verbose_match_log(match_key: Any) -> bool:
+    key = str(match_key or "").strip()
+    if not key:
+        return True
+    with verbose_match_log_lock:
+        return key not in verbose_match_log_cache
+
+
+def _mark_verbose_match_log_done(match_key: Any) -> None:
+    key = str(match_key or "").strip()
+    if not key:
         return
-    normalized = {str(url) for url in urls if isinstance(url, str) and url}
-    with processed_urls_lock:
-        processed_urls_cache.clear()
-        processed_urls_cache.update(normalized)
+    with verbose_match_log_lock:
+        verbose_match_log_cache.add(key)
+
+
+def _backup_corrupted_state_file(path: Path, suffix: str) -> Optional[Path]:
+    if not path.exists():
+        return None
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = path.with_name(f"{path.name}.{suffix}.{timestamp}")
+    try:
+        path.replace(backup_path)
+    except Exception as exc:
+        logger.exception("Failed to backup corrupted state file %s: %s", path, exc)
+        return None
+    return backup_path
+
+
+def _load_json_url_array(path: Path, *, recover: bool, label: str) -> list[str]:
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        _write_map_id_check_atomic(path, [])
+        return []
+    if not raw:
+        _write_map_id_check_atomic(path, [])
+        return []
+    try:
+        data = orjson.loads(raw)
+    except Exception as exc:
+        if not recover:
+            raise
+        backup_path = _backup_corrupted_state_file(path, "corrupt")
+        _write_map_id_check_atomic(path, [])
+        logger.exception("Recovered corrupted %s at %s", label, path)
+        print(
+            f"⚠️ {label} поврежден и сброшен в []: {path}"
+            + (f" (backup={backup_path})" if backup_path is not None else "")
+        )
+        return []
+    if not isinstance(data, list):
+        if not recover:
+            raise ValueError(f"{label} должен содержать JSON-массив")
+        backup_path = _backup_corrupted_state_file(path, "invalid")
+        _write_map_id_check_atomic(path, [])
+        logger.error("Recovered invalid %s structure at %s: expected JSON array", label, path)
+        print(
+            f"⚠️ {label} имел неверную структуру и сброшен в []: {path}"
+            + (f" (backup={backup_path})" if backup_path is not None else "")
+        )
+        return []
+    return [str(item) for item in data if isinstance(item, str) and item]
+
+
+def _load_json_object(
+    path: Path,
+    *,
+    recover: bool,
+    label: str,
+    empty_value: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return dict(empty_value or {})
+    if not raw:
+        return dict(empty_value or {})
+    try:
+        data = orjson.loads(raw)
+    except Exception:
+        if not recover:
+            raise
+        backup_path = _backup_corrupted_state_file(path, "corrupt")
+        _write_json_atomic(path, dict(empty_value or {}))
+        logger.exception("Recovered corrupted %s at %s", label, path)
+        print(
+            f"⚠️ {label} поврежден и сброшен: {path}"
+            + (f" (backup={backup_path})" if backup_path is not None else "")
+        )
+        return dict(empty_value or {})
+    if not isinstance(data, dict):
+        if not recover:
+            raise ValueError(f"{label} должен содержать JSON-объект")
+        backup_path = _backup_corrupted_state_file(path, "invalid")
+        _write_json_atomic(path, dict(empty_value or {}))
+        logger.error("Recovered invalid %s structure at %s: expected JSON object", label, path)
+        print(
+            f"⚠️ {label} имел неверную структуру и сброшен: {path}"
+            + (f" (backup={backup_path})" if backup_path is not None else "")
+        )
+        return dict(empty_value or {})
+    return {str(k): v for k, v in data.items() if isinstance(k, str) and k}
+
+
+def _load_map_id_check_urls(*, recover: bool) -> list[str]:
+    with map_id_check_lock:
+        return _load_json_url_array(
+            Path(MAP_ID_CHECK_PATH),
+            recover=recover,
+            label="MAP_ID_CHECK_PATH",
+        )
+
+
+def _load_delayed_queue_state(*, recover: bool) -> dict[str, dict[str, Any]]:
+    with delayed_queue_lock:
+        raw = _load_json_object(
+            Path(DELAYED_QUEUE_PATH),
+            recover=recover,
+            label="DELAYED_QUEUE_PATH",
+            empty_value={},
+        )
+    normalized: dict[str, dict[str, Any]] = {}
+    for match_key, payload in raw.items():
+        if isinstance(payload, dict):
+            normalized[str(match_key)] = dict(payload)
+    return normalized
+
+
+def _persist_delayed_queue_snapshot(snapshot: dict[str, dict[str, Any]]) -> None:
+    with delayed_queue_lock:
+        _write_json_atomic(Path(DELAYED_QUEUE_PATH), snapshot)
+
+
+def _replace_monitored_matches_from_snapshot(snapshot: dict[str, dict[str, Any]]) -> None:
+    with monitored_matches_lock:
+        monitored_matches.clear()
+        monitored_matches.update(copy.deepcopy(snapshot))
+
+
+def _set_delayed_match(match_key: str, payload: dict[str, Any]) -> None:
+    if not match_key:
+        return
+    payload_copy = copy.deepcopy(payload)
+    with monitored_matches_lock:
+        previous = monitored_matches.get(match_key)
+        previous_copy = copy.deepcopy(previous) if isinstance(previous, dict) else None
+        monitored_matches[match_key] = payload_copy
+        snapshot = copy.deepcopy(monitored_matches)
+    try:
+        _persist_delayed_queue_snapshot(snapshot)
+    except Exception:
+        with monitored_matches_lock:
+            if previous_copy is None:
+                monitored_matches.pop(match_key, None)
+            else:
+                monitored_matches[match_key] = previous_copy
+        raise
+
+
+def _update_delayed_match(match_key: str, **updates: Any) -> bool:
+    if not match_key:
+        return False
+    with monitored_matches_lock:
+        current = monitored_matches.get(match_key)
+        if not isinstance(current, dict):
+            return False
+        updated = dict(current)
+        updated.update(updates)
+        monitored_matches[match_key] = updated
+        snapshot = copy.deepcopy(monitored_matches)
+    try:
+        _persist_delayed_queue_snapshot(snapshot)
+    except Exception as exc:
+        logger.exception("Failed to persist delayed queue update for %s: %s", match_key, exc)
+        return False
+    return True
+
+
+def _load_uncertain_delivery_urls() -> list[str]:
+    return []
+
+
+def _append_uncertain_delivery_entry(entry: dict[str, Any]) -> str:
+    return ""
+
+
+def _append_sent_signal_journal(url: str, reason: str, details: Any) -> str:
+    return ""
+
+
+def _flush_sent_signal_journal_into_map_id_check() -> int:
+    return 0
+
+
+def _safe_flush_sent_signal_journal_into_map_id_check() -> int:
+    return 0
+
+
+def _mark_url_uncertain_delivery(url: str) -> None:
+    if not url:
+        return
+    with uncertain_delivery_urls_lock:
+        uncertain_delivery_urls_cache.add(url)
+
+
+def _is_url_uncertain_delivery(url: str) -> bool:
+    if not url:
+        return False
+    with uncertain_delivery_urls_lock:
+        return url in uncertain_delivery_urls_cache
+
+
+def _record_uncertain_delivery(
+    match_key: str,
+    *,
+    reason: str,
+    details: Optional[dict[str, Any]],
+    error_message: str,
+) -> Optional[str]:
+    return None
 
 
 def _mark_url_processed(url: str) -> None:
-    if not url:
-        return
-    with processed_urls_lock:
-        processed_urls_cache.add(url)
+    return
 
 
 def _is_url_processed(url: str) -> bool:
     if not url:
         return False
-    with processed_urls_lock:
-        if url in processed_urls_cache:
-            return True
     try:
-        with open(MAP_ID_CHECK_PATH, 'rb') as f:
-            raw = f.read()
-        data = orjson.loads(raw) if raw else []
-        if isinstance(data, list) and url in data:
-            _mark_url_processed(url)
-            return True
-    except Exception:
+        data = _load_map_id_check_urls(recover=False)
+        return bool(isinstance(data, list) and url in data)
+    except Exception as exc:
+        logger.warning("Failed processed-url lookup for %s: %s", url, exc)
         return False
-    return False
 
 
 def _drop_delayed_match(match_key: str, reason: str = "") -> bool:
@@ -5953,7 +7880,13 @@ def _drop_delayed_match(match_key: str, reason: str = "") -> bool:
         return False
     with monitored_matches_lock:
         removed = monitored_matches.pop(match_key, None)
+        snapshot = copy.deepcopy(monitored_matches)
     if removed is not None:
+        try:
+            _persist_delayed_queue_snapshot(snapshot)
+        except Exception as exc:
+            logger.exception("Failed to persist delayed queue removal for %s: %s", match_key, exc)
+            print(f"   ⚠️ Не удалось сохранить удаление delayed-очереди для {match_key}: {exc}")
         if reason:
             print(f"   🧹 Delayed очередь очищена для {match_key} ({reason})")
         else:
@@ -5979,14 +7912,60 @@ def _release_signal_send_slot(match_key: str) -> None:
         signal_send_guard.discard(match_key)
 
 
-def _skip_dispatch_for_processed_url(match_key: str, context: str, indent: str = "   ") -> bool:
+def _schedule_delayed_retry(match_key: str, exc: Exception, now_ts: Optional[float] = None) -> bool:
     if not match_key:
         return False
-    if not _is_url_processed(match_key):
+    if now_ts is None:
+        now_ts = time.time()
+    with monitored_matches_lock:
+        payload = monitored_matches.get(match_key)
+        if not isinstance(payload, dict):
+            return False
+        attempt_count = int(payload.get("retry_attempt_count", 0) or 0) + 1
+    base_delay = max(5, int(DELAYED_SIGNAL_RETRY_BACKOFF_BASE_SECONDS or 60))
+    max_delay = max(base_delay, int(DELAYED_SIGNAL_RETRY_BACKOFF_MAX_SECONDS or base_delay))
+    retry_delay = min(max_delay, base_delay * (2 ** max(0, attempt_count - 1)))
+    next_retry_at = float(now_ts + retry_delay)
+    updated = _update_delayed_match(
+        match_key,
+        retry_attempt_count=attempt_count,
+        last_send_error=str(exc),
+        last_send_error_at=float(now_ts),
+        next_retry_at=next_retry_at,
+    )
+    if updated:
+        retry_human = datetime.fromtimestamp(next_retry_at).strftime('%Y-%m-%d %H:%M:%S')
+        print(
+            f"⚠️ Delayed retry scheduled: {match_key} "
+            f"(attempt={attempt_count}, next_retry_at={retry_human}, error={exc})"
+        )
+    return updated
+
+
+def _dispatch_block_reason(match_key: str) -> Optional[str]:
+    if not match_key:
+        return None
+    if _is_url_processed(match_key):
+        return "processed"
+    return None
+
+
+def _skip_dispatch_for_processed_url(match_key: str, context: str, indent: str = "   ") -> bool:
+    block_reason = _dispatch_block_reason(match_key)
+    if block_reason is None:
         return False
-    print(f"{indent}⚠️ Пропуск {context}: URL уже обработан: {match_key}")
-    _drop_delayed_match(match_key, reason=f"{context}_already_processed")
+    if block_reason == "processed":
+        print(f"{indent}⚠️ Пропуск {context}: URL уже обработан: {match_key}")
+    else:
+        print(
+            f"{indent}⚠️ Пропуск {context}: URL заблокирован после uncertain delivery: {match_key}"
+        )
+    _drop_delayed_match(match_key, reason=f"{context}_{block_reason}")
     return True
+
+
+def _write_map_id_check_atomic(path: Path, data: list[Any]) -> None:
+    _write_json_atomic(path, data)
 
 
 def add_url(url, reason: str = "unspecified", details: Any = None):
@@ -6004,17 +7983,17 @@ def add_url(url, reason: str = "unspecified", details: Any = None):
         print(f"   📎 add_url(): details={details}")
     logger.info("ADD_URL reason=%s url=%s details=%s", reason, url, details)
     try:
-        with open(MAP_ID_CHECK_PATH, 'rb+') as f:
-            raw = f.read()
-            data = orjson.loads(raw) if raw else []
-            if not isinstance(data, list):
-                raise ValueError(f"{MAP_ID_CHECK_PATH} должен содержать JSON-массив")
+        map_id_check_path = Path(MAP_ID_CHECK_PATH)
+        with map_id_check_lock:
+            data = _load_json_url_array(
+                map_id_check_path,
+                recover=True,
+                label="MAP_ID_CHECK_PATH",
+            )
             already_present = url in data
             if not already_present:
                 data.append(url)
-            f.truncate(0)
-            f.seek(0)
-            f.write(orjson.dumps(data))
+            _write_map_id_check_atomic(map_id_check_path, data)
         if already_present:
             print(f"   ℹ️ add_url(): URL уже был в {MAP_ID_CHECK_PATH} (повторная запись не нужна)")
             logger.info("ADD_URL already_present url=%s reason=%s", url, reason)
@@ -6035,9 +8014,45 @@ def add_url(url, reason: str = "unspecified", details: Any = None):
         print(f"   🗑️ Очищена история для {match_key}")
 
 
+def _deliver_and_persist_signal(
+    match_key: str,
+    message_text: str,
+    *,
+    add_url_reason: str,
+    add_url_details: Optional[dict] = None,
+    bookmaker_decision: Optional[str] = None,
+) -> bool:
+    try:
+        send_message(message_text, require_delivery=True)
+    except TelegramSendError as exc:
+        if exc.delivery_uncertain:
+            print(
+                f"   ⚠️ Uncertain Telegram delivery for {match_key}; "
+                "URL не будет заблокирован вне map_id_check.txt"
+            )
+            return False
+        raise
+    if bookmaker_decision:
+        _log_bookmaker_source_snapshot(match_key, decision=bookmaker_decision)
+    try:
+        add_url(
+            match_key,
+            reason=add_url_reason,
+            details=dict(add_url_details or {}),
+        )
+    except Exception as exc:
+        logger.exception("Signal was sent but add_url() failed for %s", match_key)
+        print(
+            f"   ⚠️ add_url() failed after successful send for {match_key}; "
+            "единственный storage=map_id_check.txt, URL не помечен обработанным"
+        )
+        return False
+    return True
 
 
 def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.214.49", path = "/matches"):
+        global GET_HEADS_LAST_FAILURE_REASON
+        GET_HEADS_LAST_FAILURE_REASON = None
         # Формируем URL всегда (нужен для retry с новым прокси)
         url = f"https://{ip_address}{path}"
         
@@ -6046,39 +8061,69 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             # Используем глобальные headers
             global headers
             response = make_request_with_retry(url, MAX_RETRIES, RETRY_DELAY, headers=headers)
-        
+
         if not response or response.status_code != 200:
             status_msg = f"Status: {response.status_code}" if response else "No response (None)"
             print(f"❌ Ошибка получения данных: {status_msg}")
+            GET_HEADS_LAST_FAILURE_REASON = GET_HEADS_FAILURE_REASON_REQUEST_FAILED
             return None, None
-        
+
         try:
-            soup = BeautifulSoup(response.text, 'lxml')
-            live_matches = soup.find('div', class_='live__matches')
-            
-            if not live_matches:
-                print(f"❌ Не найден элемент live__matches в HTML")
-                try:
-                    send_message("❌ Не найден элемент live__matches в HTML")
-                except Exception as e:
-                    print(f"⚠️ Не удалось отправить уведомление в Telegram: {e}")
-                # Меняем прокси и пробуем еще раз
-                rotate_proxy()
+            attempted_markers: set[str] = set()
+            parse_failed_on_200 = False
+            max_proxy_attempts = max(1, len(PROXY_LIST)) if USE_PROXY and PROXY_LIST else 1
+            current_response = response
+            live_matches = None
+
+            while True:
+                marker = _get_current_proxy_marker()
+                attempted_markers.add(marker)
+
+                if current_response and current_response.status_code == 200:
+                    soup = BeautifulSoup(current_response.text, 'lxml')
+                    live_matches = soup.find('div', class_='live__matches')
+                    if live_matches:
+                        break
+                    parse_failed_on_200 = True
+                    print(
+                        "❌ Не найден элемент live__matches в HTML "
+                        f"(proxy={marker}, tried={len(attempted_markers)}/{max_proxy_attempts})"
+                    )
+                else:
+                    status_msg = (
+                        f"status={current_response.status_code}"
+                        if current_response is not None
+                        else "response=None"
+                    )
+                    print(
+                        "⚠️ Не удалось получить валидный HTML для парсинга "
+                        f"(proxy={marker}, {status_msg})"
+                    )
+
+                if len(attempted_markers) >= max_proxy_attempts:
+                    if parse_failed_on_200:
+                        print("❌ Элемент live__matches не найден после всех доступных прокси")
+                        GET_HEADS_LAST_FAILURE_REASON = (
+                            GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES
+                        )
+                    else:
+                        GET_HEADS_LAST_FAILURE_REASON = GET_HEADS_FAILURE_REASON_REQUEST_FAILED
+                    return None, None
+
+                if not _rotate_to_untried_proxy(attempted_markers):
+                    if parse_failed_on_200:
+                        print("❌ Элемент live__matches не найден после всех доступных прокси")
+                        GET_HEADS_LAST_FAILURE_REASON = (
+                            GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES
+                        )
+                    else:
+                        GET_HEADS_LAST_FAILURE_REASON = GET_HEADS_FAILURE_REASON_REQUEST_FAILED
+                    return None, None
                 print(f"🔄 Переключился на другой прокси, повторяю запрос...")
                 time.sleep(2)
-                
-                # Повторный запрос с новым прокси
-                response = make_request_with_retry(url, max_retries=3, retry_delay=2, headers=headers)
-                if response and response.status_code == 200:
-                    soup = BeautifulSoup(response.text, 'lxml')
-                    live_matches = soup.find('div', class_='live__matches')
-                    
-                    if not live_matches:
-                        print(f"❌ Элемент live__matches не найден и после смены прокси")
-                        return None, None
-                else:
-                    print(f"❌ Не удалось получить данные после смены прокси")
-                    return None, None
+                current_response = make_request_with_retry(url, max_retries=3, retry_delay=2, headers=headers)
+                if not current_response or current_response.status_code != 200:
+                    continue
             
             heads = live_matches.find_all('div', class_='live__matches-item__head')
             bodies = live_matches.find_all('div', class_='live__matches-item__body')
@@ -6093,9 +8138,9 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                 # if not any(i in title.lower() for i in ['dreamleague', 'blast', 'dacha', 'betboom',
                 #                                         'fissure', 'pgl', 'esports', 'international',
                 #                                         'european', 'epl', 'esl', 'cct']):
-                if any(i in title.lower() for i in ['lunar']):
-                    heads_copy.remove(heads[i])
-                    bodies_copy.remove(bodies[i])
+                # if any(i in title.lower() for i in ['lunar']):
+                    # heads_copy.remove(heads[i])
+                    # bodies_copy.remove(bodies[i])
             return heads_copy, bodies_copy
         except Exception as e:
             print(f"❌ Ошибка парсинга HTML: {e}")
@@ -6702,26 +8747,17 @@ def parse_draft_and_positions(soup, data, radiant_team_name, dire_team_name):
         print("      ❌ Слишком мало героев")
         return None, None, f"Слишком мало героев определено: {total_heroes}/10", "", []
 
-    # Если не хватает одного героя и есть leftover или остались заглушки, добавляем
-    if total_heroes == 9:
+    if total_heroes < 10:
         if leftover:
-            print(f"      ⚠️  Используем leftover hero_id={leftover}")
-            if len(dire_pos_list) == 1:
-                dire_heroes_and_pos[dire_pos_list[0]] = {"hero_id": leftover, "account_id": 0}
-                dire_pos_list.remove(dire_pos_list[0])
-                print(f"         ✅ Добавлен в dire {list(dire_heroes_and_pos.keys())[-1]}")
-            elif len(radiant_pos_list) == 1:
-                radiant_heroes_and_pos[radiant_pos_list[0]] = {"hero_id": leftover, "account_id": 0}
-                radiant_pos_list.remove(radiant_pos_list[0])
-                print(f"         ✅ Добавлен в radiant {list(radiant_heroes_and_pos.keys())[-1]}")
-        else:
-            print("      ⚠️  Leftover нет, но героев только 9. Проверяем заглушки...")
-            for placeholder_name in list(radiant_names_pos.keys()):
-                if placeholder_name.startswith("__missing_"):
-                    print(f"         ❌ Radiant: осталась необработанная заглушка {placeholder_name}")
-            for placeholder_name in list(dire_names_pos.keys()):
-                if placeholder_name.startswith("__missing_"):
-                    print(f"         ❌ Dire: осталась необработанная заглушка {placeholder_name}")
+            print(f"      ⚠️  Остался неподтвержденный leftover hero_id={leftover}")
+        for placeholder_name in list(radiant_names_pos.keys()):
+            if placeholder_name.startswith("__missing_"):
+                print(f"         ❌ Radiant: осталась необработанная заглушка {placeholder_name}")
+        for placeholder_name in list(dire_names_pos.keys()):
+            if placeholder_name.startswith("__missing_"):
+                print(f"         ❌ Dire: осталась необработанная заглушка {placeholder_name}")
+        print("      ❌ parse_draft_and_positions(): требуется полный драфт 10/10")
+        return None, None, f"Недостаточно героев определено: {total_heroes}/10", "", []
 
     # Финальная проверка
     final_rad = len(radiant_heroes_and_pos)
@@ -6732,8 +8768,6 @@ def parse_draft_and_positions(soup, data, radiant_team_name, dire_team_name):
 
     if final_total == 10:
         print("      ✅ parse_draft_and_positions(): завершено успешно (все 10 героев)")
-    elif final_total == 9:
-        print("      ⚠️  parse_draft_and_positions(): завершено с 9/10 героями (можно продолжить)")
     else:
         print("      ❌ parse_draft_and_positions(): недостаточно героев")
         return None, None, f"Недостаточно героев: {final_total}/10", "", []
@@ -6794,15 +8828,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         status_element = heads[i].find('div', class_='event__info-info__time')
         status = status_element.text.lower() if status_element else 'unknown'
         
-        print(f"\n🔍 DEBUG: Начало обработки матча #{i}")
-        print(f"   Статус: {status}")
-
         if return_status != 'draft...':
             return_status = status
-        if status == 'finished':
-            print(f"   ❌ Матч завершен - пропускаем")
-            print(f"   ℹ️ Матч завершен")
-            return
 
 
 
@@ -6815,43 +8842,103 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             href = link_tag['href']
             parsed_url = urlparse(href)
             path = parsed_url.path
+            series_match = re.search(r"/matches/(\d+)", path)
+            series_key_from_path = series_match.group(1) if series_match else ""
+            series_url = f'dltv.org{path}'
             check_uniq_url = f'dltv.org{path}.{uniq_score}'
-            
-            print(f"   URL: {check_uniq_url}")
-            print(f"   Score: {score}")
-            
-            if check_uniq_url in maps_data or _is_url_processed(check_uniq_url):
-                print(f"   ✅ Матч уже в map_id_check.txt - пропускаем")
+            verbose_match_log = _should_emit_verbose_match_log(check_uniq_url)
+            match_log = print if verbose_match_log else (lambda *args, **kwargs: None)
+            block_reason = _dispatch_block_reason(check_uniq_url)
+
+            if verbose_match_log:
+                print(f"\n🔍 DEBUG: Начало обработки матча #{i}")
+                print(f"   Статус: {status}")
+                print(f"   URL: {check_uniq_url}")
+                print(f"   Score: {score}")
+            elif check_uniq_url not in maps_data and block_reason != "processed":
+                print(f"\n🔁 RECHECK матча #{i}: {check_uniq_url} | status={status}")
+
+            if status == 'finished':
+                finished_finalize = _finalize_finished_live_series_for_elo(
+                    series_key=series_key_from_path,
+                    series_url=series_url,
+                    first_team_score=score_divs[:2][0].text.strip(),
+                    second_team_score=score_divs[:2][1].text.strip(),
+                )
+                if isinstance(finished_finalize, dict):
+                    applied_update = finished_finalize.get("applied_update")
+                    if isinstance(applied_update, dict):
+                        applied_map_key = str(applied_update.get("map_key") or "")
+                        applied_winner_slot = str(applied_update.get("winner_slot") or "unknown")
+                        applied_radiant_win = bool(applied_update.get("radiant_win"))
+                        print(
+                            "   📈 Live ELO finalized from finished series: "
+                            f"applied_map={applied_map_key or 'unknown'}, "
+                            f"winner_slot={applied_winner_slot}, "
+                            f"radiant_win={applied_radiant_win}"
+                        )
+                        if applied_map_key:
+                            _drop_delayed_match(applied_map_key, reason="series_finished_live_elo_applied")
+                print(f"   ❌ Матч завершен - пропускаем")
+                print(f"   ℹ️ Матч завершен")
+                return return_status
+
+            if check_uniq_url in maps_data or block_reason == "processed":
+                print(f"   ✅ Матч уже в map_id_check.txt - пропускаем: {check_uniq_url}")
                 _drop_delayed_match(check_uniq_url, reason="already_in_map_id_check")
+                return
+            if block_reason == "uncertain_delivery":
+                print(f"   ⚠️ Матч заблокирован после uncertain delivery - пропускаем")
+                _drop_delayed_match(check_uniq_url, reason="uncertain_delivery_block")
                 return
             with monitored_matches_lock:
                 delayed_payload = monitored_matches.get(check_uniq_url)
             if delayed_payload is not None:
+                allow_live_recheck = bool(delayed_payload.get("allow_live_recheck"))
                 target_game_time = float(
                     delayed_payload.get('target_game_time', DELAYED_SIGNAL_TARGET_GAME_TIME)
                 )
                 target_human = f"{int(target_game_time // 60):02d}:{int(target_game_time % 60):02d}"
                 last_game_time = delayed_payload.get('last_game_time', delayed_payload.get('queued_game_time'))
                 try:
+                    last_game_time_value = float(last_game_time)
+                except (TypeError, ValueError):
+                    last_game_time_value = None
+                try:
                     last_game_time_human = str(int(float(last_game_time)))
                 except (TypeError, ValueError):
                     last_game_time_human = "n/a"
                 queue_reason = str(delayed_payload.get('reason', 'unknown'))
-                queue_status_label = str(delayed_payload.get("dispatch_status_label") or "")
-                monitor_threshold_raw = delayed_payload.get("networth_monitor_threshold")
+                monitor_snapshot = _dynamic_monitor_snapshot_for_payload(
+                    delayed_payload,
+                    last_game_time_value,
+                )
+                queue_status_label = str(monitor_snapshot.get("status_label") or delayed_payload.get("dispatch_status_label") or "")
+                monitor_threshold_raw = monitor_snapshot.get("threshold")
                 monitor_suffix = ""
                 try:
-                    if monitor_threshold_raw is not None:
+                    if bool(delayed_payload.get("late_comeback_monitor_active")):
+                        monitor_side = str(delayed_payload.get("networth_target_side") or "").strip().lower() or "unknown"
+                        monitor_suffix = f", monitor={monitor_side} comeback_ceiling"
+                    elif monitor_threshold_raw is not None:
                         monitor_side = str(delayed_payload.get("networth_target_side") or "").strip().lower() or "unknown"
                         monitor_suffix = f", monitor={monitor_side}>={int(float(monitor_threshold_raw))}"
                 except (TypeError, ValueError):
                     monitor_suffix = ""
                 print(
-                    "   ⏳ Матч уже в delayed-очереди - пропускаем повторный расчет "
+                    "   ⏳ Матч уже в delayed-очереди "
+                    + (
+                        "- продолжаем live recheck "
+                        if allow_live_recheck
+                        else "- пропускаем повторный расчет "
+                    )
+                    + (
                     f"(target={target_human}, last_game_time={last_game_time_human}, "
                     f"reason={queue_reason}, status={queue_status_label or 'n/a'}{monitor_suffix})"
+                    )
                 )
-                return return_status
+                if not allow_live_recheck:
+                    return return_status
 
 
         except (AttributeError, KeyError, ValueError) as e:
@@ -6861,7 +8948,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
         # HTTP запрос
         url = f"https://{IP_ADDRESS}{path}"
-        print(f"   🌐 Запрос страницы матча...")
+        match_log(f"   🌐 Запрос страницы матча...")
         response = make_request_with_retry(url, MAX_RETRIES, RETRY_DELAY)
 
         if not response or response.status_code != 200:
@@ -6869,11 +8956,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             print(f"   ❌ Матч пропущен (ошибка HTTP запроса)")
             return return_status
 
-        print(f"   ✅ Страница получена")
+        match_log(f"   ✅ Страница получена")
         soup = BeautifulSoup(response.text, 'lxml')
 
         from urllib.parse import urljoin
-        import re
         m = re.search(r"\$\.get\(['\"](?P<path>/live/[^'\"]+\.json)['\"]", response.text)
         if not m:
             print(f"   ❌ Не найден JSON путь в HTML")
@@ -6883,7 +8969,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         base = "https://dltv.org"  # замениш на реальный сайт, откуда страница
         json_url = urljoin(base, json_path)
         
-        print(f"   🌐 Запрос JSON данных...")
+        match_log(f"   🌐 Запрос JSON данных...")
 
         # Получаем JSON данные с retry логикой
         data = None
@@ -6916,7 +9002,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             rotate_proxy()
                             time.sleep(2)
                         continue
-                    print(f"   ✅ JSON данные получены")
+                    match_log(f"   ✅ JSON данные получены")
                     if json_retry_errors:
                         retries_summary = " | ".join(json_retry_errors)
                         print(
@@ -6967,10 +9053,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             print(f"   ℹ️ Драфт еще не начался")
             return return_status
         
-        print(f"   ✅ fast_picks найдены - драфт начался")
+        match_log(f"   ✅ fast_picks найдены - драфт начался")
         
         # Определяем какая команда radiant, какая dire
         db_payload = data.get('db') or {}
+        db_series_payload = db_payload.get('series') or {}
+        db_scores_payload = db_payload.get('scores') or {}
         first_team_payload = db_payload.get('first_team') or {}
         second_team_payload = db_payload.get('second_team') or {}
         if first_team_payload.get('is_radiant'):
@@ -7016,22 +9104,31 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             dire_db_team_payload.get('id'),
         )
 
-        print(f"   🆔 Candidate team IDs: radiant={radiant_team_ids}, dire={dire_team_ids}")
+        match_log(f"   🆔 Candidate team IDs: radiant={radiant_team_ids}, dire={dire_team_ids}")
         if not radiant_team_ids or not dire_team_ids:
             print(f"   ❌ Отсутствуют team_id для команд")
             print(f"   ❌ Матч пропущен (нет team_id)")
             return return_status
         # Extract league_id if available
         league_id = live_league_data.get('league_id')
-        series_id = live_league_data.get('series_id')
+        series_id = live_league_data.get('series_id') or db_series_payload.get('id')
+        series_type = live_league_data.get('series_type') or db_series_payload.get('type')
+        first_team_score = db_scores_payload.get('first_team')
+        second_team_score = db_scores_payload.get('second_team')
+        first_team_is_radiant = bool(first_team_payload.get('is_radiant'))
+        series_url = f'dltv.org{path}'
+        league_name = (
+            str(live_league_data.get('league_name') or "").strip()
+            or str((db_payload.get('league') or {}).get('title') or "").strip()
+        )
         
         # Debug: print available keys in live_league_data
         lld_keys = list(live_league_data.keys())
-        print(f"   📋 live_league_data keys: {lld_keys}")
+        match_log(f"   📋 live_league_data keys: {lld_keys}")
         if league_id:
-            print(f"   🏆 League ID: {league_id}")
+            match_log(f"   🏆 League ID: {league_id}")
         if series_id:
-            print(f"   📊 Series ID: {series_id}")
+            match_log(f"   📊 Series ID: {series_id}")
         
         # Сохраняем нормализованные имена для обратной совместимости
         radiant_team_name = normalize_team_name(radiant_team_name_original)
@@ -7042,7 +9139,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         if BOOKMAKER_PREFETCH_ENABLED:
             bookmaker_map_num = _bookmaker_infer_map_num(live_league_data, score_text=score)
             if bookmaker_map_num is not None:
-                print(f"   🗺️ Bookmaker map context: карта {bookmaker_map_num}")
+                match_log(f"   🗺️ Bookmaker map context: карта {bookmaker_map_num}")
             _bookmaker_prefetch_submit(
                 match_key=check_uniq_url,
                 radiant_team=radiant_team_name_original,
@@ -7053,7 +9150,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         # Tier-режим для star-сигналов:
         # - Tier 2 матч: если хотя бы одна команда Tier 2
         # - Tier 1 матч: если обе команды Tier 1
-        # - Неизвестная команда автоматически добавляется в Tier 2 + Telegram уведомление
+        # - Неизвестная команда автоматически добавляется в Tier 2 без Telegram уведомления
         radiant_ok, radiant_team_id = _ensure_known_team_or_add_to_tier2(
             radiant_team_ids,
             radiant_team_name_original,
@@ -7083,11 +9180,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
             print(f"   {skip_msg}")
             print(f"   ❌ Матч пропущен (не удалось определить tier)")
-            send_message(skip_msg)
-            add_url(
+            _deliver_and_persist_signal(
                 check_uniq_url,
-                reason="skip_tier_undetermined",
-                details={
+                skip_msg,
+                add_url_reason="skip_tier_undetermined",
+                add_url_details={
                     "status": status,
                     "radiant_team": radiant_team_name_original,
                     "radiant_team_id": radiant_team_id,
@@ -7104,26 +9201,47 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             else TIER_SIGNAL_MIN_THRESHOLD_TIER1
         )
         tier_threshold_block_status_label = (
-            TIER_THRESHOLD_STATUS_TIER2_MIN65_BLOCK
+            TIER_THRESHOLD_STATUS_TIER2_MIN60_BLOCK
             if star_match_tier == 2
             else TIER_THRESHOLD_STATUS_TIER1_MIN60_BLOCK
         )
         tier_threshold_block_reason_label = (
-            TIER_THRESHOLD_REASON_TIER2_MIN65_BLOCK
+            TIER_THRESHOLD_REASON_TIER2_MIN60_BLOCK
             if star_match_tier == 2
             else TIER_THRESHOLD_REASON_TIER1_MIN60_BLOCK
         )
-        print(f"   🧭 Star tier mode: tier={star_match_tier}, min_wr={star_target_wr}%")
+        match_log(f"   🧭 Star tier mode: tier={star_match_tier}, min_wr={star_target_wr}%")
 
         lead = data['radiant_lead']
         game_time = data['game_time']
-        print(f"   Lead: {lead}, Game time: {game_time}")
+        match_log(f"   Lead: {lead}, Game time: {game_time}")
+
+        stale_live_map = _find_stale_live_map_payload(
+            series_key=series_id,
+            map_key=check_uniq_url,
+            live_match_id=_extract_live_match_id(data),
+        )
+        if isinstance(stale_live_map, dict):
+            print(
+                "   ⚠️ Обнаружен stale payload прошлой карты: "
+                f"current_map={stale_live_map['current_map_key']}, "
+                f"duplicate_of={stale_live_map['duplicate_of_map_key']}, "
+                f"match_id={stale_live_map['match_id']}"
+            )
+            print("   ℹ️ map_id_check.txt не обновлен: матч будет перепроверен в следующем цикле")
+            return return_status
         
         # Парсим драфт и позиции - вся логика в отдельной функции
-        print(f"   🔍 Парсинг драфта и позиций...")
-        radiant_heroes_and_pos, dire_heroes_and_pos, parse_error, problem_summary, problem_candidates = parse_draft_and_positions(
-            soup, data, radiant_team_name_original, dire_team_name_original
-        )
+        match_log(f"   🔍 Парсинг драфта и позиций...")
+        if verbose_match_log:
+            radiant_heroes_and_pos, dire_heroes_and_pos, parse_error, problem_summary, problem_candidates = parse_draft_and_positions(
+                soup, data, radiant_team_name_original, dire_team_name_original
+            )
+        else:
+            with contextlib.redirect_stdout(io.StringIO()):
+                radiant_heroes_and_pos, dire_heroes_and_pos, parse_error, problem_summary, problem_candidates = parse_draft_and_positions(
+                    soup, data, radiant_team_name_original, dire_team_name_original
+                )
         
         if parse_error:
             # Ошибка парсинга - пропускаем матч
@@ -7132,8 +9250,61 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             print(f"   ℹ️ map_id_check.txt не обновлен: матч будет перепроверен в следующем цикле")
             # add_url(check_uniq_url)
             return return_status
+
+        heroes_valid, heroes_error = validate_heroes_data(
+            radiant_heroes_and_pos,
+            dire_heroes_and_pos,
+            check_account_ids=False,
+        )
+        if not heroes_valid:
+            print(f"   ❌ Ошибка валидации драфта: {heroes_error}")
+            print("   ❌ Матч пропущен (драфт невалиден для расчета сигнала)")
+            print("   ℹ️ map_id_check.txt не обновлен: матч будет перепроверен в следующем цикле")
+            return return_status
         
-        print(f"   ✅ Драфт успешно распарсен")
+        match_log(f"   ✅ Драфт успешно распарсен")
+        if verbose_match_log:
+            _mark_verbose_match_log_done(check_uniq_url)
+        radiant_account_ids = [
+            int((radiant_heroes_and_pos.get(pos) or {}).get("account_id", 0) or 0)
+            for pos in ("pos1", "pos2", "pos3", "pos4", "pos5")
+        ]
+        dire_account_ids = [
+            int((dire_heroes_and_pos.get(pos) or {}).get("account_id", 0) or 0)
+            for pos in ("pos1", "pos2", "pos3", "pos4", "pos5")
+        ]
+        live_elo_registration = _register_completed_live_map_for_elo(
+            series_key=series_id,
+            series_url=series_url,
+            map_key=check_uniq_url,
+            first_team_score=first_team_score,
+            second_team_score=second_team_score,
+            first_team_is_radiant=first_team_is_radiant,
+            map_match_id=data.get('match_id'),
+            observed_timestamp=data.get('now'),
+            radiant_team_id=radiant_team_id,
+            dire_team_id=dire_team_id,
+            radiant_team_name=radiant_team_name_original,
+            dire_team_name=dire_team_name_original,
+            radiant_account_ids=radiant_account_ids,
+            dire_account_ids=dire_account_ids,
+            league_id=league_id,
+            league_name=league_name,
+            series_type=series_type,
+            match_tier=star_match_tier,
+        )
+        if isinstance(live_elo_registration, dict):
+            applied_update = live_elo_registration.get("applied_update")
+            if isinstance(applied_update, dict):
+                applied_map_key = str(applied_update.get("map_key") or "unknown")
+                applied_winner_slot = str(applied_update.get("winner_slot") or "unknown")
+                applied_radiant_win = bool(applied_update.get("radiant_win"))
+                print(
+                    "   📈 Live ELO updated from completed map: "
+                    f"applied_map={applied_map_key}, "
+                    f"winner_slot={applied_winner_slot}, "
+                    f"radiant_win={applied_radiant_win}"
+                )
         # Отправляем только "сырые" сигналы без wrapper.
         prev_wrapper_enabled = os.getenv("SIGNAL_WRAPPER_ENABLED")
         os.environ["SIGNAL_WRAPPER_ENABLED"] = "0"
@@ -7148,6 +9319,26 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             else:
                 os.environ["SIGNAL_WRAPPER_ENABLED"] = prev_wrapper_enabled
         s['top'], s['bot'], s['mid'] = calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data)
+        lane_top_log = str(s.get('top') or '').strip()
+        lane_mid_log = str(s.get('mid') or '').strip()
+        lane_bot_log = str(s.get('bot') or '').strip()
+        if verbose_match_log:
+            print("   🛣️ Lanes:")
+            print(f"      {lane_top_log or 'Top: n/a'}")
+            print(f"      {lane_mid_log or 'Mid: n/a'}")
+            print(f"      {lane_bot_log or 'Bot: n/a'}")
+        comeback_metrics = None
+        if comeback_dict and comeback_baseline_wr_pct is not None:
+            try:
+                comeback_metrics = calculate_comeback_solo_metrics(
+                    radiant_heroes_and_pos=radiant_heroes_and_pos,
+                    dire_heroes_and_pos=dire_heroes_and_pos,
+                    comeback_dict=comeback_dict,
+                    baseline_wr_pct=comeback_baseline_wr_pct,
+                )
+            except Exception as comeback_exc:
+                print(f"   ⚠️ Comeback metric calculation failed: {comeback_exc}")
+                comeback_metrics = None
         star_base_early_output = dict(s.get('early_output', {}) or {})
         star_base_mid_output = dict(s.get('mid_output', {}) or {})
 
@@ -7175,18 +9366,34 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             match_tier: int,
             target_wr: int,
         ) -> tuple[bool, str]:
+            early_diag = _star_block_diagnostics(
+                raw_block=candidate.get('early_output'),
+                target_wr=target_wr,
+                section="early_output",
+            )
             late_diag = _star_block_diagnostics(
                 raw_block=candidate.get('mid_output'),
                 target_wr=target_wr,
                 section="mid_output",
             )
+            has_early_star = bool(early_diag.get("valid"))
             has_late_star = bool(late_diag.get("valid"))
-            if match_tier != 2:
-                return True, "ok"
-            if STAR_REQUIRE_TIER2_LATE_STAR and not has_late_star:
+            early_sign = early_diag.get("sign") if has_early_star else None
+            late_sign = late_diag.get("sign") if has_late_star else None
+            if has_late_star and not has_early_star and STAR_REQUIRE_EARLY_WITH_LATE_SAME_SIGN:
                 return (
                     False,
-                    f"tier2_requires_late_star(late_star={'yes' if has_late_star else 'no'})",
+                    "late_star_requires_early_same_sign(early_star=no)",
+                )
+            if (
+                has_early_star
+                and has_late_star
+                and early_sign != late_sign
+                and not STAR_DELAY_ON_OPPOSITE_SIGNS
+            ):
+                return (
+                    False,
+                    f"opposite_signs_disabled(early_sign={early_sign},late_sign={late_sign})",
                 )
             return True, "ok"
 
@@ -7202,8 +9409,32 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 selected_star_candidate = cand_base
             elif base_reason != "ok":
                 star_filter_rejections.append(f"base_wr_{star_target_wr}:{base_reason}")
-        # Strict tier min-threshold rule: Tier2 matches must keep min WR=65.
-        star_fallback_wr = None
+        star_fallback_wr = (
+            TIER_SIGNAL_MIN_THRESHOLD_TIER1
+            if (
+                star_match_tier == 2
+                and STAR_ALLOW_TIER2_FALLBACK_TO_TIER1
+                and star_target_wr > TIER_SIGNAL_MIN_THRESHOLD_TIER1
+            )
+            else None
+        )
+        if not has_valid_star_signal and star_fallback_wr is not None:
+            has_star_fallback, cand_fallback = _build_star_candidate(star_fallback_wr)
+            if has_star_fallback:
+                fallback_passed, fallback_reason = _candidate_passes_extra_filters(
+                    cand_fallback,
+                    star_match_tier,
+                    star_fallback_wr,
+                )
+                if fallback_passed:
+                    has_valid_star_signal = True
+                    selected_star_candidate = cand_fallback
+                    selected_star_wr = star_fallback_wr
+                    selected_star_mode = f"tier2_fallback_wr_{star_fallback_wr}"
+                elif fallback_reason != "ok":
+                    star_filter_rejections.append(
+                        f"tier2_fallback_wr_{star_fallback_wr}:{fallback_reason}"
+                    )
         raw_star_early_summary = _format_raw_star_block_metrics(
             raw_block=star_base_early_output,
             section="early_output",
@@ -7239,6 +9470,19 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"match={primary_star_match_status}"
             )
         ]
+        early65_gate_diag = None
+        if (
+            (star_match_tier == 1 and star_target_wr < 65)
+            or (star_match_tier == 2 and star_target_wr >= 65)
+        ):
+            early65_gate_diag = _star_block_diagnostics(
+                raw_block=star_base_early_output,
+                target_wr=65,
+                section="early_output",
+            )
+            star_diag_lines.append(
+                f"WR65: early={_format_star_block_status(early65_gate_diag)}"
+            )
         if star_fallback_wr is not None:
             fallback_star_early_diag = _star_block_diagnostics(
                 raw_block=star_base_early_output,
@@ -7291,98 +9535,64 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             has_selected_late_star = bool(selected_late_diag.get("valid"))
             selected_early_sign = selected_early_diag.get("sign") if has_selected_early_star else None
             selected_late_sign = selected_late_diag.get("sign") if has_selected_late_star else None
-            late_same_or_zero_diag = _block_signs_same_or_zero(
+            late_core_same_sign_diag = _block_signs_same_or_zero(
                 raw_block=s.get('mid_output', {}),
                 expected_sign=selected_early_sign,
+                metrics=_STAR_LATE_CORE_METRIC_ORDER,
+                allow_zero=False,
             )
             early_same_or_zero_diag = _block_signs_same_or_zero(
                 raw_block=s.get('early_output', {}),
                 expected_sign=selected_late_sign,
             )
+            early_core_same_or_zero_diag = _block_signs_same_or_zero(
+                raw_block=s.get('early_output', {}),
+                expected_sign=selected_late_sign,
+                metrics=_STAR_LATE_CORE_METRIC_ORDER,
+                allow_zero=False,
+            )
+            early_core_same_sign_support = bool(
+                early_core_same_or_zero_diag.get("valid")
+                and early_core_same_or_zero_diag.get("nonzero_metrics")
+            )
+            early_core_conflict = bool(early_core_same_or_zero_diag.get("conflicting_metrics"))
+            # Приоритет dispatch:
+            # 1) full-star same-sign
+            # 2) early-star + late core(cp1v1/cp1v2/solo) same-sign
+            # 3) late-star + early same-sign-or-zero
+            # 4) delayed ветки / reject
             send_now_full_star = (
                 has_selected_early_star
                 and has_selected_late_star
                 and selected_early_sign == selected_late_sign
             )
-            send_now_tier1_early_star_late_same_or_zero = (
-                STAR_ALLOW_TIER1_EARLY_STAR_LATE_SAME_OR_ZERO
-                and star_match_tier == 1
+            send_now_early_star_late_core_same_sign = (
+                not force_odds_signal_test_active
                 and has_selected_early_star
                 and not has_selected_late_star
-                and bool(late_same_or_zero_diag.get("valid"))
+                and bool(late_core_same_sign_diag.get("valid"))
             )
-            send_now_late_star_early_same_or_zero = (
+            send_now_late_star_early_core_same_sign = (
                 STAR_ALLOW_LATE_STAR_EARLY_SAME_OR_ZERO
                 and has_selected_late_star
                 and not has_selected_early_star
-                and bool(early_same_or_zero_diag.get("valid"))
+                and early_core_same_sign_support
+            )
+            early65_gate_active = bool(
+                not force_odds_signal_test_active
+                and STAR_ALLOW_IMMEDIATE_EARLY_STAR65
+                and early65_gate_diag is not None
+                and bool(early65_gate_diag.get("valid"))
+                and (
+                    not has_selected_late_star
+                    or selected_late_sign == early65_gate_diag.get("sign")
+                )
             )
             send_now_immediate = (
                 send_now_full_star
-                or send_now_tier1_early_star_late_same_or_zero
-                or send_now_late_star_early_same_or_zero
+                or send_now_early_star_late_core_same_sign
+                or send_now_late_star_early_core_same_sign
                 or force_odds_signal_test_active
-            )
-
-            if (
-                not force_odds_signal_test_active
-                and not has_selected_late_star
-                and not send_now_tier1_early_star_late_same_or_zero
-            ):
-                print(
-                    "   ⚠️ ВЕРДИКТ: ОТКАЗ "
-                    "(нет late star-сигнала) - матч пропущен"
-                )
-                print(
-                    "   📉 Raw star metrics: "
-                    f"early[{raw_star_early_summary}] | "
-                    f"late[{raw_star_late_summary}]"
-                )
-                print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
-                add_url(
-                    check_uniq_url,
-                    reason="star_signal_rejected_no_late_star",
-                    details={
-                        "status": status,
-                        "selected_star_wr": selected_star_wr,
-                        "selected_star_mode": selected_star_mode,
-                        "selected_early_star": bool(has_selected_early_star),
-                        "selected_late_star": bool(has_selected_late_star),
-                        "selected_early_sign": selected_early_sign,
-                        "selected_late_sign": selected_late_sign,
-                        "json_retry_errors": json_retry_errors,
-                    },
-                )
-                print("   ✅ map_id_check.txt обновлен: add_url после отказа no-late-star")
-                return return_status
-
-            if send_now_tier1_early_star_late_same_or_zero:
-                print(
-                    "   ✅ Tier1 override: early star + late signs are only 0/same-sign "
-                    f"(sign={selected_early_sign})"
-                )
-            if send_now_late_star_early_same_or_zero:
-                print(
-                    "   ✅ Override: late star + early signs are only 0/same-sign "
-                    f"(sign={selected_late_sign})"
-                )
-
-            dispatch_mode = (
-                "immediate_force_odds_signal_test"
-                if force_odds_signal_test_active
-                else (
-                    "immediate_early_late_same_sign"
-                    if send_now_full_star
-                    else (
-                        "immediate_tier1_early_star_late_same_or_zero"
-                        if send_now_tier1_early_star_late_same_or_zero
-                        else (
-                            "immediate_late_star_early_same_or_zero"
-                            if send_now_late_star_early_same_or_zero
-                            else "delayed_late_only_21m"
-                        )
-                    )
-                )
             )
 
             def _format_metrics(title, data, metrics):
@@ -7393,6 +9603,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
             metric_list = [
                 ('counterpick_1vs1', 'Counterpick_1vs1'),
+                ('pos1_vs_pos1', 'Pos1_vs_pos1'),
                 ('counterpick_1vs2', 'Counterpick_1vs2'),
                 ('solo', 'Solo'),
                 ('synergy_duo', 'Synergy_duo'),
@@ -7409,17 +9620,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 section="mid_output",
                 target_wr=selected_star_wr,
             )
-            early_output = early_output_log if send_now_immediate else {}
+            early_output = early_output_log
             mid_output = mid_output_log
 
-            early_block = (
-                _format_metrics("10-28 Minute:", early_output, metric_list)
-                if send_now_immediate
-                else ""
-            )
+            early_block = _format_metrics("10-28 Minute:", early_output, metric_list)
             mid_block = _format_metrics("Mid (25-50 min):", mid_output, metric_list)
             early_block_log = _format_metrics("10-28 Minute:", early_output_log, metric_list)
             mid_block_log = _format_metrics("Mid (25-50 min):", mid_output_log, metric_list)
+            star_metrics_snapshot = _build_star_metrics_snapshot(
+                early_block_log=early_block_log,
+                mid_block_log=mid_block_log,
+                raw_star_early_summary=raw_star_early_summary,
+                raw_star_late_summary=raw_star_late_summary,
+                star_diag_lines=star_diag_lines,
+            )
 
             # Серия: только счет
             series_score_line = ""
@@ -7434,6 +9648,394 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             except Exception:
                 series_score_line = ""
 
+            early_rec = _recommend_odds_for_block(early_output, 'early')
+            late_rec = _recommend_odds_for_block(mid_output, 'late')
+            telegram_early_rec = early_rec
+            telegram_early_block = early_block
+            early_wr_pct: Optional[float] = None
+            if isinstance(early_rec, dict):
+                try:
+                    early_wr_pct = float(early_rec.get("wr_pct"))
+                except (TypeError, ValueError):
+                    early_wr_pct = None
+            late_wr_pct: Optional[float] = None
+            if isinstance(late_rec, dict):
+                try:
+                    late_wr_pct = float(late_rec.get("wr_pct"))
+                except (TypeError, ValueError):
+                    late_wr_pct = None
+            opposite_sign_early_release_allowed = bool(
+                early_wr_pct is not None and early_wr_pct <= 65.0
+            )
+            team_elo_block = ""
+            team_elo_summary = _build_team_elo_matchup_summary(
+                radiant_team_id=radiant_team_id,
+                dire_team_id=dire_team_id,
+                radiant_team_name=radiant_team_name_original,
+                dire_team_name=dire_team_name_original,
+                radiant_account_ids=radiant_account_ids,
+                dire_account_ids=dire_account_ids,
+                match_tier=star_match_tier,
+            )
+            team_elo_block, team_elo_meta = _format_team_elo_block(
+                team_elo_summary,
+                radiant_team_name=radiant_team_name_original,
+                dire_team_name=dire_team_name_original,
+            )
+            if isinstance(team_elo_meta, dict):
+                if verbose_match_log:
+                    print(
+                        "   📊 Team ELO attached: "
+                        f"source={str(team_elo_meta.get('source') or 'unknown')} "
+                        f"raw {radiant_team_name_original}={float(team_elo_meta['radiant_base_rating']):.0f} "
+                        f"vs {dire_team_name_original}={float(team_elo_meta['dire_base_rating']):.0f} "
+                        f"(raw_wr={float(team_elo_meta['raw_radiant_wr']):.1f}%/{float(team_elo_meta['raw_dire_wr']):.1f}%, "
+                        f"adj_wr={float(team_elo_meta['adjusted_radiant_wr']):.1f}%/{float(team_elo_meta['adjusted_dire_wr']):.1f}%)"
+                    )
+            else:
+                if verbose_match_log:
+                    print(
+                        "   ⚠️ Team ELO unavailable for signal: "
+                        f"{radiant_team_name_original} vs {dire_team_name_original}"
+                    )
+
+            raw_selected_early_diag = dict(selected_early_diag)
+            raw_selected_late_diag = dict(selected_late_diag)
+            raw_selected_early_valid = bool(raw_selected_early_diag.get("valid"))
+            raw_selected_late_valid = bool(raw_selected_late_diag.get("valid"))
+            selected_early_diag = _apply_elo_block_wr_guard(
+                diag=selected_early_diag,
+                block_wr_pct=early_wr_pct,
+                team_elo_meta=team_elo_meta,
+            )
+            selected_late_diag = _apply_elo_block_wr_guard(
+                diag=selected_late_diag,
+                block_wr_pct=late_wr_pct,
+                team_elo_meta=team_elo_meta,
+            )
+            if raw_selected_early_valid and not bool(selected_early_diag.get("valid")):
+                if verbose_match_log:
+                    print(
+                        "   ⚠️ Early star invalidated by ELO block guard "
+                        f"(raw_wr={float(selected_early_diag.get('block_wr_pct') or 0.0):.1f}%, "
+                        f"penalty={float(selected_early_diag.get('elo_wr_penalty_pp') or 0.0):.1f}, "
+                        f"adj={float(selected_early_diag.get('elo_adjusted_wr_pct') or 0.0):.1f}%)"
+                    )
+            if raw_selected_late_valid and not bool(selected_late_diag.get("valid")):
+                if verbose_match_log:
+                    print(
+                        "   ⚠️ Late star invalidated by ELO block guard "
+                        f"(raw_wr={float(selected_late_diag.get('block_wr_pct') or 0.0):.1f}%, "
+                        f"penalty={float(selected_late_diag.get('elo_wr_penalty_pp') or 0.0):.1f}, "
+                        f"adj={float(selected_late_diag.get('elo_adjusted_wr_pct') or 0.0):.1f}%)"
+                    )
+            star_diag_lines.append(
+                (
+                    "ELO60: "
+                    f"early={_format_star_block_status(selected_early_diag)}, "
+                    f"late={_format_star_block_status(selected_late_diag)}"
+                )
+            )
+            if isinstance(star_metrics_snapshot, dict):
+                star_metrics_snapshot["star_diag_lines"] = [str(line) for line in star_diag_lines]
+
+            has_selected_early_star = bool(selected_early_diag.get("valid"))
+            has_selected_late_star = bool(selected_late_diag.get("valid"))
+            selected_early_sign = selected_early_diag.get("sign") if has_selected_early_star else None
+            selected_late_sign = selected_late_diag.get("sign") if has_selected_late_star else None
+            late_core_same_sign_diag = _block_signs_same_or_zero(
+                raw_block=s.get('mid_output', {}),
+                expected_sign=selected_early_sign,
+                metrics=_STAR_LATE_CORE_METRIC_ORDER,
+                allow_zero=False,
+            )
+            early_same_or_zero_diag = _block_signs_same_or_zero(
+                raw_block=s.get('early_output', {}),
+                expected_sign=selected_late_sign,
+            )
+            early_core_same_or_zero_diag = _block_signs_same_or_zero(
+                raw_block=s.get('early_output', {}),
+                expected_sign=selected_late_sign,
+                metrics=_STAR_LATE_CORE_METRIC_ORDER,
+                allow_zero=False,
+            )
+            early_core_same_sign_support = bool(
+                early_core_same_or_zero_diag.get("valid")
+                and early_core_same_or_zero_diag.get("nonzero_metrics")
+            )
+            early_core_conflict = bool(early_core_same_or_zero_diag.get("conflicting_metrics"))
+            late_same_sign_raw_star_before_elo = bool(
+                has_selected_early_star
+                and not has_selected_late_star
+                and bool(raw_selected_late_diag.get("valid"))
+                and raw_selected_late_diag.get("sign") == selected_early_sign
+                and str(selected_late_diag.get("status") or "") == "elo_wr_below_min60"
+            )
+            send_now_full_star = (
+                has_selected_early_star
+                and has_selected_late_star
+                and selected_early_sign == selected_late_sign
+            )
+            send_now_early_star_late_core_same_sign = (
+                not force_odds_signal_test_active
+                and has_selected_early_star
+                and not has_selected_late_star
+                and (
+                    bool(late_core_same_sign_diag.get("valid"))
+                    or late_same_sign_raw_star_before_elo
+                )
+            )
+            send_now_late_star_early_core_same_sign = (
+                STAR_ALLOW_LATE_STAR_EARLY_SAME_OR_ZERO
+                and has_selected_late_star
+                and not has_selected_early_star
+                and early_core_same_sign_support
+            )
+            early65_gate_active = bool(
+                not force_odds_signal_test_active
+                and STAR_ALLOW_IMMEDIATE_EARLY_STAR65
+                and early65_gate_diag is not None
+                and bool(early65_gate_diag.get("valid"))
+                and (
+                    not has_selected_late_star
+                    or selected_late_sign == early65_gate_diag.get("sign")
+                )
+            )
+            send_now_immediate = (
+                send_now_full_star
+                or send_now_early_star_late_core_same_sign
+                or send_now_late_star_early_core_same_sign
+                or force_odds_signal_test_active
+            )
+            dispatch_mode = (
+                "immediate_force_odds_signal_test"
+                if force_odds_signal_test_active
+                else (
+                    "immediate_early_late_same_sign"
+                    if send_now_full_star
+                    else (
+                        "immediate_early_star_late_core_same_sign"
+                        if send_now_early_star_late_core_same_sign
+                        else (
+                            "immediate_late_star_early_core_same_sign"
+                            if send_now_late_star_early_core_same_sign
+                            else "delayed_late_only_20_20m"
+                        )
+                    )
+                )
+            )
+
+            if (
+                not force_odds_signal_test_active
+                and not has_selected_late_star
+                and not send_now_early_star_late_core_same_sign
+                and not (
+                    early65_gate_active
+                    and float(game_time or 0.0) < NETWORTH_GATE_TIER1_EARLY65_WINDOW_END_SECONDS
+                )
+            ):
+                print(
+                    "   ⚠️ ВЕРДИКТ: ОТКАЗ "
+                    "(нет late star-сигнала) - матч пропущен"
+                )
+                print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
+                add_url(
+                    check_uniq_url,
+                    reason="star_signal_rejected_no_late_star",
+                    details={
+                        "status": status,
+                        "selected_star_wr": selected_star_wr,
+                        "selected_star_mode": selected_star_mode,
+                        "selected_early_star": bool(has_selected_early_star),
+                        "selected_late_star": bool(has_selected_late_star),
+                        "selected_early_sign": selected_early_sign,
+                        "selected_late_sign": selected_late_sign,
+                        "late_core_same_sign_diag": late_core_same_sign_diag,
+                        "selected_early_diag": selected_early_diag,
+                        "selected_late_diag": selected_late_diag,
+                        "json_retry_errors": json_retry_errors,
+                    },
+                )
+                print("   ✅ map_id_check.txt обновлен: add_url после отказа no-late-star")
+                return return_status
+
+            if send_now_early_star_late_core_same_sign:
+                if late_same_sign_raw_star_before_elo and not bool(late_core_same_sign_diag.get("valid")):
+                    if verbose_match_log:
+                        print(
+                            "   ✅ Override: early star without late star allowed because "
+                            "late raw star kept same sign before ELO invalidation "
+                            f"(sign={selected_early_sign})"
+                        )
+                else:
+                    if verbose_match_log:
+                        print(
+                            "   ✅ Override: early star without late star allowed because "
+                            "late core(cp1v1/cp1v2/solo) are same-sign "
+                            f"(sign={selected_early_sign})"
+                        )
+            if early65_gate_active:
+                if verbose_match_log:
+                    print(
+                        "   ✅ Override: early star WR65+ activates early gate "
+                        f"(sign={early65_gate_diag.get('sign')}, "
+                        f"late_sign={selected_late_sign})"
+                    )
+            if send_now_late_star_early_core_same_sign:
+                if verbose_match_log:
+                    print(
+                        "   ✅ Override: late star without early star allowed because "
+                        "early core(cp1v1/cp1v2/solo) are same-sign "
+                        f"(sign={selected_late_sign})"
+                    )
+
+            target_sign = selected_late_sign if has_selected_late_star else selected_early_sign
+            target_side = _target_side_from_sign(target_sign)
+            opposite_signs_early90_monitor = _opposite_signs_early90_monitor_config(
+                team_elo_meta=team_elo_meta,
+                early_wr_pct=early_wr_pct,
+                selected_early_sign=selected_early_sign,
+                selected_late_sign=selected_late_sign,
+            )
+            if isinstance(opposite_signs_early90_monitor, dict) and opposite_signs_early90_monitor.get("enabled"):
+                elo_gap_log = opposite_signs_early90_monitor.get("elo_gap_pp")
+                elo_gap_label = (
+                    f"{float(elo_gap_log):+.1f} pp"
+                    if elo_gap_log is not None
+                    else "n/a"
+                )
+                if verbose_match_log:
+                    print(
+                        "   📈 Opposite-sign WR90 monitor: "
+                        f"early_side={opposite_signs_early90_monitor.get('early_side')}, "
+                        f"late_side={opposite_signs_early90_monitor.get('late_side')}, "
+                        f"early_elo_wr={opposite_signs_early90_monitor.get('early_elo_wr')}, "
+                        f"late_elo_wr={opposite_signs_early90_monitor.get('late_elo_wr')}, "
+                        f"gap={elo_gap_label}, "
+                        f"4_10>={int(float(opposite_signs_early90_monitor.get('threshold_4_to_10') or 0.0))}, "
+                        f"10_20>={int(float(opposite_signs_early90_monitor.get('threshold_10_to_20') or 0.0))}"
+                    )
+            signal_wr_guard_meta = _resolve_signal_wr_for_elo_guard(
+                target_side=target_side,
+                has_selected_early_star=bool(has_selected_early_star),
+                has_selected_late_star=bool(has_selected_late_star),
+                selected_early_sign=selected_early_sign,
+                selected_late_sign=selected_late_sign,
+                early_wr_pct=early_wr_pct,
+                late_wr_pct=late_wr_pct,
+            )
+            elo_underdog_guard = None
+            if not force_odds_signal_test_active:
+                elo_underdog_guard = _elo_underdog_guard_decision(
+                    team_elo_meta=team_elo_meta,
+                    target_side=target_side,
+                    signal_wr_pct=(
+                        float(signal_wr_guard_meta.get("wr_pct"))
+                        if isinstance(signal_wr_guard_meta, dict) and signal_wr_guard_meta.get("wr_pct") is not None
+                        else None
+                    ),
+                )
+            if isinstance(elo_underdog_guard, dict) and bool(elo_underdog_guard.get("reject")):
+                favorite_side = str(elo_underdog_guard.get("favorite_side") or "")
+                favorite_team_name = (
+                    radiant_team_name_original
+                    if favorite_side == "radiant"
+                    else dire_team_name_original
+                )
+                target_team_name = (
+                    radiant_team_name_original
+                    if target_side == "radiant"
+                    else dire_team_name_original
+                )
+                signal_wr_pct_value = elo_underdog_guard.get("signal_wr_pct")
+                signal_wr_label = (
+                    f"{float(signal_wr_pct_value):.1f}%"
+                    if signal_wr_pct_value is not None
+                    else "n/a"
+                )
+                signal_wr_source = (
+                    str(signal_wr_guard_meta.get("source"))
+                    if isinstance(signal_wr_guard_meta, dict)
+                    else "unknown"
+                )
+                print(
+                    "   ⚠️ ELO underdog guard: reject signal "
+                    f"for {target_team_name} vs favorite {favorite_team_name} "
+                    f"(favorite_wr={float(elo_underdog_guard.get('favorite_wr') or 0.0):.1f}%, "
+                    f"signal_wr={signal_wr_label}, source={signal_wr_source})"
+                )
+                add_url(
+                    check_uniq_url,
+                    reason="star_signal_rejected_elo_underdog_guard",
+                    details={
+                        "status": status,
+                        "dispatch_mode": dispatch_mode,
+                        "selected_star_wr": selected_star_wr,
+                        "selected_star_mode": selected_star_mode,
+                        "target_side": target_side,
+                        "target_team_name": target_team_name,
+                        "favorite_side": favorite_side,
+                        "favorite_team_name": favorite_team_name,
+                        "favorite_elo_wr": float(elo_underdog_guard.get("favorite_wr") or 0.0),
+                        "target_elo_wr": float(elo_underdog_guard.get("target_elo_wr") or 0.0),
+                        "favorite_edge_pp": float(elo_underdog_guard.get("favorite_edge_pp") or 0.0),
+                        "signal_wr_pct": signal_wr_pct_value,
+                        "signal_wr_source": signal_wr_source,
+                        "signal_wr_candidates": (
+                            dict(signal_wr_guard_meta.get("candidates") or {})
+                            if isinstance(signal_wr_guard_meta, dict)
+                            else {}
+                        ),
+                        "required_signal_wr_pct": float(elo_underdog_guard.get("min_signal_wr") or 0.0),
+                        "json_retry_errors": json_retry_errors,
+                    },
+                )
+                print("   ✅ map_id_check.txt обновлен: add_url после ELO underdog guard reject")
+                return return_status
+            if has_selected_late_star and not has_selected_early_star:
+                telegram_early_rec = None
+                telegram_early_block = ""
+            wr_block = ""
+            wr_lines = []
+            if telegram_early_rec:
+                wr_lines.append(f"Early: WR≈{float(early_wr_pct or 0.0):.1f}%")
+            if late_rec:
+                wr_lines.append(f"Late: WR≈{float(late_wr_pct or 0.0):.1f}%")
+            if wr_lines:
+                wr_block = "Оценка WR:\n" + "\n".join(wr_lines) + "\n"
+
+            comeback_block = ""
+            if isinstance(comeback_metrics, dict):
+                radiant_comeback = comeback_metrics.get("radiant") or {}
+                dire_comeback = comeback_metrics.get("dire") or {}
+
+                def _fmt_delta(value):
+                    if value is None:
+                        return "n/a"
+                    return f"{float(value):+,.1f}%".replace(",", "")
+
+                if radiant_comeback or dire_comeback:
+                    comeback_lines = []
+                    if radiant_comeback:
+                        comeback_lines.append(
+                            f"radiant_comeback: {_fmt_delta(radiant_comeback.get('delta_pp'))}"
+                        )
+                    if dire_comeback:
+                        comeback_lines.append(
+                            f"dire_comeback: {_fmt_delta(dire_comeback.get('delta_pp'))}"
+                        )
+                    if comeback_lines:
+                        comeback_block = "\n".join(comeback_lines) + "\n"
+                    if verbose_match_log:
+                        print(
+                            "   📈 Comeback solo: "
+                            f"radiant={radiant_comeback.get('delta_pp')} pp "
+                            f"(wr={radiant_comeback.get('wr_pct')}), "
+                            f"dire={dire_comeback.get('delta_pp')} pp "
+                            f"(wr={dire_comeback.get('wr_pct')}), "
+                            f"baseline={comeback_metrics.get('baseline_wr_pct')}"
+                        )
+
             odds_block = ""
             if BOOKMAKER_PREFETCH_ENABLED:
                 # Рекомендации по минимальному кэфу
@@ -7441,14 +10043,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 bookmaker_odds_block = ""
                 bookmaker_odds_ready = False
                 bookmaker_odds_reason = "not_requested"
-                early_rec = _recommend_odds_for_block(early_output, 'early') if send_now_immediate else None
-                if early_rec:
-                    odds_label = f"{early_rec['min_odds']:.2f}"
-                    wr_label = f"{float(early_rec['wr_pct']):.1f}%"
+                if telegram_early_rec:
+                    odds_label = f"{telegram_early_rec['min_odds']:.2f}"
+                    wr_label = f"{float(telegram_early_rec['wr_pct']):.1f}%"
                     odds_lines.append(
                         f"Early: от кэфа {odds_label} (WR≈{wr_label})"
                     )
-                late_rec = _recommend_odds_for_block(mid_output, 'late')
                 if late_rec:
                     odds_label = f"{late_rec['min_odds']:.2f}"
                     wr_label = f"{float(late_rec['wr_pct']):.1f}%"
@@ -7472,7 +10072,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         sections.append(bookmaker_odds_block)
                     odds_block = "".join(sections)
             problem_block = ""
-            if BOOKMAKER_PREFETCH_ENABLED and problem_candidates:
+            if problem_candidates:
                 def _problem_pos_sort_key(item: dict) -> tuple:
                     pos = str(item.get("position") or "")
                     try:
@@ -7500,29 +10100,154 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             elif problem_summary:
                 problem_block = f"{problem_summary}\n"
 
+            dispatch_message_sign = target_sign
+            if early65_gate_active and early65_sign is not None:
+                dispatch_message_sign = early65_sign
+            elif send_now_early_star_late_core_same_sign and selected_early_sign is not None:
+                dispatch_message_sign = selected_early_sign
+            elif send_now_late_star_early_core_same_sign and selected_late_sign is not None:
+                dispatch_message_sign = selected_late_sign
+            elif has_selected_late_star and selected_late_sign is not None:
+                dispatch_message_sign = selected_late_sign
+            elif has_selected_early_star and selected_early_sign is not None:
+                dispatch_message_sign = selected_early_sign
+
+            dispatch_message_side = _target_side_from_sign(dispatch_message_sign)
+            stake_team_name = (
+                radiant_team_name
+                if dispatch_message_side == "radiant"
+                else dire_team_name
+                if dispatch_message_side == "dire"
+                else "НЕИЗВЕСТНАЯ КОМАНДА"
+            )
+
             # Формирование сообщения
             message_text = (
-                f'ПОМНИ: КОМАНДА ВАЖНЕЕ ПИКА\n'
+                f"СТАВКА НА {stake_team_name}\n"
                 f"{radiant_team_name} VS {dire_team_name}\n"
                 f"{series_score_line}"
                 f"Lanes:\n{s.get('top')}{s.get('mid')}{s.get('bot')}"
                 f"{problem_block}"
+                f"{team_elo_block}"
+                f"{wr_block}"
+                f"{comeback_block}"
                 f"{odds_block}"
-                f"{early_block}"
+                f"{telegram_early_block}"
                 f"{mid_block}"
-                f'ПОМНИ: КОМАНДА ВАЖНЕЕ ПИКА'
             )
             current_game_time = float(game_time or 0.0)
-            target_sign = selected_late_sign if has_selected_late_star else selected_early_sign
-            target_side = _target_side_from_sign(target_sign)
+            early65_sign = (
+                early65_gate_diag.get("sign")
+                if isinstance(early65_gate_diag, dict) and early65_gate_diag.get("valid")
+                else None
+            )
+            early65_target_side = _target_side_from_sign(early65_sign)
+            early65_target_diff = _target_networth_diff_from_radiant_lead(
+                lead,
+                early65_target_side,
+            )
             target_networth_diff = _target_networth_diff_from_radiant_lead(lead, target_side)
+            target_comeback_delta_pp = _comeback_delta_pp_for_side(comeback_metrics, target_side)
+            late_comeback_monitor_candidate = bool(
+                has_selected_late_star
+                and target_side in {"radiant", "dire"}
+                and isinstance(late_comeback_ceiling_thresholds, dict)
+                and bool(late_comeback_ceiling_thresholds)
+            )
             networth_send_status_label: Optional[str] = None
+            queue_early_core_monitor = False
+            queue_late_core_monitor = False
+            queue_strong_same_sign_monitor = False
+            early65_release_status_label: Optional[str] = None
+            early_star_gate_wr_pct = (
+                float(early_wr_pct)
+                if early_wr_pct is not None
+                else float(selected_star_wr or 0.0)
+            )
+            early_core_monitor_threshold = float(NETWORTH_GATE_EARLY_CORE_MONITOR_DIFF)
+            early_core_monitor_wait_status_label = NETWORTH_STATUS_EARLY_CORE_MONITOR_WAIT_1500
+            early_core_monitor_delay_reason = "early_star_late_core_wait_1500"
             if not force_odds_signal_test_active:
+                if (
+                    early65_gate_active
+                    and early65_target_side is not None
+                    and early65_target_diff is not None
+                ):
+                    if current_game_time < NETWORTH_GATE_HARD_BLOCK_SECONDS:
+                        print(
+                            "   ⏳ Ожидание dispatch: pre4_block_early65 "
+                            f"(now={_format_game_clock(current_game_time)}, "
+                            f"target_side={early65_target_side}, "
+                            f"target_diff={int(early65_target_diff)})"
+                        )
+                        return return_status
+                    if current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
+                        if early65_target_diff >= NETWORTH_GATE_TIER1_EARLY65_4_TO_10_MIN_DIFF:
+                            early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY65_4_10_SEND_600
+                        else:
+                            print(
+                                "   ⏳ Ожидание dispatch: early65_gate_04_10 "
+                                f"(target_side={early65_target_side}, "
+                                f"target_diff={int(early65_target_diff)}, "
+                                f"need>={int(NETWORTH_GATE_TIER1_EARLY65_4_TO_10_MIN_DIFF)})"
+                            )
+                            return return_status
+                    elif current_game_time < NETWORTH_GATE_TIER1_EARLY65_WINDOW_END_SECONDS:
+                        if early65_target_diff >= NETWORTH_GATE_TIER1_EARLY65_10_TO_13_MAX_LOSS:
+                            early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY65_10_13_LOSS_LE1500_SEND
+                        else:
+                            print(
+                                "   ⏳ Ожидание dispatch: early65_gate_10_13 "
+                                f"(target_side={early65_target_side}, "
+                                f"target_diff={int(early65_target_diff)}, "
+                                f"need>={int(NETWORTH_GATE_TIER1_EARLY65_10_TO_13_MAX_LOSS)})"
+                            )
+                            return return_status
                 if target_networth_diff is None or target_side is None:
                     print(
                         "   ⏳ Ожидание dispatch: target-side networth gate не применен "
                         "(нет target_sign/lead)"
                     )
+                    return return_status
+                if early65_release_status_label is not None:
+                    if _skip_dispatch_for_processed_url(check_uniq_url, "early WR65 немедленной отправки"):
+                        return return_status
+                    if not _acquire_signal_send_slot(check_uniq_url):
+                        print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
+                        return return_status
+                    try:
+                        if _skip_dispatch_for_processed_url(check_uniq_url, "early WR65 немедленной отправки после lock"):
+                            return return_status
+                        if verbose_match_log:
+                            _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+                        delivery_confirmed = _deliver_and_persist_signal(
+                            check_uniq_url,
+                            message_text,
+                            add_url_reason="star_signal_sent_now_networth_gate",
+                            add_url_details={
+                                "status": status,
+                                "dispatch_mode": "immediate_early_star65",
+                                "delay_reason": "early65_gate",
+                                "release_reason": early65_release_status_label,
+                                "dispatch_status_label": early65_release_status_label,
+                                "game_time": int(current_game_time),
+                                "target_side": early65_target_side,
+                                "target_networth_diff": float(early65_target_diff or 0.0),
+                                "selected_star_wr": selected_star_wr,
+                                "selected_star_mode": selected_star_mode,
+                                "json_retry_errors": json_retry_errors,
+                            },
+                            bookmaker_decision="sent",
+                        )
+                        if delivery_confirmed:
+                            print(
+                                "   ✅ ВЕРДИКТ: Сигнал отправлен раньше 13:00 "
+                                f"(reason={early65_release_status_label}, "
+                                f"target_side={early65_target_side}, "
+                                f"target_diff={int(early65_target_diff or 0)})"
+                            )
+                    finally:
+                        _release_signal_send_slot(check_uniq_url)
                     return return_status
                 if current_game_time < NETWORTH_GATE_HARD_BLOCK_SECONDS:
                     print(
@@ -7532,54 +10257,204 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     )
                     return return_status
                 if current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
+                    if isinstance(opposite_signs_early90_monitor, dict) and opposite_signs_early90_monitor.get("enabled"):
+                        opposite_signs_4_to_10_threshold = float(
+                            opposite_signs_early90_monitor.get("threshold_4_to_10") or 0.0
+                        )
+                        if target_networth_diff < opposite_signs_4_to_10_threshold:
+                            print(
+                                "   ⏳ Ожидание dispatch: opposite_signs_wr90_gate_04_10 "
+                                f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                                f"need>={int(opposite_signs_4_to_10_threshold)}) -> "
+                                f"delayed monitor >={int(opposite_signs_4_to_10_threshold)} until 10:00, "
+                                f"then >={int(float(opposite_signs_early90_monitor.get('threshold_10_to_20') or 0.0))} "
+                                f"until {_format_game_clock(DELAYED_SIGNAL_TARGET_GAME_TIME)}"
+                            )
+                        else:
+                            networth_send_status_label = NETWORTH_STATUS_LATE_CONFLICT_WAIT_2000
+                    else:
+                        if target_networth_diff < NETWORTH_GATE_4_TO_10_MIN_DIFF:
+                            print(
+                                "   ⏳ Ожидание dispatch: networth_gate_04_10 "
+                                f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                                f"need>={int(NETWORTH_GATE_4_TO_10_MIN_DIFF)})"
+                            )
+                            return return_status
+                        if send_now_immediate and not queue_early_core_monitor:
+                            networth_send_status_label = NETWORTH_STATUS_4_10_SEND_800
+                        elif not early_core_same_sign_support:
+                            early_core_metrics = ",".join(
+                                str(m) for m in (early_core_same_or_zero_diag.get("nonzero_metrics") or [])
+                            ) or "none"
+                            early_core_conflicts = ",".join(
+                                str(m) for m in (early_core_same_or_zero_diag.get("conflicting_metrics") or [])
+                            ) or "none"
+                            print(
+                                "   ⏳ Ожидание dispatch: networth_gate_04_10_no_early_core_same_sign "
+                                f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                                f"early_core_metrics={early_core_metrics}, "
+                                f"early_core_conflicts={early_core_conflicts}) -> "
+                                f"delayed monitor >={int(NETWORTH_GATE_LATE_NO_EARLY_DIFF)} "
+                                f"until {_format_game_clock(DELAYED_SIGNAL_TARGET_GAME_TIME)}"
+                            )
+                        else:
+                            networth_send_status_label = NETWORTH_STATUS_4_10_SEND_800
+                elif send_now_early_star_late_core_same_sign:
+                    if early_star_gate_wr_pct >= EARLY_STAR_LATE_CORE_HIGH_CONFIDENCE_WR:
+                        if target_networth_diff < NETWORTH_GATE_10_MIN_MAX_LOSS:
+                            queue_early_core_monitor = True
+                            early_core_monitor_threshold = float(NETWORTH_GATE_EARLY_CORE_MONITOR_DIFF)
+                            early_core_monitor_wait_status_label = NETWORTH_STATUS_EARLY_CORE_MONITOR_WAIT_1500
+                            early_core_monitor_delay_reason = "early_star_late_core_wait_1500"
+                            print(
+                                "   ⏳ Ожидание dispatch: networth_gate_10plus_loss_le1500 "
+                                f"(early_wr={early_star_gate_wr_pct:.1f}%, "
+                                f"target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                                f"need>={int(NETWORTH_GATE_10_MIN_MAX_LOSS)}) -> delayed monitor "
+                                f">={int(NETWORTH_GATE_EARLY_CORE_MONITOR_DIFF)} until "
+                                f"{_format_game_clock(DELAYED_SIGNAL_TARGET_GAME_TIME)}"
+                            )
+                        else:
+                            networth_send_status_label = NETWORTH_STATUS_MIN10_LOSS_LE1500_SEND
+                    else:
+                        if target_networth_diff < NETWORTH_GATE_EARLY_CORE_LOW_WR_MIN_LEAD:
+                            queue_early_core_monitor = True
+                            early_core_monitor_threshold = float(NETWORTH_GATE_EARLY_CORE_LOW_WR_MIN_LEAD)
+                            early_core_monitor_wait_status_label = NETWORTH_STATUS_EARLY_CORE_MONITOR_WAIT_800
+                            early_core_monitor_delay_reason = "early_star_late_core_low_wr_wait_800"
+                            print(
+                                "   ⏳ Ожидание dispatch: networth_gate_10plus_wr60_70_need_lead800 "
+                                f"(early_wr={early_star_gate_wr_pct:.1f}%, "
+                                f"target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                                f"need>={int(NETWORTH_GATE_EARLY_CORE_LOW_WR_MIN_LEAD)}) -> delayed monitor "
+                                f">={int(NETWORTH_GATE_EARLY_CORE_LOW_WR_MIN_LEAD)} until "
+                                f"{_format_game_clock(DELAYED_SIGNAL_TARGET_GAME_TIME)}"
+                            )
+                        else:
+                            networth_send_status_label = NETWORTH_STATUS_MIN10_LEAD_GE800_SEND
+                elif send_now_late_star_early_core_same_sign:
                     if target_networth_diff < NETWORTH_GATE_4_TO_10_MIN_DIFF:
+                        queue_late_core_monitor = True
                         print(
-                            "   ⏳ Ожидание dispatch: networth_gate_04_10 "
+                            "   ⏳ Ожидание dispatch: late_star_early_core_need_lead800 "
                             f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
-                            f"need>={int(NETWORTH_GATE_4_TO_10_MIN_DIFF)})"
+                            f"need>={int(NETWORTH_GATE_4_TO_10_MIN_DIFF)}) -> delayed monitor "
+                            f">={int(NETWORTH_GATE_4_TO_10_MIN_DIFF)} until "
+                            f"{_format_game_clock(DELAYED_SIGNAL_TARGET_GAME_TIME)}"
                         )
-                        return return_status
-                    networth_send_status_label = NETWORTH_STATUS_4_10_SEND_800
+                    else:
+                        networth_send_status_label = NETWORTH_STATUS_MIN10_LEAD_GE800_SEND
                 elif send_now_full_star:
-                    if target_networth_diff < NETWORTH_GATE_10_MIN_MAX_LOSS:
+                    if target_networth_diff < NETWORTH_GATE_STRONG_SAME_SIGN_MAX_LOSS:
+                        queue_strong_same_sign_monitor = True
                         print(
-                            "   ⏳ Ожидание dispatch: networth_gate_10plus_early_late_same_sign "
+                            "   ⏳ Ожидание dispatch: strong_same_sign_loss_le800 "
                             f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
-                            f"need>={int(NETWORTH_GATE_10_MIN_MAX_LOSS)})"
+                            f"need>={int(NETWORTH_GATE_STRONG_SAME_SIGN_MAX_LOSS)}) -> delayed monitor "
+                            f">={int(NETWORTH_GATE_STRONG_SAME_SIGN_MAX_LOSS)} until "
+                            f"{_format_game_clock(DELAYED_SIGNAL_TARGET_GAME_TIME)} then comeback ceiling"
                         )
-                        return return_status
-                    networth_send_status_label = NETWORTH_STATUS_MIN10_LOSS_LE1500_SEND
-            if not send_now_immediate:
+                    else:
+                        networth_send_status_label = NETWORTH_STATUS_MIN10_LOSS_LE800_SEND
+            if (
+                not send_now_immediate
+                or queue_early_core_monitor
+                or queue_late_core_monitor
+                or queue_strong_same_sign_monitor
+            ):
                 delay_reason = "late_only_no_early_same_sign"
-                if has_selected_early_star and selected_early_sign != selected_late_sign:
+                if queue_early_core_monitor:
+                    delay_reason = early_core_monitor_delay_reason
+                elif queue_late_core_monitor:
+                    delay_reason = "late_star_early_core_wait_800"
+                elif queue_strong_same_sign_monitor:
+                    delay_reason = "strong_same_sign_wait_800_then_comeback_ceiling"
+                elif has_selected_early_star and selected_early_sign != selected_late_sign:
                     delay_reason = "late_only_opposite_signs"
                 elif not has_selected_early_star:
-                    delay_reason = "late_only_no_early_star"
-                print("   📊 STAR метрики (delayed):")
-                print("      " + early_block_log.rstrip().replace("\n", "\n      "))
-                print("      " + mid_block_log.rstrip().replace("\n", "\n      "))
-                print(
-                    "   📉 Raw star metrics: "
-                    f"early[{raw_star_early_summary}] | "
-                    f"late[{raw_star_late_summary}]"
-                )
-                print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
+                    delay_reason = "late_only_no_early_star_wait_1500"
+                if verbose_match_log:
+                    _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
                 _ensure_delayed_sender_started()
                 target_game_time = float(DELAYED_SIGNAL_TARGET_GAME_TIME)
                 target_human = _format_game_clock(target_game_time)
                 monitor_threshold: Optional[float] = None
                 monitor_wait_status_label: Optional[str] = None
-                if not has_selected_early_star and has_selected_late_star:
+                fallback_send_status_label = NETWORTH_STATUS_LATE_FALLBACK_20_20_SEND
+                allow_live_recheck = False
+                dynamic_monitor_profile: Optional[Dict[str, Any]] = None
+                if queue_early_core_monitor:
+                    monitor_threshold = early_core_monitor_threshold
+                    monitor_wait_status_label = early_core_monitor_wait_status_label
+                    fallback_send_status_label = NETWORTH_STATUS_EARLY_CORE_FALLBACK_20_20_SEND
+                    allow_live_recheck = True
+                elif queue_late_core_monitor:
+                    monitor_threshold = NETWORTH_GATE_4_TO_10_MIN_DIFF
+                    monitor_wait_status_label = NETWORTH_STATUS_LATE_CORE_MONITOR_WAIT_800
+                    allow_live_recheck = True
+                elif queue_strong_same_sign_monitor:
+                    monitor_threshold = NETWORTH_GATE_STRONG_SAME_SIGN_MAX_LOSS
+                    monitor_wait_status_label = NETWORTH_STATUS_STRONG_SAME_SIGN_MONITOR_WAIT_800
+                    fallback_send_status_label = NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT
+                elif not has_selected_early_star and has_selected_late_star:
                     monitor_threshold = NETWORTH_GATE_LATE_NO_EARLY_DIFF
-                    monitor_wait_status_label = NETWORTH_STATUS_LATE_MONITOR_WAIT_1000
+                    monitor_wait_status_label = NETWORTH_STATUS_LATE_MONITOR_WAIT_1500
                 elif has_selected_early_star and has_selected_late_star and selected_early_sign != selected_late_sign:
-                    monitor_threshold = NETWORTH_GATE_LATE_OPPOSITE_DIFF
-                    monitor_wait_status_label = NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000
+                    if isinstance(opposite_signs_early90_monitor, dict) and opposite_signs_early90_monitor.get("enabled"):
+                        dynamic_monitor_profile = dict(opposite_signs_early90_monitor)
+                        if current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
+                            monitor_threshold = float(dynamic_monitor_profile.get("threshold_4_to_10") or 0.0)
+                            monitor_wait_status_label = str(dynamic_monitor_profile.get("status_4_to_10") or "")
+                            print(
+                                "   ⏳ Opposite-sign WR90 monitor (4-10): "
+                                f"target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                                f"need>={int(monitor_threshold)} until 10:00, "
+                                f"then >={int(float(dynamic_monitor_profile.get('threshold_10_to_20') or 0.0))} "
+                                f"until {target_human}"
+                            )
+                        else:
+                            monitor_threshold = float(dynamic_monitor_profile.get("threshold_10_to_20") or 0.0)
+                            monitor_wait_status_label = str(dynamic_monitor_profile.get("status_10_to_20") or "")
+                            print(
+                                "   ⏳ Opposite-sign WR90 monitor (10-20): "
+                                f"target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                                f"need>={int(monitor_threshold)} until {target_human}"
+                            )
+                    elif opposite_sign_early_release_allowed:
+                        monitor_threshold = NETWORTH_GATE_LATE_OPPOSITE_DIFF
+                        monitor_wait_status_label = NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000
+                    else:
+                        early_wr_label = (
+                            f"{early_wr_pct:.1f}%"
+                            if early_wr_pct is not None
+                            else "n/a"
+                        )
+                        print(
+                            "   ⏳ Opposite-sign early release disabled: "
+                            f"early_wr={early_wr_label} -> wait until {target_human}"
+                        )
+                fallback_max_deficit_abs = _fallback_max_deficit_abs_for_delay_reason(
+                    delay_reason,
+                    monitor_threshold=monitor_threshold,
+                )
                 release_4_10_now = bool(
                     (not force_odds_signal_test_active)
                     and target_networth_diff is not None
                     and NETWORTH_GATE_HARD_BLOCK_SECONDS <= current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS
-                    and target_networth_diff >= NETWORTH_GATE_4_TO_10_MIN_DIFF
+                    and (
+                        (
+                            isinstance(dynamic_monitor_profile, dict)
+                            and dynamic_monitor_profile.get("enabled")
+                            and monitor_threshold is not None
+                            and target_networth_diff >= monitor_threshold
+                        )
+                        or (
+                            not (isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"))
+                            and
+                            target_networth_diff >= NETWORTH_GATE_4_TO_10_MIN_DIFF
+                            and early_core_same_sign_support
+                        )
+                    )
                 )
                 monitor_ready_now = bool(
                     (not force_odds_signal_test_active)
@@ -7591,23 +10466,28 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
                 if release_4_10_now or monitor_ready_now:
                     release_reason = (
-                        NETWORTH_STATUS_4_10_SEND_800
-                        if release_4_10_now
-                        else f"networth_monitor_{int(monitor_threshold or 0)}"
-                    )
-                    release_status_label = (
-                        NETWORTH_STATUS_4_10_SEND_800
+                        (
+                            f"networth_monitor_{int(monitor_threshold or 0)}"
+                            if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled")
+                            else NETWORTH_STATUS_4_10_SEND_800
+                        )
                         if release_4_10_now
                         else (
-                            NETWORTH_STATUS_LATE_MONITOR_WAIT_1000
-                            if monitor_threshold == NETWORTH_GATE_LATE_NO_EARLY_DIFF
-                            else NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000
+                            f"networth_monitor_{int(monitor_threshold or 0)}"
+                            if monitor_threshold is not None
+                            else "networth_monitor_unknown"
                         )
                     )
-                    print(
-                        "   ✅ ВЕРДИКТ: Сигнал отправлен раньше 21:00 "
-                        f"(reason={release_reason}, status={release_status_label}, target_side={target_side}, "
-                        f"target_diff={int(target_networth_diff or 0)})"
+                    release_status_label = (
+                        (
+                            monitor_wait_status_label or NETWORTH_STATUS_4_10_SEND_800
+                        )
+                        if release_4_10_now and isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled")
+                        else (
+                            NETWORTH_STATUS_4_10_SEND_800
+                            if release_4_10_now
+                            else (monitor_wait_status_label or "unknown_monitor_status")
+                        )
                     )
                     if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки (networth_gate)"):
                         return return_status
@@ -7617,13 +10497,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     try:
                         if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки после lock (networth_gate)"):
                             return return_status
-                        send_message(message_text)
-                        _log_bookmaker_source_snapshot(check_uniq_url, decision="sent")
-                        _mark_url_processed(check_uniq_url)
-                        add_url(
+                        if verbose_match_log:
+                            _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+                        delivery_confirmed = _deliver_and_persist_signal(
                             check_uniq_url,
-                            reason="star_signal_sent_now_networth_gate",
-                            details={
+                            message_text,
+                            add_url_reason="star_signal_sent_now_networth_gate",
+                            add_url_details={
                                 "status": status,
                                 "dispatch_mode": dispatch_mode,
                                 "delay_reason": delay_reason,
@@ -7634,7 +10514,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "target_networth_diff": float(target_networth_diff or 0.0),
                                 "json_retry_errors": json_retry_errors,
                             },
+                            bookmaker_decision="sent",
                         )
+                        if delivery_confirmed:
+                            print(
+                                f"   ✅ ВЕРДИКТ: Сигнал отправлен раньше {target_human} "
+                                f"(reason={release_reason}, status={release_status_label}, target_side={target_side}, "
+                                f"target_diff={int(target_networth_diff or 0)})"
+                            )
                     finally:
                         _release_signal_send_slot(check_uniq_url)
                     return return_status
@@ -7648,24 +10535,383 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     try:
                         if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки после lock (no_json_url)"):
                             return return_status
-                        send_message(message_text)
-                        _log_bookmaker_source_snapshot(check_uniq_url, decision="sent")
-                        _mark_url_processed(check_uniq_url)
-                        print(f"   ✅ ВЕРДИКТ: Сигнал отправлен немедленно (нет json_url для delayed)")
-                        add_url(
+                        if verbose_match_log:
+                            _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+                        delivery_confirmed = _deliver_and_persist_signal(
                             check_uniq_url,
-                            reason="star_signal_sent_now_no_json_url",
-                            details={
+                            message_text,
+                            add_url_reason="star_signal_sent_now_no_json_url",
+                            add_url_details={
                                 "status": status,
                                 "dispatch_mode": dispatch_mode,
                                 "delay_reason": delay_reason,
                                 "json_retry_errors": json_retry_errors,
                             },
+                            bookmaker_decision="sent",
                         )
+                        if delivery_confirmed:
+                            print(f"   ✅ ВЕРДИКТ: Сигнал отправлен немедленно (нет json_url для delayed)")
                     finally:
                         _release_signal_send_slot(check_uniq_url)
                     return return_status
                 if current_game_time >= target_game_time:
+                    if queue_early_core_monitor:
+                        print(
+                            f"   ⚠️ ВЕРДИКТ: ОТКАЗ (early star без late star не добрал >=1500 до {target_human}) "
+                            f"- матч пропущен"
+                        )
+                        print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
+                        add_url(
+                            check_uniq_url,
+                            reason="star_signal_rejected_early_core_monitor_timeout",
+                            details={
+                                "status": status,
+                                "dispatch_mode": dispatch_mode,
+                                "delay_reason": delay_reason,
+                                "dispatch_status_label": NETWORTH_STATUS_EARLY_CORE_TIMEOUT_NO_SEND,
+                                "game_time": int(current_game_time),
+                                "target_game_time": int(target_game_time),
+                                "target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                                "selected_star_wr": selected_star_wr,
+                                "selected_star_mode": selected_star_mode,
+                                "selected_early_star": bool(has_selected_early_star),
+                                "selected_late_star": bool(has_selected_late_star),
+                                "selected_early_sign": selected_early_sign,
+                                "selected_late_sign": selected_late_sign,
+                                "late_core_same_sign_diag": late_core_same_sign_diag,
+                                "json_retry_errors": json_retry_errors,
+                            },
+                        )
+                        print("   ✅ map_id_check.txt обновлен: add_url после early-core timeout")
+                        return return_status
+                    if queue_late_core_monitor and not late_comeback_monitor_candidate:
+                        print(
+                            f"   ⚠️ ВЕРДИКТ: ОТКАЗ (late star без early star не добрал >={int(NETWORTH_GATE_4_TO_10_MIN_DIFF)} до {target_human}) "
+                            f"- матч пропущен"
+                        )
+                        print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
+                        add_url(
+                            check_uniq_url,
+                            reason="star_signal_rejected_late_core_monitor_timeout",
+                            details={
+                                "status": status,
+                                "dispatch_mode": dispatch_mode,
+                                "delay_reason": delay_reason,
+                                "dispatch_status_label": NETWORTH_STATUS_LATE_CORE_TIMEOUT_NO_SEND,
+                                "game_time": int(current_game_time),
+                                "target_game_time": int(target_game_time),
+                                "target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                                "selected_star_wr": selected_star_wr,
+                                "selected_star_mode": selected_star_mode,
+                                "selected_early_star": bool(has_selected_early_star),
+                                "selected_late_star": bool(has_selected_late_star),
+                                "selected_early_sign": selected_early_sign,
+                                "selected_late_sign": selected_late_sign,
+                                "early_core_same_sign_diag": early_core_same_or_zero_diag,
+                                "json_retry_errors": json_retry_errors,
+                            },
+                        )
+                        print("   ✅ map_id_check.txt обновлен: add_url после late-core timeout")
+                        return return_status
+                    if (
+                        queue_strong_same_sign_monitor
+                        or (
+                        late_comeback_monitor_candidate
+                        and target_networth_diff is not None
+                        and target_networth_diff <= -NETWORTH_GATE_LATE_COMEBACK_LARGE_DEFICIT
+                        )
+                    ):
+                        late_comeback_check = _late_comeback_monitor_check(
+                            game_time_seconds=current_game_time,
+                            target_networth_diff=target_networth_diff,
+                        )
+                        if late_comeback_check.get("ready"):
+                            print(
+                                "   ✅ Late comeback ceiling reached at target time "
+                                f"(minute={late_comeback_check.get('minute')}, "
+                                f"ceiling={int(late_comeback_check.get('threshold') or 0)}, "
+                                f"target_diff={int(target_networth_diff)})"
+                            )
+                            if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки (late comeback ceiling {target_human})"):
+                                return return_status
+                            if not _acquire_signal_send_slot(check_uniq_url):
+                                print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
+                                return return_status
+                            try:
+                                if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки после lock (late comeback ceiling {target_human})"):
+                                    return return_status
+                                if verbose_match_log:
+                                    _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+                                delivery_confirmed = _deliver_and_persist_signal(
+                                    check_uniq_url,
+                                    message_text,
+                                    add_url_reason="star_signal_sent_now_late_comeback_ceiling",
+                                    add_url_details={
+                                        "status": status,
+                                        "dispatch_mode": dispatch_mode,
+                                        "delay_reason": delay_reason,
+                                        "dispatch_status_label": NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT,
+                                        "game_time": int(current_game_time),
+                                        "target_game_time": int(target_game_time),
+                                        "target_side": target_side,
+                                        "target_networth_diff": float(target_networth_diff),
+                                        "late_comeback_delta_pp": float(target_comeback_delta_pp or 0.0),
+                                        "late_comeback_monitor_reached": True,
+                                        "late_comeback_monitor_minute": late_comeback_check.get("minute"),
+                                        "late_comeback_monitor_threshold": late_comeback_check.get("threshold"),
+                                        "json_retry_errors": json_retry_errors,
+                                    },
+                                    bookmaker_decision="sent",
+                                )
+                                if delivery_confirmed:
+                                    print(
+                                        "   ✅ ВЕРДИКТ: Сигнал отправлен по late comeback ceiling "
+                                        f"(minute={late_comeback_check.get('minute')}, "
+                                        f"target_diff={int(target_networth_diff)})"
+                                    )
+                            finally:
+                                _release_signal_send_slot(check_uniq_url)
+                            return return_status
+                        late_comeback_deadline = _late_comeback_monitor_deadline_seconds()
+                        if late_comeback_deadline is not None and current_game_time < late_comeback_deadline:
+                            comeback_delay_reason = (
+                                "strong_same_sign_comeback_ceiling_monitor"
+                                if queue_strong_same_sign_monitor
+                                else "late_star_comeback_ceiling_monitor"
+                            )
+                            delayed_add_url_details = {
+                                "status": status,
+                                "dispatch_mode": dispatch_mode,
+                                "delay_reason": comeback_delay_reason,
+                                "dispatch_status_label": NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT,
+                                "queued_game_time": int(current_game_time),
+                                "target_game_time": int(late_comeback_deadline),
+                                "json_retry_errors": json_retry_errors,
+                                "networth_target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff),
+                                "late_comeback_monitor_minute": late_comeback_check.get("minute"),
+                                "late_comeback_monitor_threshold": late_comeback_check.get("threshold"),
+                            }
+                            if target_comeback_delta_pp is not None:
+                                delayed_add_url_details["late_comeback_delta_pp"] = float(target_comeback_delta_pp or 0.0)
+                            delayed_payload = {
+                                "message": message_text,
+                                "reason": comeback_delay_reason,
+                                "star_metrics_snapshot": star_metrics_snapshot,
+                                "json_url": json_url,
+                                "target_game_time": float(late_comeback_deadline),
+                                "queued_at": time.time(),
+                                "queued_game_time": current_game_time,
+                                "last_game_time": current_game_time,
+                                "last_progress_at": time.time(),
+                                "dispatch_status_label": NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT,
+                                "add_url_reason": "star_signal_sent_delayed",
+                                "add_url_details": delayed_add_url_details,
+                                "fallback_send_status_label": NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND,
+                                "send_on_target_game_time": False,
+                                "allow_live_recheck": False,
+                                "retry_attempt_count": 0,
+                                "next_retry_at": 0.0,
+                                "late_comeback_monitor_candidate": bool(late_comeback_monitor_candidate),
+                                "late_comeback_monitor_active": True,
+                                "late_comeback_monitor_deadline_game_time": float(late_comeback_deadline),
+                                "networth_target_side": target_side,
+                                "late_comeback_force_after_target": False,
+                            }
+                            if target_comeback_delta_pp is not None:
+                                delayed_payload["late_comeback_delta_pp"] = float(target_comeback_delta_pp or 0.0)
+                            _set_delayed_match(check_uniq_url, delayed_payload)
+                            comeback_delta_log = (
+                                f"comeback_delta={float(target_comeback_delta_pp or 0.0):+.2f} pp, "
+                                if target_comeback_delta_pp is not None
+                                else ""
+                            )
+                            print(
+                                "   ⏳ Late comeback monitor включен: "
+                                f"target_side={target_side}, "
+                                f"target_diff={int(target_networth_diff)}, "
+                                f"{comeback_delta_log}"
+                                f"minute={late_comeback_check.get('minute')}, "
+                                f"ceiling={int(late_comeback_check.get('threshold') or 0)}, "
+                                f"deadline={_format_game_clock(late_comeback_deadline)}"
+                            )
+                            print("   ✅ ВЕРДИКТ: Сигнал оставлен в delayed-очереди для late comeback monitor")
+                            return return_status
+                        print(
+                            f"   ⚠️ ВЕРДИКТ: ОТКАЗ (не прошел comeback ceiling после {target_human}) "
+                            f"- матч пропущен"
+                        )
+                        add_url(
+                            check_uniq_url,
+                            reason="star_signal_rejected_late_comeback_monitor_timeout",
+                            details={
+                                "status": status,
+                                "dispatch_mode": dispatch_mode,
+                                "delay_reason": (
+                                    "strong_same_sign_comeback_ceiling_monitor"
+                                    if queue_strong_same_sign_monitor
+                                    else "late_star_comeback_ceiling_monitor"
+                                ),
+                                "dispatch_status_label": NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND,
+                                "game_time": int(current_game_time),
+                                "target_game_time": int(target_game_time),
+                                "target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                                "json_retry_errors": json_retry_errors,
+                            },
+                        )
+                        return return_status
+                    post_target_comeback = _post_target_comeback_ceiling_decision(
+                        game_time_seconds=current_game_time,
+                        target_networth_diff=target_networth_diff,
+                    )
+                    if has_selected_late_star and post_target_comeback.get("available"):
+                        if post_target_comeback.get("ready"):
+                            print(
+                                "   ✅ Post-target comeback ceiling reached "
+                                f"(minute={post_target_comeback.get('minute')}, "
+                                f"ceiling={int(post_target_comeback.get('threshold') or 0)}, "
+                                f"target_diff={int(target_networth_diff or 0)})"
+                            )
+                            if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки (post-target comeback ceiling {target_human})"):
+                                return return_status
+                            if not _acquire_signal_send_slot(check_uniq_url):
+                                print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
+                                return return_status
+                            try:
+                                if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки после lock (post-target comeback ceiling {target_human})"):
+                                    return return_status
+                                if verbose_match_log:
+                                    _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+                                delivery_confirmed = _deliver_and_persist_signal(
+                                    check_uniq_url,
+                                    message_text,
+                                    add_url_reason="star_signal_sent_now_late_comeback_ceiling",
+                                    add_url_details={
+                                        "status": status,
+                                        "dispatch_mode": dispatch_mode,
+                                        "delay_reason": "post_target_comeback_ceiling_monitor",
+                                        "dispatch_status_label": NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT,
+                                        "game_time": int(current_game_time),
+                                        "target_game_time": int(target_game_time),
+                                        "target_side": target_side,
+                                        "target_networth_diff": float(target_networth_diff or 0.0),
+                                        "late_comeback_monitor_reached": True,
+                                        "late_comeback_monitor_minute": post_target_comeback.get("minute"),
+                                        "late_comeback_monitor_threshold": post_target_comeback.get("threshold"),
+                                        "json_retry_errors": json_retry_errors,
+                                    },
+                                    bookmaker_decision="sent",
+                                )
+                                if delivery_confirmed:
+                                    print(
+                                        "   ✅ ВЕРДИКТ: Сигнал отправлен по post-target comeback ceiling "
+                                        f"(minute={post_target_comeback.get('minute')}, "
+                                        f"target_diff={int(target_networth_diff or 0)})"
+                                    )
+                            finally:
+                                _release_signal_send_slot(check_uniq_url)
+                            return return_status
+                        if post_target_comeback.get("should_monitor"):
+                            post_target_comeback_deadline = post_target_comeback.get("deadline_game_time")
+                            delayed_add_url_details = {
+                                "status": status,
+                                "dispatch_mode": dispatch_mode,
+                                "delay_reason": "post_target_comeback_ceiling_monitor",
+                                "dispatch_status_label": NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT,
+                                "queued_game_time": int(current_game_time),
+                                "target_game_time": int(post_target_comeback_deadline or target_game_time),
+                                "json_retry_errors": json_retry_errors,
+                                "networth_target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                                "late_comeback_monitor_minute": post_target_comeback.get("minute"),
+                                "late_comeback_monitor_threshold": post_target_comeback.get("threshold"),
+                            }
+                            delayed_payload = {
+                                "message": message_text,
+                                "reason": "post_target_comeback_ceiling_monitor",
+                                "star_metrics_snapshot": star_metrics_snapshot,
+                                "json_url": json_url,
+                                "target_game_time": float(post_target_comeback_deadline or target_game_time),
+                                "queued_at": time.time(),
+                                "queued_game_time": current_game_time,
+                                "last_game_time": current_game_time,
+                                "last_progress_at": time.time(),
+                                "dispatch_status_label": NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT,
+                                "add_url_reason": "star_signal_sent_delayed",
+                                "add_url_details": delayed_add_url_details,
+                                "fallback_send_status_label": NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND,
+                                "send_on_target_game_time": False,
+                                "allow_live_recheck": False,
+                                "retry_attempt_count": 0,
+                                "next_retry_at": 0.0,
+                                "late_comeback_monitor_active": True,
+                                "late_comeback_monitor_deadline_game_time": float(post_target_comeback_deadline or target_game_time),
+                                "networth_target_side": target_side,
+                                "late_comeback_force_after_target": False,
+                            }
+                            _set_delayed_match(check_uniq_url, delayed_payload)
+                            print(
+                                "   ⏳ Post-target comeback monitor включен: "
+                                f"target_side={target_side}, "
+                                f"target_diff={int(target_networth_diff or 0)}, "
+                                f"minute={post_target_comeback.get('minute')}, "
+                                f"ceiling={int(post_target_comeback.get('threshold') or 0)}, "
+                                f"deadline={_format_game_clock(post_target_comeback_deadline)}"
+                            )
+                            print("   ✅ ВЕРДИКТ: Сигнал оставлен в delayed-очереди для post-target comeback monitor")
+                            return return_status
+                        if post_target_comeback.get("should_timeout"):
+                            print(
+                                f"   ⚠️ ВЕРДИКТ: ОТКАЗ (не прошел post-target comeback ceiling после {target_human}) "
+                                f"- матч пропущен"
+                            )
+                            add_url(
+                                check_uniq_url,
+                                reason="star_signal_rejected_late_comeback_monitor_timeout",
+                                details={
+                                    "status": status,
+                                    "dispatch_mode": dispatch_mode,
+                                    "delay_reason": "post_target_comeback_ceiling_monitor",
+                                    "dispatch_status_label": NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND,
+                                    "game_time": int(current_game_time),
+                                    "target_game_time": int(target_game_time),
+                                    "target_side": target_side,
+                                    "target_networth_diff": float(target_networth_diff or 0.0),
+                                    "late_comeback_monitor_minute": post_target_comeback.get("minute"),
+                                    "late_comeback_monitor_threshold": post_target_comeback.get("threshold"),
+                                    "json_retry_errors": json_retry_errors,
+                                },
+                            )
+                            return return_status
+                    fallback_guard = _fallback_networth_deficit_guard_decision(
+                        target_networth_diff=target_networth_diff,
+                        max_deficit_abs=fallback_max_deficit_abs,
+                    )
+                    if bool(fallback_guard.get("reject")):
+                        print(
+                            f"   ⚠️ ВЕРДИКТ: ОТКАЗ (fallback networth guard after {target_human}) "
+                            f"- матч пропущен"
+                        )
+                        add_url(
+                            check_uniq_url,
+                            reason="star_signal_rejected_fallback_networth_guard",
+                            details={
+                                "status": status,
+                                "dispatch_mode": dispatch_mode,
+                                "delay_reason": delay_reason,
+                                "dispatch_status_label": NETWORTH_STATUS_LATE_FALLBACK_20_20_DEFICIT_NO_SEND,
+                                "game_time": int(current_game_time),
+                                "target_game_time": int(target_game_time),
+                                "target_side": target_side,
+                                "target_networth_diff": float(fallback_guard.get("target_diff") or 0.0),
+                                "fallback_max_deficit_abs": float(fallback_guard.get("threshold_abs") or 0.0),
+                                "json_retry_errors": json_retry_errors,
+                            },
+                        )
+                        return return_status
                     print(
                         f"   ⏱️ game_time уже >= {target_human} ({int(current_game_time)}), "
                         f"отправляем сразу: {check_uniq_url}"
@@ -7678,14 +10924,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     try:
                         if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки после lock (game_time >= {target_human})"):
                             return return_status
-                        send_message(message_text)
-                        _log_bookmaker_source_snapshot(check_uniq_url, decision="sent")
-                        _mark_url_processed(check_uniq_url)
-                        print(f"   ✅ ВЕРДИКТ: Сигнал отправлен немедленно (game_time >= {target_human})")
-                        add_url(
+                        if verbose_match_log:
+                            _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+                        delivery_confirmed = _deliver_and_persist_signal(
                             check_uniq_url,
-                            reason="star_signal_sent_now_target_reached",
-                            details={
+                            message_text,
+                            add_url_reason="star_signal_sent_now_target_reached",
+                            add_url_details={
                                 "status": status,
                                 "dispatch_mode": dispatch_mode,
                                 "delay_reason": delay_reason,
@@ -7693,7 +10938,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "target_game_time": int(target_game_time),
                                 "json_retry_errors": json_retry_errors,
                             },
+                            bookmaker_decision="sent",
                         )
+                        if delivery_confirmed:
+                            print(f"   ✅ ВЕРДИКТ: Сигнал отправлен немедленно (game_time >= {target_human})")
                     finally:
                         _release_signal_send_slot(check_uniq_url)
                     return return_status
@@ -7709,43 +10957,103 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     "target_game_time": int(target_game_time),
                     "json_retry_errors": json_retry_errors,
                 }
+                if early_wr_pct is not None:
+                    delayed_add_url_details["early_wr_pct"] = float(early_wr_pct)
+                if late_wr_pct is not None:
+                    delayed_add_url_details["late_wr_pct"] = float(late_wr_pct)
                 if monitor_threshold is not None:
                     delayed_add_url_details["networth_monitor_threshold"] = float(monitor_threshold)
                     delayed_add_url_details["networth_monitor_deadline_game_time"] = int(target_game_time)
                     delayed_add_url_details["networth_target_side"] = target_side
                     if target_networth_diff is not None:
                         delayed_add_url_details["target_networth_diff"] = float(target_networth_diff)
-                with monitored_matches_lock:
-                    monitored_matches[check_uniq_url] = {
-                        'message': message_text,
-                        'reason': delay_reason,
-                        'json_url': json_url,
-                        'target_game_time': target_game_time,
-                        'queued_at': queued_ts,
-                        'queued_game_time': current_game_time,
-                        'last_game_time': current_game_time,
-                        'last_progress_at': queued_ts,
-                        'dispatch_status_label': monitor_wait_status_label,
-                        'add_url_reason': 'star_signal_sent_delayed',
-                        'add_url_details': delayed_add_url_details,
-                        'fallback_send_status_label': NETWORTH_STATUS_LATE_FALLBACK_21_SEND,
-                    }
-                    if monitor_threshold is not None:
-                        monitored_matches[check_uniq_url]['networth_monitor_threshold'] = float(monitor_threshold)
-                        monitored_matches[check_uniq_url]['networth_monitor_deadline_game_time'] = float(target_game_time)
-                        monitored_matches[check_uniq_url]['networth_target_side'] = target_side
+                if fallback_max_deficit_abs is not None:
+                    delayed_add_url_details["fallback_max_deficit_abs"] = float(fallback_max_deficit_abs)
+                    if target_side is not None:
+                        delayed_add_url_details["networth_target_side"] = target_side
+                    if target_networth_diff is not None:
+                        delayed_add_url_details["target_networth_diff"] = float(target_networth_diff)
+                if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"):
+                    delayed_add_url_details["dynamic_monitor_profile"] = str(dynamic_monitor_profile.get("profile") or "")
+                    delayed_add_url_details["networth_monitor_threshold_4_to_10"] = float(dynamic_monitor_profile.get("threshold_4_to_10") or 0.0)
+                    delayed_add_url_details["networth_monitor_threshold_10_to_20"] = float(dynamic_monitor_profile.get("threshold_10_to_20") or 0.0)
+                    delayed_add_url_details["networth_monitor_status_4_to_10"] = str(dynamic_monitor_profile.get("status_4_to_10") or "")
+                    delayed_add_url_details["networth_monitor_status_10_to_20"] = str(dynamic_monitor_profile.get("status_10_to_20") or "")
+                    delayed_add_url_details["opposite_signs_early90_elo_gap_pp"] = dynamic_monitor_profile.get("elo_gap_pp")
+                    delayed_add_url_details["opposite_signs_early90_early_elo_wr"] = dynamic_monitor_profile.get("early_elo_wr")
+                    delayed_add_url_details["opposite_signs_early90_late_elo_wr"] = dynamic_monitor_profile.get("late_elo_wr")
+                if late_comeback_monitor_candidate:
+                    delayed_add_url_details["late_comeback_delta_pp"] = float(target_comeback_delta_pp or 0.0)
+                delayed_payload = {
+                    'message': message_text,
+                    'reason': delay_reason,
+                    'star_metrics_snapshot': star_metrics_snapshot,
+                    'json_url': json_url,
+                    'target_game_time': target_game_time,
+                    'queued_at': queued_ts,
+                    'queued_game_time': current_game_time,
+                    'last_game_time': current_game_time,
+                    'last_progress_at': queued_ts,
+                    'dispatch_status_label': monitor_wait_status_label,
+                    'add_url_reason': 'star_signal_sent_delayed',
+                    'add_url_details': delayed_add_url_details,
+                    'fallback_send_status_label': fallback_send_status_label,
+                    'send_on_target_game_time': not (
+                        queue_early_core_monitor or queue_late_core_monitor or queue_strong_same_sign_monitor
+                    ),
+                    'allow_live_recheck': allow_live_recheck,
+                    'retry_attempt_count': 0,
+                    'next_retry_at': 0.0,
+                    'late_comeback_monitor_candidate': late_comeback_monitor_candidate,
+                }
+                if late_comeback_monitor_candidate:
+                    delayed_payload['late_comeback_delta_pp'] = float(target_comeback_delta_pp or 0.0)
+                if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"):
+                    delayed_payload['dynamic_monitor_profile'] = str(dynamic_monitor_profile.get("profile") or "")
+                    delayed_payload['networth_monitor_threshold_4_to_10'] = float(dynamic_monitor_profile.get("threshold_4_to_10") or 0.0)
+                    delayed_payload['networth_monitor_threshold_10_to_20'] = float(dynamic_monitor_profile.get("threshold_10_to_20") or 0.0)
+                    delayed_payload['networth_monitor_status_4_to_10'] = str(dynamic_monitor_profile.get("status_4_to_10") or "")
+                    delayed_payload['networth_monitor_status_10_to_20'] = str(dynamic_monitor_profile.get("status_10_to_20") or "")
+                    delayed_payload['opposite_signs_early90_elo_gap_pp'] = dynamic_monitor_profile.get("elo_gap_pp")
+                    delayed_payload['opposite_signs_early90_early_elo_wr'] = dynamic_monitor_profile.get("early_elo_wr")
+                    delayed_payload['opposite_signs_early90_late_elo_wr'] = dynamic_monitor_profile.get("late_elo_wr")
+                if monitor_threshold is not None:
+                    delayed_payload['networth_monitor_threshold'] = float(monitor_threshold)
+                    delayed_payload['networth_monitor_deadline_game_time'] = float(target_game_time)
+                    delayed_payload['networth_target_side'] = target_side
+                if fallback_max_deficit_abs is not None:
+                    delayed_payload['fallback_max_deficit_abs'] = float(fallback_max_deficit_abs)
+                    if target_side is not None:
+                        delayed_payload['networth_target_side'] = target_side
+                if queue_strong_same_sign_monitor:
+                    delayed_payload['late_comeback_force_after_target'] = True
+                    delayed_payload['late_comeback_monitor_deadline_game_time'] = float(
+                        _late_comeback_monitor_deadline_seconds() or target_game_time
+                    )
+                if queue_early_core_monitor:
+                    delayed_payload['timeout_add_url_reason'] = 'star_signal_rejected_early_core_monitor_timeout'
+                    delayed_payload['timeout_status_label'] = NETWORTH_STATUS_EARLY_CORE_TIMEOUT_NO_SEND
+                elif queue_late_core_monitor:
+                    delayed_payload['timeout_add_url_reason'] = 'star_signal_rejected_late_core_monitor_timeout'
+                    delayed_payload['timeout_status_label'] = NETWORTH_STATUS_LATE_CORE_TIMEOUT_NO_SEND
+                _set_delayed_match(check_uniq_url, delayed_payload)
                 print(
                     f"   ⏱️ Сигнал в delayed-очереди до game_time={target_human} "
                     f"(reason={delay_reason}, now={int(current_game_time)}), "
                     f"ETA~{eta_human}: {check_uniq_url}"
                 )
                 if monitor_threshold is not None and target_side is not None:
+                    monitor_desc = (
+                        f"threshold={int(monitor_threshold)}"
+                        if monitor_threshold is not None
+                        else "threshold=n/a"
+                    )
                     print(
                         "   🔎 Delayed monitoring включен: "
                         f"status={monitor_wait_status_label}, "
                         f"target_side={target_side}, "
                         f"target_diff={int(target_networth_diff or 0)}, "
-                        f"threshold={int(monitor_threshold)}, "
+                        f"{monitor_desc}, "
                         f"deadline={target_human}"
                     )
                 print(f"   ✅ ВЕРДИКТ: Сигнал добавлен в delayed-очередь (reason={delay_reason})")
@@ -7757,14 +11065,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             try:
                 if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки STAR-сигнала после lock"):
                     return return_status
-                send_message(message_text)
-                _log_bookmaker_source_snapshot(check_uniq_url, decision="sent")
-                _mark_url_processed(check_uniq_url)
-                print("   ✅ ВЕРДИКТ: STAR-сигнал отправлен немедленно")
-                add_url(
+                if verbose_match_log:
+                    _print_star_metrics_snapshot(star_metrics_snapshot, label="immediate")
+                delivery_confirmed = _deliver_and_persist_signal(
                     check_uniq_url,
-                    reason="star_signal_sent_now",
-                    details={
+                    message_text,
+                    add_url_reason="star_signal_sent_now",
+                    add_url_details={
                         "status": status,
                         "dispatch_mode": dispatch_mode,
                         "dispatch_status_label": networth_send_status_label,
@@ -7772,18 +11079,133 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         "selected_star_mode": selected_star_mode,
                         "json_retry_errors": json_retry_errors,
                     },
+                    bookmaker_decision="sent",
                 )
+                if delivery_confirmed:
+                    print("   ✅ ВЕРДИКТ: STAR-сигнал отправлен немедленно")
             finally:
                 _release_signal_send_slot(check_uniq_url)
         else:
+            tempo_over_fallback = _compute_tempo_over_fallback_payload(
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
+                match_tier=star_match_tier,
+            )
+            tempo_over_diag = None
+            if tempo_over_fallback is None:
+                tempo_over_diag = _compute_tempo_over_fallback_diagnostics(
+                    radiant_heroes_and_pos=radiant_heroes_and_pos,
+                    dire_heroes_and_pos=dire_heroes_and_pos,
+                    match_tier=star_match_tier,
+                )
+            if (
+                tempo_over_fallback is None
+                and int(star_match_tier or 0) == 1
+                and isinstance(tempo_over_diag, dict)
+            ):
+                tempo_score = tempo_over_diag.get("score")
+                tempo_threshold = tempo_over_diag.get("threshold")
+                tempo_reason = str(tempo_over_diag.get("reason") or "unknown")
+                if tempo_score is not None and tempo_threshold is not None:
+                    print(
+                        "   📈 Tempo fallback score="
+                        f"{float(tempo_score):.4f} "
+                        f"(threshold={float(tempo_threshold):.4f}, status={tempo_reason})"
+                    )
+                    tempo_indices = tempo_over_diag.get("indices") or {}
+                    print(
+                        "   📈 Tempo fallback indices: "
+                        f"solo_kills_pm={tempo_indices.get('solo_kills_pm')}, "
+                        f"synergy_duo_kills_pm={tempo_indices.get('synergy_duo_kills_pm')}, "
+                        f"counterpick_1vs1_kills_pm={tempo_indices.get('counterpick_1vs1_kills_pm')}, "
+                        f"counterpick_1vs1_deaths_pm={tempo_indices.get('counterpick_1vs1_deaths_pm')}"
+                    )
+                elif tempo_reason not in {"threshold_met"}:
+                    print(f"   📈 Tempo fallback unavailable: status={tempo_reason}")
+            if tempo_over_fallback is not None:
+                tempo_team_elo_block = ""
+                tempo_team_elo_summary = _build_team_elo_matchup_summary(
+                    radiant_team_id=radiant_team_id,
+                    dire_team_id=dire_team_id,
+                    radiant_team_name=radiant_team_name_original,
+                    dire_team_name=dire_team_name_original,
+                    radiant_account_ids=radiant_account_ids,
+                    dire_account_ids=dire_account_ids,
+                    match_tier=star_match_tier,
+                )
+                tempo_team_elo_block, tempo_team_elo_meta = _format_team_elo_block(
+                    tempo_team_elo_summary,
+                    radiant_team_name=radiant_team_name_original,
+                    dire_team_name=dire_team_name_original,
+                )
+                if isinstance(tempo_team_elo_meta, dict):
+                    print(
+                        "   📊 Tempo Team ELO attached: "
+                        f"source={str(tempo_team_elo_meta.get('source') or 'unknown')} "
+                        f"raw {radiant_team_name_original}={float(tempo_team_elo_meta['radiant_base_rating']):.0f} "
+                        f"vs {dire_team_name_original}={float(tempo_team_elo_meta['dire_base_rating']):.0f} "
+                        f"(raw_wr={float(tempo_team_elo_meta['raw_radiant_wr']):.1f}%/{float(tempo_team_elo_meta['raw_dire_wr']):.1f}%, "
+                        f"adj_wr={float(tempo_team_elo_meta['adjusted_radiant_wr']):.1f}%/{float(tempo_team_elo_meta['adjusted_dire_wr']):.1f}%)"
+                    )
+                else:
+                    print(
+                        "   ⚠️ Tempo Team ELO unavailable: "
+                        f"{radiant_team_name_original} vs {dire_team_name_original}"
+                    )
+                tempo_message_text = (
+                    f"{radiant_team_name_original} VS {dire_team_name_original}\n"
+                    f"{_format_series_score_line(data)}"
+                    f"{tempo_team_elo_block}"
+                    f"{tempo_over_fallback['bet_label']}"
+                )
+                print(
+                    "   ✅ TEMPO fallback: нет star-сигнала, "
+                    f"core4_weighted_corr_excess20={tempo_over_fallback['score']:.4f} "
+                    f">= {tempo_over_fallback['threshold']:.4f}"
+                )
+                print(
+                    "   📈 Tempo fallback score="
+                    f"{tempo_over_fallback['score']:.4f} "
+                    f"(threshold={tempo_over_fallback['threshold']:.4f})"
+                )
+                print(
+                    "   📈 Tempo fallback indices: "
+                    f"solo_kills_pm={tempo_over_fallback['indices']['solo_kills_pm']}, "
+                    f"synergy_duo_kills_pm={tempo_over_fallback['indices']['synergy_duo_kills_pm']}, "
+                    f"counterpick_1vs1_kills_pm={tempo_over_fallback['indices']['counterpick_1vs1_kills_pm']}, "
+                    f"counterpick_1vs1_deaths_pm={tempo_over_fallback['indices']['counterpick_1vs1_deaths_pm']}"
+                )
+                if not _acquire_signal_send_slot(check_uniq_url):
+                    print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
+                    return return_status
+                try:
+                    if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки tempo fallback после lock"):
+                        return return_status
+                    delivery_confirmed = _deliver_and_persist_signal(
+                        check_uniq_url,
+                        tempo_message_text,
+                        add_url_reason="tempo_over_fallback_sent",
+                        add_url_details={
+                            "status": status,
+                            "dispatch_mode": "tempo_over_fallback_no_star",
+                            "dispatch_status_label": "tempo_over_fallback_send",
+                            "tempo_over_score": float(tempo_over_fallback["score"]),
+                            "tempo_over_score_threshold": float(tempo_over_fallback["threshold"]),
+                            "tempo_over_bet_label": str(tempo_over_fallback["bet_label"]),
+                            "tempo_over_indices": dict(tempo_over_fallback["indices"]),
+                            "selected_star_wr": selected_star_wr,
+                            "selected_star_mode": selected_star_mode,
+                            "json_retry_errors": json_retry_errors,
+                        },
+                    )
+                    if delivery_confirmed:
+                        print("   ✅ ВЕРДИКТ: Tempo fallback отправлен немедленно")
+                finally:
+                    _release_signal_send_slot(check_uniq_url)
+                return return_status
             print(
                 "   ⚠️ ВЕРДИКТ: ОТКАЗ "
                 "(нет star-сигнала) - матч пропущен"
-            )
-            print(
-                "   📉 Raw star metrics: "
-                f"early[{raw_star_early_summary}] | "
-                f"late[{raw_star_late_summary}]"
             )
             print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
             print(
@@ -7814,8 +11236,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
 def _load_stats_dicts():
     """Ленивая загрузка словарей, чтобы не грузить их при импорте."""
-    global lane_data, early_dict, late_dict
-    if lane_data is not None and early_dict is not None and late_dict is not None:
+    global lane_data, early_dict, late_dict, comeback_dict, comeback_meta, comeback_baseline_wr_pct
+    global late_comeback_ceiling_data, late_comeback_ceiling_thresholds, late_comeback_ceiling_max_minute
+    if (
+        lane_data is not None
+        and early_dict is not None
+        and late_dict is not None
+        and comeback_dict is not None
+        and late_comeback_ceiling_data is not None
+    ):
         return
 
     def _load_json_mmap(path: str):
@@ -7829,6 +11258,18 @@ def _load_stats_dicts():
     lane_path = os.getenv("STATS_LANE_PATH", f"{stats_dir}/lane_dict_raw.json")
     early_path = os.getenv("STATS_EARLY_PATH", f"{stats_dir}/early_dict_raw.json")
     late_path = os.getenv("STATS_LATE_PATH", f"{stats_dir}/late_dict_raw.json")
+    comeback_path = os.getenv(
+        "STATS_COMEBACK_PATH",
+        f"{stats_dir}/comeback_experiment_hard_1_7_hero_position/comeback_solo_dict_21plus.json",
+    )
+    comeback_meta_path = os.getenv(
+        "STATS_COMEBACK_META_PATH",
+        f"{stats_dir}/comeback_experiment_hard_1_7_hero_position/comeback_solo_dict_21plus_meta.json",
+    )
+    late_comeback_ceiling_path = os.getenv(
+        "STATS_LATE_COMEBACK_CEILING_PATH",
+        "/Users/alex/Documents/ingame/base/tier1_no_alchemist_comeback_ceiling_by_minute.json",
+    )
 
     # If test stats folder has no lane dict, fallback to baseline lane dict.
     if not Path(lane_path).exists():
@@ -7842,6 +11283,200 @@ def _load_stats_dicts():
     gc.collect()
     late_dict = _load_json_mmap(late_path)
     gc.collect()
+    if Path(comeback_path).exists():
+        comeback_dict = _load_json_mmap(comeback_path)
+    else:
+        logger.warning("Comeback solo stats file not found: %s", comeback_path)
+        print(f"⚠️ Comeback solo stats file not found: {comeback_path}")
+        comeback_dict = {}
+    gc.collect()
+    comeback_meta = None
+    comeback_baseline_wr_pct = None
+    if Path(comeback_meta_path).exists():
+        try:
+            with open(comeback_meta_path, "r", encoding="utf-8") as f:
+                comeback_meta = json.load(f)
+            comeback_baseline_wr_pct = float((comeback_meta or {}).get("baseline_wr_pct"))
+        except Exception:
+            comeback_meta = None
+            comeback_baseline_wr_pct = None
+    else:
+        logger.warning("Comeback solo meta file not found: %s", comeback_meta_path)
+        print(f"⚠️ Comeback solo meta file not found: {comeback_meta_path}")
+    late_comeback_ceiling_data = {}
+    late_comeback_ceiling_thresholds = {}
+    late_comeback_ceiling_max_minute = None
+    if Path(late_comeback_ceiling_path).exists():
+        try:
+            with open(late_comeback_ceiling_path, "r", encoding="utf-8") as f:
+                late_comeback_ceiling_data = json.load(f)
+            late_comeback_ceiling_thresholds = dict(
+                (late_comeback_ceiling_data or {}).get("thresholds_by_minute") or {}
+            )
+            minute_keys = [
+                int(k)
+                for k in late_comeback_ceiling_thresholds.keys()
+                if str(k).strip().lstrip("-").isdigit()
+            ]
+            late_comeback_ceiling_max_minute = max(minute_keys) if minute_keys else None
+        except Exception:
+            late_comeback_ceiling_data = {}
+            late_comeback_ceiling_thresholds = {}
+            late_comeback_ceiling_max_minute = None
+
+
+def _load_tempo_stats_dicts() -> bool:
+    global tempo_solo_dict, tempo_duo_dict, tempo_cp1v1_dict
+    if (
+        tempo_solo_dict is not None
+        and tempo_duo_dict is not None
+        and tempo_cp1v1_dict is not None
+    ):
+        return True
+    try:
+        base_dir = Path(TEMPO_STATS_DIR_DEFAULT)
+        tempo_solo_dict, tempo_duo_dict, tempo_cp1v1_dict = load_tempo_dicts(base_dir)
+        return True
+    except Exception as exc:
+        logger.warning("Tempo fallback disabled: failed to load tempo dicts: %s", exc)
+        return False
+
+
+def _format_series_score_line(live_payload: Optional[dict]) -> str:
+    try:
+        live_league = live_payload.get('live_league_data') or {}
+        r_wins = live_league.get('radiant_series_wins')
+        d_wins = live_league.get('dire_series_wins')
+        if r_wins is None and d_wins is None:
+            return ""
+        return f"{int(r_wins or 0)}-{int(d_wins or 0)}\n"
+    except Exception:
+        return ""
+
+
+def _compute_tempo_over_fallback_payload(
+    radiant_heroes_and_pos: dict,
+    dire_heroes_and_pos: dict,
+    match_tier: Optional[int],
+) -> Optional[Dict[str, Any]]:
+    diag = _compute_tempo_over_fallback_diagnostics(
+        radiant_heroes_and_pos=radiant_heroes_and_pos,
+        dire_heroes_and_pos=dire_heroes_and_pos,
+        match_tier=match_tier,
+    )
+    if not isinstance(diag, dict):
+        return None
+    payload = diag.get("payload")
+    return dict(payload) if isinstance(payload, dict) else None
+
+
+def _compute_tempo_over_fallback_diagnostics(
+    radiant_heroes_and_pos: dict,
+    dire_heroes_and_pos: dict,
+    match_tier: Optional[int],
+) -> Dict[str, Any]:
+    diag: Dict[str, Any] = {
+        "enabled": bool(TEMPO_OVER_FALLBACK_ENABLED),
+        "match_tier": int(match_tier or 0),
+        "threshold": float(TEMPO_OVER_SCORE_THRESHOLD),
+        "bet_label": TEMPO_OVER_SCORE_LABEL,
+        "reason": "unknown",
+        "score": None,
+        "indices": {},
+        "payload": None,
+    }
+    if not TEMPO_OVER_FALLBACK_ENABLED:
+        diag["reason"] = "disabled"
+        return diag
+    if int(match_tier or 0) != 1:
+        diag["reason"] = "tier_not_supported"
+        return diag
+    if not _load_tempo_stats_dicts():
+        diag["reason"] = "dicts_unavailable"
+        return diag
+
+    def _normalize_team_payload(team_payload: dict) -> Dict[str, Dict[str, int]]:
+        normalized: Dict[str, Dict[str, int]] = {}
+        for pos, hero_info in (team_payload or {}).items():
+            if isinstance(hero_info, dict):
+                hero_id = hero_info.get("hero_id")
+            else:
+                hero_id = hero_info
+            try:
+                normalized[str(pos)] = {"hero_id": int(hero_id)}
+            except (TypeError, ValueError):
+                continue
+        return normalized
+
+    try:
+        tempo_metrics = build_tempo_draft_metrics(
+            _normalize_team_payload(radiant_heroes_and_pos),
+            _normalize_team_payload(dire_heroes_and_pos),
+            tempo_solo_dict,
+            tempo_duo_dict,
+            tempo_cp1v1_dict,
+        )
+    except Exception as exc:
+        logger.warning("Tempo fallback disabled: failed to build tempo metrics: %s", exc)
+        diag["reason"] = "build_failed"
+        return diag
+
+    solo_payload = (tempo_metrics.get("solo") or {})
+    duo_payload = (tempo_metrics.get("synergy_duo") or {})
+    cp_payload = (tempo_metrics.get("counterpick_1vs1") or {})
+    if not (
+        bool(solo_payload.get("complete"))
+        and bool(duo_payload.get("complete"))
+        and bool(cp_payload.get("complete"))
+    ):
+        diag["reason"] = "incomplete_metrics"
+        return diag
+
+    def _idx(family_payload: dict, metric_name: str) -> Optional[int]:
+        value = ((family_payload.get(metric_name) or {}).get("index"))
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    solo_kills_idx = _idx(solo_payload, "kills_pm")
+    duo_kills_idx = _idx(duo_payload, "kills_pm")
+    cp_kills_idx = _idx(cp_payload, "kills_pm")
+    cp_deaths_idx = _idx(cp_payload, "deaths_pm")
+    diag["indices"] = {
+        "solo_kills_pm": solo_kills_idx,
+        "synergy_duo_kills_pm": duo_kills_idx,
+        "counterpick_1vs1_kills_pm": cp_kills_idx,
+        "counterpick_1vs1_deaths_pm": cp_deaths_idx,
+    }
+    if None in {solo_kills_idx, duo_kills_idx, cp_kills_idx, cp_deaths_idx}:
+        diag["reason"] = "missing_indices"
+        return diag
+
+    score = (
+        0.2414 * max(0, int(solo_kills_idx) - 20)
+        + 0.2492 * max(0, int(duo_kills_idx) - 20)
+        + 0.2931 * max(0, int(cp_kills_idx) - 20)
+        + 0.3517 * max(0, int(cp_deaths_idx) - 20)
+    )
+    diag["score"] = float(score)
+    payload = {
+        "score": float(score),
+        "threshold": float(TEMPO_OVER_SCORE_THRESHOLD),
+        "bet_label": TEMPO_OVER_SCORE_LABEL,
+        "indices": {
+            "solo_kills_pm": int(solo_kills_idx),
+            "synergy_duo_kills_pm": int(duo_kills_idx),
+            "counterpick_1vs1_kills_pm": int(cp_kills_idx),
+            "counterpick_1vs1_deaths_pm": int(cp_deaths_idx),
+        },
+    }
+    if float(score) < float(TEMPO_OVER_SCORE_THRESHOLD):
+        diag["reason"] = "below_threshold"
+        return diag
+    diag["reason"] = "threshold_met"
+    diag["payload"] = payload
+    return diag
 
 
 def general(return_status=None, use_proxy=None, odds=None):
@@ -7897,25 +11532,30 @@ def general(return_status=None, use_proxy=None, odds=None):
 
     # Гарантируем загрузку словарей перед обработкой матчей
     _load_stats_dicts()
+
+    logger.info(f"\n{'='*60}\n🔄 НАЧАЛО ЦИКЛА ПРОВЕРКИ МАТЧЕЙ\n{'='*60}")
+
+    radiant_heroes_and_pos, dire_heroes_and_pos, radiant_team_name, dire_team_name, score, return_status = None, None, None, None, None, None
+    recovered_from_journal = _safe_flush_sent_signal_journal_into_map_id_check()
+    maps_data = _load_map_id_check_urls(recover=True)
+    delayed_queue_state = _load_delayed_queue_state(recover=True)
+    _replace_monitored_matches_from_snapshot(delayed_queue_state)
+    _sync_processed_urls_cache(maps_data)
+    uncertain_delivery_urls = _load_uncertain_delivery_urls()
+    _sync_uncertain_delivery_urls_cache(uncertain_delivery_urls)
+    print(f"✅ Загружено {len(maps_data)} матчей из {MAP_ID_CHECK_PATH}")
+    if recovered_from_journal:
+        print(f"✅ Восстановлено из recovery journal: {recovered_from_journal}")
+    if delayed_queue_state:
+        print(f"✅ Восстановлено delayed-очереди: {len(delayed_queue_state)}")
+    if uncertain_delivery_urls:
+        print(f"⚠️ Заблокировано uncertain delivery URL: {len(set(uncertain_delivery_urls))}")
+
     _ensure_delayed_sender_started()
     if BOOKMAKER_PREFETCH_ENABLED:
         _ensure_bookmaker_prefetch_started()
     else:
         _stop_bookmaker_prefetch_worker()
-    
-    logger.info(f"\n{'='*60}\n🔄 НАЧАЛО ЦИКЛА ПРОВЕРКИ МАТЧЕЙ\n{'='*60}")
-    
-    radiant_heroes_and_pos, dire_heroes_and_pos, radiant_team_name, dire_team_name, score, return_status = None, None, None, None, None, None
-    try:
-        with open(MAP_ID_CHECK_PATH, 'rb') as f:
-            maps_data = orjson.loads(f.read())
-        print(f"✅ Загружено {len(maps_data)} матчей из {MAP_ID_CHECK_PATH}")
-        _sync_processed_urls_cache(maps_data)
-    except FileNotFoundError:
-        with open(MAP_ID_CHECK_PATH, 'w') as f:
-            json.dump([], f)
-        maps_data = []
-        _sync_processed_urls_cache(maps_data)
     print(f"🌐 Получение списка активных матчей...")
     answer = get_heads()
     if not answer or answer is None:
@@ -7925,18 +11565,42 @@ def general(return_status=None, use_proxy=None, odds=None):
     
     # Проверка что heads не None
     if heads is None:
-        print('❌ Не найден элемент live__matches в HTML')
-        try:
-            send_message('❌ Не найден элемент live__matches в HTML')
-        except Exception as e:
-            print(f"⚠️ Не удалось отправить уведомление в Telegram: {e}")
+        if GET_HEADS_LAST_FAILURE_REASON == GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES:
+            print('❌ Не найден элемент live__matches в HTML')
+            try:
+                send_message('❌ Не найден элемент live__matches в HTML')
+            except Exception as e:
+                print(f"⚠️ Не удалось отправить уведомление в Telegram: {e}")
         return None
     
     print(f'✅ Найдено активных матчей: {len(heads)}')
     
     all_statuses = []
+    seen_series_keys: set[str] = set()
     for i in range(len(heads)):
-        answer = check_head(heads, bodies, i, maps_data)
+        match_ref = f"match_index={i}"
+        try:
+            link_tag = bodies[i].find('a') if i < len(bodies) else None
+            href = link_tag.get('href') if link_tag else None
+            if href:
+                match_ref = str(href)
+                from urllib.parse import urlparse
+                parsed = urlparse(href if "://" in str(href) else f"https://dltv.org{href}")
+                path = str(parsed.path or "")
+                if path:
+                    series_match = re.search(r"/matches/(\d+)", path)
+                    if series_match:
+                        seen_series_keys.add(series_match.group(1))
+                    seen_series_keys.add(f"dltv.org{path}")
+        except Exception:
+            match_ref = f"match_index={i}"
+        try:
+            answer = check_head(heads, bodies, i, maps_data)
+        except Exception as exc:
+            print(f"⚠️ Ошибка обработки матча #{i} ({match_ref}): {exc}")
+            logger.exception("Per-match processing failed for %s", match_ref)
+            all_statuses.append("error")
+            continue
         if answer is not None:
             if isinstance(answer, str):
                 all_statuses.append(answer)
@@ -7946,6 +11610,17 @@ def general(return_status=None, use_proxy=None, odds=None):
             #         return radiant_heroes_and_pos, dire_heroes_and_pos, radiant_team_name, dire_team_name, score, return_status
             #     except:
             #         pass
+
+    orphan_live_elo_updates = _finalize_orphaned_live_elo_series(seen_series_keys)
+    for orphan_update in orphan_live_elo_updates:
+        applied_update = orphan_update.get("applied_update") if isinstance(orphan_update.get("applied_update"), dict) else {}
+        print(
+            "   📈 Live ELO finalized from orphaned finished series: "
+            f"series_key={orphan_update.get('series_key')}, "
+            f"scores={orphan_update.get('current_scores')}, "
+            f"winner_slot={orphan_update.get('winner_slot')}, "
+            f"applied_map={str(applied_update.get('map_key') or 'unknown')}"
+        )
     
     print(f"\n{'='*60}")
     print(f"📊 ИТОГИ ЦИКЛА:")
@@ -7960,63 +11635,67 @@ def general(return_status=None, use_proxy=None, odds=None):
     # Иначе возвращаем последний статус или None
     return all_statuses[-1] if all_statuses else None
 if __name__ == "__main__":
-        import orjson
-        from functions import one_match, check_old_maps
-        from keys import start_date_time
+    _setup_run_logging()
 
-        parser = argparse.ArgumentParser(description="Run cyberscore live loop")
-        parser.add_argument(
-            "--odds",
-            dest="odds",
-            action="store_true",
-            help="Enable odds pipeline",
-        )
-        parser.add_argument(
-            "--no-odds",
-            dest="odds",
-            action="store_false",
-            help="Disable odds pipeline completely",
-        )
-        parser.set_defaults(odds=None)
-        args = parser.parse_args()
-        if args.odds is True and os.getenv("MAP_ID_CHECK_PATH") is None:
-            MAP_ID_CHECK_PATH = MAP_ID_CHECK_PATH_ODDS_DEFAULT
-            print(f"🗺️ MAP_ID_CHECK_PATH defaulted for --odds: {MAP_ID_CHECK_PATH}")
-        
-        # Абсолютные пути к данным (вынесены за пределы проекта для оптимизации Cursor)
-        STATS_DIR = "/Users/alex/Documents/ingame/bets_data/analise_pub_matches"
-        
-        # Ленивая загрузка словарей (использует STATS_DIR или STATS_DIR из env)
-        _load_stats_dicts()
-        # early_dict, late_dict = {}, {}
-        # lane_data, early_dict, late_dict = {}, {}, {}
-        # check_old_maps(early_dict, late_dict, lane_data, start_date_time=start_date_time,
-                    #    outfile_name='pub')
-        # one_match(radiant_heroes_and_pos={'pos1': {'hero_name': "phantom assassin"}, 'pos2': {'hero_name': "nature's prophet"},
-        #                                   'pos3': {'hero_name': 'lycan'}, 'pos4': {'hero_name': "lich"},
-        #                                   'pos5': {'hero_name': "techies"}},
-        #           dire_heroes_and_pos={'pos1': {'hero_name': "bristleback"}, 'pos2': {'hero_name': "skywrath mage"},
-        #                                'pos3': {'hero_name': 'mars'}, 'pos4': {'hero_name': 'shadow demon'},
-        #                                'pos5': {'hero_name': "sniper"}},
-        #           lane_data=lane_data, early_dict=early_dict, late_dict=late_dict,
-        #           radiant_team_name='Falcons Team', dire_team_name='dire')
+    parser = argparse.ArgumentParser(description="Run cyberscore live loop")
+    parser.add_argument(
+        "--odds",
+        dest="odds",
+        action="store_true",
+        help="Enable odds pipeline",
+    )
+    parser.add_argument(
+        "--no-odds",
+        dest="odds",
+        action="store_false",
+        help="Disable odds pipeline completely",
+    )
+    parser.set_defaults(odds=None)
+    args = parser.parse_args()
+    runtime_mode_label = _runtime_instance_mode_label(args.odds)
+    if not _try_acquire_runtime_instance_lock(mode_label=runtime_mode_label):
+        raise SystemExit(0)
+    DELAYED_QUEUE_PATH = str(_delayed_queue_path_for_mode(runtime_mode_label))
+    print(f"🗂️ DELAYED_QUEUE_PATH for mode={runtime_mode_label}: {DELAYED_QUEUE_PATH}")
 
-        # === ИНИЦИАЛИЗАЦИЯ ТРАНЗИТИВНОЙ МОДЕЛИ (85.2% ВИНРЕЙТ) ===
+    import orjson
+    from functions import one_match, check_old_maps
+    from keys import start_date_time
 
-        # === НАСТРОЙКА ПРОКСИ ===
+    if args.odds is True and os.getenv("MAP_ID_CHECK_PATH") is None:
+        MAP_ID_CHECK_PATH = MAP_ID_CHECK_PATH_ODDS_DEFAULT
+        print(f"🗺️ MAP_ID_CHECK_PATH defaulted for --odds: {MAP_ID_CHECK_PATH}")
 
-        while True:
-            try:
-                # if is_moscow_night():
-                #     sleep_until_morning()
-                status = general(use_proxy=None, odds=args.odds)
-                if status is None:
-                    print('Сплю 60 секунд')
-                    time.sleep(60)
-                else:
-                    print('Сплю 60 секунд')
-                    time.sleep(60)
-            except Exception as e:
-                print(f"⚠️ Ошибка главного цикла: {e}")
-                logger.exception("Main loop error")
-                time.sleep(30)
+    # Абсолютные пути к данным (вынесены за пределы проекта для оптимизации Cursor)
+    STATS_DIR = "/Users/alex/Documents/ingame/bets_data/analise_pub_matches"
+
+    # Ленивая загрузка словарей (использует STATS_DIR или STATS_DIR из env)
+    _load_stats_dicts()
+    # early_dict, late_dict = {}, {}
+    # lane_data, early_dict, late_dict = {}, {}, {}
+    # check_old_maps(early_dict, late_dict, lane_data, start_date_time=start_date_time,
+    #    outfile_name='pub')
+    # one_match(radiant_heroes_and_pos={'pos1': {'hero_name': "phantom assassin"}, 'pos2': {'hero_name': "nature's prophet"},
+    #                                   'pos3': {'hero_name': 'lycan'}, 'pos4': {'hero_name': "lich"},
+    #                                   'pos5': {'hero_name': "techies"}},
+    #           dire_heroes_and_pos={'pos1': {'hero_name': "bristleback"}, 'pos2': {'hero_name': "skywrath mage"},
+    #                                'pos3': {'hero_name': 'mars'}, 'pos4': {'hero_name': 'shadow demon'},
+    #                                'pos5': {'hero_name': "sniper"}},
+    #           lane_data=lane_data, early_dict=early_dict, late_dict=late_dict,
+    #           radiant_team_name='Falcons Team', dire_team_name='dire')
+
+    while True:
+        try:
+            # if is_moscow_night():
+            #     sleep_until_morning()
+            status = general(use_proxy=None, odds=args.odds)
+            if status is None:
+                print('Сплю 60 секунд')
+                time.sleep(60)
+            else:
+                print('Сплю 60 секунд')
+                time.sleep(60)
+        except Exception as e:
+            print(f"⚠️ Ошибка главного цикла: {e}")
+            logger.exception("Main loop error")
+            time.sleep(30)
