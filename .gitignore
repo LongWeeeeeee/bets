@@ -13,6 +13,8 @@ logs/
 log.txt
 nohup.out
 generated_files/
+.env
+.env.local
 bets_data/
 pro_heroes_data/
 data/pub_timeaware_*/
