@@ -1,2 +1,0 @@
-ts,match_id,prediction,radiant_prob,dire_prob,confidence,threshold,radiant_team_id,dire_team_id,radiant_heroes,dire_heroes
-1765529766,7753420462,SKIP,0.48898518406221675,0.5110148159377832,0.5110148159377832,0.65,-1,-1,"[136, 13, 137, 100, 128]","[95, 49, 129, 101, 84]"

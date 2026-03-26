@@ -1,9 +1,0 @@
-{
-  "threshold": 0.8899999999999996,
-  "metrics": {
-    "winrate_at_threshold": 0.6077395709819985,
-    "coverage_at_threshold": 0.40064780824875834
-  },
-  "train_size": 1319845,
-  "test_size": 69465
-}
