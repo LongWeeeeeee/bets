@@ -2766,6 +2766,9 @@ tempo_cp1v1_dict = None
 late_comeback_ceiling_data = None
 late_comeback_ceiling_thresholds = None
 late_comeback_ceiling_max_minute = None
+STATS_SEQUENTIAL_WARMUP_ENABLED = _safe_bool_env("STATS_SEQUENTIAL_WARMUP_ENABLED", True)
+STATS_WARMUP_STEP_DELAY_SECONDS = _safe_float_env("STATS_WARMUP_STEP_DELAY_SECONDS", 45.0)
+stats_warmup_last_heavy_load_ts = 0.0
 
 # Настройка прокси
 USE_BOOKMAKER_PROXY_FOR_MATCHES = _safe_bool_env("USE_BOOKMAKER_PROXY_FOR_MATCHES", True)
@@ -11263,6 +11266,7 @@ def _load_stats_dicts():
     """Ленивая загрузка словарей, чтобы не грузить их при импорте."""
     global lane_data, early_dict, late_dict, comeback_dict, comeback_meta, comeback_baseline_wr_pct
     global late_comeback_ceiling_data, late_comeback_ceiling_thresholds, late_comeback_ceiling_max_minute
+    global stats_warmup_last_heavy_load_ts
     if (
         lane_data is not None
         and early_dict is not None
@@ -11270,13 +11274,80 @@ def _load_stats_dicts():
         and comeback_dict is not None
         and late_comeback_ceiling_data is not None
     ):
-        return
+        return True
 
-    def _load_json_mmap(path: str):
+    def _load_json_object(path: str, label: str):
         # Avoid extra peak from f.read() copy on huge dict files.
-        with open(path, "rb") as f:
-            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-                return orjson.loads(memoryview(mm))
+        try:
+            with open(path, "rb") as f:
+                with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+                    return orjson.loads(memoryview(mm))
+        except (orjson.JSONDecodeError, MemoryError) as exc:
+            logger.warning(
+                "Stats loader fallback for %s: orjson mmap parse failed: %s",
+                label,
+                exc,
+            )
+            print(f"⚠️ Stats loader fallback for {label}: switching to json.load()")
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+
+    def _load_small_supporting_dicts():
+        nonlocal comeback_path, comeback_meta_path, late_comeback_ceiling_path
+        global lane_data, comeback_dict, comeback_meta, comeback_baseline_wr_pct
+        global late_comeback_ceiling_data, late_comeback_ceiling_thresholds, late_comeback_ceiling_max_minute
+
+        if lane_data is None:
+            print(f"📦 Loading lane stats: {lane_path}")
+            lane_data = _load_json_object(lane_path, "lane_dict_raw")
+            gc.collect()
+
+        if comeback_dict is None:
+            if Path(comeback_path).exists():
+                print(f"📦 Loading comeback stats: {comeback_path}")
+                comeback_dict = _load_json_object(comeback_path, "comeback_solo_dict")
+            else:
+                logger.warning("Comeback solo stats file not found: %s", comeback_path)
+                print(f"⚠️ Comeback solo stats file not found: {comeback_path}")
+                comeback_dict = {}
+            gc.collect()
+
+        if comeback_meta is None and comeback_baseline_wr_pct is None:
+            comeback_meta = None
+            comeback_baseline_wr_pct = None
+            if Path(comeback_meta_path).exists():
+                try:
+                    with open(comeback_meta_path, "r", encoding="utf-8") as f:
+                        comeback_meta = json.load(f)
+                    comeback_baseline_wr_pct = float((comeback_meta or {}).get("baseline_wr_pct"))
+                except Exception:
+                    comeback_meta = None
+                    comeback_baseline_wr_pct = None
+            else:
+                logger.warning("Comeback solo meta file not found: %s", comeback_meta_path)
+                print(f"⚠️ Comeback solo meta file not found: {comeback_meta_path}")
+
+        if late_comeback_ceiling_data is None:
+            late_comeback_ceiling_data = {}
+            late_comeback_ceiling_thresholds = {}
+            late_comeback_ceiling_max_minute = None
+            if Path(late_comeback_ceiling_path).exists():
+                try:
+                    with open(late_comeback_ceiling_path, "r", encoding="utf-8") as f:
+                        late_comeback_ceiling_data = json.load(f)
+                    late_comeback_ceiling_thresholds = dict(
+                        (late_comeback_ceiling_data or {}).get("thresholds_by_minute") or {}
+                    )
+                    minute_keys = [
+                        int(k)
+                        for k in late_comeback_ceiling_thresholds.keys()
+                        if str(k).strip().lstrip("-").isdigit()
+                    ]
+                    late_comeback_ceiling_max_minute = max(minute_keys) if minute_keys else None
+                except Exception:
+                    late_comeback_ceiling_data = {}
+                    late_comeback_ceiling_thresholds = {}
+                    late_comeback_ceiling_max_minute = None
 
     default_stats_dir = str(ANALYSE_PUB_DIR)
     stats_dir = os.getenv("STATS_DIR", default_stats_dir)
@@ -11302,52 +11373,58 @@ def _load_stats_dicts():
         if Path(fallback_lane).exists():
             lane_path = fallback_lane
 
-    lane_data = _load_json_mmap(lane_path)
-    gc.collect()
-    early_dict = _load_json_mmap(early_path)
-    gc.collect()
-    late_dict = _load_json_mmap(late_path)
-    gc.collect()
-    if Path(comeback_path).exists():
-        comeback_dict = _load_json_mmap(comeback_path)
+    _load_small_supporting_dicts()
+
+    if not STATS_SEQUENTIAL_WARMUP_ENABLED:
+        if early_dict is None:
+            print(f"📦 Loading early stats: {early_path}")
+            early_dict = _load_json_object(early_path, "early_dict_raw")
+            gc.collect()
+        if late_dict is None:
+            print(f"📦 Loading late stats: {late_path}")
+            late_dict = _load_json_object(late_path, "late_dict_raw")
+            gc.collect()
+        return (
+            lane_data is not None
+            and early_dict is not None
+            and late_dict is not None
+            and comeback_dict is not None
+            and late_comeback_ceiling_data is not None
+        )
+
+    if stats_warmup_last_heavy_load_ts == 0.0 and (early_dict is None or late_dict is None):
+        stats_warmup_last_heavy_load_ts = time.time()
+        return False
+
+    now_ts = time.time()
+    remaining_heavy = []
+    if early_dict is None:
+        remaining_heavy.append(("early", early_path))
+    if late_dict is None:
+        remaining_heavy.append(("late", late_path))
+
+    if not remaining_heavy:
+        return True
+
+    if stats_warmup_last_heavy_load_ts and (now_ts - stats_warmup_last_heavy_load_ts) < STATS_WARMUP_STEP_DELAY_SECONDS:
+        return False
+
+    next_label, next_path = remaining_heavy[0]
+    print(f"📦 Warmup loading {next_label} stats: {next_path}")
+    next_payload = _load_json_object(next_path, f"{next_label}_dict_raw")
+    if next_label == "early":
+        early_dict = next_payload
     else:
-        logger.warning("Comeback solo stats file not found: %s", comeback_path)
-        print(f"⚠️ Comeback solo stats file not found: {comeback_path}")
-        comeback_dict = {}
+        late_dict = next_payload
+    stats_warmup_last_heavy_load_ts = time.time()
     gc.collect()
-    comeback_meta = None
-    comeback_baseline_wr_pct = None
-    if Path(comeback_meta_path).exists():
-        try:
-            with open(comeback_meta_path, "r", encoding="utf-8") as f:
-                comeback_meta = json.load(f)
-            comeback_baseline_wr_pct = float((comeback_meta or {}).get("baseline_wr_pct"))
-        except Exception:
-            comeback_meta = None
-            comeback_baseline_wr_pct = None
-    else:
-        logger.warning("Comeback solo meta file not found: %s", comeback_meta_path)
-        print(f"⚠️ Comeback solo meta file not found: {comeback_meta_path}")
-    late_comeback_ceiling_data = {}
-    late_comeback_ceiling_thresholds = {}
-    late_comeback_ceiling_max_minute = None
-    if Path(late_comeback_ceiling_path).exists():
-        try:
-            with open(late_comeback_ceiling_path, "r", encoding="utf-8") as f:
-                late_comeback_ceiling_data = json.load(f)
-            late_comeback_ceiling_thresholds = dict(
-                (late_comeback_ceiling_data or {}).get("thresholds_by_minute") or {}
-            )
-            minute_keys = [
-                int(k)
-                for k in late_comeback_ceiling_thresholds.keys()
-                if str(k).strip().lstrip("-").isdigit()
-            ]
-            late_comeback_ceiling_max_minute = max(minute_keys) if minute_keys else None
-        except Exception:
-            late_comeback_ceiling_data = {}
-            late_comeback_ceiling_thresholds = {}
-            late_comeback_ceiling_max_minute = None
+    return (
+        lane_data is not None
+        and early_dict is not None
+        and late_dict is not None
+        and comeback_dict is not None
+        and late_comeback_ceiling_data is not None
+    )
 
 
 def _load_tempo_stats_dicts() -> bool:
@@ -11557,8 +11634,25 @@ def general(return_status=None, use_proxy=None, odds=None):
     if use_proxy != USE_PROXY:
         _init_proxy_pool(use_proxy)
 
-    # Гарантируем загрузку словарей перед обработкой матчей
-    _load_stats_dicts()
+    # Гарантируем staged warmup словарей перед обработкой матчей.
+    # На слабых серверах early/late грузим по шагам, чтобы не давать один резкий пик.
+    stats_ready = _load_stats_dicts()
+    if not stats_ready:
+        warmup_parts = []
+        if lane_data is not None:
+            warmup_parts.append("lane")
+        if early_dict is not None:
+            warmup_parts.append("early")
+        if late_dict is not None:
+            warmup_parts.append("late")
+        if comeback_dict is not None:
+            warmup_parts.append("comeback")
+        print(
+            "⏳ Stats warmup in progress: "
+            f"loaded={','.join(warmup_parts) or 'none'}; "
+            f"step_delay={int(STATS_WARMUP_STEP_DELAY_SECONDS)}s"
+        )
+        return None
 
     logger.info(f"\n{'='*60}\n🔄 НАЧАЛО ЦИКЛА ПРОВЕРКИ МАТЧЕЙ\n{'='*60}")
 
