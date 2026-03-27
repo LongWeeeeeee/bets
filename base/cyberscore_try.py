@@ -28,7 +28,7 @@ import tempfile
 import numpy as np
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any, Tuple, Union
 import math
 from bs4 import BeautifulSoup
 import requests
@@ -82,6 +82,31 @@ except ImportError:
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
+_RUNTIME_ALERTED_ERRORS: set[str] = set()
+
+
+def _notify_runtime_error_once(message: str, *, dedupe_key: Optional[str] = None) -> None:
+    key = dedupe_key or message
+    if key in _RUNTIME_ALERTED_ERRORS:
+        return
+    _RUNTIME_ALERTED_ERRORS.add(key)
+    logger.error(message)
+    try:
+        send_message(message)
+    except Exception as exc:
+        logger.warning("Failed to deliver runtime error alert to Telegram: %s", exc)
+
+
+def _report_missing_runtime_file(label: str, path: Union[Path, str], *, details: Optional[str] = None) -> None:
+    path_obj = Path(path)
+    message = f"⚠️ Missing runtime file: {label}\nPath: {path_obj}"
+    if details:
+        message += f"\nDetails: {details}"
+    _notify_runtime_error_once(message, dedupe_key=f"missing:{label}:{path_obj}")
+
+
+def _get_id_to_names_path() -> Path:
+    return BASE_DIR / "id_to_names.py"
 
 _python_executable = str(sys.executable)
 _python_executable_resolved = str(Path(sys.executable).resolve())
@@ -2989,8 +3014,13 @@ def _stop_bookmaker_prefetch_worker() -> None:
     bookmaker_prefetch_thread = None
     print("🧵 Bookmaker prefetch worker stopped")
 
-with (BASE_DIR / 'hero_valid_positions_simple.json').open('r', encoding='utf-8') as f:
-    HERO_VALID_POSITIONS_DICT = json.load(f)
+try:
+    with (BASE_DIR / 'hero_valid_positions_simple.json').open('r', encoding='utf-8') as f:
+        HERO_VALID_POSITIONS_DICT = json.load(f)
+except Exception as e:
+    HERO_VALID_POSITIONS_DICT = {}
+    print(f"⚠️ Не удалось загрузить hero_valid_positions_simple.json: {e}")
+    _report_missing_runtime_file("hero_valid_positions_simple.json", BASE_DIR / "hero_valid_positions_simple.json", details=str(e))
 try:
     with (BASE_DIR / 'hero_valid_positions_counts_500k.json').open('r', encoding='utf-8') as f:
         _raw_counts = json.load(f)
@@ -3001,12 +3031,22 @@ try:
 except Exception as e:
     HERO_POSITION_COUNTS = {}
     print(f"⚠️ Не удалось загрузить hero_valid_positions_counts_500k.json: {e}")
+    _report_missing_runtime_file(
+        "hero_valid_positions_counts_500k.json",
+        BASE_DIR / "hero_valid_positions_counts_500k.json",
+        details=str(e),
+    )
 try:
     with (BASE_DIR / 'hero_valid_positions_counts_500k.json').open('r', encoding='utf-8') as f:
         HERO_ID_TO_NAME = json.load(f)
 except Exception as e:
     HERO_ID_TO_NAME = {}
-    print(f"⚠️ Не удалось загрузить heroes.json: {e}")
+    print(f"⚠️ Не удалось загрузить hero_valid_positions_counts_500k.json (hero names fallback): {e}")
+    _report_missing_runtime_file(
+        "hero_valid_positions_counts_500k.json (hero names fallback)",
+        BASE_DIR / "hero_valid_positions_counts_500k.json",
+        details=str(e),
+    )
 
 
 trash_list=['team', 'flipster', 'esports', 'gaming', ' ', '.']
@@ -3398,7 +3438,7 @@ def _append_team_to_tier2_file(team_name: str, team_id: int) -> tuple[bool, str]
                     tier_two_teams[key] = {existing_id, team_id}
             _auto_added_tier2_ids.add(team_id)
 
-            id_to_names_path = Path('/Users/alex/Documents/ingame/base/id_to_names.py')
+            id_to_names_path = _get_id_to_names_path()
             append_block = (
                 "\n# auto-added by cyberscore_try (dynamic tier2 onboarding)\n"
                 "try:\n"
@@ -3653,7 +3693,7 @@ def get_team_context(
     # Load CSV once
     if _pro_matches_df is None:
         try:
-            _pro_matches_df = pd.read_csv('/Users/alex/Documents/ingame/data/pro_matches_enriched.csv')
+            _pro_matches_df = pd.read_csv(DATA_DIR / 'pro_matches_enriched.csv')
             if 'start_time' in _pro_matches_df.columns:
                 _pro_matches_df = _pro_matches_df.sort_values('start_time')
             else:
@@ -4232,7 +4272,7 @@ def _load_kills_rules() -> Dict[str, Any]:
     global KILLS_RULES
     if KILLS_RULES is not None:
         return KILLS_RULES
-    rules_path = Path("/Users/alex/Documents/ingame/ml-models/kills_betting_rules.json")
+    rules_path = ML_MODELS_DIR / "kills_betting_rules.json"
     if rules_path.exists():
         try:
             with rules_path.open("r", encoding="utf-8") as f:
@@ -4250,7 +4290,7 @@ def _load_kills_rules() -> Dict[str, Any]:
 
 def _load_team_predictability() -> Dict[int, Dict[str, Any]]:
     global TEAM_PREDICTABILITY_CACHE, TEAM_PREDICTABILITY_MTIME
-    path = Path("/Users/alex/Documents/ingame/reports/team_kills_predictability.json")
+    path = REPORTS_DIR / "team_kills_predictability.json"
     if not path.exists():
         return {}
 
@@ -4385,7 +4425,7 @@ def _load_pub_hero_priors() -> Dict[int, Dict[str, float]]:
     global KILLS_PUB_PRIORS
     if KILLS_PUB_PRIORS is not None:
         return KILLS_PUB_PRIORS
-    priors_path = Path("/Users/alex/Documents/ingame/ml-models/pub_hero_priors.json")
+    priors_path = ML_MODELS_DIR / "pub_hero_priors.json"
     if priors_path.exists():
         try:
             with priors_path.open("r", encoding="utf-8") as f:
@@ -4426,7 +4466,7 @@ def _load_kills_models() -> bool:
         logger.warning(f"CatBoost not available: {e}")
         return False
 
-    meta_path = Path("/Users/alex/Documents/ingame/ml-models/live_cb_kills_reg_meta.json")
+    meta_path = ML_MODELS_DIR / "live_cb_kills_reg_meta.json"
     if not meta_path.exists():
         logger.warning("Kills meta not found: %s", meta_path)
         return False
@@ -4438,26 +4478,26 @@ def _load_kills_models() -> bool:
     models = {}
     try:
         reg_all = CatBoostRegressor()
-        reg_all.load_model("/Users/alex/Documents/ingame/ml-models/live_cb_kills_reg.cbm")
+        reg_all.load_model(str(ML_MODELS_DIR / "live_cb_kills_reg.cbm"))
         models["reg_all"] = reg_all
         reg_low = CatBoostRegressor()
-        reg_low.load_model("/Users/alex/Documents/ingame/ml-models/live_cb_kills_reg_low.cbm")
+        reg_low.load_model(str(ML_MODELS_DIR / "live_cb_kills_reg_low.cbm"))
         models["reg_low"] = reg_low
         reg_high = CatBoostRegressor()
-        reg_high.load_model("/Users/alex/Documents/ingame/ml-models/live_cb_kills_reg_high.cbm")
+        reg_high.load_model(str(ML_MODELS_DIR / "live_cb_kills_reg_high.cbm"))
         models["reg_high"] = reg_high
         cls_low = CatBoostClassifier()
-        cls_low.load_model("/Users/alex/Documents/ingame/ml-models/live_cb_kills_low_cls.cbm")
+        cls_low.load_model(str(ML_MODELS_DIR / "live_cb_kills_low_cls.cbm"))
         models["cls_low"] = cls_low
         cls_high = CatBoostClassifier()
-        cls_high.load_model("/Users/alex/Documents/ingame/ml-models/live_cb_kills_high_cls.cbm")
+        cls_high.load_model(str(ML_MODELS_DIR / "live_cb_kills_high_cls.cbm"))
         models["cls_high"] = cls_high
     except Exception as e:
         logger.warning(f"Failed to load kills models: {e}")
         return False
 
-    q10_path = Path("/Users/alex/Documents/ingame/ml-models/live_cb_kills_reg_q10.cbm")
-    q90_path = Path("/Users/alex/Documents/ingame/ml-models/live_cb_kills_reg_q90.cbm")
+    q10_path = ML_MODELS_DIR / "live_cb_kills_reg_q10.cbm"
+    q90_path = ML_MODELS_DIR / "live_cb_kills_reg_q90.cbm"
     if q10_path.exists() and q90_path.exists():
         try:
             q10_model = CatBoostRegressor()
@@ -4496,7 +4536,7 @@ def _load_kills_group_models(kind: str, key: Any) -> Optional[Dict[str, Any]]:
     else:
         suffix = f"tier_{key}"
 
-    models_dir = Path("/Users/alex/Documents/ingame/ml-models")
+    models_dir = ML_MODELS_DIR
     reg_all_path = models_dir / f"live_cb_kills_reg_{suffix}.cbm"
     reg_low_path = models_dir / f"live_cb_kills_reg_{suffix}_low.cbm"
     reg_high_path = models_dir / f"live_cb_kills_reg_{suffix}_high.cbm"
@@ -4542,9 +4582,7 @@ def _build_kills_priors() -> Dict[str, Any]:
         if cached.get("priors_version") == 8:
             return cached
 
-    clean_path = Path(
-        "/Users/alex/Documents/ingame/pro_heroes_data/json_parts_split_from_object/clean_data.json"
-    )
+    clean_path = PRO_HEROES_DIR / "json_parts_split_from_object" / "clean_data.json"
     with clean_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
     matches: List[Tuple[int, Dict[str, Any]]] = []
@@ -11693,6 +11731,9 @@ def _load_stats_dicts():
             with open(path, "rb") as f:
                 with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
                     return orjson.loads(memoryview(mm))
+        except FileNotFoundError as exc:
+            _report_missing_runtime_file(label, Path(path), details=str(exc))
+            raise
         except (orjson.JSONDecodeError, MemoryError) as exc:
             logger.warning(
                 "Stats loader fallback for %s: orjson mmap parse failed: %s",
@@ -11700,8 +11741,12 @@ def _load_stats_dicts():
                 exc,
             )
             print(f"⚠️ Stats loader fallback for {label}: switching to json.load()")
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except FileNotFoundError as file_exc:
+                _report_missing_runtime_file(label, Path(path), details=str(file_exc))
+                raise
 
     def _load_small_supporting_dicts():
         nonlocal comeback_path, comeback_meta_path, late_comeback_ceiling_path
@@ -11720,6 +11765,7 @@ def _load_stats_dicts():
             else:
                 logger.warning("Comeback solo stats file not found: %s", comeback_path)
                 print(f"⚠️ Comeback solo stats file not found: {comeback_path}")
+                _report_missing_runtime_file("comeback_solo_dict_21plus.json", Path(comeback_path))
                 comeback_dict = {}
             gc.collect()
 
@@ -11737,6 +11783,7 @@ def _load_stats_dicts():
             else:
                 logger.warning("Comeback solo meta file not found: %s", comeback_meta_path)
                 print(f"⚠️ Comeback solo meta file not found: {comeback_meta_path}")
+                _report_missing_runtime_file("comeback_solo_dict_21plus_meta.json", Path(comeback_meta_path))
 
         if late_comeback_ceiling_data is None:
             late_comeback_ceiling_data = {}
@@ -11759,6 +11806,16 @@ def _load_stats_dicts():
                     late_comeback_ceiling_data = {}
                     late_comeback_ceiling_thresholds = {}
                     late_comeback_ceiling_max_minute = None
+                    _report_missing_runtime_file(
+                        "tier1_no_alchemist_comeback_ceiling_by_minute.json",
+                        Path(late_comeback_ceiling_path),
+                        details="failed to parse comeback ceiling file",
+                    )
+            else:
+                _report_missing_runtime_file(
+                    "tier1_no_alchemist_comeback_ceiling_by_minute.json",
+                    Path(late_comeback_ceiling_path),
+                )
 
     default_stats_dir = str(ANALYSE_PUB_DIR)
     stats_dir = os.getenv("STATS_DIR", default_stats_dir)

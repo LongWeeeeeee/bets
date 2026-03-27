@@ -602,9 +602,16 @@ try:
     TELEGRAM_UPDATES_FETCH_LIMIT = max(1, int(os.getenv("TELEGRAM_UPDATES_FETCH_LIMIT", "100")))
 except (TypeError, ValueError):
     TELEGRAM_UPDATES_FETCH_LIMIT = 100
-TELEGRAM_SUBSCRIBERS_STATE_PATH = Path(
-    str(os.getenv("TELEGRAM_SUBSCRIBERS_STATE_PATH", "runtime/telegram_subscribers_state.json")).strip()
-    or "runtime/telegram_subscribers_state.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH = PROJECT_ROOT / "runtime" / "telegram_subscribers_state.json"
+DEFAULT_TELEGRAM_SUBSCRIBERS_STATE_PATH = (
+    Path.home() / ".local" / "state" / "ingame" / "telegram_subscribers_state.json"
+)
+_telegram_state_path_override = str(os.getenv("TELEGRAM_SUBSCRIBERS_STATE_PATH", "")).strip()
+TELEGRAM_SUBSCRIBERS_STATE_PATH = (
+    Path(_telegram_state_path_override)
+    if _telegram_state_path_override
+    else DEFAULT_TELEGRAM_SUBSCRIBERS_STATE_PATH
 )
 TELEGRAM_SEND_PROXY_FALLBACK_ENABLED = str(
     os.getenv("TELEGRAM_SEND_PROXY_FALLBACK_ENABLED", "1")
@@ -620,6 +627,21 @@ try:
 except (TypeError, ValueError):
     TELEGRAM_SEND_CURL_TIMEOUT_SECONDS = TELEGRAM_SEND_TIMEOUT_SECONDS + 2.0
 TELEGRAM_SUBSCRIBERS_LOCK = threading.Lock()
+
+
+def _iter_telegram_state_paths() -> list[Path]:
+    paths: list[Path] = []
+    seen: set[str] = set()
+    for candidate in (TELEGRAM_SUBSCRIBERS_STATE_PATH, LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH):
+        try:
+            resolved = str(Path(candidate))
+        except Exception:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        paths.append(Path(candidate))
+    return paths
 
 
 def _telegram_raise_delivery_error(
@@ -685,41 +707,58 @@ def _write_json_atomic(path: Path, payload) -> None:
 
 def _load_telegram_subscribers_state() -> dict:
     defaults = _get_default_telegram_chat_ids()
-    state = {"chat_ids": defaults, "last_update_id": 0}
-    try:
-        raw = TELEGRAM_SUBSCRIBERS_STATE_PATH.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return state
-    except OSError as exc:
-        logger.warning("Failed to read Telegram subscribers state: %s", exc)
-        return state
-    if not raw.strip():
-        return state
-    try:
-        data = json.loads(raw)
-    except ValueError as exc:
-        logger.warning("Failed to parse Telegram subscribers state: %s", exc)
-        return state
-    if not isinstance(data, dict):
-        return state
-    raw_chat_ids = []
-    chat_ids = []
-    for item in data.get("chat_ids", []):
-        normalized = _telegram_normalize_chat_id(item)
-        if normalized:
-            raw_chat_ids.append(normalized)
-            chat_ids.append(normalized)
-    for item in defaults:
-        if item not in chat_ids:
-            chat_ids.append(item)
-    try:
-        last_update_id = int(data.get("last_update_id") or 0)
-    except (TypeError, ValueError):
-        last_update_id = 0
+    chat_ids = list(defaults)
+    loaded_any = False
+    needs_persist = False
+    max_last_update_id = 0
+
+    for state_path in _iter_telegram_state_paths():
+        try:
+            raw = state_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            logger.warning("Failed to read Telegram subscribers state %s: %s", state_path, exc)
+            continue
+        if not raw.strip():
+            continue
+        try:
+            data = json.loads(raw)
+        except ValueError as exc:
+            logger.warning("Failed to parse Telegram subscribers state %s: %s", state_path, exc)
+            continue
+        if not isinstance(data, dict):
+            continue
+
+        loaded_any = True
+        raw_chat_ids: list[str] = []
+        normalized_chat_ids: list[str] = []
+        for item in data.get("chat_ids", []):
+            normalized = _telegram_normalize_chat_id(item)
+            if normalized:
+                raw_chat_ids.append(normalized)
+                normalized_chat_ids.append(normalized)
+                if normalized not in chat_ids:
+                    chat_ids.append(normalized)
+                    needs_persist = True
+        if raw_chat_ids != normalized_chat_ids:
+            needs_persist = True
+        if state_path != TELEGRAM_SUBSCRIBERS_STATE_PATH:
+            needs_persist = True
+        try:
+            last_update_id = int(data.get("last_update_id") or 0)
+        except (TypeError, ValueError):
+            last_update_id = 0
+        if last_update_id > max_last_update_id:
+            max_last_update_id = last_update_id
+
+    if not loaded_any:
+        return {"chat_ids": chat_ids, "last_update_id": 0}
+
     return {
         "chat_ids": chat_ids,
-        "last_update_id": last_update_id,
-        "_needs_persist": raw_chat_ids != chat_ids,
+        "last_update_id": max_last_update_id,
+        "_needs_persist": needs_persist,
     }
 
 
@@ -736,10 +775,13 @@ def _save_telegram_subscribers_state(state: dict) -> None:
         last_update_id = int(state.get("last_update_id") or 0)
     except (TypeError, ValueError):
         last_update_id = 0
-    _write_json_atomic(
-        TELEGRAM_SUBSCRIBERS_STATE_PATH,
-        {"chat_ids": chat_ids, "last_update_id": last_update_id},
-    )
+    payload = {"chat_ids": chat_ids, "last_update_id": last_update_id}
+    _write_json_atomic(TELEGRAM_SUBSCRIBERS_STATE_PATH, payload)
+    if LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH != TELEGRAM_SUBSCRIBERS_STATE_PATH:
+        try:
+            _write_json_atomic(LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH, payload)
+        except OSError as exc:
+            logger.warning("Failed to sync legacy Telegram subscribers state: %s", exc)
 
 
 def _extract_chat_ids_from_telegram_update(update) -> list[str]:
@@ -1501,7 +1543,7 @@ def process_matchup_data(position, matchups, opposing_team_positions):
 
 
 STAR_THRESHOLDS_PATH = Path(
-    os.getenv('STAR_THRESHOLDS_PATH', '/Users/alex/Documents/ingame/data/star_thresholds_by_wr.json')
+    os.getenv('STAR_THRESHOLDS_PATH', str(PROJECT_ROOT / 'data' / 'star_thresholds_by_wr.json'))
 )
 
 # Fallback, если JSON не найден
@@ -2401,7 +2443,7 @@ def _ids_from_names(*hero_names):
 COUNTERPLAY_HERO_FEATURES_PATH = Path(
     os.getenv(
         "COUNTERPLAY_HERO_FEATURES_PATH",
-        os.getenv("HERO_FEATURES_FILE", "/Users/alex/Documents/ingame/data/hero_features_processed.json"),
+        os.getenv("HERO_FEATURES_FILE", str(PROJECT_ROOT / "base" / "hero_features_processed.json")),
     )
 )
 

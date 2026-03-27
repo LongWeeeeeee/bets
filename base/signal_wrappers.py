@@ -10,18 +10,18 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
-
-DEFAULT_HERO_FEATURES_PATH = Path("/Users/alex/Documents/ingame/data/hero_features_processed.json")
-DEFAULT_WRAPPER_CONFIG_PATH = Path("/Users/alex/Documents/ingame/data/hero_signal_wrappers.json")
-DEFAULT_ML_MODEL_SET_DIR = Path("/Users/alex/Documents/ingame/ml-models/phase_models_early66_latebase")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_HERO_FEATURES_PATH = PROJECT_ROOT / "base" / "hero_features_processed.json"
+DEFAULT_WRAPPER_CONFIG_PATH = PROJECT_ROOT / "data" / "hero_signal_wrappers.json"
+DEFAULT_ML_MODEL_SET_DIR = PROJECT_ROOT / "ml-models" / "phase_models_early66_latebase"
 DEFAULT_ML_EARLY_MODEL_PATH = DEFAULT_ML_MODEL_SET_DIR / "phase_signal_wrapper_early.pkl"
 DEFAULT_ML_LATE_MODEL_PATH = DEFAULT_ML_MODEL_SET_DIR / "phase_signal_wrapper_late.pkl"
-LEGACY_ML_EARLY_MODEL_PATH = Path("/Users/alex/Documents/ingame/ml-models/phase_signal_wrapper_early.pkl")
-LEGACY_ML_LATE_MODEL_PATH = Path("/Users/alex/Documents/ingame/ml-models/phase_signal_wrapper_late.pkl")
+LEGACY_ML_EARLY_MODEL_PATH = PROJECT_ROOT / "ml-models" / "phase_signal_wrapper_early.pkl"
+LEGACY_ML_LATE_MODEL_PATH = PROJECT_ROOT / "ml-models" / "phase_signal_wrapper_late.pkl"
 DEFAULT_REQUIRED_SKLEARN_VERSION = "1.6.1"
-DEFAULT_RUNTIME_REQUIREMENTS_PATH = Path("/Users/alex/Documents/ingame/data/ml_wrapper_runtime_requirements.json")
+DEFAULT_RUNTIME_REQUIREMENTS_PATH = PROJECT_ROOT / "data" / "ml_wrapper_runtime_requirements.json"
 STAR_THRESHOLDS_PATH = Path(
-    os.getenv("STAR_THRESHOLDS_PATH", "/Users/alex/Documents/ingame/data/star_thresholds_by_wr.json")
+    os.getenv("STAR_THRESHOLDS_PATH", str(PROJECT_ROOT / "data" / "star_thresholds_by_wr.json"))
 )
 _SKLEARN_VERSION_WARNED: set[str] = set()
 logger = logging.getLogger(__name__)
