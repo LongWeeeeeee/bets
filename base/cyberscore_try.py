@@ -604,6 +604,10 @@ def _load_star_confidence_calibration() -> Dict[str, Dict[int, float]]:
 
 
 STAR_CONFIDENCE_CALIBRATION = _load_star_confidence_calibration()
+if not (DATA_DIR / "star_thresholds_by_wr.json").exists():
+    _report_missing_runtime_file("star_thresholds_by_wr.json", DATA_DIR / "star_thresholds_by_wr.json")
+if not STAR_CONFIDENCE_CALIBRATION_PATH.exists():
+    _report_missing_runtime_file("star_confidence_calibration.json", STAR_CONFIDENCE_CALIBRATION_PATH)
 STAR_ODDS_USE_CALIBRATION = _safe_bool_env("STAR_ODDS_USE_CALIBRATION", False)
 
 # Fallback ladder for dynamic WR display when only base WR=60 thresholds are available.
