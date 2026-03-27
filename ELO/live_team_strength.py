@@ -351,6 +351,193 @@ def _winner_slot_from_scores(
     return None
 
 
+def _preview_lineup_rating_from_model(
+    *,
+    model: HybridPlayerRosterEloModel,
+    team_id: int | None,
+    team_name: str,
+    player_ids: tuple[int, ...],
+    player_positions: tuple[str | None, ...] | None,
+    tier: LeagueTier,
+    timestamp: int,
+    player_only_fallback_roster_matches: int = DEFAULT_PLAYER_ONLY_FALLBACK_ROSTER_MATCHES,
+) -> dict[str, Any]:
+    preview = model.preview_team_strength(
+        team_id=team_id,
+        team_name=team_name,
+        player_ids=player_ids,
+        player_positions=player_positions,
+        tier=tier,
+        timestamp=max(int(timestamp or 0), 1),
+    )
+    team_strength = float(preview["team_strength"])
+    player_strength = float(preview["player_strength"])
+    roster_matches = int(preview["roster_matches"])
+    rating_source = "lineup_team_strength"
+    base_rating = team_strength
+    if roster_matches < max(0, int(player_only_fallback_roster_matches)):
+        base_rating = player_strength
+        rating_source = "lineup_player_strength_cold_roster"
+    return {
+        "team_id": team_id,
+        "team_name": str(team_name or ""),
+        "base_rating": base_rating,
+        "team_strength": team_strength,
+        "player_strength": player_strength,
+        "prior_blended_strength": float(preview["prior_blended_strength"]),
+        "player_global_avg": float(preview["player_global_avg"]),
+        "player_local_avg": float(preview["player_local_avg"]),
+        "roster_rating": float(preview["roster_rating"]),
+        "roster_matches": roster_matches,
+        "roster_weight": float(preview["roster_weight"]),
+        "roster_key": str(preview["roster_key"]),
+        "rating_source": rating_source,
+        "lineup_player_count": len(player_ids),
+    }
+
+
+def _preview_live_matchup_from_model(
+    *,
+    model: HybridPlayerRosterEloModel,
+    match: MatchRecord,
+    tier_matchup_elo_bonus: dict[str, Any] | None = None,
+    elo_scale: float = 400.0,
+    player_only_fallback_roster_matches: int = DEFAULT_PLAYER_ONLY_FALLBACK_ROSTER_MATCHES,
+) -> dict[str, Any]:
+    tier_bonus_map = tier_matchup_elo_bonus if isinstance(tier_matchup_elo_bonus, dict) else {}
+    radiant_payload = _preview_lineup_rating_from_model(
+        model=model,
+        team_id=match.radiant_team_id,
+        team_name=match.radiant_team_name,
+        player_ids=match.radiant_player_ids,
+        player_positions=match.radiant_player_positions or None,
+        tier=match.derived_league_tier,
+        timestamp=match.timestamp,
+        player_only_fallback_roster_matches=player_only_fallback_roster_matches,
+    )
+    dire_payload = _preview_lineup_rating_from_model(
+        model=model,
+        team_id=match.dire_team_id,
+        team_name=match.dire_team_name,
+        player_ids=match.dire_player_ids,
+        player_positions=match.dire_player_positions or None,
+        tier=match.derived_league_tier,
+        timestamp=match.timestamp,
+        player_only_fallback_roster_matches=player_only_fallback_roster_matches,
+    )
+    radiant_known_tier = get_known_team_tier(match.radiant_team_id, match.radiant_team_name)
+    dire_known_tier = get_known_team_tier(match.dire_team_id, match.dire_team_name)
+    tier_gap_bonus = 0.0
+    tier_gap_key: str | None = None
+    if (
+        radiant_known_tier is not None
+        and dire_known_tier is not None
+        and radiant_known_tier != dire_known_tier
+    ):
+        if radiant_known_tier.value < dire_known_tier.value:
+            tier_gap_key = f"{radiant_known_tier.value}_vs_{dire_known_tier.value}"
+            tier_gap_bonus = float((tier_bonus_map.get(tier_gap_key) or {}).get("elo_bonus", 0.0))
+        else:
+            tier_gap_key = f"{dire_known_tier.value}_vs_{radiant_known_tier.value}"
+            tier_gap_bonus = -float((tier_bonus_map.get(tier_gap_key) or {}).get("elo_bonus", 0.0))
+    radiant_rating = float(radiant_payload["base_rating"]) + (tier_gap_bonus / 2.0)
+    dire_rating = float(dire_payload["base_rating"]) - (tier_gap_bonus / 2.0)
+    radiant_win_prob = _elo_probability(radiant_rating - dire_rating, elo_scale)
+    radiant_payload["rating"] = radiant_rating
+    dire_payload["rating"] = dire_rating
+    return {
+        "radiant": radiant_payload,
+        "dire": dire_payload,
+        "radiant_win_prob": radiant_win_prob,
+        "dire_win_prob": 1.0 - radiant_win_prob,
+        "elo_diff": radiant_rating - dire_rating,
+        "tier_gap_key": tier_gap_key,
+        "tier_gap_bonus": tier_gap_bonus,
+    }
+
+
+def _build_live_applied_update(
+    *,
+    snapshot: dict[str, Any],
+    model: HybridPlayerRosterEloModel,
+    match: MatchRecord,
+    map_key: str,
+    series_key: str,
+    series_url: str,
+    winner_slot: str,
+    radiant_win: bool,
+    previous_scores: dict[str, int],
+    current_scores: dict[str, int],
+    first_team_is_radiant: bool,
+) -> dict[str, Any]:
+    meta = snapshot.get("meta") or {}
+    before_summary = _preview_live_matchup_from_model(
+        model=model,
+        match=match,
+        tier_matchup_elo_bonus=meta.get("tier_matchup_elo_bonus"),
+    )
+    model.process_match(match)
+    after_summary = _preview_live_matchup_from_model(
+        model=model,
+        match=match,
+        tier_matchup_elo_bonus=meta.get("tier_matchup_elo_bonus"),
+    )
+    first_team_name = match.radiant_team_name if first_team_is_radiant else match.dire_team_name
+    second_team_name = match.dire_team_name if first_team_is_radiant else match.radiant_team_name
+    winner_team_name = first_team_name if winner_slot == "first" else second_team_name
+
+    def _side_delta(side: str) -> dict[str, Any]:
+        before_side = before_summary.get(side) or {}
+        after_side = after_summary.get(side) or {}
+        before_rating = float(before_side.get("rating", before_side.get("base_rating", LEADERBOARD_BASELINE)))
+        after_rating = float(after_side.get("rating", after_side.get("base_rating", before_rating)))
+        before_base = float(before_side.get("base_rating", before_rating))
+        after_base = float(after_side.get("base_rating", after_rating))
+        return {
+            "team_name": str(after_side.get("team_name") or before_side.get("team_name") or ""),
+            "team_id": after_side.get("team_id", before_side.get("team_id")),
+            "rating_source": str(after_side.get("rating_source") or before_side.get("rating_source") or ""),
+            "before_rating": before_rating,
+            "after_rating": after_rating,
+            "delta": after_rating - before_rating,
+            "before_base_rating": before_base,
+            "after_base_rating": after_base,
+            "base_delta": after_base - before_base,
+            "before_roster_matches": int(before_side.get("roster_matches", 0) or 0),
+            "after_roster_matches": int(after_side.get("roster_matches", 0) or 0),
+        }
+
+    return {
+        "map_key": map_key,
+        "series_key": series_key,
+        "series_url": series_url,
+        "winner_slot": winner_slot,
+        "radiant_win": bool(radiant_win),
+        "match_id": int(match.match_id),
+        "series_score_before": {
+            "first": int(previous_scores.get("first", 0)),
+            "second": int(previous_scores.get("second", 0)),
+        },
+        "series_score_after": {
+            "first": int(current_scores.get("first", 0)),
+            "second": int(current_scores.get("second", 0)),
+        },
+        "first_team_name": str(first_team_name or ""),
+        "second_team_name": str(second_team_name or ""),
+        "winner_team_name": str(winner_team_name or ""),
+        "radiant_team_name": str(match.radiant_team_name or ""),
+        "dire_team_name": str(match.dire_team_name or ""),
+        "radiant": _side_delta("radiant"),
+        "dire": _side_delta("dire"),
+        "radiant_win_prob_before": float(before_summary.get("radiant_win_prob", 0.5)),
+        "radiant_win_prob_after": float(after_summary.get("radiant_win_prob", 0.5)),
+        "radiant_win_prob_delta": float(after_summary.get("radiant_win_prob", 0.5))
+        - float(before_summary.get("radiant_win_prob", 0.5)),
+        "elo_diff_before": float(before_summary.get("elo_diff", 0.0)),
+        "elo_diff_after": float(after_summary.get("elo_diff", 0.0)),
+    }
+
+
 def _build_snapshot_dict(
     *,
     data_dir: Path,
@@ -870,7 +1057,6 @@ def register_live_map_context(
                         radiant_win=radiant_won,
                     )
                     if pending_match is not None:
-                        model.process_match(pending_match)
                         applied_maps[pending_map_key] = {
                             "series_key": normalized_series_key,
                             "series_url": str(series_state.get("series_url") or series_url),
@@ -879,12 +1065,19 @@ def register_live_map_context(
                             "applied_at": int(time.time()),
                             "match_id": int(pending_match.match_id),
                         }
-                        applied_update = {
-                            "map_key": pending_map_key,
-                            "winner_slot": winner_slot,
-                            "radiant_win": bool(radiant_won),
-                            "match_id": int(pending_match.match_id),
-                        }
+                        applied_update = _build_live_applied_update(
+                            snapshot=snapshot,
+                            model=model,
+                            match=pending_match,
+                            map_key=pending_map_key,
+                            series_key=normalized_series_key,
+                            series_url=str(series_state.get("series_url") or series_url),
+                            winner_slot=winner_slot,
+                            radiant_win=bool(radiant_won),
+                            previous_scores=previous_scores,
+                            current_scores=current_scores,
+                            first_team_is_radiant=first_radiant_pending,
+                        )
                         wrote_model_state = True
 
         current_map_already_applied = normalized_map_key in applied_maps
@@ -992,7 +1185,6 @@ def finalize_live_series_from_scores(
                         radiant_win=radiant_won,
                     )
                     if pending_match is not None:
-                        model.process_match(pending_match)
                         applied_maps[pending_map_key] = {
                             "series_key": normalized_series_key,
                             "series_url": str(series_state.get("series_url") or series_url),
@@ -1001,12 +1193,19 @@ def finalize_live_series_from_scores(
                             "applied_at": int(time.time()),
                             "match_id": int(pending_match.match_id),
                         }
-                        applied_update = {
-                            "map_key": pending_map_key,
-                            "winner_slot": winner_slot,
-                            "radiant_win": bool(radiant_won),
-                            "match_id": int(pending_match.match_id),
-                        }
+                        applied_update = _build_live_applied_update(
+                            snapshot=snapshot,
+                            model=model,
+                            match=pending_match,
+                            map_key=pending_map_key,
+                            series_key=normalized_series_key,
+                            series_url=str(series_state.get("series_url") or series_url),
+                            winner_slot=winner_slot,
+                            radiant_win=bool(radiant_won),
+                            previous_scores=previous_scores,
+                            current_scores=current_scores,
+                            first_team_is_radiant=first_radiant_pending,
+                        )
                         wrote_model_state = True
 
         pending_series.pop(normalized_series_key, None)

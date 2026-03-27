@@ -412,6 +412,7 @@ NETWORTH_GATE_LATE_OPPOSITE_DIFF = 3000.0
 NETWORTH_GATE_LATE_OPPOSITE_EARLY90_4_TO_10_DIFF = 2000.0
 NETWORTH_GATE_LATE_OPPOSITE_EARLY90_UNDERDOG_10_TO_20_DIFF = 1500.0
 NETWORTH_GATE_LATE_COMEBACK_LARGE_DEFICIT = 14000.0
+NETWORTH_MONITOR_HOLD_SECONDS = max(0, _safe_int_env("NETWORTH_MONITOR_HOLD_SECONDS", 60))
 NETWORTH_STATUS_PRE4_BLOCK = "pre4_block"
 NETWORTH_STATUS_4_10_SEND_800 = "4_10_send_800"
 NETWORTH_STATUS_MIN10_LOSS_LE800_SEND = "minute10_loss_le800_send"
@@ -438,7 +439,7 @@ TIER_SIGNAL_MIN_THRESHOLD_TIER1_BASE = 60
 TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE = 60
 ELO_UNDERDOG_GUARD_FAVORITE_EDGE_PP = 15.0
 ELO_UNDERDOG_GUARD_MIN_SIGNAL_WR = 70.0
-ELO_BLOCK_WR_MIN_AFTER_PENALTY = 60.0
+ELO_BLOCK_WR_MIN_AFTER_PENALTY = 58.5
 EARLY_STAR_LATE_CORE_HIGH_CONFIDENCE_WR = 70.0
 OPPOSITE_SIGNS_EARLY90_TRIGGER_WR = 90.0
 OPPOSITE_SIGNS_EARLY90_ELO_GAP_PP = 15.0
@@ -1428,6 +1429,89 @@ def _target_networth_diff_from_radiant_lead(
     return lead_value if target_side == "radiant" else -lead_value
 
 
+def _networth_monitor_hold_check(
+    *,
+    current_game_time: Optional[float],
+    target_networth_diff: Optional[float],
+    monitor_threshold: Optional[float],
+    hold_started_game_time: Optional[float],
+    hold_seconds: Optional[float] = None,
+) -> Dict[str, Any]:
+    try:
+        hold_required_seconds = (
+            float(hold_seconds)
+            if hold_seconds is not None
+            else float(NETWORTH_MONITOR_HOLD_SECONDS)
+        )
+    except (TypeError, ValueError):
+        hold_required_seconds = float(NETWORTH_MONITOR_HOLD_SECONDS)
+    hold_required_seconds = max(0.0, hold_required_seconds)
+
+    try:
+        threshold_value = float(monitor_threshold) if monitor_threshold is not None else None
+    except (TypeError, ValueError):
+        threshold_value = None
+    try:
+        target_diff_value = (
+            float(target_networth_diff) if target_networth_diff is not None else None
+        )
+    except (TypeError, ValueError):
+        target_diff_value = None
+    try:
+        game_time_value = float(current_game_time) if current_game_time is not None else None
+    except (TypeError, ValueError):
+        game_time_value = None
+    try:
+        hold_started_value = (
+            float(hold_started_game_time)
+            if hold_started_game_time is not None
+            else None
+        )
+    except (TypeError, ValueError):
+        hold_started_value = None
+
+    enabled = bool(
+        threshold_value is not None
+        and threshold_value > 0
+        and hold_required_seconds > 0.0
+    )
+    threshold_met = bool(
+        threshold_value is not None
+        and target_diff_value is not None
+        and target_diff_value >= threshold_value
+    )
+    if not enabled:
+        return {
+            "enabled": False,
+            "ready": threshold_met,
+            "threshold_met": threshold_met,
+            "hold_started_game_time": hold_started_value if threshold_met else None,
+            "held_seconds": 0.0,
+            "hold_seconds": hold_required_seconds,
+        }
+    if not threshold_met or game_time_value is None:
+        return {
+            "enabled": True,
+            "ready": False,
+            "threshold_met": threshold_met,
+            "hold_started_game_time": None,
+            "held_seconds": 0.0,
+            "hold_seconds": hold_required_seconds,
+        }
+    effective_hold_started = (
+        hold_started_value if hold_started_value is not None else game_time_value
+    )
+    held_seconds = max(0.0, game_time_value - effective_hold_started)
+    return {
+        "enabled": True,
+        "ready": held_seconds >= hold_required_seconds,
+        "threshold_met": True,
+        "hold_started_game_time": effective_hold_started,
+        "held_seconds": held_seconds,
+        "hold_seconds": hold_required_seconds,
+    }
+
+
 def _fallback_max_deficit_abs_for_delay_reason(
     delay_reason: Optional[str],
     *,
@@ -1992,6 +2076,23 @@ def _drain_due_delayed_signals_once() -> None:
                 dispatch_status_label=dynamic_status_label,
                 networth_monitor_threshold=monitor_threshold,
             )
+        monitor_hold_seconds_raw = payload.get(
+            "networth_monitor_hold_seconds",
+            NETWORTH_MONITOR_HOLD_SECONDS,
+        )
+        try:
+            monitor_hold_seconds = max(0.0, float(monitor_hold_seconds_raw))
+        except (TypeError, ValueError):
+            monitor_hold_seconds = float(NETWORTH_MONITOR_HOLD_SECONDS)
+        monitor_hold_started_raw = payload.get("networth_monitor_hold_started_game_time")
+        try:
+            monitor_hold_started_game_time = (
+                float(monitor_hold_started_raw)
+                if monitor_hold_started_raw is not None
+                else None
+            )
+        except (TypeError, ValueError):
+            monitor_hold_started_game_time = None
         late_comeback_monitor_active = bool(payload.get("late_comeback_monitor_active"))
         late_comeback_monitor_candidate = bool(payload.get("late_comeback_monitor_candidate"))
         late_comeback_force_after_target = bool(payload.get("late_comeback_force_after_target"))
@@ -2019,6 +2120,7 @@ def _drain_due_delayed_signals_once() -> None:
         monitor_ready = False
         monitor_target_diff: Optional[float] = None
         late_comeback_check: Optional[Dict[str, Any]] = None
+        monitor_hold_check: Optional[Dict[str, Any]] = None
         if monitor_target_side in {"radiant", "dire"}:
             monitor_target_diff = _target_networth_diff_from_radiant_lead(
                 current_radiant_lead,
@@ -2168,10 +2270,20 @@ def _drain_due_delayed_signals_once() -> None:
             and current_game_time < monitor_deadline_game_time
         ):
             if monitor_target_diff is not None:
-                if (
-                    monitor_threshold is not None
-                    and monitor_target_diff >= monitor_threshold
-                ):
+                monitor_hold_check = _networth_monitor_hold_check(
+                    current_game_time=current_game_time,
+                    target_networth_diff=monitor_target_diff,
+                    monitor_threshold=monitor_threshold,
+                    hold_started_game_time=monitor_hold_started_game_time,
+                    hold_seconds=monitor_hold_seconds,
+                )
+                next_hold_started = monitor_hold_check.get("hold_started_game_time")
+                if next_hold_started != monitor_hold_started_game_time:
+                    _update_delayed_match(
+                        match_key,
+                        networth_monitor_hold_started_game_time=next_hold_started,
+                    )
+                if bool(monitor_hold_check.get("ready")):
                     monitor_ready = True
 
         if not monitor_ready and current_game_time < target_game_time:
@@ -2312,6 +2424,20 @@ def _drain_due_delayed_signals_once() -> None:
                 add_url_details.setdefault("networth_monitor_early_release", True)
                 if monitor_threshold is not None:
                     add_url_details.setdefault("networth_monitor_threshold", float(monitor_threshold))
+                if isinstance(monitor_hold_check, dict) and monitor_hold_check.get("enabled"):
+                    add_url_details.setdefault(
+                        "networth_monitor_hold_seconds",
+                        float(monitor_hold_check.get("hold_seconds") or 0.0),
+                    )
+                    if monitor_hold_check.get("hold_started_game_time") is not None:
+                        add_url_details.setdefault(
+                            "networth_monitor_hold_started_game_time",
+                            float(monitor_hold_check.get("hold_started_game_time") or 0.0),
+                        )
+                    add_url_details.setdefault(
+                        "networth_monitor_hold_elapsed_seconds",
+                        float(monitor_hold_check.get("held_seconds") or 0.0),
+                    )
                 add_url_details.setdefault("target_networth_diff", float(monitor_target_diff))
             else:
                 add_url_details.setdefault("dispatch_status_label", fallback_send_status_label)
@@ -5396,6 +5522,61 @@ def _finalize_finished_live_series_for_elo(
         logger.exception("Failed to finalize live ELO series context for %s", normalized_series_key)
         return None
     return result if isinstance(result, dict) else None
+
+
+def _emit_live_elo_applied_log(prefix: str, applied_update: Optional[Dict[str, Any]]) -> None:
+    payload = applied_update if isinstance(applied_update, dict) else {}
+    if not payload:
+        return
+
+    map_key = str(payload.get("map_key") or "unknown")
+    winner_slot = str(payload.get("winner_slot") or "unknown")
+    winner_team_name = str(payload.get("winner_team_name") or "unknown")
+    first_team_name = str(payload.get("first_team_name") or "")
+    second_team_name = str(payload.get("second_team_name") or "")
+    before_scores = payload.get("series_score_before") if isinstance(payload.get("series_score_before"), dict) else {}
+    after_scores = payload.get("series_score_after") if isinstance(payload.get("series_score_after"), dict) else {}
+    before_score = f"{_coerce_int(before_scores.get('first'))}:{_coerce_int(before_scores.get('second'))}"
+    after_score = f"{_coerce_int(after_scores.get('first'))}:{_coerce_int(after_scores.get('second'))}"
+    matchup = (
+        f"{first_team_name} vs {second_team_name}"
+        if first_team_name and second_team_name
+        else f"{str(payload.get('radiant_team_name') or '')} vs {str(payload.get('dire_team_name') or '')}".strip(" vs ")
+    )
+    print(
+        f"   📈 {prefix}: applied_map={map_key}, "
+        f"matchup={matchup or 'unknown'}, "
+        f"score={before_score}->{after_score}, "
+        f"winner_slot={winner_slot}, "
+        f"winner={winner_team_name}"
+    )
+
+    def _emit_side(side_label: str, side_payload: Optional[Dict[str, Any]]) -> None:
+        side = side_payload if isinstance(side_payload, dict) else {}
+        team_name = str(side.get("team_name") or side_label)
+        before_rating = float(side.get("before_rating", 0.0) or 0.0)
+        after_rating = float(side.get("after_rating", before_rating) or before_rating)
+        delta = float(side.get("delta", after_rating - before_rating) or 0.0)
+        rating_source = str(side.get("rating_source") or "unknown")
+        print(
+            f"      {side_label} {team_name}: "
+            f"{before_rating:.1f} -> {after_rating:.1f} ({delta:+.1f}) "
+            f"[{rating_source}]"
+        )
+
+    _emit_side("Radiant", payload.get("radiant"))
+    _emit_side("Dire", payload.get("dire"))
+
+    rad_before = float(payload.get("radiant_win_prob_before", 0.5) or 0.5) * 100.0
+    rad_after = float(payload.get("radiant_win_prob_after", 0.5) or 0.5) * 100.0
+    prob_delta = float(payload.get("radiant_win_prob_delta", (rad_after - rad_before) / 100.0) or 0.0) * 100.0
+    elo_before = float(payload.get("elo_diff_before", 0.0) or 0.0)
+    elo_after = float(payload.get("elo_diff_after", 0.0) or 0.0)
+    print(
+        "      WR(rad): "
+        f"{rad_before:.1f}% -> {rad_after:.1f}% ({prob_delta:+.1f} pp), "
+        f"ΔELO(rad-dire): {elo_before:.1f} -> {elo_after:.1f}"
+    )
 
 
 def _winner_slot_from_series_scores(
@@ -9064,6 +9245,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             verbose_match_log = _should_emit_verbose_match_log(check_uniq_url)
             match_log = print if verbose_match_log else (lambda *args, **kwargs: None)
             block_reason = _dispatch_block_reason(check_uniq_url)
+            delayed_payload = None
 
             if verbose_match_log:
                 print(f"\n🔍 DEBUG: Начало обработки матча #{i}")
@@ -9083,15 +9265,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 if isinstance(finished_finalize, dict):
                     applied_update = finished_finalize.get("applied_update")
                     if isinstance(applied_update, dict):
+                        _emit_live_elo_applied_log("Live ELO finalized from finished series", applied_update)
                         applied_map_key = str(applied_update.get("map_key") or "")
-                        applied_winner_slot = str(applied_update.get("winner_slot") or "unknown")
-                        applied_radiant_win = bool(applied_update.get("radiant_win"))
-                        print(
-                            "   📈 Live ELO finalized from finished series: "
-                            f"applied_map={applied_map_key or 'unknown'}, "
-                            f"winner_slot={applied_winner_slot}, "
-                            f"radiant_win={applied_radiant_win}"
-                        )
                         if applied_map_key:
                             _drop_delayed_match(applied_map_key, reason="series_finished_live_elo_applied")
                 print(f"   ❌ Матч завершен - пропускаем")
@@ -9511,15 +9686,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         if isinstance(live_elo_registration, dict):
             applied_update = live_elo_registration.get("applied_update")
             if isinstance(applied_update, dict):
-                applied_map_key = str(applied_update.get("map_key") or "unknown")
-                applied_winner_slot = str(applied_update.get("winner_slot") or "unknown")
-                applied_radiant_win = bool(applied_update.get("radiant_win"))
-                print(
-                    "   📈 Live ELO updated from completed map: "
-                    f"applied_map={applied_map_key}, "
-                    f"winner_slot={applied_winner_slot}, "
-                    f"radiant_win={applied_radiant_win}"
-                )
+                _emit_live_elo_applied_log("Live ELO updated from completed map", applied_update)
         _warm_draft_stats_shards(radiant_heroes_and_pos, dire_heroes_and_pos)
         # Отправляем только "сырые" сигналы без wrapper.
         prev_wrapper_enabled = os.getenv("SIGNAL_WRAPPER_ENABLED")
@@ -10680,6 +10847,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     and current_game_time < target_game_time
                     and target_networth_diff >= monitor_threshold
                 )
+                existing_monitor_hold_started = None
+                if isinstance(delayed_payload, dict):
+                    try:
+                        raw_hold_started = delayed_payload.get("networth_monitor_hold_started_game_time")
+                        existing_monitor_hold_started = (
+                            float(raw_hold_started) if raw_hold_started is not None else None
+                        )
+                    except (TypeError, ValueError):
+                        existing_monitor_hold_started = None
                 if release_4_10_now or monitor_ready_now:
                     release_reason = (
                         (
@@ -10705,42 +10881,76 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             else (monitor_wait_status_label or "unknown_monitor_status")
                         )
                     )
-                    if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки (networth_gate)"):
-                        return return_status
-                    if not _acquire_signal_send_slot(check_uniq_url):
-                        print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
-                        return return_status
-                    try:
-                        if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки после lock (networth_gate)"):
-                            return return_status
-                        if verbose_match_log:
-                            _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
-                        delivery_confirmed = _deliver_and_persist_signal(
-                            check_uniq_url,
-                            message_text,
-                            add_url_reason="star_signal_sent_now_networth_gate",
-                            add_url_details={
-                                "status": status,
-                                "dispatch_mode": dispatch_mode,
-                                "delay_reason": delay_reason,
-                                "release_reason": release_reason,
-                                "dispatch_status_label": release_status_label,
-                                "game_time": int(current_game_time),
-                                "target_side": target_side,
-                                "target_networth_diff": float(target_networth_diff or 0.0),
-                                "json_retry_errors": json_retry_errors,
-                            },
-                            bookmaker_decision="sent",
+                    release_threshold = (
+                        float(monitor_threshold)
+                        if monitor_ready_now and monitor_threshold is not None
+                        else (
+                            float(monitor_threshold)
+                            if release_4_10_now
+                            and isinstance(dynamic_monitor_profile, dict)
+                            and dynamic_monitor_profile.get("enabled")
+                            and monitor_threshold is not None
+                            else float(NETWORTH_GATE_4_TO_10_MIN_DIFF)
                         )
-                        if delivery_confirmed:
-                            print(
-                                f"   ✅ ВЕРДИКТ: Сигнал отправлен раньше {target_human} "
-                                f"(reason={release_reason}, status={release_status_label}, target_side={target_side}, "
-                                f"target_diff={int(target_networth_diff or 0)})"
+                    )
+                    hold_check = _networth_monitor_hold_check(
+                        current_game_time=current_game_time,
+                        target_networth_diff=target_networth_diff,
+                        monitor_threshold=release_threshold,
+                        hold_started_game_time=existing_monitor_hold_started,
+                        hold_seconds=NETWORTH_MONITOR_HOLD_SECONDS,
+                    )
+                    if hold_check.get("enabled") and not hold_check.get("ready"):
+                        monitor_threshold = release_threshold
+                        monitor_wait_status_label = release_status_label
+                        print(
+                            "   ⏳ Networth hold started: "
+                            f"(target_side={target_side}, "
+                            f"target_diff={int(target_networth_diff or 0)}, "
+                            f"need>={int(release_threshold)}, "
+                            f"hold={int(hold_check.get('hold_seconds') or 0)}s)"
+                        )
+                    else:
+                        if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки (networth_gate)"):
+                            return return_status
+                        if not _acquire_signal_send_slot(check_uniq_url):
+                            print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
+                            return return_status
+                        try:
+                            if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки после lock (networth_gate)"):
+                                return return_status
+                            if verbose_match_log:
+                                _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+                            delivery_confirmed = _deliver_and_persist_signal(
+                                check_uniq_url,
+                                message_text,
+                                add_url_reason="star_signal_sent_now_networth_gate",
+                                add_url_details={
+                                    "status": status,
+                                    "dispatch_mode": dispatch_mode,
+                                    "delay_reason": delay_reason,
+                                    "release_reason": release_reason,
+                                    "dispatch_status_label": release_status_label,
+                                    "game_time": int(current_game_time),
+                                    "target_side": target_side,
+                                    "target_networth_diff": float(target_networth_diff or 0.0),
+                                    "networth_monitor_threshold": float(release_threshold),
+                                    "networth_monitor_hold_seconds": float(hold_check.get("hold_seconds") or 0.0),
+                                    "networth_monitor_hold_started_game_time": float(hold_check.get("hold_started_game_time") or 0.0),
+                                    "networth_monitor_hold_elapsed_seconds": float(hold_check.get("held_seconds") or 0.0),
+                                    "json_retry_errors": json_retry_errors,
+                                },
+                                bookmaker_decision="sent",
                             )
-                    finally:
-                        _release_signal_send_slot(check_uniq_url)
-                    return return_status
+                            if delivery_confirmed:
+                                print(
+                                    f"   ✅ ВЕРДИКТ: Сигнал отправлен раньше {target_human} "
+                                    f"(reason={release_reason}, status={release_status_label}, target_side={target_side}, "
+                                    f"target_diff={int(target_networth_diff or 0)})"
+                                )
+                        finally:
+                            _release_signal_send_slot(check_uniq_url)
+                        return return_status
                 if not json_url:
                     print(f"   ⚠️ Нет json_url для delayed сигнала, отправляем сразу: {check_uniq_url}")
                     if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки (no_json_url)"):
@@ -11181,6 +11391,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_add_url_details["networth_monitor_threshold"] = float(monitor_threshold)
                     delayed_add_url_details["networth_monitor_deadline_game_time"] = int(target_game_time)
                     delayed_add_url_details["networth_target_side"] = target_side
+                    delayed_add_url_details["networth_monitor_hold_seconds"] = float(NETWORTH_MONITOR_HOLD_SECONDS)
                     if target_networth_diff is not None:
                         delayed_add_url_details["target_networth_diff"] = float(target_networth_diff)
                 if fallback_max_deficit_abs is not None:
@@ -11237,6 +11448,18 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_payload['networth_monitor_threshold'] = float(monitor_threshold)
                     delayed_payload['networth_monitor_deadline_game_time'] = float(target_game_time)
                     delayed_payload['networth_target_side'] = target_side
+                    delayed_payload['networth_monitor_hold_seconds'] = float(NETWORTH_MONITOR_HOLD_SECONDS)
+                    hold_seed = _networth_monitor_hold_check(
+                        current_game_time=current_game_time,
+                        target_networth_diff=target_networth_diff,
+                        monitor_threshold=monitor_threshold,
+                        hold_started_game_time=existing_monitor_hold_started,
+                        hold_seconds=NETWORTH_MONITOR_HOLD_SECONDS,
+                    )
+                    if hold_seed.get("enabled") and hold_seed.get("hold_started_game_time") is not None:
+                        delayed_payload['networth_monitor_hold_started_game_time'] = float(
+                            hold_seed.get("hold_started_game_time") or 0.0
+                        )
                 if fallback_max_deficit_abs is not None:
                     delayed_payload['fallback_max_deficit_abs'] = float(fallback_max_deficit_abs)
                     if target_side is not None:
@@ -11932,13 +12155,7 @@ def general(return_status=None, use_proxy=None, odds=None):
     orphan_live_elo_updates = _finalize_orphaned_live_elo_series(seen_series_keys)
     for orphan_update in orphan_live_elo_updates:
         applied_update = orphan_update.get("applied_update") if isinstance(orphan_update.get("applied_update"), dict) else {}
-        print(
-            "   📈 Live ELO finalized from orphaned finished series: "
-            f"series_key={orphan_update.get('series_key')}, "
-            f"scores={orphan_update.get('current_scores')}, "
-            f"winner_slot={orphan_update.get('winner_slot')}, "
-            f"applied_map={str(applied_update.get('map_key') or 'unknown')}"
-        )
+        _emit_live_elo_applied_log("Live ELO finalized from orphaned finished series", applied_update)
     
     print(f"\n{'='*60}")
     print(f"📊 ИТОГИ ЦИКЛА:")
