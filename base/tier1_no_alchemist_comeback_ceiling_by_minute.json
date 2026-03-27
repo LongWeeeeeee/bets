@@ -1,0 +1,663 @@
+{
+  "meta": {
+    "generated_at": "2026-03-12T19:01:23.554391Z",
+    "source_dir": "/Users/alex/Documents/ingame/pro_heroes_data/json_parts_split_from_object",
+    "scope": "tier1_vs_tier1_eventual_winner_max_deficit_no_alchemist_opponent",
+    "minute_start": 20,
+    "minute_end": 91,
+    "matches_total": 4546,
+    "excluded_vs_alchemist": 148
+  },
+  "thresholds_by_minute": {
+    "20": 13500,
+    "21": 13698,
+    "22": 15105,
+    "23": 16121,
+    "24": 18351,
+    "25": 18351,
+    "26": 18351,
+    "27": 18351,
+    "28": 18351,
+    "29": 18351,
+    "30": 18351,
+    "31": 19014,
+    "32": 19311,
+    "33": 21421,
+    "34": 22281,
+    "35": 28577,
+    "36": 28577,
+    "37": 28577,
+    "38": 28577,
+    "39": 28577,
+    "40": 28577,
+    "41": 28577,
+    "42": 28577,
+    "43": 28577,
+    "44": 29850,
+    "45": 29850,
+    "46": 35075,
+    "47": 35075,
+    "48": 35075,
+    "49": 35075,
+    "50": 35075,
+    "51": 35075,
+    "52": 35075,
+    "53": 35075,
+    "54": 35075,
+    "55": 35075,
+    "56": 35075,
+    "57": 35075,
+    "58": 35075,
+    "59": 35075,
+    "60": 35075,
+    "61": 35075,
+    "62": 35075,
+    "63": 38751,
+    "64": 38751,
+    "65": 38751,
+    "66": 41210,
+    "67": 45345,
+    "68": 45345,
+    "69": 45345,
+    "70": 45345,
+    "71": 45345,
+    "72": 45345,
+    "73": 45345,
+    "74": 45345,
+    "75": 45345,
+    "76": 45345,
+    "77": 45345,
+    "78": 45345,
+    "79": 45345,
+    "80": 45345,
+    "81": 45345,
+    "82": 45345,
+    "83": 45345,
+    "84": 45345,
+    "85": 45345,
+    "86": 45345,
+    "87": 45345,
+    "88": 45345,
+    "89": 45345,
+    "90": 45345,
+    "91": 45345
+  },
+  "examples_by_minute": {
+    "20": {
+      "match_id": "8499767188",
+      "radiant": "1win",
+      "dire": "OG",
+      "winner": "radiant",
+      "league": "FISSURE Universe Episode 7",
+      "startDateTime": "2025-10-07T13:09:41Z"
+    },
+    "21": {
+      "match_id": "8499767188",
+      "radiant": "1win",
+      "dire": "OG",
+      "winner": "radiant",
+      "league": "FISSURE Universe Episode 7",
+      "startDateTime": "2025-10-07T13:09:41Z"
+    },
+    "22": {
+      "match_id": "8499767188",
+      "radiant": "1win",
+      "dire": "OG",
+      "winner": "radiant",
+      "league": "FISSURE Universe Episode 7",
+      "startDateTime": "2025-10-07T13:09:41Z"
+    },
+    "23": {
+      "match_id": "8499767188",
+      "radiant": "1win",
+      "dire": "OG",
+      "winner": "radiant",
+      "league": "FISSURE Universe Episode 7",
+      "startDateTime": "2025-10-07T13:09:41Z"
+    },
+    "24": {
+      "match_id": "8499767188",
+      "radiant": "1win",
+      "dire": "OG",
+      "winner": "radiant",
+      "league": "FISSURE Universe Episode 7",
+      "startDateTime": "2025-10-07T13:09:41Z"
+    },
+    "25": {
+      "match_id": "8512558125",
+      "radiant": "Heroic",
+      "dire": "Team Falcons",
+      "winner": "radiant",
+      "league": "SLAM IV",
+      "startDateTime": "2025-10-15T15:21:16Z"
+    },
+    "26": {
+      "match_id": "8512558125",
+      "radiant": "Heroic",
+      "dire": "Team Falcons",
+      "winner": "radiant",
+      "league": "SLAM IV",
+      "startDateTime": "2025-10-15T15:21:16Z"
+    },
+    "27": {
+      "match_id": "8512558125",
+      "radiant": "Heroic",
+      "dire": "Team Falcons",
+      "winner": "radiant",
+      "league": "SLAM IV",
+      "startDateTime": "2025-10-15T15:21:16Z"
+    },
+    "28": {
+      "match_id": "8247399268",
+      "radiant": "Tundra Esports",
+      "dire": "BetBoom Team",
+      "winner": "dire",
+      "league": "ESL One Raleigh 2025",
+      "startDateTime": "2025-04-08T22:43:04Z"
+    },
+    "29": {
+      "match_id": "8448290176",
+      "radiant": "Nigma Galaxy",
+      "dire": "Invictus Gaming",
+      "winner": "dire",
+      "league": "The International 2025",
+      "startDateTime": "2025-09-05T18:33:12Z"
+    },
+    "30": {
+      "match_id": "8003021377",
+      "radiant": "Aurora Gaming",
+      "dire": "Team Spirit",
+      "winner": "dire",
+      "league": "BetBoom Dacha Belgrade 2024",
+      "startDateTime": "2024-10-25T07:59:59Z"
+    },
+    "31": {
+      "match_id": "7929087653",
+      "radiant": "BetBoom Team",
+      "dire": "Team Falcons",
+      "winner": "dire",
+      "league": "The International 2024",
+      "startDateTime": "2024-09-05T11:36:23Z"
+    },
+    "32": {
+      "match_id": "7873114667",
+      "radiant": "1win",
+      "dire": "OG",
+      "winner": "radiant",
+      "league": "Elite League Season 2 Main Event – presented by ESB",
+      "startDateTime": "2024-07-30T18:28:48Z"
+    },
+    "33": {
+      "match_id": "7873114667",
+      "radiant": "1win",
+      "dire": "OG",
+      "winner": "radiant",
+      "league": "Elite League Season 2 Main Event – presented by ESB",
+      "startDateTime": "2024-07-30T18:28:48Z"
+    },
+    "34": {
+      "match_id": "8448290176",
+      "radiant": "Nigma Galaxy",
+      "dire": "Invictus Gaming",
+      "winner": "dire",
+      "league": "The International 2025",
+      "startDateTime": "2025-09-05T18:33:12Z"
+    },
+    "35": {
+      "match_id": "8376447504",
+      "radiant": "Team Spirit",
+      "dire": "Gaimin Gladiators",
+      "winner": "radiant",
+      "league": "Esports World Cup 2025",
+      "startDateTime": "2025-07-16T09:21:52Z"
+    },
+    "36": {
+      "match_id": "8376447504",
+      "radiant": "Team Spirit",
+      "dire": "Gaimin Gladiators",
+      "winner": "radiant",
+      "league": "Esports World Cup 2025",
+      "startDateTime": "2025-07-16T09:21:52Z"
+    },
+    "37": {
+      "match_id": "8448290176",
+      "radiant": "Nigma Galaxy",
+      "dire": "Invictus Gaming",
+      "winner": "dire",
+      "league": "The International 2025",
+      "startDateTime": "2025-09-05T18:33:12Z"
+    },
+    "38": {
+      "match_id": "8448290176",
+      "radiant": "Nigma Galaxy",
+      "dire": "Invictus Gaming",
+      "winner": "dire",
+      "league": "The International 2025",
+      "startDateTime": "2025-09-05T18:33:12Z"
+    },
+    "39": {
+      "match_id": "8346867930",
+      "radiant": "Team Spirit",
+      "dire": "Natus Vincere",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2025 Season 5",
+      "startDateTime": "2025-06-23T16:04:15Z"
+    },
+    "40": {
+      "match_id": "8376447504",
+      "radiant": "Team Spirit",
+      "dire": "Gaimin Gladiators",
+      "winner": "radiant",
+      "league": "Esports World Cup 2025",
+      "startDateTime": "2025-07-16T09:21:52Z"
+    },
+    "41": {
+      "match_id": "8172888481",
+      "radiant": "Wildcard",
+      "dire": "M80",
+      "winner": "radiant",
+      "league": "PGL Wallachia Season #4 AMER Closed Qualifiers",
+      "startDateTime": "2025-02-14T04:00:15Z"
+    },
+    "42": {
+      "match_id": "8172888481",
+      "radiant": "Wildcard",
+      "dire": "M80",
+      "winner": "radiant",
+      "league": "PGL Wallachia Season #4 AMER Closed Qualifiers",
+      "startDateTime": "2025-02-14T04:00:15Z"
+    },
+    "43": {
+      "match_id": "7935087384",
+      "radiant": "Talon",
+      "dire": "BetBoom Team",
+      "winner": "radiant",
+      "league": "The International 2024",
+      "startDateTime": "2024-09-09T09:02:18Z"
+    },
+    "44": {
+      "match_id": "8347641930",
+      "radiant": "Nigma Galaxy",
+      "dire": "Xtreme Gaming",
+      "winner": "dire",
+      "league": "PGL Wallachia 2025 Season 5",
+      "startDateTime": "2025-06-24T09:04:14Z"
+    },
+    "45": {
+      "match_id": "7935087384",
+      "radiant": "Talon",
+      "dire": "BetBoom Team",
+      "winner": "radiant",
+      "league": "The International 2024",
+      "startDateTime": "2024-09-09T09:02:18Z"
+    },
+    "46": {
+      "match_id": "7935087384",
+      "radiant": "Talon",
+      "dire": "BetBoom Team",
+      "winner": "radiant",
+      "league": "The International 2024",
+      "startDateTime": "2024-09-09T09:02:18Z"
+    },
+    "47": {
+      "match_id": "7962130151",
+      "radiant": "1win",
+      "dire": "L1GA TEAM",
+      "winner": "dire",
+      "league": "BetBoom Dacha Belgrade 2024 - Closed Qualifiers - EEU",
+      "startDateTime": "2024-09-27T14:59:39Z"
+    },
+    "48": {
+      "match_id": "8598888081",
+      "radiant": "Aurora Gaming",
+      "dire": "Natus Vincere",
+      "winner": "dire",
+      "league": "DreamLeague Season 27",
+      "startDateTime": "2025-12-10T14:27:08Z"
+    },
+    "49": {
+      "match_id": "7963358136",
+      "radiant": "Palianytsia",
+      "dire": "OG",
+      "winner": "radiant",
+      "league": "DreamLeague Season Qualifiers 24 powered by Intel",
+      "startDateTime": "2024-09-28T10:00:04Z"
+    },
+    "50": {
+      "match_id": "7963358136",
+      "radiant": "Palianytsia",
+      "dire": "OG",
+      "winner": "radiant",
+      "league": "DreamLeague Season Qualifiers 24 powered by Intel",
+      "startDateTime": "2024-09-28T10:00:04Z"
+    },
+    "51": {
+      "match_id": "7963358136",
+      "radiant": "Palianytsia",
+      "dire": "OG",
+      "winner": "radiant",
+      "league": "DreamLeague Season Qualifiers 24 powered by Intel",
+      "startDateTime": "2024-09-28T10:00:04Z"
+    },
+    "52": {
+      "match_id": "8302303861",
+      "radiant": "Gaimin Gladiators",
+      "dire": "Invictus Gaming",
+      "winner": "dire",
+      "league": "DreamLeague Season 26",
+      "startDateTime": "2025-05-21T19:40:00Z"
+    },
+    "53": {
+      "match_id": "8327213575",
+      "radiant": "Heroic",
+      "dire": "Edge",
+      "winner": "radiant",
+      "league": "Road To The International 2025 - Regional Qualifiers South America",
+      "startDateTime": "2025-06-08T23:15:10Z"
+    },
+    "54": {
+      "match_id": "8565136926",
+      "radiant": "PARIVISION",
+      "dire": "BetBoom Team",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2025 Season 6",
+      "startDateTime": "2025-11-18T15:06:56Z"
+    },
+    "55": {
+      "match_id": "8327213575",
+      "radiant": "Heroic",
+      "dire": "Edge",
+      "winner": "radiant",
+      "league": "Road To The International 2025 - Regional Qualifiers South America",
+      "startDateTime": "2025-06-08T23:15:10Z"
+    },
+    "56": {
+      "match_id": "8327213575",
+      "radiant": "Heroic",
+      "dire": "Edge",
+      "winner": "radiant",
+      "league": "Road To The International 2025 - Regional Qualifiers South America",
+      "startDateTime": "2025-06-08T23:15:10Z"
+    },
+    "57": {
+      "match_id": "8327213575",
+      "radiant": "Heroic",
+      "dire": "Edge",
+      "winner": "radiant",
+      "league": "Road To The International 2025 - Regional Qualifiers South America",
+      "startDateTime": "2025-06-08T23:15:10Z"
+    },
+    "58": {
+      "match_id": "8327213575",
+      "radiant": "Heroic",
+      "dire": "Edge",
+      "winner": "radiant",
+      "league": "Road To The International 2025 - Regional Qualifiers South America",
+      "startDateTime": "2025-06-08T23:15:10Z"
+    },
+    "59": {
+      "match_id": "8327213575",
+      "radiant": "Heroic",
+      "dire": "Edge",
+      "winner": "radiant",
+      "league": "Road To The International 2025 - Regional Qualifiers South America",
+      "startDateTime": "2025-06-08T23:15:10Z"
+    },
+    "60": {
+      "match_id": "8093118813",
+      "radiant": "BOOM Esports",
+      "dire": "Talon",
+      "winner": "radiant",
+      "league": "FISSURE PLAYGROUND - Closed Qualifiers - SEA",
+      "startDateTime": "2024-12-22T13:55:33Z"
+    },
+    "61": {
+      "match_id": "8449730523",
+      "radiant": "BetBoom Team",
+      "dire": "PARIVISION",
+      "winner": "radiant",
+      "league": "The International 2025",
+      "startDateTime": "2025-09-06T17:12:24Z"
+    },
+    "62": {
+      "match_id": "8449730523",
+      "radiant": "BetBoom Team",
+      "dire": "PARIVISION",
+      "winner": "radiant",
+      "league": "The International 2025",
+      "startDateTime": "2025-09-06T17:12:24Z"
+    },
+    "63": {
+      "match_id": "7963358136",
+      "radiant": "Palianytsia",
+      "dire": "OG",
+      "winner": "radiant",
+      "league": "DreamLeague Season Qualifiers 24 powered by Intel",
+      "startDateTime": "2024-09-28T10:00:04Z"
+    },
+    "64": {
+      "match_id": "8397762037",
+      "radiant": "BOOM Esports",
+      "dire": "BB Team",
+      "winner": "radiant",
+      "league": "Clavision DOTA2 Masters 2025: Snow-Ruyi",
+      "startDateTime": "2025-08-01T06:50:42Z"
+    },
+    "65": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "66": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "67": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "68": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "69": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "70": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "71": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "72": {
+      "match_id": "8308552131",
+      "radiant": "Aurora Gaming",
+      "dire": "FLIPSTER TALON",
+      "winner": "radiant",
+      "league": "DreamLeague Season 26",
+      "startDateTime": "2025-05-26T09:30:26Z"
+    },
+    "73": {
+      "match_id": "8308552131",
+      "radiant": "Aurora Gaming",
+      "dire": "FLIPSTER TALON",
+      "winner": "radiant",
+      "league": "DreamLeague Season 26",
+      "startDateTime": "2025-05-26T09:30:26Z"
+    },
+    "74": {
+      "match_id": "8308552131",
+      "radiant": "Aurora Gaming",
+      "dire": "FLIPSTER TALON",
+      "winner": "radiant",
+      "league": "DreamLeague Season 26",
+      "startDateTime": "2025-05-26T09:30:26Z"
+    },
+    "75": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "76": {
+      "match_id": "8308552131",
+      "radiant": "Aurora Gaming",
+      "dire": "FLIPSTER TALON",
+      "winner": "radiant",
+      "league": "DreamLeague Season 26",
+      "startDateTime": "2025-05-26T09:30:26Z"
+    },
+    "77": {
+      "match_id": "8325643721",
+      "radiant": "Shopify Rebellion",
+      "dire": "Wildcard",
+      "winner": "radiant",
+      "league": "Esports World Cup 2025 Qualifiers",
+      "startDateTime": "2025-06-07T21:56:47Z"
+    },
+    "78": {
+      "match_id": "8565136926",
+      "radiant": "PARIVISION",
+      "dire": "BetBoom Team",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2025 Season 6",
+      "startDateTime": "2025-11-18T15:06:56Z"
+    },
+    "79": {
+      "match_id": "8308552131",
+      "radiant": "Aurora Gaming",
+      "dire": "FLIPSTER TALON",
+      "winner": "radiant",
+      "league": "DreamLeague Season 26",
+      "startDateTime": "2025-05-26T09:30:26Z"
+    },
+    "80": {
+      "match_id": "8565136926",
+      "radiant": "PARIVISION",
+      "dire": "BetBoom Team",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2025 Season 6",
+      "startDateTime": "2025-11-18T15:06:56Z"
+    },
+    "81": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "82": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "83": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "84": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "85": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "86": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "87": {
+      "match_id": "7972206434",
+      "radiant": "nouns",
+      "dire": "L1GA TEAM",
+      "winner": "radiant",
+      "league": "PGL Wallachia 2024 Season 2",
+      "startDateTime": "2024-10-04T10:16:31Z"
+    },
+    "88": {
+      "match_id": "8484212853",
+      "radiant": "BOOM Esports",
+      "dire": "Team Aureus",
+      "winner": "dire",
+      "league": "RES Unchained - A Blast Dota Slam IV Qualifier SEA",
+      "startDateTime": "2025-09-28T03:03:40Z"
+    },
+    "89": {
+      "match_id": "8484212853",
+      "radiant": "BOOM Esports",
+      "dire": "Team Aureus",
+      "winner": "dire",
+      "league": "RES Unchained - A Blast Dota Slam IV Qualifier SEA",
+      "startDateTime": "2025-09-28T03:03:40Z"
+    },
+    "90": {
+      "match_id": "8484212853",
+      "radiant": "BOOM Esports",
+      "dire": "Team Aureus",
+      "winner": "dire",
+      "league": "RES Unchained - A Blast Dota Slam IV Qualifier SEA",
+      "startDateTime": "2025-09-28T03:03:40Z"
+    },
+    "91": {
+      "match_id": "8484212853",
+      "radiant": "BOOM Esports",
+      "dire": "Team Aureus",
+      "winner": "dire",
+      "league": "RES Unchained - A Blast Dota Slam IV Qualifier SEA",
+      "startDateTime": "2025-09-28T03:03:40Z"
+    }
+  }
+}
