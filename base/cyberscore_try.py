@@ -5607,6 +5607,14 @@ def _emit_live_elo_applied_log(prefix: str, applied_update: Optional[Dict[str, A
         f"winner_slot={winner_slot}, "
         f"winner={winner_team_name}"
     )
+    k_global = float(payload.get("k_global", 0.0) or 0.0)
+    k_local = float(payload.get("k_local", 0.0) or 0.0)
+    k_roster = float(payload.get("k_roster", 0.0) or 0.0)
+    if any(abs(value) > 0.0 for value in (k_global, k_local, k_roster)):
+        print(
+            "      K(base): "
+            f"global={k_global:.1f}, local={k_local:.1f}, roster={k_roster:.1f}"
+        )
 
     def _emit_side(side_label: str, side_payload: Optional[Dict[str, Any]]) -> None:
         side = side_payload if isinstance(side_payload, dict) else {}
@@ -5614,15 +5622,25 @@ def _emit_live_elo_applied_log(prefix: str, applied_update: Optional[Dict[str, A
         before_rating = float(side.get("before_rating", 0.0) or 0.0)
         after_rating = float(side.get("after_rating", before_rating) or before_rating)
         delta = float(side.get("delta", after_rating - before_rating) or 0.0)
+        base_delta = float(side.get("base_delta", delta) or 0.0)
         rating_source = str(side.get("rating_source") or "unknown")
+        lineup_matches = int(side.get("before_lineup_matches", 0) or 0)
+        lineup_k = float(side.get("lineup_k_multiplier", 1.0) or 1.0)
+        player_org_k = float(side.get("player_org_k_multiplier_avg", 1.0) or 1.0)
+        local_k = float(side.get("effective_local_k_multiplier_avg", 1.0) or 1.0)
         print(
             f"      {side_label} {team_name}: "
             f"{before_rating:.1f} -> {after_rating:.1f} ({delta:+.1f}) "
-            f"[{rating_source}]"
+            f"[{rating_source}; baseΔ={base_delta:+.1f}; "
+            f"lineup_matches={lineup_matches}; lineupK={lineup_k:.2f}; "
+            f"playerOrgK≈{player_org_k:.2f}; localK≈{local_k:.2f}]"
         )
 
     _emit_side("Radiant", payload.get("radiant"))
     _emit_side("Dire", payload.get("dire"))
+    rating_delta_sum = float(payload.get("rating_delta_sum", 0.0) or 0.0)
+    base_delta_sum = float(payload.get("base_delta_sum", rating_delta_sum) or rating_delta_sum)
+    print(f"      ΣΔ rating/base: {rating_delta_sum:+.1f} / {base_delta_sum:+.1f}")
 
     rad_before = float(payload.get("radiant_win_prob_before", 0.5) or 0.5) * 100.0
     rad_after = float(payload.get("radiant_win_prob_after", 0.5) or 0.5) * 100.0

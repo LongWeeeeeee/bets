@@ -1246,6 +1246,12 @@ class HybridPlayerRosterEloModel:
         dire_mult = dire_context.lineup_k_multiplier
         rad_org = _team_key(match.radiant_team_id, match.radiant_team_name)
         dire_org = _team_key(match.dire_team_id, match.dire_team_name)
+        rad_player_org_mults: list[float] = []
+        dire_player_org_mults: list[float] = []
+        rad_global_mults: list[float] = []
+        dire_global_mults: list[float] = []
+        rad_local_mults: list[float] = []
+        dire_local_mults: list[float] = []
 
         for player_id, position in zip(match.radiant_player_ids, radiant_positions):
             player_mult = self._player_org_k_multiplier(player_id, rad_org, tier)
@@ -1255,6 +1261,9 @@ class HybridPlayerRosterEloModel:
                 global_mult *= player_mult
             if self.config.player_org_uncertainty_boost_local:
                 local_mult *= player_mult
+            rad_player_org_mults.append(player_mult)
+            rad_global_mults.append(global_mult)
+            rad_local_mults.append(local_mult)
             self.player_global[player_id] += (
                 k_global * global_mult * error
             )
@@ -1277,6 +1286,9 @@ class HybridPlayerRosterEloModel:
                 global_mult *= player_mult
             if self.config.player_org_uncertainty_boost_local:
                 local_mult *= player_mult
+            dire_player_org_mults.append(player_mult)
+            dire_global_mults.append(global_mult)
+            dire_local_mults.append(local_mult)
             self.player_global[player_id] -= (
                 k_global * global_mult * error
             )
@@ -1309,5 +1321,11 @@ class HybridPlayerRosterEloModel:
         step.metadata["k_roster"] = k_roster
         step.metadata["radiant_lineup_k_multiplier"] = rad_mult
         step.metadata["dire_lineup_k_multiplier"] = dire_mult
+        step.metadata["radiant_player_org_k_multiplier_avg"] = _mean(rad_player_org_mults)
+        step.metadata["dire_player_org_k_multiplier_avg"] = _mean(dire_player_org_mults)
+        step.metadata["radiant_effective_global_k_multiplier_avg"] = _mean(rad_global_mults)
+        step.metadata["dire_effective_global_k_multiplier_avg"] = _mean(dire_global_mults)
+        step.metadata["radiant_effective_local_k_multiplier_avg"] = _mean(rad_local_mults)
+        step.metadata["dire_effective_local_k_multiplier_avg"] = _mean(dire_local_mults)
         step.metadata["side_bias"] = self.side_bias[tier]
         return step

@@ -476,12 +476,13 @@ def _build_live_applied_update(
         match=match,
         tier_matchup_elo_bonus=meta.get("tier_matchup_elo_bonus"),
     )
-    model.process_match(match)
+    step = model.process_match(match)
     after_summary = _preview_live_matchup_from_model(
         model=model,
         match=match,
         tier_matchup_elo_bonus=meta.get("tier_matchup_elo_bonus"),
     )
+    step_meta = step.metadata if isinstance(step.metadata, dict) else {}
     first_team_name = match.radiant_team_name if first_team_is_radiant else match.dire_team_name
     second_team_name = match.dire_team_name if first_team_is_radiant else match.radiant_team_name
     winner_team_name = first_team_name if winner_slot == "first" else second_team_name
@@ -493,6 +494,7 @@ def _build_live_applied_update(
         after_rating = float(after_side.get("rating", after_side.get("base_rating", before_rating)))
         before_base = float(before_side.get("base_rating", before_rating))
         after_base = float(after_side.get("base_rating", after_rating))
+        side_prefix = "radiant" if side == "radiant" else "dire"
         return {
             "team_name": str(after_side.get("team_name") or before_side.get("team_name") or ""),
             "team_id": after_side.get("team_id", before_side.get("team_id")),
@@ -505,8 +507,22 @@ def _build_live_applied_update(
             "base_delta": after_base - before_base,
             "before_roster_matches": int(before_side.get("roster_matches", 0) or 0),
             "after_roster_matches": int(after_side.get("roster_matches", 0) or 0),
+            "before_lineup_matches": int(step_meta.get(f"{side_prefix}_lineup_matches", 0) or 0),
+            "after_lineup_matches": int(step_meta.get(f"{side_prefix}_lineup_matches", 0) or 0) + 1,
+            "lineup_k_multiplier": float(step_meta.get(f"{side_prefix}_lineup_k_multiplier", 1.0) or 1.0),
+            "player_org_k_multiplier_avg": float(
+                step_meta.get(f"{side_prefix}_player_org_k_multiplier_avg", 1.0) or 1.0
+            ),
+            "effective_global_k_multiplier_avg": float(
+                step_meta.get(f"{side_prefix}_effective_global_k_multiplier_avg", 1.0) or 1.0
+            ),
+            "effective_local_k_multiplier_avg": float(
+                step_meta.get(f"{side_prefix}_effective_local_k_multiplier_avg", 1.0) or 1.0
+            ),
         }
 
+    radiant_delta = _side_delta("radiant")
+    dire_delta = _side_delta("dire")
     return {
         "map_key": map_key,
         "series_key": series_key,
@@ -527,8 +543,13 @@ def _build_live_applied_update(
         "winner_team_name": str(winner_team_name or ""),
         "radiant_team_name": str(match.radiant_team_name or ""),
         "dire_team_name": str(match.dire_team_name or ""),
-        "radiant": _side_delta("radiant"),
-        "dire": _side_delta("dire"),
+        "radiant": radiant_delta,
+        "dire": dire_delta,
+        "k_global": float(step_meta.get("k_global", 0.0) or 0.0),
+        "k_local": float(step_meta.get("k_local", 0.0) or 0.0),
+        "k_roster": float(step_meta.get("k_roster", 0.0) or 0.0),
+        "rating_delta_sum": float(radiant_delta.get("delta", 0.0)) + float(dire_delta.get("delta", 0.0)),
+        "base_delta_sum": float(radiant_delta.get("base_delta", 0.0)) + float(dire_delta.get("base_delta", 0.0)),
         "radiant_win_prob_before": float(before_summary.get("radiant_win_prob", 0.5)),
         "radiant_win_prob_after": float(after_summary.get("radiant_win_prob", 0.5)),
         "radiant_win_prob_delta": float(after_summary.get("radiant_win_prob", 0.5))

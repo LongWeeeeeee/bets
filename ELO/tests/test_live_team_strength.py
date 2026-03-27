@@ -418,6 +418,11 @@ def test_register_live_map_context_applies_previous_map_once_and_updates_runtime
     assert result_map2["applied_update"]["series_score_after"] == {"first": 1, "second": 0}
     assert result_map2["applied_update"]["radiant"]["delta"] > 0.0
     assert result_map2["applied_update"]["dire"]["delta"] < 0.0
+    assert "lineup_k_multiplier" in result_map2["applied_update"]["radiant"]
+    assert "player_org_k_multiplier_avg" in result_map2["applied_update"]["radiant"]
+    assert "effective_local_k_multiplier_avg" in result_map2["applied_update"]["radiant"]
+    assert "rating_delta_sum" in result_map2["applied_update"]
+    assert "base_delta_sum" in result_map2["applied_update"]
     assert result_map2["applied_update"]["radiant_win_prob_after"] > result_map2["applied_update"]["radiant_win_prob_before"]
     assert runtime_model_state_path.exists() is True
 
@@ -607,6 +612,8 @@ def test_finalize_live_series_from_scores_applies_pending_final_map_once(tmp_pat
     assert finalize_result["applied_update"]["winner_team_name"] == "Elegia"
     assert finalize_result["applied_update"]["radiant"]["delta"] > 0.0
     assert finalize_result["applied_update"]["dire"]["delta"] < 0.0
+    assert "lineup_k_multiplier" in finalize_result["applied_update"]["dire"]
+    assert "player_org_k_multiplier_avg" in finalize_result["applied_update"]["dire"]
 
     summary_after_map2 = get_matchup_summary(
         radiant_team_id=1,
