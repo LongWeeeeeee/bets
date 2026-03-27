@@ -92,7 +92,7 @@ def _notify_runtime_error_once(message: str, *, dedupe_key: Optional[str] = None
     _RUNTIME_ALERTED_ERRORS.add(key)
     logger.error(message)
     try:
-        send_message(message)
+        send_message(message, admin_only=True)
     except Exception as exc:
         logger.warning("Failed to deliver runtime error alert to Telegram: %s", exc)
 
@@ -3542,7 +3542,7 @@ def _ensure_known_team_or_add_to_tier2(team_ids, team_name: str, match_url: str)
         f"{match_url}"
     )
     print(f"   {err_msg}")
-    send_message(err_msg)
+    send_message(err_msg, admin_only=True)
     return False, (candidate_ids[0] if candidate_ids else 0)
 
 
@@ -12356,7 +12356,7 @@ def general(return_status=None, use_proxy=None, odds=None):
         if GET_HEADS_LAST_FAILURE_REASON == GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES:
             print('❌ Не найден элемент live__matches в HTML')
             try:
-                send_message('❌ Не найден элемент live__matches в HTML')
+                send_message('❌ Не найден элемент live__matches в HTML', admin_only=True)
             except Exception as e:
                 print(f"⚠️ Не удалось отправить уведомление в Telegram: {e}")
         return None

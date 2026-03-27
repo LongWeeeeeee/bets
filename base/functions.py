@@ -698,6 +698,11 @@ def _get_default_telegram_chat_ids() -> list[str]:
     return ordered
 
 
+def _get_admin_telegram_chat_ids() -> list[str]:
+    primary = _telegram_normalize_chat_id(getattr(keys, "Chat_id", None))
+    return [primary] if primary else []
+
+
 def _write_json_atomic(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".{path.name}.tmp")
@@ -1237,10 +1242,13 @@ def _remove_telegram_subscribers(chat_ids_to_remove: list[str]) -> None:
             logger.warning("Failed to remove Telegram subscribers %s: %s", chat_ids_to_remove, exc)
 
 
-def send_message(message, *, require_delivery: bool = False):
-    target_chat_ids = _refresh_telegram_subscribers()
-    if not target_chat_ids:
-        target_chat_ids = _get_default_telegram_chat_ids()
+def send_message(message, *, require_delivery: bool = False, admin_only: bool = False):
+    if admin_only:
+        target_chat_ids = _get_admin_telegram_chat_ids()
+    else:
+        target_chat_ids = _refresh_telegram_subscribers()
+        if not target_chat_ids:
+            target_chat_ids = _get_default_telegram_chat_ids()
 
     delivered = []
     uncertain_errors = []
@@ -4296,14 +4304,14 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
         if hero_name in name_to_id:
             dire_heroes_and_pos[key]['hero_id'] = name_to_id[hero_name]
         else:
-            send_message(f'Error handling name {hero_name}')
+            send_message(f'Error handling name {hero_name}', admin_only=True)
             return
     for key in radiant_heroes_and_pos:
         hero_name = radiant_heroes_and_pos[key]['hero_name'].lower()
         if hero_name in name_to_id:
             radiant_heroes_and_pos[key]['hero_id'] = name_to_id[hero_name]
         else:
-            send_message(f'Error handling name {hero_name}')
+            send_message(f'Error handling name {hero_name}', admin_only=True)
             return
     if match is not None:
         with open('one_match.json', encoding='utf-8') as f:

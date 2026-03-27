@@ -262,6 +262,41 @@ def test_send_message_broadcasts_to_discovered_subscribers(tmp_path, monkeypatch
     assert state["last_update_id"] == 10
 
 
+def test_send_message_admin_only_targets_primary_chat_only(tmp_path, monkeypatch) -> None:
+    import functions
+
+    state_path = tmp_path / "telegram_subscribers_state.json"
+    legacy_path = tmp_path / "legacy_telegram_subscribers_state.json"
+    state_path.write_text(
+        json.dumps({"chat_ids": ["100", "200", "300"], "last_update_id": 0}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(functions, "TELEGRAM_SUBSCRIBERS_STATE_PATH", state_path, raising=False)
+    monkeypatch.setattr(functions, "LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH", legacy_path, raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_id", "100", raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_ids", ["200", "300"], raising=False)
+
+    class _Response:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> Dict[str, Any]:
+            return {"ok": True, "result": {"message_id": 1}}
+
+    delivered: List[str] = []
+
+    def _fake_post(_url, **kwargs):
+        delivered.append(str(kwargs["json"]["chat_id"]))
+        return _Response()
+
+    monkeypatch.setattr(functions.requests, "post", _fake_post)
+
+    assert functions.send_message("admin message", require_delivery=True, admin_only=True) is True
+    assert delivered == ["100"]
+
+
 def test_load_telegram_subscribers_state_merges_primary_and_legacy(tmp_path, monkeypatch) -> None:
     import functions
 
