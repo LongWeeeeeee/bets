@@ -109,8 +109,13 @@ def test_send_message_requires_delivery_confirmation(monkeypatch) -> None:
         functions.send_message("test message", require_delivery=True)
 
 
-def test_send_message_uses_curl_fallback_on_ssl_connection_error(monkeypatch) -> None:
+def test_send_message_uses_curl_fallback_on_ssl_connection_error(tmp_path, monkeypatch) -> None:
     import functions
+    monkeypatch.setattr(functions, "TELEGRAM_UPDATES_FETCH_ENABLED", False, raising=False)
+    monkeypatch.setattr(functions, "TELEGRAM_SUBSCRIBERS_STATE_PATH", tmp_path / "telegram_subscribers_state.json", raising=False)
+    monkeypatch.setattr(functions, "LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH", tmp_path / "legacy_telegram_subscribers_state.json", raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_id", "100", raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_ids", [], raising=False)
 
     class _CurlResult:
         returncode = 0
@@ -161,9 +166,13 @@ def test_auto_add_to_tier2_does_not_send_telegram_message(monkeypatch) -> None:
     assert sent_messages == []
 
 
-def test_send_message_uses_proxy_fallback_before_curl(monkeypatch) -> None:
+def test_send_message_uses_proxy_fallback_before_curl(tmp_path, monkeypatch) -> None:
     import functions
     monkeypatch.setattr(functions, "TELEGRAM_UPDATES_FETCH_ENABLED", False, raising=False)
+    monkeypatch.setattr(functions, "TELEGRAM_SUBSCRIBERS_STATE_PATH", tmp_path / "telegram_subscribers_state.json", raising=False)
+    monkeypatch.setattr(functions, "LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH", tmp_path / "legacy_telegram_subscribers_state.json", raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_id", "100", raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_ids", [], raising=False)
 
     class _ProxyResponse:
         status_code = 200

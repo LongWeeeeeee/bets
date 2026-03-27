@@ -506,6 +506,21 @@ MAP_ID_CHECK_PATH_ODDS_DEFAULT = str(PROJECT_ROOT / "map_id_check_test.txt")
 DELAYED_QUEUE_PATH = str(
     os.getenv("DELAYED_QUEUE_PATH", "runtime/delayed_signal_queue.json")
 ).strip() or "runtime/delayed_signal_queue.json"
+SENT_SIGNAL_JOURNAL_PATH = str(
+    os.getenv("SENT_SIGNAL_JOURNAL_PATH", "runtime/sent_signal_recovery.jsonl")
+).strip() or "runtime/sent_signal_recovery.jsonl"
+SENT_SIGNAL_JOURNAL_FALLBACK_PATH = str(
+    os.getenv("SENT_SIGNAL_JOURNAL_FALLBACK_PATH", "runtime/sent_signal_recovery_fallback.jsonl")
+).strip() or "runtime/sent_signal_recovery_fallback.jsonl"
+UNCERTAIN_SIGNAL_DELIVERY_PATH = str(
+    os.getenv("UNCERTAIN_SIGNAL_DELIVERY_PATH", "runtime/uncertain_signal_delivery.jsonl")
+).strip() or "runtime/uncertain_signal_delivery.jsonl"
+UNCERTAIN_SIGNAL_DELIVERY_FALLBACK_PATH = str(
+    os.getenv(
+        "UNCERTAIN_SIGNAL_DELIVERY_FALLBACK_PATH",
+        "runtime/uncertain_signal_delivery_fallback.jsonl",
+    )
+).strip() or "runtime/uncertain_signal_delivery_fallback.jsonl"
 RUNTIME_INSTANCE_LOCK_PATH = str(
     os.getenv("RUNTIME_INSTANCE_LOCK_PATH", "runtime/cyberscore_try.instance.lock")
 ).strip() or "runtime/cyberscore_try.instance.lock"
@@ -8068,11 +8083,25 @@ headers = {
                       "Chrome/130.0.0.0 Safari/537.36", }
 
 def _sync_processed_urls_cache(urls: Any) -> None:
-    return
+    normalized = {
+        str(url).strip()
+        for url in (urls or [])
+        if str(url).strip()
+    }
+    with processed_urls_lock:
+        processed_urls_cache.clear()
+        processed_urls_cache.update(normalized)
 
 
 def _sync_uncertain_delivery_urls_cache(urls: Any) -> None:
-    return
+    normalized = {
+        str(url).strip()
+        for url in (urls or [])
+        if str(url).strip()
+    }
+    with uncertain_delivery_urls_lock:
+        uncertain_delivery_urls_cache.clear()
+        uncertain_delivery_urls_cache.update(normalized)
 
 
 def _should_emit_verbose_match_log(match_key: Any) -> bool:
@@ -8255,23 +8284,123 @@ def _update_delayed_match(match_key: str, **updates: Any) -> bool:
 
 
 def _load_uncertain_delivery_urls() -> list[str]:
-    return []
+    paths = [
+        Path(UNCERTAIN_SIGNAL_DELIVERY_PATH),
+        Path(UNCERTAIN_SIGNAL_DELIVERY_FALLBACK_PATH),
+    ]
+    urls: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError:
+            continue
+        except Exception as exc:
+            logger.exception("Failed to read uncertain-delivery journal %s: %s", path, exc)
+            continue
+        for raw_line in raw.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = orjson.loads(line)
+            except Exception as exc:
+                logger.warning("Failed to parse uncertain-delivery journal line from %s: %s", path, exc)
+                continue
+            url = str((payload or {}).get("url") or "").strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+    return urls
 
 
 def _append_uncertain_delivery_entry(entry: dict[str, Any]) -> str:
-    return ""
+    primary_path = Path(UNCERTAIN_SIGNAL_DELIVERY_PATH)
+    fallback_path = Path(UNCERTAIN_SIGNAL_DELIVERY_FALLBACK_PATH)
+    try:
+        _append_journal_entry_to_path(primary_path, entry)
+        return str(primary_path)
+    except Exception as exc:
+        logger.exception("Failed to append uncertain-delivery journal %s: %s", primary_path, exc)
+        _append_journal_entry_to_path(fallback_path, entry)
+        return str(fallback_path)
 
 
 def _append_sent_signal_journal(url: str, reason: str, details: Any) -> str:
-    return ""
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "url": str(url or "").strip(),
+        "reason": str(reason or "unspecified"),
+        "details": details,
+    }
+    primary_path = Path(SENT_SIGNAL_JOURNAL_PATH)
+    fallback_path = Path(SENT_SIGNAL_JOURNAL_FALLBACK_PATH)
+    try:
+        _append_journal_entry_to_path(primary_path, entry)
+        return str(primary_path)
+    except Exception as exc:
+        logger.exception("Failed to append sent-signal journal %s: %s", primary_path, exc)
+        _append_journal_entry_to_path(fallback_path, entry)
+        return str(fallback_path)
 
 
 def _flush_sent_signal_journal_into_map_id_check() -> int:
-    return 0
+    journal_paths = [
+        Path(SENT_SIGNAL_JOURNAL_PATH),
+        Path(SENT_SIGNAL_JOURNAL_FALLBACK_PATH),
+    ]
+    recovered_urls: list[str] = []
+    seen: set[str] = set()
+    for journal_path in journal_paths:
+        try:
+            raw = journal_path.read_bytes()
+        except FileNotFoundError:
+            continue
+        if not raw:
+            continue
+        for raw_line in raw.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            payload = orjson.loads(line)
+            url = str((payload or {}).get("url") or "").strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            recovered_urls.append(url)
+    if not recovered_urls:
+        return 0
+
+    map_id_check_path = Path(MAP_ID_CHECK_PATH)
+    with map_id_check_lock:
+        data = _load_json_url_array(
+            map_id_check_path,
+            recover=True,
+            label="MAP_ID_CHECK_PATH",
+        )
+        appended = 0
+        for url in recovered_urls:
+            if url in data:
+                continue
+            data.append(url)
+            appended += 1
+        _write_map_id_check_atomic(map_id_check_path, data)
+    _sync_processed_urls_cache(data)
+    for journal_path in journal_paths:
+        try:
+            _clear_journal_file(journal_path)
+        except Exception as exc:
+            logger.exception("Failed to clear sent-signal journal %s: %s", journal_path, exc)
+    return appended
 
 
 def _safe_flush_sent_signal_journal_into_map_id_check() -> int:
-    return 0
+    try:
+        return _flush_sent_signal_journal_into_map_id_check()
+    except Exception as exc:
+        logger.exception("Failed to flush sent-signal journal into map_id_check: %s", exc)
+        return 0
 
 
 def _mark_url_uncertain_delivery(url: str) -> None:
@@ -8295,19 +8424,44 @@ def _record_uncertain_delivery(
     details: Optional[dict[str, Any]],
     error_message: str,
 ) -> Optional[str]:
-    return None
+    normalized_url = str(match_key or "").strip()
+    if not normalized_url:
+        return None
+    payload = {
+        "timestamp": datetime.now().isoformat(),
+        "url": normalized_url,
+        "reason": str(reason or "uncertain_delivery"),
+        "details": dict(details or {}),
+        "error_message": str(error_message or ""),
+    }
+    journal_path = _append_uncertain_delivery_entry(payload)
+    _mark_url_uncertain_delivery(normalized_url)
+    _drop_delayed_match(normalized_url, reason="uncertain_delivery")
+    _release_signal_send_slot(normalized_url)
+    return journal_path
 
 
 def _mark_url_processed(url: str) -> None:
-    return
+    normalized_url = str(url or "").strip()
+    if not normalized_url:
+        return
+    with processed_urls_lock:
+        processed_urls_cache.add(normalized_url)
 
 
 def _is_url_processed(url: str) -> bool:
     if not url:
         return False
+    normalized_url = str(url).strip()
+    with processed_urls_lock:
+        if normalized_url in processed_urls_cache:
+            return True
     try:
         data = _load_map_id_check_urls(recover=False)
-        return bool(isinstance(data, list) and url in data)
+        exists = bool(isinstance(data, list) and normalized_url in data)
+        if exists:
+            _mark_url_processed(normalized_url)
+        return exists
     except Exception as exc:
         logger.warning("Failed processed-url lookup for %s: %s", url, exc)
         return False
@@ -8383,6 +8537,8 @@ def _schedule_delayed_retry(match_key: str, exc: Exception, now_ts: Optional[flo
 def _dispatch_block_reason(match_key: str) -> Optional[str]:
     if not match_key:
         return None
+    if _is_url_uncertain_delivery(match_key):
+        return "uncertain_delivery"
     if _is_url_processed(match_key):
         return "processed"
     return None
@@ -8464,6 +8620,12 @@ def _deliver_and_persist_signal(
         send_message(message_text, require_delivery=True)
     except TelegramSendError as exc:
         if exc.delivery_uncertain:
+            _record_uncertain_delivery(
+                match_key,
+                reason="telegram_delivery_uncertain",
+                details=dict(add_url_details or {}),
+                error_message=str(exc),
+            )
             print(
                 f"   ⚠️ Uncertain Telegram delivery for {match_key}; "
                 "URL не будет заблокирован вне map_id_check.txt"
@@ -8479,6 +8641,12 @@ def _deliver_and_persist_signal(
             details=dict(add_url_details or {}),
         )
     except Exception as exc:
+        journal_details = dict(add_url_details or {})
+        journal_details["persist_error"] = str(exc)
+        _append_sent_signal_journal(match_key, add_url_reason, journal_details)
+        _mark_url_processed(match_key)
+        _drop_delayed_match(match_key, reason="sent_signal_journaled_after_persist_error")
+        _release_signal_send_slot(match_key)
         logger.exception("Signal was sent but add_url() failed for %s", match_key)
         print(
             f"   ⚠️ add_url() failed after successful send for {match_key}; "
@@ -12118,7 +12286,7 @@ def general(return_status=None, use_proxy=None, odds=None):
     # Гарантируем staged warmup словарей перед обработкой матчей.
     # На слабых серверах early/late грузим по шагам, чтобы не давать один резкий пик.
     stats_ready = _load_stats_dicts()
-    if not stats_ready:
+    if stats_ready is False:
         warmup_parts = []
         if lane_data is not None:
             warmup_parts.append("lane")

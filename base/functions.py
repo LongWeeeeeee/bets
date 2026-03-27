@@ -6515,7 +6515,7 @@ def _lc_build_player_maps(players):
 def _lc_load_models(models_dir=None):
     if _LC_MODEL_CACHE.get("loaded"):
         return _LC_MODEL_CACHE
-    models_dir = models_dir or "/Users/alex/Documents/ingame/ml-models"
+    models_dir = models_dir or str(PROJECT_ROOT / "ml-models")
     try:
         from catboost import CatBoostClassifier  # type: ignore
     except Exception as exc:
@@ -6566,7 +6566,7 @@ def _lc_load_models(models_dir=None):
 def _lc_load_decisive_models(models_dir=None):
     if _LC_DEC_MODEL_CACHE.get("loaded"):
         return _LC_DEC_MODEL_CACHE
-    models_dir = models_dir or "/Users/alex/Documents/ingame/ml-models"
+    models_dir = models_dir or str(PROJECT_ROOT / "ml-models")
     try:
         from catboost import CatBoostClassifier  # type: ignore
     except Exception as exc:
@@ -6627,7 +6627,7 @@ def _lc_load_decisive_models(models_dir=None):
 def _lc_load_laning_winner_model(models_dir=None):
     if _LC_LW_MODEL_CACHE.get("loaded"):
         return _LC_LW_MODEL_CACHE
-    models_dir = models_dir or "/Users/alex/Documents/ingame/ml-models"
+    models_dir = models_dir or str(PROJECT_ROOT / "ml-models")
     try:
         from catboost import CatBoostClassifier  # type: ignore
     except Exception as exc:
@@ -6684,7 +6684,7 @@ def _lc_load_laning_winner_model(models_dir=None):
 def _lc_load_laning_winner_rich_model(models_dir=None):
     if _LC_LW_RICH_MODEL_CACHE.get("loaded"):
         return _LC_LW_RICH_MODEL_CACHE
-    models_dir = models_dir or "/Users/alex/Documents/ingame/ml-models"
+    models_dir = models_dir or str(PROJECT_ROOT / "ml-models")
     try:
         from catboost import CatBoostClassifier  # type: ignore
     except Exception as exc:
