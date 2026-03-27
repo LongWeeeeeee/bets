@@ -30,6 +30,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Tuple, Union
 import math
+from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 import requests
 from functions import (
@@ -41,7 +42,11 @@ from functions import (
     STAR_THRESHOLDS_BY_WR,
     TelegramSendError,
 )
-from keys import api_to_proxy, BOOKMAKER_PROXY_URL
+try:
+    from keys import api_to_proxy, BOOKMAKER_PROXY_URL, BOOKMAKER_PROXY_POOL
+except ImportError:
+    from keys import api_to_proxy, BOOKMAKER_PROXY_URL
+    BOOKMAKER_PROXY_POOL = []
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -3144,8 +3149,17 @@ stats_warmup_last_heavy_load_ts = 0.0
 
 # Настройка прокси
 USE_BOOKMAKER_PROXY_FOR_MATCHES = _safe_bool_env("USE_BOOKMAKER_PROXY_FOR_MATCHES", True)
-if USE_BOOKMAKER_PROXY_FOR_MATCHES and BOOKMAKER_PROXY_URL:
-    PROXY_LIST = [str(BOOKMAKER_PROXY_URL).strip()]
+if USE_BOOKMAKER_PROXY_FOR_MATCHES:
+    _proxy_candidates: list[str] = []
+    if isinstance(BOOKMAKER_PROXY_POOL, (list, tuple, set)):
+        for item in BOOKMAKER_PROXY_POOL:
+            candidate = str(item).strip()
+            if candidate and candidate not in _proxy_candidates:
+                _proxy_candidates.append(candidate)
+    candidate = str(BOOKMAKER_PROXY_URL).strip() if BOOKMAKER_PROXY_URL else ""
+    if candidate and candidate not in _proxy_candidates:
+        _proxy_candidates.append(candidate)
+    PROXY_LIST = _proxy_candidates
 else:
     PROXY_LIST = [str(p).strip() for p in api_to_proxy.keys() if str(p).strip()]
 CURRENT_PROXY_INDEX = 0
@@ -3155,6 +3169,9 @@ USE_PROXY = None
 GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES = "live_matches_missing_after_all_proxies"
 GET_HEADS_FAILURE_REASON_REQUEST_FAILED = "request_failed"
 GET_HEADS_LAST_FAILURE_REASON = None
+MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+QUIET_HOURS_START_HOUR_MSK = 3
+QUIET_HOURS_END_HOUR_MSK = 7
 
 
 def _env_use_proxy_default() -> bool:
@@ -3162,6 +3179,19 @@ def _env_use_proxy_default() -> bool:
     if env_use_proxy is None:
         return True
     return env_use_proxy.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _compute_moscow_quiet_hours_sleep_seconds(now: Optional[datetime] = None) -> float:
+    current = now.astimezone(MOSCOW_TZ) if now is not None else datetime.now(MOSCOW_TZ)
+    if current.hour < QUIET_HOURS_START_HOUR_MSK or current.hour >= QUIET_HOURS_END_HOUR_MSK:
+        return 0.0
+    wake_at = current.replace(
+        hour=QUIET_HOURS_END_HOUR_MSK,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    return max(0.0, (wake_at - current).total_seconds())
 
 
 def _init_proxy_pool(use_proxy: bool) -> None:
@@ -12468,8 +12498,23 @@ if __name__ == "__main__":
 
     while True:
         try:
-            # if is_moscow_night():
-            #     sleep_until_morning()
+            quiet_sleep_seconds = _compute_moscow_quiet_hours_sleep_seconds()
+            if quiet_sleep_seconds > 0:
+                quiet_now = datetime.now(MOSCOW_TZ)
+                wake_at = quiet_now.replace(
+                    hour=QUIET_HOURS_END_HOUR_MSK,
+                    minute=0,
+                    second=0,
+                    microsecond=0,
+                )
+                print(
+                    "🌙 Quiet hours active (MSK): "
+                    f"{QUIET_HOURS_START_HOUR_MSK:02d}:00-{QUIET_HOURS_END_HOUR_MSK:02d}:00. "
+                    f"Sleeping until {wake_at.strftime('%H:%M')} MSK "
+                    f"({int(quiet_sleep_seconds)}s)"
+                )
+                time.sleep(quiet_sleep_seconds)
+                continue
             status = general(use_proxy=None, odds=args.odds)
             if status is None:
                 print('Сплю 60 секунд')

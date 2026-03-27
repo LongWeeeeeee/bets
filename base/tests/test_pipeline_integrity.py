@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
+from zoneinfo import ZoneInfo
+from datetime import datetime
 
 import orjson
 import pytest
@@ -89,6 +91,22 @@ def test_add_url_recovers_corrupt_map_id_check_and_persists_url(tmp_path, monkey
 
     assert orjson.loads(target_path.read_bytes()) == ["dltv.org/matches/test-recover.0"]
     assert list(tmp_path.glob("map_id_check.json.corrupt.*"))
+
+
+def test_compute_moscow_quiet_hours_sleep_seconds() -> None:
+    tz = ZoneInfo("Europe/Moscow")
+
+    assert runtime._compute_moscow_quiet_hours_sleep_seconds(
+        datetime(2026, 3, 28, 2, 59, tzinfo=tz)
+    ) == 0.0
+    assert runtime._compute_moscow_quiet_hours_sleep_seconds(
+        datetime(2026, 3, 28, 7, 0, tzinfo=tz)
+    ) == 0.0
+
+    sleep_seconds = runtime._compute_moscow_quiet_hours_sleep_seconds(
+        datetime(2026, 3, 28, 3, 30, tzinfo=tz)
+    )
+    assert sleep_seconds == 3.5 * 60 * 60
 
 
 def test_send_message_requires_delivery_confirmation(monkeypatch) -> None:
