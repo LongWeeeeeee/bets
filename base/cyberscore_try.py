@@ -26,7 +26,7 @@ import subprocess
 import re
 import tempfile
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Tuple, Union
 import math
@@ -3172,6 +3172,8 @@ GET_HEADS_LAST_FAILURE_REASON = None
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 QUIET_HOURS_START_HOUR_MSK = 3
 QUIET_HOURS_END_HOUR_MSK = 7
+NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
+NEXT_SCHEDULE_MATCH_INFO: Optional[Dict[str, Any]] = None
 
 
 def _env_use_proxy_default() -> bool:
@@ -3192,6 +3194,47 @@ def _compute_moscow_quiet_hours_sleep_seconds(now: Optional[datetime] = None) ->
         microsecond=0,
     )
     return max(0.0, (wake_at - current).total_seconds())
+
+
+def _parse_dltv_schedule_timestamp(raw_value: str) -> Optional[datetime]:
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _extract_nearest_scheduled_match_info(
+    soup: BeautifulSoup,
+    *,
+    now_utc: Optional[datetime] = None,
+) -> Optional[dict[str, Any]]:
+    current_utc = now_utc.astimezone(timezone.utc) if now_utc is not None else datetime.now(timezone.utc)
+    best_payload: Optional[dict[str, Any]] = None
+    best_sleep_seconds: Optional[float] = None
+
+    for event_tag in soup.find_all("a", class_="event"):
+        time_tag = event_tag.find("div", class_="event__info-info__time")
+        scheduled_at = _parse_dltv_schedule_timestamp(time_tag.get_text(" ", strip=True) if time_tag else "")
+        if scheduled_at is None or scheduled_at <= current_utc:
+            continue
+        match_item = event_tag.find_next("div", class_="match__item")
+        team_tags = match_item.find_all("div", class_="match__item-team__name") if match_item else []
+        team_names = [tag.get_text(" ", strip=True) for tag in team_tags if tag.get_text(" ", strip=True)]
+        matchup = " vs ".join(team_names[:2]) if team_names else "unknown"
+        sleep_seconds = max(0.0, (scheduled_at - current_utc).total_seconds())
+        if best_sleep_seconds is None or sleep_seconds < best_sleep_seconds:
+            best_sleep_seconds = sleep_seconds
+            best_payload = {
+                "scheduled_at_utc": scheduled_at,
+                "scheduled_at_msk": scheduled_at.astimezone(MOSCOW_TZ),
+                "sleep_seconds": sleep_seconds,
+                "matchup": matchup,
+            }
+
+    return best_payload
 
 
 def _init_proxy_pool(use_proxy: bool) -> None:
@@ -8705,8 +8748,10 @@ def _deliver_and_persist_signal(
 
 
 def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.214.49", path = "/matches"):
-        global GET_HEADS_LAST_FAILURE_REASON
+        global GET_HEADS_LAST_FAILURE_REASON, NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO
         GET_HEADS_LAST_FAILURE_REASON = None
+        NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
+        NEXT_SCHEDULE_MATCH_INFO = None
         # Формируем URL всегда (нужен для retry с новым прокси)
         url = f"https://{ip_address}{path}"
         
@@ -8784,6 +8829,10 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             
             if not heads or not bodies:
                 print(f"⚠️  Не найдены матчи (heads: {len(heads)}, bodies: {len(bodies)})")
+                schedule_info = _extract_nearest_scheduled_match_info(soup)
+                if schedule_info:
+                    NEXT_SCHEDULE_MATCH_INFO = schedule_info
+                    NEXT_SCHEDULE_SLEEP_SECONDS = float(schedule_info.get("sleep_seconds", 0.0) or 0.0)
                 return [], []
             
             heads_copy, bodies_copy = heads.copy(), bodies.copy()
@@ -12390,6 +12439,26 @@ def general(return_status=None, use_proxy=None, odds=None):
             except Exception as e:
                 print(f"⚠️ Не удалось отправить уведомление в Telegram: {e}")
         return None
+
+    if not heads or not bodies:
+        schedule_info = NEXT_SCHEDULE_MATCH_INFO if isinstance(NEXT_SCHEDULE_MATCH_INFO, dict) else {}
+        sleep_seconds = float(schedule_info.get("sleep_seconds", 0.0) or 0.0)
+        matchup = str(schedule_info.get("matchup") or "unknown")
+        scheduled_at_msk = schedule_info.get("scheduled_at_msk")
+        scheduled_label = (
+            scheduled_at_msk.strftime("%Y-%m-%d %H:%M:%S MSK")
+            if isinstance(scheduled_at_msk, datetime)
+            else "unknown"
+        )
+        if sleep_seconds > 0:
+            print(
+                "🗓️ Live matches empty. "
+                f"Nearest scheduled match: {matchup} at {scheduled_label}. "
+                f"Sleep planned: {int(math.ceil(sleep_seconds))}s"
+            )
+            return "__sleep_until_schedule__"
+        print("⚠️ Live matches empty and no future scheduled match was parsed")
+        return None
     
     print(f'✅ Найдено активных матчей: {len(heads)}')
     
@@ -12516,7 +12585,11 @@ if __name__ == "__main__":
                 time.sleep(quiet_sleep_seconds)
                 continue
             status = general(use_proxy=None, odds=args.odds)
-            if status is None:
+            if status == "__sleep_until_schedule__":
+                scheduled_sleep_seconds = max(1, int(math.ceil(float(NEXT_SCHEDULE_SLEEP_SECONDS or 0.0))))
+                print(f"Сплю {scheduled_sleep_seconds} секунд до ближайшего матча по расписанию DLTV")
+                time.sleep(scheduled_sleep_seconds)
+            elif status is None:
                 print('Сплю 60 секунд')
                 time.sleep(60)
             else:

@@ -109,6 +109,43 @@ def test_compute_moscow_quiet_hours_sleep_seconds() -> None:
     assert sleep_seconds == 3.5 * 60 * 60
 
 
+def test_extract_nearest_scheduled_match_info() -> None:
+    html = """
+    <div class="live__matches"></div>
+    <a class="event" href="/events/test-1">
+      <div class="event__info">
+        <div class="event__info-info">
+          <div class="event__info-info__time" data-moment="HH:mm">2026-03-28 12:00:00</div>
+        </div>
+      </div>
+    </a>
+    <div class="match__item">
+      <div class="match__item-team__name">Aurora</div>
+      <div class="match__item-team__name">PARIVISION</div>
+    </div>
+    <a class="event" href="/events/test-2">
+      <div class="event__info">
+        <div class="event__info-info">
+          <div class="event__info-info__time" data-moment="HH:mm">2026-03-28 15:30:00</div>
+        </div>
+      </div>
+    </a>
+    <div class="match__item">
+      <div class="match__item-team__name">Team Yandex</div>
+      <div class="match__item-team__name">Tundra Esports</div>
+    </div>
+    """
+    soup = BeautifulSoup(html, "lxml")
+    schedule = runtime._extract_nearest_scheduled_match_info(
+        soup,
+        now_utc=datetime(2026, 3, 28, 8, 46, tzinfo=ZoneInfo("UTC")),
+    )
+
+    assert schedule is not None
+    assert schedule["matchup"] == "Aurora vs PARIVISION"
+    assert int(schedule["sleep_seconds"]) == (3 * 60 * 60 + 14 * 60)
+
+
 def test_send_message_requires_delivery_confirmation(monkeypatch) -> None:
     import functions
 
