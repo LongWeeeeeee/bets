@@ -9,6 +9,7 @@ import os
 import sys
 import tempfile
 import time
+from bisect import bisect_right
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -41,10 +42,18 @@ DEFAULT_SNAPSHOT_PATH = Path(__file__).resolve().parent / "output" / "live_team_
 DEFAULT_RUNTIME_PROGRESS_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_progress.json"
 DEFAULT_RUNTIME_MODEL_STATE_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_model_state.json"
 DEFAULT_RUNTIME_LOCK_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_state.lock"
+DEFAULT_LIVE_SEGMENT_POLICY_PATH = Path(__file__).resolve().parent / "live_probability_segment_policy.json"
 
 _SNAPSHOT_CACHE: dict[str, Any] | None = None
 _MODEL_FROM_SNAPSHOT_CACHE: dict[str, Any] = {"snapshot_id": None, "model": None}
 _RUNTIME_SNAPSHOT_CACHE: dict[str, Any] = {"base_snapshot_id": None, "runtime_signature": None, "snapshot": None}
+_LIVE_PROBABILITY_POLICY_CACHE: dict[str, Any] = {"path": None, "signature": None, "policy": None}
+
+SEGMENT_OVERALL = "overall"
+SEGMENT_TIER1_ONLY = "tier1_only"
+SEGMENT_TIER2_ONLY = "tier2_only"
+SEGMENT_TIER1_VS_TIER2 = "tier1_vs_tier2"
+SEGMENT_OTHER = "other"
 
 
 def _timestamp_to_iso(timestamp: int) -> str:
@@ -65,6 +74,229 @@ def _elo_probability(rating_diff: float, scale: float) -> float:
 def _elo_diff_from_probability(probability: float, scale: float) -> float:
     p = min(0.99, max(0.01, probability))
     return scale * math.log10(p / (1.0 - p))
+
+
+def _known_team_segment(
+    team_a_id: int | None,
+    team_a_name: str,
+    team_b_id: int | None,
+    team_b_name: str,
+) -> str:
+    team_a_tier = get_known_team_tier(team_a_id, team_a_name)
+    team_b_tier = get_known_team_tier(team_b_id, team_b_name)
+    if team_a_tier == LeagueTier.TIER1 and team_b_tier == LeagueTier.TIER1:
+        return SEGMENT_TIER1_ONLY
+    if team_a_tier == LeagueTier.TIER2 and team_b_tier == LeagueTier.TIER2:
+        return SEGMENT_TIER2_ONLY
+    if {team_a_tier, team_b_tier} == {LeagueTier.TIER1, LeagueTier.TIER2}:
+        return SEGMENT_TIER1_VS_TIER2
+    return SEGMENT_OTHER
+
+
+def _live_probability_policy_signature(path: Path) -> tuple[bool, int]:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return False, 0
+    return True, int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)))
+
+
+def _load_live_probability_segment_policy(
+    policy_path: Path = DEFAULT_LIVE_SEGMENT_POLICY_PATH,
+) -> dict[str, Any] | None:
+    exists, signature = _live_probability_policy_signature(policy_path)
+    cached_policy = _LIVE_PROBABILITY_POLICY_CACHE.get("policy")
+    if (
+        _LIVE_PROBABILITY_POLICY_CACHE.get("path") == str(policy_path)
+        and _LIVE_PROBABILITY_POLICY_CACHE.get("signature") == signature
+        and isinstance(cached_policy, dict)
+    ):
+        return cached_policy
+    if not exists:
+        _LIVE_PROBABILITY_POLICY_CACHE["path"] = str(policy_path)
+        _LIVE_PROBABILITY_POLICY_CACHE["signature"] = signature
+        _LIVE_PROBABILITY_POLICY_CACHE["policy"] = None
+        return None
+    payload = _load_json_dict(policy_path)
+    if not isinstance(payload, dict):
+        _LIVE_PROBABILITY_POLICY_CACHE["path"] = str(policy_path)
+        _LIVE_PROBABILITY_POLICY_CACHE["signature"] = signature
+        _LIVE_PROBABILITY_POLICY_CACHE["policy"] = None
+        return None
+    segments = payload.get("segments")
+    policy = segments if isinstance(segments, dict) else payload
+    if not isinstance(policy, dict):
+        _LIVE_PROBABILITY_POLICY_CACHE["path"] = str(policy_path)
+        _LIVE_PROBABILITY_POLICY_CACHE["signature"] = signature
+        _LIVE_PROBABILITY_POLICY_CACHE["policy"] = None
+        return None
+    _LIVE_PROBABILITY_POLICY_CACHE["path"] = str(policy_path)
+    _LIVE_PROBABILITY_POLICY_CACHE["signature"] = signature
+    _LIVE_PROBABILITY_POLICY_CACHE["policy"] = policy
+    return policy
+
+
+def _favorite_score_from_variant(
+    *,
+    favorite_strength: float,
+    underdog_strength: float,
+    variant: str,
+) -> float | None:
+    favorite_strength = float(max(favorite_strength, 1.0))
+    underdog_strength = float(max(underdog_strength, 1.0))
+    abs_diff = favorite_strength - underdog_strength
+    avg_strength = max(1.0, (favorite_strength + underdog_strength) / 2.0)
+    pct_gap_avg_pp = 100.0 * abs_diff / avg_strength
+    pct_gap_fav_pp = 100.0 * abs_diff / favorite_strength
+    ratio_gap_pp = 100.0 * (favorite_strength / underdog_strength - 1.0)
+    log_ratio_points = 400.0 * math.log10(favorite_strength / underdog_strength)
+    if variant == "abs_diff":
+        return abs_diff
+    if variant == "pct_gap_avg_pp":
+        return pct_gap_avg_pp
+    if variant == "pct_gap_fav_pp":
+        return pct_gap_fav_pp
+    if variant == "ratio_gap_pp":
+        return ratio_gap_pp
+    if variant == "log_ratio_points":
+        return log_ratio_points
+    if variant.startswith("blend_avg_k"):
+        try:
+            coef = float(variant.removeprefix("blend_avg_k"))
+        except ValueError:
+            return None
+        return abs_diff + coef * pct_gap_avg_pp
+    if variant.startswith("blend_fav_k"):
+        try:
+            coef = float(variant.removeprefix("blend_fav_k"))
+        except ValueError:
+            return None
+        return abs_diff + coef * pct_gap_fav_pp
+    return None
+
+
+def _monotonic_bucket_probs(values: list[float]) -> list[float]:
+    monotonic: list[float] = []
+    current = 0.5
+    for raw_value in values:
+        current = max(current, float(raw_value))
+        monotonic.append(min(0.99, current))
+    return monotonic
+
+
+def _apply_live_probability_policy(
+    *,
+    radiant_rating: float,
+    dire_rating: float,
+    radiant_team_id: int | None,
+    radiant_team_name: str,
+    dire_team_id: int | None,
+    dire_team_name: str,
+    elo_scale: float,
+    policy_path: Path = DEFAULT_LIVE_SEGMENT_POLICY_PATH,
+) -> dict[str, Any]:
+    direct_radiant_win_prob = _elo_probability(radiant_rating - dire_rating, elo_scale)
+    segment = _known_team_segment(radiant_team_id, radiant_team_name, dire_team_id, dire_team_name)
+    policy = _load_live_probability_segment_policy(policy_path)
+    policy_segment = segment
+    segment_policy = (policy or {}).get(segment)
+    if not isinstance(segment_policy, dict):
+        policy_segment = SEGMENT_OVERALL
+        segment_policy = (policy or {}).get(SEGMENT_OVERALL)
+    if not isinstance(segment_policy, dict):
+        return {
+            "radiant_win_prob": direct_radiant_win_prob,
+            "dire_win_prob": 1.0 - direct_radiant_win_prob,
+            "direct_radiant_win_prob": direct_radiant_win_prob,
+            "direct_dire_win_prob": 1.0 - direct_radiant_win_prob,
+            "probability_segment": segment,
+            "probability_policy_segment": None,
+            "probability_mode": "direct",
+            "probability_variant": None,
+            "favorite_probability": max(direct_radiant_win_prob, 1.0 - direct_radiant_win_prob),
+            "favorite_score": None,
+            "policy_applied": False,
+        }
+
+    mode = str(segment_policy.get("mode") or "direct").strip() or "direct"
+    if mode == "direct_series_prob":
+        return {
+            "radiant_win_prob": direct_radiant_win_prob,
+            "dire_win_prob": 1.0 - direct_radiant_win_prob,
+            "direct_radiant_win_prob": direct_radiant_win_prob,
+            "direct_dire_win_prob": 1.0 - direct_radiant_win_prob,
+            "probability_segment": segment,
+            "probability_policy_segment": policy_segment,
+            "probability_mode": mode,
+            "probability_variant": None,
+            "favorite_probability": max(direct_radiant_win_prob, 1.0 - direct_radiant_win_prob),
+            "favorite_score": None,
+            "policy_applied": True,
+        }
+
+    variant = str(segment_policy.get("variant") or "").strip()
+    score: float | None = None
+    bucket_probs: list[float] = []
+    edges: list[float] = []
+    favorite_is_radiant = radiant_rating >= dire_rating
+    favorite_strength = max(radiant_rating, dire_rating)
+    underdog_strength = min(radiant_rating, dire_rating)
+    if variant:
+        score = _favorite_score_from_variant(
+            favorite_strength=favorite_strength,
+            underdog_strength=underdog_strength,
+            variant=variant,
+        )
+    raw_edges = segment_policy.get("edges")
+    raw_bucket_probs = segment_policy.get("bucket_probs") or segment_policy.get("smoothed_probs")
+    if isinstance(raw_edges, list):
+        edges = [float(value) for value in raw_edges]
+    if isinstance(raw_bucket_probs, list):
+        bucket_probs = _monotonic_bucket_probs([float(value) for value in raw_bucket_probs])
+    if score is None or not bucket_probs:
+        return {
+            "radiant_win_prob": direct_radiant_win_prob,
+            "dire_win_prob": 1.0 - direct_radiant_win_prob,
+            "direct_radiant_win_prob": direct_radiant_win_prob,
+            "direct_dire_win_prob": 1.0 - direct_radiant_win_prob,
+            "probability_segment": segment,
+            "probability_policy_segment": policy_segment,
+            "probability_mode": "direct_fallback",
+            "probability_variant": variant or None,
+            "favorite_probability": max(direct_radiant_win_prob, 1.0 - direct_radiant_win_prob),
+            "favorite_score": score,
+            "policy_applied": False,
+        }
+    if abs(radiant_rating - dire_rating) < 1e-9:
+        return {
+            "radiant_win_prob": 0.5,
+            "dire_win_prob": 0.5,
+            "direct_radiant_win_prob": direct_radiant_win_prob,
+            "direct_dire_win_prob": 1.0 - direct_radiant_win_prob,
+            "probability_segment": segment,
+            "probability_policy_segment": policy_segment,
+            "probability_mode": mode,
+            "probability_variant": variant or None,
+            "favorite_probability": 0.5,
+            "favorite_score": score,
+            "policy_applied": True,
+        }
+    bucket_idx = min(bisect_right(edges, score), len(bucket_probs) - 1)
+    favorite_probability = max(0.01, min(0.99, float(bucket_probs[bucket_idx])))
+    radiant_win_prob = favorite_probability if favorite_is_radiant else (1.0 - favorite_probability)
+    return {
+        "radiant_win_prob": radiant_win_prob,
+        "dire_win_prob": 1.0 - radiant_win_prob,
+        "direct_radiant_win_prob": direct_radiant_win_prob,
+        "direct_dire_win_prob": 1.0 - direct_radiant_win_prob,
+        "probability_segment": segment,
+        "probability_policy_segment": policy_segment,
+        "probability_mode": mode,
+        "probability_variant": variant or None,
+        "favorite_probability": favorite_probability,
+        "favorite_score": score,
+        "policy_applied": True,
+    }
 
 
 def _latest_data_mtime(data_dir: Path) -> float:
@@ -442,7 +674,16 @@ def _preview_live_matchup_from_model(
             tier_gap_bonus = -float((tier_bonus_map.get(tier_gap_key) or {}).get("elo_bonus", 0.0))
     radiant_rating = float(radiant_payload["base_rating"]) + (tier_gap_bonus / 2.0)
     dire_rating = float(dire_payload["base_rating"]) - (tier_gap_bonus / 2.0)
-    radiant_win_prob = _elo_probability(radiant_rating - dire_rating, elo_scale)
+    probability_meta = _apply_live_probability_policy(
+        radiant_rating=radiant_rating,
+        dire_rating=dire_rating,
+        radiant_team_id=match.radiant_team_id,
+        radiant_team_name=match.radiant_team_name,
+        dire_team_id=match.dire_team_id,
+        dire_team_name=match.dire_team_name,
+        elo_scale=elo_scale,
+    )
+    radiant_win_prob = float(probability_meta.get("radiant_win_prob", 0.5))
     radiant_payload["rating"] = radiant_rating
     dire_payload["rating"] = dire_rating
     return {
@@ -453,6 +694,7 @@ def _preview_live_matchup_from_model(
         "elo_diff": radiant_rating - dire_rating,
         "tier_gap_key": tier_gap_key,
         "tier_gap_bonus": tier_gap_bonus,
+        **probability_meta,
     }
 
 
@@ -908,7 +1150,16 @@ def build_matchup_summary_from_snapshot(
 
     radiant_rating = radiant_base_rating + (tier_gap_bonus / 2.0)
     dire_rating = dire_base_rating - (tier_gap_bonus / 2.0)
-    radiant_win_prob = _elo_probability(radiant_rating - dire_rating, elo_scale)
+    probability_meta = _apply_live_probability_policy(
+        radiant_rating=radiant_rating,
+        dire_rating=dire_rating,
+        radiant_team_id=radiant_team_id,
+        radiant_team_name=radiant_team_name,
+        dire_team_id=dire_team_id,
+        dire_team_name=dire_team_name,
+        elo_scale=elo_scale,
+    )
+    radiant_win_prob = float(probability_meta.get("radiant_win_prob", 0.5))
 
     return {
         "source": (
@@ -932,6 +1183,7 @@ def build_matchup_summary_from_snapshot(
         "elo_diff": radiant_rating - dire_rating,
         "tier_gap_key": tier_gap_key,
         "tier_gap_bonus": tier_gap_bonus,
+        **probability_meta,
     }
 
 

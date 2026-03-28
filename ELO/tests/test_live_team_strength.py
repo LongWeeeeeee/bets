@@ -23,6 +23,9 @@ def _reset_live_team_strength_caches() -> None:
     live_team_strength_module._RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = None
     live_team_strength_module._RUNTIME_SNAPSHOT_CACHE["runtime_signature"] = None
     live_team_strength_module._RUNTIME_SNAPSHOT_CACHE["snapshot"] = None
+    live_team_strength_module._LIVE_PROBABILITY_POLICY_CACHE["path"] = None
+    live_team_strength_module._LIVE_PROBABILITY_POLICY_CACHE["signature"] = None
+    live_team_strength_module._LIVE_PROBABILITY_POLICY_CACHE["policy"] = None
 
 
 def test_build_matchup_summary_from_snapshot_uses_current_strengths() -> None:
@@ -300,6 +303,125 @@ def test_build_matchup_summary_from_snapshot_uses_player_strength_for_cold_roste
     assert summary["radiant"]["roster_matches"] == 2
     assert summary["radiant"]["rating_source"] == "lineup_player_strength_cold_roster"
     assert summary["radiant"]["base_rating"] == pytest.approx(1600.0)
+
+
+def test_build_matchup_summary_from_snapshot_applies_segment_probability_grid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = {
+        "meta": {"reference_timestamp": 1771153251},
+        "teams_by_org_key": {
+            "org:parivision": {
+                "team_id": 987654,
+                "team_name": "PARIVISION",
+                "current_strength": 1737.0,
+                "tier": "TIER1",
+                "last_seen_utc": "2026-03-27T10:07:01+00:00",
+            },
+            "org:aurora": {
+                "team_id": 987655,
+                "team_name": "Aurora",
+                "current_strength": 1873.0,
+                "tier": "TIER1",
+                "last_seen_utc": "2026-03-27T10:07:01+00:00",
+            },
+        },
+    }
+
+    monkeypatch.setattr(
+        live_team_strength_module,
+        "_load_live_probability_segment_policy",
+        lambda *_args, **_kwargs: {
+            "tier1_only": {
+                "mode": "grid",
+                "variant": "blend_fav_k30",
+                "edges": [120.0, 200.0],
+                "bucket_probs": [0.54, 0.62, 0.78],
+            }
+        },
+    )
+    monkeypatch.setattr(
+        live_team_strength_module,
+        "get_known_team_tier",
+        lambda _team_id, _team_name: LeagueTier.TIER1,
+    )
+
+    summary = build_matchup_summary_from_snapshot(
+        snapshot,
+        radiant_team_id=987654,
+        dire_team_id=987655,
+        radiant_team_name="PARIVISION",
+        dire_team_name="Aurora",
+    )
+
+    assert summary is not None
+    assert summary["probability_segment"] == "tier1_only"
+    assert summary["probability_policy_segment"] == "tier1_only"
+    assert summary["probability_mode"] == "grid"
+    assert summary["probability_variant"] == "blend_fav_k30"
+    assert summary["radiant_win_prob"] == pytest.approx(0.22)
+    assert summary["dire_win_prob"] == pytest.approx(0.78)
+    assert summary["direct_radiant_win_prob"] == pytest.approx(
+        1.0 / (1.0 + 10 ** ((1873.0 - 1737.0) / 400.0))
+    )
+
+
+def test_build_matchup_summary_from_snapshot_keeps_direct_for_tier1_vs_tier2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = {
+        "meta": {"reference_timestamp": 1771153251},
+        "teams_by_org_key": {
+            "name:tierone": {
+                "team_id": 1001,
+                "team_name": "Tier One",
+                "current_strength": 1700.0,
+                "tier": "TIER1",
+                "last_seen_utc": "2026-03-27T10:07:01+00:00",
+            },
+            "name:tiertwo": {
+                "team_id": 1002,
+                "team_name": "Tier Two",
+                "current_strength": 1600.0,
+                "tier": "TIER2",
+                "last_seen_utc": "2026-03-27T10:07:01+00:00",
+            },
+        },
+    }
+
+    monkeypatch.setattr(
+        live_team_strength_module,
+        "_load_live_probability_segment_policy",
+        lambda *_args, **_kwargs: {
+            "tier1_vs_tier2": {
+                "mode": "direct_series_prob",
+            }
+        },
+    )
+
+    def _fake_known_tier(team_id: int | None, _team_name: str) -> LeagueTier | None:
+        if team_id == 1001:
+            return LeagueTier.TIER1
+        if team_id == 1002:
+            return LeagueTier.TIER2
+        return None
+
+    monkeypatch.setattr(live_team_strength_module, "get_known_team_tier", _fake_known_tier)
+
+    summary = build_matchup_summary_from_snapshot(
+        snapshot,
+        radiant_team_id=1001,
+        dire_team_id=1002,
+        radiant_team_name="Tier One",
+        dire_team_name="Tier Two",
+    )
+
+    assert summary is not None
+    assert summary["probability_segment"] == "tier1_vs_tier2"
+    assert summary["probability_mode"] == "direct_series_prob"
+    assert summary["radiant_win_prob"] == pytest.approx(
+        1.0 / (1.0 + 10 ** ((1600.0 - 1700.0) / 400.0))
+    )
 
 
 def test_register_live_map_context_applies_previous_map_once_and_updates_runtime_snapshot(tmp_path) -> None:
@@ -629,7 +751,7 @@ def test_finalize_live_series_from_scores_applies_pending_final_map_once(tmp_pat
         runtime_model_state_path=runtime_model_state_path,
     )
     assert summary_after_map2 is not None
-    assert summary_after_map2["radiant_win_prob"] > summary_after_map1["radiant_win_prob"]
+    assert summary_after_map2["radiant_win_prob"] >= summary_after_map1["radiant_win_prob"]
 
     finalize_repeat = finalize_live_series_from_scores(
         series_key="425663",
