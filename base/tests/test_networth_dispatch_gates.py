@@ -1624,6 +1624,52 @@ def test_top25_late_elo_block_opposite_signs_queues_instead_of_reject(monkeypatc
     assert add_url_details["top25_late_elo_block_rank"] == 7
 
 
+def test_top25_late_elo_block_no_early_hits_queues_instead_of_reject(monkeypatch) -> None:
+    case = BranchScenario(
+        name="top25_late_elo_block_no_early_hits_queues",
+        game_time_seconds=12 * 60,
+        target_side="radiant",
+        target_networth_diff=900,
+        has_early_star=False,
+        early_sign=1,
+        has_late_star=True,
+        late_sign=1,
+        expected_send_calls=0,
+        raw_early_output={"counterpick_1vs1": 1},
+        raw_mid_output={"counterpick_1vs1": 6, "pos1_vs_pos1": 24, "solo": 3},
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_recommend_odds_for_block",
+        lambda _data, phase: (
+            {"level": 70, "min_odds": 1.43, "wr_pct": 70.0}
+            if phase == "late"
+            else None
+        ),
+    )
+    _patch_team_elo_summary(
+        monkeypatch,
+        radiant_wr=31.2,
+        dire_wr=68.8,
+        radiant_rank=7,
+        dire_rank=1,
+    )
+
+    result = _run_branch_scenario(monkeypatch, case)
+
+    assert result.sent_messages == []
+    assert result.add_url_calls == []
+    assert result.queued_payload is not None
+    assert result.queued_payload["reason"] == "late_top25_elo_block_opposite_monitor"
+    assert result.queued_payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_WAIT
+    assert result.queued_payload["send_on_target_game_time"] is False
+    assert result.queued_payload["dynamic_monitor_profile"] == "late_top25_elo_block_opposite_monitor"
+    assert result.queued_payload["networth_target_side"] == "radiant"
+    assert result.queued_payload["top25_late_elo_block_rank"] == 7
+    add_url_details = result.queued_payload.get("add_url_details") or {}
+    assert add_url_details["top25_late_elo_block_rank"] == 7
+
+
 def test_top25_late_elo_block_delayed_sender_sends_if_target_side_leads_at_20_20(tmp_path, monkeypatch) -> None:
     delayed_queue_path = tmp_path / "delayed_signal_queue.json"
     monkeypatch.setattr(runtime, "DELAYED_QUEUE_PATH", str(delayed_queue_path), raising=False)

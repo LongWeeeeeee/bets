@@ -1802,20 +1802,31 @@ def _top25_late_elo_block_opposite_monitor_override(
 ) -> Optional[Dict[str, Any]]:
     if not STAR_ALLOW_TOP25_LATE_ELO_BLOCK_OPPOSITE_MONITOR:
         return None
-    if not bool(selected_early_diag.get("valid")):
-        return None
     if bool(selected_late_diag.get("valid")):
         return None
     if str(selected_late_diag.get("status") or "") != "elo_wr_below_min60":
         return None
-    if not bool(raw_selected_early_diag.get("valid")) or not bool(raw_selected_late_diag.get("valid")):
+    if not bool(raw_selected_late_diag.get("valid")):
         return None
-    raw_early_sign = raw_selected_early_diag.get("sign")
     raw_late_sign = raw_selected_late_diag.get("sign")
-    if raw_early_sign not in (-1, 1) or raw_late_sign not in (-1, 1):
+    if raw_late_sign not in (-1, 1):
         return None
-    if raw_early_sign == raw_late_sign:
-        return None
+
+    override_mode: Optional[str] = None
+    raw_early_sign = raw_selected_early_diag.get("sign")
+    if bool(selected_early_diag.get("valid")) and bool(raw_selected_early_diag.get("valid")):
+        if raw_early_sign not in (-1, 1):
+            return None
+        if raw_early_sign == raw_late_sign:
+            return None
+        override_mode = "opposite_signs"
+    else:
+        raw_early_status = str(raw_selected_early_diag.get("status") or "")
+        selected_early_status = str(selected_early_diag.get("status") or "")
+        if raw_early_status != "no_hits" or selected_early_status != "no_hits":
+            return None
+        override_mode = "no_early"
+
     late_side = _target_side_from_sign(raw_late_sign)
     if late_side not in {"radiant", "dire"}:
         return None
@@ -1829,6 +1840,7 @@ def _top25_late_elo_block_opposite_monitor_override(
         "target_side": late_side,
         "leaderboard_rank": int(late_rank),
         "elo_target_wr": float(late_elo_wr) if late_elo_wr is not None else None,
+        "mode": override_mode,
         "window_start_seconds": float(NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_WINDOW_START_SECONDS),
         "window_threshold": float(NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_DIFF),
         "target_game_time": float(DELAYED_SIGNAL_TARGET_GAME_TIME),
@@ -10834,20 +10846,22 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 override_target_side = str(top25_late_elo_block_override.get("target_side") or "")
                 override_rank = top25_late_elo_block_override.get("leaderboard_rank")
                 override_adj_wr = top25_late_elo_block_override.get("elo_target_wr")
+                override_mode = str(top25_late_elo_block_override.get("mode") or "unknown")
                 override_adj_wr_label = (
                     f"{float(override_adj_wr):.1f}%"
                     if override_adj_wr is not None
                     else "n/a"
                 )
                 print(
-                    "   ✅ Override: opposite raw late star kept alive despite ELO block "
+                    "   ✅ Override: raw late star kept alive despite ELO block "
                     f"because target side is top-{int(TOP25_LATE_ELO_BLOCK_RANK_THRESHOLD)} "
-                    f"(side={override_target_side}, "
+                    f"(mode={override_mode}, side={override_target_side}, "
                     f"rank={override_rank}, "
                     f"adj_wr={override_adj_wr_label})"
                 )
             if top25_late_elo_block_override_active:
                 override_adj_wr = top25_late_elo_block_override.get("elo_target_wr")
+                override_mode = str(top25_late_elo_block_override.get("mode") or "unknown")
                 adj_wr_label = (
                     f"{float(override_adj_wr):.1f}%"
                     if override_adj_wr is not None
@@ -10855,7 +10869,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
                 star_diag_lines.append(
                     "Top25LateEloBlock: "
-                    f"enabled(rank={int(top25_late_elo_block_override.get('leaderboard_rank') or 0)},"
+                    f"enabled(mode={override_mode},rank={int(top25_late_elo_block_override.get('leaderboard_rank') or 0)},"
                     f"target_side={top25_late_elo_block_override.get('target_side')},"
                     f"adj_wr={adj_wr_label})"
                 )
