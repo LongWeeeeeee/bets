@@ -48,6 +48,7 @@ _SNAPSHOT_CACHE: dict[str, Any] | None = None
 _MODEL_FROM_SNAPSHOT_CACHE: dict[str, Any] = {"snapshot_id": None, "model": None}
 _RUNTIME_SNAPSHOT_CACHE: dict[str, Any] = {"base_snapshot_id": None, "runtime_signature": None, "snapshot": None}
 _LIVE_PROBABILITY_POLICY_CACHE: dict[str, Any] = {"path": None, "signature": None, "policy": None}
+_LEADERBOARD_RANK_CACHE: dict[str, Any] = {"snapshot_id": None, "rank_map": None}
 
 SEGMENT_OVERALL = "overall"
 SEGMENT_TIER1_ONLY = "tier1_only"
@@ -570,6 +571,37 @@ def _snapshot_with_runtime_model_state(
     return merged_snapshot
 
 
+def _leaderboard_rank_map(snapshot: dict[str, Any]) -> dict[str, int]:
+    snapshot_id = id(snapshot)
+    cached_rank_map = _LEADERBOARD_RANK_CACHE.get("rank_map")
+    if (
+        _LEADERBOARD_RANK_CACHE.get("snapshot_id") == snapshot_id
+        and isinstance(cached_rank_map, dict)
+    ):
+        return cached_rank_map
+
+    teams_by_org_key = snapshot.get("teams_by_org_key")
+    if not isinstance(teams_by_org_key, dict):
+        _LEADERBOARD_RANK_CACHE["snapshot_id"] = snapshot_id
+        _LEADERBOARD_RANK_CACHE["rank_map"] = {}
+        return {}
+
+    rows: list[tuple[str, float, str]] = []
+    for org_key, row in teams_by_org_key.items():
+        if not isinstance(row, dict):
+            continue
+        try:
+            current_strength = float(row.get("current_strength"))
+        except (TypeError, ValueError):
+            continue
+        rows.append((str(org_key), current_strength, str(row.get("team_name") or org_key)))
+    rows.sort(key=lambda item: (-item[1], item[2].casefold()))
+    rank_map = {org_key: idx + 1 for idx, (org_key, _rating, _name) in enumerate(rows)}
+    _LEADERBOARD_RANK_CACHE["snapshot_id"] = snapshot_id
+    _LEADERBOARD_RANK_CACHE["rank_map"] = rank_map
+    return rank_map
+
+
 def _winner_slot_from_scores(
     previous_scores: dict[str, int],
     current_scores: dict[str, int],
@@ -1032,6 +1064,7 @@ def build_matchup_summary_from_snapshot(
     meta = snapshot.get("meta") or {}
     tier_matchup_elo_bonus = meta.get("tier_matchup_elo_bonus") or {}
     reference_timestamp = int(meta.get("reference_timestamp") or 0)
+    rank_map = _leaderboard_rank_map(snapshot)
     lineup_match_tier = _coerce_match_tier(match_tier)
     model = _restore_model_from_snapshot(snapshot)
 
@@ -1110,6 +1143,8 @@ def build_matchup_summary_from_snapshot(
 
     radiant_org_key, radiant_row = _lookup(radiant_team_id, radiant_team_name)
     dire_org_key, dire_row = _lookup(dire_team_id, dire_team_name)
+    radiant_rank = rank_map.get(radiant_org_key)
+    dire_rank = rank_map.get(dire_org_key)
     radiant_base_rating, radiant_payload = _resolve_base_rating(
         team_id=radiant_team_id,
         team_name=radiant_team_name,
@@ -1172,11 +1207,13 @@ def build_matchup_summary_from_snapshot(
             **radiant_payload,
             "rating": radiant_rating,
             "base_rating": radiant_base_rating,
+            "leaderboard_rank": int(radiant_rank) if radiant_rank is not None else None,
         },
         "dire": {
             **dire_payload,
             "rating": dire_rating,
             "base_rating": dire_base_rating,
+            "leaderboard_rank": int(dire_rank) if dire_rank is not None else None,
         },
         "radiant_win_prob": radiant_win_prob,
         "dire_win_prob": 1.0 - radiant_win_prob,

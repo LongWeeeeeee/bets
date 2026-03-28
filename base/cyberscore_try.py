@@ -441,6 +441,8 @@ NETWORTH_GATE_LATE_NO_EARLY_DIFF = 1500.0
 NETWORTH_GATE_LATE_OPPOSITE_DIFF = 3000.0
 NETWORTH_GATE_LATE_OPPOSITE_EARLY90_4_TO_10_DIFF = 2000.0
 NETWORTH_GATE_LATE_OPPOSITE_EARLY90_UNDERDOG_10_TO_20_DIFF = 1500.0
+NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_WINDOW_START_SECONDS = 17 * 60
+NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_DIFF = 3000.0
 NETWORTH_GATE_LATE_COMEBACK_LARGE_DEFICIT = 14000.0
 NETWORTH_MONITOR_HOLD_SECONDS = max(0, _safe_int_env("NETWORTH_MONITOR_HOLD_SECONDS", 60))
 NETWORTH_STATUS_PRE4_BLOCK = "pre4_block"
@@ -461,6 +463,9 @@ NETWORTH_STATUS_LATE_MONITOR_WAIT_1500 = "late_monitor_wait_1500"
 NETWORTH_STATUS_LATE_CONFLICT_WAIT_1500 = "late_conflict_wait_1500"
 NETWORTH_STATUS_LATE_CONFLICT_WAIT_2000 = "late_conflict_wait_2000"
 NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000 = "late_conflict_wait_3000"
+NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_WAIT = "late_top25_elo_block_wait_3000"
+NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_TARGET_LEAD_SEND = "late_top25_elo_block_target_lead_send"
+NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_TIMEOUT_NO_SEND = "late_top25_elo_block_timeout_no_send"
 NETWORTH_STATUS_LATE_FALLBACK_20_20_SEND = "late_fallback_20_20_send"
 NETWORTH_STATUS_LATE_FALLBACK_20_20_DEFICIT_NO_SEND = "late_fallback_20_20_deficit_no_send"
 NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT = "late_comeback_monitor_wait"
@@ -586,6 +591,14 @@ STAR_ALLOW_IMMEDIATE_EARLY_STAR65 = _safe_bool_env(
 STAR_ALLOW_LATE_STAR_EARLY_SAME_OR_ZERO = _safe_bool_env(
     "STAR_ALLOW_LATE_STAR_EARLY_SAME_OR_ZERO",
     True,
+)
+STAR_ALLOW_TOP25_LATE_ELO_BLOCK_OPPOSITE_MONITOR = _safe_bool_env(
+    "STAR_ALLOW_TOP25_LATE_ELO_BLOCK_OPPOSITE_MONITOR",
+    True,
+)
+TOP25_LATE_ELO_BLOCK_RANK_THRESHOLD = _safe_int_env(
+    "TOP25_LATE_ELO_BLOCK_RANK_THRESHOLD",
+    25,
 )
 STAR_CONFIDENCE_CALIBRATION_PATH = Path(
     os.getenv(
@@ -1709,6 +1722,25 @@ def _team_elo_wr_for_side(
         return None
 
 
+def _team_elo_rank_for_side(
+    team_elo_meta: Optional[Dict[str, Any]],
+    side: Optional[str],
+) -> Optional[int]:
+    if not isinstance(team_elo_meta, dict):
+        return None
+    if side == "radiant":
+        key = "radiant_leaderboard_rank"
+    elif side == "dire":
+        key = "dire_leaderboard_rank"
+    else:
+        return None
+    try:
+        rank_value = team_elo_meta.get(key)
+        return int(rank_value) if rank_value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _elo_block_wr_penalty_pp(
     team_elo_meta: Optional[Dict[str, Any]],
     target_side: Optional[str],
@@ -1758,6 +1790,50 @@ def _apply_elo_block_wr_guard(
     out["valid"] = False
     out["status"] = "elo_wr_below_min60"
     return out
+
+
+def _top25_late_elo_block_opposite_monitor_override(
+    *,
+    team_elo_meta: Optional[Dict[str, Any]],
+    selected_early_diag: Dict[str, Any],
+    selected_late_diag: Dict[str, Any],
+    raw_selected_early_diag: Dict[str, Any],
+    raw_selected_late_diag: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    if not STAR_ALLOW_TOP25_LATE_ELO_BLOCK_OPPOSITE_MONITOR:
+        return None
+    if not bool(selected_early_diag.get("valid")):
+        return None
+    if bool(selected_late_diag.get("valid")):
+        return None
+    if str(selected_late_diag.get("status") or "") != "elo_wr_below_min60":
+        return None
+    if not bool(raw_selected_early_diag.get("valid")) or not bool(raw_selected_late_diag.get("valid")):
+        return None
+    raw_early_sign = raw_selected_early_diag.get("sign")
+    raw_late_sign = raw_selected_late_diag.get("sign")
+    if raw_early_sign not in (-1, 1) or raw_late_sign not in (-1, 1):
+        return None
+    if raw_early_sign == raw_late_sign:
+        return None
+    late_side = _target_side_from_sign(raw_late_sign)
+    if late_side not in {"radiant", "dire"}:
+        return None
+    late_rank = _team_elo_rank_for_side(team_elo_meta, late_side)
+    if late_rank is None or late_rank > int(TOP25_LATE_ELO_BLOCK_RANK_THRESHOLD):
+        return None
+    late_elo_wr = _team_elo_wr_for_side(team_elo_meta, late_side)
+    return {
+        "enabled": True,
+        "target_sign": int(raw_late_sign),
+        "target_side": late_side,
+        "leaderboard_rank": int(late_rank),
+        "elo_target_wr": float(late_elo_wr) if late_elo_wr is not None else None,
+        "window_start_seconds": float(NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_WINDOW_START_SECONDS),
+        "window_threshold": float(NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_DIFF),
+        "target_game_time": float(DELAYED_SIGNAL_TARGET_GAME_TIME),
+        "profile": "late_top25_elo_block_opposite_monitor",
+    }
 
 
 def _opposite_signs_early90_monitor_config(
@@ -1837,13 +1913,36 @@ def _dynamic_monitor_snapshot_for_payload(
     }
     if not isinstance(payload, dict):
         return snapshot
-    if snapshot["profile"] != "late_only_opposite_signs_early90":
-        return snapshot
     try:
         current_game_time = float(game_time_seconds) if game_time_seconds is not None else None
     except (TypeError, ValueError):
         current_game_time = None
     if current_game_time is None:
+        return snapshot
+
+    if snapshot["profile"] == "late_top25_elo_block_opposite_monitor":
+        if current_game_time < float(NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_WINDOW_START_SECONDS):
+            snapshot["threshold"] = None
+            return snapshot
+        next_threshold_raw = payload.get(
+            "networth_monitor_threshold_17_to_20",
+            payload.get("networth_monitor_threshold"),
+        )
+        try:
+            next_threshold = float(next_threshold_raw) if next_threshold_raw is not None else None
+        except (TypeError, ValueError):
+            next_threshold = None
+        next_status_label = str(
+            payload.get("networth_monitor_status_17_to_20")
+            or payload.get("dispatch_status_label")
+            or snapshot["status_label"]
+            or ""
+        )
+        snapshot["threshold"] = next_threshold
+        snapshot["status_label"] = next_status_label
+        return snapshot
+
+    if snapshot["profile"] != "late_only_opposite_signs_early90":
         return snapshot
 
     threshold_key = (
@@ -2400,6 +2499,47 @@ def _drain_due_delayed_signals_once() -> None:
                         f"game_time={int(current_game_time)})"
                     )
                     continue
+            if (
+                reason == "late_top25_elo_block_opposite_monitor"
+                and current_game_time >= target_game_time
+                and not monitor_ready
+            ):
+                if monitor_target_diff is not None and monitor_target_diff > 0:
+                    monitor_ready = True
+                    add_url_reason = "star_signal_sent_now_top25_late_elo_block_target_lead"
+                    add_url_details.setdefault(
+                        "dispatch_status_label",
+                        NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_TARGET_LEAD_SEND,
+                    )
+                    add_url_details.setdefault(
+                        "top25_late_elo_block_target_lead",
+                        True,
+                    )
+                    add_url_details.setdefault(
+                        "top25_late_elo_block_rank",
+                        payload.get("top25_late_elo_block_rank"),
+                    )
+                else:
+                    timeout_status_label = NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_TIMEOUT_NO_SEND
+                    add_url_details.setdefault("dispatch_status_label", timeout_status_label)
+                    add_url_details.setdefault("sent_game_time", int(current_game_time))
+                    add_url_details.setdefault("target_game_time", int(target_game_time))
+                    add_url_details.setdefault("target_networth_diff", float(monitor_target_diff or 0.0))
+                    add_url_details.setdefault(
+                        "top25_late_elo_block_rank",
+                        payload.get("top25_late_elo_block_rank"),
+                    )
+                    add_url(
+                        match_key,
+                        reason="star_signal_rejected_top25_late_elo_block_timeout",
+                        details=add_url_details,
+                    )
+                    _drop_delayed_match(match_key, reason="top25_late_elo_block_timeout")
+                    print(
+                        f"⏱️ Отложенный сигнал отменен без отправки: {match_key} "
+                        f"(reason={reason}, status={timeout_status_label}, game_time={int(current_game_time)})"
+                    )
+                    continue
             if not monitor_ready and not send_on_target_game_time:
                 timeout_add_url_reason = str(
                     payload.get("timeout_add_url_reason") or "star_signal_rejected_delayed_timeout"
@@ -2505,6 +2645,15 @@ def _drain_due_delayed_signals_once() -> None:
                         f"target_networth_diff={int(monitor_target_diff)}, "
                         f"minute={late_comeback_check.get('minute') if late_comeback_check else 'n/a'}, "
                         f"ceiling={int(late_comeback_check.get('threshold')) if late_comeback_check and late_comeback_check.get('threshold') is not None else 'n/a'})"
+                    )
+                elif (
+                    reason == "late_top25_elo_block_opposite_monitor"
+                    and current_game_time >= target_game_time
+                    and monitor_target_diff is not None
+                ):
+                    print(
+                        f"⏱️ Отложенный сигнал отправлен по top25 late ELO-block target lead: {match_key} "
+                        f"(game_time={int(current_game_time)}, target_networth_diff={int(monitor_target_diff)})"
                     )
                 elif monitor_ready and monitor_target_diff is not None:
                     monitor_desc = (
@@ -3174,6 +3323,10 @@ QUIET_HOURS_START_HOUR_MSK = 3
 QUIET_HOURS_END_HOUR_MSK = 7
 NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
 NEXT_SCHEDULE_MATCH_INFO: Optional[Dict[str, Any]] = None
+PENDING_SCHEDULE_WAKE_AUDIT: Optional[Dict[str, Any]] = None
+SCHEDULE_WAKE_LEAD_SECONDS = _safe_float_env("SCHEDULE_WAKE_LEAD_SECONDS", 30.0 * 60.0)
+SCHEDULE_MAX_SLEEP_SECONDS = _safe_float_env("SCHEDULE_MAX_SLEEP_SECONDS", 15.0 * 60.0)
+SCHEDULE_NEAR_MATCH_POLL_SECONDS = _safe_float_env("SCHEDULE_NEAR_MATCH_POLL_SECONDS", 60.0)
 
 
 def _env_use_proxy_default() -> bool:
@@ -3206,6 +3359,22 @@ def _parse_dltv_schedule_timestamp(raw_value: str) -> Optional[datetime]:
         return None
 
 
+def _compute_schedule_recheck_sleep_seconds(raw_sleep_seconds: float) -> float:
+    try:
+        raw_seconds = float(raw_sleep_seconds)
+    except (TypeError, ValueError):
+        return float(SCHEDULE_NEAR_MATCH_POLL_SECONDS)
+    if raw_seconds <= 0:
+        return float(SCHEDULE_NEAR_MATCH_POLL_SECONDS)
+    if raw_seconds <= SCHEDULE_WAKE_LEAD_SECONDS:
+        return min(float(SCHEDULE_NEAR_MATCH_POLL_SECONDS), raw_seconds)
+    reduced_seconds = max(
+        float(SCHEDULE_NEAR_MATCH_POLL_SECONDS),
+        raw_seconds - float(SCHEDULE_WAKE_LEAD_SECONDS),
+    )
+    return min(float(SCHEDULE_MAX_SLEEP_SECONDS), reduced_seconds)
+
+
 def _extract_nearest_scheduled_match_info(
     soup: BeautifulSoup,
     *,
@@ -3224,17 +3393,78 @@ def _extract_nearest_scheduled_match_info(
         team_tags = match_item.find_all("div", class_="match__item-team__name") if match_item else []
         team_names = [tag.get_text(" ", strip=True) for tag in team_tags if tag.get_text(" ", strip=True)]
         matchup = " vs ".join(team_names[:2]) if team_names else "unknown"
-        sleep_seconds = max(0.0, (scheduled_at - current_utc).total_seconds())
-        if best_sleep_seconds is None or sleep_seconds < best_sleep_seconds:
-            best_sleep_seconds = sleep_seconds
+        sleep_seconds_raw = max(0.0, (scheduled_at - current_utc).total_seconds())
+        sleep_seconds = _compute_schedule_recheck_sleep_seconds(sleep_seconds_raw)
+        if best_sleep_seconds is None or sleep_seconds_raw < best_sleep_seconds:
+            best_sleep_seconds = sleep_seconds_raw
             best_payload = {
                 "scheduled_at_utc": scheduled_at,
                 "scheduled_at_msk": scheduled_at.astimezone(MOSCOW_TZ),
                 "sleep_seconds": sleep_seconds,
+                "sleep_seconds_raw": sleep_seconds_raw,
                 "matchup": matchup,
             }
 
     return best_payload
+
+
+def _format_schedule_match_label(schedule_info: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(schedule_info, dict):
+        return "unknown"
+    matchup = str(schedule_info.get("matchup") or "unknown")
+    scheduled_at_msk = schedule_info.get("scheduled_at_msk")
+    if isinstance(scheduled_at_msk, datetime):
+        return f"{matchup} at {scheduled_at_msk.strftime('%Y-%m-%d %H:%M:%S MSK')}"
+    return matchup
+
+
+def _emit_pending_schedule_wake_audit(
+    *,
+    heads_count: int,
+    bodies_count: int,
+    next_schedule_info: Optional[Dict[str, Any]] = None,
+    request_status: str = "ok",
+) -> None:
+    global PENDING_SCHEDULE_WAKE_AUDIT
+    pending = PENDING_SCHEDULE_WAKE_AUDIT
+    if not isinstance(pending, dict):
+        return
+
+    woke_at_msk = pending.get("woke_at_msk")
+    woke_label = (
+        woke_at_msk.strftime("%Y-%m-%d %H:%M:%S MSK")
+        if isinstance(woke_at_msk, datetime)
+        else datetime.now(MOSCOW_TZ).strftime("%Y-%m-%d %H:%M:%S MSK")
+    )
+    target_label = _format_schedule_match_label(pending)
+    proxy_marker = _get_current_proxy_marker()
+
+    if heads_count > 0 and bodies_count > 0:
+        print(
+            "⏰ Wake audit: "
+            f"woke at {woke_label} for {target_label}. "
+            f"DLTV response after wake: live matches found "
+            f"(heads={heads_count}, bodies={bodies_count}, proxy={proxy_marker}, request={request_status})"
+        )
+        PENDING_SCHEDULE_WAKE_AUDIT = None
+        return
+
+    next_label = _format_schedule_match_label(next_schedule_info)
+    if isinstance(next_schedule_info, dict):
+        print(
+            "⏰ Wake audit: "
+            f"woke at {woke_label} for {target_label}, but live matches are still empty "
+            f"(heads={heads_count}, bodies={bodies_count}, proxy={proxy_marker}, request={request_status}). "
+            f"DLTV now points to next scheduled match: {next_label}"
+        )
+    else:
+        print(
+            "⏰ Wake audit: "
+            f"woke at {woke_label} for {target_label}, but live matches are still empty "
+            f"(heads={heads_count}, bodies={bodies_count}, proxy={proxy_marker}, request={request_status}). "
+            "DLTV did not expose a new scheduled match either"
+        )
+    PENDING_SCHEDULE_WAKE_AUDIT = None
 
 
 def _init_proxy_pool(use_proxy: bool) -> None:
@@ -6049,6 +6279,14 @@ def _format_team_elo_block(
     dire_snapshot_base_rating = float(dire_payload.get("snapshot_base_rating", dire_base_rating))
     radiant_live_base_delta = float(radiant_payload.get("live_base_delta", radiant_base_rating - radiant_snapshot_base_rating))
     dire_live_base_delta = float(dire_payload.get("live_base_delta", dire_base_rating - dire_snapshot_base_rating))
+    try:
+        radiant_leaderboard_rank = int(radiant_payload.get("leaderboard_rank"))
+    except (TypeError, ValueError):
+        radiant_leaderboard_rank = None
+    try:
+        dire_leaderboard_rank = int(dire_payload.get("leaderboard_rank"))
+    except (TypeError, ValueError):
+        dire_leaderboard_rank = None
     adjusted_radiant_wr = float(summary.get("radiant_win_prob", _elo_probability_from_ratings(radiant_rating, dire_rating))) * 100.0
     adjusted_dire_wr = float(summary.get("dire_win_prob", 1.0 - (adjusted_radiant_wr / 100.0))) * 100.0
     adjusted_diff = float(summary.get("elo_diff", radiant_rating - dire_rating))
@@ -6086,6 +6324,8 @@ def _format_team_elo_block(
         "dire_snapshot_base_rating": dire_snapshot_base_rating,
         "radiant_live_base_delta": radiant_live_base_delta,
         "dire_live_base_delta": dire_live_base_delta,
+        "radiant_leaderboard_rank": radiant_leaderboard_rank,
+        "dire_leaderboard_rank": dire_leaderboard_rank,
         "adjusted_radiant_wr": adjusted_radiant_wr,
         "adjusted_dire_wr": adjusted_dire_wr,
         "raw_radiant_wr": raw_radiant_wr,
@@ -8765,6 +9005,12 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             status_msg = f"Status: {response.status_code}" if response else "No response (None)"
             print(f"❌ Ошибка получения данных: {status_msg}")
             GET_HEADS_LAST_FAILURE_REASON = GET_HEADS_FAILURE_REASON_REQUEST_FAILED
+            _emit_pending_schedule_wake_audit(
+                heads_count=0,
+                bodies_count=0,
+                next_schedule_info=None,
+                request_status=status_msg,
+            )
             return None, None
 
         try:
@@ -8807,6 +9053,12 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                         )
                     else:
                         GET_HEADS_LAST_FAILURE_REASON = GET_HEADS_FAILURE_REASON_REQUEST_FAILED
+                    _emit_pending_schedule_wake_audit(
+                        heads_count=0,
+                        bodies_count=0,
+                        next_schedule_info=None,
+                        request_status=GET_HEADS_LAST_FAILURE_REASON,
+                    )
                     return None, None
 
                 if not _rotate_to_untried_proxy(attempted_markers):
@@ -8817,6 +9069,12 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                         )
                     else:
                         GET_HEADS_LAST_FAILURE_REASON = GET_HEADS_FAILURE_REASON_REQUEST_FAILED
+                    _emit_pending_schedule_wake_audit(
+                        heads_count=0,
+                        bodies_count=0,
+                        next_schedule_info=None,
+                        request_status=GET_HEADS_LAST_FAILURE_REASON,
+                    )
                     return None, None
                 print(f"🔄 Переключился на другой прокси, повторяю запрос...")
                 time.sleep(2)
@@ -8833,7 +9091,16 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                 if schedule_info:
                     NEXT_SCHEDULE_MATCH_INFO = schedule_info
                     NEXT_SCHEDULE_SLEEP_SECONDS = float(schedule_info.get("sleep_seconds", 0.0) or 0.0)
+                _emit_pending_schedule_wake_audit(
+                    heads_count=len(heads),
+                    bodies_count=len(bodies),
+                    next_schedule_info=schedule_info,
+                )
                 return [], []
+            _emit_pending_schedule_wake_audit(
+                heads_count=len(heads),
+                bodies_count=len(bodies),
+            )
             
             heads_copy, bodies_copy = heads.copy(), bodies.copy()
             for i in range(len(heads)):
@@ -10433,6 +10700,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             has_selected_late_star = bool(selected_late_diag.get("valid"))
             selected_early_sign = selected_early_diag.get("sign") if has_selected_early_star else None
             selected_late_sign = selected_late_diag.get("sign") if has_selected_late_star else None
+            top25_late_elo_block_override = _top25_late_elo_block_opposite_monitor_override(
+                team_elo_meta=team_elo_meta,
+                selected_early_diag=selected_early_diag,
+                selected_late_diag=selected_late_diag,
+                raw_selected_early_diag=raw_selected_early_diag,
+                raw_selected_late_diag=raw_selected_late_diag,
+            )
+            top25_late_elo_block_override_active = bool(
+                isinstance(top25_late_elo_block_override, dict)
+                and top25_late_elo_block_override.get("enabled")
+            )
             late_core_same_sign_diag = _block_signs_same_or_zero(
                 raw_block=s.get('mid_output', {}),
                 expected_sign=selected_early_sign,
@@ -10514,10 +10792,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     )
                 )
             )
+            if top25_late_elo_block_override_active:
+                dispatch_mode = "delayed_late_elo_block_top25_opposite_monitor"
 
             if (
                 not force_odds_signal_test_active
                 and not has_selected_late_star
+                and not top25_late_elo_block_override_active
                 and not send_now_early_star_late_core_same_sign
                 and not (
                     early65_gate_active
@@ -10549,6 +10830,38 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 print("   ✅ map_id_check.txt обновлен: add_url после отказа no-late-star")
                 return return_status
 
+            if top25_late_elo_block_override_active and verbose_match_log:
+                override_target_side = str(top25_late_elo_block_override.get("target_side") or "")
+                override_rank = top25_late_elo_block_override.get("leaderboard_rank")
+                override_adj_wr = top25_late_elo_block_override.get("elo_target_wr")
+                override_adj_wr_label = (
+                    f"{float(override_adj_wr):.1f}%"
+                    if override_adj_wr is not None
+                    else "n/a"
+                )
+                print(
+                    "   ✅ Override: opposite raw late star kept alive despite ELO block "
+                    f"because target side is top-{int(TOP25_LATE_ELO_BLOCK_RANK_THRESHOLD)} "
+                    f"(side={override_target_side}, "
+                    f"rank={override_rank}, "
+                    f"adj_wr={override_adj_wr_label})"
+                )
+            if top25_late_elo_block_override_active:
+                override_adj_wr = top25_late_elo_block_override.get("elo_target_wr")
+                adj_wr_label = (
+                    f"{float(override_adj_wr):.1f}%"
+                    if override_adj_wr is not None
+                    else "n/a"
+                )
+                star_diag_lines.append(
+                    "Top25LateEloBlock: "
+                    f"enabled(rank={int(top25_late_elo_block_override.get('leaderboard_rank') or 0)},"
+                    f"target_side={top25_late_elo_block_override.get('target_side')},"
+                    f"adj_wr={adj_wr_label})"
+                )
+                if isinstance(star_metrics_snapshot, dict):
+                    star_metrics_snapshot["star_diag_lines"] = [str(line) for line in star_diag_lines]
+
             if send_now_early_star_late_core_same_sign:
                 if late_same_sign_raw_star_before_elo and not bool(late_core_same_sign_diag.get("valid")):
                     if verbose_match_log:
@@ -10576,10 +10889,19 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     print(
                         "   ✅ Override: late star without early star allowed because "
                         "early core(cp1v1/cp1v2/solo) are same-sign "
-                        f"(sign={selected_late_sign})"
-                    )
+                            f"(sign={selected_late_sign})"
+                        )
 
-            target_sign = selected_late_sign if has_selected_late_star else selected_early_sign
+            late_display_sign = (
+                raw_selected_late_diag.get("sign")
+                if top25_late_elo_block_override_active and raw_selected_late_diag.get("sign") in (-1, 1)
+                else selected_late_sign
+            )
+            target_sign = (
+                int(top25_late_elo_block_override.get("target_sign"))
+                if top25_late_elo_block_override_active
+                else (selected_late_sign if has_selected_late_star else selected_early_sign)
+            )
             target_side = _target_side_from_sign(target_sign)
             opposite_signs_early90_monitor = _opposite_signs_early90_monitor_config(
                 team_elo_meta=team_elo_meta,
@@ -10615,7 +10937,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 late_wr_pct=late_wr_pct,
             )
             elo_underdog_guard = None
-            if not force_odds_signal_test_active:
+            if not force_odds_signal_test_active and not top25_late_elo_block_override_active:
                 elo_underdog_guard = _elo_underdog_guard_decision(
                     team_elo_meta=team_elo_meta,
                     target_side=target_side,
@@ -10687,10 +11009,27 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 telegram_early_block = ""
             wr_block = ""
             wr_lines = []
+
+            def _signal_team_name(sign: Optional[int]) -> str:
+                side = _target_side_from_sign(sign)
+                if side == "radiant":
+                    return str(radiant_team_name_original or radiant_team_name or "Radiant")
+                if side == "dire":
+                    return str(dire_team_name_original or dire_team_name or "Dire")
+                return ""
+
             if telegram_early_rec:
-                wr_lines.append(f"Early: WR≈{float(early_wr_pct or 0.0):.1f}%")
+                early_team_name = _signal_team_name(selected_early_sign)
+                if early_team_name:
+                    wr_lines.append(f"Early: {early_team_name} WR≈{float(early_wr_pct or 0.0):.1f}%")
+                else:
+                    wr_lines.append(f"Early: WR≈{float(early_wr_pct or 0.0):.1f}%")
             if late_rec:
-                wr_lines.append(f"Late: WR≈{float(late_wr_pct or 0.0):.1f}%")
+                late_team_name = _signal_team_name(late_display_sign)
+                if late_team_name:
+                    wr_lines.append(f"Late: {late_team_name} WR≈{float(late_wr_pct or 0.0):.1f}%")
+                else:
+                    wr_lines.append(f"Late: WR≈{float(late_wr_pct or 0.0):.1f}%")
             if wr_lines:
                 wr_block = "Оценка WR:\n" + "\n".join(wr_lines) + "\n"
 
@@ -10793,6 +11132,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             dispatch_message_sign = target_sign
             if early65_gate_active and early65_sign is not None:
                 dispatch_message_sign = early65_sign
+            elif top25_late_elo_block_override_active and target_sign in (-1, 1):
+                dispatch_message_sign = target_sign
             elif send_now_early_star_late_core_same_sign and selected_early_sign is not None:
                 dispatch_message_sign = selected_early_sign
             elif send_now_late_star_early_core_same_sign and selected_late_sign is not None:
@@ -10848,6 +11189,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             queue_early_core_monitor = False
             queue_late_core_monitor = False
             queue_strong_same_sign_monitor = False
+            queue_top25_late_elo_block_monitor = bool(top25_late_elo_block_override_active)
             early65_release_status_label: Optional[str] = None
             early_star_gate_wr_pct = (
                 float(early_wr_pct)
@@ -11051,6 +11393,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 or queue_early_core_monitor
                 or queue_late_core_monitor
                 or queue_strong_same_sign_monitor
+                or queue_top25_late_elo_block_monitor
             ):
                 delay_reason = "late_only_no_early_same_sign"
                 if queue_early_core_monitor:
@@ -11059,6 +11402,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delay_reason = "late_star_early_core_wait_800"
                 elif queue_strong_same_sign_monitor:
                     delay_reason = "strong_same_sign_wait_800_then_comeback_ceiling"
+                elif queue_top25_late_elo_block_monitor:
+                    delay_reason = "late_top25_elo_block_opposite_monitor"
                 elif has_selected_early_star and selected_early_sign != selected_late_sign:
                     delay_reason = "late_only_opposite_signs"
                 elif not has_selected_early_star:
@@ -11086,6 +11431,29 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     monitor_threshold = NETWORTH_GATE_STRONG_SAME_SIGN_MAX_LOSS
                     monitor_wait_status_label = NETWORTH_STATUS_STRONG_SAME_SIGN_MONITOR_WAIT_800
                     fallback_send_status_label = NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT
+                elif queue_top25_late_elo_block_monitor:
+                    dynamic_monitor_profile = dict(top25_late_elo_block_override or {})
+                    allow_live_recheck = True
+                    fallback_send_status_label = NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_TARGET_LEAD_SEND
+                    monitor_wait_status_label = NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_WAIT
+                    if current_game_time >= NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_WINDOW_START_SECONDS:
+                        monitor_threshold = NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_DIFF
+                        print(
+                            "   ⏳ Top25 late ELO-block monitor (17-20): "
+                            f"target_side={target_side}, "
+                            f"target_diff={int(target_networth_diff or 0)}, "
+                            f"need>={int(NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_DIFF)} until {target_human}, "
+                            "then send only if target_side still leads at 20:20"
+                        )
+                    else:
+                        print(
+                            "   ⏳ Top25 late ELO-block monitor: "
+                            f"target_side={target_side}, "
+                            f"target_diff={int(target_networth_diff or 0)}, "
+                            f"wait until {_format_game_clock(NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_WINDOW_START_SECONDS)}, "
+                            f"then need>={int(NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_DIFF)} until {target_human}, "
+                            "then send only if target_side leads at 20:20"
+                        )
                 elif not has_selected_early_star and has_selected_late_star:
                     monitor_threshold = NETWORTH_GATE_LATE_NO_EARLY_DIFF
                     monitor_wait_status_label = NETWORTH_STATUS_LATE_MONITOR_WAIT_1500
@@ -11288,6 +11656,65 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         _release_signal_send_slot(check_uniq_url)
                     return return_status
                 if current_game_time >= target_game_time:
+                    if queue_top25_late_elo_block_monitor:
+                        if target_networth_diff is not None and target_networth_diff > 0:
+                            if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки (top25 late elo block {target_human})"):
+                                return return_status
+                            if not _acquire_signal_send_slot(check_uniq_url):
+                                print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
+                                return return_status
+                            try:
+                                if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки после lock (top25 late elo block {target_human})"):
+                                    return return_status
+                                if verbose_match_log:
+                                    _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+                                delivery_confirmed = _deliver_and_persist_signal(
+                                    check_uniq_url,
+                                    message_text,
+                                    add_url_reason="star_signal_sent_now_top25_late_elo_block_target_lead",
+                                    add_url_details={
+                                        "status": status,
+                                        "dispatch_mode": dispatch_mode,
+                                        "delay_reason": delay_reason,
+                                        "dispatch_status_label": NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_TARGET_LEAD_SEND,
+                                        "game_time": int(current_game_time),
+                                        "target_game_time": int(target_game_time),
+                                        "target_side": target_side,
+                                        "target_networth_diff": float(target_networth_diff or 0.0),
+                                        "top25_late_elo_block_rank": int(top25_late_elo_block_override.get("leaderboard_rank") or 0),
+                                        "json_retry_errors": json_retry_errors,
+                                    },
+                                    bookmaker_decision="sent",
+                                )
+                                if delivery_confirmed:
+                                    print(
+                                        "   ✅ ВЕРДИКТ: Сигнал отправлен по top25 late ELO-block target lead "
+                                        f"(target_side={target_side}, target_diff={int(target_networth_diff or 0)})"
+                                    )
+                            finally:
+                                _release_signal_send_slot(check_uniq_url)
+                            return return_status
+                        print(
+                            f"   ⚠️ ВЕРДИКТ: ОТКАЗ (top25 late ELO-block monitor не дал lead к {target_human}) "
+                            f"- матч пропущен"
+                        )
+                        add_url(
+                            check_uniq_url,
+                            reason="star_signal_rejected_top25_late_elo_block_timeout",
+                            details={
+                                "status": status,
+                                "dispatch_mode": dispatch_mode,
+                                "delay_reason": delay_reason,
+                                "dispatch_status_label": NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_TIMEOUT_NO_SEND,
+                                "game_time": int(current_game_time),
+                                "target_game_time": int(target_game_time),
+                                "target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                                "top25_late_elo_block_rank": int(top25_late_elo_block_override.get("leaderboard_rank") or 0),
+                                "json_retry_errors": json_retry_errors,
+                            },
+                        )
+                        return return_status
                     if queue_early_core_monitor:
                         print(
                             f"   ⚠️ ВЕРДИКТ: ОТКАЗ (early star без late star не добрал >=1500 до {target_human}) "
@@ -11694,6 +12121,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_add_url_details["early_wr_pct"] = float(early_wr_pct)
                 if late_wr_pct is not None:
                     delayed_add_url_details["late_wr_pct"] = float(late_wr_pct)
+                if queue_top25_late_elo_block_monitor:
+                    delayed_add_url_details["networth_target_side"] = target_side
+                    delayed_add_url_details["target_side"] = target_side
+                    delayed_add_url_details["top25_late_elo_block_rank"] = int(top25_late_elo_block_override.get("leaderboard_rank") or 0)
+                    delayed_add_url_details["top25_late_elo_block_adj_wr"] = top25_late_elo_block_override.get("elo_target_wr")
+                    if target_networth_diff is not None:
+                        delayed_add_url_details["target_networth_diff"] = float(target_networth_diff)
                 if monitor_threshold is not None:
                     delayed_add_url_details["networth_monitor_threshold"] = float(monitor_threshold)
                     delayed_add_url_details["networth_monitor_deadline_game_time"] = int(target_game_time)
@@ -11709,13 +12143,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_add_url_details["target_networth_diff"] = float(target_networth_diff)
                 if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"):
                     delayed_add_url_details["dynamic_monitor_profile"] = str(dynamic_monitor_profile.get("profile") or "")
-                    delayed_add_url_details["networth_monitor_threshold_4_to_10"] = float(dynamic_monitor_profile.get("threshold_4_to_10") or 0.0)
-                    delayed_add_url_details["networth_monitor_threshold_10_to_20"] = float(dynamic_monitor_profile.get("threshold_10_to_20") or 0.0)
-                    delayed_add_url_details["networth_monitor_status_4_to_10"] = str(dynamic_monitor_profile.get("status_4_to_10") or "")
-                    delayed_add_url_details["networth_monitor_status_10_to_20"] = str(dynamic_monitor_profile.get("status_10_to_20") or "")
-                    delayed_add_url_details["opposite_signs_early90_elo_gap_pp"] = dynamic_monitor_profile.get("elo_gap_pp")
-                    delayed_add_url_details["opposite_signs_early90_early_elo_wr"] = dynamic_monitor_profile.get("early_elo_wr")
-                    delayed_add_url_details["opposite_signs_early90_late_elo_wr"] = dynamic_monitor_profile.get("late_elo_wr")
+                    if dynamic_monitor_profile.get("profile") == "late_top25_elo_block_opposite_monitor":
+                        delayed_add_url_details["networth_monitor_threshold_17_to_20"] = float(dynamic_monitor_profile.get("window_threshold") or 0.0)
+                        delayed_add_url_details["networth_monitor_status_17_to_20"] = NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_WAIT
+                        delayed_add_url_details["networth_monitor_window_start_game_time"] = int(dynamic_monitor_profile.get("window_start_seconds") or 0.0)
+                        delayed_add_url_details["top25_late_elo_block_rank"] = int(dynamic_monitor_profile.get("leaderboard_rank") or 0)
+                        delayed_add_url_details["top25_late_elo_block_adj_wr"] = dynamic_monitor_profile.get("elo_target_wr")
+                    else:
+                        delayed_add_url_details["networth_monitor_threshold_4_to_10"] = float(dynamic_monitor_profile.get("threshold_4_to_10") or 0.0)
+                        delayed_add_url_details["networth_monitor_threshold_10_to_20"] = float(dynamic_monitor_profile.get("threshold_10_to_20") or 0.0)
+                        delayed_add_url_details["networth_monitor_status_4_to_10"] = str(dynamic_monitor_profile.get("status_4_to_10") or "")
+                        delayed_add_url_details["networth_monitor_status_10_to_20"] = str(dynamic_monitor_profile.get("status_10_to_20") or "")
+                        delayed_add_url_details["opposite_signs_early90_elo_gap_pp"] = dynamic_monitor_profile.get("elo_gap_pp")
+                        delayed_add_url_details["opposite_signs_early90_early_elo_wr"] = dynamic_monitor_profile.get("early_elo_wr")
+                        delayed_add_url_details["opposite_signs_early90_late_elo_wr"] = dynamic_monitor_profile.get("late_elo_wr")
                 if late_comeback_monitor_candidate:
                     delayed_add_url_details["late_comeback_delta_pp"] = float(target_comeback_delta_pp or 0.0)
                 delayed_payload = {
@@ -11733,24 +12174,38 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     'add_url_details': delayed_add_url_details,
                     'fallback_send_status_label': fallback_send_status_label,
                     'send_on_target_game_time': not (
-                        queue_early_core_monitor or queue_late_core_monitor or queue_strong_same_sign_monitor
+                        queue_early_core_monitor
+                        or queue_late_core_monitor
+                        or queue_strong_same_sign_monitor
+                        or queue_top25_late_elo_block_monitor
                     ),
                     'allow_live_recheck': allow_live_recheck,
                     'retry_attempt_count': 0,
                     'next_retry_at': 0.0,
                     'late_comeback_monitor_candidate': late_comeback_monitor_candidate,
                 }
+                if queue_top25_late_elo_block_monitor:
+                    delayed_payload['networth_target_side'] = target_side
+                    delayed_payload['top25_late_elo_block_rank'] = int(top25_late_elo_block_override.get("leaderboard_rank") or 0)
+                    delayed_payload['top25_late_elo_block_adj_wr'] = top25_late_elo_block_override.get("elo_target_wr")
                 if late_comeback_monitor_candidate:
                     delayed_payload['late_comeback_delta_pp'] = float(target_comeback_delta_pp or 0.0)
                 if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"):
                     delayed_payload['dynamic_monitor_profile'] = str(dynamic_monitor_profile.get("profile") or "")
-                    delayed_payload['networth_monitor_threshold_4_to_10'] = float(dynamic_monitor_profile.get("threshold_4_to_10") or 0.0)
-                    delayed_payload['networth_monitor_threshold_10_to_20'] = float(dynamic_monitor_profile.get("threshold_10_to_20") or 0.0)
-                    delayed_payload['networth_monitor_status_4_to_10'] = str(dynamic_monitor_profile.get("status_4_to_10") or "")
-                    delayed_payload['networth_monitor_status_10_to_20'] = str(dynamic_monitor_profile.get("status_10_to_20") or "")
-                    delayed_payload['opposite_signs_early90_elo_gap_pp'] = dynamic_monitor_profile.get("elo_gap_pp")
-                    delayed_payload['opposite_signs_early90_early_elo_wr'] = dynamic_monitor_profile.get("early_elo_wr")
-                    delayed_payload['opposite_signs_early90_late_elo_wr'] = dynamic_monitor_profile.get("late_elo_wr")
+                    if dynamic_monitor_profile.get("profile") == "late_top25_elo_block_opposite_monitor":
+                        delayed_payload['networth_monitor_threshold_17_to_20'] = float(dynamic_monitor_profile.get("window_threshold") or 0.0)
+                        delayed_payload['networth_monitor_status_17_to_20'] = NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_WAIT
+                        delayed_payload['networth_monitor_window_start_game_time'] = float(dynamic_monitor_profile.get("window_start_seconds") or 0.0)
+                        delayed_payload['top25_late_elo_block_rank'] = int(dynamic_monitor_profile.get("leaderboard_rank") or 0)
+                        delayed_payload['top25_late_elo_block_adj_wr'] = dynamic_monitor_profile.get("elo_target_wr")
+                    else:
+                        delayed_payload['networth_monitor_threshold_4_to_10'] = float(dynamic_monitor_profile.get("threshold_4_to_10") or 0.0)
+                        delayed_payload['networth_monitor_threshold_10_to_20'] = float(dynamic_monitor_profile.get("threshold_10_to_20") or 0.0)
+                        delayed_payload['networth_monitor_status_4_to_10'] = str(dynamic_monitor_profile.get("status_4_to_10") or "")
+                        delayed_payload['networth_monitor_status_10_to_20'] = str(dynamic_monitor_profile.get("status_10_to_20") or "")
+                        delayed_payload['opposite_signs_early90_elo_gap_pp'] = dynamic_monitor_profile.get("elo_gap_pp")
+                        delayed_payload['opposite_signs_early90_early_elo_wr'] = dynamic_monitor_profile.get("early_elo_wr")
+                        delayed_payload['opposite_signs_early90_late_elo_wr'] = dynamic_monitor_profile.get("late_elo_wr")
                 if monitor_threshold is not None:
                     delayed_payload['networth_monitor_threshold'] = float(monitor_threshold)
                     delayed_payload['networth_monitor_deadline_game_time'] = float(target_game_time)
@@ -11782,6 +12237,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 elif queue_late_core_monitor:
                     delayed_payload['timeout_add_url_reason'] = 'star_signal_rejected_late_core_monitor_timeout'
                     delayed_payload['timeout_status_label'] = NETWORTH_STATUS_LATE_CORE_TIMEOUT_NO_SEND
+                elif queue_top25_late_elo_block_monitor:
+                    delayed_payload['timeout_add_url_reason'] = 'star_signal_rejected_top25_late_elo_block_timeout'
+                    delayed_payload['timeout_status_label'] = NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_TIMEOUT_NO_SEND
                 _set_delayed_match(check_uniq_url, delayed_payload)
                 print(
                     f"   ⏱️ Сигнал в delayed-очереди до game_time={target_human} "
@@ -12443,6 +12901,7 @@ def general(return_status=None, use_proxy=None, odds=None):
     if not heads or not bodies:
         schedule_info = NEXT_SCHEDULE_MATCH_INFO if isinstance(NEXT_SCHEDULE_MATCH_INFO, dict) else {}
         sleep_seconds = float(schedule_info.get("sleep_seconds", 0.0) or 0.0)
+        raw_sleep_seconds = float(schedule_info.get("sleep_seconds_raw", sleep_seconds) or sleep_seconds or 0.0)
         matchup = str(schedule_info.get("matchup") or "unknown")
         scheduled_at_msk = schedule_info.get("scheduled_at_msk")
         scheduled_label = (
@@ -12454,7 +12913,8 @@ def general(return_status=None, use_proxy=None, odds=None):
             print(
                 "🗓️ Live matches empty. "
                 f"Nearest scheduled match: {matchup} at {scheduled_label}. "
-                f"Sleep planned: {int(math.ceil(sleep_seconds))}s"
+                f"Sleep planned: {int(math.ceil(sleep_seconds))}s "
+                f"(raw until start: {int(math.ceil(raw_sleep_seconds))}s)"
             )
             return "__sleep_until_schedule__"
         print("⚠️ Live matches empty and no future scheduled match was parsed")
@@ -12587,8 +13047,16 @@ if __name__ == "__main__":
             status = general(use_proxy=None, odds=args.odds)
             if status == "__sleep_until_schedule__":
                 scheduled_sleep_seconds = max(1, int(math.ceil(float(NEXT_SCHEDULE_SLEEP_SECONDS or 0.0))))
+                schedule_snapshot = dict(NEXT_SCHEDULE_MATCH_INFO or {})
+                sleep_started_at_msk = datetime.now(MOSCOW_TZ)
+                if schedule_snapshot:
+                    schedule_snapshot["sleep_started_at_msk"] = sleep_started_at_msk
+                    schedule_snapshot["planned_sleep_seconds"] = scheduled_sleep_seconds
                 print(f"Сплю {scheduled_sleep_seconds} секунд до ближайшего матча по расписанию DLTV")
                 time.sleep(scheduled_sleep_seconds)
+                if schedule_snapshot:
+                    schedule_snapshot["woke_at_msk"] = datetime.now(MOSCOW_TZ)
+                    PENDING_SCHEDULE_WAKE_AUDIT = schedule_snapshot
             elif status is None:
                 print('Сплю 60 секунд')
                 time.sleep(60)
