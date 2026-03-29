@@ -109,6 +109,13 @@ def test_compute_moscow_quiet_hours_sleep_seconds() -> None:
     assert sleep_seconds == 3.5 * 60 * 60
 
 
+def test_compute_schedule_recheck_sleep_seconds() -> None:
+    assert runtime._compute_schedule_recheck_sleep_seconds(-1) == 3 * 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(5 * 60) == 5 * 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(45 * 60) == 45 * 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(4 * 60 * 60) == 4 * 60 * 60
+
+
 def test_extract_nearest_scheduled_match_info() -> None:
     html = """
     <div class="live__matches"></div>
@@ -143,7 +150,47 @@ def test_extract_nearest_scheduled_match_info() -> None:
 
     assert schedule is not None
     assert schedule["matchup"] == "Aurora vs PARIVISION"
+    assert int(schedule["sleep_seconds_raw"]) == (3 * 60 * 60 + 14 * 60)
     assert int(schedule["sleep_seconds"]) == (3 * 60 * 60 + 14 * 60)
+
+
+def test_should_poll_for_scheduled_live_target_after_match_start() -> None:
+    runtime.SCHEDULE_LIVE_WAIT_TARGET = {
+        "matchup": "Team Yandex vs Xtreme Gaming",
+        "scheduled_at_utc": datetime(2026, 3, 29, 11, 0, tzinfo=ZoneInfo("UTC")),
+    }
+
+    assert runtime._should_poll_for_scheduled_live_target(
+        datetime(2026, 3, 29, 10, 59, tzinfo=ZoneInfo("UTC"))
+    ) is False
+    assert runtime._should_poll_for_scheduled_live_target(
+        datetime(2026, 3, 29, 11, 0, 1, tzinfo=ZoneInfo("UTC"))
+    ) is True
+
+    runtime.SCHEDULE_LIVE_WAIT_TARGET = None
+
+
+def test_emit_pending_schedule_wake_audit_logs_schedule_shift(capsys, monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "_get_current_proxy_marker", lambda: "proxy:test")
+    runtime.PENDING_SCHEDULE_WAKE_AUDIT = {
+        "matchup": "Aurora vs PARIVISION",
+        "scheduled_at_msk": datetime(2026, 3, 28, 15, 0, tzinfo=ZoneInfo("Europe/Moscow")),
+        "woke_at_msk": datetime(2026, 3, 28, 15, 0, 5, tzinfo=ZoneInfo("Europe/Moscow")),
+    }
+
+    runtime._emit_pending_schedule_wake_audit(
+        heads_count=0,
+        bodies_count=0,
+        next_schedule_info={
+            "matchup": "Team Yandex vs Tundra Esports",
+            "scheduled_at_msk": datetime(2026, 3, 28, 18, 30, tzinfo=ZoneInfo("Europe/Moscow")),
+        },
+    )
+
+    captured = capsys.readouterr()
+    assert "Aurora vs PARIVISION" in captured.out
+    assert "Team Yandex vs Tundra Esports" in captured.out
+    assert runtime.PENDING_SCHEDULE_WAKE_AUDIT is None
 
 
 def test_send_message_requires_delivery_confirmation(monkeypatch) -> None:

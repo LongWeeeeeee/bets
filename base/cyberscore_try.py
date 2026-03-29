@@ -3336,9 +3336,11 @@ QUIET_HOURS_END_HOUR_MSK = 7
 NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
 NEXT_SCHEDULE_MATCH_INFO: Optional[Dict[str, Any]] = None
 PENDING_SCHEDULE_WAKE_AUDIT: Optional[Dict[str, Any]] = None
+SCHEDULE_LIVE_WAIT_TARGET: Optional[Dict[str, Any]] = None
 SCHEDULE_WAKE_LEAD_SECONDS = _safe_float_env("SCHEDULE_WAKE_LEAD_SECONDS", 30.0 * 60.0)
 SCHEDULE_MAX_SLEEP_SECONDS = _safe_float_env("SCHEDULE_MAX_SLEEP_SECONDS", 15.0 * 60.0)
 SCHEDULE_NEAR_MATCH_POLL_SECONDS = _safe_float_env("SCHEDULE_NEAR_MATCH_POLL_SECONDS", 60.0)
+SCHEDULE_POST_START_POLL_SECONDS = _safe_float_env("SCHEDULE_POST_START_POLL_SECONDS", 3.0 * 60.0)
 
 
 def _env_use_proxy_default() -> bool:
@@ -3375,16 +3377,21 @@ def _compute_schedule_recheck_sleep_seconds(raw_sleep_seconds: float) -> float:
     try:
         raw_seconds = float(raw_sleep_seconds)
     except (TypeError, ValueError):
-        return float(SCHEDULE_NEAR_MATCH_POLL_SECONDS)
+        return float(SCHEDULE_POST_START_POLL_SECONDS)
     if raw_seconds <= 0:
-        return float(SCHEDULE_NEAR_MATCH_POLL_SECONDS)
-    if raw_seconds <= SCHEDULE_WAKE_LEAD_SECONDS:
-        return min(float(SCHEDULE_NEAR_MATCH_POLL_SECONDS), raw_seconds)
-    reduced_seconds = max(
-        float(SCHEDULE_NEAR_MATCH_POLL_SECONDS),
-        raw_seconds - float(SCHEDULE_WAKE_LEAD_SECONDS),
-    )
-    return min(float(SCHEDULE_MAX_SLEEP_SECONDS), reduced_seconds)
+        return float(SCHEDULE_POST_START_POLL_SECONDS)
+    return raw_seconds
+
+
+def _should_poll_for_scheduled_live_target(now_utc: Optional[datetime] = None) -> bool:
+    target = SCHEDULE_LIVE_WAIT_TARGET
+    if not isinstance(target, dict):
+        return False
+    scheduled_at = target.get("scheduled_at_utc")
+    if not isinstance(scheduled_at, datetime):
+        return False
+    current_utc = now_utc.astimezone(timezone.utc) if now_utc is not None else datetime.now(timezone.utc)
+    return current_utc >= scheduled_at.astimezone(timezone.utc)
 
 
 def _extract_nearest_scheduled_match_info(
@@ -9000,7 +9007,7 @@ def _deliver_and_persist_signal(
 
 
 def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.214.49", path = "/matches"):
-        global GET_HEADS_LAST_FAILURE_REASON, NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO
+        global GET_HEADS_LAST_FAILURE_REASON, NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO, SCHEDULE_LIVE_WAIT_TARGET
         GET_HEADS_LAST_FAILURE_REASON = None
         NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
         NEXT_SCHEDULE_MATCH_INFO = None
@@ -9109,6 +9116,7 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                     next_schedule_info=schedule_info,
                 )
                 return [], []
+            SCHEDULE_LIVE_WAIT_TARGET = None
             _emit_pending_schedule_wake_audit(
                 heads_count=len(heads),
                 bodies_count=len(bodies),
@@ -12923,6 +12931,16 @@ def general(return_status=None, use_proxy=None, odds=None):
             if isinstance(scheduled_at_msk, datetime)
             else "unknown"
         )
+        if _should_poll_for_scheduled_live_target():
+            target_info = SCHEDULE_LIVE_WAIT_TARGET if isinstance(SCHEDULE_LIVE_WAIT_TARGET, dict) else {}
+            target_label = _format_schedule_match_label(target_info)
+            post_start_poll_seconds = max(1, int(math.ceil(float(SCHEDULE_POST_START_POLL_SECONDS))))
+            print(
+                "⏳ Scheduled match start has passed, but live matches are still empty. "
+                f"Waiting for live appearance for {target_label}. "
+                f"Next recheck in {post_start_poll_seconds}s"
+            )
+            return "__sleep_wait_for_live_after_schedule__"
         if sleep_seconds > 0:
             print(
                 "🗓️ Live matches empty. "
@@ -13070,7 +13088,12 @@ if __name__ == "__main__":
                 time.sleep(scheduled_sleep_seconds)
                 if schedule_snapshot:
                     schedule_snapshot["woke_at_msk"] = datetime.now(MOSCOW_TZ)
+                    SCHEDULE_LIVE_WAIT_TARGET = dict(schedule_snapshot)
                     PENDING_SCHEDULE_WAKE_AUDIT = schedule_snapshot
+            elif status == "__sleep_wait_for_live_after_schedule__":
+                wait_for_live_seconds = max(1, int(math.ceil(float(SCHEDULE_POST_START_POLL_SECONDS))))
+                print(f"Сплю {wait_for_live_seconds} секунд в режиме ожидания появления live matches")
+                time.sleep(wait_for_live_seconds)
             elif status is None:
                 print('Сплю 60 секунд')
                 time.sleep(60)
