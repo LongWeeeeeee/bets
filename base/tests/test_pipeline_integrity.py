@@ -193,6 +193,73 @@ def test_emit_pending_schedule_wake_audit_logs_schedule_shift(capsys, monkeypatc
     assert runtime.PENDING_SCHEDULE_WAKE_AUDIT is None
 
 
+def test_parse_draft_and_positions_uses_live_league_players_for_account_ids() -> None:
+    html = """
+    <div class="lineups__team">
+      <span class="title">xtreme</span>
+      <div class="player__name-name">ame</div><div class="player__role-item">Core</div>
+      <div class="player__name-name">nothingtosay</div><div class="player__role-item">Mid</div>
+      <div class="player__name-name">xxs</div><div class="player__role-item">Offlane</div>
+      <div class="player__name-name">fy</div><div class="player__role-item">Support</div>
+      <div class="player__name-name">xnova</div><div class="player__role-item">Full Support</div>
+    </div>
+    <div class="lineups__team">
+      <span class="title">yandex</span>
+      <div class="player__name-name">watson</div><div class="player__role-item">Core</div>
+      <div class="player__name-name">chira_junior</div><div class="player__role-item">Mid</div>
+      <div class="player__name-name">noticed</div><div class="player__role-item">Offlane</div>
+      <div class="player__name-name">saksa</div><div class="player__role-item">Support</div>
+      <div class="player__name-name">malady</div><div class="player__role-item">Full Support</div>
+    </div>
+    """
+    soup = BeautifulSoup(html, "lxml")
+    data = {
+        "fast_picks": {
+            "first_team": [
+                {"player": {"title": "chira_junior"}, "hero_id": 106},
+                {"player": {"title": "noticed"}, "hero_id": 29},
+                {"player": {"title": "watson"}, "hero_id": 46},
+                {"player": {"title": "saksa"}, "hero_id": 65},
+                {"player": {"title": "malady"}, "hero_id": 110},
+            ],
+            "second_team": [
+                {"player": {"title": "fy"}, "hero_id": 100},
+                {"player": {"title": "nothingtosay"}, "hero_id": 52},
+                {"player": {"title": "xnova"}, "hero_id": 111},
+                {"player": {"title": "ame"}, "hero_id": 114},
+                {"player": {"title": "xxs"}, "hero_id": 129},
+            ],
+        },
+        "live_league_data": {
+            "players": [
+                {"hero_id": 106, "account_id": 10106},
+                {"hero_id": 29, "account_id": 10029},
+                {"hero_id": 46, "account_id": 10046},
+                {"hero_id": 65, "account_id": 10065},
+                {"hero_id": 110, "account_id": 10110},
+                {"hero_id": 100, "account_id": 10100},
+                {"hero_id": 52, "account_id": 10052},
+                {"hero_id": 111, "account_id": 10111},
+                {"hero_id": 114, "account_id": 10114},
+                {"hero_id": 129, "account_id": 10129},
+            ]
+        },
+    }
+
+    radiant, dire, error, _summary, _candidates = runtime.parse_draft_and_positions(
+        soup,
+        data,
+        "xtreme",
+        "yandex",
+    )
+
+    assert error is None
+    assert radiant["pos1"]["account_id"] == 10114
+    assert radiant["pos2"]["account_id"] == 10052
+    assert dire["pos1"]["account_id"] == 10046
+    assert dire["pos5"]["account_id"] == 10110
+
+
 def test_send_message_requires_delivery_confirmation(monkeypatch) -> None:
     import functions
 

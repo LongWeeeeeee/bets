@@ -9610,7 +9610,8 @@ def parse_draft_and_positions(soup, data, radiant_team_name, dire_team_name):
     dire_pos_list = ["pos1", "pos2", "pos3", "pos4", "pos5"].copy()
     leftover = None
 
-    players_data = data.get("players", [])
+    live_league_payload = data.get("live_league_data") or {}
+    players_data = data.get("players") or live_league_payload.get("players") or []
 
     def _find_account_id_by_hero(hero_id: int) -> int:
         for p in players_data:
