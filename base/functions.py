@@ -1554,209 +1554,65 @@ STAR_THRESHOLDS_PATH = Path(
     os.getenv('STAR_THRESHOLDS_PATH', str(PROJECT_ROOT / 'data' / 'star_thresholds_by_wr.json'))
 )
 
-# Fallback, если JSON не найден
-_STAR_THRESHOLDS_FALLBACK = {
-    60: {
-        'early_output': [
-            ('counterpick_1vs1', 4),
-            ('pos1_vs_pos1', 20),
-            ('counterpick_1vs2', 6),
-            ('solo', 3),
-            ('synergy_duo', 24),
-            ('synergy_trio', 17),
-        ],
-        'mid_output': [
-            ('counterpick_1vs1', 5),
-            ('pos1_vs_pos1', 20),
-            ('counterpick_1vs2', 7),
-            ('solo', 3),
-            ('synergy_duo', 18),
-            ('synergy_trio', 14),
-        ],
-    },
-    65: {
-        'early_output': [
-            ('counterpick_1vs1', 8),
-            ('pos1_vs_pos1', 30),
-            ('counterpick_1vs2', 10),
-            ('solo', 3),
-            ('synergy_duo', 24),
-            ('synergy_trio', 17),
-        ],
-        'mid_output': [
-            ('counterpick_1vs1', 8),
-            ('pos1_vs_pos1', 30),
-            ('counterpick_1vs2', 10),
-            ('solo', 5),
-            ('synergy_duo', 18),
-            ('synergy_trio', 15),
-        ],
-    },
-    70: {
-        'early_output': [
-            ('counterpick_1vs1', 8),
-            ('pos1_vs_pos1', 41),
-            ('counterpick_1vs2', 12),
-            ('solo', 5),
-            ('synergy_duo', 24),
-            ('synergy_trio', 17),
-        ],
-        'mid_output': [
-            ('counterpick_1vs1', 8),
-            ('pos1_vs_pos1', 41),
-            ('counterpick_1vs2', 14),
-            ('solo', 6),
-            ('synergy_duo', 18),
-            ('synergy_trio', 18),
-        ],
-    },
-    75: {
-        'early_output': [
-            ('counterpick_1vs1', 8),
-            ('pos1_vs_pos1', 51),
-            ('counterpick_1vs2', 13),
-            ('solo', 5),
-            ('synergy_duo', 24),
-            ('synergy_trio', 17),
-        ],
-        'mid_output': [
-            ('counterpick_1vs1', 8),
-            ('pos1_vs_pos1', 51),
-            ('counterpick_1vs2', 24),
-            ('solo', 6),
-            ('synergy_duo', 18),
-            ('synergy_trio', 27),
-        ],
-    },
-    80: {
-        'early_output': [
-            ('counterpick_1vs1', 8),
-            ('pos1_vs_pos1', 61),
-            ('counterpick_1vs2', 20),
-            ('solo', 5),
-            ('synergy_duo', 24),
-            ('synergy_trio', 30),
-        ],
-        'mid_output': [
-            ('counterpick_1vs1', 8),
-            ('pos1_vs_pos1', 67),
-            ('counterpick_1vs2', 24),
-            ('solo', 6),
-            ('synergy_duo', 18),
-            ('synergy_trio', 27),
-        ],
-    },
-    85: {
-        'early_output': [
-            ('counterpick_1vs1', 8),
-            ('counterpick_1vs2', 26),
-            ('solo', 5),
-            ('synergy_duo', 24),
-            ('synergy_trio', 36),
-        ],
-        'mid_output': [
-            ('counterpick_1vs1', 8),
-            ('pos1_vs_pos1', 70),
-            ('counterpick_1vs2', 24),
-            ('solo', 6),
-            ('synergy_duo', 18),
-            ('synergy_trio', 33),
-        ],
-    },
-    90: {
-        'early_output': [
-            ('counterpick_1vs1', 8),
-            ('counterpick_1vs2', 27),
-            ('solo', 5),
-            ('synergy_duo', 24),
-            ('synergy_trio', 36),
-        ],
-        'mid_output': [
-            ('counterpick_1vs1', 8),
-            ('counterpick_1vs2', 29),
-            ('solo', 6),
-            ('synergy_duo', 18),
-            ('synergy_trio', 33),
-        ],
-    },
-}
-
 
 def _load_star_thresholds() -> dict:
-    def _copy_block(block: dict) -> dict:
-        out = {}
-        for section in ('early_output', 'mid_output'):
-            rows = block.get(section) or []
-            out[section] = [(str(metric), int(threshold)) for metric, threshold in rows]
-        return out
+    if not STAR_THRESHOLDS_PATH.exists():
+        raise FileNotFoundError(
+            f"STAR thresholds file is required and was not found: {STAR_THRESHOLDS_PATH}"
+        )
 
-    fallback60 = _copy_block(_STAR_THRESHOLDS_FALLBACK.get(60, {}))
-
-    if STAR_THRESHOLDS_PATH.exists():
-        try:
-            data = json.loads(STAR_THRESHOLDS_PATH.read_text(encoding='utf-8'))
-            parsed = {}
-            if isinstance(data, dict):
-                for k, v in data.items():
-                    try:
-                        key = int(k)
-                    except Exception:
-                        continue
-                    if not isinstance(v, dict):
-                        continue
-                    block = {}
-                    for section in ('early_output', 'mid_output'):
-                        items = v.get(section) or []
-                        rows = []
-                        if isinstance(items, list):
-                            for item in items:
-                                if not isinstance(item, (list, tuple)) or len(item) != 2:
-                                    continue
-                                metric, threshold = item
-                                try:
-                                    rows.append((str(metric), int(threshold)))
-                                except (TypeError, ValueError):
-                                    continue
-                        block[section] = rows
-                    parsed[key] = block
-            if parsed:
-                hydrated = {}
-                for wr, block in parsed.items():
-                    out_block = {}
-                    for section in ('early_output', 'mid_output'):
-                        section_rows = list(block.get(section) or [])
-                        if not section_rows and int(wr) == 60:
-                            logger.warning(
-                                "STAR thresholds missing WR60 section=%s in %s; using hardcoded fallback60",
-                                section,
-                                STAR_THRESHOLDS_PATH,
-                            )
-                            section_rows = list(fallback60.get(section, []))
-                        elif not section_rows:
-                            logger.warning(
-                                "STAR thresholds missing WR%s section=%s in %s; section disabled",
-                                wr,
-                                section,
-                                STAR_THRESHOLDS_PATH,
-                            )
-                        out_block[section] = section_rows
-                    hydrated[int(wr)] = out_block
-                if 60 not in hydrated:
-                    logger.warning(
-                        "STAR thresholds missing WR60 in %s; using hardcoded fallback60",
-                        STAR_THRESHOLDS_PATH,
-                    )
-                    hydrated[60] = _copy_block(fallback60)
-                return hydrated
+    try:
+        data = json.loads(STAR_THRESHOLDS_PATH.read_text(encoding='utf-8'))
+        parsed = {}
+        if isinstance(data, dict):
+            for k, v in data.items():
+                try:
+                    key = int(k)
+                except Exception:
+                    continue
+                if not isinstance(v, dict):
+                    continue
+                block = {}
+                for section in ('early_output', 'mid_output'):
+                    items = v.get(section) or []
+                    rows = []
+                    if isinstance(items, list):
+                        for item in items:
+                            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                                continue
+                            metric, threshold = item
+                            try:
+                                rows.append((str(metric), int(threshold)))
+                            except (TypeError, ValueError):
+                                continue
+                    block[section] = rows
+                parsed[key] = block
+        if not parsed:
             raise RuntimeError(
                 f"STAR thresholds file {STAR_THRESHOLDS_PATH} contains no valid WR entries"
             )
-        except Exception as exc:
-            logger.exception("Failed to load STAR thresholds from %s", STAR_THRESHOLDS_PATH)
+
+        hydrated = {}
+        for wr, block in parsed.items():
+            out_block = {}
+            for section in ('early_output', 'mid_output'):
+                section_rows = list(block.get(section) or [])
+                if not section_rows:
+                    raise RuntimeError(
+                        f"STAR thresholds file {STAR_THRESHOLDS_PATH} is missing WR{wr} section={section}"
+                    )
+                out_block[section] = section_rows
+            hydrated[int(wr)] = out_block
+        if 60 not in hydrated:
             raise RuntimeError(
-                f"Failed to load STAR thresholds from {STAR_THRESHOLDS_PATH}"
-            ) from exc
-    return {int(k): _copy_block(v) for k, v in _STAR_THRESHOLDS_FALLBACK.items()}
+                f"STAR thresholds file {STAR_THRESHOLDS_PATH} is missing required WR60 block"
+            )
+        return hydrated
+    except Exception as exc:
+        logger.exception("Failed to load STAR thresholds from %s", STAR_THRESHOLDS_PATH)
+        raise RuntimeError(
+            f"Failed to load STAR thresholds from {STAR_THRESHOLDS_PATH}"
+        ) from exc
 
 
 STAR_THRESHOLDS_BY_WR = _load_star_thresholds()
@@ -1832,13 +1688,13 @@ def format_output_dict(
             target_wr = 60
     thresholds = STAR_THRESHOLDS_BY_WR.get(target_wr)
     if not isinstance(thresholds, dict):
-        if int(target_wr) != 60:
-            return False
-        thresholds = STAR_THRESHOLDS_BY_WR.get(60, _STAR_THRESHOLDS_FALLBACK[60])
+        raise RuntimeError(
+            f"STAR thresholds are missing required WR{target_wr} block in {STAR_THRESHOLDS_PATH}"
+        )
     if not (thresholds.get('early_output') or thresholds.get('mid_output')):
-        if int(target_wr) != 60:
-            return False
-        thresholds = STAR_THRESHOLDS_BY_WR.get(60, _STAR_THRESHOLDS_FALLBACK[60])
+        raise RuntimeError(
+            f"STAR thresholds are empty for WR{target_wr} in {STAR_THRESHOLDS_PATH}"
+        )
     if late_signal_gate_enabled is None:
         late_signal_gate_enabled = STAR_LATE_SIGNAL_GATE_ENABLED
 

@@ -260,6 +260,29 @@ def test_parse_draft_and_positions_uses_live_league_players_for_account_ids() ->
     assert dire["pos5"]["account_id"] == 10110
 
 
+def test_functions_star_thresholds_require_real_file(tmp_path, monkeypatch) -> None:
+    import functions
+
+    missing = tmp_path / "missing_star_thresholds.json"
+    monkeypatch.setattr(functions, "STAR_THRESHOLDS_PATH", missing)
+
+    with pytest.raises(FileNotFoundError):
+        functions._load_star_thresholds()
+
+
+def test_signal_wrappers_star_thresholds_require_real_file(tmp_path, monkeypatch) -> None:
+    import signal_wrappers
+
+    missing = tmp_path / "missing_star_thresholds.json"
+    signal_wrappers._load_star_thresholds.cache_clear()
+    monkeypatch.setattr(signal_wrappers, "STAR_THRESHOLDS_PATH", missing)
+
+    with pytest.raises(FileNotFoundError):
+        signal_wrappers._load_star_thresholds()
+
+    signal_wrappers._load_star_thresholds.cache_clear()
+
+
 def test_send_message_requires_delivery_confirmation(monkeypatch) -> None:
     import functions
 

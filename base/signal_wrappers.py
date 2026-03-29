@@ -54,27 +54,6 @@ DEFAULT_HARD_CARRY_IDS = (
     109,  # Terrorblade
     114,  # Monkey King
 )
-_STAR_THRESHOLDS_FALLBACK = {
-    60: {
-        "early_output": [
-            ("counterpick_1vs1", 4),
-            ("pos1_vs_pos1", 20),
-            ("counterpick_1vs2", 6),
-            ("solo", 3),
-            ("synergy_duo", 24),
-            ("synergy_trio", 17),
-        ],
-        "mid_output": [
-            ("counterpick_1vs1", 5),
-            ("pos1_vs_pos1", 20),
-            ("counterpick_1vs2", 7),
-            ("solo", 3),
-            ("synergy_duo", 18),
-            ("synergy_trio", 14),
-        ],
-    },
-}
-
 DEFAULT_CONFIG: Dict[str, Any] = {
     "guardrails": {
         # Conservative mode: wrapper cannot introduce new weak bets from zero
@@ -318,77 +297,63 @@ def _warn_sklearn_mismatch(path: Path, required: str, artifact: str) -> None:
 
 @lru_cache(maxsize=1)
 def _load_star_thresholds() -> Dict[int, Dict[str, list[tuple[str, int]]]]:
-    if STAR_THRESHOLDS_PATH.exists():
-        try:
-            data = json.loads(STAR_THRESHOLDS_PATH.read_text(encoding="utf-8"))
-            parsed: Dict[int, Dict[str, list[tuple[str, int]]]] = {}
-            if isinstance(data, dict):
-                for raw_wr, payload in data.items():
-                    try:
-                        wr = int(raw_wr)
-                    except (TypeError, ValueError):
-                        continue
-                    if not isinstance(payload, dict):
-                        continue
-                    block: Dict[str, list[tuple[str, int]]] = {}
-                    for section in ("early_output", "mid_output"):
-                        items = payload.get(section) or []
-                        rows: list[tuple[str, int]] = []
-                        if isinstance(items, list):
-                            for row in items:
-                                if not isinstance(row, (list, tuple)) or len(row) != 2:
-                                    continue
-                                metric = str(row[0]).strip()
-                                try:
-                                    thr = int(row[1])
-                                except (TypeError, ValueError):
-                                    continue
-                                if metric:
-                                    rows.append((metric, thr))
-                        block[section] = rows
-                    parsed[wr] = block
-            if parsed:
-                hydrated: Dict[int, Dict[str, list[tuple[str, int]]]] = {}
-                fallback60 = {
-                    section: list(_STAR_THRESHOLDS_FALLBACK[60].get(section, []))
-                    for section in ("early_output", "mid_output")
-                }
-                for wr, block in parsed.items():
-                    out_block: Dict[str, list[tuple[str, int]]] = {}
-                    for section in ("early_output", "mid_output"):
-                        section_rows = list(block.get(section) or [])
-                        if not section_rows and int(wr) == 60:
-                            logger.warning(
-                                "SIGNAL_WRAPPER thresholds missing WR60 section=%s in %s; using hardcoded fallback60",
-                                section,
-                                STAR_THRESHOLDS_PATH,
-                            )
-                            section_rows = list(fallback60.get(section, []))
-                        elif not section_rows:
-                            logger.warning(
-                                "SIGNAL_WRAPPER thresholds missing WR%s section=%s in %s; section disabled",
-                                wr,
-                                section,
-                                STAR_THRESHOLDS_PATH,
-                            )
-                        out_block[section] = section_rows
-                    hydrated[int(wr)] = out_block
-                if 60 not in hydrated:
-                    logger.warning(
-                        "SIGNAL_WRAPPER thresholds missing WR60 in %s; using hardcoded fallback60",
-                        STAR_THRESHOLDS_PATH,
-                    )
-                    hydrated[60] = fallback60
-                return hydrated
+    if not STAR_THRESHOLDS_PATH.exists():
+        raise FileNotFoundError(
+            f"SIGNAL_WRAPPER thresholds file is required and was not found: {STAR_THRESHOLDS_PATH}"
+        )
+    try:
+        data = json.loads(STAR_THRESHOLDS_PATH.read_text(encoding="utf-8"))
+        parsed: Dict[int, Dict[str, list[tuple[str, int]]]] = {}
+        if isinstance(data, dict):
+            for raw_wr, payload in data.items():
+                try:
+                    wr = int(raw_wr)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(payload, dict):
+                    continue
+                block: Dict[str, list[tuple[str, int]]] = {}
+                for section in ("early_output", "mid_output"):
+                    items = payload.get(section) or []
+                    rows: list[tuple[str, int]] = []
+                    if isinstance(items, list):
+                        for row in items:
+                            if not isinstance(row, (list, tuple)) or len(row) != 2:
+                                continue
+                            metric = str(row[0]).strip()
+                            try:
+                                thr = int(row[1])
+                            except (TypeError, ValueError):
+                                continue
+                            if metric:
+                                rows.append((metric, thr))
+                    block[section] = rows
+                parsed[wr] = block
+        if not parsed:
             raise RuntimeError(
                 f"SIGNAL_WRAPPER thresholds file {STAR_THRESHOLDS_PATH} contains no valid WR entries"
             )
-        except Exception as exc:
-            logger.exception("Failed to load SIGNAL_WRAPPER thresholds from %s", STAR_THRESHOLDS_PATH)
+        hydrated: Dict[int, Dict[str, list[tuple[str, int]]]] = {}
+        for wr, block in parsed.items():
+            out_block: Dict[str, list[tuple[str, int]]] = {}
+            for section in ("early_output", "mid_output"):
+                section_rows = list(block.get(section) or [])
+                if not section_rows:
+                    raise RuntimeError(
+                        f"SIGNAL_WRAPPER thresholds file {STAR_THRESHOLDS_PATH} is missing WR{wr} section={section}"
+                    )
+                out_block[section] = section_rows
+            hydrated[int(wr)] = out_block
+        if 60 not in hydrated:
             raise RuntimeError(
-                f"Failed to load SIGNAL_WRAPPER thresholds from {STAR_THRESHOLDS_PATH}"
-            ) from exc
-    return {int(k): dict(v) for k, v in _STAR_THRESHOLDS_FALLBACK.items()}
+                f"SIGNAL_WRAPPER thresholds file {STAR_THRESHOLDS_PATH} is missing required WR60 block"
+            )
+        return hydrated
+    except Exception as exc:
+        logger.exception("Failed to load SIGNAL_WRAPPER thresholds from %s", STAR_THRESHOLDS_PATH)
+        raise RuntimeError(
+            f"Failed to load SIGNAL_WRAPPER thresholds from {STAR_THRESHOLDS_PATH}"
+        ) from exc
 
 
 def _star_target_wr() -> int:
@@ -473,7 +438,9 @@ def _runtime_pro_star_features(
     target_wr = _star_target_wr()
     threshold_set = all_thresholds.get(target_wr)
     if not isinstance(threshold_set, dict):
-        threshold_set = all_thresholds.get(60) if target_wr == 60 else {}
+        raise RuntimeError(
+            f"SIGNAL_WRAPPER thresholds are missing required WR{target_wr} block in {STAR_THRESHOLDS_PATH}"
+        )
     early_thresholds = threshold_set.get("early_output") or []
     late_thresholds = threshold_set.get("mid_output") or []
 
