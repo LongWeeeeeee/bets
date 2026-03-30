@@ -9186,10 +9186,13 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                     )
 
                 if proxy_attempt_count >= max_proxy_attempts:
+                    schedule_source_soup = soup
                     if USE_PROXY:
                         direct_response, direct_soup, direct_live_matches = _try_direct_live_matches_fallback()
                         if direct_response is not None and direct_response.status_code == 200:
                             parse_failed_on_200 = True
+                            if direct_soup is not None:
+                                schedule_source_soup = direct_soup
                         if direct_live_matches:
                             current_response = direct_response
                             soup = direct_soup
@@ -9197,6 +9200,28 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                             used_direct_fallback = True
                             break
                     if parse_failed_on_200:
+                        schedule_info = (
+                            _extract_nearest_scheduled_match_info(schedule_source_soup)
+                            if schedule_source_soup is not None
+                            else None
+                        )
+                        if schedule_info:
+                            NEXT_SCHEDULE_MATCH_INFO = schedule_info
+                            NEXT_SCHEDULE_SLEEP_SECONDS = float(
+                                schedule_info.get("sleep_seconds", 0.0) or 0.0
+                            )
+                            GET_HEADS_LAST_FAILURE_REASON = None
+                            print(
+                                "🗓️ live__matches block missing, but schedule was parsed successfully. "
+                                "Switching to schedule-only mode."
+                            )
+                            _emit_pending_schedule_wake_audit(
+                                heads_count=0,
+                                bodies_count=0,
+                                next_schedule_info=schedule_info,
+                                request_status="schedule_only_no_live_matches",
+                            )
+                            return [], []
                         print("❌ Элемент live__matches не найден после всех доступных прокси")
                         GET_HEADS_LAST_FAILURE_REASON = (
                             GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES

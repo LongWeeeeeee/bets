@@ -1000,6 +1000,64 @@ def test_get_heads_uses_direct_fallback_after_proxy_pool_exhaustion(monkeypatch)
     ]
 
 
+def test_get_heads_switches_to_schedule_mode_when_live_block_missing(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "USE_PROXY", True, raising=False)
+    monkeypatch.setattr(runtime, "PROXY_LIST", ["proxy-a", "proxy-b"], raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY_INDEX", 0, raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY", "proxy-a", raising=False)
+    monkeypatch.setattr(runtime, "PROXIES", {"http": "proxy-a", "https": "proxy-a"}, raising=False)
+    monkeypatch.setattr(runtime, "PROXY_POOL_ROTATION_ROUNDS", 3, raising=False)
+    monkeypatch.setattr(runtime, "PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE", False, raising=False)
+    monkeypatch.setattr(runtime.time, "sleep", lambda *_args, **_kwargs: None)
+
+    def _fake_retry(*_args, **_kwargs):
+        return _FakeTextResponse("<html><body>proxy response without live matches</body></html>")
+
+    monkeypatch.setattr(runtime, "make_request_with_retry", _fake_retry)
+
+    send_calls: List[str] = []
+    monkeypatch.setattr(runtime, "send_message", lambda message, **_kwargs: send_calls.append(str(message)))
+
+    def _direct_get(*_args, **_kwargs):
+        return _FakeTextResponse(
+            """
+            <html>
+              <div class="match upcoming" data-matches-odd="2026-04-01 11:00:00" data-series-id="425790">
+                <div class="match__head">
+                  <div class="match__head-event"><span>Fonbet Media Eleague Season 4</span></div>
+                </div>
+                <div class="match__body">
+                  <div class="match__body-details">
+                    <a href="https://dltv.org/matches/425790/team-rostikfacekid-vs-team-lens-fonbet-media-eleague-season-4"></a>
+                    <div class="match__body-details__team">
+                      <div class="team"><div class="team__title"><span>Team RostikFaceKid</span></div></div>
+                      <div class="team"><div class="team__title"><span>Team Lens</span></div></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </html>
+            """,
+            status_code=200,
+        )
+
+    monkeypatch.setattr(runtime.requests, "get", _direct_get)
+
+    heads, bodies = runtime.get_heads(
+        response=_FakeTextResponse("<html><body>proxy response without live matches</body></html>")
+    )
+
+    assert heads == []
+    assert bodies == []
+    assert runtime.GET_HEADS_LAST_FAILURE_REASON is None
+    assert runtime.NEXT_SCHEDULE_MATCH_INFO is not None
+    assert runtime.NEXT_SCHEDULE_MATCH_INFO["league_title"] == "Fonbet Media Eleague Season 4"
+    assert runtime.NEXT_SCHEDULE_MATCH_INFO["matchup"] == "Team RostikFaceKid vs Team Lens"
+    assert send_calls == [
+        "⚠️ Все прокси для live matches исчерпаны после 3 кругов. Переключаюсь на direct fallback."
+    ]
+
+
 def test_general_notifies_live_matches_missing_only_after_all_proxies(monkeypatch) -> None:
     send_calls: List[str] = []
 
