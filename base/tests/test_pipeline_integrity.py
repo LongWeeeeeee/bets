@@ -195,6 +195,73 @@ def test_extract_nearest_scheduled_match_info_skips_denied_leagues() -> None:
     assert schedule["league_title"] == "ESL One Birmingham 2026"
 
 
+def test_extract_nearest_scheduled_match_info_supports_new_match_card_layout() -> None:
+    html = """
+    <div class="match upcoming" data-matches-odd="2026-04-01 11:00:00" data-series-id="425790">
+      <div class="match__head">
+        <div class="match__head-event"><span>Fonbet Media Eleague Season 4</span></div>
+      </div>
+      <div class="match__body">
+        <div class="match__body-details">
+          <div class="match__body-details__team">
+            <div class="team"><div class="team__title"><span>Team RostikFaceKid</span></div></div>
+            <div class="team"><div class="team__title"><span>Team Lens</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+    soup = BeautifulSoup(html, "lxml")
+    schedule = runtime._extract_nearest_scheduled_match_info(
+        soup,
+        now_utc=datetime(2026, 4, 1, 8, 0, tzinfo=ZoneInfo("UTC")),
+    )
+
+    assert schedule is not None
+    assert schedule["league_title"] == "Fonbet Media Eleague Season 4"
+    assert schedule["matchup"] == "Team RostikFaceKid vs Team Lens"
+    assert schedule["scheduled_at_msk"].strftime("%Y-%m-%d %H:%M:%S") == "2026-04-01 14:00:00"
+
+
+def test_extract_nearest_scheduled_match_info_skips_denied_new_layout_by_href() -> None:
+    html = """
+    <div class="match upcoming tbd" data-matches-odd="2026-03-31 07:00:00" data-series-id="425836">
+      <div class="match__body">
+        <div class="match__body-details">
+          <a href="https://dltv.org/matches/425836/cloud-rising-vs-tbd-blast-slam-vii-china-open-qualifier-2"></a>
+          <div class="match__body-details__team">
+            <div class="team"><div class="team__title"><span>Cloud Rising</span></div></div>
+            <div class="team"><div class="team__title"><span>TBD</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="match upcoming" data-matches-odd="2026-04-01 11:00:00" data-series-id="425790">
+      <div class="match__head">
+        <div class="match__head-event"><span>Fonbet Media Eleague Season 4</span></div>
+      </div>
+      <div class="match__body">
+        <div class="match__body-details">
+          <a href="https://dltv.org/matches/425790/team-rostikfacekid-vs-team-lens-fonbet-media-eleague-season-4"></a>
+          <div class="match__body-details__team">
+            <div class="team"><div class="team__title"><span>Team RostikFaceKid</span></div></div>
+            <div class="team"><div class="team__title"><span>Team Lens</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+    soup = BeautifulSoup(html, "lxml")
+    schedule = runtime._extract_nearest_scheduled_match_info(
+        soup,
+        now_utc=datetime(2026, 3, 31, 6, 0, tzinfo=ZoneInfo("UTC")),
+    )
+
+    assert schedule is not None
+    assert schedule["league_title"] == "Fonbet Media Eleague Season 4"
+    assert schedule["matchup"] == "Team RostikFaceKid vs Team Lens"
+
+
 def test_should_poll_for_scheduled_live_target_after_match_start() -> None:
     runtime.SCHEDULE_LIVE_WAIT_TARGET = {
         "matchup": "Team Yandex vs Xtreme Gaming",

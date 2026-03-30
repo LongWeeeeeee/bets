@@ -118,6 +118,24 @@ def _normalize_live_league_title(title: Any) -> str:
     return re.sub(r"\s+", " ", str(title or "").strip()).lower()
 
 
+def _slugify_live_league_title(title: Any) -> str:
+    normalized = _normalize_live_league_title(title)
+    return re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")
+
+
+def _is_skipped_live_league_candidate(*, league_title: Any = "", href: Any = "") -> bool:
+    normalized_title = _normalize_live_league_title(league_title)
+    if normalized_title in SKIPPED_LIVE_LEAGUE_TITLES:
+        return True
+    href_text = str(href or "").strip().lower()
+    if href_text:
+        for denied_title in SKIPPED_LIVE_LEAGUE_TITLES:
+            denied_slug = _slugify_live_league_title(denied_title)
+            if denied_slug and denied_slug in href_text:
+                return True
+    return False
+
+
 def _get_id_to_names_path() -> Path:
     return BASE_DIR / "id_to_names.py"
 
@@ -3414,19 +3432,18 @@ def _extract_nearest_scheduled_match_info(
     best_payload: Optional[dict[str, Any]] = None
     best_sleep_seconds: Optional[float] = None
 
-    for event_tag in soup.find_all("a", class_="event"):
-        event_name_tag = event_tag.find("div", class_="event__name")
-        event_title = event_name_tag.get_text(" ", strip=True) if event_name_tag else ""
-        if _normalize_live_league_title(event_title) in SKIPPED_LIVE_LEAGUE_TITLES:
-            continue
-        time_tag = event_tag.find("div", class_="event__info-info__time")
-        scheduled_at = _parse_dltv_schedule_timestamp(time_tag.get_text(" ", strip=True) if time_tag else "")
+    def _consider_candidate(
+        *,
+        scheduled_at: Optional[datetime],
+        matchup: str,
+        league_title: str,
+        href: str = "",
+    ) -> None:
+        nonlocal best_payload, best_sleep_seconds
         if scheduled_at is None or scheduled_at <= current_utc:
-            continue
-        match_item = event_tag.find_next("div", class_="match__item")
-        team_tags = match_item.find_all("div", class_="match__item-team__name") if match_item else []
-        team_names = [tag.get_text(" ", strip=True) for tag in team_tags if tag.get_text(" ", strip=True)]
-        matchup = " vs ".join(team_names[:2]) if team_names else "unknown"
+            return
+        if _is_skipped_live_league_candidate(league_title=league_title, href=href):
+            return
         sleep_seconds_raw = max(0.0, (scheduled_at - current_utc).total_seconds())
         sleep_seconds = _compute_schedule_recheck_sleep_seconds(sleep_seconds_raw)
         if best_sleep_seconds is None or sleep_seconds_raw < best_sleep_seconds:
@@ -3437,8 +3454,48 @@ def _extract_nearest_scheduled_match_info(
                 "sleep_seconds": sleep_seconds,
                 "sleep_seconds_raw": sleep_seconds_raw,
                 "matchup": matchup,
-                "league_title": event_title,
+                "league_title": league_title,
             }
+
+    for event_tag in soup.find_all("a", class_="event"):
+        event_name_tag = event_tag.find("div", class_="event__name")
+        event_title = event_name_tag.get_text(" ", strip=True) if event_name_tag else ""
+        time_tag = event_tag.find("div", class_="event__info-info__time")
+        scheduled_at = _parse_dltv_schedule_timestamp(time_tag.get_text(" ", strip=True) if time_tag else "")
+        match_item = event_tag.find_next("div", class_="match__item")
+        team_tags = match_item.find_all("div", class_="match__item-team__name") if match_item else []
+        team_names = [tag.get_text(" ", strip=True) for tag in team_tags if tag.get_text(" ", strip=True)]
+        matchup = " vs ".join(team_names[:2]) if team_names else "unknown"
+        href = str(event_tag.get("href") or "")
+        _consider_candidate(
+            scheduled_at=scheduled_at,
+            matchup=matchup,
+            league_title=event_title,
+            href=href,
+        )
+
+    for match_tag in soup.select("div.match.upcoming[data-matches-odd]"):
+        scheduled_at = _parse_dltv_schedule_timestamp(match_tag.get("data-matches-odd"))
+        league_title = ""
+        head_event = match_tag.find("div", class_="match__head-event")
+        if head_event is not None:
+            league_title = head_event.get_text(" ", strip=True)
+        team_names = [
+            tag.get_text(" ", strip=True)
+            for tag in match_tag.select(".match__body-details__team .team__title span")
+            if tag.get_text(" ", strip=True)
+        ]
+        matchup = " vs ".join(team_names[:2]) if team_names else "unknown"
+        href = ""
+        href_tag = match_tag.find("a", href=True)
+        if href_tag is not None:
+            href = str(href_tag.get("href") or "")
+        _consider_candidate(
+            scheduled_at=scheduled_at,
+            matchup=matchup,
+            league_title=league_title,
+            href=href,
+        )
 
     return best_payload
 
