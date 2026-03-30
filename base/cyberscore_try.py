@@ -3346,10 +3346,12 @@ NEXT_SCHEDULE_MATCH_INFO: Optional[Dict[str, Any]] = None
 PENDING_SCHEDULE_WAKE_AUDIT: Optional[Dict[str, Any]] = None
 SCHEDULE_LIVE_WAIT_TARGET: Optional[Dict[str, Any]] = None
 LIVE_MATCHES_MISSING_ALERT_ACTIVE = False
+PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE = False
 SCHEDULE_WAKE_LEAD_SECONDS = _safe_float_env("SCHEDULE_WAKE_LEAD_SECONDS", 30.0 * 60.0)
 SCHEDULE_MAX_SLEEP_SECONDS = _safe_float_env("SCHEDULE_MAX_SLEEP_SECONDS", 15.0 * 60.0)
 SCHEDULE_NEAR_MATCH_POLL_SECONDS = _safe_float_env("SCHEDULE_NEAR_MATCH_POLL_SECONDS", 60.0)
 SCHEDULE_POST_START_POLL_SECONDS = _safe_float_env("SCHEDULE_POST_START_POLL_SECONDS", 3.0 * 60.0)
+PROXY_POOL_ROTATION_ROUNDS = max(1, _safe_int_env("PROXY_POOL_ROTATION_ROUNDS", 3))
 
 
 def _env_use_proxy_default() -> bool:
@@ -9022,17 +9024,20 @@ def _deliver_and_persist_signal(
 
 def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.214.49", path = "/matches"):
         global GET_HEADS_LAST_FAILURE_REASON, NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO, SCHEDULE_LIVE_WAIT_TARGET
+        global PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE
         GET_HEADS_LAST_FAILURE_REASON = None
         NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
         NEXT_SCHEDULE_MATCH_INFO = None
         # Формируем URL всегда (нужен для retry с новым прокси)
         url = f"https://{ip_address}{path}"
+        request_headers = globals().get(
+            'headers',
+            {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        )
         
         # Если response уже передан, используем его, иначе делаем запрос
         if response is None:
-            # Используем глобальные headers
-            global headers
-            response = make_request_with_retry(url, MAX_RETRIES, RETRY_DELAY, headers=headers)
+            response = make_request_with_retry(url, MAX_RETRIES, RETRY_DELAY, headers=request_headers)
 
         if not response or response.status_code != 200:
             status_msg = f"Status: {response.status_code}" if response else "No response (None)"
@@ -9047,25 +9052,70 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             return None, None
 
         try:
-            attempted_markers: set[str] = set()
             parse_failed_on_200 = False
-            max_proxy_attempts = max(1, len(PROXY_LIST)) if USE_PROXY and PROXY_LIST else 1
+            proxy_pool_size = len(PROXY_LIST) if USE_PROXY and PROXY_LIST else 0
+            max_proxy_attempts = max(1, proxy_pool_size * PROXY_POOL_ROTATION_ROUNDS) if proxy_pool_size else 1
+            proxy_attempt_count = 0
             current_response = response
             live_matches = None
+            soup = None
+            used_direct_fallback = False
+
+            def _try_direct_live_matches_fallback():
+                global PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE
+                print("🌐 Все прокси исчерпаны, пробую direct fallback...")
+                if not PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE:
+                    try:
+                        send_message(
+                            "⚠️ Все прокси для live matches исчерпаны после 3 кругов. "
+                            "Переключаюсь на direct fallback.",
+                            admin_only=True,
+                        )
+                    except Exception as exc:
+                        print(f"⚠️ Не удалось отправить уведомление о direct fallback: {exc}")
+                    PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE = True
+                try:
+                    direct_response = requests.get(
+                        url,
+                        headers=request_headers,
+                        verify=False,
+                        timeout=10,
+                    )
+                except requests.exceptions.RequestException as exc:
+                    print(f"⚠️ Direct fallback failed: {type(exc).__name__}: {exc}")
+                    logger.warning("Direct fallback failed for %s: %s", url, exc)
+                    return None, None, None
+                if direct_response.status_code != 200:
+                    print(f"⚠️ Direct fallback вернул статус {direct_response.status_code}")
+                    return direct_response, None, None
+                direct_soup = BeautifulSoup(direct_response.text, 'lxml')
+                direct_live_matches = direct_soup.find('div', class_='live__matches')
+                if direct_live_matches:
+                    print("✅ Direct fallback succeeded after proxy exhaustion")
+                    return direct_response, direct_soup, direct_live_matches
+                print("❌ Direct fallback также не нашел элемент live__matches в HTML")
+                return direct_response, direct_soup, None
 
             while True:
                 marker = _get_current_proxy_marker()
-                attempted_markers.add(marker)
+                proxy_attempt_count += 1
+                attempted_human = (
+                    f"{proxy_attempt_count}/{max_proxy_attempts}"
+                    if proxy_pool_size
+                    else "1/1"
+                )
 
                 if current_response and current_response.status_code == 200:
                     soup = BeautifulSoup(current_response.text, 'lxml')
                     live_matches = soup.find('div', class_='live__matches')
                     if live_matches:
+                        if not used_direct_fallback:
+                            PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE = False
                         break
                     parse_failed_on_200 = True
                     print(
                         "❌ Не найден элемент live__matches в HTML "
-                        f"(proxy={marker}, tried={len(attempted_markers)}/{max_proxy_attempts})"
+                        f"(proxy={marker}, tried={attempted_human})"
                     )
                 else:
                     status_msg = (
@@ -9078,7 +9128,17 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                         f"(proxy={marker}, {status_msg})"
                     )
 
-                if len(attempted_markers) >= max_proxy_attempts:
+                if proxy_attempt_count >= max_proxy_attempts:
+                    if USE_PROXY:
+                        direct_response, direct_soup, direct_live_matches = _try_direct_live_matches_fallback()
+                        if direct_response is not None and direct_response.status_code == 200:
+                            parse_failed_on_200 = True
+                        if direct_live_matches:
+                            current_response = direct_response
+                            soup = direct_soup
+                            live_matches = direct_live_matches
+                            used_direct_fallback = True
+                            break
                     if parse_failed_on_200:
                         print("❌ Элемент live__matches не найден после всех доступных прокси")
                         GET_HEADS_LAST_FAILURE_REASON = (
@@ -9094,24 +9154,11 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                     )
                     return None, None
 
-                if not _rotate_to_untried_proxy(attempted_markers):
-                    if parse_failed_on_200:
-                        print("❌ Элемент live__matches не найден после всех доступных прокси")
-                        GET_HEADS_LAST_FAILURE_REASON = (
-                            GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES
-                        )
-                    else:
-                        GET_HEADS_LAST_FAILURE_REASON = GET_HEADS_FAILURE_REASON_REQUEST_FAILED
-                    _emit_pending_schedule_wake_audit(
-                        heads_count=0,
-                        bodies_count=0,
-                        next_schedule_info=None,
-                        request_status=GET_HEADS_LAST_FAILURE_REASON,
-                    )
-                    return None, None
                 print(f"🔄 Переключился на другой прокси, повторяю запрос...")
+                if proxy_pool_size:
+                    rotate_proxy()
                 time.sleep(2)
-                current_response = make_request_with_retry(url, max_retries=3, retry_delay=2, headers=headers)
+                current_response = make_request_with_retry(url, max_retries=3, retry_delay=2, headers=request_headers)
                 if not current_response or current_response.status_code != 200:
                     continue
             
@@ -12851,6 +12898,7 @@ def general(return_status=None, use_proxy=None, odds=None):
               Если None — берется из переменной окружения BOOKMAKER_PREFETCH_ENABLED (по умолчанию True).
     """
     global PROXIES, BOOKMAKER_PREFETCH_ENABLED, LIVE_MATCHES_MISSING_ALERT_ACTIVE
+    global PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE
 
     odds_arg = odds
     if odds is None:
@@ -12944,7 +12992,7 @@ def general(return_status=None, use_proxy=None, odds=None):
     if heads is None:
         if GET_HEADS_LAST_FAILURE_REASON == GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES:
             print('❌ Не найден элемент live__matches в HTML')
-            if not LIVE_MATCHES_MISSING_ALERT_ACTIVE:
+            if not LIVE_MATCHES_MISSING_ALERT_ACTIVE and not PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE:
                 try:
                     send_message('❌ Не найден элемент live__matches в HTML', admin_only=True)
                 except Exception as e:

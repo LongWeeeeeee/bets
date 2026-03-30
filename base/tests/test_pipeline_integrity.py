@@ -873,6 +873,66 @@ def test_get_heads_sets_missing_live_matches_reason_without_telegram(monkeypatch
     )
 
 
+def test_get_heads_uses_direct_fallback_after_proxy_pool_exhaustion(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "USE_PROXY", True, raising=False)
+    monkeypatch.setattr(runtime, "PROXY_LIST", ["proxy-a", "proxy-b"], raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY_INDEX", 0, raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY", "proxy-a", raising=False)
+    monkeypatch.setattr(runtime, "PROXIES", {"http": "proxy-a", "https": "proxy-a"}, raising=False)
+    monkeypatch.setattr(runtime, "PROXY_POOL_ROTATION_ROUNDS", 3, raising=False)
+    monkeypatch.setattr(runtime, "PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE", False, raising=False)
+    monkeypatch.setattr(runtime.time, "sleep", lambda *_args, **_kwargs: None)
+
+    retry_calls = {"count": 0}
+
+    def _fake_retry(*_args, **_kwargs):
+        retry_calls["count"] += 1
+        return _FakeTextResponse("<html><body>proxy response without live matches</body></html>")
+
+    monkeypatch.setattr(
+        runtime,
+        "make_request_with_retry",
+        _fake_retry,
+    )
+
+    direct_calls: List[Dict[str, Any]] = []
+    send_calls: List[str] = []
+    monkeypatch.setattr(runtime, "send_message", lambda message, **_kwargs: send_calls.append(str(message)))
+
+    def _direct_get(*_args, **kwargs):
+        direct_calls.append(dict(kwargs))
+        return _FakeTextResponse(
+            """
+            <html>
+              <div class="live__matches">
+                <div class="live__matches-item__head">
+                  <div class="event__name"><div>ESL One Birmingham 2026</div></div>
+                </div>
+                <div class="live__matches-item__body">
+                  <a href="/matches/test-direct-fallback"></a>
+                </div>
+              </div>
+            </html>
+            """,
+            status_code=200,
+        )
+
+    monkeypatch.setattr(runtime.requests, "get", _direct_get)
+
+    heads, bodies = runtime.get_heads(
+        response=_FakeTextResponse("<html><body>proxy response without live matches</body></html>")
+    )
+
+    assert heads is not None and len(heads) == 1
+    assert bodies is not None and len(bodies) == 1
+    assert retry_calls["count"] == 5
+    assert len(direct_calls) == 1
+    assert "proxies" not in direct_calls[0]
+    assert send_calls == [
+        "⚠️ Все прокси для live matches исчерпаны после 3 кругов. Переключаюсь на direct fallback."
+    ]
+
+
 def test_general_notifies_live_matches_missing_only_after_all_proxies(monkeypatch) -> None:
     send_calls: List[str] = []
 
