@@ -75,6 +75,10 @@ ANALYSE_PUB_DIR = PROJECT_ROOT / "bets_data" / "analise_pub_matches"
 TEMPO_EXPERIMENT_DIR = PROJECT_ROOT / "bets_data" / "tempo_pub_experiment"
 PRO_HEROES_DIR = PROJECT_ROOT / "pro_heroes_data"
 
+SKIPPED_LIVE_LEAGUE_TITLES = {
+    "blast slam vii: china open qualifier 2",
+}
+
 # Импорт Ultimate Inference предсказателя
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -108,6 +112,10 @@ def _report_missing_runtime_file(label: str, path: Union[Path, str], *, details:
     if details:
         message += f"\nDetails: {details}"
     _notify_runtime_error_once(message, dedupe_key=f"missing:{label}:{path_obj}")
+
+
+def _normalize_live_league_title(title: Any) -> str:
+    return re.sub(r"\s+", " ", str(title or "").strip()).lower()
 
 
 def _get_id_to_names_path() -> Path:
@@ -10106,6 +10114,21 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             str(live_league_data.get('league_name') or "").strip()
             or str((db_payload.get('league') or {}).get('title') or "").strip()
         )
+        league_name_normalized = _normalize_live_league_title(league_name)
+        if league_name_normalized in SKIPPED_LIVE_LEAGUE_TITLES:
+            print(
+                f"   🚫 Матч пропущен: лига в denylist ({league_name or 'unknown league'})"
+            )
+            add_url(
+                check_uniq_url,
+                reason="skip_league_title_denylist",
+                details={
+                    "status": status,
+                    "league_name": league_name,
+                    "json_retry_errors": json_retry_errors,
+                },
+            )
+            return return_status
         
         # Debug: print available keys in live_league_data
         lld_keys = list(live_league_data.keys())
