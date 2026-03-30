@@ -3345,6 +3345,7 @@ NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
 NEXT_SCHEDULE_MATCH_INFO: Optional[Dict[str, Any]] = None
 PENDING_SCHEDULE_WAKE_AUDIT: Optional[Dict[str, Any]] = None
 SCHEDULE_LIVE_WAIT_TARGET: Optional[Dict[str, Any]] = None
+LIVE_MATCHES_MISSING_ALERT_ACTIVE = False
 SCHEDULE_WAKE_LEAD_SECONDS = _safe_float_env("SCHEDULE_WAKE_LEAD_SECONDS", 30.0 * 60.0)
 SCHEDULE_MAX_SLEEP_SECONDS = _safe_float_env("SCHEDULE_MAX_SLEEP_SECONDS", 15.0 * 60.0)
 SCHEDULE_NEAR_MATCH_POLL_SECONDS = _safe_float_env("SCHEDULE_NEAR_MATCH_POLL_SECONDS", 60.0)
@@ -3412,6 +3413,10 @@ def _extract_nearest_scheduled_match_info(
     best_sleep_seconds: Optional[float] = None
 
     for event_tag in soup.find_all("a", class_="event"):
+        event_name_tag = event_tag.find("div", class_="event__name")
+        event_title = event_name_tag.get_text(" ", strip=True) if event_name_tag else ""
+        if _normalize_live_league_title(event_title) in SKIPPED_LIVE_LEAGUE_TITLES:
+            continue
         time_tag = event_tag.find("div", class_="event__info-info__time")
         scheduled_at = _parse_dltv_schedule_timestamp(time_tag.get_text(" ", strip=True) if time_tag else "")
         if scheduled_at is None or scheduled_at <= current_utc:
@@ -3430,6 +3435,7 @@ def _extract_nearest_scheduled_match_info(
                 "sleep_seconds": sleep_seconds,
                 "sleep_seconds_raw": sleep_seconds_raw,
                 "matchup": matchup,
+                "league_title": event_title,
             }
 
     return best_payload
@@ -12844,7 +12850,7 @@ def general(return_status=None, use_proxy=None, odds=None):
         odds: включить odds-пайплайн (True/False).
               Если None — берется из переменной окружения BOOKMAKER_PREFETCH_ENABLED (по умолчанию True).
     """
-    global PROXIES, BOOKMAKER_PREFETCH_ENABLED
+    global PROXIES, BOOKMAKER_PREFETCH_ENABLED, LIVE_MATCHES_MISSING_ALERT_ACTIVE
 
     odds_arg = odds
     if odds is None:
@@ -12938,11 +12944,16 @@ def general(return_status=None, use_proxy=None, odds=None):
     if heads is None:
         if GET_HEADS_LAST_FAILURE_REASON == GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES:
             print('❌ Не найден элемент live__matches в HTML')
-            try:
-                send_message('❌ Не найден элемент live__matches в HTML', admin_only=True)
-            except Exception as e:
-                print(f"⚠️ Не удалось отправить уведомление в Telegram: {e}")
+            if not LIVE_MATCHES_MISSING_ALERT_ACTIVE:
+                try:
+                    send_message('❌ Не найден элемент live__matches в HTML', admin_only=True)
+                except Exception as e:
+                    print(f"⚠️ Не удалось отправить уведомление в Telegram: {e}")
+                LIVE_MATCHES_MISSING_ALERT_ACTIVE = True
+        else:
+            LIVE_MATCHES_MISSING_ALERT_ACTIVE = False
         return None
+    LIVE_MATCHES_MISSING_ALERT_ACTIVE = False
 
     if not heads or not bodies:
         schedule_info = NEXT_SCHEDULE_MATCH_INFO if isinstance(NEXT_SCHEDULE_MATCH_INFO, dict) else {}

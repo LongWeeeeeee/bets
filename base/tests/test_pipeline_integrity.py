@@ -120,6 +120,7 @@ def test_extract_nearest_scheduled_match_info() -> None:
     html = """
     <div class="live__matches"></div>
     <a class="event" href="/events/test-1">
+      <div class="event__name"><div>ESL One Birmingham 2026</div></div>
       <div class="event__info">
         <div class="event__info-info">
           <div class="event__info-info__time" data-moment="HH:mm">2026-03-28 12:00:00</div>
@@ -131,6 +132,7 @@ def test_extract_nearest_scheduled_match_info() -> None:
       <div class="match__item-team__name">PARIVISION</div>
     </div>
     <a class="event" href="/events/test-2">
+      <div class="event__name"><div>ESL One Birmingham 2026</div></div>
       <div class="event__info">
         <div class="event__info-info">
           <div class="event__info-info__time" data-moment="HH:mm">2026-03-28 15:30:00</div>
@@ -152,6 +154,45 @@ def test_extract_nearest_scheduled_match_info() -> None:
     assert schedule["matchup"] == "Aurora vs PARIVISION"
     assert int(schedule["sleep_seconds_raw"]) == (3 * 60 * 60 + 14 * 60)
     assert int(schedule["sleep_seconds"]) == (3 * 60 * 60 + 14 * 60)
+
+
+def test_extract_nearest_scheduled_match_info_skips_denied_leagues() -> None:
+    html = """
+    <div class="live__matches"></div>
+    <a class="event" href="/events/test-skip">
+      <div class="event__name"><div>BLAST Slam VII: China Open Qualifier 2</div></div>
+      <div class="event__info">
+        <div class="event__info-info">
+          <div class="event__info-info__time" data-moment="HH:mm">2026-03-28 12:00:00</div>
+        </div>
+      </div>
+    </a>
+    <div class="match__item">
+      <div class="match__item-team__name">Skip Team A</div>
+      <div class="match__item-team__name">Skip Team B</div>
+    </div>
+    <a class="event" href="/events/test-keep">
+      <div class="event__name"><div>ESL One Birmingham 2026</div></div>
+      <div class="event__info">
+        <div class="event__info-info">
+          <div class="event__info-info__time" data-moment="HH:mm">2026-03-28 15:30:00</div>
+        </div>
+      </div>
+    </a>
+    <div class="match__item">
+      <div class="match__item-team__name">Team Yandex</div>
+      <div class="match__item-team__name">Tundra Esports</div>
+    </div>
+    """
+    soup = BeautifulSoup(html, "lxml")
+    schedule = runtime._extract_nearest_scheduled_match_info(
+        soup,
+        now_utc=datetime(2026, 3, 28, 8, 46, tzinfo=ZoneInfo("UTC")),
+    )
+
+    assert schedule is not None
+    assert schedule["matchup"] == "Team Yandex vs Tundra Esports"
+    assert schedule["league_title"] == "ESL One Birmingham 2026"
 
 
 def test_should_poll_for_scheduled_live_target_after_match_start() -> None:
@@ -848,6 +889,7 @@ def test_general_notifies_live_matches_missing_only_after_all_proxies(monkeypatc
     monkeypatch.setattr(runtime, "_stop_bookmaker_prefetch_worker", lambda: None)
     monkeypatch.setattr(runtime, "_init_proxy_pool", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runtime, "send_message", lambda message, **_kwargs: send_calls.append(str(message)))
+    monkeypatch.setattr(runtime, "LIVE_MATCHES_MISSING_ALERT_ACTIVE", False, raising=False)
 
     def _heads_request_failed():
         runtime.GET_HEADS_LAST_FAILURE_REASON = runtime.GET_HEADS_FAILURE_REASON_REQUEST_FAILED
@@ -862,6 +904,8 @@ def test_general_notifies_live_matches_missing_only_after_all_proxies(monkeypatc
         return None, None
 
     monkeypatch.setattr(runtime, "get_heads", _heads_missing_after_all_proxies)
+    assert runtime.general(use_proxy=False, odds=False) is None
+    assert send_calls == ["❌ Не найден элемент live__matches в HTML"]
     assert runtime.general(use_proxy=False, odds=False) is None
     assert send_calls == ["❌ Не найден элемент live__matches в HTML"]
 
