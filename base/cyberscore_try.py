@@ -3500,6 +3500,26 @@ def _extract_nearest_scheduled_match_info(
     return best_payload
 
 
+def _is_valid_dltv_matches_page(soup: Optional[BeautifulSoup], html_text: Any = "") -> bool:
+    if soup is None:
+        return False
+    text = str(html_text or "")
+    if not text.strip():
+        return False
+    title_text = ""
+    if soup.title is not None:
+        title_text = soup.title.get_text(" ", strip=True).lower()
+    if "dltv" in title_text and "match" in title_text:
+        return True
+    if soup.find("div", class_="live__matches") is not None:
+        return True
+    if soup.select_one("div.match.upcoming[data-matches-odd]") is not None:
+        return True
+    if soup.select_one("a.event") is not None:
+        return True
+    return False
+
+
 def _format_schedule_match_label(schedule_info: Optional[Dict[str, Any]]) -> str:
     if not isinstance(schedule_info, dict):
         return "unknown"
@@ -9117,6 +9137,7 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             live_matches = None
             soup = None
             used_direct_fallback = False
+            saw_valid_matches_page_without_live = False
 
             def _try_direct_live_matches_fallback():
                 global PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE
@@ -9163,16 +9184,48 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                 )
 
                 if current_response and current_response.status_code == 200:
-                    soup = BeautifulSoup(current_response.text, 'lxml')
+                    response_text = current_response.text or ""
+                    soup = BeautifulSoup(response_text, 'lxml')
                     live_matches = soup.find('div', class_='live__matches')
                     if live_matches:
                         if not used_direct_fallback:
                             PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE = False
                         break
+                    if _is_valid_dltv_matches_page(soup, response_text):
+                        saw_valid_matches_page_without_live = True
+                        schedule_info = _extract_nearest_scheduled_match_info(soup)
+                        if schedule_info:
+                            NEXT_SCHEDULE_MATCH_INFO = schedule_info
+                            NEXT_SCHEDULE_SLEEP_SECONDS = float(
+                                schedule_info.get("sleep_seconds", 0.0) or 0.0
+                            )
+                            GET_HEADS_LAST_FAILURE_REASON = None
+                            print(
+                                "🗓️ Получен валидный HTML DLTV без live__matches. "
+                                "Переключаюсь в режим ожидания по расписанию."
+                            )
+                            _emit_pending_schedule_wake_audit(
+                                heads_count=0,
+                                bodies_count=0,
+                                next_schedule_info=schedule_info,
+                                request_status="schedule_only_no_live_matches",
+                            )
+                            return [], []
+                        print(
+                            "⚠️ Получен валидный HTML DLTV без live__matches и без будущих матчей "
+                            f"(proxy={marker}, tried={attempted_human})"
+                        )
+                        _emit_pending_schedule_wake_audit(
+                            heads_count=0,
+                            bodies_count=0,
+                            next_schedule_info=None,
+                            request_status="valid_page_no_live_matches",
+                        )
+                        return [], []
                     parse_failed_on_200 = True
                     print(
-                        "❌ Не найден элемент live__matches в HTML "
-                        f"(proxy={marker}, tried={attempted_human})"
+                        "⚠️ Прокси не вернул валидную непустую HTML-страницу DLTV "
+                        f"(proxy={marker}, tried={attempted_human}, len={len(response_text.strip())})"
                     )
                 else:
                     status_msg = (
@@ -9220,6 +9273,15 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                                 bodies_count=0,
                                 next_schedule_info=schedule_info,
                                 request_status="schedule_only_no_live_matches",
+                            )
+                            return [], []
+                        if saw_valid_matches_page_without_live:
+                            GET_HEADS_LAST_FAILURE_REASON = None
+                            _emit_pending_schedule_wake_audit(
+                                heads_count=0,
+                                bodies_count=0,
+                                next_schedule_info=None,
+                                request_status="valid_page_no_live_matches",
                             )
                             return [], []
                         print("❌ Элемент live__matches не найден после всех доступных прокси")

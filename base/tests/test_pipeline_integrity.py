@@ -924,16 +924,19 @@ def test_get_heads_sets_missing_live_matches_reason_without_telegram(monkeypatch
     monkeypatch.setattr(runtime, "send_message", lambda message, **_kwargs: send_calls.append(str(message)))
 
     def _fake_retry(*_args, **_kwargs):
-        return _FakeTextResponse("<html><body>no live matches here</body></html>")
+        return _FakeTextResponse("")
 
     monkeypatch.setattr(runtime, "make_request_with_retry", _fake_retry)
+    monkeypatch.setattr(runtime.requests, "get", lambda *_args, **_kwargs: _FakeTextResponse(""))
 
     heads, bodies = runtime.get_heads(
-        response=_FakeTextResponse("<html><body>no live matches here</body></html>")
+        response=_FakeTextResponse("")
     )
 
     assert heads is None and bodies is None
-    assert send_calls == []
+    assert send_calls == [
+        "⚠️ Все прокси для live matches исчерпаны после 3 кругов. Переключаюсь на direct fallback."
+    ]
     assert (
         runtime.GET_HEADS_LAST_FAILURE_REASON
         == runtime.GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES
@@ -954,7 +957,7 @@ def test_get_heads_uses_direct_fallback_after_proxy_pool_exhaustion(monkeypatch)
 
     def _fake_retry(*_args, **_kwargs):
         retry_calls["count"] += 1
-        return _FakeTextResponse("<html><body>proxy response without live matches</body></html>")
+        return _FakeTextResponse("")
 
     monkeypatch.setattr(
         runtime,
@@ -987,7 +990,7 @@ def test_get_heads_uses_direct_fallback_after_proxy_pool_exhaustion(monkeypatch)
     monkeypatch.setattr(runtime.requests, "get", _direct_get)
 
     heads, bodies = runtime.get_heads(
-        response=_FakeTextResponse("<html><body>proxy response without live matches</body></html>")
+        response=_FakeTextResponse("")
     )
 
     assert heads is not None and len(heads) == 1
@@ -1010,18 +1013,27 @@ def test_get_heads_switches_to_schedule_mode_when_live_block_missing(monkeypatch
     monkeypatch.setattr(runtime, "PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE", False, raising=False)
     monkeypatch.setattr(runtime.time, "sleep", lambda *_args, **_kwargs: None)
 
-    def _fake_retry(*_args, **_kwargs):
-        return _FakeTextResponse("<html><body>proxy response without live matches</body></html>")
-
-    monkeypatch.setattr(runtime, "make_request_with_retry", _fake_retry)
+    retry_calls: List[str] = []
+    monkeypatch.setattr(
+        runtime,
+        "make_request_with_retry",
+        lambda *_args, **_kwargs: retry_calls.append("retry") or _FakeTextResponse(""),
+    )
 
     send_calls: List[str] = []
     monkeypatch.setattr(runtime, "send_message", lambda message, **_kwargs: send_calls.append(str(message)))
+    direct_calls: List[str] = []
+    monkeypatch.setattr(
+        runtime.requests,
+        "get",
+        lambda *_args, **_kwargs: direct_calls.append("direct") or _FakeTextResponse(""),
+    )
 
-    def _direct_get(*_args, **_kwargs):
-        return _FakeTextResponse(
+    heads, bodies = runtime.get_heads(
+        response=_FakeTextResponse(
             """
             <html>
+              <head><title>Dota 2 Matches & livescore – DLTV</title></head>
               <div class="match upcoming" data-matches-odd="2026-04-01 11:00:00" data-series-id="425790">
                 <div class="match__head">
                   <div class="match__head-event"><span>Fonbet Media Eleague Season 4</span></div>
@@ -1037,14 +1049,8 @@ def test_get_heads_switches_to_schedule_mode_when_live_block_missing(monkeypatch
                 </div>
               </div>
             </html>
-            """,
-            status_code=200,
+            """
         )
-
-    monkeypatch.setattr(runtime.requests, "get", _direct_get)
-
-    heads, bodies = runtime.get_heads(
-        response=_FakeTextResponse("<html><body>proxy response without live matches</body></html>")
     )
 
     assert heads == []
@@ -1053,9 +1059,9 @@ def test_get_heads_switches_to_schedule_mode_when_live_block_missing(monkeypatch
     assert runtime.NEXT_SCHEDULE_MATCH_INFO is not None
     assert runtime.NEXT_SCHEDULE_MATCH_INFO["league_title"] == "Fonbet Media Eleague Season 4"
     assert runtime.NEXT_SCHEDULE_MATCH_INFO["matchup"] == "Team RostikFaceKid vs Team Lens"
-    assert send_calls == [
-        "⚠️ Все прокси для live matches исчерпаны после 3 кругов. Переключаюсь на direct fallback."
-    ]
+    assert send_calls == []
+    assert retry_calls == []
+    assert direct_calls == []
 
 
 def test_general_notifies_live_matches_missing_only_after_all_proxies(monkeypatch) -> None:
@@ -1075,6 +1081,7 @@ def test_general_notifies_live_matches_missing_only_after_all_proxies(monkeypatc
     monkeypatch.setattr(runtime, "_init_proxy_pool", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runtime, "send_message", lambda message, **_kwargs: send_calls.append(str(message)))
     monkeypatch.setattr(runtime, "LIVE_MATCHES_MISSING_ALERT_ACTIVE", False, raising=False)
+    monkeypatch.setattr(runtime, "PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE", False, raising=False)
 
     def _heads_request_failed():
         runtime.GET_HEADS_LAST_FAILURE_REASON = runtime.GET_HEADS_FAILURE_REASON_REQUEST_FAILED
