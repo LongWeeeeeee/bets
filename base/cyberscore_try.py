@@ -3701,6 +3701,7 @@ _ADMIN_DELAYED_OUTCOME_PATTERNS = (
     re.compile(r"^⏱️ Отложенный сигнал отправлен.*?: (?P<url>\S+)\b"),
     re.compile(r"^⏱️ Отложенный сигнал отменен без отправки: (?P<url>\S+)\b"),
 )
+_ADMIN_SUMMARY_MATCH_URL_RE = re.compile(r"(dltv\.org/matches/\d+/[^\s)]+?)\.\d+(?=$|[\s)])")
 
 
 def _is_admin_match_summary_line(compact_line: str) -> bool:
@@ -3708,6 +3709,11 @@ def _is_admin_match_summary_line(compact_line: str) -> bool:
     if not compact:
         return False
     return any(compact.startswith(prefix) for prefix in _ADMIN_MATCH_SUMMARY_PREFIXES)
+
+
+def _normalize_admin_summary_line(raw_line: str) -> str:
+    raw = str(raw_line or "").rstrip()
+    return _ADMIN_SUMMARY_MATCH_URL_RE.sub(r"\1", raw)
 
 
 def _build_recent_match_summaries_text(*, limit: int = 10) -> str:
@@ -3775,8 +3781,9 @@ def _build_recent_match_summaries_text(*, limit: int = 10) -> str:
 
         if _is_admin_match_summary_line(compact):
             block_lines = current_block.setdefault("lines", [])
-            if raw not in block_lines:
-                block_lines.append(raw)
+            normalized_line = _normalize_admin_summary_line(raw)
+            if normalized_line not in block_lines:
+                block_lines.append(normalized_line)
             current_block["interesting_count"] = int(current_block.get("interesting_count") or 0) + 1
             if not (
                 compact.startswith("Статус:")
@@ -3794,7 +3801,7 @@ def _build_recent_match_summaries_text(*, limit: int = 10) -> str:
         delayed_outcome = latest_delayed_outcome_by_url.get(url)
         ordering_line_no = block_line_no
         if isinstance(delayed_outcome, dict):
-            delayed_line = str(delayed_outcome.get("line") or "").strip()
+            delayed_line = _normalize_admin_summary_line(str(delayed_outcome.get("line") or "").strip())
             delayed_line_no = int(delayed_outcome.get("line_no") or block_line_no)
             ordering_line_no = max(ordering_line_no, delayed_line_no)
             if delayed_line and delayed_line not in [line.strip() for line in lines]:

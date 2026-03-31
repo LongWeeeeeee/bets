@@ -364,7 +364,7 @@ def test_build_recent_match_summaries_text_for_rejected_match(tmp_path, monkeypa
 
     assert "[1]" in payload
     assert "Статус: 0:52" in payload
-    assert "URL: dltv.org/matches/425881/virtuspro-vs-team-stels-blast-slam-vii-europe-open-qualifier-1.0" in payload
+    assert "URL: dltv.org/matches/425881/virtuspro-vs-team-stels-blast-slam-vii-europe-open-qualifier-1" in payload
     assert "Top: lose 52%" in payload
     assert "Late star invalidated by ELO block guard" in payload
     assert "ВЕРДИКТ: ОТКАЗ" in payload
@@ -402,10 +402,10 @@ def test_build_recent_match_summaries_text_appends_delayed_outcome(tmp_path, mon
 
     payload = runtime._build_recent_match_summaries_text(limit=10)
 
-    assert "URL: dltv.org/matches/425690/winter-bear-vs-nemiga-gaming-european-pro-league-season-35.1" in payload
+    assert "URL: dltv.org/matches/425690/winter-bear-vs-nemiga-gaming-european-pro-league-season-35" in payload
     assert "ВЕРДИКТ: Сигнал добавлен в delayed-очередь" in payload
     assert "Отложенный сигнал отправлен по comeback ceiling" in payload
-    assert payload.count("winter-bear-vs-nemiga-gaming-european-pro-league-season-35.1") == 2
+    assert payload.count("winter-bear-vs-nemiga-gaming-european-pro-league-season-35") == 2
 
 
 def test_build_recent_match_summaries_text_orders_from_older_to_newer(tmp_path, monkeypatch) -> None:
@@ -433,7 +433,7 @@ def test_build_recent_match_summaries_text_orders_from_older_to_newer(tmp_path, 
 
     payload = runtime._build_recent_match_summaries_text(limit=10)
 
-    assert payload.index("dltv.org/matches/1/older-match.0") < payload.index("dltv.org/matches/2/newer-match.0")
+    assert payload.index("dltv.org/matches/1/older-match") < payload.index("dltv.org/matches/2/newer-match")
 
 
 def test_parse_draft_and_positions_uses_live_league_players_for_account_ids() -> None:
@@ -721,15 +721,22 @@ def test_send_message_admin_only_targets_primary_chat_only(tmp_path, monkeypatch
             return {"ok": True, "result": {"message_id": 1}}
 
     delivered: List[str] = []
+    reply_markups: List[dict] = []
 
     def _fake_post(_url, **kwargs):
         delivered.append(str(kwargs["json"]["chat_id"]))
+        reply_markup = kwargs["json"].get("reply_markup")
+        if isinstance(reply_markup, dict):
+            reply_markups.append(reply_markup)
         return _Response()
 
     monkeypatch.setattr(functions.requests, "post", _fake_post)
 
     assert functions.send_message("admin message", require_delivery=True, admin_only=True) is True
     assert delivered == ["100"]
+    assert len(reply_markups) == 1
+    assert reply_markups[0]["keyboard"][0][0]["text"] == "tail_log"
+    assert reply_markups[0]["keyboard"][0][1]["text"] == "reboot"
 
 
 def test_drain_telegram_admin_commands_extracts_restart_command(tmp_path, monkeypatch) -> None:
@@ -836,6 +843,81 @@ def test_drain_telegram_admin_commands_extracts_literal_tail_command(tmp_path, m
     assert len(commands) == 1
     assert commands[0]["command"] == "tail_log_100"
     assert commands[0]["raw_text"] == "tail -n 100 log.txt"
+
+
+def test_drain_telegram_admin_commands_extracts_plain_reboot_command(tmp_path, monkeypatch) -> None:
+    import functions
+
+    state_path = tmp_path / "telegram_subscribers_state.json"
+    legacy_path = tmp_path / "legacy_telegram_subscribers_state.json"
+    monkeypatch.setattr(functions, "TELEGRAM_SUBSCRIBERS_STATE_PATH", state_path, raising=False)
+    monkeypatch.setattr(functions, "LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH", legacy_path, raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_id", "100", raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_ids", [], raising=False)
+
+    class _Response:
+        status_code = 200
+
+        def __init__(self, payload: Dict[str, Any]) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> Dict[str, Any]:
+            return self._payload
+
+    def _fake_post(url, **_kwargs):
+        if url.endswith("/getUpdates"):
+            return _Response(
+                {
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 103,
+                            "message": {
+                                "chat": {"id": 100},
+                                "from": {"id": 100},
+                                "text": "reboot",
+                            },
+                        }
+                    ],
+                }
+            )
+        return _Response({"ok": True, "result": {"message_id": 1}})
+
+    with functions.TELEGRAM_ADMIN_COMMANDS_LOCK:
+        functions.TELEGRAM_PENDING_ADMIN_COMMANDS.clear()
+
+    monkeypatch.setattr(functions.requests, "post", _fake_post)
+
+    commands = functions.drain_telegram_admin_commands(refresh=True)
+
+    assert len(commands) == 1
+    assert commands[0]["command"] == "restart_bot"
+
+
+def test_build_recent_match_summaries_text_normalizes_map_suffix_in_urls(tmp_path, monkeypatch) -> None:
+    log_path = tmp_path / "log.txt"
+    log_path.write_text(
+        "\n".join(
+            [
+                "🔍 DEBUG: Начало обработки матча #0",
+                "   Статус: draft...",
+                "   URL: dltv.org/matches/425878/1win-team-vs-enjoy-boys-blast-slam-vii-europe-open-qualifier-1.0",
+                "   Score: 0 : 0",
+                "   ✅ Драфт успешно распарсен",
+                "   ⚠️ ВЕРДИКТ: ОТКАЗ (нет late star-сигнала) - матч пропущен",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runtime, "PROJECT_ROOT", tmp_path, raising=False)
+
+    payload = runtime._build_recent_match_summaries_text(limit=10)
+
+    assert "dltv.org/matches/425878/1win-team-vs-enjoy-boys-blast-slam-vii-europe-open-qualifier-1.0" not in payload
+    assert "dltv.org/matches/425878/1win-team-vs-enjoy-boys-blast-slam-vii-europe-open-qualifier-1" in payload
 
 
 def test_load_telegram_subscribers_state_merges_primary_and_legacy(tmp_path, monkeypatch) -> None:

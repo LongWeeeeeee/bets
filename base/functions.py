@@ -12,7 +12,7 @@ import time
 from collections import deque
 from pathlib import Path
 from itertools import chain, permutations
-from typing import ClassVar
+from typing import ClassVar, Optional
 
 import pytz
 import requests
@@ -838,8 +838,10 @@ def _normalize_telegram_admin_command(text: str) -> str:
     if not raw_text:
         return ""
     lowered = raw_text.lower().strip()
-    if lowered == "tail -n 100 log.txt":
+    if lowered in {"tail -n 100 log.txt", "tail_log", "tail_log_100"}:
         return TELEGRAM_ADMIN_COMMAND_TAIL_LOG
+    if lowered in {"reboot", "restart_bot"}:
+        return TELEGRAM_ADMIN_COMMAND_RESTART
     if not lowered.startswith("/"):
         return ""
     first_token = lowered.split(None, 1)[0]
@@ -849,6 +851,16 @@ def _normalize_telegram_admin_command(text: str) -> str:
     if command_token in {"/tail_log", "/tail_log_100", "/log100"}:
         return TELEGRAM_ADMIN_COMMAND_TAIL_LOG
     return ""
+
+
+def _build_admin_telegram_reply_markup() -> dict:
+    return {
+        "keyboard": [
+            [{"text": "tail_log"}, {"text": "reboot"}],
+        ],
+        "resize_keyboard": True,
+        "one_time_keyboard": False,
+    }
 
 
 def _extract_admin_commands_from_telegram_update(update) -> list[dict]:
@@ -1087,7 +1099,7 @@ def _recover_telegram_network_send(
     )
 
 
-def _send_message_to_chat_id(chat_id, message, *, require_delivery: bool = False):
+def _send_message_to_chat_id(chat_id, message, *, require_delivery: bool = False, reply_markup: Optional[dict] = None):
     bot_token = f'{keys.Token}'
     chat_id = _telegram_normalize_chat_id(chat_id)
     if not chat_id:
@@ -1101,6 +1113,8 @@ def _send_message_to_chat_id(chat_id, message, *, require_delivery: bool = False
         'chat_id': chat_id,
         'text': message,
     }
+    if isinstance(reply_markup, dict) and reply_markup:
+        payload['reply_markup'] = reply_markup
     try:
         response = requests.post(
             url,
@@ -1326,10 +1340,12 @@ def _remove_telegram_subscribers(chat_ids_to_remove: list[str]) -> None:
 def send_message(message, *, require_delivery: bool = False, admin_only: bool = False):
     if admin_only:
         target_chat_ids = _get_admin_telegram_chat_ids()
+        reply_markup = _build_admin_telegram_reply_markup()
     else:
         target_chat_ids = _refresh_telegram_subscribers()
         if not target_chat_ids:
             target_chat_ids = _get_default_telegram_chat_ids()
+        reply_markup = None
 
     delivered = []
     uncertain_errors = []
@@ -1338,7 +1354,12 @@ def send_message(message, *, require_delivery: bool = False, admin_only: bool = 
 
     for chat_id in target_chat_ids:
         try:
-            result = _send_message_to_chat_id(chat_id, message, require_delivery=require_delivery)
+            result = _send_message_to_chat_id(
+                chat_id,
+                message,
+                require_delivery=require_delivery,
+                reply_markup=reply_markup,
+            )
             if result:
                 delivered.append(chat_id)
         except TelegramSendError as exc:
