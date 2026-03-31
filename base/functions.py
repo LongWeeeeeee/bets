@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from itertools import chain, permutations
 from typing import ClassVar
@@ -627,6 +628,10 @@ try:
 except (TypeError, ValueError):
     TELEGRAM_SEND_CURL_TIMEOUT_SECONDS = TELEGRAM_SEND_TIMEOUT_SECONDS + 2.0
 TELEGRAM_SUBSCRIBERS_LOCK = threading.Lock()
+TELEGRAM_ADMIN_COMMANDS_LOCK = threading.Lock()
+TELEGRAM_PENDING_ADMIN_COMMANDS = deque()
+TELEGRAM_ADMIN_COMMAND_RESTART = "restart_bot"
+TELEGRAM_ADMIN_COMMAND_TAIL_LOG = "tail_log_100"
 
 
 def _iter_telegram_state_paths() -> list[Path]:
@@ -826,6 +831,79 @@ def _extract_chat_ids_from_telegram_update(update) -> list[str]:
         seen.add(chat_id)
         ordered.append(chat_id)
     return ordered
+
+
+def _normalize_telegram_admin_command(text: str) -> str:
+    raw_text = str(text or "").strip()
+    if not raw_text:
+        return ""
+    lowered = raw_text.lower().strip()
+    if lowered == "tail -n 100 log.txt":
+        return TELEGRAM_ADMIN_COMMAND_TAIL_LOG
+    if not lowered.startswith("/"):
+        return ""
+    first_token = lowered.split(None, 1)[0]
+    command_token = first_token.split("@", 1)[0]
+    if command_token == "/restart_bot":
+        return TELEGRAM_ADMIN_COMMAND_RESTART
+    if command_token in {"/tail_log", "/tail_log_100", "/log100"}:
+        return TELEGRAM_ADMIN_COMMAND_TAIL_LOG
+    return ""
+
+
+def _extract_admin_commands_from_telegram_update(update) -> list[dict]:
+    if not isinstance(update, dict):
+        return []
+    admin_chat_ids = set(_get_admin_telegram_chat_ids())
+    if not admin_chat_ids:
+        return []
+
+    commands = []
+
+    def _append_from_payload(payload) -> None:
+        if not isinstance(payload, dict):
+            return
+        text = payload.get("text")
+        if text is None:
+            text = payload.get("caption")
+        command_name = _normalize_telegram_admin_command(str(text or ""))
+        if not command_name:
+            return
+        chat_id = _telegram_normalize_chat_id(((payload.get("chat") or {}).get("id")))
+        from_id = _telegram_normalize_chat_id(((payload.get("from") or {}).get("id")))
+        if chat_id not in admin_chat_ids and from_id not in admin_chat_ids:
+            return
+        commands.append(
+            {
+                "update_id": update.get("update_id"),
+                "command": command_name,
+                "raw_text": str(text or "").strip(),
+                "chat_id": chat_id,
+                "from_id": from_id,
+            }
+        )
+
+    for key in ("message", "edited_message", "channel_post", "edited_channel_post"):
+        _append_from_payload(update.get(key))
+    return commands
+
+
+def _enqueue_telegram_admin_commands(commands: list[dict]) -> None:
+    if not commands:
+        return
+    with TELEGRAM_ADMIN_COMMANDS_LOCK:
+        for payload in commands:
+            if isinstance(payload, dict):
+                TELEGRAM_PENDING_ADMIN_COMMANDS.append(dict(payload))
+
+
+def drain_telegram_admin_commands(*, refresh: bool = True) -> list[dict]:
+    if refresh:
+        _refresh_telegram_subscribers()
+    with TELEGRAM_ADMIN_COMMANDS_LOCK:
+        drained = list(TELEGRAM_PENDING_ADMIN_COMMANDS)
+        TELEGRAM_PENDING_ADMIN_COMMANDS.clear()
+    return drained
 
 
 def _should_try_telegram_network_fallback(exc: Exception) -> bool:
@@ -1187,6 +1265,9 @@ def _refresh_telegram_subscribers() -> list[str]:
                     break
                 for update in updates:
                     extracted.extend(_extract_chat_ids_from_telegram_update(update))
+                    _enqueue_telegram_admin_commands(
+                        _extract_admin_commands_from_telegram_update(update)
+                    )
                 if batch_max_update_id < offset:
                     break
                 offset = batch_max_update_id + 1

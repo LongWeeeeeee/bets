@@ -143,8 +143,10 @@ def test_compute_moscow_quiet_hours_sleep_seconds() -> None:
 def test_compute_schedule_recheck_sleep_seconds() -> None:
     assert runtime._compute_schedule_recheck_sleep_seconds(-1) == 3 * 60
     assert runtime._compute_schedule_recheck_sleep_seconds(5 * 60) == 5 * 60
-    assert runtime._compute_schedule_recheck_sleep_seconds(45 * 60) == 45 * 60
-    assert runtime._compute_schedule_recheck_sleep_seconds(4 * 60 * 60) == 4 * 60 * 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(29 * 60) == 29 * 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(30 * 60) == 30 * 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(45 * 60) == 30 * 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(4 * 60 * 60) == 30 * 60
 
 
 def test_extract_nearest_scheduled_match_info() -> None:
@@ -184,7 +186,7 @@ def test_extract_nearest_scheduled_match_info() -> None:
     assert schedule is not None
     assert schedule["matchup"] == "Aurora vs PARIVISION"
     assert int(schedule["sleep_seconds_raw"]) == (3 * 60 * 60 + 14 * 60)
-    assert int(schedule["sleep_seconds"]) == (3 * 60 * 60 + 14 * 60)
+    assert int(schedule["sleep_seconds"]) == (30 * 60)
 
 
 def test_extract_nearest_scheduled_match_info_skips_denied_leagues() -> None:
@@ -626,6 +628,112 @@ def test_send_message_admin_only_targets_primary_chat_only(tmp_path, monkeypatch
 
     assert functions.send_message("admin message", require_delivery=True, admin_only=True) is True
     assert delivered == ["100"]
+
+
+def test_drain_telegram_admin_commands_extracts_restart_command(tmp_path, monkeypatch) -> None:
+    import functions
+
+    state_path = tmp_path / "telegram_subscribers_state.json"
+    legacy_path = tmp_path / "legacy_telegram_subscribers_state.json"
+    monkeypatch.setattr(functions, "TELEGRAM_SUBSCRIBERS_STATE_PATH", state_path, raising=False)
+    monkeypatch.setattr(functions, "LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH", legacy_path, raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_id", "100", raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_ids", [], raising=False)
+
+    class _Response:
+        status_code = 200
+
+        def __init__(self, payload: Dict[str, Any]) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> Dict[str, Any]:
+            return self._payload
+
+    def _fake_post(url, **_kwargs):
+        if url.endswith("/getUpdates"):
+            return _Response(
+                {
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 101,
+                            "message": {
+                                "chat": {"id": 100},
+                                "from": {"id": 100},
+                                "text": "/restart_bot",
+                            },
+                        }
+                    ],
+                }
+            )
+        return _Response({"ok": True, "result": {"message_id": 1}})
+
+    with functions.TELEGRAM_ADMIN_COMMANDS_LOCK:
+        functions.TELEGRAM_PENDING_ADMIN_COMMANDS.clear()
+
+    monkeypatch.setattr(functions.requests, "post", _fake_post)
+
+    commands = functions.drain_telegram_admin_commands(refresh=True)
+
+    assert len(commands) == 1
+    assert commands[0]["command"] == "restart_bot"
+    assert commands[0]["chat_id"] == "100"
+
+
+def test_drain_telegram_admin_commands_extracts_literal_tail_command(tmp_path, monkeypatch) -> None:
+    import functions
+
+    state_path = tmp_path / "telegram_subscribers_state.json"
+    legacy_path = tmp_path / "legacy_telegram_subscribers_state.json"
+    monkeypatch.setattr(functions, "TELEGRAM_SUBSCRIBERS_STATE_PATH", state_path, raising=False)
+    monkeypatch.setattr(functions, "LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH", legacy_path, raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_id", "100", raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_ids", [], raising=False)
+
+    class _Response:
+        status_code = 200
+
+        def __init__(self, payload: Dict[str, Any]) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> Dict[str, Any]:
+            return self._payload
+
+    def _fake_post(url, **_kwargs):
+        if url.endswith("/getUpdates"):
+            return _Response(
+                {
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 102,
+                            "message": {
+                                "chat": {"id": 100},
+                                "from": {"id": 100},
+                                "text": "tail -n 100 log.txt",
+                            },
+                        }
+                    ],
+                }
+            )
+        return _Response({"ok": True, "result": {"message_id": 1}})
+
+    with functions.TELEGRAM_ADMIN_COMMANDS_LOCK:
+        functions.TELEGRAM_PENDING_ADMIN_COMMANDS.clear()
+
+    monkeypatch.setattr(functions.requests, "post", _fake_post)
+
+    commands = functions.drain_telegram_admin_commands(refresh=True)
+
+    assert len(commands) == 1
+    assert commands[0]["command"] == "tail_log_100"
+    assert commands[0]["raw_text"] == "tail -n 100 log.txt"
 
 
 def test_load_telegram_subscribers_state_merges_primary_and_legacy(tmp_path, monkeypatch) -> None:

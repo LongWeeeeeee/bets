@@ -24,6 +24,7 @@ import mmap
 import gc
 import subprocess
 import re
+import shlex
 import tempfile
 import numpy as np
 from datetime import datetime, timezone
@@ -35,6 +36,7 @@ from bs4 import BeautifulSoup
 import requests
 from functions import (
     send_message,
+    drain_telegram_admin_commands,
     synergy_and_counterpick,
     calculate_lanes,
     calculate_comeback_solo_metrics,
@@ -3366,9 +3368,14 @@ SCHEDULE_LIVE_WAIT_TARGET: Optional[Dict[str, Any]] = None
 LIVE_MATCHES_MISSING_ALERT_ACTIVE = False
 PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE = False
 SCHEDULE_WAKE_LEAD_SECONDS = _safe_float_env("SCHEDULE_WAKE_LEAD_SECONDS", 30.0 * 60.0)
-SCHEDULE_MAX_SLEEP_SECONDS = _safe_float_env("SCHEDULE_MAX_SLEEP_SECONDS", 15.0 * 60.0)
+SCHEDULE_MAX_SLEEP_SECONDS = _safe_float_env("SCHEDULE_MAX_SLEEP_SECONDS", 30.0 * 60.0)
+SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS = _safe_float_env("SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS", 30.0 * 60.0)
 SCHEDULE_NEAR_MATCH_POLL_SECONDS = _safe_float_env("SCHEDULE_NEAR_MATCH_POLL_SECONDS", 60.0)
 SCHEDULE_POST_START_POLL_SECONDS = _safe_float_env("SCHEDULE_POST_START_POLL_SECONDS", 3.0 * 60.0)
+TELEGRAM_ADMIN_COMMAND_POLL_INTERVAL_SECONDS = _safe_float_env(
+    "TELEGRAM_ADMIN_COMMAND_POLL_INTERVAL_SECONDS",
+    15.0,
+)
 PROXY_POOL_ROTATION_ROUNDS = max(1, _safe_int_env("PROXY_POOL_ROTATION_ROUNDS", 3))
 
 
@@ -3409,6 +3416,8 @@ def _compute_schedule_recheck_sleep_seconds(raw_sleep_seconds: float) -> float:
         return float(SCHEDULE_POST_START_POLL_SECONDS)
     if raw_seconds <= 0:
         return float(SCHEDULE_POST_START_POLL_SECONDS)
+    if raw_seconds >= float(SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS):
+        return min(raw_seconds, float(SCHEDULE_MAX_SLEEP_SECONDS))
     return raw_seconds
 
 
@@ -3645,6 +3654,132 @@ def _emit_pending_schedule_wake_audit(
             "DLTV did not expose a new scheduled match either"
         )
     PENDING_SCHEDULE_WAKE_AUDIT = None
+
+
+def _split_telegram_text_chunks(text: str, *, max_chars: int = 3500) -> List[str]:
+    payload = str(text or "")
+    if len(payload) <= max_chars:
+        return [payload]
+    chunks: List[str] = []
+    current: List[str] = []
+    current_len = 0
+    for line in payload.splitlines():
+        line_with_break = line + "\n"
+        if current and current_len + len(line_with_break) > max_chars:
+            chunks.append("".join(current).rstrip())
+            current = [line_with_break]
+            current_len = len(line_with_break)
+            continue
+        current.append(line_with_break)
+        current_len += len(line_with_break)
+    if current:
+        chunks.append("".join(current).rstrip())
+    return chunks or [payload[:max_chars]]
+
+
+def _read_log_tail_text(*, line_count: int = 100) -> str:
+    log_path = PROJECT_ROOT / "log.txt"
+    if not log_path.exists():
+        return f"log.txt not found: {log_path}"
+    recent_lines: deque[str] = deque(maxlen=max(1, int(line_count)))
+    try:
+        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                recent_lines.append(line.rstrip("\n"))
+    except Exception as exc:
+        return f"failed to read log.txt: {exc}"
+    header = f"tail -n {int(line_count)} {log_path.name}"
+    body = "\n".join(recent_lines).strip()
+    if not body:
+        body = "(empty)"
+    return f"{header}\n{body}"
+
+
+def _send_admin_log_tail(*, line_count: int = 100) -> None:
+    tail_text = _read_log_tail_text(line_count=line_count)
+    for idx, chunk in enumerate(_split_telegram_text_chunks(tail_text), start=1):
+        prefix = ""
+        if idx > 1:
+            prefix = f"[part {idx}] "
+        send_message(f"{prefix}{chunk}", admin_only=True)
+
+
+def _build_self_restart_command(raw_odds: Any) -> Tuple[str, Path]:
+    odds_enabled = _odds_requested_flag(raw_odds)
+    mode_flag = "--odds" if odds_enabled else "--no-odds"
+    log_name = "cyberscore_odds.log" if odds_enabled else "cyberscore_noodds.log"
+    log_path = PROJECT_ROOT / log_name
+    command = (
+        f"cd {shlex.quote(str(PROJECT_ROOT))} && "
+        f"nohup {shlex.quote(str(sys.executable))} "
+        f"{shlex.quote(str(BASE_DIR / 'cyberscore_try.py'))} {mode_flag} "
+        f">> {shlex.quote(str(log_path))} 2>&1 < /dev/null &"
+    )
+    return command, log_path
+
+
+def _restart_current_runtime_from_admin_command(raw_odds: Any) -> None:
+    command, log_path = _build_self_restart_command(raw_odds)
+    print(f"🔄 Admin command: restarting runtime via detached command -> {command}")
+    try:
+        send_message(
+            f"🔄 Перезапускаю bot.\nmode={_runtime_instance_mode_label(raw_odds)}\nlog={log_path.name}",
+            admin_only=True,
+        )
+    except Exception as exc:
+        print(f"⚠️ Не удалось отправить admin restart ack: {exc}")
+    _release_runtime_instance_lock()
+    subprocess.Popen(
+        ["/bin/bash", "-lc", command],
+        cwd=str(PROJECT_ROOT),
+        start_new_session=True,
+    )
+    raise SystemExit(0)
+
+
+def _handle_pending_telegram_admin_commands(raw_odds: Any) -> None:
+    try:
+        commands = drain_telegram_admin_commands(refresh=True)
+    except Exception as exc:
+        logger.warning("Failed to poll Telegram admin commands: %s", exc)
+        return
+    if not commands:
+        return
+    for command_payload in commands:
+        if not isinstance(command_payload, dict):
+            continue
+        command_name = str(command_payload.get("command") or "").strip()
+        raw_text = str(command_payload.get("raw_text") or "").strip()
+        print(f"📨 Admin command received: {command_name or raw_text}")
+        if command_name == "tail_log_100":
+            try:
+                _send_admin_log_tail(line_count=100)
+            except Exception as exc:
+                try:
+                    send_message(f"⚠️ tail_log command failed: {exc}", admin_only=True)
+                except Exception:
+                    pass
+            continue
+        if command_name == "restart_bot":
+            _restart_current_runtime_from_admin_command(raw_odds)
+
+
+def _sleep_interruptible(total_seconds: float, *, raw_odds: Any, label: str) -> None:
+    remaining = max(0.0, float(total_seconds or 0.0))
+    if remaining <= 0:
+        _handle_pending_telegram_admin_commands(raw_odds)
+        return
+    deadline = time.time() + remaining
+    while True:
+        _handle_pending_telegram_admin_commands(raw_odds)
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+        chunk = min(
+            remaining,
+            max(1.0, float(TELEGRAM_ADMIN_COMMAND_POLL_INTERVAL_SECONDS)),
+        )
+        time.sleep(chunk)
 
 
 def _init_proxy_pool(use_proxy: bool) -> None:
@@ -13488,6 +13623,7 @@ if __name__ == "__main__":
 
     while True:
         try:
+            _handle_pending_telegram_admin_commands(args.odds)
             quiet_sleep_seconds = _compute_moscow_quiet_hours_sleep_seconds()
             if quiet_sleep_seconds > 0:
                 quiet_now = datetime.now(MOSCOW_TZ)
@@ -13503,7 +13639,11 @@ if __name__ == "__main__":
                     f"Sleeping until {wake_at.strftime('%H:%M')} MSK "
                     f"({int(quiet_sleep_seconds)}s)"
                 )
-                time.sleep(quiet_sleep_seconds)
+                _sleep_interruptible(
+                    quiet_sleep_seconds,
+                    raw_odds=args.odds,
+                    label="quiet_hours",
+                )
                 continue
             status = general(use_proxy=None, odds=args.odds)
             if status == "__sleep_until_schedule__":
@@ -13514,7 +13654,11 @@ if __name__ == "__main__":
                     schedule_snapshot["sleep_started_at_msk"] = sleep_started_at_msk
                     schedule_snapshot["planned_sleep_seconds"] = scheduled_sleep_seconds
                 print(f"Сплю {scheduled_sleep_seconds} секунд до ближайшего матча по расписанию DLTV")
-                time.sleep(scheduled_sleep_seconds)
+                _sleep_interruptible(
+                    scheduled_sleep_seconds,
+                    raw_odds=args.odds,
+                    label="sleep_until_schedule",
+                )
                 if schedule_snapshot:
                     schedule_snapshot["woke_at_msk"] = datetime.now(MOSCOW_TZ)
                     SCHEDULE_LIVE_WAIT_TARGET = dict(schedule_snapshot)
@@ -13522,14 +13666,18 @@ if __name__ == "__main__":
             elif status == "__sleep_wait_for_live_after_schedule__":
                 wait_for_live_seconds = max(1, int(math.ceil(float(SCHEDULE_POST_START_POLL_SECONDS))))
                 print(f"Сплю {wait_for_live_seconds} секунд в режиме ожидания появления live matches")
-                time.sleep(wait_for_live_seconds)
+                _sleep_interruptible(
+                    wait_for_live_seconds,
+                    raw_odds=args.odds,
+                    label="wait_for_live_after_schedule",
+                )
             elif status is None:
                 print('Сплю 60 секунд')
-                time.sleep(60)
+                _sleep_interruptible(60, raw_odds=args.odds, label="default_idle")
             else:
                 print('Сплю 60 секунд')
-                time.sleep(60)
+                _sleep_interruptible(60, raw_odds=args.odds, label="default_status")
         except Exception as e:
             print(f"⚠️ Ошибка главного цикла: {e}")
             logger.exception("Main loop error")
-            time.sleep(30)
+            _sleep_interruptible(30, raw_odds=args.odds, label="error_backoff")
