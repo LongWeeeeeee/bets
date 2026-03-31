@@ -334,6 +334,80 @@ def test_emit_pending_schedule_wake_audit_logs_schedule_shift(capsys, monkeypatc
     assert runtime.PENDING_SCHEDULE_WAKE_AUDIT is None
 
 
+def test_build_recent_match_summaries_text_for_rejected_match(tmp_path, monkeypatch) -> None:
+    log_path = tmp_path / "log.txt"
+    log_path.write_text(
+        "\n".join(
+            [
+                "🔍 DEBUG: Начало обработки матча #0",
+                "   Статус: 0:52",
+                "   URL: dltv.org/matches/425881/virtuspro-vs-team-stels-blast-slam-vii-europe-open-qualifier-1.0",
+                "   Score: 0 : 0",
+                "   ✅ Драфт успешно распарсен",
+                "   🛣️ Lanes:",
+                "      Top: lose 52%",
+                "      Mid: lose 53%",
+                "      Bot: win 58%",
+                "   📊 Team ELO attached: source=elo_live_lineup_snapshot raw Virtus.pro=1586 vs Team Stels=1374 (raw_wr=77.3%/22.7%, adj_wr=87.6%/12.4%)",
+                "   ⚠️ Early star invalidated by ELO block guard (raw_wr=90.0%, penalty=37.6, adj=52.4%)",
+                "   ⚠️ Late star invalidated by ELO block guard (raw_wr=60.0%, penalty=37.6, adj=22.4%)",
+                "   ⚠️ ВЕРДИКТ: ОТКАЗ (нет late star-сигнала) - матч пропущен",
+                "   📉 Star checks: WR60: early=ok, late=ok, match=send_now_same_sign | ELO60: early=elo_wr_below_min60(adj=52.4,penalty=37.6), late=elo_wr_below_min60(adj=22.4,penalty=37.6)",
+                "   ✅ map_id_check.txt обновлен: add_url после отказа no-late-star",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runtime, "PROJECT_ROOT", tmp_path, raising=False)
+
+    payload = runtime._build_recent_match_summaries_text(limit=10)
+
+    assert "[1]" in payload
+    assert "Статус: 0:52" in payload
+    assert "URL: dltv.org/matches/425881/virtuspro-vs-team-stels-blast-slam-vii-europe-open-qualifier-1.0" in payload
+    assert "Top: lose 52%" in payload
+    assert "Late star invalidated by ELO block guard" in payload
+    assert "ВЕРДИКТ: ОТКАЗ" in payload
+    assert "map_id_check.txt обновлен: add_url после отказа no-late-star" in payload
+
+
+def test_build_recent_match_summaries_text_appends_delayed_outcome(tmp_path, monkeypatch) -> None:
+    log_path = tmp_path / "log.txt"
+    log_path.write_text(
+        "\n".join(
+            [
+                "🔍 DEBUG: Начало обработки матча #0",
+                "   Статус: draft...",
+                "   URL: dltv.org/matches/425690/winter-bear-vs-nemiga-gaming-european-pro-league-season-35.1",
+                "   Score: 0 : 1",
+                "   ✅ Драфт успешно распарсен",
+                "   🛣️ Lanes:",
+                "      Top: draw 50%",
+                "      Mid: win 52%",
+                "      Bot: lose 47%",
+                "   📊 Team ELO attached: source=elo_live_lineup_snapshot raw Nemiga Gaming=1456 vs Winter Bear=1462 (raw_wr=49.1%/50.9%, adj_wr=49.1%/50.9%)",
+                "   ⏳ Ожидание dispatch: late_only_opposite_signs (target_side=dire)",
+                "   📉 Star checks: WR60: early=ok, late=ok, match=delay_late_only_opposite_signs | ELO60: early=ok, late=ok",
+                "   ✅ ВЕРДИКТ: Сигнал добавлен в delayed-очередь (reason=late_only_opposite_signs)",
+                "⏱️ Отложенный сигнал отправлен по comeback ceiling: dltv.org/matches/425690/winter-bear-vs-nemiga-gaming-european-pro-league-season-35.1 (game_time=1233, target_networth_diff=-569, minute=20, ceiling=13500)",
+                "🔍 DEBUG: Начало обработки матча #1",
+                "   Статус: finished",
+                "   URL: dltv.org/matches/425690/winter-bear-vs-nemiga-gaming-european-pro-league-season-35.1",
+                "   Score: 0 : 1",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runtime, "PROJECT_ROOT", tmp_path, raising=False)
+
+    payload = runtime._build_recent_match_summaries_text(limit=10)
+
+    assert "URL: dltv.org/matches/425690/winter-bear-vs-nemiga-gaming-european-pro-league-season-35.1" in payload
+    assert "ВЕРДИКТ: Сигнал добавлен в delayed-очередь" in payload
+    assert "Отложенный сигнал отправлен по comeback ceiling" in payload
+    assert payload.count("winter-bear-vs-nemiga-gaming-european-pro-league-season-35.1") == 2
+
+
 def test_parse_draft_and_positions_uses_live_league_players_for_account_ids() -> None:
     html = """
     <div class="lineups__team">

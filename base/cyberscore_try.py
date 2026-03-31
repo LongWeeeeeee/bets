@@ -3677,26 +3677,156 @@ def _split_telegram_text_chunks(text: str, *, max_chars: int = 3500) -> List[str
     return chunks or [payload[:max_chars]]
 
 
-def _read_log_tail_text(*, line_count: int = 100) -> str:
+_ADMIN_MATCH_SUMMARY_PREFIXES = (
+    "Статус:",
+    "URL:",
+    "Score:",
+    "✅ Драфт успешно распарсен",
+    "🛣️ Lanes:",
+    "Top:",
+    "Mid:",
+    "Bot:",
+    "📊 Team ELO attached:",
+    "⚠️ Early star invalidated",
+    "⚠️ Late star invalidated",
+    "✅ Override:",
+    "📈 Comeback solo:",
+    "⏳ Ожидание dispatch:",
+    "📉 Star checks:",
+    "✅ ВЕРДИКТ:",
+    "⚠️ ВЕРДИКТ:",
+    "✅ map_id_check.txt обновлен:",
+)
+_ADMIN_DELAYED_OUTCOME_PATTERNS = (
+    re.compile(r"^⏱️ Отложенный сигнал отправлен.*?: (?P<url>\S+)\b"),
+    re.compile(r"^⏱️ Отложенный сигнал отменен без отправки: (?P<url>\S+)\b"),
+)
+
+
+def _is_admin_match_summary_line(compact_line: str) -> bool:
+    compact = str(compact_line or "").strip()
+    if not compact:
+        return False
+    return any(compact.startswith(prefix) for prefix in _ADMIN_MATCH_SUMMARY_PREFIXES)
+
+
+def _build_recent_match_summaries_text(*, limit: int = 10) -> str:
     log_path = PROJECT_ROOT / "log.txt"
     if not log_path.exists():
         return f"log.txt not found: {log_path}"
-    recent_lines: deque[str] = deque(maxlen=max(1, int(line_count)))
+
     try:
-        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                recent_lines.append(line.rstrip("\n"))
+        raw_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     except Exception as exc:
         return f"failed to read log.txt: {exc}"
-    header = f"tail -n {int(line_count)} {log_path.name}"
-    body = "\n".join(recent_lines).strip()
-    if not body:
-        body = "(empty)"
-    return f"{header}\n{body}"
+
+    latest_blocks_by_url: Dict[str, Dict[str, Any]] = {}
+    latest_delayed_outcome_by_url: Dict[str, Dict[str, Any]] = {}
+    current_block: Optional[Dict[str, Any]] = None
+
+    def _finalize_block() -> None:
+        nonlocal current_block
+        if not isinstance(current_block, dict):
+            return
+        block_url = str(current_block.get("url") or "").strip()
+        lines = list(current_block.get("lines") or [])
+        informative_count = int(current_block.get("informative_count") or 0)
+        if block_url and lines and informative_count > 0:
+            latest_blocks_by_url[block_url] = {
+                "url": block_url,
+                "lines": lines,
+                "line_no": int(current_block.get("line_no") or 0),
+            }
+        current_block = None
+
+    for line_no, raw_line in enumerate(raw_lines):
+        raw = str(raw_line or "").rstrip()
+        compact = raw.strip()
+        if not compact:
+            continue
+
+        if compact.startswith("🔍 DEBUG: Начало обработки матча") or compact.startswith("🔁 RECHECK матча"):
+            _finalize_block()
+            current_block = {
+                "url": "",
+                "lines": [],
+                "line_no": line_no,
+                "interesting_count": 0,
+                "informative_count": 0,
+            }
+            continue
+
+        for pattern in _ADMIN_DELAYED_OUTCOME_PATTERNS:
+            match = pattern.search(compact)
+            if match:
+                outcome_url = str(match.group("url") or "").strip()
+                if outcome_url:
+                    latest_delayed_outcome_by_url[outcome_url] = {
+                        "line": compact,
+                        "line_no": line_no,
+                    }
+                break
+
+        if not isinstance(current_block, dict):
+            continue
+
+        if compact.startswith("URL:"):
+            current_block["url"] = compact.split(":", 1)[1].strip()
+
+        if _is_admin_match_summary_line(compact):
+            block_lines = current_block.setdefault("lines", [])
+            if raw not in block_lines:
+                block_lines.append(raw)
+            current_block["interesting_count"] = int(current_block.get("interesting_count") or 0) + 1
+            if not (
+                compact.startswith("Статус:")
+                or compact.startswith("URL:")
+                or compact.startswith("Score:")
+            ):
+                current_block["informative_count"] = int(current_block.get("informative_count") or 0) + 1
+
+    _finalize_block()
+
+    entries: List[Dict[str, Any]] = []
+    for url, block in latest_blocks_by_url.items():
+        lines = list(block.get("lines") or [])
+        block_line_no = int(block.get("line_no") or 0)
+        delayed_outcome = latest_delayed_outcome_by_url.get(url)
+        ordering_line_no = block_line_no
+        if isinstance(delayed_outcome, dict):
+            delayed_line = str(delayed_outcome.get("line") or "").strip()
+            delayed_line_no = int(delayed_outcome.get("line_no") or block_line_no)
+            ordering_line_no = max(ordering_line_no, delayed_line_no)
+            if delayed_line and delayed_line not in [line.strip() for line in lines]:
+                lines.append(delayed_line)
+        entries.append(
+            {
+                "url": url,
+                "lines": lines,
+                "line_no": ordering_line_no,
+            }
+        )
+
+    if not entries:
+        return "recent match summaries: no informative match blocks found"
+
+    entries.sort(key=lambda item: int(item.get("line_no") or 0), reverse=True)
+    selected = entries[: max(1, int(limit))]
+
+    parts: List[str] = []
+    for idx, entry in enumerate(selected, start=1):
+        lines = [str(line).rstrip() for line in entry.get("lines") or [] if str(line).strip()]
+        if not lines:
+            continue
+        parts.append(f"[{idx}]")
+        parts.extend(lines)
+        parts.append("")
+    payload = "\n".join(parts).strip()
+    return payload or "recent match summaries: no informative match blocks found"
 
 
 def _send_admin_log_tail(*, line_count: int = 100) -> None:
-    tail_text = _read_log_tail_text(line_count=line_count)
+    tail_text = _build_recent_match_summaries_text(limit=10)
     for idx, chunk in enumerate(_split_telegram_text_chunks(tail_text), start=1):
         prefix = ""
         if idx > 1:
