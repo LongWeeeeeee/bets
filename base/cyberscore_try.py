@@ -1750,6 +1750,24 @@ def _team_elo_wr_for_side(
         return None
 
 
+def _team_elo_base_rating_for_side(
+    team_elo_meta: Optional[Dict[str, Any]],
+    side: Optional[str],
+) -> Optional[float]:
+    if not isinstance(team_elo_meta, dict):
+        return None
+    if side == "radiant":
+        key = "radiant_base_rating"
+    elif side == "dire":
+        key = "dire_base_rating"
+    else:
+        return None
+    try:
+        return float(team_elo_meta.get(key))
+    except (TypeError, ValueError):
+        return None
+
+
 def _team_elo_rank_for_side(
     team_elo_meta: Optional[Dict[str, Any]],
     side: Optional[str],
@@ -1931,6 +1949,69 @@ def _opposite_signs_early90_monitor_config(
         "status_4_to_10": NETWORTH_STATUS_LATE_CONFLICT_WAIT_2000,
         "status_10_to_20": status_10_to_20,
     }
+
+
+def _stake_multiplier_for_signal(
+    *,
+    team_elo_meta: Optional[Dict[str, Any]],
+    target_side: Optional[str],
+    selected_early_sign: Optional[int],
+    selected_late_sign: Optional[int],
+    has_selected_early_star: bool,
+    has_selected_late_star: bool,
+    early_wr_pct: Optional[float],
+    late_wr_pct: Optional[float],
+    game_time_seconds: Optional[float],
+    radiant_lead: Optional[float],
+) -> int:
+    if target_side not in {"radiant", "dire"}:
+        return 1
+    if not has_selected_early_star or not has_selected_late_star:
+        return 1
+
+    early_side = _target_side_from_sign(selected_early_sign)
+    late_side = _target_side_from_sign(selected_late_sign)
+    if early_side not in {"radiant", "dire"} or late_side not in {"radiant", "dire"}:
+        return 1
+    if early_side != late_side or early_side != target_side:
+        return 1
+
+    target_networth_diff = _target_networth_diff_from_radiant_lead(radiant_lead, target_side)
+    if target_networth_diff is None or float(target_networth_diff) <= 0.0:
+        return 1
+
+    target_rating = _team_elo_base_rating_for_side(team_elo_meta, target_side)
+    opposite_side = "dire" if target_side == "radiant" else "radiant"
+    opposite_rating = _team_elo_base_rating_for_side(team_elo_meta, opposite_side)
+    if target_rating is None or opposite_rating is None or float(target_rating) <= float(opposite_rating):
+        return 1
+
+    try:
+        current_game_time = float(game_time_seconds or 0.0)
+    except (TypeError, ValueError):
+        current_game_time = 0.0
+
+    try:
+        early_wr_value = float(early_wr_pct) if early_wr_pct is not None else None
+    except (TypeError, ValueError):
+        early_wr_value = None
+    try:
+        late_wr_value = float(late_wr_pct) if late_wr_pct is not None else None
+    except (TypeError, ValueError):
+        late_wr_value = None
+
+    if current_game_time < float(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS):
+        if early_wr_value is None or late_wr_value is None:
+            return 1
+        if early_wr_value >= 65.0 and late_wr_value >= 65.0:
+            return 3
+        return 2
+
+    if late_wr_value is None or late_wr_value < 60.0:
+        return 1
+    if late_wr_value >= 65.0:
+        return 3
+    return 2
 
 
 def _dynamic_monitor_snapshot_for_payload(
@@ -11894,10 +11975,22 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 if dispatch_message_side == "dire"
                 else "НЕИЗВЕСТНАЯ КОМАНДА"
             )
+            stake_multiplier = _stake_multiplier_for_signal(
+                team_elo_meta=team_elo_meta,
+                target_side=dispatch_message_side,
+                selected_early_sign=selected_early_sign,
+                selected_late_sign=selected_late_sign,
+                has_selected_early_star=has_selected_early_star,
+                has_selected_late_star=has_selected_late_star,
+                early_wr_pct=early_wr_pct,
+                late_wr_pct=late_wr_pct,
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+            )
 
             # Формирование сообщения
             message_text = (
-                f"СТАВКА НА {stake_team_name}\n"
+                f"СТАВКА НА {stake_team_name} x{int(stake_multiplier)}\n"
                 f"{radiant_team_name} VS {dire_team_name}\n"
                 f"{series_score_line}"
                 f"Lanes:\n{s.get('top')}{s.get('mid')}{s.get('bot')}"

@@ -552,7 +552,7 @@ def test_opposite_signs_wait_until_20_20_when_early_wr_between_66_and_89(monkeyp
     assert float(result.queued_payload["fallback_max_deficit_abs"]) == 3000.0
     assert result.queued_payload["networth_target_side"] == "radiant"
     queued_message = str(result.queued_payload.get("message") or "")
-    assert queued_message.startswith("СТАВКА НА radiant\n")
+    assert queued_message.startswith("СТАВКА НА radiant x1\n")
     add_url_details = result.queued_payload.get("add_url_details") or {}
     assert float(add_url_details["early_wr_pct"]) == 80.0
     assert float(add_url_details["fallback_max_deficit_abs"]) == 3000.0
@@ -1618,7 +1618,7 @@ def test_top25_late_elo_block_opposite_signs_queues_instead_of_reject(monkeypatc
     assert result.queued_payload["networth_target_side"] == "radiant"
     assert result.queued_payload["top25_late_elo_block_rank"] == 7
     queued_message = str(result.queued_payload.get("message") or "")
-    assert queued_message.startswith("СТАВКА НА radiant\n")
+    assert queued_message.startswith("СТАВКА НА radiant x1\n")
     add_url_details = result.queued_payload.get("add_url_details") or {}
     assert add_url_details["networth_target_side"] == "radiant"
     assert add_url_details["top25_late_elo_block_rank"] == 7
@@ -1883,6 +1883,7 @@ def test_full_star_same_sign_message_keeps_early_block(monkeypatch) -> None:
             "wr_pct": 65.0 if phase == "early" else 90.0,
         },
     )
+    _patch_team_elo_summary(monkeypatch, radiant_wr=56.0, dire_wr=44.0)
     result = _run_branch_scenario(
         monkeypatch,
         case,
@@ -1891,9 +1892,74 @@ def test_full_star_same_sign_message_keeps_early_block(monkeypatch) -> None:
 
     assert len(result.sent_messages) == 1
     message = result.sent_messages[0]
-    assert message.startswith("СТАВКА НА radiant\n")
+    assert message.startswith("СТАВКА НА radiant x3\n")
     assert "ПОМНИ: КОМАНДА ВАЖНЕЕ ПИКА" not in message
     assert "Оценка WR:\nEarly: Radiant Team WR≈" in message
     assert "Late: Radiant Team WR≈" in message
     assert "10-28 Minute:" in message
     assert "Mid (25-50 min):" in message
+
+
+def test_stake_multiplier_is_x2_for_early_same_sign_stronger_elo_lead(monkeypatch) -> None:
+    case = BranchScenario(
+        name="stake_multiplier_x2_early_same_sign",
+        game_time_seconds=6 * 60,
+        target_side="radiant",
+        target_networth_diff=900,
+        has_early_star=True,
+        early_sign=1,
+        has_late_star=True,
+        late_sign=1,
+        expected_send_calls=1,
+        expected_add_url_reason="star_signal_sent_now_networth_gate",
+        expected_release_reason="4_10_send_800",
+        raw_early_output={"counterpick_1vs1": 4, "solo": 3},
+        raw_mid_output={"counterpick_1vs1": 4, "solo": 3},
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_recommend_odds_for_block",
+        lambda _data, phase: {
+            "level": 60,
+            "min_odds": 1.80,
+            "wr_pct": 60.0 if phase == "early" else 62.0,
+        },
+    )
+    _patch_team_elo_summary(monkeypatch, radiant_wr=56.0, dire_wr=44.0)
+
+    result = _run_branch_scenario(monkeypatch, case)
+
+    assert len(result.sent_messages) == 1
+    assert result.sent_messages[0].startswith("СТАВКА НА radiant x2\n")
+
+
+def test_stake_multiplier_is_x2_for_late_same_sign_stronger_elo_lead(monkeypatch) -> None:
+    case = BranchScenario(
+        name="stake_multiplier_x2_late_same_sign",
+        game_time_seconds=12 * 60,
+        target_side="radiant",
+        target_networth_diff=900,
+        has_early_star=True,
+        early_sign=1,
+        has_late_star=True,
+        late_sign=1,
+        expected_send_calls=1,
+        expected_add_url_reason="star_signal_sent_now",
+        raw_early_output={"counterpick_1vs1": 4, "solo": 3},
+        raw_mid_output={"counterpick_1vs1": 4, "solo": 3},
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_recommend_odds_for_block",
+        lambda _data, phase: {
+            "level": 60,
+            "min_odds": 1.80,
+            "wr_pct": 62.0 if phase == "early" else 64.0,
+        },
+    )
+    _patch_team_elo_summary(monkeypatch, radiant_wr=56.0, dire_wr=44.0)
+
+    result = _run_branch_scenario(monkeypatch, case)
+
+    assert len(result.sent_messages) == 1
+    assert result.sent_messages[0].startswith("СТАВКА НА radiant x2\n")
