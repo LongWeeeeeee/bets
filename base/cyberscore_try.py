@@ -3520,6 +3520,74 @@ def _is_valid_dltv_matches_page(soup: Optional[BeautifulSoup], html_text: Any = 
     return False
 
 
+def _extract_live_listing_context(head_node: Any, body_node: Any) -> Dict[str, Any]:
+    head_classes = set(head_node.get("class") or []) if getattr(head_node, "get", None) else set()
+    body_classes = set(body_node.get("class") or []) if getattr(body_node, "get", None) else set()
+    match_card = None
+    if {"match", "live"}.issubset(body_classes):
+        match_card = body_node
+    elif {"match", "live"}.issubset(head_classes):
+        match_card = head_node
+
+    if match_card is not None:
+        series_id = str(match_card.get("data-series-id") or "").strip()
+        live_match_id = str(match_card.get("data-match") or "").strip()
+        league_title_tag = match_card.select_one(".match__head-event span")
+        league_title = league_title_tag.get_text(" ", strip=True) if league_title_tag else ""
+        status_tag = match_card.select_one(".duration__time strong")
+        status = status_tag.get_text(" ", strip=True).lower() if status_tag else "live"
+        score_parts: List[str] = []
+        for small_tag in match_card.select("div.match__body-details__score div.score small")[:2]:
+            raw_text = small_tag.get_text(" ", strip=True)
+            digits_match = re.search(r"-?\d+", raw_text)
+            score_parts.append(digits_match.group(0) if digits_match else "0")
+        while len(score_parts) < 2:
+            score_parts.append("0")
+        score = f"{score_parts[0]} : {score_parts[1]}"
+        uniq_score = sum(int(part) for part in score_parts[:2])
+        match_href = ""
+        match_anchor = match_card.select_one("a[href*='/matches/']")
+        if match_anchor is not None:
+            match_href = str(match_anchor.get("href") or "").strip()
+        return {
+            "layout": "match_card_v2",
+            "status": status,
+            "score": score,
+            "uniq_score": uniq_score,
+            "href": match_href,
+            "series_id": series_id,
+            "live_match_id": live_match_id,
+            "league_title": league_title,
+            "match_card": match_card,
+        }
+
+    status_element = head_node.find('div', class_='event__info-info__time') if getattr(head_node, "find", None) else None
+    status = status_element.text.lower() if status_element else 'unknown'
+    score_divs = body_node.find_all('div', class_='match__item-team__score') if getattr(body_node, "find_all", None) else []
+    score_values = [div.text.strip() for div in score_divs[:2]]
+    while len(score_values) < 2:
+        score_values.append("0")
+    uniq_score = sum(int(value) for value in score_values[:2])
+    score = f"{score_values[0]} : {score_values[1]}"
+    link_tag = body_node.find('a') if getattr(body_node, "find", None) else None
+    href = str(link_tag.get('href') or "").strip() if link_tag is not None else ""
+    league_title = ""
+    event_name = head_node.find('div', class_='event__name') if getattr(head_node, "find", None) else None
+    if event_name is not None:
+        league_title = event_name.get_text(" ", strip=True)
+    return {
+        "layout": "legacy_live_matches",
+        "status": status,
+        "score": score,
+        "uniq_score": uniq_score,
+        "href": href,
+        "series_id": "",
+        "live_match_id": "",
+        "league_title": league_title,
+        "match_card": None,
+    }
+
+
 def _format_schedule_match_label(schedule_info: Optional[Dict[str, Any]]) -> str:
     if not isinstance(schedule_info, dict):
         return "unknown"
@@ -9135,6 +9203,7 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             proxy_attempt_count = 0
             current_response = response
             live_matches = None
+            live_cards: List[Any] = []
             soup = None
             used_direct_fallback = False
             saw_valid_matches_page_without_live = False
@@ -9187,7 +9256,12 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                     response_text = current_response.text or ""
                     soup = BeautifulSoup(response_text, 'lxml')
                     live_matches = soup.find('div', class_='live__matches')
+                    live_cards = list(soup.select("div.match.live"))
                     if live_matches:
+                        if not used_direct_fallback:
+                            PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE = False
+                        break
+                    if live_cards:
                         if not used_direct_fallback:
                             PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE = False
                         break
@@ -9306,8 +9380,12 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                 if not current_response or current_response.status_code != 200:
                     continue
             
-            heads = live_matches.find_all('div', class_='live__matches-item__head')
-            bodies = live_matches.find_all('div', class_='live__matches-item__body')
+            if live_matches is not None:
+                heads = live_matches.find_all('div', class_='live__matches-item__head')
+                bodies = live_matches.find_all('div', class_='live__matches-item__body')
+            else:
+                heads = list(live_cards)
+                bodies = list(live_cards)
             
             if not heads or not bodies:
                 print(f"⚠️  Не найдены матчи (heads: {len(heads)}, bodies: {len(bodies)})")
@@ -9329,7 +9407,16 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             
             heads_copy, bodies_copy = heads.copy(), bodies.copy()
             for i in range(len(heads)):
-                title = heads[i].find('div', class_='event__name').find('div').text
+                listing_context = _extract_live_listing_context(heads[i], bodies[i])
+                title = str(listing_context.get("league_title") or "")
+                href = str(listing_context.get("href") or "")
+                if _is_skipped_live_league_candidate(league_title=title, href=href):
+                    try:
+                        heads_copy.remove(heads[i])
+                        bodies_copy.remove(bodies[i])
+                    except ValueError:
+                        pass
+                    continue
                 # if not any(i in title.lower() for i in ['dreamleague', 'blast', 'dacha', 'betboom',
                 #                                         'fissure', 'pgl', 'esports', 'international',
                 #                                         'european', 'epl', 'esl', 'cct']):
@@ -10020,9 +10107,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         MAX_RETRIES = 5
         RETRY_DELAY = 5
 
-        # Проверка статуса матча
-        status_element = heads[i].find('div', class_='event__info-info__time')
-        status = status_element.text.lower() if status_element else 'unknown'
+        listing_context = _extract_live_listing_context(heads[i], bodies[i])
+        is_match_card_v2 = str(listing_context.get("layout") or "") == "match_card_v2"
+        status = str(listing_context.get("status") or "unknown").lower()
         
         if return_status != 'draft...':
             return_status = status
@@ -10031,36 +10118,43 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
         # Извлечение данных
         try:
-            score_divs = bodies[i].find_all('div', class_='match__item-team__score')
-            uniq_score = sum(int(div.text.strip()) for div in score_divs[:2])
-            score = f"{score_divs[:2][0].text.strip()} : {score_divs[:2][1].text.strip()}"
-            link_tag = bodies[i].find('a')
-            href = link_tag['href']
-            parsed_url = urlparse(href)
-            path = parsed_url.path
-            series_match = re.search(r"/matches/(\d+)", path)
-            series_key_from_path = series_match.group(1) if series_match else ""
-            series_url = f'dltv.org{path}'
-            check_uniq_url = f'dltv.org{path}.{uniq_score}'
+            uniq_score = int(listing_context.get("uniq_score") or 0)
+            score = str(listing_context.get("score") or "0 : 0")
+            href = str(listing_context.get("href") or "").strip()
+            parsed_url = urlparse(href) if href else None
+            path = str(parsed_url.path or "") if parsed_url else ""
+            series_key_from_path = str(listing_context.get("series_id") or "")
+            if not series_key_from_path and path:
+                series_match = re.search(r"/matches/(\d+)", path)
+                series_key_from_path = series_match.group(1) if series_match else ""
+            series_url = f'dltv.org{path}' if path else (f'dltv.org/matches/{series_key_from_path}' if series_key_from_path else "")
+            check_uniq_url = (
+                f'dltv.org{path}.{uniq_score}'
+                if path
+                else (f'dltv.org/matches/{series_key_from_path}.{uniq_score}' if series_key_from_path else f'live_match_unknown.{uniq_score}')
+            )
             verbose_match_log = _should_emit_verbose_match_log(check_uniq_url)
             match_log = print if verbose_match_log else (lambda *args, **kwargs: None)
             block_reason = _dispatch_block_reason(check_uniq_url)
             delayed_payload = None
 
-            if verbose_match_log:
+            if not is_match_card_v2 and verbose_match_log:
                 print(f"\n🔍 DEBUG: Начало обработки матча #{i}")
                 print(f"   Статус: {status}")
                 print(f"   URL: {check_uniq_url}")
                 print(f"   Score: {score}")
-            elif check_uniq_url not in maps_data and block_reason != "processed":
+            elif not is_match_card_v2 and check_uniq_url not in maps_data and block_reason != "processed":
                 print(f"\n🔁 RECHECK матча #{i}: {check_uniq_url} | status={status}")
 
             if status == 'finished':
+                score_values = [part.strip() for part in score.split(":")]
+                while len(score_values) < 2:
+                    score_values.append("0")
                 finished_finalize = _finalize_finished_live_series_for_elo(
                     series_key=series_key_from_path,
                     series_url=series_url,
-                    first_team_score=score_divs[:2][0].text.strip(),
-                    second_team_score=score_divs[:2][1].text.strip(),
+                    first_team_score=score_values[0],
+                    second_team_score=score_values[1],
                 )
                 if isinstance(finished_finalize, dict):
                     applied_update = finished_finalize.get("applied_update")
@@ -10073,17 +10167,18 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 print(f"   ℹ️ Матч завершен")
                 return return_status
 
-            if check_uniq_url in maps_data or block_reason == "processed":
+            if not is_match_card_v2 and (check_uniq_url in maps_data or block_reason == "processed"):
                 print(f"   ✅ Матч уже в map_id_check.txt - пропускаем: {check_uniq_url}")
                 _drop_delayed_match(check_uniq_url, reason="already_in_map_id_check")
                 return
-            if block_reason == "uncertain_delivery":
+            if not is_match_card_v2 and block_reason == "uncertain_delivery":
                 print(f"   ⚠️ Матч заблокирован после uncertain delivery - пропускаем")
                 _drop_delayed_match(check_uniq_url, reason="uncertain_delivery_block")
                 return
-            with monitored_matches_lock:
-                delayed_payload = monitored_matches.get(check_uniq_url)
-            if delayed_payload is not None:
+            if not is_match_card_v2:
+                with monitored_matches_lock:
+                    delayed_payload = monitored_matches.get(check_uniq_url)
+            if not is_match_card_v2 and delayed_payload is not None:
                 allow_live_recheck = bool(delayed_payload.get("allow_live_recheck"))
                 target_game_time = float(
                     delayed_payload.get('target_game_time', DELAYED_SIGNAL_TARGET_GAME_TIME)
@@ -10136,35 +10231,46 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             print(f"   ❌ Матч пропущен (ошибка парсинга URL/score)")
             return return_status
 
-        # HTTP запрос
-        url = f"https://{IP_ADDRESS}{path}"
-        match_log(f"   🌐 Запрос страницы матча...")
-        response = make_request_with_retry(url, MAX_RETRIES, RETRY_DELAY)
-
-        if not response or response.status_code != 200:
-            print(f"   ❌ Не удалось получить страницу. Status code: {response.status_code if response else 'No response'}")
-            print(f"   ❌ Матч пропущен (ошибка HTTP запроса)")
-            return return_status
-
-        match_log(f"   ✅ Страница получена")
-        soup = BeautifulSoup(response.text, 'lxml')
-
-        from urllib.parse import urljoin
-        m = re.search(r"\$\.get\(['\"](?P<path>/live/[^'\"]+\.json)['\"]", response.text)
-        if not m:
-            print(f"   ❌ Не найден JSON путь в HTML")
-            print(f"   ❌ Матч пропущен (нет JSON пути)")
-            return return_status
-        json_path = m.group('path')
-        base = "https://dltv.org"  # замениш на реальный сайт, откуда страница
-        json_url = urljoin(base, json_path)
-        
         match_log(f"   🌐 Запрос JSON данных...")
 
         # Получаем JSON данные с retry логикой
         data = None
         max_json_retries = 3
         json_retry_errors = []
+        json_url = ""
+        response = None
+        soup = None
+        if is_match_card_v2:
+            live_match_id = str(listing_context.get("live_match_id") or "").strip()
+            if not live_match_id:
+                print("   ❌ Не найден data-match у live карточки")
+                print("   ❌ Матч пропущен (нет live match id)")
+                return return_status
+            json_url = f"https://dltv.org/live/{live_match_id}.json"
+        else:
+            # HTTP запрос страницы матча нужен для получения JSON path и lineups
+            url = f"https://{IP_ADDRESS}{path}"
+            match_log(f"   🌐 Запрос страницы матча...")
+            response = make_request_with_retry(url, MAX_RETRIES, RETRY_DELAY)
+
+            if not response or response.status_code != 200:
+                print(f"   ❌ Не удалось получить страницу. Status code: {response.status_code if response else 'No response'}")
+                print(f"   ❌ Матч пропущен (ошибка HTTP запроса)")
+                return return_status
+
+            match_log(f"   ✅ Страница получена")
+            soup = BeautifulSoup(response.text, 'lxml')
+
+            from urllib.parse import urljoin
+            m = re.search(r"\$\.get\(['\"](?P<path>/live/[^'\"]+\.json)['\"]", response.text)
+            if not m:
+                print(f"   ❌ Не найден JSON путь в HTML")
+                print(f"   ❌ Матч пропущен (нет JSON пути)")
+                return return_status
+            json_path = m.group('path')
+            base = "https://dltv.org"
+            json_url = urljoin(base, json_path)
+
         for json_attempt in range(max_json_retries):
             attempt_no = json_attempt + 1
             try:
@@ -10237,6 +10343,102 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 print(f"   📉 Сводка JSON ошибок: {' | '.join(json_retry_errors)}")
             print(f"   ❌ Матч пропущен (ошибка получения JSON)")
             return return_status
+
+        if is_match_card_v2:
+            series_info = data.get("db", {}).get("series", {}) if isinstance(data, dict) else {}
+            series_slug = str(series_info.get("slug") or "").strip()
+            if not series_key_from_path:
+                series_key_from_path = str(series_info.get("id") or "").strip()
+            if not series_key_from_path:
+                print("   ❌ Не найден series id в live JSON")
+                print("   ❌ Матч пропущен (нет series id)")
+                return return_status
+            if not series_slug:
+                print("   ❌ Не найден series slug в live JSON")
+                print("   ❌ Матч пропущен (нет series slug)")
+                return return_status
+            path = f"/matches/{series_key_from_path}/{series_slug}"
+            series_url = f'dltv.org{path}'
+            check_uniq_url = f'dltv.org{path}.{uniq_score}'
+            verbose_match_log = _should_emit_verbose_match_log(check_uniq_url)
+            match_log = print if verbose_match_log else (lambda *args, **kwargs: None)
+            block_reason = _dispatch_block_reason(check_uniq_url)
+            if verbose_match_log:
+                print(f"\n🔍 DEBUG: Начало обработки матча #{i}")
+                print(f"   Статус: {status}")
+                print(f"   URL: {check_uniq_url}")
+                print(f"   Score: {score}")
+            elif check_uniq_url not in maps_data and block_reason != "processed":
+                print(f"\n🔁 RECHECK матча #{i}: {check_uniq_url} | status={status}")
+
+            if check_uniq_url in maps_data or block_reason == "processed":
+                print(f"   ✅ Матч уже в map_id_check.txt - пропускаем: {check_uniq_url}")
+                _drop_delayed_match(check_uniq_url, reason="already_in_map_id_check")
+                return
+            if block_reason == "uncertain_delivery":
+                print(f"   ⚠️ Матч заблокирован после uncertain delivery - пропускаем")
+                _drop_delayed_match(check_uniq_url, reason="uncertain_delivery_block")
+                return
+            with monitored_matches_lock:
+                delayed_payload = monitored_matches.get(check_uniq_url)
+            if delayed_payload is not None:
+                allow_live_recheck = bool(delayed_payload.get("allow_live_recheck"))
+                target_game_time = float(
+                    delayed_payload.get('target_game_time', DELAYED_SIGNAL_TARGET_GAME_TIME)
+                )
+                target_human = f"{int(target_game_time // 60):02d}:{int(target_game_time % 60):02d}"
+                last_game_time = delayed_payload.get('last_game_time', delayed_payload.get('queued_game_time'))
+                try:
+                    last_game_time_value = float(last_game_time)
+                except (TypeError, ValueError):
+                    last_game_time_value = None
+                try:
+                    last_game_time_human = str(int(float(last_game_time)))
+                except (TypeError, ValueError):
+                    last_game_time_human = "n/a"
+                queue_reason = str(delayed_payload.get('reason', 'unknown'))
+                monitor_snapshot = _dynamic_monitor_snapshot_for_payload(
+                    delayed_payload,
+                    last_game_time_value,
+                )
+                queue_status_label = str(monitor_snapshot.get("status_label") or delayed_payload.get("dispatch_status_label") or "")
+                monitor_threshold_raw = monitor_snapshot.get("threshold")
+                monitor_suffix = ""
+                try:
+                    if bool(delayed_payload.get("late_comeback_monitor_active")):
+                        monitor_side = str(delayed_payload.get("networth_target_side") or "").strip().lower() or "unknown"
+                        monitor_suffix = f", monitor={monitor_side} comeback_ceiling"
+                    elif monitor_threshold_raw is not None:
+                        monitor_side = str(delayed_payload.get("networth_target_side") or "").strip().lower() or "unknown"
+                        monitor_suffix = f", monitor={monitor_side}>={int(float(monitor_threshold_raw))}"
+                except (TypeError, ValueError):
+                    monitor_suffix = ""
+                print(
+                    "   ⏳ Матч уже в delayed-очереди "
+                    + (
+                        "- продолжаем live recheck "
+                        if allow_live_recheck
+                        else "- пропускаем повторный расчет "
+                    )
+                    + (
+                    f"(target={target_human}, last_game_time={last_game_time_human}, "
+                    f"reason={queue_reason}, status={queue_status_label or 'n/a'}{monitor_suffix})"
+                    )
+                )
+                if not allow_live_recheck:
+                    return return_status
+
+            url = f"https://{IP_ADDRESS}{path}"
+            match_log(f"   🌐 Запрос страницы матча...")
+            response = make_request_with_retry(url, MAX_RETRIES, RETRY_DELAY)
+
+            if not response or response.status_code != 200:
+                print(f"   ❌ Не удалось получить страницу. Status code: {response.status_code if response else 'No response'}")
+                print(f"   ❌ Матч пропущен (ошибка HTTP запроса)")
+                return return_status
+
+            match_log(f"   ✅ Страница получена")
+            soup = BeautifulSoup(response.text, 'lxml')
         
         if 'fast_picks' not in data:
             print(f"   ❌ Нет 'fast_picks' в данных - драфт не начался")

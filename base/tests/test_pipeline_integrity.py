@@ -53,6 +53,37 @@ def _build_heads_and_bodies():
     return [head], [body]
 
 
+def _build_v2_live_cards():
+    html = """
+    <div class="match live" data-series-id="425633" data-match="8740039655">
+      <div class="match__head">
+        <div class="match__head-event"><span>ESL One Birmingham 2026</span></div>
+      </div>
+      <div class="match__body">
+        <div class="match__body-details">
+          <div class="match__body-details__team">
+            <div class="team"><div class="team__title"><span>Virtus.pro</span></div></div>
+          </div>
+          <div class="match__body-details__score">
+            <div class="score"><strong class="text-red">12</strong><small>(0)</small></div>
+            <div class="duration">
+              <div class="duration__time"><strong>draft...</strong></div>
+            </div>
+            <div class="score"><strong class="text-red">18</strong><small>(1)</small></div>
+          </div>
+          <div class="match__body-details__team">
+            <div class="team"><div class="team__title"><span>Nigma Galaxy</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+    soup = BeautifulSoup(html, "lxml")
+    card = soup.find("div", class_="match")
+    assert card is not None
+    return [card], [card]
+
+
 def _valid_heroes(seed: int, positions: int = 5) -> Dict[str, Dict[str, int]]:
     pos_order = ["pos1", "pos2", "pos3", "pos4", "pos5"][:positions]
     return {
@@ -1062,6 +1093,45 @@ def test_get_heads_switches_to_schedule_mode_when_live_block_missing(monkeypatch
     assert send_calls == []
     assert retry_calls == []
     assert direct_calls == []
+
+
+def test_get_heads_supports_new_live_match_card_layout(monkeypatch) -> None:
+    html = """
+    <html>
+      <head><title>Dota 2 Matches & livescore – DLTV</title></head>
+      <div class="match live" data-series-id="425877" data-match="8751684122">
+        <div class="match__head">
+          <div class="match__head-event"><span>ESL One Birmingham 2026</span></div>
+        </div>
+        <div class="match__body">
+          <div class="match__body-details">
+            <div class="match__body-details__team">
+              <div class="team"><div class="team__title"><span>Xtreme Gaming</span></div></div>
+            </div>
+            <div class="match__body-details__score">
+              <div class="score"><strong class="text-red">10</strong><small>(0)</small></div>
+              <div class="duration"><div class="duration__time"><strong>draft...</strong></div></div>
+              <div class="score"><strong class="text-red">12</strong><small>(0)</small></div>
+            </div>
+            <div class="match__body-details__team">
+              <div class="team"><div class="team__title"><span>Team Yandex</span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </html>
+    """
+
+    heads, bodies = runtime.get_heads(response=_FakeTextResponse(html))
+
+    assert heads is not None and len(heads) == 1
+    assert bodies is not None and len(bodies) == 1
+    listing = runtime._extract_live_listing_context(heads[0], bodies[0])
+    assert listing["layout"] == "match_card_v2"
+    assert listing["status"] == "draft..."
+    assert listing["score"] == "0 : 0"
+    assert listing["series_id"] == "425877"
+    assert listing["live_match_id"] == "8751684122"
 
 
 def test_general_notifies_live_matches_missing_only_after_all_proxies(monkeypatch) -> None:
@@ -2240,6 +2310,65 @@ def test_stale_duplicate_live_map_payload_is_not_added_to_map_id_check(tmp_path,
 
     assert parse_called["value"] is False
     assert add_url_calls == []
+
+
+def test_v2_live_card_duplicate_is_skipped_before_match_page_fetch(monkeypatch) -> None:
+    heads, bodies = _build_v2_live_cards()
+
+    monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", False, raising=False)
+    monkeypatch.setattr(runtime, "FORCE_ODDS_SIGNAL_TEST", False, raising=False)
+    monkeypatch.setattr(runtime, "_ensure_delayed_sender_started", lambda: None)
+    monkeypatch.setattr(runtime, "_is_url_processed", lambda _url: False)
+    monkeypatch.setattr(runtime, "_drop_delayed_match", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(runtime, "_skip_dispatch_for_processed_url", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(runtime, "_acquire_signal_send_slot", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(runtime, "_release_signal_send_slot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runtime, "_mark_url_processed", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runtime, "_log_bookmaker_source_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runtime, "send_message", lambda *_args, **_kwargs: None)
+
+    final_url = "dltv.org/matches/425633/virtuspro-vs-nigma-esl-one-birmingham-2026.1"
+    maps_data = {final_url}
+
+    page_fetch_calls: List[str] = []
+    monkeypatch.setattr(
+        runtime,
+        "make_request_with_retry",
+        lambda *_args, **_kwargs: page_fetch_calls.append("page") or _FakeTextResponse("", status_code=404),
+    )
+
+    live_data = {
+        "match_id": 8740039655,
+        "db": {
+            "series": {
+                "id": 425633,
+                "slug": "virtuspro-vs-nigma-esl-one-birmingham-2026",
+            }
+        },
+    }
+    monkeypatch.setattr(
+        runtime.requests,
+        "get",
+        lambda *_args, **_kwargs: _FakeJsonResponse(live_data, status_code=200),
+    )
+
+    parse_called = {"value": False}
+    monkeypatch.setattr(
+        runtime,
+        "parse_draft_and_positions",
+        lambda *_args, **_kwargs: parse_called.__setitem__("value", True),
+    )
+
+    runtime.check_head(
+        heads=heads,
+        bodies=bodies,
+        i=0,
+        maps_data=maps_data,
+        return_status=None,
+    )
+
+    assert page_fetch_calls == []
+    assert parse_called["value"] is False
 
 
 def test_stale_duplicate_live_map_payload_is_not_added_to_map_id_check_for_later_bo5_map(tmp_path, monkeypatch) -> None:
