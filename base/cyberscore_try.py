@@ -3832,13 +3832,39 @@ def _build_recent_match_summaries_text(*, limit: int = 10) -> str:
     return payload or "recent match summaries: no informative match blocks found"
 
 
+def _split_admin_match_summary_messages(payload: str) -> List[str]:
+    raw_text = str(payload or "").strip()
+    if not raw_text:
+        return []
+    messages: List[str] = []
+    current_lines: List[str] = []
+    for raw_line in raw_text.splitlines():
+        line = str(raw_line or "").rstrip()
+        compact = line.strip()
+        if re.fullmatch(r"\[\d+\]", compact):
+            if current_lines:
+                messages.append("\n".join(current_lines).strip())
+                current_lines = []
+            continue
+        if not compact and not current_lines:
+            continue
+        current_lines.append(line)
+    if current_lines:
+        messages.append("\n".join(current_lines).strip())
+    return [message for message in messages if message]
+
+
 def _send_admin_log_tail(*, line_count: int = 100) -> None:
     tail_text = _build_recent_match_summaries_text(limit=10)
-    for idx, chunk in enumerate(_split_telegram_text_chunks(tail_text), start=1):
-        prefix = ""
-        if idx > 1:
-            prefix = f"[part {idx}] "
-        send_message(f"{prefix}{chunk}", admin_only=True)
+    messages = _split_admin_match_summary_messages(tail_text)
+    if not messages:
+        messages = [tail_text]
+    for message in messages:
+        for idx, chunk in enumerate(_split_telegram_text_chunks(message), start=1):
+            prefix = ""
+            if idx > 1:
+                prefix = f"[part {idx}] "
+            send_message(f"{prefix}{chunk}", admin_only=True)
 
 
 def _build_self_restart_command(raw_odds: Any) -> Tuple[str, Path]:

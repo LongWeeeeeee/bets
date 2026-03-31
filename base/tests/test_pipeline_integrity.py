@@ -920,6 +920,30 @@ def test_build_recent_match_summaries_text_normalizes_map_suffix_in_urls(tmp_pat
     assert "dltv.org/matches/425878/1win-team-vs-enjoy-boys-blast-slam-vii-europe-open-qualifier-1" in payload
 
 
+def test_send_admin_log_tail_sends_one_message_per_match(monkeypatch) -> None:
+    payload = "\n".join(
+        [
+            "[1]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/1/older-match",
+            "",
+            "[2]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/2/newer-match",
+        ]
+    )
+    sent_messages: List[str] = []
+
+    monkeypatch.setattr(runtime, "_build_recent_match_summaries_text", lambda limit=10: payload)
+    monkeypatch.setattr(runtime, "send_message", lambda message, admin_only=True: sent_messages.append(str(message)))
+
+    runtime._send_admin_log_tail(line_count=100)
+
+    assert len(sent_messages) == 2
+    assert "dltv.org/matches/1/older-match" in sent_messages[0]
+    assert "dltv.org/matches/2/newer-match" in sent_messages[1]
+
+
 def test_load_telegram_subscribers_state_merges_primary_and_legacy(tmp_path, monkeypatch) -> None:
     import functions
 
