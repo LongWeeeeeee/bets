@@ -408,6 +408,34 @@ def test_build_recent_match_summaries_text_appends_delayed_outcome(tmp_path, mon
     assert payload.count("winter-bear-vs-nemiga-gaming-european-pro-league-season-35.1") == 2
 
 
+def test_build_recent_match_summaries_text_orders_from_older_to_newer(tmp_path, monkeypatch) -> None:
+    log_path = tmp_path / "log.txt"
+    log_path.write_text(
+        "\n".join(
+            [
+                "🔍 DEBUG: Начало обработки матча #0",
+                "   Статус: draft...",
+                "   URL: dltv.org/matches/1/older-match.0",
+                "   Score: 0 : 0",
+                "   ✅ Драфт успешно распарсен",
+                "   ⚠️ ВЕРДИКТ: ОТКАЗ (нет late star-сигнала) - матч пропущен",
+                "🔍 DEBUG: Начало обработки матча #1",
+                "   Статус: draft...",
+                "   URL: dltv.org/matches/2/newer-match.0",
+                "   Score: 0 : 0",
+                "   ✅ Драфт успешно распарсен",
+                "   ⚠️ ВЕРДИКТ: ОТКАЗ (нет late star-сигнала) - матч пропущен",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runtime, "PROJECT_ROOT", tmp_path, raising=False)
+
+    payload = runtime._build_recent_match_summaries_text(limit=10)
+
+    assert payload.index("dltv.org/matches/1/older-match.0") < payload.index("dltv.org/matches/2/newer-match.0")
+
+
 def test_parse_draft_and_positions_uses_live_league_players_for_account_ids() -> None:
     html = """
     <div class="lineups__team">

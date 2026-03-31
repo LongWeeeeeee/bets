@@ -3810,8 +3810,8 @@ def _build_recent_match_summaries_text(*, limit: int = 10) -> str:
     if not entries:
         return "recent match summaries: no informative match blocks found"
 
-    entries.sort(key=lambda item: int(item.get("line_no") or 0), reverse=True)
-    selected = entries[: max(1, int(limit))]
+    entries.sort(key=lambda item: int(item.get("line_no") or 0))
+    selected = entries[-max(1, int(limit)) :]
 
     parts: List[str] = []
     for idx, entry in enumerate(selected, start=1):
