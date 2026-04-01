@@ -1963,6 +1963,8 @@ def _stake_multiplier_for_signal(
     late_wr_pct: Optional[float],
     game_time_seconds: Optional[float],
     radiant_lead: Optional[float],
+    target_rating: Optional[float] = None,
+    opposite_rating: Optional[float] = None,
 ) -> int:
     if target_side not in {"radiant", "dire"}:
         return 1
@@ -1980,9 +1982,10 @@ def _stake_multiplier_for_signal(
     if target_networth_diff is None or float(target_networth_diff) <= 0.0:
         return 1
 
-    target_rating = _team_elo_base_rating_for_side(team_elo_meta, target_side)
-    opposite_side = "dire" if target_side == "radiant" else "radiant"
-    opposite_rating = _team_elo_base_rating_for_side(team_elo_meta, opposite_side)
+    if target_rating is None or opposite_rating is None:
+        target_rating = _team_elo_base_rating_for_side(team_elo_meta, target_side)
+        opposite_side = "dire" if target_side == "radiant" else "radiant"
+        opposite_rating = _team_elo_base_rating_for_side(team_elo_meta, opposite_side)
     if target_rating is None or opposite_rating is None or float(target_rating) <= float(opposite_rating):
         return 1
 
@@ -2012,6 +2015,73 @@ def _stake_multiplier_for_signal(
     if late_wr_value >= 65.0:
         return 3
     return 2
+
+
+def _build_stake_multiplier_context(
+    *,
+    stake_team_name: str,
+    target_side: Optional[str],
+    team_elo_meta: Optional[Dict[str, Any]],
+    selected_early_sign: Optional[int],
+    selected_late_sign: Optional[int],
+    has_selected_early_star: bool,
+    has_selected_late_star: bool,
+    early_wr_pct: Optional[float],
+    late_wr_pct: Optional[float],
+) -> Dict[str, Any]:
+    opposite_side = "dire" if target_side == "radiant" else "radiant"
+    return {
+        "stake_team_name": str(stake_team_name or ""),
+        "target_side": target_side,
+        "selected_early_sign": selected_early_sign,
+        "selected_late_sign": selected_late_sign,
+        "has_selected_early_star": bool(has_selected_early_star),
+        "has_selected_late_star": bool(has_selected_late_star),
+        "early_wr_pct": float(early_wr_pct) if early_wr_pct is not None else None,
+        "late_wr_pct": float(late_wr_pct) if late_wr_pct is not None else None,
+        "target_rating": _team_elo_base_rating_for_side(team_elo_meta, target_side),
+        "opposite_rating": _team_elo_base_rating_for_side(team_elo_meta, opposite_side),
+    }
+
+
+def _refresh_stake_multiplier_message(
+    message_text: str,
+    *,
+    stake_multiplier_context: Optional[Dict[str, Any]],
+    game_time_seconds: Optional[float],
+    radiant_lead: Optional[float],
+) -> str:
+    if not isinstance(message_text, str) or not message_text.startswith("СТАВКА НА "):
+        return message_text
+    if not isinstance(stake_multiplier_context, dict):
+        return message_text
+
+    stake_team_name = str(stake_multiplier_context.get("stake_team_name") or "").strip()
+    if not stake_team_name:
+        return message_text
+
+    multiplier = _stake_multiplier_for_signal(
+        team_elo_meta=None,
+        target_side=stake_multiplier_context.get("target_side"),
+        selected_early_sign=stake_multiplier_context.get("selected_early_sign"),
+        selected_late_sign=stake_multiplier_context.get("selected_late_sign"),
+        has_selected_early_star=bool(stake_multiplier_context.get("has_selected_early_star")),
+        has_selected_late_star=bool(stake_multiplier_context.get("has_selected_late_star")),
+        early_wr_pct=stake_multiplier_context.get("early_wr_pct"),
+        late_wr_pct=stake_multiplier_context.get("late_wr_pct"),
+        game_time_seconds=game_time_seconds,
+        radiant_lead=radiant_lead,
+        target_rating=stake_multiplier_context.get("target_rating"),
+        opposite_rating=stake_multiplier_context.get("opposite_rating"),
+    )
+
+    new_header = f"СТАВКА НА {stake_team_name} x{int(multiplier)}"
+    lines = message_text.splitlines()
+    if not lines:
+        return message_text
+    lines[0] = new_header
+    trailing_newline = "\n" if message_text.endswith("\n") else ""
+    return "\n".join(lines) + trailing_newline
 
 
 def _dynamic_monitor_snapshot_for_payload(
@@ -2752,9 +2822,15 @@ def _drain_due_delayed_signals_once() -> None:
             else:
                 add_url_details.setdefault("dispatch_status_label", fallback_send_status_label)
             _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+            delivery_message_text = _refresh_stake_multiplier_message(
+                payload.get('message', ''),
+                stake_multiplier_context=payload.get("stake_multiplier_context"),
+                game_time_seconds=current_game_time,
+                radiant_lead=current_radiant_lead,
+            )
             delivery_confirmed = _deliver_and_persist_signal(
                 match_key,
-                payload.get('message', ''),
+                delivery_message_text,
                 add_url_reason=add_url_reason,
                 add_url_details=add_url_details,
             )
@@ -11975,6 +12051,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 if dispatch_message_side == "dire"
                 else "НЕИЗВЕСТНАЯ КОМАНДА"
             )
+            stake_multiplier_context = _build_stake_multiplier_context(
+                stake_team_name=stake_team_name,
+                target_side=dispatch_message_side,
+                team_elo_meta=team_elo_meta,
+                selected_early_sign=selected_early_sign,
+                selected_late_sign=selected_late_sign,
+                has_selected_early_star=has_selected_early_star,
+                has_selected_late_star=has_selected_late_star,
+                early_wr_pct=early_wr_pct,
+                late_wr_pct=late_wr_pct,
+            )
             stake_multiplier = _stake_multiplier_for_signal(
                 team_elo_meta=team_elo_meta,
                 target_side=dispatch_message_side,
@@ -12088,9 +12175,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             return return_status
                         if verbose_match_log:
                             _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+                        delivery_message_text = _refresh_stake_multiplier_message(
+                            message_text,
+                            stake_multiplier_context=stake_multiplier_context,
+                            game_time_seconds=current_game_time,
+                            radiant_lead=lead,
+                        )
                         delivery_confirmed = _deliver_and_persist_signal(
                             check_uniq_url,
-                            message_text,
+                            delivery_message_text,
                             add_url_reason="star_signal_sent_now_networth_gate",
                             add_url_details={
                                 "status": status,
@@ -12432,9 +12525,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 return return_status
                             if verbose_match_log:
                                 _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+                            delivery_message_text = _refresh_stake_multiplier_message(
+                                message_text,
+                                stake_multiplier_context=stake_multiplier_context,
+                                game_time_seconds=current_game_time,
+                                radiant_lead=lead,
+                            )
                             delivery_confirmed = _deliver_and_persist_signal(
                                 check_uniq_url,
-                                message_text,
+                                delivery_message_text,
                                 add_url_reason="star_signal_sent_now_networth_gate",
                                 add_url_details={
                                     "status": status,
@@ -12474,9 +12573,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             return return_status
                         if verbose_match_log:
                             _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+                        delivery_message_text = _refresh_stake_multiplier_message(
+                            message_text,
+                            stake_multiplier_context=stake_multiplier_context,
+                            game_time_seconds=current_game_time,
+                            radiant_lead=lead,
+                        )
                         delivery_confirmed = _deliver_and_persist_signal(
                             check_uniq_url,
-                            message_text,
+                            delivery_message_text,
                             add_url_reason="star_signal_sent_now_no_json_url",
                             add_url_details={
                                 "status": status,
@@ -12504,9 +12609,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     return return_status
                                 if verbose_match_log:
                                     _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+                                delivery_message_text = _refresh_stake_multiplier_message(
+                                    message_text,
+                                    stake_multiplier_context=stake_multiplier_context,
+                                    game_time_seconds=current_game_time,
+                                    radiant_lead=lead,
+                                )
                                 delivery_confirmed = _deliver_and_persist_signal(
                                     check_uniq_url,
-                                    message_text,
+                                    delivery_message_text,
                                     add_url_reason="star_signal_sent_now_top25_late_elo_block_target_lead",
                                     add_url_details={
                                         "status": status,
@@ -12640,9 +12751,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     return return_status
                                 if verbose_match_log:
                                     _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
+                                delivery_message_text = _refresh_stake_multiplier_message(
+                                    message_text,
+                                    stake_multiplier_context=stake_multiplier_context,
+                                    game_time_seconds=current_game_time,
+                                    radiant_lead=lead,
+                                )
                                 delivery_confirmed = _deliver_and_persist_signal(
                                     check_uniq_url,
-                                    message_text,
+                                    delivery_message_text,
                                     add_url_reason="star_signal_sent_now_late_comeback_ceiling",
                                     add_url_details={
                                         "status": status,
@@ -12694,6 +12811,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 delayed_add_url_details["late_comeback_delta_pp"] = float(target_comeback_delta_pp or 0.0)
                             delayed_payload = {
                                 "message": message_text,
+                                "stake_multiplier_context": stake_multiplier_context,
                                 "reason": comeback_delay_reason,
                                 "star_metrics_snapshot": star_metrics_snapshot,
                                 "json_url": json_url,
@@ -12827,6 +12945,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             }
                             delayed_payload = {
                                 "message": message_text,
+                                "stake_multiplier_context": stake_multiplier_context,
                                 "reason": "post_target_comeback_ceiling_monitor",
                                 "star_metrics_snapshot": star_metrics_snapshot,
                                 "json_url": json_url,
@@ -12997,6 +13116,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_add_url_details["late_comeback_delta_pp"] = float(target_comeback_delta_pp or 0.0)
                 delayed_payload = {
                     'message': message_text,
+                    'stake_multiplier_context': stake_multiplier_context,
                     'reason': delay_reason,
                     'star_metrics_snapshot': star_metrics_snapshot,
                     'json_url': json_url,
@@ -13107,9 +13227,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     return return_status
                 if verbose_match_log:
                     _print_star_metrics_snapshot(star_metrics_snapshot, label="immediate")
+                delivery_message_text = _refresh_stake_multiplier_message(
+                    message_text,
+                    stake_multiplier_context=stake_multiplier_context,
+                    game_time_seconds=current_game_time,
+                    radiant_lead=lead,
+                )
                 delivery_confirmed = _deliver_and_persist_signal(
                     check_uniq_url,
-                    message_text,
+                    delivery_message_text,
                     add_url_reason="star_signal_sent_now",
                     add_url_details={
                         "status": status,

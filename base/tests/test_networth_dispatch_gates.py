@@ -1963,3 +1963,49 @@ def test_stake_multiplier_is_x2_for_late_same_sign_stronger_elo_lead(monkeypatch
 
     assert len(result.sent_messages) == 1
     assert result.sent_messages[0].startswith("СТАВКА НА radiant x2\n")
+
+
+def test_refresh_stake_multiplier_message_uses_current_send_state_for_early_branch() -> None:
+    message = "СТАВКА НА Radiant Team x1\nRadiant Team VS Dire Team\n"
+    refreshed = runtime._refresh_stake_multiplier_message(
+        message,
+        stake_multiplier_context={
+            "stake_team_name": "Radiant Team",
+            "target_side": "radiant",
+            "selected_early_sign": 1,
+            "selected_late_sign": 1,
+            "has_selected_early_star": True,
+            "has_selected_late_star": True,
+            "early_wr_pct": 60.0,
+            "late_wr_pct": 62.0,
+            "target_rating": 1600.0,
+            "opposite_rating": 1500.0,
+        },
+        game_time_seconds=6 * 60,
+        radiant_lead=900.0,
+    )
+
+    assert refreshed.startswith("СТАВКА НА Radiant Team x2\n")
+
+
+def test_refresh_stake_multiplier_message_uses_current_send_state_for_late_branch() -> None:
+    message = "СТАВКА НА Radiant Team x1\nRadiant Team VS Dire Team\n"
+    refreshed = runtime._refresh_stake_multiplier_message(
+        message,
+        stake_multiplier_context={
+            "stake_team_name": "Radiant Team",
+            "target_side": "radiant",
+            "selected_early_sign": 1,
+            "selected_late_sign": 1,
+            "has_selected_early_star": True,
+            "has_selected_late_star": True,
+            "early_wr_pct": 60.0,
+            "late_wr_pct": 65.0,
+            "target_rating": 1600.0,
+            "opposite_rating": 1500.0,
+        },
+        game_time_seconds=12 * 60,
+        radiant_lead=1200.0,
+    )
+
+    assert refreshed.startswith("СТАВКА НА Radiant Team x3\n")
