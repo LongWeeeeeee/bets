@@ -1,5 +1,6 @@
 import argparse
 import json
+from html import escape as html_escape
 import ast
 import atexit
 import contextlib
@@ -34,6 +35,14 @@ import math
 from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 import requests
+try:
+    from curl_cffi import requests as curl_cffi_requests
+    from curl_cffi.requests.exceptions import RequestException as CurlCffiRequestException
+    CURL_CFFI_AVAILABLE = True
+except Exception as _curl_cffi_import_error:
+    curl_cffi_requests = None
+    CurlCffiRequestException = None
+    CURL_CFFI_AVAILABLE = False
 from functions import (
     send_message,
     drain_telegram_admin_commands,
@@ -3558,6 +3567,180 @@ def _env_use_proxy_default() -> bool:
     return env_use_proxy.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _matches_request_headers(headers: Optional[dict]) -> dict:
+    prepared = dict(headers or {})
+    prepared.pop("X-Requested-With", None)
+    prepared["Accept"] = (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,*/*;q=0.8"
+    )
+    return prepared
+
+
+def _live_series_request_headers(headers: Optional[dict]) -> dict:
+    prepared = dict(headers or {})
+    prepared.pop("Host", None)
+    prepared.pop("X-Requested-With", None)
+    prepared["Accept"] = "application/json, text/plain, */*"
+    return prepared
+
+
+def _should_use_curl_transport(url: str) -> bool:
+    try:
+        parsed = urlparse(str(url))
+    except Exception:
+        return False
+    normalized_path = (parsed.path or "").rstrip("/")
+    return parsed.scheme in {"http", "https"} and normalized_path == "/matches"
+
+
+def _http_request_exceptions() -> tuple[type, ...]:
+    exceptions: List[type] = [requests.exceptions.RequestException]
+    if CurlCffiRequestException is not None:
+        exceptions.append(CurlCffiRequestException)
+    return tuple(exceptions)
+
+
+def _perform_http_get(
+    url: str,
+    *,
+    headers: Optional[dict] = None,
+    verify: bool = False,
+    timeout: float = 10,
+    proxies: Optional[dict] = None,
+):
+    use_curl = CURL_CFFI_AVAILABLE and curl_cffi_requests is not None and _should_use_curl_transport(url)
+    request_headers = _matches_request_headers(headers) if use_curl else dict(headers or {})
+    if use_curl:
+        return curl_cffi_requests.get(
+            url,
+            headers=request_headers,
+            verify=verify,
+            timeout=timeout,
+            proxies=proxies,
+            impersonate="chrome136",
+        )
+    return requests.get(
+        url,
+        headers=request_headers,
+        verify=verify,
+        timeout=timeout,
+        proxies=proxies,
+    )
+
+
+def _build_live_series_lookup(series_payload: Any) -> Dict[str, dict]:
+    if isinstance(series_payload, dict):
+        result: Dict[str, dict] = {}
+        for key, value in series_payload.items():
+            if isinstance(value, dict):
+                result[str(key)] = value
+        return result
+    if isinstance(series_payload, list):
+        result = {}
+        for item in series_payload:
+            if not isinstance(item, dict):
+                continue
+            series_id = item.get("id")
+            if series_id is None:
+                continue
+            result[str(series_id)] = item
+        return result
+    return {}
+
+
+def _render_live_series_json_cards(payload: Any) -> List[Any]:
+    if not isinstance(payload, dict):
+        return []
+    live_map = payload.get("live")
+    if not isinstance(live_map, dict) or not live_map:
+        return []
+
+    series_lookup = _build_live_series_lookup(payload.get("upcoming"))
+    if not series_lookup:
+        series_lookup.update(_build_live_series_lookup(payload.get("results")))
+
+    cards: List[Any] = []
+    for live_match_id, series_id in live_map.items():
+        series_key = str(series_id or "").strip()
+        series_item = series_lookup.get(series_key)
+        if not isinstance(series_item, dict):
+            continue
+
+        series_numeric_id = str(series_item.get("id") or series_key).strip()
+        slug = str(series_item.get("slug") or "").strip()
+        if not slug:
+            continue
+
+        first_team = series_item.get("first_team") if isinstance(series_item.get("first_team"), dict) else {}
+        second_team = series_item.get("second_team") if isinstance(series_item.get("second_team"), dict) else {}
+        first_title = str(first_team.get("title") or "Team 1").strip()
+        second_title = str(second_team.get("title") or "Team 2").strip()
+
+        scores = series_item.get("series_scores") if isinstance(series_item.get("series_scores"), dict) else {}
+        first_score = int(_coerce_int(scores.get("first_team")) or 0)
+        second_score = int(_coerce_int(scores.get("second_team")) or 0)
+
+        event_title = ""
+        event_payload = series_item.get("event")
+        if isinstance(event_payload, dict):
+            event_title = str(event_payload.get("title") or "").strip()
+        if not event_title:
+            event_title = str(series_item.get("league_name") or "Live series").strip()
+
+        href = f"https://dltv.org/matches/{series_numeric_id}/{slug}"
+        card_html = f"""
+        <div class="match live" data-series-id="{html_escape(series_numeric_id)}" data-match="{html_escape(str(live_match_id))}">
+          <a href="{html_escape(href)}"></a>
+          <div class="match__head">
+            <div class="match__head-event"><span>{html_escape(event_title)}</span></div>
+          </div>
+          <div class="match__body">
+            <div class="match__body-details">
+              <div class="match__body-details__team">
+                <div class="team"><div class="team__title"><span>{html_escape(first_title)}</span></div></div>
+              </div>
+              <div class="match__body-details__score">
+                <div class="score"><strong class="text-red">0</strong><small>({first_score})</small></div>
+                <div class="duration"><div class="duration__time"><strong>live</strong></div></div>
+                <div class="score"><strong class="text-red">0</strong><small>({second_score})</small></div>
+              </div>
+              <div class="match__body-details__team">
+                <div class="team"><div class="team__title"><span>{html_escape(second_title)}</span></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        """
+        soup = BeautifulSoup(card_html, "lxml")
+        card = soup.find("div", class_="match")
+        if card is not None:
+            cards.append(card)
+    return cards
+
+
+def _fetch_live_series_json_cards(
+    *,
+    headers: Optional[dict] = None,
+    proxies: Optional[dict] = None,
+) -> List[Any]:
+    live_series_url = "https://dltv.org/live/series.json"
+    response = _perform_http_get(
+        live_series_url,
+        headers=_live_series_request_headers(headers),
+        verify=False,
+        timeout=10,
+        proxies=proxies,
+    )
+    if response is None or response.status_code != 200:
+        return []
+    try:
+        payload = response.json()
+    except Exception:
+        return []
+    return _render_live_series_json_cards(payload)
+
+
 def _compute_moscow_quiet_hours_sleep_seconds(now: Optional[datetime] = None) -> float:
     current = now.astimezone(MOSCOW_TZ) if now is not None else datetime.now(MOSCOW_TZ)
     if current.hour < QUIET_HOURS_START_HOUR_MSK or current.hour >= QUIET_HOURS_END_HOUR_MSK:
@@ -4984,7 +5167,7 @@ def make_request_with_retry(url, max_retries=5, retry_delay=5, headers=None):
     
     for attempt in range(max_retries):
         try:
-            response = requests.get(
+            response = _perform_http_get(
                 url,
                 headers=headers,
                 verify=False,
@@ -5003,7 +5186,13 @@ def make_request_with_retry(url, max_retries=5, retry_delay=5, headers=None):
                 for retry_429 in range(3):
                     print(f'Повторная попытка {retry_429 + 1}/3 с новым прокси. Ожидание {retry_429_delay} сек...')
                     time.sleep(retry_429_delay)
-                    response = requests.get(url, headers=headers, verify=False, timeout=10, proxies=PROXIES)
+                    response = _perform_http_get(
+                        url,
+                        headers=headers,
+                        verify=False,
+                        timeout=10,
+                        proxies=PROXIES,
+                    )
                     if response.status_code == 200:
                         return response
                     elif response.status_code == 429:
@@ -5020,7 +5209,7 @@ def make_request_with_retry(url, max_retries=5, retry_delay=5, headers=None):
                 if (attempt + 1) % proxy_rotation_threshold == 0 and attempt < max_retries - 1:
                     rotate_proxy()
                     
-        except requests.exceptions.RequestException as e:
+        except _http_request_exceptions() as e:
             last_exception = e
             print(f'⚠️  Попытка {attempt + 1}/{max_retries}: ошибка {type(e).__name__}: {e}')
             logger.warning(f'Попытка {attempt + 1}/{max_retries}: {type(e).__name__} для {url}')
@@ -9692,13 +9881,13 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                         print(f"⚠️ Не удалось отправить уведомление о direct fallback: {exc}")
                     PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE = True
                 try:
-                    direct_response = requests.get(
+                    direct_response = _perform_http_get(
                         url,
                         headers=request_headers,
                         verify=False,
                         timeout=10,
                     )
-                except requests.exceptions.RequestException as exc:
+                except _http_request_exceptions() as exc:
                     print(f"⚠️ Direct fallback failed: {type(exc).__name__}: {exc}")
                     logger.warning("Direct fallback failed for %s: %s", url, exc)
                     return None, None, None
@@ -9727,6 +9916,21 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                     soup = BeautifulSoup(response_text, 'lxml')
                     live_matches = soup.find('div', class_='live__matches')
                     live_cards = list(soup.select("div.match.live"))
+                    if not live_matches and not live_cards:
+                        try:
+                            live_cards = _fetch_live_series_json_cards(
+                                headers=request_headers,
+                                proxies=PROXIES if USE_PROXY else None,
+                            )
+                        except _http_request_exceptions() as exc:
+                            live_cards = []
+                            print(f"⚠️ live/series.json fetch failed: {type(exc).__name__}: {exc}")
+                            logger.warning("live/series.json fetch failed for %s: %s", url, exc)
+                        if live_cards:
+                            print(
+                                "🛰️ Live series JSON returned active matches. "
+                                "Using synthesized live cards."
+                            )
                     if live_matches:
                         if not used_direct_fallback:
                             PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE = False

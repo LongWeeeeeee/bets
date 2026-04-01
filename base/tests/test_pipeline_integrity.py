@@ -1491,6 +1491,115 @@ def test_get_heads_falls_back_to_v2_cards_inside_live_matches_wrapper(monkeypatc
     assert listing["live_match_id"] == "8751684122"
 
 
+def test_perform_http_get_prefers_curl_cffi_for_matches(monkeypatch) -> None:
+    curl_calls: List[Dict[str, Any]] = []
+
+    class _FakeCurlRequests:
+        @staticmethod
+        def get(url: str, **kwargs):
+            curl_calls.append({"url": url, **kwargs})
+            return _FakeTextResponse("<html></html>", status_code=200)
+
+    def _requests_get(*_args, **_kwargs):
+        raise AssertionError("requests.get should not be used for /matches when curl_cffi is available")
+
+    monkeypatch.setattr(runtime, "CURL_CFFI_AVAILABLE", True, raising=False)
+    monkeypatch.setattr(runtime, "curl_cffi_requests", _FakeCurlRequests, raising=False)
+    monkeypatch.setattr(runtime.requests, "get", _requests_get)
+
+    response = runtime._perform_http_get(
+        "https://46.229.214.49/matches",
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "X-Requested-With": "XMLHttpRequest",
+        },
+        verify=False,
+        timeout=10,
+        proxies={"http": "proxy-a", "https": "proxy-a"},
+    )
+
+    assert response.status_code == 200
+    assert len(curl_calls) == 1
+    assert curl_calls[0]["url"] == "https://46.229.214.49/matches"
+    assert curl_calls[0]["impersonate"] == "chrome136"
+    assert "X-Requested-With" not in curl_calls[0]["headers"]
+    assert "text/html" in curl_calls[0]["headers"]["Accept"]
+
+
+def test_perform_http_get_uses_requests_for_non_matches(monkeypatch) -> None:
+    request_calls: List[Dict[str, Any]] = []
+
+    def _requests_get(url: str, **kwargs):
+        request_calls.append({"url": url, **kwargs})
+        return _FakeTextResponse("{}", status_code=200)
+
+    monkeypatch.setattr(runtime, "CURL_CFFI_AVAILABLE", True, raising=False)
+    monkeypatch.setattr(runtime.requests, "get", _requests_get)
+
+    response = runtime._perform_http_get(
+        "https://dltv.org/live/test.json",
+        headers={"User-Agent": "Mozilla/5.0", "X-Requested-With": "XMLHttpRequest"},
+        verify=False,
+        timeout=10,
+        proxies=None,
+    )
+
+    assert response.status_code == 200
+    assert len(request_calls) == 1
+    assert request_calls[0]["url"] == "https://dltv.org/live/test.json"
+    assert request_calls[0]["headers"]["X-Requested-With"] == "XMLHttpRequest"
+
+
+def test_render_live_series_json_cards_builds_v2_cards() -> None:
+    payload = {
+        "live": {"8751684122": 425877},
+        "upcoming": {
+            "425877": {
+                "id": 425877,
+                "slug": "xtreme-gaming-vs-team-yandex-esl-one-birmingham-2026",
+                "event": {"title": "ESL One Birmingham 2026"},
+                "first_team": {"title": "Xtreme Gaming"},
+                "second_team": {"title": "Team Yandex"},
+                "series_scores": {"first_team": 1, "second_team": 0},
+            }
+        },
+    }
+
+    cards = runtime._render_live_series_json_cards(payload)
+
+    assert len(cards) == 1
+    listing = runtime._extract_live_listing_context(cards[0], cards[0])
+    assert listing["layout"] == "match_card_v2"
+    assert listing["series_id"] == "425877"
+    assert listing["live_match_id"] == "8751684122"
+    assert listing["href"].endswith("/matches/425877/xtreme-gaming-vs-team-yandex-esl-one-birmingham-2026")
+    assert listing["score"] == "1 : 0"
+
+
+def test_get_heads_uses_live_series_json_when_matches_html_is_template(monkeypatch) -> None:
+    html = """
+    <html>
+      <head><title>Dota 2 Matches & livescore – DLTV</title></head>
+      <script>
+        for (const [match_id, series_id] of Object.entries(result.live)) { console.log(match_id, series_id); }
+      </script>
+    </html>
+    """
+
+    monkeypatch.setattr(
+        runtime,
+        "_fetch_live_series_json_cards",
+        lambda **_kwargs: _build_v2_live_cards()[0],
+    )
+
+    heads, bodies = runtime.get_heads(response=_FakeTextResponse(html))
+
+    assert heads is not None and len(heads) == 1
+    assert bodies is not None and len(bodies) == 1
+    listing = runtime._extract_live_listing_context(heads[0], bodies[0])
+    assert listing["layout"] == "match_card_v2"
+
+
 def test_general_notifies_live_matches_missing_only_after_all_proxies(monkeypatch) -> None:
     send_calls: List[str] = []
 
