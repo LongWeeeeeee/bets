@@ -1968,14 +1968,14 @@ def _stake_multiplier_for_signal(
 ) -> int:
     if target_side not in {"radiant", "dire"}:
         return 1
-    if not has_selected_early_star or not has_selected_late_star:
+    if not has_selected_late_star:
         return 1
 
     early_side = _target_side_from_sign(selected_early_sign)
     late_side = _target_side_from_sign(selected_late_sign)
-    if early_side not in {"radiant", "dire"} or late_side not in {"radiant", "dire"}:
+    if late_side not in {"radiant", "dire"}:
         return 1
-    if early_side != late_side or early_side != target_side:
+    if late_side != target_side:
         return 1
 
     target_networth_diff = _target_networth_diff_from_radiant_lead(radiant_lead, target_side)
@@ -2002,6 +2002,18 @@ def _stake_multiplier_for_signal(
         late_wr_value = float(late_wr_pct) if late_wr_pct is not None else None
     except (TypeError, ValueError):
         late_wr_value = None
+
+    late_only_or_opposite = (
+        not has_selected_early_star
+        or early_side not in {"radiant", "dire"}
+        or early_side != late_side
+    )
+    if late_only_or_opposite:
+        if late_wr_value is None:
+            return 1
+        if late_wr_value >= 70.0:
+            return 3
+        return 2
 
     if current_game_time < float(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS):
         if early_wr_value is None or late_wr_value is None:

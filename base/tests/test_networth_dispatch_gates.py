@@ -2009,3 +2009,49 @@ def test_refresh_stake_multiplier_message_uses_current_send_state_for_late_branc
     )
 
     assert refreshed.startswith("СТАВКА НА Radiant Team x3\n")
+
+
+def test_refresh_stake_multiplier_message_uses_x2_for_late_only_stronger_elo_lead() -> None:
+    message = "СТАВКА НА Dire Team x1\nRadiant Team VS Dire Team\n"
+    refreshed = runtime._refresh_stake_multiplier_message(
+        message,
+        stake_multiplier_context={
+            "stake_team_name": "Dire Team",
+            "target_side": "dire",
+            "selected_early_sign": None,
+            "selected_late_sign": -1,
+            "has_selected_early_star": False,
+            "has_selected_late_star": True,
+            "early_wr_pct": None,
+            "late_wr_pct": 60.0,
+            "target_rating": 1550.0,
+            "opposite_rating": 1450.0,
+        },
+        game_time_seconds=12 * 60,
+        radiant_lead=-1200.0,
+    )
+
+    assert refreshed.startswith("СТАВКА НА Dire Team x2\n")
+
+
+def test_refresh_stake_multiplier_message_uses_x3_for_opposite_signs_late_wr70() -> None:
+    message = "СТАВКА НА Dire Team x1\nRadiant Team VS Dire Team\n"
+    refreshed = runtime._refresh_stake_multiplier_message(
+        message,
+        stake_multiplier_context={
+            "stake_team_name": "Dire Team",
+            "target_side": "dire",
+            "selected_early_sign": 1,
+            "selected_late_sign": -1,
+            "has_selected_early_star": True,
+            "has_selected_late_star": True,
+            "early_wr_pct": 90.0,
+            "late_wr_pct": 70.0,
+            "target_rating": 1550.0,
+            "opposite_rating": 1450.0,
+        },
+        game_time_seconds=15 * 60,
+        radiant_lead=-2500.0,
+    )
+
+    assert refreshed.startswith("СТАВКА НА Dire Team x3\n")
