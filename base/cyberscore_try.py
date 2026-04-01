@@ -2189,6 +2189,28 @@ def _format_game_clock(game_time_seconds: Any) -> str:
     return f"{int(sec // 60):02d}:{int(sec % 60):02d}"
 
 
+def _format_live_message_state_block(
+    *,
+    game_time_seconds: Any,
+    radiant_lead: Any,
+    radiant_team_name: Any,
+    dire_team_name: Any,
+) -> str:
+    time_line = f"Time: {_format_game_clock(game_time_seconds)}"
+    try:
+        lead_value = float(radiant_lead or 0.0)
+    except (TypeError, ValueError):
+        lead_value = 0.0
+    abs_lead = int(round(abs(lead_value)))
+    if abs_lead <= 0:
+        networth_line = "Networth: 0"
+    elif lead_value > 0:
+        networth_line = f"Networth: {str(radiant_team_name or 'Radiant')} +{abs_lead}"
+    else:
+        networth_line = f"Networth: {str(dire_team_name or 'Dire')} +{abs_lead}"
+    return f"{time_line}\n{networth_line}\n"
+
+
 def _comeback_delta_pp_for_side(
     comeback_metrics: Optional[dict],
     side: Optional[str],
@@ -12300,6 +12322,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 game_time_seconds=game_time,
                 radiant_lead=lead,
             )
+            live_state_block = _format_live_message_state_block(
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+            )
 
             # Формирование сообщения
             message_text = (
@@ -12314,6 +12342,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"{odds_block}"
                 f"{telegram_early_block}"
                 f"{mid_block}"
+                f"{live_state_block}"
             )
             current_game_time = float(game_time or 0.0)
             early65_sign = (

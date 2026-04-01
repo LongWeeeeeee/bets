@@ -1898,6 +1898,8 @@ def test_full_star_same_sign_message_keeps_early_block(monkeypatch) -> None:
     assert "Late: Radiant Team WR≈" in message
     assert "10-28 Minute:" in message
     assert "Mid (25-50 min):" in message
+    assert "Time: 12:00" in message
+    assert "Networth: Radiant Team +900" in message
 
 
 def test_stake_multiplier_is_x2_for_early_same_sign_stronger_elo_lead(monkeypatch) -> None:
@@ -1931,6 +1933,8 @@ def test_stake_multiplier_is_x2_for_early_same_sign_stronger_elo_lead(monkeypatc
 
     assert len(result.sent_messages) == 1
     assert result.sent_messages[0].startswith("СТАВКА НА radiant x2\n")
+    assert "Time: 06:00" in result.sent_messages[0]
+    assert "Networth: Radiant Team +900" in result.sent_messages[0]
 
 
 def test_stake_multiplier_is_x2_for_late_same_sign_stronger_elo_lead(monkeypatch) -> None:
