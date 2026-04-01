@@ -2046,6 +2046,8 @@ def _build_stake_multiplier_context(
     stake_team_name: str,
     target_side: Optional[str],
     team_elo_meta: Optional[Dict[str, Any]],
+    radiant_team_name: Optional[str],
+    dire_team_name: Optional[str],
     selected_early_sign: Optional[int],
     selected_late_sign: Optional[int],
     has_selected_early_star: bool,
@@ -2057,6 +2059,8 @@ def _build_stake_multiplier_context(
     return {
         "stake_team_name": str(stake_team_name or ""),
         "target_side": target_side,
+        "radiant_team_name": str(radiant_team_name or ""),
+        "dire_team_name": str(dire_team_name or ""),
         "selected_early_sign": selected_early_sign,
         "selected_late_sign": selected_late_sign,
         "has_selected_early_star": bool(has_selected_early_star),
@@ -2104,8 +2108,36 @@ def _refresh_stake_multiplier_message(
     if not lines:
         return message_text
     lines[0] = new_header
+
+    try:
+        radiant_team_name = str(stake_multiplier_context.get("radiant_team_name") or "").strip()
+        dire_team_name = str(stake_multiplier_context.get("dire_team_name") or "").strip()
+    except Exception:
+        radiant_team_name = ""
+        dire_team_name = ""
+    live_state_lines = _format_live_message_state_block(
+        game_time_seconds=game_time_seconds,
+        radiant_lead=radiant_lead,
+        radiant_team_name=radiant_team_name,
+        dire_team_name=dire_team_name,
+    ).strip().splitlines()
+    filtered_lines = [
+        line
+        for line in lines
+        if not str(line).startswith("Time:") and not str(line).startswith("Networth:")
+    ]
+    insert_after_idx = -1
+    for idx, line in enumerate(filtered_lines):
+        if str(line).startswith("Synergy_trio:"):
+            insert_after_idx = idx
+    if insert_after_idx >= 0:
+        filtered_lines[insert_after_idx + 1 : insert_after_idx + 1] = live_state_lines
+    else:
+        if filtered_lines and str(filtered_lines[-1]).strip():
+            filtered_lines.append("")
+        filtered_lines.extend(live_state_lines)
     trailing_newline = "\n" if message_text.endswith("\n") else ""
-    return "\n".join(lines) + trailing_newline
+    return "\n".join(filtered_lines) + trailing_newline
 
 
 def _dynamic_monitor_snapshot_for_payload(
@@ -12303,6 +12335,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 stake_team_name=stake_team_name,
                 target_side=dispatch_message_side,
                 team_elo_meta=team_elo_meta,
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
                 selected_early_sign=selected_early_sign,
                 selected_late_sign=selected_late_sign,
                 has_selected_early_star=has_selected_early_star,

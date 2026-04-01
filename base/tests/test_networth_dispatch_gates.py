@@ -1970,12 +1970,19 @@ def test_stake_multiplier_is_x2_for_late_same_sign_stronger_elo_lead(monkeypatch
 
 
 def test_refresh_stake_multiplier_message_uses_current_send_state_for_early_branch() -> None:
-    message = "СТАВКА НА Radiant Team x1\nRadiant Team VS Dire Team\n"
+    message = (
+        "СТАВКА НА Radiant Team x1\n"
+        "Radiant Team VS Dire Team\n"
+        "Mid (25-50 min):\n"
+        "Synergy_trio: None\n"
+    )
     refreshed = runtime._refresh_stake_multiplier_message(
         message,
         stake_multiplier_context={
             "stake_team_name": "Radiant Team",
             "target_side": "radiant",
+            "radiant_team_name": "Radiant Team",
+            "dire_team_name": "Dire Team",
             "selected_early_sign": 1,
             "selected_late_sign": 1,
             "has_selected_early_star": True,
@@ -1990,6 +1997,9 @@ def test_refresh_stake_multiplier_message_uses_current_send_state_for_early_bran
     )
 
     assert refreshed.startswith("СТАВКА НА Radiant Team x2\n")
+    assert "Time: 06:00" in refreshed
+    assert "Networth: Radiant Team +900" in refreshed
+    assert "Synergy_trio: None\nTime: 06:00\nNetworth: Radiant Team +900\n" in refreshed
 
 
 def test_refresh_stake_multiplier_message_uses_current_send_state_for_late_branch() -> None:
@@ -2016,12 +2026,19 @@ def test_refresh_stake_multiplier_message_uses_current_send_state_for_late_branc
 
 
 def test_refresh_stake_multiplier_message_uses_x2_for_late_only_stronger_elo_lead() -> None:
-    message = "СТАВКА НА Dire Team x1\nRadiant Team VS Dire Team\n"
+    message = (
+        "СТАВКА НА Dire Team x1\n"
+        "Radiant Team VS Dire Team\n"
+        "Mid (25-50 min):\n"
+        "Synergy_trio: None\n"
+    )
     refreshed = runtime._refresh_stake_multiplier_message(
         message,
         stake_multiplier_context={
             "stake_team_name": "Dire Team",
             "target_side": "dire",
+            "radiant_team_name": "Radiant Team",
+            "dire_team_name": "Dire Team",
             "selected_early_sign": None,
             "selected_late_sign": -1,
             "has_selected_early_star": False,
@@ -2036,6 +2053,8 @@ def test_refresh_stake_multiplier_message_uses_x2_for_late_only_stronger_elo_lea
     )
 
     assert refreshed.startswith("СТАВКА НА Dire Team x2\n")
+    assert "Time: 12:00" in refreshed
+    assert "Networth: Dire Team +1200" in refreshed
 
 
 def test_refresh_stake_multiplier_message_uses_x3_for_opposite_signs_late_wr70() -> None:
