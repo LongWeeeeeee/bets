@@ -79,6 +79,9 @@ PRO_HEROES_DIR = PROJECT_ROOT / "pro_heroes_data"
 
 SKIPPED_LIVE_LEAGUE_TITLES = {
     "blast slam vii: china open qualifier 2",
+    "blast slam 7: china open qualifier 2",
+    "blast slam vii: southeast asia open qualifier 2",
+    "blast slam 7: southeast asia open qualifier 2",
 }
 
 # Импорт Ultimate Inference предсказателя

@@ -1954,7 +1954,16 @@ def test_check_head_skips_invalid_draft_before_synergy(monkeypatch) -> None:
     assert add_url_calls == []
 
 
-def test_check_head_skips_denied_league_title_before_draft(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("league_title", "league_name"),
+    [
+        ("BLAST Slam VII: China Open Qualifier 2", "BLAST Slam VII: China Open Qualifier 2"),
+        ("BLAST Slam 7: Southeast Asia Open Qualifier 2", "BLAST Slam 7: Southeast Asia Open Qualifier 2"),
+    ],
+)
+def test_check_head_skips_denied_league_title_before_draft(
+    monkeypatch, league_title: str, league_name: str
+) -> None:
     heads, bodies = _build_heads_and_bodies()
     add_url_calls: List[Dict[str, Any]] = []
     parse_called = {"value": False}
@@ -1987,13 +1996,13 @@ def test_check_head_skips_denied_league_title_before_draft(monkeypatch) -> None:
         "db": {
             "first_team": {"is_radiant": True, "title": "Radiant Team", "team_id": 1001, "id": 1001},
             "second_team": {"title": "Dire Team", "team_id": 2002, "id": 2002},
-            "league": {"title": "BLAST Slam VII: China Open Qualifier 2"},
+            "league": {"title": league_title},
         },
         "live_league_data": {
             "match": {},
             "radiant_team": {"team_id": 1001},
             "dire_team": {"team_id": 2002},
-            "league_name": "BLAST Slam VII: China Open Qualifier 2",
+            "league_name": league_name,
         },
         "radiant_lead": 0.0,
         "game_time": -90.0,
@@ -2024,7 +2033,7 @@ def test_check_head_skips_denied_league_title_before_draft(monkeypatch) -> None:
     assert parse_called["value"] is False
     assert add_url_calls
     assert add_url_calls[-1]["reason"] == "skip_league_title_denylist"
-    assert add_url_calls[-1]["details"]["league_name"] == "BLAST Slam VII: China Open Qualifier 2"
+    assert add_url_calls[-1]["details"]["league_name"] == league_name
 
 
 def test_problem_candidates_are_shown_without_odds(monkeypatch) -> None:
