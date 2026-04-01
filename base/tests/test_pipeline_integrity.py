@@ -1450,6 +1450,47 @@ def test_get_heads_supports_new_live_match_card_layout(monkeypatch) -> None:
     assert listing["live_match_id"] == "8751684122"
 
 
+def test_get_heads_falls_back_to_v2_cards_inside_live_matches_wrapper(monkeypatch) -> None:
+    html = """
+    <html>
+      <head><title>Dota 2 Matches & livescore – DLTV</title></head>
+      <div class="live__matches">
+        <div class="match live" data-series-id="425877" data-match="8751684122">
+          <div class="match__head">
+            <div class="match__head-event"><span>ESL One Birmingham 2026</span></div>
+          </div>
+          <div class="match__body">
+            <div class="match__body-details">
+              <div class="match__body-details__team">
+                <div class="team"><div class="team__title"><span>Xtreme Gaming</span></div></div>
+              </div>
+              <div class="match__body-details__score">
+                <div class="score"><strong class="text-red">10</strong><small>(0)</small></div>
+                <div class="duration"><div class="duration__time"><strong>50:47</strong></div></div>
+                <div class="score"><strong class="text-red">12</strong><small>(0)</small></div>
+              </div>
+              <div class="match__body-details__team">
+                <div class="team"><div class="team__title"><span>Team Yandex</span></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </html>
+    """
+
+    heads, bodies = runtime.get_heads(response=_FakeTextResponse(html))
+
+    assert heads is not None and len(heads) == 1
+    assert bodies is not None and len(bodies) == 1
+    listing = runtime._extract_live_listing_context(heads[0], bodies[0])
+    assert listing["layout"] == "match_card_v2"
+    assert listing["status"] == "50:47"
+    assert listing["score"] == "0 : 0"
+    assert listing["series_id"] == "425877"
+    assert listing["live_match_id"] == "8751684122"
+
+
 def test_general_notifies_live_matches_missing_only_after_all_proxies(monkeypatch) -> None:
     send_calls: List[str] = []
 

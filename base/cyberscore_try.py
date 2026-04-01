@@ -9853,6 +9853,13 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             if live_matches is not None:
                 heads = live_matches.find_all('div', class_='live__matches-item__head')
                 bodies = live_matches.find_all('div', class_='live__matches-item__body')
+                if (not heads or not bodies) and live_cards:
+                    print(
+                        "🧩 live__matches wrapper found, but old item blocks are missing. "
+                        "Falling back to v2 live cards."
+                    )
+                    heads = list(live_cards)
+                    bodies = list(live_cards)
             else:
                 heads = list(live_cards)
                 bodies = list(live_cards)
