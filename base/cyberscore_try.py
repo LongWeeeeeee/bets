@@ -1293,6 +1293,43 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
     }
 
 
+def _star_hit_conflicts_with_expected_sign(
+    raw_block: Optional[dict],
+    *,
+    target_wr: int,
+    section: str,
+    expected_sign: Optional[int],
+) -> Dict[str, Any]:
+    if expected_sign not in (-1, 1):
+        return {
+            "valid": False,
+            "status": "no_expected_sign",
+            "hit_metrics": [],
+            "conflicting_hit_metrics": [],
+        }
+
+    block = raw_block if isinstance(raw_block, dict) else {}
+    thresholds = _star_thresholds_for_wr(target_wr, section)
+    hit_metrics: List[str] = []
+    conflicting_hit_metrics: List[str] = []
+
+    for metric, threshold in thresholds.items():
+        value = _coerce_metric_value(block.get(metric))
+        if value is None or abs(value) < threshold:
+            continue
+        hit_metrics.append(metric)
+        sign = 1 if value > 0 else -1
+        if sign != expected_sign:
+            conflicting_hit_metrics.append(metric)
+
+    return {
+        "valid": len(conflicting_hit_metrics) == 0,
+        "status": "ok" if len(conflicting_hit_metrics) == 0 else "conflict_hits_against_expected_sign",
+        "hit_metrics": hit_metrics,
+        "conflicting_hit_metrics": conflicting_hit_metrics,
+    }
+
+
 def _format_star_block_status(diag: Dict[str, Any]) -> str:
     status = str(diag.get("status") or "unknown")
     if status == "ok":
@@ -11793,6 +11830,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 late_core_same_sign_diag.get("valid")
                 and late_core_same_sign_diag.get("nonzero_metrics")
             )
+            late_star_hits_against_early_diag = _star_hit_conflicts_with_expected_sign(
+                s.get('mid_output', {}),
+                target_wr=selected_star_wr,
+                section="mid_output",
+                expected_sign=selected_early_sign,
+            )
             early_same_or_zero_diag = _block_signs_same_or_zero(
                 raw_block=s.get('early_output', {}),
                 expected_sign=selected_late_sign,
@@ -11824,6 +11867,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and has_selected_early_star
                 and not has_selected_late_star
                 and late_core_same_sign_support
+                and bool(late_star_hits_against_early_diag.get("valid"))
             )
             send_now_late_star_early_core_same_sign = (
                 STAR_ALLOW_LATE_STAR_EARLY_SAME_OR_ZERO
@@ -12018,6 +12062,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 late_core_same_sign_diag.get("valid")
                 and late_core_same_sign_diag.get("nonzero_metrics")
             )
+            late_star_hits_against_early_diag = _star_hit_conflicts_with_expected_sign(
+                s.get('mid_output', {}),
+                target_wr=selected_star_wr,
+                section="mid_output",
+                expected_sign=selected_early_sign,
+            )
             early_same_or_zero_diag = _block_signs_same_or_zero(
                 raw_block=s.get('early_output', {}),
                 expected_sign=selected_late_sign,
@@ -12054,6 +12104,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     late_core_same_sign_support
                     or late_same_sign_raw_star_before_elo
                 )
+                and bool(late_star_hits_against_early_diag.get("valid"))
             )
             send_now_late_star_early_core_same_sign = (
                 STAR_ALLOW_LATE_STAR_EARLY_SAME_OR_ZERO
@@ -12124,6 +12175,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         "selected_early_sign": selected_early_sign,
                         "selected_late_sign": selected_late_sign,
                         "late_core_same_sign_diag": late_core_same_sign_diag,
+                        "late_star_hits_against_early_diag": late_star_hits_against_early_diag,
                         "selected_early_diag": selected_early_diag,
                         "selected_late_diag": selected_late_diag,
                         "json_retry_errors": json_retry_errors,

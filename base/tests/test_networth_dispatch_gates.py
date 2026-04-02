@@ -853,6 +853,43 @@ def test_early_star_and_late_pos1_vs_pos1_below_five_does_not_count_as_core_supp
     assert result.add_url_calls[-1]["reason"] == "star_signal_rejected_no_late_star"
 
 
+def test_early_star_late_core_same_sign_rejects_when_late_star_metric_has_opposite_sign(monkeypatch) -> None:
+    case = BranchScenario(
+        name="early_star_late_core_same_sign_opposite_late_star_metric",
+        game_time_seconds=(10 * 60) + 1,
+        target_side="radiant",
+        target_networth_diff=900,
+        has_early_star=True,
+        early_sign=1,
+        has_late_star=False,
+        late_sign=1,
+        expected_send_calls=0,
+        expected_add_url_reason="star_signal_rejected_no_late_star",
+        raw_early_output={"counterpick_1vs1": 6, "solo": 3},
+        raw_mid_output={
+            "counterpick_1vs1": 3,
+            "pos1_vs_pos1": -38,
+            "solo": 1,
+            "synergy_duo": 7,
+        },
+    )
+    result = _run_branch_scenario(
+        monkeypatch,
+        case,
+        match_tier=2,
+        allow_early_star_late_core_same_or_zero=True,
+    )
+
+    assert result.sent_messages == []
+    assert result.add_url_calls
+    assert result.add_url_calls[-1]["reason"] == "star_signal_rejected_no_late_star"
+    details = result.add_url_calls[-1]["details"]
+    assert isinstance(details, dict)
+    late_conflict_diag = details["late_star_hits_against_early_diag"]
+    assert late_conflict_diag["valid"] is False
+    assert "pos1_vs_pos1" in late_conflict_diag["conflicting_hit_metrics"]
+
+
 def test_early_star_without_late_star_can_send_even_if_late_core_conflicts(monkeypatch) -> None:
     case = BranchScenario(
         name="early_star_no_late_star_send",
