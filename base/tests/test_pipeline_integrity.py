@@ -739,6 +739,79 @@ def test_send_message_admin_only_targets_primary_chat_only(tmp_path, monkeypatch
     assert reply_markups[0]["keyboard"][0][1]["text"] == "reboot"
 
 
+def test_send_message_mirrors_to_ntfy_once_per_broadcast(tmp_path, monkeypatch) -> None:
+    import functions
+
+    state_path = tmp_path / "telegram_subscribers_state.json"
+    legacy_path = tmp_path / "legacy_telegram_subscribers_state.json"
+    state_path.write_text(
+        json.dumps({"chat_ids": ["100", "200"], "last_update_id": 0}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(functions, "TELEGRAM_SUBSCRIBERS_STATE_PATH", state_path, raising=False)
+    monkeypatch.setattr(functions, "LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH", legacy_path, raising=False)
+    monkeypatch.setattr(functions, "_refresh_telegram_subscribers", lambda: ["100", "200"], raising=False)
+    monkeypatch.setattr(functions.keys, "NTFY_ENABLED", True, raising=False)
+    monkeypatch.setattr(functions.keys, "NTFY_SERVER_URL", "https://ntfy.sh", raising=False)
+    monkeypatch.setattr(functions.keys, "NTFY_TOPIC", "ingame-test-topic", raising=False)
+    monkeypatch.setattr(functions.keys, "NTFY_TOKEN", "", raising=False)
+
+    class _Response:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> Dict[str, Any]:
+            return {"ok": True, "result": {"message_id": 1}}
+
+    delivered_telegram: List[str] = []
+    delivered_ntfy: List[str] = []
+
+    def _fake_post(url, **kwargs):
+        if str(url).startswith("https://ntfy.sh/"):
+            delivered_ntfy.append(str(url))
+            return _Response()
+        delivered_telegram.append(str(kwargs["json"]["chat_id"]))
+        return _Response()
+
+    monkeypatch.setattr(functions.requests, "post", _fake_post)
+
+    assert functions.send_message("broadcast", require_delivery=True) is True
+    assert delivered_telegram == ["100", "200"]
+    assert delivered_ntfy == ["https://ntfy.sh/ingame-test-topic"]
+
+
+def test_send_message_can_succeed_via_ntfy_when_telegram_fails(monkeypatch) -> None:
+    import functions
+
+    monkeypatch.setattr(functions.keys, "NTFY_ENABLED", True, raising=False)
+    monkeypatch.setattr(functions.keys, "NTFY_SERVER_URL", "https://ntfy.sh", raising=False)
+    monkeypatch.setattr(functions.keys, "NTFY_TOPIC", "ingame-test-topic", raising=False)
+    monkeypatch.setattr(functions.keys, "NTFY_TOKEN", "", raising=False)
+    monkeypatch.setattr(functions, "_refresh_telegram_subscribers", lambda: ["100"], raising=False)
+
+    class _Response:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> Dict[str, Any]:
+            return {"ok": True, "result": {"message_id": 1}}
+
+    def _fake_post(url, **kwargs):
+        if str(url).startswith("https://ntfy.sh/"):
+            return _Response()
+        raise functions.requests.exceptions.ConnectionError("telegram down")
+
+    monkeypatch.setattr(functions.requests, "post", _fake_post)
+    monkeypatch.setattr(functions, "_send_message_via_proxy_request", lambda *_args, **_kwargs: (_ for _ in ()).throw(functions.requests.exceptions.ConnectionError("proxy down")))
+    monkeypatch.setattr(functions.shutil, "which", lambda _name: None)
+
+    assert functions.send_message("fallback via ntfy", require_delivery=True) is True
+
+
 def test_drain_telegram_admin_commands_extracts_restart_command(tmp_path, monkeypatch) -> None:
     import functions
 

@@ -13,6 +13,7 @@ from collections import deque
 from pathlib import Path
 from itertools import chain, permutations
 from typing import ClassVar, Optional
+from urllib.parse import quote
 
 import pytz
 import requests
@@ -31,6 +32,8 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+NTFY_SEND_TIMEOUT_SECONDS = 10
 
 
 class TelegramSendError(RuntimeError):
@@ -1337,7 +1340,87 @@ def _remove_telegram_subscribers(chat_ids_to_remove: list[str]) -> None:
             logger.warning("Failed to remove Telegram subscribers %s: %s", chat_ids_to_remove, exc)
 
 
+def _ntfy_is_enabled() -> bool:
+    return bool(getattr(keys, "NTFY_ENABLED", False))
+
+
+def _get_ntfy_server_url() -> str:
+    return str(getattr(keys, "NTFY_SERVER_URL", "") or "").strip().rstrip("/")
+
+
+def _get_ntfy_topic() -> str:
+    return str(getattr(keys, "NTFY_TOPIC", "") or "").strip().strip("/")
+
+
+def _get_ntfy_token() -> str:
+    return str(getattr(keys, "NTFY_TOKEN", "") or "").strip()
+
+
+def _split_ntfy_text_chunks(text: str, *, max_chars: int = 3500) -> list[str]:
+    raw_text = str(text or "")
+    if len(raw_text) <= max_chars:
+        return [raw_text]
+    chunks: list[str] = []
+    current = ""
+    for line in raw_text.splitlines(keepends=True):
+        if len(current) + len(line) > max_chars and current:
+            chunks.append(current)
+            current = line
+            continue
+        if len(line) > max_chars:
+            if current:
+                chunks.append(current)
+                current = ""
+            for start in range(0, len(line), max_chars):
+                chunks.append(line[start : start + max_chars])
+            continue
+        current += line
+    if current:
+        chunks.append(current)
+    return chunks or [raw_text[:max_chars]]
+
+
+def _send_message_to_ntfy(message: str, *, admin_only: bool = False) -> bool:
+    if not _ntfy_is_enabled():
+        return False
+    server_url = _get_ntfy_server_url()
+    topic = _get_ntfy_topic()
+    if not server_url or not topic:
+        return False
+    first_line = next((line.strip() for line in str(message or "").splitlines() if line.strip()), "ingame notification")
+    base_headers = {
+        "Title": first_line[:120],
+        "Priority": "high" if admin_only else "default",
+        "Tags": "warning" if admin_only else "loudspeaker",
+    }
+    token = _get_ntfy_token()
+    if token:
+        base_headers["Authorization"] = f"Bearer {token}"
+    topic_url = f"{server_url}/{quote(topic, safe='')}"
+    delivered = False
+    chunks = _split_ntfy_text_chunks(message)
+    for idx, chunk in enumerate(chunks, start=1):
+        headers = dict(base_headers)
+        if len(chunks) > 1:
+            headers["Title"] = f"{base_headers['Title']} [{idx}/{len(chunks)}]"
+        response = requests.post(
+            topic_url,
+            data=str(chunk).encode("utf-8"),
+            headers=headers,
+            timeout=NTFY_SEND_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        delivered = True
+    return delivered
+
+
 def send_message(message, *, require_delivery: bool = False, admin_only: bool = False):
+    ntfy_delivered = False
+    try:
+        ntfy_delivered = _send_message_to_ntfy(message, admin_only=admin_only)
+    except Exception as exc:
+        logger.warning("ntfy mirror failed: %s", exc)
+
     if admin_only:
         target_chat_ids = _get_admin_telegram_chat_ids()
         reply_markup = _build_admin_telegram_reply_markup()
@@ -1389,6 +1472,16 @@ def send_message(message, *, require_delivery: bool = False, admin_only: bool = 
                 "Telegram broadcast partial hard failures: delivered=%s failed=%s",
                 delivered,
                 [chat_id for chat_id, _ in hard_errors],
+            )
+        return True
+
+    if ntfy_delivered:
+        if uncertain_errors or hard_errors or terminal_chat_errors:
+            logger.warning(
+                "Telegram delivery failed, but ntfy mirror succeeded; uncertain=%s hard=%s terminal=%s",
+                [chat_id for chat_id, _ in uncertain_errors],
+                [chat_id for chat_id, _ in hard_errors],
+                [chat_id for chat_id, _ in terminal_chat_errors],
             )
         return True
 
