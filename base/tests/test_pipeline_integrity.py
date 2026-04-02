@@ -2482,6 +2482,93 @@ def test_check_head_skips_denied_league_title_before_draft(
     assert add_url_calls[-1]["details"]["league_name"] == league_name
 
 
+def test_check_head_skips_player_denylist_after_draft_parse(monkeypatch) -> None:
+    heads, bodies = _build_heads_and_bodies()
+    add_url_calls: List[Dict[str, Any]] = []
+    sent_messages: List[str] = []
+
+    monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", False, raising=False)
+    monkeypatch.setattr(runtime, "_ensure_delayed_sender_started", lambda: None)
+    monkeypatch.setattr(runtime, "_is_url_processed", lambda _url: False)
+    monkeypatch.setattr(runtime, "_drop_delayed_match", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(runtime, "send_message", lambda message, **_kwargs: sent_messages.append(str(message)))
+
+    def _record_add_url(url: str, reason: str = "unspecified", details: Any = None):
+        add_url_calls.append(
+            {
+                "url": url,
+                "reason": reason,
+                "details": dict(details) if isinstance(details, dict) else details,
+            }
+        )
+
+    monkeypatch.setattr(runtime, "add_url", _record_add_url)
+
+    page_html = "<html><script>$.get('/live/test-player-denylist.json')</script></html>"
+    monkeypatch.setattr(
+        runtime,
+        "make_request_with_retry",
+        lambda *_args, **_kwargs: _FakeTextResponse(page_html, status_code=200),
+    )
+
+    live_data = {
+        "fast_picks": [1],
+        "db": {
+            "first_team": {"is_radiant": True, "title": "Radiant Team", "team_id": 1001, "id": 1001},
+            "second_team": {"title": "Dire Team", "team_id": 2002, "id": 2002},
+        },
+        "live_league_data": {
+            "match": {},
+            "radiant_team": {"team_id": 1001},
+            "dire_team": {"team_id": 2002},
+        },
+        "radiant_lead": 0.0,
+        "game_time": -90.0,
+    }
+    monkeypatch.setattr(
+        runtime.requests,
+        "get",
+        lambda *_args, **_kwargs: _FakeJsonResponse(live_data, status_code=200),
+    )
+
+    team_id_calls = {"count": 0}
+
+    def _extract_candidate_team_ids(*_args, **_kwargs):
+        team_id_calls["count"] += 1
+        return [1001] if team_id_calls["count"] == 1 else [2002]
+
+    monkeypatch.setattr(runtime, "_extract_candidate_team_ids", _extract_candidate_team_ids)
+    monkeypatch.setattr(
+        runtime,
+        "_ensure_known_team_or_add_to_tier2",
+        lambda team_ids, _team_name, _match_key: (True, int(team_ids[0])),
+    )
+    monkeypatch.setattr(runtime, "_determine_star_signal_match_tier", lambda *_args, **_kwargs: 2)
+
+    radiant = _valid_heroes(0, positions=5)
+    dire = _valid_heroes(100, positions=5)
+    dire["pos1"]["account_id"] = 21270361
+    monkeypatch.setattr(
+        runtime,
+        "parse_draft_and_positions",
+        lambda *_args, **_kwargs: (radiant, dire, None, "", []),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_register_completed_live_map_for_elo",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("live ELO registration must not run")),
+    )
+
+    status = runtime.check_head(heads, bodies, 0, set(), return_status="draft...")
+
+    assert status == "draft..."
+    assert sent_messages == []
+    assert add_url_calls
+    assert add_url_calls[-1]["reason"] == "skip_player_denylist"
+    assert add_url_calls[-1]["details"]["skipped_player_hits"]["radiant"] == []
+    assert add_url_calls[-1]["details"]["skipped_player_hits"]["dire"] == [21270361]
+
+
 def test_problem_candidates_are_shown_without_odds(monkeypatch) -> None:
     heads, bodies = _build_heads_and_bodies()
     sent_messages: List[str] = []

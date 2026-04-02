@@ -93,6 +93,19 @@ SKIPPED_LIVE_LEAGUE_TITLES = {
     "blast slam 7: southeast asia open qualifier 2",
 }
 
+# Dota account ids / steam ids for lineups we never want to process in live runtime.
+SKIPPED_PLAYER_ACCOUNT_IDS = {
+    # Ilbirs eSports observed lineups from live ELO snapshot history.
+    21270361,
+    34505203,
+    187123736,
+    326327879,
+    405499625,
+    851295431,
+    860145568,
+    1054936816,
+}
+
 # Импорт Ultimate Inference предсказателя
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -148,6 +161,30 @@ def _is_skipped_live_league_candidate(*, league_title: Any = "", href: Any = "")
             if denied_slug and denied_slug in href_text:
                 return True
     return False
+
+
+def _find_skipped_player_account_ids(
+    radiant_account_ids: Optional[List[int]],
+    dire_account_ids: Optional[List[int]],
+) -> Dict[str, List[int]]:
+    radiant_hits = sorted(
+        {
+            int(pid)
+            for pid in (radiant_account_ids or [])
+            if _coerce_int(pid) > 0 and int(pid) in SKIPPED_PLAYER_ACCOUNT_IDS
+        }
+    )
+    dire_hits = sorted(
+        {
+            int(pid)
+            for pid in (dire_account_ids or [])
+            if _coerce_int(pid) > 0 and int(pid) in SKIPPED_PLAYER_ACCOUNT_IDS
+        }
+    )
+    return {
+        "radiant": radiant_hits,
+        "dire": dire_hits,
+    }
 
 
 def _get_id_to_names_path() -> Path:
@@ -11600,6 +11637,29 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             int((dire_heroes_and_pos.get(pos) or {}).get("account_id", 0) or 0)
             for pos in ("pos1", "pos2", "pos3", "pos4", "pos5")
         ]
+        skipped_player_hits = _find_skipped_player_account_ids(
+            radiant_account_ids,
+            dire_account_ids,
+        )
+        if skipped_player_hits["radiant"] or skipped_player_hits["dire"]:
+            print(
+                "   🚫 Матч пропущен: найден игрок из player denylist "
+                f"(radiant={skipped_player_hits['radiant']}, dire={skipped_player_hits['dire']})"
+            )
+            add_url(
+                check_uniq_url,
+                reason="skip_player_denylist",
+                details={
+                    "status": status,
+                    "radiant_team": radiant_team_name_original,
+                    "dire_team": dire_team_name_original,
+                    "radiant_account_ids": radiant_account_ids,
+                    "dire_account_ids": dire_account_ids,
+                    "skipped_player_hits": skipped_player_hits,
+                    "json_retry_errors": json_retry_errors,
+                },
+            )
+            return return_status
         live_elo_registration = _register_completed_live_map_for_elo(
             series_key=series_id,
             series_url=series_url,
