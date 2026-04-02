@@ -904,6 +904,52 @@ def test_send_message_admin_only_mirrors_only_to_primary_vk_peer(tmp_path, monke
     assert vk_peer_ids == ["717099073"]
 
 
+def test_send_message_can_skip_vk_mirror_for_admin_reply(tmp_path, monkeypatch) -> None:
+    import functions
+
+    state_path = tmp_path / "telegram_subscribers_state.json"
+    legacy_path = tmp_path / "legacy_telegram_subscribers_state.json"
+    state_path.write_text(
+        json.dumps({"chat_ids": ["100"], "last_update_id": 0}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(functions, "TELEGRAM_SUBSCRIBERS_STATE_PATH", state_path, raising=False)
+    monkeypatch.setattr(functions, "LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH", legacy_path, raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_id", "100", raising=False)
+    monkeypatch.setattr(functions.keys, "VK_GROUP_TOKEN", "vk-token", raising=False)
+    monkeypatch.setattr(functions.keys, "VK_GROUP_ID", "237301744", raising=False)
+    monkeypatch.setattr(functions.keys, "VK_PEER_IDS", ["717099073", "64086675"], raising=False)
+    monkeypatch.setattr(functions.keys, "VK_PEER_ID", "717099073", raising=False)
+    monkeypatch.setattr(functions.keys, "VK_API_VERSION", "5.199", raising=False)
+
+    telegram_calls: List[Dict[str, Any]] = []
+    vk_calls: List[Dict[str, Any]] = []
+
+    class _Response:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> Dict[str, Any]:
+            return {"ok": True, "result": {"message_id": 1}, "response": 1}
+
+    def _fake_post(url, **kwargs):
+        if "api.telegram.org" in url:
+            telegram_calls.append(dict(kwargs))
+            return _Response()
+        if "api.vk.com/method/messages.send" in url:
+            vk_calls.append(dict(kwargs))
+            return _Response()
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr(functions.requests, "post", _fake_post)
+
+    assert functions.send_message("admin tail reply", admin_only=True, mirror_to_vk=False) is True
+    assert len(telegram_calls) == 1
+    assert vk_calls == []
+
+
 def test_send_message_can_succeed_via_vk_when_telegram_fails(tmp_path, monkeypatch) -> None:
     import functions
 
@@ -1171,16 +1217,27 @@ def test_send_admin_log_tail_sends_one_message_per_match(monkeypatch) -> None:
             "   URL: dltv.org/matches/2/newer-match",
         ]
     )
-    sent_messages: List[str] = []
+    sent_messages: List[Dict[str, Any]] = []
+    requested_limits: List[int] = []
 
-    monkeypatch.setattr(runtime, "_build_recent_match_summaries_text", lambda limit=10: payload)
-    monkeypatch.setattr(runtime, "send_message", lambda message, admin_only=True: sent_messages.append(str(message)))
+    def _fake_build_recent_match_summaries_text(limit=10, scan_lines=12000):
+        requested_limits.append(int(limit))
+        return payload
+
+    def _fake_send_message(message, **kwargs):
+        sent_messages.append({"message": str(message), "kwargs": dict(kwargs)})
+
+    monkeypatch.setattr(runtime, "_build_recent_match_summaries_text", _fake_build_recent_match_summaries_text)
+    monkeypatch.setattr(runtime, "send_message", _fake_send_message)
 
     runtime._send_admin_log_tail(line_count=100)
 
+    assert requested_limits == [4]
     assert len(sent_messages) == 2
-    assert "dltv.org/matches/1/older-match" in sent_messages[0]
-    assert "dltv.org/matches/2/newer-match" in sent_messages[1]
+    assert "dltv.org/matches/1/older-match" in sent_messages[0]["message"]
+    assert "dltv.org/matches/2/newer-match" in sent_messages[1]["message"]
+    assert sent_messages[0]["kwargs"]["admin_only"] is True
+    assert sent_messages[0]["kwargs"]["mirror_to_vk"] is False
 
 
 def test_load_telegram_subscribers_state_merges_primary_and_legacy(tmp_path, monkeypatch) -> None:

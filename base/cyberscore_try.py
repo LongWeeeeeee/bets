@@ -4405,7 +4405,7 @@ def _split_admin_match_summary_messages(payload: str) -> List[str]:
 
 def _send_admin_log_tail(*, line_count: int = 100) -> None:
     scan_lines = max(2000, int(line_count) * 120)
-    tail_text = _build_recent_match_summaries_text(limit=10, scan_lines=scan_lines)
+    tail_text = _build_recent_match_summaries_text(limit=4, scan_lines=scan_lines)
     messages = _split_admin_match_summary_messages(tail_text)
     if not messages:
         messages = [tail_text]
@@ -4414,7 +4414,7 @@ def _send_admin_log_tail(*, line_count: int = 100) -> None:
             prefix = ""
             if idx > 1:
                 prefix = f"[part {idx}] "
-            send_message(f"{prefix}{chunk}", admin_only=True)
+            send_message(f"{prefix}{chunk}", admin_only=True, mirror_to_vk=False)
 
 
 def _build_self_restart_command(raw_odds: Any) -> Tuple[str, Path]:
@@ -4438,6 +4438,7 @@ def _restart_current_runtime_from_admin_command(raw_odds: Any) -> None:
         send_message(
             f"🔄 Перезапускаю bot.\nmode={_runtime_instance_mode_label(raw_odds)}\nlog={log_path.name}",
             admin_only=True,
+            mirror_to_vk=False,
         )
     except Exception as exc:
         print(f"⚠️ Не удалось отправить admin restart ack: {exc}")
@@ -4469,7 +4470,11 @@ def _handle_pending_telegram_admin_commands(raw_odds: Any) -> None:
                 _send_admin_log_tail(line_count=100)
             except Exception as exc:
                 try:
-                    send_message(f"⚠️ tail_log command failed: {exc}", admin_only=True)
+                    send_message(
+                        f"⚠️ tail_log command failed: {exc}",
+                        admin_only=True,
+                        mirror_to_vk=False,
+                    )
                 except Exception:
                     pass
             continue

@@ -1479,7 +1479,13 @@ def _send_message_to_vk(message: str, *, admin_only: bool = False) -> bool:
     return False
 
 
-def send_message(message, *, require_delivery: bool = False, admin_only: bool = False):
+def send_message(
+    message,
+    *,
+    require_delivery: bool = False,
+    admin_only: bool = False,
+    mirror_to_vk: bool = True,
+):
     if admin_only:
         target_chat_ids = _get_admin_telegram_chat_ids()
         reply_markup = _build_admin_telegram_reply_markup()
@@ -1520,10 +1526,11 @@ def send_message(message, *, require_delivery: bool = False, admin_only: bool = 
     if terminal_chat_errors:
         _remove_telegram_subscribers([chat_id for chat_id, _ in terminal_chat_errors])
 
-    try:
-        vk_delivered = _send_message_to_vk(message, admin_only=admin_only)
-    except Exception as exc:
-        logger.warning("VK mirror failed: %s", exc)
+    if mirror_to_vk:
+        try:
+            vk_delivered = _send_message_to_vk(message, admin_only=admin_only)
+        except Exception as exc:
+            logger.warning("VK mirror failed: %s", exc)
 
     if delivered:
         if uncertain_errors:
@@ -1538,11 +1545,11 @@ def send_message(message, *, require_delivery: bool = False, admin_only: bool = 
                 delivered,
                 [chat_id for chat_id, _ in hard_errors],
             )
-        if not vk_delivered and _vk_is_enabled():
+        if mirror_to_vk and not vk_delivered and _vk_is_enabled():
             logger.warning("VK mirror did not confirm delivery for message mirrored after Telegram success")
         return True
 
-    if vk_delivered:
+    if mirror_to_vk and vk_delivered:
         if uncertain_errors or hard_errors or terminal_chat_errors:
             logger.warning(
                 "Telegram delivery failed, but VK mirror succeeded; uncertain=%s hard=%s terminal=%s",
