@@ -534,6 +534,31 @@ def test_parse_draft_and_positions_uses_live_league_players_for_account_ids() ->
     assert dire["pos5"]["account_id"] == 10110
 
 
+def test_zero_players_proxy_ban_diagnostics_requires_fast_picks_and_zero_counts(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "USE_PROXY", True, raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY", "http://proxy.local", raising=False)
+
+    diag = runtime._zero_players_proxy_ban_diagnostics(
+        "Слишком мало игроков: radiant=0, dire=0",
+        {"fast_picks": [1, 2, 3]},
+    )
+
+    assert diag is not None
+    assert diag["radiant"] == 0
+    assert diag["dire"] == 0
+    assert diag["proxy_in_use"] is True
+    assert diag["proxy_marker"] == "http://proxy.local"
+
+    assert runtime._zero_players_proxy_ban_diagnostics(
+        "Слишком мало игроков: radiant=1, dire=4",
+        {"fast_picks": [1]},
+    ) is None
+    assert runtime._zero_players_proxy_ban_diagnostics(
+        "Слишком мало игроков: radiant=0, dire=0",
+        {},
+    ) is None
+
+
 def test_functions_star_thresholds_require_real_file(tmp_path, monkeypatch) -> None:
     import functions
 
@@ -2582,6 +2607,93 @@ def test_check_head_skips_player_denylist_after_draft_parse(monkeypatch) -> None
     assert add_url_calls[-1]["reason"] == "skip_player_denylist"
     assert add_url_calls[-1]["details"]["skipped_player_hits"]["radiant"] == []
     assert add_url_calls[-1]["details"]["skipped_player_hits"]["dire"] == [21270361]
+
+
+def test_check_head_retries_direct_after_zero_player_proxy_parse_error(monkeypatch, capsys) -> None:
+    heads, bodies = _build_heads_and_bodies()
+
+    monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", False, raising=False)
+    monkeypatch.setattr(runtime, "_ensure_delayed_sender_started", lambda: None)
+    monkeypatch.setattr(runtime, "_is_url_processed", lambda _url: False)
+    monkeypatch.setattr(runtime, "_drop_delayed_match", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(runtime, "_skip_dispatch_for_processed_url", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(runtime, "USE_PROXY", True, raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY", "http://proxy.local", raising=False)
+
+    page_html = "<html><script>$.get('/live/test-zero-player-retry.json')</script></html>"
+    monkeypatch.setattr(
+        runtime,
+        "make_request_with_retry",
+        lambda *_args, **_kwargs: _FakeTextResponse(page_html, status_code=200),
+    )
+
+    live_data = {
+        "fast_picks": [1],
+        "db": {
+            "first_team": {"is_radiant": True, "title": "Radiant Team", "team_id": 1001, "id": 1001},
+            "second_team": {"title": "Dire Team", "team_id": 2002, "id": 2002},
+        },
+        "live_league_data": {
+            "match": {},
+            "radiant_team": {"team_id": 1001},
+            "dire_team": {"team_id": 2002},
+        },
+        "radiant_lead": 0.0,
+        "game_time": 420.0,
+    }
+    monkeypatch.setattr(
+        runtime.requests,
+        "get",
+        lambda *_args, **_kwargs: _FakeJsonResponse(live_data, status_code=200),
+    )
+
+    team_id_calls = {"count": 0}
+
+    def _extract_candidate_team_ids(*_args, **_kwargs):
+        team_id_calls["count"] += 1
+        return [1001] if team_id_calls["count"] == 1 else [2002]
+
+    monkeypatch.setattr(runtime, "_extract_candidate_team_ids", _extract_candidate_team_ids)
+    monkeypatch.setattr(
+        runtime,
+        "_ensure_known_team_or_add_to_tier2",
+        lambda team_ids, _team_name, _match_key: (True, int(team_ids[0])),
+    )
+    monkeypatch.setattr(runtime, "_determine_star_signal_match_tier", lambda *_args, **_kwargs: 1)
+
+    parse_calls = {"count": 0}
+
+    def _parse(*_args, **_kwargs):
+        parse_calls["count"] += 1
+        if parse_calls["count"] == 1:
+            return None, None, "Слишком мало игроков: radiant=0, dire=0", "", []
+        return _valid_heroes(0, positions=5), _valid_heroes(100, positions=5), None, "", []
+
+    monkeypatch.setattr(runtime, "parse_draft_and_positions", _parse)
+
+    direct_http_calls: List[Dict[str, Any]] = []
+
+    def _direct_http_get(_url: str, **kwargs):
+        direct_http_calls.append(dict(kwargs))
+        return _FakeTextResponse("<html><body>direct retry page</body></html>", status_code=200)
+
+    monkeypatch.setattr(runtime, "_perform_http_get", _direct_http_get)
+    monkeypatch.setattr(
+        runtime,
+        "validate_heroes_data",
+        lambda *_args, **_kwargs: (False, "forced stop after direct retry"),
+    )
+
+    status = runtime.check_head(heads, bodies, 0, set(), return_status="draft...")
+
+    assert status == "draft..."
+    assert parse_calls["count"] == 2
+    assert direct_http_calls
+    assert direct_http_calls[-1].get("proxies") is None
+
+    output = capsys.readouterr().out
+    assert "Подозрение на забаненный/битый прокси" in output
+    assert "Direct retry восстановил HTML lineups" in output
 
 
 def test_problem_candidates_are_shown_without_odds(monkeypatch) -> None:

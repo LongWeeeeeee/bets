@@ -11052,6 +11052,103 @@ def parse_draft_and_positions(soup, data, radiant_team_name, dire_team_name):
     return radiant_heroes_and_pos, dire_heroes_and_pos, None, problem_summary, problem_candidates
 
 
+_TOO_FEW_PLAYERS_RE = re.compile(
+    r"Слишком мало игроков:\s*radiant=(?P<radiant>\d+),\s*dire=(?P<dire>\d+)"
+)
+
+
+def _extract_too_few_players_counts(parse_error: Any) -> Optional[Dict[str, int]]:
+    if not isinstance(parse_error, str):
+        return None
+    match = _TOO_FEW_PLAYERS_RE.search(parse_error)
+    if match is None:
+        return None
+    try:
+        return {
+            "radiant": int(match.group("radiant")),
+            "dire": int(match.group("dire")),
+        }
+    except (TypeError, ValueError):
+        return None
+
+
+def _zero_players_proxy_ban_diagnostics(parse_error: Any, data: Any) -> Optional[Dict[str, Any]]:
+    counts = _extract_too_few_players_counts(parse_error)
+    if not counts:
+        return None
+    if not isinstance(data, dict):
+        return None
+    fast_picks = data.get("fast_picks")
+    if not fast_picks:
+        return None
+    if counts["radiant"] > 0 and counts["dire"] > 0:
+        return None
+    proxy_marker = _get_current_proxy_marker()
+    return {
+        "radiant": counts["radiant"],
+        "dire": counts["dire"],
+        "fast_picks_count": len(fast_picks) if isinstance(fast_picks, (list, tuple)) else 1,
+        "proxy_marker": proxy_marker,
+        "proxy_in_use": bool(USE_PROXY and proxy_marker != "__direct__"),
+    }
+
+
+def _retry_match_page_direct_after_zero_players(
+    *,
+    url: str,
+    data: dict,
+    radiant_team_name: str,
+    dire_team_name: str,
+    verbose_match_log: bool,
+) -> tuple[Any, Any, Any, Any, Any]:
+    request_headers = globals().get(
+        "headers",
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36"
+            )
+        },
+    )
+    print("   🌐 Пробую direct retry страницы матча после zero-player lineups...")
+    try:
+        direct_response = _perform_http_get(
+            url,
+            headers=request_headers,
+            verify=False,
+            timeout=10,
+        )
+    except _http_request_exceptions() as exc:
+        print(f"   ⚠️ Direct retry страницы матча не удался: {type(exc).__name__}: {exc}")
+        logger.warning("Direct retry after zero-player lineups failed for %s: %s", url, exc)
+        return None, None, "direct_retry_request_failed", "", []
+    if direct_response.status_code != 200:
+        print(f"   ⚠️ Direct retry страницы матча вернул статус {direct_response.status_code}")
+        logger.warning(
+            "Direct retry after zero-player lineups returned status %s for %s",
+            direct_response.status_code,
+            url,
+        )
+        return None, None, f"direct_retry_status_{direct_response.status_code}", "", []
+    if verbose_match_log:
+        print("   ✅ Direct retry страницы матча получен")
+        parse_result = parse_draft_and_positions(
+            BeautifulSoup(direct_response.text, "lxml"),
+            data,
+            radiant_team_name,
+            dire_team_name,
+        )
+    else:
+        with contextlib.redirect_stdout(io.StringIO()):
+            parse_result = parse_draft_and_positions(
+                BeautifulSoup(direct_response.text, "lxml"),
+                data,
+                radiant_team_name,
+                dire_team_name,
+            )
+    return parse_result
+
+
 def check_head(heads, bodies, i, maps_data, return_status=None):
         # Глобальные переменные для модели киллов и enhanced predictor
         global kills_model_data, kills_stats, enhanced_predictor, monitored_matches
@@ -11604,6 +11701,64 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     soup, data, radiant_team_name_original, dire_team_name_original
                 )
         
+        if parse_error:
+            zero_players_diag = _zero_players_proxy_ban_diagnostics(parse_error, data)
+            if zero_players_diag:
+                proxy_marker = str(zero_players_diag.get("proxy_marker") or "__unknown__")
+                radiant_count = int(zero_players_diag.get("radiant") or 0)
+                dire_count = int(zero_players_diag.get("dire") or 0)
+                diag_message = (
+                    "fast_picks есть, но HTML lineups вернул 0 игроков "
+                    f"(radiant={radiant_count}, dire={dire_count}, proxy={proxy_marker})"
+                )
+                if bool(zero_players_diag.get("proxy_in_use")):
+                    print(f"   ⚠️ Подозрение на забаненный/битый прокси: {diag_message}")
+                    logger.warning(
+                        "MATCH_PAGE_PROXY_SUSPECTED_ZERO_PLAYERS url=%s proxy=%s "
+                        "radiant=%s dire=%s",
+                        check_uniq_url,
+                        proxy_marker,
+                        radiant_count,
+                        dire_count,
+                    )
+                    (
+                        direct_radiant_heroes_and_pos,
+                        direct_dire_heroes_and_pos,
+                        direct_parse_error,
+                        direct_problem_summary,
+                        direct_problem_candidates,
+                    ) = _retry_match_page_direct_after_zero_players(
+                        url=url,
+                        data=data,
+                        radiant_team_name=radiant_team_name_original,
+                        dire_team_name=dire_team_name_original,
+                        verbose_match_log=verbose_match_log,
+                    )
+                    if not direct_parse_error:
+                        print("   ✅ Direct retry восстановил HTML lineups, продолжаем обработку")
+                        logger.info(
+                            "MATCH_PAGE_DIRECT_RETRY_RECOVERED url=%s old_proxy=%s",
+                            check_uniq_url,
+                            proxy_marker,
+                        )
+                        radiant_heroes_and_pos = direct_radiant_heroes_and_pos
+                        dire_heroes_and_pos = direct_dire_heroes_and_pos
+                        parse_error = None
+                        problem_summary = direct_problem_summary
+                        problem_candidates = direct_problem_candidates
+                    else:
+                        if _rotate_to_untried_proxy({proxy_marker}):
+                            print("   🔄 Переключаю прокси после zero-player lineups")
+                        else:
+                            print("   ℹ️ Дополнительных прокси для match-page retry нет")
+                else:
+                    print(f"   ⚠️ HTML страницы матча вернул 0 игроков даже без прокси: {diag_message}")
+                    logger.warning(
+                        "MATCH_PAGE_ZERO_PLAYERS_WITHOUT_PROXY url=%s radiant=%s dire=%s",
+                        check_uniq_url,
+                        radiant_count,
+                        dire_count,
+                    )
         if parse_error:
             # Ошибка парсинга - пропускаем матч
             print(f"   ❌ Ошибка парсинга драфта: {parse_error}")
