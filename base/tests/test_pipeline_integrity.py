@@ -1024,6 +1024,21 @@ def test_send_message_admin_only_targets_primary_chat_only(tmp_path, monkeypatch
     assert reply_markups[0]["keyboard"][0][1]["text"] == "reboot"
 
 
+def test_telegram_proxy_fallback_does_not_reuse_bookmaker_proxy(monkeypatch) -> None:
+    import functions
+
+    monkeypatch.setattr(functions, "TELEGRAM_SEND_PROXY_FALLBACK_ENABLED", True, raising=False)
+    monkeypatch.delattr(functions.keys, "TELEGRAM_PROXIES", raising=False)
+    monkeypatch.setattr(
+        functions.keys,
+        "BOOKMAKER_PROXIES",
+        {"http": "http://bookmaker-proxy", "https": "http://bookmaker-proxy"},
+        raising=False,
+    )
+
+    assert functions._get_telegram_proxy_fallback() == {}
+
+
 def test_drain_telegram_admin_commands_extracts_restart_command(tmp_path, monkeypatch) -> None:
     import functions
 

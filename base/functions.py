@@ -617,7 +617,7 @@ TELEGRAM_SUBSCRIBERS_STATE_PATH = (
     else DEFAULT_TELEGRAM_SUBSCRIBERS_STATE_PATH
 )
 TELEGRAM_SEND_PROXY_FALLBACK_ENABLED = str(
-    os.getenv("TELEGRAM_SEND_PROXY_FALLBACK_ENABLED", "1")
+    os.getenv("TELEGRAM_SEND_PROXY_FALLBACK_ENABLED", "0")
 ).strip().lower() in {"1", "true", "yes", "y", "on"}
 TELEGRAM_SEND_CURL_FALLBACK_ENABLED = str(
     os.getenv("TELEGRAM_SEND_CURL_FALLBACK_ENABLED", "1")
@@ -944,7 +944,7 @@ def _should_try_telegram_network_fallback(exc: Exception) -> bool:
 def _get_telegram_proxy_fallback() -> dict:
     if not TELEGRAM_SEND_PROXY_FALLBACK_ENABLED:
         return {}
-    raw_proxies = getattr(keys, "BOOKMAKER_PROXIES", None)
+    raw_proxies = getattr(keys, "TELEGRAM_PROXIES", None)
     if not isinstance(raw_proxies, dict):
         return {}
     http_proxy = str(raw_proxies.get("http") or raw_proxies.get("https") or "").strip()
@@ -1068,32 +1068,37 @@ def _recover_telegram_network_send(
     delivery_uncertain: bool,
 ):
     if _should_try_telegram_network_fallback(exc):
-        try:
-            logger.warning("%s; trying proxy fallback", error_message)
-            return _send_message_via_proxy_request(url, payload)
-        except requests.exceptions.RequestException as proxy_exc:
-            logger.error("Telegram proxy fallback failed: %s", proxy_exc)
-            if _should_try_telegram_curl_fallback(proxy_exc):
-                logger.warning("Telegram proxy fallback failed; trying curl fallback")
-                chat_id = payload.get("chat_id") if isinstance(payload, dict) else None
-                return _send_message_via_curl_to_chat(chat_id, message)
-            return _telegram_raise_delivery_error(
-                f"{error_message}: {proxy_exc}",
-                require_delivery=require_delivery,
-                delivery_uncertain=isinstance(
-                    proxy_exc,
-                    (
-                        requests.exceptions.ReadTimeout,
-                        requests.exceptions.ConnectionError,
-                        requests.exceptions.SSLError,
+        if _get_telegram_proxy_fallback():
+            try:
+                logger.warning("%s; trying proxy fallback", error_message)
+                return _send_message_via_proxy_request(url, payload)
+            except requests.exceptions.RequestException as proxy_exc:
+                logger.error("Telegram proxy fallback failed: %s", proxy_exc)
+                if _should_try_telegram_curl_fallback(proxy_exc):
+                    logger.warning("Telegram proxy fallback failed; trying curl fallback")
+                    chat_id = payload.get("chat_id") if isinstance(payload, dict) else None
+                    return _send_message_via_curl_to_chat(chat_id, message)
+                return _telegram_raise_delivery_error(
+                    f"{error_message}: {proxy_exc}",
+                    require_delivery=require_delivery,
+                    delivery_uncertain=isinstance(
+                        proxy_exc,
+                        (
+                            requests.exceptions.ReadTimeout,
+                            requests.exceptions.ConnectionError,
+                            requests.exceptions.SSLError,
+                        ),
                     ),
-                ),
-            )
-        except TelegramSendError:
-            if _should_try_telegram_curl_fallback(exc):
-                logger.warning("Telegram proxy unavailable; trying curl fallback")
-                chat_id = payload.get("chat_id") if isinstance(payload, dict) else None
-                return _send_message_via_curl_to_chat(chat_id, message)
+                )
+            except TelegramSendError:
+                if _should_try_telegram_curl_fallback(exc):
+                    logger.warning("Telegram proxy unavailable; trying curl fallback")
+                    chat_id = payload.get("chat_id") if isinstance(payload, dict) else None
+                    return _send_message_via_curl_to_chat(chat_id, message)
+        elif _should_try_telegram_curl_fallback(exc):
+            logger.warning("Telegram direct send failed; trying curl fallback")
+            chat_id = payload.get("chat_id") if isinstance(payload, dict) else None
+            return _send_message_via_curl_to_chat(chat_id, message)
     return _telegram_raise_delivery_error(
         f"{error_message}: {exc}",
         require_delivery=require_delivery,
@@ -1228,7 +1233,7 @@ def _fetch_telegram_updates_from_api(offset: int) -> tuple[list[dict], int]:
     try:
         response = requests.post(url, json=payload, timeout=TELEGRAM_SEND_TIMEOUT_SECONDS)
     except requests.exceptions.RequestException as exc:
-        if _should_try_telegram_network_fallback(exc):
+        if _should_try_telegram_network_fallback(exc) and _get_telegram_proxy_fallback():
             response = _send_message_via_proxy_request(url, payload)
         else:
             raise
