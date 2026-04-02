@@ -1343,7 +1343,7 @@ def _vk_is_enabled() -> bool:
     return bool(
         getattr(keys, "VK_GROUP_TOKEN", "")
         and getattr(keys, "VK_GROUP_ID", "")
-        and getattr(keys, "VK_PEER_ID", "")
+        and _get_vk_peer_ids()
     )
 
 
@@ -1355,8 +1355,23 @@ def _get_vk_group_id() -> str:
     return str(getattr(keys, "VK_GROUP_ID", "") or "").strip()
 
 
-def _get_vk_peer_id() -> str:
-    return str(getattr(keys, "VK_PEER_ID", "") or "").strip()
+def _get_vk_peer_ids() -> list[str]:
+    raw_peer_ids = getattr(keys, "VK_PEER_IDS", None)
+    if isinstance(raw_peer_ids, (list, tuple, set)):
+        candidates = [str(peer_id or "").strip() for peer_id in raw_peer_ids]
+    elif raw_peer_ids:
+        candidates = [str(raw_peer_ids).strip()]
+    else:
+        candidates = [str(getattr(keys, "VK_PEER_ID", "") or "").strip()]
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for peer_id in candidates:
+        if not peer_id or peer_id in seen:
+            continue
+        seen.add(peer_id)
+        result.append(peer_id)
+    return result
 
 
 def _get_vk_api_version() -> str:
@@ -1391,32 +1406,53 @@ def _send_message_to_vk(message: str) -> bool:
     if not _vk_is_enabled():
         return False
     url = "https://api.vk.com/method/messages.send"
-    delivered = False
-    for chunk in _split_vk_text_chunks(message):
-        response = requests.post(
-            url,
-            data={
-                "access_token": _get_vk_group_token(),
-                "group_id": _get_vk_group_id(),
-                "peer_id": _get_vk_peer_id(),
-                "random_id": str(uuid.uuid4().int & 0x7FFFFFFF),
-                "message": str(chunk),
-                "v": _get_vk_api_version(),
-            },
-            timeout=VK_SEND_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        if not isinstance(payload, dict):
-            raise RuntimeError("VK send invalid JSON payload")
-        if payload.get("error"):
-            error_payload = payload.get("error") or {}
-            error_msg = str(error_payload.get("error_msg") or "unknown VK error")
-            raise RuntimeError(f"VK send rejected response: {error_msg}")
-        if payload.get("response") is None:
-            raise RuntimeError("VK send missing response id")
-        delivered = True
-    return delivered
+    delivered_peer_ids: list[str] = []
+    errors: list[tuple[str, Exception]] = []
+    for peer_id in _get_vk_peer_ids():
+        peer_delivered = False
+        try:
+            for chunk in _split_vk_text_chunks(message):
+                response = requests.post(
+                    url,
+                    data={
+                        "access_token": _get_vk_group_token(),
+                        "group_id": _get_vk_group_id(),
+                        "peer_id": peer_id,
+                        "random_id": str(uuid.uuid4().int & 0x7FFFFFFF),
+                        "message": str(chunk),
+                        "v": _get_vk_api_version(),
+                    },
+                    timeout=VK_SEND_TIMEOUT_SECONDS,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if not isinstance(payload, dict):
+                    raise RuntimeError("VK send invalid JSON payload")
+                if payload.get("error"):
+                    error_payload = payload.get("error") or {}
+                    error_msg = str(error_payload.get("error_msg") or "unknown VK error")
+                    raise RuntimeError(f"VK send rejected response: {error_msg}")
+                if payload.get("response") is None:
+                    raise RuntimeError("VK send missing response id")
+                peer_delivered = True
+        except Exception as exc:
+            errors.append((peer_id, exc))
+            continue
+        if peer_delivered:
+            delivered_peer_ids.append(peer_id)
+
+    if delivered_peer_ids:
+        if errors:
+            logger.warning(
+                "VK broadcast partial failures: delivered=%s failed=%s",
+                delivered_peer_ids,
+                [peer_id for peer_id, _ in errors],
+            )
+        return True
+
+    if errors:
+        raise errors[0][1]
+    return False
 
 
 def send_message(message, *, require_delivery: bool = False, admin_only: bool = False):
