@@ -95,13 +95,10 @@ SKIPPED_LIVE_LEAGUE_TITLES = {
 
 # Dota account ids / steam ids for lineups we never want to process in live runtime.
 SKIPPED_PLAYER_ACCOUNT_IDS = {
-    # Ilbirs eSports observed lineups from live ELO snapshot history.
+    # Current Ilbirs eSports lineup from the latest live ELO snapshot segment.
     21270361,
-    34505203,
     187123736,
     326327879,
-    405499625,
-    851295431,
     860145568,
     1054936816,
 }
