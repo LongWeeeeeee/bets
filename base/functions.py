@@ -13,7 +13,7 @@ import uuid
 from collections import deque
 from pathlib import Path
 from itertools import chain, permutations
-from typing import ClassVar, Optional
+from typing import Any, ClassVar, Optional
 
 import pytz
 import requests
@@ -1374,6 +1374,27 @@ def _get_vk_peer_ids() -> list[str]:
     return result
 
 
+def _get_vk_admin_peer_id() -> str:
+    peer_ids = _get_vk_peer_ids()
+    return peer_ids[0] if peer_ids else ""
+
+
+def _is_vk_public_bet_message(message: Any) -> bool:
+    return str(message or "").lstrip().startswith("СТАВКА НА ")
+
+
+def _get_vk_target_peer_ids(message: Any, *, admin_only: bool = False) -> list[str]:
+    peer_ids = _get_vk_peer_ids()
+    if not peer_ids:
+        return []
+    admin_peer_id = _get_vk_admin_peer_id()
+    if admin_only:
+        return [admin_peer_id] if admin_peer_id else []
+    if _is_vk_public_bet_message(message):
+        return peer_ids
+    return [admin_peer_id] if admin_peer_id else []
+
+
 def _get_vk_api_version() -> str:
     return str(getattr(keys, "VK_API_VERSION", "5.199") or "5.199").strip()
 
@@ -1402,13 +1423,16 @@ def _split_vk_text_chunks(text: str, *, max_chars: int = 3500) -> list[str]:
     return chunks or [raw_text[:max_chars]]
 
 
-def _send_message_to_vk(message: str) -> bool:
+def _send_message_to_vk(message: str, *, admin_only: bool = False) -> bool:
     if not _vk_is_enabled():
+        return False
+    target_peer_ids = _get_vk_target_peer_ids(message, admin_only=admin_only)
+    if not target_peer_ids:
         return False
     url = "https://api.vk.com/method/messages.send"
     delivered_peer_ids: list[str] = []
     errors: list[tuple[str, Exception]] = []
-    for peer_id in _get_vk_peer_ids():
+    for peer_id in target_peer_ids:
         peer_delivered = False
         try:
             for chunk in _split_vk_text_chunks(message):
@@ -1497,7 +1521,7 @@ def send_message(message, *, require_delivery: bool = False, admin_only: bool = 
         _remove_telegram_subscribers([chat_id for chat_id, _ in terminal_chat_errors])
 
     try:
-        vk_delivered = _send_message_to_vk(message)
+        vk_delivered = _send_message_to_vk(message, admin_only=admin_only)
     except Exception as exc:
         logger.warning("VK mirror failed: %s", exc)
 
