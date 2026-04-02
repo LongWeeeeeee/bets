@@ -436,6 +436,18 @@ def test_build_recent_match_summaries_text_orders_from_older_to_newer(tmp_path, 
     assert payload.index("dltv.org/matches/1/older-match") < payload.index("dltv.org/matches/2/newer-match")
 
 
+def test_read_log_tail_lines_returns_recent_lines_without_full_scan(tmp_path) -> None:
+    log_path = tmp_path / "log.txt"
+    log_path.write_text(
+        "\n".join(f"line-{idx}" for idx in range(1, 501)),
+        encoding="utf-8",
+    )
+
+    lines = runtime._read_log_tail_lines(log_path, max_lines=5, chunk_size=32, max_bytes=256)
+
+    assert lines == ["line-496", "line-497", "line-498", "line-499", "line-500"]
+
+
 def test_parse_draft_and_positions_uses_live_league_players_for_account_ids() -> None:
     html = """
     <div class="lineups__team">

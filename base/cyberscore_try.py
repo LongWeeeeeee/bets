@@ -4125,13 +4125,62 @@ def _normalize_admin_summary_line(raw_line: str) -> str:
     return _ADMIN_SUMMARY_MATCH_URL_RE.sub(r"\1", raw)
 
 
-def _build_recent_match_summaries_text(*, limit: int = 10) -> str:
+def _read_log_tail_lines(
+    log_path: Path,
+    *,
+    max_lines: int = 12000,
+    chunk_size: int = 65536,
+    max_bytes: int = 2_000_000,
+) -> List[str]:
+    target_lines = max(1, int(max_lines))
+    target_bytes = max(chunk_size, int(max_bytes))
+    try:
+        file_size = int(log_path.stat().st_size)
+    except OSError:
+        return []
+    if file_size <= 0:
+        return []
+
+    chunks: List[bytes] = []
+    bytes_read = 0
+    newline_count = 0
+    position = file_size
+
+    with log_path.open("rb") as handle:
+        while position > 0 and bytes_read < target_bytes and newline_count <= target_lines:
+            read_size = min(chunk_size, position, target_bytes - bytes_read)
+            position -= read_size
+            handle.seek(position)
+            chunk = handle.read(read_size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            bytes_read += len(chunk)
+            newline_count += chunk.count(b"\n")
+
+    if not chunks:
+        return []
+
+    raw_bytes = b"".join(reversed(chunks))
+    if position > 0:
+        first_newline = raw_bytes.find(b"\n")
+        if first_newline >= 0:
+            raw_bytes = raw_bytes[first_newline + 1 :]
+
+    decoded = raw_bytes.decode("utf-8", errors="replace")
+    lines = decoded.splitlines()
+    if len(lines) > target_lines:
+        lines = lines[-target_lines:]
+    return lines
+
+
+def _build_recent_match_summaries_text(*, limit: int = 10, scan_lines: int = 12000) -> str:
     log_path = PROJECT_ROOT / "log.txt"
     if not log_path.exists():
         return f"log.txt not found: {log_path}"
 
     try:
-        raw_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        raw_lines = _read_log_tail_lines(log_path, max_lines=scan_lines)
     except Exception as exc:
         return f"failed to read log.txt: {exc}"
 
@@ -4264,7 +4313,8 @@ def _split_admin_match_summary_messages(payload: str) -> List[str]:
 
 
 def _send_admin_log_tail(*, line_count: int = 100) -> None:
-    tail_text = _build_recent_match_summaries_text(limit=10)
+    scan_lines = max(2000, int(line_count) * 120)
+    tail_text = _build_recent_match_summaries_text(limit=10, scan_lines=scan_lines)
     messages = _split_admin_match_summary_messages(tail_text)
     if not messages:
         messages = [tail_text]
