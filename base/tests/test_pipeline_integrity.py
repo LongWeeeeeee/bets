@@ -697,6 +697,97 @@ def test_send_message_broadcasts_to_discovered_subscribers(tmp_path, monkeypatch
     assert state["last_update_id"] == 10
 
 
+def test_send_message_mirrors_to_vk_once_per_broadcast(tmp_path, monkeypatch) -> None:
+    import functions
+
+    state_path = tmp_path / "telegram_subscribers_state.json"
+    legacy_path = tmp_path / "legacy_telegram_subscribers_state.json"
+    monkeypatch.setattr(functions, "TELEGRAM_SUBSCRIBERS_STATE_PATH", state_path, raising=False)
+    monkeypatch.setattr(functions, "LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH", legacy_path, raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_id", "100", raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_ids", [], raising=False)
+    monkeypatch.setattr(functions.keys, "VK_GROUP_TOKEN", "vk-token", raising=False)
+    monkeypatch.setattr(functions.keys, "VK_GROUP_ID", "237301744", raising=False)
+    monkeypatch.setattr(functions.keys, "VK_PEER_ID", "717099073", raising=False)
+    monkeypatch.setattr(functions.keys, "VK_API_VERSION", "5.199", raising=False)
+
+    class _Response:
+        def __init__(self, payload: Dict[str, Any]) -> None:
+            self._payload = payload
+            self.status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> Dict[str, Any]:
+            return self._payload
+
+    delivered_telegram: List[str] = []
+    delivered_vk: List[Dict[str, Any]] = []
+
+    def _fake_post(url, **kwargs):
+        if url.endswith("/getUpdates"):
+            return _Response(
+                {
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 10,
+                            "message": {
+                                "chat": {"id": 200},
+                                "from": {"id": 200},
+                            },
+                        }
+                    ],
+                }
+            )
+        if "api.vk.com/method/messages.send" in url:
+            delivered_vk.append(dict(kwargs["data"]))
+            return _Response({"response": 42})
+        delivered_telegram.append(str(kwargs["json"]["chat_id"]))
+        return _Response({"ok": True, "result": {"message_id": 1}})
+
+    monkeypatch.setattr(functions.requests, "post", _fake_post)
+
+    assert functions.send_message("broadcast", require_delivery=True) is True
+    assert delivered_telegram == ["100", "200"]
+    assert len(delivered_vk) == 1
+    assert delivered_vk[0]["peer_id"] == "717099073"
+    assert delivered_vk[0]["message"] == "broadcast"
+
+
+def test_send_message_can_succeed_via_vk_when_telegram_fails(tmp_path, monkeypatch) -> None:
+    import functions
+
+    state_path = tmp_path / "telegram_subscribers_state.json"
+    legacy_path = tmp_path / "legacy_telegram_subscribers_state.json"
+    monkeypatch.setattr(functions, "TELEGRAM_SUBSCRIBERS_STATE_PATH", state_path, raising=False)
+    monkeypatch.setattr(functions, "LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH", legacy_path, raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_id", "100", raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_ids", [], raising=False)
+    monkeypatch.setattr(functions.keys, "VK_GROUP_TOKEN", "vk-token", raising=False)
+    monkeypatch.setattr(functions.keys, "VK_GROUP_ID", "237301744", raising=False)
+    monkeypatch.setattr(functions.keys, "VK_PEER_ID", "717099073", raising=False)
+
+    class _Response:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> Dict[str, Any]:
+            return {"response": 99}
+
+    def _fake_post(url, **kwargs):
+        if "api.vk.com/method/messages.send" in url:
+            return _Response()
+        raise functions.requests.exceptions.ConnectionError("telegram down")
+
+    monkeypatch.setattr(functions.requests, "post", _fake_post)
+
+    assert functions.send_message("vk fallback", require_delivery=True) is True
+
+
 def test_send_message_admin_only_targets_primary_chat_only(tmp_path, monkeypatch) -> None:
     import functions
 

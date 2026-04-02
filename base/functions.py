@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import threading
 import time
+import uuid
 from collections import deque
 from pathlib import Path
 from itertools import chain, permutations
@@ -31,6 +32,8 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+VK_SEND_TIMEOUT_SECONDS = 10
 
 class TelegramSendError(RuntimeError):
     def __init__(self, message: str, *, delivery_uncertain: bool = False) -> None:
@@ -1336,6 +1339,86 @@ def _remove_telegram_subscribers(chat_ids_to_remove: list[str]) -> None:
             logger.warning("Failed to remove Telegram subscribers %s: %s", chat_ids_to_remove, exc)
 
 
+def _vk_is_enabled() -> bool:
+    return bool(
+        getattr(keys, "VK_GROUP_TOKEN", "")
+        and getattr(keys, "VK_GROUP_ID", "")
+        and getattr(keys, "VK_PEER_ID", "")
+    )
+
+
+def _get_vk_group_token() -> str:
+    return str(getattr(keys, "VK_GROUP_TOKEN", "") or "").strip()
+
+
+def _get_vk_group_id() -> str:
+    return str(getattr(keys, "VK_GROUP_ID", "") or "").strip()
+
+
+def _get_vk_peer_id() -> str:
+    return str(getattr(keys, "VK_PEER_ID", "") or "").strip()
+
+
+def _get_vk_api_version() -> str:
+    return str(getattr(keys, "VK_API_VERSION", "5.199") or "5.199").strip()
+
+
+def _split_vk_text_chunks(text: str, *, max_chars: int = 3500) -> list[str]:
+    raw_text = str(text or "")
+    if len(raw_text) <= max_chars:
+        return [raw_text]
+    chunks: list[str] = []
+    current = ""
+    for line in raw_text.splitlines(keepends=True):
+        if len(current) + len(line) > max_chars and current:
+            chunks.append(current)
+            current = line
+            continue
+        if len(line) > max_chars:
+            if current:
+                chunks.append(current)
+                current = ""
+            for start in range(0, len(line), max_chars):
+                chunks.append(line[start : start + max_chars])
+            continue
+        current += line
+    if current:
+        chunks.append(current)
+    return chunks or [raw_text[:max_chars]]
+
+
+def _send_message_to_vk(message: str) -> bool:
+    if not _vk_is_enabled():
+        return False
+    url = "https://api.vk.com/method/messages.send"
+    delivered = False
+    for chunk in _split_vk_text_chunks(message):
+        response = requests.post(
+            url,
+            data={
+                "access_token": _get_vk_group_token(),
+                "group_id": _get_vk_group_id(),
+                "peer_id": _get_vk_peer_id(),
+                "random_id": str(uuid.uuid4().int & 0x7FFFFFFF),
+                "message": str(chunk),
+                "v": _get_vk_api_version(),
+            },
+            timeout=VK_SEND_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("VK send invalid JSON payload")
+        if payload.get("error"):
+            error_payload = payload.get("error") or {}
+            error_msg = str(error_payload.get("error_msg") or "unknown VK error")
+            raise RuntimeError(f"VK send rejected response: {error_msg}")
+        if payload.get("response") is None:
+            raise RuntimeError("VK send missing response id")
+        delivered = True
+    return delivered
+
+
 def send_message(message, *, require_delivery: bool = False, admin_only: bool = False):
     if admin_only:
         target_chat_ids = _get_admin_telegram_chat_ids()
@@ -1350,6 +1433,7 @@ def send_message(message, *, require_delivery: bool = False, admin_only: bool = 
     uncertain_errors = []
     terminal_chat_errors = []
     hard_errors = []
+    vk_delivered = False
 
     for chat_id in target_chat_ids:
         try:
@@ -1376,6 +1460,11 @@ def send_message(message, *, require_delivery: bool = False, admin_only: bool = 
     if terminal_chat_errors:
         _remove_telegram_subscribers([chat_id for chat_id, _ in terminal_chat_errors])
 
+    try:
+        vk_delivered = _send_message_to_vk(message)
+    except Exception as exc:
+        logger.warning("VK mirror failed: %s", exc)
+
     if delivered:
         if uncertain_errors:
             logger.warning(
@@ -1388,6 +1477,18 @@ def send_message(message, *, require_delivery: bool = False, admin_only: bool = 
                 "Telegram broadcast partial hard failures: delivered=%s failed=%s",
                 delivered,
                 [chat_id for chat_id, _ in hard_errors],
+            )
+        if not vk_delivered and _vk_is_enabled():
+            logger.warning("VK mirror did not confirm delivery for message mirrored after Telegram success")
+        return True
+
+    if vk_delivered:
+        if uncertain_errors or hard_errors or terminal_chat_errors:
+            logger.warning(
+                "Telegram delivery failed, but VK mirror succeeded; uncertain=%s hard=%s terminal=%s",
+                [chat_id for chat_id, _ in uncertain_errors],
+                [chat_id for chat_id, _ in hard_errors],
+                [chat_id for chat_id, _ in terminal_chat_errors],
             )
         return True
 
