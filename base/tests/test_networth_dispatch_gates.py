@@ -925,6 +925,46 @@ def test_early_star_late_core_same_sign_after_10min_uses_minus1500_gate(monkeypa
     assert details["dispatch_status_label"] == runtime.NETWORTH_STATUS_MIN10_LOSS_LE1500_SEND
 
 
+def test_early_star_late_core_same_sign_message_uses_core_support_label(monkeypatch) -> None:
+    case = BranchScenario(
+        name="early_star_late_core_same_sign_message",
+        game_time_seconds=10 * 60,
+        target_side="radiant",
+        target_networth_diff=-900,
+        has_early_star=True,
+        early_sign=1,
+        has_late_star=False,
+        late_sign=1,
+        expected_send_calls=1,
+        expected_add_url_reason="star_signal_sent_now",
+        raw_early_output={"counterpick_1vs1": 14, "solo": 6},
+        raw_mid_output={"counterpick_1vs1": 3, "solo": 1},
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_recommend_odds_for_block",
+        lambda _data, phase: {
+            "level": 90 if phase == "early" else 65,
+            "min_odds": 1.43,
+            "wr_pct": 90.0 if phase == "early" else 65.0,
+        },
+    )
+    _patch_team_elo_summary(monkeypatch, radiant_wr=31.2, dire_wr=68.8)
+    result = _run_branch_scenario(
+        monkeypatch,
+        case,
+        match_tier=1,
+        allow_early_star_late_core_same_or_zero=True,
+        lane_output=("Top: lose 60%\n", "Mid: draw 39%\n", "Bot: win 44%\n"),
+    )
+
+    assert len(result.sent_messages) == 1
+    message = result.sent_messages[0]
+    assert "Early: Radiant Team WR≈90.0%" in message
+    assert "Late: WR≈65.0%" not in message
+    assert "Late core support: Radiant Team same sign (без full late star)" in message
+
+
 def test_early_star_late_core_same_sign_after_10min_waits_below_minus1500(monkeypatch, capsys) -> None:
     case = BranchScenario(
         name="early_star_late_core_same_sign_10plus_wait",
