@@ -1178,9 +1178,13 @@ _STAR_SUPPORT_METRIC_ORDER = (
 )
 _STAR_LATE_CORE_METRIC_ORDER = (
     "counterpick_1vs1",
+    "pos1_vs_pos1",
     "counterpick_1vs2",
     "solo",
 )
+_STAR_LATE_CORE_MIN_ABS_BY_METRIC = {
+    "pos1_vs_pos1": 5.0,
+}
 _STAR_METRIC_SHORT = {
     "counterpick_1vs1": "cp1v1",
     "pos1_vs_pos1": "pos1vpos1",
@@ -1354,6 +1358,7 @@ def _block_signs_same_or_zero(
     expected_sign: Optional[int],
     metrics: Optional[Tuple[str, ...]] = None,
     allow_zero: bool = True,
+    min_abs_by_metric: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     if expected_sign not in (-1, 1):
         return {
@@ -1371,6 +1376,14 @@ def _block_signs_same_or_zero(
     for metric in metric_order:
         value = _coerce_metric_value(block.get(metric))
         if value is None:
+            continue
+        min_abs = None
+        if isinstance(min_abs_by_metric, dict):
+            try:
+                min_abs = float(min_abs_by_metric.get(metric)) if metric in min_abs_by_metric else None
+            except (TypeError, ValueError):
+                min_abs = None
+        if min_abs is not None and abs(value) < min_abs:
             continue
         if value == 0:
             if not allow_zero:
@@ -11774,6 +11787,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 expected_sign=selected_early_sign,
                 metrics=_STAR_LATE_CORE_METRIC_ORDER,
                 allow_zero=False,
+                min_abs_by_metric=_STAR_LATE_CORE_MIN_ABS_BY_METRIC,
+            )
+            late_core_same_sign_support = bool(
+                late_core_same_sign_diag.get("valid")
+                and late_core_same_sign_diag.get("nonzero_metrics")
             )
             early_same_or_zero_diag = _block_signs_same_or_zero(
                 raw_block=s.get('early_output', {}),
@@ -11784,6 +11802,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 expected_sign=selected_late_sign,
                 metrics=_STAR_LATE_CORE_METRIC_ORDER,
                 allow_zero=False,
+                min_abs_by_metric=_STAR_LATE_CORE_MIN_ABS_BY_METRIC,
             )
             early_core_same_sign_support = bool(
                 early_core_same_or_zero_diag.get("valid")
@@ -11804,7 +11823,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 not force_odds_signal_test_active
                 and has_selected_early_star
                 and not has_selected_late_star
-                and bool(late_core_same_sign_diag.get("valid"))
+                and late_core_same_sign_support
             )
             send_now_late_star_early_core_same_sign = (
                 STAR_ALLOW_LATE_STAR_EARLY_SAME_OR_ZERO
@@ -11993,6 +12012,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 expected_sign=selected_early_sign,
                 metrics=_STAR_LATE_CORE_METRIC_ORDER,
                 allow_zero=False,
+                min_abs_by_metric=_STAR_LATE_CORE_MIN_ABS_BY_METRIC,
+            )
+            late_core_same_sign_support = bool(
+                late_core_same_sign_diag.get("valid")
+                and late_core_same_sign_diag.get("nonzero_metrics")
             )
             early_same_or_zero_diag = _block_signs_same_or_zero(
                 raw_block=s.get('early_output', {}),
@@ -12003,6 +12027,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 expected_sign=selected_late_sign,
                 metrics=_STAR_LATE_CORE_METRIC_ORDER,
                 allow_zero=False,
+                min_abs_by_metric=_STAR_LATE_CORE_MIN_ABS_BY_METRIC,
             )
             early_core_same_sign_support = bool(
                 early_core_same_or_zero_diag.get("valid")
@@ -12026,7 +12051,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and has_selected_early_star
                 and not has_selected_late_star
                 and (
-                    bool(late_core_same_sign_diag.get("valid"))
+                    late_core_same_sign_support
                     or late_same_sign_raw_star_before_elo
                 )
             )
@@ -12153,7 +12178,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     if verbose_match_log:
                         print(
                             "   ✅ Override: early star without late star allowed because "
-                            "late core(cp1v1/cp1v2/solo) are same-sign "
+                            "late core(cp1v1/pos1vpos1/cp1v2/solo) are same-sign "
                             f"(sign={selected_early_sign})"
                         )
             if early65_gate_active:
@@ -12167,7 +12192,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 if verbose_match_log:
                     print(
                         "   ✅ Override: late star without early star allowed because "
-                        "early core(cp1v1/cp1v2/solo) are same-sign "
+                        "early core(cp1v1/pos1vpos1/cp1v2/solo) are same-sign "
                             f"(sign={selected_late_sign})"
                         )
 
