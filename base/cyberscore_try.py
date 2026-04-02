@@ -1330,6 +1330,37 @@ def _star_hit_conflicts_with_expected_sign(
     }
 
 
+def _build_no_late_star_late_block_guard(
+    raw_block: Optional[dict],
+    *,
+    expected_sign: Optional[int],
+    target_wr: int,
+    section: str = "mid_output",
+) -> Dict[str, Any]:
+    core_same_sign_diag = _block_signs_same_or_zero(
+        raw_block=raw_block,
+        expected_sign=expected_sign,
+        metrics=_STAR_LATE_CORE_METRIC_ORDER,
+        allow_zero=False,
+        min_abs_by_metric=_STAR_LATE_CORE_MIN_ABS_BY_METRIC,
+    )
+    star_hit_diag = _star_hit_conflicts_with_expected_sign(
+        raw_block,
+        target_wr=target_wr,
+        section=section,
+        expected_sign=expected_sign,
+    )
+    return {
+        "expected_sign": expected_sign,
+        "core_same_sign_diag": core_same_sign_diag,
+        "core_same_sign_support": bool(
+            core_same_sign_diag.get("valid")
+            and core_same_sign_diag.get("nonzero_metrics")
+        ),
+        "star_hit_diag": star_hit_diag,
+    }
+
+
 def _format_star_block_status(diag: Dict[str, Any]) -> str:
     status = str(diag.get("status") or "unknown")
     if status == "ok":
@@ -11819,22 +11850,34 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             has_selected_late_star = bool(selected_late_diag.get("valid"))
             selected_early_sign = selected_early_diag.get("sign") if has_selected_early_star else None
             selected_late_sign = selected_late_diag.get("sign") if has_selected_late_star else None
-            late_core_same_sign_diag = _block_signs_same_or_zero(
-                raw_block=s.get('mid_output', {}),
-                expected_sign=selected_early_sign,
-                metrics=_STAR_LATE_CORE_METRIC_ORDER,
-                allow_zero=False,
-                min_abs_by_metric=_STAR_LATE_CORE_MIN_ABS_BY_METRIC,
-            )
-            late_core_same_sign_support = bool(
-                late_core_same_sign_diag.get("valid")
-                and late_core_same_sign_diag.get("nonzero_metrics")
-            )
-            late_star_hits_against_early_diag = _star_hit_conflicts_with_expected_sign(
+            late_no_star_guard_against_early = _build_no_late_star_late_block_guard(
                 s.get('mid_output', {}),
+                expected_sign=selected_early_sign,
                 target_wr=selected_star_wr,
                 section="mid_output",
-                expected_sign=selected_early_sign,
+            )
+            late_core_same_sign_diag = dict(
+                late_no_star_guard_against_early.get("core_same_sign_diag") or {}
+            )
+            late_core_same_sign_support = bool(
+                late_no_star_guard_against_early.get("core_same_sign_support")
+            )
+            late_star_hits_against_early_diag = dict(
+                late_no_star_guard_against_early.get("star_hit_diag") or {}
+            )
+            early65_sign = (
+                early65_gate_diag.get("sign")
+                if isinstance(early65_gate_diag, dict) and early65_gate_diag.get("valid")
+                else None
+            )
+            late_no_star_guard_against_early65 = _build_no_late_star_late_block_guard(
+                s.get('mid_output', {}),
+                expected_sign=early65_sign,
+                target_wr=selected_star_wr,
+                section="mid_output",
+            )
+            late_star_hits_against_early65_diag = dict(
+                late_no_star_guard_against_early65.get("star_hit_diag") or {}
             )
             early_same_or_zero_diag = _block_signs_same_or_zero(
                 raw_block=s.get('early_output', {}),
@@ -11880,6 +11923,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and STAR_ALLOW_IMMEDIATE_EARLY_STAR65
                 and early65_gate_diag is not None
                 and bool(early65_gate_diag.get("valid"))
+                and bool(late_star_hits_against_early65_diag.get("valid"))
                 and (
                     not has_selected_late_star
                     or selected_late_sign == early65_gate_diag.get("sign")
@@ -12051,22 +12095,34 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 isinstance(top25_late_elo_block_override, dict)
                 and top25_late_elo_block_override.get("enabled")
             )
-            late_core_same_sign_diag = _block_signs_same_or_zero(
-                raw_block=s.get('mid_output', {}),
-                expected_sign=selected_early_sign,
-                metrics=_STAR_LATE_CORE_METRIC_ORDER,
-                allow_zero=False,
-                min_abs_by_metric=_STAR_LATE_CORE_MIN_ABS_BY_METRIC,
-            )
-            late_core_same_sign_support = bool(
-                late_core_same_sign_diag.get("valid")
-                and late_core_same_sign_diag.get("nonzero_metrics")
-            )
-            late_star_hits_against_early_diag = _star_hit_conflicts_with_expected_sign(
+            late_no_star_guard_against_early = _build_no_late_star_late_block_guard(
                 s.get('mid_output', {}),
+                expected_sign=selected_early_sign,
                 target_wr=selected_star_wr,
                 section="mid_output",
-                expected_sign=selected_early_sign,
+            )
+            late_core_same_sign_diag = dict(
+                late_no_star_guard_against_early.get("core_same_sign_diag") or {}
+            )
+            late_core_same_sign_support = bool(
+                late_no_star_guard_against_early.get("core_same_sign_support")
+            )
+            late_star_hits_against_early_diag = dict(
+                late_no_star_guard_against_early.get("star_hit_diag") or {}
+            )
+            early65_sign = (
+                early65_gate_diag.get("sign")
+                if isinstance(early65_gate_diag, dict) and early65_gate_diag.get("valid")
+                else None
+            )
+            late_no_star_guard_against_early65 = _build_no_late_star_late_block_guard(
+                s.get('mid_output', {}),
+                expected_sign=early65_sign,
+                target_wr=selected_star_wr,
+                section="mid_output",
+            )
+            late_star_hits_against_early65_diag = dict(
+                late_no_star_guard_against_early65.get("star_hit_diag") or {}
             )
             early_same_or_zero_diag = _block_signs_same_or_zero(
                 raw_block=s.get('early_output', {}),
@@ -12117,6 +12173,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and STAR_ALLOW_IMMEDIATE_EARLY_STAR65
                 and early65_gate_diag is not None
                 and bool(early65_gate_diag.get("valid"))
+                and bool(late_star_hits_against_early65_diag.get("valid"))
                 and (
                     not has_selected_late_star
                     or selected_late_sign == early65_gate_diag.get("sign")
@@ -12176,6 +12233,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         "selected_late_sign": selected_late_sign,
                         "late_core_same_sign_diag": late_core_same_sign_diag,
                         "late_star_hits_against_early_diag": late_star_hits_against_early_diag,
+                        "late_star_hits_against_early65_diag": late_star_hits_against_early65_diag,
                         "selected_early_diag": selected_early_diag,
                         "selected_late_diag": selected_late_diag,
                         "json_retry_errors": json_retry_errors,
@@ -12240,6 +12298,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"(sign={early65_gate_diag.get('sign')}, "
                         f"late_sign={selected_late_sign})"
                     )
+            elif (
+                verbose_match_log
+                and isinstance(early65_gate_diag, dict)
+                and bool(early65_gate_diag.get("valid"))
+                and not bool(late_star_hits_against_early65_diag.get("valid"))
+            ):
+                conflicting_early65_hits = ",".join(
+                    str(metric)
+                    for metric in (late_star_hits_against_early65_diag.get("conflicting_hit_metrics") or [])
+                ) or "none"
+                print(
+                    "   ⚠️ Early WR65 override blocked by opposite-sign late star hits "
+                    f"(conflicting_metrics={conflicting_early65_hits})"
+                )
             if send_now_late_star_early_core_same_sign:
                 if verbose_match_log:
                     print(
