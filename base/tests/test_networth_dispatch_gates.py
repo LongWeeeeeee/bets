@@ -1029,8 +1029,8 @@ def test_early_star_late_core_same_sign_message_uses_core_support_label(monkeypa
     assert len(result.sent_messages) == 1
     message = result.sent_messages[0]
     assert "Early: Radiant Team WR≈90.0%" in message
-    assert "Late: WR≈65.0%" not in message
-    assert "Late core support: Radiant Team same sign (без full late star)" in message
+    assert "Late: Radiant Team WR≈65.0%" in message
+    assert "Late core support:" not in message
 
 
 def test_early_star_late_core_same_sign_after_10min_waits_below_minus1500(monkeypatch, capsys) -> None:

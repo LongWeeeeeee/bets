@@ -12382,13 +12382,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     else:
                         wr_lines.append(f"Early: WR≈{float(early_wr_pct or 0.0):.1f}%")
                 elif send_now_late_star_early_core_same_sign:
-                    early_core_team_name = _signal_team_name(selected_late_sign)
-                    if early_core_team_name:
-                        wr_lines.append(
-                            f"Early core support: {early_core_team_name} same sign (без full early star)"
-                        )
+                    early_team_name = _signal_team_name(selected_late_sign)
+                    if early_team_name:
+                        wr_lines.append(f"Early: {early_team_name} WR≈{float(early_wr_pct or 0.0):.1f}%")
                     else:
-                        wr_lines.append("Early core support: same sign (без full early star)")
+                        wr_lines.append(f"Early: WR≈{float(early_wr_pct or 0.0):.1f}%")
             if late_rec:
                 if has_selected_late_star or top25_late_elo_block_override_active:
                     late_team_name = _signal_team_name(late_display_sign)
@@ -12397,13 +12395,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     else:
                         wr_lines.append(f"Late: WR≈{float(late_wr_pct or 0.0):.1f}%")
                 elif send_now_early_star_late_core_same_sign:
-                    late_core_team_name = _signal_team_name(selected_early_sign)
-                    if late_core_team_name:
-                        wr_lines.append(
-                            f"Late core support: {late_core_team_name} same sign (без full late star)"
-                        )
+                    late_team_name = _signal_team_name(selected_early_sign)
+                    if late_team_name:
+                        wr_lines.append(f"Late: {late_team_name} WR≈{float(late_wr_pct or 0.0):.1f}%")
                     else:
-                        wr_lines.append("Late core support: same sign (без full late star)")
+                        wr_lines.append(f"Late: WR≈{float(late_wr_pct or 0.0):.1f}%")
             if wr_lines:
                 wr_block = "Оценка WR:\n" + "\n".join(wr_lines) + "\n"
 
