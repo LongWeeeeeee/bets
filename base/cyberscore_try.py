@@ -551,8 +551,18 @@ BOOKMAKER_PREFETCH_SITES = tuple(
 # Testing helpers:
 # - optionally use separate MAP_ID_CHECK_PATH
 # - optionally disable add_url persistence to keep matches re-analysed every cycle
-MAP_ID_CHECK_PATH = str(os.getenv("MAP_ID_CHECK_PATH", "map_id_check.txt")).strip() or "map_id_check.txt"
-MAP_ID_CHECK_PATH_ODDS_DEFAULT = str(PROJECT_ROOT / "map_id_check_test.txt")
+LOCAL_STATE_DIR = Path.home() / ".local" / "state" / "ingame"
+LEGACY_MAP_ID_CHECK_PATH = PROJECT_ROOT / "map_id_check.txt"
+LEGACY_MAP_ID_CHECK_PATH_ODDS = PROJECT_ROOT / "map_id_check_test.txt"
+DEFAULT_MAP_ID_CHECK_PATH = LOCAL_STATE_DIR / "map_id_check.txt"
+DEFAULT_MAP_ID_CHECK_PATH_ODDS = LOCAL_STATE_DIR / "map_id_check_test.txt"
+MAP_ID_CHECK_PATH = str(
+    Path(
+        str(os.getenv("MAP_ID_CHECK_PATH", str(DEFAULT_MAP_ID_CHECK_PATH))).strip()
+        or str(DEFAULT_MAP_ID_CHECK_PATH)
+    ).expanduser()
+)
+MAP_ID_CHECK_PATH_ODDS_DEFAULT = str(DEFAULT_MAP_ID_CHECK_PATH_ODDS)
 DELAYED_QUEUE_PATH = str(
     os.getenv("DELAYED_QUEUE_PATH", "runtime/delayed_signal_queue.json")
 ).strip() or "runtime/delayed_signal_queue.json"
@@ -9483,10 +9493,49 @@ def _load_json_object(
     return {str(k): v for k, v in data.items() if isinstance(k, str) and k}
 
 
+def _current_map_id_check_path() -> Path:
+    return Path(MAP_ID_CHECK_PATH).expanduser()
+
+
+def _iter_legacy_map_id_check_paths(current_path: Path) -> list[Path]:
+    normalized_current = current_path.expanduser()
+    if normalized_current == DEFAULT_MAP_ID_CHECK_PATH:
+        return [LEGACY_MAP_ID_CHECK_PATH]
+    if normalized_current == DEFAULT_MAP_ID_CHECK_PATH_ODDS:
+        return [LEGACY_MAP_ID_CHECK_PATH_ODDS]
+    return []
+
+
 def _load_map_id_check_urls(*, recover: bool) -> list[str]:
     with map_id_check_lock:
+        map_id_check_path = _current_map_id_check_path()
+        if map_id_check_path.exists():
+            return _load_json_url_array(
+                map_id_check_path,
+                recover=recover,
+                label="MAP_ID_CHECK_PATH",
+            )
+        for legacy_path in _iter_legacy_map_id_check_paths(map_id_check_path):
+            if not legacy_path.exists():
+                continue
+            data = _load_json_url_array(
+                legacy_path,
+                recover=recover,
+                label="LEGACY_MAP_ID_CHECK_PATH",
+            )
+            _write_map_id_check_atomic(map_id_check_path, data)
+            logger.info(
+                "Migrated map_id_check state from legacy repo file %s to %s",
+                legacy_path,
+                map_id_check_path,
+            )
+            print(
+                "✅ MAP_ID_CHECK_PATH migrated from legacy repo file: "
+                f"{legacy_path} -> {map_id_check_path} ({len(data)})"
+            )
+            return data
         return _load_json_url_array(
-            Path(MAP_ID_CHECK_PATH),
+            map_id_check_path,
             recover=recover,
             label="MAP_ID_CHECK_PATH",
         )
@@ -9646,7 +9695,7 @@ def _flush_sent_signal_journal_into_map_id_check() -> int:
     if not recovered_urls:
         return 0
 
-    map_id_check_path = Path(MAP_ID_CHECK_PATH)
+    map_id_check_path = _current_map_id_check_path()
     with map_id_check_lock:
         data = _load_json_url_array(
             map_id_check_path,
@@ -9851,7 +9900,7 @@ def add_url(url, reason: str = "unspecified", details: Any = None):
         print(f"   📎 add_url(): details={details}")
     logger.info("ADD_URL reason=%s url=%s details=%s", reason, url, details)
     try:
-        map_id_check_path = Path(MAP_ID_CHECK_PATH)
+        map_id_check_path = _current_map_id_check_path()
         with map_id_check_lock:
             data = _load_json_url_array(
                 map_id_check_path,

@@ -124,6 +124,25 @@ def test_add_url_recovers_corrupt_map_id_check_and_persists_url(tmp_path, monkey
     assert list(tmp_path.glob("map_id_check.json.corrupt.*"))
 
 
+def test_load_map_id_check_urls_migrates_legacy_repo_file(tmp_path, monkeypatch) -> None:
+    target_path = tmp_path / ".local" / "state" / "ingame" / "map_id_check.txt"
+    legacy_path = tmp_path / "repo" / "map_id_check.txt"
+    expected = ["dltv.org/matches/test-migrate.0"]
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_bytes(orjson.dumps(expected))
+    monkeypatch.setattr(runtime, "DEFAULT_MAP_ID_CHECK_PATH", target_path, raising=False)
+    monkeypatch.setattr(runtime, "DEFAULT_MAP_ID_CHECK_PATH_ODDS", tmp_path / ".local" / "state" / "ingame" / "map_id_check_test.txt", raising=False)
+    monkeypatch.setattr(runtime, "LEGACY_MAP_ID_CHECK_PATH", legacy_path, raising=False)
+    monkeypatch.setattr(runtime, "LEGACY_MAP_ID_CHECK_PATH_ODDS", tmp_path / "repo" / "map_id_check_test.txt", raising=False)
+    monkeypatch.setattr(runtime, "MAP_ID_CHECK_PATH", str(target_path), raising=False)
+
+    urls = runtime._load_map_id_check_urls(recover=False)
+
+    assert urls == expected
+    assert target_path.exists()
+    assert orjson.loads(target_path.read_bytes()) == expected
+
+
 def test_compute_moscow_quiet_hours_sleep_seconds() -> None:
     tz = ZoneInfo("Europe/Moscow")
 

@@ -22,3 +22,5 @@ pro_heroes_data/
 data/pub_timeaware_*/
 data/pub_timeaware_full/
 data/pub_timeaware_100k/
+map_id_check.txt
+map_id_check_test.txt
