@@ -1259,6 +1259,7 @@ def test_send_admin_log_tail_sends_one_message_per_match(monkeypatch) -> None:
     )
     sent_messages: List[Dict[str, Any]] = []
     requested_limits: List[int] = []
+    saved_seen_urls: List[List[str]] = []
 
     def _fake_build_recent_match_summaries_text(limit=10, scan_lines=12000):
         requested_limits.append(int(limit))
@@ -1269,15 +1270,107 @@ def test_send_admin_log_tail_sends_one_message_per_match(monkeypatch) -> None:
 
     monkeypatch.setattr(runtime, "_build_recent_match_summaries_text", _fake_build_recent_match_summaries_text)
     monkeypatch.setattr(runtime, "send_message", _fake_send_message)
+    monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        runtime,
+        "_save_admin_tail_log_seen_urls",
+        lambda urls, **_kwargs: saved_seen_urls.append(list(urls)),
+    )
 
-    runtime._send_admin_log_tail(line_count=100)
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
-    assert requested_limits == [4]
+    assert requested_limits == [runtime._ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT]
     assert len(sent_messages) == 2
     assert "dltv.org/matches/1/older-match" in sent_messages[0]["message"]
     assert "dltv.org/matches/2/newer-match" in sent_messages[1]["message"]
     assert sent_messages[0]["kwargs"]["admin_only"] is True
     assert sent_messages[0]["kwargs"]["mirror_to_vk"] is False
+    assert saved_seen_urls == [["dltv.org/matches/1/older-match", "dltv.org/matches/2/newer-match"]]
+
+
+def test_send_admin_log_tail_skips_seen_matches_and_only_sends_new(monkeypatch) -> None:
+    payload = "\n".join(
+        [
+            "[1]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/1/already-seen",
+            "",
+            "[2]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/2/new-match",
+        ]
+    )
+    sent_messages: List[Dict[str, Any]] = []
+    saved_seen_urls: List[List[str]] = []
+
+    monkeypatch.setattr(
+        runtime,
+        "_build_recent_match_summaries_text",
+        lambda **_kwargs: payload,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_load_admin_tail_log_seen_urls",
+        lambda **_kwargs: ["dltv.org/matches/1/already-seen"],
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_save_admin_tail_log_seen_urls",
+        lambda urls, **_kwargs: saved_seen_urls.append(list(urls)),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "send_message",
+        lambda message, **kwargs: sent_messages.append({"message": str(message), "kwargs": dict(kwargs)}),
+    )
+
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
+
+    assert len(sent_messages) == 1
+    assert "dltv.org/matches/2/new-match" in sent_messages[0]["message"]
+    assert "dltv.org/matches/1/already-seen" not in sent_messages[0]["message"]
+    assert saved_seen_urls == [["dltv.org/matches/1/already-seen", "dltv.org/matches/2/new-match"]]
+
+
+def test_send_admin_log_tail_reports_no_new_matches(monkeypatch) -> None:
+    payload = "\n".join(
+        [
+            "[1]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/1/already-seen",
+        ]
+    )
+    sent_messages: List[Dict[str, Any]] = []
+
+    monkeypatch.setattr(
+        runtime,
+        "_build_recent_match_summaries_text",
+        lambda **_kwargs: payload,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_load_admin_tail_log_seen_urls",
+        lambda **_kwargs: ["dltv.org/matches/1/already-seen"],
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_save_admin_tail_log_seen_urls",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("seen-state must not be rewritten")),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "send_message",
+        lambda message, **kwargs: sent_messages.append({"message": str(message), "kwargs": dict(kwargs)}),
+    )
+
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
+
+    assert sent_messages == [
+        {
+            "message": "tail_log: новых ставок нет",
+            "kwargs": {"admin_only": True, "mirror_to_vk": False},
+        }
+    ]
 
 
 def test_load_telegram_subscribers_state_merges_primary_and_legacy(tmp_path, monkeypatch) -> None:

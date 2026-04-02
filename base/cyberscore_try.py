@@ -590,6 +590,7 @@ LEGACY_MAP_ID_CHECK_PATH = PROJECT_ROOT / "map_id_check.txt"
 LEGACY_MAP_ID_CHECK_PATH_ODDS = PROJECT_ROOT / "map_id_check_test.txt"
 DEFAULT_MAP_ID_CHECK_PATH = LOCAL_STATE_DIR / "map_id_check.txt"
 DEFAULT_MAP_ID_CHECK_PATH_ODDS = LOCAL_STATE_DIR / "map_id_check_test.txt"
+DEFAULT_ADMIN_TAIL_LOG_SEEN_MATCHES_PATH = LOCAL_STATE_DIR / "admin_tail_log_seen_matches.json"
 MAP_ID_CHECK_PATH = str(
     Path(
         str(os.getenv("MAP_ID_CHECK_PATH", str(DEFAULT_MAP_ID_CHECK_PATH))).strip()
@@ -597,6 +598,17 @@ MAP_ID_CHECK_PATH = str(
     ).expanduser()
 )
 MAP_ID_CHECK_PATH_ODDS_DEFAULT = str(DEFAULT_MAP_ID_CHECK_PATH_ODDS)
+ADMIN_TAIL_LOG_SEEN_MATCHES_PATH = str(
+    Path(
+        str(
+            os.getenv(
+                "ADMIN_TAIL_LOG_SEEN_MATCHES_PATH",
+                str(DEFAULT_ADMIN_TAIL_LOG_SEEN_MATCHES_PATH),
+            )
+        ).strip()
+        or str(DEFAULT_ADMIN_TAIL_LOG_SEEN_MATCHES_PATH)
+    ).expanduser()
+)
 DELAYED_QUEUE_PATH = str(
     os.getenv("DELAYED_QUEUE_PATH", "runtime/delayed_signal_queue.json")
 ).strip() or "runtime/delayed_signal_queue.json"
@@ -4236,6 +4248,9 @@ _ADMIN_DELAYED_OUTCOME_PATTERNS = (
     re.compile(r"^⏱️ Отложенный сигнал отменен без отправки: (?P<url>\S+)\b"),
 )
 _ADMIN_SUMMARY_MATCH_URL_RE = re.compile(r"(dltv\.org/matches/\d+/[^\s)]+?)\.\d+(?=$|[\s)])")
+_ADMIN_SUMMARY_URL_LINE_RE = re.compile(r"^\s*URL:\s*(?P<url>\S+)\s*$")
+_ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT = 20
+_ADMIN_TAIL_LOG_SEND_LIMIT = 4
 
 
 def _is_admin_match_summary_line(compact_line: str) -> bool:
@@ -4437,18 +4452,80 @@ def _split_admin_match_summary_messages(payload: str) -> List[str]:
     return [message for message in messages if message]
 
 
-def _send_admin_log_tail(*, line_count: int = 100) -> None:
+def _extract_admin_summary_message_url(message: str) -> str:
+    for raw_line in str(message or "").splitlines():
+        match = _ADMIN_SUMMARY_URL_LINE_RE.match(str(raw_line or "").rstrip())
+        if match:
+            return str(match.group("url") or "").strip()
+    return ""
+
+
+def _admin_tail_log_seen_matches_path_for_mode(mode_label: str) -> Path:
+    return _mode_specific_runtime_path(ADMIN_TAIL_LOG_SEEN_MATCHES_PATH, mode_label)
+
+
+def _load_admin_tail_log_seen_urls(*, mode_label: str) -> List[str]:
+    path = _admin_tail_log_seen_matches_path_for_mode(mode_label)
+    try:
+        return _load_json_url_array(
+            path,
+            recover=True,
+            label="ADMIN_TAIL_LOG_SEEN_MATCHES_PATH",
+        )
+    except Exception:
+        return []
+
+
+def _save_admin_tail_log_seen_urls(urls: List[str], *, mode_label: str) -> None:
+    unique_urls: List[str] = []
+    seen: set[str] = set()
+    for raw_url in urls:
+        compact = str(raw_url or "").strip()
+        if not compact or compact in seen:
+            continue
+        seen.add(compact)
+        unique_urls.append(compact)
+    if len(unique_urls) > 1000:
+        unique_urls = unique_urls[-1000:]
+    _write_json_atomic(
+        _admin_tail_log_seen_matches_path_for_mode(mode_label),
+        unique_urls,
+    )
+
+
+def _send_admin_log_tail(*, line_count: int = 100, raw_odds: Any = None) -> None:
     scan_lines = max(2000, int(line_count) * 120)
-    tail_text = _build_recent_match_summaries_text(limit=4, scan_lines=scan_lines)
+    mode_label = _runtime_instance_mode_label(raw_odds)
+    tail_text = _build_recent_match_summaries_text(
+        limit=_ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT,
+        scan_lines=scan_lines,
+    )
     messages = _split_admin_match_summary_messages(tail_text)
-    if not messages:
-        messages = [tail_text]
+    seen_urls = _load_admin_tail_log_seen_urls(mode_label=mode_label)
+    seen_url_set = set(seen_urls)
+    unseen_messages: List[Tuple[str, str]] = []
     for message in messages:
+        match_url = _extract_admin_summary_message_url(message)
+        if match_url and match_url in seen_url_set:
+            continue
+        unseen_messages.append((match_url, message))
+    if not unseen_messages:
+        send_message("tail_log: новых ставок нет", admin_only=True, mirror_to_vk=False)
+        return
+    newly_sent_urls: List[str] = []
+    for match_url, message in unseen_messages[:_ADMIN_TAIL_LOG_SEND_LIMIT]:
         for idx, chunk in enumerate(_split_telegram_text_chunks(message), start=1):
             prefix = ""
             if idx > 1:
                 prefix = f"[part {idx}] "
             send_message(f"{prefix}{chunk}", admin_only=True, mirror_to_vk=False)
+        if match_url:
+            newly_sent_urls.append(match_url)
+    if newly_sent_urls:
+        _save_admin_tail_log_seen_urls(
+            seen_urls + newly_sent_urls,
+            mode_label=mode_label,
+        )
 
 
 def _build_self_restart_command(raw_odds: Any) -> Tuple[str, Path]:
@@ -4501,7 +4578,7 @@ def _handle_pending_telegram_admin_commands(raw_odds: Any) -> None:
         print(f"📨 Admin command received: {command_name or raw_text}")
         if command_name == "tail_log_100":
             try:
-                _send_admin_log_tail(line_count=100)
+                _send_admin_log_tail(line_count=100, raw_odds=raw_odds)
             except Exception as exc:
                 try:
                     send_message(
