@@ -515,7 +515,6 @@ TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE = 60
 ELO_UNDERDOG_GUARD_FAVORITE_EDGE_PP = 15.0
 ELO_UNDERDOG_GUARD_MIN_SIGNAL_WR = 70.0
 ELO_BLOCK_WR_MIN_AFTER_PENALTY = 58.5
-MIN_SIGNAL_TEAM_ELO = 1500.0
 EARLY_STAR_LATE_CORE_HIGH_CONFIDENCE_WR = 70.0
 OPPOSITE_SIGNS_EARLY90_TRIGGER_WR = 90.0
 OPPOSITE_SIGNS_EARLY90_ELO_GAP_PP = 15.0
@@ -1833,30 +1832,6 @@ def _elo_underdog_guard_decision(
         "signal_wr_pct": float(signal_wr_pct) if signal_wr_pct is not None else None,
         "favorite_edge_pp": float(edge_from_even_pp),
         "min_signal_wr": float(min_signal_wr),
-    }
-
-
-def _team_elo_min_rating_guard_decision(
-    *,
-    team_elo_meta: Optional[Dict[str, Any]],
-    target_side: Optional[str],
-    min_rating: float = MIN_SIGNAL_TEAM_ELO,
-) -> Optional[Dict[str, Any]]:
-    if target_side not in {"radiant", "dire"}:
-        return None
-    target_rating = _team_elo_base_rating_for_side(team_elo_meta, target_side)
-    if target_rating is None:
-        return None
-    opposite_side = "dire" if target_side == "radiant" else "radiant"
-    opposite_rating = _team_elo_base_rating_for_side(team_elo_meta, opposite_side)
-    reject = float(target_rating) < float(min_rating)
-    return {
-        "reject": bool(reject),
-        "target_side": target_side,
-        "target_rating": float(target_rating),
-        "opposite_side": opposite_side,
-        "opposite_rating": float(opposite_rating) if opposite_rating is not None else None,
-        "min_rating": float(min_rating),
     }
 
 
@@ -12461,59 +12436,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     },
                 )
                 print("   ✅ map_id_check.txt обновлен: add_url после ELO underdog guard reject")
-                return return_status
-            team_elo_min_rating_guard = _team_elo_min_rating_guard_decision(
-                team_elo_meta=team_elo_meta,
-                target_side=target_side,
-            )
-            if isinstance(team_elo_min_rating_guard, dict) and bool(team_elo_min_rating_guard.get("reject")):
-                target_team_name = (
-                    radiant_team_name_original
-                    if target_side == "radiant"
-                    else dire_team_name_original
-                )
-                opposite_side = str(team_elo_min_rating_guard.get("opposite_side") or "")
-                opposite_team_name = (
-                    radiant_team_name_original
-                    if opposite_side == "radiant"
-                    else dire_team_name_original
-                )
-                target_rating = float(team_elo_min_rating_guard.get("target_rating") or 0.0)
-                min_rating = float(team_elo_min_rating_guard.get("min_rating") or 0.0)
-                opposite_rating = team_elo_min_rating_guard.get("opposite_rating")
-                opposite_rating_label = (
-                    f"{float(opposite_rating):.1f}"
-                    if opposite_rating is not None
-                    else "n/a"
-                )
-                print(
-                    "   ⚠️ Team ELO minimum guard: reject signal "
-                    f"for {target_team_name} (rating={target_rating:.1f} < {min_rating:.1f}; "
-                    f"opponent={opposite_team_name}, opponent_rating={opposite_rating_label})"
-                )
-                add_url(
-                    check_uniq_url,
-                    reason="star_signal_rejected_team_elo_below_1500",
-                    details={
-                        "status": status,
-                        "dispatch_mode": dispatch_mode,
-                        "selected_star_wr": selected_star_wr,
-                        "selected_star_mode": selected_star_mode,
-                        "target_side": target_side,
-                        "target_team_name": target_team_name,
-                        "target_rating": target_rating,
-                        "min_rating": min_rating,
-                        "opposite_side": opposite_side,
-                        "opposite_team_name": opposite_team_name,
-                        "opposite_rating": (
-                            float(opposite_rating)
-                            if opposite_rating is not None
-                            else None
-                        ),
-                        "json_retry_errors": json_retry_errors,
-                    },
-                )
-                print("   ✅ map_id_check.txt обновлен: add_url после team elo minimum guard reject")
                 return return_status
             if has_selected_late_star and not has_selected_early_star:
                 telegram_early_rec = None
