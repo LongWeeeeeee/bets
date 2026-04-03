@@ -1423,7 +1423,88 @@ def test_send_admin_log_tail_prefers_three_freshest_unseen_matches(monkeypatch) 
     assert "dltv.org/matches/3/match-3" in sent_messages[0]["message"]
     assert "dltv.org/matches/4/match-4" in sent_messages[1]["message"]
     assert "dltv.org/matches/5/match-5" in sent_messages[2]["message"]
-    assert saved_seen_urls == [["dltv.org/matches/3/match-3", "dltv.org/matches/4/match-4", "dltv.org/matches/5/match-5"]]
+
+
+def test_send_admin_log_tail_expands_window_until_three_unseen_found(monkeypatch) -> None:
+    payload_small = "\n".join(
+        [
+            "[1]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/10/seen-a",
+            "",
+            "[2]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/11/seen-b",
+            "",
+            "[3]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/12/new-c",
+        ]
+    )
+    payload_large = "\n".join(
+        [
+            "[1]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/8/new-a",
+            "",
+            "[2]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/9/new-b",
+            "",
+            "[3]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/10/seen-a",
+            "",
+            "[4]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/11/seen-b",
+            "",
+            "[5]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/12/new-c",
+        ]
+    )
+    requested_limits: List[int] = []
+    sent_messages: List[Dict[str, Any]] = []
+    saved_seen_urls: List[List[str]] = []
+
+    def _fake_build_recent_match_summaries_text(limit=10, scan_lines=12000):
+        requested_limits.append(int(limit))
+        if int(limit) <= runtime._ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT:
+            return payload_small
+        return payload_large
+
+    monkeypatch.setattr(runtime, "_build_recent_match_summaries_text", _fake_build_recent_match_summaries_text)
+    monkeypatch.setattr(
+        runtime,
+        "_load_admin_tail_log_seen_urls",
+        lambda **_kwargs: ["dltv.org/matches/10/seen-a", "dltv.org/matches/11/seen-b"],
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_save_admin_tail_log_seen_urls",
+        lambda urls, **_kwargs: saved_seen_urls.append(list(urls)),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "send_message",
+        lambda message, **kwargs: sent_messages.append({"message": str(message), "kwargs": dict(kwargs)}),
+    )
+
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
+
+    assert requested_limits[:2] == [runtime._ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT, runtime._ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT * 2]
+    assert len(sent_messages) == 3
+    assert "dltv.org/matches/8/new-a" in sent_messages[0]["message"]
+    assert "dltv.org/matches/9/new-b" in sent_messages[1]["message"]
+    assert "dltv.org/matches/12/new-c" in sent_messages[2]["message"]
+    assert saved_seen_urls == [[
+        "dltv.org/matches/10/seen-a",
+        "dltv.org/matches/11/seen-b",
+        "dltv.org/matches/8/new-a",
+        "dltv.org/matches/9/new-b",
+        "dltv.org/matches/12/new-c",
+    ]]
 
 
 def test_load_telegram_subscribers_state_merges_primary_and_legacy(tmp_path, monkeypatch) -> None:

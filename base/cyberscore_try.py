@@ -562,6 +562,7 @@ TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE = 60
 ELO_UNDERDOG_GUARD_FAVORITE_EDGE_PP = 15.0
 ELO_UNDERDOG_GUARD_MIN_SIGNAL_WR = 70.0
 ELO_BLOCK_WR_MIN_AFTER_PENALTY = 58.5
+ELO_GUARD_MIN_ABS_DIFF = 30.0
 EARLY_STAR_LATE_CORE_HIGH_CONFIDENCE_WR = 70.0
 OPPOSITE_SIGNS_EARLY90_TRIGGER_WR = 90.0
 OPPOSITE_SIGNS_EARLY90_ELO_GAP_PP = 15.0
@@ -1866,6 +1867,9 @@ def _elo_underdog_guard_decision(
         return None
     if target_side not in {"radiant", "dire"}:
         return None
+    abs_diff = _team_elo_abs_diff_for_guard(team_elo_meta)
+    if abs_diff is not None and abs_diff < float(ELO_GUARD_MIN_ABS_DIFF):
+        return None
     try:
         radiant_wr = float(team_elo_meta.get("adjusted_radiant_wr"))
         dire_wr = float(team_elo_meta.get("adjusted_dire_wr"))
@@ -1912,6 +1916,17 @@ def _team_elo_wr_for_side(
         return None
 
 
+def _team_elo_abs_diff_for_guard(team_elo_meta: Optional[Dict[str, Any]]) -> Optional[float]:
+    if not isinstance(team_elo_meta, dict):
+        return None
+    for key in ("adjusted_diff", "raw_diff", "elo_diff", "team_elo_diff"):
+        try:
+            return abs(float(team_elo_meta.get(key)))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _team_elo_base_rating_for_side(
     team_elo_meta: Optional[Dict[str, Any]],
     side: Optional[str],
@@ -1953,6 +1968,9 @@ def _elo_block_wr_penalty_pp(
     team_elo_meta: Optional[Dict[str, Any]],
     target_side: Optional[str],
 ) -> float:
+    abs_diff = _team_elo_abs_diff_for_guard(team_elo_meta)
+    if abs_diff is not None and abs_diff < float(ELO_GUARD_MIN_ABS_DIFF):
+        return 0.0
     side_wr = _team_elo_wr_for_side(team_elo_meta, target_side)
     if side_wr is None:
         return 0.0
@@ -4252,6 +4270,7 @@ _ADMIN_SUMMARY_MATCH_URL_RE = re.compile(r"(dltv\.org/matches/\d+/[^\s)]+?)\.\d+
 _ADMIN_SUMMARY_URL_LINE_RE = re.compile(r"^\s*URL:\s*(?P<url>\S+)\s*$")
 _ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT = 60
 _ADMIN_TAIL_LOG_SEND_LIMIT = 3
+_ADMIN_TAIL_LOG_MAX_EXPANSION_STEPS = 4
 
 
 def _is_admin_match_summary_line(compact_line: str) -> bool:
@@ -4494,22 +4513,47 @@ def _save_admin_tail_log_seen_urls(urls: List[str], *, mode_label: str) -> None:
     )
 
 
-def _send_admin_log_tail(*, line_count: int = 100, raw_odds: Any = None) -> None:
-    scan_lines = max(2000, int(line_count) * 120)
-    mode_label = _runtime_instance_mode_label(raw_odds)
-    tail_text = _build_recent_match_summaries_text(
-        limit=_ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT,
-        scan_lines=scan_lines,
-    )
-    messages = _split_admin_match_summary_messages(tail_text)
+def _collect_admin_tail_unseen_messages(
+    *,
+    mode_label: str,
+    line_count: int,
+) -> Tuple[List[str], List[Tuple[str, str]], List[int]]:
     seen_urls = _load_admin_tail_log_seen_urls(mode_label=mode_label)
     seen_url_set = set(seen_urls)
+    requested_limits: List[int] = []
     unseen_messages: List[Tuple[str, str]] = []
-    for message in messages:
-        match_url = _extract_admin_summary_message_url(message)
-        if match_url and match_url in seen_url_set:
-            continue
-        unseen_messages.append((match_url, message))
+    base_scan_lines = max(3000, int(line_count) * 60)
+    limit = max(1, int(_ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT))
+    scan_lines = base_scan_lines
+
+    for _attempt in range(max(1, int(_ADMIN_TAIL_LOG_MAX_EXPANSION_STEPS))):
+        requested_limits.append(limit)
+        tail_text = _build_recent_match_summaries_text(limit=limit, scan_lines=scan_lines)
+        messages = _split_admin_match_summary_messages(tail_text)
+        unseen_messages = []
+        for message in messages:
+            match_url = _extract_admin_summary_message_url(message)
+            if match_url and match_url in seen_url_set:
+                continue
+            unseen_messages.append((match_url, message))
+        if len(unseen_messages) >= int(_ADMIN_TAIL_LOG_SEND_LIMIT):
+            break
+        if not messages:
+            break
+        if len(messages) <= int(_ADMIN_TAIL_LOG_SEND_LIMIT) and len(unseen_messages) == len(messages):
+            break
+        limit *= 2
+        scan_lines *= 2
+
+    return seen_urls, unseen_messages, requested_limits
+
+
+def _send_admin_log_tail(*, line_count: int = 100, raw_odds: Any = None) -> None:
+    mode_label = _runtime_instance_mode_label(raw_odds)
+    seen_urls, unseen_messages, _requested_limits = _collect_admin_tail_unseen_messages(
+        mode_label=mode_label,
+        line_count=line_count,
+    )
     if not unseen_messages:
         send_message("tail_log: новых ставок нет", admin_only=True, mirror_to_vk=False)
         return

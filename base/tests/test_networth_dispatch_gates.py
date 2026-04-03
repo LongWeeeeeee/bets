@@ -2024,6 +2024,28 @@ def test_elo_block_wr_guard_does_not_penalize_favorite_star_block() -> None:
     assert diag["elo_adjusted_wr_pct"] == pytest.approx(60.0)
 
 
+def test_elo_block_wr_guard_does_not_penalize_small_elo_diff() -> None:
+    diag = runtime._apply_elo_block_wr_guard(
+        diag={
+            "valid": True,
+            "status": "ok",
+            "sign": -1,
+            "hit_metrics": ["counterpick_1vs1", "solo"],
+        },
+        block_wr_pct=60.0,
+        team_elo_meta={
+            "adjusted_radiant_wr": 52.9,
+            "adjusted_dire_wr": 47.1,
+            "adjusted_diff": 20.0,
+        },
+    )
+
+    assert diag["valid"] is True
+    assert diag["status"] == "ok"
+    assert diag["elo_wr_penalty_pp"] == pytest.approx(0.0)
+    assert diag["elo_adjusted_wr_pct"] == pytest.approx(60.0)
+
+
 def test_full_star_same_sign_message_keeps_early_block(monkeypatch) -> None:
     case = BranchScenario(
         name="full_star_same_sign_message_keeps_early",
