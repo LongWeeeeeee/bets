@@ -537,6 +537,7 @@ NETWORTH_STATUS_LATE_MONITOR_WAIT_1500 = "late_monitor_wait_1500"
 NETWORTH_STATUS_LATE_CONFLICT_WAIT_1500 = "late_conflict_wait_1500"
 NETWORTH_STATUS_LATE_CONFLICT_WAIT_2000 = "late_conflict_wait_2000"
 NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000 = "late_conflict_wait_3000"
+NETWORTH_STATUS_LATE_OPPOSITE_EARLY90_WAIT_20_20 = "late_opposite_early90_wait_20_20"
 NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_WAIT = "late_top25_elo_block_wait_3000"
 NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_TARGET_LEAD_SEND = "late_top25_elo_block_target_lead_send"
 NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_TIMEOUT_NO_SEND = "late_top25_elo_block_timeout_no_send"
@@ -2093,10 +2094,10 @@ def _opposite_signs_early90_monitor_config(
         "late_elo_wr": float(late_elo_wr) if late_elo_wr is not None else None,
         "elo_gap_pp": float(elo_gap_pp) if elo_gap_pp is not None else None,
         "early_is_elo_underdog_by_gap": bool(early_is_elo_underdog_by_gap),
-        "threshold_4_to_10": float(NETWORTH_GATE_LATE_OPPOSITE_EARLY90_4_TO_10_DIFF),
-        "threshold_10_to_20": float(threshold_10_to_20),
-        "status_4_to_10": NETWORTH_STATUS_LATE_CONFLICT_WAIT_2000,
-        "status_10_to_20": status_10_to_20,
+        "target_game_time": float(DELAYED_SIGNAL_TARGET_GAME_TIME),
+        "dispatch_status_label": NETWORTH_STATUS_LATE_OPPOSITE_EARLY90_WAIT_20_20,
+        "send_on_target_game_time": False,
+        "wait_until_target_then_post_target_comeback": True,
     }
 
 
@@ -2328,25 +2329,13 @@ def _dynamic_monitor_snapshot_for_payload(
 
     if snapshot["profile"] != "late_only_opposite_signs_early90":
         return snapshot
-
-    threshold_key = (
-        "networth_monitor_threshold_4_to_10"
-        if current_game_time < float(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS)
-        else "networth_monitor_threshold_10_to_20"
+    snapshot["threshold"] = None
+    snapshot["status_label"] = str(
+        payload.get("dispatch_status_label")
+        or payload.get("timeout_status_label")
+        or snapshot["status_label"]
+        or ""
     )
-    status_key = (
-        "networth_monitor_status_4_to_10"
-        if current_game_time < float(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS)
-        else "networth_monitor_status_10_to_20"
-    )
-    next_threshold_raw = payload.get(threshold_key)
-    try:
-        next_threshold = float(next_threshold_raw) if next_threshold_raw is not None else None
-    except (TypeError, ValueError):
-        next_threshold = None
-    next_status_label = str(payload.get(status_key) or snapshot["status_label"] or "")
-    snapshot["threshold"] = next_threshold
-    snapshot["status_label"] = next_status_label
     return snapshot
 
 
@@ -12647,8 +12636,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"early_elo_wr={opposite_signs_early90_monitor.get('early_elo_wr')}, "
                         f"late_elo_wr={opposite_signs_early90_monitor.get('late_elo_wr')}, "
                         f"gap={elo_gap_label}, "
-                        f"4_10>={int(float(opposite_signs_early90_monitor.get('threshold_4_to_10') or 0.0))}, "
-                        f"10_20>={int(float(opposite_signs_early90_monitor.get('threshold_10_to_20') or 0.0))}"
+                        f"wait_until={_format_game_clock(opposite_signs_early90_monitor.get('target_game_time'))}, "
+                        "release=post_target_comeback_ceiling"
                     )
             signal_wr_guard_meta = _resolve_signal_wr_for_elo_guard(
                 target_side=target_side,
@@ -13065,20 +13054,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     return return_status
                 if current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
                     if isinstance(opposite_signs_early90_monitor, dict) and opposite_signs_early90_monitor.get("enabled"):
-                        opposite_signs_4_to_10_threshold = float(
-                            opposite_signs_early90_monitor.get("threshold_4_to_10") or 0.0
+                        print(
+                            "   ⏳ Opposite-sign WR90 gate: "
+                            f"target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                            f"wait until {_format_game_clock(DELAYED_SIGNAL_TARGET_GAME_TIME)}, "
+                            "then only post-target comeback ceiling"
                         )
-                        if target_networth_diff < opposite_signs_4_to_10_threshold:
-                            print(
-                                "   ⏳ Ожидание dispatch: opposite_signs_wr90_gate_04_10 "
-                                f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
-                                f"need>={int(opposite_signs_4_to_10_threshold)}) -> "
-                                f"delayed monitor >={int(opposite_signs_4_to_10_threshold)} until 10:00, "
-                                f"then >={int(float(opposite_signs_early90_monitor.get('threshold_10_to_20') or 0.0))} "
-                                f"until {_format_game_clock(DELAYED_SIGNAL_TARGET_GAME_TIME)}"
-                            )
-                        else:
-                            networth_send_status_label = NETWORTH_STATUS_LATE_CONFLICT_WAIT_2000
                     else:
                         if target_networth_diff < NETWORTH_GATE_4_TO_10_MIN_DIFF:
                             print(
@@ -13235,24 +13216,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 elif has_selected_early_star and has_selected_late_star and selected_early_sign != selected_late_sign:
                     if isinstance(opposite_signs_early90_monitor, dict) and opposite_signs_early90_monitor.get("enabled"):
                         dynamic_monitor_profile = dict(opposite_signs_early90_monitor)
-                        if current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
-                            monitor_threshold = float(dynamic_monitor_profile.get("threshold_4_to_10") or 0.0)
-                            monitor_wait_status_label = str(dynamic_monitor_profile.get("status_4_to_10") or "")
-                            print(
-                                "   ⏳ Opposite-sign WR90 monitor (4-10): "
-                                f"target_side={target_side}, target_diff={int(target_networth_diff)}, "
-                                f"need>={int(monitor_threshold)} until 10:00, "
-                                f"then >={int(float(dynamic_monitor_profile.get('threshold_10_to_20') or 0.0))} "
-                                f"until {target_human}"
-                            )
-                        else:
-                            monitor_threshold = float(dynamic_monitor_profile.get("threshold_10_to_20") or 0.0)
-                            monitor_wait_status_label = str(dynamic_monitor_profile.get("status_10_to_20") or "")
-                            print(
-                                "   ⏳ Opposite-sign WR90 monitor (10-20): "
-                                f"target_side={target_side}, target_diff={int(target_networth_diff)}, "
-                                f"need>={int(monitor_threshold)} until {target_human}"
-                            )
+                        monitor_threshold = None
+                        monitor_wait_status_label = str(
+                            dynamic_monitor_profile.get("dispatch_status_label")
+                            or NETWORTH_STATUS_LATE_OPPOSITE_EARLY90_WAIT_20_20
+                        )
+                        fallback_send_status_label = NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND
+                        print(
+                            "   ⏳ Opposite-sign WR90 monitor: "
+                            f"target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                            f"wait until {target_human}, then only post-target comeback ceiling"
+                        )
                     elif opposite_sign_early_release_allowed:
                         monitor_threshold = NETWORTH_GATE_LATE_OPPOSITE_DIFF
                         monitor_wait_status_label = NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000
@@ -13443,6 +13417,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         _release_signal_send_slot(check_uniq_url)
                     return return_status
                 if current_game_time >= target_game_time:
+                    post_target_only_early90 = bool(
+                        isinstance(dynamic_monitor_profile, dict)
+                        and dynamic_monitor_profile.get("profile") == "late_only_opposite_signs_early90"
+                    )
                     if queue_top25_late_elo_block_monitor:
                         if target_networth_diff is not None and target_networth_diff > 0:
                             if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки (top25 late elo block {target_human})"):
@@ -13847,6 +13825,27 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 },
                             )
                             return return_status
+                    if post_target_only_early90:
+                        print(
+                            f"   ⚠️ ВЕРДИКТ: ОТКАЗ (opposite-sign WR90 не дал post-target comeback после {target_human}) "
+                            f"- матч пропущен"
+                        )
+                        add_url(
+                            check_uniq_url,
+                            reason="star_signal_rejected_late_comeback_monitor_timeout",
+                            details={
+                                "status": status,
+                                "dispatch_mode": dispatch_mode,
+                                "delay_reason": "post_target_comeback_ceiling_monitor",
+                                "dispatch_status_label": NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND,
+                                "game_time": int(current_game_time),
+                                "target_game_time": int(target_game_time),
+                                "target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                                "json_retry_errors": json_retry_errors,
+                            },
+                        )
+                        return return_status
                     fallback_guard = _fallback_networth_deficit_guard_decision(
                         target_networth_diff=target_networth_diff,
                         max_deficit_abs=fallback_max_deficit_abs,
@@ -13950,6 +13949,18 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_add_url_details["networth_monitor_window_start_game_time"] = int(dynamic_monitor_profile.get("window_start_seconds") or 0.0)
                         delayed_add_url_details["top25_late_elo_block_rank"] = int(dynamic_monitor_profile.get("leaderboard_rank") or 0)
                         delayed_add_url_details["top25_late_elo_block_adj_wr"] = dynamic_monitor_profile.get("elo_target_wr")
+                    elif dynamic_monitor_profile.get("profile") == "late_only_opposite_signs_early90":
+                        delayed_add_url_details["target_game_time"] = int(
+                            float(dynamic_monitor_profile.get("target_game_time") or target_game_time)
+                        )
+                        delayed_add_url_details["post_target_comeback_only"] = True
+                        delayed_add_url_details["dispatch_status_label"] = str(
+                            dynamic_monitor_profile.get("dispatch_status_label")
+                            or NETWORTH_STATUS_LATE_OPPOSITE_EARLY90_WAIT_20_20
+                        )
+                        delayed_add_url_details["opposite_signs_early90_elo_gap_pp"] = dynamic_monitor_profile.get("elo_gap_pp")
+                        delayed_add_url_details["opposite_signs_early90_early_elo_wr"] = dynamic_monitor_profile.get("early_elo_wr")
+                        delayed_add_url_details["opposite_signs_early90_late_elo_wr"] = dynamic_monitor_profile.get("late_elo_wr")
                     else:
                         delayed_add_url_details["networth_monitor_threshold_4_to_10"] = float(dynamic_monitor_profile.get("threshold_4_to_10") or 0.0)
                         delayed_add_url_details["networth_monitor_threshold_10_to_20"] = float(dynamic_monitor_profile.get("threshold_10_to_20") or 0.0)
@@ -13980,6 +13991,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         or queue_late_core_monitor
                         or queue_strong_same_sign_monitor
                         or queue_top25_late_elo_block_monitor
+                        or (
+                            isinstance(dynamic_monitor_profile, dict)
+                            and dynamic_monitor_profile.get("profile") == "late_only_opposite_signs_early90"
+                        )
                     ),
                     'allow_live_recheck': allow_live_recheck,
                     'retry_attempt_count': 0,
@@ -14000,6 +14015,19 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_payload['networth_monitor_window_start_game_time'] = float(dynamic_monitor_profile.get("window_start_seconds") or 0.0)
                         delayed_payload['top25_late_elo_block_rank'] = int(dynamic_monitor_profile.get("leaderboard_rank") or 0)
                         delayed_payload['top25_late_elo_block_adj_wr'] = dynamic_monitor_profile.get("elo_target_wr")
+                    elif dynamic_monitor_profile.get("profile") == "late_only_opposite_signs_early90":
+                        delayed_payload['target_game_time'] = float(
+                            dynamic_monitor_profile.get("target_game_time") or target_game_time
+                        )
+                        delayed_payload['dispatch_status_label'] = str(
+                            dynamic_monitor_profile.get("dispatch_status_label")
+                            or NETWORTH_STATUS_LATE_OPPOSITE_EARLY90_WAIT_20_20
+                        )
+                        delayed_payload['timeout_add_url_reason'] = "star_signal_rejected_late_comeback_monitor_timeout"
+                        delayed_payload['timeout_status_label'] = NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND
+                        delayed_payload['opposite_signs_early90_elo_gap_pp'] = dynamic_monitor_profile.get("elo_gap_pp")
+                        delayed_payload['opposite_signs_early90_early_elo_wr'] = dynamic_monitor_profile.get("early_elo_wr")
+                        delayed_payload['opposite_signs_early90_late_elo_wr'] = dynamic_monitor_profile.get("late_elo_wr")
                     else:
                         delayed_payload['networth_monitor_threshold_4_to_10'] = float(dynamic_monitor_profile.get("threshold_4_to_10") or 0.0)
                         delayed_payload['networth_monitor_threshold_10_to_20'] = float(dynamic_monitor_profile.get("threshold_10_to_20") or 0.0)

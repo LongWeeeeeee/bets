@@ -558,7 +558,7 @@ def test_opposite_signs_wait_until_20_20_when_early_wr_between_66_and_89(monkeyp
     assert float(add_url_details["fallback_max_deficit_abs"]) == 3000.0
 
 
-def test_opposite_signs_early90_uses_2000_in_4_10_window(monkeypatch) -> None:
+def test_opposite_signs_early90_waits_until_20_20_in_4_10_window(monkeypatch) -> None:
     case = BranchScenario(
         name="opposite_signs_early90_uses_2000_in_4_10_window",
         game_time_seconds=7 * 60,
@@ -589,12 +589,13 @@ def test_opposite_signs_early90_uses_2000_in_4_10_window(monkeypatch) -> None:
     assert result.add_url_calls == []
     assert result.queued_payload is not None
     assert result.queued_payload["reason"] == "late_only_opposite_signs"
-    assert float(result.queued_payload["networth_monitor_threshold"]) == 2000.0
-    assert result.queued_payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_CONFLICT_WAIT_2000
+    assert "networth_monitor_threshold" not in result.queued_payload
+    assert result.queued_payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_OPPOSITE_EARLY90_WAIT_20_20
     assert result.queued_payload["dynamic_monitor_profile"] == "late_only_opposite_signs_early90"
+    assert result.queued_payload["send_on_target_game_time"] is False
 
 
-def test_opposite_signs_early90_underdog_gap_uses_1500_after_10(monkeypatch) -> None:
+def test_opposite_signs_early90_underdog_gap_still_waits_until_20_20_after_10(monkeypatch) -> None:
     case = BranchScenario(
         name="opposite_signs_early90_underdog_gap_uses_1500_after_10",
         game_time_seconds=12 * 60,
@@ -625,13 +626,12 @@ def test_opposite_signs_early90_underdog_gap_uses_1500_after_10(monkeypatch) -> 
     assert result.add_url_calls == []
     assert result.queued_payload is not None
     assert result.queued_payload["reason"] == "late_only_opposite_signs"
-    assert float(result.queued_payload["networth_monitor_threshold"]) == 1500.0
-    assert result.queued_payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_CONFLICT_WAIT_1500
-    assert float(result.queued_payload["networth_monitor_hold_seconds"]) == 60.0
-    assert float(result.queued_payload["networth_monitor_hold_started_game_time"]) == float(case.game_time_seconds)
+    assert "networth_monitor_threshold" not in result.queued_payload
+    assert result.queued_payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_OPPOSITE_EARLY90_WAIT_20_20
+    assert result.queued_payload["send_on_target_game_time"] is False
 
 
-def test_opposite_signs_early90_close_elo_uses_3000_after_10(monkeypatch) -> None:
+def test_opposite_signs_early90_close_elo_still_waits_until_20_20_after_10(monkeypatch) -> None:
     case = BranchScenario(
         name="opposite_signs_early90_close_elo_uses_3000_after_10",
         game_time_seconds=12 * 60,
@@ -662,8 +662,9 @@ def test_opposite_signs_early90_close_elo_uses_3000_after_10(monkeypatch) -> Non
     assert result.add_url_calls == []
     assert result.queued_payload is not None
     assert result.queued_payload["reason"] == "late_only_opposite_signs"
-    assert float(result.queued_payload["networth_monitor_threshold"]) == 3000.0
-    assert result.queued_payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_CONFLICT_WAIT_3000
+    assert "networth_monitor_threshold" not in result.queued_payload
+    assert result.queued_payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_OPPOSITE_EARLY90_WAIT_20_20
+    assert result.queued_payload["send_on_target_game_time"] is False
 
 
 def test_late_fallback_at_20_20_uses_comeback_ceiling(monkeypatch) -> None:
