@@ -772,3 +772,170 @@ def test_finalize_live_series_from_scores_applies_pending_final_map_once(tmp_pat
     assert "425663" not in progress_payload["pending_series"]
 
     _reset_live_team_strength_caches()
+
+
+def test_live_runtime_applies_roster_change_and_uncertainty_boosts(tmp_path) -> None:
+    _reset_live_team_strength_caches()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    snapshot_path = tmp_path / "live_snapshot.json"
+    progress_path = tmp_path / "live_progress.json"
+    runtime_model_state_path = tmp_path / "live_model_state.json"
+    runtime_lock_path = tmp_path / "live_state.lock"
+
+    config = HybridEloConfig(
+        lineup_uncertainty_boost_max=1.0,
+        lineup_uncertainty_boost_matches=4,
+        lineup_uncertainty_boost_global=True,
+        lineup_uncertainty_boost_local=True,
+        lineup_uncertainty_boost_roster=True,
+        lineup_uncertainty_tier1_enabled=True,
+        player_org_uncertainty_boost_max=1.0,
+        player_org_uncertainty_boost_matches=4,
+        player_org_uncertainty_boost_global=False,
+        player_org_uncertainty_boost_local=True,
+        player_org_uncertainty_tier1_enabled=True,
+    )
+    model = HybridPlayerRosterEloModel(config)
+
+    seed_match = MatchRecord(
+        match_id=301,
+        timestamp=1771152600,
+        radiant_win=True,
+        radiant_team_id=10,
+        radiant_team_name="Old Org",
+        dire_team_id=20,
+        dire_team_name="Stable Opponent",
+        radiant_player_ids=(1, 2, 3, 4, 5),
+        dire_player_ids=(6, 7, 8, 9, 10),
+        league_id=11,
+        league_name="Test League",
+        source_league_tier="TIER1",
+        series_id=500001,
+        series_type="3",
+        derived_league_tier=LeagueTier.TIER1,
+    )
+    model.process_match(seed_match)
+
+    snapshot = {
+        "meta": {"reference_timestamp": 1771153251},
+        "teams_by_org_key": {},
+        "model_state": model.export_state(),
+    }
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+
+    preview_before = get_matchup_summary(
+        radiant_team_id=11,
+        dire_team_id=20,
+        radiant_team_name="New Org",
+        dire_team_name="Stable Opponent",
+        radiant_account_ids=[1, 2, 3, 4, 5],
+        dire_account_ids=[6, 7, 8, 9, 10],
+        match_tier=LeagueTier.TIER1,
+        snapshot_path=snapshot_path,
+        data_dir=data_dir,
+        rebuild_if_missing=False,
+        runtime_model_state_path=runtime_model_state_path,
+    )
+
+    assert preview_before is not None
+    assert preview_before["source"] == "elo_live_lineup_snapshot"
+    assert preview_before["radiant"]["lineup_used"] is True
+    assert preview_before["radiant"]["rating_source"] == "lineup_player_strength_cold_roster"
+    assert preview_before["radiant"]["roster_matches"] == 0
+
+    live_map1 = MatchRecord(
+        match_id=302,
+        timestamp=1771153800,
+        radiant_win=True,
+        radiant_team_id=11,
+        radiant_team_name="New Org",
+        dire_team_id=20,
+        dire_team_name="Stable Opponent",
+        radiant_player_ids=(1, 2, 3, 4, 5),
+        dire_player_ids=(6, 7, 8, 9, 10),
+        league_id=11,
+        league_name="Test League",
+        source_league_tier="TIER1",
+        series_id=500002,
+        series_type="3",
+        derived_league_tier=LeagueTier.TIER1,
+    )
+    register_live_map_context(
+        series_key="500002",
+        series_url="dltv.org/matches/500002/new-org-vs-stable-opponent.0",
+        map_key="dltv.org/matches/500002/new-org-vs-stable-opponent.0",
+        first_team_score=0,
+        second_team_score=0,
+        first_team_is_radiant=True,
+        match_record=live_map1,
+        snapshot_path=snapshot_path,
+        data_dir=data_dir,
+        rebuild_if_missing=False,
+        progress_path=progress_path,
+        runtime_model_state_path=runtime_model_state_path,
+        runtime_lock_path=runtime_lock_path,
+    )
+
+    live_map2 = MatchRecord(
+        match_id=303,
+        timestamp=1771154400,
+        radiant_win=True,
+        radiant_team_id=11,
+        radiant_team_name="New Org",
+        dire_team_id=20,
+        dire_team_name="Stable Opponent",
+        radiant_player_ids=(1, 2, 3, 4, 5),
+        dire_player_ids=(6, 7, 8, 9, 10),
+        league_id=11,
+        league_name="Test League",
+        source_league_tier="TIER1",
+        series_id=500002,
+        series_type="3",
+        derived_league_tier=LeagueTier.TIER1,
+    )
+    result_map2 = register_live_map_context(
+        series_key="500002",
+        series_url="dltv.org/matches/500002/new-org-vs-stable-opponent.1",
+        map_key="dltv.org/matches/500002/new-org-vs-stable-opponent.1",
+        first_team_score=1,
+        second_team_score=0,
+        first_team_is_radiant=True,
+        match_record=live_map2,
+        snapshot_path=snapshot_path,
+        data_dir=data_dir,
+        rebuild_if_missing=False,
+        progress_path=progress_path,
+        runtime_model_state_path=runtime_model_state_path,
+        runtime_lock_path=runtime_lock_path,
+    )
+
+    assert result_map2 is not None
+    applied_update = result_map2["applied_update"]
+    assert applied_update is not None
+    assert applied_update["radiant"]["lineup_k_multiplier"] > 1.0
+    assert applied_update["radiant"]["player_org_k_multiplier_avg"] > 1.0
+    assert applied_update["radiant"]["effective_local_k_multiplier_avg"] > 1.0
+    assert applied_update["radiant"]["after_roster_matches"] == 1
+
+    preview_after = get_matchup_summary(
+        radiant_team_id=11,
+        dire_team_id=20,
+        radiant_team_name="New Org",
+        dire_team_name="Stable Opponent",
+        radiant_account_ids=[1, 2, 3, 4, 5],
+        dire_account_ids=[6, 7, 8, 9, 10],
+        match_tier=LeagueTier.TIER1,
+        snapshot_path=snapshot_path,
+        data_dir=data_dir,
+        rebuild_if_missing=False,
+        runtime_model_state_path=runtime_model_state_path,
+    )
+
+    assert preview_after is not None
+    assert preview_after["radiant"]["lineup_used"] is True
+    assert preview_after["radiant"]["roster_key"] == preview_before["radiant"]["roster_key"]
+    assert preview_after["radiant"]["roster_matches"] == 1
+    assert preview_after["radiant"]["live_base_delta"] != pytest.approx(0.0)
+
+    _reset_live_team_strength_caches()
