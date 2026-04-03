@@ -184,6 +184,18 @@ def _find_skipped_player_account_ids(
     }
 
 
+def _target_side_skipped_player_hits(
+    skipped_player_hits: Optional[Dict[str, List[int]]],
+    target_side: Optional[str],
+) -> List[int]:
+    if target_side not in {"radiant", "dire"} or not isinstance(skipped_player_hits, dict):
+        return []
+    hits = skipped_player_hits.get(target_side)
+    if not isinstance(hits, list):
+        return []
+    return sorted({int(pid) for pid in hits if _coerce_int(pid) > 0})
+
+
 def _get_id_to_names_path() -> Path:
     return BASE_DIR / "id_to_names.py"
 
@@ -11862,23 +11874,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         )
         if skipped_player_hits["radiant"] or skipped_player_hits["dire"]:
             print(
-                "   🚫 Матч пропущен: найден игрок из player denylist "
+                "   🚫 Найдены игроки из player denylist "
                 f"(radiant={skipped_player_hits['radiant']}, dire={skipped_player_hits['dire']})"
             )
-            add_url(
-                check_uniq_url,
-                reason="skip_player_denylist",
-                details={
-                    "status": status,
-                    "radiant_team": radiant_team_name_original,
-                    "dire_team": dire_team_name_original,
-                    "radiant_account_ids": radiant_account_ids,
-                    "dire_account_ids": dire_account_ids,
-                    "skipped_player_hits": skipped_player_hits,
-                    "json_retry_errors": json_retry_errors,
-                },
-            )
-            return return_status
         live_elo_registration = _register_completed_live_map_for_elo(
             series_key=series_id,
             series_url=series_url,
@@ -12870,6 +12868,38 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 dispatch_message_sign = selected_early_sign
 
             dispatch_message_side = _target_side_from_sign(dispatch_message_sign)
+            skipped_target_player_hits = _target_side_skipped_player_hits(
+                skipped_player_hits,
+                dispatch_message_side,
+            )
+            if skipped_target_player_hits:
+                skipped_team_name = (
+                    radiant_team_name_original or radiant_team_name
+                    if dispatch_message_side == "radiant"
+                    else dire_team_name_original or dire_team_name
+                )
+                print(
+                    "   🚫 Ставка отклонена: target side содержит игрока из player denylist "
+                    f"(target_side={dispatch_message_side}, team={skipped_team_name}, "
+                    f"hits={skipped_target_player_hits})"
+                )
+                add_url(
+                    check_uniq_url,
+                    reason="skip_player_denylist",
+                    details={
+                        "status": status,
+                        "target_side": dispatch_message_side,
+                        "target_team": skipped_team_name,
+                        "blocked_player_account_ids": skipped_target_player_hits,
+                        "radiant_team": radiant_team_name_original,
+                        "dire_team": dire_team_name_original,
+                        "radiant_account_ids": radiant_account_ids,
+                        "dire_account_ids": dire_account_ids,
+                        "skipped_player_hits": skipped_player_hits,
+                        "json_retry_errors": json_retry_errors,
+                    },
+                )
+                return return_status
             stake_team_name = (
                 radiant_team_name
                 if dispatch_message_side == "radiant"
