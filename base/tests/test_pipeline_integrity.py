@@ -1281,11 +1281,11 @@ def test_send_admin_log_tail_sends_one_message_per_match(monkeypatch) -> None:
 
     assert requested_limits == [runtime._ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT]
     assert len(sent_messages) == 2
-    assert "dltv.org/matches/1/older-match" in sent_messages[0]["message"]
-    assert "dltv.org/matches/2/newer-match" in sent_messages[1]["message"]
+    assert "dltv.org/matches/2/newer-match" in sent_messages[0]["message"]
+    assert "dltv.org/matches/1/older-match" in sent_messages[1]["message"]
     assert sent_messages[0]["kwargs"]["admin_only"] is True
     assert sent_messages[0]["kwargs"]["mirror_to_vk"] is False
-    assert saved_seen_urls == [["dltv.org/matches/1/older-match", "dltv.org/matches/2/newer-match"]]
+    assert saved_seen_urls == [["dltv.org/matches/2/newer-match", "dltv.org/matches/1/older-match"]]
 
 
 def test_send_admin_log_tail_skips_seen_matches_and_only_sends_new(monkeypatch) -> None:
@@ -1420,9 +1420,9 @@ def test_send_admin_log_tail_prefers_three_freshest_unseen_matches(monkeypatch) 
     runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
     assert len(sent_messages) == 3
-    assert "dltv.org/matches/3/match-3" in sent_messages[0]["message"]
+    assert "dltv.org/matches/5/match-5" in sent_messages[0]["message"]
     assert "dltv.org/matches/4/match-4" in sent_messages[1]["message"]
-    assert "dltv.org/matches/5/match-5" in sent_messages[2]["message"]
+    assert "dltv.org/matches/3/match-3" in sent_messages[2]["message"]
 
 
 def test_send_admin_log_tail_expands_window_until_three_unseen_found(monkeypatch) -> None:
@@ -1495,15 +1495,15 @@ def test_send_admin_log_tail_expands_window_until_three_unseen_found(monkeypatch
 
     assert requested_limits[:2] == [runtime._ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT, runtime._ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT * 2]
     assert len(sent_messages) == 3
-    assert "dltv.org/matches/8/new-a" in sent_messages[0]["message"]
+    assert "dltv.org/matches/12/new-c" in sent_messages[0]["message"]
     assert "dltv.org/matches/9/new-b" in sent_messages[1]["message"]
-    assert "dltv.org/matches/12/new-c" in sent_messages[2]["message"]
+    assert "dltv.org/matches/8/new-a" in sent_messages[2]["message"]
     assert saved_seen_urls == [[
         "dltv.org/matches/10/seen-a",
         "dltv.org/matches/11/seen-b",
-        "dltv.org/matches/8/new-a",
-        "dltv.org/matches/9/new-b",
         "dltv.org/matches/12/new-c",
+        "dltv.org/matches/9/new-b",
+        "dltv.org/matches/8/new-a",
     ]]
 
 

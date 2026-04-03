@@ -4558,7 +4558,7 @@ def _send_admin_log_tail(*, line_count: int = 100, raw_odds: Any = None) -> None
         send_message("tail_log: новых ставок нет", admin_only=True, mirror_to_vk=False)
         return
     newly_sent_urls: List[str] = []
-    selected_messages = unseen_messages[-_ADMIN_TAIL_LOG_SEND_LIMIT:]
+    selected_messages = list(reversed(unseen_messages[-_ADMIN_TAIL_LOG_SEND_LIMIT:]))
     for match_url, message in selected_messages:
         for idx, chunk in enumerate(_split_telegram_text_chunks(message), start=1):
             prefix = ""
