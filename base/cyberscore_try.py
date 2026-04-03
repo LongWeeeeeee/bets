@@ -4249,8 +4249,8 @@ _ADMIN_DELAYED_OUTCOME_PATTERNS = (
 )
 _ADMIN_SUMMARY_MATCH_URL_RE = re.compile(r"(dltv\.org/matches/\d+/[^\s)]+?)\.\d+(?=$|[\s)])")
 _ADMIN_SUMMARY_URL_LINE_RE = re.compile(r"^\s*URL:\s*(?P<url>\S+)\s*$")
-_ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT = 20
-_ADMIN_TAIL_LOG_SEND_LIMIT = 4
+_ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT = 60
+_ADMIN_TAIL_LOG_SEND_LIMIT = 3
 
 
 def _is_admin_match_summary_line(compact_line: str) -> bool:
@@ -4513,7 +4513,8 @@ def _send_admin_log_tail(*, line_count: int = 100, raw_odds: Any = None) -> None
         send_message("tail_log: новых ставок нет", admin_only=True, mirror_to_vk=False)
         return
     newly_sent_urls: List[str] = []
-    for match_url, message in unseen_messages[:_ADMIN_TAIL_LOG_SEND_LIMIT]:
+    selected_messages = unseen_messages[-_ADMIN_TAIL_LOG_SEND_LIMIT:]
+    for match_url, message in selected_messages:
         for idx, chunk in enumerate(_split_telegram_text_chunks(message), start=1):
             prefix = ""
             if idx > 1:

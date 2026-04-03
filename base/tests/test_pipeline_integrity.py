@@ -1373,6 +1373,59 @@ def test_send_admin_log_tail_reports_no_new_matches(monkeypatch) -> None:
     ]
 
 
+def test_send_admin_log_tail_prefers_three_freshest_unseen_matches(monkeypatch) -> None:
+    payload = "\n".join(
+        [
+            "[1]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/1/match-1",
+            "",
+            "[2]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/2/match-2",
+            "",
+            "[3]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/3/match-3",
+            "",
+            "[4]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/4/match-4",
+            "",
+            "[5]",
+            "   Статус: draft...",
+            "   URL: dltv.org/matches/5/match-5",
+        ]
+    )
+    sent_messages: List[Dict[str, Any]] = []
+    saved_seen_urls: List[List[str]] = []
+
+    monkeypatch.setattr(
+        runtime,
+        "_build_recent_match_summaries_text",
+        lambda **_kwargs: payload,
+    )
+    monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        runtime,
+        "_save_admin_tail_log_seen_urls",
+        lambda urls, **_kwargs: saved_seen_urls.append(list(urls)),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "send_message",
+        lambda message, **kwargs: sent_messages.append({"message": str(message), "kwargs": dict(kwargs)}),
+    )
+
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
+
+    assert len(sent_messages) == 3
+    assert "dltv.org/matches/3/match-3" in sent_messages[0]["message"]
+    assert "dltv.org/matches/4/match-4" in sent_messages[1]["message"]
+    assert "dltv.org/matches/5/match-5" in sent_messages[2]["message"]
+    assert saved_seen_urls == [["dltv.org/matches/3/match-3", "dltv.org/matches/4/match-4", "dltv.org/matches/5/match-5"]]
+
+
 def test_load_telegram_subscribers_state_merges_primary_and_legacy(tmp_path, monkeypatch) -> None:
     import functions
 
