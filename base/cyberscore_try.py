@@ -1099,30 +1099,44 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
             'wr_pct': wr_pct,
         }
 
-    best_level = None
-    for level in STAR_LEVEL_ORDER:
+    thresholds_by_level: Dict[int, Dict[str, int]] = {}
+    for level in sorted(set(available_levels)):
         thresholds = STAR_THRESHOLDS_BY_WR.get(level, {}).get(section, [])
         if not thresholds:
             continue
         threshold_map: Dict[str, int] = {}
         for metric, threshold in thresholds:
             try:
-                threshold_map[str(metric)] = int(threshold)
+                compact_metric = str(metric)
+                compact_threshold = int(threshold)
             except (TypeError, ValueError):
                 continue
-        if not threshold_map:
+            if compact_threshold < 1:
+                compact_threshold = 1
+            threshold_map[compact_metric] = compact_threshold
+        if threshold_map:
+            thresholds_by_level[int(level)] = threshold_map
+
+    best_level = None
+    for metric, value in star_only_data.items():
+        metric_best_level = None
+        metric_max_threshold = 0
+        abs_value = abs(value)
+        for level in sorted(thresholds_by_level):
+            threshold = thresholds_by_level[level].get(metric)
+            if threshold is None:
+                continue
+            # Если порог для более высокого WR не вырос, не повышаем confidence.
+            # Это устраняет скачки вида 7* -> WR60, 8* -> WR90 при плато таблицы.
+            if threshold <= metric_max_threshold:
+                continue
+            metric_max_threshold = int(threshold)
+            if abs_value >= metric_max_threshold:
+                metric_best_level = int(level)
+        if metric_best_level is None:
             continue
-        # Уровень WR валиден, если хотя бы одна STAR-метрика проходит порог
-        # своего индекса на этом WR-уровне.
-        level_ok = False
-        for metric, value in star_only_data.items():
-            threshold = threshold_map.get(metric)
-            if threshold is not None and abs(value) >= threshold:
-                level_ok = True
-                break
-        if level_ok:
-            best_level = level
-            break
+        if best_level is None or metric_best_level > best_level:
+            best_level = metric_best_level
     if best_level is None:
         return None
     # Минимальный кэф по уровню (шаг 0.01)
@@ -4334,15 +4348,15 @@ def _read_log_tail_lines(
     return lines
 
 
-def _build_recent_match_summaries_text(*, limit: int = 10, scan_lines: int = 12000) -> str:
+def _build_recent_match_summaries_entries(*, limit: int = 10, scan_lines: int = 12000) -> List[Dict[str, Any]]:
     log_path = PROJECT_ROOT / "log.txt"
     if not log_path.exists():
-        return f"log.txt not found: {log_path}"
+        return []
 
     try:
         raw_lines = _read_log_tail_lines(log_path, max_lines=scan_lines)
-    except Exception as exc:
-        return f"failed to read log.txt: {exc}"
+    except Exception:
+        return []
 
     latest_blocks_by_url: Dict[str, Dict[str, Any]] = {}
     latest_delayed_outcome_by_url: Dict[str, Dict[str, Any]] = {}
@@ -4432,14 +4446,17 @@ def _build_recent_match_summaries_text(*, limit: int = 10, scan_lines: int = 120
             }
         )
 
+    entries.sort(key=lambda item: int(item.get("line_no") or 0))
+    return entries[-max(1, int(limit)) :]
+
+
+def _build_recent_match_summaries_text(*, limit: int = 10, scan_lines: int = 12000) -> str:
+    entries = _build_recent_match_summaries_entries(limit=limit, scan_lines=scan_lines)
     if not entries:
         return "recent match summaries: no informative match blocks found"
 
-    entries.sort(key=lambda item: int(item.get("line_no") or 0))
-    selected = entries[-max(1, int(limit)) :]
-
     parts: List[str] = []
-    for idx, entry in enumerate(selected, start=1):
+    for idx, entry in enumerate(entries, start=1):
         lines = [str(line).rstrip() for line in entry.get("lines") or [] if str(line).strip()]
         if not lines:
             continue
@@ -4528,19 +4545,22 @@ def _collect_admin_tail_unseen_messages(
 
     for _attempt in range(max(1, int(_ADMIN_TAIL_LOG_MAX_EXPANSION_STEPS))):
         requested_limits.append(limit)
-        tail_text = _build_recent_match_summaries_text(limit=limit, scan_lines=scan_lines)
-        messages = _split_admin_match_summary_messages(tail_text)
+        entries = _build_recent_match_summaries_entries(limit=limit, scan_lines=scan_lines)
         unseen_messages = []
-        for message in messages:
-            match_url = _extract_admin_summary_message_url(message)
+        for entry in entries:
+            match_url = str(entry.get("url") or "").strip()
+            lines = [str(line).rstrip() for line in entry.get("lines") or [] if str(line).strip()]
+            message = "\n".join(lines).strip()
+            if not message:
+                continue
             if match_url and match_url in seen_url_set:
                 continue
             unseen_messages.append((match_url, message))
         if len(unseen_messages) >= int(_ADMIN_TAIL_LOG_SEND_LIMIT):
             break
-        if not messages:
+        if not entries:
             break
-        if len(messages) <= int(_ADMIN_TAIL_LOG_SEND_LIMIT) and len(unseen_messages) == len(messages):
+        if len(entries) <= int(_ADMIN_TAIL_LOG_SEND_LIMIT) and len(unseen_messages) == len(entries):
             break
         limit *= 2
         scan_lines *= 2

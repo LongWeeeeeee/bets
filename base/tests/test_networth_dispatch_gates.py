@@ -154,6 +154,53 @@ def _patch_team_elo_summary(
     )
 
 
+def test_recommend_odds_for_block_does_not_jump_to_highest_wr_on_late_plateau(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {"mid_output": [["counterpick_1vs1", 5]]},
+            65: {"mid_output": [["counterpick_1vs1", 8]]},
+            70: {"mid_output": [["counterpick_1vs1", 8]]},
+            75: {"mid_output": [["counterpick_1vs1", 8]]},
+            80: {"mid_output": [["counterpick_1vs1", 8]]},
+            85: {"mid_output": [["counterpick_1vs1", 8]]},
+            90: {"mid_output": [["counterpick_1vs1", 8]]},
+        },
+        raising=False,
+    )
+
+    rec_7 = runtime._recommend_odds_for_block({"counterpick_1vs1": "7*"}, "late")
+    rec_8 = runtime._recommend_odds_for_block({"counterpick_1vs1": "8*"}, "late")
+
+    assert rec_7 is not None
+    assert rec_8 is not None
+    assert rec_7["level"] == 60
+    assert rec_8["level"] == 65
+
+
+def test_recommend_odds_for_block_ignores_non_increasing_early_thresholds(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {"early_output": [["synergy_duo", 24]]},
+            65: {"early_output": [["synergy_duo", 24]]},
+            70: {"early_output": [["synergy_duo", 24]]},
+            75: {"early_output": [["synergy_duo", 24]]},
+            80: {"early_output": [["synergy_duo", 24]]},
+            85: {"early_output": [["synergy_duo", 24]]},
+            90: {"early_output": [["synergy_duo", 24]]},
+        },
+        raising=False,
+    )
+
+    rec = runtime._recommend_odds_for_block({"synergy_duo": "24*"}, "early")
+
+    assert rec is not None
+    assert rec["level"] == 60
+
+
 def _star_diagnostics_for_case(
     case: BranchScenario,
     section: str,

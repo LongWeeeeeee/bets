@@ -1245,30 +1245,41 @@ def test_build_recent_match_summaries_text_normalizes_map_suffix_in_urls(tmp_pat
     assert "dltv.org/matches/425878/1win-team-vs-enjoy-boys-blast-slam-vii-europe-open-qualifier-1" in payload
 
 
+def _tail_entry(url: str, *lines: str, line_no: int = 1) -> Dict[str, Any]:
+    return {
+        "url": url,
+        "lines": list(lines),
+        "line_no": line_no,
+    }
+
+
 def test_send_admin_log_tail_sends_one_message_per_match(monkeypatch) -> None:
-    payload = "\n".join(
-        [
-            "[1]",
+    entries = [
+        _tail_entry(
+            "dltv.org/matches/1/older-match.0",
             "   Статус: draft...",
             "   URL: dltv.org/matches/1/older-match",
-            "",
-            "[2]",
+            line_no=10,
+        ),
+        _tail_entry(
+            "dltv.org/matches/2/newer-match.0",
             "   Статус: draft...",
             "   URL: dltv.org/matches/2/newer-match",
-        ]
-    )
+            line_no=20,
+        ),
+    ]
     sent_messages: List[Dict[str, Any]] = []
     requested_limits: List[int] = []
     saved_seen_urls: List[List[str]] = []
 
-    def _fake_build_recent_match_summaries_text(limit=10, scan_lines=12000):
+    def _fake_build_recent_match_summaries_entries(limit=10, scan_lines=12000):
         requested_limits.append(int(limit))
-        return payload
+        return entries
 
     def _fake_send_message(message, **kwargs):
         sent_messages.append({"message": str(message), "kwargs": dict(kwargs)})
 
-    monkeypatch.setattr(runtime, "_build_recent_match_summaries_text", _fake_build_recent_match_summaries_text)
+    monkeypatch.setattr(runtime, "_build_recent_match_summaries_entries", _fake_build_recent_match_summaries_entries)
     monkeypatch.setattr(runtime, "send_message", _fake_send_message)
     monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
     monkeypatch.setattr(
@@ -1285,33 +1296,36 @@ def test_send_admin_log_tail_sends_one_message_per_match(monkeypatch) -> None:
     assert "dltv.org/matches/1/older-match" in sent_messages[1]["message"]
     assert sent_messages[0]["kwargs"]["admin_only"] is True
     assert sent_messages[0]["kwargs"]["mirror_to_vk"] is False
-    assert saved_seen_urls == [["dltv.org/matches/2/newer-match", "dltv.org/matches/1/older-match"]]
+    assert saved_seen_urls == [["dltv.org/matches/2/newer-match.0", "dltv.org/matches/1/older-match.0"]]
 
 
 def test_send_admin_log_tail_skips_seen_matches_and_only_sends_new(monkeypatch) -> None:
-    payload = "\n".join(
-        [
-            "[1]",
+    entries = [
+        _tail_entry(
+            "dltv.org/matches/1/already-seen.0",
             "   Статус: draft...",
             "   URL: dltv.org/matches/1/already-seen",
-            "",
-            "[2]",
+            line_no=10,
+        ),
+        _tail_entry(
+            "dltv.org/matches/2/new-match.0",
             "   Статус: draft...",
             "   URL: dltv.org/matches/2/new-match",
-        ]
-    )
+            line_no=20,
+        ),
+    ]
     sent_messages: List[Dict[str, Any]] = []
     saved_seen_urls: List[List[str]] = []
 
     monkeypatch.setattr(
         runtime,
-        "_build_recent_match_summaries_text",
-        lambda **_kwargs: payload,
+        "_build_recent_match_summaries_entries",
+        lambda **_kwargs: entries,
     )
     monkeypatch.setattr(
         runtime,
         "_load_admin_tail_log_seen_urls",
-        lambda **_kwargs: ["dltv.org/matches/1/already-seen"],
+        lambda **_kwargs: ["dltv.org/matches/1/already-seen.0"],
     )
     monkeypatch.setattr(
         runtime,
@@ -1329,28 +1343,29 @@ def test_send_admin_log_tail_skips_seen_matches_and_only_sends_new(monkeypatch) 
     assert len(sent_messages) == 1
     assert "dltv.org/matches/2/new-match" in sent_messages[0]["message"]
     assert "dltv.org/matches/1/already-seen" not in sent_messages[0]["message"]
-    assert saved_seen_urls == [["dltv.org/matches/1/already-seen", "dltv.org/matches/2/new-match"]]
+    assert saved_seen_urls == [["dltv.org/matches/1/already-seen.0", "dltv.org/matches/2/new-match.0"]]
 
 
 def test_send_admin_log_tail_reports_no_new_matches(monkeypatch) -> None:
-    payload = "\n".join(
-        [
-            "[1]",
+    entries = [
+        _tail_entry(
+            "dltv.org/matches/1/already-seen.0",
             "   Статус: draft...",
             "   URL: dltv.org/matches/1/already-seen",
-        ]
-    )
+            line_no=10,
+        )
+    ]
     sent_messages: List[Dict[str, Any]] = []
 
     monkeypatch.setattr(
         runtime,
-        "_build_recent_match_summaries_text",
-        lambda **_kwargs: payload,
+        "_build_recent_match_summaries_entries",
+        lambda **_kwargs: entries,
     )
     monkeypatch.setattr(
         runtime,
         "_load_admin_tail_log_seen_urls",
-        lambda **_kwargs: ["dltv.org/matches/1/already-seen"],
+        lambda **_kwargs: ["dltv.org/matches/1/already-seen.0"],
     )
     monkeypatch.setattr(
         runtime,
@@ -1374,36 +1389,17 @@ def test_send_admin_log_tail_reports_no_new_matches(monkeypatch) -> None:
 
 
 def test_send_admin_log_tail_prefers_three_freshest_unseen_matches(monkeypatch) -> None:
-    payload = "\n".join(
-        [
-            "[1]",
-            "   Статус: draft...",
-            "   URL: dltv.org/matches/1/match-1",
-            "",
-            "[2]",
-            "   Статус: draft...",
-            "   URL: dltv.org/matches/2/match-2",
-            "",
-            "[3]",
-            "   Статус: draft...",
-            "   URL: dltv.org/matches/3/match-3",
-            "",
-            "[4]",
-            "   Статус: draft...",
-            "   URL: dltv.org/matches/4/match-4",
-            "",
-            "[5]",
-            "   Статус: draft...",
-            "   URL: dltv.org/matches/5/match-5",
-        ]
-    )
+    entries = [
+        _tail_entry(f"dltv.org/matches/{idx}/match-{idx}.0", "   Статус: draft...", f"   URL: dltv.org/matches/{idx}/match-{idx}", line_no=idx)
+        for idx in range(1, 6)
+    ]
     sent_messages: List[Dict[str, Any]] = []
     saved_seen_urls: List[List[str]] = []
 
     monkeypatch.setattr(
         runtime,
-        "_build_recent_match_summaries_text",
-        lambda **_kwargs: payload,
+        "_build_recent_match_summaries_entries",
+        lambda **_kwargs: entries,
     )
     monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
     monkeypatch.setattr(
@@ -1426,59 +1422,33 @@ def test_send_admin_log_tail_prefers_three_freshest_unseen_matches(monkeypatch) 
 
 
 def test_send_admin_log_tail_expands_window_until_three_unseen_found(monkeypatch) -> None:
-    payload_small = "\n".join(
-        [
-            "[1]",
-            "   Статус: draft...",
-            "   URL: dltv.org/matches/10/seen-a",
-            "",
-            "[2]",
-            "   Статус: draft...",
-            "   URL: dltv.org/matches/11/seen-b",
-            "",
-            "[3]",
-            "   Статус: draft...",
-            "   URL: dltv.org/matches/12/new-c",
-        ]
-    )
-    payload_large = "\n".join(
-        [
-            "[1]",
-            "   Статус: draft...",
-            "   URL: dltv.org/matches/8/new-a",
-            "",
-            "[2]",
-            "   Статус: draft...",
-            "   URL: dltv.org/matches/9/new-b",
-            "",
-            "[3]",
-            "   Статус: draft...",
-            "   URL: dltv.org/matches/10/seen-a",
-            "",
-            "[4]",
-            "   Статус: draft...",
-            "   URL: dltv.org/matches/11/seen-b",
-            "",
-            "[5]",
-            "   Статус: draft...",
-            "   URL: dltv.org/matches/12/new-c",
-        ]
-    )
+    entries_small = [
+        _tail_entry("dltv.org/matches/10/seen-a.0", "   Статус: draft...", "   URL: dltv.org/matches/10/seen-a", line_no=10),
+        _tail_entry("dltv.org/matches/11/seen-b.0", "   Статус: draft...", "   URL: dltv.org/matches/11/seen-b", line_no=11),
+        _tail_entry("dltv.org/matches/12/new-c.0", "   Статус: draft...", "   URL: dltv.org/matches/12/new-c", line_no=12),
+    ]
+    entries_large = [
+        _tail_entry("dltv.org/matches/8/new-a.0", "   Статус: draft...", "   URL: dltv.org/matches/8/new-a", line_no=8),
+        _tail_entry("dltv.org/matches/9/new-b.0", "   Статус: draft...", "   URL: dltv.org/matches/9/new-b", line_no=9),
+        _tail_entry("dltv.org/matches/10/seen-a.0", "   Статус: draft...", "   URL: dltv.org/matches/10/seen-a", line_no=10),
+        _tail_entry("dltv.org/matches/11/seen-b.0", "   Статус: draft...", "   URL: dltv.org/matches/11/seen-b", line_no=11),
+        _tail_entry("dltv.org/matches/12/new-c.0", "   Статус: draft...", "   URL: dltv.org/matches/12/new-c", line_no=12),
+    ]
     requested_limits: List[int] = []
     sent_messages: List[Dict[str, Any]] = []
     saved_seen_urls: List[List[str]] = []
 
-    def _fake_build_recent_match_summaries_text(limit=10, scan_lines=12000):
+    def _fake_build_recent_match_summaries_entries(limit=10, scan_lines=12000):
         requested_limits.append(int(limit))
         if int(limit) <= runtime._ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT:
-            return payload_small
-        return payload_large
+            return entries_small
+        return entries_large
 
-    monkeypatch.setattr(runtime, "_build_recent_match_summaries_text", _fake_build_recent_match_summaries_text)
+    monkeypatch.setattr(runtime, "_build_recent_match_summaries_entries", _fake_build_recent_match_summaries_entries)
     monkeypatch.setattr(
         runtime,
         "_load_admin_tail_log_seen_urls",
-        lambda **_kwargs: ["dltv.org/matches/10/seen-a", "dltv.org/matches/11/seen-b"],
+        lambda **_kwargs: ["dltv.org/matches/10/seen-a.0", "dltv.org/matches/11/seen-b.0"],
     )
     monkeypatch.setattr(
         runtime,
@@ -1499,11 +1469,67 @@ def test_send_admin_log_tail_expands_window_until_three_unseen_found(monkeypatch
     assert "dltv.org/matches/9/new-b" in sent_messages[1]["message"]
     assert "dltv.org/matches/8/new-a" in sent_messages[2]["message"]
     assert saved_seen_urls == [[
-        "dltv.org/matches/10/seen-a",
-        "dltv.org/matches/11/seen-b",
-        "dltv.org/matches/12/new-c",
-        "dltv.org/matches/9/new-b",
-        "dltv.org/matches/8/new-a",
+        "dltv.org/matches/10/seen-a.0",
+        "dltv.org/matches/11/seen-b.0",
+        "dltv.org/matches/12/new-c.0",
+        "dltv.org/matches/9/new-b.0",
+        "dltv.org/matches/8/new-a.0",
+    ]]
+
+
+def test_send_admin_log_tail_keeps_distinct_series_maps_unseen(monkeypatch) -> None:
+    entries = [
+        _tail_entry(
+            "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.0",
+            "   Статус: finished",
+            "   URL: dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series",
+            "   Score: 1 : 0",
+            line_no=10,
+        ),
+        _tail_entry(
+            "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.1",
+            "   Статус: finished",
+            "   URL: dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series",
+            "   Score: 1 : 1",
+            line_no=20,
+        ),
+        _tail_entry(
+            "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.2",
+            "   Статус: finished",
+            "   URL: dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series",
+            "   Score: 2 : 1",
+            line_no=30,
+        ),
+    ]
+    sent_messages: List[Dict[str, Any]] = []
+    saved_seen_urls: List[List[str]] = []
+
+    monkeypatch.setattr(runtime, "_build_recent_match_summaries_entries", lambda **_kwargs: entries)
+    monkeypatch.setattr(
+        runtime,
+        "_load_admin_tail_log_seen_urls",
+        lambda **_kwargs: ["dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.0"],
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_save_admin_tail_log_seen_urls",
+        lambda urls, **_kwargs: saved_seen_urls.append(list(urls)),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "send_message",
+        lambda message, **kwargs: sent_messages.append({"message": str(message), "kwargs": dict(kwargs)}),
+    )
+
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
+
+    assert len(sent_messages) == 2
+    assert "Score: 2 : 1" in sent_messages[0]["message"]
+    assert "Score: 1 : 1" in sent_messages[1]["message"]
+    assert saved_seen_urls == [[
+        "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.0",
+        "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.2",
+        "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.1",
     ]]
 
 
