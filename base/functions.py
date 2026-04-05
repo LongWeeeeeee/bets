@@ -1827,6 +1827,14 @@ def process_matchup_data(position, matchups, opposing_team_positions):
 STAR_THRESHOLDS_PATH = Path(
     os.getenv('STAR_THRESHOLDS_PATH', str(PROJECT_ROOT / 'data' / 'star_thresholds_by_wr.json'))
 )
+STAR_DISABLED_METRICS = frozenset({
+    'synergy_duo',
+    'synergy_trio',
+})
+
+
+def _is_star_metric_enabled(metric: Any) -> bool:
+    return str(metric).strip() not in STAR_DISABLED_METRICS
 
 
 def _load_star_thresholds() -> dict:
@@ -1980,6 +1988,8 @@ def format_output_dict(
         block_conflict = False
         starred_original_values = {}
         for key, threshold in metrics:
+            if not _is_star_metric_enabled(key):
+                continue
             original_value = data.get(key)
             hit, sign = mark_if_exceeds(data, key, threshold)
             if not hit:

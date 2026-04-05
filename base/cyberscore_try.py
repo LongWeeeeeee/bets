@@ -51,6 +51,7 @@ from functions import (
     calculate_comeback_solo_metrics,
     format_output_dict,
     STAR_THRESHOLDS_BY_WR,
+    STAR_DISABLED_METRICS,
     TelegramSendError,
 )
 try:
@@ -1281,7 +1282,10 @@ def _star_thresholds_for_wr(target_wr: int, section: str) -> Dict[str, int]:
     out: Dict[str, int] = {}
     for metric, threshold in raw:
         try:
-            out[str(metric)] = int(threshold)
+            metric_name = str(metric)
+            if metric_name in STAR_DISABLED_METRICS:
+                continue
+            out[metric_name] = int(threshold)
         except (TypeError, ValueError):
             continue
     return out

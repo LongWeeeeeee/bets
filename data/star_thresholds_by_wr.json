@@ -7,7 +7,33 @@
       ],
       [
         "pos1_vs_pos1",
-        20
+        16
+      ],
+      [
+        "counterpick_1vs2",
+        5
+      ],
+      [
+        "solo",
+        3
+      ],
+      [
+        "synergy_duo",
+        7
+      ],
+      [
+        "synergy_trio",
+        6
+      ]
+    ],
+    "mid_output": [
+      [
+        "counterpick_1vs1",
+        5
+      ],
+      [
+        "pos1_vs_pos1",
+        22
       ],
       [
         "counterpick_1vs2",
@@ -15,41 +41,15 @@
       ],
       [
         "solo",
-        3
+        4
       ],
       [
         "synergy_duo",
-        24
+        9
       ],
       [
         "synergy_trio",
-        17
-      ]
-    ],
-    "mid_output": [
-      [
-        "counterpick_1vs1",
-        5
-      ],
-      [
-        "pos1_vs_pos1",
-        20
-      ],
-      [
-        "counterpick_1vs2",
-        7
-      ],
-      [
-        "solo",
-        3
-      ],
-      [
-        "synergy_duo",
-        18
-      ],
-      [
-        "synergy_trio",
-        14
+        6
       ]
     ]
   },
@@ -57,41 +57,41 @@
     "early_output": [
       [
         "counterpick_1vs1",
-        8
+        6
       ],
       [
         "pos1_vs_pos1",
-        30
+        22
       ],
       [
         "counterpick_1vs2",
-        10
+        7
       ],
       [
         "solo",
-        3
+        4
       ],
       [
         "synergy_duo",
-        24
+        9
       ],
       [
         "synergy_trio",
-        17
+        8
       ]
     ],
     "mid_output": [
       [
         "counterpick_1vs1",
-        8
+        6
       ],
       [
         "pos1_vs_pos1",
-        30
+        27
       ],
       [
         "counterpick_1vs2",
-        10
+        7
       ],
       [
         "solo",
@@ -99,11 +99,11 @@
       ],
       [
         "synergy_duo",
-        18
+        10
       ],
       [
         "synergy_trio",
-        15
+        7
       ]
     ]
   },
@@ -115,6 +115,86 @@
       ],
       [
         "pos1_vs_pos1",
+        31
+      ],
+      [
+        "counterpick_1vs2",
+        9
+      ],
+      [
+        "solo",
+        5
+      ],
+      [
+        "synergy_duo",
+        13
+      ],
+      [
+        "synergy_trio",
+        9
+      ]
+    ],
+    "mid_output": [
+      [
+        "counterpick_1vs1",
+        9
+      ],
+      [
+        "pos1_vs_pos1",
+        34
+      ],
+      [
+        "counterpick_1vs2",
+        10
+      ],
+      [
+        "solo",
+        6
+      ],
+      [
+        "synergy_duo",
+        13
+      ],
+      [
+        "synergy_trio",
+        8
+      ]
+    ]
+  },
+  "75": {
+    "early_output": [
+      [
+        "counterpick_1vs1",
+        10
+      ],
+      [
+        "pos1_vs_pos1",
+        32
+      ],
+      [
+        "counterpick_1vs2",
+        11
+      ],
+      [
+        "solo",
+        6
+      ],
+      [
+        "synergy_duo",
+        17
+      ],
+      [
+        "synergy_trio",
+        13
+      ]
+    ],
+    "mid_output": [
+      [
+        "counterpick_1vs1",
+        10
+      ],
+      [
+        "pos1_vs_pos1",
         41
       ],
       [
@@ -123,95 +203,15 @@
       ],
       [
         "solo",
-        5
+        8
       ],
       [
         "synergy_duo",
-        24
-      ],
-      [
-        "synergy_trio",
         17
-      ]
-    ],
-    "mid_output": [
-      [
-        "counterpick_1vs1",
-        8
-      ],
-      [
-        "pos1_vs_pos1",
-        41
-      ],
-      [
-        "counterpick_1vs2",
-        14
-      ],
-      [
-        "solo",
-        6
-      ],
-      [
-        "synergy_duo",
-        18
       ],
       [
         "synergy_trio",
-        18
-      ]
-    ]
-  },
-  "75": {
-    "early_output": [
-      [
-        "counterpick_1vs1",
-        8
-      ],
-      [
-        "pos1_vs_pos1",
-        51
-      ],
-      [
-        "counterpick_1vs2",
-        13
-      ],
-      [
-        "solo",
-        5
-      ],
-      [
-        "synergy_duo",
-        24
-      ],
-      [
-        "synergy_trio",
-        17
-      ]
-    ],
-    "mid_output": [
-      [
-        "counterpick_1vs1",
-        8
-      ],
-      [
-        "pos1_vs_pos1",
-        51
-      ],
-      [
-        "counterpick_1vs2",
-        24
-      ],
-      [
-        "solo",
-        6
-      ],
-      [
-        "synergy_duo",
-        18
-      ],
-      [
-        "synergy_trio",
-        27
+        11
       ]
     ]
   },
@@ -219,45 +219,19 @@
     "early_output": [
       [
         "counterpick_1vs1",
-        8
+        12
       ],
       [
         "pos1_vs_pos1",
-        61
+        33
       ],
       [
         "counterpick_1vs2",
-        20
+        11
       ],
       [
         "solo",
-        5
-      ],
-      [
-        "synergy_duo",
-        24
-      ],
-      [
-        "synergy_trio",
-        30
-      ]
-    ],
-    "mid_output": [
-      [
-        "counterpick_1vs1",
-        8
-      ],
-      [
-        "pos1_vs_pos1",
-        67
-      ],
-      [
-        "counterpick_1vs2",
-        24
-      ],
-      [
-        "solo",
-        6
+        7
       ],
       [
         "synergy_duo",
@@ -265,7 +239,33 @@
       ],
       [
         "synergy_trio",
-        27
+        15
+      ]
+    ],
+    "mid_output": [
+      [
+        "counterpick_1vs1",
+        13
+      ],
+      [
+        "pos1_vs_pos1",
+        43
+      ],
+      [
+        "counterpick_1vs2",
+        15
+      ],
+      [
+        "solo",
+        9
+      ],
+      [
+        "synergy_duo",
+        18
+      ],
+      [
+        "synergy_trio",
+        15
       ]
     ]
   },
@@ -273,49 +273,53 @@
     "early_output": [
       [
         "counterpick_1vs1",
-        8
+        14
+      ],
+      [
+        "pos1_vs_pos1",
+        35
       ],
       [
         "counterpick_1vs2",
-        26
+        14
       ],
       [
         "solo",
-        5
+        9
       ],
       [
         "synergy_duo",
-        24
+        22
       ],
       [
         "synergy_trio",
-        36
+        15
       ]
     ],
     "mid_output": [
       [
         "counterpick_1vs1",
-        8
+        15
       ],
       [
         "pos1_vs_pos1",
-        70
+        44
       ],
       [
         "counterpick_1vs2",
-        24
+        19
       ],
       [
         "solo",
-        6
+        10
       ],
       [
         "synergy_duo",
-        18
+        20
       ],
       [
         "synergy_trio",
-        33
+        15
       ]
     ]
   },
@@ -323,45 +327,53 @@
     "early_output": [
       [
         "counterpick_1vs1",
-        8
+        17
+      ],
+      [
+        "pos1_vs_pos1",
+        36
       ],
       [
         "counterpick_1vs2",
-        27
+        15
       ],
       [
         "solo",
-        5
+        9
       ],
       [
         "synergy_duo",
-        24
+        23
       ],
       [
         "synergy_trio",
-        36
+        16
       ]
     ],
     "mid_output": [
       [
         "counterpick_1vs1",
-        8
+        16
+      ],
+      [
+        "pos1_vs_pos1",
+        46
       ],
       [
         "counterpick_1vs2",
-        29
+        20
       ],
       [
         "solo",
-        6
+        10
       ],
       [
         "synergy_duo",
-        18
+        21
       ],
       [
         "synergy_trio",
-        33
+        16
       ]
     ]
   }

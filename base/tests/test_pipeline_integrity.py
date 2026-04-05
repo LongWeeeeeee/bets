@@ -3282,6 +3282,54 @@ def test_format_output_dict_does_not_fallback_to_wr60_when_target_missing(monkey
     assert has_star is False
 
 
+def test_format_output_dict_ignores_disabled_duo_trio_star_metrics(monkeypatch) -> None:
+    import functions
+
+    monkeypatch.setattr(
+        functions,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {
+                "early_output": [("synergy_duo", 7), ("synergy_trio", 6)],
+                "mid_output": [("synergy_duo", 9), ("synergy_trio", 6)],
+            }
+        },
+        raising=False,
+    )
+    payload = {
+        "early_output": {"synergy_duo": 99, "synergy_trio": -99},
+        "mid_output": {"synergy_duo": 99, "synergy_trio": -99},
+    }
+
+    has_star = functions.format_output_dict(payload, target_wr=60, late_signal_gate_enabled=False)
+
+    assert has_star is False
+    assert payload["early_output"]["synergy_duo"] == 99
+    assert payload["early_output"]["synergy_trio"] == -99
+    assert payload["mid_output"]["synergy_duo"] == 99
+    assert payload["mid_output"]["synergy_trio"] == -99
+
+
+def test_runtime_star_thresholds_skip_disabled_duo_trio(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {
+                "early_output": [("solo", 3), ("synergy_duo", 7), ("synergy_trio", 6)],
+                "mid_output": [("counterpick_1vs1", 5), ("synergy_duo", 9), ("synergy_trio", 6)],
+            }
+        },
+        raising=False,
+    )
+
+    early_thresholds = runtime._star_thresholds_for_wr(60, "early_output")
+    late_thresholds = runtime._star_thresholds_for_wr(60, "mid_output")
+
+    assert early_thresholds == {"solo": 3}
+    assert late_thresholds == {"counterpick_1vs1": 5}
+
+
 def test_finalize_orphaned_live_elo_series_uses_finished_page_score(tmp_path, monkeypatch) -> None:
     progress_path = tmp_path / "live_elo_progress.json"
     progress_path.write_text(

@@ -184,18 +184,18 @@ def test_recommend_odds_for_block_ignores_non_increasing_early_thresholds(monkey
         runtime,
         "STAR_THRESHOLDS_BY_WR",
         {
-            60: {"early_output": [["synergy_duo", 24]]},
-            65: {"early_output": [["synergy_duo", 24]]},
-            70: {"early_output": [["synergy_duo", 24]]},
-            75: {"early_output": [["synergy_duo", 24]]},
-            80: {"early_output": [["synergy_duo", 24]]},
-            85: {"early_output": [["synergy_duo", 24]]},
-            90: {"early_output": [["synergy_duo", 24]]},
+            60: {"early_output": [["solo", 3]]},
+            65: {"early_output": [["solo", 3]]},
+            70: {"early_output": [["solo", 3]]},
+            75: {"early_output": [["solo", 3]]},
+            80: {"early_output": [["solo", 3]]},
+            85: {"early_output": [["solo", 3]]},
+            90: {"early_output": [["solo", 3]]},
         },
         raising=False,
     )
 
-    rec = runtime._recommend_odds_for_block({"synergy_duo": "24*"}, "early")
+    rec = runtime._recommend_odds_for_block({"solo": "3*"}, "early")
 
     assert rec is not None
     assert rec["level"] == 60
@@ -938,7 +938,7 @@ def test_early_star_late_core_same_sign_rejects_when_late_star_metric_has_opposi
     assert "pos1_vs_pos1" in late_conflict_diag["conflicting_hit_metrics"]
 
 
-def test_early_star_late_core_same_sign_rejects_when_late_duo_star_has_opposite_sign(monkeypatch) -> None:
+def test_early_star_late_core_same_sign_ignores_late_duo_opposite_sign(monkeypatch) -> None:
     case = BranchScenario(
         name="early_star_late_core_same_sign_opposite_late_duo_star",
         game_time_seconds=(10 * 60) + 1,
@@ -948,8 +948,8 @@ def test_early_star_late_core_same_sign_rejects_when_late_duo_star_has_opposite_
         early_sign=1,
         has_late_star=False,
         late_sign=1,
-        expected_send_calls=0,
-        expected_add_url_reason="star_signal_rejected_no_late_star",
+        expected_send_calls=1,
+        expected_add_url_reason="star_signal_sent_now",
         raw_early_output={"counterpick_1vs1": 6, "solo": 3},
         raw_mid_output={
             "counterpick_1vs1": 3,
@@ -964,14 +964,12 @@ def test_early_star_late_core_same_sign_rejects_when_late_duo_star_has_opposite_
         allow_early_star_late_core_same_or_zero=True,
     )
 
-    assert result.sent_messages == []
+    assert len(result.sent_messages) == 1
     assert result.add_url_calls
-    assert result.add_url_calls[-1]["reason"] == "star_signal_rejected_no_late_star"
+    assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now"
     details = result.add_url_calls[-1]["details"]
     assert isinstance(details, dict)
-    late_conflict_diag = details["late_star_hits_against_early_diag"]
-    assert late_conflict_diag["valid"] is False
-    assert "synergy_duo" in late_conflict_diag["conflicting_hit_metrics"]
+    assert details["dispatch_mode"] == "immediate_early_star_late_core_same_sign"
 
 
 def test_early_star_without_late_star_can_send_even_if_late_core_conflicts(monkeypatch) -> None:
@@ -1392,7 +1390,7 @@ def test_tier1_early65_without_late_star_is_rejected(monkeypatch) -> None:
     assert details["selected_late_star"] is False
 
 
-def test_early65_without_late_star_rejects_opposite_sign_late_trio_star(monkeypatch) -> None:
+def test_early65_without_late_star_ignores_opposite_sign_late_trio(monkeypatch) -> None:
     monkeypatch.setattr(runtime, "STAR_ALLOW_IMMEDIATE_EARLY_STAR65", True, raising=False)
     case = BranchScenario(
         name="early65_no_late_star_opposite_trio_reject",
@@ -1403,7 +1401,7 @@ def test_early65_without_late_star_rejects_opposite_sign_late_trio_star(monkeypa
         early_sign=1,
         has_late_star=False,
         late_sign=1,
-        expected_send_calls=0,
+        expected_send_calls=1,
         raw_early_output={"solo": 3},
         raw_mid_output={
             "counterpick_1vs1": 1,
@@ -1413,15 +1411,12 @@ def test_early65_without_late_star_rejects_opposite_sign_late_trio_star(monkeypa
     )
     result = _run_branch_scenario(monkeypatch, case)
 
-    assert result.sent_messages == []
-    assert result.queued_payload is None
+    assert len(result.sent_messages) == 1
     assert result.add_url_calls
-    assert result.add_url_calls[-1]["reason"] == "star_signal_rejected_no_late_star"
+    assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now_networth_gate"
     details = result.add_url_calls[-1]["details"]
     assert isinstance(details, dict)
-    early65_conflict_diag = details["late_star_hits_against_early65_diag"]
-    assert early65_conflict_diag["valid"] is False
-    assert "synergy_trio" in early65_conflict_diag["conflicting_hit_metrics"]
+    assert details["dispatch_status_label"] == runtime.NETWORTH_STATUS_TIER1_EARLY65_4_10_SEND_600
 
 
 def test_late_star_early_core_same_sign_after_10min_waits_below_plus800(monkeypatch, capsys) -> None:
