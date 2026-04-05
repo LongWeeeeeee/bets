@@ -23,6 +23,7 @@ import glob
 import copy
 import mmap
 import gc
+import resource
 import subprocess
 import re
 import shlex
@@ -3689,7 +3690,7 @@ bookmaker_prefetch_condition = threading.Condition(bookmaker_prefetch_lock)
 bookmaker_prefetch_results = {}
 processed_urls_cache = set()
 processed_urls_lock = threading.Lock()
-verbose_match_log_cache = set()
+verbose_match_log_cache: "OrderedDict[str, None]" = OrderedDict()
 verbose_match_log_lock = threading.Lock()
 uncertain_delivery_urls_cache = set()
 uncertain_delivery_urls_lock = threading.Lock()
@@ -3700,6 +3701,11 @@ uncertain_delivery_lock = threading.Lock()
 signal_send_guard = set()
 signal_send_guard_lock = threading.Lock()
 runtime_instance_lock_handle = None
+runtime_cycle_counter = 0
+
+VERBOSE_MATCH_LOG_CACHE_MAX_SIZE = 5000
+RUNTIME_MEMORY_SNAPSHOT_EVERY_CYCLES = 5
+RUNTIME_MEMORY_SNAPSHOT_RSS_ALERT_MB = 1536.0
 
 # Extreme predictor singleton
 extreme_predictor = None
@@ -9668,7 +9674,70 @@ def _mark_verbose_match_log_done(match_key: Any) -> None:
     if not key:
         return
     with verbose_match_log_lock:
-        verbose_match_log_cache.add(key)
+        if key in verbose_match_log_cache:
+            verbose_match_log_cache.move_to_end(key)
+            return
+        verbose_match_log_cache[key] = None
+        while len(verbose_match_log_cache) > max(1, int(VERBOSE_MATCH_LOG_CACHE_MAX_SIZE)):
+            verbose_match_log_cache.popitem(last=False)
+
+
+def _get_current_rss_mb() -> float:
+    proc_status_path = Path("/proc/self/status")
+    if proc_status_path.exists():
+        try:
+            for line in proc_status_path.read_text(encoding="utf-8").splitlines():
+                if line.startswith("VmRSS:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return float(parts[1]) / 1024.0
+        except Exception:
+            pass
+    try:
+        return float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024.0
+    except Exception:
+        return 0.0
+
+
+def _build_runtime_memory_snapshot() -> Dict[str, Any]:
+    with monitored_matches_lock:
+        monitored_count = len(monitored_matches)
+    with processed_urls_lock:
+        processed_count = len(processed_urls_cache)
+    with verbose_match_log_lock:
+        verbose_count = len(verbose_match_log_cache)
+    with uncertain_delivery_urls_lock:
+        uncertain_count = len(uncertain_delivery_urls_cache)
+    with signal_send_guard_lock:
+        send_guard_count = len(signal_send_guard)
+    gc_gen0, gc_gen1, gc_gen2 = gc.get_count()
+    return {
+        "rss_mb": round(_get_current_rss_mb(), 1),
+        "monitored_matches": monitored_count,
+        "processed_urls_cache": processed_count,
+        "verbose_match_log_cache": verbose_count,
+        "uncertain_delivery_urls_cache": uncertain_count,
+        "signal_send_guard": send_guard_count,
+        "gc_count": f"{gc_gen0}/{gc_gen1}/{gc_gen2}",
+    }
+
+
+def _maybe_log_runtime_memory_snapshot(*, cycle_number: int, context: str, force: bool = False) -> None:
+    snapshot = _build_runtime_memory_snapshot()
+    rss_mb = float(snapshot.get("rss_mb") or 0.0)
+    should_log = force or (cycle_number % max(1, int(RUNTIME_MEMORY_SNAPSHOT_EVERY_CYCLES)) == 0)
+    if not should_log and rss_mb < float(RUNTIME_MEMORY_SNAPSHOT_RSS_ALERT_MB):
+        return
+    print(
+        "🧠 Memory snapshot: "
+        f"cycle={cycle_number}, context={context}, rss={rss_mb:.1f}MB, "
+        f"monitored={snapshot['monitored_matches']}, "
+        f"processed={snapshot['processed_urls_cache']}, "
+        f"verbose={snapshot['verbose_match_log_cache']}, "
+        f"uncertain={snapshot['uncertain_delivery_urls_cache']}, "
+        f"send_guard={snapshot['signal_send_guard']}, "
+        f"gc={snapshot['gc_count']}"
+    )
 
 
 def _backup_corrupted_state_file(path: Path, suffix: str) -> Optional[Path]:
@@ -14977,6 +15046,8 @@ if __name__ == "__main__":
 
     while True:
         try:
+            runtime_cycle_counter += 1
+            cycle_number = int(runtime_cycle_counter)
             _handle_pending_telegram_admin_commands(args.odds)
             quiet_sleep_seconds = _compute_moscow_quiet_hours_sleep_seconds()
             if quiet_sleep_seconds > 0:
@@ -14993,6 +15064,10 @@ if __name__ == "__main__":
                     f"Sleeping until {wake_at.strftime('%H:%M')} MSK "
                     f"({int(quiet_sleep_seconds)}s)"
                 )
+                _maybe_log_runtime_memory_snapshot(
+                    cycle_number=cycle_number,
+                    context="quiet_hours",
+                )
                 _sleep_interruptible(
                     quiet_sleep_seconds,
                     raw_odds=args.odds,
@@ -15000,6 +15075,10 @@ if __name__ == "__main__":
                 )
                 continue
             status = general(use_proxy=None, odds=args.odds)
+            _maybe_log_runtime_memory_snapshot(
+                cycle_number=cycle_number,
+                context=f"status={status}",
+            )
             if status == "__sleep_until_schedule__":
                 scheduled_sleep_seconds = max(1, int(math.ceil(float(NEXT_SCHEDULE_SLEEP_SECONDS or 0.0))))
                 schedule_snapshot = dict(NEXT_SCHEDULE_MATCH_INFO or {})
@@ -15034,4 +15113,9 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"⚠️ Ошибка главного цикла: {e}")
             logger.exception("Main loop error")
+            _maybe_log_runtime_memory_snapshot(
+                cycle_number=int(runtime_cycle_counter),
+                context=f"exception={type(e).__name__}",
+                force=True,
+            )
             _sleep_interruptible(30, raw_odds=args.odds, label="error_backoff")

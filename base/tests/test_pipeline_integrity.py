@@ -124,6 +124,68 @@ def test_add_url_recovers_corrupt_map_id_check_and_persists_url(tmp_path, monkey
     assert list(tmp_path.glob("map_id_check.json.corrupt.*"))
 
 
+def test_verbose_match_log_cache_is_bounded(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "VERBOSE_MATCH_LOG_CACHE_MAX_SIZE", 2, raising=False)
+
+    with runtime.verbose_match_log_lock:
+        runtime.verbose_match_log_cache.clear()
+
+    runtime._mark_verbose_match_log_done("match-a")
+    runtime._mark_verbose_match_log_done("match-b")
+    runtime._mark_verbose_match_log_done("match-c")
+
+    with runtime.verbose_match_log_lock:
+        keys = list(runtime.verbose_match_log_cache.keys())
+
+    assert keys == ["match-b", "match-c"]
+    assert runtime._should_emit_verbose_match_log("match-a") is True
+    assert runtime._should_emit_verbose_match_log("match-b") is False
+
+    with runtime.verbose_match_log_lock:
+        runtime.verbose_match_log_cache.clear()
+
+
+def test_build_runtime_memory_snapshot_reports_cache_sizes(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "_get_current_rss_mb", lambda: 321.5)
+
+    with runtime.monitored_matches_lock:
+        runtime.monitored_matches.clear()
+        runtime.monitored_matches["dltv.org/matches/test-memory.0"] = {"queued": True}
+    with runtime.processed_urls_lock:
+        runtime.processed_urls_cache.clear()
+        runtime.processed_urls_cache.update({"a", "b"})
+    with runtime.verbose_match_log_lock:
+        runtime.verbose_match_log_cache.clear()
+        runtime.verbose_match_log_cache["verbose-a"] = None
+    with runtime.uncertain_delivery_urls_lock:
+        runtime.uncertain_delivery_urls_cache.clear()
+        runtime.uncertain_delivery_urls_cache.add("uncertain-a")
+    with runtime.signal_send_guard_lock:
+        runtime.signal_send_guard.clear()
+        runtime.signal_send_guard.add("guard-a")
+
+    snapshot = runtime._build_runtime_memory_snapshot()
+
+    assert snapshot["rss_mb"] == 321.5
+    assert snapshot["monitored_matches"] == 1
+    assert snapshot["processed_urls_cache"] == 2
+    assert snapshot["verbose_match_log_cache"] == 1
+    assert snapshot["uncertain_delivery_urls_cache"] == 1
+    assert snapshot["signal_send_guard"] == 1
+    assert isinstance(snapshot["gc_count"], str)
+
+    with runtime.monitored_matches_lock:
+        runtime.monitored_matches.clear()
+    with runtime.processed_urls_lock:
+        runtime.processed_urls_cache.clear()
+    with runtime.verbose_match_log_lock:
+        runtime.verbose_match_log_cache.clear()
+    with runtime.uncertain_delivery_urls_lock:
+        runtime.uncertain_delivery_urls_cache.clear()
+    with runtime.signal_send_guard_lock:
+        runtime.signal_send_guard.clear()
+
+
 def test_load_map_id_check_urls_migrates_legacy_repo_file(tmp_path, monkeypatch) -> None:
     target_path = tmp_path / ".local" / "state" / "ingame" / "map_id_check.txt"
     legacy_path = tmp_path / "repo" / "map_id_check.txt"
