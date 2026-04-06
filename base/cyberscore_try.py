@@ -9722,8 +9722,53 @@ def _build_runtime_memory_snapshot() -> Dict[str, Any]:
     }
 
 
+def _runtime_object_summary(value: Any) -> str:
+    if value is None:
+        return "none"
+    try:
+        if isinstance(value, _ShardedStatsLookup):
+            cached_shards = len(value._shards)
+            cached_rows = sum(len(shard) for shard in value._shards.values())
+            return f"sharded(cached_shards={cached_shards},cached_rows={cached_rows})"
+        if isinstance(value, dict):
+            return f"dict(len={len(value)})"
+        if isinstance(value, (set, list, tuple, deque)):
+            return f"{type(value).__name__}(len={len(value)})"
+        if isinstance(value, OrderedDict):
+            return f"OrderedDict(len={len(value)})"
+    except Exception:
+        pass
+    return type(value).__name__
+
+
+def _build_runtime_object_snapshot() -> Dict[str, str]:
+    with bookmaker_prefetch_lock:
+        bookmaker_queue_len = len(bookmaker_prefetch_queue)
+        bookmaker_results_len = len(bookmaker_prefetch_results)
+    history_count = len(match_history)
+    extras = {
+        "lane_data": _runtime_object_summary(lane_data),
+        "early_dict": _runtime_object_summary(early_dict),
+        "late_dict": _runtime_object_summary(late_dict),
+        "comeback_dict": _runtime_object_summary(comeback_dict),
+        "late_comeback_ceiling_thresholds": _runtime_object_summary(late_comeback_ceiling_thresholds),
+        "match_history": f"dict(len={history_count})",
+        "bookmaker_prefetch_queue": f"deque(len={bookmaker_queue_len})",
+        "bookmaker_prefetch_results": f"dict(len={bookmaker_results_len})",
+        "kills_models_loaded": "yes" if KILLS_MODELS is not None else "no",
+        "kills_models_by_patch": f"dict(len={len(KILLS_MODELS_BY_PATCH)})",
+        "kills_models_by_tier": f"dict(len={len(KILLS_MODELS_BY_TIER)})",
+        "team_predictability_cache": _runtime_object_summary(TEAM_PREDICTABILITY_CACHE),
+        "tempo_solo_dict": _runtime_object_summary(tempo_solo_dict),
+        "tempo_duo_dict": _runtime_object_summary(tempo_duo_dict),
+        "tempo_cp1v1_dict": _runtime_object_summary(tempo_cp1v1_dict),
+    }
+    return extras
+
+
 def _maybe_log_runtime_memory_snapshot(*, cycle_number: int, context: str, force: bool = False) -> None:
     snapshot = _build_runtime_memory_snapshot()
+    object_snapshot = _build_runtime_object_snapshot()
     rss_mb = float(snapshot.get("rss_mb") or 0.0)
     should_log = force or (cycle_number % max(1, int(RUNTIME_MEMORY_SNAPSHOT_EVERY_CYCLES)) == 0)
     if not should_log and rss_mb < float(RUNTIME_MEMORY_SNAPSHOT_RSS_ALERT_MB):
@@ -9736,7 +9781,22 @@ def _maybe_log_runtime_memory_snapshot(*, cycle_number: int, context: str, force
         f"verbose={snapshot['verbose_match_log_cache']}, "
         f"uncertain={snapshot['uncertain_delivery_urls_cache']}, "
         f"send_guard={snapshot['signal_send_guard']}, "
-        f"gc={snapshot['gc_count']}"
+        f"gc={snapshot['gc_count']}, "
+        f"lane={object_snapshot['lane_data']}, "
+        f"early={object_snapshot['early_dict']}, "
+        f"late={object_snapshot['late_dict']}, "
+        f"comeback={object_snapshot['comeback_dict']}, "
+        f"ceiling={object_snapshot['late_comeback_ceiling_thresholds']}, "
+        f"history={object_snapshot['match_history']}, "
+        f"prefetch_q={object_snapshot['bookmaker_prefetch_queue']}, "
+        f"prefetch_r={object_snapshot['bookmaker_prefetch_results']}, "
+        f"kills={object_snapshot['kills_models_loaded']}, "
+        f"kills_patch={object_snapshot['kills_models_by_patch']}, "
+        f"kills_tier={object_snapshot['kills_models_by_tier']}, "
+        f"predictability={object_snapshot['team_predictability_cache']}, "
+        f"tempo_solo={object_snapshot['tempo_solo_dict']}, "
+        f"tempo_duo={object_snapshot['tempo_duo_dict']}, "
+        f"tempo_cp1v1={object_snapshot['tempo_cp1v1_dict']}"
     )
 
 

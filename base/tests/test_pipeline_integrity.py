@@ -186,6 +186,58 @@ def test_build_runtime_memory_snapshot_reports_cache_sizes(monkeypatch) -> None:
         runtime.signal_send_guard.clear()
 
 
+def test_build_runtime_object_snapshot_reports_large_runtime_objects(monkeypatch) -> None:
+    with runtime.bookmaker_prefetch_lock:
+        runtime.bookmaker_prefetch_queue.clear()
+        runtime.bookmaker_prefetch_queue.append({"match": "queued"})
+        runtime.bookmaker_prefetch_results.clear()
+        runtime.bookmaker_prefetch_results["match-a"] = {"status": "done"}
+    runtime.match_history.clear()
+    runtime.match_history["match-a"] = {"times": [0], "leads": [100]}
+
+    monkeypatch.setattr(runtime, "lane_data", {"lane": 1})
+    monkeypatch.setattr(runtime, "early_dict", {"early": 1})
+    monkeypatch.setattr(runtime, "late_dict", {"late": 1})
+    monkeypatch.setattr(runtime, "comeback_dict", {"cb": 1})
+    monkeypatch.setattr(runtime, "late_comeback_ceiling_thresholds", {"21": 123})
+    monkeypatch.setattr(runtime, "KILLS_MODELS", {"model": 1})
+    monkeypatch.setattr(runtime, "TEAM_PREDICTABILITY_CACHE", {"team": 1})
+    monkeypatch.setattr(runtime, "tempo_solo_dict", {"solo": 1})
+    monkeypatch.setattr(runtime, "tempo_duo_dict", {"duo": 1})
+    monkeypatch.setattr(runtime, "tempo_cp1v1_dict", {"cp": 1})
+
+    snapshot = runtime._build_runtime_object_snapshot()
+
+    assert snapshot["lane_data"] == "dict(len=1)"
+    assert snapshot["early_dict"] == "dict(len=1)"
+    assert snapshot["late_dict"] == "dict(len=1)"
+    assert snapshot["comeback_dict"] == "dict(len=1)"
+    assert snapshot["late_comeback_ceiling_thresholds"] == "dict(len=1)"
+    assert snapshot["match_history"] == "dict(len=1)"
+    assert snapshot["bookmaker_prefetch_queue"] == "deque(len=1)"
+    assert snapshot["bookmaker_prefetch_results"] == "dict(len=1)"
+    assert snapshot["kills_models_loaded"] == "yes"
+    assert snapshot["team_predictability_cache"] == "dict(len=1)"
+    assert snapshot["tempo_solo_dict"] == "dict(len=1)"
+    assert snapshot["tempo_duo_dict"] == "dict(len=1)"
+    assert snapshot["tempo_cp1v1_dict"] == "dict(len=1)"
+
+    with runtime.bookmaker_prefetch_lock:
+        runtime.bookmaker_prefetch_queue.clear()
+        runtime.bookmaker_prefetch_results.clear()
+    runtime.match_history.clear()
+    monkeypatch.setattr(runtime, "lane_data", None)
+    monkeypatch.setattr(runtime, "early_dict", None)
+    monkeypatch.setattr(runtime, "late_dict", None)
+    monkeypatch.setattr(runtime, "comeback_dict", None)
+    monkeypatch.setattr(runtime, "late_comeback_ceiling_thresholds", {})
+    monkeypatch.setattr(runtime, "KILLS_MODELS", None)
+    monkeypatch.setattr(runtime, "TEAM_PREDICTABILITY_CACHE", None)
+    monkeypatch.setattr(runtime, "tempo_solo_dict", None)
+    monkeypatch.setattr(runtime, "tempo_duo_dict", None)
+    monkeypatch.setattr(runtime, "tempo_cp1v1_dict", None)
+
+
 def test_load_map_id_check_urls_migrates_legacy_repo_file(tmp_path, monkeypatch) -> None:
     target_path = tmp_path / ".local" / "state" / "ingame" / "map_id_check.txt"
     legacy_path = tmp_path / "repo" / "map_id_check.txt"
