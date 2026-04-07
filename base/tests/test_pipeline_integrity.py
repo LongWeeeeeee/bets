@@ -238,6 +238,11 @@ def test_build_runtime_object_snapshot_reports_large_runtime_objects(monkeypatch
     monkeypatch.setattr(runtime, "tempo_cp1v1_dict", None)
 
 
+def test_build_lane_block_omits_section_when_lanes_missing() -> None:
+    assert runtime._build_lane_block("", "", "") == ""
+    assert runtime._build_lane_block(None, "Mid: win 52%", "") == "Lanes:\nMid: win 52%\n\n"
+
+
 def test_load_map_id_check_urls_migrates_legacy_repo_file(tmp_path, monkeypatch) -> None:
     target_path = tmp_path / ".local" / "state" / "ingame" / "map_id_check.txt"
     legacy_path = tmp_path / "repo" / "map_id_check.txt"

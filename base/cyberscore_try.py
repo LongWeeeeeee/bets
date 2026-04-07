@@ -754,6 +754,7 @@ if not (DATA_DIR / "star_thresholds_by_wr.json").exists():
 if not STAR_CONFIDENCE_CALIBRATION_PATH.exists():
     _report_missing_runtime_file("star_confidence_calibration.json", STAR_CONFIDENCE_CALIBRATION_PATH)
 STAR_ODDS_USE_CALIBRATION = _safe_bool_env("STAR_ODDS_USE_CALIBRATION", False)
+LIVE_LANE_ANALYSIS_ENABLED = _safe_bool_env("LIVE_LANE_ANALYSIS_ENABLED", False)
 
 # Fallback ladder for dynamic WR display when only base WR=60 thresholds are available.
 # Multiplier compares |metric_value| to base threshold for the metric.
@@ -1296,6 +1297,16 @@ def _format_metric_value(value: float) -> str:
     if abs(value - round(value)) < 1e-9:
         return str(int(round(value)))
     return f"{value:.1f}"
+
+
+def _build_lane_block(top: Any, mid: Any, bot: Any) -> str:
+    top_line = str(top or "").strip()
+    mid_line = str(mid or "").strip()
+    bot_line = str(bot or "").strip()
+    lane_lines = [line for line in (top_line, mid_line, bot_line) if line]
+    if not lane_lines:
+        return ""
+    return "Lanes:\n" + "\n".join(lane_lines) + "\n\n"
 
 
 def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: str) -> Dict[str, Any]:
@@ -12112,11 +12123,18 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 os.environ.pop("SIGNAL_WRAPPER_ENABLED", None)
             else:
                 os.environ["SIGNAL_WRAPPER_ENABLED"] = prev_wrapper_enabled
-        s['top'], s['bot'], s['mid'] = calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data)
+        if LIVE_LANE_ANALYSIS_ENABLED and lane_data is not None:
+            s['top'], s['bot'], s['mid'] = calculate_lanes(
+                radiant_heroes_and_pos,
+                dire_heroes_and_pos,
+                lane_data,
+            )
+        else:
+            s['top'], s['bot'], s['mid'] = "", "", ""
         lane_top_log = str(s.get('top') or '').strip()
         lane_mid_log = str(s.get('mid') or '').strip()
         lane_bot_log = str(s.get('bot') or '').strip()
-        if verbose_match_log:
+        if verbose_match_log and LIVE_LANE_ANALYSIS_ENABLED:
             print("   🛣️ Lanes:")
             print(f"      {lane_top_log or 'Top: n/a'}")
             print(f"      {lane_mid_log or 'Mid: n/a'}")
@@ -13135,13 +13153,18 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 radiant_team_name=radiant_team_name_original or radiant_team_name,
                 dire_team_name=dire_team_name_original or dire_team_name,
             )
+            lane_block = _build_lane_block(
+                s.get('top'),
+                s.get('mid'),
+                s.get('bot'),
+            )
 
             # Формирование сообщения
             message_text = (
                 f"СТАВКА НА {stake_team_name} x{int(stake_multiplier)}\n"
                 f"{radiant_team_name} VS {dire_team_name}\n"
                 f"{series_score_line}"
-                f"Lanes:\n{s.get('top')}{s.get('mid')}{s.get('bot')}"
+                f"{lane_block}"
                 f"{problem_block}"
                 f"{team_elo_block}"
                 f"{wr_block}"
@@ -14507,8 +14530,7 @@ def _load_stats_dicts():
     global late_comeback_ceiling_data, late_comeback_ceiling_thresholds, late_comeback_ceiling_max_minute
     global stats_warmup_last_heavy_load_ts
     if (
-        lane_data is not None
-        and early_dict is not None
+        early_dict is not None
         and late_dict is not None
         and comeback_dict is not None
         and late_comeback_ceiling_data is not None
@@ -14543,7 +14565,9 @@ def _load_stats_dicts():
         global lane_data, comeback_dict, comeback_meta, comeback_baseline_wr_pct
         global late_comeback_ceiling_data, late_comeback_ceiling_thresholds, late_comeback_ceiling_max_minute
 
-        if lane_data is None:
+        if not LIVE_LANE_ANALYSIS_ENABLED:
+            lane_data = None
+        elif lane_data is None:
             print(f"📦 Loading lane stats: {lane_path}")
             lane_data = _load_json_object(lane_path, "lane_dict_raw")
             gc.collect()
@@ -14625,8 +14649,8 @@ def _load_stats_dicts():
         str(BASE_DIR / "tier1_no_alchemist_comeback_ceiling_by_minute.json"),
     )
 
-    # If test stats folder has no lane dict, fallback to baseline lane dict.
-    if not Path(lane_path).exists():
+    # If lane analysis is enabled and test stats folder has no lane dict, fallback to baseline lane dict.
+    if LIVE_LANE_ANALYSIS_ENABLED and not Path(lane_path).exists():
         fallback_lane = f"{default_stats_dir}/lane_dict_raw.json"
         if Path(fallback_lane).exists():
             lane_path = fallback_lane
@@ -14649,8 +14673,7 @@ def _load_stats_dicts():
                 late_dict = _load_json_object(late_path, "late_dict_raw")
             gc.collect()
         return (
-            lane_data is not None
-            and early_dict is not None
+            early_dict is not None
             and late_dict is not None
             and comeback_dict is not None
             and late_comeback_ceiling_data is not None
@@ -14686,8 +14709,7 @@ def _load_stats_dicts():
     stats_warmup_last_heavy_load_ts = time.time()
     gc.collect()
     return (
-        lane_data is not None
-        and early_dict is not None
+        early_dict is not None
         and late_dict is not None
         and comeback_dict is not None
         and late_comeback_ceiling_data is not None
