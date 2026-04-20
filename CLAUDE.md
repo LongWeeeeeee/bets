@@ -122,9 +122,18 @@ python3 base/cyberscore_try.py --no-odds
 - `BOOKMAKER_PROXY_URL`, `BOOKMAKER_PROXY_POOL` — прокси для букмекеров
 - `DLTV_PROXY_POOL` — прокси для OpenDota/DLTV
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ADMIN_IDS`
+- `DOTA2PROTRACKER_ENABLED=0` — отключить парсинг pro-tracker
+- `DOTA2PROTRACKER_MIN_GAMES=10` — минимум игр для статистики
 
 ### `base/functions.py`
 Общие хелперы. Импортируется в `cyberscore_try.py`.
+
+### `base/dota2protracker.py`
+Парсер hero matchups и synergies с dota2protracker.com. Использует Selenium для обхода Cloudflare.
+- `enrich_with_pro_tracker()` — обогащает synergy_and_counterpick() результаты pro-level статистикой
+- cp1vs1 и duo_synergy из pro-игр (от 10+ матчей)
+- Кэширование в `hero_dota2protracker_data/`
+- Переменная `DOTA2PROTRACKER_ENABLED=0` для отключения
 
 ### `base/id_to_names.py`
 Справочник команд с динамическим onboarding (auto-added секции внизу файла).
