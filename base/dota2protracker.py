@@ -12,7 +12,7 @@ import time
 import re
 import os
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 
 # Optional Selenium imports
 try:
@@ -29,6 +29,40 @@ BASE_URL = "https://dota2protracker.com"
 CACHE_DIR = "hero_dota2protracker_data"
 MIN_GAMES_THRESHOLD = 10  # Минимум игр для статистики
 
+# Коэффициенты позиций (同步 с functions.py)
+PRO_EARLY_POSITION_WEIGHTS = {
+    'pos1': 1.4,
+    'pos2': 1.6,
+    'pos3': 1.4,
+    'pos4': 1.2,
+    'pos5': 0.8,
+}
+PRO_LATE_POSITION_WEIGHTS = {
+    'pos1': 2.4,
+    'pos2': 2.2,
+    'pos3': 1.4,
+    'pos4': 1.2,
+    'pos5': 0.6,
+}
+
+CORE_POSITIONS = ('pos1', 'pos2', 'pos3')
+TOTAL_CP_1VS1 = len(CORE_POSITIONS) * len(CORE_POSITIONS)  # 9 matchups для валидации
+DUO_COMBINATIONS_PER_TEAM = 3  # C(3,2) = 3 пары на команду
+DUO_VALID_THRESHOLD = 0.8  # 80% комбинаций должны быть
+
+# Pair weights для cp1vs1 (sync с functions.py)
+PRO_CP1VS1_PAIR_WEIGHTS = {
+    ('pos1', 'pos1'): 3.0,
+    ('pos1', 'pos2'): 2.2,
+    ('pos2', 'pos1'): 2.2,
+    ('pos1', 'pos3'): 1.6,
+    ('pos3', 'pos1'): 1.6,
+    ('pos2', 'pos2'): 2.2,
+    ('pos2', 'pos3'): 1.6,
+    ('pos3', 'pos2'): 1.6,
+    ('pos3', 'pos3'): 1.6,
+}
+
 # Hero name to URL slug mapping
 HERO_NAME_MAP = {
     'night stalker': 'Night_Stalker',
@@ -42,7 +76,6 @@ HERO_NAME_MAP = {
     'abyssal underlord': 'Underlord',
     'muerta': 'Muerta',
     'treant protector': 'Treant_Protector',
-    # Aliases
     'ns': 'Night_Stalker',
     'sk': 'Sand_King',
     'sd': 'Shadow_Demon',
@@ -57,8 +90,6 @@ POSITION_MAP = {
     'pos4': '4', '4': '4',
     'pos5': '5', '5': '5',
 }
-
-POSITION_REVERSE = {v: k for k, v in POSITION_MAP.items()}
 
 
 def _get_proxy_from_pool() -> Optional[str]:
@@ -112,7 +143,6 @@ def _parse_matchups_from_html(html: str) -> Dict[str, Dict[str, Dict]]:
     """Parse matchups table from page HTML."""
     matchups: Dict[str, Dict[str, Dict]] = {}
 
-    # Find the matchups section
     matchup_match = re.search(r'Matchups.*?<table[^>]*>(.*?)</table>', html, re.DOTALL | re.IGNORECASE)
     if not matchup_match:
         return matchups
@@ -129,7 +159,6 @@ def _parse_matchups_from_html(html: str) -> Dict[str, Dict[str, Dict]]:
         if not hero_name:
             continue
 
-        # Extract position data
         cells = re.findall(r'<td[^>]*>(.*?)</td>', row, re.DOTALL)
 
         matchups[hero_name] = {}
@@ -267,6 +296,104 @@ def parse_hero_matchups(hero_name: str, use_cache: bool = True,
     return result
 
 
+def _calculate_cp1vs1(radiant_cores: List[str], dire_cores: List[str],
+                       hero_data: Dict, min_games: int) -> Tuple[bool, Dict]:
+    """
+    Расчёт cp1vs1 с pair_weights.
+
+    Требуем все 9 матчапов (3x3 cores).
+    Для каждого матчапа: diff = wr - 50
+    Умножаем на pair_weight для пары позиций.
+    Суммируем и усредняем.
+    """
+    weighted_scores = []
+    matchup_count = 0
+    games_sum = 0
+
+    for r_idx, r_hero in enumerate(radiant_cores):
+        r_pos = CORE_POSITIONS[r_idx]
+        r_matchups = hero_data.get(r_hero, {}).get('matchups', {})
+
+        for d_idx, d_hero in enumerate(dire_cores):
+            d_pos = CORE_POSITIONS[d_idx]
+            pair_key = (r_pos, d_pos)
+            pair_weight = PRO_CP1VS1_PAIR_WEIGHTS.get(pair_key, 1.0)
+
+            # Radiant hero vs Dire hero
+            d_hero_title = d_hero.title()
+            if d_hero_title in r_matchups:
+                pos_data = r_matchups[d_hero_title].get(str(d_idx + 1), {})
+                if pos_data.get('games', 0) >= min_games:
+                    diff = pos_data['wr'] - 50
+                    weighted_scores.append(diff * pair_weight)
+                    matchup_count += 1
+                    games_sum += pos_data['games']
+
+            # Dire hero vs Radiant hero (obverse matchup)
+            d_hero_lower = d_hero.lower()
+            if d_hero_lower in hero_data:
+                d_matchups = hero_data[d_hero_lower].get('matchups', {})
+                r_hero_title = r_hero.title()
+                if r_hero_title in d_matchups:
+                    pos_data = d_matchups[r_hero_title].get(str(r_idx + 1), {})
+                    if pos_data.get('games', 0) >= min_games:
+                        diff = 50 - pos_data['wr']  # radiant perspective
+                        weighted_scores.append(diff * pair_weight)
+                        matchup_count += 1
+                        games_sum += pos_data['games']
+
+    # Требуем все 9 матчапов
+    is_valid = matchup_count >= TOTAL_CP_1VS1
+
+    return is_valid, {
+        'scores': weighted_scores,
+        'count': matchup_count,
+        'games': games_sum // 2 if matchup_count else 0  # делим на 2 т.к. bidirectional
+    }
+
+
+def _calculate_duo_synergy(cores: List[str], hero_data: Dict, min_games: int,
+                            position_weights: Dict) -> Tuple[bool, Dict]:
+    """
+    Расчёт duo synergy.
+
+    Duo валиден если хотя бы 80% комбинаций присутствуют.
+    Для каждой пары: diff = wr - 50
+    Умножаем на сумму position_weights для двух позиций.
+    """
+    weighted_scores = []
+    matchup_count = 0
+    games_sum = 0
+
+    for i in range(len(cores)):
+        for j in range(i + 1, len(cores)):
+            hero1, hero2 = cores[i], cores[j]
+            pos1, pos2 = CORE_POSITIONS[i], CORE_POSITIONS[j]
+            weight = position_weights.get(pos1, 1.0) + position_weights.get(pos2, 1.0)
+
+            # synergy от hero1 к hero2
+            synergies = hero_data.get(hero1, {}).get('synergies', {})
+            hero2_title = hero2.title()
+
+            if hero2_title in synergies:
+                for pos_key, pos_data in synergies[hero2_title].items():
+                    if pos_data.get('games', 0) >= min_games:
+                        diff = pos_data['wr'] - 50
+                        weighted_scores.append(diff * weight)
+                        matchup_count += 1
+                        games_sum += pos_data['games']
+
+    # Требуем 80% комбинаций (2 из 3)
+    required = int(DUO_COMBINATIONS_PER_TEAM * DUO_VALID_THRESHOLD)
+    is_valid = matchup_count >= required
+
+    return is_valid, {
+        'scores': weighted_scores,
+        'count': matchup_count,
+        'games': games_sum
+    }
+
+
 def enrich_with_pro_tracker(
     radiant_heroes_and_pos: Dict,
     dire_heroes_and_pos: Dict,
@@ -276,139 +403,92 @@ def enrich_with_pro_tracker(
     """
     Обогащает synergy_dict данными с dota2protracker.com.
 
-    Вызывается после synergy_and_counterpick().
+    Правила валидации:
+    - cp1vs1: все 9 матчапов (3x3 cores) должны быть
+    - duo_synergy: минимум 80% комбинаций (2 из 3 пар)
 
-    Args:
-        radiant_heroes_and_pos: {'pos1': {'hero_name': 'ursa', 'hero_id': 70}, ...}
-        dire_heroes_and_pos: аналогично для dire
-        synergy_dict: результат от synergy_and_counterpick()
-        min_games: минимум игр для включения статистики
-
-    Returns:
-        Обогащённый synergy_dict с полями:
-        - pro_cp1vs1_early, pro_cp1vs1_late
-        - pro_duo_synergy_early, pro_duo_synergy_late
-        - pro_matchups: детальные данные по каждой паре
+    Aggregation:
+    - cp1vs1: sum(scores * pair_weight) / count
+    - duo_synergy: avg(r_scores) - avg(d_scores)
     """
     result = dict(synergy_dict)
-    result['pro_matchups'] = {}
-    result['pro_duo_synergy_early'] = 0
-    result['pro_duo_synergy_late'] = 0
     result['pro_cp1vs1_early'] = 0
     result['pro_cp1vs1_late'] = 0
+    result['pro_duo_synergy_early'] = 0
+    result['pro_duo_synergy_late'] = 0
     result['pro_cp1vs1_early_games'] = 0
     result['pro_cp1vs1_late_games'] = 0
     result['pro_duo_synergy_early_games'] = 0
     result['pro_duo_synergy_late_games'] = 0
+    result['pro_cp1vs1_valid'] = False
+    result['pro_duo_synergy_valid'] = False
 
-    # Собираем всех героев
-    all_heroes = {}
-    for side_name, side in [('radiant', radiant_heroes_and_pos), ('dire', dire_heroes_and_pos)]:
-        for pos, data in side.items():
-            if isinstance(data, dict) and data.get('hero_name'):
-                hero_name = data['hero_name'].lower()
-                all_heroes[hero_name] = {
-                    'name': data['hero_name'],
-                    'id': data.get('hero_id'),
-                    'pos': pos,
-                    'side': side_name
-                }
+    # Собираем cores героев
+    radiant_cores = []
+    dire_cores = []
 
-    # Парсим данные для всех героев (один раз)
+    for pos in CORE_POSITIONS:
+        r_data = radiant_heroes_and_pos.get(pos, {})
+        d_data = dire_heroes_and_pos.get(pos, {})
+
+        if isinstance(r_data, dict) and r_data.get('hero_name'):
+            radiant_cores.append(r_data['hero_name'].lower())
+        if isinstance(d_data, dict) and d_data.get('hero_name'):
+            dire_cores.append(d_data['hero_name'].lower())
+
+    if len(radiant_cores) < 3 or len(dire_cores) < 3:
+        print("   ⚠️ ProTracker: insufficient core heroes")
+        return result
+
+    # Парсим данные для всех героев
+    all_heroes = set(radiant_cores + dire_cores)
     hero_data = {}
-    for hero_name, hero_info in all_heroes.items():
-        if hero_name not in hero_data:
-            hero_data[hero_name] = parse_hero_matchups(hero_info['name'])
-            time.sleep(2)  # Rate limiting
 
-    # Вычисляем cp1vs1
-    radiant_cp_scores = []
-    dire_cp_scores = []
-    radiant_cp_games = []
-    dire_cp_games = []
+    for hero_name in all_heroes:
+        hero_data[hero_name] = parse_hero_matchups(hero_name)
+        time.sleep(2)
 
-    radiant_team = [(pos, data.get('hero_name', '').lower()) for pos, data in radiant_heroes_and_pos.items() if isinstance(data, dict)]
-    dire_team = [(pos, data.get('hero_name', '').lower()) for pos, data in dire_heroes_and_pos.items() if isinstance(data, dict)]
+    # ===== CP1VS1 =====
+    r_cp_valid, r_cp_data = _calculate_cp1vs1(radiant_cores, dire_cores, hero_data, min_games)
 
-    for r_pos, r_hero in radiant_team:
-        for d_pos, d_hero in dire_team:
-            if r_hero not in hero_data:
-                continue
-            matchups = hero_data[r_hero].get('matchups', {})
-            d_hero_title = d_hero.title()
+    if r_cp_valid:
+        result['pro_cp1vs1_valid'] = True
+        scores = r_cp_data['scores']
+        result['pro_cp1vs1_early_games'] = r_cp_data['games']
+        result['pro_cp1vs1_late_games'] = r_cp_data['games']
 
-            if d_hero_title in matchups:
-                pos_num = r_pos[-1]  # 'pos1' -> '1'
-                pos_data = matchups[d_hero_title].get(pos_num, {})
-                if pos_data.get('games', 0) >= min_games:
-                    wr = pos_data['wr']
-                    diff = wr - 50
-                    radiant_cp_scores.append(diff)
-                    radiant_cp_games.append(pos_data['games'])
+        if scores:
+            # Сумма weighted scores / count
+            cp_score = sum(scores) / len(scores)
+            result['pro_cp1vs1_early'] = cp_score
+            result['pro_cp1vs1_late'] = cp_score
 
-            # Обратный matchup (dire vs radiant)
-            if d_hero in hero_data:
-                d_matchups = hero_data[d_hero].get('matchups', {})
-                r_hero_title = r_hero.title()
-                if r_hero_title in d_matchups:
-                    pos_num = d_pos[-1]
-                    pos_data = d_matchups[r_hero_title].get(pos_num, {})
-                    if pos_data.get('games', 0) >= min_games:
-                        wr = pos_data['wr']
-                        diff = 50 - wr
-                        dire_cp_scores.append(diff)
-                        dire_cp_games.append(pos_data['games'])
+            print(f"   📊 ProTracker cp1vs1: {r_cp_data['count']} matchups, score={cp_score:+.1f}%, games={r_cp_data['games']}")
 
-    if radiant_cp_scores:
-        result['pro_cp1vs1_early'] = sum(radiant_cp_scores) / len(radiant_cp_scores) if radiant_cp_scores else 0
-        result['pro_cp1vs1_late'] = result['pro_cp1vs1_early']
-        result['pro_cp1vs1_early_games'] = min(radiant_cp_games) if radiant_cp_games else 0
-        result['pro_cp1vs1_late_games'] = result['pro_cp1vs1_early_games']
+    # ===== DUO SYNERGY =====
+    r_duo_valid, r_duo_data = _calculate_duo_synergy(
+        radiant_cores, hero_data, min_games, PRO_EARLY_POSITION_WEIGHTS
+    )
+    d_duo_valid, d_duo_data = _calculate_duo_synergy(
+        dire_cores, hero_data, min_games, PRO_EARLY_POSITION_WEIGHTS
+    )
 
-    if dire_cp_scores:
-        result['pro_cp1vs1_early'] -= sum(dire_cp_scores) / len(dire_cp_scores) if dire_cp_scores else 0
-        result['pro_cp1vs1_late'] = result['pro_cp1vs1_early']
-
-    # Вычисляем duo synergy
-    def calc_duo_synergy(team, hero_data):
-        scores = []
-        games = []
-        for i, (pos1, hero1) in enumerate(team):
-            for j, (pos2, hero2) in enumerate(team):
-                if i >= j:
-                    continue
-                if hero1 not in hero_data or hero2 not in hero_data:
-                    continue
-                synergies = hero_data[hero1].get('synergies', {})
-                hero2_title = hero2.title()
-                if hero2_title in synergies:
-                    pos_num = pos1[-1]
-                    pos_data = synergies[hero2_title].get(pos_num, {})
-                    if pos_data.get('games', 0) >= min_games:
-                        wr = pos_data['wr']
-                        diff = wr - 50
-                        scores.append(diff)
-                        games.append(pos_data['games'])
-        return scores, games
-
-    r_scores, r_games = calc_duo_synergy(radiant_team, hero_data)
-    d_scores, d_games = calc_duo_synergy(dire_team, hero_data)
-
-    if r_scores:
-        result['pro_duo_synergy_early'] = sum(r_scores) / len(r_scores)
-        result['pro_duo_synergy_late'] = result['pro_duo_synergy_early']
-        result['pro_duo_synergy_early_games'] = min(r_games) if r_games else 0
+    if r_duo_valid and d_duo_valid:
+        result['pro_duo_synergy_valid'] = True
+        r_scores = r_duo_data['scores']
+        d_scores = d_duo_data['scores']
+        result['pro_duo_synergy_early_games'] = r_duo_data['games'] + d_duo_data['games']
         result['pro_duo_synergy_late_games'] = result['pro_duo_synergy_early_games']
 
-    if d_scores:
-        result['pro_duo_synergy_early'] -= sum(d_scores) / len(d_scores)
-        result['pro_duo_synergy_late'] = result['pro_duo_synergy_early']
+        if r_scores and d_scores:
+            r_avg = sum(r_scores) / len(r_scores)
+            d_avg = sum(d_scores) / len(d_scores)
+            duo_score = r_avg - d_avg
 
-    # Сохраняем детальные данные
-    result['pro_matchups'] = {
-        'radiant_heroes': {h: hero_data[h] for h in [t[1] for t in radiant_team] if h in hero_data},
-        'dire_heroes': {h: hero_data[h] for h in [t[1] for t in dire_team] if h in hero_data},
-    }
+            result['pro_duo_synergy_early'] = duo_score
+            result['pro_duo_synergy_late'] = duo_score
+
+            print(f"   📊 ProTracker duo: R={r_duo_data['count']} pairs ({r_avg:+.1f}%), D={d_duo_data['count']} pairs ({d_avg:+.1f}%)")
 
     return result
 
