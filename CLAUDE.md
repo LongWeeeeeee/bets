@@ -28,11 +28,22 @@ kill <PID>
 rm -f ~/.local/state/ingame/map_id_check.txt
 ```
 
+### Деплой на сервер
+
+**Важно: если пользователь не откатывает изменения, то:**
+1. Фиксируем изменения в git: `git add . && git commit -m "message" && git push origin main`
+2. На сервере: `cd /root/main && git pull origin main`
+3. Если сервер без git — используем rsync:
+   ```bash
+   rsync -avz --exclude='venv*' --exclude='__pycache__' --exclude='*.log' \
+     ELO/ base/ root@212.113.104.102:/root/main/
+   ```
+
 Затем запустить:
 ```bash
-cd /Users/alex/Documents/ingame
-source venv_catboost/bin/activate
-python base/cyberscore_try.py --mode live --no-odds
+cd /root/main
+source venv/bin/activate
+python3 base/cyberscore_try.py --no-odds
 ```
 
 ---
@@ -103,9 +114,9 @@ python base/cyberscore_try.py --mode live --no-odds
 - `calculate_comeback_solo_metrics()` — метрики камбеков
 
 **Режимы запуска:**
-- `--mode live` — основной режим
-- `--no-odds` — без букмекерского парсинга (только DLTV Selenium)
+- `--no-odds` — без букмекерского парсинга (только DLTV Selenium) — ОСНОВНОЙ РЕЖИМ
 - `--odds` — с парсингом букмекерских коэффициентов
+- `--bookmaker-gate-mode {odds,presence}` — режим gate для odds pipeline
 
 **Переменные окружения:**
 - `BOOKMAKER_PROXY_URL`, `BOOKMAKER_PROXY_POOL` — прокси для букмекеров
