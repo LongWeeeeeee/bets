@@ -18,12 +18,15 @@ from dataclasses import dataclass
 try:
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
     SELENIUM_AVAILABLE = True
 except ImportError:
     SELENIUM_AVAILABLE = False
+
+import requests
 
 BASE_URL = "https://dota2protracker.com"
 CACHE_DIR = "hero_dota2protracker_data"
@@ -93,7 +96,11 @@ POSITION_MAP = {
 
 
 def _get_proxy_from_pool() -> Optional[str]:
-    """Get a working proxy from DLTV pool."""
+    """Get a working proxy from DLTV pool. Returns None if no proxies available."""
+    # Check for local testing - no proxy needed
+    if os.getenv('DOTA2PROTRACKER_NO_PROXY'):
+        return None
+
     try:
         import sys
         sys.path.insert(0, 'base')
@@ -127,7 +134,8 @@ def _create_driver(proxy: Optional[str] = None):
     if proxy:
         options.add_argument(f'--proxy-server={proxy}')
 
-    driver = webdriver.Chrome(options=options)
+    service = Service()
+    driver = webdriver.Chrome(service=service, options=options)
     driver.set_page_load_timeout(30)
     driver.implicitly_wait(3)
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
@@ -267,16 +275,25 @@ def parse_hero_matchups(hero_name: str, use_cache: bool = True,
         print(f"   📊 Fetching pro-tracker: {hero_name} (proxy: {proxy or 'direct'})")
         driver = _create_driver(proxy)
         driver.get(url)
-        time.sleep(6)
 
-        try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "table"))
-            )
-        except:
-            pass
+        # Wait for Cloudflare challenge to pass (looking for actual content)
+        max_wait = 30
+        start_time = time.time()
+        while time.time() - start_time < max_wait:
+            html = driver.page_source
+            if 'Matchups' in html or 'Synergies' in html:
+                break
+            time.sleep(1)
 
         html = driver.page_source
+
+        # Check if we hit Cloudflare
+        if 'Один момент' in html or 'Just a moment' in html or 'challenge' in html.lower():
+            print(f"   ⚠️ Cloudflare challenge detected, page not loaded")
+            result['error'] = 'Cloudflare challenge'
+            driver.quit()
+            return result
+
         result['matchups'] = _parse_matchups_from_html(html)
         result['synergies'] = _parse_synergies_from_html(html)
 
@@ -291,7 +308,10 @@ def parse_hero_matchups(hero_name: str, use_cache: bool = True,
         result['error'] = str(e)
     finally:
         if driver:
-            driver.quit()
+            try:
+                driver.quit()
+            except:
+                pass
 
     return result
 
