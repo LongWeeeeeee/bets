@@ -1959,11 +1959,6 @@ def parse_site_in_camoufox_page(
                 details=(details_deep or body_text)[:700],
                 market_closed=True,
             )
-        # If map odds not found but match-level odds exist, use them as fallback
-        if match_fallback_odds and not map_odds:
-            map_odds = match_fallback_odds[:2]
-            source_deep = "match_fallback"
-            details_deep = body_text[:700]
         if map_odds:
             return SiteResult(
                 site=site,
@@ -2098,11 +2093,6 @@ def parse_site_in_camoufox_page(
         market_closed = True
         source_name = _map_closed_source(site) if map_context_active else (source_name or "map_market_closed")
         details = (details or body_text or _map_context_details(site, "map_market_closed"))[:700]
-    # If map_odds not found but match-level odds exist, use them as fallback
-    if not odds and match_fallback_odds:
-        odds = match_fallback_odds[:2]
-        source_name = f"{source_name}_match_fallback" if source_name else "match_fallback"
-        details = (details or body_text)[:700]
     if map_context_active and not odds:
         if market_closed:
             source_name = source_name or _map_closed_source(site)
@@ -2300,11 +2290,6 @@ def parse_site(
                 details=(details_deep or body_text)[:700],
                 market_closed=True,
             )
-        # If map odds not found but match-level odds exist, use them as fallback
-        if match_fallback_odds and not map_odds:
-            map_odds = match_fallback_odds[:2]
-            source_deep = "match_fallback"
-            details_deep = body_text[:700]
         if map_odds:
             return SiteResult(
                 site=site,

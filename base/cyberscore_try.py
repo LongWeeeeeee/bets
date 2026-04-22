@@ -2774,10 +2774,35 @@ def _build_dota2protracker_block(protracker_payload: Optional[Dict[str, Any]]) -
     duo_value = payload.get("pro_duo_synergy_late", payload.get("pro_duo_synergy_early", 0.0))
     cp_valid = bool(payload.get("pro_cp1vs1_valid"))
     duo_valid = bool(payload.get("pro_duo_synergy_valid"))
+
+    # Lane advantage data
+    lane_adv = payload.get("pro_lane_advantage", 0.0)
+    mid_cp = payload.get("pro_lane_mid_cp1vs1", 0.0)
+    mid_v = payload.get("pro_lane_mid_cp1vs1_valid", False)
+    top_cp = payload.get("pro_lane_top_cp1vs1", 0.0)
+    top_v = payload.get("pro_lane_top_cp1vs1_valid", False)
+    bot_cp = payload.get("pro_lane_bot_cp1vs1", 0.0)
+    bot_v = payload.get("pro_lane_bot_cp1vs1_valid", False)
+    top_duo = payload.get("pro_lane_top_duo", 0.0)
+    top_duo_v = payload.get("pro_lane_top_duo_valid", False)
+    bot_duo = payload.get("pro_lane_bot_duo", 0.0)
+    bot_duo_v = payload.get("pro_lane_bot_duo_valid", False)
+
+    def _fmt(val, valid):
+        return f"{val:+.2f}" if valid else "N/A"
+
+    lane_lines = [
+        f"lane_adv: {_fmt(lane_adv, lane_adv != 0)}",
+        f"mid_cp1vs1: {_fmt(mid_cp, mid_v)}",
+        f"top_cp1vs1: {_fmt(top_cp, top_v)}, duo: {_fmt(top_duo, top_duo_v)}",
+        f"bot_cp1vs1: {_fmt(bot_cp, bot_v)}, duo: {_fmt(bot_duo, bot_duo_v)}",
+    ]
+
     return (
         "dota2protracker:\n"
         f"cp1vs1: {_format_dota2protracker_metric(value=cp_value, valid=cp_valid)}\n"
         f"synergy_duo: {_format_dota2protracker_metric(value=duo_value, valid=duo_valid)}\n"
+        + "\n".join(lane_lines) + "\n"
     )
 
 
@@ -4446,8 +4471,8 @@ def _ensure_camoufox_browser() -> Any:
         return None
     if bookmaker_camoufox_browser is None:
         proxy_kwargs = _bookmaker_camoufox_proxy_kwargs(BOOKMAKER_PROXY_URL)
-        bookmaker_camoufox_browser = _bookmaker_camoufox(headless=True, **proxy_kwargs)
-        bookmaker_camoufox_browser.__enter__()
+        camoufox_instance = _bookmaker_camoufox.Camoufox(headless=True, **proxy_kwargs)
+        bookmaker_camoufox_browser = camoufox_instance.__enter__()  # Returns Browser object
         print("   🌐 Camoufox browser created (persistent mode)")
     bookmaker_camoufox_browser_last_used = time.time()
     return bookmaker_camoufox_browser
@@ -4458,7 +4483,7 @@ def _close_camoufox_browser() -> None:
     global bookmaker_camoufox_browser, bookmaker_camoufox_browser_last_used
     if bookmaker_camoufox_browser is not None:
         try:
-            bookmaker_camoufox_browser.__exit__(None, None, None)
+            bookmaker_camoufox_browser.close()
         except Exception:
             pass
         bookmaker_camoufox_browser = None
