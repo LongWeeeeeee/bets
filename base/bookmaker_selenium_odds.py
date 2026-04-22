@@ -3093,6 +3093,7 @@ def run_sites_in_camoufox(
     mode: str,
     forced_map_num: Optional[int] = None,
 ) -> List[SiteResult]:
+    """Parse all selected bookmaker sites. Creates one browser instance per call."""
     if not CAMOUFOX_AVAILABLE:
         raise RuntimeError("Camoufox is unavailable")
     proxy_kwargs = _camoufox_proxy_kwargs(BOOKMAKER_PROXY_URL)

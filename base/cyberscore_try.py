@@ -354,6 +354,10 @@ try:
             _parse_map_market_on_current_page as _bookmaker_parse_map_market_on_current_page,
             _probe_presence_site_in_current_tab as _bookmaker_probe_presence_site_in_current_tab,
             parse_site as _bookmaker_parse_site,
+            parse_site_in_camoufox_page as _bookmaker_parse_site_in_camoufox_page,
+            run_sites_in_camoufox as _bookmaker_run_sites_in_camoufox,
+            camoufox as _bookmaker_camoufox,
+            _camoufox_proxy_kwargs as _bookmaker_camoufox_proxy_kwargs,
             BOOKMAKER_URLS as _BOOKMAKER_URLS_MAP,
         )
     except Exception:
@@ -365,11 +369,17 @@ try:
             _parse_map_market_on_current_page as _bookmaker_parse_map_market_on_current_page,
             _probe_presence_site_in_current_tab as _bookmaker_probe_presence_site_in_current_tab,
             parse_site as _bookmaker_parse_site,
+            parse_site_in_camoufox_page as _bookmaker_parse_site_in_camoufox_page,
+            run_sites_in_camoufox as _bookmaker_run_sites_in_camoufox,
+            camoufox as _bookmaker_camoufox,
+            _camoufox_proxy_kwargs as _bookmaker_camoufox_proxy_kwargs,
             BOOKMAKER_URLS as _BOOKMAKER_URLS_MAP,
         )
     BOOKMAKER_PREFETCH_AVAILABLE = True
+    BOOKMAKER_CAMOUFOX_IMPORTED = True
 except Exception as _bookmaker_import_error:
     BOOKMAKER_PREFETCH_AVAILABLE = False
+    BOOKMAKER_CAMOUFOX_IMPORTED = False
     _bookmaker_build_driver = None
     _bookmaker_is_map_market_closed = None
     _bookmaker_open_match_details_by_teams = None
@@ -4425,6 +4435,58 @@ def _bookmaker_browser_bootstrap_unlocked(mode: str) -> bool:
     return bool(bookmaker_browser_base_handles)
 
 
+# Camoufox browser reuse functions
+CAMOUFOX_BROWSER_MAX_IDLE_SECONDS = 300  # 5 minutes idle = close browser
+
+
+def _ensure_camoufox_browser() -> Any:
+    """Get or create a persistent Camoufox browser for reuse."""
+    global bookmaker_camoufox_browser, bookmaker_camoufox_browser_last_used
+    if not BOOKMAKER_CAMOUFOX_IMPORTED or _bookmaker_camoufox is None:
+        return None
+    if bookmaker_camoufox_browser is None:
+        proxy_kwargs = _bookmaker_camoufox_proxy_kwargs(BOOKMAKER_PROXY_URL)
+        bookmaker_camoufox_browser = _bookmaker_camoufox(headless=True, **proxy_kwargs)
+        bookmaker_camoufox_browser.__enter__()
+        print("   🌐 Camoufox browser created (persistent mode)")
+    bookmaker_camoufox_browser_last_used = time.time()
+    return bookmaker_camoufox_browser
+
+
+def _close_camoufox_browser() -> None:
+    """Close the persistent Camoufox browser if idle too long or on shutdown."""
+    global bookmaker_camoufox_browser, bookmaker_camoufox_browser_last_used
+    if bookmaker_camoufox_browser is not None:
+        try:
+            bookmaker_camoufox_browser.__exit__(None, None, None)
+        except Exception:
+            pass
+        bookmaker_camoufox_browser = None
+        bookmaker_camoufox_browser_last_used = 0.0
+        print("   🔒 Camoufox browser closed")
+
+
+def _cleanup_on_exit() -> None:
+    """Called on process exit to clean up resources."""
+    _close_camoufox_browser()
+
+
+atexit.register(_cleanup_on_exit)
+
+
+def _should_close_camoufox_browser() -> bool:
+    """Check if Camoufox browser should be closed due to inactivity."""
+    global bookmaker_camoufox_browser, bookmaker_camoufox_browser_last_used
+    if bookmaker_camoufox_browser is None:
+        return False
+    if bookmaker_camoufox_browser_last_used <= 0:
+        return False
+    idle = time.time() - bookmaker_camoufox_browser_last_used
+    if idle > CAMOUFOX_BROWSER_MAX_IDLE_SECONDS:
+        return True
+    return False
+
+
 def _bookmaker_try_open_match_details_with_candidates_unlocked(
     driver: Any,
     *,
@@ -5023,9 +5085,75 @@ def _bookmaker_prefetch_fetch_subprocess(
     return sites_payload
 
 
+def _bookmaker_prefetch_fetch_camoufox_direct(
+    radiant_team: str,
+    dire_team: str,
+    mode: str,
+    map_num: Optional[int] = None,
+    radiant_team_candidates: Optional[List[str]] = None,
+    dire_team_candidates: Optional[List[str]] = None,
+) -> Dict[str, dict]:
+    """Fetch bookmaker odds using a persistent Camoufox browser (no subprocess).
+
+    Reuses bookmaker_camoufox_browser across calls for efficiency.
+    """
+    if not BOOKMAKER_CAMOUFOX_IMPORTED or _bookmaker_parse_site_in_camoufox_page is None:
+        raise RuntimeError("Camoufox not available")
+
+    urls = _bookmaker_urls_for_mode(mode)
+    selected_sites = [site for site in BOOKMAKER_PREFETCH_SITES if site in urls]
+
+    browser = _ensure_camoufox_browser()
+    if browser is None:
+        raise RuntimeError("Failed to get Camoufox browser")
+
+    team1 = str(radiant_team or "")
+    team2 = str(dire_team or "")
+
+    results: Dict[str, dict] = {}
+    for site in selected_sites:
+        page = browser.new_page()
+        try:
+            result = _bookmaker_parse_site_in_camoufox_page(
+                page,
+                site=site,
+                url=urls[site],
+                team1=team1,
+                team2=team2,
+                mode=mode,
+                forced_map_num=map_num,
+            )
+            results[site] = {
+                "status": result.status,
+                "match_found": result.match_found,
+                "odds": result.odds,
+                "match_odds": result.match_odds,
+                "source": result.source,
+                "details": result.details[:500] if result.details else "",
+                "market_closed": result.market_closed,
+            }
+        except Exception as e:
+            results[site] = {
+                "status": "error",
+                "match_found": False,
+                "odds": [],
+                "match_odds": [],
+                "source": "camoufox_direct_error",
+                "details": str(e)[:500],
+                "market_closed": False,
+            }
+        finally:
+            with contextlib.suppress(Exception):
+                page.close()
+
+    return results
+
+
 def _bookmaker_prefetch_loop() -> None:
+    """Bookmaker prefetch worker. Reuses a single Camoufox browser when CAMOUFOX_ENABLED=1."""
     driver = None
     driver_tasks_done = 0
+    browser_idle_check_counter = 0
     while not bookmaker_prefetch_stop_event.is_set():
         task = None
         with bookmaker_prefetch_condition:
@@ -5041,6 +5169,12 @@ def _bookmaker_prefetch_loop() -> None:
                     payload["status"] = "running"
                     payload["started_at"] = time.time()
         if not task:
+            # Periodic idle check
+            browser_idle_check_counter += 1
+            if browser_idle_check_counter >= 10:  # Every ~5 seconds
+                browser_idle_check_counter = 0
+                if _should_close_camoufox_browser():
+                    _close_camoufox_browser()
             continue
 
         match_key = str(task.get("match_key") or "")
@@ -5057,7 +5191,17 @@ def _bookmaker_prefetch_loop() -> None:
             task_map_num = None
         mode = str(task.get("mode") or BOOKMAKER_PREFETCH_MODE)
         try:
-            if BOOKMAKER_PREFETCH_USE_SUBPROCESS:
+            if BOOKMAKER_PREFETCH_USE_SUBPROCESS and BOOKMAKER_CAMOUFOX_ENABLED and BOOKMAKER_CAMOUFOX_IMPORTED:
+                # Direct Camoufox mode: reuse browser, no subprocess
+                sites_payload = _bookmaker_prefetch_fetch_camoufox_direct(
+                    radiant_team=radiant_team,
+                    dire_team=dire_team,
+                    mode=mode,
+                    map_num=task_map_num,
+                    radiant_team_candidates=radiant_team_candidates,
+                    dire_team_candidates=dire_team_candidates,
+                )
+            elif BOOKMAKER_PREFETCH_USE_SUBPROCESS:
                 sites_payload = _bookmaker_prefetch_fetch_subprocess(
                     radiant_team=radiant_team,
                     dire_team=dire_team,
@@ -5101,17 +5245,21 @@ def _bookmaker_prefetch_loop() -> None:
                     payload["error"] = str(e)
                 bookmaker_prefetch_condition.notify_all()
             print(f"   ⚠️ Bookmaker prefetch error for {match_key}: {e}")
-            try:
-                if driver is not None and BOOKMAKER_PREFETCH_USE_SUBPROCESS:
-                    driver.quit()
-            except Exception:
-                pass
-            if BOOKMAKER_PREFETCH_USE_SUBPROCESS:
-                driver = None
-                driver_tasks_done = 0
+            # For Camoufox direct mode, don't close browser on error - just log and continue
+            if not (BOOKMAKER_PREFETCH_USE_SUBPROCESS and BOOKMAKER_CAMOUFOX_ENABLED and BOOKMAKER_CAMOUFOX_IMPORTED):
+                try:
+                    if driver is not None and BOOKMAKER_PREFETCH_USE_SUBPROCESS:
+                        driver.quit()
+                except Exception:
+                    pass
+                if BOOKMAKER_PREFETCH_USE_SUBPROCESS:
+                    driver = None
+                    driver_tasks_done = 0
 
+    # Cleanup: close persistent Camoufox browser on exit
+    _close_camoufox_browser()
     try:
-        if driver is not None and BOOKMAKER_PREFETCH_USE_SUBPROCESS:
+        if driver is not None and not (BOOKMAKER_PREFETCH_USE_SUBPROCESS and BOOKMAKER_CAMOUFOX_ENABLED and BOOKMAKER_CAMOUFOX_IMPORTED):
             driver.quit()
     except Exception:
         pass
@@ -5223,6 +5371,8 @@ bookmaker_prefetch_condition = threading.Condition(bookmaker_prefetch_lock)
 bookmaker_prefetch_results = {}
 bookmaker_browser_lock = threading.RLock()
 bookmaker_browser_driver = None
+bookmaker_camoufox_browser = None  # Persistent Camoufox browser for reuse
+bookmaker_camoufox_browser_last_used = 0.0  # Timestamp of last use
 bookmaker_browser_base_handles: Dict[str, str] = {}
 bookmaker_browser_match_tabs: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
 processed_urls_cache = set()
