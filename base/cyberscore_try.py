@@ -1,4 +1,5 @@
 import argparse
+import importlib.util
 import json
 from html import escape as html_escape
 import ast
@@ -37,6 +38,12 @@ from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 import requests
 try:
+    import camoufox
+    CAMOUFOX_AVAILABLE = True
+except Exception:
+    camoufox = None
+    CAMOUFOX_AVAILABLE = False
+try:
     from curl_cffi import requests as curl_cffi_requests
     from curl_cffi.requests.exceptions import RequestException as CurlCffiRequestException
     CURL_CFFI_AVAILABLE = True
@@ -62,17 +69,73 @@ except ImportError:
     BOOKMAKER_PROXY_POOL = []
     DLTV_PROXY_POOL = []
 
+
+def _env_flag(name: str, default: str = "0") -> bool:
+    return str(os.getenv(name, default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
 # Dota2ProTracker integration (optional)
-DOTA2PROTRACKER_ENABLED = os.getenv('DOTA2PROTRACKER_ENABLED', '1') == '1'
+DOTA2PROTRACKER_ENABLED = _env_flag('DOTA2PROTRACKER_ENABLED', '0')
 DOTA2PROTRACKER_MIN_GAMES = int(os.getenv('DOTA2PROTRACKER_MIN_GAMES', '10'))
+DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED = _env_flag(
+    'DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED',
+    '1' if DOTA2PROTRACKER_ENABLED else '0',
+)
+DOTA2PROTRACKER_ONLY_MODE = _env_flag('DOTA2PROTRACKER_ONLY_MODE', '0')
+DOTA2PROTRACKER_BYPASS_GATES = _env_flag(
+    'DOTA2PROTRACKER_BYPASS_GATES',
+    '1' if DOTA2PROTRACKER_ONLY_MODE else '0',
+)
+DOTA2PROTRACKER_SKIP_BOOKMAKER_GATE = _env_flag(
+    'DOTA2PROTRACKER_SKIP_BOOKMAKER_GATE',
+    '1' if DOTA2PROTRACKER_BYPASS_GATES else '0',
+)
+DOTA2PROTRACKER_SUPERSEDE_OPENDOTA = _env_flag(
+    'DOTA2PROTRACKER_SUPERSEDE_OPENDOTA',
+    '1' if DOTA2PROTRACKER_ENABLED else '0',
+)
+SIGNAL_MINIMAL_ODDS_ONLY_MODE = _env_flag('SIGNAL_MINIMAL_ODDS_ONLY_MODE', '0')
+CLASSIC_SIGNAL_PIPELINE_ENABLED = _env_flag(
+    'CLASSIC_SIGNAL_PIPELINE_ENABLED',
+    '0' if SIGNAL_MINIMAL_ODDS_ONLY_MODE else '1',
+)
+DLTV_CAMOUFOX_ENABLED = _env_flag(
+    'DLTV_CAMOUFOX_ENABLED',
+    '1' if CAMOUFOX_AVAILABLE else '0',
+)
 if DOTA2PROTRACKER_ENABLED:
     try:
-        from dota2protracker import enrich_with_pro_tracker
-    except ImportError:
-        enrich_with_pro_tracker = None
-        print("   ⚠️ Dota2ProTracker integration disabled (module not found)")
+        _dota2protracker_path = os.path.join(os.path.dirname(__file__), "dota2protracker.py")
+        _dota2protracker_spec = importlib.util.spec_from_file_location(
+            "base_dota2protracker_runtime",
+            _dota2protracker_path,
+        )
+        if _dota2protracker_spec is None or _dota2protracker_spec.loader is None:
+            raise ImportError(f"spec not available for {_dota2protracker_path}")
+        _dota2protracker_module = importlib.util.module_from_spec(_dota2protracker_spec)
+        _dota2protracker_spec.loader.exec_module(_dota2protracker_module)
+        enrich_with_pro_tracker = _dota2protracker_module.enrich_with_pro_tracker
+    except Exception:
+        try:
+            from dota2protracker import enrich_with_pro_tracker
+            print("   ⚠️ Dota2ProTracker imported from legacy module path")
+        except ImportError:
+            enrich_with_pro_tracker = None
+            print("   ⚠️ Dota2ProTracker integration disabled (module not found)")
 else:
     enrich_with_pro_tracker = None
+
+# OpenDota API integration (preferred - no Cloudflare blocking)
+OPENDOTA_ENABLED = os.getenv('OPENDOTA_ENABLED', '1') == '1'
+OPENDOTA_MIN_GAMES = int(os.getenv('OPENDOTA_MIN_GAMES', '10'))
+if OPENDOTA_ENABLED:
+    try:
+        from opendota_matchups import enrich_with_opendota
+    except ImportError:
+        enrich_with_opendota = None
+        print("   ⚠️ OpenDota integration disabled (module not found)")
+else:
+    enrich_with_opendota = None
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -674,7 +737,11 @@ BOOKMAKER_PREFETCH_MAX_PENDING = _safe_int_env("BOOKMAKER_PREFETCH_MAX_PENDING",
 BOOKMAKER_PREFETCH_RESULT_TTL_SECONDS = _safe_int_env("BOOKMAKER_PREFETCH_RESULT_TTL_SECONDS", 1800)
 BOOKMAKER_PREFETCH_MESSAGE_WAIT_SECONDS = _safe_float_env("BOOKMAKER_PREFETCH_MESSAGE_WAIT_SECONDS", 3.0)
 BOOKMAKER_PREFETCH_DRIVER_ROTATE_TASKS = _safe_int_env("BOOKMAKER_PREFETCH_DRIVER_ROTATE_TASKS", 3)
-BOOKMAKER_PREFETCH_USE_SUBPROCESS = _safe_bool_env("BOOKMAKER_PREFETCH_USE_SUBPROCESS", False)
+BOOKMAKER_CAMOUFOX_ENABLED = _env_flag("BOOKMAKER_CAMOUFOX_ENABLED", "0")
+BOOKMAKER_PREFETCH_USE_SUBPROCESS = _safe_bool_env(
+    "BOOKMAKER_PREFETCH_USE_SUBPROCESS",
+    BOOKMAKER_CAMOUFOX_ENABLED,
+)
 BOOKMAKER_PREFETCH_SUBPROCESS_TIMEOUT_SECONDS = _safe_int_env("BOOKMAKER_PREFETCH_SUBPROCESS_TIMEOUT_SECONDS", 160)
 BOOKMAKER_MATCH_TAB_CACHE_MAX_MATCHES = _safe_int_env("BOOKMAKER_MATCH_TAB_CACHE_MAX_MATCHES", 8)
 SIGNAL_SEND_ADMIN_ONLY = _safe_bool_env("SIGNAL_SEND_ADMIN_ONLY", False)
@@ -2581,6 +2648,157 @@ def _format_signal_header(
     return f"СТАВКА НА {team_name} x{_format_stake_multiplier_label(stake_multiplier)}"
 
 
+def _blank_dota2protracker_result() -> Dict[str, Any]:
+    return {
+        "pro_cp1vs1_early": 0.0,
+        "pro_cp1vs1_late": 0.0,
+        "pro_duo_synergy_early": 0.0,
+        "pro_duo_synergy_late": 0.0,
+        "pro_cp1vs1_early_games": 0,
+        "pro_cp1vs1_late_games": 0,
+        "pro_duo_synergy_early_games": 0,
+        "pro_duo_synergy_late_games": 0,
+        "pro_cp1vs1_valid": False,
+        "pro_duo_synergy_valid": False,
+        "pro_cp1vs1_reason": "not_computed",
+        "pro_duo_synergy_reason": "not_computed",
+        "pro_cp1vs1_diagnostics": {},
+        "pro_duo_synergy_diagnostics": {},
+    }
+
+
+def _format_dota2protracker_value(value: Any) -> str:
+    try:
+        return f"{float(value):+,.2f}".replace(",", "")
+    except (TypeError, ValueError):
+        return "+0.00"
+
+
+def _dota2protracker_metric_is_valid(
+    protracker_payload: Optional[Dict[str, Any]],
+    metric_name: str,
+) -> bool:
+    if not isinstance(protracker_payload, dict):
+        return False
+    if metric_name == "cp1vs1":
+        return bool(protracker_payload.get("pro_cp1vs1_valid"))
+    if metric_name == "synergy_duo":
+        return bool(protracker_payload.get("pro_duo_synergy_valid"))
+    return False
+
+
+def _has_valid_dota2protracker_signal(protracker_payload: Optional[Dict[str, Any]]) -> bool:
+    return (
+        _dota2protracker_metric_is_valid(protracker_payload, "cp1vs1")
+        or _dota2protracker_metric_is_valid(protracker_payload, "synergy_duo")
+    )
+
+
+def _format_dota2protracker_metric(
+    *,
+    value: Any,
+    valid: bool,
+) -> str:
+    if not valid:
+        return "invalid"
+    return _format_dota2protracker_value(value)
+
+
+def _build_dota2protracker_debug_summary(
+    protracker_payload: Optional[Dict[str, Any]],
+) -> str:
+    payload = dict(_blank_dota2protracker_result())
+    if isinstance(protracker_payload, dict):
+        payload.update(protracker_payload)
+    cp_valid = bool(payload.get("pro_cp1vs1_valid"))
+    duo_valid = bool(payload.get("pro_duo_synergy_valid"))
+    cp_reason = str(payload.get("pro_cp1vs1_reason") or "unknown")
+    duo_reason = str(payload.get("pro_duo_synergy_reason") or "unknown")
+    cp_diag = payload.get("pro_cp1vs1_diagnostics") or {}
+    duo_diag = payload.get("pro_duo_synergy_diagnostics") or {}
+    cp_value = payload.get("pro_cp1vs1_late", payload.get("pro_cp1vs1_early", 0.0))
+    duo_value = payload.get("pro_duo_synergy_late", payload.get("pro_duo_synergy_early", 0.0))
+    return (
+        "cp1vs1="
+        f"{_format_dota2protracker_metric(value=cp_value, valid=cp_valid)} "
+        f"(valid={cp_valid}, reason={cp_reason}, diag={cp_diag}), "
+        "duo_synergy="
+        f"{_format_dota2protracker_metric(value=duo_value, valid=duo_valid)} "
+        f"(valid={duo_valid}, reason={duo_reason}, diag={duo_diag})"
+    )
+
+
+def _build_series_score_line(live_league: Optional[Dict[str, Any]]) -> str:
+    try:
+        live_league = live_league or {}
+        r_wins = live_league.get('radiant_series_wins')
+        d_wins = live_league.get('dire_series_wins')
+        if r_wins is not None or d_wins is not None:
+            r_wins = int(r_wins or 0)
+            d_wins = int(d_wins or 0)
+            return f"{r_wins}-{d_wins}\n"
+    except Exception:
+        pass
+    return ""
+
+
+def _build_series_score_line_with_fallback(
+    live_league: Optional[Dict[str, Any]],
+    fallback_score_text: str = "",
+) -> str:
+    score_line = _build_series_score_line(live_league)
+    if score_line:
+        return score_line
+    score_text = str(fallback_score_text or "").strip()
+    if not score_text:
+        return ""
+    normalized = re.sub(r"\s*:\s*", "-", score_text)
+    return f"{normalized}\n"
+
+
+def _build_dota2protracker_block(protracker_payload: Optional[Dict[str, Any]]) -> str:
+    payload = dict(_blank_dota2protracker_result())
+    if isinstance(protracker_payload, dict):
+        payload.update(protracker_payload)
+    cp_value = payload.get("pro_cp1vs1_late", payload.get("pro_cp1vs1_early", 0.0))
+    duo_value = payload.get("pro_duo_synergy_late", payload.get("pro_duo_synergy_early", 0.0))
+    cp_valid = bool(payload.get("pro_cp1vs1_valid"))
+    duo_valid = bool(payload.get("pro_duo_synergy_valid"))
+    return (
+        "dota2protracker:\n"
+        f"cp1vs1: {_format_dota2protracker_metric(value=cp_value, valid=cp_valid)}\n"
+        f"synergy_duo: {_format_dota2protracker_metric(value=duo_value, valid=duo_valid)}\n"
+    )
+
+
+def _build_dota2protracker_only_message(
+    *,
+    radiant_team_name: str,
+    dire_team_name: str,
+    live_league: Optional[Dict[str, Any]],
+    protracker_payload: Optional[Dict[str, Any]],
+) -> str:
+    return (
+        "DOTA2PROTRACKER\n"
+        f"{radiant_team_name} VS {dire_team_name}\n"
+        f"{_build_series_score_line(live_league)}"
+        f"{_build_dota2protracker_block(protracker_payload)}"
+    )
+
+
+def _build_minimal_odds_only_message(
+    *,
+    radiant_team_name: str,
+    dire_team_name: str,
+    live_league: Optional[Dict[str, Any]],
+    fallback_score_text: str,
+) -> str:
+    return (
+        f"{radiant_team_name} VS {dire_team_name}\n"
+        f"{_build_series_score_line_with_fallback(live_league, fallback_score_text)}"
+    )
+
+
 def _refresh_stake_multiplier_message(
     message_text: str,
     *,
@@ -3908,7 +4126,6 @@ def _bookmaker_format_odds_block(match_key: str) -> Tuple[str, bool, str]:
         ("pari", "Pari"),
     ]
     cells: List[str] = []
-    has_numeric_odds = False
     for site, site_label in display_order:
         site_payload = sites_payload.get(site)
         if not isinstance(site_payload, dict):
@@ -3916,12 +4133,12 @@ def _bookmaker_format_odds_block(match_key: str) -> Tuple[str, bool, str]:
             continue
         odds = site_payload.get("odds")
         match_odds = site_payload.get("match_odds")
-        if not bool(site_payload.get("market_closed")) and isinstance(odds, list) and len(odds) >= 2:
+        market_closed = bool(site_payload.get("market_closed"))
+        if not market_closed and isinstance(odds, list) and len(odds) >= 2:
             try:
                 p1 = float(odds[0])
                 p2 = float(odds[1])
                 cells.append(f"{site_label} {p1:.2f}/{p2:.2f}")
-                has_numeric_odds = True
                 continue
             except (TypeError, ValueError):
                 pass
@@ -3929,12 +4146,17 @@ def _bookmaker_format_odds_block(match_key: str) -> Tuple[str, bool, str]:
             try:
                 p1 = float(match_odds[0])
                 p2 = float(match_odds[1])
-                cells.append(f"{site_label} (матч) {p1:.2f}/{p2:.2f}")
+                cells.append(f"{site_label} (п1/п2) {p1:.2f}/{p2:.2f}")
                 continue
             except (TypeError, ValueError):
                 pass
         cells.append(f"{site_label} —")
-    if not cells or not has_numeric_odds:
+    if not cells:
+        return "", False, "no_cells"
+    has_real_odds = any(
+        "—" not in cell for cell in cells
+    )
+    if not has_real_odds:
         return "", False, "no_numeric_odds"
     mode = str(snapshot.get("mode") or BOOKMAKER_PREFETCH_MODE)
     map_num_raw = snapshot.get("map_num")
@@ -4500,6 +4722,48 @@ def _bookmaker_best_effort_odds_block(match_key: str) -> Tuple[str, bool, str]:
     return f"БК ({mode}{map_suffix}): " + " | ".join(cells) + "\n", True, "ok"
 
 
+def _bookmaker_refresh_snapshot_via_subprocess(match_key: str) -> Optional[dict]:
+    if not BOOKMAKER_PREFETCH_ENABLED or not BOOKMAKER_PREFETCH_USE_SUBPROCESS:
+        return None
+    snapshot = _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
+    if not isinstance(snapshot, dict):
+        return None
+    radiant_team = str(snapshot.get("radiant_team") or "")
+    dire_team = str(snapshot.get("dire_team") or "")
+    mode = str(snapshot.get("mode") or BOOKMAKER_PREFETCH_MODE or "live")
+    map_num_raw = snapshot.get("map_num")
+    try:
+        map_num = int(map_num_raw) if map_num_raw is not None else None
+    except (TypeError, ValueError):
+        map_num = None
+    if map_num is not None and not (1 <= map_num <= 5):
+        map_num = None
+    radiant_team_candidates = list(snapshot.get("radiant_team_candidates") or [radiant_team])
+    dire_team_candidates = list(snapshot.get("dire_team_candidates") or [dire_team])
+    try:
+        sites_payload = _bookmaker_prefetch_fetch_subprocess(
+            radiant_team=radiant_team,
+            dire_team=dire_team,
+            mode=mode,
+            map_num=map_num,
+            radiant_team_candidates=radiant_team_candidates,
+            dire_team_candidates=dire_team_candidates,
+        )
+    except Exception as exc:
+        logger.warning("BOOKMAKER_SUBPROCESS_REFRESH_FAILED %s: %s", match_key, exc)
+        return snapshot
+    refreshed_at = time.time()
+    with bookmaker_prefetch_condition:
+        payload = bookmaker_prefetch_results.get(match_key)
+        if isinstance(payload, dict):
+            payload["status"] = "done"
+            payload["finished_at"] = refreshed_at
+            payload["odds_refreshed_at"] = refreshed_at
+            payload["sites"] = sites_payload
+            bookmaker_prefetch_condition.notify_all()
+    return _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
+
+
 def _replace_bookmaker_block_in_message(message_text: str, bookmaker_block: str) -> str:
     if not isinstance(message_text, str) or not message_text.strip():
         return message_text
@@ -4546,10 +4810,40 @@ def _bookmaker_prepare_message_for_delivery(
 ) -> Tuple[str, bool, str]:
     if not BOOKMAKER_PREFETCH_ENABLED or BOOKMAKER_PREFETCH_GATE_MODE != "odds":
         return message_text, True, "disabled"
-    _bookmaker_refresh_cached_match_tabs_for_dispatch(match_key)
+    if BOOKMAKER_PREFETCH_USE_SUBPROCESS:
+        _bookmaker_refresh_snapshot_via_subprocess(match_key)
+    else:
+        _bookmaker_refresh_cached_match_tabs_for_dispatch(match_key)
     bookmaker_block, bookmaker_ready, bookmaker_reason = _bookmaker_best_effort_odds_block(match_key)
     if not bookmaker_ready:
         return message_text, False, str(bookmaker_reason or "no_numeric_odds")
+    return _replace_bookmaker_block_in_message(message_text, bookmaker_block), True, "ok"
+
+
+def _build_bookmaker_empty_odds_block(match_key: str) -> str:
+    snapshot = _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
+    mode = str((snapshot or {}).get("mode") or BOOKMAKER_PREFETCH_MODE or "live")
+    map_num_raw = (snapshot or {}).get("map_num")
+    map_num = int(map_num_raw) if isinstance(map_num_raw, int) and 1 <= map_num_raw <= 5 else None
+    map_suffix = f", карта {map_num}" if map_num is not None else ""
+    return f"БК ({mode}{map_suffix}): Winline — | BetBoom — | Pari —\n"
+
+
+def _prepare_minimal_odds_only_message_for_delivery(
+    match_key: str,
+    message_text: str,
+) -> Tuple[str, bool, str]:
+    if BOOKMAKER_PREFETCH_ENABLED:
+        if BOOKMAKER_PREFETCH_USE_SUBPROCESS:
+            _bookmaker_refresh_snapshot_via_subprocess(match_key)
+        else:
+            _bookmaker_refresh_cached_match_tabs_for_dispatch(match_key)
+    bookmaker_block, bookmaker_ready, bookmaker_reason = _bookmaker_format_odds_block(match_key)
+    if not bookmaker_ready:
+        reason_str = str(bookmaker_reason or "")
+        if reason_str == "no_numeric_odds":
+            return message_text, False, "no_numeric_odds"
+        return message_text, False, str(bookmaker_reason or "unknown")
     return _replace_bookmaker_block_in_message(message_text, bookmaker_block), True, "ok"
 
 
@@ -4687,10 +4981,26 @@ def _bookmaker_prefetch_fetch_subprocess(
     try:
         payload = json.loads(raw)
     except Exception:
-        # Fallback: some environments may prepend stray lines before JSON.
-        start = raw.rfind("{")
-        if start >= 0:
-            payload = json.loads(raw[start:])
+        # Fallback: find the first complete JSON object starting from the first '{'
+        first_brace = raw.find("{")
+        if first_brace >= 0:
+            candidate = raw[first_brace:]
+            # Count braces to find the matching closing brace
+            open_count = 0
+            end_pos = -1
+            for i, ch in enumerate(candidate):
+                if ch == "{":
+                    open_count += 1
+                elif ch == "}":
+                    open_count -= 1
+                    if open_count == 0:
+                        end_pos = i + 1
+                        break
+            if end_pos > 0:
+                try:
+                    payload = json.loads(candidate[:end_pos])
+                except Exception:
+                    pass
     if not isinstance(payload, dict):
         raise RuntimeError("bookmaker subprocess returned invalid JSON payload")
 
@@ -5354,6 +5664,47 @@ def _is_valid_dltv_matches_page(soup: Optional[BeautifulSoup], html_text: Any = 
     if soup.select_one("a.event") is not None:
         return True
     return False
+
+
+def _live_match_card_is_tbd(card: Any) -> bool:
+    if card is None or not getattr(card, "get", None):
+        return False
+    class_names = {str(item).strip().lower() for item in (card.get("class") or [])}
+    if "tbd" in class_names:
+        return True
+    match_anchor = card.select_one("a[href*='/matches/']") if getattr(card, "select_one", None) else None
+    href = str(match_anchor.get("href") or "").strip().lower() if match_anchor is not None else ""
+    if "/tbd-vs-tbd-" in href:
+        return True
+    team_titles = [
+        tag.get_text(" ", strip=True).strip().lower()
+        for tag in (card.select(".match__body-details__team .team__title span") or [])
+    ]
+    if len(team_titles) >= 2 and all(title == "tbd" for title in team_titles[:2]):
+        return True
+    return False
+
+
+def _count_non_tbd_live_cards(cards: Any) -> int:
+    if not cards:
+        return 0
+    return sum(1 for card in cards if not _live_match_card_is_tbd(card))
+
+
+def _summarize_live_card_hrefs(cards: Any, *, limit: int = 10) -> List[str]:
+    if not cards:
+        return []
+    result: List[str] = []
+    for card in list(cards)[:limit]:
+        anchor = card.select_one("a[href*='/matches/']") if getattr(card, "select_one", None) else None
+        href = str(anchor.get("href") or "").strip() if anchor is not None else ""
+        if href:
+            result.append(href)
+            continue
+        series_id = str(card.get("data-series-id") or "").strip() if getattr(card, "get", None) else ""
+        if series_id:
+            result.append(f"series:{series_id}")
+    return result
 
 
 def _extract_live_listing_context(head_node: Any, body_node: Any) -> Dict[str, Any]:
@@ -8648,7 +8999,7 @@ def _fetch_finished_series_scores_from_page(series_url: str) -> Optional[Tuple[i
     if not re.search(r"/matches/\d+(?:/|$)", path):
         return None
 
-    response = make_request_with_retry(f"https://46.229.214.49{path}", max_retries=3, retry_delay=2)
+    response = make_request_with_retry(f"https://dltv.org{path}", max_retries=3, retry_delay=2)
     if not response or response.status_code != 200:
         return None
 
@@ -11760,17 +12111,19 @@ def _deliver_and_persist_signal(
     add_url_reason: str,
     add_url_details: Optional[dict] = None,
     bookmaker_decision: Optional[str] = None,
+    skip_bookmaker_prepare: bool = False,
 ) -> bool:
-    message_text, bookmaker_ready, bookmaker_reason = _bookmaker_prepare_message_for_delivery(
-        match_key,
-        message_text,
-    )
-    if not bookmaker_ready:
-        print(
-            "   ⏳ Отправка отложена: bookmaker odds ещё не готовы "
-            f"(reason={bookmaker_reason}) для {match_key}"
+    if not skip_bookmaker_prepare:
+        message_text, bookmaker_ready, bookmaker_reason = _bookmaker_prepare_message_for_delivery(
+            match_key,
+            message_text,
         )
-        return False
+        if not bookmaker_ready:
+            print(
+                "   ⏳ Отправка отложена: bookmaker odds ещё не готовы "
+                f"(reason={bookmaker_reason}) для {match_key}"
+            )
+            return False
     try:
         send_message(
             message_text,
@@ -11817,6 +12170,69 @@ def _deliver_and_persist_signal(
 
 
 _dltv_selenium_driver = None
+
+
+def _get_dltv_html_via_camoufox():
+        """Fetch DLTV live matches page via Camoufox/Playwright."""
+        from bs4 import BeautifulSoup
+        from bookmaker_selenium_odds import _parse_proxy
+
+        if not CAMOUFOX_AVAILABLE:
+            print("⚠️ DLTV HTML mode: Camoufox unavailable, fallback to Selenium")
+            return None, None
+
+        proxy_kwargs: Dict[str, Any] = {}
+        proxy_for_dltv = None
+        try:
+            if DLTV_PROXY_POOL:
+                proxy_for_dltv = DLTV_PROXY_POOL[0]
+            if proxy_for_dltv:
+                parsed = _parse_proxy(proxy_for_dltv)
+                proxy_kwargs["proxy"] = {
+                    "server": f"http://{parsed['host']}:{parsed['port']}",
+                    "username": parsed["username"],
+                    "password": parsed["password"],
+                }
+                print(f"🌐 DLTV HTML mode: init Camoufox with proxy {proxy_for_dltv[:50]}...")
+            else:
+                print("🌐 DLTV HTML mode: init Camoufox without proxy...")
+        except Exception as exc:
+            print(f"⚠️ DLTV HTML mode: failed to prepare Camoufox proxy config: {exc}")
+            proxy_kwargs = {}
+
+        try:
+            with camoufox.Camoufox(
+                headless=True,
+                **proxy_kwargs,
+            ) as browser:
+                page = browser.new_page()
+                print("🌐 DLTV HTML mode: loading dltv.org/matches via Camoufox...")
+                page.goto("https://dltv.org/matches", wait_until="domcontentloaded", timeout=30000)
+                try:
+                    page.wait_for_selector("div.live__matches, div.match.live", timeout=15000)
+                except Exception:
+                    pass
+                time.sleep(2.0)
+                html = page.content() or ""
+                soup = BeautifulSoup(html, 'lxml')
+                live_matches = soup.find('div', class_='live__matches')
+                live_cards = list(soup.select("div.match.live"))
+
+                if live_matches:
+                    cards = list(live_matches.select("div.match.live")) if live_matches else []
+                    if cards:
+                        print(f"✅ DLTV HTML Camoufox: found {len(cards)} live cards from section")
+                        return [None] * len(cards), cards
+                    print("✅ DLTV HTML Camoufox: found live_matches section (no cards)")
+                    return [None], [soup]
+                if live_cards:
+                    print(f"✅ DLTV HTML Camoufox: found {len(live_cards)} live cards")
+                    return [None] * len(live_cards), live_cards
+                print("⚠️ DLTV HTML Camoufox: no live matches found")
+                return [], []
+        except Exception as exc:
+            print(f"❌ DLTV HTML Camoufox fetch failed: {exc}")
+            return None, None
 
 
 def _get_dltv_html_via_selenium():
@@ -11929,15 +12345,23 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
         global GET_HEADS_LAST_FAILURE_REASON, NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO, SCHEDULE_LIVE_WAIT_TARGET
         global PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE
 
-        # HTML mode: use Selenium instead of API
+        # HTML mode: prefer Camoufox, fallback to Selenium instead of API
         if DLTV_SOURCE_MODE == "html":
+            if DLTV_CAMOUFOX_ENABLED:
+                heads, datas = _get_dltv_html_via_camoufox()
+                if heads is not None and datas is not None:
+                    return heads, datas
+                print("⚠️ DLTV HTML mode: Camoufox failed, fallback to Selenium")
             return _get_dltv_html_via_selenium()
 
         GET_HEADS_LAST_FAILURE_REASON = None
         NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
         NEXT_SCHEDULE_MATCH_INFO = None
-        # Формируем URL всегда (нужен для retry с новым прокси)
-        url = f"https://{ip_address}{path}"
+        # Формируем URL всегда через canonical host, а не через IP:
+        # HTML /matches на raw IP периодически отдает устаревший live snapshot.
+        requested_host = str(ip_address or "").strip().lower()
+        canonical_host = "dltv.org" if requested_host in {"", "46.229.214.49", "dltv.org", "www.dltv.org"} else str(ip_address).strip()
+        url = f"https://{canonical_host}{path}"
         request_headers = globals().get(
             'headers',
             {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
@@ -11971,10 +12395,10 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             used_direct_fallback = False
             saw_valid_matches_page_without_live = False
 
-            def _try_direct_live_matches_fallback():
+            def _try_direct_live_matches_fallback(*, announce: bool = True, reason: str = "proxy_exhausted"):
                 global PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE
-                print("🌐 Все прокси исчерпаны, пробую direct fallback...")
-                if not PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE:
+                print(f"🌐 Пробую direct fallback ({reason})...")
+                if announce and not PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE:
                     try:
                         send_message(
                             "⚠️ Все прокси для live matches исчерпаны после 3 кругов. "
@@ -11997,14 +12421,29 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                     return None, None, None
                 if direct_response.status_code != 200:
                     print(f"⚠️ Direct fallback вернул статус {direct_response.status_code}")
-                    return direct_response, None, None
+                    return direct_response, None, None, []
                 direct_soup = BeautifulSoup(direct_response.text, 'lxml')
                 direct_live_matches = direct_soup.find('div', class_='live__matches')
-                if direct_live_matches:
-                    print("✅ Direct fallback succeeded after proxy exhaustion")
-                    return direct_response, direct_soup, direct_live_matches
-                print("❌ Direct fallback также не нашел элемент live__matches в HTML")
-                return direct_response, direct_soup, None
+                direct_live_cards = list(direct_soup.select("div.match.live"))
+                if not direct_live_matches and not direct_live_cards:
+                    try:
+                        direct_live_cards = _fetch_live_series_json_cards(
+                            headers=request_headers,
+                            proxies=None,
+                        )
+                    except _http_request_exceptions() as exc:
+                        direct_live_cards = []
+                        print(f"⚠️ Direct live/series.json fetch failed: {type(exc).__name__}: {exc}")
+                        logger.warning("Direct live/series.json fetch failed for %s: %s", url, exc)
+                if direct_live_matches or direct_live_cards:
+                    print(
+                        "✅ Direct fallback succeeded "
+                        f"({reason}); live_cards={len(direct_live_cards)}, "
+                        f"non_tbd={_count_non_tbd_live_cards(direct_live_cards)}"
+                    )
+                    return direct_response, direct_soup, direct_live_matches, direct_live_cards
+                print("❌ Direct fallback также не нашел live матчи в HTML")
+                return direct_response, direct_soup, None, []
 
             while True:
                 marker = _get_current_proxy_marker()
@@ -12040,6 +12479,31 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                             PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE = False
                         break
                     if live_cards:
+                        if USE_PROXY and _count_non_tbd_live_cards(live_cards) == 0:
+                            print(
+                                "🩺 Proxy live snapshot looks stale/tbd-only. "
+                                f"Proxy cards={_summarize_live_card_hrefs(live_cards)}"
+                            )
+                            direct_response, direct_soup, direct_live_matches, direct_live_cards = _try_direct_live_matches_fallback(
+                                announce=False,
+                                reason="proxy_tbd_only_live_snapshot",
+                            )
+                            direct_non_tbd = _count_non_tbd_live_cards(direct_live_cards)
+                            current_non_tbd = _count_non_tbd_live_cards(live_cards)
+                            if direct_response is not None and direct_response.status_code == 200 and (
+                                direct_non_tbd > current_non_tbd or len(direct_live_cards) > len(live_cards)
+                            ):
+                                print(
+                                    "🔁 Replacing stale proxy live snapshot with direct live snapshot: "
+                                    f"proxy_non_tbd={current_non_tbd}, direct_non_tbd={direct_non_tbd}, "
+                                    f"proxy_cards={_summarize_live_card_hrefs(live_cards)}, "
+                                    f"direct_cards={_summarize_live_card_hrefs(direct_live_cards)}"
+                                )
+                                current_response = direct_response
+                                soup = direct_soup
+                                live_matches = direct_live_matches
+                                live_cards = list(direct_live_cards)
+                                used_direct_fallback = True
                         if not used_direct_fallback:
                             PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE = False
                         break
@@ -12093,15 +12557,16 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                 if proxy_attempt_count >= max_proxy_attempts:
                     schedule_source_soup = soup
                     if USE_PROXY:
-                        direct_response, direct_soup, direct_live_matches = _try_direct_live_matches_fallback()
+                        direct_response, direct_soup, direct_live_matches, direct_live_cards = _try_direct_live_matches_fallback()
                         if direct_response is not None and direct_response.status_code == 200:
                             parse_failed_on_200 = True
                             if direct_soup is not None:
                                 schedule_source_soup = direct_soup
-                        if direct_live_matches:
+                        if direct_live_matches or direct_live_cards:
                             current_response = direct_response
                             soup = direct_soup
                             live_matches = direct_live_matches
+                            live_cards = list(direct_live_cards)
                             used_direct_fallback = True
                             break
                     if parse_failed_on_200:
@@ -12951,6 +13416,9 @@ def _retry_match_page_direct_after_zero_players(
     dire_team_name: str,
     verbose_match_log: bool,
 ) -> tuple[Any, Any, Any, Any, Any]:
+    parsed_retry_url = urlparse(str(url or ""))
+    retry_path = str(parsed_retry_url.path or "").strip()
+    canonical_url = f"https://dltv.org{retry_path}" if retry_path else str(url or "").strip()
     request_headers = globals().get(
         "headers",
         {
@@ -12963,21 +13431,21 @@ def _retry_match_page_direct_after_zero_players(
     print("   🌐 Пробую direct retry страницы матча после zero-player lineups...")
     try:
         direct_response = _perform_http_get(
-            url,
+            canonical_url,
             headers=request_headers,
             verify=False,
             timeout=10,
         )
     except _http_request_exceptions() as exc:
         print(f"   ⚠️ Direct retry страницы матча не удался: {type(exc).__name__}: {exc}")
-        logger.warning("Direct retry after zero-player lineups failed for %s: %s", url, exc)
+        logger.warning("Direct retry after zero-player lineups failed for %s: %s", canonical_url, exc)
         return None, None, "direct_retry_request_failed", "", []
     if direct_response.status_code != 200:
         print(f"   ⚠️ Direct retry страницы матча вернул статус {direct_response.status_code}")
         logger.warning(
             "Direct retry after zero-player lineups returned status %s for %s",
             direct_response.status_code,
-            url,
+            canonical_url,
         )
         return None, None, f"direct_retry_status_{direct_response.status_code}", "", []
     if verbose_match_log:
@@ -13072,14 +13540,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 print(f"   ✅ Матч уже в map_id_check.txt - пропускаем: {check_uniq_url}")
                 _drop_delayed_match(check_uniq_url, reason="already_in_map_id_check")
                 return
-            if not is_match_card_v2 and block_reason == "uncertain_delivery":
+            if not SIGNAL_MINIMAL_ODDS_ONLY_MODE and not is_match_card_v2 and block_reason == "uncertain_delivery":
                 print(f"   ⚠️ Матч заблокирован после uncertain delivery - пропускаем")
                 _drop_delayed_match(check_uniq_url, reason="uncertain_delivery_block")
                 return
-            if not is_match_card_v2:
+            if not SIGNAL_MINIMAL_ODDS_ONLY_MODE and not is_match_card_v2:
                 with monitored_matches_lock:
                     delayed_payload = monitored_matches.get(check_uniq_url)
-            if not is_match_card_v2 and delayed_payload is not None:
+            if not SIGNAL_MINIMAL_ODDS_ONLY_MODE and not is_match_card_v2 and delayed_payload is not None:
                 allow_live_recheck = bool(delayed_payload.get("allow_live_recheck"))
                 target_game_time = float(
                     delayed_payload.get('target_game_time', DELAYED_SIGNAL_TARGET_GAME_TIME)
@@ -13150,7 +13618,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             json_url = f"https://dltv.org/live/{live_match_id}.json"
         else:
             # HTTP запрос страницы матча нужен для получения JSON path и lineups
-            url = f"https://{IP_ADDRESS}{path}"
+            url = f"https://dltv.org{path}"
             match_log(f"   🌐 Запрос страницы матча...")
             response = make_request_with_retry(url, MAX_RETRIES, RETRY_DELAY)
 
@@ -13329,7 +13797,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 if not allow_live_recheck:
                     return return_status
 
-            url = f"https://{IP_ADDRESS}{path}"
+            url = f"https://dltv.org{path}"
             match_log(f"   🌐 Запрос страницы матча...")
             response = make_request_with_retry(url, MAX_RETRIES, RETRY_DELAY)
 
@@ -13340,13 +13808,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
             match_log(f"   ✅ Страница получена")
             soup = BeautifulSoup(response.text, 'lxml')
-        
-        if 'fast_picks' not in data:
-            print(f"   ❌ Нет 'fast_picks' в данных - драфт не начался")
-            print(f"   ℹ️ Драфт еще не начался")
-            return return_status
-        
-        match_log(f"   ✅ fast_picks найдены - драфт начался")
         
         # Определяем какая команда radiant, какая dire
         db_payload = data.get('db') or {}
@@ -13398,7 +13859,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         )
 
         match_log(f"   🆔 Candidate team IDs: radiant={radiant_team_ids}, dire={dire_team_ids}")
-        if not radiant_team_ids or not dire_team_ids:
+        if not SIGNAL_MINIMAL_ODDS_ONLY_MODE and (not radiant_team_ids or not dire_team_ids):
             print(f"   ❌ Отсутствуют team_id для команд")
             print(f"   ❌ Матч пропущен (нет team_id)")
             return return_status
@@ -13415,7 +13876,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             or str((db_payload.get('league') or {}).get('title') or "").strip()
         )
         league_name_normalized = _normalize_live_league_title(league_name)
-        if league_name_normalized in SKIPPED_LIVE_LEAGUE_TITLES:
+        if not SIGNAL_MINIMAL_ODDS_ONLY_MODE and league_name_normalized in SKIPPED_LIVE_LEAGUE_TITLES:
             print(
                 f"   🚫 Матч пропущен: лига в denylist ({league_name or 'unknown league'})"
             )
@@ -13444,6 +13905,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
         # Стартуем prefetch кэфов ДО анализа драфта (в отдельном воркере, без блокировки основного пайплайна).
         # Ключевой момент: парсим именно текущую карту серии, а не "1-я карта" по умолчанию.
+        dota2protracker_pipeline_bypass_active = bool(
+            DOTA2PROTRACKER_ENABLED and DOTA2PROTRACKER_BYPASS_GATES
+        )
         if BOOKMAKER_PREFETCH_ENABLED:
             bookmaker_map_num = _bookmaker_infer_map_num(live_league_data, score_text=score)
             if bookmaker_map_num is not None:
@@ -13456,7 +13920,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 series_url=series_url,
                 league_title=str(listing_context.get("league_title") or ""),
             )
-            if not PURE_DLTV_MODE and BOOKMAKER_PREFETCH_GATE_MODE == "presence":
+            if (
+                not PURE_DLTV_MODE
+                and BOOKMAKER_PREFETCH_GATE_MODE == "presence"
+                and not dota2protracker_pipeline_bypass_active
+            ):
                 bookmaker_presence_state, bookmaker_presence_snapshot = _bookmaker_presence_gate_resolution(check_uniq_url)
                 _log_bookmaker_presence_gate(
                     check_uniq_url,
@@ -13537,7 +14005,66 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     print("   ✅ map_id_check.txt обновлен: bookmaker presence one-shot check failed")
                     return return_status
             else:
+                if (
+                    BOOKMAKER_PREFETCH_ENABLED
+                    and not PURE_DLTV_MODE
+                    and BOOKMAKER_PREFETCH_GATE_MODE == "presence"
+                    and dota2protracker_pipeline_bypass_active
+                ):
+                    print("   ℹ️ Bookmaker presence gate bypassed by Dota2ProTracker pipeline mode")
                 bookmaker_presence_state = "allow"
+
+        if SIGNAL_MINIMAL_ODDS_ONLY_MODE:
+            print("   🎯 Minimal odds-only mode active: пропускаю draft metrics и все gate-ветки")
+            minimal_odds_message = _build_minimal_odds_only_message(
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=live_league_data,
+                fallback_score_text=score,
+            )
+            minimal_odds_message, minimal_odds_ready, minimal_odds_reason = _prepare_minimal_odds_only_message_for_delivery(
+                check_uniq_url,
+                minimal_odds_message,
+            )
+            if not minimal_odds_ready:
+                print(
+                    "   ⏳ Minimal odds-only send skipped: нет ни одного числового коэффициента "
+                    f"(reason={minimal_odds_reason})"
+                )
+                return return_status
+            if _skip_dispatch_for_processed_url(check_uniq_url, "minimal odds-only dispatch"):
+                return return_status
+            if not _acquire_signal_send_slot(check_uniq_url):
+                print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
+                return return_status
+            try:
+                if _skip_dispatch_for_processed_url(check_uniq_url, "minimal odds-only dispatch after lock"):
+                    return return_status
+                delivery_confirmed = _deliver_and_persist_signal(
+                    check_uniq_url,
+                    minimal_odds_message,
+                    add_url_reason="minimal_odds_only_signal_sent_now",
+                    add_url_details={
+                        "status": status,
+                        "dispatch_mode": "minimal_odds_only",
+                        "dispatch_status_label": "minimal_odds_only_immediate",
+                        "json_retry_errors": json_retry_errors,
+                        "bookmaker_ready_reason": minimal_odds_reason,
+                    },
+                    skip_bookmaker_prepare=True,
+                )
+                if delivery_confirmed:
+                    print("   ✅ ВЕРДИКТ: minimal odds-only сигнал отправлен")
+            finally:
+                _release_signal_send_slot(check_uniq_url)
+            return return_status
+
+        if 'fast_picks' not in data:
+            print(f"   ❌ Нет 'fast_picks' в данных - драфт не начался")
+            print(f"   ℹ️ Драфт еще не начался")
+            return return_status
+        
+        match_log(f"   ✅ fast_picks найдены - драфт начался")
 
         # Tier-режим для star-сигналов:
         # - Tier 2 матч: если хотя бы одна команда Tier 2
@@ -13757,6 +14284,66 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if isinstance(applied_update, dict):
                 _emit_live_elo_applied_log("Live ELO updated from completed map", applied_update)
         _warm_draft_stats_shards(radiant_heroes_and_pos, dire_heroes_and_pos)
+        protracker_payload = _blank_dota2protracker_result()
+        if DOTA2PROTRACKER_ENABLED:
+            if enrich_with_pro_tracker is None:
+                print("   ⚠️ Dota2ProTracker enrichment skipped: module unavailable")
+            else:
+                try:
+                    protracker_payload = enrich_with_pro_tracker(
+                        radiant_heroes_and_pos=radiant_heroes_and_pos,
+                        dire_heroes_and_pos=dire_heroes_and_pos,
+                        synergy_dict=protracker_payload,
+                        min_games=DOTA2PROTRACKER_MIN_GAMES,
+                    )
+                except Exception as e:
+                    print(f"   ⚠️ Dota2ProTracker enrichment failed: {e}")
+                    protracker_payload = _blank_dota2protracker_result()
+                print(f"   📊 Dota2ProTracker: {_build_dota2protracker_debug_summary(protracker_payload)}")
+
+        if DOTA2PROTRACKER_ENABLED and DOTA2PROTRACKER_ONLY_MODE:
+            if not _has_valid_dota2protracker_signal(protracker_payload):
+                print(
+                    "   ⚠️ Dota2ProTracker-only dispatch skipped: both metrics invalid. "
+                    f"{_build_dota2protracker_debug_summary(protracker_payload)}"
+                )
+                return return_status
+            protracker_message_text = _build_dota2protracker_only_message(
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=live_league_data,
+                protracker_payload=protracker_payload,
+            )
+            if _skip_dispatch_for_processed_url(check_uniq_url, "dota2protracker only dispatch"):
+                return return_status
+            if not _acquire_signal_send_slot(check_uniq_url):
+                print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
+                return return_status
+            try:
+                if _skip_dispatch_for_processed_url(check_uniq_url, "dota2protracker only dispatch after lock"):
+                    return return_status
+                delivery_confirmed = _deliver_and_persist_signal(
+                    check_uniq_url,
+                    protracker_message_text,
+                    add_url_reason="dota2protracker_signal_sent_now",
+                    add_url_details={
+                        "status": status,
+                        "dispatch_mode": "dota2protracker_only",
+                        "dispatch_status_label": "dota2protracker_only_immediate",
+                        "json_retry_errors": json_retry_errors,
+                        "pro_cp1vs1": float(protracker_payload.get("pro_cp1vs1_late") or 0.0),
+                        "pro_cp1vs1_valid": bool(protracker_payload.get("pro_cp1vs1_valid")),
+                        "pro_duo_synergy": float(protracker_payload.get("pro_duo_synergy_late") or 0.0),
+                        "pro_duo_synergy_valid": bool(protracker_payload.get("pro_duo_synergy_valid")),
+                    },
+                    skip_bookmaker_prepare=bool(DOTA2PROTRACKER_SKIP_BOOKMAKER_GATE),
+                )
+                if delivery_confirmed:
+                    print("   ✅ ВЕРДИКТ: Dota2ProTracker-only сигнал отправлен")
+            finally:
+                _release_signal_send_slot(check_uniq_url)
+            return return_status
+
         # Отправляем только "сырые" сигналы без wrapper.
         prev_wrapper_enabled = os.getenv("SIGNAL_WRAPPER_ENABLED")
         os.environ["SIGNAL_WRAPPER_ENABLED"] = "0"
@@ -13771,21 +14358,26 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             else:
                 os.environ["SIGNAL_WRAPPER_ENABLED"] = prev_wrapper_enabled
 
-        # Обогащение данными с Dota2ProTracker (cp1vs1, duo synergy из pro-игр)
-        if enrich_with_pro_tracker:
+        if DOTA2PROTRACKER_ENABLED and isinstance(protracker_payload, dict):
+            s.update(protracker_payload)
+
+        # Обогащение данными с OpenDota API (cp1vs1, duo synergy из pub-игр)
+        if enrich_with_opendota and not (
+            DOTA2PROTRACKER_ENABLED and DOTA2PROTRACKER_SUPERSEDE_OPENDOTA
+        ):
             try:
-                s = enrich_with_pro_tracker(
+                s = enrich_with_opendota(
                     radiant_heroes_and_pos=radiant_heroes_and_pos,
                     dire_heroes_and_pos=dire_heroes_and_pos,
                     synergy_dict=s,
-                    min_games=DOTA2PROTRACKER_MIN_GAMES
+                    min_games=OPENDOTA_MIN_GAMES
                 )
                 if verbose_match_log:
                     pro_cp = s.get('pro_cp1vs1_early', 0)
                     pro_duo = s.get('pro_duo_synergy_early', 0)
-                    print(f"   📊 ProTracker: cp1vs1={pro_cp:+.1f}%, duo_synergy={pro_duo:+.1f}%")
+                    print(f"   📊 OpenDota: cp1vs1={pro_cp:+.1f}%, duo_synergy={pro_duo:+.1f}%")
             except Exception as e:
-                print(f"   ⚠️ ProTracker enrichment failed: {e}")
+                print(f"   ⚠️ OpenDota enrichment failed: {e}")
 
         if LIVE_LANE_ANALYSIS_ENABLED and lane_data is not None:
             s['top'], s['bot'], s['mid'] = calculate_lanes(
@@ -14117,8 +14709,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
             print(f"   📊 LANING (20-28 min): {early_output.get('counterpick_1vs1', 'N/A')}, {early_output.get('pos1_vs_pos1', 'N/A')}, {early_output.get('counterpick_1vs2', 'N/A')}, {early_output.get('solo', 'N/A')}, {early_output.get('synergy_duo', 'N/A')}, {early_output.get('synergy_trio', 'N/A')}")
             print(f"   📊 LATE (28-60 min): {mid_output.get('counterpick_1vs1', 'N/A')}, {mid_output.get('pos1_vs_pos1', 'N/A')}, {mid_output.get('counterpick_1vs2', 'N/A')}, {mid_output.get('solo', 'N/A')}, {mid_output.get('synergy_duo', 'N/A')}, {mid_output.get('synergy_trio', 'N/A')}")
-            if DOTA2PROTRACKER_ENABLED and (pro_cp_early or pro_duo_early):
-                print(f"   📊 PRO-TRACKER: cp1vs1={pro_cp_early:+.1f}%/{pro_cp_late:+.1f}%, duo_synergy={pro_duo_early:+.1f}%/{pro_duo_late:+.1f}%")
+            if DOTA2PROTRACKER_ENABLED and isinstance(s, dict) and _has_valid_dota2protracker_signal(s):
+                print(f"   📊 PRO-TRACKER: {_build_dota2protracker_debug_summary(s)}")
 
             def _format_metrics(title, data, metrics):
                 lines = [title]
@@ -14134,22 +14726,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 ('synergy_duo', 'Synergy_duo'),
                 ('synergy_trio', 'Synergy_trio'),
             ]
-
-            # ProTracker metrics
-            if DOTA2PROTRACKER_ENABLED:
-                metric_list_pro = metric_list + [
-                    ('pro_cp1vs1_early', 'Pro_CP1vs1_E'),
-                    ('pro_duo_synergy_early', 'Pro_Duo_E'),
-                    ('pro_cp1vs1_late', 'Pro_CP1vs1_L'),
-                    ('pro_duo_synergy_late', 'Pro_Duo_L'),
-                ]
-            else:
-                metric_list_pro = metric_list
-
-            early_block = _format_metrics("Early 20-28:", early_output, metric_list_pro)
-            mid_block = _format_metrics("Late: (28-60 min):", mid_output, metric_list_pro)
-            early_block_log = _format_metrics("Early 20-28:", early_output_log, metric_list_pro)
-            mid_block_log = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list_pro)
+            early_block = _format_metrics("Early 20-28:", early_output, metric_list)
+            mid_block = _format_metrics("Late: (28-60 min):", mid_output, metric_list)
+            early_block_log = _format_metrics("Early 20-28:", early_output_log, metric_list)
+            mid_block_log = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
+            dota2protracker_block = (
+                _build_dota2protracker_block(s)
+                if DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED and _has_valid_dota2protracker_signal(s)
+                else ""
+            )
             star_metrics_snapshot = _build_star_metrics_snapshot(
                 early_block_log=early_block_log,
                 mid_block_log=mid_block_log,
@@ -14159,17 +14744,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
 
             # Серия: только счет
-            series_score_line = ""
-            try:
-                live_league = data.get('live_league_data') or {}
-                r_wins = live_league.get('radiant_series_wins')
-                d_wins = live_league.get('dire_series_wins')
-                if r_wins is not None or d_wins is not None:
-                    r_wins = int(r_wins or 0)
-                    d_wins = int(d_wins or 0)
-                    series_score_line = f"{r_wins}-{d_wins}\n"
-            except Exception:
-                series_score_line = ""
+            series_score_line = _build_series_score_line(data.get('live_league_data') or {})
 
             early_rec = _recommend_odds_for_block(early_output, 'early')
             late_rec = _recommend_odds_for_block(mid_output, 'late')
@@ -14974,6 +15549,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"{comeback_block}"
                 f"{telegram_early_block}"
                 f"{mid_block}"
+                f"{dota2protracker_block}"
                 f"{live_state_block}"
                 f"{odds_block}"
             )
@@ -16954,6 +17530,10 @@ def general(return_status=None, use_proxy=None, odds=None, bookmaker_gate_mode=N
         f"(source={odds_source}, requested={odds_requested}, available={BOOKMAKER_PREFETCH_AVAILABLE}, "
         f"gate_mode={BOOKMAKER_PREFETCH_GATE_MODE})"
     )
+    if SIGNAL_MINIMAL_ODDS_ONLY_MODE:
+        print("🎯 Signal mode: minimal_odds_only (metrics/gates disabled)")
+    elif not CLASSIC_SIGNAL_PIPELINE_ENABLED:
+        print("🎯 Signal mode: classic pipeline disabled")
     logger.info(
         "Odds pipeline mode: %s (source=%s, requested=%s, available=%s, gate_mode=%s)",
         "ON" if BOOKMAKER_PREFETCH_ENABLED else "OFF",
@@ -16978,25 +17558,26 @@ def general(return_status=None, use_proxy=None, odds=None, bookmaker_gate_mode=N
     if use_proxy != USE_PROXY:
         _init_proxy_pool(use_proxy)
 
-    # Гарантируем staged warmup словарей перед обработкой матчей.
-    # На слабых серверах early/late грузим по шагам, чтобы не давать один резкий пик.
-    stats_ready = _load_stats_dicts()
-    if stats_ready is False:
-        warmup_parts = []
-        if lane_data is not None:
-            warmup_parts.append("lane")
-        if early_dict is not None:
-            warmup_parts.append("early")
-        if late_dict is not None:
-            warmup_parts.append("late")
-        if comeback_dict is not None:
-            warmup_parts.append("comeback")
-        print(
-            "⏳ Stats warmup in progress: "
-            f"loaded={','.join(warmup_parts) or 'none'}; "
-            f"step_delay={int(STATS_WARMUP_STEP_DELAY_SECONDS)}s"
-        )
-        return None
+    # Гарантируем staged warmup словарей только для classic signal pipeline.
+    # В минимальных режимах без словарей этот шаг пропускаем полностью.
+    if CLASSIC_SIGNAL_PIPELINE_ENABLED:
+        stats_ready = _load_stats_dicts()
+        if stats_ready is False:
+            warmup_parts = []
+            if lane_data is not None:
+                warmup_parts.append("lane")
+            if early_dict is not None:
+                warmup_parts.append("early")
+            if late_dict is not None:
+                warmup_parts.append("late")
+            if comeback_dict is not None:
+                warmup_parts.append("comeback")
+            print(
+                "⏳ Stats warmup in progress: "
+                f"loaded={','.join(warmup_parts) or 'none'}; "
+                f"step_delay={int(STATS_WARMUP_STEP_DELAY_SECONDS)}s"
+            )
+            return None
 
     logger.info(f"\n{'='*60}\n🔄 НАЧАЛО ЦИКЛА ПРОВЕРКИ МАТЧЕЙ\n{'='*60}")
 
@@ -17185,83 +17766,63 @@ if __name__ == "__main__":
     DELAYED_QUEUE_PATH = str(_delayed_queue_path_for_mode(runtime_mode_label))
     print(f"🗂️ DELAYED_QUEUE_PATH for mode={runtime_mode_label}: {DELAYED_QUEUE_PATH}")
 
-    import orjson
-    from functions import one_match, check_old_maps
-    from keys import start_date_time
-
     # Always unify to DEFAULT_MAP_ID_CHECK_PATH regardless of --odds flag
     MAP_ID_CHECK_PATH = str(DEFAULT_MAP_ID_CHECK_PATH)
     print(f"🗺️ MAP_ID_CHECK_PATH unified: {MAP_ID_CHECK_PATH}")
 
     # Абсолютные пути к данным (вынесены за пределы проекта для оптимизации Cursor)
     STATS_DIR = str(ANALYSE_PUB_DIR)
-
-    # Ленивая загрузка словарей (использует STATS_DIR или STATS_DIR из env)
-    # _load_stats_dicts()
-    # early_dict, late_dict = {}, {}
-    # lane_data, early_dict, late_dict = {}, {}, {}
-    # check_old_maps(early_dict, late_dict, lane_data, start_date_time=start_date_time,
-    #    outfile_name='pub')
-    one_match(radiant_heroes_and_pos={'pos1': {'hero_name': "ursa"}, 'pos2': {'hero_name': "night stalker"},
-                                      'pos3': {'hero_name': 'sand king'}, 'pos4': {'hero_name': "shadow demon"},
-                                      'pos5': {'hero_name': "warlock"}},
-              dire_heroes_and_pos={'pos1': {'hero_name': "lone druid"}, 'pos2': {'hero_name': "puck"},
-                                   'pos3': {'hero_name': 'underlord'}, 'pos4': {'hero_name': 'muerta'},
-                                   'pos5': {'hero_name': "treant protector"}},
-              lane_data=lane_data, early_dict=early_dict, late_dict=late_dict,
-              radiant_team_name='Yandex Team', dire_team_name='dire')
-
-    # while True:
-    #     try:
-    #         runtime_cycle_counter += 1
-    #         cycle_number = int(runtime_cycle_counter)
-    #         _handle_pending_telegram_admin_commands(args.odds)
-    #         status = general(
-    #             use_proxy=None,
-    #             odds=args.odds,
-    #             bookmaker_gate_mode=args.bookmaker_gate_mode,
-    #         )
-    #         _maybe_log_runtime_memory_snapshot(
-    #             cycle_number=cycle_number,
-    #             context=f"status={status}",
-    #         )
-    #         if status == "__sleep_until_schedule__":
-    #             scheduled_sleep_seconds = max(1, int(math.ceil(float(NEXT_SCHEDULE_SLEEP_SECONDS or 0.0))))
-    #             schedule_snapshot = dict(NEXT_SCHEDULE_MATCH_INFO or {})
-    #             sleep_started_at_msk = datetime.now(MOSCOW_TZ)
-    #             if schedule_snapshot:
-    #                 schedule_snapshot["sleep_started_at_msk"] = sleep_started_at_msk
-    #                 schedule_snapshot["planned_sleep_seconds"] = scheduled_sleep_seconds
-    #             print(f"Сплю {scheduled_sleep_seconds} секунд до ближайшего матча по расписанию DLTV")
-    #             _sleep_interruptible(
-    #                 scheduled_sleep_seconds,
-    #                 raw_odds=args.odds,
-    #                 label="sleep_until_schedule",
-    #             )
-    #             if schedule_snapshot:
-    #                 schedule_snapshot["woke_at_msk"] = datetime.now(MOSCOW_TZ)
-    #                 SCHEDULE_LIVE_WAIT_TARGET = dict(schedule_snapshot)
-    #                 PENDING_SCHEDULE_WAKE_AUDIT = schedule_snapshot
-    #         elif status == "__sleep_wait_for_live_after_schedule__":
-    #             wait_for_live_seconds = max(1, int(math.ceil(float(SCHEDULE_POST_START_POLL_SECONDS))))
-    #             print(f"Сплю {wait_for_live_seconds} секунд в режиме ожидания появления live matches")
-    #             _sleep_interruptible(
-    #                 wait_for_live_seconds,
-    #                 raw_odds=args.odds,
-    #                 label="wait_for_live_after_schedule",
-    #             )
-    #         elif status is None:
-    #             print('Сплю 60 секунд')
-    #             _sleep_interruptible(60, raw_odds=args.odds, label="default_idle")
-    #         else:
-    #             print('Сплю 60 секунд')
-    #             _sleep_interruptible(60, raw_odds=args.odds, label="default_status")
-    #     except Exception as e:
-    #         print(f"⚠️ Ошибка главного цикла: {e}")
-    #         logger.exception("Main loop error")
-    #         _maybe_log_runtime_memory_snapshot(
-    #             cycle_number=int(runtime_cycle_counter),
-    #             context=f"exception={type(e).__name__}",
-    #             force=True,
-    #         )
-    #         _sleep_interruptible(30, raw_odds=args.odds, label="error_backoff")
+    while True:
+        try:
+            runtime_cycle_counter += 1
+            cycle_number = int(runtime_cycle_counter)
+            _handle_pending_telegram_admin_commands(args.odds)
+            status = general(
+                use_proxy=None,
+                odds=args.odds,
+                bookmaker_gate_mode=args.bookmaker_gate_mode,
+            )
+            _maybe_log_runtime_memory_snapshot(
+                cycle_number=cycle_number,
+                context=f"status={status}",
+            )
+            if status == "__sleep_until_schedule__":
+                scheduled_sleep_seconds = max(1, int(math.ceil(float(NEXT_SCHEDULE_SLEEP_SECONDS or 0.0))))
+                schedule_snapshot = dict(NEXT_SCHEDULE_MATCH_INFO or {})
+                sleep_started_at_msk = datetime.now(MOSCOW_TZ)
+                if schedule_snapshot:
+                    schedule_snapshot["sleep_started_at_msk"] = sleep_started_at_msk
+                    schedule_snapshot["planned_sleep_seconds"] = scheduled_sleep_seconds
+                print(f"Сплю {scheduled_sleep_seconds} секунд до ближайшего матча по расписанию DLTV")
+                _sleep_interruptible(
+                    scheduled_sleep_seconds,
+                    raw_odds=args.odds,
+                    label="sleep_until_schedule",
+                )
+                if schedule_snapshot:
+                    schedule_snapshot["woke_at_msk"] = datetime.now(MOSCOW_TZ)
+                    SCHEDULE_LIVE_WAIT_TARGET = dict(schedule_snapshot)
+                    PENDING_SCHEDULE_WAKE_AUDIT = schedule_snapshot
+            elif status == "__sleep_wait_for_live_after_schedule__":
+                wait_for_live_seconds = max(1, int(math.ceil(float(SCHEDULE_POST_START_POLL_SECONDS))))
+                print(f"Сплю {wait_for_live_seconds} секунд в режиме ожидания появления live matches")
+                _sleep_interruptible(
+                    wait_for_live_seconds,
+                    raw_odds=args.odds,
+                    label="wait_for_live_after_schedule",
+                )
+            elif status is None:
+                print('Сплю 60 секунд')
+                _sleep_interruptible(60, raw_odds=args.odds, label="default_idle")
+            else:
+                print('Сплю 60 секунд')
+                _sleep_interruptible(60, raw_odds=args.odds, label="default_status")
+        except Exception as e:
+            print(f"⚠️ Ошибка главного цикла: {e}")
+            logger.exception("Main loop error")
+            _maybe_log_runtime_memory_snapshot(
+                cycle_number=int(runtime_cycle_counter),
+                context=f"exception={type(e).__name__}",
+                force=True,
+            )
+            _sleep_interruptible(30, raw_odds=args.odds, label="error_backoff")

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Selenium (proxy-only) parser for Dota2 bookmaker odds.
+"""Bookmaker parser for Dota2 odds/presence/deeplinks.
 
 Requirements (already installed in venv_catboost):
   - selenium
   - selenium-wire
   - bs4
+  - camoufox (optional, enabled via env flags)
 
 Usage:
   source venv_catboost/bin/activate
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import json
 import logging
 import os
@@ -24,13 +26,20 @@ import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
 from seleniumwire import webdriver
+try:
+    import camoufox
+    CAMOUFOX_AVAILABLE = True
+except Exception:
+    camoufox = None
+    CAMOUFOX_AVAILABLE = False
 
 try:
     from base.keys import BOOKMAKER_PROXY_URL
@@ -39,6 +48,16 @@ except Exception:
 
 HEADLESS_DEFAULT = os.getenv("BOOKMAKER_SELENIUM_HEADLESS", "1").strip().lower()
 BOOKMAKER_SELENIUM_HEADLESS = HEADLESS_DEFAULT not in {"0", "false", "no", "off"}
+BOOKMAKER_CAMOUFOX_ENABLED = (
+    os.getenv("BOOKMAKER_CAMOUFOX_ENABLED", "0").strip().lower()
+    in {"1", "true", "yes", "on"}
+) and CAMOUFOX_AVAILABLE
+BOOKMAKER_CAMOUFOX_PRESENCE_ENABLED = (
+    os.getenv("BOOKMAKER_CAMOUFOX_PRESENCE_ENABLED", "0").strip().lower()
+    in {"1", "true", "yes", "on"}
+) and CAMOUFOX_AVAILABLE
+if BOOKMAKER_CAMOUFOX_ENABLED:
+    BOOKMAKER_CAMOUFOX_PRESENCE_ENABLED = True
 
 BOOKMAKER_URLS: Dict[str, Dict[str, str]] = {
     "live": {
@@ -160,6 +179,19 @@ def _parse_proxy(proxy_url: str) -> Dict[str, str]:
         "port": str(parsed.port),
         "username": parsed.username,
         "password": parsed.password,
+    }
+
+
+def _camoufox_proxy_kwargs(proxy_url: Optional[str]) -> Dict[str, Any]:
+    if not proxy_url:
+        return {}
+    parsed = _parse_proxy(proxy_url)
+    return {
+        "proxy": {
+            "server": f"http://{parsed['host']}:{parsed['port']}",
+            "username": parsed["username"],
+            "password": parsed["password"],
+        }
     }
 
 
@@ -344,6 +376,414 @@ def _presence_collect_probe_snapshot(drv, *, url: str) -> Tuple[str, str, str, i
     host = urlparse(url).netloc
     sources = _presence_sources_from_current_tab(drv, host=host)
     return current_url, ready_state, page_title, len(body_text.strip()), sources
+
+
+def _camoufox_collect_probe_snapshot(page, *, url: str) -> Tuple[str, str, str, int, List[Tuple[str, str]]]:
+    current_url = ""
+    ready_state = ""
+    page_title = ""
+    html = ""
+    body_text = ""
+    try:
+        current_url = str(page.url or "")
+    except Exception:
+        current_url = ""
+    try:
+        ready_state = str(page.evaluate("() => document.readyState") or "")
+    except Exception:
+        ready_state = ""
+    try:
+        page_title = str(page.title() or "")
+    except Exception:
+        page_title = ""
+    try:
+        html = page.content() or ""
+    except Exception:
+        html = ""
+    try:
+        body_text = str(page.locator("body").inner_text(timeout=5000) or "")
+    except Exception:
+        body_text = ""
+    visible = ""
+    if html:
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            visible = " ".join(soup.stripped_strings)
+        except Exception:
+            visible = ""
+    sources: List[Tuple[str, str]] = []
+    if body_text:
+        sources.append(("dom_body_text", body_text))
+    if visible:
+        sources.append(("dom_visible_text", visible))
+    if html:
+        sources.append(("dom_html", html))
+    return current_url, ready_state, page_title, len(body_text.strip()), sources
+
+
+def _camoufox_body_text(page) -> str:
+    try:
+        return str(page.locator("body").inner_text(timeout=5000) or "")
+    except Exception:
+        return ""
+
+
+def _load_site_render_payload_camoufox(
+    page,
+    url: str,
+    *,
+    initial_wait_seconds: float = 7.0,
+    scroll_wait_seconds: float = 2.0,
+) -> Tuple[str, str, str, str, str]:
+    load_status = "ok"
+    load_error = ""
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        time.sleep(max(0.0, float(initial_wait_seconds)))
+        try:
+            page.evaluate(
+                "() => {"
+                " window.scrollTo(0, 0);"
+                " window.scrollTo(0, document.body.scrollHeight * 0.5);"
+                " window.scrollTo(0, document.body.scrollHeight);"
+                "}"
+            )
+            time.sleep(max(0.0, float(scroll_wait_seconds)))
+        except Exception:
+            pass
+    except Exception as exc:
+        load_status = "partial_load"
+        load_error = str(exc)
+
+    html = ""
+    visible = ""
+    body_text = ""
+    try:
+        html = page.content() or ""
+    except Exception:
+        html = ""
+    if html:
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            visible = " ".join(soup.stripped_strings)
+        except Exception:
+            visible = ""
+    body_text = _camoufox_body_text(page)
+    return load_status, load_error, html, visible or body_text, body_text
+
+
+def _camoufox_try_click_text(page, text_candidates: List[str]) -> bool:
+    script = """
+    ([labels]) => {
+      const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+      const elements = Array.from(
+        document.querySelectorAll(
+          'button,a,[role="tab"],[role="button"],div,span,li'
+        )
+      );
+      for (const rawLabel of labels) {
+        const label = normalize(rawLabel);
+        if (!label) continue;
+        for (const el of elements) {
+          const text = normalize(el.innerText || el.textContent || '');
+          if (!text) continue;
+          if (text === label || text.includes(label)) {
+            el.scrollIntoView({block:'center'});
+            el.click();
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+    """
+    for label in list(text_candidates or []):
+        if not str(label or "").strip():
+            continue
+        try:
+            clicked = bool(page.evaluate(script, [[str(label)]]))
+        except Exception:
+            clicked = False
+        if clicked:
+            time.sleep(1.0)
+            return True
+    return False
+
+
+def _camoufox_click_map_tab_on_current_page(page, site: str, map_num: Optional[int]) -> bool:
+    if map_num is None:
+        return False
+    labels: List[str] = []
+    if site == "betboom":
+        labels = [f"Карта {map_num}", f"Карта{map_num}", f"{map_num} карта"]
+    elif site == "pari":
+        labels = [f"{map_num}-Я КАРТА", f"{map_num}-я карта", f"{map_num} карта", f"Карта {map_num}"]
+    elif site == "winline":
+        labels = [
+            f"{map_num}К",
+            f"{map_num} К",
+            f"{map_num}-я карта",
+            f"{map_num} карта",
+            f"Победитель {map_num} карты",
+            f"Победитель {map_num} карт",
+        ]
+    return _camoufox_try_click_text(page, labels)
+
+
+def _parse_map_market_on_current_camoufox_page(
+    page,
+    site: str,
+    team1: str,
+    team2: str,
+    forced_map_num: Optional[int] = None,
+) -> Tuple[List[float], str]:
+    body_text = _camoufox_body_text(page)
+    map_num = _resolve_map_num_for_site(site, body_text, forced_map_num)
+    clicked_tab = _camoufox_click_map_tab_on_current_page(page, site, map_num)
+    if not clicked_tab and site == "betboom" and map_num is not None:
+        _camoufox_try_click_text(page, [f"Карта {map_num}", f"Карта{map_num}", f"{map_num} карта"])
+    elif not clicked_tab and site == "pari" and map_num is not None:
+        _camoufox_try_click_text(page, [f"{map_num}-Я КАРТА", f"{map_num}-я карта", f"{map_num} карта", f"Карта {map_num}"])
+    elif not clicked_tab and site == "winline" and map_num is not None:
+        _camoufox_try_click_text(
+            page,
+            [f"{map_num}К", f"{map_num} К", f"{map_num}-я карта", f"{map_num} карта", f"Победитель {map_num} карты", f"Победитель {map_num} карт"],
+        )
+    body_text = _camoufox_body_text(page)
+    odds = _extract_map_odds_deeplink(
+        site,
+        " ".join((body_text or "").split()),
+        team1,
+        team2,
+        forced_map_num=forced_map_num,
+    )
+    # Pari-specific: if no odds after first click, retry with stronger labels (uppercase) + reload
+    if site == "pari" and not odds and map_num is not None:
+        for attempt in range(3):
+            time.sleep(1.5)
+            _camoufox_try_click_text(page, [f"{map_num}-Я КАРТА", f"Карта {map_num}"])
+            time.sleep(1.5)
+            body_text = _camoufox_body_text(page)
+            odds = _extract_map_odds_deeplink(
+                site,
+                " ".join((body_text or "").split()),
+                team1,
+                team2,
+                forced_map_num=forced_map_num,
+            )
+            if odds:
+                break
+            # Reload and retry on last attempt
+            if attempt == 2:
+                with contextlib.suppress(Exception):
+                    page.reload(wait_until="domcontentloaded", timeout=30000)
+                    time.sleep(2.5)
+                    body_text = _camoufox_body_text(page)
+                    odds = _extract_map_odds_deeplink(
+                        site,
+                        " ".join((body_text or "").split()),
+                        team1,
+                        team2,
+                        forced_map_num=forced_map_num,
+                    )
+    return odds, body_text
+
+
+def _camoufox_find_match_by_urls(page, site: str, urls: List[str], team1: str, team2: str) -> Optional[str]:
+    if not urls:
+        return None
+    t1 = (team1 or "").strip().lower()
+    t2 = (team2 or "").strip().lower()
+    t1s = t1.split()[0] if t1 else ""
+    t2s = t2.split()[0] if t2 else ""
+    for target in urls[:12]:
+        try:
+            page.goto(target, wait_until="domcontentloaded", timeout=25000)
+            time.sleep(1.5)
+            body = " ".join((page.locator("body").inner_text(timeout=4000) or "").lower().split())
+        except Exception:
+            continue
+        if (
+            (t1 and t1 in body and t2 and t2 in body)
+            or (t1s and t1s in body and t2s and t2s in body)
+            or _text_matches_teams(body, team1, team2)
+        ):
+            return target
+    return None
+
+
+def _probe_presence_site_in_camoufox_page(
+    page,
+    *,
+    site: str,
+    url: str,
+    team1: str,
+    team2: str,
+    mode: str,
+    team1_aliases: Optional[List[str]] = None,
+    team2_aliases: Optional[List[str]] = None,
+) -> SiteResult:
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        time.sleep(2.0)
+        try:
+            page.evaluate(
+                "() => { window.scrollTo(0, 0); window.scrollTo(0, document.body.scrollHeight * 0.5); window.scrollTo(0, document.body.scrollHeight); }"
+            )
+        except Exception:
+            pass
+        time.sleep(1.0)
+    except Exception as exc:
+        return SiteResult(
+            site=site,
+            url=url,
+            status="request_error",
+            match_found=False,
+            odds=[],
+            source="camoufox_goto_error",
+            details=str(exc),
+            market_closed=False,
+            match_odds=[],
+        )
+
+    current_url, ready_state, page_title, body_len, sources = _camoufox_collect_probe_snapshot(
+        page,
+        url=url,
+    )
+    found, source_name, details = _find_presence_from_sources(
+        team1,
+        team2,
+        sources,
+        team1_aliases=team1_aliases,
+        team2_aliases=team2_aliases,
+    )
+
+    status = "ok"
+    if not sources:
+        status = "loading"
+    elif ready_state and ready_state != "complete":
+        status = "loading"
+    elif body_len < 240:
+        status = "loading"
+
+    if (
+        not found
+        and _presence_should_open_match_details(
+            site,
+            current_url or url,
+            body_len=body_len,
+            source_count=len(sources),
+        )
+    ):
+        html_text = ""
+        for source_name_candidate, text in sources:
+            if source_name_candidate == "dom_html" and text:
+                html_text = text
+                break
+        candidate_urls = _candidate_match_urls_from_html(site, current_url or url, html_text)
+        opened_match_url = _camoufox_find_match_by_urls(page, site, candidate_urls, team1, team2) or ""
+        if opened_match_url:
+            current_url, ready_state, page_title, body_len, sources = _camoufox_collect_probe_snapshot(
+                page,
+                url=url,
+            )
+            found, source_name, details = _find_presence_from_sources(
+                team1,
+                team2,
+                sources,
+                team1_aliases=team1_aliases,
+                team2_aliases=team2_aliases,
+            )
+            status = "ok"
+            if not sources:
+                status = "loading"
+            elif ready_state and ready_state != "complete":
+                status = "loading"
+            elif body_len < 240:
+                status = "loading"
+
+    details = details or "match not found in rendered DOM payload"
+    meta_bits = []
+    if current_url:
+        meta_bits.append(f"current_url={current_url[:220]}")
+    if ready_state:
+        meta_bits.append(f"ready_state={ready_state}")
+    if page_title:
+        meta_bits.append(f"title={page_title[:160]}")
+    meta_bits.append(f"sources={len(sources)}")
+    meta_bits.append(f"body_len={body_len}")
+    if meta_bits:
+        details = f"{details} | {'; '.join(meta_bits)}"
+
+    if found:
+        return SiteResult(
+            site=site,
+            url=url,
+            status=status,
+            match_found=True,
+            odds=[],
+            source=source_name or "presence_found_camoufox",
+            details=details,
+            market_closed=False,
+            match_odds=[],
+        )
+
+    return SiteResult(
+        site=site,
+        url=url,
+        status=status,
+        match_found=False,
+        odds=[],
+        source="presence_missing",
+        details=details,
+        market_closed=False,
+        match_odds=[],
+    )
+
+
+def _run_presence_sites_in_camoufox(
+    *,
+    selected_sites: List[str],
+    urls: Dict[str, str],
+    team1: str,
+    team2: str,
+    mode: str,
+    team1_aliases: Optional[List[str]] = None,
+    team2_aliases: Optional[List[str]] = None,
+) -> List[SiteResult]:
+    if not CAMOUFOX_AVAILABLE:
+        return _run_presence_sites_in_browser(
+            selected_sites=selected_sites,
+            urls=urls,
+            team1=team1,
+            team2=team2,
+            mode=mode,
+            team1_aliases=team1_aliases,
+            team2_aliases=team2_aliases,
+        )
+
+    proxy_kwargs = _camoufox_proxy_kwargs(BOOKMAKER_PROXY_URL)
+    results: List[SiteResult] = []
+    with camoufox.Camoufox(headless=True, **proxy_kwargs) as browser:
+        for site in selected_sites:
+            page = browser.new_page()
+            try:
+                results.append(
+                    _probe_presence_site_in_camoufox_page(
+                        page,
+                        site=site,
+                        url=urls[site],
+                        team1=team1,
+                        team2=team2,
+                        mode=mode,
+                        team1_aliases=team1_aliases,
+                        team2_aliases=team2_aliases,
+                    )
+                )
+            finally:
+                with contextlib.suppress(Exception):
+                    page.close()
+    return results
 
 
 def _current_page_matches_teams(
@@ -1378,6 +1818,321 @@ def _map_context_details(site: str, reason_kind: str) -> str:
     return f"{base} map market not found in map-only context"
 
 
+def parse_site_in_camoufox_page(
+    page,
+    site: str,
+    url: str,
+    team1: str,
+    team2: str,
+    mode: str,
+    forced_map_num: Optional[int] = None,
+) -> SiteResult:
+    load_status, load_error, html, visible, body_text = _load_site_render_payload_camoufox(
+        page,
+        url,
+        initial_wait_seconds=7.0,
+        scroll_wait_seconds=2.0,
+    )
+    initial_body_text = body_text
+    match_fallback_odds: List[float] = []
+
+    if _is_deeplink(site, url):
+        if not body_text:
+            for _ in range(8):
+                time.sleep(1.0)
+                body_text = " ".join(_camoufox_body_text(page).split())
+                if body_text:
+                    break
+        if site == "pari":
+            for i in range(8):
+                if ("КИБЕРСПОРТ / DOTA 2" in body_text or "КИБЕРСПОРТ / DOTA2" in body_text) and "Исход" in body_text:
+                    break
+                if i == 3:
+                    with contextlib.suppress(Exception):
+                        page.reload(wait_until="domcontentloaded", timeout=30000)
+                time.sleep(1.0)
+                body_text = " ".join(_camoufox_body_text(page).split())
+        map_odds, body_text = _parse_map_market_on_current_camoufox_page(
+            page,
+            site,
+            team1,
+            team2,
+            forced_map_num=forced_map_num,
+        )
+        if map_odds:
+            return SiteResult(
+                site=site,
+                url=url,
+                status=load_status,
+                match_found=True,
+                odds=map_odds[:2],
+                source="deeplink_map_market",
+                details=str(body_text or "")[:700],
+            )
+        if _is_map_market_closed(site, body_text, forced_map_num=forced_map_num):
+            map_context_active = _is_map_context_active(body_text or visible, forced_map_num)
+            source_name = "deeplink_map_market_closed"
+            if map_context_active:
+                source_name = _map_closed_source(site)
+            return SiteResult(
+                site=site,
+                url=url,
+                status=load_status,
+                match_found=True,
+                odds=[],
+                source=source_name,
+                details=str(body_text or "")[:700],
+                market_closed=True,
+            )
+
+        deep_sources: List[Tuple[str, str]] = []
+        if body_text:
+            deep_sources.append(("dom_body_text", body_text))
+        if visible:
+            deep_sources.append(("dom_visible_text", visible))
+        if html:
+            deep_sources.append(("dom_html", html))
+        found_deep, odds_deep, source_deep, details_deep = _find_from_sources(team1, team2, deep_sources)
+        deep_context_text = details_deep or body_text or visible
+        map_context_active = _is_map_context_active(deep_context_text, forced_map_num)
+        if map_context_active and found_deep and odds_deep:
+            match_fallback_odds = _extract_first_match_odds(
+                site,
+                team1,
+                team2,
+                body_text,
+                visible,
+                details_deep,
+            )
+        if map_context_active:
+            if found_deep and odds_deep:
+                return SiteResult(
+                    site=site,
+                    url=url,
+                    status=load_status,
+                    match_found=True,
+                    odds=[],
+                    source=_match_level_rejected_source(site),
+                    details=(details_deep or body_text or _map_context_details(site, "match_level_rejected"))[:700],
+                    match_odds=match_fallback_odds,
+                )
+            if _is_map_market_closed(site, deep_context_text, forced_map_num=forced_map_num):
+                return SiteResult(
+                    site=site,
+                    url=url,
+                    status=load_status,
+                    match_found=found_deep,
+                    odds=[],
+                    source=_map_closed_source(site),
+                    details=(details_deep or body_text or _map_context_details(site, "map_market_closed"))[:700],
+                    market_closed=True,
+                    match_odds=match_fallback_odds,
+                )
+            return SiteResult(
+                site=site,
+                url=url,
+                status=load_status,
+                match_found=found_deep,
+                odds=[],
+                source=_map_missing_source(site),
+                details=(details_deep or body_text or _map_context_details(site, "map_market_missing"))[:700],
+                match_odds=match_fallback_odds,
+            )
+        if found_deep and odds_deep and _looks_map_context(details_deep):
+            return SiteResult(
+                site=site,
+                url=url,
+                status=load_status,
+                match_found=True,
+                odds=odds_deep[:2],
+                source=f"deeplink_{source_deep}",
+                details=details_deep,
+            )
+        if found_deep and _is_map_market_closed(site, details_deep or body_text, forced_map_num=forced_map_num):
+            return SiteResult(
+                site=site,
+                url=url,
+                status=load_status,
+                match_found=True,
+                odds=[],
+                source=f"deeplink_{source_deep or 'map_market'}_closed",
+                details=(details_deep or body_text)[:700],
+                market_closed=True,
+            )
+        # If map odds not found but match-level odds exist, use them as fallback
+        if match_fallback_odds and not map_odds:
+            map_odds = match_fallback_odds[:2]
+            source_deep = "match_fallback"
+            details_deep = body_text[:700]
+        if map_odds:
+            return SiteResult(
+                site=site,
+                url=url,
+                status=load_status,
+                match_found=True,
+                odds=map_odds[:2],
+                source=f"deeplink_{source_deep}",
+                details=details_deep,
+            )
+        return SiteResult(
+            site=site,
+            url=url,
+            status=load_status,
+            match_found=False,
+            odds=[],
+            source="",
+            details="deeplink loaded but map market odds not found",
+        )
+
+    candidate_urls = _candidate_match_urls_from_html(site, str(getattr(page, "url", "") or url), html)
+    href_opened = _camoufox_find_match_by_urls(page, site, candidate_urls, team1, team2)
+    if href_opened:
+        map_odds, body_text = _parse_map_market_on_current_camoufox_page(
+            page,
+            site,
+            team1,
+            team2,
+            forced_map_num=forced_map_num,
+        )
+        if map_odds:
+            return SiteResult(
+                site=site,
+                url=url,
+                status=load_status,
+                match_found=True,
+                odds=map_odds[:2],
+                source="feed_href_map_market",
+                details=str(body_text or "")[:700],
+            )
+        if _is_map_market_closed(site, body_text, forced_map_num=forced_map_num):
+            return SiteResult(
+                site=site,
+                url=url,
+                status=load_status,
+                match_found=True,
+                odds=[],
+                source="feed_href_map_market_closed",
+                details=str(body_text or "")[:700],
+                market_closed=True,
+            )
+        if _is_map_context_active(body_text, forced_map_num):
+            return SiteResult(
+                site=site,
+                url=url,
+                status=load_status,
+                match_found=True,
+                odds=[],
+                source=_map_missing_source(site),
+                details=str(body_text or "")[:700],
+            )
+
+    feed_sources: List[Tuple[str, str]] = []
+    if body_text:
+        feed_sources.append(("dom_body_text", body_text))
+    if visible:
+        feed_sources.append(("dom_visible_text", visible))
+    if html:
+        feed_sources.append(("dom_html", html))
+
+    feed_found, _feed_odds_ignored, feed_source_name, feed_details = _find_from_sources(team1, team2, feed_sources)
+    feed_map_odds: List[float] = []
+    for context in (body_text, visible, feed_details):
+        feed_map_odds = _extract_map_odds_from_feed_context(
+            site,
+            context or "",
+            team1=team1,
+            team2=team2,
+            forced_map_num=forced_map_num,
+        )
+        if feed_map_odds:
+            break
+    if feed_found and feed_map_odds:
+        return SiteResult(
+            site=site,
+            url=url,
+            status=load_status,
+            match_found=True,
+            odds=feed_map_odds[:2],
+            source=f"{feed_source_name or 'feed'}_map_row",
+            details=(feed_details or body_text or visible)[:700],
+        )
+
+    sources: List[Tuple[str, str]] = []
+    if body_text:
+        sources.append(("dom_body_text", body_text))
+    if visible:
+        sources.append(("dom_visible_text", visible))
+    if html:
+        sources.append(("dom_html", html))
+
+    found, _odds_ignored, source_name, details = _find_from_sources(team1, team2, sources)
+    strict_map_odds: List[float] = []
+    for context in (body_text, visible, details):
+        strict_map_odds = _extract_map_odds_from_feed_context(
+            site,
+            context or "",
+            team1=team1,
+            team2=team2,
+            forced_map_num=forced_map_num,
+        )
+        if strict_map_odds:
+            break
+    odds: List[float] = []
+    if strict_map_odds:
+        odds = strict_map_odds[:2]
+        source_name = f"{source_name or 'dom'}_map_row"
+    market_closed = False
+    context_text = details or body_text or visible or ""
+    map_context_active = _is_map_context_active(context_text, forced_map_num)
+    if map_context_active and found and _odds_ignored:
+        match_fallback_odds = _extract_first_match_odds(
+            site,
+            team1,
+            team2,
+            initial_body_text,
+            visible,
+            body_text,
+            details,
+        )
+    if found and not odds and _is_map_market_closed(site, context_text, forced_map_num=forced_map_num):
+        market_closed = True
+        source_name = _map_closed_source(site) if map_context_active else (source_name or "map_market_closed")
+        details = (details or body_text or _map_context_details(site, "map_market_closed"))[:700]
+    # If map_odds not found but match-level odds exist, use them as fallback
+    if not odds and match_fallback_odds:
+        odds = match_fallback_odds[:2]
+        source_name = f"{source_name}_match_fallback" if source_name else "match_fallback"
+        details = (details or body_text)[:700]
+    if map_context_active and not odds:
+        if market_closed:
+            source_name = source_name or _map_closed_source(site)
+        elif found and _odds_ignored:
+            source_name = _match_level_rejected_source(site)
+            details = (details or body_text or _map_context_details(site, "match_level_rejected"))[:700]
+        else:
+            source_name = _map_missing_source(site)
+            details = (details or body_text or _map_context_details(site, "map_market_missing"))[:700]
+    if mode == "live" and found and _looks_future_context(details):
+        found = False
+        odds = []
+        match_fallback_odds = []
+        source_name = ""
+        details = "match found but filtered as non-live (future context)"
+    if load_error:
+        details = f"{details} | load_error={load_error[:300]}"
+    return SiteResult(
+        site=site,
+        url=url,
+        status=load_status,
+        match_found=found,
+        odds=odds,
+        source=source_name,
+        details=details,
+        market_closed=market_closed,
+        match_odds=match_fallback_odds,
+    )
+
+
 def parse_site(
     drv,
     site: str,
@@ -1544,6 +2299,21 @@ def parse_site(
                 source=f"deeplink_{source_deep or 'map_market'}_closed",
                 details=(details_deep or body_text)[:700],
                 market_closed=True,
+            )
+        # If map odds not found but match-level odds exist, use them as fallback
+        if match_fallback_odds and not map_odds:
+            map_odds = match_fallback_odds[:2]
+            source_deep = "match_fallback"
+            details_deep = body_text[:700]
+        if map_odds:
+            return SiteResult(
+                site=site,
+                url=url,
+                status=load_status,
+                match_found=True,
+                odds=map_odds[:2],
+                source=f"deeplink_{source_deep}",
+                details=details_deep,
             )
         return SiteResult(
             site=site,
@@ -2049,7 +2819,7 @@ def _probe_presence_site_in_current_tab(
     # OCR fallback: try screenshots if teams not found
     if not found and status == "loading":
         try:
-            from bookmaker_ocr import check_bookmaker_presence_via_ocr
+            from base.bookmaker_ocr import check_bookmaker_presence_via_ocr
             ocr_result = check_bookmaker_presence_via_ocr(
                 drv, site, url, team1, team2,
                 team1_aliases=team1_aliases,
@@ -2100,7 +2870,16 @@ def _open_presence_site_tabs(
         before = set(drv.window_handles)
         drv.execute_script("window.open(arguments[0], '_blank');", urls[site])
         new_handles = [handle for handle in drv.window_handles if handle not in before]
-        handle_by_site[site] = new_handles[0] if new_handles else drv.window_handles[-1]
+        new_handle = new_handles[0] if new_handles else drv.window_handles[-1]
+        handle_by_site[site] = new_handle
+
+        # Wait for tab to load before moving to next
+        drv.switch_to.window(new_handle)
+        try:
+            WebDriverWait(drv, 15).until(lambda d: d.execute_script("return document.readyState") == "complete")
+            time.sleep(1.0)  # Extra wait for JS rendering
+        except Exception:
+            time.sleep(4.0)  # Fallback wait
         time.sleep(0.15)
 
     try:
@@ -2195,7 +2974,7 @@ def _run_presence_sites_in_browser(
                     drv.execute_script("window.focus();")
                 except Exception:
                     pass
-                time.sleep(2.5)
+                time.sleep(6.0)
                 result = _probe_presence_site_in_current_tab(
                     drv,
                     site=site,
@@ -2244,7 +3023,7 @@ def _run_presence_sites_in_browser(
 
     # OCR fallback: try screenshots for sites that timed out or didn't find match
     try:
-        from bookmaker_ocr import check_bookmaker_presence_via_ocr
+        from base.bookmaker_ocr import check_bookmaker_presence_via_ocr
         for site in selected_sites:
             result = results_by_site.get(site)
             if result and not result.match_found and result.status in {"loading", "request_error", "ok"}:
@@ -2284,6 +3063,16 @@ def run_presence_sites_parallel(
     team1_aliases: Optional[List[str]] = None,
     team2_aliases: Optional[List[str]] = None,
 ) -> List[SiteResult]:
+    if BOOKMAKER_CAMOUFOX_PRESENCE_ENABLED:
+        return _run_presence_sites_in_camoufox(
+            selected_sites=selected_sites,
+            urls=urls,
+            team1=team1,
+            team2=team2,
+            mode=mode,
+            team1_aliases=team1_aliases,
+            team2_aliases=team2_aliases,
+        )
     return _run_presence_sites_in_browser(
         selected_sites=selected_sites,
         urls=urls,
@@ -2293,6 +3082,40 @@ def run_presence_sites_parallel(
         team1_aliases=team1_aliases,
         team2_aliases=team2_aliases,
     )
+
+
+def run_sites_in_camoufox(
+    *,
+    selected_sites: List[str],
+    urls: Dict[str, str],
+    team1: str,
+    team2: str,
+    mode: str,
+    forced_map_num: Optional[int] = None,
+) -> List[SiteResult]:
+    if not CAMOUFOX_AVAILABLE:
+        raise RuntimeError("Camoufox is unavailable")
+    proxy_kwargs = _camoufox_proxy_kwargs(BOOKMAKER_PROXY_URL)
+    results: List[SiteResult] = []
+    with camoufox.Camoufox(headless=True, **proxy_kwargs) as browser:
+        for site in selected_sites:
+            page = browser.new_page()
+            try:
+                results.append(
+                    parse_site_in_camoufox_page(
+                        page,
+                        site=site,
+                        url=urls[site],
+                        team1=team1,
+                        team2=team2,
+                        mode=mode,
+                        forced_map_num=forced_map_num,
+                    )
+                )
+            finally:
+                with contextlib.suppress(Exception):
+                    page.close()
+    return results
 
 
 def verify_proxy(drv) -> str:
@@ -2366,7 +3189,7 @@ def main() -> None:
     proxy_origin: Optional[str] = None
     if odds_enabled or args.presence_only:
         if args.presence_only:
-            proxy_origin = "parallel_presence_proxy_only"
+            proxy_origin = "camoufox_presence_proxy_only" if BOOKMAKER_CAMOUFOX_PRESENCE_ENABLED else "parallel_presence_proxy_only"
             results = run_presence_sites_parallel(
                 selected_sites=selected_sites,
                 urls=urls,
@@ -2377,23 +3200,34 @@ def main() -> None:
                 team2_aliases=args.team2_alias,
             )
         else:
-            drv = _build_driver(BOOKMAKER_PROXY_URL)
-            try:
-                proxy_origin = verify_proxy(drv)
-                results = [
-                    parse_site(
-                        drv,
-                        site=site,
-                        url=urls[site],
-                        team1=args.team1,
-                        team2=args.team2,
-                        mode=args.mode,
-                        forced_map_num=args.map_num,
-                    )
-                    for site in selected_sites
-                ]
-            finally:
-                drv.quit()
+            if BOOKMAKER_CAMOUFOX_ENABLED:
+                proxy_origin = "camoufox_proxy_only"
+                results = run_sites_in_camoufox(
+                    selected_sites=selected_sites,
+                    urls=urls,
+                    team1=args.team1,
+                    team2=args.team2,
+                    mode=args.mode,
+                    forced_map_num=args.map_num,
+                )
+            else:
+                drv = _build_driver(BOOKMAKER_PROXY_URL)
+                try:
+                    proxy_origin = verify_proxy(drv)
+                    results = [
+                        parse_site(
+                            drv,
+                            site=site,
+                            url=urls[site],
+                            team1=args.team1,
+                            team2=args.team2,
+                            mode=args.mode,
+                            forced_map_num=args.map_num,
+                        )
+                        for site in selected_sites
+                    ]
+                finally:
+                    drv.quit()
     else:
         proxy_origin = "disabled"
         results = [
