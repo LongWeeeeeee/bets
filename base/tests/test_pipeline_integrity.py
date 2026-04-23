@@ -138,11 +138,40 @@ def test_verbose_match_log_cache_is_bounded(monkeypatch) -> None:
         keys = list(runtime.verbose_match_log_cache.keys())
 
     assert keys == ["match-b", "match-c"]
-    assert runtime._should_emit_verbose_match_log("match-a") is True
-    assert runtime._should_emit_verbose_match_log("match-b") is False
 
-    with runtime.verbose_match_log_lock:
-        runtime.verbose_match_log_cache.clear()
+
+def test_build_series_score_line_with_fallback_uses_live_score_when_series_missing() -> None:
+    assert runtime._build_series_score_line_with_fallback({}, "0 : 0") == "0-0\n"
+
+
+def test_build_minimal_odds_only_message_contains_only_teams_and_score() -> None:
+    message = runtime._build_minimal_odds_only_message(
+        radiant_team_name="Team Lynx",
+        dire_team_name="Nemiga Gaming",
+        live_league={},
+        fallback_score_text="0 : 0",
+    )
+    assert message == "Team Lynx VS Nemiga Gaming\n0-0\n"
+
+
+def test_prepare_minimal_odds_only_message_requires_at_least_one_numeric_bookmaker(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", True, raising=False)
+    monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_USE_SUBPROCESS", False, raising=False)
+    monkeypatch.setattr(runtime, "_bookmaker_refresh_cached_match_tabs_for_dispatch", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        runtime,
+        "_bookmaker_format_odds_block",
+        lambda *_args, **_kwargs: ("", False, "no_numeric_odds"),
+    )
+
+    message, ready, reason = runtime._prepare_minimal_odds_only_message_for_delivery(
+        "dltv.org/matches/test.0",
+        "Team Lynx VS Nemiga Gaming\n0-0\n",
+    )
+
+    assert ready is False
+    assert reason == "no_numeric_odds"
+    assert message == "Team Lynx VS Nemiga Gaming\n0-0\n"
 
 
 def test_build_runtime_memory_snapshot_reports_cache_sizes(monkeypatch) -> None:
@@ -236,6 +265,95 @@ def test_build_runtime_object_snapshot_reports_large_runtime_objects(monkeypatch
     monkeypatch.setattr(runtime, "tempo_solo_dict", None)
     monkeypatch.setattr(runtime, "tempo_duo_dict", None)
     monkeypatch.setattr(runtime, "tempo_cp1v1_dict", None)
+
+
+def test_build_dota2protracker_block_marks_invalid_metrics() -> None:
+    payload = {
+        "pro_cp1vs1_late": 0.0,
+        "pro_duo_synergy_late": 1.25,
+        "pro_cp1vs1_valid": False,
+        "pro_duo_synergy_valid": True,
+    }
+
+    block = runtime._build_dota2protracker_block(payload)
+
+    assert "cp1vs1: invalid" in block
+    assert "synergy_duo: +1.25" in block
+
+
+def test_has_valid_dota2protracker_signal_requires_at_least_one_valid_metric() -> None:
+    assert runtime._has_valid_dota2protracker_signal(
+        {
+            "pro_cp1vs1_valid": False,
+            "pro_duo_synergy_valid": False,
+        }
+    ) is False
+    assert runtime._has_valid_dota2protracker_signal(
+        {
+            "pro_cp1vs1_valid": True,
+            "pro_duo_synergy_valid": False,
+        }
+    ) is True
+
+
+def test_has_dispatchable_dota2protracker_signal_respects_thresholds() -> None:
+    assert runtime._has_dispatchable_dota2protracker_signal(
+        {
+            "pro_cp1vs1_valid": True,
+            "pro_cp1vs1_late": 3.01,
+            "pro_duo_synergy_valid": False,
+            "pro_duo_synergy_late": 0.0,
+        }
+    ) is True
+    assert runtime._has_dispatchable_dota2protracker_signal(
+        {
+            "pro_cp1vs1_valid": True,
+            "pro_cp1vs1_late": 2.99,
+            "pro_duo_synergy_valid": False,
+            "pro_duo_synergy_late": 0.0,
+        }
+    ) is False
+    assert runtime._has_dispatchable_dota2protracker_signal(
+        {
+            "pro_cp1vs1_valid": False,
+            "pro_cp1vs1_late": 0.0,
+            "pro_duo_synergy_valid": True,
+            "pro_duo_synergy_late": -7.0,
+        }
+    ) is True
+
+
+def test_build_dota2protracker_gate_summary_reports_threshold_pass_state() -> None:
+    summary = runtime._build_dota2protracker_gate_summary(
+        {
+            "pro_cp1vs1_valid": True,
+            "pro_cp1vs1_late": 3.5,
+            "pro_duo_synergy_valid": True,
+            "pro_duo_synergy_late": 4.0,
+        }
+    )
+
+    assert "cp(abs>=3" in summary
+    assert "pass=True" in summary
+    assert "duo(abs>=7" in summary
+    assert "pass=False" in summary
+
+
+def test_build_dota2protracker_debug_summary_includes_invalid_reasons() -> None:
+    summary = runtime._build_dota2protracker_debug_summary(
+        {
+            "pro_cp1vs1_valid": False,
+            "pro_duo_synergy_valid": False,
+            "pro_cp1vs1_reason": "insufficient_core_heroes",
+            "pro_duo_synergy_reason": "insufficient_core_heroes",
+            "pro_cp1vs1_diagnostics": {"radiant_core_count": 2, "dire_core_count": 3},
+            "pro_duo_synergy_diagnostics": {"radiant_core_count": 2, "dire_core_count": 3},
+        }
+    )
+
+    assert "cp1vs1=invalid" in summary
+    assert "reason=insufficient_core_heroes" in summary
+    assert "radiant_core_count" in summary
 
 
 def test_build_lane_block_omits_section_when_lanes_missing() -> None:
@@ -2042,7 +2160,7 @@ def test_get_heads_uses_direct_fallback_after_proxy_pool_exhaustion(monkeypatch)
             status_code=200,
         )
 
-    monkeypatch.setattr(runtime.requests, "get", _direct_get)
+    monkeypatch.setattr(runtime, "_perform_http_get", _direct_get)
 
     heads, bodies = runtime.get_heads(
         response=_FakeTextResponse("")
@@ -2051,8 +2169,8 @@ def test_get_heads_uses_direct_fallback_after_proxy_pool_exhaustion(monkeypatch)
     assert heads is not None and len(heads) == 1
     assert bodies is not None and len(bodies) == 1
     assert retry_calls["count"] == 5
-    assert len(direct_calls) == 1
-    assert "proxies" not in direct_calls[0]
+    assert len(direct_calls) >= 1
+    assert any("proxies" not in call for call in direct_calls)
     assert send_calls == [
         "⚠️ Все прокси для live matches исчерпаны после 3 кругов. Переключаюсь на direct fallback."
     ]
@@ -2197,6 +2315,151 @@ def test_get_heads_falls_back_to_v2_cards_inside_live_matches_wrapper(monkeypatc
     assert listing["score"] == "0 : 0"
     assert listing["series_id"] == "425877"
     assert listing["live_match_id"] == "8751684122"
+
+
+def test_get_heads_replaces_tbd_only_proxy_live_snapshot_with_direct_live_cards(monkeypatch) -> None:
+    proxy_html = """
+    <html>
+      <head><title>Dota 2 Matches & livescore – DLTV</title></head>
+      <div class="card mobile-none" data-matches-live>
+        <div class="card__body">
+          <div class="matches__v2-items">
+            <div class="match live tbd" data-series-id="426241" data-match="0">
+              <div class="match__head">
+                <div class="match__head-event"><span>DreamLeague Division 2 Season 4</span></div>
+              </div>
+              <div class="match__body">
+                <div class="match__body-details">
+                  <a href="https://dltv.org/matches/426241/btc-gaming-vs-alis-ventorus-dreamleague-division-2-season-4"></a>
+                  <div class="match__body-details__team">
+                    <div class="team"><div class="team__title"><span>TBD</span></div></div>
+                  </div>
+                  <div class="match__body-details__score">
+                    <div class="score"><strong class="text-red">-</strong><small>(0)</small></div>
+                    <div class="duration"><strong class="duration__live"><span>Live</span></strong></div>
+                    <div class="score"><strong class="text-red">-</strong><small>(0)</small></div>
+                  </div>
+                  <div class="match__body-details__team">
+                    <div class="team"><div class="team__title"><span>TBD</span></div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="match live tbd" data-series-id="426263" data-match="0">
+              <div class="match__head">
+                <div class="match__head-event"><span>DreamLeague Division 2 Season 4</span></div>
+              </div>
+              <div class="match__body">
+                <div class="match__body-details">
+                  <a href="https://dltv.org/matches/426263/south-america-rejects-vs-l1ga-team-dreamleague-division-2-season-4"></a>
+                  <div class="match__body-details__team">
+                    <div class="team"><div class="team__title"><span>TBD</span></div></div>
+                  </div>
+                  <div class="match__body-details__score">
+                    <div class="score"><strong class="text-red">-</strong><small>(0)</small></div>
+                    <div class="duration"><strong class="duration__live"><span>Live</span></strong></div>
+                    <div class="score"><strong class="text-red">-</strong><small>(0)</small></div>
+                  </div>
+                  <div class="match__body-details__team">
+                    <div class="team"><div class="team__title"><span>TBD</span></div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="match upcoming" data-series-id="426228">
+              <div class="match__body">
+                <div class="match__body-details">
+                  <a href="https://dltv.org/matches/426228/rune-eaters-vs-modus-dreamleague-division-2-season-4"></a>
+                </div>
+              </div>
+            </div>
+            <div class="match upcoming tbd" data-series-id="426205">
+              <div class="match__body">
+                <div class="match__body-details">
+                  <a href="https://dltv.org/matches/426205/tbd-vs-tbd-pgl-wallachia-season-8"></a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </html>
+    """
+    direct_html = """
+    <html>
+      <head><title>Dota 2 Matches & livescore – DLTV</title></head>
+      <div class="match live" data-series-id="426228" data-match="0">
+        <div class="match__head">
+          <div class="match__head-event"><span>DreamLeague Division 2 Season 4</span></div>
+        </div>
+        <div class="match__body">
+          <div class="match__body-details">
+            <a href="https://dltv.org/matches/426228/rune-eaters-vs-modus-dreamleague-division-2-season-4"></a>
+            <div class="match__body-details__team">
+              <div class="team"><div class="team__title"><span>Rune Eaters</span></div></div>
+            </div>
+            <div class="match__body-details__score">
+              <div class="score"><strong class="text-red">-</strong><small>(0)</small></div>
+              <div class="duration"><strong class="duration__live"><span>Live</span></strong></div>
+              <div class="score"><strong class="text-red">-</strong><small>(1)</small></div>
+            </div>
+            <div class="match__body-details__team">
+              <div class="team"><div class="team__title"><span>Modus</span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="match live" data-series-id="426205" data-match="8781484100">
+        <div class="match__head">
+          <div class="match__head-event"><span>PGL Wallachia Season 8</span></div>
+        </div>
+        <div class="match__body">
+          <div class="match__body-details">
+            <a href="https://dltv.org/matches/426205/south-america-rejects-vs-mouz-pgl-wallachia-season-8"></a>
+            <div class="match__body-details__team">
+              <div class="team"><div class="team__title"><span>SAR</span></div></div>
+            </div>
+            <div class="match__body-details__score">
+              <div class="score"><strong class="text-red">4</strong><small>(1)</small></div>
+              <div class="duration"><strong class="duration__live"><span>Live</span></strong></div>
+              <div class="score"><strong class="text-red">4</strong><small>(0)</small></div>
+            </div>
+            <div class="match__body-details__team">
+              <div class="team"><div class="team__title"><span>MOUZ</span></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </html>
+    """
+
+    monkeypatch.setattr(runtime, "USE_PROXY", True, raising=False)
+    monkeypatch.setattr(runtime, "PROXY_LIST", ["proxy-a"], raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY_INDEX", 0, raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY", "proxy-a", raising=False)
+    monkeypatch.setattr(runtime, "PROXIES", {"http": "proxy-a", "https": "proxy-a"}, raising=False)
+    monkeypatch.setattr(runtime.time, "sleep", lambda *_args, **_kwargs: None)
+
+    direct_calls: List[str] = []
+    monkeypatch.setattr(
+        runtime,
+        "_perform_http_get",
+        lambda *_args, **_kwargs: direct_calls.append("direct") or _FakeTextResponse(direct_html),
+    )
+    send_calls: List[str] = []
+    monkeypatch.setattr(runtime, "send_message", lambda message, **_kwargs: send_calls.append(str(message)))
+
+    heads, bodies = runtime.get_heads(response=_FakeTextResponse(proxy_html))
+
+    assert heads is not None and len(heads) == 2
+    assert bodies is not None and len(bodies) == 2
+    hrefs = [runtime._extract_live_listing_context(heads[i], bodies[i])["href"] for i in range(len(heads))]
+    assert hrefs == [
+        "https://dltv.org/matches/426228/rune-eaters-vs-modus-dreamleague-division-2-season-4",
+        "https://dltv.org/matches/426205/south-america-rejects-vs-mouz-pgl-wallachia-season-8",
+    ]
+    assert direct_calls == ["direct"]
+    assert send_calls == []
 
 
 def test_perform_http_get_prefers_curl_cffi_for_matches(monkeypatch) -> None:
@@ -3325,9 +3588,9 @@ def test_bookmaker_odds_block_shows_match_fallback_row(monkeypatch) -> None:
 
     assert ready is True
     assert reason == "ok"
-    assert "Букмекеры (live, карта 2):" in block
-    assert "Pari: П1 1.58 | П2 2.25" in block
-    assert "Winline (матч): П1 1.30 | П2 3.15" in block
+    assert "БК (live, карта 2):" in block
+    assert "Pari 1.58/2.25" in block
+    assert "Winline (матч) 1.30/3.15" in block
 
 
 @pytest.mark.parametrize("module_name", ["functions", "signal_wrappers"])

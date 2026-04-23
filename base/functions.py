@@ -143,10 +143,10 @@ COUNTERPICK_1VS1_CORES_REQUIRED = len(CORE_POSITIONS) * len(CORE_POSITIONS)  # 3
 SYNERGY_DUO_CORES_REQUIRED = (len(CORE_POSITIONS) * (len(CORE_POSITIONS) - 1)) // 2  # C(3,2) = 3
 # Пороги по количеству матчей (единственные действующие пороги)
 SOLO_MIN_MATCHES = 50
-SYNERGY_DUO_MIN_MATCHES = 50
-COUNTERPICK_1VS1_MIN_MATCHES = 50
-COUNTERPICK_1VS2_MIN_MATCHES = 30
-SYNERGY_TRIO_MIN_MATCHES = 30
+SYNERGY_DUO_MIN_MATCHES = 30
+COUNTERPICK_1VS1_MIN_MATCHES = 30
+COUNTERPICK_1VS2_MIN_MATCHES = 15
+SYNERGY_TRIO_MIN_MATCHES = 15
 SYNERGY_DUO_REQUIRE_CP_ALIGN = False
 
 # Позиционные веса по умолчанию (разные для early/late)
@@ -2204,7 +2204,7 @@ def calculate_average(values):
     return sum(values) / len(values) if len(values) else None
 
 
-def synergy_team(heroes_and_pos, output, mkdir, data, min_matches_trio=20):
+def synergy_team(heroes_and_pos, output, mkdir, data, min_matches_trio=SYNERGY_TRIO_MIN_MATCHES):
     """
     Анализирует синергию героев в команде
 

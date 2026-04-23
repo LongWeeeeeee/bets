@@ -94,6 +94,8 @@ DOTA2PROTRACKER_SUPERSEDE_OPENDOTA = _env_flag(
     'DOTA2PROTRACKER_SUPERSEDE_OPENDOTA',
     '1' if DOTA2PROTRACKER_ENABLED else '0',
 )
+DOTA2PROTRACKER_CP1VS1_GATE_ABS = float(os.getenv('DOTA2PROTRACKER_CP1VS1_GATE_ABS', '3'))
+DOTA2PROTRACKER_DUO_GATE_ABS = float(os.getenv('DOTA2PROTRACKER_DUO_GATE_ABS', '7'))
 SIGNAL_MINIMAL_ODDS_ONLY_MODE = _env_flag('SIGNAL_MINIMAL_ODDS_ONLY_MODE', '0')
 CLASSIC_SIGNAL_PIPELINE_ENABLED = _env_flag(
     'CLASSIC_SIGNAL_PIPELINE_ENABLED',
@@ -2701,6 +2703,42 @@ def _has_valid_dota2protracker_signal(protracker_payload: Optional[Dict[str, Any
     return (
         _dota2protracker_metric_is_valid(protracker_payload, "cp1vs1")
         or _dota2protracker_metric_is_valid(protracker_payload, "synergy_duo")
+    )
+
+
+def _has_dispatchable_dota2protracker_signal(
+    protracker_payload: Optional[Dict[str, Any]],
+) -> bool:
+    if not isinstance(protracker_payload, dict):
+        return False
+    cp_valid = bool(protracker_payload.get("pro_cp1vs1_valid"))
+    duo_valid = bool(protracker_payload.get("pro_duo_synergy_valid"))
+    cp_value = float(protracker_payload.get("pro_cp1vs1_late", protracker_payload.get("pro_cp1vs1_early", 0.0)) or 0.0)
+    duo_value = float(
+        protracker_payload.get("pro_duo_synergy_late", protracker_payload.get("pro_duo_synergy_early", 0.0)) or 0.0
+    )
+    return (
+        (cp_valid and abs(cp_value) >= DOTA2PROTRACKER_CP1VS1_GATE_ABS)
+        or (duo_valid and abs(duo_value) >= DOTA2PROTRACKER_DUO_GATE_ABS)
+    )
+
+
+def _build_dota2protracker_gate_summary(
+    protracker_payload: Optional[Dict[str, Any]],
+) -> str:
+    payload = dict(_blank_dota2protracker_result())
+    if isinstance(protracker_payload, dict):
+        payload.update(protracker_payload)
+    cp_valid = bool(payload.get("pro_cp1vs1_valid"))
+    duo_valid = bool(payload.get("pro_duo_synergy_valid"))
+    cp_value = float(payload.get("pro_cp1vs1_late", payload.get("pro_cp1vs1_early", 0.0)) or 0.0)
+    duo_value = float(payload.get("pro_duo_synergy_late", payload.get("pro_duo_synergy_early", 0.0)) or 0.0)
+    cp_pass = cp_valid and abs(cp_value) >= DOTA2PROTRACKER_CP1VS1_GATE_ABS
+    duo_pass = duo_valid and abs(duo_value) >= DOTA2PROTRACKER_DUO_GATE_ABS
+    return (
+        "gate="
+        f"cp(abs>={DOTA2PROTRACKER_CP1VS1_GATE_ABS:g}, valid={cp_valid}, pass={cp_pass}), "
+        f"duo(abs>={DOTA2PROTRACKER_DUO_GATE_ABS:g}, valid={duo_valid}, pass={duo_pass})"
     )
 
 
@@ -14481,6 +14519,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 print(
                     "   ⚠️ Dota2ProTracker-only dispatch skipped: both metrics invalid. "
                     f"{_build_dota2protracker_debug_summary(protracker_payload)}"
+                )
+                return return_status
+            if not _has_dispatchable_dota2protracker_signal(protracker_payload):
+                print(
+                    "   ⚠️ Dota2ProTracker-only dispatch skipped: below gate threshold. "
+                    f"{_build_dota2protracker_debug_summary(protracker_payload)}; "
+                    f"{_build_dota2protracker_gate_summary(protracker_payload)}"
                 )
                 return return_status
             protracker_message_text = _build_dota2protracker_only_message(
