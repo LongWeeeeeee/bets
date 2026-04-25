@@ -133,14 +133,11 @@ if _env_pos_weights_late:
 GET_DIFF_MIN_MATCHES = 0  # Порог матчей отключен (используем пороги при сборе)
 GET_DIFF_MIN_FINAL_DEVIATION = 0.0  # Порог отключен
 GET_DIFF_MIN_WR_GAP = 0.0  # Порог отключен
-# Минимум core-позиций (pos1-3) с данными для расчета counterpick_1vs1
-COUNTERPICK_1VS1_MIN_CORE_POSITIONS = 0
 # Минимальный абсолютный индекс counterpick_1vs1 для сохранения (отсекаем слабый шум)
 COUNTERPICK_1VS1_MIN_ABS = 0
-# Core позиции и полное покрытие по вариантам
+# Core позиции и покрытие для global counterpick_1vs1.
 CORE_POSITIONS = ('pos1', 'pos2', 'pos3')
-COUNTERPICK_1VS1_CORES_REQUIRED = len(CORE_POSITIONS) * len(CORE_POSITIONS)  # 3x3 = 9
-SYNERGY_DUO_CORES_REQUIRED = (len(CORE_POSITIONS) * (len(CORE_POSITIONS) - 1)) // 2  # C(3,2) = 3
+COUNTERPICK_1VS1_CORE_MATCHUPS_REQUIRED = math.ceil(len(CORE_POSITIONS) * 2 / 3)
 # Пороги по количеству матчей для early/late фаз
 SOLO_MIN_MATCHES = 50
 SYNERGY_DUO_MIN_MATCHES = 15
@@ -2256,18 +2253,12 @@ def synergy_team(
                 continue
             second_key = f"{second_hero_id}{second_pos}"
 
-            pair = sorted([hero_key, second_key])
-            key = f"{pair[0]}_with_{pair[1]}"
-            foo = data.get(key, {})
-
-            games = foo.get('games', 0)
+            value, games = _lookup_with_winrate(data, hero_key, second_key)
             if games >= min_matches_duo:
                 # Учитываем позиции, чтобы не смешивать разные конфигурации дуо
                 combo = tuple(sorted([f"{hero_id}{pos}", f"{second_hero_id}{second_pos}"]))
                 if combo not in unique_combinations:
                     unique_combinations.add(combo)
-                    wins = foo['wins']
-                    value = wins / games
                     # Сохраняем (winrate, count) для взвешивания в get_diff
                     output.setdefault(f'{mkdir}_duo', []).append((value, games))
 
@@ -2293,17 +2284,12 @@ def synergy_team(
                     continue
                 third_key = f"{third_hero_id}{third_pos}"
 
-                parts = sorted([hero_key, second_key, third_key])
-                key = ",".join(parts)
-                foo = data.get(key, {})
-
-                games = foo.get('games', 0)
+                parts = [hero_key, second_key, third_key]
+                value, games = _lookup_unordered_combo_winrate(data, parts)
                 if games >= min_matches_trio:
-                    combo = tuple(parts)
+                    combo = tuple(sorted(parts))
                     if combo not in unique_combinations:
                         unique_combinations.add(combo)
-                        wins = foo['wins']
-                        value = wins / games
 
                         # Фильтруем trio: минимум 2 кора (pos1-3)
                         trio_positions = {pos, second_pos, third_pos}
@@ -2316,6 +2302,126 @@ def synergy_team(
                             output.setdefault(f'{mkdir}_trio_all_cores', []).append((value, games))
                         output.setdefault(f'{mkdir}_trio', []).append((value, games))
 
+
+
+def _stats_games(entry):
+    if not isinstance(entry, dict):
+        return 0
+    try:
+        return int(entry.get('games', 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _stats_score(entry):
+    games = _stats_games(entry)
+    if games <= 0:
+        return 0.0
+    try:
+        wins = float(entry.get('wins', entry.get('win', 0)) or 0)
+    except (TypeError, ValueError):
+        wins = 0.0
+    try:
+        draws = float(entry.get('draws', entry.get('draw', 0)) or 0)
+    except (TypeError, ValueError):
+        draws = 0.0
+    return max(0.0, min(float(games), wins + draws * 0.5))
+
+
+def _group_key_variants(group):
+    parts = str(group or "").split(',')
+    if len(parts) <= 1:
+        return [parts[0]] if parts and parts[0] else []
+    variants = {",".join(perm) for perm in permutations(parts)}
+    return sorted(variants)
+
+
+def _sum_score_games(entries, *, invert=False):
+    total_score = 0.0
+    total_games = 0
+    seen_stats = set()
+    for entry in entries:
+        games = _stats_games(entry)
+        if games <= 0:
+            continue
+        score = _stats_score(entry)
+        if invert:
+            score = games - score
+        signature = (round(float(score), 8), int(games))
+        if signature in seen_stats:
+            continue
+        seen_stats.add(signature)
+        total_score += score
+        total_games += games
+    return total_score, total_games
+
+
+def _lookup_unordered_combo_winrate(data, parts):
+    if not isinstance(data, dict):
+        return None, 0
+
+    found_entries = []
+    for perm in permutations(parts):
+        key = ",".join(perm)
+        entry = data.get(key)
+        games = _stats_games(entry)
+        if games > 0:
+            found_entries.append(entry)
+
+    if not found_entries:
+        return None, 0
+
+    score, games = _sum_score_games(found_entries)
+    if games <= 0:
+        return None, 0
+    return score / games, games
+
+
+def _lookup_with_winrate(data, left, right):
+    if not isinstance(data, dict):
+        return None, 0
+
+    entries = []
+    for left_variant in _group_key_variants(left):
+        for right_variant in _group_key_variants(right):
+            for key in (
+                f"{left_variant}_with_{right_variant}",
+                f"{right_variant}_with_{left_variant}",
+            ):
+                entry = data.get(key)
+                if _stats_games(entry) > 0:
+                    entries.append(entry)
+
+    score, games = _sum_score_games(entries)
+    if games <= 0:
+        return None, 0
+    return score / games, games
+
+
+def _lookup_vs_winrate(data, left, right):
+    """Return left-side winrate while combining both directional raw keys."""
+    if not isinstance(data, dict):
+        return None, 0
+
+    direct_entries = []
+    reverse_entries = []
+    for left_variant in _group_key_variants(left):
+        for right_variant in _group_key_variants(right):
+            direct = data.get(f"{left_variant}_vs_{right_variant}")
+            if _stats_games(direct) > 0:
+                direct_entries.append(direct)
+            reverse = data.get(f"{right_variant}_vs_{left_variant}")
+            if _stats_games(reverse) > 0:
+                reverse_entries.append(reverse)
+
+    direct_score, direct_games = _sum_score_games(direct_entries)
+    reverse_score, reverse_games = _sum_score_games(reverse_entries, invert=True)
+    total_score = direct_score + reverse_score
+    total_games = direct_games + reverse_games
+
+    if total_games <= 0:
+        return None, 0
+    return total_score / total_games, total_games
 
 
 def counterpick_team(
@@ -2334,10 +2440,6 @@ def counterpick_team(
     ИЗМЕНЕНО: теперь сохраняет (winrate, num_matches) вместо просто winrate
     """
     unique_combinations = set()
-    def _canon_vs(left, right):
-        if left <= right:
-            return f"{left}_vs_{right}", True
-        return f"{right}_vs_{left}", False
 
     opp_items = list(heroes_and_pos_opposite.items())
     for pos in heroes_and_pos:
@@ -2355,16 +2457,9 @@ def counterpick_team(
         for enemy_pos, enemy_data in opp_items:
             enemy_hero_id = str(enemy_data['hero_id'])
             enemy_key = f"{enemy_hero_id}{enemy_pos}"
-            key, hero_left = _canon_vs(hero_key, enemy_key)
-            foo = data.get(key, {})
 
-            games = foo.get('games', 0)
+            value, games = _lookup_vs_winrate(data, hero_key, enemy_key)
             if games >= min_matches_1vs1:
-                wins = foo['wins']
-                value = wins / games
-                if not hero_left:
-                    value = 1 - value
-
                 # Сохраняем (winrate, count, enemy_pos) для pair-weights в get_diff.
                 output.setdefault(f'{mkdir}_1vs1', {}).setdefault(pos, []).append((value, games, enemy_pos))
                 if pos == 'pos1' and enemy_pos == 'pos1':
@@ -2388,10 +2483,8 @@ def counterpick_team(
 
                 duo_parts = sorted([enemy_key, f"{second_enemy_id}{second_enemy_pos}"])
                 duo_key = ",".join(duo_parts)
-                key, hero_left = _canon_vs(hero_key, duo_key)
-                foo = data.get(key, {})
 
-                games = foo.get('games', 0)
+                value, games = _lookup_vs_winrate(data, hero_key, duo_key)
                 if games >= min_matches_1vs2:
                     # Учитываем позиции, чтобы не смешивать разные конфигурации
                     combo = (
@@ -2403,10 +2496,6 @@ def counterpick_team(
                     )
                     if combo not in unique_combinations:
                         unique_combinations.add(combo)
-                        wins = foo['wins']
-                        value = wins / games
-                        if not hero_left:
-                            value = 1 - value
                         # Сохраняем (winrate, count) для взвешивания в get_diff
                         if pos in {'pos1', 'pos2', 'pos3'} and any(i in {'pos1', 'pos2', 'pos3'} for i in [second_enemy_pos, enemy_pos]):
                             output.setdefault(f'{mkdir}_1vs2_two_cores', {}).setdefault(pos, []).append((value, games))
@@ -3677,9 +3766,11 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     continue
                 if not _is_valid_hero_id(hero_j):
                     continue
-                parts = sorted([f"{int(hero_i)}{pos_i}", f"{int(hero_j)}{pos_j}"])
-                key = f"{parts[0]}_with_{parts[1]}"
-                games = data.get(key, {}).get('games', 0)
+                _, games = _lookup_with_winrate(
+                    data,
+                    f"{int(hero_i)}{pos_i}",
+                    f"{int(hero_j)}{pos_j}",
+                )
                 if games >= min_matches_duo:
                     found = True
                     break
@@ -3709,8 +3800,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                         f"{int(hero_j)}{pos_j}",
                         f"{int(hero_k)}{pos_k}",
                     ]
-                    key = ",".join(sorted(parts))
-                    games = data.get(key, {}).get('games', 0)
+                    _, games = _lookup_unordered_combo_winrate(data, parts)
                     has_games = games >= min_matches_trio
                     if has_games:
                         covered.update([i, j, k])
@@ -3719,21 +3809,23 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
     def _covers_1vs1(data, team, opp, min_matches_1vs1):
         if not isinstance(data, dict):
             return False
-        for pos_i, hero_i in team:
+        core_team = [(pos, hero) for pos, hero in team if pos in CORE_POSITIONS]
+        core_opp = [(pos, hero) for pos, hero in opp if pos in CORE_POSITIONS]
+        if len(core_team) != len(CORE_POSITIONS) or len(core_opp) != len(CORE_POSITIONS):
+            return False
+        for pos_i, hero_i in core_team:
             if not _is_valid_hero_id(hero_i):
                 return False
-            found = False
-            for pos_j, hero_j in opp:
+            covered_core_matchups = 0
+            for pos_j, hero_j in core_opp:
                 if not _is_valid_hero_id(hero_j):
                     continue
                 left = f"{int(hero_i)}{pos_i}"
                 right = f"{int(hero_j)}{pos_j}"
-                key = f"{left}_vs_{right}" if left <= right else f"{right}_vs_{left}"
-                games = data.get(key, {}).get('games', 0)
+                _, games = _lookup_vs_winrate(data, left, right)
                 if games >= min_matches_1vs1:
-                    found = True
-                    break
-            if not found:
+                    covered_core_matchups += 1
+            if covered_core_matchups < COUNTERPICK_1VS1_CORE_MATCHUPS_REQUIRED:
                 return False
         return True
 
@@ -3755,8 +3847,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     solo = f"{int(hero_i)}{pos_i}"
                     duo_parts = sorted([f"{int(hero_a)}{pos_a}", f"{int(hero_b)}{pos_b}"])
                     duo = ",".join(duo_parts)
-                    key = f"{solo}_vs_{duo}" if solo <= duo else f"{duo}_vs_{solo}"
-                    games = data.get(key, {}).get('games', 0)
+                    _, games = _lookup_vs_winrate(data, solo, duo)
                     if games >= min_matches_1vs2:
                         found = True
                         break
@@ -3973,51 +4064,28 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                 d_games = _sum_games_dict(output.get('dire_counterpick_1vs2'))
                 if r_games and d_games:
                     phase_bucket['counterpick_1vs2_games'] = min(r_games, d_games)
-        def _has_min_core_positions(counterpick_dict, min_positions):
-            if not isinstance(counterpick_dict, dict):
-                return False
-            core_positions = ('pos1', 'pos2', 'pos3')
-            available = sum(1 for p in core_positions if counterpick_dict.get(p))
-            return available >= min_positions
-
-        def _has_full_core_1vs1(counterpick_dict):
-            if not isinstance(counterpick_dict, dict):
-                return False
-            # Требуем полный набор 3x3 матчапов по корам
-            for pos in CORE_POSITIONS:
-                if len(counterpick_dict.get(pos, [])) < len(CORE_POSITIONS):
-                    return False
-            return True
-
-        def _has_full_core_duo(synergy_list):
-            return isinstance(synergy_list, list) and len(synergy_list) >= SYNERGY_DUO_CORES_REQUIRED
-
         if has_all_1vs1 and all(f'{side}_counterpick_1vs1' in output for side in ['radiant', 'dire']):
-            if (
-                _has_min_core_positions(output['radiant_counterpick_1vs1'], COUNTERPICK_1VS1_MIN_CORE_POSITIONS)
-                and _has_min_core_positions(output['dire_counterpick_1vs1'], COUNTERPICK_1VS1_MIN_CORE_POSITIONS)
-            ):
-                cp_1vs1 = get_diff(
-                    output['radiant_counterpick_1vs1'],
-                    output['dire_counterpick_1vs1'],
-                    _1vs2=True,
-                    custom_position_weights=(
-                        COUNTERPICK_1VS1_POSITION_WEIGHTS
-                        if name in ('mid_output', 'post_lane_output')
-                        else phase_weights
-                    ),
-                    pair_weights=(
-                        LATE_COUNTERPICK_1VS1_PAIR_WEIGHTS
-                        if name in ('mid_output', 'post_lane_output')
-                        else None
-                    ),
-                )
-                if cp_1vs1 is not None:
-                    phase_bucket['counterpick_1vs1'] = cp_1vs1
-                r_games = _sum_games_dict(output.get('radiant_counterpick_1vs1'))
-                d_games = _sum_games_dict(output.get('dire_counterpick_1vs1'))
-                if r_games and d_games:
-                    phase_bucket['counterpick_1vs1_games'] = min(r_games, d_games)
+            cp_1vs1 = get_diff(
+                output['radiant_counterpick_1vs1'],
+                output['dire_counterpick_1vs1'],
+                _1vs2=True,
+                custom_position_weights=(
+                    COUNTERPICK_1VS1_POSITION_WEIGHTS
+                    if name in ('mid_output', 'post_lane_output')
+                    else phase_weights
+                ),
+                pair_weights=(
+                    LATE_COUNTERPICK_1VS1_PAIR_WEIGHTS
+                    if name in ('mid_output', 'post_lane_output')
+                    else None
+                ),
+            )
+            if cp_1vs1 is not None:
+                phase_bucket['counterpick_1vs1'] = cp_1vs1
+            r_games = _sum_games_dict(output.get('radiant_counterpick_1vs1'))
+            d_games = _sum_games_dict(output.get('dire_counterpick_1vs1'))
+            if r_games and d_games:
+                phase_bucket['counterpick_1vs1_games'] = min(r_games, d_games)
 
         r_pos1_vs_pos1 = output.get('radiant_counterpick_pos1_vs_pos1')
         d_pos1_vs_pos1 = output.get('dire_counterpick_pos1_vs_pos1')
@@ -4104,9 +4172,6 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                 if core_support_conflict:
                     synergy_duo_val = None
                     duo_reason = 'core_support_conflict'
-                    phase_bucket['synergy_duo_conflict'] = True
-                    phase_bucket['synergy_duo_core'] = cores_diff
-                    phase_bucket['synergy_duo_support'] = support_diff
                     r_games = core_r_games + support_r_games
                     d_games = core_d_games + support_d_games
                 else:
@@ -4126,14 +4191,6 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                 synergy_duo_val = support_diff
                 r_games = support_r_games
                 d_games = support_d_games
-
-            if duo_reason and synergy_duo_val is not None:
-                phase_bucket['synergy_duo_partial'] = synergy_duo_val
-                if r_games and d_games:
-                    phase_bucket['synergy_duo_partial_games'] = min(r_games, d_games)
-                phase_bucket['synergy_duo_partial_reason'] = duo_reason
-            elif duo_reason:
-                phase_bucket['synergy_duo_partial_reason'] = duo_reason
 
             if duo_reason:
                 synergy_duo_val = None
@@ -4980,6 +5037,18 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
     return output
 
 
+_legacy_check_old_maps = check_old_maps
+
+
+def check_old_maps(*args, **kwargs):
+    """Compatibility wrapper; the offline collector lives in base/check_old_maps.py."""
+    try:
+        from check_old_maps import check_old_maps as _check_old_maps_impl
+    except Exception:
+        from base.check_old_maps import check_old_maps as _check_old_maps_impl
+    return _check_old_maps_impl(*args, **kwargs)
+
+
 
 
 def check_old_maps_weights(early_dict, mid_dict, lane_data, custom_weights=None):
@@ -5190,22 +5259,10 @@ def _get_lane_stats_for_key(key, heroes_data):
     split = _split_vs_key(key)
     if split is None:
         return heroes_data.get(key, {}), False, None, None
-    left_raw, right_raw, left_parts, right_parts, left_sorted, right_sorted = split
-
-    canon_key, left_is_canon = _canon_vs(left_sorted, right_sorted)
-    if canon_key in heroes_data:
-        return heroes_data[canon_key], not left_is_canon, left_parts, right_parts
-    if key in heroes_data:
-        return heroes_data[key], False, left_parts, right_parts
-    rev_key = f"{right_raw}_vs_{left_raw}"
-    if rev_key in heroes_data:
-        return heroes_data[rev_key], True, left_parts, right_parts
-    sorted_direct = f"{left_sorted}_vs_{right_sorted}"
-    if sorted_direct in heroes_data:
-        return heroes_data[sorted_direct], False, left_parts, right_parts
-    sorted_rev = f"{right_sorted}_vs_{left_sorted}"
-    if sorted_rev in heroes_data:
-        return heroes_data[sorted_rev], True, left_parts, right_parts
+    _left_raw, _right_raw, left_parts, right_parts, _left_sorted, _right_sorted = split
+    stats = _aggregate_lane_vs_stats(heroes_data, left_parts, right_parts)
+    if stats:
+        return stats, False, left_parts, right_parts
     return {}, False, left_parts, right_parts
 
 
@@ -5232,7 +5289,7 @@ LANE_SYNERGY_MIN_GAMES = 30
 LANE_SOLO_MIN_GAMES = 10
 
 
-def _lane_stats_to_counts(stats, invert=False):
+def _lane_raw_counts(stats, invert=False):
     if not isinstance(stats, dict):
         return None
     if 'games' in stats:
@@ -5242,6 +5299,8 @@ def _lane_stats_to_counts(stats, invert=False):
         wins = int(stats.get('wins', 0) or 0)
         draws = int(stats.get('draws', 0) or 0)
         losses = max(0, games - wins - draws)
+        stomp_win = int(stats.get('stomp_win', 0) or 0)
+        stomp_lose = int(stats.get('stomp_lose', 0) or 0)
     else:
         value = stats.get('value', [])
         if not value:
@@ -5250,8 +5309,105 @@ def _lane_stats_to_counts(stats, invert=False):
         wins = value.count(1)
         draws = value.count(0)
         losses = value.count(-1)
+        stomp_win = 0
+        stomp_lose = 0
     if invert:
         wins, losses = losses, wins
+        stomp_win, stomp_lose = stomp_lose, stomp_win
+    return wins, draws, losses, games, stomp_win, stomp_lose
+
+
+def _aggregate_lane_entry_group(entries, *, invert=False):
+    wins = draws = losses = games = 0
+    stomp_win = stomp_lose = 0
+    seen_stats = set()
+    for entry in entries:
+        counts = _lane_raw_counts(entry, invert=invert)
+        if counts is None:
+            continue
+        signature = tuple(counts)
+        if signature in seen_stats:
+            continue
+        seen_stats.add(signature)
+        w, d, l, g, sw, sl = counts
+        wins += w
+        draws += d
+        losses += l
+        games += g
+        stomp_win += sw
+        stomp_lose += sl
+    return wins, draws, losses, games, stomp_win, stomp_lose
+
+
+def _lane_group_variants(parts):
+    if not parts:
+        return []
+    if len(parts) == 1:
+        return [parts[0]]
+    return sorted({",".join(perm) for perm in permutations(parts)})
+
+
+def _aggregate_lane_vs_stats(data, left_parts, right_parts):
+    if not isinstance(data, dict):
+        return {}
+    direct_entries = []
+    reverse_entries = []
+    for left_key in _lane_group_variants(left_parts):
+        for right_key in _lane_group_variants(right_parts):
+            entry = data.get(f"{left_key}_vs_{right_key}")
+            if isinstance(entry, dict) and _lane_raw_counts(entry) is not None:
+                direct_entries.append(entry)
+            rev_entry = data.get(f"{right_key}_vs_{left_key}")
+            if isinstance(rev_entry, dict) and _lane_raw_counts(rev_entry) is not None:
+                reverse_entries.append(rev_entry)
+
+    d_w, d_d, d_l, d_g, d_sw, d_sl = _aggregate_lane_entry_group(direct_entries, invert=False)
+    r_w, r_d, r_l, r_g, r_sw, r_sl = _aggregate_lane_entry_group(reverse_entries, invert=True)
+    games = d_g + r_g
+    if games <= 0:
+        return {}
+    wins = d_w + r_w
+    draws = d_d + r_d
+    losses = d_l + r_l
+    return {
+        'wins': wins,
+        'draws': draws,
+        'games': games,
+        'stomp_win': d_sw + r_sw,
+        'stomp_lose': d_sl + r_sl,
+    }
+
+
+def _aggregate_lane_with_stats(data, left, right):
+    if not isinstance(data, dict):
+        return {}
+    entries = []
+    for left_key in _group_key_variants(left):
+        for right_key in _group_key_variants(right):
+            for key in (
+                f"{left_key}_with_{right_key}",
+                f"{right_key}_with_{left_key}",
+            ):
+                entry = data.get(key)
+                if isinstance(entry, dict) and _lane_raw_counts(entry) is not None:
+                    entries.append(entry)
+    wins, draws, losses, games, stomp_win, stomp_lose = _aggregate_lane_entry_group(entries, invert=False)
+    if games <= 0:
+        return {}
+    return {
+        'wins': wins,
+        'draws': draws,
+        'games': games,
+        'stomp_win': stomp_win,
+        'stomp_lose': stomp_lose,
+    }
+
+
+def _lane_stats_to_counts(stats, invert=False):
+    counts = _lane_raw_counts(stats, invert=invert)
+    if counts is None:
+        return None
+    wins, draws, losses, games, _stomp_win, _stomp_lose = counts
     wins, draws, losses = _apply_stomp_weighted_counts(wins, draws, losses, stats, invert=invert)
     return wins, draws, losses, games
 
@@ -5572,10 +5728,10 @@ def synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane
     else:
         return None
 
-    radiant_key = f"{radiant_pair[0]}_with_{radiant_pair[1]}"
-    dire_key = f"{dire_pair[0]}_with_{dire_pair[1]}"
-    radiant_probs = _lane_probs_from_stats(heroes_data.get(radiant_key, {}), LANE_SYNERGY_MIN_GAMES, invert=False)
-    dire_probs = _lane_probs_from_stats(heroes_data.get(dire_key, {}), LANE_SYNERGY_MIN_GAMES, invert=False)
+    radiant_stats = _aggregate_lane_with_stats(heroes_data, radiant_pair[0], radiant_pair[1])
+    dire_stats = _aggregate_lane_with_stats(heroes_data, dire_pair[0], dire_pair[1])
+    radiant_probs = _lane_probs_from_stats(radiant_stats, LANE_SYNERGY_MIN_GAMES, invert=False)
+    dire_probs = _lane_probs_from_stats(dire_stats, LANE_SYNERGY_MIN_GAMES, invert=False)
     matchup_probs = _predict_matchup_probs_from_side_probs(radiant_probs, dire_probs)
     if return_probs:
         return matchup_probs
@@ -7226,9 +7382,8 @@ def _lc_build_lane_row(
     if lane != "mid":
         r_duo = _lc_duo_key(rad_heroes)
         d_duo = _lc_duo_key(dire_heroes)
-        canon_key, left_is_left = _canon_vs(r_duo, d_duo)
-        entry = v2_data.get(canon_key)
-        st = _lc_entry_stats(entry, invert=not left_is_left)
+        entry = _aggregate_lane_vs_stats(v2_data, r_duo.split(','), d_duo.split(','))
+        st = _lc_entry_stats(entry, invert=False)
         if st:
             row["raw2v2_stomp_rate"] = st["stomp_rate"]
             row["raw2v2_stomp_balance"] = st["stomp_balance"]
@@ -7236,10 +7391,10 @@ def _lc_build_lane_row(
             row["raw2v2_stomp_rate"] = 0.0
             row["raw2v2_stomp_balance"] = 0.0
 
-        r_sy_key = f"{_lc_duo_key(rad_heroes).replace(',', '_with_', 1)}"
-        d_sy_key = f"{_lc_duo_key(dire_heroes).replace(',', '_with_', 1)}"
-        r_sy = _lc_entry_stats(sy_data.get(r_sy_key), invert=False)
-        d_sy = _lc_entry_stats(sy_data.get(d_sy_key), invert=False)
+        r_sy_left, r_sy_right = _lc_duo_key(rad_heroes).split(",", 1)
+        d_sy_left, d_sy_right = _lc_duo_key(dire_heroes).split(",", 1)
+        r_sy = _lc_entry_stats(_aggregate_lane_with_stats(sy_data, r_sy_left, r_sy_right), invert=False)
+        d_sy = _lc_entry_stats(_aggregate_lane_with_stats(sy_data, d_sy_left, d_sy_right), invert=False)
         row["rawsy_stomp_rate"] = (r_sy["stomp_rate"] if r_sy else 0.0)
         row["rawsy_stomp_balance"] = (r_sy["stomp_balance"] if r_sy else 0.0)
         row["diff_sy_stomp_rate"] = (r_sy["stomp_rate"] if r_sy else 0.0) - (d_sy["stomp_rate"] if d_sy else 0.0)
@@ -7262,9 +7417,8 @@ def _lc_build_lane_row(
         stomp_rates = []
         stomp_balances = []
         for left, right in matchups:
-            canon, left_is_left = _canon_vs(left, right)
-            ent = v1_data.get(canon)
-            st = _lc_entry_stats(ent, invert=not left_is_left)
+            ent = _aggregate_lane_vs_stats(v1_data, [left], [right])
+            st = _lc_entry_stats(ent, invert=False)
             if st:
                 stomp_rates.append((st["stomp_rate"], st["games"]))
                 stomp_balances.append((st["stomp_balance"], st["games"]))
@@ -7273,9 +7427,8 @@ def _lc_build_lane_row(
     else:
         left = f"{rad_heroes[0][0]}pos2"
         right = f"{dire_heroes[0][0]}pos2"
-        canon, left_is_left = _canon_vs(left, right)
-        ent = v1_data.get(canon)
-        st = _lc_entry_stats(ent, invert=not left_is_left)
+        ent = _aggregate_lane_vs_stats(v1_data, [left], [right])
+        st = _lc_entry_stats(ent, invert=False)
         row["rawcp_stomp_rate"] = st["stomp_rate"] if st else 0.0
         row["rawcp_stomp_balance"] = st["stomp_balance"] if st else 0.0
         row["raw2v2_stomp_rate"] = 0.0
@@ -7838,11 +7991,8 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
                 f"{dire_heroes_and_pos['pos3']['hero_id']}pos3",
                 f"{dire_heroes_and_pos['pos4']['hero_id']}pos4",
             ]
-        left_sorted = ",".join(sorted(left_parts))
-        right_sorted = ",".join(sorted(right_parts))
-        canon_key, left_is_canon = _canon_vs(left_sorted, right_sorted)
-        stats = data_2v2.get(canon_key)
-        st = _stomp_stats(stats, invert=not left_is_canon)
+        stats = _aggregate_lane_vs_stats(data_2v2, left_parts, right_parts)
+        st = _stomp_stats(stats, invert=False)
         if not st:
             return None
         return st[0]
@@ -7855,8 +8005,8 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
         if lane_name == "mid":
             left = f"{radiant_heroes_and_pos['pos2']['hero_id']}pos2"
             right = f"{dire_heroes_and_pos['pos2']['hero_id']}pos2"
-            canon_key, left_is_canon = _canon_vs(left, right)
-            st = _stomp_stats(data_1v1.get(canon_key), invert=not left_is_canon)
+            stats = _aggregate_lane_vs_stats(data_1v1, [left], [right])
+            st = _stomp_stats(stats, invert=False)
             if st:
                 return st[0]
             return None
@@ -7876,8 +8026,8 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
             ]
         vals = []
         for left, right in matchups:
-            canon_key, left_is_canon = _canon_vs(left, right)
-            st = _stomp_stats(data_1v1.get(canon_key), invert=not left_is_canon)
+            stats = _aggregate_lane_vs_stats(data_1v1, [left], [right])
+            st = _stomp_stats(stats, invert=False)
             if st:
                 balance, _rate, games = st
                 vals.append((balance, games))
@@ -7909,10 +8059,10 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
                 f"{dire_heroes_and_pos['pos3']['hero_id']}pos3",
                 f"{dire_heroes_and_pos['pos4']['hero_id']}pos4",
             ]))
-        r_key = r_key.replace(",", "_with_", 1)
-        d_key = d_key.replace(",", "_with_", 1)
-        r_st = _stomp_stats(data_sy.get(r_key), invert=False)
-        d_st = _stomp_stats(data_sy.get(d_key), invert=False)
+        r_left, r_right = r_key.split(",", 1)
+        d_left, d_right = d_key.split(",", 1)
+        r_st = _stomp_stats(_aggregate_lane_with_stats(data_sy, r_left, r_right), invert=False)
+        d_st = _stomp_stats(_aggregate_lane_with_stats(data_sy, d_left, d_right), invert=False)
         if not r_st or not d_st:
             return None
         return (r_st[0] - d_st[0])
@@ -8029,62 +8179,21 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
                 for d_ha, d_hb in dire_hero_perms:
                     left_parts = [f'{r_ha}{r_p1}', f'{r_hb}{r_p2}']
                     right_parts = [f'{d_ha}{d_p1}', f'{d_hb}{d_p2}']
-                    left_sorted = ",".join(sorted(left_parts))
-                    right_sorted = ",".join(sorted(right_parts))
-                    canon_key, left_is_canon = _canon_vs(left_sorted, right_sorted)
-
-                    if canon_key in seen_keys:
+                    stats = _aggregate_lane_vs_stats(data_2vs2, left_parts, right_parts)
+                    counts = _lane_raw_counts(stats)
+                    if counts is None:
                         continue
-                    seen_keys.add(canon_key)
-
-                    stats = data_2vs2.get(canon_key, {})
-                    invert = not left_is_canon
-                    if not stats:
-                        key = f'{left_parts[0]},{left_parts[1]}_vs_{right_parts[0]},{right_parts[1]}'
-                        stats = data_2vs2.get(key, {})
-                        invert = False
-                        if not stats:
-                            rev_key = f'{right_parts[0]},{right_parts[1]}_vs_{left_parts[0]},{left_parts[1]}'
-                            stats = data_2vs2.get(rev_key, {})
-                            invert = True
-
-                    if isinstance(stats, dict) and stats.get('games', 0) > 0:
-                        g = int(stats.get('games', 0))
-                        w = int(stats.get('wins', 0))
-                        d = int(stats.get('draws', 0))
-                        l = max(0, g - w - d)
-                        sw = int(stats.get('stomp_win', 0) or 0)
-                        sl = int(stats.get('stomp_lose', 0) or 0)
-                        if invert:
-                            w, l = l, w
-                            sw, sl = sl, sw
-                        w, d, l = _apply_stomp_weighted_counts(w, d, l, stats, invert=invert)
-                        wins += w
-                        draws += d
-                        losses += l
-                        stomp_w += sw
-                        stomp_l += sl
-                        games += g
-                    
-                    # Обратный ключ: dire vs radiant (инвертируем результат)
-                    rev_key = f'{d_ha}{r_p1},{d_hb}{r_p2}_vs_{r_ha}{d_p1},{r_hb}{d_p2}'
-                    if rev_key not in seen_keys:
-                        seen_keys.add(rev_key)
-                        rev_stats = data_2vs2.get(rev_key, {})
-                        if isinstance(rev_stats, dict) and rev_stats.get('games', 0) > 0:
-                            g = int(rev_stats.get('games', 0))
-                            w = int(rev_stats.get('wins', 0))
-                            d = int(rev_stats.get('draws', 0))
-                            l = max(0, g - w - d)
-                            sw = int(rev_stats.get('stomp_win', 0) or 0)
-                            sl = int(rev_stats.get('stomp_lose', 0) or 0)
-                            w, d, l = _apply_stomp_weighted_counts(w, d, l, rev_stats, invert=False)
-                            wins += l
-                            draws += d
-                            losses += w
-                            stomp_w += sl
-                            stomp_l += sw
-                            games += g
+                    if counts in seen_keys:
+                        continue
+                    seen_keys.add(counts)
+                    w, d, l, g, sw, sl = counts
+                    w, d, l = _apply_stomp_weighted_counts(w, d, l, stats, invert=False)
+                    wins += w
+                    draws += d
+                    losses += l
+                    stomp_w += sw
+                    stomp_l += sl
+                    games += g
         
         if games < 6:
             return None, None

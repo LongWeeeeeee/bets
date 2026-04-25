@@ -73,7 +73,7 @@ PRO_LATE_POSITION_WEIGHTS = {
 
 CORE_POSITIONS = ('pos1', 'pos2', 'pos3')
 ALL_POSITIONS = ('pos1', 'pos2', 'pos3', 'pos4', 'pos5')
-TOTAL_CP_1VS1 = len(CORE_POSITIONS) * len(CORE_POSITIONS)  # 9 matchups для валидации
+TOTAL_CP_1VS1 = len(CORE_POSITIONS) * len(CORE_POSITIONS)  # full 3x3 reference count
 DUO_COMBINATIONS_PER_TEAM = 3  # C(3,2) = 3 пары на команду
 DUO_VALID_THRESHOLD = 0.8  # 80% комбинаций должны быть
 PRO_POSITION_COVERAGE_THRESHOLD = 2 / 3
@@ -842,7 +842,8 @@ def _calculate_cp1vs1(radiant_cores: List[str], dire_cores: List[str],
     """
     Расчёт cp1vs1 с pair_weights.
 
-    Требуем все 9 матчапов (3x3 cores).
+    Валидность: каждая core-позиция на обеих сторонах должна иметь >= 2/3
+    валидных core-vs-core матчапов.
     Для каждого матчапа: diff = wr - 50
     Умножаем на pair_weight для пары позиций.
     Суммируем и усредняем.
@@ -850,6 +851,8 @@ def _calculate_cp1vs1(radiant_cores: List[str], dire_cores: List[str],
     weighted_scores = []
     matchup_count = 0
     games_sum = 0
+    rad_core_vs_core_coverage = {pos: 0 for pos in CORE_POSITIONS[:len(radiant_cores)]}
+    dire_core_vs_core_coverage = {pos: 0 for pos in CORE_POSITIONS[:len(dire_cores)]}
 
     for r_idx, r_hero in enumerate(radiant_cores):
         r_pos = CORE_POSITIONS[r_idx]
@@ -885,14 +888,21 @@ def _calculate_cp1vs1(radiant_cores: List[str], dire_cores: List[str],
                 weighted_scores.append((sum(pair_diffs) / len(pair_diffs)) * pair_weight)
                 matchup_count += 1
                 games_sum += int(sum(pair_games) / len(pair_games))
+                rad_core_vs_core_coverage[r_pos] += 1
+                dire_core_vs_core_coverage[d_pos] += 1
 
-    # Требуем все 9 матчапов
-    is_valid = matchup_count >= TOTAL_CP_1VS1
+    required_core_vs_core = _required_coverage(len(CORE_POSITIONS))
+    radiant_valid = all(count >= required_core_vs_core for count in rad_core_vs_core_coverage.values()) if rad_core_vs_core_coverage else False
+    dire_valid = all(count >= required_core_vs_core for count in dire_core_vs_core_coverage.values()) if dire_core_vs_core_coverage else False
+    is_valid = radiant_valid and dire_valid and bool(weighted_scores)
 
     return is_valid, {
         'scores': weighted_scores,
         'count': matchup_count,
-        'games': games_sum
+        'games': games_sum,
+        'radiant_core_vs_core_coverage': rad_core_vs_core_coverage,
+        'dire_core_vs_core_coverage': dire_core_vs_core_coverage,
+        'required_core_vs_core': required_core_vs_core,
     }
 
 
@@ -1000,20 +1010,18 @@ def _calculate_duo_synergy(cores: List[str], hero_data: Dict, min_games: int,
             hero1, hero2 = cores[i], cores[j]
             pos1, pos2 = CORE_POSITIONS[i], CORE_POSITIONS[j]
             weight = position_weights.get(pos1, 1.0) + position_weights.get(pos2, 1.0)
-            pos1_num = POSITION_MAP.get(pos1, pos1[-1])
-            pos2_num = POSITION_MAP.get(pos2, pos2[-1])
-            hero2_key = _hero_norm_key(hero2)
-
-            # synergy от hero1 к hero2
-            hero1_entry = _hero_data_entry(hero_data, hero1)
-            precise_synergies = hero1_entry.get('_synergies_by_hero_pos', {})
-
-            pos_data = precise_synergies.get(hero2_key, {}).get(pos2_num, {}).get(pos1_num, {})
-            if pos_data.get('games', 0) >= min_games:
-                diff = pos_data['wr'] - 50
+            diff, games = _get_duo_synergy_best_direction(
+                hero_data,
+                hero1,
+                hero2,
+                pos1,
+                pos2,
+                min_games,
+            )
+            if diff is not None:
                 weighted_scores.append(diff * weight)
                 matchup_count += 1
-                games_sum += pos_data['games']
+                games_sum += games
 
     # Требуем 80% комбинаций (2 из 3)
     required = int(DUO_COMBINATIONS_PER_TEAM * DUO_VALID_THRESHOLD)
@@ -1048,19 +1056,18 @@ def _calculate_duo_synergy_all_positions(
             pos1, hero1 = team_positions[i]
             pos2, hero2 = team_positions[j]
             weight = position_weights.get(pos1, 1.0) + position_weights.get(pos2, 1.0)
-            pos1_num = POSITION_MAP.get(pos1, pos1[-1])
-            pos2_num = POSITION_MAP.get(pos2, pos2[-1])
-            hero2_key = _hero_norm_key(hero2)
-
-            hero1_entry = _hero_data_entry(hero_data, hero1)
-            precise_synergies = hero1_entry.get('_synergies_by_hero_pos', {})
-
-            pos_data = precise_synergies.get(hero2_key, {}).get(pos2_num, {}).get(pos1_num, {})
-            if pos_data.get('games', 0) >= min_games:
-                diff = pos_data['wr'] - 50
+            diff, games = _get_duo_synergy_best_direction(
+                hero_data,
+                hero1,
+                hero2,
+                pos1,
+                pos2,
+                min_games,
+            )
+            if diff is not None:
                 weighted_scores.append(diff * weight)
                 matchup_count += 1
-                games_sum += pos_data['games']
+                games_sum += games
                 if pos1 in core_coverage:
                     core_coverage[pos1] += 1
                 if pos2 in core_coverage:
@@ -1132,6 +1139,24 @@ def _get_duo_synergy(hero_data: Dict, hero1: str, hero2: str, pos1: str, pos2: s
     return None, 0
 
 
+def _get_duo_synergy_best_direction(
+    hero_data: Dict,
+    hero1: str,
+    hero2: str,
+    pos1: str,
+    pos2: str,
+    min_games: int,
+) -> Tuple[Optional[float], int]:
+    """Get one unordered duo synergy sample, using whichever hero page has coverage."""
+    fwd_diff, fwd_games = _get_duo_synergy(hero_data, hero1, hero2, pos1, pos2, min_games)
+    rev_diff, rev_games = _get_duo_synergy(hero_data, hero2, hero1, pos2, pos1, min_games)
+    if fwd_diff is None and rev_diff is None:
+        return None, 0
+    if rev_diff is not None and (fwd_diff is None or rev_games > fwd_games):
+        return rev_diff, rev_games
+    return fwd_diff, fwd_games
+
+
 def _get_duo_synergy_pair(
     hero_data: Dict,
     r_hero1: str, r_hero2: str, r_pos1: str, r_pos2: str,
@@ -1142,21 +1167,12 @@ def _get_duo_synergy_pair(
 
     Takes best available direction per pair (more games wins).
     """
-    # Get both directions for radiant pair
-    r_fwd1, r_games1 = _get_duo_synergy(hero_data, r_hero1, r_hero2, r_pos1, r_pos2, min_games)
-    r_rev1, r_games2 = _get_duo_synergy(hero_data, r_hero2, r_hero1, r_pos2, r_pos1, min_games)
-
-    # Pick the best direction for Radiant
-    r_diff = r_fwd1 if (r_fwd1 is not None and r_games1 >= r_games2) else r_rev1
-    r_games = max(r_games1, r_games2)
-
-    # Get both directions for dire pair
-    d_fwd1, d_games1 = _get_duo_synergy(hero_data, d_hero1, d_hero2, d_pos1, d_pos2, min_games)
-    d_rev1, d_games2 = _get_duo_synergy(hero_data, d_hero2, d_hero1, d_pos2, d_pos1, min_games)
-
-    # Pick the best direction for Dire
-    d_diff = d_fwd1 if (d_fwd1 is not None and d_games1 >= d_games2) else d_rev1
-    d_games = max(d_games1, d_games2)
+    r_diff, r_games = _get_duo_synergy_best_direction(
+        hero_data, r_hero1, r_hero2, r_pos1, r_pos2, min_games
+    )
+    d_diff, d_games = _get_duo_synergy_best_direction(
+        hero_data, d_hero1, d_hero2, d_pos1, d_pos2, min_games
+    )
 
     if r_diff is not None and d_diff is not None:
         return r_diff - d_diff, r_games + d_games
@@ -1276,7 +1292,7 @@ def enrich_with_pro_tracker(
     Обогащает synergy_dict данными с dota2protracker.com.
 
     Правила валидации:
-    - cp1vs1: все 9 матчапов (3x3 cores) должны быть
+    - cp1vs1: каждая core-позиция должна иметь >= 2/3 core-vs-core матчапов
     - duo_synergy: минимум 80% комбинаций (2 из 3 пар)
 
     Aggregation:

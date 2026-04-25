@@ -14,7 +14,10 @@
 - LANE_MIN_CONFIDENCE: минимальный % уверенности для отображения
 """
 
+import argparse
 import json
+import math
+import os
 import sys
 from pathlib import Path
 from typing import Optional, Tuple
@@ -268,7 +271,10 @@ def is_late_match_custom(match: dict, early_dominator: Optional[str]) -> Tuple[b
 # 'precomputed' -> используем early_output/late_output внутри матчей
 # 'on_the_fly'  -> строим словари на train и считаем метрики на лету
 DATA_MODE = ''
-PRECOMPUTED_FILE = Path('/Users/alex/Documents/ingame/bets_data/pro_heroes_data/pro_new.txt')
+PRECOMPUTED_FILE = Path(os.getenv(
+    'METRICS_PRECOMPUTED_FILE',
+    '/Users/alex/Documents/ingame/runtime/pro_maps_metrics_2025-12-15.json',
+))
 TRAIN_DIR = Path('/Users/alex/Documents/ingame/bets_data/analise_pub_matches/json_parts_split_from_object')
 TRAIN_MAX_FILES = 5          # None чтобы использовать все файлы
 TRAIN_LIMIT_PER_FILE = None  # None чтобы не ограничивать
@@ -294,6 +300,8 @@ USE_CUMULATIVE_INDICES = True
 # - '5050' : строгие 50/50 фильтры is_early_5050/is_late_5050
 # - 'custom': early до 34 мин = winner, 34+ = первый 7k в (20,27); late = 40+ мин и early_dominator=None
 FILTER_MODE = 'custom'
+BUCKET_MODE = os.getenv('METRICS_BUCKET_MODE', '1').strip().lower() not in ('0', 'false', 'off', 'no')
+BUCKET_MAX_INDEX = int(os.getenv('METRICS_BUCKET_MAX_INDEX', '100'))
 
 
 def load_matches(filename: str) -> list[dict]:
@@ -304,6 +312,226 @@ def load_matches(filename: str) -> list[dict]:
     if isinstance(data, dict):
         return list(data.values())
     return data
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value is not None
+
+
+def _is_internal_metric_key(metric_name: object) -> bool:
+    metric = str(metric_name)
+    return metric != 'synergy_duo' and metric.startswith('synergy_duo_')
+
+
+def _winner_from_generated_fields(match: dict, phase: str) -> tuple[bool, Optional[str]]:
+    if phase == 'early':
+        winner = match.get('early_win')
+        if winner in ('radiant', 'dire'):
+            return True, winner
+        did_radiant_win = match.get('didRadiantWin')
+        if did_radiant_win is None:
+            return False, None
+        if FILTER_MODE == 'draft':
+            return is_early_match_strict(match)
+        if FILTER_MODE == 'soft':
+            return is_early_match_soft(match)
+        if FILTER_MODE == '5050':
+            return is_early_5050(match)
+        return is_early_match_custom(match)
+
+    if phase == 'late':
+        winner = match.get('late_win')
+        if match.get('is_late') and winner in ('radiant', 'dire'):
+            return True, winner
+        if FILTER_MODE == 'draft':
+            early_ok, early_winner = is_early_match_strict(match)
+            return is_late_match_strict(match, early_winner if early_ok else None, if_check=True)
+        if FILTER_MODE == 'soft':
+            ok = is_late_match_soft(match)
+            did_radiant_win = match.get('didRadiantWin')
+            return ok, ('radiant' if did_radiant_win else 'dire') if ok and did_radiant_win is not None else None
+        if FILTER_MODE == '5050':
+            return is_late_5050(match)
+        early_ok, early_winner = is_early_match_custom(match)
+        return is_late_match_custom(match, early_winner if early_ok else None)
+
+    if phase == 'post_lane':
+        winner = match.get('post_lane_win')
+        if match.get('is_post_lane') and winner in ('radiant', 'dire'):
+            return True, winner
+        return is_post_lane_match(match, if_check=True)
+
+    return False, None
+
+
+def _bucket_for_value(value: float, max_index: int = BUCKET_MAX_INDEX) -> Optional[int]:
+    if not _is_number(value):
+        return None
+    abs_value = abs(float(value))
+    if not math.isfinite(abs_value):
+        return None
+    bucket = int(math.floor(abs_value))
+    if bucket > max_index:
+        bucket = max_index
+    return bucket
+
+
+def _record_signed_metric(results: dict, metric_name: str, value: float, winner: Optional[str]) -> None:
+    if winner not in ('radiant', 'dire') or not _is_number(value) or float(value) == 0:
+        return
+    bucket = _bucket_for_value(float(value))
+    if bucket is None:
+        return
+    predicted = 'radiant' if float(value) > 0 else 'dire'
+    stats = results.setdefault(metric_name, {}).setdefault(bucket, {'wins': 0, 'looses': 0})
+    if predicted == winner:
+        stats['wins'] += 1
+    else:
+        stats['looses'] += 1
+
+
+def _lane_winner_from_outcome(outcome: Optional[str]) -> Optional[str]:
+    if not outcome:
+        return None
+    upper = str(outcome).upper()
+    if 'TIE' in upper or 'DRAW' in upper:
+        return None
+    if 'RADIANT' in upper:
+        return 'radiant'
+    if 'DIRE' in upper:
+        return 'dire'
+    return None
+
+
+def _lane_metric_value(prediction: Optional[str]) -> Optional[float]:
+    if not prediction:
+        return None
+    cleaned = str(prediction).strip()
+    if ':' in cleaned:
+        cleaned = cleaned.split(':', 1)[1].strip()
+    parts = cleaned.split()
+    if len(parts) != 2:
+        return None
+    side, raw_conf = parts
+    if side == 'draw':
+        return None
+    try:
+        confidence = float(raw_conf.rstrip('%'))
+    except ValueError:
+        return None
+    if side == 'win':
+        return confidence
+    if side == 'loose':
+        return -confidence
+    return None
+
+
+def process_metrics_winrate_buckets(matches: list[dict]) -> dict:
+    """
+    Считает объединённый signed winrate по непересекающимся bucket-интервалам:
+    0=[0,1), 1=[1,2), 2=[2,3), ...
+
+    Плюс и минус объединяются: знак метрики задаёт predicted side, а win/lose
+    считается относительно winner для нужной фазы.
+    """
+    results: dict = {}
+    counters = {
+        'early': 0,
+        'late': 0,
+        'post_lane': 0,
+        'dota2protracker': 0,
+        'lane': 0,
+    }
+
+    if MIN_START_DATE:
+        filtered_matches = [m for m in matches if m.get('startDateTime', 0) >= MIN_START_DATE]
+    else:
+        filtered_matches = matches
+    print(f"Отфильтровано по дате (>= {MIN_START_DATE}): {len(filtered_matches)} из {len(matches)} матчей")
+
+    for idx, match in enumerate(filtered_matches, 1):
+        if idx % 500 == 0 or idx == len(filtered_matches):
+            print(f"  [{idx:>5}/{len(filtered_matches)}] bucket winrate", end='\r')
+
+        phase_specs = (
+            ('early', 'early_output'),
+            ('late', 'late_output'),
+            ('post_lane', 'post_lane_output'),
+        )
+        for phase, bucket_name in phase_specs:
+            ok, winner = _winner_from_generated_fields(match, phase)
+            if not ok or winner not in ('radiant', 'dire'):
+                continue
+            counters[phase] += 1
+            for metric_name, metric_value in (match.get(bucket_name) or {}).items():
+                if str(metric_name).endswith('_games'):
+                    continue
+                if _is_internal_metric_key(metric_name):
+                    continue
+                if _is_number(metric_value):
+                    _record_signed_metric(results, f'{phase}_{metric_name}', metric_value, winner)
+
+        post_ok, post_winner = _winner_from_generated_fields(match, 'post_lane')
+        pro = match.get('dota2protracker') or match.get('protracker_output') or {}
+        if post_ok and post_winner in ('radiant', 'dire') and isinstance(pro, dict):
+            counters['dota2protracker'] += 1
+            pro_metric_map = {
+                'pro_cp1vs1_late': 'dota2protracker_cp1vs1',
+                'pro_duo_synergy_late': 'dota2protracker_duo_synergy',
+            }
+            for source_key, metric_name in pro_metric_map.items():
+                valid_key = source_key.replace('_late', '_valid')
+                if valid_key in pro and not bool(pro.get(valid_key)):
+                    continue
+                metric_value = pro.get(source_key)
+                if _is_number(metric_value):
+                    _record_signed_metric(results, metric_name, metric_value, post_winner)
+
+        lane_specs = (
+            ('top', 'topLaneOutcome'),
+            ('mid', 'midLaneOutcome'),
+            ('bot', 'bottomLaneOutcome'),
+        )
+        for lane_name, outcome_key in lane_specs:
+            lane_winner = _lane_winner_from_outcome(match.get(outcome_key))
+            if lane_winner is None:
+                continue
+            lane_value = _lane_metric_value(match.get(lane_name))
+            if lane_value is not None:
+                counters['lane'] += 1
+                _record_signed_metric(results, f'lane_{lane_name}', lane_value, lane_winner)
+
+            if isinstance(pro, dict):
+                for source_key in (f'pro_lane_{lane_name}_cp1vs1', f'pro_lane_{lane_name}_duo'):
+                    if source_key not in pro or not _is_number(pro.get(source_key)):
+                        continue
+                    valid_key = f'{source_key}_valid'
+                    if valid_key in pro and not bool(pro.get(valid_key)):
+                        continue
+                    _record_signed_metric(results, f'dota2protracker_{source_key}', pro[source_key], lane_winner)
+
+    print()
+    print("Фазовые фильтры:")
+    for key, value in counters.items():
+        print(f"  {key:18s}: {value}")
+    return results
+
+
+def print_bucket_results(results: dict, *, min_matches: int = 6) -> None:
+    print("РЕЗУЛЬТАТЫ BUCKET WINRATE")
+    print("=" * 120)
+    print("Bucket N означает интервал [N,N+1), например 1=[1,2). Плюс/минус объединены по predicted side.")
+    for metric_name in sorted(results):
+        parts = []
+        for bucket in sorted(results[metric_name]):
+            stats = results[metric_name][bucket]
+            total = stats['wins'] + stats['looses']
+            if total < min_matches:
+                continue
+            wr = stats['wins'] / total
+            parts.append(f"{bucket}-{bucket + 1}: {wr:.1%} (n={total})")
+        if parts:
+            print(f"{metric_name:42s} {' '.join(parts)}")
 
 
 def build_train_dicts(train_files: list[Path], limit_per_file=None, exclude_ids=None, include_post_lane: bool = False):
@@ -483,6 +711,8 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_
                 # Пропускаем None значения
                 if not isinstance(metric_value, (int, float)) or metric_value is None:
                     continue
+                if _is_internal_metric_key(metric_name):
+                    continue
                 
                 full_metric_name = f'early_{metric_name}'
                 
@@ -563,6 +793,8 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_
                 # Пропускаем None значения
                 if not isinstance(metric_value, (int, float)) or metric_value is None:
                     continue
+                if _is_internal_metric_key(metric_name):
+                    continue
 
                 full_metric_name = f'late_{metric_name}'
                 
@@ -611,6 +843,8 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_
 
             for metric_name, metric_value in post_lane_output.items():
                 if not isinstance(metric_value, (int, float)) or metric_value is None:
+                    continue
+                if _is_internal_metric_key(metric_name):
                     continue
 
                 full_metric_name = f'post_lane_{metric_name}'
@@ -873,8 +1107,18 @@ def print_results(results, unique_matches_per_metric: Optional[dict] = None):
             print(f"  {metric_name:30s} {avg_wr:.2%} (n={match_count})")
 
 
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Winrate analysis for precomputed draft metrics.")
+    parser.add_argument("--input", default=str(PRECOMPUTED_FILE), help="Precomputed JSON from base/check_old_maps.py")
+    parser.add_argument("--bucket-mode", dest="bucket_mode", action="store_true", default=BUCKET_MODE)
+    parser.add_argument("--old-mode", dest="bucket_mode", action="store_false")
+    parser.add_argument("--min-matches", type=int, default=6)
+    return parser
+
+
 if __name__ == '__main__':
-    if DATA_MODE == 'on_the_fly':
+    args = _build_arg_parser().parse_args()
+    if DATA_MODE == 'on_the_fly' and not args.bucket_mode:
         train_files = sorted(TRAIN_DIR.glob('combined*.json'))
         if TRAIN_MAX_FILES:
             train_files = train_files[:TRAIN_MAX_FILES]
@@ -907,10 +1151,15 @@ if __name__ == '__main__':
             post_lane_dict,
             use_train_dicts=True,
         )
+        print_results(results, unique_matches)
     else:
-        matches = load_matches(str(PRECOMPUTED_FILE))
+        matches = load_matches(str(args.input))
         print(f"Загружено матчей: {len(matches)}")
-        print("\nОбработка метрик...")
-        results, unique_matches = process_metrics_winrate(matches)
-
-    print_results(results, unique_matches)
+        if args.bucket_mode:
+            print("\nОбработка bucket winrate...")
+            bucket_results = process_metrics_winrate_buckets(matches)
+            print_bucket_results(bucket_results, min_matches=args.min_matches)
+        else:
+            print("\nОбработка метрик...")
+            results, unique_matches = process_metrics_winrate(matches)
+            print_results(results, unique_matches)

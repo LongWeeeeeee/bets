@@ -49,6 +49,24 @@ def _put_duo(data: dict, side: dict, left_pos: str, right_pos: str, wr: float, g
     _put_stats(data, f"{pair[0]}_with_{pair[1]}", wr, games)
 
 
+def _put_exact_two_of_three_core_cp(data: dict, radiant: dict, dire: dict, games: int) -> None:
+    for radiant_pos, dire_pos in (
+        ("pos1", "pos1"),
+        ("pos1", "pos2"),
+        ("pos2", "pos1"),
+        ("pos2", "pos3"),
+        ("pos3", "pos2"),
+        ("pos3", "pos3"),
+    ):
+        _put_vs(
+            data,
+            f"{int(radiant[radiant_pos]['hero_id'])}{radiant_pos}",
+            f"{int(dire[dire_pos]['hero_id'])}{dire_pos}",
+            0.8,
+            games,
+        )
+
+
 def _build_post_lane_stats(radiant: dict, dire: dict) -> dict:
     games = max(
         functions.SOLO_MIN_MATCHES,
@@ -92,6 +110,25 @@ def _build_post_lane_stats(radiant: dict, dire: dict) -> dict:
     return data
 
 
+def _reverse_trio_keys(data: dict) -> dict:
+    rewritten = {}
+    for key, value in data.items():
+        if "," in key and "_vs_" not in key and "_with_" not in key:
+            key = ",".join(reversed(key.split(",")))
+        rewritten[key] = value
+    return rewritten
+
+
+def _reverse_with_keys(data: dict) -> dict:
+    rewritten = {}
+    for key, value in data.items():
+        if "_with_" in key:
+            left, right = key.split("_with_", 1)
+            key = f"{right}_with_{left}"
+        rewritten[key] = value
+    return rewritten
+
+
 def test_synergy_and_counterpick_emits_post_lane_output() -> None:
     radiant = _side(1)
     dire = _side(6)
@@ -112,6 +149,106 @@ def test_synergy_and_counterpick_emits_post_lane_output() -> None:
     assert post_lane_output["counterpick_1vs2"] > 0
     assert post_lane_output["synergy_duo"] > 0
     assert post_lane_output["synergy_trio"] > 0
+
+
+def test_synergy_trio_accepts_any_key_order_in_pipeline() -> None:
+    radiant = _side(1)
+    dire = _side(6)
+    post_lane_dict = _reverse_trio_keys(_build_post_lane_stats(radiant, dire))
+
+    result = functions.synergy_and_counterpick(
+        radiant_heroes_and_pos=radiant,
+        dire_heroes_and_pos=dire,
+        early_dict={},
+        mid_dict={},
+        post_lane_dict=post_lane_dict,
+    )
+
+    assert result["post_lane_output"]["synergy_trio"] > 0
+    assert result["post_lane_output"]["synergy_trio_games"] > 0
+
+
+def test_synergy_duo_accepts_either_with_key_order() -> None:
+    radiant = _side(1)
+    dire = _side(6)
+    post_lane_dict = _reverse_with_keys(_build_post_lane_stats(radiant, dire))
+
+    result = functions.synergy_and_counterpick(
+        radiant_heroes_and_pos=radiant,
+        dire_heroes_and_pos=dire,
+        early_dict={},
+        mid_dict={},
+        post_lane_dict=post_lane_dict,
+    )
+
+    assert result["post_lane_output"]["synergy_duo"] > 0
+    assert result["post_lane_output"]["synergy_duo_games"] > 0
+
+
+def test_synergy_trio_dedupes_identical_order_aliases() -> None:
+    radiant = _side(1)
+    data = {
+        "1pos1,2pos2,3pos3": {"wins": 12, "draws": 0, "games": 15},
+        "3pos3,2pos2,1pos1": {"wins": 12, "draws": 0, "games": 15},
+    }
+    output: dict = {}
+
+    functions.synergy_team(
+        radiant,
+        output,
+        "radiant_synergy",
+        data,
+        min_matches_trio=15,
+    )
+
+    assert output["radiant_synergy_trio"] == [(0.8, 15)]
+
+
+def test_counterpick_1vs2_accepts_duo_key_order_and_reverse_side() -> None:
+    radiant = _side(1)
+    dire = _side(6)
+    data = {
+        "7pos2,6pos1_vs_1pos1": {"wins": 3, "draws": 0, "games": 20},
+    }
+    output: dict = {}
+
+    functions.counterpick_team(
+        radiant,
+        dire,
+        output,
+        "radiant_counterpick",
+        data,
+        min_matches_1vs2=15,
+    )
+
+    item = output["radiant_counterpick_1vs2"]["pos1"][0]
+    assert item[0] == 0.85
+    assert item[1] == 20
+
+
+def test_lane_vs_lookup_accepts_reversed_side_and_group_order() -> None:
+    data = {
+        "7pos4,6pos3_vs_5pos5,1pos1": {"wins": 12, "draws": 0, "games": 60},
+    }
+
+    stats, invert, _left, _right = functions._get_lane_stats_for_key(
+        "1pos1,5pos5_vs_6pos3,7pos4",
+        data,
+    )
+    counts = functions._lane_stats_to_counts(stats, invert=invert)
+
+    assert counts == (48, 0, 12, 60)
+
+
+def test_lane_with_lookup_accepts_either_pair_order() -> None:
+    data = {
+        "5pos5_with_1pos1": {"wins": 36, "draws": 0, "games": 60},
+    }
+
+    stats = functions._aggregate_lane_with_stats(data, "1pos1", "5pos5")
+    counts = functions._lane_stats_to_counts(stats)
+
+    assert counts == (36, 0, 24, 60)
 
 
 def test_pos1_vs_pos1_uses_separate_sample_gate() -> None:
@@ -154,6 +291,130 @@ def test_pos1_vs_pos1_uses_separate_sample_gate() -> None:
     assert enough_result["early_output"]["pos1_vs_pos1_games"] == functions.POS1_VS_POS1_MIN_MATCHES
 
 
+def test_pos1_vs_pos1_aggregates_directional_samples() -> None:
+    radiant = {
+        "pos1": {"hero_id": 114, "hero_name": "Monkey King"},
+        "pos2": {"hero_id": 38, "hero_name": "Beastmaster"},
+        "pos3": {"hero_id": 65, "hero_name": "Batrider"},
+        "pos4": {"hero_id": 51, "hero_name": "Clockwerk"},
+        "pos5": {"hero_id": 31, "hero_name": "Lich"},
+    }
+    dire = {
+        "pos1": {"hero_id": 41, "hero_name": "Faceless Void"},
+        "pos2": {"hero_id": 43, "hero_name": "Death Prophet"},
+        "pos3": {"hero_id": 99, "hero_name": "Bristleback"},
+        "pos4": {"hero_id": 86, "hero_name": "Rubick"},
+        "pos5": {"hero_id": 58, "hero_name": "Enchantress"},
+    }
+    data = {
+        "114pos1_vs_41pos1": {"wins": 3, "draws": 0, "games": 37},
+        "41pos1_vs_114pos1": {"wins": 25, "draws": 0, "games": 31},
+    }
+
+    result = functions.synergy_and_counterpick(
+        radiant_heroes_and_pos=radiant,
+        dire_heroes_and_pos=dire,
+        early_dict={},
+        mid_dict=data,
+    )
+
+    late_output = result["mid_output"]
+    assert late_output["pos1_vs_pos1_games"] == 68
+    assert late_output["pos1_vs_pos1"] == functions.get_diff(
+        [(9 / 68, 68)],
+        [(59 / 68, 68)],
+    )
+
+
+def test_pos1_vs_pos1_reads_reverse_only_direction() -> None:
+    radiant = _side(114)
+    dire = _side(41)
+    data = {
+        "41pos1_vs_114pos1": {
+            "wins": 25,
+            "draws": 0,
+            "games": functions.POS1_VS_POS1_MIN_MATCHES + 1,
+        },
+    }
+
+    result = functions.synergy_and_counterpick(
+        radiant_heroes_and_pos=radiant,
+        dire_heroes_and_pos=dire,
+        early_dict=data,
+        mid_dict={},
+    )
+
+    early_output = result["early_output"]
+    assert early_output["pos1_vs_pos1_games"] == functions.POS1_VS_POS1_MIN_MATCHES + 1
+    assert early_output["pos1_vs_pos1"] < 0
+
+
+def test_counterpick_1vs1_requires_two_of_three_core_matchups_per_core() -> None:
+    radiant = _side(1)
+    dire = _side(6)
+    data: dict = {}
+    _put_exact_two_of_three_core_cp(data, radiant, dire, functions.COUNTERPICK_1VS1_MIN_MATCHES)
+
+    result = functions.synergy_and_counterpick(
+        radiant_heroes_and_pos=radiant,
+        dire_heroes_and_pos=dire,
+        early_dict=data,
+        mid_dict={},
+    )
+
+    assert result["early_output"]["counterpick_1vs1"] > 0
+    assert result["early_output"]["counterpick_1vs1_games"] > 0
+
+
+def test_counterpick_1vs1_rejects_one_of_three_core_matchups() -> None:
+    radiant = _side(1)
+    dire = _side(6)
+    data: dict = {}
+
+    for radiant_pos, dire_pos in (
+        ("pos1", "pos1"),
+        ("pos1", "pos2"),
+        ("pos2", "pos1"),
+        ("pos2", "pos2"),
+        ("pos3", "pos3"),
+    ):
+        _put_vs(
+            data,
+            f"{int(radiant[radiant_pos]['hero_id'])}{radiant_pos}",
+            f"{int(dire[dire_pos]['hero_id'])}{dire_pos}",
+            0.8,
+            functions.COUNTERPICK_1VS1_MIN_MATCHES,
+        )
+
+    result = functions.synergy_and_counterpick(
+        radiant_heroes_and_pos=radiant,
+        dire_heroes_and_pos=dire,
+        early_dict=data,
+        mid_dict={},
+    )
+
+    assert result["early_output"]["counterpick_1vs1"] is None
+    assert result["early_output"]["counterpick_1vs1_games"] == 0
+
+
+def test_post_lane_counterpick_1vs1_uses_two_of_three_core_gate() -> None:
+    radiant = _side(1)
+    dire = _side(6)
+    data: dict = {}
+    _put_exact_two_of_three_core_cp(data, radiant, dire, functions.POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES)
+
+    result = functions.synergy_and_counterpick(
+        radiant_heroes_and_pos=radiant,
+        dire_heroes_and_pos=dire,
+        early_dict={},
+        mid_dict={},
+        post_lane_dict=data,
+    )
+
+    assert result["post_lane_output"]["counterpick_1vs1"] > 0
+    assert result["post_lane_output"]["counterpick_1vs1_games"] > 0
+
+
 def test_synergy_duo_requires_core_pair_coverage_for_primary_metric() -> None:
     radiant = _side(1)
     dire = _side(6)
@@ -171,8 +432,7 @@ def test_synergy_duo_requires_core_pair_coverage_for_primary_metric() -> None:
 
     early_output = result["early_output"]
     assert "synergy_duo" not in early_output
-    assert early_output["synergy_duo_partial"] > 0
-    assert early_output["synergy_duo_partial_reason"] == "partial_core_duo_coverage"
+    assert not any(key.startswith("synergy_duo_") for key in early_output)
 
 
 def test_synergy_duo_drops_primary_metric_on_core_support_conflict() -> None:
@@ -196,7 +456,4 @@ def test_synergy_duo_drops_primary_metric_on_core_support_conflict() -> None:
 
     early_output = result["early_output"]
     assert "synergy_duo" not in early_output
-    assert early_output["synergy_duo_conflict"] is True
-    assert early_output["synergy_duo_core"] > 0
-    assert early_output["synergy_duo_support"] < 0
-    assert early_output["synergy_duo_partial_reason"] == "core_support_conflict"
+    assert not any(key.startswith("synergy_duo_") for key in early_output)
