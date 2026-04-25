@@ -49,11 +49,11 @@ except Exception:
 HEADLESS_DEFAULT = os.getenv("BOOKMAKER_SELENIUM_HEADLESS", "1").strip().lower()
 BOOKMAKER_SELENIUM_HEADLESS = HEADLESS_DEFAULT not in {"0", "false", "no", "off"}
 BOOKMAKER_CAMOUFOX_ENABLED = (
-    os.getenv("BOOKMAKER_CAMOUFOX_ENABLED", "0").strip().lower()
+    os.getenv("BOOKMAKER_CAMOUFOX_ENABLED", "1").strip().lower()
     in {"1", "true", "yes", "on"}
 ) and CAMOUFOX_AVAILABLE
 BOOKMAKER_CAMOUFOX_PRESENCE_ENABLED = (
-    os.getenv("BOOKMAKER_CAMOUFOX_PRESENCE_ENABLED", "0").strip().lower()
+    os.getenv("BOOKMAKER_CAMOUFOX_PRESENCE_ENABLED", "1").strip().lower()
     in {"1", "true", "yes", "on"}
 ) and CAMOUFOX_AVAILABLE
 if BOOKMAKER_CAMOUFOX_ENABLED:

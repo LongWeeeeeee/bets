@@ -3,6 +3,7 @@ warnings.filterwarnings('ignore', category=DeprecationWarning)
 warnings.filterwarnings('ignore', message='.*urllib3.*')
 
 import json
+import re
 import shutil
 from urllib.parse import quote
 # from analyze_maps import new_proceed_map, send_message
@@ -34,33 +35,23 @@ PUBS_SOURCE_DIR = ANALYSE_PUB_DIR / "json_parts_split_from_object_since_2025_12_
 
 # Загрузка валидных позиций героев
 HERO_VALID_POSITIONS = {}
-HERO_VALID_POSITIONS_COUNTS = {}
+HERO_POSITION_STATS = {}
 try:
-    HERO_VALID_POSITIONS_COUNTS_MIN_GAMES = int(float(os.getenv("HERO_VALID_POSITIONS_COUNTS_MIN_GAMES", "100")))
+    HERO_POSITION_STATS_MIN_PERCENTAGE = float(os.getenv("HERO_POSITION_STATS_MIN_PERCENTAGE", "1"))
 except (TypeError, ValueError):
-    HERO_VALID_POSITIONS_COUNTS_MIN_GAMES = 100
+    HERO_POSITION_STATS_MIN_PERCENTAGE = 1.0
 try:
-    hero_positions_path = BASE_DIR / 'hero_valid_positions_simple.json'
-    with open(hero_positions_path, 'r', encoding='utf-8') as f:
-        HERO_VALID_POSITIONS = json.load(f)
-        # Конвертируем ключи в int для быстрого поиска
-        HERO_VALID_POSITIONS = {int(k): v for k, v in HERO_VALID_POSITIONS.items()}
-except Exception as e:
-    print(f"Предупреждение: не удалось загрузить hero_valid_positions_simple.json: {e}")
-    print("Проверка валидности позиций будет отключена")
-
-try:
-    hero_positions_counts_path = BASE_DIR / 'hero_valid_positions_counts_500k.json'
-    with open(hero_positions_counts_path, 'r', encoding='utf-8') as f:
-        HERO_VALID_POSITIONS_COUNTS = json.load(f)
-        HERO_VALID_POSITIONS_COUNTS = {
+    hero_position_stats_path = BASE_DIR / 'hero_position_stats.json'
+    with open(hero_position_stats_path, 'r', encoding='utf-8') as f:
+        HERO_POSITION_STATS = json.load(f)
+        HERO_POSITION_STATS = {
             int(k): v
-            for k, v in HERO_VALID_POSITIONS_COUNTS.items()
+            for k, v in HERO_POSITION_STATS.items()
             if str(k).isdigit() and isinstance(v, dict)
         }
 except Exception as e:
-    print(f"Предупреждение: не удалось загрузить hero_valid_positions_counts_500k.json: {e}")
-    HERO_VALID_POSITIONS_COUNTS = {}
+    print(f"Предупреждение: не удалось загрузить hero_position_stats.json: {e}")
+    HERO_POSITION_STATS = {}
 
 
 def _normalize_position_label(position):
@@ -86,22 +77,26 @@ def _hero_allowed_positions(hero_id):
 
     allowed = set()
 
+    raw_stats = HERO_POSITION_STATS.get(hero_id)
+    if isinstance(raw_stats, dict):
+        raw_positions = raw_stats.get('positions')
+        if isinstance(raw_positions, dict):
+            for raw_position, position_stats in raw_positions.items():
+                if not isinstance(position_stats, dict):
+                    continue
+                try:
+                    percentage = float(position_stats.get('percentage', 0))
+                except (TypeError, ValueError):
+                    continue
+                if percentage < HERO_POSITION_STATS_MIN_PERCENTAGE:
+                    continue
+                normalized = _normalize_position_label(f'pos{raw_position}')
+                if normalized:
+                    allowed.add(normalized)
+
     raw_positions = HERO_VALID_POSITIONS.get(hero_id)
     if isinstance(raw_positions, (list, tuple, set)):
         for raw_position in raw_positions:
-            normalized = _normalize_position_label(raw_position)
-            if normalized:
-                allowed.add(normalized)
-
-    raw_counts = HERO_VALID_POSITIONS_COUNTS.get(hero_id)
-    if isinstance(raw_counts, dict):
-        for raw_position, raw_count in raw_counts.items():
-            try:
-                count = int(raw_count)
-            except (TypeError, ValueError):
-                continue
-            if count < HERO_VALID_POSITIONS_COUNTS_MIN_GAMES:
-                continue
             normalized = _normalize_position_label(raw_position)
             if normalized:
                 allowed.add(normalized)
@@ -117,6 +112,10 @@ def _position_is_valid_for_hero(hero_id, position):
     if normalized_position is None:
         return False
     return normalized_position in allowed_positions
+
+
+def _has_position_catalog():
+    return bool(HERO_POSITION_STATS or HERO_VALID_POSITIONS)
 
 # Rate limits для API
 RATE_LIMITS = {
@@ -1655,6 +1654,600 @@ def merge_temp_files_by_size(mkdir, max_size_mb=500, output_dir=None, cleanup=Fa
     return output_files
 
 
+def merge_temp_files_by_patch(
+    mkdir,
+    max_size_mb=500,
+    output_dir=None,
+    cleanup=False,
+    clear_output_dir=False,
+    patch_specs=None,
+):
+    """
+    Объединяет temp_files в patch-part файлы с глобальной дедупликацией по normalized match_id.
+
+    Пишет файлы вида:
+      - 7.40_part001.json
+      - 7.41_part001.json
+
+    Фильтрация по startDateTime:
+      - 7.40: 2025-12-15 <= ts < 2026-03-24
+      - 7.41: 2026-03-24 <= ts
+    """
+    return merge_temp_files_by_patch_streaming(
+        mkdir=mkdir,
+        max_size_mb=max_size_mb,
+        output_dir=output_dir,
+        cleanup=cleanup,
+        clear_output_dir=clear_output_dir,
+        patch_specs=patch_specs,
+    )
+
+    from decimal import Decimal
+
+    temp_folder = f"{mkdir}/temp_files"
+    if not os.path.exists(temp_folder):
+        os.makedirs(temp_folder)
+        print(f"📁 Создана папка: {temp_folder} (была пустая, нечего объединять)")
+        return []
+
+    if output_dir is None:
+        output_dir = f"{mkdir}/json_parts_split_from_object"
+    os.makedirs(output_dir, exist_ok=True)
+
+    if patch_specs is None:
+        patch_specs = [
+            ("7.40", 1765756800, 1774310400),
+            ("7.41", 1774310400, None),
+        ]
+
+    def _normalize_match_id(value):
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            s = value.strip()
+            if s.isdigit() or (s.startswith("-") and s[1:].isdigit()):
+                try:
+                    return int(s)
+                except Exception:
+                    return None
+            return None
+        try:
+            return int(value)
+        except Exception:
+            return None
+
+    def _sanitize_recovered_value(value):
+        if isinstance(value, Decimal):
+            if value == value.to_integral_value():
+                try:
+                    return int(value)
+                except Exception:
+                    return float(value)
+            return float(value)
+        if isinstance(value, list):
+            return [_sanitize_recovered_value(v) for v in value]
+        if isinstance(value, dict):
+            return {k: _sanitize_recovered_value(v) for k, v in value.items()}
+        return value
+
+    def _load_temp_file_dict_with_recovery(file_path):
+        primary_error = None
+        try:
+            with open(file_path, 'rb') as f:
+                data = orjson.loads(f.read())
+            if isinstance(data, dict):
+                return data, False, None
+            return None, False, f"root_is_{type(data).__name__}"
+        except Exception as e:
+            primary_error = str(e)
+
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data, False, None
+            return None, False, f"root_is_{type(data).__name__}"
+        except Exception as e:
+            if not primary_error:
+                primary_error = str(e)
+
+        if ijson is not None:
+            recovered = {}
+            stream_error = None
+            try:
+                with open(file_path, 'rb') as f:
+                    for key, value in ijson.kvitems(f, '', use_float=True):
+                        recovered[str(key)] = _sanitize_recovered_value(value)
+            except Exception as e:
+                stream_error = str(e)
+            if recovered:
+                return recovered, True, primary_error or stream_error or "partial_recovery"
+
+        return None, False, primary_error or "unknown_parse_error"
+
+    def _resolve_patch_name(start_ts):
+        try:
+            ts = int(start_ts)
+        except Exception:
+            return None
+        for patch_name, start_ts_inclusive, end_ts_exclusive in patch_specs:
+            if ts < int(start_ts_inclusive):
+                continue
+            if end_ts_exclusive is not None and ts >= int(end_ts_exclusive):
+                continue
+            return str(patch_name)
+        return None
+
+    def _patch_sort_key(name):
+        try:
+            return tuple(int(part) for part in str(name).split("."))
+        except Exception:
+            return (9999,)
+
+    def _flush_patch_state(patch_name, state, output_files):
+        if not state["current_data"]:
+            return
+        filename = f"{patch_name}_part{state['part_number']:03d}.json"
+        output_path = os.path.join(output_dir, filename)
+        payload = orjson.dumps(state["current_data"])
+        with open(output_path, 'wb') as f:
+            f.write(payload)
+        file_size_mb = len(payload) / (1024 * 1024)
+        print(f"  ✅ {output_path}: {len(state['current_data'])} матчей ({file_size_mb:.1f} МБ)")
+        output_files.append(output_path)
+        state["written_matches"] += len(state["current_data"])
+        state["current_data"] = {}
+        state["current_size"] = 0
+        state["part_number"] += 1
+
+    existing_json_files = list(Path(output_dir).glob("*.json"))
+    non_summary_json_files = [p for p in existing_json_files if p.name != "processed_ids.txt"]
+    if clear_output_dir and non_summary_json_files:
+        backup_dir = Path(output_dir).parent / f"{Path(output_dir).name}__backup_before_patch_merge_{int(time.time())}"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for path in non_summary_json_files:
+            shutil.move(str(path), str(backup_dir / path.name))
+        processed_ids_candidate = Path(output_dir) / "processed_ids.txt"
+        if processed_ids_candidate.exists():
+            shutil.move(str(processed_ids_candidate), str(backup_dir / processed_ids_candidate.name))
+        print(f"🗄️ Старые JSON перенесены в backup: {backup_dir}")
+
+    processed_ids = set()
+    processed_ids_file = os.path.join(output_dir, "processed_ids.txt")
+    if os.path.exists(processed_ids_file):
+        try:
+            with open(processed_ids_file, 'rb') as f:
+                existing_ids = orjson.loads(f.read())
+            if isinstance(existing_ids, list):
+                for value in existing_ids:
+                    normalized = _normalize_match_id(value)
+                    if normalized is not None:
+                        processed_ids.add(normalized)
+        except Exception as e:
+            print(f"⚠️ Не удалось прочитать processed_ids.txt, начинаю с пустого набора: {e}")
+
+    patch_part_numbers = {}
+    for patch_name, *_ in patch_specs:
+        existing_parts = sorted(Path(output_dir).glob(f"{patch_name}_part*.json"))
+        max_part = 0
+        for path in existing_parts:
+            m = re.match(rf"^{re.escape(str(patch_name))}_part(\d+)\.json$", path.name)
+            if not m:
+                continue
+            try:
+                max_part = max(max_part, int(m.group(1)))
+            except Exception:
+                continue
+        patch_part_numbers[str(patch_name)] = max_part + 1
+
+    max_size_bytes = max_size_mb * 1024 * 1024
+    patch_states = {
+        str(patch_name): {
+            "current_data": {},
+            "current_size": 0,
+            "part_number": patch_part_numbers[str(patch_name)],
+            "written_matches": 0,
+        }
+        for patch_name, *_ in patch_specs
+    }
+    output_files = []
+    session_ids = set()
+    duplicates_count = 0
+    invalid_id_count = 0
+    skipped_outside_patch = 0
+    broken_files_skipped = 0
+    recovered_files_count = 0
+    recovered_records_count = 0
+
+    temp_files = sorted([f for f in os.listdir(temp_folder) if f.endswith('.txt')])
+    if not temp_files:
+        print(f"⚠️ В папке {temp_folder} нет .txt файлов")
+        return []
+
+    print(f"📊 Найдено {len(temp_files)} временных файлов")
+    print(
+        "🎯 Объединяем с фильтрацией по патчам "
+        f"{', '.join(name for name, *_ in sorted(patch_specs, key=lambda x: _patch_sort_key(x[0])))} "
+        f"и дедупликацией по match_id; лимит {max_size_mb} МБ"
+    )
+
+    for index, filename in enumerate(temp_files, 1):
+        file_path = os.path.join(temp_folder, filename)
+        data, recovered_partially, parse_err = _load_temp_file_dict_with_recovery(file_path)
+        if data is None:
+            broken_files_skipped += 1
+            print(f"  ⚠️ Ошибка при чтении {file_path}: {parse_err}")
+            continue
+        if recovered_partially:
+            recovered_files_count += 1
+            recovered_records_count += len(data)
+            print(
+                f"  🩹 Частичное восстановление {file_path}: "
+                f"{len(data)} записей (исходная ошибка: {parse_err})"
+            )
+
+        for raw_match_id, raw_match_data in data.items():
+            match_id_norm = _normalize_match_id(raw_match_id)
+            if match_id_norm is None:
+                match_id_norm = _normalize_match_id((raw_match_data or {}).get("id") if isinstance(raw_match_data, dict) else None)
+            if match_id_norm is None:
+                invalid_id_count += 1
+                continue
+
+            if match_id_norm in processed_ids or match_id_norm in session_ids:
+                duplicates_count += 1
+                continue
+
+            if not isinstance(raw_match_data, dict):
+                continue
+
+            patch_name = _resolve_patch_name(raw_match_data.get("startDateTime"))
+            if patch_name is None:
+                skipped_outside_patch += 1
+                continue
+
+            match_data = dict(raw_match_data)
+            match_data["id"] = int(match_id_norm)
+            canonical_key = str(match_id_norm)
+            estimated_size = len(canonical_key.encode("utf-8")) + len(orjson.dumps(match_data)) + 6
+
+            state = patch_states[patch_name]
+            if state["current_data"] and state["current_size"] + estimated_size > max_size_bytes:
+                _flush_patch_state(patch_name, state, output_files)
+
+            state["current_data"][canonical_key] = match_data
+            state["current_size"] += estimated_size
+            session_ids.add(match_id_norm)
+
+        if index % 25 == 0 or index == len(temp_files):
+            patch_progress = ", ".join(
+                f"{patch}={len(state['current_data']) + state['written_matches']}"
+                for patch, state in sorted(patch_states.items(), key=lambda item: _patch_sort_key(item[0]))
+            )
+            print(
+                f"  📈 Обработано {index}/{len(temp_files)} файлов | "
+                f"Уникальных={len(session_ids)} | Дубликатов={duplicates_count} | {patch_progress}"
+            )
+
+    for patch_name, state in sorted(patch_states.items(), key=lambda item: _patch_sort_key(item[0])):
+        _flush_patch_state(patch_name, state, output_files)
+
+    processed_ids.update(session_ids)
+    with open(processed_ids_file, 'wb') as f:
+        f.write(orjson.dumps(sorted(processed_ids)))
+
+    summary = {
+        "patches": {
+            patch: {
+                "matches": state["written_matches"],
+                "next_part_number": state["part_number"],
+            }
+            for patch, state in sorted(patch_states.items(), key=lambda item: _patch_sort_key(item[0]))
+        },
+        "unique_matches_added": len(session_ids),
+        "duplicates_filtered": duplicates_count,
+        "invalid_ids_skipped": invalid_id_count,
+        "outside_patch_skipped": skipped_outside_patch,
+        "broken_files_skipped": broken_files_skipped,
+        "recovered_files_count": recovered_files_count,
+        "recovered_records_count": recovered_records_count,
+    }
+    summary_path = os.path.join(output_dir, "merge_patch_summary.json")
+    with open(summary_path, "wb") as f:
+        f.write(orjson.dumps(summary, option=orjson.OPT_INDENT_2))
+
+    print("\n🎉 Patch merge завершён!")
+    for patch, state in sorted(patch_states.items(), key=lambda item: _patch_sort_key(item[0])):
+        print(f"   {patch}: {state['written_matches']} матчей")
+    print(f"🔄 Дубликатов отфильтровано: {duplicates_count}")
+    print(f"🆔 Невалидных ID пропущено: {invalid_id_count}")
+    print(f"🗓️ Вне 7.40/7.41 пропущено: {skipped_outside_patch}")
+    if recovered_files_count:
+        print(f"🩹 Частично восстановлено файлов: {recovered_files_count} (записей: {recovered_records_count})")
+    if broken_files_skipped:
+        print(f"⚠️ Полностью пропущено битых файлов: {broken_files_skipped}")
+    print(f"📄 summary: {summary_path}")
+
+    if cleanup:
+        try:
+            shutil.rmtree(temp_folder)
+            print(f"🗑️ Папка {temp_folder} удалена")
+        except Exception as e:
+            print(f"⚠️ Не удалось удалить {temp_folder}: {e}")
+
+    return output_files
+
+def merge_temp_files_by_patch_streaming(
+    mkdir,
+    max_size_mb=500,
+    output_dir=None,
+    cleanup=False,
+    clear_output_dir=False,
+    patch_specs=None,
+):
+    """
+    Быстро объединяет temp_files в patch-part JSON без дублей.
+
+    Записи пишутся сразу в compact JSON, поэтому нет 500MB dict-буфера
+    и повторной сериализации целого файла.
+    """
+    temp_folder = Path(mkdir) / "temp_files"
+    if not temp_folder.exists():
+        temp_folder.mkdir(parents=True, exist_ok=True)
+        print(f"📁 Создана папка: {temp_folder} (была пустая, нечего объединять)")
+        return []
+
+    if output_dir is None:
+        output_dir = Path(mkdir) / "json_parts_split_from_object"
+    else:
+        output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if patch_specs is None:
+        patch_specs = [
+            ("7.40", 1765756800, 1774310400),
+            ("7.41", 1774310400, None),
+        ]
+
+    if clear_output_dir and any(output_dir.iterdir()):
+        backup_dir = output_dir.parent / f"{output_dir.name}__backup_before_stream_merge_{int(time.time())}"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        for path in list(output_dir.iterdir()):
+            shutil.move(str(path), str(backup_dir / path.name))
+        print(f"🗄️ Старый output перенесён в backup: {backup_dir}")
+
+    def _normalize_match_id(value):
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            s = value.strip()
+            if s.isdigit() or (s.startswith("-") and s[1:].isdigit()):
+                try:
+                    return int(s)
+                except Exception:
+                    return None
+            return None
+        try:
+            return int(value)
+        except Exception:
+            return None
+
+    def _resolve_patch_name(start_ts):
+        try:
+            ts = int(start_ts)
+        except Exception:
+            return None
+        for patch_name, start_ts_inclusive, end_ts_exclusive in patch_specs:
+            if ts < int(start_ts_inclusive):
+                continue
+            if end_ts_exclusive is not None and ts >= int(end_ts_exclusive):
+                continue
+            return str(patch_name)
+        return None
+
+    def _patch_sort_key(name):
+        try:
+            return tuple(int(part) for part in str(name).split("."))
+        except Exception:
+            return (9999,)
+
+    def _load_temp_file(file_path):
+        with open(file_path, "rb") as f:
+            data = orjson.loads(f.read())
+        if not isinstance(data, dict):
+            raise ValueError(f"root_is_{type(data).__name__}")
+        return data
+
+    max_size_bytes = int(max_size_mb * 1024 * 1024)
+    output_files = []
+    processed_ids = set()
+    duplicates_count = 0
+    invalid_id_count = 0
+    skipped_outside_patch = 0
+    broken_files_skipped = 0
+
+    states = {
+        str(patch_name): {
+            "fh": None,
+            "path": None,
+            "part_number": 1,
+            "current_size": 0,
+            "current_matches": 0,
+            "written_matches": 0,
+            "written_files": 0,
+        }
+        for patch_name, *_ in patch_specs
+    }
+
+    def _open_part(patch_name):
+        state = states[patch_name]
+        filename = f"{patch_name}_part{state['part_number']:03d}.json"
+        path = output_dir / filename
+        fh = open(path, "wb")
+        fh.write(b"{")
+        state["fh"] = fh
+        state["path"] = path
+        state["current_size"] = 1
+        state["current_matches"] = 0
+
+    def _close_part(patch_name):
+        state = states[patch_name]
+        fh = state["fh"]
+        if fh is None:
+            return
+        fh.write(b"}")
+        fh.close()
+        path = state["path"]
+        file_size = path.stat().st_size
+        if state["current_matches"] == 0:
+            path.unlink(missing_ok=True)
+        else:
+            output_files.append(str(path))
+            state["written_files"] += 1
+            state["written_matches"] += state["current_matches"]
+            print(
+                f"  ✅ {path}: {state['current_matches']} матчей "
+                f"({file_size / (1024 * 1024):.1f} МБ)"
+            )
+        state["fh"] = None
+        state["path"] = None
+        state["current_size"] = 0
+        state["current_matches"] = 0
+        state["part_number"] += 1
+
+    def _write_entry(patch_name, canonical_key, match_data):
+        state = states[patch_name]
+        key_bytes = orjson.dumps(canonical_key)
+        value_bytes = orjson.dumps(match_data)
+        entry_size = len(key_bytes) + 1 + len(value_bytes)
+        comma_size = 1 if state["current_matches"] else 0
+
+        if state["fh"] is None:
+            _open_part(patch_name)
+            state = states[patch_name]
+            comma_size = 0
+
+        projected_size = state["current_size"] + comma_size + entry_size + 1
+        if state["current_matches"] and projected_size > max_size_bytes:
+            _close_part(patch_name)
+            _open_part(patch_name)
+            state = states[patch_name]
+            comma_size = 0
+
+        if comma_size:
+            state["fh"].write(b",")
+            state["current_size"] += 1
+        state["fh"].write(key_bytes)
+        state["fh"].write(b":")
+        state["fh"].write(value_bytes)
+        state["current_size"] += entry_size
+        state["current_matches"] += 1
+
+    temp_files = sorted(temp_folder.glob("*.txt"))
+    if not temp_files:
+        print(f"⚠️ В папке {temp_folder} нет .txt файлов")
+        return []
+
+    print(f"📊 Найдено {len(temp_files)} временных файлов")
+    print(
+        "🎯 Streaming merge по патчам "
+        f"{', '.join(name for name, *_ in sorted(patch_specs, key=lambda x: _patch_sort_key(x[0])))}; "
+        f"лимит {max_size_mb} МБ"
+    )
+
+    try:
+        for index, file_path in enumerate(temp_files, 1):
+            try:
+                data = _load_temp_file(file_path)
+            except Exception as e:
+                broken_files_skipped += 1
+                print(f"  ⚠️ Ошибка при чтении {file_path}: {e}")
+                continue
+
+            for raw_match_id, raw_match_data in data.items():
+                if not isinstance(raw_match_data, dict):
+                    continue
+
+                match_id_norm = _normalize_match_id(raw_match_id)
+                if match_id_norm is None:
+                    match_id_norm = _normalize_match_id(raw_match_data.get("id"))
+                if match_id_norm is None:
+                    invalid_id_count += 1
+                    continue
+
+                if match_id_norm in processed_ids:
+                    duplicates_count += 1
+                    continue
+
+                patch_name = _resolve_patch_name(raw_match_data.get("startDateTime"))
+                if patch_name is None:
+                    skipped_outside_patch += 1
+                    continue
+
+                match_data = dict(raw_match_data)
+                match_data["id"] = int(match_id_norm)
+                _write_entry(patch_name, str(match_id_norm), match_data)
+                processed_ids.add(match_id_norm)
+
+            if index % 25 == 0 or index == len(temp_files):
+                patch_progress = ", ".join(
+                    f"{patch}={state['written_matches'] + state['current_matches']}"
+                    for patch, state in sorted(states.items(), key=lambda item: _patch_sort_key(item[0]))
+                )
+                print(
+                    f"  📈 Обработано {index}/{len(temp_files)} файлов | "
+                    f"Уникальных={len(processed_ids)} | Дубликатов={duplicates_count} | {patch_progress}"
+                )
+    finally:
+        for patch_name in sorted(states, key=_patch_sort_key):
+            _close_part(patch_name)
+
+    processed_ids_file = output_dir / "processed_ids.txt"
+    with open(processed_ids_file, "wb") as f:
+        f.write(orjson.dumps(sorted(processed_ids)))
+
+    summary = {
+        "patches": {
+            patch: {
+                "matches": state["written_matches"],
+                "files": state["written_files"],
+                "next_part_number": state["part_number"],
+            }
+            for patch, state in sorted(states.items(), key=lambda item: _patch_sort_key(item[0]))
+        },
+        "unique_matches_added": len(processed_ids),
+        "duplicates_filtered": duplicates_count,
+        "invalid_ids_skipped": invalid_id_count,
+        "outside_patch_skipped": skipped_outside_patch,
+        "broken_files_skipped": broken_files_skipped,
+        "source_temp_files": len(temp_files),
+    }
+    summary_path = output_dir / "merge_patch_summary.json"
+    with open(summary_path, "wb") as f:
+        f.write(orjson.dumps(summary, option=orjson.OPT_INDENT_2))
+
+    print("\n🎉 Streaming patch merge завершён!")
+    for patch, state in sorted(states.items(), key=lambda item: _patch_sort_key(item[0])):
+        print(f"   {patch}: {state['written_matches']} матчей, файлов: {state['written_files']}")
+    print(f"🔄 Дубликатов отфильтровано: {duplicates_count}")
+    print(f"🆔 Невалидных ID пропущено: {invalid_id_count}")
+    print(f"🗓️ Вне 7.40/7.41 пропущено: {skipped_outside_patch}")
+    if broken_files_skipped:
+        print(f"⚠️ Полностью пропущено битых файлов: {broken_files_skipped}")
+    print(f"📄 summary: {summary_path}")
+
+    if cleanup:
+        try:
+            shutil.rmtree(temp_folder)
+            print(f"🗑️ Папка {temp_folder} удалена")
+        except Exception as e:
+            print(f"⚠️ Не удалось удалить {temp_folder}: {e}")
+
+    return output_files
 
 
 def check_match_quality(
@@ -1665,7 +2258,7 @@ def check_match_quality(
     strict_lane_positions=False,
 ):
     """Проверяет качество данных карты"""
-    if strict_lane_positions and not (HERO_VALID_POSITIONS or HERO_VALID_POSITIONS_COUNTS):
+    if strict_lane_positions and not _has_position_catalog():
         return False, 'hero valid positions unavailable'
 
     # if match.get('direKills') is None:
@@ -1687,14 +2280,15 @@ def check_match_quality(
         #     return False, 'smurf'
 
         # Проверка валидности позиции героя: отсекаем матч если 2+ неверных позиций
-        if HERO_VALID_POSITIONS or HERO_VALID_POSITIONS_COUNTS:
+        if _has_position_catalog():
             hero_id = player.get('heroId')
             position = player.get('position')
             is_valid_position = _position_is_valid_for_hero(hero_id, position)
             if is_valid_position is False:
                 invalid_positions += 1
                 team_key = bool(player.get('isRadiant'))
-                invalid_by_team[team_key][position] = player
+                normalized_position = _normalize_position_label(position)
+                invalid_by_team[team_key][normalized_position or position] = player
 
     if invalid_positions >= 2:
         lane_pairs = (('pos1', 'pos5'), ('pos3', 'pos4'))
@@ -1740,7 +2334,7 @@ def check_match_quality(
                 else:
                     return False, 'invalid positions networth order'
 
-    if strict_lane_positions and (HERO_VALID_POSITIONS or HERO_VALID_POSITIONS_COUNTS):
+    if strict_lane_positions and _has_position_catalog():
         remaining_invalid = 0
         for player in match.get('players', []):
             hero_id = player.get('heroId')

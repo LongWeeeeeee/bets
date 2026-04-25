@@ -1,0 +1,3431 @@
+{
+  "64": {
+    "hero_id": 64,
+    "hero_name": "Jakiro",
+    "total_games": 409988,
+    "positions": {
+      "1": {
+        "games": 1574,
+        "percentage": 0.38
+      },
+      "2": {
+        "games": 12859,
+        "percentage": 3.14
+      },
+      "3": {
+        "games": 4893,
+        "percentage": 1.19
+      },
+      "4": {
+        "games": 108547,
+        "percentage": 26.48
+      },
+      "5": {
+        "games": 282115,
+        "percentage": 68.81
+      }
+    }
+  },
+  "47": {
+    "hero_id": 47,
+    "hero_name": "Viper",
+    "total_games": 219348,
+    "positions": {
+      "1": {
+        "games": 13860,
+        "percentage": 6.32
+      },
+      "2": {
+        "games": 110396,
+        "percentage": 50.33
+      },
+      "3": {
+        "games": 79506,
+        "percentage": 36.25
+      },
+      "4": {
+        "games": 8691,
+        "percentage": 3.96
+      },
+      "5": {
+        "games": 6895,
+        "percentage": 3.14
+      }
+    }
+  },
+  "82": {
+    "hero_id": 82,
+    "hero_name": "Meepo",
+    "total_games": 58122,
+    "positions": {
+      "1": {
+        "games": 10520,
+        "percentage": 18.1
+      },
+      "2": {
+        "games": 45109,
+        "percentage": 77.61
+      },
+      "3": {
+        "games": 2001,
+        "percentage": 3.44
+      },
+      "4": {
+        "games": 270,
+        "percentage": 0.46
+      },
+      "5": {
+        "games": 222,
+        "percentage": 0.38
+      }
+    }
+  },
+  "12": {
+    "hero_id": 12,
+    "hero_name": "Phantom Lancer",
+    "total_games": 190953,
+    "positions": {
+      "1": {
+        "games": 187791,
+        "percentage": 98.34
+      },
+      "2": {
+        "games": 1555,
+        "percentage": 0.81
+      },
+      "3": {
+        "games": 1145,
+        "percentage": 0.6
+      },
+      "4": {
+        "games": 188,
+        "percentage": 0.1
+      },
+      "5": {
+        "games": 274,
+        "percentage": 0.14
+      }
+    }
+  },
+  "110": {
+    "hero_id": 110,
+    "hero_name": "Phoenix",
+    "total_games": 193784,
+    "positions": {
+      "1": {
+        "games": 184,
+        "percentage": 0.09
+      },
+      "2": {
+        "games": 27535,
+        "percentage": 14.21
+      },
+      "3": {
+        "games": 45544,
+        "percentage": 23.5
+      },
+      "4": {
+        "games": 71864,
+        "percentage": 37.08
+      },
+      "5": {
+        "games": 48657,
+        "percentage": 25.11
+      }
+    }
+  },
+  "84": {
+    "hero_id": 84,
+    "hero_name": "Ogre Magi",
+    "total_games": 288782,
+    "positions": {
+      "1": {
+        "games": 1057,
+        "percentage": 0.37
+      },
+      "2": {
+        "games": 16414,
+        "percentage": 5.68
+      },
+      "3": {
+        "games": 34091,
+        "percentage": 11.81
+      },
+      "4": {
+        "games": 88091,
+        "percentage": 30.5
+      },
+      "5": {
+        "games": 149129,
+        "percentage": 51.64
+      }
+    }
+  },
+  "15": {
+    "hero_id": 15,
+    "hero_name": "Razor",
+    "total_games": 288808,
+    "positions": {
+      "1": {
+        "games": 52808,
+        "percentage": 18.28
+      },
+      "2": {
+        "games": 32752,
+        "percentage": 11.34
+      },
+      "3": {
+        "games": 196836,
+        "percentage": 68.15
+      },
+      "4": {
+        "games": 4093,
+        "percentage": 1.42
+      },
+      "5": {
+        "games": 2319,
+        "percentage": 0.8
+      }
+    }
+  },
+  "6": {
+    "hero_id": 6,
+    "hero_name": "Drow Ranger",
+    "total_games": 316279,
+    "positions": {
+      "1": {
+        "games": 309642,
+        "percentage": 97.9
+      },
+      "2": {
+        "games": 4912,
+        "percentage": 1.55
+      },
+      "3": {
+        "games": 694,
+        "percentage": 0.22
+      },
+      "4": {
+        "games": 421,
+        "percentage": 0.13
+      },
+      "5": {
+        "games": 610,
+        "percentage": 0.19
+      }
+    }
+  },
+  "37": {
+    "hero_id": 37,
+    "hero_name": "Warlock",
+    "total_games": 229981,
+    "positions": {
+      "1": {
+        "games": 227,
+        "percentage": 0.1
+      },
+      "2": {
+        "games": 781,
+        "percentage": 0.34
+      },
+      "3": {
+        "games": 606,
+        "percentage": 0.26
+      },
+      "4": {
+        "games": 42219,
+        "percentage": 18.36
+      },
+      "5": {
+        "games": 186148,
+        "percentage": 80.94
+      }
+    }
+  },
+  "113": {
+    "hero_id": 113,
+    "hero_name": "Arc Warden",
+    "total_games": 69688,
+    "positions": {
+      "1": {
+        "games": 4934,
+        "percentage": 7.08
+      },
+      "2": {
+        "games": 62169,
+        "percentage": 89.21
+      },
+      "3": {
+        "games": 598,
+        "percentage": 0.86
+      },
+      "4": {
+        "games": 1148,
+        "percentage": 1.65
+      },
+      "5": {
+        "games": 839,
+        "percentage": 1.2
+      }
+    }
+  },
+  "54": {
+    "hero_id": 54,
+    "hero_name": "Lifestealer",
+    "total_games": 203097,
+    "positions": {
+      "1": {
+        "games": 198407,
+        "percentage": 97.69
+      },
+      "2": {
+        "games": 768,
+        "percentage": 0.38
+      },
+      "3": {
+        "games": 3055,
+        "percentage": 1.5
+      },
+      "4": {
+        "games": 379,
+        "percentage": 0.19
+      },
+      "5": {
+        "games": 488,
+        "percentage": 0.24
+      }
+    }
+  },
+  "17": {
+    "hero_id": 17,
+    "hero_name": "Storm Spirit",
+    "total_games": 235744,
+    "positions": {
+      "1": {
+        "games": 10420,
+        "percentage": 4.42
+      },
+      "2": {
+        "games": 221292,
+        "percentage": 93.87
+      },
+      "3": {
+        "games": 1889,
+        "percentage": 0.8
+      },
+      "4": {
+        "games": 1362,
+        "percentage": 0.58
+      },
+      "5": {
+        "games": 781,
+        "percentage": 0.33
+      }
+    }
+  },
+  "68": {
+    "hero_id": 68,
+    "hero_name": "Ancient Apparition",
+    "total_games": 180977,
+    "positions": {
+      "1": {
+        "games": 240,
+        "percentage": 0.13
+      },
+      "2": {
+        "games": 5836,
+        "percentage": 3.22
+      },
+      "3": {
+        "games": 848,
+        "percentage": 0.47
+      },
+      "4": {
+        "games": 57204,
+        "percentage": 31.61
+      },
+      "5": {
+        "games": 116849,
+        "percentage": 64.57
+      }
+    }
+  },
+  "25": {
+    "hero_id": 25,
+    "hero_name": "Lina",
+    "total_games": 247474,
+    "positions": {
+      "1": {
+        "games": 13768,
+        "percentage": 5.56
+      },
+      "2": {
+        "games": 181283,
+        "percentage": 73.25
+      },
+      "3": {
+        "games": 1927,
+        "percentage": 0.78
+      },
+      "4": {
+        "games": 32773,
+        "percentage": 13.24
+      },
+      "5": {
+        "games": 17723,
+        "percentage": 7.16
+      }
+    }
+  },
+  "29": {
+    "hero_id": 29,
+    "hero_name": "Tidehunter",
+    "total_games": 309568,
+    "positions": {
+      "1": {
+        "games": 5031,
+        "percentage": 1.63
+      },
+      "2": {
+        "games": 6199,
+        "percentage": 2.0
+      },
+      "3": {
+        "games": 291986,
+        "percentage": 94.32
+      },
+      "4": {
+        "games": 4070,
+        "percentage": 1.31
+      },
+      "5": {
+        "games": 2282,
+        "percentage": 0.74
+      }
+    }
+  },
+  "14": {
+    "hero_id": 14,
+    "hero_name": "Pudge",
+    "total_games": 669234,
+    "positions": {
+      "1": {
+        "games": 19542,
+        "percentage": 2.92
+      },
+      "2": {
+        "games": 71761,
+        "percentage": 10.72
+      },
+      "3": {
+        "games": 150400,
+        "percentage": 22.47
+      },
+      "4": {
+        "games": 239436,
+        "percentage": 35.78
+      },
+      "5": {
+        "games": 188095,
+        "percentage": 28.11
+      }
+    }
+  },
+  "104": {
+    "hero_id": 104,
+    "hero_name": "Legion Commander",
+    "total_games": 355786,
+    "positions": {
+      "1": {
+        "games": 5430,
+        "percentage": 1.53
+      },
+      "2": {
+        "games": 18281,
+        "percentage": 5.14
+      },
+      "3": {
+        "games": 327790,
+        "percentage": 92.13
+      },
+      "4": {
+        "games": 2920,
+        "percentage": 0.82
+      },
+      "5": {
+        "games": 1365,
+        "percentage": 0.38
+      }
+    }
+  },
+  "74": {
+    "hero_id": 74,
+    "hero_name": "Invoker",
+    "total_games": 523631,
+    "positions": {
+      "1": {
+        "games": 1327,
+        "percentage": 0.25
+      },
+      "2": {
+        "games": 378651,
+        "percentage": 72.31
+      },
+      "3": {
+        "games": 5220,
+        "percentage": 1.0
+      },
+      "4": {
+        "games": 103559,
+        "percentage": 19.78
+      },
+      "5": {
+        "games": 34874,
+        "percentage": 6.66
+      }
+    }
+  },
+  "86": {
+    "hero_id": 86,
+    "hero_name": "Rubick",
+    "total_games": 557312,
+    "positions": {
+      "1": {
+        "games": 671,
+        "percentage": 0.12
+      },
+      "2": {
+        "games": 126828,
+        "percentage": 22.76
+      },
+      "3": {
+        "games": 10221,
+        "percentage": 1.83
+      },
+      "4": {
+        "games": 293652,
+        "percentage": 52.69
+      },
+      "5": {
+        "games": 125940,
+        "percentage": 22.6
+      }
+    }
+  },
+  "96": {
+    "hero_id": 96,
+    "hero_name": "Centaur Warrunner",
+    "total_games": 190593,
+    "positions": {
+      "1": {
+        "games": 367,
+        "percentage": 0.19
+      },
+      "2": {
+        "games": 1902,
+        "percentage": 1.0
+      },
+      "3": {
+        "games": 184856,
+        "percentage": 96.99
+      },
+      "4": {
+        "games": 2161,
+        "percentage": 1.13
+      },
+      "5": {
+        "games": 1307,
+        "percentage": 0.69
+      }
+    }
+  },
+  "102": {
+    "hero_id": 102,
+    "hero_name": "Abaddon",
+    "total_games": 109583,
+    "positions": {
+      "1": {
+        "games": 27802,
+        "percentage": 25.37
+      },
+      "2": {
+        "games": 694,
+        "percentage": 0.63
+      },
+      "3": {
+        "games": 28236,
+        "percentage": 25.77
+      },
+      "4": {
+        "games": 15482,
+        "percentage": 14.13
+      },
+      "5": {
+        "games": 37369,
+        "percentage": 34.1
+      }
+    }
+  },
+  "35": {
+    "hero_id": 35,
+    "hero_name": "Sniper",
+    "total_games": 311600,
+    "positions": {
+      "1": {
+        "games": 34881,
+        "percentage": 11.19
+      },
+      "2": {
+        "games": 179725,
+        "percentage": 57.68
+      },
+      "3": {
+        "games": 5478,
+        "percentage": 1.76
+      },
+      "4": {
+        "games": 68309,
+        "percentage": 21.92
+      },
+      "5": {
+        "games": 23207,
+        "percentage": 7.45
+      }
+    }
+  },
+  "75": {
+    "hero_id": 75,
+    "hero_name": "Silencer",
+    "total_games": 230007,
+    "positions": {
+      "1": {
+        "games": 1790,
+        "percentage": 0.78
+      },
+      "2": {
+        "games": 13105,
+        "percentage": 5.7
+      },
+      "3": {
+        "games": 2235,
+        "percentage": 0.97
+      },
+      "4": {
+        "games": 86824,
+        "percentage": 37.75
+      },
+      "5": {
+        "games": 126053,
+        "percentage": 54.8
+      }
+    }
+  },
+  "90": {
+    "hero_id": 90,
+    "hero_name": "Keeper of the Light",
+    "total_games": 82978,
+    "positions": {
+      "1": {
+        "games": 190,
+        "percentage": 0.23
+      },
+      "2": {
+        "games": 44340,
+        "percentage": 53.44
+      },
+      "3": {
+        "games": 2332,
+        "percentage": 2.81
+      },
+      "4": {
+        "games": 24818,
+        "percentage": 29.91
+      },
+      "5": {
+        "games": 11298,
+        "percentage": 13.62
+      }
+    }
+  },
+  "99": {
+    "hero_id": 99,
+    "hero_name": "Bristleback",
+    "total_games": 106669,
+    "positions": {
+      "1": {
+        "games": 6268,
+        "percentage": 5.88
+      },
+      "2": {
+        "games": 3749,
+        "percentage": 3.51
+      },
+      "3": {
+        "games": 94920,
+        "percentage": 88.99
+      },
+      "4": {
+        "games": 1021,
+        "percentage": 0.96
+      },
+      "5": {
+        "games": 711,
+        "percentage": 0.67
+      }
+    }
+  },
+  "7": {
+    "hero_id": 7,
+    "hero_name": "Earthshaker",
+    "total_games": 269780,
+    "positions": {
+      "1": {
+        "games": 1327,
+        "percentage": 0.49
+      },
+      "2": {
+        "games": 60077,
+        "percentage": 22.27
+      },
+      "3": {
+        "games": 85659,
+        "percentage": 31.75
+      },
+      "4": {
+        "games": 99286,
+        "percentage": 36.8
+      },
+      "5": {
+        "games": 23431,
+        "percentage": 8.69
+      }
+    }
+  },
+  "56": {
+    "hero_id": 56,
+    "hero_name": "Clinkz",
+    "total_games": 299186,
+    "positions": {
+      "1": {
+        "games": 231000,
+        "percentage": 77.21
+      },
+      "2": {
+        "games": 53557,
+        "percentage": 17.9
+      },
+      "3": {
+        "games": 4063,
+        "percentage": 1.36
+      },
+      "4": {
+        "games": 8120,
+        "percentage": 2.71
+      },
+      "5": {
+        "games": 2446,
+        "percentage": 0.82
+      }
+    }
+  },
+  "42": {
+    "hero_id": 42,
+    "hero_name": "Wraith King",
+    "total_games": 163966,
+    "positions": {
+      "1": {
+        "games": 73186,
+        "percentage": 44.63
+      },
+      "2": {
+        "games": 2305,
+        "percentage": 1.41
+      },
+      "3": {
+        "games": 86668,
+        "percentage": 52.86
+      },
+      "4": {
+        "games": 1317,
+        "percentage": 0.8
+      },
+      "5": {
+        "games": 490,
+        "percentage": 0.3
+      }
+    }
+  },
+  "123": {
+    "hero_id": 123,
+    "hero_name": "Hoodwink",
+    "total_games": 197953,
+    "positions": {
+      "1": {
+        "games": 2024,
+        "percentage": 1.02
+      },
+      "2": {
+        "games": 4986,
+        "percentage": 2.52
+      },
+      "3": {
+        "games": 2744,
+        "percentage": 1.39
+      },
+      "4": {
+        "games": 124540,
+        "percentage": 62.91
+      },
+      "5": {
+        "games": 63659,
+        "percentage": 32.16
+      }
+    }
+  },
+  "129": {
+    "hero_id": 129,
+    "hero_name": "Mars",
+    "total_games": 325882,
+    "positions": {
+      "1": {
+        "games": 1594,
+        "percentage": 0.49
+      },
+      "2": {
+        "games": 13444,
+        "percentage": 4.13
+      },
+      "3": {
+        "games": 302552,
+        "percentage": 92.84
+      },
+      "4": {
+        "games": 5453,
+        "percentage": 1.67
+      },
+      "5": {
+        "games": 2839,
+        "percentage": 0.87
+      }
+    }
+  },
+  "10": {
+    "hero_id": 10,
+    "hero_name": "Morphling",
+    "total_games": 203186,
+    "positions": {
+      "1": {
+        "games": 178343,
+        "percentage": 87.77
+      },
+      "2": {
+        "games": 20452,
+        "percentage": 10.07
+      },
+      "3": {
+        "games": 2477,
+        "percentage": 1.22
+      },
+      "4": {
+        "games": 1171,
+        "percentage": 0.58
+      },
+      "5": {
+        "games": 743,
+        "percentage": 0.37
+      }
+    }
+  },
+  "26": {
+    "hero_id": 26,
+    "hero_name": "Lion",
+    "total_games": 584567,
+    "positions": {
+      "1": {
+        "games": 1617,
+        "percentage": 0.28
+      },
+      "2": {
+        "games": 42510,
+        "percentage": 7.27
+      },
+      "3": {
+        "games": 3697,
+        "percentage": 0.63
+      },
+      "4": {
+        "games": 197369,
+        "percentage": 33.76
+      },
+      "5": {
+        "games": 339374,
+        "percentage": 58.06
+      }
+    }
+  },
+  "3": {
+    "hero_id": 3,
+    "hero_name": "Bane",
+    "total_games": 58579,
+    "positions": {
+      "1": {
+        "games": 56,
+        "percentage": 0.1
+      },
+      "2": {
+        "games": 3340,
+        "percentage": 5.7
+      },
+      "3": {
+        "games": 743,
+        "percentage": 1.27
+      },
+      "4": {
+        "games": 19536,
+        "percentage": 33.35
+      },
+      "5": {
+        "games": 34904,
+        "percentage": 59.58
+      }
+    }
+  },
+  "57": {
+    "hero_id": 57,
+    "hero_name": "Omniknight",
+    "total_games": 146793,
+    "positions": {
+      "1": {
+        "games": 6990,
+        "percentage": 4.76
+      },
+      "2": {
+        "games": 5218,
+        "percentage": 3.55
+      },
+      "3": {
+        "games": 81892,
+        "percentage": 55.79
+      },
+      "4": {
+        "games": 15856,
+        "percentage": 10.8
+      },
+      "5": {
+        "games": 36837,
+        "percentage": 25.09
+      }
+    }
+  },
+  "61": {
+    "hero_id": 61,
+    "hero_name": "Broodmother",
+    "total_games": 93434,
+    "positions": {
+      "1": {
+        "games": 26018,
+        "percentage": 27.85
+      },
+      "2": {
+        "games": 48561,
+        "percentage": 51.97
+      },
+      "3": {
+        "games": 18405,
+        "percentage": 19.7
+      },
+      "4": {
+        "games": 286,
+        "percentage": 0.31
+      },
+      "5": {
+        "games": 164,
+        "percentage": 0.18
+      }
+    }
+  },
+  "155": {
+    "hero_id": 155,
+    "hero_name": "Largo",
+    "total_games": 230053,
+    "positions": {
+      "1": {
+        "games": 964,
+        "percentage": 0.42
+      },
+      "2": {
+        "games": 14450,
+        "percentage": 6.28
+      },
+      "3": {
+        "games": 78565,
+        "percentage": 34.15
+      },
+      "4": {
+        "games": 61767,
+        "percentage": 26.85
+      },
+      "5": {
+        "games": 74307,
+        "percentage": 32.3
+      }
+    }
+  },
+  "63": {
+    "hero_id": 63,
+    "hero_name": "Weaver",
+    "total_games": 328803,
+    "positions": {
+      "1": {
+        "games": 141644,
+        "percentage": 43.08
+      },
+      "2": {
+        "games": 7614,
+        "percentage": 2.32
+      },
+      "3": {
+        "games": 19112,
+        "percentage": 5.81
+      },
+      "4": {
+        "games": 117035,
+        "percentage": 35.59
+      },
+      "5": {
+        "games": 43398,
+        "percentage": 13.2
+      }
+    }
+  },
+  "51": {
+    "hero_id": 51,
+    "hero_name": "Clockwerk",
+    "total_games": 154717,
+    "positions": {
+      "1": {
+        "games": 136,
+        "percentage": 0.09
+      },
+      "2": {
+        "games": 1812,
+        "percentage": 1.17
+      },
+      "3": {
+        "games": 10136,
+        "percentage": 6.55
+      },
+      "4": {
+        "games": 65460,
+        "percentage": 42.31
+      },
+      "5": {
+        "games": 77173,
+        "percentage": 49.88
+      }
+    }
+  },
+  "11": {
+    "hero_id": 11,
+    "hero_name": "Shadow Fiend",
+    "total_games": 462885,
+    "positions": {
+      "1": {
+        "games": 246347,
+        "percentage": 53.22
+      },
+      "2": {
+        "games": 204020,
+        "percentage": 44.08
+      },
+      "3": {
+        "games": 3976,
+        "percentage": 0.86
+      },
+      "4": {
+        "games": 5568,
+        "percentage": 1.2
+      },
+      "5": {
+        "games": 2974,
+        "percentage": 0.64
+      }
+    }
+  },
+  "50": {
+    "hero_id": 50,
+    "hero_name": "Dazzle",
+    "total_games": 126750,
+    "positions": {
+      "1": {
+        "games": 641,
+        "percentage": 0.51
+      },
+      "2": {
+        "games": 6494,
+        "percentage": 5.12
+      },
+      "3": {
+        "games": 3510,
+        "percentage": 2.77
+      },
+      "4": {
+        "games": 27433,
+        "percentage": 21.64
+      },
+      "5": {
+        "games": 88672,
+        "percentage": 69.96
+      }
+    }
+  },
+  "40": {
+    "hero_id": 40,
+    "hero_name": "Venomancer",
+    "total_games": 322680,
+    "positions": {
+      "1": {
+        "games": 2856,
+        "percentage": 0.89
+      },
+      "2": {
+        "games": 8408,
+        "percentage": 2.61
+      },
+      "3": {
+        "games": 22213,
+        "percentage": 6.88
+      },
+      "4": {
+        "games": 142362,
+        "percentage": 44.12
+      },
+      "5": {
+        "games": 146841,
+        "percentage": 45.51
+      }
+    }
+  },
+  "85": {
+    "hero_id": 85,
+    "hero_name": "Undying",
+    "total_games": 192505,
+    "positions": {
+      "1": {
+        "games": 615,
+        "percentage": 0.32
+      },
+      "2": {
+        "games": 4027,
+        "percentage": 2.09
+      },
+      "3": {
+        "games": 50128,
+        "percentage": 26.04
+      },
+      "4": {
+        "games": 54633,
+        "percentage": 28.38
+      },
+      "5": {
+        "games": 83102,
+        "percentage": 43.17
+      }
+    }
+  },
+  "107": {
+    "hero_id": 107,
+    "hero_name": "Earth Spirit",
+    "total_games": 115826,
+    "positions": {
+      "1": {
+        "games": 238,
+        "percentage": 0.21
+      },
+      "2": {
+        "games": 33086,
+        "percentage": 28.57
+      },
+      "3": {
+        "games": 15437,
+        "percentage": 13.33
+      },
+      "4": {
+        "games": 52320,
+        "percentage": 45.17
+      },
+      "5": {
+        "games": 14745,
+        "percentage": 12.73
+      }
+    }
+  },
+  "138": {
+    "hero_id": 138,
+    "hero_name": "Muerta",
+    "total_games": 148764,
+    "positions": {
+      "1": {
+        "games": 97797,
+        "percentage": 65.74
+      },
+      "2": {
+        "games": 13012,
+        "percentage": 8.75
+      },
+      "3": {
+        "games": 1776,
+        "percentage": 1.19
+      },
+      "4": {
+        "games": 26106,
+        "percentage": 17.55
+      },
+      "5": {
+        "games": 10073,
+        "percentage": 6.77
+      }
+    }
+  },
+  "38": {
+    "hero_id": 38,
+    "hero_name": "Beastmaster",
+    "total_games": 155016,
+    "positions": {
+      "1": {
+        "games": 21878,
+        "percentage": 14.11
+      },
+      "2": {
+        "games": 40655,
+        "percentage": 26.23
+      },
+      "3": {
+        "games": 90647,
+        "percentage": 58.48
+      },
+      "4": {
+        "games": 1078,
+        "percentage": 0.7
+      },
+      "5": {
+        "games": 758,
+        "percentage": 0.49
+      }
+    }
+  },
+  "106": {
+    "hero_id": 106,
+    "hero_name": "Ember Spirit",
+    "total_games": 265632,
+    "positions": {
+      "1": {
+        "games": 4172,
+        "percentage": 1.57
+      },
+      "2": {
+        "games": 245995,
+        "percentage": 92.61
+      },
+      "3": {
+        "games": 6715,
+        "percentage": 2.53
+      },
+      "4": {
+        "games": 6265,
+        "percentage": 2.36
+      },
+      "5": {
+        "games": 2485,
+        "percentage": 0.94
+      }
+    }
+  },
+  "21": {
+    "hero_id": 21,
+    "hero_name": "Windranger",
+    "total_games": 452728,
+    "positions": {
+      "1": {
+        "games": 122654,
+        "percentage": 27.09
+      },
+      "2": {
+        "games": 73955,
+        "percentage": 16.34
+      },
+      "3": {
+        "games": 64466,
+        "percentage": 14.24
+      },
+      "4": {
+        "games": 143366,
+        "percentage": 31.67
+      },
+      "5": {
+        "games": 48287,
+        "percentage": 10.67
+      }
+    }
+  },
+  "62": {
+    "hero_id": 62,
+    "hero_name": "Bounty Hunter",
+    "total_games": 145757,
+    "positions": {
+      "1": {
+        "games": 811,
+        "percentage": 0.56
+      },
+      "2": {
+        "games": 8978,
+        "percentage": 6.16
+      },
+      "3": {
+        "games": 7298,
+        "percentage": 5.01
+      },
+      "4": {
+        "games": 106696,
+        "percentage": 73.2
+      },
+      "5": {
+        "games": 21974,
+        "percentage": 15.08
+      }
+    }
+  },
+  "46": {
+    "hero_id": 46,
+    "hero_name": "Templar Assassin",
+    "total_games": 158032,
+    "positions": {
+      "1": {
+        "games": 132238,
+        "percentage": 83.68
+      },
+      "2": {
+        "games": 24630,
+        "percentage": 15.59
+      },
+      "3": {
+        "games": 451,
+        "percentage": 0.29
+      },
+      "4": {
+        "games": 424,
+        "percentage": 0.27
+      },
+      "5": {
+        "games": 289,
+        "percentage": 0.18
+      }
+    }
+  },
+  "126": {
+    "hero_id": 126,
+    "hero_name": "Void Spirit",
+    "total_games": 195381,
+    "positions": {
+      "1": {
+        "games": 5096,
+        "percentage": 2.61
+      },
+      "2": {
+        "games": 156382,
+        "percentage": 80.04
+      },
+      "3": {
+        "games": 20032,
+        "percentage": 10.25
+      },
+      "4": {
+        "games": 10636,
+        "percentage": 5.44
+      },
+      "5": {
+        "games": 3235,
+        "percentage": 1.66
+      }
+    }
+  },
+  "108": {
+    "hero_id": 108,
+    "hero_name": "Underlord",
+    "total_games": 193407,
+    "positions": {
+      "1": {
+        "games": 2157,
+        "percentage": 1.12
+      },
+      "2": {
+        "games": 3148,
+        "percentage": 1.63
+      },
+      "3": {
+        "games": 184077,
+        "percentage": 95.18
+      },
+      "4": {
+        "games": 2525,
+        "percentage": 1.31
+      },
+      "5": {
+        "games": 1500,
+        "percentage": 0.78
+      }
+    }
+  },
+  "91": {
+    "hero_id": 91,
+    "hero_name": "Io",
+    "total_games": 77523,
+    "positions": {
+      "1": {
+        "games": 972,
+        "percentage": 1.25
+      },
+      "2": {
+        "games": 4854,
+        "percentage": 6.26
+      },
+      "3": {
+        "games": 1665,
+        "percentage": 2.15
+      },
+      "4": {
+        "games": 15604,
+        "percentage": 20.13
+      },
+      "5": {
+        "games": 54428,
+        "percentage": 70.21
+      }
+    }
+  },
+  "19": {
+    "hero_id": 19,
+    "hero_name": "Tiny",
+    "total_games": 318366,
+    "positions": {
+      "1": {
+        "games": 22771,
+        "percentage": 7.15
+      },
+      "2": {
+        "games": 97418,
+        "percentage": 30.6
+      },
+      "3": {
+        "games": 64436,
+        "percentage": 20.24
+      },
+      "4": {
+        "games": 107137,
+        "percentage": 33.65
+      },
+      "5": {
+        "games": 26604,
+        "percentage": 8.36
+      }
+    }
+  },
+  "31": {
+    "hero_id": 31,
+    "hero_name": "Lich",
+    "total_games": 352568,
+    "positions": {
+      "1": {
+        "games": 291,
+        "percentage": 0.08
+      },
+      "2": {
+        "games": 1925,
+        "percentage": 0.55
+      },
+      "3": {
+        "games": 858,
+        "percentage": 0.24
+      },
+      "4": {
+        "games": 93168,
+        "percentage": 26.43
+      },
+      "5": {
+        "games": 256326,
+        "percentage": 72.7
+      }
+    }
+  },
+  "59": {
+    "hero_id": 59,
+    "hero_name": "Huskar",
+    "total_games": 165300,
+    "positions": {
+      "1": {
+        "games": 10050,
+        "percentage": 6.08
+      },
+      "2": {
+        "games": 115924,
+        "percentage": 70.13
+      },
+      "3": {
+        "games": 22915,
+        "percentage": 13.86
+      },
+      "4": {
+        "games": 7713,
+        "percentage": 4.67
+      },
+      "5": {
+        "games": 8698,
+        "percentage": 5.26
+      }
+    }
+  },
+  "27": {
+    "hero_id": 27,
+    "hero_name": "Shadow Shaman",
+    "total_games": 350421,
+    "positions": {
+      "1": {
+        "games": 400,
+        "percentage": 0.11
+      },
+      "2": {
+        "games": 1986,
+        "percentage": 0.57
+      },
+      "3": {
+        "games": 978,
+        "percentage": 0.28
+      },
+      "4": {
+        "games": 115315,
+        "percentage": 32.91
+      },
+      "5": {
+        "games": 231742,
+        "percentage": 66.13
+      }
+    }
+  },
+  "70": {
+    "hero_id": 70,
+    "hero_name": "Ursa",
+    "total_games": 251676,
+    "positions": {
+      "1": {
+        "games": 235749,
+        "percentage": 93.67
+      },
+      "2": {
+        "games": 5854,
+        "percentage": 2.33
+      },
+      "3": {
+        "games": 8815,
+        "percentage": 3.5
+      },
+      "4": {
+        "games": 708,
+        "percentage": 0.28
+      },
+      "5": {
+        "games": 550,
+        "percentage": 0.22
+      }
+    }
+  },
+  "2": {
+    "hero_id": 2,
+    "hero_name": "Axe",
+    "total_games": 414691,
+    "positions": {
+      "1": {
+        "games": 1560,
+        "percentage": 0.38
+      },
+      "2": {
+        "games": 10211,
+        "percentage": 2.46
+      },
+      "3": {
+        "games": 373687,
+        "percentage": 90.11
+      },
+      "4": {
+        "games": 17420,
+        "percentage": 4.2
+      },
+      "5": {
+        "games": 11813,
+        "percentage": 2.85
+      }
+    }
+  },
+  "41": {
+    "hero_id": 41,
+    "hero_name": "Faceless Void",
+    "total_games": 205010,
+    "positions": {
+      "1": {
+        "games": 165095,
+        "percentage": 80.53
+      },
+      "2": {
+        "games": 5701,
+        "percentage": 2.78
+      },
+      "3": {
+        "games": 20051,
+        "percentage": 9.78
+      },
+      "4": {
+        "games": 10632,
+        "percentage": 5.19
+      },
+      "5": {
+        "games": 3531,
+        "percentage": 1.72
+      }
+    }
+  },
+  "30": {
+    "hero_id": 30,
+    "hero_name": "Witch Doctor",
+    "total_games": 342727,
+    "positions": {
+      "1": {
+        "games": 163,
+        "percentage": 0.05
+      },
+      "2": {
+        "games": 2006,
+        "percentage": 0.59
+      },
+      "3": {
+        "games": 1184,
+        "percentage": 0.35
+      },
+      "4": {
+        "games": 105696,
+        "percentage": 30.84
+      },
+      "5": {
+        "games": 233678,
+        "percentage": 68.18
+      }
+    }
+  },
+  "119": {
+    "hero_id": 119,
+    "hero_name": "Dark Willow",
+    "total_games": 154780,
+    "positions": {
+      "1": {
+        "games": 864,
+        "percentage": 0.56
+      },
+      "2": {
+        "games": 7313,
+        "percentage": 4.72
+      },
+      "3": {
+        "games": 2110,
+        "percentage": 1.36
+      },
+      "4": {
+        "games": 82374,
+        "percentage": 53.22
+      },
+      "5": {
+        "games": 62119,
+        "percentage": 40.13
+      }
+    }
+  },
+  "16": {
+    "hero_id": 16,
+    "hero_name": "Sand King",
+    "total_games": 112462,
+    "positions": {
+      "1": {
+        "games": 289,
+        "percentage": 0.26
+      },
+      "2": {
+        "games": 37604,
+        "percentage": 33.44
+      },
+      "3": {
+        "games": 71885,
+        "percentage": 63.92
+      },
+      "4": {
+        "games": 2053,
+        "percentage": 1.83
+      },
+      "5": {
+        "games": 631,
+        "percentage": 0.56
+      }
+    }
+  },
+  "18": {
+    "hero_id": 18,
+    "hero_name": "Sven",
+    "total_games": 84919,
+    "positions": {
+      "1": {
+        "games": 79408,
+        "percentage": 93.51
+      },
+      "2": {
+        "games": 844,
+        "percentage": 0.99
+      },
+      "3": {
+        "games": 2093,
+        "percentage": 2.46
+      },
+      "4": {
+        "games": 1124,
+        "percentage": 1.32
+      },
+      "5": {
+        "games": 1450,
+        "percentage": 1.71
+      }
+    }
+  },
+  "69": {
+    "hero_id": 69,
+    "hero_name": "Doom",
+    "total_games": 120009,
+    "positions": {
+      "1": {
+        "games": 7743,
+        "percentage": 6.45
+      },
+      "2": {
+        "games": 6729,
+        "percentage": 5.61
+      },
+      "3": {
+        "games": 96568,
+        "percentage": 80.47
+      },
+      "4": {
+        "games": 5687,
+        "percentage": 4.74
+      },
+      "5": {
+        "games": 3282,
+        "percentage": 2.73
+      }
+    }
+  },
+  "95": {
+    "hero_id": 95,
+    "hero_name": "Troll Warlord",
+    "total_games": 46208,
+    "positions": {
+      "1": {
+        "games": 44453,
+        "percentage": 96.2
+      },
+      "2": {
+        "games": 634,
+        "percentage": 1.37
+      },
+      "3": {
+        "games": 732,
+        "percentage": 1.58
+      },
+      "4": {
+        "games": 200,
+        "percentage": 0.43
+      },
+      "5": {
+        "games": 189,
+        "percentage": 0.41
+      }
+    }
+  },
+  "66": {
+    "hero_id": 66,
+    "hero_name": "Chen",
+    "total_games": 27381,
+    "positions": {
+      "1": {
+        "games": 47,
+        "percentage": 0.17
+      },
+      "2": {
+        "games": 90,
+        "percentage": 0.33
+      },
+      "3": {
+        "games": 156,
+        "percentage": 0.57
+      },
+      "4": {
+        "games": 4647,
+        "percentage": 16.97
+      },
+      "5": {
+        "games": 22441,
+        "percentage": 81.96
+      }
+    }
+  },
+  "101": {
+    "hero_id": 101,
+    "hero_name": "Skywrath Mage",
+    "total_games": 371483,
+    "positions": {
+      "1": {
+        "games": 311,
+        "percentage": 0.08
+      },
+      "2": {
+        "games": 80297,
+        "percentage": 21.62
+      },
+      "3": {
+        "games": 2875,
+        "percentage": 0.77
+      },
+      "4": {
+        "games": 194882,
+        "percentage": 52.46
+      },
+      "5": {
+        "games": 93118,
+        "percentage": 25.07
+      }
+    }
+  },
+  "5": {
+    "hero_id": 5,
+    "hero_name": "Crystal Maiden",
+    "total_games": 225414,
+    "positions": {
+      "1": {
+        "games": 302,
+        "percentage": 0.13
+      },
+      "2": {
+        "games": 2681,
+        "percentage": 1.19
+      },
+      "3": {
+        "games": 787,
+        "percentage": 0.35
+      },
+      "4": {
+        "games": 45395,
+        "percentage": 20.14
+      },
+      "5": {
+        "games": 176249,
+        "percentage": 78.19
+      }
+    }
+  },
+  "137": {
+    "hero_id": 137,
+    "hero_name": "Primal Beast",
+    "total_games": 135172,
+    "positions": {
+      "1": {
+        "games": 284,
+        "percentage": 0.21
+      },
+      "2": {
+        "games": 35305,
+        "percentage": 26.12
+      },
+      "3": {
+        "games": 96247,
+        "percentage": 71.2
+      },
+      "4": {
+        "games": 2543,
+        "percentage": 1.88
+      },
+      "5": {
+        "games": 793,
+        "percentage": 0.59
+      }
+    }
+  },
+  "98": {
+    "hero_id": 98,
+    "hero_name": "Timbersaw",
+    "total_games": 174909,
+    "positions": {
+      "1": {
+        "games": 2028,
+        "percentage": 1.16
+      },
+      "2": {
+        "games": 25474,
+        "percentage": 14.56
+      },
+      "3": {
+        "games": 143898,
+        "percentage": 82.27
+      },
+      "4": {
+        "games": 2279,
+        "percentage": 1.3
+      },
+      "5": {
+        "games": 1230,
+        "percentage": 0.7
+      }
+    }
+  },
+  "92": {
+    "hero_id": 92,
+    "hero_name": "Visage",
+    "total_games": 60537,
+    "positions": {
+      "1": {
+        "games": 493,
+        "percentage": 0.81
+      },
+      "2": {
+        "games": 17578,
+        "percentage": 29.04
+      },
+      "3": {
+        "games": 28726,
+        "percentage": 47.45
+      },
+      "4": {
+        "games": 9111,
+        "percentage": 15.05
+      },
+      "5": {
+        "games": 4629,
+        "percentage": 7.65
+      }
+    }
+  },
+  "34": {
+    "hero_id": 34,
+    "hero_name": "Tinker",
+    "total_games": 146592,
+    "positions": {
+      "1": {
+        "games": 1916,
+        "percentage": 1.31
+      },
+      "2": {
+        "games": 124325,
+        "percentage": 84.81
+      },
+      "3": {
+        "games": 2279,
+        "percentage": 1.55
+      },
+      "4": {
+        "games": 9597,
+        "percentage": 6.55
+      },
+      "5": {
+        "games": 8475,
+        "percentage": 5.78
+      }
+    }
+  },
+  "79": {
+    "hero_id": 79,
+    "hero_name": "Shadow Demon",
+    "total_games": 117321,
+    "positions": {
+      "1": {
+        "games": 148,
+        "percentage": 0.13
+      },
+      "2": {
+        "games": 1360,
+        "percentage": 1.16
+      },
+      "3": {
+        "games": 451,
+        "percentage": 0.38
+      },
+      "4": {
+        "games": 49259,
+        "percentage": 41.99
+      },
+      "5": {
+        "games": 66103,
+        "percentage": 56.34
+      }
+    }
+  },
+  "1": {
+    "hero_id": 1,
+    "hero_name": "Anti-Mage",
+    "total_games": 258785,
+    "positions": {
+      "1": {
+        "games": 239832,
+        "percentage": 92.68
+      },
+      "2": {
+        "games": 12043,
+        "percentage": 4.65
+      },
+      "3": {
+        "games": 5035,
+        "percentage": 1.95
+      },
+      "4": {
+        "games": 1027,
+        "percentage": 0.4
+      },
+      "5": {
+        "games": 848,
+        "percentage": 0.33
+      }
+    }
+  },
+  "52": {
+    "hero_id": 52,
+    "hero_name": "Leshrac",
+    "total_games": 130547,
+    "positions": {
+      "1": {
+        "games": 4624,
+        "percentage": 3.54
+      },
+      "2": {
+        "games": 102922,
+        "percentage": 78.84
+      },
+      "3": {
+        "games": 6912,
+        "percentage": 5.29
+      },
+      "4": {
+        "games": 10535,
+        "percentage": 8.07
+      },
+      "5": {
+        "games": 5554,
+        "percentage": 4.25
+      }
+    }
+  },
+  "28": {
+    "hero_id": 28,
+    "hero_name": "Slardar",
+    "total_games": 255415,
+    "positions": {
+      "1": {
+        "games": 2763,
+        "percentage": 1.08
+      },
+      "2": {
+        "games": 39138,
+        "percentage": 15.32
+      },
+      "3": {
+        "games": 210058,
+        "percentage": 82.24
+      },
+      "4": {
+        "games": 2622,
+        "percentage": 1.03
+      },
+      "5": {
+        "games": 834,
+        "percentage": 0.33
+      }
+    }
+  },
+  "87": {
+    "hero_id": 87,
+    "hero_name": "Disruptor",
+    "total_games": 255129,
+    "positions": {
+      "1": {
+        "games": 116,
+        "percentage": 0.05
+      },
+      "2": {
+        "games": 987,
+        "percentage": 0.39
+      },
+      "3": {
+        "games": 388,
+        "percentage": 0.15
+      },
+      "4": {
+        "games": 58611,
+        "percentage": 22.97
+      },
+      "5": {
+        "games": 195027,
+        "percentage": 76.44
+      }
+    }
+  },
+  "88": {
+    "hero_id": 88,
+    "hero_name": "Nyx Assassin",
+    "total_games": 184292,
+    "positions": {
+      "1": {
+        "games": 452,
+        "percentage": 0.25
+      },
+      "2": {
+        "games": 30385,
+        "percentage": 16.49
+      },
+      "3": {
+        "games": 16551,
+        "percentage": 8.98
+      },
+      "4": {
+        "games": 108672,
+        "percentage": 58.97
+      },
+      "5": {
+        "games": 28232,
+        "percentage": 15.32
+      }
+    }
+  },
+  "23": {
+    "hero_id": 23,
+    "hero_name": "Kunkka",
+    "total_games": 110816,
+    "positions": {
+      "1": {
+        "games": 1817,
+        "percentage": 1.64
+      },
+      "2": {
+        "games": 40103,
+        "percentage": 36.19
+      },
+      "3": {
+        "games": 63294,
+        "percentage": 57.12
+      },
+      "4": {
+        "games": 3908,
+        "percentage": 3.53
+      },
+      "5": {
+        "games": 1694,
+        "percentage": 1.53
+      }
+    }
+  },
+  "145": {
+    "hero_id": 145,
+    "hero_name": "Kez",
+    "total_games": 167111,
+    "positions": {
+      "1": {
+        "games": 109850,
+        "percentage": 65.73
+      },
+      "2": {
+        "games": 48701,
+        "percentage": 29.14
+      },
+      "3": {
+        "games": 7011,
+        "percentage": 4.2
+      },
+      "4": {
+        "games": 947,
+        "percentage": 0.57
+      },
+      "5": {
+        "games": 602,
+        "percentage": 0.36
+      }
+    }
+  },
+  "36": {
+    "hero_id": 36,
+    "hero_name": "Necrophos",
+    "total_games": 286200,
+    "positions": {
+      "1": {
+        "games": 15442,
+        "percentage": 5.4
+      },
+      "2": {
+        "games": 175972,
+        "percentage": 61.49
+      },
+      "3": {
+        "games": 90854,
+        "percentage": 31.74
+      },
+      "4": {
+        "games": 2557,
+        "percentage": 0.89
+      },
+      "5": {
+        "games": 1375,
+        "percentage": 0.48
+      }
+    }
+  },
+  "97": {
+    "hero_id": 97,
+    "hero_name": "Magnus",
+    "total_games": 331706,
+    "positions": {
+      "1": {
+        "games": 3964,
+        "percentage": 1.2
+      },
+      "2": {
+        "games": 63672,
+        "percentage": 19.2
+      },
+      "3": {
+        "games": 164476,
+        "percentage": 49.58
+      },
+      "4": {
+        "games": 61887,
+        "percentage": 18.66
+      },
+      "5": {
+        "games": 37707,
+        "percentage": 11.37
+      }
+    }
+  },
+  "45": {
+    "hero_id": 45,
+    "hero_name": "Pugna",
+    "total_games": 102918,
+    "positions": {
+      "1": {
+        "games": 120,
+        "percentage": 0.12
+      },
+      "2": {
+        "games": 12094,
+        "percentage": 11.75
+      },
+      "3": {
+        "games": 2280,
+        "percentage": 2.22
+      },
+      "4": {
+        "games": 43442,
+        "percentage": 42.21
+      },
+      "5": {
+        "games": 44982,
+        "percentage": 43.71
+      }
+    }
+  },
+  "73": {
+    "hero_id": 73,
+    "hero_name": "Alchemist",
+    "total_games": 169826,
+    "positions": {
+      "1": {
+        "games": 68019,
+        "percentage": 40.05
+      },
+      "2": {
+        "games": 24258,
+        "percentage": 14.28
+      },
+      "3": {
+        "games": 19309,
+        "percentage": 11.37
+      },
+      "4": {
+        "games": 31946,
+        "percentage": 18.81
+      },
+      "5": {
+        "games": 26294,
+        "percentage": 15.48
+      }
+    }
+  },
+  "48": {
+    "hero_id": 48,
+    "hero_name": "Luna",
+    "total_games": 180650,
+    "positions": {
+      "1": {
+        "games": 173491,
+        "percentage": 96.04
+      },
+      "2": {
+        "games": 3200,
+        "percentage": 1.77
+      },
+      "3": {
+        "games": 1245,
+        "percentage": 0.69
+      },
+      "4": {
+        "games": 1906,
+        "percentage": 1.06
+      },
+      "5": {
+        "games": 808,
+        "percentage": 0.45
+      }
+    }
+  },
+  "22": {
+    "hero_id": 22,
+    "hero_name": "Zeus",
+    "total_games": 307504,
+    "positions": {
+      "1": {
+        "games": 4198,
+        "percentage": 1.37
+      },
+      "2": {
+        "games": 101713,
+        "percentage": 33.08
+      },
+      "3": {
+        "games": 4095,
+        "percentage": 1.33
+      },
+      "4": {
+        "games": 136949,
+        "percentage": 44.54
+      },
+      "5": {
+        "games": 60549,
+        "percentage": 19.69
+      }
+    }
+  },
+  "71": {
+    "hero_id": 71,
+    "hero_name": "Spirit Breaker",
+    "total_games": 320445,
+    "positions": {
+      "1": {
+        "games": 575,
+        "percentage": 0.18
+      },
+      "2": {
+        "games": 9370,
+        "percentage": 2.92
+      },
+      "3": {
+        "games": 45809,
+        "percentage": 14.3
+      },
+      "4": {
+        "games": 223985,
+        "percentage": 69.9
+      },
+      "5": {
+        "games": 40706,
+        "percentage": 12.7
+      }
+    }
+  },
+  "112": {
+    "hero_id": 112,
+    "hero_name": "Winter Wyvern",
+    "total_games": 120084,
+    "positions": {
+      "1": {
+        "games": 491,
+        "percentage": 0.41
+      },
+      "2": {
+        "games": 4559,
+        "percentage": 3.8
+      },
+      "3": {
+        "games": 9340,
+        "percentage": 7.78
+      },
+      "4": {
+        "games": 40144,
+        "percentage": 33.43
+      },
+      "5": {
+        "games": 65550,
+        "percentage": 54.59
+      }
+    }
+  },
+  "83": {
+    "hero_id": 83,
+    "hero_name": "Treant Protector",
+    "total_games": 155718,
+    "positions": {
+      "1": {
+        "games": 1247,
+        "percentage": 0.8
+      },
+      "2": {
+        "games": 1923,
+        "percentage": 1.23
+      },
+      "3": {
+        "games": 14388,
+        "percentage": 9.24
+      },
+      "4": {
+        "games": 33155,
+        "percentage": 21.29
+      },
+      "5": {
+        "games": 105005,
+        "percentage": 67.43
+      }
+    }
+  },
+  "109": {
+    "hero_id": 109,
+    "hero_name": "Terrorblade",
+    "total_games": 64960,
+    "positions": {
+      "1": {
+        "games": 59230,
+        "percentage": 91.18
+      },
+      "2": {
+        "games": 331,
+        "percentage": 0.51
+      },
+      "3": {
+        "games": 1550,
+        "percentage": 2.39
+      },
+      "4": {
+        "games": 2549,
+        "percentage": 3.92
+      },
+      "5": {
+        "games": 1300,
+        "percentage": 2.0
+      }
+    }
+  },
+  "13": {
+    "hero_id": 13,
+    "hero_name": "Puck",
+    "total_games": 194263,
+    "positions": {
+      "1": {
+        "games": 835,
+        "percentage": 0.43
+      },
+      "2": {
+        "games": 189321,
+        "percentage": 97.46
+      },
+      "3": {
+        "games": 1672,
+        "percentage": 0.86
+      },
+      "4": {
+        "games": 1704,
+        "percentage": 0.88
+      },
+      "5": {
+        "games": 731,
+        "percentage": 0.38
+      }
+    }
+  },
+  "114": {
+    "hero_id": 114,
+    "hero_name": "Monkey King",
+    "total_games": 159752,
+    "positions": {
+      "1": {
+        "games": 92147,
+        "percentage": 57.68
+      },
+      "2": {
+        "games": 42627,
+        "percentage": 26.68
+      },
+      "3": {
+        "games": 8493,
+        "percentage": 5.32
+      },
+      "4": {
+        "games": 12904,
+        "percentage": 8.08
+      },
+      "5": {
+        "games": 3581,
+        "percentage": 2.24
+      }
+    }
+  },
+  "20": {
+    "hero_id": 20,
+    "hero_name": "Vengeful Spirit",
+    "total_games": 153482,
+    "positions": {
+      "1": {
+        "games": 7907,
+        "percentage": 5.15
+      },
+      "2": {
+        "games": 6899,
+        "percentage": 4.49
+      },
+      "3": {
+        "games": 29987,
+        "percentage": 19.54
+      },
+      "4": {
+        "games": 51584,
+        "percentage": 33.61
+      },
+      "5": {
+        "games": 57105,
+        "percentage": 37.21
+      }
+    }
+  },
+  "60": {
+    "hero_id": 60,
+    "hero_name": "Night Stalker",
+    "total_games": 160894,
+    "positions": {
+      "1": {
+        "games": 1713,
+        "percentage": 1.06
+      },
+      "2": {
+        "games": 8418,
+        "percentage": 5.23
+      },
+      "3": {
+        "games": 147571,
+        "percentage": 91.72
+      },
+      "4": {
+        "games": 2271,
+        "percentage": 1.41
+      },
+      "5": {
+        "games": 921,
+        "percentage": 0.57
+      }
+    }
+  },
+  "128": {
+    "hero_id": 128,
+    "hero_name": "Snapfire",
+    "total_games": 224802,
+    "positions": {
+      "1": {
+        "games": 683,
+        "percentage": 0.3
+      },
+      "2": {
+        "games": 8158,
+        "percentage": 3.63
+      },
+      "3": {
+        "games": 7664,
+        "percentage": 3.41
+      },
+      "4": {
+        "games": 120334,
+        "percentage": 53.53
+      },
+      "5": {
+        "games": 87963,
+        "percentage": 39.13
+      }
+    }
+  },
+  "131": {
+    "hero_id": 131,
+    "hero_name": "Ringmaster",
+    "total_games": 133900,
+    "positions": {
+      "1": {
+        "games": 61,
+        "percentage": 0.05
+      },
+      "2": {
+        "games": 419,
+        "percentage": 0.31
+      },
+      "3": {
+        "games": 327,
+        "percentage": 0.24
+      },
+      "4": {
+        "games": 55958,
+        "percentage": 41.79
+      },
+      "5": {
+        "games": 77135,
+        "percentage": 57.61
+      }
+    }
+  },
+  "76": {
+    "hero_id": 76,
+    "hero_name": "Outworld Destroyer",
+    "total_games": 142365,
+    "positions": {
+      "1": {
+        "games": 2606,
+        "percentage": 1.83
+      },
+      "2": {
+        "games": 135357,
+        "percentage": 95.08
+      },
+      "3": {
+        "games": 2591,
+        "percentage": 1.82
+      },
+      "4": {
+        "games": 1199,
+        "percentage": 0.84
+      },
+      "5": {
+        "games": 612,
+        "percentage": 0.43
+      }
+    }
+  },
+  "93": {
+    "hero_id": 93,
+    "hero_name": "Slark",
+    "total_games": 393790,
+    "positions": {
+      "1": {
+        "games": 337723,
+        "percentage": 85.76
+      },
+      "2": {
+        "games": 20344,
+        "percentage": 5.17
+      },
+      "3": {
+        "games": 14326,
+        "percentage": 3.64
+      },
+      "4": {
+        "games": 13085,
+        "percentage": 3.32
+      },
+      "5": {
+        "games": 8312,
+        "percentage": 2.11
+      }
+    }
+  },
+  "78": {
+    "hero_id": 78,
+    "hero_name": "Brewmaster",
+    "total_games": 56403,
+    "positions": {
+      "1": {
+        "games": 472,
+        "percentage": 0.84
+      },
+      "2": {
+        "games": 3678,
+        "percentage": 6.52
+      },
+      "3": {
+        "games": 48622,
+        "percentage": 86.2
+      },
+      "4": {
+        "games": 2239,
+        "percentage": 3.97
+      },
+      "5": {
+        "games": 1392,
+        "percentage": 2.47
+      }
+    }
+  },
+  "136": {
+    "hero_id": 136,
+    "hero_name": "Marci",
+    "total_games": 126361,
+    "positions": {
+      "1": {
+        "games": 14028,
+        "percentage": 11.1
+      },
+      "2": {
+        "games": 33494,
+        "percentage": 26.51
+      },
+      "3": {
+        "games": 18785,
+        "percentage": 14.87
+      },
+      "4": {
+        "games": 28579,
+        "percentage": 22.62
+      },
+      "5": {
+        "games": 31475,
+        "percentage": 24.91
+      }
+    }
+  },
+  "8": {
+    "hero_id": 8,
+    "hero_name": "Juggernaut",
+    "total_games": 348879,
+    "positions": {
+      "1": {
+        "games": 343773,
+        "percentage": 98.54
+      },
+      "2": {
+        "games": 1905,
+        "percentage": 0.55
+      },
+      "3": {
+        "games": 1879,
+        "percentage": 0.54
+      },
+      "4": {
+        "games": 669,
+        "percentage": 0.19
+      },
+      "5": {
+        "games": 653,
+        "percentage": 0.19
+      }
+    }
+  },
+  "100": {
+    "hero_id": 100,
+    "hero_name": "Tusk",
+    "total_games": 238953,
+    "positions": {
+      "1": {
+        "games": 654,
+        "percentage": 0.27
+      },
+      "2": {
+        "games": 12961,
+        "percentage": 5.42
+      },
+      "3": {
+        "games": 18082,
+        "percentage": 7.57
+      },
+      "4": {
+        "games": 104358,
+        "percentage": 43.67
+      },
+      "5": {
+        "games": 102898,
+        "percentage": 43.06
+      }
+    }
+  },
+  "43": {
+    "hero_id": 43,
+    "hero_name": "Death Prophet",
+    "total_games": 87150,
+    "positions": {
+      "1": {
+        "games": 562,
+        "percentage": 0.64
+      },
+      "2": {
+        "games": 40615,
+        "percentage": 46.6
+      },
+      "3": {
+        "games": 39270,
+        "percentage": 45.06
+      },
+      "4": {
+        "games": 3773,
+        "percentage": 4.33
+      },
+      "5": {
+        "games": 2930,
+        "percentage": 3.36
+      }
+    }
+  },
+  "94": {
+    "hero_id": 94,
+    "hero_name": "Medusa",
+    "total_games": 101012,
+    "positions": {
+      "1": {
+        "games": 92793,
+        "percentage": 91.86
+      },
+      "2": {
+        "games": 3741,
+        "percentage": 3.7
+      },
+      "3": {
+        "games": 3480,
+        "percentage": 3.45
+      },
+      "4": {
+        "games": 543,
+        "percentage": 0.54
+      },
+      "5": {
+        "games": 455,
+        "percentage": 0.45
+      }
+    }
+  },
+  "39": {
+    "hero_id": 39,
+    "hero_name": "Queen of Pain",
+    "total_games": 439978,
+    "positions": {
+      "1": {
+        "games": 7347,
+        "percentage": 1.67
+      },
+      "2": {
+        "games": 352625,
+        "percentage": 80.15
+      },
+      "3": {
+        "games": 26069,
+        "percentage": 5.93
+      },
+      "4": {
+        "games": 39538,
+        "percentage": 8.99
+      },
+      "5": {
+        "games": 14399,
+        "percentage": 3.27
+      }
+    }
+  },
+  "4": {
+    "hero_id": 4,
+    "hero_name": "Bloodseeker",
+    "total_games": 66949,
+    "positions": {
+      "1": {
+        "games": 49016,
+        "percentage": 73.21
+      },
+      "2": {
+        "games": 8563,
+        "percentage": 12.79
+      },
+      "3": {
+        "games": 7454,
+        "percentage": 11.13
+      },
+      "4": {
+        "games": 1247,
+        "percentage": 1.86
+      },
+      "5": {
+        "games": 669,
+        "percentage": 1.0
+      }
+    }
+  },
+  "44": {
+    "hero_id": 44,
+    "hero_name": "Phantom Assassin",
+    "total_games": 194184,
+    "positions": {
+      "1": {
+        "games": 188336,
+        "percentage": 96.99
+      },
+      "2": {
+        "games": 2898,
+        "percentage": 1.49
+      },
+      "3": {
+        "games": 1154,
+        "percentage": 0.59
+      },
+      "4": {
+        "games": 1083,
+        "percentage": 0.56
+      },
+      "5": {
+        "games": 713,
+        "percentage": 0.37
+      }
+    }
+  },
+  "120": {
+    "hero_id": 120,
+    "hero_name": "Pangolier",
+    "total_games": 92225,
+    "positions": {
+      "1": {
+        "games": 860,
+        "percentage": 0.93
+      },
+      "2": {
+        "games": 47628,
+        "percentage": 51.64
+      },
+      "3": {
+        "games": 41635,
+        "percentage": 45.15
+      },
+      "4": {
+        "games": 1522,
+        "percentage": 1.65
+      },
+      "5": {
+        "games": 580,
+        "percentage": 0.63
+      }
+    }
+  },
+  "53": {
+    "hero_id": 53,
+    "hero_name": "Nature's Prophet",
+    "total_games": 198670,
+    "positions": {
+      "1": {
+        "games": 41255,
+        "percentage": 20.77
+      },
+      "2": {
+        "games": 50782,
+        "percentage": 25.56
+      },
+      "3": {
+        "games": 14706,
+        "percentage": 7.4
+      },
+      "4": {
+        "games": 64974,
+        "percentage": 32.7
+      },
+      "5": {
+        "games": 26953,
+        "percentage": 13.57
+      }
+    }
+  },
+  "81": {
+    "hero_id": 81,
+    "hero_name": "Chaos Knight",
+    "total_games": 92555,
+    "positions": {
+      "1": {
+        "games": 36205,
+        "percentage": 39.12
+      },
+      "2": {
+        "games": 3594,
+        "percentage": 3.88
+      },
+      "3": {
+        "games": 47368,
+        "percentage": 51.18
+      },
+      "4": {
+        "games": 3278,
+        "percentage": 3.54
+      },
+      "5": {
+        "games": 2110,
+        "percentage": 2.28
+      }
+    }
+  },
+  "58": {
+    "hero_id": 58,
+    "hero_name": "Enchantress",
+    "total_games": 43189,
+    "positions": {
+      "1": {
+        "games": 384,
+        "percentage": 0.89
+      },
+      "2": {
+        "games": 4937,
+        "percentage": 11.43
+      },
+      "3": {
+        "games": 4441,
+        "percentage": 10.28
+      },
+      "4": {
+        "games": 13774,
+        "percentage": 31.89
+      },
+      "5": {
+        "games": 19653,
+        "percentage": 45.5
+      }
+    }
+  },
+  "67": {
+    "hero_id": 67,
+    "hero_name": "Spectre",
+    "total_games": 158202,
+    "positions": {
+      "1": {
+        "games": 153379,
+        "percentage": 96.95
+      },
+      "2": {
+        "games": 2113,
+        "percentage": 1.34
+      },
+      "3": {
+        "games": 2001,
+        "percentage": 1.26
+      },
+      "4": {
+        "games": 321,
+        "percentage": 0.2
+      },
+      "5": {
+        "games": 388,
+        "percentage": 0.25
+      }
+    }
+  },
+  "49": {
+    "hero_id": 49,
+    "hero_name": "Dragon Knight",
+    "total_games": 141134,
+    "positions": {
+      "1": {
+        "games": 57414,
+        "percentage": 40.68
+      },
+      "2": {
+        "games": 41254,
+        "percentage": 29.23
+      },
+      "3": {
+        "games": 41626,
+        "percentage": 29.49
+      },
+      "4": {
+        "games": 481,
+        "percentage": 0.34
+      },
+      "5": {
+        "games": 359,
+        "percentage": 0.25
+      }
+    }
+  },
+  "89": {
+    "hero_id": 89,
+    "hero_name": "Naga Siren",
+    "total_games": 28590,
+    "positions": {
+      "1": {
+        "games": 23146,
+        "percentage": 80.96
+      },
+      "2": {
+        "games": 747,
+        "percentage": 2.61
+      },
+      "3": {
+        "games": 753,
+        "percentage": 2.63
+      },
+      "4": {
+        "games": 1438,
+        "percentage": 5.03
+      },
+      "5": {
+        "games": 2506,
+        "percentage": 8.77
+      }
+    }
+  },
+  "111": {
+    "hero_id": 111,
+    "hero_name": "Oracle",
+    "total_games": 95861,
+    "positions": {
+      "1": {
+        "games": 131,
+        "percentage": 0.14
+      },
+      "2": {
+        "games": 4260,
+        "percentage": 4.44
+      },
+      "3": {
+        "games": 438,
+        "percentage": 0.46
+      },
+      "4": {
+        "games": 20814,
+        "percentage": 21.71
+      },
+      "5": {
+        "games": 70218,
+        "percentage": 73.25
+      }
+    }
+  },
+  "65": {
+    "hero_id": 65,
+    "hero_name": "Batrider",
+    "total_games": 93423,
+    "positions": {
+      "1": {
+        "games": 2040,
+        "percentage": 2.18
+      },
+      "2": {
+        "games": 27535,
+        "percentage": 29.47
+      },
+      "3": {
+        "games": 36869,
+        "percentage": 39.46
+      },
+      "4": {
+        "games": 17353,
+        "percentage": 18.57
+      },
+      "5": {
+        "games": 9626,
+        "percentage": 10.3
+      }
+    }
+  },
+  "72": {
+    "hero_id": 72,
+    "hero_name": "Gyrocopter",
+    "total_games": 135711,
+    "positions": {
+      "1": {
+        "games": 102412,
+        "percentage": 75.46
+      },
+      "2": {
+        "games": 2085,
+        "percentage": 1.54
+      },
+      "3": {
+        "games": 1974,
+        "percentage": 1.45
+      },
+      "4": {
+        "games": 19397,
+        "percentage": 14.29
+      },
+      "5": {
+        "games": 9843,
+        "percentage": 7.25
+      }
+    }
+  },
+  "105": {
+    "hero_id": 105,
+    "hero_name": "Techies",
+    "total_games": 212567,
+    "positions": {
+      "1": {
+        "games": 894,
+        "percentage": 0.42
+      },
+      "2": {
+        "games": 9537,
+        "percentage": 4.49
+      },
+      "3": {
+        "games": 3610,
+        "percentage": 1.7
+      },
+      "4": {
+        "games": 125881,
+        "percentage": 59.22
+      },
+      "5": {
+        "games": 72645,
+        "percentage": 34.18
+      }
+    }
+  },
+  "33": {
+    "hero_id": 33,
+    "hero_name": "Enigma",
+    "total_games": 57433,
+    "positions": {
+      "1": {
+        "games": 171,
+        "percentage": 0.3
+      },
+      "2": {
+        "games": 3095,
+        "percentage": 5.39
+      },
+      "3": {
+        "games": 33838,
+        "percentage": 58.92
+      },
+      "4": {
+        "games": 13802,
+        "percentage": 24.03
+      },
+      "5": {
+        "games": 6527,
+        "percentage": 11.36
+      }
+    }
+  },
+  "135": {
+    "hero_id": 135,
+    "hero_name": "Dawnbreaker",
+    "total_games": 170931,
+    "positions": {
+      "1": {
+        "games": 1571,
+        "percentage": 0.92
+      },
+      "2": {
+        "games": 11970,
+        "percentage": 7.0
+      },
+      "3": {
+        "games": 140416,
+        "percentage": 82.15
+      },
+      "4": {
+        "games": 10599,
+        "percentage": 6.2
+      },
+      "5": {
+        "games": 6375,
+        "percentage": 3.73
+      }
+    }
+  },
+  "121": {
+    "hero_id": 121,
+    "hero_name": "Grimstroke",
+    "total_games": 99465,
+    "positions": {
+      "1": {
+        "games": 93,
+        "percentage": 0.09
+      },
+      "2": {
+        "games": 2176,
+        "percentage": 2.19
+      },
+      "3": {
+        "games": 709,
+        "percentage": 0.71
+      },
+      "4": {
+        "games": 45177,
+        "percentage": 45.42
+      },
+      "5": {
+        "games": 51310,
+        "percentage": 51.59
+      }
+    }
+  },
+  "9": {
+    "hero_id": 9,
+    "hero_name": "Mirana",
+    "total_games": 162264,
+    "positions": {
+      "1": {
+        "games": 7836,
+        "percentage": 4.83
+      },
+      "2": {
+        "games": 24644,
+        "percentage": 15.19
+      },
+      "3": {
+        "games": 7381,
+        "percentage": 4.55
+      },
+      "4": {
+        "games": 89016,
+        "percentage": 54.86
+      },
+      "5": {
+        "games": 33387,
+        "percentage": 20.58
+      }
+    }
+  },
+  "80": {
+    "hero_id": 80,
+    "hero_name": "Lone Druid",
+    "total_games": 48432,
+    "positions": {
+      "1": {
+        "games": 14940,
+        "percentage": 30.85
+      },
+      "2": {
+        "games": 22692,
+        "percentage": 46.85
+      },
+      "3": {
+        "games": 8868,
+        "percentage": 18.31
+      },
+      "4": {
+        "games": 857,
+        "percentage": 1.77
+      },
+      "5": {
+        "games": 1075,
+        "percentage": 2.22
+      }
+    }
+  },
+  "32": {
+    "hero_id": 32,
+    "hero_name": "Riki",
+    "total_games": 94650,
+    "positions": {
+      "1": {
+        "games": 37890,
+        "percentage": 40.03
+      },
+      "2": {
+        "games": 30048,
+        "percentage": 31.75
+      },
+      "3": {
+        "games": 11063,
+        "percentage": 11.69
+      },
+      "4": {
+        "games": 12218,
+        "percentage": 12.91
+      },
+      "5": {
+        "games": 3431,
+        "percentage": 3.62
+      }
+    }
+  },
+  "55": {
+    "hero_id": 55,
+    "hero_name": "Dark Seer",
+    "total_games": 46529,
+    "positions": {
+      "1": {
+        "games": 171,
+        "percentage": 0.37
+      },
+      "2": {
+        "games": 1298,
+        "percentage": 2.79
+      },
+      "3": {
+        "games": 42687,
+        "percentage": 91.74
+      },
+      "4": {
+        "games": 1782,
+        "percentage": 3.83
+      },
+      "5": {
+        "games": 591,
+        "percentage": 1.27
+      }
+    }
+  },
+  "103": {
+    "hero_id": 103,
+    "hero_name": "Elder Titan",
+    "total_games": 30395,
+    "positions": {
+      "1": {
+        "games": 652,
+        "percentage": 2.15
+      },
+      "2": {
+        "games": 765,
+        "percentage": 2.52
+      },
+      "3": {
+        "games": 8151,
+        "percentage": 26.82
+      },
+      "4": {
+        "games": 9179,
+        "percentage": 30.2
+      },
+      "5": {
+        "games": 11648,
+        "percentage": 38.32
+      }
+    }
+  },
+  "77": {
+    "hero_id": 77,
+    "hero_name": "Lycan",
+    "total_games": 28754,
+    "positions": {
+      "1": {
+        "games": 1986,
+        "percentage": 6.91
+      },
+      "2": {
+        "games": 6105,
+        "percentage": 21.23
+      },
+      "3": {
+        "games": 20087,
+        "percentage": 69.86
+      },
+      "4": {
+        "games": 357,
+        "percentage": 1.24
+      },
+      "5": {
+        "games": 219,
+        "percentage": 0.76
+      }
+    }
+  }
+}

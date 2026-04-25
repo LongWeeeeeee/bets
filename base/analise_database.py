@@ -93,8 +93,8 @@ def lanes(match, lane_dict):
     """
     Обрабатывает данные по лайнам и записывает в lane_dict.
     
-    ФИЛЬТР: исключает матчи с экстремальным imp (>30) для минимизации
-    влияния скилла игроков на статистику лейнинга.
+    Lane dict intentionally has no draft/tempo gates: if the match has enough
+    lane outcome and position data, it contributes to lane statistics.
     
     Формирует:
     - Соло героя с позицией
@@ -106,10 +106,6 @@ def lanes(match, lane_dict):
         match: словарь с данными матча
         lane_dict: словарь для записи статистики по лайнам
     """
-    # Фильтр: исключаем матчи с экстремальным imp
-    if _has_extreme_imp(match, threshold=30):
-        return
-    
     # Извлекаем героев и позиции
     r_by_pos, d_by_pos = extract_heroes_by_position(match)
     if r_by_pos is None:
@@ -242,66 +238,6 @@ def lanes(match, lane_dict):
 
 
 
-def check_comeback(match, lead_threshold=12000, min_duration=3):
-    """
-    Проверяет, был ли РЕАЛЬНЫЙ камбек в матче.
-    
-    Камбек: было >= lead_threshold преимущества за одной командой до 40 минуты,
-    и это преимущество ДЕРЖАЛОСЬ минимум min_duration минут (не просто пик),
-    но выиграла другая команда.
-    
-    ОПТИМИЗИРОВАНО экспериментально:
-    - lead_12k_3min: 76.9% accuracy (147 матчей) - лучший результат
-    - lead_10k_5min: 76.5% accuracy (170 матчей)
-    - lead_10k_3min: 74.3% accuracy (748 матчей)
-    
-    Args:
-        match: словарь с данными матча
-        lead_threshold: минимальное преимущество в золоте (default: 12000)
-        min_duration: минимальная длительность преимущества в минутах (default: 3)
-    
-    Returns:
-        True если был камбек, False если нет
-    """
-    networth_leads = match.get('radiantNetworthLeads', [])
-    
-    # Проверяем наличие данных до 40 минуты
-    if len(networth_leads) > 50 or len(networth_leads) < 30:
-        return False
-    
-    # Определяем победителя
-    did_radiant_win = match.get('didRadiantWin')
-    if did_radiant_win is None:
-        # Используем последний элемент winRates
-        win_rates = match.get('winRates', [])
-        if not win_rates:
-            return False
-        did_radiant_win = win_rates[-1] > 0.5
-    
-    # Проверяем СТАБИЛЬНОЕ преимущество (держалось минимум min_duration минут подряд)
-    leads_to_check = networth_leads[:40]
-    
-    # Находим периоды стабильного преимущества >= threshold
-    def has_stable_lead(leads, threshold, duration):
-        """Проверяет был ли период где lead держался >= duration минут"""
-        consecutive_count = 0
-        for lead in leads:
-            if (threshold > 0 and lead >= threshold) or (threshold < 0 and lead <= threshold):
-                consecutive_count += 1
-                if consecutive_count >= duration:
-                    return True
-            else:
-                consecutive_count = 0
-        return False
-    
-    had_stable_radiant_lead = has_stable_lead(leads_to_check, lead_threshold, min_duration)
-    had_stable_dire_lead = has_stable_lead(leads_to_check, -lead_threshold, min_duration)
-    
-    # Камбек: если Radiant выиграл но было СТАБИЛЬНОЕ преимущество Dire >= threshold, 
-    # или Dire выиграл но было СТАБИЛЬНОЕ преимущество Radiant >= threshold
-    return (did_radiant_win and had_stable_dire_lead) or (not did_radiant_win and had_stable_radiant_lead)
-
-
 def _dominant_lane_stomp(match, dominator, threshold=2):
     """
     Ограничивает влияние лейнинга на early: отбрасываем матчи,
@@ -380,6 +316,12 @@ LATE_LEAD_AT_20_MAX = 8000           # ограничение |lead| на 20-й 
 LATE_REQUIRE_EARLY_LOSS = True      # late = победитель не был early-доминатором
 LATE_EXCLUDE_EXTREME_IMP = True      # исключать матчи с экстремальным imp
 LATE_EXTREME_IMP_THRESHOLD = 30
+
+# Post-lane: нейтральная выборка после лейнинга.
+# Гейты только на 10-й минуте и минимальную длину; дальше любая длительность.
+POST_LANE_GATE_MINUTE = 10
+POST_LANE_MAX_ABS_LEAD_AT_GATE = 2000
+POST_LANE_MIN_DURATION = 20
 
 
 def _max_abs_in_window(leads, start, end):
@@ -574,6 +516,46 @@ def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
     return (False, None) if if_check else False
 
 
+def is_post_lane_match(match, if_check: bool = False):
+    """
+    Проверяет, подходит ли матч для post-lane словаря.
+
+    Логика:
+    - матч должен иметь победителя;
+    - длина матча >= POST_LANE_MIN_DURATION;
+    - на 10-й минуте игра не должна быть уже слишком разъехавшейся;
+    - верхнего ограничения по длительности нет.
+
+    Returns:
+        bool | tuple: подходит ли матч, и победитель при if_check=True.
+    """
+    leads = match.get('radiantNetworthLeads', [])
+    did_radiant_win = match.get('didRadiantWin')
+    duration = len(leads)
+
+    if did_radiant_win is None:
+        win_rates = match.get('winRates', [])
+        did_radiant_win = win_rates[-1] > 0.5 if win_rates else None
+
+    if did_radiant_win is None or duration < POST_LANE_MIN_DURATION:
+        return (False, None) if if_check else False
+
+    gate_index = POST_LANE_GATE_MINUTE - 1
+    if len(leads) <= gate_index:
+        return (False, None) if if_check else False
+
+    try:
+        gate_lead = float(leads[gate_index])
+    except (TypeError, ValueError):
+        return (False, None) if if_check else False
+
+    if abs(gate_lead) > POST_LANE_MAX_ABS_LEAD_AT_GATE:
+        return (False, None) if if_check else False
+
+    winner = 'radiant' if did_radiant_win else 'dire'
+    return (True, winner) if if_check else True
+
+
 def _add_combinations_to_dict(r_by_pos, d_by_pos, target_dict, r_value, d_value=None):
     """
     Добавляет все комбинации героев в словарь.
@@ -685,8 +667,9 @@ def is_pro_match(match):
     return False
 
 
-def analise_database(match, lane_dict, early_dict, late_dict, comeback_dict=None, 
-                     exclude_match_ids=None, exclude_pro_matches=True,dominator = None):
+def analise_database(match, lane_dict, early_dict, late_dict, *,
+                     exclude_match_ids=None, exclude_pro_matches=True, dominator=None,
+                     post_lane_dict=None):
     """
     Основная функция анализа матча.
     
@@ -695,7 +678,7 @@ def analise_database(match, lane_dict, early_dict, late_dict, comeback_dict=None
         lane_dict: словарь для записи статистики по лайнам
         early_dict: словарь для записи статистики по early фазе
         late_dict: словарь для записи статистики по late фазе
-        comeback_dict: словарь для записи статистики по камбекам (опционально)
+        post_lane_dict: словарь после лейнинга с gate на 10-й минуте и min duration
         exclude_match_ids: set или list ID матчей которые нужно исключить (для избежания data leakage)
         exclude_pro_matches: если True, пропускает про-матчи (default: True)
     
@@ -715,15 +698,12 @@ def analise_database(match, lane_dict, early_dict, late_dict, comeback_dict=None
     # 1. Обработка лайнов
     lanes(match, lane_dict)
     
-    # 2. Извлекаем героев и позиции для early/late/comeback
+    # 2. Извлекаем героев и позиции для early/late/post-lane
     r_by_pos, d_by_pos = extract_heroes_by_position(match)
     if r_by_pos is None:
         return
     
-    networth_leads = match.get('radiantNetworthLeads', [])
-    match_duration = len(networth_leads)
-    
-    # Определяем победителя один раз (используется в late и comeback)
+    # Определяем победителя один раз (используется в late и post-lane)
     did_radiant_win = match.get('didRadiantWin')
     if did_radiant_win is None:
         # Используем последний элемент winRates
@@ -746,12 +726,11 @@ def analise_database(match, lane_dict, early_dict, late_dict, comeback_dict=None
         r_val = 1 if did_radiant_win else 0
         d_val = 0 if did_radiant_win else 1
         _add_combinations_to_dict(r_by_pos, d_by_pos, late_dict, r_val, d_val)
-    
-    # 5. Обработка COMEBACK словаря
-    if comeback_dict is not None and check_comeback(match):
-        # Записываем комбинации для команды которая сделала камбек
+
+    if post_lane_dict is not None and is_post_lane_match(match):
+        # После post-lane gate записываем фактического победителя матча.
         r_val = 1 if did_radiant_win else 0
         d_val = 0 if did_radiant_win else 1
-        _add_combinations_to_dict(r_by_pos, d_by_pos, comeback_dict, r_val, d_val)
-    
+        _add_combinations_to_dict(r_by_pos, d_by_pos, post_lane_dict, r_val, d_val)
+
     return True  # Матч успешно обработан

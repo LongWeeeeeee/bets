@@ -47,6 +47,13 @@ BASE_URL = "https://dota2protracker.com"
 CACHE_DIR = "hero_dota2protracker_data"
 MIN_GAMES_THRESHOLD = 10  # Минимум игр для статистики
 CACHE_SCHEMA_VERSION = 2
+PROTRACKER_PAYLOAD_FETCHER = None
+
+
+def set_payload_fetcher(fetcher):
+    """Install an external payload fetcher, e.g. a shared Camoufox browser owner."""
+    global PROTRACKER_PAYLOAD_FETCHER
+    PROTRACKER_PAYLOAD_FETCHER = fetcher
 
 # Коэффициенты позиций (同步 с functions.py)
 PRO_EARLY_POSITION_WEIGHTS = {
@@ -681,19 +688,27 @@ def parse_hero_matchups(hero_name: str, use_cache: bool = True,
         return result
 
     last_error: Optional[Exception] = None
-    proxy_candidates = _dota2protracker_candidate_proxies(proxy or _get_proxy_from_pool())
+    external_fetcher = PROTRACKER_PAYLOAD_FETCHER
+    proxy_candidates = (
+        [proxy or _get_proxy_from_pool()]
+        if external_fetcher is not None
+        else _dota2protracker_candidate_proxies(proxy or _get_proxy_from_pool())
+    )
     matchup_by_hero_pos = {}
     synergy_by_hero_pos = {}
 
     try:
         for proxy_candidate in proxy_candidates:
             try:
-                if proxy_candidate:
-                    print(f"   📊 Fetching pro-tracker: {hero_name} (Camoufox subprocess via proxy {proxy_candidate})")
+                if external_fetcher is not None:
+                    print(f"   📊 Fetching pro-tracker: {hero_name} (shared Camoufox tab)")
+                    raw_payload = external_fetcher(slug, hero_id, proxy_candidate)
                 else:
-                    print(f"   📊 Fetching pro-tracker: {hero_name} (Camoufox subprocess direct)")
-
-                raw_payload = _fetch_protracker_payload_via_subprocess(slug, hero_id, proxy_candidate)
+                    if proxy_candidate:
+                        print(f"   📊 Fetching pro-tracker: {hero_name} (Camoufox subprocess via proxy {proxy_candidate})")
+                    else:
+                        print(f"   📊 Fetching pro-tracker: {hero_name} (Camoufox subprocess direct)")
+                    raw_payload = _fetch_protracker_payload_via_subprocess(slug, hero_id, proxy_candidate)
 
                 matchup_by_hero_pos = {}
                 synergy_by_hero_pos = {}
@@ -1171,6 +1186,8 @@ def calculate_lane_advantage(
     result = {}
     cp1vs1_values = []
     duo_values = []
+    radiant_pos_to_hero = {pos: hero for pos, hero in radiant_positions}
+    dire_pos_to_hero = {pos: hero for pos, hero in dire_positions}
 
     for lane in ('mid', 'top', 'bot'):
         lane_result = {
@@ -1182,9 +1199,6 @@ def calculate_lane_advantage(
             'duo_games': 0,
         }
 
-        # Get hero for each position
-        pos_to_hero = {pos: hero for pos, hero in radiant_positions + dire_positions}
-
         # --- CP1VS1 ---
         matchups = LANE_CP1VS1_PAIRS.get(lane, [])
         min_required = LANE_CP1VS1_MIN_MATCHUPS.get(lane, 1)
@@ -1194,8 +1208,8 @@ def calculate_lane_advantage(
 
         for matchup in matchups:
             r_pos, d_pos = matchup[0]
-            r_hero = pos_to_hero.get(r_pos)
-            d_hero = pos_to_hero.get(d_pos)
+            r_hero = radiant_pos_to_hero.get(r_pos)
+            d_hero = dire_pos_to_hero.get(d_pos)
 
             if not r_hero or not d_hero:
                 continue
@@ -1217,10 +1231,10 @@ def calculate_lane_advantage(
             r_pos1, r_pos2 = duo_config['radiant']
             d_pos1, d_pos2 = duo_config['dire']
 
-            r_hero1 = pos_to_hero.get(r_pos1)
-            r_hero2 = pos_to_hero.get(r_pos2)
-            d_hero1 = pos_to_hero.get(d_pos1)
-            d_hero2 = pos_to_hero.get(d_pos2)
+            r_hero1 = radiant_pos_to_hero.get(r_pos1)
+            r_hero2 = radiant_pos_to_hero.get(r_pos2)
+            d_hero1 = dire_pos_to_hero.get(d_pos1)
+            d_hero2 = dire_pos_to_hero.get(d_pos2)
 
             if r_hero1 and r_hero2 and d_hero1 and d_hero2:
                 duo_adv, duo_g = _get_duo_synergy_pair(
@@ -1246,8 +1260,8 @@ def calculate_lane_advantage(
         result['lane_advantage'] = 0.0
 
     # Overall validity
-    result['cp1vs1_valid'] = all(r.get('cp1vs1_valid', False) for r in result.values() if 'cp1vs1_valid' in r)
-    result['duo_valid'] = all(r.get('duo_valid', False) for r in result.values() if 'duo_valid' in r)
+    result['cp1vs1_valid'] = all(result[lane].get('cp1vs1_valid', False) for lane in ('mid', 'top', 'bot'))
+    result['duo_valid'] = all(result[lane].get('duo_valid', False) for lane in ('top', 'bot'))
 
     return result
 

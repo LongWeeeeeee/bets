@@ -119,7 +119,6 @@ python3 base/cyberscore_try.py --no-odds
 - `send_message()` — Telegram
 - `drain_telegram_admin_commands()` — обработка команд
 - `synergy_and_counterpick()` — расчёт синергии/контрпиков
-- `calculate_comeback_solo_metrics()` — метрики камбеков
 - `_ensure_camoufox_browser()` — создаёт/переиспользует persistent Camoufox browser
 - `_bookmaker_prefetch_fetch_camoufox_direct()` — direct Camoufox парсинг без subprocess
 

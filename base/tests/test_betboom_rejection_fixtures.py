@@ -36,6 +36,43 @@ class _FakeDriver:
         return None
 
 
+class _FakeLocator:
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def inner_text(self, timeout: int = 0):  # noqa: ARG002
+        return self._text
+
+
+class _FakePage:
+    def __init__(self, *, html: str, body_text: str, url: str = "about:blank") -> None:
+        self._html = html
+        self._body_text = body_text
+        self.url = url
+
+    def goto(self, url: str, wait_until: str = "domcontentloaded", timeout: int = 0):  # noqa: ARG002
+        self.url = url
+
+    def content(self) -> str:
+        return self._html
+
+    def locator(self, selector: str):
+        if selector == "body":
+            return _FakeLocator(self._body_text)
+        raise AssertionError(f"unexpected selector: {selector}")
+
+    def title(self) -> str:
+        return ""
+
+    def evaluate(self, script: str, arg=None):  # noqa: ARG002
+        if "document.readyState" in script:
+            return "complete"
+        return False
+
+    def reload(self, wait_until: str = "domcontentloaded", timeout: int = 0):  # noqa: ARG002
+        return None
+
+
 def _load_fixture(name: str) -> dict:
     return json.loads((FIXTURE_DIR / name).read_text(encoding="utf-8"))
 
@@ -182,4 +219,112 @@ def test_betboom_map_market_missing_fixture(monkeypatch) -> None:
     assert result.odds == []
     assert result.source == "betboom_map_market_missing"
     assert result.source != "betboom_map_market_closed"
+    assert result.market_closed is False
+
+
+def test_betboom_match_level_rejected_fixture_camoufox(monkeypatch) -> None:
+    _patch_no_sleep(monkeypatch)
+    fixture = _load_fixture("betboom_match_level_rejected.json")
+    page = _FakePage(
+        html=f"<html><body>{fixture['body_text']}</body></html>",
+        body_text=fixture["body_text"],
+    )
+
+    monkeypatch.setattr(
+        odds_parser,
+        "_parse_map_market_on_current_camoufox_page",
+        lambda *_args, **_kwargs: ([], fixture["body_text"]),
+    )
+    monkeypatch.setattr(odds_parser, "_is_map_market_closed", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        odds_parser,
+        "_find_from_sources",
+        lambda *_args, **_kwargs: (
+            True,
+            [2.90, 1.32],
+            "dom_visible_text",
+            fixture["details_with_match_odds"],
+        ),
+    )
+
+    result = odds_parser.parse_site_in_camoufox_page(
+        page,
+        fixture["site"],
+        fixture["url"],
+        fixture["team1"],
+        fixture["team2"],
+        mode="live",
+        forced_map_num=fixture["forced_map_num"],
+    )
+
+    assert result.match_found is True
+    assert result.odds == []
+    assert result.source == "betboom_match_level_rejected"
+    assert "2-я карта" in result.details
+
+
+def test_betboom_map_market_closed_fixture_camoufox(monkeypatch) -> None:
+    _patch_no_sleep(monkeypatch)
+    fixture = _load_fixture("betboom_map_market_closed.json")
+    page = _FakePage(
+        html=f"<html><body>{fixture['body_text']}</body></html>",
+        body_text=fixture["body_text"],
+    )
+
+    monkeypatch.setattr(
+        odds_parser,
+        "_parse_map_market_on_current_camoufox_page",
+        lambda *_args, **_kwargs: ([], fixture["body_text"]),
+    )
+    monkeypatch.setattr(odds_parser, "_is_map_market_closed", lambda *_args, **_kwargs: True)
+
+    result = odds_parser.parse_site_in_camoufox_page(
+        page,
+        fixture["site"],
+        fixture["url"],
+        fixture["team1"],
+        fixture["team2"],
+        mode="live",
+        forced_map_num=fixture["forced_map_num"],
+    )
+
+    assert result.match_found is True
+    assert result.odds == []
+    assert result.source == "betboom_map_market_closed"
+    assert result.market_closed is True
+
+
+def test_betboom_map_market_missing_fixture_camoufox(monkeypatch) -> None:
+    _patch_no_sleep(monkeypatch)
+    fixture = _load_fixture("betboom_map_market_missing.json")
+    page = _FakePage(
+        html=f"<html><body>{fixture['body_text']}</body></html>",
+        body_text=fixture["body_text"],
+    )
+
+    monkeypatch.setattr(
+        odds_parser,
+        "_parse_map_market_on_current_camoufox_page",
+        lambda *_args, **_kwargs: ([], fixture["body_text"]),
+    )
+    monkeypatch.setattr(odds_parser, "_is_map_market_closed", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        odds_parser,
+        "_find_from_sources",
+        lambda *_args, **_kwargs: (True, [], "dom_visible_text", fixture["body_text"]),
+    )
+
+    result = odds_parser.parse_site_in_camoufox_page(
+        page,
+        fixture["site"],
+        fixture["url"],
+        fixture["team1"],
+        fixture["team2"],
+        mode="live",
+        forced_map_num=fixture["forced_map_num"],
+    )
+
+    assert result.match_found is True
+    assert result.odds == []
+    assert result.source == "betboom_map_market_missing"
     assert result.market_closed is False

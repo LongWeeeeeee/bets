@@ -21,7 +21,12 @@ from typing import Optional, Tuple
 
 # Подключаем базу для использования фильтров из analise_database
 sys.path.insert(0, str(Path(__file__).parent))
-from analise_database import is_early_match as is_early_match_strict, is_late_match as is_late_match_strict, analise_database
+from analise_database import (
+    analise_database,
+    is_early_match as is_early_match_strict,
+    is_late_match as is_late_match_strict,
+    is_post_lane_match,
+)
 
 
 def is_early_match_soft(match):
@@ -275,6 +280,7 @@ MIN_START_DATE = 0           # 0 чтобы не фильтровать по д�
 # --- Настройки выводимого диапазона индексов ---
 EARLY_MIN_INDEX = 18  # например 8, чтобы смотреть только сильные ранние сигналы
 LATE_MIN_INDEX = 18   # например 6 или 10
+POST_LANE_MIN_INDEX = 18
 LANE_MIN_CONFIDENCE = 52  # минимальный % уверенности (1-100)
 
 LANE_MAX_CONFIDENCE = 100
@@ -300,11 +306,12 @@ def load_matches(filename: str) -> list[dict]:
     return data
 
 
-def build_train_dicts(train_files: list[Path], limit_per_file=None, exclude_ids=None):
-    """Строит early/late словари на train выборке."""
+def build_train_dicts(train_files: list[Path], limit_per_file=None, exclude_ids=None, include_post_lane: bool = False):
+    """Строит early/late словари на train выборке, опционально post-lane."""
     lane_dict = {}
     early_dict = {}
     late_dict = {}
+    post_lane_dict = {} if include_post_lane else None
     total = 0
 
     for idx, file in enumerate(train_files, 1):
@@ -320,19 +327,27 @@ def build_train_dicts(train_files: list[Path], limit_per_file=None, exclude_ids=
                 continue
             if 'players' not in match or len(match.get('players', [])) != 10:
                 continue
-            analise_database(match, lane_dict, early_dict, late_dict)
+            analise_database(
+                match,
+                lane_dict,
+                early_dict,
+                late_dict,
+                post_lane_dict=post_lane_dict,
+            )
             total += 1
         print(f"  train[{idx}/{len(train_files)}]: обработано {total:,} матчей", end='\r')
     print()
+    if include_post_lane:
+        return early_dict, late_dict, post_lane_dict
     return early_dict, late_dict
 
 
-def process_metrics_winrate(matches, early_dict=None, late_dict=None, use_train_dicts: bool = False):
+def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_dict=None, use_train_dicts: bool = False):
     """
     Обрабатывает матчи и вычисляет винрейт для метрик.
     
     Для каждой метрики отдельно проверяет индексы от 1 до 50 (с положительным и отрицательным знаком).
-    Разделяет метрики: early_* и late_* (например, early_solo, late_solo).
+    Разделяет метрики: early_*, late_* и post_lane_*.
     
     Args:
         matches: список матчей для анализа
@@ -341,16 +356,23 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, use_train_
         dict: словарь с результатами для каждой метрики и каждого индекса
             {phase_metric_name: {index: {'positive': {...}, 'negative': {...}}}}
     """
+    if isinstance(post_lane_dict, bool) and not use_train_dicts:
+        use_train_dicts = post_lane_dict
+        post_lane_dict = None
+
     results = {}  # {phase_metric_name: {index: {'positive': {...}, 'negative': {...}}}}
     unique_matches_per_metric = {}  # {metric_name: set of match_ids}
     
     # Счетчики для дебага
     early_count = 0
     late_count = 0
+    post_lane_count = 0
     early_with_metrics = 0
     late_with_metrics = 0
+    post_lane_with_metrics = 0
     early_no_filter = 0
     late_no_filter = 0
+    post_lane_no_filter = 0
     
     early_and_stats = {
         'cp_strong': {'matches': 0, 'wins': 0},
@@ -394,6 +416,8 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, use_train_
             match_is_late, late_dominator = is_late_match_custom(match, early_dominator)
         else:
             raise ValueError(f'Unknown FILTER_MODE: {FILTER_MODE}')
+        match_is_post_lane = is_post_lane_match(match)
+        post_lane_dominator = 'radiant' if did_radiant_win else 'dire'
         
         # Получаем метрики из early_output и late_output
         if use_train_dicts:
@@ -407,16 +431,20 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, use_train_
                 dire_heroes_and_pos=d_by_pos,
                 early_dict=early_dict or {},
                 mid_dict=late_dict or {},
+                post_lane_dict=post_lane_dict or {},
             ) or {}
             early_output = s.get('early_output', {})
             late_output = s.get('mid_output', {})
+            post_lane_output = s.get('post_lane_output', {})
         else:
             early_output = match.get('early_output', {})
             late_output = match.get('late_output', {})
+            post_lane_output = match.get('post_lane_output', {})
         
         # Диагностика: считаем метрики с/без фильтров
         has_early_metrics = any(v is not None and isinstance(v, (int, float)) for v in early_output.values())
         has_late_metrics = any(v is not None and isinstance(v, (int, float)) for v in late_output.values())
+        has_post_lane_metrics = any(v is not None and isinstance(v, (int, float)) for v in post_lane_output.values())
         
         if has_early_metrics:
             if match_is_early:
@@ -429,12 +457,19 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, use_train_
                 late_with_metrics += 1
             else:
                 late_no_filter += 1
+        if has_post_lane_metrics:
+            if match_is_post_lane:
+                post_lane_with_metrics += 1
+            else:
+                post_lane_no_filter += 1
         
         # Счетчики для фильтров
         if match_is_early:
             early_count += 1
         if match_is_late:
             late_count += 1
+        if match_is_post_lane:
+            post_lane_count += 1
         
         # Обрабатываем метрики из early_output как early_*
         # ВАЖНО: обрабатываем ТОЛЬКО если матч прошел early фильтр!
@@ -568,6 +603,46 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, use_train_
                             results[full_metric_name][index]['negative']['wins'] += 1
                         else:
                             results[full_metric_name][index]['negative']['looses'] += 1
+
+        # Post-lane словарь обучается на матчах после 10m gate + min duration и дальше берёт winner.
+        if match_is_post_lane and post_lane_dominator is not None:
+            actual_winner = post_lane_dominator
+            match_id = match.get('id', idx)
+
+            for metric_name, metric_value in post_lane_output.items():
+                if not isinstance(metric_value, (int, float)) or metric_value is None:
+                    continue
+
+                full_metric_name = f'post_lane_{metric_name}'
+                if full_metric_name not in unique_matches_per_metric:
+                    unique_matches_per_metric[full_metric_name] = set()
+                unique_matches_per_metric[full_metric_name].add(match_id)
+
+                if full_metric_name not in results:
+                    results[full_metric_name] = {}
+                    for idx in range(1, 51):
+                        results[full_metric_name][idx] = {
+                            'positive': {'wins': 0, 'looses': 0},
+                            'negative': {'wins': 0, 'looses': 0}
+                        }
+
+                abs_val = abs(int(metric_value))
+                if abs_val == 0:
+                    continue
+                max_idx = min(50, abs_val) if USE_CUMULATIVE_INDICES else 50
+                for index in range(1, max_idx + 1):
+                    if not USE_CUMULATIVE_INDICES and abs_val != index:
+                        continue
+                    if metric_value > 0:
+                        if actual_winner == 'radiant':
+                            results[full_metric_name][index]['positive']['wins'] += 1
+                        else:
+                            results[full_metric_name][index]['positive']['looses'] += 1
+                    elif metric_value < 0:
+                        if actual_winner == 'dire':
+                            results[full_metric_name][index]['negative']['wins'] += 1
+                        else:
+                            results[full_metric_name][index]['negative']['looses'] += 1
         
         # Обрабатываем COMEBACK метрики (опционально)
         # Обрабатываем лейн метрики (top, bot, mid)
@@ -660,6 +735,7 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, use_train_
     print(f"\nФильтрация:")
     print(f"  Early матчей (прошли фильтр): {early_count}")
     print(f"  Late матчей (прошли фильтр): {late_count}")
+    print(f"  Post-lane матчей (прошли фильтр): {post_lane_count}")
     print(f"\nДиагностика метрик:")
     print(f"  Early метрики:")
     print(f"    Прошли фильтр: {early_with_metrics}")
@@ -667,6 +743,9 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, use_train_
     print(f"  Late метрики:")
     print(f"    Прошли фильтр: {late_with_metrics}")
     print(f"    Отсеяно фильтром: {late_no_filter}")
+    print(f"  Post-lane метрики:")
+    print(f"    Прошли фильтр: {post_lane_with_metrics}")
+    print(f"    Отсеяно фильтром: {post_lane_no_filter}")
     
     cp_matches = early_and_stats['cp_strong']['matches']
     syn_matches = early_and_stats['syn_strong']['matches']
@@ -693,6 +772,8 @@ def _min_index_for(metric_name: str) -> int:
         return max(1, EARLY_MIN_INDEX)
     if metric_name.startswith('late_'):
         return max(1, LATE_MIN_INDEX)
+    if metric_name.startswith('post_lane_'):
+        return max(1, POST_LANE_MIN_INDEX)
     return 1
 
 
@@ -714,7 +795,7 @@ def print_results(results, unique_matches_per_metric: Optional[dict] = None):
     # Минимум матчей для учёта в среднем винрейте
     MIN_MATCHES_FOR_AVG = 10
     
-    print("\n📊 МЕТРИКИ (early/late + лейны):")
+    print("\n📊 МЕТРИКИ (early/late/post-lane + лейны):")
     print("=" * 120)
     for metric_name in sorted(results.keys()):
         metric_data = results[metric_name]
@@ -810,11 +891,22 @@ if __name__ == '__main__':
 
         print(f"TRAIN файлов: {len(train_files)}")
         print("Построение словарей train...")
-        early_dict, late_dict = build_train_dicts(train_files, TRAIN_LIMIT_PER_FILE, exclude_ids)
+        early_dict, late_dict, post_lane_dict = build_train_dicts(
+            train_files,
+            TRAIN_LIMIT_PER_FILE,
+            exclude_ids,
+            include_post_lane=True,
+        )
 
         print(f"\nЗагружено test матчей: {len(test_matches)}")
         print("\nОбработка метрик...")
-        results, unique_matches = process_metrics_winrate(test_matches, early_dict, late_dict, use_train_dicts=True)
+        results, unique_matches = process_metrics_winrate(
+            test_matches,
+            early_dict,
+            late_dict,
+            post_lane_dict,
+            use_train_dicts=True,
+        )
     else:
         matches = load_matches(str(PRECOMPUTED_FILE))
         print(f"Загружено матчей: {len(matches)}")

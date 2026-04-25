@@ -6,6 +6,7 @@ import ast
 import atexit
 import contextlib
 from collections import deque, OrderedDict
+from concurrent.futures import Future, ThreadPoolExecutor
 import io
 import orjson
 try:
@@ -19,6 +20,7 @@ import pickle
 import logging
 import asyncio
 import threading
+import queue
 import glob
 import copy
 import mmap
@@ -56,7 +58,6 @@ from functions import (
     drain_telegram_admin_commands,
     synergy_and_counterpick,
     calculate_lanes,
-    calculate_comeback_solo_metrics,
     format_output_dict,
     STAR_THRESHOLDS_BY_WR,
     STAR_DISABLED_METRICS,
@@ -105,7 +106,8 @@ DLTV_CAMOUFOX_ENABLED = _env_flag(
     'DLTV_CAMOUFOX_ENABLED',
     '1' if CAMOUFOX_AVAILABLE else '0',
 )
-if DOTA2PROTRACKER_ENABLED:
+_dota2protracker_module = None
+if DOTA2PROTRACKER_ENABLED or _env_flag('DOTA2PROTRACKER_PRELOAD', '1'):
     try:
         _dota2protracker_path = os.path.join(os.path.dirname(__file__), "dota2protracker.py")
         _dota2protracker_spec = importlib.util.spec_from_file_location(
@@ -119,7 +121,8 @@ if DOTA2PROTRACKER_ENABLED:
         enrich_with_pro_tracker = _dota2protracker_module.enrich_with_pro_tracker
     except Exception:
         try:
-            from dota2protracker import enrich_with_pro_tracker
+            import dota2protracker as _dota2protracker_module
+            enrich_with_pro_tracker = _dota2protracker_module.enrich_with_pro_tracker
             print("   ⚠️ Dota2ProTracker imported from legacy module path")
         except ImportError:
             enrich_with_pro_tracker = None
@@ -448,9 +451,13 @@ def _detect_total_memory_bytes() -> Optional[int]:
 
 
 def _stats_sharded_mode_enabled(label: str) -> bool:
-    if label not in {"early", "late"}:
+    if label not in {"early", "late", "post_lane"}:
         return False
-    mode = STATS_SHARDED_LOOKUP_MODE
+    per_label_env = f"STATS_{label.upper()}_SHARDED_LOOKUP_MODE"
+    per_label_mode = str(os.getenv(per_label_env, "")).strip().lower()
+    mode = per_label_mode or STATS_SHARDED_LOOKUP_MODE
+    if label == "post_lane" and not per_label_mode and mode == "auto":
+        return True
     if mode in {"1", "true", "yes", "on", "always"}:
         return True
     if mode in {"0", "false", "no", "off", "never"}:
@@ -609,7 +616,7 @@ def _warm_draft_stats_shards(radiant_heroes_and_pos: dict, dire_heroes_and_pos: 
     if not hero_ids:
         return
     unique_hero_ids = sorted(set(hero_ids))
-    for stats_obj in (early_dict, late_dict):
+    for stats_obj in (early_dict, late_dict, post_lane_dict):
         if isinstance(stats_obj, _ShardedStatsLookup):
             stats_obj.warm_hero_ids(unique_hero_ids)
 
@@ -749,7 +756,7 @@ BOOKMAKER_PREFETCH_MAX_PENDING = _safe_int_env("BOOKMAKER_PREFETCH_MAX_PENDING",
 BOOKMAKER_PREFETCH_RESULT_TTL_SECONDS = _safe_int_env("BOOKMAKER_PREFETCH_RESULT_TTL_SECONDS", 1800)
 BOOKMAKER_PREFETCH_MESSAGE_WAIT_SECONDS = _safe_float_env("BOOKMAKER_PREFETCH_MESSAGE_WAIT_SECONDS", 3.0)
 BOOKMAKER_PREFETCH_DRIVER_ROTATE_TASKS = _safe_int_env("BOOKMAKER_PREFETCH_DRIVER_ROTATE_TASKS", 3)
-BOOKMAKER_CAMOUFOX_ENABLED = _env_flag("BOOKMAKER_CAMOUFOX_ENABLED", "0")
+BOOKMAKER_CAMOUFOX_ENABLED = _env_flag("BOOKMAKER_CAMOUFOX_ENABLED", "1")
 BOOKMAKER_PREFETCH_USE_SUBPROCESS = _safe_bool_env(
     "BOOKMAKER_PREFETCH_USE_SUBPROCESS",
     BOOKMAKER_CAMOUFOX_ENABLED,
@@ -765,6 +772,67 @@ BOOKMAKER_PREFETCH_SITES = tuple(
     for s in BOOKMAKER_PREFETCH_SITES_RAW.split(",")
     if s.strip()
 ) or ("betboom", "pari", "winline")
+
+# Pipeline smoke-test mode: keep parsing and calculating every draft, but bypass
+# production gates that would normally suppress Telegram/VK dispatch.
+PIPELINE_DISABLE_SIGNAL_GATES = _safe_bool_env("PIPELINE_DISABLE_SIGNAL_GATES", False)
+PIPELINE_SEND_EVERY_PARSED_MATCH = _safe_bool_env(
+    "PIPELINE_SEND_EVERY_PARSED_MATCH",
+    PIPELINE_DISABLE_SIGNAL_GATES,
+)
+PIPELINE_METRICS_PARALLEL_ENABLED = _safe_bool_env("PIPELINE_METRICS_PARALLEL_ENABLED", True)
+PIPELINE_BYPASS_BOOKMAKER_GATE = _safe_bool_env(
+    "PIPELINE_BYPASS_BOOKMAKER_GATE",
+    PIPELINE_DISABLE_SIGNAL_GATES,
+)
+PIPELINE_BYPASS_TIER_GATE = _safe_bool_env(
+    "PIPELINE_BYPASS_TIER_GATE",
+    PIPELINE_DISABLE_SIGNAL_GATES,
+)
+PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE = _safe_bool_env(
+    "PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE",
+    PIPELINE_DISABLE_SIGNAL_GATES,
+)
+PIPELINE_BYPASS_PROTRACKER_GATE = _safe_bool_env(
+    "PIPELINE_BYPASS_PROTRACKER_GATE",
+    PIPELINE_DISABLE_SIGNAL_GATES,
+)
+PIPELINE_BYPASS_PROCESSED_URL_GATE = _safe_bool_env("PIPELINE_BYPASS_PROCESSED_URL_GATE", False)
+PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND = _safe_bool_env(
+    "PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND",
+    PIPELINE_DISABLE_SIGNAL_GATES,
+)
+
+
+def _apply_live_entrypoint_pipeline_defaults() -> None:
+    """Enable the current live smoke-test behavior only for the executable entrypoint."""
+    global DOTA2PROTRACKER_ENABLED, DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED, DOTA2PROTRACKER_SUPERSEDE_OPENDOTA
+    global PIPELINE_DISABLE_SIGNAL_GATES, PIPELINE_SEND_EVERY_PARSED_MATCH
+    global PIPELINE_BYPASS_BOOKMAKER_GATE, PIPELINE_BYPASS_TIER_GATE, PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE
+    global PIPELINE_BYPASS_PROTRACKER_GATE, PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND
+
+    if "DOTA2PROTRACKER_ENABLED" not in os.environ:
+        DOTA2PROTRACKER_ENABLED = True
+    if DOTA2PROTRACKER_ENABLED:
+        if "DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED" not in os.environ:
+            DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED = True
+        if "DOTA2PROTRACKER_SUPERSEDE_OPENDOTA" not in os.environ:
+            DOTA2PROTRACKER_SUPERSEDE_OPENDOTA = True
+
+    if "PIPELINE_DISABLE_SIGNAL_GATES" not in os.environ:
+        PIPELINE_DISABLE_SIGNAL_GATES = True
+    if "PIPELINE_SEND_EVERY_PARSED_MATCH" not in os.environ:
+        PIPELINE_SEND_EVERY_PARSED_MATCH = PIPELINE_DISABLE_SIGNAL_GATES
+    if "PIPELINE_BYPASS_BOOKMAKER_GATE" not in os.environ:
+        PIPELINE_BYPASS_BOOKMAKER_GATE = PIPELINE_DISABLE_SIGNAL_GATES
+    if "PIPELINE_BYPASS_TIER_GATE" not in os.environ:
+        PIPELINE_BYPASS_TIER_GATE = PIPELINE_DISABLE_SIGNAL_GATES
+    if "PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE" not in os.environ:
+        PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE = PIPELINE_DISABLE_SIGNAL_GATES
+    if "PIPELINE_BYPASS_PROTRACKER_GATE" not in os.environ:
+        PIPELINE_BYPASS_PROTRACKER_GATE = PIPELINE_DISABLE_SIGNAL_GATES
+    if "PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND" not in os.environ:
+        PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND = PIPELINE_DISABLE_SIGNAL_GATES
 
 # Testing helpers:
 # - optionally use separate MAP_ID_CHECK_PATH
@@ -922,7 +990,7 @@ if not (DATA_DIR / "star_thresholds_by_wr.json").exists():
 if not STAR_CONFIDENCE_CALIBRATION_PATH.exists():
     _report_missing_runtime_file("star_confidence_calibration.json", STAR_CONFIDENCE_CALIBRATION_PATH)
 STAR_ODDS_USE_CALIBRATION = _safe_bool_env("STAR_ODDS_USE_CALIBRATION", False)
-LIVE_LANE_ANALYSIS_ENABLED = _safe_bool_env("LIVE_LANE_ANALYSIS_ENABLED", False)
+LIVE_LANE_ANALYSIS_ENABLED = _safe_bool_env("LIVE_LANE_ANALYSIS_ENABLED", True)
 
 # Fallback ladder for dynamic WR display when only base WR=60 thresholds are available.
 # Multiplier compares |metric_value| to base threshold for the metric.
@@ -2776,6 +2844,35 @@ def _build_dota2protracker_debug_summary(
     )
 
 
+def _build_dota2protracker_log_lines(
+    protracker_payload: Optional[Dict[str, Any]],
+) -> List[str]:
+    payload = dict(_blank_dota2protracker_result())
+    if isinstance(protracker_payload, dict):
+        payload.update(protracker_payload)
+
+    cp_valid = bool(payload.get("pro_cp1vs1_valid"))
+    duo_valid = bool(payload.get("pro_duo_synergy_valid"))
+    cp_reason = str(payload.get("pro_cp1vs1_reason") or "unknown")
+    duo_reason = str(payload.get("pro_duo_synergy_reason") or "unknown")
+    cp_value = payload.get("pro_cp1vs1_late", payload.get("pro_cp1vs1_early", 0.0))
+    duo_value = payload.get("pro_duo_synergy_late", payload.get("pro_duo_synergy_early", 0.0))
+    cp_games = int(payload.get("pro_cp1vs1_late_games", payload.get("pro_cp1vs1_early_games", 0)) or 0)
+    duo_games = int(payload.get("pro_duo_synergy_late_games", payload.get("pro_duo_synergy_early_games", 0)) or 0)
+    cp_diag = payload.get("pro_cp1vs1_diagnostics") or {}
+    duo_diag = payload.get("pro_duo_synergy_diagnostics") or {}
+
+    return [
+        "   📊 Dota2ProTracker:",
+        "      cp1vs1: "
+        f"{_format_dota2protracker_metric(value=cp_value, valid=cp_valid)} "
+        f"(valid={cp_valid}, games={cp_games}, reason={cp_reason}, diag={cp_diag})",
+        "      synergy_duo: "
+        f"{_format_dota2protracker_metric(value=duo_value, valid=duo_valid)} "
+        f"(valid={duo_valid}, games={duo_games}, reason={duo_reason}, diag={duo_diag})",
+    ]
+
+
 def _build_series_score_line(live_league: Optional[Dict[str, Any]]) -> str:
     try:
         live_league = live_league or {}
@@ -2813,35 +2910,34 @@ def _build_dota2protracker_block(protracker_payload: Optional[Dict[str, Any]]) -
     cp_valid = bool(payload.get("pro_cp1vs1_valid"))
     duo_valid = bool(payload.get("pro_duo_synergy_valid"))
 
-    # Lane advantage data
-    lane_adv = payload.get("pro_lane_advantage", 0.0)
-    mid_cp = payload.get("pro_lane_mid_cp1vs1", 0.0)
-    mid_v = payload.get("pro_lane_mid_cp1vs1_valid", False)
-    top_cp = payload.get("pro_lane_top_cp1vs1", 0.0)
-    top_v = payload.get("pro_lane_top_cp1vs1_valid", False)
-    bot_cp = payload.get("pro_lane_bot_cp1vs1", 0.0)
-    bot_v = payload.get("pro_lane_bot_cp1vs1_valid", False)
-    top_duo = payload.get("pro_lane_top_duo", 0.0)
-    top_duo_v = payload.get("pro_lane_top_duo_valid", False)
-    bot_duo = payload.get("pro_lane_bot_duo", 0.0)
-    bot_duo_v = payload.get("pro_lane_bot_duo_valid", False)
-
-    def _fmt(val, valid):
-        return f"{val:+.2f}" if valid else "N/A"
-
-    lane_lines = [
-        f"lane_adv: {_fmt(lane_adv, lane_adv != 0)}",
-        f"mid_cp1vs1: {_fmt(mid_cp, mid_v)}",
-        f"top_cp1vs1: {_fmt(top_cp, top_v)}, duo: {_fmt(top_duo, top_duo_v)}",
-        f"bot_cp1vs1: {_fmt(bot_cp, bot_v)}, duo: {_fmt(bot_duo, bot_duo_v)}",
-    ]
-
     return (
-        "dota2protracker:\n"
+        "\ndota2protracker:\n"
         f"cp1vs1: {_format_dota2protracker_metric(value=cp_value, valid=cp_valid)}\n"
         f"synergy_duo: {_format_dota2protracker_metric(value=duo_value, valid=duo_valid)}\n"
-        + "\n".join(lane_lines) + "\n"
     )
+
+
+def _build_dota2protracker_lane_adv_line(protracker_payload: Optional[Dict[str, Any]]) -> str:
+    payload = dict(_blank_dota2protracker_result())
+    if isinstance(protracker_payload, dict):
+        payload.update(protracker_payload)
+    lane_adv = payload.get("pro_lane_advantage", 0.0)
+    has_lane_data = any(
+        bool(payload.get(key))
+        for key in (
+            "pro_lane_mid_cp1vs1_valid",
+            "pro_lane_top_cp1vs1_valid",
+            "pro_lane_bot_cp1vs1_valid",
+            "pro_lane_top_duo_valid",
+            "pro_lane_bot_duo_valid",
+        )
+    )
+    if not has_lane_data:
+        return ""
+    try:
+        return f"lane_adv: {float(lane_adv):+.2f}\n"
+    except (TypeError, ValueError):
+        return ""
 
 
 def _build_dota2protracker_only_message(
@@ -2855,6 +2951,101 @@ def _build_dota2protracker_only_message(
         "DOTA2PROTRACKER\n"
         f"{radiant_team_name} VS {dire_team_name}\n"
         f"{_build_series_score_line(live_league)}"
+        f"{_build_dota2protracker_block(protracker_payload)}"
+    )
+
+
+_PIPELINE_PROBE_METRICS = (
+    "counterpick_1vs1",
+    "pos1_vs_pos1",
+    "counterpick_1vs2",
+    "solo",
+    "synergy_duo",
+    "synergy_trio",
+)
+
+
+def _format_pipeline_probe_value(value: Any) -> str:
+    try:
+        return f"{float(value):+.2f}"
+    except (TypeError, ValueError):
+        text = str(value or "").strip()
+        return text if text else "N/A"
+
+
+def _format_pipeline_probe_phase_block(title: str, data: Optional[Dict[str, Any]]) -> str:
+    block = data if isinstance(data, dict) else {}
+    lines: List[str] = []
+    for metric in _PIPELINE_PROBE_METRICS:
+        if metric not in block:
+            continue
+        games = block.get(f"{metric}_games")
+        games_suffix = ""
+        if metric != "solo":
+            try:
+                games_value = int(games)
+                if games_value > 0:
+                    games_suffix = f" ({games_value} games)"
+            except (TypeError, ValueError):
+                pass
+        lines.append(f"{metric}: {_format_pipeline_probe_value(block.get(metric))}{games_suffix}")
+    if not lines:
+        lines.append("no covered metrics")
+    return f"{title}:\n" + "\n".join(lines) + "\n"
+
+
+def _format_pipeline_probe_draft_side(side: Optional[Dict[str, Any]]) -> str:
+    side = side if isinstance(side, dict) else {}
+    chunks: List[str] = []
+    for pos in ("pos1", "pos2", "pos3", "pos4", "pos5"):
+        payload = side.get(pos) or {}
+        hero_id_raw = payload.get("hero_id") if isinstance(payload, dict) else None
+        try:
+            hero_id = int(hero_id_raw or 0)
+        except (TypeError, ValueError):
+            hero_id = 0
+        hero_name = ""
+        if isinstance(payload, dict):
+            hero_name = str(
+                payload.get("hero_name")
+                or payload.get("_hero_name")
+                or payload.get("name")
+                or ""
+            ).strip()
+        if not hero_name and hero_id > 0:
+            hero_name = str(HERO_ID_TO_NAME.get(str(hero_id)) or HERO_ID_TO_NAME.get(hero_id) or "").strip()
+        hero_label = hero_name or f"hero{hero_id or '?'}"
+        chunks.append(f"{pos}:{hero_label}({hero_id or '?'})")
+    return ", ".join(chunks)
+
+
+def _build_pipeline_probe_message(
+    *,
+    radiant_team_name: str,
+    dire_team_name: str,
+    live_league: Optional[Dict[str, Any]],
+    fallback_score_text: str,
+    game_time_seconds: Any,
+    radiant_lead: Any,
+    radiant_heroes_and_pos: Dict[str, Any],
+    dire_heroes_and_pos: Dict[str, Any],
+    metrics_payload: Dict[str, Any],
+    protracker_payload: Optional[Dict[str, Any]],
+) -> str:
+    return (
+        f"{_format_signal_header(stake_team_name='PIPELINE CHECK', stake_multiplier=1)}\n"
+        f"{radiant_team_name} VS {dire_team_name}\n"
+        f"{_build_series_score_line_with_fallback(live_league, fallback_score_text)}"
+        f"{_format_live_message_state_block(game_time_seconds=game_time_seconds, radiant_lead=radiant_lead, radiant_team_name=radiant_team_name, dire_team_name=dire_team_name)}"
+        "mode: send_every_parsed_match\n"
+        "source: get_heads/cyberscore_try\n"
+        f"Radiant draft: {_format_pipeline_probe_draft_side(radiant_heroes_and_pos)}\n"
+        f"Dire draft: {_format_pipeline_probe_draft_side(dire_heroes_and_pos)}\n\n"
+        f"{_build_lane_block(metrics_payload.get('top'), metrics_payload.get('mid'), metrics_payload.get('bot'))}"
+        f"{_format_pipeline_probe_phase_block('Early', metrics_payload.get('early_output'))}"
+        f"{_build_dota2protracker_lane_adv_line(protracker_payload)}"
+        f"{_format_pipeline_probe_phase_block('Late', metrics_payload.get('mid_output'))}"
+        f"{_format_pipeline_probe_phase_block('Post-lane', metrics_payload.get('post_lane_output'))}"
         f"{_build_dota2protracker_block(protracker_payload)}"
     )
 
@@ -3084,22 +3275,6 @@ def _format_live_message_state_block(
     else:
         networth_line = f"Networth: {str(dire_team_name or 'Dire')} +{abs_lead}"
     return f"{time_line}\n{networth_line}\n"
-
-
-def _comeback_delta_pp_for_side(
-    comeback_metrics: Optional[dict],
-    side: Optional[str],
-) -> Optional[float]:
-    if side not in {"radiant", "dire"} or not isinstance(comeback_metrics, dict):
-        return None
-    side_metrics = comeback_metrics.get(side)
-    if not isinstance(side_metrics, dict):
-        return None
-    value = side_metrics.get("delta_pp")
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def _late_comeback_monitor_entry_for_game_time(
@@ -4503,17 +4678,8 @@ CAMOUFOX_BROWSER_MAX_IDLE_SECONDS = 300  # 5 minutes idle = close browser
 
 
 def _ensure_camoufox_browser() -> Any:
-    """Get or create a persistent Camoufox browser for reuse."""
-    global bookmaker_camoufox_browser, bookmaker_camoufox_browser_last_used
-    if not BOOKMAKER_CAMOUFOX_IMPORTED or _bookmaker_camoufox is None:
-        return None
-    if bookmaker_camoufox_browser is None:
-        proxy_kwargs = _bookmaker_camoufox_proxy_kwargs(BOOKMAKER_PROXY_URL)
-        camoufox_instance = _bookmaker_camoufox.Camoufox(headless=True, **proxy_kwargs)
-        bookmaker_camoufox_browser = camoufox_instance.__enter__()  # Returns Browser object
-        print("   🌐 Camoufox browser created (persistent mode)")
-    bookmaker_camoufox_browser_last_used = time.time()
-    return bookmaker_camoufox_browser
+    """Legacy guard: direct Camoufox ownership moved to _SharedCamoufoxSession."""
+    raise RuntimeError("Use _run_shared_camoufox_job() for Camoufox work")
 
 
 def _close_camoufox_browser() -> None:
@@ -5156,60 +5322,55 @@ def _bookmaker_prefetch_fetch_camoufox_direct(
     radiant_team_candidates: Optional[List[str]] = None,
     dire_team_candidates: Optional[List[str]] = None,
 ) -> Dict[str, dict]:
-    """Fetch bookmaker odds using a persistent Camoufox browser (no subprocess).
-
-    Reuses bookmaker_camoufox_browser across calls for efficiency.
-    """
+    """Fetch bookmaker odds in tabs of the shared Camoufox browser."""
     if not BOOKMAKER_CAMOUFOX_IMPORTED or _bookmaker_parse_site_in_camoufox_page is None:
         raise RuntimeError("Camoufox not available")
 
     urls = _bookmaker_urls_for_mode(mode)
     selected_sites = [site for site in BOOKMAKER_PREFETCH_SITES if site in urls]
 
-    browser = _ensure_camoufox_browser()
-    if browser is None:
-        raise RuntimeError("Failed to get Camoufox browser")
-
     team1 = str(radiant_team or "")
     team2 = str(dire_team or "")
 
-    results: Dict[str, dict] = {}
-    for site in selected_sites:
-        page = browser.new_page()
-        try:
-            result = _bookmaker_parse_site_in_camoufox_page(
-                page,
-                site=site,
-                url=urls[site],
-                team1=team1,
-                team2=team2,
-                mode=mode,
-                forced_map_num=map_num,
-            )
-            results[site] = {
-                "status": result.status,
-                "match_found": result.match_found,
-                "odds": result.odds,
-                "match_odds": result.match_odds,
-                "source": result.source,
-                "details": result.details[:500] if result.details else "",
-                "market_closed": result.market_closed,
-            }
-        except Exception as e:
-            results[site] = {
-                "status": "error",
-                "match_found": False,
-                "odds": [],
-                "match_odds": [],
-                "source": "camoufox_direct_error",
-                "details": str(e)[:500],
-                "market_closed": False,
-            }
-        finally:
-            with contextlib.suppress(Exception):
-                page.close()
+    def _job(browser) -> Dict[str, dict]:
+        results: Dict[str, dict] = {}
+        for site in selected_sites:
+            page = browser.new_page()
+            try:
+                result = _bookmaker_parse_site_in_camoufox_page(
+                    page,
+                    site=site,
+                    url=urls[site],
+                    team1=team1,
+                    team2=team2,
+                    mode=mode,
+                    forced_map_num=map_num,
+                )
+                results[site] = {
+                    "status": result.status,
+                    "match_found": result.match_found,
+                    "odds": result.odds,
+                    "match_odds": result.match_odds,
+                    "source": result.source,
+                    "details": result.details[:500] if result.details else "",
+                    "market_closed": result.market_closed,
+                }
+            except Exception as e:
+                results[site] = {
+                    "status": "error",
+                    "match_found": False,
+                    "odds": [],
+                    "match_odds": [],
+                    "source": "camoufox_direct_error",
+                    "details": str(e)[:500],
+                    "market_closed": False,
+                }
+            finally:
+                with contextlib.suppress(Exception):
+                    page.close()
+        return results
 
-    return results
+    return _run_shared_camoufox_job("bookmaker-prefetch", _job, timeout=180)
 
 
 def _bookmaker_prefetch_loop() -> None:
@@ -5381,37 +5542,50 @@ def _stop_bookmaker_prefetch_worker() -> None:
         bookmaker_browser_match_tabs = OrderedDict()
     print("🧵 Bookmaker prefetch worker stopped")
 
+HERO_VALID_POSITIONS_DICT = {}
+HERO_POSITION_COUNTS = {}
+HERO_ID_TO_NAME = {}
 try:
-    with (BASE_DIR / 'hero_valid_positions_simple.json').open('r', encoding='utf-8') as f:
-        HERO_VALID_POSITIONS_DICT = json.load(f)
+    with (BASE_DIR / 'hero_position_stats.json').open('r', encoding='utf-8') as f:
+        _raw_position_stats = json.load(f)
+    _min_position_pct = float(os.getenv("HERO_POSITION_STATS_MIN_PERCENTAGE", "1") or "1")
+    for raw_hero_id, payload in (_raw_position_stats or {}).items():
+        if not str(raw_hero_id).isdigit() or not isinstance(payload, dict):
+            continue
+        hero_id = str(raw_hero_id)
+        hero_name = payload.get("hero_name")
+        if hero_name:
+            HERO_ID_TO_NAME[hero_id] = str(hero_name)
+        raw_positions = payload.get("positions")
+        if not isinstance(raw_positions, dict):
+            continue
+        valid_positions = []
+        position_counts = {}
+        for raw_pos, pos_stats in raw_positions.items():
+            if not str(raw_pos).isdigit() or not isinstance(pos_stats, dict):
+                continue
+            pos_num = int(raw_pos)
+            if not 1 <= pos_num <= 5:
+                continue
+            try:
+                games = int(pos_stats.get("games", 0) or 0)
+                percentage = float(pos_stats.get("percentage", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            pos_label = f"POSITION_{pos_num}"
+            if games > 0:
+                position_counts[pos_label] = games
+            if percentage >= _min_position_pct:
+                valid_positions.append(pos_label)
+        if valid_positions:
+            HERO_VALID_POSITIONS_DICT[hero_id] = valid_positions
+        if position_counts:
+            HERO_POSITION_COUNTS[hero_id] = position_counts
 except Exception as e:
-    HERO_VALID_POSITIONS_DICT = {}
-    print(f"⚠️ Не удалось загрузить hero_valid_positions_simple.json: {e}")
-    _report_missing_runtime_file("hero_valid_positions_simple.json", BASE_DIR / "hero_valid_positions_simple.json", details=str(e))
-try:
-    with (BASE_DIR / 'hero_valid_positions_counts_500k.json').open('r', encoding='utf-8') as f:
-        _raw_counts = json.load(f)
-    HERO_POSITION_COUNTS = {
-        str(k): v for k, v in _raw_counts.items()
-        if str(k).isdigit() and isinstance(v, dict)
-    }
-except Exception as e:
-    HERO_POSITION_COUNTS = {}
-    print(f"⚠️ Не удалось загрузить hero_valid_positions_counts_500k.json: {e}")
+    print(f"⚠️ Не удалось загрузить hero_position_stats.json: {e}")
     _report_missing_runtime_file(
-        "hero_valid_positions_counts_500k.json",
-        BASE_DIR / "hero_valid_positions_counts_500k.json",
-        details=str(e),
-    )
-try:
-    with (BASE_DIR / 'hero_valid_positions_counts_500k.json').open('r', encoding='utf-8') as f:
-        HERO_ID_TO_NAME = json.load(f)
-except Exception as e:
-    HERO_ID_TO_NAME = {}
-    print(f"⚠️ Не удалось загрузить hero_valid_positions_counts_500k.json (hero names fallback): {e}")
-    _report_missing_runtime_file(
-        "hero_valid_positions_counts_500k.json (hero names fallback)",
-        BASE_DIR / "hero_valid_positions_counts_500k.json",
+        "hero_position_stats.json",
+        BASE_DIR / "hero_position_stats.json",
         details=str(e),
     )
 
@@ -5484,18 +5658,16 @@ KILLS_PRIORS_CACHE_PATH = ML_MODELS_DIR / "pro_kills_priors.json"
 lane_data = None
 early_dict = None
 late_dict = None
-comeback_dict = None
-comeback_meta = None
-comeback_baseline_wr_pct = None
+post_lane_dict = None
 tempo_solo_dict = None
 tempo_duo_dict = None
 tempo_cp1v1_dict = None
-late_comeback_ceiling_data = None
-late_comeback_ceiling_thresholds = None
+late_comeback_ceiling_data = {}
+late_comeback_ceiling_thresholds = {}
 late_comeback_ceiling_max_minute = None
-late_pub_comeback_table_data = None
-late_pub_comeback_table_thresholds_by_wr = None
-late_pub_comeback_table_max_minute_by_wr = None
+late_pub_comeback_table_data = {}
+late_pub_comeback_table_thresholds_by_wr = {}
+late_pub_comeback_table_max_minute_by_wr = {}
 late_pub_comeback_table_global_max_minute = None
 STATS_SEQUENTIAL_WARMUP_ENABLED = _safe_bool_env("STATS_SEQUENTIAL_WARMUP_ENABLED", True)
 STATS_WARMUP_STEP_DELAY_SECONDS = _safe_float_env("STATS_WARMUP_STEP_DELAY_SECONDS", 45.0)
@@ -5523,8 +5695,17 @@ CURRENT_PROXY_INDEX = 0
 CURRENT_PROXY = None
 PROXIES = {}
 USE_PROXY = None
-# DLTV source mode: "api" (curl/proxy) or "html" (Selenium). Set by --dltv-source arg.
-DLTV_SOURCE_MODE = "api"
+# Live source mode: "cyberscore" (Camoufox/proxy), "api" (curl/proxy), or "html" (Camoufox/Selenium).
+DLTV_SOURCE_MODE = str(os.getenv("DLTV_SOURCE_MODE", "cyberscore")).strip().lower() or "cyberscore"
+CYBERSCORE_MATCHES_URL = str(
+    os.getenv(
+        "CYBERSCORE_MATCHES_URL",
+        "https://cyberscore.live/en/matches/?type=liveOrUpcoming&tournament_tier=2%2C1",
+    )
+).strip()
+CYBERSCORE_GET_HEADS_FALLBACK = _env_flag("CYBERSCORE_GET_HEADS_FALLBACK", "0")
+CYBERSCORE_CAMOUFOX_PROXY_URL = str(os.getenv("CYBERSCORE_CAMOUFOX_PROXY_URL", "")).strip()
+CYBERSCORE_LISTING_ITEM_CACHE: Dict[str, Dict[str, Any]] = {}
 GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES = "live_matches_missing_after_all_proxies"
 GET_HEADS_FAILURE_REASON_REQUEST_FAILED = "request_failed"
 GET_HEADS_LAST_FAILURE_REASON = None
@@ -5923,6 +6104,47 @@ def _summarize_live_card_hrefs(cards: Any, *, limit: int = 10) -> List[str]:
 def _extract_live_listing_context(head_node: Any, body_node: Any) -> Dict[str, Any]:
     head_classes = set(head_node.get("class") or []) if getattr(head_node, "get", None) else set()
     body_classes = set(body_node.get("class") or []) if getattr(body_node, "get", None) else set()
+    source_marker = ""
+    if getattr(body_node, "get", None):
+        source_marker = str(body_node.get("data-source") or "").strip().lower()
+    if not source_marker and getattr(head_node, "get", None):
+        source_marker = str(head_node.get("data-source") or "").strip().lower()
+    if (
+        source_marker == "cyberscore"
+        or "matches-item" in body_classes
+        or "matches-item" in head_classes
+    ):
+        card = body_node if getattr(body_node, "get", None) else head_node
+        href = (
+            str(card.get("data-cyberscore-href") or card.get("href") or "").strip()
+            if getattr(card, "get", None)
+            else ""
+        )
+        absolute_href = _absolute_cyberscore_url(href) if href else ""
+        match_id = (
+            str(card.get("data-cyberscore-match-id") or "").strip()
+            if getattr(card, "get", None)
+            else ""
+        ) or _extract_cyberscore_match_id_from_href(absolute_href)
+        text = card.get_text(" ", strip=True) if getattr(card, "get_text", None) else ""
+        score_match = re.search(r"\b(\d+)\s*:\s*(\d+)\b", text)
+        if score_match:
+            left_score, right_score = int(score_match.group(1)), int(score_match.group(2))
+        else:
+            left_score, right_score = 0, 0
+        status = "live" if "online" in body_classes or "LIVE" in text.upper() else "unknown"
+        return {
+            "layout": "cyberscore_match_card",
+            "source": "cyberscore",
+            "status": status,
+            "score": f"{left_score} : {right_score}",
+            "uniq_score": left_score + right_score,
+            "href": absolute_href,
+            "series_id": match_id,
+            "live_match_id": match_id,
+            "league_title": "",
+            "match_card": card,
+        }
     match_card = None
     if {"match", "live"}.issubset(body_classes):
         match_card = body_node
@@ -11738,7 +11960,7 @@ def _build_runtime_object_snapshot() -> Dict[str, str]:
         "lane_data": _runtime_object_summary(lane_data),
         "early_dict": _runtime_object_summary(early_dict),
         "late_dict": _runtime_object_summary(late_dict),
-        "comeback_dict": _runtime_object_summary(comeback_dict),
+        "post_lane_dict": _runtime_object_summary(post_lane_dict),
         "late_pub_comeback_table_thresholds": _runtime_object_summary(late_pub_comeback_table_thresholds_by_wr),
         "match_history": f"dict(len={history_count})",
         "bookmaker_prefetch_queue": f"deque(len={bookmaker_queue_len})",
@@ -11773,7 +11995,7 @@ def _maybe_log_runtime_memory_snapshot(*, cycle_number: int, context: str, force
         f"lane={object_snapshot['lane_data']}, "
         f"early={object_snapshot['early_dict']}, "
         f"late={object_snapshot['late_dict']}, "
-        f"comeback={object_snapshot['comeback_dict']}, "
+        f"post_lane={object_snapshot['post_lane_dict']}, "
         f"late_pub_table={object_snapshot['late_pub_comeback_table_thresholds']}, "
         f"history={object_snapshot['match_history']}, "
         f"prefetch_q={object_snapshot['bookmaker_prefetch_queue']}, "
@@ -12385,64 +12607,630 @@ def _deliver_and_persist_signal(
 _dltv_selenium_driver = None
 
 
+def _camoufox_proxy_kwargs_from_url(proxy_url: str) -> Dict[str, Any]:
+    proxy_value = str(proxy_url or "").strip()
+    if not proxy_value:
+        return {}
+    try:
+        from bookmaker_selenium_odds import _parse_proxy
+
+        parsed = _parse_proxy(proxy_value)
+        return {
+            "proxy": {
+                "server": f"http://{parsed['host']}:{parsed['port']}",
+                "username": parsed["username"],
+                "password": parsed["password"],
+            }
+        }
+    except Exception as exc:
+        print(f"⚠️ Camoufox proxy config failed for {proxy_value[:50]}...: {exc}")
+        return {}
+
+
+def _cyberscore_camoufox_proxy_kwargs() -> Dict[str, Any]:
+    proxy_candidates = [
+        CYBERSCORE_CAMOUFOX_PROXY_URL,
+        CURRENT_PROXY,
+    ]
+    if isinstance(DLTV_PROXY_POOL, (list, tuple)):
+        proxy_candidates.extend(DLTV_PROXY_POOL)
+    proxy_candidates.extend(PROXY_LIST)
+    proxy_value = next((str(candidate).strip() for candidate in proxy_candidates if str(candidate or "").strip()), "")
+    if not proxy_value:
+        print("⚠️ CyberScore source: proxy pool empty, Camoufox will run direct")
+        return {}
+    return _camoufox_proxy_kwargs_from_url(proxy_value)
+
+
+def _camoufox_env_int(name: str, default: int) -> int:
+    try:
+        return int(str(os.getenv(name, str(default))).strip())
+    except (TypeError, ValueError):
+        return int(default)
+
+
+class _SharedCamoufoxSession:
+    """Owns the only Camoufox browser and runs all page work on one thread."""
+
+    _STOP = object()
+
+    def __init__(self) -> None:
+        self._jobs: "queue.Queue[Any]" = queue.Queue()
+        self._lock = threading.RLock()
+        self._thread: Optional[threading.Thread] = None
+        self._reset_requested = False
+
+    def submit(self, label: str, callback, timeout: float = 120.0) -> Any:
+        if not CAMOUFOX_AVAILABLE or camoufox is None:
+            raise RuntimeError("Camoufox unavailable")
+        future: Future = Future()
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(
+                    target=self._worker,
+                    name="shared-camoufox",
+                    daemon=True,
+                )
+                self._thread.start()
+        self._jobs.put((future, str(label or "camoufox-job"), callback))
+        return future.result(timeout=timeout)
+
+    def request_reset(self) -> None:
+        with self._lock:
+            self._reset_requested = True
+
+    def close(self) -> None:
+        with self._lock:
+            thread = self._thread
+            if thread is None:
+                return
+            self._jobs.put(self._STOP)
+        if thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=10)
+        with self._lock:
+            self._thread = None
+
+    def _pop_reset_requested(self) -> bool:
+        with self._lock:
+            value = self._reset_requested
+            self._reset_requested = False
+            return value
+
+    def _worker(self) -> None:
+        browser_cm = None
+        browser = None
+        launched_at = 0.0
+        jobs_since_launch = 0
+        reset_after_jobs = max(1, _camoufox_env_int("CAMOUFOX_RESET_AFTER_JOBS", 250))
+        reset_after_seconds = max(60, _camoufox_env_int("CAMOUFOX_RESET_AFTER_SECONDS", 3600))
+
+        def _close_browser(reason: str) -> None:
+            nonlocal browser_cm, browser, launched_at, jobs_since_launch
+            if browser is not None:
+                with contextlib.suppress(Exception):
+                    browser.close()
+            if browser_cm is not None:
+                with contextlib.suppress(Exception):
+                    browser_cm.__exit__(None, None, None)
+            if browser is not None:
+                print(f"   🔒 Shared Camoufox browser closed ({reason})")
+            browser_cm = None
+            browser = None
+            launched_at = 0.0
+            jobs_since_launch = 0
+
+        def _ensure_browser() -> Any:
+            nonlocal browser_cm, browser, launched_at
+            if browser is not None:
+                return browser
+            proxy_kwargs = _cyberscore_camoufox_proxy_kwargs()
+            proxy_label = "with proxy" if proxy_kwargs else "without proxy"
+            browser_cm = camoufox.Camoufox(headless=True, **proxy_kwargs)
+            browser = browser_cm.__enter__()
+            launched_at = time.time()
+            print(f"   🌐 Shared Camoufox browser created ({proxy_label})")
+            return browser
+
+        try:
+            while True:
+                job = self._jobs.get()
+                if job is self._STOP:
+                    break
+                future, label, callback = job
+                if not future.set_running_or_notify_cancel():
+                    continue
+                try:
+                    active_browser = _ensure_browser()
+                    result = callback(active_browser)
+                    jobs_since_launch += 1
+                    future.set_result(result)
+                except Exception as exc:
+                    future.set_exception(exc)
+                    self.request_reset()
+                finally:
+                    browser_age = time.time() - launched_at if launched_at else 0.0
+                    should_reset = (
+                        self._pop_reset_requested()
+                        or jobs_since_launch >= reset_after_jobs
+                        or (browser_age >= reset_after_seconds and self._jobs.empty())
+                    )
+                    if should_reset:
+                        _close_browser("periodic reset" if browser_age >= reset_after_seconds else "requested reset")
+        finally:
+            _close_browser("shutdown")
+
+
+_shared_camoufox_session = _SharedCamoufoxSession()
+atexit.register(_shared_camoufox_session.close)
+
+
+def _run_shared_camoufox_job(label: str, callback, timeout: float = 120.0, retry: bool = True) -> Any:
+    try:
+        return _shared_camoufox_session.submit(label, callback, timeout=timeout)
+    except Exception:
+        if not retry:
+            raise
+        _shared_camoufox_session.request_reset()
+        return _shared_camoufox_session.submit(label, callback, timeout=timeout)
+
+
+def _fetch_protracker_payload_via_shared_camoufox(
+    slug: str,
+    hero_id: int,
+    proxy_candidate: Optional[str] = None,
+) -> Dict[str, Any]:
+    base_url = "https://dota2protracker.com"
+
+    def _job(browser) -> Dict[str, Any]:
+        page = browser.new_page()
+        try:
+            page.goto(f"{base_url}/hero/{slug}", wait_until="networkidle", timeout=30000)
+            payload = {"matchups": {}, "synergies": {}}
+            for pos in ["1", "2", "3", "4", "5"]:
+                api_url = f"{base_url}/hero/{slug}/api/matchup-payload?heroId={int(hero_id)}&position=pos+{pos}"
+                response = page.evaluate(
+                    """async (apiUrl) => {
+                        const r = await fetch(apiUrl);
+                        return await r.json();
+                    }""",
+                    api_url,
+                )
+                payload["matchups"][pos] = response.get("matchups", []) if isinstance(response, dict) else []
+                payload["synergies"][pos] = response.get("synergies", []) if isinstance(response, dict) else []
+            return payload
+        finally:
+            with contextlib.suppress(Exception):
+                page.close()
+
+    return _run_shared_camoufox_job(f"dota2protracker:{slug}", _job, timeout=180)
+
+
+def _install_dota2protracker_shared_camoufox_fetcher() -> bool:
+    module = globals().get("_dota2protracker_module")
+    if module is None and enrich_with_pro_tracker is not None:
+        module = sys.modules.get(getattr(enrich_with_pro_tracker, "__module__", ""))
+    setter = getattr(module, "set_payload_fetcher", None) if module is not None else None
+    if callable(setter):
+        setter(_fetch_protracker_payload_via_shared_camoufox)
+    return getattr(module, "PROTRACKER_PAYLOAD_FETCHER", None) is _fetch_protracker_payload_via_shared_camoufox
+
+
+def _decode_next_flight_chunks_from_html(html: str) -> List[str]:
+    def _decode_payload(raw_payload: str) -> Optional[str]:
+        try:
+            return json.loads(f'"{raw_payload}"')
+        except Exception as exc:
+            logger.debug("Failed to decode Next flight chunk: %s", exc)
+            return None
+
+    def _scan_payloads(raw_text: str) -> List[str]:
+        found: List[str] = []
+        needle = 'self.__next_f.push([1,"'
+        start_search = 0
+        while True:
+            idx = raw_text.find(needle, start_search)
+            if idx < 0:
+                break
+            start = idx + len(needle)
+            pos = start
+            escaped = False
+            while pos < len(raw_text):
+                ch = raw_text[pos]
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"' and raw_text[pos + 1 : pos + 3] == "])":
+                    decoded = _decode_payload(raw_text[start:pos])
+                    if decoded is not None:
+                        found.append(decoded)
+                    pos += 3
+                    break
+                pos += 1
+            start_search = max(pos, start + 1)
+        return found
+
+    soup = BeautifulSoup(html or "", "lxml")
+    chunks: List[str] = []
+    for script in soup.find_all("script"):
+        script_text = script.string or script.get_text() or ""
+        if "self.__next_f.push" not in script_text:
+            continue
+        chunks.extend(_scan_payloads(script_text))
+    if not chunks and "self.__next_f.push" in str(html or ""):
+        chunks.extend(_scan_payloads(str(html or "")))
+    return chunks
+
+
+def _extract_balanced_json_object(text: str, start_index: int) -> Optional[str]:
+    if start_index < 0 or start_index >= len(text) or text[start_index] != "{":
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for idx in range(start_index, len(text)):
+        ch = text[idx]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start_index : idx + 1]
+    return None
+
+
+def _extract_cyberscore_match_item_from_html(html: str, match_id: Optional[Union[int, str]] = None) -> Optional[Dict[str, Any]]:
+    chunks = _decode_next_flight_chunks_from_html(html)
+    if not chunks:
+        return None
+    blob = "\n".join(chunks)
+    candidates: List[str] = []
+    if match_id:
+        candidates.append(f'"item":{{"id":{match_id}')
+        candidates.append(f'"item":{{"id":"{match_id}"')
+    candidates.append('"item":{"id":')
+    for needle in candidates:
+        idx = blob.find(needle)
+        if idx < 0:
+            continue
+        start = blob.find("{", idx + len('"item":') - 1)
+        raw_object = _extract_balanced_json_object(blob, start)
+        if not raw_object:
+            continue
+        try:
+            item = json.loads(raw_object)
+        except Exception as exc:
+            logger.debug("Failed to parse CyberScore match item JSON: %s", exc)
+            continue
+        if not isinstance(item, dict):
+            continue
+        if match_id:
+            try:
+                if int(item.get("id") or 0) != int(match_id):
+                    continue
+            except Exception:
+                pass
+        return item
+    return None
+
+
+def _extract_cyberscore_match_id_from_href(href: str) -> str:
+    match = re.search(r"/matches/(\d+)", str(href or ""))
+    return match.group(1) if match else ""
+
+
+def _absolute_cyberscore_url(href: str) -> str:
+    raw = str(href or "").strip()
+    if raw.startswith("http://") or raw.startswith("https://"):
+        return raw
+    if raw.startswith("/"):
+        return f"https://cyberscore.live{raw}"
+    return f"https://cyberscore.live/{raw.lstrip('/')}"
+
+
+def _extract_cyberscore_live_cards_from_html(html: str) -> Tuple[List[Any], List[Any]]:
+    global CYBERSCORE_LISTING_ITEM_CACHE
+    soup = BeautifulSoup(html or "", "lxml")
+    cards: List[Any] = []
+    listing_item_cache: Dict[str, Dict[str, Any]] = {}
+    for card in soup.select("a.matches-item[href*='/matches/']"):
+        classes = set(card.get("class") or [])
+        text = card.get_text(" ", strip=True)
+        if "online" not in classes and "LIVE" not in text.upper():
+            continue
+        href = _absolute_cyberscore_url(str(card.get("href") or ""))
+        match_id = _extract_cyberscore_match_id_from_href(href)
+        card["data-source"] = "cyberscore"
+        card["data-cyberscore-href"] = href
+        if match_id:
+            card["data-cyberscore-match-id"] = match_id
+            listing_item = _extract_cyberscore_match_item_from_html(html, match_id=match_id)
+            if isinstance(listing_item, dict):
+                listing_item_cache[str(match_id)] = listing_item
+        cards.append(card)
+    CYBERSCORE_LISTING_ITEM_CACHE = listing_item_cache
+    return list(cards), list(cards)
+
+
+def _get_cyberscore_html_via_camoufox(url: Optional[str] = None) -> Optional[str]:
+    if not CAMOUFOX_AVAILABLE:
+        print("⚠️ CyberScore source: Camoufox unavailable")
+        return None
+    target_url = str(url or CYBERSCORE_MATCHES_URL).strip()
+    try:
+        def _job(browser) -> str:
+            page = browser.new_page()
+            try:
+                print(f"🌐 CyberScore source: loading {target_url} via shared Camoufox tab...")
+                page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+                try:
+                    page.wait_for_selector("a.matches-item[href*='/matches/'], main", timeout=20000)
+                except Exception:
+                    pass
+                time.sleep(2.0)
+                return page.content() or ""
+            finally:
+                with contextlib.suppress(Exception):
+                    page.close()
+
+        return _run_shared_camoufox_job(f"cyberscore:{target_url}", _job, timeout=90)
+    except Exception as exc:
+        print(f"❌ CyberScore Camoufox fetch failed: {exc}")
+        logger.warning("CyberScore Camoufox fetch failed for %s: %s", target_url, exc)
+        return None
+
+
+def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[List[Any]]]:
+    html = _get_cyberscore_html_via_camoufox(CYBERSCORE_MATCHES_URL)
+    if html is None:
+        return None, None
+    heads, bodies = _extract_cyberscore_live_cards_from_html(html)
+    if heads:
+        print(f"✅ CyberScore source: found {len(heads)} live cards")
+        return heads, bodies
+    print("⚠️ CyberScore source: no live cards found")
+    return [], []
+
+
+def _maybe_get_cyberscore_heads_fallback(reason: str) -> Optional[Tuple[Optional[List[Any]], Optional[List[Any]]]]:
+    global GET_HEADS_LAST_FAILURE_REASON, NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO
+    if not CYBERSCORE_GET_HEADS_FALLBACK:
+        return None
+    print(f"🧭 DLTV get_heads fallback -> CyberScore (reason={reason})")
+    result = _get_cyberscore_heads_via_camoufox()
+    if result and result[0] is not None:
+        GET_HEADS_LAST_FAILURE_REASON = None
+        NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
+        NEXT_SCHEDULE_MATCH_INFO = None
+    return result
+
+
+def _parse_cyberscore_best_of_score(item: Dict[str, Any]) -> Tuple[int, int]:
+    raw_score = item.get("best_of_score")
+    if isinstance(raw_score, (list, tuple)) and len(raw_score) >= 2:
+        try:
+            return int(raw_score[0] or 0), int(raw_score[1] or 0)
+        except Exception:
+            return 0, 0
+    return 0, 0
+
+
+def _latest_cyberscore_radiant_lead(item: Dict[str, Any]) -> int:
+    networth = item.get("networth")
+    if not isinstance(networth, list) or not networth:
+        return 0
+    valid_points = [point for point in networth if isinstance(point, dict)]
+    if not valid_points:
+        return 0
+    latest = max(valid_points, key=lambda point: _coerce_int(point.get("time")))
+    value = _coerce_int(latest.get("value"))
+    team = str(latest.get("team") or "").strip().lower()
+    return -abs(value) if team == "dire" else abs(value)
+
+
+def _parse_cyberscore_draft_and_positions(item: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]], Optional[str]]:
+    radiant: Dict[str, Dict[str, Any]] = {}
+    dire: Dict[str, Dict[str, Any]] = {}
+    picks = item.get("picks")
+    if not isinstance(picks, list):
+        return {}, {}, "CyberScore item has no picks list"
+    for pick in picks:
+        if not isinstance(pick, dict):
+            continue
+        team = str(pick.get("team") or "").strip().lower()
+        player = pick.get("player") if isinstance(pick.get("player"), dict) else {}
+        hero = pick.get("hero") if isinstance(pick.get("hero"), dict) else {}
+        role = _coerce_int(player.get("role"))
+        hero_id = _coerce_int(hero.get("id_steam") or hero.get("steam_id") or hero.get("hero_id"))
+        if hero_id <= 0:
+            # CyberScore internal hero ids are not Dota ids; id_steam is the useful one.
+            hero_id = _coerce_int(hero.get("idSteam") or hero.get("dota_id"))
+        if role < 1 or role > 5 or hero_id <= 0:
+            continue
+        target = radiant if team == "radiant" else dire if team == "dire" else None
+        if target is None:
+            continue
+        pos_key = f"pos{role}"
+        target[pos_key] = {
+            "hero_id": int(hero_id),
+            # CyberScore exposes its own player id here, not Steam account id.
+            # Keep account_id=0 so skipped-player and live-ELO code do not read it as Steam id.
+            "account_id": 0,
+            "_cyberscore_player_id": _coerce_int(player.get("id")),
+            "_player_name": str(player.get("game_name") or player.get("full_name") or "").strip(),
+            "_hero_name": str(hero.get("name") or "").strip(),
+        }
+    for payload in list(radiant.values()) + list(dire.values()):
+        payload.pop("_player_name", None)
+    missing = []
+    for team_name, payload in (("radiant", radiant), ("dire", dire)):
+        for idx in range(1, 6):
+            if f"pos{idx}" not in payload:
+                missing.append(f"{team_name}.pos{idx}")
+    if missing:
+        return radiant, dire, f"CyberScore draft incomplete: missing {', '.join(missing)}"
+    return radiant, dire, None
+
+
+def _cyberscore_item_to_runtime_payload(item: Dict[str, Any]) -> Dict[str, Any]:
+    radiant_score = _coerce_int(item.get("score_team_radiant"))
+    dire_score = _coerce_int(item.get("score_team_dire"))
+    game_time = _coerce_int(item.get("game_time") or item.get("ticks_game_time"))
+    radiant_lead = _latest_cyberscore_radiant_lead(item)
+    radiant_bo_score, dire_bo_score = _parse_cyberscore_best_of_score(item)
+    radiant_team = item.get("team_radiant") if isinstance(item.get("team_radiant"), dict) else {}
+    dire_team = item.get("team_dire") if isinstance(item.get("team_dire"), dict) else {}
+    tournament = item.get("tournament") if isinstance(item.get("tournament"), dict) else {}
+    radiant_team_name = str(radiant_team.get("name") or item.get("team_radiant_name") or "").strip()
+    dire_team_name = str(dire_team.get("name") or item.get("team_dire_name") or "").strip()
+    radiant_team_id = _coerce_int(item.get("team_radiant_id") or radiant_team.get("id"))
+    dire_team_id = _coerce_int(item.get("team_dire_id") or dire_team.get("id"))
+    series_id = str(item.get("id_series") or item.get("id") or "").strip()
+    league_name = str(tournament.get("title") or tournament.get("name") or "").strip()
+    radiant_heroes, dire_heroes, draft_error = _parse_cyberscore_draft_and_positions(item)
+
+    def _fast_picks(team_payload: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+        result: List[Dict[str, Any]] = []
+        for idx in range(1, 6):
+            payload = team_payload.get(f"pos{idx}") or {}
+            hero_id = int(payload.get("hero_id") or 0)
+            if hero_id <= 0:
+                continue
+            result.append(
+                {
+                    "hero_id": hero_id,
+                    "player": {"title": f"cyberscore_pos{idx}"},
+                }
+            )
+        return result
+
+    return {
+        "source": "cyberscore",
+        "match_id": _coerce_int(item.get("id")),
+        "game_time": game_time,
+        "radiant_lead": radiant_lead,
+        "radiant_score": radiant_score,
+        "dire_score": dire_score,
+        "fast_picks": {
+            "first_team": _fast_picks(radiant_heroes),
+            "second_team": _fast_picks(dire_heroes),
+        },
+        "_cyberscore_item": item,
+        "_cyberscore_draft_error": draft_error,
+        "_cyberscore_heroes_and_pos": {
+            "radiant": radiant_heroes,
+            "dire": dire_heroes,
+        },
+        "db": {
+            "series": {
+                "id": series_id,
+                "type": item.get("best_of"),
+                "slug": str(item.get("title") or "").strip().lower().replace(" ", "-"),
+            },
+            "scores": {
+                "first_team": radiant_bo_score,
+                "second_team": dire_bo_score,
+            },
+            "first_team": {
+                "title": radiant_team_name,
+                "is_radiant": True,
+                "id": radiant_team_id,
+                "team_id": radiant_team_id,
+            },
+            "second_team": {
+                "title": dire_team_name,
+                "is_radiant": False,
+                "id": dire_team_id,
+                "team_id": dire_team_id,
+            },
+            "league": {
+                "title": league_name,
+            },
+        },
+        "live_league_data": {
+            "league_id": _coerce_int(item.get("tournament_id") or tournament.get("id")),
+            "league_name": league_name,
+            "series_id": series_id,
+            "series_type": item.get("best_of"),
+            "game_time": game_time,
+            "radiant_lead": radiant_lead,
+            "radiant_score": radiant_score,
+            "dire_score": dire_score,
+            "radiant_series_wins": radiant_bo_score,
+            "dire_series_wins": dire_bo_score,
+            "match": {
+                "radiant_team_id": radiant_team_id,
+                "dire_team_id": dire_team_id,
+                "game_time": game_time,
+                "radiant_lead": radiant_lead,
+            },
+            "radiant_team_id": radiant_team_id,
+            "dire_team_id": dire_team_id,
+            "radiant_team": {
+                "team_id": radiant_team_id,
+                "id": radiant_team_id,
+                "title": radiant_team_name,
+            },
+            "dire_team": {
+                "team_id": dire_team_id,
+                "id": dire_team_id,
+                "title": dire_team_name,
+            },
+        },
+    }
+
+
 def _get_dltv_html_via_camoufox():
         """Fetch DLTV live matches page via Camoufox/Playwright."""
         from bs4 import BeautifulSoup
-        from bookmaker_selenium_odds import _parse_proxy
 
         if not CAMOUFOX_AVAILABLE:
             print("⚠️ DLTV HTML mode: Camoufox unavailable, fallback to Selenium")
             return None, None
 
-        proxy_kwargs: Dict[str, Any] = {}
-        proxy_for_dltv = None
         try:
-            if DLTV_PROXY_POOL:
-                proxy_for_dltv = DLTV_PROXY_POOL[0]
-            if proxy_for_dltv:
-                parsed = _parse_proxy(proxy_for_dltv)
-                proxy_kwargs["proxy"] = {
-                    "server": f"http://{parsed['host']}:{parsed['port']}",
-                    "username": parsed["username"],
-                    "password": parsed["password"],
-                }
-                print(f"🌐 DLTV HTML mode: init Camoufox with proxy {proxy_for_dltv[:50]}...")
-            else:
-                print("🌐 DLTV HTML mode: init Camoufox without proxy...")
-        except Exception as exc:
-            print(f"⚠️ DLTV HTML mode: failed to prepare Camoufox proxy config: {exc}")
-            proxy_kwargs = {}
-
-        try:
-            with camoufox.Camoufox(
-                headless=True,
-                **proxy_kwargs,
-            ) as browser:
+            def _job(browser):
                 page = browser.new_page()
-                print("🌐 DLTV HTML mode: loading dltv.org/matches via Camoufox...")
-                page.goto("https://dltv.org/matches", wait_until="domcontentloaded", timeout=30000)
                 try:
-                    page.wait_for_selector("div.live__matches, div.match.live", timeout=15000)
-                except Exception:
-                    pass
-                time.sleep(2.0)
-                html = page.content() or ""
-                soup = BeautifulSoup(html, 'lxml')
-                live_matches = soup.find('div', class_='live__matches')
-                live_cards = list(soup.select("div.match.live"))
+                    print("🌐 DLTV HTML mode: loading dltv.org/matches via shared Camoufox tab...")
+                    page.goto("https://dltv.org/matches", wait_until="domcontentloaded", timeout=30000)
+                    try:
+                        page.wait_for_selector("div.live__matches, div.match.live", timeout=15000)
+                    except Exception:
+                        pass
+                    time.sleep(2.0)
+                    html = page.content() or ""
+                    soup = BeautifulSoup(html, 'lxml')
+                    live_matches = soup.find('div', class_='live__matches')
+                    live_cards = list(soup.select("div.match.live"))
 
-                if live_matches:
-                    cards = list(live_matches.select("div.match.live")) if live_matches else []
-                    if cards:
-                        print(f"✅ DLTV HTML Camoufox: found {len(cards)} live cards from section")
-                        return [None] * len(cards), cards
-                    print("✅ DLTV HTML Camoufox: found live_matches section (no cards)")
-                    return [None], [soup]
-                if live_cards:
-                    print(f"✅ DLTV HTML Camoufox: found {len(live_cards)} live cards")
-                    return [None] * len(live_cards), live_cards
-                print("⚠️ DLTV HTML Camoufox: no live matches found")
-                return [], []
+                    if live_matches:
+                        cards = list(live_matches.select("div.match.live")) if live_matches else []
+                        if cards:
+                            print(f"✅ DLTV HTML Camoufox: found {len(cards)} live cards from section")
+                            return [None] * len(cards), cards
+                        print("✅ DLTV HTML Camoufox: found live_matches section (no cards)")
+                        return [None], [soup]
+                    if live_cards:
+                        print(f"✅ DLTV HTML Camoufox: found {len(live_cards)} live cards")
+                        return [None] * len(live_cards), live_cards
+                    print("⚠️ DLTV HTML Camoufox: no live matches found")
+                    return [], []
+                finally:
+                    with contextlib.suppress(Exception):
+                        page.close()
+
+            return _run_shared_camoufox_job("dltv-html:matches", _job, timeout=60)
         except Exception as exc:
             print(f"❌ DLTV HTML Camoufox fetch failed: {exc}")
             return None, None
@@ -12558,6 +13346,12 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
         global GET_HEADS_LAST_FAILURE_REASON, NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO, SCHEDULE_LIVE_WAIT_TARGET
         global PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE
 
+        if DLTV_SOURCE_MODE == "cyberscore":
+            GET_HEADS_LAST_FAILURE_REASON = None
+            NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
+            NEXT_SCHEDULE_MATCH_INFO = None
+            return _get_cyberscore_heads_via_camoufox()
+
         # HTML mode: prefer Camoufox, fallback to Selenium instead of API
         if DLTV_SOURCE_MODE == "html":
             if DLTV_CAMOUFOX_ENABLED:
@@ -12588,6 +13382,9 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             status_msg = f"Status: {response.status_code}" if response else "No response (None)"
             print(f"❌ Ошибка получения данных: {status_msg}")
             GET_HEADS_LAST_FAILURE_REASON = GET_HEADS_FAILURE_REASON_REQUEST_FAILED
+            cyberscore_fallback = _maybe_get_cyberscore_heads_fallback("dltv_request_failed")
+            if cyberscore_fallback is not None:
+                return cyberscore_fallback
             _emit_pending_schedule_wake_audit(
                 heads_count=0,
                 bodies_count=0,
@@ -12826,6 +13623,11 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                         next_schedule_info=None,
                         request_status=GET_HEADS_LAST_FAILURE_REASON,
                     )
+                    cyberscore_fallback = _maybe_get_cyberscore_heads_fallback(
+                        str(GET_HEADS_LAST_FAILURE_REASON or "dltv_live_missing")
+                    )
+                    if cyberscore_fallback is not None:
+                        return cyberscore_fallback
                     return None, None
 
                 print(f"🔄 Переключился на другой прокси, повторяю запрос...")
@@ -12856,6 +13658,9 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                 if schedule_info:
                     NEXT_SCHEDULE_MATCH_INFO = schedule_info
                     NEXT_SCHEDULE_SLEEP_SECONDS = float(schedule_info.get("sleep_seconds", 0.0) or 0.0)
+                cyberscore_fallback = _maybe_get_cyberscore_heads_fallback("dltv_no_live_cards")
+                if cyberscore_fallback is not None:
+                    return cyberscore_fallback
                 _emit_pending_schedule_wake_audit(
                     heads_count=len(heads),
                     bodies_count=len(bodies),
@@ -13058,7 +13863,7 @@ def parse_draft_and_positions(soup, data, radiant_team_name, dire_team_name):
         return f"Unknown({hero_id})"
 
     def _hero_pos_score(hero_id: int, pos: str) -> int:
-        # Приоритет: частотная модель на 500k матчей (share + reliability).
+        # Приоритет: частотная модель из hero_position_stats.json (share + reliability).
         share = _hero_position_share(hero_id, pos)
         if share > 0:
             counts = _hero_position_counts(hero_id)
@@ -13305,7 +14110,7 @@ def parse_draft_and_positions(soup, data, radiant_team_name, dire_team_name):
                     radiant_problem_positions.add(pos)
                     print(
                         f"      ⚠️ ДУБЛЬ ПОЗИЦИИ в Radiant: {pos} "
-                        f"({existing_player} vs {player_name}) - разрулим по hero_valid_positions_simple.json"
+                        f"({existing_player} vs {player_name}) - разрулим по hero_position_stats.json"
                     )
                 radiant_names_pos[player_name] = pos
         elif is_same_team(team_name, dire_team_name):
@@ -13322,7 +14127,7 @@ def parse_draft_and_positions(soup, data, radiant_team_name, dire_team_name):
                     dire_problem_positions.add(pos)
                     print(
                         f"      ⚠️ ДУБЛЬ ПОЗИЦИИ в Dire: {pos} "
-                        f"({existing_player} vs {player_name}) - разрулим по hero_valid_positions_simple.json"
+                        f"({existing_player} vs {player_name}) - разрулим по hero_position_stats.json"
                     )
                 dire_names_pos[player_name] = pos
 
@@ -13691,6 +14496,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
         listing_context = _extract_live_listing_context(heads[i], bodies[i])
         is_match_card_v2 = str(listing_context.get("layout") or "") == "match_card_v2"
+        is_cyberscore_card = str(listing_context.get("source") or "").lower() == "cyberscore"
         status = str(listing_context.get("status") or "unknown").lower()
         
         if return_status != 'draft...':
@@ -13709,12 +14515,32 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if not series_key_from_path and path:
                 series_match = re.search(r"/matches/(\d+)", path)
                 series_key_from_path = series_match.group(1) if series_match else ""
-            series_url = f'dltv.org{path}' if path else (f'dltv.org/matches/{series_key_from_path}' if series_key_from_path else "")
-            check_uniq_url = (
-                f'dltv.org{path}.{uniq_score}'
-                if path
-                else (f'dltv.org/matches/{series_key_from_path}.{uniq_score}' if series_key_from_path else f'live_match_unknown.{uniq_score}')
-            )
+            if is_cyberscore_card:
+                series_url = (
+                    f"cyberscore.live{path}"
+                    if path
+                    else (
+                        f"cyberscore.live/en/matches/{series_key_from_path}"
+                        if series_key_from_path
+                        else ""
+                    )
+                )
+                check_uniq_url = (
+                    f"cyberscore.live{path}.{uniq_score}"
+                    if path
+                    else (
+                        f"cyberscore.live/en/matches/{series_key_from_path}.{uniq_score}"
+                        if series_key_from_path
+                        else f"cyberscore.live/match_unknown.{uniq_score}"
+                    )
+                )
+            else:
+                series_url = f'dltv.org{path}' if path else (f'dltv.org/matches/{series_key_from_path}' if series_key_from_path else "")
+                check_uniq_url = (
+                    f'dltv.org{path}.{uniq_score}'
+                    if path
+                    else (f'dltv.org/matches/{series_key_from_path}.{uniq_score}' if series_key_from_path else f'live_match_unknown.{uniq_score}')
+                )
             verbose_match_log = _should_emit_verbose_match_log(check_uniq_url)
             match_log = print if verbose_match_log else (lambda *args, **kwargs: None)
             block_reason = _dispatch_block_reason(check_uniq_url)
@@ -13749,7 +14575,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 print(f"   ℹ️ Матч завершен")
                 return return_status
 
-            if not is_match_card_v2 and (check_uniq_url in maps_data or block_reason == "processed"):
+            if (
+                not PIPELINE_BYPASS_PROCESSED_URL_GATE
+                and not is_match_card_v2
+                and (check_uniq_url in maps_data or block_reason == "processed")
+            ):
                 print(f"   ✅ Матч уже в map_id_check.txt - пропускаем: {check_uniq_url}")
                 _drop_delayed_match(check_uniq_url, reason="already_in_map_id_check")
                 return
@@ -13822,7 +14652,71 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         json_url = ""
         response = None
         soup = None
-        if is_match_card_v2:
+        if is_cyberscore_card:
+            match_id = str(listing_context.get("live_match_id") or series_key_from_path or "").strip()
+            match_url = _absolute_cyberscore_url(href or f"/en/matches/{match_id}/")
+            match_log(f"   🌐 Запрос страницы CyberScore...")
+            response_text = _get_cyberscore_html_via_camoufox(match_url)
+            if not response_text:
+                print(f"   ❌ Не удалось получить страницу CyberScore")
+                print(f"   ❌ Матч пропущен (ошибка CyberScore Camoufox)")
+                return return_status
+            cyber_item = _extract_cyberscore_match_item_from_html(response_text, match_id=match_id or None)
+            if not cyber_item and match_id:
+                cyber_item = CYBERSCORE_LISTING_ITEM_CACHE.get(str(match_id))
+                if isinstance(cyber_item, dict):
+                    print("   ℹ️ CyberScore detail item missing; using get_heads listing item cache")
+            if not cyber_item:
+                print(f"   ❌ Не найден CyberScore embedded match item")
+                print(f"   ❌ Матч пропущен (нет CyberScore item)")
+                return return_status
+            data = _cyberscore_item_to_runtime_payload(cyber_item)
+            soup = BeautifulSoup("", "lxml")
+            json_url = match_url
+            match_id = str(data.get("match_id") or match_id or "").strip()
+            map_num = _coerce_int(cyber_item.get("game_map_number"))
+            radiant_bo_score, dire_bo_score = _parse_cyberscore_best_of_score(cyber_item)
+            score = f"{radiant_bo_score} : {dire_bo_score}"
+            uniq_score = radiant_bo_score + dire_bo_score
+            series_key_from_path = match_id or series_key_from_path
+            path = f"/en/matches/{match_id}/" if match_id else path
+            series_url = f"cyberscore.live{path}" if path else series_url
+            check_uniq_url = (
+                f"cyberscore.live/en/matches/{match_id}.map{map_num or uniq_score}"
+                if match_id
+                else f"cyberscore.live{path}.{uniq_score}"
+            )
+            verbose_match_log = _should_emit_verbose_match_log(check_uniq_url)
+            match_log = print if verbose_match_log else (lambda *args, **kwargs: None)
+            block_reason = _dispatch_block_reason(check_uniq_url)
+            if verbose_match_log:
+                print(f"\n🔍 DEBUG: CyberScore match #{i}")
+                print(f"   Статус: {status}")
+                print(f"   URL: {check_uniq_url}")
+                print(f"   Score: {score}")
+            elif check_uniq_url not in maps_data and block_reason != "processed":
+                print(f"\n🔁 RECHECK CyberScore матча #{i}: {check_uniq_url} | status={status}")
+            if (
+                not PIPELINE_BYPASS_PROCESSED_URL_GATE
+                and (check_uniq_url in maps_data or block_reason == "processed")
+            ):
+                print(f"   ✅ Матч уже в map_id_check.txt - пропускаем: {check_uniq_url}")
+                _drop_delayed_match(check_uniq_url, reason="already_in_map_id_check")
+                return
+            if not SIGNAL_MINIMAL_ODDS_ONLY_MODE and block_reason == "uncertain_delivery":
+                print(f"   ⚠️ Матч заблокирован после uncertain delivery - пропускаем")
+                _drop_delayed_match(check_uniq_url, reason="uncertain_delivery_block")
+                return
+            if not SIGNAL_MINIMAL_ODDS_ONLY_MODE:
+                with monitored_matches_lock:
+                    delayed_payload = monitored_matches.get(check_uniq_url)
+            print(
+                "   ✅ CyberScore data: "
+                f"map={map_num or 'n/a'}, time={_format_game_clock(data.get('game_time'))}, "
+                f"radiant_lead={data.get('radiant_lead')}, "
+                f"kills={data.get('radiant_score')}:{data.get('dire_score')}"
+            )
+        elif is_match_card_v2:
             live_match_id = str(listing_context.get("live_match_id") or "").strip()
             if not live_match_id:
                 print("   ❌ Не найден data-match у live карточки")
@@ -13853,70 +14747,71 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             base = "https://dltv.org"
             json_url = urljoin(base, json_path)
 
-        for json_attempt in range(max_json_retries):
-            attempt_no = json_attempt + 1
-            try:
-                resp = requests.get(json_url, proxies=PROXIES, timeout=10)
-                if resp.status_code == 200:
-                    try:
-                        data = resp.json()
-                    except Exception as e:
-                        preview = (resp.text or "").strip().replace("\n", " ")[:140]
-                        err_msg = (
-                            f"attempt={attempt_no}: invalid-json ({e}); "
-                            f"preview={preview!r}"
-                        )
+        if data is None:
+            for json_attempt in range(max_json_retries):
+                attempt_no = json_attempt + 1
+                try:
+                    resp = requests.get(json_url, proxies=PROXIES, timeout=10)
+                    if resp.status_code == 200:
+                        try:
+                            data = resp.json()
+                        except Exception as e:
+                            preview = (resp.text or "").strip().replace("\n", " ")[:140]
+                            err_msg = (
+                                f"attempt={attempt_no}: invalid-json ({e}); "
+                                f"preview={preview!r}"
+                            )
+                            json_retry_errors.append(err_msg)
+                            logger.warning(
+                                "Ошибка парсинга JSON (попытка %s/%s): %s",
+                                attempt_no,
+                                max_json_retries,
+                                err_msg,
+                            )
+                            print(f"   ⚠️  Ошибка парсинга JSON: {e}")
+                            if preview:
+                                print(f"   🔎 JSON preview: {preview!r}")
+                            if json_attempt < max_json_retries - 1:
+                                rotate_proxy()
+                                time.sleep(2)
+                            continue
+                        match_log(f"   ✅ JSON данные получены")
+                        if json_retry_errors:
+                            retries_summary = " | ".join(json_retry_errors)
+                            print(
+                                f"   ℹ️ JSON получен после попытки {attempt_no}/{max_json_retries}; "
+                                f"предыдущие ошибки: {retries_summary}"
+                            )
+                            logger.info(
+                                "JSON_RECOVERED url=%s attempt=%s/%s previous_errors=%s",
+                                check_uniq_url,
+                                attempt_no,
+                                max_json_retries,
+                                retries_summary,
+                            )
+                        break
+                    elif resp.status_code == 429:
+                        err_msg = f"attempt={attempt_no}: status=429"
                         json_retry_errors.append(err_msg)
-                        logger.warning(
-                            "Ошибка парсинга JSON (попытка %s/%s): %s",
-                            attempt_no,
-                            max_json_retries,
-                            err_msg,
-                        )
-                        print(f"   ⚠️  Ошибка парсинга JSON: {e}")
-                        if preview:
-                            print(f"   🔎 JSON preview: {preview!r}")
+                        logger.warning(f"429 при получении JSON, меняем прокси (попытка {attempt_no}/{max_json_retries})")
+                        print(f"   ⚠️  429: Too Many Requests - меняем прокси")
+                        rotate_proxy()
+                        time.sleep(3)
+                    else:
+                        err_msg = f"attempt={attempt_no}: status={resp.status_code}"
+                        json_retry_errors.append(err_msg)
+                        logger.warning(f"Статус {resp.status_code} при получении JSON (попытка {attempt_no}/{max_json_retries})")
                         if json_attempt < max_json_retries - 1:
                             rotate_proxy()
                             time.sleep(2)
-                        continue
-                    match_log(f"   ✅ JSON данные получены")
-                    if json_retry_errors:
-                        retries_summary = " | ".join(json_retry_errors)
-                        print(
-                            f"   ℹ️ JSON получен после попытки {attempt_no}/{max_json_retries}; "
-                            f"предыдущие ошибки: {retries_summary}"
-                        )
-                        logger.info(
-                            "JSON_RECOVERED url=%s attempt=%s/%s previous_errors=%s",
-                            check_uniq_url,
-                            attempt_no,
-                            max_json_retries,
-                            retries_summary,
-                        )
-                    break
-                elif resp.status_code == 429:
-                    err_msg = f"attempt={attempt_no}: status=429"
+                except Exception as e:
+                    err_msg = f"attempt={attempt_no}: request-exception ({e})"
                     json_retry_errors.append(err_msg)
-                    logger.warning(f"429 при получении JSON, меняем прокси (попытка {attempt_no}/{max_json_retries})")
-                    print(f"   ⚠️  429: Too Many Requests - меняем прокси")
-                    rotate_proxy()
-                    time.sleep(3)
-                else:
-                    err_msg = f"attempt={attempt_no}: status={resp.status_code}"
-                    json_retry_errors.append(err_msg)
-                    logger.warning(f"Статус {resp.status_code} при получении JSON (попытка {attempt_no}/{max_json_retries})")
+                    logger.warning(f"Ошибка получения JSON (попытка {attempt_no}/{max_json_retries}): {e}")
+                    print(f"   ⚠️  Ошибка получения JSON: {e}")
                     if json_attempt < max_json_retries - 1:
                         rotate_proxy()
                         time.sleep(2)
-            except Exception as e:
-                err_msg = f"attempt={attempt_no}: request-exception ({e})"
-                json_retry_errors.append(err_msg)
-                logger.warning(f"Ошибка получения JSON (попытка {attempt_no}/{max_json_retries}): {e}")
-                print(f"   ⚠️  Ошибка получения JSON: {e}")
-                if json_attempt < max_json_retries - 1:
-                    rotate_proxy()
-                    time.sleep(2)
         
         if data is None:
             logger.error("Не удалось получить JSON данные после всех попыток")
@@ -13953,7 +14848,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             elif check_uniq_url not in maps_data and block_reason != "processed":
                 print(f"\n🔁 RECHECK матча #{i}: {check_uniq_url} | status={status}")
 
-            if check_uniq_url in maps_data or block_reason == "processed":
+            if (
+                not PIPELINE_BYPASS_PROCESSED_URL_GATE
+                and (check_uniq_url in maps_data or block_reason == "processed")
+            ):
                 print(f"   ✅ Матч уже в map_id_check.txt - пропускаем: {check_uniq_url}")
                 _drop_delayed_match(check_uniq_url, reason="already_in_map_id_check")
                 return
@@ -14072,7 +14970,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         )
 
         match_log(f"   🆔 Candidate team IDs: radiant={radiant_team_ids}, dire={dire_team_ids}")
-        if not SIGNAL_MINIMAL_ODDS_ONLY_MODE and (not radiant_team_ids or not dire_team_ids):
+        if (
+            not SIGNAL_MINIMAL_ODDS_ONLY_MODE
+            and not PIPELINE_BYPASS_TIER_GATE
+            and (not radiant_team_ids or not dire_team_ids)
+        ):
             print(f"   ❌ Отсутствуют team_id для команд")
             print(f"   ❌ Матч пропущен (нет team_id)")
             return return_status
@@ -14089,7 +14991,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             or str((db_payload.get('league') or {}).get('title') or "").strip()
         )
         league_name_normalized = _normalize_live_league_title(league_name)
-        if not SIGNAL_MINIMAL_ODDS_ONLY_MODE and league_name_normalized in SKIPPED_LIVE_LEAGUE_TITLES:
+        if (
+            not SIGNAL_MINIMAL_ODDS_ONLY_MODE
+            and not PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE
+            and league_name_normalized in SKIPPED_LIVE_LEAGUE_TITLES
+        ):
             print(
                 f"   🚫 Матч пропущен: лига в denylist ({league_name or 'unknown league'})"
             )
@@ -14137,6 +15043,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 not PURE_DLTV_MODE
                 and BOOKMAKER_PREFETCH_GATE_MODE == "presence"
                 and not dota2protracker_pipeline_bypass_active
+                and not PIPELINE_BYPASS_BOOKMAKER_GATE
             ):
                 bookmaker_presence_state, bookmaker_presence_snapshot = _bookmaker_presence_gate_resolution(check_uniq_url)
                 _log_bookmaker_presence_gate(
@@ -14218,13 +15125,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     print("   ✅ map_id_check.txt обновлен: bookmaker presence one-shot check failed")
                     return return_status
             else:
-                if (
-                    BOOKMAKER_PREFETCH_ENABLED
-                    and not PURE_DLTV_MODE
-                    and BOOKMAKER_PREFETCH_GATE_MODE == "presence"
-                    and dota2protracker_pipeline_bypass_active
-                ):
-                    print("   ℹ️ Bookmaker presence gate bypassed by Dota2ProTracker pipeline mode")
+                if BOOKMAKER_PREFETCH_ENABLED and not PURE_DLTV_MODE and BOOKMAKER_PREFETCH_GATE_MODE == "presence":
+                    if dota2protracker_pipeline_bypass_active:
+                        print("   ℹ️ Bookmaker presence gate bypassed by Dota2ProTracker pipeline mode")
+                    elif PIPELINE_BYPASS_BOOKMAKER_GATE:
+                        print("   ℹ️ Bookmaker presence gate bypassed by pipeline smoke-test mode")
                 bookmaker_presence_state = "allow"
 
         if SIGNAL_MINIMAL_ODDS_ONLY_MODE:
@@ -14272,7 +15177,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 _release_signal_send_slot(check_uniq_url)
             return return_status
 
-        if 'fast_picks' not in data:
+        fast_picks_payload = data.get('fast_picks')
+        if isinstance(fast_picks_payload, dict):
+            has_fast_picks = any(bool(value) for value in fast_picks_payload.values())
+        else:
+            has_fast_picks = bool(fast_picks_payload)
+        if not has_fast_picks:
             print(f"   ❌ Нет 'fast_picks' в данных - драфт не начался")
             print(f"   ℹ️ Драфт еще не начался")
             return return_status
@@ -14283,49 +15193,55 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         # - Tier 2 матч: если хотя бы одна команда Tier 2
         # - Tier 1 матч: если обе команды Tier 1
         # - Неизвестная команда автоматически добавляется в Tier 2 без Telegram уведомления
-        radiant_ok, radiant_team_id = _ensure_known_team_or_add_to_tier2(
-            radiant_team_ids,
-            radiant_team_name_original,
-            check_uniq_url,
-        )
-        if not radiant_ok:
-            print(f"   ❌ Матч пропущен (radiant команда не добавлена в Tier 2)")
-            print("   ℹ️ map_id_check.txt не обновлен: add_url только после send_message()")
-            return return_status
-        dire_ok, dire_team_id = _ensure_known_team_or_add_to_tier2(
-            dire_team_ids,
-            dire_team_name_original,
-            check_uniq_url,
-        )
-        if not dire_ok:
-            print(f"   ❌ Матч пропущен (dire команда не добавлена в Tier 2)")
-            print("   ℹ️ map_id_check.txt не обновлен: add_url только после send_message()")
-            return return_status
-
-        star_match_tier = _determine_star_signal_match_tier(radiant_team_id, dire_team_id)
-        if star_match_tier is None:
-            skip_msg = (
-                "🚫 Пропуск матча: не удалось определить tier матча после авто-добавления.\n"
-                f"{radiant_team_name_original} ({radiant_team_id}) vs "
-                f"{dire_team_name_original} ({dire_team_id})\n"
-                f"{check_uniq_url}"
-            )
-            print(f"   {skip_msg}")
-            print(f"   ❌ Матч пропущен (не удалось определить tier)")
-            _deliver_and_persist_signal(
+        if PIPELINE_BYPASS_TIER_GATE:
+            radiant_team_id = (_coerce_int(radiant_team_ids[0]) if radiant_team_ids else 0) or 0
+            dire_team_id = (_coerce_int(dire_team_ids[0]) if dire_team_ids else 0) or 0
+            star_match_tier = _determine_star_signal_match_tier(radiant_team_id, dire_team_id) or 2
+            print(f"   ℹ️ Tier gate bypassed by pipeline smoke-test mode (tier={star_match_tier})")
+        else:
+            radiant_ok, radiant_team_id = _ensure_known_team_or_add_to_tier2(
+                radiant_team_ids,
+                radiant_team_name_original,
                 check_uniq_url,
-                skip_msg,
-                add_url_reason="skip_tier_undetermined",
-                add_url_details={
-                    "status": status,
-                    "radiant_team": radiant_team_name_original,
-                    "radiant_team_id": radiant_team_id,
-                    "dire_team": dire_team_name_original,
-                    "dire_team_id": dire_team_id,
-                    "json_retry_errors": json_retry_errors,
-                },
             )
-            return return_status
+            if not radiant_ok:
+                print(f"   ❌ Матч пропущен (radiant команда не добавлена в Tier 2)")
+                print("   ℹ️ map_id_check.txt не обновлен: add_url только после send_message()")
+                return return_status
+            dire_ok, dire_team_id = _ensure_known_team_or_add_to_tier2(
+                dire_team_ids,
+                dire_team_name_original,
+                check_uniq_url,
+            )
+            if not dire_ok:
+                print(f"   ❌ Матч пропущен (dire команда не добавлена в Tier 2)")
+                print("   ℹ️ map_id_check.txt не обновлен: add_url только после send_message()")
+                return return_status
+
+            star_match_tier = _determine_star_signal_match_tier(radiant_team_id, dire_team_id)
+            if star_match_tier is None:
+                skip_msg = (
+                    "🚫 Пропуск матча: не удалось определить tier матча после авто-добавления.\n"
+                    f"{radiant_team_name_original} ({radiant_team_id}) vs "
+                    f"{dire_team_name_original} ({dire_team_id})\n"
+                    f"{check_uniq_url}"
+                )
+                print(f"   {skip_msg}")
+                print(f"   ❌ Матч пропущен (не удалось определить tier)")
+                _deliver_and_persist_signal(
+                    check_uniq_url,
+                    skip_msg,
+                    add_url_reason="skip_tier_undetermined",
+                    add_url_details={
+                        "status": status,
+                        "radiant_team": radiant_team_name_original,
+                        "radiant_team_id": radiant_team_id,
+                        "dire_team": dire_team_name_original,
+                        "dire_team_id": dire_team_id,
+                        "json_retry_errors": json_retry_errors,
+                    },
+                )
+                return return_status
 
         star_target_wr = (
             TIER_SIGNAL_MIN_THRESHOLD_TIER2
@@ -14365,7 +15281,19 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         
         # Парсим драфт и позиции - вся логика в отдельной функции
         match_log(f"   🔍 Парсинг драфта и позиций...")
-        if verbose_match_log:
+        cyberscore_draft = data.get("_cyberscore_heroes_and_pos") if isinstance(data, dict) else None
+        if isinstance(cyberscore_draft, dict):
+            radiant_heroes_and_pos = dict(cyberscore_draft.get("radiant") or {})
+            dire_heroes_and_pos = dict(cyberscore_draft.get("dire") or {})
+            parse_error = data.get("_cyberscore_draft_error")
+            problem_summary = ""
+            problem_candidates = []
+            if not parse_error:
+                match_log(
+                    "   ✅ CyberScore draft parsed: "
+                    f"radiant={len(radiant_heroes_and_pos)}, dire={len(dire_heroes_and_pos)}"
+                )
+        elif verbose_match_log:
             radiant_heroes_and_pos, dire_heroes_and_pos, parse_error, problem_summary, problem_candidates = parse_draft_and_positions(
                 soup, data, radiant_team_name_original, dire_team_name_original
             )
@@ -14497,24 +15425,62 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if isinstance(applied_update, dict):
                 _emit_live_elo_applied_log("Live ELO updated from completed map", applied_update)
         _warm_draft_stats_shards(radiant_heroes_and_pos, dire_heroes_and_pos)
-        protracker_payload = _blank_dota2protracker_result()
-        if DOTA2PROTRACKER_ENABLED:
+
+        def _run_dota2protracker_enrichment() -> Dict[str, Any]:
+            payload = _blank_dota2protracker_result()
+            if not DOTA2PROTRACKER_ENABLED:
+                return payload
             if enrich_with_pro_tracker is None:
                 print("   ⚠️ Dota2ProTracker enrichment skipped: module unavailable")
-            else:
-                try:
-                    protracker_payload = enrich_with_pro_tracker(
-                        radiant_heroes_and_pos=radiant_heroes_and_pos,
-                        dire_heroes_and_pos=dire_heroes_and_pos,
-                        synergy_dict=protracker_payload,
-                        min_games=DOTA2PROTRACKER_MIN_GAMES,
-                    )
-                except Exception as e:
-                    print(f"   ⚠️ Dota2ProTracker enrichment failed: {e}")
-                    protracker_payload = _blank_dota2protracker_result()
-                print(f"   📊 Dota2ProTracker: {_build_dota2protracker_debug_summary(protracker_payload)}")
+                return payload
+            try:
+                if not _install_dota2protracker_shared_camoufox_fetcher():
+                    print("   ⚠️ Dota2ProTracker enrichment skipped: shared Camoufox hook unavailable")
+                    return payload
+                return enrich_with_pro_tracker(
+                    radiant_heroes_and_pos=radiant_heroes_and_pos,
+                    dire_heroes_and_pos=dire_heroes_and_pos,
+                    synergy_dict=payload,
+                    min_games=DOTA2PROTRACKER_MIN_GAMES,
+                )
+            except Exception as e:
+                print(f"   ⚠️ Dota2ProTracker enrichment failed: {e}")
+                return _blank_dota2protracker_result()
 
-        if DOTA2PROTRACKER_ENABLED and DOTA2PROTRACKER_ONLY_MODE:
+        def _run_local_dictionary_metrics() -> Dict[str, Any]:
+            # Отправляем только "сырые" сигналы без wrapper.
+            prev_wrapper_enabled = os.getenv("SIGNAL_WRAPPER_ENABLED")
+            os.environ["SIGNAL_WRAPPER_ENABLED"] = "0"
+            try:
+                return synergy_and_counterpick(
+                    radiant_heroes_and_pos=radiant_heroes_and_pos,
+                    dire_heroes_and_pos=dire_heroes_and_pos,
+                    early_dict=early_dict,
+                    mid_dict=late_dict,
+                    post_lane_dict=post_lane_dict,
+                )
+            finally:
+                if prev_wrapper_enabled is None:
+                    os.environ.pop("SIGNAL_WRAPPER_ENABLED", None)
+                else:
+                    os.environ["SIGNAL_WRAPPER_ENABLED"] = prev_wrapper_enabled
+
+        if PIPELINE_METRICS_PARALLEL_ENABLED and DOTA2PROTRACKER_ENABLED:
+            print("   🧵 Draft metrics: local dictionaries + Dota2ProTracker in parallel")
+            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="draft-metrics") as executor:
+                local_future = executor.submit(_run_local_dictionary_metrics)
+                protracker_future = executor.submit(_run_dota2protracker_enrichment)
+                s = local_future.result()
+                protracker_payload = protracker_future.result()
+        else:
+            protracker_payload = _run_dota2protracker_enrichment()
+            s = _run_local_dictionary_metrics()
+
+        if DOTA2PROTRACKER_ENABLED:
+            for _line in _build_dota2protracker_log_lines(protracker_payload):
+                print(_line)
+
+        if DOTA2PROTRACKER_ENABLED and DOTA2PROTRACKER_ONLY_MODE and not PIPELINE_BYPASS_PROTRACKER_GATE:
             if not _has_valid_dota2protracker_signal(protracker_payload):
                 print(
                     "   ⚠️ Dota2ProTracker-only dispatch skipped: both metrics invalid. "
@@ -14563,20 +15529,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             finally:
                 _release_signal_send_slot(check_uniq_url)
             return return_status
-
-        # Отправляем только "сырые" сигналы без wrapper.
-        prev_wrapper_enabled = os.getenv("SIGNAL_WRAPPER_ENABLED")
-        os.environ["SIGNAL_WRAPPER_ENABLED"] = "0"
-        try:
-            s = synergy_and_counterpick(
-                radiant_heroes_and_pos=radiant_heroes_and_pos,
-                dire_heroes_and_pos=dire_heroes_and_pos,
-                early_dict=early_dict, mid_dict=late_dict)
-        finally:
-            if prev_wrapper_enabled is None:
-                os.environ.pop("SIGNAL_WRAPPER_ENABLED", None)
-            else:
-                os.environ["SIGNAL_WRAPPER_ENABLED"] = prev_wrapper_enabled
+        elif DOTA2PROTRACKER_ENABLED and DOTA2PROTRACKER_ONLY_MODE and PIPELINE_BYPASS_PROTRACKER_GATE:
+            print("   ℹ️ Dota2ProTracker-only gates bypassed by pipeline smoke-test mode")
 
         if DOTA2PROTRACKER_ENABLED and isinstance(protracker_payload, dict):
             s.update(protracker_payload)
@@ -14615,18 +15569,56 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             print(f"      {lane_top_log or 'Top: n/a'}")
             print(f"      {lane_mid_log or 'Mid: n/a'}")
             print(f"      {lane_bot_log or 'Bot: n/a'}")
-        comeback_metrics = None
-        if comeback_dict and comeback_baseline_wr_pct is not None:
+        if PIPELINE_SEND_EVERY_PARSED_MATCH:
+            pipeline_message_text = _build_pipeline_probe_message(
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=live_league_data,
+                fallback_score_text=score,
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
+                metrics_payload=s,
+                protracker_payload=protracker_payload,
+            )
+            if (
+                not PIPELINE_BYPASS_PROCESSED_URL_GATE
+                and _skip_dispatch_for_processed_url(check_uniq_url, "pipeline send-every parsed match")
+            ):
+                return return_status
+            if not _acquire_signal_send_slot(check_uniq_url):
+                print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
+                return return_status
             try:
-                comeback_metrics = calculate_comeback_solo_metrics(
-                    radiant_heroes_and_pos=radiant_heroes_and_pos,
-                    dire_heroes_and_pos=dire_heroes_and_pos,
-                    comeback_dict=comeback_dict,
-                    baseline_wr_pct=comeback_baseline_wr_pct,
+                if (
+                    not PIPELINE_BYPASS_PROCESSED_URL_GATE
+                    and _skip_dispatch_for_processed_url(check_uniq_url, "pipeline send-every parsed match after lock")
+                ):
+                    return return_status
+                delivery_confirmed = _deliver_and_persist_signal(
+                    check_uniq_url,
+                    pipeline_message_text,
+                    add_url_reason="pipeline_send_every_parsed_match",
+                    add_url_details={
+                        "status": status,
+                        "dispatch_mode": "pipeline_send_every_parsed_match",
+                        "dispatch_status_label": "pipeline_probe_immediate",
+                        "source_mode": DLTV_SOURCE_MODE,
+                        "json_retry_errors": json_retry_errors,
+                        "pipeline_disable_signal_gates": bool(PIPELINE_DISABLE_SIGNAL_GATES),
+                        "pipeline_metrics_parallel": bool(PIPELINE_METRICS_PARALLEL_ENABLED),
+                        "dota2protracker_enabled": bool(DOTA2PROTRACKER_ENABLED),
+                        "live_lane_analysis_enabled": bool(LIVE_LANE_ANALYSIS_ENABLED),
+                        "has_post_lane_output": bool((s.get("post_lane_output") or {})),
+                    },
+                    skip_bookmaker_prepare=bool(PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND),
                 )
-            except Exception as comeback_exc:
-                print(f"   ⚠️ Comeback metric calculation failed: {comeback_exc}")
-                comeback_metrics = None
+                if delivery_confirmed:
+                    print("   ✅ ВЕРДИКТ: pipeline smoke-test матч отправлен в Telegram/VK")
+            finally:
+                _release_signal_send_slot(check_uniq_url)
+            return return_status
         star_base_early_output = dict(s.get('early_output', {}) or {})
         star_base_mid_output = dict(s.get('mid_output', {}) or {})
 
@@ -14929,8 +15921,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
             print(f"   📊 LANING (20-28 min): {early_output.get('counterpick_1vs1', 'N/A')}, {early_output.get('pos1_vs_pos1', 'N/A')}, {early_output.get('counterpick_1vs2', 'N/A')}, {early_output.get('solo', 'N/A')}, {early_output.get('synergy_duo', 'N/A')}, {early_output.get('synergy_trio', 'N/A')}")
             print(f"   📊 LATE (28-60 min): {mid_output.get('counterpick_1vs1', 'N/A')}, {mid_output.get('pos1_vs_pos1', 'N/A')}, {mid_output.get('counterpick_1vs2', 'N/A')}, {mid_output.get('solo', 'N/A')}, {mid_output.get('synergy_duo', 'N/A')}, {mid_output.get('synergy_trio', 'N/A')}")
-            if DOTA2PROTRACKER_ENABLED and isinstance(s, dict) and _has_valid_dota2protracker_signal(s):
-                print(f"   📊 PRO-TRACKER: {_build_dota2protracker_debug_summary(s)}")
+            if DOTA2PROTRACKER_ENABLED and isinstance(s, dict):
+                for _line in _build_dota2protracker_log_lines(s):
+                    print(_line)
 
             def _format_metrics(title, data, metrics):
                 lines = [title]
@@ -14950,6 +15943,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             mid_block = _format_metrics("Late: (28-60 min):", mid_output, metric_list)
             early_block_log = _format_metrics("Early 20-28:", early_output_log, metric_list)
             mid_block_log = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
+            dota2protracker_lane_adv_line = (
+                _build_dota2protracker_lane_adv_line(s)
+                if DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED and _has_valid_dota2protracker_signal(s)
+                else ""
+            )
+            if dota2protracker_lane_adv_line:
+                early_block = f"{early_block.rstrip()}\n{dota2protracker_lane_adv_line}"
             dota2protracker_block = (
                 _build_dota2protracker_block(s)
                 if DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED and _has_valid_dota2protracker_signal(s)
@@ -15535,38 +16535,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if wr_lines:
                 wr_block = "Оценка WR:\n" + "\n".join(wr_lines) + "\n"
 
-            comeback_block = ""
-            if isinstance(comeback_metrics, dict):
-                radiant_comeback = comeback_metrics.get("radiant") or {}
-                dire_comeback = comeback_metrics.get("dire") or {}
-
-                def _fmt_delta(value):
-                    if value is None:
-                        return "n/a"
-                    return f"{float(value):+,.1f}%".replace(",", "")
-
-                if radiant_comeback or dire_comeback:
-                    comeback_lines = []
-                    if radiant_comeback:
-                        comeback_lines.append(
-                            f"radiant_comeback: {_fmt_delta(radiant_comeback.get('delta_pp'))}"
-                        )
-                    if dire_comeback:
-                        comeback_lines.append(
-                            f"dire_comeback: {_fmt_delta(dire_comeback.get('delta_pp'))}"
-                        )
-                    if comeback_lines:
-                        comeback_block = "\n".join(comeback_lines) + "\n"
-                    if verbose_match_log:
-                        print(
-                            "   📈 Comeback solo: "
-                            f"radiant={radiant_comeback.get('delta_pp')} pp "
-                            f"(wr={radiant_comeback.get('wr_pct')}), "
-                            f"dire={dire_comeback.get('delta_pp')} pp "
-                            f"(wr={dire_comeback.get('wr_pct')}), "
-                            f"baseline={comeback_metrics.get('baseline_wr_pct')}"
-                        )
-
             odds_block = ""
             if not PURE_DLTV_MODE and BOOKMAKER_PREFETCH_ENABLED:
                 if BOOKMAKER_PREFETCH_GATE_MODE == "presence":
@@ -15766,7 +16734,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"{problem_block}"
                 f"{team_elo_block}"
                 f"{wr_block}"
-                f"{comeback_block}"
                 f"{telegram_early_block}"
                 f"{mid_block}"
                 f"{dota2protracker_block}"
@@ -15785,7 +16752,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early65_target_side,
             )
             target_networth_diff = _target_networth_diff_from_radiant_lead(lead, target_side)
-            target_comeback_delta_pp = _comeback_delta_pp_for_side(comeback_metrics, target_side)
             late_pub_comeback_table_wr_level = _late_star_pub_table_wr_level(late_wr_pct)
             late_pub_comeback_table_candidate = bool(
                 has_selected_late_star
@@ -16625,7 +17591,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                         "target_game_time": int(target_game_time),
                                         "target_side": target_side,
                                         "target_networth_diff": float(target_networth_diff),
-                                        "late_comeback_delta_pp": float(target_comeback_delta_pp or 0.0),
                                         "late_comeback_monitor_reached": True,
                                         "late_comeback_monitor_minute": late_comeback_check.get("minute"),
                                         "late_comeback_monitor_threshold": late_comeback_check.get("threshold"),
@@ -16662,8 +17627,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "late_comeback_monitor_minute": late_comeback_check.get("minute"),
                                 "late_comeback_monitor_threshold": late_comeback_check.get("threshold"),
                             }
-                            if target_comeback_delta_pp is not None:
-                                delayed_add_url_details["late_comeback_delta_pp"] = float(target_comeback_delta_pp or 0.0)
                             delayed_payload = {
                                 "message": message_text,
                                 "stake_multiplier_context": stake_multiplier_context,
@@ -16689,19 +17652,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "networth_target_side": target_side,
                                 "late_comeback_force_after_target": False,
                             }
-                            if target_comeback_delta_pp is not None:
-                                delayed_payload["late_comeback_delta_pp"] = float(target_comeback_delta_pp or 0.0)
                             _set_delayed_match(check_uniq_url, delayed_payload)
-                            comeback_delta_log = (
-                                f"comeback_delta={float(target_comeback_delta_pp or 0.0):+.2f} pp, "
-                                if target_comeback_delta_pp is not None
-                                else ""
-                            )
                             print(
                                 "   ⏳ Late comeback monitor включен: "
                                 f"target_side={target_side}, "
                                 f"target_diff={int(target_networth_diff)}, "
-                                f"{comeback_delta_log}"
                                 f"minute={late_comeback_check.get('minute')}, "
                                 f"ceiling={int(late_comeback_check.get('threshold') or 0)}, "
                                 f"deadline={_format_game_clock(late_comeback_deadline)}"
@@ -17017,8 +17972,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_add_url_details["late_pub_comeback_table_minute"] = int(late_pub_table_decision.get("source_minute") or 0)
                     if late_pub_table_decision.get("threshold") is not None:
                         delayed_add_url_details["late_pub_comeback_table_threshold"] = float(late_pub_table_decision.get("threshold") or 0.0)
-                if late_comeback_monitor_candidate:
-                    delayed_add_url_details["late_comeback_delta_pp"] = float(target_comeback_delta_pp or 0.0)
                 delayed_payload = {
                     'message': message_text,
                     'stake_multiplier_context': stake_multiplier_context,
@@ -17065,8 +18018,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_payload['networth_target_side'] = target_side
                     delayed_payload['top25_late_elo_block_rank'] = int(top25_late_elo_block_override.get("leaderboard_rank") or 0)
                     delayed_payload['top25_late_elo_block_raw_wr'] = top25_late_elo_block_override.get("elo_target_wr")
-                if late_comeback_monitor_candidate:
-                    delayed_payload['late_comeback_delta_pp'] = float(target_comeback_delta_pp or 0.0)
                 if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"):
                     delayed_payload['dynamic_monitor_profile'] = str(dynamic_monitor_profile.get("profile") or "")
                     if dynamic_monitor_profile.get("profile") == "late_top25_elo_block_opposite_monitor":
@@ -17343,7 +18294,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
 def _load_stats_dicts():
     """Ленивая загрузка словарей, чтобы не грузить их при импорте."""
-    global lane_data, early_dict, late_dict, comeback_dict, comeback_meta, comeback_baseline_wr_pct
+    global lane_data, early_dict, late_dict, post_lane_dict
     global late_comeback_ceiling_data, late_comeback_ceiling_thresholds, late_comeback_ceiling_max_minute
     global late_pub_comeback_table_data, late_pub_comeback_table_thresholds_by_wr
     global late_pub_comeback_table_max_minute_by_wr, late_pub_comeback_table_global_max_minute
@@ -17351,7 +18302,7 @@ def _load_stats_dicts():
     if (
         early_dict is not None
         and late_dict is not None
-        and comeback_dict is not None
+        and post_lane_dict is not None
         and late_pub_comeback_table_data is not None
     ):
         return True
@@ -17380,8 +18331,8 @@ def _load_stats_dicts():
                 raise
 
     def _load_small_supporting_dicts():
-        nonlocal comeback_path, comeback_meta_path, late_pub_comeback_table_path
-        global lane_data, comeback_dict, comeback_meta, comeback_baseline_wr_pct
+        nonlocal late_pub_comeback_table_path
+        global lane_data
         global late_comeback_ceiling_data, late_comeback_ceiling_thresholds, late_comeback_ceiling_max_minute
         global late_pub_comeback_table_data, late_pub_comeback_table_thresholds_by_wr
         global late_pub_comeback_table_max_minute_by_wr, late_pub_comeback_table_global_max_minute
@@ -17392,33 +18343,6 @@ def _load_stats_dicts():
             print(f"📦 Loading lane stats: {lane_path}")
             lane_data = _load_json_object(lane_path, "lane_dict_raw")
             gc.collect()
-
-        if comeback_dict is None:
-            if Path(comeback_path).exists():
-                print(f"📦 Loading comeback stats: {comeback_path}")
-                comeback_dict = _load_json_object(comeback_path, "comeback_solo_dict")
-            else:
-                logger.warning("Comeback solo stats file not found: %s", comeback_path)
-                print(f"⚠️ Comeback solo stats file not found: {comeback_path}")
-                _report_missing_runtime_file("comeback_solo_dict_21plus.json", Path(comeback_path))
-                comeback_dict = {}
-            gc.collect()
-
-        if comeback_meta is None and comeback_baseline_wr_pct is None:
-            comeback_meta = None
-            comeback_baseline_wr_pct = None
-            if Path(comeback_meta_path).exists():
-                try:
-                    with open(comeback_meta_path, "r", encoding="utf-8") as f:
-                        comeback_meta = json.load(f)
-                    comeback_baseline_wr_pct = float((comeback_meta or {}).get("baseline_wr_pct"))
-                except Exception:
-                    comeback_meta = None
-                    comeback_baseline_wr_pct = None
-            else:
-                logger.warning("Comeback solo meta file not found: %s", comeback_meta_path)
-                print(f"⚠️ Comeback solo meta file not found: {comeback_meta_path}")
-                _report_missing_runtime_file("comeback_solo_dict_21plus_meta.json", Path(comeback_meta_path))
 
         if late_pub_comeback_table_data is None:
             late_pub_comeback_table_data = {}
@@ -17472,14 +18396,7 @@ def _load_stats_dicts():
     lane_path = os.getenv("STATS_LANE_PATH", f"{stats_dir}/lane_dict_raw.json")
     early_path = os.getenv("STATS_EARLY_PATH", f"{stats_dir}/early_dict_raw.json")
     late_path = os.getenv("STATS_LATE_PATH", f"{stats_dir}/late_dict_raw.json")
-    comeback_path = os.getenv(
-        "STATS_COMEBACK_PATH",
-        f"{stats_dir}/comeback_experiment_hard_1_7_hero_position/comeback_solo_dict_21plus.json",
-    )
-    comeback_meta_path = os.getenv(
-        "STATS_COMEBACK_META_PATH",
-        f"{stats_dir}/comeback_experiment_hard_1_7_hero_position/comeback_solo_dict_21plus_meta.json",
-    )
+    post_lane_path = os.getenv("STATS_POST_LANE_PATH", f"{stats_dir}/post_lane_dict_raw.json")
     late_pub_comeback_table_path = os.getenv(
         "STATS_LATE_PUB_COMEBACK_TABLE_PATH",
         str(BASE_DIR / "pub_late_star_comeback_table_piecewise.json"),
@@ -17508,14 +18425,29 @@ def _load_stats_dicts():
                 print(f"📦 Loading late stats: {late_path}")
                 late_dict = _load_json_object(late_path, "late_dict_raw")
             gc.collect()
+        if post_lane_dict is None:
+            if Path(post_lane_path).exists():
+                if _stats_sharded_mode_enabled("post_lane"):
+                    post_lane_dict = _prepare_sharded_stats_lookup(post_lane_path, "post_lane")
+                else:
+                    print(f"📦 Loading post-lane stats: {post_lane_path}")
+                    post_lane_dict = _load_json_object(post_lane_path, "post_lane_dict_raw")
+            else:
+                logger.warning("Post-lane stats file not found: %s", post_lane_path)
+                print(f"⚠️ Post-lane stats file not found: {post_lane_path}")
+                _report_missing_runtime_file("post_lane_dict_raw.json", Path(post_lane_path))
+                post_lane_dict = {}
+            gc.collect()
         return (
             early_dict is not None
             and late_dict is not None
-            and comeback_dict is not None
+            and post_lane_dict is not None
             and late_pub_comeback_table_data is not None
         )
 
-    if stats_warmup_last_heavy_load_ts == 0.0 and (early_dict is None or late_dict is None):
+    if stats_warmup_last_heavy_load_ts == 0.0 and (
+        early_dict is None or late_dict is None or post_lane_dict is None
+    ):
         stats_warmup_last_heavy_load_ts = time.time()
         return False
 
@@ -17525,6 +18457,8 @@ def _load_stats_dicts():
         remaining_heavy.append(("early", early_path))
     if late_dict is None:
         remaining_heavy.append(("late", late_path))
+    if post_lane_dict is None:
+        remaining_heavy.append(("post_lane", post_lane_path))
 
     if not remaining_heavy:
         return True
@@ -17533,22 +18467,29 @@ def _load_stats_dicts():
         return False
 
     next_label, next_path = remaining_heavy[0]
-    if _stats_sharded_mode_enabled(next_label):
+    if next_label == "post_lane" and not Path(next_path).exists():
+        logger.warning("Post-lane stats file not found: %s", next_path)
+        print(f"⚠️ Post-lane stats file not found: {next_path}")
+        _report_missing_runtime_file("post_lane_dict_raw.json", Path(next_path))
+        next_payload = {}
+    elif _stats_sharded_mode_enabled(next_label):
         next_payload = _prepare_sharded_stats_lookup(next_path, next_label)
     else:
         print(f"📦 Warmup loading {next_label} stats: {next_path}")
         next_payload = _load_json_object(next_path, f"{next_label}_dict_raw")
     if next_label == "early":
         early_dict = next_payload
-    else:
+    elif next_label == "late":
         late_dict = next_payload
+    else:
+        post_lane_dict = next_payload
     stats_warmup_last_heavy_load_ts = time.time()
     gc.collect()
     return (
         early_dict is not None
         and late_dict is not None
-        and comeback_dict is not None
-        and late_comeback_ceiling_data is not None
+        and post_lane_dict is not None
+        and late_pub_comeback_table_data is not None
     )
 
 
@@ -17790,8 +18731,6 @@ def general(return_status=None, use_proxy=None, odds=None, bookmaker_gate_mode=N
                 warmup_parts.append("early")
             if late_dict is not None:
                 warmup_parts.append("late")
-            if comeback_dict is not None:
-                warmup_parts.append("comeback")
             print(
                 "⏳ Stats warmup in progress: "
                 f"loaded={','.join(warmup_parts) or 'none'}; "
@@ -17963,9 +18902,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--dltv-source",
-        choices=["api", "html"],
-        default="api",
-        help="DLTV live matches source: api (curl/proxy) or html (Selenium)",
+        choices=["api", "html", "cyberscore"],
+        default=DLTV_SOURCE_MODE if DLTV_SOURCE_MODE in {"api", "html", "cyberscore"} else "cyberscore",
+        help="Live matches source: api/html for DLTV, or cyberscore for CyberScore Camoufox",
     )
     parser.add_argument(
         "--pure-dltv",
@@ -17977,7 +18916,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
     DLTV_SOURCE_MODE = str(args.dltv_source).strip().lower()
     PURE_DLTV_MODE = bool(args.pure_dltv)
-    print(f"🌐 DLTV source mode: {DLTV_SOURCE_MODE}")
+    _apply_live_entrypoint_pipeline_defaults()
+    print(f"🌐 Live source mode: {DLTV_SOURCE_MODE}")
+    print(
+        "🧪 Pipeline smoke-test: "
+        f"send_every={PIPELINE_SEND_EVERY_PARSED_MATCH}, "
+        f"disable_gates={PIPELINE_DISABLE_SIGNAL_GATES}, "
+        f"parallel_metrics={PIPELINE_METRICS_PARALLEL_ENABLED}, "
+        f"laning={LIVE_LANE_ANALYSIS_ENABLED}, "
+        f"dota2protracker={DOTA2PROTRACKER_ENABLED}"
+    )
     if PURE_DLTV_MODE:
         print("🔇 Pure DLTV mode: all bookmaker prefetch/presence checks disabled")
     runtime_mode_label = _runtime_instance_mode_label(args.odds)

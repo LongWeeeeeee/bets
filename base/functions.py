@@ -141,13 +141,22 @@ COUNTERPICK_1VS1_MIN_ABS = 0
 CORE_POSITIONS = ('pos1', 'pos2', 'pos3')
 COUNTERPICK_1VS1_CORES_REQUIRED = len(CORE_POSITIONS) * len(CORE_POSITIONS)  # 3x3 = 9
 SYNERGY_DUO_CORES_REQUIRED = (len(CORE_POSITIONS) * (len(CORE_POSITIONS) - 1)) // 2  # C(3,2) = 3
-# Пороги по количеству матчей (единственные действующие пороги)
+# Пороги по количеству матчей для early/late фаз
 SOLO_MIN_MATCHES = 50
-SYNERGY_DUO_MIN_MATCHES = 30
-COUNTERPICK_1VS1_MIN_MATCHES = 30
-COUNTERPICK_1VS2_MIN_MATCHES = 15
-SYNERGY_TRIO_MIN_MATCHES = 15
+SYNERGY_DUO_MIN_MATCHES = 15
+COUNTERPICK_1VS1_MIN_MATCHES = 15
+POS1_VS_POS1_MIN_MATCHES = 30
+COUNTERPICK_1VS2_MIN_MATCHES = 10
+SYNERGY_TRIO_MIN_MATCHES = 10
+# Более широкий post-lane словарь держим на более строгих порогах.
+POST_LANE_SYNERGY_DUO_MIN_MATCHES = 30
+POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES = 30
+POST_LANE_POS1_VS_POS1_MIN_MATCHES = 50
+POST_LANE_COUNTERPICK_1VS2_MIN_MATCHES = 20
+POST_LANE_SYNERGY_TRIO_MIN_MATCHES = 20
 SYNERGY_DUO_REQUIRE_CP_ALIGN = False
+SYNERGY_DUO_MIN_CORE_PAIRS_PER_SIDE = 2
+SYNERGY_DUO_CORE_SUPPORT_CONFLICT_MIN_ABS = 5
 
 # Позиционные веса по умолчанию (разные для early/late)
 EARLY_POSITION_WEIGHTS = {
@@ -2204,7 +2213,14 @@ def calculate_average(values):
     return sum(values) / len(values) if len(values) else None
 
 
-def synergy_team(heroes_and_pos, output, mkdir, data, min_matches_trio=SYNERGY_TRIO_MIN_MATCHES):
+def synergy_team(
+    heroes_and_pos,
+    output,
+    mkdir,
+    data,
+    min_matches_trio=SYNERGY_TRIO_MIN_MATCHES,
+    min_matches_duo=SYNERGY_DUO_MIN_MATCHES,
+):
     """
     Анализирует синергию героев в команде
 
@@ -2213,7 +2229,8 @@ def synergy_team(heroes_and_pos, output, mkdir, data, min_matches_trio=SYNERGY_T
         output: выходной словарь
         mkdir: префикс для ключей (radiant_synergy/dire_synergy)
         data: данные статистики
-        min_matches_trio: минимальное количество матчей для trio (по умолчанию 20)
+        min_matches_trio: минимальное количество матчей для trio
+        min_matches_duo: минимальное количество матчей для duo
     """
     # Проверка валидности входных данных
     if not isinstance(heroes_and_pos, dict):
@@ -2244,7 +2261,7 @@ def synergy_team(heroes_and_pos, output, mkdir, data, min_matches_trio=SYNERGY_T
             foo = data.get(key, {})
 
             games = foo.get('games', 0)
-            if games >= SYNERGY_DUO_MIN_MATCHES:
+            if games >= min_matches_duo:
                 # Учитываем позиции, чтобы не смешивать разные конфигурации дуо
                 combo = tuple(sorted([f"{hero_id}{pos}", f"{second_hero_id}{second_pos}"]))
                 if combo not in unique_combinations:
@@ -2301,7 +2318,17 @@ def synergy_team(heroes_and_pos, output, mkdir, data, min_matches_trio=SYNERGY_T
 
 
 
-def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, data, pos1_matchup=None, check_solo=False):
+def counterpick_team(
+    heroes_and_pos,
+    heroes_and_pos_opposite,
+    output,
+    mkdir,
+    data,
+    pos1_matchup=None,
+    check_solo=False,
+    min_matches_1vs1=COUNTERPICK_1VS1_MIN_MATCHES,
+    min_matches_1vs2=COUNTERPICK_1VS2_MIN_MATCHES,
+):
     """
     Анализирует контрпики против вражеской команды
     ИЗМЕНЕНО: теперь сохраняет (winrate, num_matches) вместо просто winrate
@@ -2332,7 +2359,7 @@ def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, dat
             foo = data.get(key, {})
 
             games = foo.get('games', 0)
-            if games >= COUNTERPICK_1VS1_MIN_MATCHES:
+            if games >= min_matches_1vs1:
                 wins = foo['wins']
                 value = wins / games
                 if not hero_left:
@@ -2365,7 +2392,7 @@ def counterpick_team(heroes_and_pos, heroes_and_pos_opposite, output, mkdir, dat
                 foo = data.get(key, {})
 
                 games = foo.get('games', 0)
-                if games >= COUNTERPICK_1VS2_MIN_MATCHES:
+                if games >= min_matches_1vs2:
                     # Учитываем позиции, чтобы не смешивать разные конфигурации
                     combo = (
                         f"{hero_id}{pos}",
@@ -3577,202 +3604,11 @@ def _team_counterplay_traits(team_side_or_ids):
     return traits
 
 
-def _team_counterplay_vulnerability_score(team_side_or_ids, enemy_pressures):
-    entries = _team_counterplay_entries(team_side_or_ids)
-    traits = _team_counterplay_traits(entries)
-    score = 0.0
-
-    # capability-driven vulnerability (hybrid axis matching)
-    score += traits["root_reliant"] * (
-        0.75 * enemy_pressures.get("dispel", 0.0)
-        + 0.55 * enemy_pressures.get("manta", 0.0)
-    )
-    score += traits["escape_reliant"] * (
-        0.65 * enemy_pressures.get("lock", 0.0)
-        + 0.25 * enemy_pressures.get("silence", 0.0)
-    )
-    score += traits["passive_core"] * (
-        0.95 * enemy_pressures.get("break", 0.0)
-        + 0.45 * enemy_pressures.get("mars_combo", 0.0)
-    )
-    score += traits["single_target_commit"] * (0.9 * enemy_pressures.get("save", 0.0))
-    score += traits["save_sensitive_damage"] * (
-        1.1 * enemy_pressures.get("save", 0.0)
-        + 0.2 * enemy_pressures.get("dispel", 0.0)
-    )
-    score += traits["egg_tomb_reliant"] * (
-        0.95 * enemy_pressures.get("rapid_hit", 0.0)
-        + 0.2 * enemy_pressures.get("burst", 0.0)
-    )
-    score += traits["healer_reliant"] * (1.15 * enemy_pressures.get("anti_heal", 0.0))
-    score += traits["bkb_channel_reliant"] * (
-        1.0 * enemy_pressures.get("bkb_pierce_disable", 0.0)
-        + 0.2 * enemy_pressures.get("initiation", 0.0)
-    )
-    score += traits["long_ult_reliant"] * (
-        0.7 * enemy_pressures.get("tempo_no_cd", 0.0)
-        + 0.25 * enemy_pressures.get("push", 0.0)
-    )
-    score += traits["strength_core"] * (1.05 * enemy_pressures.get("timber", 0.0))
-    score += traits["late_carry_reliant"] * (
-        0.8 * enemy_pressures.get("push", 0.0)
-        + 0.45 * enemy_pressures.get("tempo_no_cd", 0.0)
-        + 0.35 * enemy_pressures.get("burst", 0.0)
-    )
-    score += traits["space_deficit_late"] * (
-        0.8 * enemy_pressures.get("push", 0.0)
-        + 0.45 * enemy_pressures.get("tempo_no_cd", 0.0)
-    )
-    score += traits["burst_fragile"] * (
-        0.95 * enemy_pressures.get("burst", 0.0)
-        + 0.2 * enemy_pressures.get("tempo_no_cd", 0.0)
-    )
-    score += traits["backline_static"] * (
-        0.95 * enemy_pressures.get("reach", 0.0)
-        + 0.35 * enemy_pressures.get("initiation", 0.0)
-    )
-    score += traits["armor_sensitive"] * (0.85 * enemy_pressures.get("high_armor", 0.0))
-    score += traits["init_vulnerable"] * (
-        1.0 * enemy_pressures.get("initiation", 0.0)
-        + 0.3 * enemy_pressures.get("reach", 0.0)
-    )
-    score += traits["dispel_sensitive"] * (0.95 * enemy_pressures.get("dispel", 0.0))
-
-    # explicit hero-vs overlay (for known fragile interactions), weighted by role impact.
-    for pos, hero_id in entries:
-        score += _counterplay_role_weight(pos) * _counterplay_profile_score(hero_id, enemy_pressures)
-
-    # Win-condition dependency:
-    # if one hero carries most of team's damage burden and gets countered,
-    # the whole draft should be penalized more than support-friendly matchups.
-    damage_rows = []
-    for pos, hero_id in entries:
-        dmg_score = _counterplay_damage_source_score(pos, hero_id)
-        damage_rows.append((dmg_score, pos, hero_id))
-    total_damage = sum(row[0] for row in damage_rows)
-    if total_damage > 0:
-        damage_rows.sort(key=lambda row: row[0], reverse=True)
-        top_score, top_pos, top_hero = damage_rows[0]
-        second_score = damage_rows[1][0] if len(damage_rows) > 1 else 0.0
-        concentration = top_score / total_damage
-        dependency = max(0.0, concentration - 0.5)
-        if second_score < 1.15:
-            dependency *= 1.25
-        carry_exposure = _counterplay_primary_carry_exposure(top_pos, top_hero, enemy_pressures)
-        score += dependency * carry_exposure * 1.4
-        if concentration <= 0.44 and second_score >= 1.1:
-            # Distributed damage profile: less fragile to single-core shutdown.
-            score -= 0.12 * carry_exposure
-
-    return max(0.0, float(score))
-
-
-def _compute_counterplay_vulnerability_edge(radiant_side, dire_side):
-    """
-    Return signed edge:
-    > 0 means radiant draft is less vulnerable to enemy counterplay patterns.
-    < 0 means dire draft is less vulnerable.
-    """
-    radiant_ids = _team_hero_ids_for_counterplay(radiant_side)
-    dire_ids = _team_hero_ids_for_counterplay(dire_side)
-    if not radiant_ids or not dire_ids:
-        return None
-
-    radiant_enemy_pressures = _compute_enemy_counterplay_pressures(dire_ids)
-    dire_enemy_pressures = _compute_enemy_counterplay_pressures(radiant_ids)
-
-    radiant_vulnerability = _team_counterplay_vulnerability_score(radiant_side, radiant_enemy_pressures)
-    dire_vulnerability = _team_counterplay_vulnerability_score(dire_side, dire_enemy_pressures)
-    radiant_dep, radiant_top_exp = _counterplay_top_damage_dependency_and_exposure(
-        team_side_or_ids=radiant_side,
-        enemy_pressures=radiant_enemy_pressures,
-    )
-    dire_dep, dire_top_exp = _counterplay_top_damage_dependency_and_exposure(
-        team_side_or_ids=dire_side,
-        enemy_pressures=dire_enemy_pressures,
-    )
-
-    # Higher is better for radiant: enemy vulnerability minus own vulnerability.
-    # Use soft-saturation to keep extreme drafts informative without hard clipping too often.
-    carry_focus_delta = (dire_dep * dire_top_exp) - (radiant_dep * radiant_top_exp)
-    carry_dep_delta = dire_dep - radiant_dep
-    base_raw_delta = dire_vulnerability - radiant_vulnerability
-    base_edge = 30.0 * (base_raw_delta / (abs(base_raw_delta) + 30.0))
-    carry_adjustment = 3.0 * carry_focus_delta + 0.8 * carry_dep_delta
-    raw_edge = base_edge + carry_adjustment
-    clipped = max(-30.0, min(30.0, raw_edge))
-    return int(round(clipped))
-
-
-def _compute_counterplay_vulnerability_signal_meta(radiant_side, dire_side):
-    radiant_ids = _team_hero_ids_for_counterplay(radiant_side)
-    dire_ids = _team_hero_ids_for_counterplay(dire_side)
-    if not radiant_ids or not dire_ids:
-        return None
-
-    radiant_enemy_pressures = _compute_enemy_counterplay_pressures(dire_ids)
-    dire_enemy_pressures = _compute_enemy_counterplay_pressures(radiant_ids)
-
-    radiant_vulnerability = _team_counterplay_vulnerability_score(radiant_side, radiant_enemy_pressures)
-    dire_vulnerability = _team_counterplay_vulnerability_score(dire_side, dire_enemy_pressures)
-
-    radiant_dep, radiant_top_exp = _counterplay_top_damage_dependency_and_exposure(
-        team_side_or_ids=radiant_side,
-        enemy_pressures=radiant_enemy_pressures,
-    )
-    dire_dep, dire_top_exp = _counterplay_top_damage_dependency_and_exposure(
-        team_side_or_ids=dire_side,
-        enemy_pressures=dire_enemy_pressures,
-    )
-
-    carry_focus_delta = (dire_dep * dire_top_exp) - (radiant_dep * radiant_top_exp)
-    carry_dep_delta = dire_dep - radiant_dep
-    base_raw_delta = dire_vulnerability - radiant_vulnerability
-    base_edge = 30.0 * (base_raw_delta / (abs(base_raw_delta) + 30.0))
-    carry_adjustment = 3.0 * carry_focus_delta + 0.8 * carry_dep_delta
-    raw_edge = base_edge + carry_adjustment
-    edge = int(round(max(-30.0, min(30.0, raw_edge))))
-
-    predicted_side = None
-    if edge > 0:
-        predicted_side = "radiant"
-    elif edge < 0:
-        predicted_side = "dire"
-
-    predicted_opp_dep = None
-    predicted_opp_exp = None
-    if predicted_side == "radiant":
-        predicted_opp_dep = float(dire_dep)
-        predicted_opp_exp = float(dire_top_exp)
-    elif predicted_side == "dire":
-        predicted_opp_dep = float(radiant_dep)
-        predicted_opp_exp = float(radiant_top_exp)
-
-    strong_edge = None
-    if (
-        edge != 0
-        and abs(edge) >= COUNTERPLAY_STRONG_EDGE_THRESHOLD
-        and predicted_opp_dep is not None
-        and predicted_opp_dep >= COUNTERPLAY_STRONG_OPP_DEP_MIN
-    ):
-        strong_edge = edge
-
-    return {
-        "edge": edge,
-        "strong_edge": strong_edge,
-        "predicted_side": predicted_side,
-        "predicted_opp_dep": predicted_opp_dep,
-        "predicted_opp_exp": predicted_opp_exp,
-        "radiant_dep": float(radiant_dep),
-        "dire_dep": float(dire_dep),
-        "base_edge": float(base_edge),
-        "carry_adjustment": float(carry_adjustment),
-    }
-
-
 def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_dict, mid_dict, match=None, custom_weights=None,
                               early_trio_threshold=SYNERGY_TRIO_MIN_MATCHES, mid_trio_threshold=SYNERGY_TRIO_MIN_MATCHES,
-                              synergy_duo_use_max=False, early_position_weights=None, late_position_weights=None):
+                              synergy_duo_use_max=False, early_position_weights=None, late_position_weights=None,
+                              post_lane_dict=None, post_lane_trio_threshold=POST_LANE_SYNERGY_TRIO_MIN_MATCHES,
+                              post_lane_position_weights=None):
     """
     Основная функция анализа синергии и контрпиков
 
@@ -3787,11 +3623,13 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
         mid_trio_threshold: минимум матчей для mid trio (по умолчанию 20)
         synergy_duo_use_max: если True, берёт лучший duo по winrate (без учёта количества матчей);
                              если False, использует взвешенное среднее по матчам (по умолчанию)
+        post_lane_dict: данные post-lane фазы (10min gate + min duration), если доступны
     """
     return_dict = {}
-    early_output, mid_output = {}, {}
+    early_output, mid_output, post_lane_output = {}, {}, {}
     early_weights = early_position_weights or custom_weights or _ENV_POS_WEIGHTS_EARLY or _ENV_POS_WEIGHTS or EARLY_POSITION_WEIGHTS
     late_weights = late_position_weights or custom_weights or _ENV_POS_WEIGHTS_LATE or _ENV_POS_WEIGHTS or LATE_POSITION_WEIGHTS
+    post_lane_weights = post_lane_position_weights or late_weights
     def _all_heroes_known(radiant, dire):
         for side in (radiant, dire):
             if not isinstance(side, dict):
@@ -3827,7 +3665,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                 return False
         return True
 
-    def _covers_duo(data, team):
+    def _covers_duo(data, team, min_matches_duo):
         if not isinstance(data, dict):
             return False
         for i, (pos_i, hero_i) in enumerate(team):
@@ -3842,7 +3680,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                 parts = sorted([f"{int(hero_i)}{pos_i}", f"{int(hero_j)}{pos_j}"])
                 key = f"{parts[0]}_with_{parts[1]}"
                 games = data.get(key, {}).get('games', 0)
-                if games >= SYNERGY_DUO_MIN_MATCHES:
+                if games >= min_matches_duo:
                     found = True
                     break
             if not found:
@@ -3878,7 +3716,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                         covered.update([i, j, k])
         return len(covered) == n
 
-    def _covers_1vs1(data, team, opp):
+    def _covers_1vs1(data, team, opp, min_matches_1vs1):
         if not isinstance(data, dict):
             return False
         for pos_i, hero_i in team:
@@ -3892,14 +3730,14 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                 right = f"{int(hero_j)}{pos_j}"
                 key = f"{left}_vs_{right}" if left <= right else f"{right}_vs_{left}"
                 games = data.get(key, {}).get('games', 0)
-                if games >= COUNTERPICK_1VS1_MIN_MATCHES:
+                if games >= min_matches_1vs1:
                     found = True
                     break
             if not found:
                 return False
         return True
 
-    def _covers_1vs2(data, team, opp):
+    def _covers_1vs2(data, team, opp, min_matches_1vs2):
         if not isinstance(data, dict):
             return False
         for pos_i, hero_i in team:
@@ -3919,7 +3757,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     duo = ",".join(duo_parts)
                     key = f"{solo}_vs_{duo}" if solo <= duo else f"{duo}_vs_{solo}"
                     games = data.get(key, {}).get('games', 0)
-                    if games >= COUNTERPICK_1VS2_MIN_MATCHES:
+                    if games >= min_matches_1vs2:
                         found = True
                         break
                 if found:
@@ -3931,51 +3769,176 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
     all_heroes_known = _all_heroes_known(radiant_heroes_and_pos, dire_heroes_and_pos)
     radiant_team = _team_list(radiant_heroes_and_pos)
     dire_team = _team_list(dire_heroes_and_pos)
-    counterplay_signal_meta = _compute_counterplay_vulnerability_signal_meta(
-        radiant_side=radiant_heroes_and_pos,
-        dire_side=dire_heroes_and_pos,
-    )
-    counterplay_vulnerability_edge = (
-        counterplay_signal_meta.get("edge") if isinstance(counterplay_signal_meta, dict) else None
-    )
-    counterplay_vulnerability_strong = (
-        counterplay_signal_meta.get("strong_edge") if isinstance(counterplay_signal_meta, dict) else None
-    )
-    if counterplay_vulnerability_edge is not None:
-        return_dict['counterplay_vulnerability'] = counterplay_vulnerability_edge
-    if counterplay_vulnerability_strong is not None:
-        return_dict['counterplay_vulnerability_strong'] = counterplay_vulnerability_strong
 
-    synergy_team(radiant_heroes_and_pos, early_output, 'radiant_synergy', early_dict, min_matches_trio=early_trio_threshold)
-    synergy_team(dire_heroes_and_pos, early_output, 'dire_synergy', early_dict, min_matches_trio=early_trio_threshold)
-    synergy_team(radiant_heroes_and_pos, mid_output, 'radiant_synergy', mid_dict, min_matches_trio=mid_trio_threshold)
-    synergy_team(dire_heroes_and_pos, mid_output, 'dire_synergy', mid_dict, min_matches_trio=mid_trio_threshold)
+    synergy_team(
+        radiant_heroes_and_pos,
+        early_output,
+        'radiant_synergy',
+        early_dict,
+        min_matches_trio=early_trio_threshold,
+        min_matches_duo=SYNERGY_DUO_MIN_MATCHES,
+    )
+    synergy_team(
+        dire_heroes_and_pos,
+        early_output,
+        'dire_synergy',
+        early_dict,
+        min_matches_trio=early_trio_threshold,
+        min_matches_duo=SYNERGY_DUO_MIN_MATCHES,
+    )
+    synergy_team(
+        radiant_heroes_and_pos,
+        mid_output,
+        'radiant_synergy',
+        mid_dict,
+        min_matches_trio=mid_trio_threshold,
+        min_matches_duo=SYNERGY_DUO_MIN_MATCHES,
+    )
+    synergy_team(
+        dire_heroes_and_pos,
+        mid_output,
+        'dire_synergy',
+        mid_dict,
+        min_matches_trio=mid_trio_threshold,
+        min_matches_duo=SYNERGY_DUO_MIN_MATCHES,
+    )
+    if post_lane_dict:
+        synergy_team(
+            radiant_heroes_and_pos,
+            post_lane_output,
+            'radiant_synergy',
+            post_lane_dict,
+            min_matches_trio=post_lane_trio_threshold,
+            min_matches_duo=POST_LANE_SYNERGY_DUO_MIN_MATCHES,
+        )
+        synergy_team(
+            dire_heroes_and_pos,
+            post_lane_output,
+            'dire_synergy',
+            post_lane_dict,
+            min_matches_trio=post_lane_trio_threshold,
+            min_matches_duo=POST_LANE_SYNERGY_DUO_MIN_MATCHES,
+        )
     
     # Анализ контрпиков
     counterpick_team(radiant_heroes_and_pos, dire_heroes_and_pos, early_output, 'radiant_counterpick', early_dict, check_solo=True)
     counterpick_team(dire_heroes_and_pos, radiant_heroes_and_pos, early_output, 'dire_counterpick', early_dict, check_solo=True)
     counterpick_team(radiant_heroes_and_pos, dire_heroes_and_pos, mid_output, 'radiant_counterpick', mid_dict, check_solo=True)
     counterpick_team(dire_heroes_and_pos, radiant_heroes_and_pos, mid_output, 'dire_counterpick', mid_dict, check_solo=True)
+    if post_lane_dict:
+        counterpick_team(
+            radiant_heroes_and_pos,
+            dire_heroes_and_pos,
+            post_lane_output,
+            'radiant_counterpick',
+            post_lane_dict,
+            check_solo=True,
+            min_matches_1vs1=POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES,
+            min_matches_1vs2=POST_LANE_COUNTERPICK_1VS2_MIN_MATCHES,
+        )
+        counterpick_team(
+            dire_heroes_and_pos,
+            radiant_heroes_and_pos,
+            post_lane_output,
+            'dire_counterpick',
+            post_lane_dict,
+            check_solo=True,
+            min_matches_1vs1=POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES,
+            min_matches_1vs2=POST_LANE_COUNTERPICK_1VS2_MIN_MATCHES,
+        )
     
     # # Вычисление разниц с проверкой значимости
     outputs_to_process = [
-        (early_output, 'early_output', early_dict, early_trio_threshold),
-        (mid_output, 'mid_output', mid_dict, mid_trio_threshold),
+        (
+            early_output,
+            'early_output',
+            early_dict,
+            early_trio_threshold,
+            SYNERGY_DUO_MIN_MATCHES,
+            COUNTERPICK_1VS1_MIN_MATCHES,
+            POS1_VS_POS1_MIN_MATCHES,
+            COUNTERPICK_1VS2_MIN_MATCHES,
+        ),
+        (
+            mid_output,
+            'mid_output',
+            mid_dict,
+            mid_trio_threshold,
+            SYNERGY_DUO_MIN_MATCHES,
+            COUNTERPICK_1VS1_MIN_MATCHES,
+            POS1_VS_POS1_MIN_MATCHES,
+            COUNTERPICK_1VS2_MIN_MATCHES,
+        ),
     ]
+    if post_lane_dict:
+        outputs_to_process.append(
+            (
+                post_lane_output,
+                'post_lane_output',
+                post_lane_dict,
+                post_lane_trio_threshold,
+                POST_LANE_SYNERGY_DUO_MIN_MATCHES,
+                POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES,
+                POST_LANE_POS1_VS_POS1_MIN_MATCHES,
+                POST_LANE_COUNTERPICK_1VS2_MIN_MATCHES,
+            )
+        )
     
-    for output, name, data_dict, trio_threshold in outputs_to_process:
+    for (
+        output,
+        name,
+        data_dict,
+        trio_threshold,
+        duo_threshold,
+        cp1vs1_threshold,
+        pos1_vs_pos1_threshold,
+        cp1vs2_threshold,
+    ) in outputs_to_process:
         phase_bucket = return_dict.setdefault(name, {})
-        if counterplay_vulnerability_edge is not None:
-            phase_bucket['counterplay_vulnerability'] = counterplay_vulnerability_edge
-        if counterplay_vulnerability_strong is not None:
-            phase_bucket['counterplay_vulnerability_strong'] = counterplay_vulnerability_strong
-        phase_weights = early_weights if name == 'early_output' else late_weights
-        # Требуем, чтобы у всех 10 героев были известны данные для соответствующей метрики
+        for metric in ("counterpick_1vs1", "counterpick_1vs2", "synergy_trio"):
+            phase_bucket.setdefault(metric, None)
+            phase_bucket.setdefault(f"{metric}_games", 0)
+        if name == 'early_output':
+            phase_weights = early_weights
+        elif name == 'post_lane_output':
+            phase_weights = post_lane_weights
+        else:
+            phase_weights = late_weights
+        # Coverage gates by metric; duo may fall back to available core/support pairs.
         has_all_solo = all_heroes_known and _covers_solo(data_dict, radiant_team) and _covers_solo(data_dict, dire_team)
-        has_all_duo = all_heroes_known and _covers_duo(data_dict, radiant_team) and _covers_duo(data_dict, dire_team)
-        has_all_trio = all_heroes_known and _covers_trio(data_dict, radiant_team, trio_threshold) and _covers_trio(data_dict, dire_team, trio_threshold)
-        has_all_1vs1 = all_heroes_known and _covers_1vs1(data_dict, radiant_team, dire_team) and _covers_1vs1(data_dict, dire_team, radiant_team)
-        has_all_1vs2 = all_heroes_known and _covers_1vs2(data_dict, radiant_team, dire_team) and _covers_1vs2(data_dict, dire_team, radiant_team)
+        has_all_duo = (
+            all_heroes_known
+            and _covers_duo(data_dict, radiant_team, duo_threshold)
+            and _covers_duo(data_dict, dire_team, duo_threshold)
+        )
+        has_duo_inputs = has_all_duo or (
+            all(f'{side}_synergy_cores_duo' in output for side in ['radiant', 'dire'])
+            or all(f'{side}_synergy_support_duo' in output for side in ['radiant', 'dire'])
+            or all(f'{side}_synergy_duo' in output for side in ['radiant', 'dire'])
+        )
+        has_core_duo_metric = (
+            all_heroes_known
+            and all(
+                len(output.get(f'{side}_synergy_cores_duo', [])) >= SYNERGY_DUO_MIN_CORE_PAIRS_PER_SIDE
+                for side in ['radiant', 'dire']
+            )
+        )
+        has_duo_metric = has_core_duo_metric
+        has_all_trio = (
+            all_heroes_known
+            and _covers_trio(data_dict, radiant_team, trio_threshold)
+            and _covers_trio(data_dict, dire_team, trio_threshold)
+        )
+        has_all_1vs1 = (
+            all_heroes_known
+            and _covers_1vs1(data_dict, radiant_team, dire_team, cp1vs1_threshold)
+            and _covers_1vs1(data_dict, dire_team, radiant_team, cp1vs1_threshold)
+        )
+        has_all_1vs2 = (
+            all_heroes_known
+            and _covers_1vs2(data_dict, radiant_team, dire_team, cp1vs2_threshold)
+            and _covers_1vs2(data_dict, dire_team, radiant_team, cp1vs2_threshold)
+        )
         def _sum_games_list(items):
             total = 0
             if not items:
@@ -4039,13 +4002,17 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     output['dire_counterpick_1vs1'],
                     _1vs2=True,
                     custom_position_weights=(
-                        COUNTERPICK_1VS1_POSITION_WEIGHTS if name == 'mid_output' else phase_weights
+                        COUNTERPICK_1VS1_POSITION_WEIGHTS
+                        if name in ('mid_output', 'post_lane_output')
+                        else phase_weights
                     ),
                     pair_weights=(
-                        LATE_COUNTERPICK_1VS1_PAIR_WEIGHTS if name == 'mid_output' else None
+                        LATE_COUNTERPICK_1VS1_PAIR_WEIGHTS
+                        if name in ('mid_output', 'post_lane_output')
+                        else None
                     ),
                 )
-                if cp_1vs1 is not None and abs(cp_1vs1) >= COUNTERPICK_1VS1_MIN_ABS:
+                if cp_1vs1 is not None:
                     phase_bucket['counterpick_1vs1'] = cp_1vs1
                 r_games = _sum_games_dict(output.get('radiant_counterpick_1vs1'))
                 d_games = _sum_games_dict(output.get('dire_counterpick_1vs1'))
@@ -4055,10 +4022,11 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
         r_pos1_vs_pos1 = output.get('radiant_counterpick_pos1_vs_pos1')
         d_pos1_vs_pos1 = output.get('dire_counterpick_pos1_vs_pos1')
         if all_heroes_known and r_pos1_vs_pos1 and d_pos1_vs_pos1:
-            phase_bucket['pos1_vs_pos1'] = get_diff(r_pos1_vs_pos1, d_pos1_vs_pos1)
             r_games = _sum_games_list(r_pos1_vs_pos1)
             d_games = _sum_games_list(d_pos1_vs_pos1)
-            if r_games and d_games:
+            pos1_games = min(r_games, d_games) if r_games and d_games else 0
+            if pos1_games >= pos1_vs_pos1_threshold:
+                phase_bucket['pos1_vs_pos1'] = get_diff(r_pos1_vs_pos1, d_pos1_vs_pos1)
                 phase_bucket['pos1_vs_pos1_games'] = min(r_games, d_games)
 
         if has_all_solo and all(f'{side}_counterpick_solo' in output for side in ['radiant', 'dire']):
@@ -4087,39 +4055,88 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
 
         synergy_duo_val = None
         r_games = d_games = 0
-        if has_all_duo:
+        duo_reason = None
+        if has_duo_inputs:
             cores_diff = None
             support_diff = None
+            all_diff = None
+            core_r_games = core_d_games = 0
+            support_r_games = support_d_games = 0
+            all_r_games = all_d_games = 0
             if all(f'{side}_synergy_cores_duo' in output for side in ['radiant', 'dire']):
                 cores_diff = get_diff(
                     output['radiant_synergy_cores_duo'],
                     output['dire_synergy_cores_duo'],
                     use_max_for_synergy=synergy_duo_use_max,
                 )
+                core_r_games = _sum_games_list(output.get('radiant_synergy_cores_duo'))
+                core_d_games = _sum_games_list(output.get('dire_synergy_cores_duo'))
             if all(f'{side}_synergy_support_duo' in output for side in ['radiant', 'dire']):
                 support_diff = get_diff(
                     output['radiant_synergy_support_duo'],
                     output['dire_synergy_support_duo'],
                     use_max_for_synergy=synergy_duo_use_max,
                 )
-
-            if cores_diff is not None or support_diff is not None:
-                # Ставим упор на коры: поддержка часто шумит для предикта силы драфта
-                synergy_duo_val = cores_diff if cores_diff is not None else support_diff
-                if cores_diff is not None:
-                    r_games = _sum_games_list(output.get('radiant_synergy_cores_duo'))
-                    d_games = _sum_games_list(output.get('dire_synergy_cores_duo'))
-                else:
-                    r_games = _sum_games_list(output.get('radiant_synergy_support_duo'))
-                    d_games = _sum_games_list(output.get('dire_synergy_support_duo'))
-            elif all(f'{side}_synergy_duo' in output for side in ['radiant', 'dire']):
-                synergy_duo_val = get_diff(
+                support_r_games = _sum_games_list(output.get('radiant_synergy_support_duo'))
+                support_d_games = _sum_games_list(output.get('dire_synergy_support_duo'))
+            if all(f'{side}_synergy_duo' in output for side in ['radiant', 'dire']):
+                all_diff = get_diff(
                     output['radiant_synergy_duo'],
                     output['dire_synergy_duo'],
                     use_max_for_synergy=synergy_duo_use_max,
                 )
-                r_games = _sum_games_list(output.get('radiant_synergy_duo'))
-                d_games = _sum_games_list(output.get('dire_synergy_duo'))
+                all_r_games = _sum_games_list(output.get('radiant_synergy_duo'))
+                all_d_games = _sum_games_list(output.get('dire_synergy_duo'))
+
+            if not has_duo_metric:
+                synergy_duo_val = all_diff if all_diff is not None else cores_diff if cores_diff is not None else support_diff
+                r_games = all_r_games if all_diff is not None else core_r_games if cores_diff is not None else support_r_games
+                d_games = all_d_games if all_diff is not None else core_d_games if cores_diff is not None else support_d_games
+                duo_reason = 'partial_core_duo_coverage'
+            elif cores_diff is not None and support_diff is not None:
+                core_support_conflict = (
+                    cores_diff
+                    and support_diff
+                    and (cores_diff > 0) != (support_diff > 0)
+                    and abs(cores_diff) >= SYNERGY_DUO_CORE_SUPPORT_CONFLICT_MIN_ABS
+                    and abs(support_diff) >= SYNERGY_DUO_CORE_SUPPORT_CONFLICT_MIN_ABS
+                )
+                if core_support_conflict:
+                    synergy_duo_val = None
+                    duo_reason = 'core_support_conflict'
+                    phase_bucket['synergy_duo_conflict'] = True
+                    phase_bucket['synergy_duo_core'] = cores_diff
+                    phase_bucket['synergy_duo_support'] = support_diff
+                    r_games = core_r_games + support_r_games
+                    d_games = core_d_games + support_d_games
+                else:
+                    # Коры важнее для силы драфта, но саппорт-связка не должна полностью пропадать.
+                    synergy_duo_val = round(cores_diff * 0.7 + support_diff * 0.3)
+                    r_games = core_r_games + support_r_games
+                    d_games = core_d_games + support_d_games
+            elif cores_diff is not None:
+                synergy_duo_val = cores_diff
+                r_games = core_r_games
+                d_games = core_d_games
+            elif all_diff is not None:
+                synergy_duo_val = all_diff
+                r_games = all_r_games
+                d_games = all_d_games
+            elif support_diff is not None:
+                synergy_duo_val = support_diff
+                r_games = support_r_games
+                d_games = support_d_games
+
+            if duo_reason and synergy_duo_val is not None:
+                phase_bucket['synergy_duo_partial'] = synergy_duo_val
+                if r_games and d_games:
+                    phase_bucket['synergy_duo_partial_games'] = min(r_games, d_games)
+                phase_bucket['synergy_duo_partial_reason'] = duo_reason
+            elif duo_reason:
+                phase_bucket['synergy_duo_partial_reason'] = duo_reason
+
+            if duo_reason:
+                synergy_duo_val = None
 
         if not SYNERGY_DUO_REQUIRE_CP_ALIGN and synergy_duo_val is not None:
             phase_bucket['synergy_duo'] = synergy_duo_val
@@ -4155,6 +4172,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
         phase_context = {
             'early_output': return_dict.get('early_output', {}),
             'mid_output': return_dict.get('mid_output', {}),
+            'post_lane_output': return_dict.get('post_lane_output', {}),
         }
         # Wrapper disabled by default: only apply when explicitly enabled via env.
         wrapper_enabled = os.getenv('SIGNAL_WRAPPER_ENABLED', '0').strip().lower() in {
@@ -4176,82 +4194,6 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     phase_context=phase_context,
                 )
     return return_dict
-
-
-def calculate_comeback_solo_metrics(
-    radiant_heroes_and_pos,
-    dire_heroes_and_pos,
-    comeback_dict,
-    baseline_wr_pct,
-    late_position_weights=None,
-):
-    if not isinstance(comeback_dict, dict) or not comeback_dict:
-        return None
-
-    weights = late_position_weights or _ENV_POS_WEIGHTS_LATE or _ENV_POS_WEIGHTS or LATE_POSITION_WEIGHTS
-    ordered_positions = ("pos1", "pos2", "pos3", "pos4", "pos5")
-
-    def _side_metrics(side):
-        weighted_wr = 0.0
-        total_weight = 0.0
-        missing_positions = []
-        games_by_pos = {}
-        wr_by_pos = {}
-
-        for pos in ordered_positions:
-            hero_id = side.get(pos, {}).get("hero_id")
-            try:
-                hero_int = int(hero_id)
-            except (TypeError, ValueError):
-                missing_positions.append(pos)
-                continue
-            if hero_int <= 0:
-                missing_positions.append(pos)
-                continue
-
-            key = f"{hero_int}{pos}"
-            stats = comeback_dict.get(key) or {}
-            games = int(stats.get("games", 0) or 0)
-            wins = int(stats.get("wins", 0) or 0)
-            if games < SOLO_MIN_MATCHES:
-                missing_positions.append(pos)
-                continue
-
-            wr = wins / games
-            weight = float(weights.get(pos, 1.0))
-            weighted_wr += wr * weight
-            total_weight += weight
-            games_by_pos[pos] = games
-            wr_by_pos[pos] = round(wr * 100, 2)
-
-        if total_weight <= 0:
-            return {
-                "complete": False,
-                "wr_pct": None,
-                "delta_pp": None,
-                "missing_positions": missing_positions,
-                "games_by_pos": games_by_pos,
-                "wr_by_pos": wr_by_pos,
-            }
-
-        wr_pct = (weighted_wr / total_weight) * 100.0
-        delta_pp = wr_pct - float(baseline_wr_pct)
-        return {
-            "complete": len(missing_positions) == 0,
-            "wr_pct": round(wr_pct, 2),
-            "delta_pp": round(delta_pp, 2),
-            "missing_positions": missing_positions,
-            "games_by_pos": games_by_pos,
-            "wr_by_pos": wr_by_pos,
-        }
-
-    radiant = _side_metrics(radiant_heroes_and_pos)
-    dire = _side_metrics(dire_heroes_and_pos)
-    return {
-        "baseline_wr_pct": round(float(baseline_wr_pct), 2),
-        "radiant": radiant,
-        "dire": dire,
-    }
 
 
 # functions.py
@@ -4437,7 +4379,7 @@ def determine_game_dominance(match):
 
 
 def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict, late_dict,
-              radiant_team_name=None, dire_team_name=None, match=None):
+              radiant_team_name=None, dire_team_name=None, match=None, post_lane_dict=None):
 
     for key in dire_heroes_and_pos:
         hero_name = dire_heroes_and_pos[key]['hero_name'].lower()
@@ -4474,7 +4416,10 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
     s = synergy_and_counterpick(
         radiant_heroes_and_pos=radiant_heroes_and_pos,
         dire_heroes_and_pos=dire_heroes_and_pos,
-        early_dict=early_dict, mid_dict=late_dict)
+        early_dict=early_dict,
+        mid_dict=late_dict,
+        post_lane_dict=post_lane_dict,
+    )
     base_top, base_bot, base_mid = calculate_lanes(
         radiant_heroes_and_pos, dire_heroes_and_pos, structured_lane_data
     )
@@ -4551,8 +4496,6 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
             return any(value is not None for value in data.values()) if isinstance(data, dict) else False
 
         metric_list = [
-            ('counterplay_vulnerability', 'Counterplay_vulnerability'),
-            ('counterplay_vulnerability_strong', 'Counterplay_vulnerability_strong'),
             ('trio_pos1_strong', 'Trio_pos1_strong'),
             ('counterpick_1vs1', 'Counterpick_1vs1'),
             ('pos1_vs_pos1', 'Pos1_vs_pos1'),
@@ -4564,12 +4507,18 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
 
         early_output = s.get('early_output', {})
         mid_output = s.get('mid_output', {})
+        post_lane_output = s.get('post_lane_output', {})
         laning_winner_line = _lc_format_laning_winner_message(
             s.get("laning_winner"),
             s.get("laning_winner_conf"),
         )
 
         early_block = _format_metrics("10-28 Minute:", early_output, metric_list)
+        post_lane_block = (
+            _format_metrics("Post-lane (10m gate):", post_lane_output, metric_list)
+            if _has_any_metric(post_lane_output)
+            else ""
+        )
         mid_block = _format_metrics("Mid (25-50 min):", mid_output, metric_list)
 
         # Формирование сообщения
@@ -4578,6 +4527,7 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
             f"{radiant_team_name} VS {dire_team_name}\n"
             f"Lanes:\n{s.get('top')}{s.get('mid')}{s.get('bot')}{laning_winner_line}"
             f"{early_block}"
+            f"{post_lane_block}"
             f"{mid_block}"
             f'ПОМНИ: КОМАНДА ВАЖНЕЕ ПИКА')
 
@@ -4763,7 +4713,7 @@ def evaluate_winrate_check_old_maps(matches):
     return avg_wr, winrates_by_index
 
 
-def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weights=None, write_to_file=True, start_date_time=1747872000, maps_path=None, output_path=None, merge_side_lanes: bool = False, disable_lanes: bool = False, max_matches: int = None, autoload_dicts: bool = True, use_lane_corrector: bool = True, lane_corrector_dir: str = None):
+def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weights=None, write_to_file=True, start_date_time=1747872000, maps_path=None, output_path=None, merge_side_lanes: bool = False, disable_lanes: bool = False, max_matches: int = None, autoload_dicts: bool = True, use_lane_corrector: bool = True, lane_corrector_dir: str = None, post_lane_dict=None):
     import sys
     import time
     start_time = time.time()
@@ -4795,6 +4745,10 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
                 with open(stats_dir / "late_dict_raw.json", "r") as f:
                     late_dict = json.load(f)
                 print("  ✓ Загружен late_dict по умолчанию")
+            if (not post_lane_dict) and (stats_dir / "post_lane_dict_raw.json").exists():
+                with open(stats_dir / "post_lane_dict_raw.json", "r") as f:
+                    post_lane_dict = json.load(f)
+                print("  ✓ Загружен post_lane_dict по умолчанию")
             if (not lane_data) and (stats_dir / "lane_dict_raw.json").exists():
                 with open(stats_dir / "lane_dict_raw.json", "r") as f:
                     lane_data = json.load(f)
@@ -4912,6 +4866,7 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
             early_dict=early_dict,
             mid_dict=late_dict,
             custom_weights=custom_weights,
+            post_lane_dict=post_lane_dict,
         ) or {}
         # Совместимость: старые пайплайны ожидают late_output
         if 'mid_output' in s and 'late_output' not in s:
@@ -4926,6 +4881,7 @@ def check_old_maps(early_dict, late_dict, lane_data, outfile_name, custom_weight
         _strip_games_metrics(s.get('early_output'))
         _strip_games_metrics(s.get('mid_output'))
         _strip_games_metrics(s.get('late_output'))
+        _strip_games_metrics(s.get('post_lane_output'))
         if not disable_lanes:
             base_top, base_bot, base_mid = calculate_lanes(
                 radiant_heroes_and_pos=radiant_heroes_and_pos,

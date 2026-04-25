@@ -84,12 +84,107 @@ def _build_v2_live_cards():
     return [card], [card]
 
 
+def _build_cyberscore_card():
+    html = """
+    <a class="item matches-item online" href="/en/matches/172835/">
+      LIVE MAP 3 BO3 1:1 +5.4k 1WIN Team 13 : 48 9 - 3 SA Rejects
+    </a>
+    """
+    soup = BeautifulSoup(html, "lxml")
+    card = soup.find("a", class_="matches-item")
+    assert card is not None
+    card["data-source"] = "cyberscore"
+    card["data-cyberscore-href"] = "https://cyberscore.live/en/matches/172835/"
+    card["data-cyberscore-match-id"] = "172835"
+    return [card], [card]
+
+
+def _build_cyberscore_item() -> Dict[str, Any]:
+    picks = []
+    radiant_heroes = [1, 2, 3, 4, 5]
+    dire_heroes = [6, 7, 8, 9, 10]
+    for role, hero_id in enumerate(radiant_heroes, start=1):
+        picks.append(
+            {
+                "team": "radiant",
+                "player": {"id": 1000 + role, "role": role, "game_name": f"r{role}"},
+                "hero": {"id": 2600 + role, "id_steam": hero_id, "name": f"R{role}"},
+            }
+        )
+    for role, hero_id in enumerate(dire_heroes, start=1):
+        picks.append(
+            {
+                "team": "dire",
+                "player": {"id": 2000 + role, "role": role, "game_name": f"d{role}"},
+                "hero": {"id": 2700 + role, "id_steam": hero_id, "name": f"D{role}"},
+            }
+        )
+    return {
+        "id": 172835,
+        "id_series": "series-1",
+        "title": "1WIN Team vs South American Rejects",
+        "status": "online",
+        "best_of": 3,
+        "game_time": 845,
+        "game_map_number": 3,
+        "score_team_radiant": 9,
+        "score_team_dire": 3,
+        "best_of_score": [1, 1],
+        "team_radiant_id": 44348,
+        "team_dire_id": 45011,
+        "team_radiant": {"id": 44348, "name": "1WIN Team"},
+        "team_dire": {"id": 45011, "name": "South American Rejects"},
+        "tournament_id": 46035,
+        "tournament": {"id": 46035, "title": "DreamLeague Division 2 Season 4"},
+        "picks": picks,
+        "networth": [
+            {"team": "radiant", "time": 120, "value": 500},
+            {"team": "dire", "time": 240, "value": 1200},
+        ],
+    }
+
+
 def _valid_heroes(seed: int, positions: int = 5) -> Dict[str, Dict[str, int]]:
     pos_order = ["pos1", "pos2", "pos3", "pos4", "pos5"][:positions]
     return {
         pos: {"hero_id": seed + idx + 1, "account_id": seed + idx + 101}
         for idx, pos in enumerate(pos_order)
     }
+
+
+def test_extract_live_listing_context_supports_cyberscore_cards() -> None:
+    heads, bodies = _build_cyberscore_card()
+    context = runtime._extract_live_listing_context(heads[0], bodies[0])
+
+    assert context["source"] == "cyberscore"
+    assert context["layout"] == "cyberscore_match_card"
+    assert context["status"] == "live"
+    assert context["score"] == "1 : 1"
+    assert context["uniq_score"] == 2
+    assert context["live_match_id"] == "172835"
+    assert context["href"] == "https://cyberscore.live/en/matches/172835/"
+
+
+def test_cyberscore_next_payload_extracts_draft_time_and_networth() -> None:
+    item = _build_cyberscore_item()
+    flight_chunk = f'prefix "item":{json.dumps(item, separators=(",", ":"))}, suffix'
+    html = f"<script>self.__next_f.push([1,{json.dumps(flight_chunk)}])</script>"
+
+    parsed_item = runtime._extract_cyberscore_match_item_from_html(html, match_id=172835)
+    assert parsed_item is not None
+    payload = runtime._cyberscore_item_to_runtime_payload(parsed_item)
+
+    assert payload["game_time"] == 845
+    assert payload["radiant_lead"] == -1200
+    assert payload["radiant_score"] == 9
+    assert payload["dire_score"] == 3
+    assert payload["db"]["first_team"]["title"] == "1WIN Team"
+    assert payload["live_league_data"]["radiant_series_wins"] == 1
+    assert payload["_cyberscore_draft_error"] is None
+    assert payload["_cyberscore_heroes_and_pos"]["radiant"]["pos1"]["hero_id"] == 1
+    assert payload["_cyberscore_heroes_and_pos"]["radiant"]["pos5"]["hero_id"] == 5
+    assert payload["_cyberscore_heroes_and_pos"]["dire"]["pos1"]["hero_id"] == 6
+    assert payload["_cyberscore_heroes_and_pos"]["dire"]["pos5"]["hero_id"] == 10
 
 
 def test_add_url_creates_json_array_and_deduplicates(tmp_path, monkeypatch) -> None:
@@ -227,8 +322,8 @@ def test_build_runtime_object_snapshot_reports_large_runtime_objects(monkeypatch
     monkeypatch.setattr(runtime, "lane_data", {"lane": 1})
     monkeypatch.setattr(runtime, "early_dict", {"early": 1})
     monkeypatch.setattr(runtime, "late_dict", {"late": 1})
-    monkeypatch.setattr(runtime, "comeback_dict", {"cb": 1})
-    monkeypatch.setattr(runtime, "late_comeback_ceiling_thresholds", {"21": 123})
+    monkeypatch.setattr(runtime, "post_lane_dict", {"post_lane": 1})
+    monkeypatch.setattr(runtime, "late_pub_comeback_table_thresholds_by_wr", {"21": 123})
     monkeypatch.setattr(runtime, "KILLS_MODELS", {"model": 1})
     monkeypatch.setattr(runtime, "TEAM_PREDICTABILITY_CACHE", {"team": 1})
     monkeypatch.setattr(runtime, "tempo_solo_dict", {"solo": 1})
@@ -240,8 +335,8 @@ def test_build_runtime_object_snapshot_reports_large_runtime_objects(monkeypatch
     assert snapshot["lane_data"] == "dict(len=1)"
     assert snapshot["early_dict"] == "dict(len=1)"
     assert snapshot["late_dict"] == "dict(len=1)"
-    assert snapshot["comeback_dict"] == "dict(len=1)"
-    assert snapshot["late_comeback_ceiling_thresholds"] == "dict(len=1)"
+    assert snapshot["post_lane_dict"] == "dict(len=1)"
+    assert snapshot["late_pub_comeback_table_thresholds"] == "dict(len=1)"
     assert snapshot["match_history"] == "dict(len=1)"
     assert snapshot["bookmaker_prefetch_queue"] == "deque(len=1)"
     assert snapshot["bookmaker_prefetch_results"] == "dict(len=1)"
@@ -258,7 +353,6 @@ def test_build_runtime_object_snapshot_reports_large_runtime_objects(monkeypatch
     monkeypatch.setattr(runtime, "lane_data", None)
     monkeypatch.setattr(runtime, "early_dict", None)
     monkeypatch.setattr(runtime, "late_dict", None)
-    monkeypatch.setattr(runtime, "comeback_dict", None)
     monkeypatch.setattr(runtime, "late_comeback_ceiling_thresholds", {})
     monkeypatch.setattr(runtime, "KILLS_MODELS", None)
     monkeypatch.setattr(runtime, "TEAM_PREDICTABILITY_CACHE", None)
@@ -273,12 +367,18 @@ def test_build_dota2protracker_block_marks_invalid_metrics() -> None:
         "pro_duo_synergy_late": 1.25,
         "pro_cp1vs1_valid": False,
         "pro_duo_synergy_valid": True,
+        "pro_lane_mid_cp1vs1": -0.18,
+        "pro_lane_mid_cp1vs1_valid": True,
+        "pro_lane_advantage": 0.42,
     }
 
     block = runtime._build_dota2protracker_block(payload)
 
+    assert block.startswith("\ndota2protracker:")
     assert "cp1vs1: invalid" in block
     assert "synergy_duo: +1.25" in block
+    assert "mid_cp1vs1" not in block
+    assert runtime._build_dota2protracker_lane_adv_line(payload) == "lane_adv: +0.42\n"
 
 
 def test_has_valid_dota2protracker_signal_requires_at_least_one_valid_metric() -> None:
@@ -323,6 +423,22 @@ def test_has_dispatchable_dota2protracker_signal_respects_thresholds() -> None:
     ) is True
 
 
+def test_pipeline_probe_phase_block_hides_solo_games() -> None:
+    block = runtime._format_pipeline_probe_phase_block(
+        "Early",
+        {
+            "solo": 3,
+            "solo_games": 10346,
+            "counterpick_1vs1": 4,
+            "counterpick_1vs1_games": 1328,
+        },
+    )
+
+    assert "solo: +3.00 (10346 games)" not in block
+    assert "solo: +3.00" in block
+    assert "counterpick_1vs1: +4.00 (1328 games)" in block
+
+
 def test_build_dota2protracker_gate_summary_reports_threshold_pass_state() -> None:
     summary = runtime._build_dota2protracker_gate_summary(
         {
@@ -354,6 +470,28 @@ def test_build_dota2protracker_debug_summary_includes_invalid_reasons() -> None:
     assert "cp1vs1=invalid" in summary
     assert "reason=insufficient_core_heroes" in summary
     assert "radiant_core_count" in summary
+
+
+def test_build_dota2protracker_log_lines_include_games_and_reasons() -> None:
+    lines = runtime._build_dota2protracker_log_lines(
+        {
+            "pro_cp1vs1_valid": True,
+            "pro_cp1vs1_late": -3.25,
+            "pro_cp1vs1_late_games": 84,
+            "pro_cp1vs1_reason": "ok",
+            "pro_duo_synergy_valid": False,
+            "pro_duo_synergy_late": 0.0,
+            "pro_duo_synergy_late_games": 0,
+            "pro_duo_synergy_reason": "insufficient_duo_core_coverage",
+        }
+    )
+
+    joined = "\n".join(lines)
+    assert "Dota2ProTracker" in joined
+    assert "cp1vs1: -3.25" in joined
+    assert "games=84" in joined
+    assert "synergy_duo: invalid" in joined
+    assert "insufficient_duo_core_coverage" in joined
 
 
 def test_build_lane_block_omits_section_when_lanes_missing() -> None:

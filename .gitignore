@@ -10,6 +10,8 @@ __pycache__/
 venv_catboost/
 catboost_info/
 logs/
+*.log
+*.out
 log.txt
 nohup.out
 generated_files/
@@ -19,6 +21,7 @@ base/keys.py
 base/keys_local.py
 bets_data/
 pro_heroes_data/
+hero_dota2protracker_data/
 data/pub_timeaware_*/
 data/pub_timeaware_full/
 data/pub_timeaware_100k/

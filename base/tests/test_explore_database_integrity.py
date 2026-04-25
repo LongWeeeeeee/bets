@@ -36,8 +36,29 @@ def _set_valid_positions_catalog(monkeypatch) -> None:
         },
         raising=False,
     )
-    monkeypatch.setattr(maps_research, "HERO_VALID_POSITIONS_COUNTS", {}, raising=False)
-    monkeypatch.setattr(maps_research, "HERO_VALID_POSITIONS_COUNTS_MIN_GAMES", 100, raising=False)
+    monkeypatch.setattr(maps_research, "HERO_POSITION_STATS", {}, raising=False)
+
+
+def _set_percentage_position_catalog(monkeypatch) -> None:
+    monkeypatch.setattr(maps_research, "HERO_VALID_POSITIONS", {}, raising=False)
+    monkeypatch.setattr(maps_research, "HERO_POSITION_STATS_MIN_PERCENTAGE", 1.0, raising=False)
+    monkeypatch.setattr(
+        maps_research,
+        "HERO_POSITION_STATS",
+        {
+            101: {"positions": {"1": {"percentage": 0.99}, "5": {"percentage": 1.0}}},
+            102: {"positions": {"1": {"percentage": 1.0}, "5": {"percentage": 0.99}}},
+            201: {"positions": {"2": {"percentage": 1.0}}},
+            202: {"positions": {"3": {"percentage": 1.0}}},
+            203: {"positions": {"4": {"percentage": 1.0}}},
+            301: {"positions": {"1": {"percentage": 1.0}}},
+            302: {"positions": {"2": {"percentage": 1.0}}},
+            303: {"positions": {"3": {"percentage": 1.0}}},
+            304: {"positions": {"4": {"percentage": 1.0}}},
+            305: {"positions": {"5": {"percentage": 1.0}}},
+        },
+        raising=False,
+    )
 
 
 def _clear_mode_env(monkeypatch) -> None:
@@ -75,6 +96,45 @@ def _valid_match(match_id: str = "101"):
         "didRadiantWin": True,
         "towerDeaths": [{"npcId": 1}],
     }
+
+
+def test_check_match_quality_swaps_lane_roles_with_percentage_catalog(monkeypatch):
+    _set_percentage_position_catalog(monkeypatch)
+
+    def player(hero_id, position, is_radiant, networth):
+        return {
+            "heroId": hero_id,
+            "position": position,
+            "isRadiant": is_radiant,
+            "intentionalFeeding": False,
+            "networth": networth,
+            "imp": 0,
+        }
+
+    match = {
+        "id": "swap-percentage-catalog",
+        "players": [
+            player(101, "POSITION_1", True, 500),
+            player(201, "POSITION_2", True, 2000),
+            player(202, "POSITION_3", True, 2500),
+            player(203, "POSITION_4", True, 1200),
+            player(102, "POSITION_5", True, 2100),
+            player(301, "POSITION_1", False, 2000),
+            player(302, "POSITION_2", False, 2000),
+            player(303, "POSITION_3", False, 2000),
+            player(304, "POSITION_4", False, 1200),
+            player(305, "POSITION_5", False, 800),
+        ],
+    }
+
+    assert maps_research._position_is_valid_for_hero(101, "POSITION_1") is False
+    assert maps_research._position_is_valid_for_hero(102, "POSITION_5") is False
+
+    ok, reason = maps_research.check_match_quality(match, strict_lane_positions=True)
+
+    assert (ok, reason) == (True, "ok")
+    assert match["players"][0]["position"] == "pos5"
+    assert match["players"][4]["position"] == "pos1"
 
 
 def test_run_explore_database_requires_test_set_by_default(tmp_path, monkeypatch):
@@ -191,9 +251,9 @@ def test_run_explore_database_reads_env_paths_when_args_omitted(tmp_path, monkey
 def test_run_explore_database_fails_closed_without_position_catalog(tmp_path, monkeypatch):
     _clear_mode_env(monkeypatch)
     monkeypatch.setattr(maps_research, "HERO_VALID_POSITIONS", {}, raising=False)
-    monkeypatch.setattr(maps_research, "HERO_VALID_POSITIONS_COUNTS", {}, raising=False)
+    monkeypatch.setattr(maps_research, "HERO_POSITION_STATS", {}, raising=False)
 
-    with pytest.raises(RuntimeError, match="hero_valid_positions_simple.json"):
+    with pytest.raises(RuntimeError, match="hero_position_stats.json"):
         explore.run_explore_database(
             base_dir=tmp_path,
             json_dir=tmp_path / "json_parts_split_from_object",
