@@ -5237,12 +5237,6 @@ def find_biggest_param(data, mid=False):
     return key, int(round(first_val))
 
 
-def _canon_vs(left, right):
-    if left <= right:
-        return f"{left}_vs_{right}", True
-    return f"{right}_vs_{left}", False
-
-
 def _split_vs_key(key):
     parts = key.split('_vs_')
     if len(parts) != 2:

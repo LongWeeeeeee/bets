@@ -143,6 +143,108 @@ def test_global_pro_duo_synergy_accepts_reverse_hero_page_direction() -> None:
     assert data["core_coverage"] == {"pos1": 2, "pos2": 2, "pos3": 2}
 
 
+def test_protracker_cp1vs1_merges_both_hero_page_directions() -> None:
+    hero_data: dict = {}
+    _add_precise_matchup(
+        hero_data,
+        "RadiantOne",
+        "DireOne",
+        "pos1",
+        "pos1",
+        wr=60.0,
+        games=20,
+    )
+    _add_precise_matchup(
+        hero_data,
+        "DireOne",
+        "RadiantOne",
+        "pos1",
+        "pos1",
+        wr=30.0,
+        games=40,
+    )
+
+    diff, games = protracker._get_matchup_1v1(
+        hero_data,
+        "RadiantOne",
+        "DireOne",
+        "pos1",
+        "pos1",
+        min_games=10,
+    )
+
+    assert games == 60
+    assert round(diff, 4) == 16.6667
+
+
+def test_protracker_duo_synergy_merges_both_hero_page_directions() -> None:
+    hero_data: dict = {}
+    _add_precise_synergy(
+        hero_data,
+        "RadiantOne",
+        "RadiantTwo",
+        "pos1",
+        "pos2",
+        wr=60.0,
+        games=20,
+    )
+    _add_precise_synergy(
+        hero_data,
+        "RadiantTwo",
+        "RadiantOne",
+        "pos2",
+        "pos1",
+        wr=70.0,
+        games=40,
+    )
+
+    diff, games = protracker._get_duo_synergy_best_direction(
+        hero_data,
+        "RadiantOne",
+        "RadiantTwo",
+        "pos1",
+        "pos2",
+        min_games=10,
+    )
+
+    assert games == 60
+    assert round(diff, 4) == 16.6667
+
+
+def test_protracker_identical_reverse_sample_is_not_double_counted() -> None:
+    hero_data: dict = {}
+    _add_precise_synergy(
+        hero_data,
+        "RadiantOne",
+        "RadiantTwo",
+        "pos1",
+        "pos2",
+        wr=63.0,
+        games=22,
+    )
+    _add_precise_synergy(
+        hero_data,
+        "RadiantTwo",
+        "RadiantOne",
+        "pos2",
+        "pos1",
+        wr=63.0,
+        games=22,
+    )
+
+    diff, games = protracker._get_duo_synergy_best_direction(
+        hero_data,
+        "RadiantOne",
+        "RadiantTwo",
+        "pos1",
+        "pos2",
+        min_games=10,
+    )
+
+    assert diff == 13.0
+    assert games == 22
+
+
 def test_calculate_lane_advantage_uses_team_specific_lane_pairs(monkeypatch) -> None:
     radiant_positions = [
         ("pos1", "RadiantCarry"),

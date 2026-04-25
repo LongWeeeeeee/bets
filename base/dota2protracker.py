@@ -867,27 +867,25 @@ def _calculate_cp1vs1(radiant_cores: List[str], dire_cores: List[str],
             r_key = _hero_norm_key(r_hero)
             hero_pos_num = POSITION_MAP.get(r_pos, r_pos[-1])
             opp_pos_num = POSITION_MAP.get(d_pos, d_pos[-1])
-            pair_diffs = []
-            pair_games = []
+            pair_samples = []
 
             # Radiant hero vs Dire hero
             pos_data = r_precise.get(d_key, {}).get(opp_pos_num, {}).get(hero_pos_num, {})
             if pos_data.get('games', 0) >= min_games:
-                pair_diffs.append(pos_data['wr'] - 50)
-                pair_games.append(pos_data['games'])
+                pair_samples.append((pos_data['wr'] - 50, pos_data['games']))
 
             # Dire hero vs Radiant hero (obverse matchup)
             d_entry = _hero_data_entry(hero_data, d_hero)
             d_precise = d_entry.get('_matchups_by_hero_pos', {})
             pos_data = d_precise.get(r_key, {}).get(hero_pos_num, {}).get(opp_pos_num, {})
             if pos_data.get('games', 0) >= min_games:
-                pair_diffs.append(50 - pos_data['wr'])  # radiant perspective
-                pair_games.append(pos_data['games'])
+                pair_samples.append((50 - pos_data['wr'], pos_data['games']))  # radiant perspective
 
-            if pair_diffs:
-                weighted_scores.append((sum(pair_diffs) / len(pair_diffs)) * pair_weight)
+            pair_diff, pair_games = _merge_oriented_samples(pair_samples)
+            if pair_diff is not None:
+                weighted_scores.append(pair_diff * pair_weight)
                 matchup_count += 1
-                games_sum += int(sum(pair_games) / len(pair_games))
+                games_sum += pair_games
                 rad_core_vs_core_coverage[r_pos] += 1
                 dire_core_vs_core_coverage[d_pos] += 1
 
@@ -910,6 +908,33 @@ def _required_coverage(possible: int) -> int:
     if possible <= 0:
         return 0
     return max(1, math.ceil(possible * PRO_POSITION_COVERAGE_THRESHOLD))
+
+
+def _merge_oriented_samples(samples: List[Tuple[Optional[float], int]]) -> Tuple[Optional[float], int]:
+    """Weighted merge for the same oriented matchup/pair from multiple hero pages."""
+    unique_samples: List[Tuple[float, int]] = []
+    seen = set()
+    for diff, games in samples:
+        if diff is None:
+            continue
+        try:
+            diff_f = float(diff)
+            games_i = int(games or 0)
+        except (TypeError, ValueError):
+            continue
+        if games_i <= 0:
+            continue
+        signature = (round(diff_f, 6), games_i)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        unique_samples.append((diff_f, games_i))
+
+    total_games = sum(games for _diff, games in unique_samples)
+    if total_games <= 0:
+        return None, 0
+    merged = sum(diff * games for diff, games in unique_samples) / total_games
+    return merged, total_games
 
 
 def _calculate_cp1vs1_all_positions(
@@ -946,25 +971,23 @@ def _calculate_cp1vs1_all_positions(
             d_pos_num = POSITION_MAP.get(d_pos, d_pos[-1])
             d_key = _hero_norm_key(d_hero)
             r_key = _hero_norm_key(r_hero)
-            pair_diffs = []
-            pair_games = []
+            pair_samples = []
 
             pos_data = r_precise.get(d_key, {}).get(d_pos_num, {}).get(r_pos_num, {})
             if pos_data.get('games', 0) >= min_games:
-                pair_diffs.append(pos_data['wr'] - 50)
-                pair_games.append(pos_data['games'])
+                pair_samples.append((pos_data['wr'] - 50, pos_data['games']))
 
             d_entry = _hero_data_entry(hero_data, d_hero)
             d_precise = d_entry.get('_matchups_by_hero_pos', {})
             pos_data = d_precise.get(r_key, {}).get(r_pos_num, {}).get(d_pos_num, {})
             if pos_data.get('games', 0) >= min_games:
-                pair_diffs.append(50 - pos_data['wr'])
-                pair_games.append(pos_data['games'])
+                pair_samples.append((50 - pos_data['wr'], pos_data['games']))
 
-            if pair_diffs:
-                weighted_scores.append((sum(pair_diffs) / len(pair_diffs)) * pair_weight)
+            pair_diff, pair_games = _merge_oriented_samples(pair_samples)
+            if pair_diff is not None:
+                weighted_scores.append(pair_diff * pair_weight)
                 matchup_count += 1
-                games_sum += int(sum(pair_games) / len(pair_games))
+                games_sum += pair_games
                 if r_pos in rad_core_coverage:
                     rad_core_coverage[r_pos] += 1
                 if d_pos in dire_core_coverage:
@@ -1086,10 +1109,10 @@ def _calculate_duo_synergy_all_positions(
     }
 
 
-def _get_matchup_1v1(hero_data: Dict, r_hero: str, d_hero: str, r_pos: str, d_pos: str, min_games: int) -> Tuple[float, int]:
+def _get_matchup_1v1(hero_data: Dict, r_hero: str, d_hero: str, r_pos: str, d_pos: str, min_games: int) -> Tuple[Optional[float], int]:
     """Get 1v1 matchup diff from Radiant perspective.
 
-    Takes the best available direction (more games wins), doesn't average symmetrically.
+    Merges both hero-page directions when both are present.
     """
     r_key = _hero_norm_key(r_hero)
     d_key = _hero_norm_key(d_hero)
@@ -1106,24 +1129,18 @@ def _get_matchup_1v1(hero_data: Dict, r_hero: str, d_hero: str, r_pos: str, d_po
     d_precise = d_entry.get('_matchups_by_hero_pos', {})
     reverse_data = d_precise.get(r_key, {}).get(r_pos_num, {}).get(d_pos_num, {})
 
-    forward_games = forward_data.get('games', 0)
-    reverse_games = reverse_data.get('games', 0)
-
-    # Take the direction with more games (or forward if equal)
-    if forward_games >= min_games and forward_games >= reverse_games:
-        diff = forward_data['wr'] - 50
-        return diff, forward_games
-    elif reverse_games >= min_games:
-        diff = 50 - reverse_data['wr']
-        return diff, reverse_games
-
-    return None, 0
+    samples = []
+    if forward_data.get('games', 0) >= min_games:
+        samples.append((forward_data['wr'] - 50, forward_data['games']))
+    if reverse_data.get('games', 0) >= min_games:
+        samples.append((50 - reverse_data['wr'], reverse_data['games']))
+    return _merge_oriented_samples(samples)
 
 
 def _get_duo_synergy(hero_data: Dict, hero1: str, hero2: str, pos1: str, pos2: str, min_games: int) -> Tuple[float, int]:
     """Get duo synergy score for hero1 with hero2 at positions pos1/pos2.
 
-    Returns diff from 50% and games. Takes best available direction.
+    Returns diff from 50% and games for this exact hero-page direction.
     """
     pos1_num = POSITION_MAP.get(pos1, pos1[-1])
     pos2_num = POSITION_MAP.get(pos2, pos2[-1])
@@ -1147,14 +1164,10 @@ def _get_duo_synergy_best_direction(
     pos2: str,
     min_games: int,
 ) -> Tuple[Optional[float], int]:
-    """Get one unordered duo synergy sample, using whichever hero page has coverage."""
+    """Get one unordered duo synergy sample, merging both hero pages when available."""
     fwd_diff, fwd_games = _get_duo_synergy(hero_data, hero1, hero2, pos1, pos2, min_games)
     rev_diff, rev_games = _get_duo_synergy(hero_data, hero2, hero1, pos2, pos1, min_games)
-    if fwd_diff is None and rev_diff is None:
-        return None, 0
-    if rev_diff is not None and (fwd_diff is None or rev_games > fwd_games):
-        return rev_diff, rev_games
-    return fwd_diff, fwd_games
+    return _merge_oriented_samples([(fwd_diff, fwd_games), (rev_diff, rev_games)])
 
 
 def _get_duo_synergy_pair(
@@ -1165,7 +1178,7 @@ def _get_duo_synergy_pair(
 ) -> Tuple[Optional[float], int]:
     """Get duo synergy advantage for Radiant pair over Dire pair.
 
-    Takes best available direction per pair (more games wins).
+    Merges both hero-page directions per pair.
     """
     r_diff, r_games = _get_duo_synergy_best_direction(
         hero_data, r_hero1, r_hero2, r_pos1, r_pos2, min_games
