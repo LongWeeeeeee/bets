@@ -32,7 +32,7 @@ import shlex
 import shutil
 import tempfile
 import numpy as np
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Tuple, Union
 import math
@@ -5700,11 +5700,12 @@ DLTV_SOURCE_MODE = str(os.getenv("DLTV_SOURCE_MODE", "cyberscore")).strip().lowe
 CYBERSCORE_MATCHES_URL = str(
     os.getenv(
         "CYBERSCORE_MATCHES_URL",
-        "https://cyberscore.live/en/matches/?type=liveOrUpcoming&tournament_tier=2%2C1",
+        "https://cyberscore.live/en/matches/?type=liveOrUpcoming&tournament_tier=1%2C2",
     )
 ).strip()
 CYBERSCORE_GET_HEADS_FALLBACK = _env_flag("CYBERSCORE_GET_HEADS_FALLBACK", "0")
 CYBERSCORE_CAMOUFOX_PROXY_URL = str(os.getenv("CYBERSCORE_CAMOUFOX_PROXY_URL", "")).strip()
+CYBERSCORE_CAMOUFOX_REQUIRE_PROXY = _env_flag("CYBERSCORE_CAMOUFOX_REQUIRE_PROXY", "1")
 CYBERSCORE_LISTING_ITEM_CACHE: Dict[str, Dict[str, Any]] = {}
 GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES = "live_matches_missing_after_all_proxies"
 GET_HEADS_FAILURE_REASON_REQUEST_FAILED = "request_failed"
@@ -5724,6 +5725,10 @@ SCHEDULE_MAX_SLEEP_SECONDS = _safe_float_env("SCHEDULE_MAX_SLEEP_SECONDS", 30.0 
 SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS = _safe_float_env("SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS", 30.0 * 60.0)
 SCHEDULE_NEAR_MATCH_POLL_SECONDS = _safe_float_env("SCHEDULE_NEAR_MATCH_POLL_SECONDS", 60.0)
 SCHEDULE_POST_START_POLL_SECONDS = _safe_float_env("SCHEDULE_POST_START_POLL_SECONDS", 3.0 * 60.0)
+CYBERSCORE_QUIET_HOURS_START_HOUR_MSK = _safe_int_env("CYBERSCORE_QUIET_HOURS_START_HOUR_MSK", 0)
+CYBERSCORE_QUIET_HOURS_END_HOUR_MSK = _safe_int_env("CYBERSCORE_QUIET_HOURS_END_HOUR_MSK", 7)
+CYBERSCORE_SCHEDULE_POLL_SECONDS = _safe_float_env("CYBERSCORE_SCHEDULE_POLL_SECONDS", 30.0 * 60.0)
+CYBERSCORE_QUIET_HOURS_PROBE_ENABLED = _env_flag("CYBERSCORE_QUIET_HOURS_PROBE_ENABLED", "1")
 TELEGRAM_ADMIN_COMMAND_POLL_INTERVAL_SECONDS = _safe_float_env(
     "TELEGRAM_ADMIN_COMMAND_POLL_INTERVAL_SECONDS",
     15.0,
@@ -5925,6 +5930,116 @@ def _compute_moscow_quiet_hours_sleep_seconds(now: Optional[datetime] = None) ->
     return max(0.0, (wake_at - current).total_seconds())
 
 
+def _compute_cyberscore_quiet_hours_sleep_seconds(now: Optional[datetime] = None) -> float:
+    current = now.astimezone(MOSCOW_TZ) if now is not None else datetime.now(MOSCOW_TZ)
+    start_hour = int(CYBERSCORE_QUIET_HOURS_START_HOUR_MSK) % 24
+    end_hour = int(CYBERSCORE_QUIET_HOURS_END_HOUR_MSK) % 24
+    if start_hour == end_hour:
+        return 0.0
+    midnight = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    if start_hour < end_hour:
+        in_window = start_hour <= current.hour < end_hour
+        wake_at = midnight + timedelta(hours=end_hour)
+    else:
+        in_window = current.hour >= start_hour or current.hour < end_hour
+        wake_at = midnight + timedelta(hours=end_hour)
+        if current.hour >= start_hour:
+            wake_at += timedelta(days=1)
+    if not in_window:
+        return 0.0
+    if wake_at <= current:
+        wake_at += timedelta(days=1)
+    return max(0.0, (wake_at - current).total_seconds())
+
+
+def _seconds_until_cyberscore_quiet_start(now: Optional[datetime] = None) -> float:
+    current = now.astimezone(MOSCOW_TZ) if now is not None else datetime.now(MOSCOW_TZ)
+    if _compute_cyberscore_quiet_hours_sleep_seconds(current) > 0:
+        return 0.0
+    start_hour = int(CYBERSCORE_QUIET_HOURS_START_HOUR_MSK) % 24
+    end_hour = int(CYBERSCORE_QUIET_HOURS_END_HOUR_MSK) % 24
+    if start_hour == end_hour:
+        return 0.0
+    midnight = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    quiet_start = midnight + timedelta(hours=start_hour)
+    if quiet_start <= current:
+        quiet_start += timedelta(days=1)
+    return max(0.0, (quiet_start - current).total_seconds())
+
+
+def _cap_cyberscore_schedule_sleep_seconds(
+    sleep_seconds: float,
+    *,
+    now_utc: Optional[datetime] = None,
+) -> float:
+    current_msk = now_utc.astimezone(MOSCOW_TZ) if now_utc is not None else datetime.now(MOSCOW_TZ)
+    seconds_until_quiet = _seconds_until_cyberscore_quiet_start(current_msk)
+    if seconds_until_quiet <= 0:
+        return max(0.0, float(sleep_seconds or 0.0))
+    return max(0.0, min(float(sleep_seconds or 0.0), seconds_until_quiet))
+
+
+def _cyberscore_schedule_before_quiet_end(
+    schedule_info: Optional[Dict[str, Any]],
+    *,
+    now: Optional[datetime] = None,
+) -> bool:
+    if not isinstance(schedule_info, dict):
+        return False
+    current = now.astimezone(MOSCOW_TZ) if now is not None else datetime.now(MOSCOW_TZ)
+    quiet_sleep = _compute_cyberscore_quiet_hours_sleep_seconds(current)
+    if quiet_sleep <= 0:
+        return False
+    quiet_end = current + timedelta(seconds=quiet_sleep)
+    scheduled_at = schedule_info.get("scheduled_at_msk")
+    if not isinstance(scheduled_at, datetime):
+        scheduled_at_utc = schedule_info.get("scheduled_at_utc")
+        if isinstance(scheduled_at_utc, datetime):
+            scheduled_at = scheduled_at_utc.astimezone(MOSCOW_TZ)
+    if not isinstance(scheduled_at, datetime):
+        return False
+    scheduled_at_msk = scheduled_at.astimezone(MOSCOW_TZ)
+    return current <= scheduled_at_msk <= quiet_end
+
+
+def _cyberscore_quiet_hours_sleep_seconds_with_probe() -> float:
+    quiet_sleep_seconds = _compute_cyberscore_quiet_hours_sleep_seconds()
+    if quiet_sleep_seconds <= 0:
+        return 0.0
+
+    now_msk = datetime.now(MOSCOW_TZ)
+    for known_schedule in (SCHEDULE_LIVE_WAIT_TARGET, NEXT_SCHEDULE_MATCH_INFO):
+        if _cyberscore_schedule_before_quiet_end(known_schedule, now=now_msk):
+            print(
+                "🌙 CyberScore quiet hours skipped: known scheduled match before 07:00 MSK "
+                f"({_format_schedule_match_label(known_schedule)})"
+            )
+            return 0.0
+
+    if not CYBERSCORE_QUIET_HOURS_PROBE_ENABLED:
+        return quiet_sleep_seconds
+
+    print("🌙 CyberScore quiet hours: probing tier1/2 schedule before sleeping")
+    heads, bodies = _get_cyberscore_heads_via_camoufox()
+    if heads:
+        print("🌙 CyberScore quiet hours skipped: live match is already available")
+        return 0.0
+    if heads is None:
+        retry_sleep = min(float(quiet_sleep_seconds), float(CYBERSCORE_SCHEDULE_POLL_SECONDS))
+        print(
+            "🌙 CyberScore quiet-hours probe failed. "
+            f"Will retry after {int(math.ceil(retry_sleep))}s instead of sleeping until 07:00"
+        )
+        return retry_sleep
+    if _cyberscore_schedule_before_quiet_end(NEXT_SCHEDULE_MATCH_INFO, now=now_msk):
+        print(
+            "🌙 CyberScore quiet hours skipped: nearest scheduled match is before 07:00 MSK "
+            f"({_format_schedule_match_label(NEXT_SCHEDULE_MATCH_INFO)})"
+        )
+        return 0.0
+    return quiet_sleep_seconds
+
+
 def _should_use_schedule_sleep_window(now: Optional[datetime] = None) -> bool:
     current = now.astimezone(MOSCOW_TZ) if now is not None else datetime.now(MOSCOW_TZ)
     return current.hour >= SCHEDULE_ONLY_IDLE_START_HOUR_MSK
@@ -6036,6 +6151,267 @@ def _extract_nearest_scheduled_match_info(
             league_title=league_title,
             href=href,
         )
+
+    return best_payload
+
+
+def _parse_cyberscore_schedule_timestamp_value(
+    raw_value: Any,
+    *,
+    now_utc: Optional[datetime] = None,
+) -> Optional[datetime]:
+    if raw_value is None or raw_value is False:
+        return None
+    if isinstance(raw_value, datetime):
+        value = raw_value
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(raw_value, (int, float)) and not isinstance(raw_value, bool):
+        try:
+            timestamp = float(raw_value)
+        except (TypeError, ValueError):
+            return None
+        if timestamp <= 0:
+            return None
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000.0
+        if timestamp > 1_000_000_000:
+            try:
+                return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+        return None
+
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d{10,13}", text):
+        try:
+            return _parse_cyberscore_schedule_timestamp_value(float(text), now_utc=now_utc)
+        except ValueError:
+            return None
+
+    iso_text = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(iso_text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        pass
+
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d.%m.%Y %H:%M", "%d/%m/%Y %H:%M"):
+        try:
+            return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+
+    current_msk = (now_utc.astimezone(MOSCOW_TZ) if now_utc is not None else datetime.now(MOSCOW_TZ))
+    time_match = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", text)
+    if not time_match:
+        return None
+    hour = int(time_match.group(1))
+    minute = int(time_match.group(2))
+    lower = text.lower()
+    day_offset = 0
+    if "tomorrow" in lower or "завтра" in lower:
+        day_offset = 1
+    elif "today" in lower or "сегодня" in lower:
+        day_offset = 0
+
+    date_match = re.search(r"\b(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?\b", text)
+    if date_match:
+        day = int(date_match.group(1))
+        month = int(date_match.group(2))
+        year_raw = date_match.group(3)
+        year = current_msk.year if not year_raw else int(year_raw)
+        if year < 100:
+            year += 2000
+        try:
+            candidate = datetime(year, month, day, hour, minute, tzinfo=MOSCOW_TZ)
+        except ValueError:
+            return None
+    else:
+        candidate = current_msk.replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=day_offset)
+        if day_offset == 0 and candidate <= current_msk:
+            candidate += timedelta(days=1)
+    return candidate.astimezone(timezone.utc)
+
+
+_CYBERSCORE_SCHEDULE_TIME_KEY_RE = re.compile(
+    r"(start|begin|schedule|date|time|timestamp)",
+    re.IGNORECASE,
+)
+_CYBERSCORE_SCHEDULE_TIME_SKIP_KEY_RE = re.compile(
+    r"(update|create|finish|end|duration|timezone|zone|period|score)",
+    re.IGNORECASE,
+)
+
+
+def _iter_cyberscore_schedule_time_values(payload: Any, *, depth: int = 0):
+    if depth > 5:
+        return
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            key_text = str(key or "")
+            if _CYBERSCORE_SCHEDULE_TIME_SKIP_KEY_RE.search(key_text):
+                continue
+            if _CYBERSCORE_SCHEDULE_TIME_KEY_RE.search(key_text) and not isinstance(value, (dict, list, tuple)):
+                yield value
+            if isinstance(value, (dict, list, tuple)):
+                yield from _iter_cyberscore_schedule_time_values(value, depth=depth + 1)
+    elif isinstance(payload, (list, tuple)):
+        for value in payload:
+            if isinstance(value, (dict, list, tuple)):
+                yield from _iter_cyberscore_schedule_time_values(value, depth=depth + 1)
+
+
+def _extract_cyberscore_item_scheduled_at(
+    item: Optional[Dict[str, Any]],
+    *,
+    now_utc: Optional[datetime] = None,
+) -> Optional[datetime]:
+    if not isinstance(item, dict):
+        return None
+    for value in _iter_cyberscore_schedule_time_values(item):
+        parsed = _parse_cyberscore_schedule_timestamp_value(value, now_utc=now_utc)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _extract_cyberscore_card_scheduled_at(
+    card: Any,
+    *,
+    now_utc: Optional[datetime] = None,
+) -> Optional[datetime]:
+    if card is None or not getattr(card, "find_all", None):
+        return None
+    nodes = [card]
+    nodes.extend(card.find_all(True))
+    for node in nodes:
+        attrs = getattr(node, "attrs", {}) or {}
+        for attr_name, attr_value in attrs.items():
+            attr_text = str(attr_name or "").lower()
+            if not (
+                attr_text in {"datetime", "date", "time", "timestamp"}
+                or ("data-" in attr_text and any(marker in attr_text for marker in ("time", "date", "start", "schedule")))
+            ):
+                continue
+            values = attr_value if isinstance(attr_value, (list, tuple)) else [attr_value]
+            for value in values:
+                parsed = _parse_cyberscore_schedule_timestamp_value(value, now_utc=now_utc)
+                if parsed is not None:
+                    return parsed
+    text = card.get_text(" ", strip=True) if getattr(card, "get_text", None) else ""
+    return _parse_cyberscore_schedule_timestamp_value(text, now_utc=now_utc)
+
+
+def _extract_cyberscore_team_names_from_item(item: Optional[Dict[str, Any]]) -> List[str]:
+    names: List[str] = []
+
+    def _push(value: Any) -> None:
+        text = str(value or "").strip()
+        if text and text.lower() not in {"tbd", "vs"} and text not in names:
+            names.append(text)
+
+    if not isinstance(item, dict):
+        return names
+    for key in ("teams", "opponents", "participants"):
+        raw_teams = item.get(key)
+        if isinstance(raw_teams, list):
+            for team in raw_teams:
+                if isinstance(team, dict):
+                    _push(team.get("name") or team.get("title") or team.get("short_name"))
+    for key in ("team1", "team2", "radiantTeam", "direTeam", "team_radiant", "team_dire"):
+        team = item.get(key)
+        if isinstance(team, dict):
+            _push(team.get("name") or team.get("title") or team.get("short_name"))
+        else:
+            _push(team)
+    return names[:2]
+
+
+def _extract_cyberscore_team_names_from_card(card: Any) -> List[str]:
+    if card is None or not getattr(card, "select", None):
+        return []
+    selectors = [
+        "[class*='team'][class*='name']",
+        "[class*='team'] [class*='name']",
+        "[class*='competitor'][class*='name']",
+        "[class*='opponent'][class*='name']",
+    ]
+    names: List[str] = []
+    for selector in selectors:
+        for node in card.select(selector):
+            text = node.get_text(" ", strip=True)
+            if text and text.lower() not in {"tbd", "vs"} and text not in names:
+                names.append(text)
+            if len(names) >= 2:
+                return names[:2]
+    return names[:2]
+
+
+def _extract_cyberscore_league_title_from_item(item: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(item, dict):
+        return ""
+    for key in ("tournament", "league", "event"):
+        value = item.get(key)
+        if isinstance(value, dict):
+            title = str(value.get("name") or value.get("title") or "").strip()
+            if title:
+                return title
+        elif value:
+            return str(value).strip()
+    return ""
+
+
+def _extract_nearest_cyberscore_scheduled_match_info(
+    html: str,
+    *,
+    now_utc: Optional[datetime] = None,
+) -> Optional[dict[str, Any]]:
+    current_utc = now_utc.astimezone(timezone.utc) if now_utc is not None else datetime.now(timezone.utc)
+    soup = BeautifulSoup(html or "", "lxml")
+    best_payload: Optional[dict[str, Any]] = None
+    best_raw_sleep: Optional[float] = None
+
+    for card in soup.select("a.matches-item[href*='/matches/']"):
+        classes = {str(item).strip().lower() for item in (card.get("class") or [])}
+        text = card.get_text(" ", strip=True)
+        if "online" in classes or "LIVE" in text.upper():
+            continue
+        href = _absolute_cyberscore_url(str(card.get("href") or ""))
+        match_id = _extract_cyberscore_match_id_from_href(href)
+        item = _extract_cyberscore_match_item_from_html(html, match_id=match_id or None)
+        scheduled_at = (
+            _extract_cyberscore_item_scheduled_at(item, now_utc=current_utc)
+            or _extract_cyberscore_card_scheduled_at(card, now_utc=current_utc)
+        )
+        if scheduled_at is None or scheduled_at <= current_utc:
+            continue
+        raw_sleep = max(0.0, (scheduled_at - current_utc).total_seconds())
+        if best_raw_sleep is not None and raw_sleep >= best_raw_sleep:
+            continue
+        team_names = _extract_cyberscore_team_names_from_item(item) or _extract_cyberscore_team_names_from_card(card)
+        matchup = " vs ".join(team_names[:2]) if len(team_names) >= 2 else "unknown"
+        league_title = _extract_cyberscore_league_title_from_item(item)
+        sleep_seconds = _cap_cyberscore_schedule_sleep_seconds(
+            _compute_schedule_recheck_sleep_seconds(raw_sleep),
+            now_utc=current_utc,
+        )
+        best_raw_sleep = raw_sleep
+        best_payload = {
+            "scheduled_at_utc": scheduled_at,
+            "scheduled_at_msk": scheduled_at.astimezone(MOSCOW_TZ),
+            "sleep_seconds": sleep_seconds,
+            "sleep_seconds_raw": raw_sleep,
+            "matchup": matchup,
+            "league_title": league_title,
+            "href": href,
+            "source": "cyberscore",
+        }
 
     return best_payload
 
@@ -6239,13 +6615,20 @@ def _emit_pending_schedule_wake_audit(
         else datetime.now(MOSCOW_TZ).strftime("%Y-%m-%d %H:%M:%S MSK")
     )
     target_label = _format_schedule_match_label(pending)
+    source_name = str(
+        pending.get("source")
+        or (next_schedule_info.get("source") if isinstance(next_schedule_info, dict) else "")
+        or DLTV_SOURCE_MODE
+        or "schedule"
+    )
+    source_label = "CyberScore" if "cyber" in source_name.lower() else "DLTV"
     proxy_marker = _get_current_proxy_marker()
 
     if heads_count > 0 and bodies_count > 0:
         print(
             "⏰ Wake audit: "
             f"woke at {woke_label} for {target_label}. "
-            f"DLTV response after wake: live matches found "
+            f"{source_label} response after wake: live matches found "
             f"(heads={heads_count}, bodies={bodies_count}, proxy={proxy_marker}, request={request_status})"
         )
         PENDING_SCHEDULE_WAKE_AUDIT = None
@@ -6257,14 +6640,14 @@ def _emit_pending_schedule_wake_audit(
             "⏰ Wake audit: "
             f"woke at {woke_label} for {target_label}, but live matches are still empty "
             f"(heads={heads_count}, bodies={bodies_count}, proxy={proxy_marker}, request={request_status}). "
-            f"DLTV now points to next scheduled match: {next_label}"
+            f"{source_label} now points to next scheduled match: {next_label}"
         )
     else:
         print(
             "⏰ Wake audit: "
             f"woke at {woke_label} for {target_label}, but live matches are still empty "
             f"(heads={heads_count}, bodies={bodies_count}, proxy={proxy_marker}, request={request_status}). "
-            "DLTV did not expose a new scheduled match either"
+            f"{source_label} did not expose a new scheduled match either"
         )
     PENDING_SCHEDULE_WAKE_AUDIT = None
 
@@ -12637,9 +13020,15 @@ def _cyberscore_camoufox_proxy_kwargs() -> Dict[str, Any]:
     proxy_candidates.extend(PROXY_LIST)
     proxy_value = next((str(candidate).strip() for candidate in proxy_candidates if str(candidate or "").strip()), "")
     if not proxy_value:
-        print("⚠️ CyberScore source: proxy pool empty, Camoufox will run direct")
+        message = "CyberScore source: proxy pool empty"
+        if CYBERSCORE_CAMOUFOX_REQUIRE_PROXY:
+            raise RuntimeError(f"{message}; direct CyberScore requests are disabled")
+        print(f"⚠️ {message}, Camoufox will run direct")
         return {}
-    return _camoufox_proxy_kwargs_from_url(proxy_value)
+    proxy_kwargs = _camoufox_proxy_kwargs_from_url(proxy_value)
+    if not proxy_kwargs and CYBERSCORE_CAMOUFOX_REQUIRE_PROXY:
+        raise RuntimeError("CyberScore source: proxy config failed; direct CyberScore requests are disabled")
+    return proxy_kwargs
 
 
 def _camoufox_env_int(name: str, default: int) -> int:
@@ -12991,14 +13380,63 @@ def _get_cyberscore_html_via_camoufox(url: Optional[str] = None) -> Optional[str
 
 
 def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[List[Any]]]:
+    global GET_HEADS_LAST_FAILURE_REASON, NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO, SCHEDULE_LIVE_WAIT_TARGET
     html = _get_cyberscore_html_via_camoufox(CYBERSCORE_MATCHES_URL)
     if html is None:
         return None, None
     heads, bodies = _extract_cyberscore_live_cards_from_html(html)
     if heads:
         print(f"✅ CyberScore source: found {len(heads)} live cards")
+        GET_HEADS_LAST_FAILURE_REASON = None
+        NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
+        NEXT_SCHEDULE_MATCH_INFO = None
+        SCHEDULE_LIVE_WAIT_TARGET = None
+        _emit_pending_schedule_wake_audit(
+            heads_count=len(heads),
+            bodies_count=len(bodies),
+            request_status="cyberscore_live_found",
+        )
         return heads, bodies
-    print("⚠️ CyberScore source: no live cards found")
+
+    schedule_info = _extract_nearest_cyberscore_scheduled_match_info(html)
+    if schedule_info:
+        NEXT_SCHEDULE_MATCH_INFO = schedule_info
+        NEXT_SCHEDULE_SLEEP_SECONDS = float(schedule_info.get("sleep_seconds", 0.0) or 0.0)
+        GET_HEADS_LAST_FAILURE_REASON = None
+        print(
+            "🗓️ CyberScore source: no live cards. "
+            f"Nearest tier1/2 scheduled match: {_format_schedule_match_label(schedule_info)}. "
+            f"Next recheck in {int(math.ceil(NEXT_SCHEDULE_SLEEP_SECONDS))}s"
+        )
+        _emit_pending_schedule_wake_audit(
+            heads_count=0,
+            bodies_count=0,
+            next_schedule_info=schedule_info,
+            request_status="cyberscore_schedule_only",
+        )
+        return [], []
+
+    NEXT_SCHEDULE_SLEEP_SECONDS = float(
+        _cap_cyberscore_schedule_sleep_seconds(CYBERSCORE_SCHEDULE_POLL_SECONDS)
+    )
+    NEXT_SCHEDULE_MATCH_INFO = {
+        "sleep_seconds": NEXT_SCHEDULE_SLEEP_SECONDS,
+        "sleep_seconds_raw": NEXT_SCHEDULE_SLEEP_SECONDS,
+        "matchup": "no tier1/2 upcoming match",
+        "league_title": "",
+        "source": "cyberscore_no_upcoming",
+    }
+    GET_HEADS_LAST_FAILURE_REASON = None
+    print(
+        "⚠️ CyberScore source: no live cards and no tier1/2 upcoming match found. "
+        f"Next schedule poll in {int(math.ceil(NEXT_SCHEDULE_SLEEP_SECONDS))}s"
+    )
+    _emit_pending_schedule_wake_audit(
+        heads_count=0,
+        bodies_count=0,
+        next_schedule_info=None,
+        request_status="cyberscore_no_live_no_upcoming",
+    )
     return [], []
 
 
@@ -18670,6 +19108,7 @@ def general(return_status=None, use_proxy=None, odds=None, bookmaker_gate_mode=N
     global PROXIES, BOOKMAKER_PREFETCH_ENABLED, BOOKMAKER_PREFETCH_GATE_MODE
     global LIVE_MATCHES_MISSING_ALERT_ACTIVE
     global PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE
+    global NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO
 
     odds_arg = odds
     if odds is None:
@@ -18718,6 +19157,28 @@ def general(return_status=None, use_proxy=None, odds=None, bookmaker_gate_mode=N
     # Инициализируем прокси явно при запуске цикла
     if use_proxy != USE_PROXY:
         _init_proxy_pool(use_proxy)
+
+    if DLTV_SOURCE_MODE == "cyberscore":
+        quiet_sleep_seconds = _cyberscore_quiet_hours_sleep_seconds_with_probe()
+        if quiet_sleep_seconds > 0:
+            _stop_bookmaker_prefetch_worker()
+            NEXT_SCHEDULE_SLEEP_SECONDS = float(quiet_sleep_seconds)
+            wake_at_msk = datetime.now(MOSCOW_TZ) + timedelta(seconds=quiet_sleep_seconds)
+            NEXT_SCHEDULE_MATCH_INFO = {
+                "sleep_seconds": NEXT_SCHEDULE_SLEEP_SECONDS,
+                "sleep_seconds_raw": NEXT_SCHEDULE_SLEEP_SECONDS,
+                "matchup": "CyberScore quiet hours",
+                "league_title": "",
+                "scheduled_at_msk": wake_at_msk,
+                "source": "cyberscore_quiet_hours",
+            }
+            print(
+                "🌙 CyberScore quiet hours "
+                f"({CYBERSCORE_QUIET_HOURS_START_HOUR_MSK:02d}:00-"
+                f"{CYBERSCORE_QUIET_HOURS_END_HOUR_MSK:02d}:00 MSK). "
+                f"Сплю до {wake_at_msk.strftime('%Y-%m-%d %H:%M:%S MSK')}"
+            )
+            return "__sleep_cyberscore_quiet_hours__"
 
     # Гарантируем staged warmup словарей только для classic signal pipeline.
     # В минимальных режимах без словарей этот шаг пропускаем полностью.
@@ -18954,14 +19415,26 @@ if __name__ == "__main__":
                 cycle_number=cycle_number,
                 context=f"status={status}",
             )
-            if status == "__sleep_until_schedule__":
+            if status == "__sleep_cyberscore_quiet_hours__":
+                quiet_sleep_seconds = max(1, int(math.ceil(float(NEXT_SCHEDULE_SLEEP_SECONDS or 0.0))))
+                print(f"Сплю {quiet_sleep_seconds} секунд до окончания ночного окна CyberScore")
+                _sleep_interruptible(
+                    quiet_sleep_seconds,
+                    raw_odds=args.odds,
+                    label="cyberscore_quiet_hours",
+                )
+            elif status == "__sleep_until_schedule__":
                 scheduled_sleep_seconds = max(1, int(math.ceil(float(NEXT_SCHEDULE_SLEEP_SECONDS or 0.0))))
                 schedule_snapshot = dict(NEXT_SCHEDULE_MATCH_INFO or {})
                 sleep_started_at_msk = datetime.now(MOSCOW_TZ)
                 if schedule_snapshot:
                     schedule_snapshot["sleep_started_at_msk"] = sleep_started_at_msk
                     schedule_snapshot["planned_sleep_seconds"] = scheduled_sleep_seconds
-                print(f"Сплю {scheduled_sleep_seconds} секунд до ближайшего матча по расписанию DLTV")
+                source_label = str(schedule_snapshot.get("source") or DLTV_SOURCE_MODE or "schedule")
+                if source_label == "cyberscore_no_upcoming":
+                    print(f"Сплю {scheduled_sleep_seconds} секунд до следующего опроса расписания CyberScore")
+                else:
+                    print(f"Сплю {scheduled_sleep_seconds} секунд до ближайшего матча по расписанию {source_label}")
                 _sleep_interruptible(
                     scheduled_sleep_seconds,
                     raw_odds=args.odds,

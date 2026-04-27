@@ -92,7 +92,7 @@ def test_post_lane_dict_requires_min_duration_and_minute_10_gate() -> None:
         assert post_lane_dict == {}
 
 
-def test_lane_dict_has_no_extreme_imp_gate() -> None:
+def test_lane_dict_ignores_imp_field() -> None:
     lane_dict = {}
 
     stats.analise_database(
@@ -104,3 +104,56 @@ def test_lane_dict_has_no_extreme_imp_gate() -> None:
 
     assert lane_dict["3pos3"]["games"] == 1
     assert lane_dict["3pos3,4pos4_vs_6pos1,10pos5"]["games"] == 1
+
+
+def test_early_filter_uses_networth_dominator_not_match_winner() -> None:
+    match = _match(duration=35, radiant_win=False)
+    match["radiantNetworthLeads"][19] = 6100
+
+    ok, dominator = stats.is_early_match(match)
+
+    assert ok is True
+    assert dominator == "radiant"
+
+
+def test_early_filter_uses_alchemist_leading_thresholds() -> None:
+    match = _match(duration=35, radiant_win=True)
+    match["players"][0]["heroId"] = stats.ALCHEMIST_HERO_ID
+    match["radiantNetworthLeads"][23] = 7500
+
+    ok, dominator = stats.is_early_match(match)
+
+    assert ok is False
+    assert dominator is None
+
+
+def test_early_filter_uses_alchemist_trailing_thresholds() -> None:
+    match = _match(duration=35, radiant_win=True)
+    match["players"][5]["heroId"] = stats.ALCHEMIST_HERO_ID
+    match["radiantNetworthLeads"][23] = 6600
+
+    ok, dominator = stats.is_early_match(match)
+
+    assert ok is True
+    assert dominator == "radiant"
+
+
+def test_late_filter_uses_wr60_abs_networth_gap_threshold() -> None:
+    match = _match(duration=34, radiant_win=True)
+    match["radiantNetworthLeads"][20] = 3500
+
+    ok, winner = stats.is_late_match(match, if_check=True)
+
+    assert ok is True
+    assert winner == "radiant"
+
+
+def test_late_filter_rejects_long_match_without_wr60_deficit() -> None:
+    match = _match(duration=40, radiant_win=False)
+    for idx in range(20, 40):
+        match["radiantNetworthLeads"][idx] = 20000
+
+    ok, winner = stats.is_late_match(match, if_check=True)
+
+    assert ok is False
+    assert winner is None

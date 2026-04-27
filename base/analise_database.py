@@ -9,7 +9,39 @@
 4. Фильтруйте про-матчи если работаете только с публичными данными
 """
 
+import json
+import os
+from functools import lru_cache
 from itertools import combinations
+from pathlib import Path
+
+
+ALCHEMIST_HERO_ID = 73
+EARLY_DOMINATOR_THRESHOLDS_PATH = Path(os.getenv(
+    "EARLY_DOMINATOR_THRESHOLDS_PATH",
+    Path(__file__).with_name("early_networth_dominator_20pct_thresholds_7_41.json"),
+))
+LATE_WR60_THRESHOLDS_PATH = Path(os.getenv(
+    "LATE_WR60_THRESHOLDS_PATH",
+    Path(__file__).with_name("is_late_wr60_70pct_thresholds.json"),
+))
+EARLY_DOMINATOR_FALLBACK_THRESHOLDS = {
+    "alchemist_leading": {
+        20: 6000, 21: 6000, 22: 6500, 23: 7000, 24: 8000,
+        25: 8000, 26: 8000, 27: 9500, 28: 7500, 29: 9500,
+        30: 9500, 31: 10500, 32: 12000, 33: 11000, 34: 12000,
+    },
+    "alchemist_trailing": {
+        20: 6000, 21: 6000, 22: 6000, 23: 5500, 24: 6500,
+        25: 6500, 26: 6500, 27: 7000, 28: 8500, 29: 7500,
+        30: 6000, 31: 7500, 32: 7500, 33: 6500, 34: 7000,
+    },
+    "no_alchemist": {
+        20: 6000, 21: 6500, 22: 6500, 23: 7000, 24: 7000,
+        25: 7000, 26: 7500, 27: 8000, 28: 8500, 29: 8000,
+        30: 8500, 31: 9000, 32: 9000, 33: 9000, 34: 9500,
+    },
+}
 
 
 def _append_to_dict(target_dict, key, value, is_defaultdict=None):
@@ -74,19 +106,28 @@ def extract_heroes_by_position(match):
     return r_by_pos, d_by_pos
 
 
-def _has_extreme_imp(match, threshold=30):
-    """
-    Проверяет есть ли игрок с экстремальным imp в матче.
-    Используется для фильтрации лейнинга - экстремальный imp
-    скорее показывает скилл игрока, а не силу драфта.
-    
-    Accuracy на тесте: 63.2% с threshold=30 (vs 61.8% без фильтра)
-    """
-    for p in match.get('players', []):
-        imp = p.get('imp')
-        if imp is not None and abs(imp) > threshold:
-            return True
-    return False
+def _player_hero_id(player):
+    hero = player.get('hero', {}) if isinstance(player, dict) else {}
+    hero_id = hero.get('id') if hero else player.get('heroId') if isinstance(player, dict) else None
+    try:
+        return int(hero_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def _hero_side_flags(match, hero_id):
+    radiant_has = False
+    dire_has = False
+    for player in match.get('players', []):
+        if not isinstance(player, dict):
+            continue
+        if _player_hero_id(player) != int(hero_id):
+            continue
+        if bool(player.get('isRadiant')):
+            radiant_has = True
+        else:
+            dire_has = True
+    return radiant_has, dire_has
 
 
 def lanes(match, lane_dict):
@@ -238,84 +279,65 @@ def lanes(match, lane_dict):
 
 
 
-def _dominant_lane_stomp(match, dominator, threshold=2):
-    """
-    Ограничивает влияние лейнинга на early: отбрасываем матчи,
-    где доминант уже выиграл большинство лайнов.
-    """
-    outcomes = [
-        match.get('topLaneOutcome'),
-        match.get('midLaneOutcome'),
-        match.get('bottomLaneOutcome')
-    ]
-    radiant_wins = 0
-    dire_wins = 0
-    for outcome in outcomes:
-        if not outcome or not isinstance(outcome, str):
-            continue
-        up = outcome.upper()
-        if 'RADIANT' in up:
-            radiant_wins += 1
-        elif 'DIRE' in up:
-            dire_wins += 1
-    if dominator == 'radiant' and radiant_wins >= threshold:
-        return True
-    if dominator == 'dire' and dire_wins >= threshold:
-        return True
-    return False
-
-
-def _has_lane_stomp(match):
-    """
-    Проверяет, был ли stomp на каком-либо лайне (по строке outcome).
-    Такие матчи исключаем из early, чтобы лейнинг не решал исход.
-    """
-    outcomes = [
-        match.get('topLaneOutcome'),
-        match.get('midLaneOutcome'),
-        match.get('bottomLaneOutcome')
-    ]
-    for outcome in outcomes:
-        if isinstance(outcome, str) and 'STOMP' in outcome.upper():
-            return True
-    return False
-
-
 # ============================================================================
 # НАСТРОЙКИ ФИЛЬТРОВ EARLY/LATE (подбираются экспериментально)
 # ============================================================================
-# Early: фильтруем лейнинг и ищем ранний перевес (draft strength в early).
-EARLY_LANE_WINDOW = (8, 12)          # минута лейнинга (включительно)
-EARLY_LANE_MAX_LEAD = 2000           # max |lead| в окне лейнинга
-EARLY_MAX_LEAD_BEFORE = 3000         # max |lead| до конца лейнинга (0..12)
-EARLY_LEAD_THRESHOLD = 7000          # порог раннего доминирования
-EARLY_LEAD_WINDOW = (20, 27)         # окно для достижения порога
-EARLY_STABLE_MINUTES = 2             # минимум минут подряд с lead >= threshold
-EARLY_WIN_MAX_MINUTES = 34           # победа до этой минуты = early победа
-EARLY_REQUIRE_THRESHOLD_FOR_FAST_WIN = True  # быстрые победы учитываем только если был threshold
-EARLY_AVG_WINDOW = (20, 28)          # окно для средней доминации
-EARLY_AVG_MIN_LEAD = 5000            # минимум среднего lead в early-окне
-EARLY_LEAD_AT_15_MAX = 2500          # ограничение |lead| на 15-й минуте
-EARLY_REQUIRE_MATCH_WINNER = True    # учитываем только матчи, где early-доминатор победил
-EARLY_EXCLUDE_LANE_STOMP = True      # исключать stomp по лайнам
-EARLY_EXCLUDE_DOMINANT_LANES = True  # исключать матчи с доминированием на 2+ лайнах
-EARLY_DOMINANT_LANES_THRESHOLD = 2
-EARLY_EXCLUDE_EXTREME_IMP = True    # исключать матчи с экстремальным imp
-EARLY_EXTREME_IMP_THRESHOLD = 30
+# Early: требуем близкий networth на gate-точке и ищем ранний перевес.
+EARLY_GATE_INDEX = 10                # фильтр на leads[10]
+EARLY_GATE_MAX_ABS_LEAD = 2000       # игра не должна разъехаться до early-gate
+EARLY_LEAD_WINDOW = (20, 34)         # реальные минуты достижения 20% comeback threshold
 
-# Late: длинная игра без раннего snowball или с камбеком.
-LATE_MIN_DURATION = 40
-LATE_MAX_DURATION = 70  # None если не нужен верхний предел
+# Late: длинная игра, где networth gap не разъехался сильнее WR60 ladder.
+LATE_MIN_DURATION = 34
+LATE_MAX_DURATION = None  # None если не нужен верхний предел
 LATE_EARLY_WINDOW = (15, 25)         # окно для оценки раннего snowball
 LATE_EARLY_STOMP_MAX = 12000         # max |lead| для раннего snowball
 LATE_COMEBACK_AVG_DEFICIT = 4000     # средний deficit победителя в 15-25
 LATE_CLOSE_WINDOW = (20, 30)         # окно "близкой" игры
 LATE_CLOSE_MAX_LEAD = 5000           # max |lead| в close-окне
 LATE_MODE = 'comeback'               # 'either' | 'comeback' | 'close'
-LATE_LEAD_AT_20_MAX = 8000           # ограничение |lead| на 20-й минуте для late
 LATE_REQUIRE_EARLY_LOSS = True      # late = победитель не был early-доминатором
-LATE_EXCLUDE_EXTREME_IMP = True      # исключать матчи с экстремальным imp
-LATE_EXTREME_IMP_THRESHOLD = 30
+LATE_WR60_START_MINUTE = 28
+LATE_WR60_FALLBACK_THRESHOLDS = {
+    20: 2498.74,
+    21: 2666.64,
+    22: 2890.64,
+    23: 3151.62,
+    24: 3363.39,
+    25: 3603.93,
+    26: 3846.09,
+    27: 4104.51,
+    28: 4380.31,
+    29: 4674.63,
+    30: 4988.72,
+    31: 5121.12,
+    32: 5257.03,
+    33: 5396.56,
+    34: 5539.79,
+    35: 5686.81,
+    36: 5837.74,
+    37: 5992.67,
+    38: 6151.72,
+    39: 6314.99,
+    40: 6482.59,
+    41: 6945.47,
+    42: 7441.40,
+    43: 7972.74,
+    44: 8542.02,
+    45: 9151.95,
+    46: 9805.44,
+    47: 10505.58,
+    48: 11255.71,
+    49: 12059.41,
+    50: 12920.50,
+    51: 13843.07,
+    52: 14831.51,
+    53: 15890.53,
+    54: 17025.17,
+    55: 18240.82,
+    56: 19543.29,
+    57: 20938.74,
+}
 
 # Post-lane: нейтральная выборка после лейнинга.
 # Гейты только на 10-й минуте и минимальную длину; дальше любая длительность.
@@ -339,21 +361,121 @@ def _avg_in_window(leads, start, end):
     return sum(window) / len(window) if window else None
 
 
-def _first_stable_reach(leads, start, end, threshold, stable_minutes, sign):
-    if len(leads) <= start:
+def _as_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
         return None
-    end = min(end, len(leads) - 1)
-    consecutive = 0
-    for i in range(start, end + 1):
-        lead = leads[i]
-        hit = lead >= threshold if sign > 0 else lead <= -threshold
-        if hit:
-            consecutive += 1
-            if consecutive >= stable_minutes:
-                return i - stable_minutes + 1
-        else:
-            consecutive = 0
+
+
+def _normalize_thresholds(raw):
+    normalized = {}
+    for group, values in (raw or {}).items():
+        if not isinstance(values, dict):
+            continue
+        group_values = {}
+        for minute, threshold in values.items():
+            try:
+                group_values[int(minute)] = int(threshold)
+            except (TypeError, ValueError):
+                continue
+        if group_values:
+            normalized[str(group)] = group_values
+    return normalized
+
+
+def _normalize_minute_thresholds(raw):
+    normalized = {}
+    for minute, threshold in (raw or {}).items():
+        try:
+            normalized[int(minute)] = abs(float(threshold))
+        except (TypeError, ValueError):
+            continue
+    return normalized
+
+
+@lru_cache(maxsize=1)
+def _load_early_dominator_thresholds():
+    try:
+        payload = json.loads(EARLY_DOMINATOR_THRESHOLDS_PATH.read_text(encoding='utf-8'))
+        raw_thresholds = payload.get('thresholds_by_group') if isinstance(payload, dict) else None
+        thresholds = _normalize_thresholds(raw_thresholds)
+        if thresholds:
+            return thresholds
+    except (OSError, json.JSONDecodeError):
+        pass
+    return EARLY_DOMINATOR_FALLBACK_THRESHOLDS
+
+
+@lru_cache(maxsize=1)
+def _load_late_wr60_thresholds():
+    try:
+        payload = json.loads(LATE_WR60_THRESHOLDS_PATH.read_text(encoding='utf-8'))
+        raw_thresholds = payload.get('thresholds_by_minute') if isinstance(payload, dict) else None
+        thresholds = _normalize_minute_thresholds(raw_thresholds)
+        if thresholds:
+            return thresholds
+    except (OSError, json.JSONDecodeError):
+        pass
+    return LATE_WR60_FALLBACK_THRESHOLDS
+
+
+def _early_threshold_group(match, dominator):
+    radiant_has_alchemist, dire_has_alchemist = _hero_side_flags(match, ALCHEMIST_HERO_ID)
+    leading_has_alchemist = radiant_has_alchemist if dominator == 'radiant' else dire_has_alchemist
+    trailing_has_alchemist = dire_has_alchemist if dominator == 'radiant' else radiant_has_alchemist
+    if leading_has_alchemist:
+        return 'alchemist_leading'
+    if trailing_has_alchemist:
+        return 'alchemist_trailing'
+    return 'no_alchemist'
+
+
+def _early_threshold_for(match, dominator, minute):
+    thresholds = _load_early_dominator_thresholds()
+    group = _early_threshold_group(match, dominator)
+    group_thresholds = thresholds.get(group) or thresholds.get('no_alchemist') or {}
+    threshold = group_thresholds.get(int(minute))
+    if threshold is not None:
+        return threshold
+
+    earlier_minutes = [item for item in group_thresholds if item <= int(minute)]
+    if earlier_minutes:
+        return group_thresholds[max(earlier_minutes)]
+    later_minutes = [item for item in group_thresholds if item >= int(minute)]
+    if later_minutes:
+        return group_thresholds[min(later_minutes)]
     return None
+
+
+def _first_dynamic_threshold_reach(match, leads, start_minute, end_minute):
+    for minute in range(int(start_minute), int(end_minute) + 1):
+        idx = minute - 1
+        if idx < 0 or len(leads) <= idx:
+            continue
+        lead = _as_float(leads[idx])
+        if lead is None or lead == 0:
+            continue
+        dominator = 'radiant' if lead > 0 else 'dire'
+        threshold = _early_threshold_for(match, dominator, minute)
+        if threshold is not None and abs(lead) >= threshold:
+            return dominator, minute
+    return None, None
+
+
+def _late_wr60_gap_hit(leads, start_minute=LATE_WR60_START_MINUTE):
+    thresholds = _load_late_wr60_thresholds()
+    for minute in sorted(thresholds):
+        if minute < int(start_minute):
+            continue
+        idx = minute - 1
+        if idx < 0 or len(leads) <= idx:
+            continue
+        lead = _as_float(leads[idx])
+        threshold = thresholds[minute]
+        if lead is not None and abs(lead) <= threshold:
+            return True
+    return False
 
 
 def is_early_match(match, n: int = 3000):
@@ -361,79 +483,34 @@ def is_early_match(match, n: int = 3000):
     Проверяет, подходит ли матч для early словаря.
     
     ЛОГИКА EARLY:
-    - Лейнинг должен быть ровным (ограничиваем влияние лейнов)
-    - Early победитель = кто первым стабильно достиг порога в окне 20-27,
-      ИЛИ кто выиграл матч до EARLY_WIN_MAX_MINUTES
+    - На gate-точке leads[10] игра не должна быть уже слишком разъехавшейся
+    - Early dominator = кто первым достиг 20% comeback networth threshold
+      в окне 20-34 минут
+    - Победитель матча для early не важен
     
     Args:
         match: словарь с данными матча
         n: параметр сохранен для совместимости (не используется)
     
     Returns:
-        tuple: (bool, winner) - (подходит ли матч, кто сделал камбек)
-            winner: 'radiant' | 'dire' | None
+        tuple: (bool, dominator)
+            dominator: 'radiant' | 'dire' | None
     """
     leads = match.get('radiantNetworthLeads', [])
-    did_radiant_win = match.get('didRadiantWin')
     duration = len(leads)
-    
-    if did_radiant_win is None:
-        win_rates = match.get('winRates', [])
-        did_radiant_win = win_rates[-1] > 0.5 if win_rates else None
 
-    if did_radiant_win is None or duration <= EARLY_LANE_WINDOW[1]:
+    if duration <= EARLY_GATE_INDEX or duration < EARLY_LEAD_WINDOW[0]:
         return False, None
 
-    if EARLY_EXCLUDE_EXTREME_IMP and _has_extreme_imp(match, threshold=EARLY_EXTREME_IMP_THRESHOLD):
+    gate_lead = _as_float(leads[EARLY_GATE_INDEX])
+    if gate_lead is None or abs(gate_lead) > EARLY_GATE_MAX_ABS_LEAD:
         return False, None
 
-    # Ровный лейнинг: фильтруем ранние snowball/стомпы
-    lane_max_abs = _max_abs_in_window(leads, EARLY_LANE_WINDOW[0], EARLY_LANE_WINDOW[1])
-    if lane_max_abs is None or lane_max_abs > EARLY_LANE_MAX_LEAD:
-        return False, None
-    pre_lane_max_abs = _max_abs_in_window(leads, 0, EARLY_LANE_WINDOW[1])
-    if pre_lane_max_abs is None or pre_lane_max_abs > EARLY_MAX_LEAD_BEFORE:
-        return False, None
-    if len(leads) > 15 and abs(leads[15]) > EARLY_LEAD_AT_15_MAX:
-        return False, None
-    if EARLY_EXCLUDE_LANE_STOMP and _has_lane_stomp(match):
-        return False, None
-
-    # Ищем первую стабильную достижение порога в окне 20-27
-    r_min = _first_stable_reach(
-        leads, EARLY_LEAD_WINDOW[0], EARLY_LEAD_WINDOW[1],
-        EARLY_LEAD_THRESHOLD, EARLY_STABLE_MINUTES, sign=1
+    dominator, _minute = _first_dynamic_threshold_reach(
+        match, leads, EARLY_LEAD_WINDOW[0], EARLY_LEAD_WINDOW[1]
     )
-    d_min = _first_stable_reach(
-        leads, EARLY_LEAD_WINDOW[0], EARLY_LEAD_WINDOW[1],
-        EARLY_LEAD_THRESHOLD, EARLY_STABLE_MINUTES, sign=-1
-    )
-
-    # Быстрая победа: учитываем только если был threshold (если требуется)
-    if duration <= EARLY_WIN_MAX_MINUTES and not EARLY_REQUIRE_THRESHOLD_FOR_FAST_WIN:
-        dominator = 'radiant' if did_radiant_win else 'dire'
-    else:
-        if r_min is None and d_min is None:
-            return False, None
-        if r_min is not None and d_min is not None and r_min == d_min:
-            return False, None
-        if d_min is None or (r_min is not None and r_min < d_min):
-            dominator = 'radiant'
-        else:
-            dominator = 'dire'
-
-    # Среднее доминирование в early-окне
-    avg_early = _avg_in_window(leads, EARLY_AVG_WINDOW[0], EARLY_AVG_WINDOW[1])
-    if avg_early is None or abs(avg_early) < EARLY_AVG_MIN_LEAD:
+    if dominator is None:
         return False, None
-
-    if EARLY_EXCLUDE_DOMINANT_LANES and _dominant_lane_stomp(match, dominator, threshold=EARLY_DOMINANT_LANES_THRESHOLD):
-        return False, None
-
-    if EARLY_REQUIRE_MATCH_WINNER:
-        winner = 'radiant' if did_radiant_win else 'dire'
-        if dominator != winner:
-            return False, None
 
     return True, dominator
 
@@ -443,9 +520,10 @@ def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
     Проверяет, подходит ли матч для late словаря.
     
     ЛОГИКА LATE:
-    - Игра должна быть длинной (>= LATE_MIN_DURATION)
-    - Исключаем ранний snowball, если он не перешел в камбек
-    - Включаем камбеки и/или "ровные" игры, где late должен решать
+    - Матч должен длиться >= 34 минут.
+    - Берем WR60 networth ladder с LATE_WR60_START_MINUTE.
+    - Если абсолютный networth gap хотя бы на одной минуте не больше
+      WR60-порога этой минуты, матч идет в late sample.
     
     Args:
         match: словарь с данными матча
@@ -471,46 +549,8 @@ def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
     if LATE_MAX_DURATION is not None and duration > LATE_MAX_DURATION:
         return (False, None) if if_check else False
 
-    if LATE_EXCLUDE_EXTREME_IMP and _has_extreme_imp(match, threshold=LATE_EXTREME_IMP_THRESHOLD):
-        return (False, None) if if_check else False
-
-    if len(leads) > 20 and abs(leads[20]) > LATE_LEAD_AT_20_MAX:
-        return (False, None) if if_check else False
-
     winner = 'radiant' if did_radiant_win else 'dire'
-    
-    # Камбек: победитель был в минусе на 15-25 (среднее значение)
-    avg_early = _avg_in_window(leads, LATE_EARLY_WINDOW[0], LATE_EARLY_WINDOW[1])
-    comeback = False
-    if avg_early is not None:
-        if winner == 'radiant' and avg_early <= -LATE_COMEBACK_AVG_DEFICIT:
-            comeback = True
-        elif winner == 'dire' and avg_early >= LATE_COMEBACK_AVG_DEFICIT:
-            comeback = True
-
-    # Ровная игра в mid/late-окне
-    close_max_abs = _max_abs_in_window(leads, LATE_CLOSE_WINDOW[0], LATE_CLOSE_WINDOW[1])
-    close_early = close_max_abs is not None and close_max_abs <= LATE_CLOSE_MAX_LEAD
-
-    # Ранний snowball без камбека = не late
-    early_max_abs = _max_abs_in_window(leads, LATE_EARLY_WINDOW[0], LATE_EARLY_WINDOW[1])
-    early_stomp = early_max_abs is not None and early_max_abs >= LATE_EARLY_STOMP_MAX
-
-    if dominator in ('radiant', 'dire') and dominator == winner and not comeback and early_stomp:
-        return (False, None) if if_check else False
-
-    if LATE_REQUIRE_EARLY_LOSS and dominator in ('radiant', 'dire') and dominator == winner:
-        return (False, None) if if_check else False
-
-    if LATE_MODE == 'comeback':
-        if comeback:
-            return (True, winner) if if_check else True
-        return (False, None) if if_check else False
-    if LATE_MODE == 'close':
-        if close_early:
-            return (True, winner) if if_check else True
-        return (False, None) if if_check else False
-    if comeback or close_early:
+    if _late_wr60_gap_hit(leads):
         return (True, winner) if if_check else True
 
     return (False, None) if if_check else False

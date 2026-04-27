@@ -534,6 +534,22 @@ def test_compute_moscow_quiet_hours_sleep_seconds() -> None:
     assert sleep_seconds == 3.5 * 60 * 60
 
 
+def test_compute_cyberscore_quiet_hours_sleep_seconds() -> None:
+    tz = ZoneInfo("Europe/Moscow")
+
+    assert runtime._compute_cyberscore_quiet_hours_sleep_seconds(
+        datetime(2026, 3, 28, 23, 59, tzinfo=tz)
+    ) == 0.0
+    assert runtime._compute_cyberscore_quiet_hours_sleep_seconds(
+        datetime(2026, 3, 28, 7, 0, tzinfo=tz)
+    ) == 0.0
+
+    sleep_seconds = runtime._compute_cyberscore_quiet_hours_sleep_seconds(
+        datetime(2026, 3, 28, 0, 15, tzinfo=tz)
+    )
+    assert sleep_seconds == 6.75 * 60 * 60
+
+
 def test_compute_schedule_recheck_sleep_seconds() -> None:
     assert runtime._compute_schedule_recheck_sleep_seconds(-1) == 3 * 60
     assert runtime._compute_schedule_recheck_sleep_seconds(5 * 60) == 5 * 60
@@ -541,6 +557,73 @@ def test_compute_schedule_recheck_sleep_seconds() -> None:
     assert runtime._compute_schedule_recheck_sleep_seconds(30 * 60) == 30 * 60
     assert runtime._compute_schedule_recheck_sleep_seconds(45 * 60) == 30 * 60
     assert runtime._compute_schedule_recheck_sleep_seconds(4 * 60 * 60) == 30 * 60
+
+
+def test_extract_nearest_cyberscore_scheduled_match_info_from_card() -> None:
+    now_utc = datetime(2026, 4, 1, 9, 0, tzinfo=ZoneInfo("UTC"))
+    html = """
+    <html>
+      <a class="matches-item" href="/en/matches/111/late-match" data-start-time="2026-04-01T12:00:00+00:00">
+        <span class="team-name">Late A</span><span class="team-name">Late B</span>
+      </a>
+      <a class="matches-item" href="/en/matches/222/next-match" data-start-time="2026-04-01T09:20:00+00:00">
+        <span class="team-name">Team A</span><span class="team-name">Team B</span>
+      </a>
+    </html>
+    """
+
+    info = runtime._extract_nearest_cyberscore_scheduled_match_info(html, now_utc=now_utc)
+
+    assert info is not None
+    assert info["matchup"] == "Team A vs Team B"
+    assert info["href"] == "https://cyberscore.live/en/matches/222/next-match"
+    assert info["sleep_seconds_raw"] == 20 * 60
+    assert info["sleep_seconds"] == 20 * 60
+    assert info["source"] == "cyberscore"
+
+
+def test_cyberscore_schedule_sleep_is_capped_by_midnight_quiet_window() -> None:
+    now_utc = datetime(2026, 4, 1, 20, 50, tzinfo=ZoneInfo("UTC"))  # 23:50 MSK
+    html = """
+    <html>
+      <a class="matches-item" href="/en/matches/333/after-midnight" data-start-time="2026-04-01T21:10:00+00:00">
+        <span class="team-name">Night A</span><span class="team-name">Night B</span>
+      </a>
+    </html>
+    """
+
+    info = runtime._extract_nearest_cyberscore_scheduled_match_info(html, now_utc=now_utc)
+
+    assert info is not None
+    assert info["sleep_seconds_raw"] == 20 * 60
+    assert info["sleep_seconds"] == 10 * 60
+
+
+def test_cyberscore_schedule_before_quiet_end_keeps_runtime_awake() -> None:
+    tz = ZoneInfo("Europe/Moscow")
+    now = datetime(2026, 4, 2, 0, 5, tzinfo=tz)
+    during_quiet = {
+        "scheduled_at_msk": datetime(2026, 4, 2, 1, 30, tzinfo=tz),
+        "matchup": "Lynx vs Sa Reject",
+    }
+    after_quiet = {
+        "scheduled_at_msk": datetime(2026, 4, 2, 7, 30, tzinfo=tz),
+        "matchup": "Late Match",
+    }
+
+    assert runtime._cyberscore_schedule_before_quiet_end(during_quiet, now=now) is True
+    assert runtime._cyberscore_schedule_before_quiet_end(after_quiet, now=now) is False
+
+
+def test_cyberscore_proxy_required_blocks_direct(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "CYBERSCORE_CAMOUFOX_REQUIRE_PROXY", True, raising=False)
+    monkeypatch.setattr(runtime, "CYBERSCORE_CAMOUFOX_PROXY_URL", "", raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY", None, raising=False)
+    monkeypatch.setattr(runtime, "DLTV_PROXY_POOL", [], raising=False)
+    monkeypatch.setattr(runtime, "PROXY_LIST", [], raising=False)
+
+    with pytest.raises(RuntimeError):
+        runtime._cyberscore_camoufox_proxy_kwargs()
 
 
 def test_extract_nearest_scheduled_match_info() -> None:

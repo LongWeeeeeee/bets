@@ -298,8 +298,8 @@ USE_CUMULATIVE_INDICES = True
 # - 'draft': фильтры из analise_database (приближены к логике ранней/поздней силы драфта)
 # - 'soft' : мягкие фильтры is_early_match_soft/is_late_match_soft
 # - '5050' : строгие 50/50 фильтры is_early_5050/is_late_5050
-# - 'custom': early до 34 мин = winner, 34+ = первый 7k в (20,27); late = 40+ мин и early_dominator=None
-FILTER_MODE = 'custom'
+# - 'custom': legacy режим; draft является каноничным для текущих early/late словарей
+FILTER_MODE = os.getenv('METRICS_FILTER_MODE', 'draft')
 BUCKET_MODE = os.getenv('METRICS_BUCKET_MODE', '1').strip().lower() not in ('0', 'false', 'off', 'no')
 BUCKET_MAX_INDEX = int(os.getenv('METRICS_BUCKET_MAX_INDEX', '100'))
 
@@ -328,11 +328,11 @@ def _winner_from_generated_fields(match: dict, phase: str) -> tuple[bool, Option
         winner = match.get('early_win')
         if winner in ('radiant', 'dire'):
             return True, winner
+        if FILTER_MODE == 'draft':
+            return is_early_match_strict(match)
         did_radiant_win = match.get('didRadiantWin')
         if did_radiant_win is None:
             return False, None
-        if FILTER_MODE == 'draft':
-            return is_early_match_strict(match)
         if FILTER_MODE == 'soft':
             return is_early_match_soft(match)
         if FILTER_MODE == '5050':
@@ -701,10 +701,10 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_
         
         # Обрабатываем метрики из early_output как early_*
         # ВАЖНО: обрабатываем ТОЛЬКО если матч прошел early фильтр!
-        # Сравниваем ПРЕДСКАЗАНИЕ метрики (знак) с РЕАЛЬНЫМ победителем матча
+        # Сравниваем ПРЕДСКАЗАНИЕ метрики (знак) с early dominator.
+        # Победитель матча для early-фильтра намеренно не важен.
         if match_is_early and early_dominator is not None:
-            # actual_winner - кто реально выиграл матч
-            actual_winner = 'radiant' if did_radiant_win else 'dire'
+            actual_winner = early_dominator
             match_id = match.get('id', idx)
             
             for metric_name, metric_value in early_output.items():
@@ -740,7 +740,7 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_
                         continue
                     # metric_value > 0 означает метрика ПРЕДСКАЗЫВАЕТ победу Radiant
                     # metric_value < 0 означает метрика ПРЕДСКАЗЫВАЕТ победу Dire
-                    # Сравниваем предсказание с actual_winner
+                    # Сравниваем предсказание с early dominator
                     if metric_value > 0:
                         # Метрика предсказала Radiant
                         if actual_winner == 'radiant':

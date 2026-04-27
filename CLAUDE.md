@@ -64,6 +64,8 @@ python3 base/cyberscore_try.py --no-odds
 │   ├── functions.py       # Хелперы: synergy, comeback metrics, вывод
 │   ├── id_to_names.py     # Справочник команд (tier1/tier2 списки)
 │   ├── maps_research.py   # Исследование карт
+│   ├── check_old_maps.py  # Offline-сбор метрик по историческим картам
+│   ├── metrics_winrate.py # Bucket winrate по JSON из check_old_maps.py
 │   ├── analise_database.py
 │   ├── explore_database.py
 │   ├── bookmaker_selenium_odds.py  # Selenium-парсинг букмекеров
@@ -159,6 +161,41 @@ python3 base/cyberscore_try.py --odds
 
 ### `base/functions.py`
 Общие хелперы. Импортируется в `cyberscore_try.py`.
+
+### Offline-проверка draft-метрик
+
+`base/check_old_maps.py` прогоняет исторические карты через те же draft-метрики, что используются в Telegram-сигнале:
+- словари `early_dict_raw`, `late_dict_raw`, `lane_dict_raw`, `post_lane_dict_raw`;
+- `dota2protracker` cp1vs1, synergy_duo и lane_advantage из локального hero cache;
+- lane outcomes и early/late/post-lane outcomes из карты.
+
+Публичные матчи по патчам лежат в `bets_data/analise_pub_matches/json_parts_split_from_object/`.
+Для split-файлов можно передавать директорию и `--patch`; `--patch 7.41` автоматически использует start timestamp `1774310400`.
+
+Пример 50k public backtest для patch 7.41:
+```bash
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/check_old_maps.py \
+  --maps-path bets_data/analise_pub_matches/json_parts_split_from_object \
+  --patch 7.41 \
+  --max-matches 50000 \
+  --dicts \
+  --dota2protracker \
+  --post-lane-max-cached-shards 127 \
+  --output runtime/pub_7.41_50k_metrics.json
+```
+
+`--post-lane-max-cached-shards 127` полезен именно для offline backtest на больших public выборках: он не меняет live-логику, но убирает thrash sharded post-lane lookup.
+
+После сборки JSON прогоняем bucket winrate:
+```bash
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/metrics_winrate.py \
+  --input runtime/pub_7.41_50k_metrics.json \
+  --bucket-mode \
+  --min-matches 6 \
+  > runtime/pub_7.41_50k_winrate.txt
+```
+
+Для pro-match проверки используется тот же pipeline, например `runtime/pro_maps_metrics_2025-12-15.json` -> `runtime/pro_maps_metrics_2025-12-15_winrate.txt`.
 
 ### `base/dota2protracker.py`
 Парсер hero matchups и synergies с dota2protracker.com. Использует Selenium/Camoufox для обхода Cloudflare.

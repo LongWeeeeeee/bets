@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import math
 import os
@@ -43,6 +44,10 @@ DEFAULT_MAPS_PATH = ROOT_DIR / "pro_heroes_data" / "pro.json"
 DEFAULT_STATS_DIR = ROOT_DIR / "bets_data" / "analise_pub_matches"
 DEFAULT_OUTPUT_PATH = ROOT_DIR / "runtime" / "pro_maps_metrics_2025-12-15.json"
 DEC_15_2025_UTC = 1765756800
+PATCH_START_TIMES = {
+    "7.40": 1765756800,
+    "7.41": 1774310400,
+}
 
 
 def _rss_mb() -> float:
@@ -78,6 +83,47 @@ def _iter_json_object_items(path: Path):
         for item in data:
             if isinstance(item, dict):
                 yield str(item.get("id", "")), item
+
+
+def _has_glob_meta(value: str) -> bool:
+    return any(ch in value for ch in "*?[]")
+
+
+def _resolve_maps_paths(maps_path: str | Path, patch: Optional[str] = None) -> list[Path]:
+    raw_parts = [part.strip() for part in str(maps_path).split(",") if part.strip()]
+    resolved: list[Path] = []
+    for raw_part in raw_parts:
+        path = Path(raw_part)
+        if _has_glob_meta(raw_part):
+            matches = sorted(Path(item) for item in glob.glob(raw_part))
+        elif path.is_dir():
+            pattern = f"{patch}_part*.json" if patch else "*.json"
+            matches = sorted(
+                item
+                for item in path.glob(pattern)
+                if item.is_file() and item.name != "merge_patch_summary.json"
+            )
+        else:
+            matches = [path]
+        resolved.extend(matches)
+
+    seen: set[Path] = set()
+    unique_paths: list[Path] = []
+    for path in resolved:
+        normalized = path.expanduser()
+        key = normalized.resolve() if normalized.exists() else normalized
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_paths.append(normalized)
+
+    if not unique_paths:
+        suffix = f" for patch {patch}" if patch else ""
+        raise FileNotFoundError(f"No map files found{suffix}: {maps_path}")
+    missing = [str(path) for path in unique_paths if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"Map file does not exist: {missing[0]}")
+    return unique_paths
 
 
 def _stats_key_leading_hero_id(key: Any) -> str:
@@ -134,7 +180,12 @@ class ShardedStatsLookup(dict):
         return shard.get(str(key), default)
 
 
-def _load_stats_dicts(stats_dir: Path, *, include_dicts: bool) -> tuple[dict, dict, Any, Any]:
+def _load_stats_dicts(
+    stats_dir: Path,
+    *,
+    include_dicts: bool,
+    post_lane_max_cached_shards: int = 48,
+) -> tuple[dict, dict, Any, Any]:
     if not include_dicts:
         return {}, {}, {}, {}
 
@@ -150,7 +201,7 @@ def _load_stats_dicts(stats_dir: Path, *, include_dicts: bool) -> tuple[dict, di
     post_lane_path = stats_dir / "post_lane_dict_raw.json"
     shard_dir = stats_dir / "post_lane_dict_raw.shards"
     if shard_dir.exists() and (shard_dir / "_complete").exists():
-        post_lane_dict = ShardedStatsLookup(shard_dir)
+        post_lane_dict = ShardedStatsLookup(shard_dir, max_cached_shards=post_lane_max_cached_shards)
         print(f"  ✓ post_lane_dict: sharded lookup {shard_dir}")
     elif post_lane_path.exists():
         post_lane_dict = _load_json(post_lane_path)
@@ -321,27 +372,39 @@ def _protracker_metrics_for_match(radiant_draft: dict, dire_draft: dict, hero_da
     return result
 
 
-def collect_matches(maps_path: Path, start_date_time: int, max_matches: Optional[int]) -> list[tuple[str, dict, dict, dict]]:
+def collect_matches(
+    maps_paths: str | Path | Iterable[Path],
+    start_date_time: int,
+    max_matches: Optional[int],
+) -> list[tuple[str, dict, dict, dict]]:
+    if isinstance(maps_paths, (str, Path)):
+        paths = [Path(maps_paths)]
+    else:
+        paths = [Path(path) for path in maps_paths]
     rows: list[tuple[str, dict, dict, dict]] = []
     scanned = 0
     skipped = 0
-    for match_id, match in _iter_json_object_items(Path(maps_path)):
-        scanned += 1
-        if not isinstance(match, dict):
-            skipped += 1
-            continue
-        if int(match.get("startDateTime") or 0) < int(start_date_time):
-            continue
-        parsed = check_bad_map(match, start_date_time=start_date_time)
-        if parsed is None:
-            skipped += 1
-            continue
-        radiant_draft, dire_draft = parsed
-        rows.append((str(match_id), match, _team_payload(radiant_draft), _team_payload(dire_draft)))
+    for path in paths:
+        print(f"Reading maps: {path}", flush=True)
+        for match_id, match in _iter_json_object_items(path):
+            scanned += 1
+            if not isinstance(match, dict):
+                skipped += 1
+                continue
+            if int(match.get("startDateTime") or 0) < int(start_date_time):
+                continue
+            parsed = check_bad_map(match, start_date_time=start_date_time)
+            if parsed is None:
+                skipped += 1
+                continue
+            radiant_draft, dire_draft = parsed
+            rows.append((str(match_id), match, _team_payload(radiant_draft), _team_payload(dire_draft)))
+            if max_matches is not None and len(rows) >= int(max_matches):
+                break
+            if scanned % 5000 == 0:
+                print(f"  scanned={scanned:,} selected={len(rows):,} skipped={skipped:,}", flush=True)
         if max_matches is not None and len(rows) >= int(max_matches):
             break
-        if scanned % 5000 == 0:
-            print(f"  scanned={scanned:,} selected={len(rows):,} skipped={skipped:,}", flush=True)
     print(f"Selected matches: {len(rows):,} (scanned={scanned:,}, skipped={skipped:,})")
     return rows
 
@@ -365,25 +428,34 @@ def check_old_maps(
     post_lane_dict=None,
     *,
     dicts: bool = True,
+    patch: Optional[str] = None,
     dota2protracker_enabled: bool = False,
     dota2protracker_min_games: int = 10,
     dota2protracker_allow_stale_cache: bool = True,
     dota2protracker_refresh: bool = False,
     dota2protracker_sleep: float = 0.0,
+    post_lane_max_cached_shards: int = 48,
     stats_dir: str | Path = DEFAULT_STATS_DIR,
 ) -> dict:
     del use_lane_corrector, lane_corrector_dir
     started_at = time.monotonic()
-    maps_path = Path(maps_path or DEFAULT_MAPS_PATH)
+    maps_paths = _resolve_maps_paths(maps_path or DEFAULT_MAPS_PATH, patch=patch)
     output_path = Path(output_path or ROOT_DIR / "runtime" / f"{outfile_name}.json")
 
     print("\nCHECK_OLD_MAPS OFFLINE")
     print("=" * 80)
-    print(f"maps_path: {maps_path}")
+    print(f"maps_path: {maps_paths[0] if len(maps_paths) == 1 else f'{len(maps_paths)} files'}")
+    if len(maps_paths) > 1:
+        print(f"first_map_file: {maps_paths[0]}")
+        print(f"last_map_file: {maps_paths[-1]}")
+    if patch:
+        print(f"patch: {patch}")
     print(f"start_date_time: {start_date_time}")
     print(f"flags: dicts={dicts}, dota2protracker={dota2protracker_enabled}")
+    if dicts:
+        print(f"post_lane_max_cached_shards: {post_lane_max_cached_shards}")
 
-    rows = collect_matches(maps_path, int(start_date_time), max_matches)
+    rows = collect_matches(maps_paths, int(start_date_time), max_matches)
     records: list[dict] = []
     for match_id, match, radiant_draft, dire_draft in rows:
         records.append(
@@ -406,7 +478,11 @@ def check_old_maps(
 
     if dicts:
         if autoload_dicts:
-            early_dict, late_dict, lane_data, post_lane_dict = _load_stats_dicts(Path(stats_dir), include_dicts=True)
+            early_dict, late_dict, lane_data, post_lane_dict = _load_stats_dicts(
+                Path(stats_dir),
+                include_dicts=True,
+                post_lane_max_cached_shards=post_lane_max_cached_shards,
+            )
         else:
             early_dict = early_dict or {}
             late_dict = late_dict or {}
@@ -473,10 +549,11 @@ def check_old_maps(
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Offline draft metrics collector for historical maps.")
-    parser.add_argument("--maps-path", default=str(DEFAULT_MAPS_PATH))
+    parser.add_argument("--maps-path", default=str(DEFAULT_MAPS_PATH), help="JSON file, comma-separated files, glob, or directory with patch parts.")
+    parser.add_argument("--patch", default=None, help="Patch prefix for split public files, for example 7.41.")
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT_PATH))
     parser.add_argument("--stats-dir", default=str(DEFAULT_STATS_DIR))
-    parser.add_argument("--start-date-time", type=int, default=DEC_15_2025_UTC)
+    parser.add_argument("--start-date-time", type=int, default=None)
     parser.add_argument("--max-matches", type=int, default=None)
     parser.add_argument("--dicts", dest="dicts", action="store_true", default=True)
     parser.add_argument("--no-dicts", dest="dicts", action="store_false")
@@ -486,6 +563,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dota2protracker-refresh", action="store_true", default=False)
     parser.add_argument("--no-stale-dota2protracker-cache", action="store_true", default=False)
     parser.add_argument("--dota2protracker-sleep", type=float, default=0.0)
+    parser.add_argument("--post-lane-max-cached-shards", type=int, default=48)
     parser.add_argument("--merge-side-lanes", action="store_true", default=False)
     parser.add_argument("--disable-lanes", action="store_true", default=False)
     return parser
@@ -493,10 +571,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = _build_arg_parser().parse_args(argv)
+    start_date_time = args.start_date_time
+    if start_date_time is None:
+        start_date_time = PATCH_START_TIMES.get(str(args.patch), DEC_15_2025_UTC) if args.patch else DEC_15_2025_UTC
     check_old_maps(
         maps_path=args.maps_path,
+        patch=args.patch,
         output_path=args.output,
-        start_date_time=args.start_date_time,
+        start_date_time=start_date_time,
         max_matches=args.max_matches,
         dicts=args.dicts,
         stats_dir=args.stats_dir,
@@ -505,6 +587,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         dota2protracker_allow_stale_cache=not args.no_stale_dota2protracker_cache,
         dota2protracker_refresh=args.dota2protracker_refresh,
         dota2protracker_sleep=args.dota2protracker_sleep,
+        post_lane_max_cached_shards=args.post_lane_max_cached_shards,
         merge_side_lanes=args.merge_side_lanes,
         disable_lanes=args.disable_lanes,
     )
