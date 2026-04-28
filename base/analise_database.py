@@ -285,7 +285,8 @@ def lanes(match, lane_dict):
 # Early: требуем близкий networth на gate-точке и ищем ранний перевес.
 EARLY_GATE_INDEX = 10                # фильтр на leads[10]
 EARLY_GATE_MAX_ABS_LEAD = 2000       # игра не должна разъехаться до early-gate
-EARLY_LEAD_WINDOW = (20, 34)         # реальные минуты достижения 20% comeback threshold
+EARLY_LEAD_WINDOW = (20, 28)         # реальные минуты достижения 20% comeback threshold
+EARLY_FAST_FINISH_MAX_MINUTES = 34   # быстрые карты считаем early по победителю
 
 # Late: длинная игра, где networth gap не разъехался сильнее WR60 ladder.
 LATE_MIN_DURATION = 34
@@ -483,9 +484,10 @@ def is_early_match(match, n: int = 3000):
     Проверяет, подходит ли матч для early словаря.
     
     ЛОГИКА EARLY:
-    - На gate-точке leads[10] игра не должна быть уже слишком разъехавшейся
+    - Быстрые карты duration <= 34 минут считаются early; dominator = winner
+    - Для длинных карт на gate-точке leads[10] игра не должна быть уже слишком разъехавшейся
     - Early dominator = кто первым достиг 20% comeback networth threshold
-      в окне 20-34 минут
+      в окне 20-28 минут
     - Победитель матча для early не важен
     
     Args:
@@ -499,20 +501,58 @@ def is_early_match(match, n: int = 3000):
     leads = match.get('radiantNetworthLeads', [])
     duration = len(leads)
 
-    if duration <= EARLY_GATE_INDEX or duration < EARLY_LEAD_WINDOW[0]:
+    if duration <= EARLY_FAST_FINISH_MAX_MINUTES:
+        did_radiant_win = match.get('didRadiantWin')
+        if did_radiant_win is None:
+            win_rates = match.get('winRates', [])
+            did_radiant_win = win_rates[-1] > 0.5 if win_rates else None
+        if did_radiant_win is not None:
+            return True, 'radiant' if did_radiant_win else 'dire'
+        final_lead = _as_float(leads[-1]) if leads else None
+        if final_lead is not None and final_lead != 0:
+            return True, 'radiant' if final_lead > 0 else 'dire'
+        return False, None
+
+    if duration <= EARLY_GATE_INDEX:
         return False, None
 
     gate_lead = _as_float(leads[EARLY_GATE_INDEX])
     if gate_lead is None or abs(gate_lead) > EARLY_GATE_MAX_ABS_LEAD:
         return False, None
 
-    dominator, _minute = _first_dynamic_threshold_reach(
-        match, leads, EARLY_LEAD_WINDOW[0], EARLY_LEAD_WINDOW[1]
-    )
-    if dominator is None:
+    if duration < EARLY_LEAD_WINDOW[0]:
         return False, None
 
-    return True, dominator
+    early_thresholds_by_group = _load_early_dominator_thresholds()
+    for minute in range(EARLY_LEAD_WINDOW[0], EARLY_LEAD_WINDOW[1] + 1):
+        idx = minute - 1
+        if idx < 0 or len(leads) <= idx:
+            continue
+        lead = _as_float(leads[idx])
+        if lead is None or lead == 0:
+            continue
+
+        dominator = 'radiant' if lead > 0 else 'dire'
+        threshold_group = _early_threshold_group(match, dominator)
+        thresholds_by_minute = (
+            early_thresholds_by_group.get(threshold_group)
+            or early_thresholds_by_group.get('no_alchemist')
+            or {}
+        )
+        threshold = thresholds_by_minute.get(int(minute))
+        if threshold is None:
+            earlier_minutes = [item for item in thresholds_by_minute if item <= int(minute)]
+            if earlier_minutes:
+                threshold = thresholds_by_minute[max(earlier_minutes)]
+            else:
+                later_minutes = [item for item in thresholds_by_minute if item >= int(minute)]
+                if later_minutes:
+                    threshold = thresholds_by_minute[min(later_minutes)]
+
+        if threshold is not None and abs(lead) >= threshold:
+            return True, dominator
+
+    return False, None
 
 
 def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
@@ -550,8 +590,16 @@ def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
         return (False, None) if if_check else False
 
     winner = 'radiant' if did_radiant_win else 'dire'
-    if _late_wr60_gap_hit(leads):
-        return (True, winner) if if_check else True
+    late_thresholds_by_minute = _load_late_wr60_thresholds()
+    for minute, threshold in sorted(late_thresholds_by_minute.items()):
+        if minute < int(LATE_WR60_START_MINUTE):
+            continue
+        idx = minute - 1
+        if idx < 0 or len(leads) <= idx:
+            continue
+        lead = _as_float(leads[idx])
+        if lead is not None and abs(lead) <= threshold:
+            return (True, winner) if if_check else True
 
     return (False, None) if if_check else False
 

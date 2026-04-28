@@ -116,6 +116,25 @@ def test_early_filter_uses_networth_dominator_not_match_winner() -> None:
     assert dominator == "radiant"
 
 
+def test_early_filter_fast_finish_uses_winner_and_bypasses_gate() -> None:
+    match = _match(duration=31, minute_10_lead=5000, radiant_win=False)
+
+    ok, dominator = stats.is_early_match(match)
+
+    assert ok is True
+    assert dominator == "dire"
+
+
+def test_early_filter_threshold_window_ends_at_28() -> None:
+    match = _match(duration=35, radiant_win=True)
+    match["radiantNetworthLeads"][28] = 20000
+
+    ok, dominator = stats.is_early_match(match)
+
+    assert ok is False
+    assert dominator is None
+
+
 def test_early_filter_uses_alchemist_leading_thresholds() -> None:
     match = _match(duration=35, radiant_win=True)
     match["players"][0]["heroId"] = stats.ALCHEMIST_HERO_ID
