@@ -522,6 +522,24 @@ class _ShardedStatsLookup(dict):
             self._shards.popitem(last=False)
         return shard_data
 
+    def _get_uncached(self, key: Any, default=None):
+        key_str = str(key)
+        shard_path = self.shard_dir / f"{_stats_key_leading_hero_id(key_str)}.jsonl"
+        if not shard_path.exists():
+            return default
+        with shard_path.open("rb") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    stored_key, value = orjson.loads(line)
+                except Exception:
+                    continue
+                if str(stored_key) == key_str:
+                    return value
+        return default
+
     def warm_hero_ids(self, hero_ids: List[Any]) -> None:
         if not self.cache_enabled:
             return
@@ -533,6 +551,8 @@ class _ShardedStatsLookup(dict):
             self._load_shard(shard_id)
 
     def get(self, key: Any, default=None):
+        if not self.cache_enabled:
+            return self._get_uncached(key, default)
         shard_id = _stats_key_leading_hero_id(key)
         shard = self._load_shard(shard_id)
         return shard.get(str(key), default)
