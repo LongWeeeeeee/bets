@@ -163,6 +163,17 @@ def _write_sharded_stats(shard_dir: Path, stats: Dict[str, Any]) -> None:
         (shard_dir / f"{shard_id}.jsonl").write_bytes(payload)
 
 
+def _write_complete_sharded_stats(source_path: Path, stats: Dict[str, Any]) -> Path:
+    source_path.write_bytes(orjson.dumps(stats))
+    shard_dir = source_path.parent / f"{source_path.stem}.shards"
+    _write_sharded_stats(shard_dir, stats)
+    expected_meta = runtime._stats_expected_meta(source_path)
+    expected_meta["entries"] = len(stats)
+    (shard_dir / "_meta.json").write_text(json.dumps(expected_meta), encoding="utf-8")
+    (shard_dir / "_complete").write_text("ok\n", encoding="utf-8")
+    return shard_dir
+
+
 def test_sharded_stats_get_many_returns_only_requested_keys_without_full_cache(tmp_path) -> None:
     shard_dir = tmp_path / "stats.shards"
     stats = {
@@ -189,6 +200,86 @@ def test_sharded_stats_get_many_returns_only_requested_keys_without_full_cache(t
     assert lookup.get("1pos1_with_2pos2") == stats["1pos1_with_2pos2"]
     assert len(lookup._key_cache) == 2
     assert "1pos1_with_2pos2" in lookup._key_cache
+
+
+def test_sqlite_stats_lookup_builds_from_complete_shards_and_batches_keys(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "STATS_SQLITE_BUILD_FROM_SHARDS", True, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SQLITE_BUILD_BATCH_SIZE", 2, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SQLITE_BUILD_PROGRESS_EVERY", 0, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SQLITE_QUERY_CHUNK_SIZE", 2, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SHARD_KEY_CACHE_MAX", 2, raising=False)
+    source_path = tmp_path / "early_dict_raw.json"
+    stats = {
+        "1pos1": {"wins": 12, "games": 20},
+        "1pos1_with_2pos2": {"wins": 11, "games": 20},
+        "1pos1_vs_6pos1": {"wins": 14, "games": 20},
+        "6pos1_vs_1pos1": {"wins": 6, "games": 20},
+    }
+    _write_complete_sharded_stats(source_path, stats)
+
+    lookup = runtime._prepare_sqlite_stats_lookup(str(source_path), "early")
+
+    assert isinstance(lookup, runtime._SqliteStatsLookup)
+    assert runtime._stats_sqlite_db_path(source_path).exists()
+    assert lookup.get_many(["1pos1", "1pos1_vs_6pos1", "missing"]) == {
+        "1pos1": stats["1pos1"],
+        "1pos1_vs_6pos1": stats["1pos1_vs_6pos1"],
+    }
+    assert lookup.get("1pos1_with_2pos2") == stats["1pos1_with_2pos2"]
+    assert lookup.get("missing", {"fallback": True}) == {"fallback": True}
+    assert len(lookup._key_cache) <= 2
+    assert runtime._sqlite_stats_meta_matches(
+        runtime._stats_sqlite_db_path(source_path),
+        runtime._stats_expected_meta(source_path),
+    )
+
+
+def test_indexed_stats_lookup_auto_uses_existing_sqlite_without_autobuild(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "STATS_LOOKUP_BACKEND", "auto", raising=False)
+    monkeypatch.setattr(runtime, "STATS_SQLITE_AUTOBUILD", False, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SQLITE_BUILD_FROM_SHARDS", True, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SQLITE_BUILD_PROGRESS_EVERY", 0, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SHARD_KEY_CACHE_MAX", 5, raising=False)
+    source_path = tmp_path / "late_dict_raw.json"
+    stats = {"1pos1": {"wins": 12, "games": 20}}
+    _write_complete_sharded_stats(source_path, stats)
+    runtime._prepare_sqlite_stats_lookup(str(source_path), "late").close()
+
+    lookup = runtime._prepare_indexed_stats_lookup(str(source_path), "late")
+
+    assert isinstance(lookup, runtime._SqliteStatsLookup)
+    assert lookup.get("1pos1") == stats["1pos1"]
+
+
+def test_sqlite_stats_meta_accepts_same_sized_source_with_different_mtime(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "STATS_SQLITE_BUILD_FROM_SHARDS", True, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SQLITE_BUILD_PROGRESS_EVERY", 0, raising=False)
+    source_path = tmp_path / "post_lane_dict_raw.json"
+    _write_complete_sharded_stats(source_path, {"1pos1": {"wins": 12, "games": 20}})
+    lookup = runtime._prepare_sqlite_stats_lookup(str(source_path), "post_lane")
+    lookup.close()
+
+    expected = runtime._stats_expected_meta(source_path)
+    expected["source_mtime_ns"] += 1
+    assert runtime._sqlite_stats_meta_matches(runtime._stats_sqlite_db_path(source_path), expected)
+
+    expected["source_size"] += 1
+    assert not runtime._sqlite_stats_meta_matches(runtime._stats_sqlite_db_path(source_path), expected)
+
+
+def test_explicit_stats_lookup_backend_enables_indexed_lookup_without_sharded_gate(monkeypatch) -> None:
+    monkeypatch.delenv("STATS_EARLY_LOOKUP_BACKEND", raising=False)
+    monkeypatch.delenv("STATS_EARLY_SHARDED_LOOKUP_MODE", raising=False)
+    monkeypatch.setattr(runtime, "STATS_SHARDED_LOOKUP_MODE", "never", raising=False)
+
+    monkeypatch.setattr(runtime, "STATS_LOOKUP_BACKEND", "auto", raising=False)
+    assert runtime._stats_indexed_lookup_enabled("early") is False
+
+    monkeypatch.setattr(runtime, "STATS_LOOKUP_BACKEND", "sqlite", raising=False)
+    assert runtime._stats_indexed_lookup_enabled("early") is True
+
+    monkeypatch.setenv("STATS_EARLY_LOOKUP_BACKEND", "jsonl")
+    assert runtime._stats_indexed_lookup_enabled("early") is True
 
 
 def test_draft_stats_lookup_keys_cover_synergy_accesses() -> None:
@@ -252,6 +343,42 @@ def test_draft_scoped_stats_lookup_preserves_synergy_results(tmp_path, monkeypat
         post_lane_dict=scoped,
     )
     assert full_result == scoped_result
+
+
+def test_draft_scoped_stats_lookup_supports_sqlite_backend(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "STATS_DRAFT_SCOPED_LOOKUP_ENABLED", True, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SQLITE_BUILD_FROM_SHARDS", True, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SQLITE_BUILD_PROGRESS_EVERY", 0, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SQLITE_QUERY_CHUNK_SIZE", 3, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SHARD_KEY_CACHE_MAX", 100, raising=False)
+    radiant = _valid_heroes(0)
+    dire = _valid_heroes(5)
+    required_keys = runtime._draft_stats_lookup_keys(radiant, dire)
+    stats = {key: {"wins": 14, "games": 20} for key in required_keys}
+    stats["1pos1_with_999pos1"] = {"wins": 1, "games": 20}
+    source_path = tmp_path / "late_dict_raw.json"
+    _write_complete_sharded_stats(source_path, stats)
+    lookup = runtime._prepare_sqlite_stats_lookup(str(source_path), "late")
+
+    scoped = runtime._prepare_draft_scoped_stats_lookup(lookup, radiant, dire)
+
+    assert isinstance(scoped, dict)
+    assert scoped
+    assert "1pos1_with_999pos1" not in scoped
+    full_stats = {key: stats[key] for key in required_keys}
+    assert runtime.synergy_and_counterpick(
+        radiant,
+        dire,
+        full_stats,
+        full_stats,
+        post_lane_dict=full_stats,
+    ) == runtime.synergy_and_counterpick(
+        radiant,
+        dire,
+        scoped,
+        scoped,
+        post_lane_dict=scoped,
+    )
 
 
 def test_extract_live_listing_context_supports_cyberscore_cards() -> None:

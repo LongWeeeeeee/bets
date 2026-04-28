@@ -30,6 +30,7 @@ import subprocess
 import re
 import shlex
 import shutil
+import sqlite3
 import tempfile
 from itertools import combinations, permutations
 import numpy as np
@@ -647,6 +648,112 @@ class _ShardedStatsLookup(dict):
         return value
 
 
+class _SqliteStatsLookup(dict):
+    def __init__(self, db_path: Path, *, label: str, max_cached_keys: int = 0):
+        super().__init__()
+        self.db_path = Path(db_path)
+        self.label = str(label)
+        self.max_cached_keys = max(0, int(max_cached_keys))
+        self._key_cache: "OrderedDict[str, Any]" = OrderedDict()
+        self._conn: Optional[sqlite3.Connection] = None
+        self._lock = threading.RLock()
+
+    def __bool__(self) -> bool:
+        return True
+
+    @property
+    def key_cache_enabled(self) -> bool:
+        return self.max_cached_keys > 0
+
+    def _connect(self) -> sqlite3.Connection:
+        if self._conn is not None:
+            return self._conn
+        uri = f"{self.db_path.resolve().as_uri()}?mode=ro&immutable=1"
+        conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+        conn.execute("PRAGMA query_only=ON")
+        conn.execute("PRAGMA temp_store=MEMORY")
+        self._conn = conn
+        return conn
+
+    def close(self) -> None:
+        with self._lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
+
+    def _get_cached_key(self, key: Any) -> Tuple[bool, Any]:
+        if not self.key_cache_enabled:
+            return False, None
+        key_str = str(key)
+        try:
+            value = self._key_cache[key_str]
+        except KeyError:
+            return False, None
+        self._key_cache.move_to_end(key_str)
+        return True, value
+
+    def _remember_key(self, key: Any, value: Any) -> None:
+        if not self.key_cache_enabled:
+            return
+        key_str = str(key)
+        self._key_cache[key_str] = value
+        self._key_cache.move_to_end(key_str)
+        while len(self._key_cache) > self.max_cached_keys:
+            self._key_cache.popitem(last=False)
+
+    def get_many(self, keys: Any) -> Dict[str, Any]:
+        result: Dict[str, Any] = {}
+        missing: List[str] = []
+        seen = set()
+        for key in keys or []:
+            key_str = str(key)
+            if key_str in seen:
+                continue
+            seen.add(key_str)
+            found, cached = self._get_cached_key(key_str)
+            if found:
+                result[key_str] = cached
+            else:
+                missing.append(key_str)
+
+        if not missing:
+            return result
+
+        chunk_size = max(1, min(int(STATS_SQLITE_QUERY_CHUNK_SIZE), 900))
+        with self._lock:
+            conn = self._connect()
+            for start in range(0, len(missing), chunk_size):
+                chunk = missing[start:start + chunk_size]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = conn.execute(
+                    f"SELECT key, value FROM stats WHERE key IN ({placeholders})",
+                    chunk,
+                )
+                for key, value_blob in rows:
+                    value = orjson.loads(value_blob)
+                    key = str(key)
+                    result[key] = value
+                    self._remember_key(key, value)
+        return result
+
+    def get(self, key: Any, default=None):
+        key_str = str(key)
+        found, cached = self._get_cached_key(key_str)
+        if found:
+            return cached
+        with self._lock:
+            conn = self._connect()
+            row = conn.execute("SELECT value FROM stats WHERE key = ?", (key_str,)).fetchone()
+        if row is None:
+            return default
+        value = orjson.loads(row[0])
+        self._remember_key(key_str, value)
+        return value
+
+    def warm_hero_ids(self, hero_ids: List[Any]) -> None:
+        return None
+
+
 class _DraftScopedStatsLookup(dict):
     def __bool__(self) -> bool:
         return True
@@ -729,7 +836,7 @@ def _prepare_draft_scoped_stats_lookup(
     dire_heroes_and_pos: Any,
     draft_lookup_keys: Optional[set] = None,
 ) -> Any:
-    if not STATS_DRAFT_SCOPED_LOOKUP_ENABLED or not isinstance(stats_obj, _ShardedStatsLookup):
+    if not STATS_DRAFT_SCOPED_LOOKUP_ENABLED or not isinstance(stats_obj, (_ShardedStatsLookup, _SqliteStatsLookup)):
         return stats_obj
     keys = draft_lookup_keys
     if keys is None:
@@ -737,18 +844,168 @@ def _prepare_draft_scoped_stats_lookup(
     return _DraftScopedStatsLookup(stats_obj.get_many(keys))
 
 
-def _prepare_sharded_stats_lookup(source_path: str, label: str) -> _ShardedStatsLookup:
-    source = Path(source_path)
-    shard_dir = source.parent / f"{source.stem}.shards"
-    meta_path = shard_dir / "_meta.json"
-    complete_path = shard_dir / "_complete"
+def _stats_sqlite_db_path(source: Path) -> Path:
+    return source.parent / f"{source.stem}.sqlite3"
+
+
+def _stats_expected_meta(source: Path) -> Dict[str, Any]:
     source_stat = source.stat()
-    expected_meta = {
+    return {
         "format_version": 1,
         "source_name": source.name,
         "source_size": int(source_stat.st_size),
         "source_mtime_ns": int(source_stat.st_mtime_ns),
     }
+
+
+def _stats_meta_matches(actual: Dict[str, Any], expected: Dict[str, Any]) -> bool:
+    return all(actual.get(key) == value for key, value in expected.items())
+
+
+def _sqlite_stats_meta_matches_source(actual: Dict[str, Any], expected: Dict[str, Any]) -> bool:
+    if actual.get("backend") not in {None, "sqlite_kv"}:
+        return False
+    for key in ("format_version", "source_name", "source_size"):
+        if actual.get(key) != expected.get(key):
+            return False
+    return True
+
+
+def _sqlite_stats_meta_matches(db_path: Path, expected_meta: Dict[str, Any]) -> bool:
+    if not db_path.exists():
+        return False
+    try:
+        uri = f"{db_path.resolve().as_uri()}?mode=ro&immutable=1"
+        with sqlite3.connect(uri, uri=True) as conn:
+            rows = conn.execute("SELECT key, value FROM meta").fetchall()
+        actual = {str(key): orjson.loads(value) for key, value in rows}
+        return _sqlite_stats_meta_matches_source(actual, expected_meta)
+    except Exception:
+        return False
+
+
+def _stats_shards_match_source(shard_dir: Path, expected_meta: Dict[str, Any]) -> bool:
+    meta_path = shard_dir / "_meta.json"
+    complete_path = shard_dir / "_complete"
+    if not (shard_dir.exists() and meta_path.exists() and complete_path.exists()):
+        return False
+    try:
+        current_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return _stats_meta_matches(current_meta, expected_meta)
+
+
+def _stats_shard_sort_key(path: Path) -> Tuple[int, Any]:
+    try:
+        return (0, int(path.stem))
+    except ValueError:
+        return (1, path.stem)
+
+
+def _iter_stats_records_for_sqlite(source: Path, shard_dir: Path, expected_meta: Dict[str, Any]):
+    if STATS_SQLITE_BUILD_FROM_SHARDS and _stats_shards_match_source(shard_dir, expected_meta):
+        print(f"🧱 Building SQLite stats from JSONL shards: {shard_dir}")
+        for shard_path in sorted(shard_dir.glob("*.jsonl"), key=_stats_shard_sort_key):
+            with shard_path.open("rb") as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    key, value = orjson.loads(line)
+                    yield str(key), orjson.dumps(value)
+        return
+
+    if ijson is None:
+        raise RuntimeError(f"ijson is required to build SQLite stats from {source}")
+
+    print(f"🧱 Building SQLite stats from JSON source: {source}")
+    with source.open("rb") as f:
+        for key, value in ijson.kvitems(f, ""):
+            yield str(key), orjson.dumps(value)
+
+
+def _build_sqlite_stats_db(source: Path, db_path: Path, label: str, expected_meta: Dict[str, Any]) -> None:
+    shard_dir = source.parent / f"{source.stem}.shards"
+    temp_path = db_path.parent / f"{db_path.name}.tmp"
+    if temp_path.exists():
+        temp_path.unlink()
+
+    entries = 0
+    batch: List[Tuple[str, Any]] = []
+    batch_size = max(1, int(STATS_SQLITE_BUILD_BATCH_SIZE))
+    progress_every = max(0, int(STATS_SQLITE_BUILD_PROGRESS_EVERY))
+    print(f"🧱 Building SQLite {label} stats DB: {db_path}")
+
+    conn = sqlite3.connect(str(temp_path))
+    try:
+        conn.execute("PRAGMA journal_mode=OFF")
+        conn.execute("PRAGMA synchronous=OFF")
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA locking_mode=EXCLUSIVE")
+        conn.execute("CREATE TABLE stats (key TEXT NOT NULL, value BLOB NOT NULL)")
+        conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID")
+
+        def flush_batch() -> None:
+            nonlocal batch
+            if not batch:
+                return
+            conn.executemany("INSERT INTO stats (key, value) VALUES (?, ?)", batch)
+            batch = []
+
+        for key, value_blob in _iter_stats_records_for_sqlite(source, shard_dir, expected_meta):
+            batch.append((key, sqlite3.Binary(value_blob)))
+            entries += 1
+            if len(batch) >= batch_size:
+                flush_batch()
+            if progress_every > 0 and entries % progress_every == 0:
+                print(f"   📚 {label} SQLite progress: {entries:,} rows")
+
+        flush_batch()
+        print(f"   🔎 Creating SQLite index for {label}: {entries:,} rows")
+        conn.execute("CREATE UNIQUE INDEX stats_key_idx ON stats(key)")
+        meta_payload = dict(expected_meta)
+        meta_payload["backend"] = "sqlite_kv"
+        meta_payload["entries"] = int(entries)
+        conn.executemany(
+            "INSERT INTO meta (key, value) VALUES (?, ?)",
+            [(key, orjson.dumps(value).decode("utf-8")) for key, value in meta_payload.items()],
+        )
+        conn.commit()
+        conn.execute("PRAGMA optimize")
+    finally:
+        conn.close()
+
+    if db_path.exists():
+        db_path.unlink()
+    temp_path.rename(db_path)
+    print(f"✅ Built SQLite {label} stats DB: {entries:,} rows -> {db_path}")
+
+
+def _prepare_sqlite_stats_lookup(source_path: str, label: str) -> _SqliteStatsLookup:
+    source = Path(source_path)
+    expected_meta = _stats_expected_meta(source)
+    db_path = _stats_sqlite_db_path(source)
+    if not _sqlite_stats_meta_matches(db_path, expected_meta):
+        _build_sqlite_stats_db(source, db_path, label, expected_meta)
+
+    print(
+        f"🧠 Using SQLite {label} stats backend: {db_path} "
+        f"(key_cache={STATS_SHARD_KEY_CACHE_MAX})"
+    )
+    return _SqliteStatsLookup(
+        db_path,
+        label=label,
+        max_cached_keys=STATS_SHARD_KEY_CACHE_MAX,
+    )
+
+
+def _prepare_sharded_stats_lookup(source_path: str, label: str) -> _ShardedStatsLookup:
+    source = Path(source_path)
+    shard_dir = source.parent / f"{source.stem}.shards"
+    meta_path = shard_dir / "_meta.json"
+    complete_path = shard_dir / "_complete"
+    expected_meta = _stats_expected_meta(source)
 
     rebuild_required = True
     if shard_dir.exists() and meta_path.exists() and complete_path.exists():
@@ -811,6 +1068,60 @@ def _prepare_sharded_stats_lookup(source_path: str, label: str) -> _ShardedStats
     )
 
 
+def _stats_lookup_backend(label: str) -> str:
+    per_label_env = f"STATS_{label.upper()}_LOOKUP_BACKEND"
+    raw = str(os.getenv(per_label_env, "") or STATS_LOOKUP_BACKEND).strip().lower()
+    if raw in {"", "auto"}:
+        return "auto"
+    if raw in {"sqlite", "sqlite3", "kv", "sqlite_kv"}:
+        return "sqlite"
+    if raw in {"jsonl", "shard", "shards", "sharded"}:
+        return "jsonl"
+    return "auto"
+
+
+def _stats_indexed_lookup_enabled(label: str) -> bool:
+    return _stats_lookup_backend(label) != "auto" or _stats_sharded_mode_enabled(label)
+
+
+def _prepare_indexed_stats_lookup(source_path: str, label: str):
+    backend = _stats_lookup_backend(label)
+    if backend == "auto":
+        source = Path(source_path)
+        db_path = _stats_sqlite_db_path(source)
+        try:
+            expected_meta = _stats_expected_meta(source)
+        except Exception:
+            expected_meta = {}
+        if expected_meta and _sqlite_stats_meta_matches(db_path, expected_meta):
+            print(
+                f"🧠 Using SQLite {label} stats backend: {db_path} "
+                f"(key_cache={STATS_SHARD_KEY_CACHE_MAX})"
+            )
+            return _SqliteStatsLookup(
+                db_path,
+                label=label,
+                max_cached_keys=STATS_SHARD_KEY_CACHE_MAX,
+            )
+        if not STATS_SQLITE_AUTOBUILD:
+            print(f"🧠 SQLite {label} stats DB missing/stale; using JSONL shards backend")
+            return _prepare_sharded_stats_lookup(source_path, label)
+
+    if backend in {"auto", "sqlite"}:
+        try:
+            return _prepare_sqlite_stats_lookup(source_path, label)
+        except Exception as exc:
+            if not STATS_SQLITE_FALLBACK_TO_JSONL:
+                raise
+            logger.warning(
+                "SQLite stats backend failed for %s, falling back to JSONL shards: %s",
+                label,
+                exc,
+            )
+            print(f"⚠️ SQLite stats backend failed for {label}: {exc}; falling back to JSONL shards")
+    return _prepare_sharded_stats_lookup(source_path, label)
+
+
 def _warm_draft_stats_shards(radiant_heroes_and_pos: dict, dire_heroes_and_pos: dict) -> None:
     if STATS_DRAFT_SCOPED_LOOKUP_ENABLED:
         return
@@ -830,7 +1141,7 @@ def _warm_draft_stats_shards(radiant_heroes_and_pos: dict, dire_heroes_and_pos: 
         return
     unique_hero_ids = sorted(set(hero_ids))
     for stats_obj in (early_dict, late_dict, post_lane_dict):
-        if isinstance(stats_obj, _ShardedStatsLookup):
+        if isinstance(stats_obj, (_ShardedStatsLookup, _SqliteStatsLookup)):
             stats_obj.warm_hero_ids(unique_hero_ids)
 
 
@@ -5886,9 +6197,16 @@ STATS_SEQUENTIAL_WARMUP_ENABLED = _safe_bool_env("STATS_SEQUENTIAL_WARMUP_ENABLE
 STATS_WARMUP_STEP_DELAY_SECONDS = _safe_float_env("STATS_WARMUP_STEP_DELAY_SECONDS", 45.0)
 STATS_SHARDED_LOOKUP_MODE = str(os.getenv("STATS_SHARDED_LOOKUP_MODE", "auto")).strip().lower() or "auto"
 STATS_SHARDED_LOOKUP_MAX_RAM_GB = _safe_float_env("STATS_SHARDED_LOOKUP_MAX_RAM_GB", 8.0)
+STATS_LOOKUP_BACKEND = str(os.getenv("STATS_LOOKUP_BACKEND", "auto")).strip().lower() or "auto"
 STATS_SHARD_CACHE_MAX = _safe_int_env("STATS_SHARD_CACHE_MAX", 0)
 STATS_SHARD_KEY_CACHE_MAX = _safe_int_env("STATS_SHARD_KEY_CACHE_MAX", 20000)
 STATS_SHARD_BUILD_PROGRESS_EVERY = _safe_int_env("STATS_SHARD_BUILD_PROGRESS_EVERY", 500000)
+STATS_SQLITE_AUTOBUILD = _safe_bool_env("STATS_SQLITE_AUTOBUILD", False)
+STATS_SQLITE_BUILD_FROM_SHARDS = _safe_bool_env("STATS_SQLITE_BUILD_FROM_SHARDS", True)
+STATS_SQLITE_BUILD_BATCH_SIZE = _safe_int_env("STATS_SQLITE_BUILD_BATCH_SIZE", 50000)
+STATS_SQLITE_BUILD_PROGRESS_EVERY = _safe_int_env("STATS_SQLITE_BUILD_PROGRESS_EVERY", 500000)
+STATS_SQLITE_QUERY_CHUNK_SIZE = _safe_int_env("STATS_SQLITE_QUERY_CHUNK_SIZE", 800)
+STATS_SQLITE_FALLBACK_TO_JSONL = _safe_bool_env("STATS_SQLITE_FALLBACK_TO_JSONL", True)
 STATS_DRAFT_SCOPED_LOOKUP_ENABLED = _safe_bool_env("STATS_DRAFT_SCOPED_LOOKUP_ENABLED", True)
 stats_warmup_last_heavy_load_ts = 0.0
 
@@ -12539,6 +12857,9 @@ def _runtime_object_summary(value: Any) -> str:
             cached_rows = sum(len(shard) for shard in value._shards.values())
             cached_keys = len(value._key_cache)
             return f"sharded(cached_shards={cached_shards},cached_rows={cached_rows},cached_keys={cached_keys})"
+        if isinstance(value, _SqliteStatsLookup):
+            cached_keys = len(value._key_cache)
+            return f"sqlite(cached_keys={cached_keys})"
         if isinstance(value, dict):
             return f"dict(len={len(value)})"
         if isinstance(value, (set, list, tuple, deque)):
@@ -19088,23 +19409,23 @@ def _load_stats_dicts():
 
     if not STATS_SEQUENTIAL_WARMUP_ENABLED:
         if early_dict is None:
-            if _stats_sharded_mode_enabled("early"):
-                early_dict = _prepare_sharded_stats_lookup(early_path, "early")
+            if _stats_indexed_lookup_enabled("early"):
+                early_dict = _prepare_indexed_stats_lookup(early_path, "early")
             else:
                 print(f"📦 Loading early stats: {early_path}")
                 early_dict = _load_json_object(early_path, "early_dict_raw")
             gc.collect()
         if late_dict is None:
-            if _stats_sharded_mode_enabled("late"):
-                late_dict = _prepare_sharded_stats_lookup(late_path, "late")
+            if _stats_indexed_lookup_enabled("late"):
+                late_dict = _prepare_indexed_stats_lookup(late_path, "late")
             else:
                 print(f"📦 Loading late stats: {late_path}")
                 late_dict = _load_json_object(late_path, "late_dict_raw")
             gc.collect()
         if post_lane_dict is None:
             if Path(post_lane_path).exists():
-                if _stats_sharded_mode_enabled("post_lane"):
-                    post_lane_dict = _prepare_sharded_stats_lookup(post_lane_path, "post_lane")
+                if _stats_indexed_lookup_enabled("post_lane"):
+                    post_lane_dict = _prepare_indexed_stats_lookup(post_lane_path, "post_lane")
                 else:
                     print(f"📦 Loading post-lane stats: {post_lane_path}")
                     post_lane_dict = _load_json_object(post_lane_path, "post_lane_dict_raw")
@@ -19148,8 +19469,8 @@ def _load_stats_dicts():
         print(f"⚠️ Post-lane stats file not found: {next_path}")
         _report_missing_runtime_file("post_lane_dict_raw.json", Path(next_path))
         next_payload = {}
-    elif _stats_sharded_mode_enabled(next_label):
-        next_payload = _prepare_sharded_stats_lookup(next_path, next_label)
+    elif _stats_indexed_lookup_enabled(next_label):
+        next_payload = _prepare_indexed_stats_lookup(next_path, next_label)
     else:
         print(f"📦 Warmup loading {next_label} stats: {next_path}")
         next_payload = _load_json_object(next_path, f"{next_label}_dict_raw")
