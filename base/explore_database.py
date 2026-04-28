@@ -53,6 +53,19 @@ MERGE_PARTITIONS = max(1, int(os.getenv("EXPLORE_MERGE_PARTITIONS", "64") or "64
 KEEP_SHARDS = os.getenv("EXPLORE_KEEP_SHARDS", "0").strip().lower() in {"1", "true", "yes"}
 COUNTER_BITS = 24
 COUNTER_MASK = (1 << COUNTER_BITS) - 1
+ALL_METRICS = ("lane", "early", "late", "post_lane")
+OUTPUTS_BY_METRIC = {
+    "lane": "lane_dict_raw.json",
+    "early": "early_dict_raw.json",
+    "late": "late_dict_raw.json",
+    "post_lane": "post_lane_dict_raw.json",
+}
+LABELS_BY_METRIC = {
+    "lane": "Lane",
+    "early": "Early",
+    "late": "Late",
+    "post_lane": "Post-lane",
+}
 
 
 def _rss_mb() -> float:
@@ -319,6 +332,42 @@ def _discover_pub_files(json_dir: Path) -> list[Path]:
     return pub_files
 
 
+def _enabled_metrics() -> tuple[str, ...]:
+    raw = os.getenv("EXPLORE_METRICS", "all").strip().lower()
+    if raw in {"", "all", "*"}:
+        return ALL_METRICS
+    aliases = {
+        "postlane": "post_lane",
+        "post-lane": "post_lane",
+        "post_lane": "post_lane",
+    }
+    metrics: list[str] = []
+    for item in raw.replace(";", ",").split(","):
+        metric = aliases.get(item.strip(), item.strip())
+        if not metric:
+            continue
+        if metric not in ALL_METRICS:
+            raise ValueError(f"Unknown EXPLORE_METRICS item: {item!r}; allowed={ALL_METRICS}")
+        if metric not in metrics:
+            metrics.append(metric)
+    if not metrics:
+        raise ValueError("EXPLORE_METRICS resolved to empty set")
+    return tuple(metrics)
+
+
+def _new_metric_dicts(metric_names: tuple[str, ...]) -> tuple[dict | None, dict | None, dict | None, dict | None]:
+    return (
+        {} if "lane" in metric_names else None,
+        {} if "early" in metric_names else None,
+        {} if "late" in metric_names else None,
+        {} if "post_lane" in metric_names else None,
+    )
+
+
+def _dict_len(data) -> int:
+    return len(data) if data is not None else 0
+
+
 def _match_is_train_candidate(match_id, match, min_start_ts: int, test_match_ids: set[str]) -> tuple[bool, str | None]:
     if not isinstance(match, dict):
         return False, "not_dict"
@@ -353,6 +402,7 @@ def main() -> int:
 
     _enable_compact_accumulators()
 
+    metric_names = _enabled_metrics()
     json_dir = Path(os.getenv("EXPLORE_JSON_DIR", str(DEFAULT_JSON_DIR)))
     test_set_path = Path(os.getenv("EXPLORE_TEST_SET_PATH", str(DEFAULT_TEST_SET_PATH)))
     stats_dir = Path(os.getenv("EXPLORE_STATS_DIR", str(DEFAULT_STATS_DIR)))
@@ -360,7 +410,6 @@ def main() -> int:
     max_matches = int(os.getenv("EXPLORE_MAX_MATCHES", "0") or "0")
     run_id = os.getenv("EXPLORE_RUN_ID", time.strftime("%Y%m%d_%H%M%S"))
     shard_dir = Path(os.getenv("EXPLORE_SHARD_DIR", str(stats_dir / "explore_database_shards" / run_id)))
-    metric_names = ("lane", "early", "late", "post_lane")
     metric_shards = {
         metric: [[] for _ in range(MERGE_PARTITIONS)]
         for metric in metric_names
@@ -378,6 +427,7 @@ def main() -> int:
     print(f"\nНайдено файлов для обработки: {len(pub_files)}")
     print(f"Источник: {json_dir}")
     print(f"start_date_time: {min_start_ts}")
+    print(f"enabled_metrics: {', '.join(metric_names)}")
 
     print("\n[ШАГ 2/3] Построение статистики на train set...")
 
@@ -386,12 +436,9 @@ def main() -> int:
             shutil.rmtree(shard_dir)
         shard_dir.mkdir(parents=True, exist_ok=True)
         print(f"  Shards dir: {shard_dir}")
-        lane_dict = early_dict = late_dict = post_lane_dict = None
+        lane_dict, early_dict, late_dict, post_lane_dict = _new_metric_dicts(metric_names)
     else:
-        lane_dict: dict = {}
-        early_dict: dict = {}
-        late_dict: dict = {}
-        post_lane_dict: dict = {}
+        lane_dict, early_dict, late_dict, post_lane_dict = _new_metric_dicts(metric_names)
 
     train_processed = 0
     train_total = 0
@@ -407,10 +454,7 @@ def main() -> int:
         file_train = 0
         file_excluded = 0
         if SHARD_PER_FILE:
-            lane_dict = {}
-            early_dict = {}
-            late_dict = {}
-            post_lane_dict = {}
+            lane_dict, early_dict, late_dict, post_lane_dict = _new_metric_dicts(metric_names)
 
         try:
             for match_id, match in _iter_json_object_items(file):
@@ -447,8 +491,8 @@ def main() -> int:
                     rate = train_total / elapsed
                     print(
                         f"\n    [{train_total:,}] "
-                        f"Lane: {len(lane_dict):,}, Early: {len(early_dict):,}, "
-                        f"Late: {len(late_dict):,}, PostLane: {len(post_lane_dict):,}, "
+                        f"Lane: {_dict_len(lane_dict):,}, Early: {_dict_len(early_dict):,}, "
+                        f"Late: {_dict_len(late_dict):,}, PostLane: {_dict_len(post_lane_dict):,}, "
                         f"RSS≈{_rss_mb():.0f}MB, {rate:.0f} maps/s",
                         end="",
                         flush=True,
@@ -467,6 +511,11 @@ def main() -> int:
                     "late": late_dict,
                     "post_lane": post_lane_dict,
                 }
+                per_file_data = {
+                    metric: data
+                    for metric, data in per_file_data.items()
+                    if metric in metric_names and data is not None
+                }
                 key_counts = {metric: len(data) for metric, data in per_file_data.items()}
                 for metric, data in per_file_data.items():
                     paths = _dump_partitioned_stats_dict(
@@ -477,16 +526,13 @@ def main() -> int:
                     for part, path in enumerate(paths):
                         metric_shards[metric][part].append(path)
 
-                lane_dict.clear()
-                early_dict.clear()
-                late_dict.clear()
-                post_lane_dict.clear()
+                for data in per_file_data.values():
+                    data.clear()
                 gc.collect()
                 shard_msg = (
                     f" shards:{time.monotonic() - shard_started:.1f}s "
-                    f"keys L/E/La/P:{key_counts['lane']:,}/"
-                    f"{key_counts['early']:,}/{key_counts['late']:,}/"
-                    f"{key_counts['post_lane']:,}"
+                    f"keys "
+                    + "/".join(f"{metric}:{key_counts.get(metric, 0):,}" for metric in metric_names)
                 )
             else:
                 shard_msg = ""
@@ -519,12 +565,7 @@ def main() -> int:
     stats_dir.mkdir(parents=True, exist_ok=True)
 
     if SHARD_PER_FILE:
-        outputs = [
-            ("lane_dict_raw.json", "lane"),
-            ("early_dict_raw.json", "early"),
-            ("late_dict_raw.json", "late"),
-            ("post_lane_dict_raw.json", "post_lane"),
-        ]
+        outputs = [(OUTPUTS_BY_METRIC[metric], metric) for metric in metric_names]
         merged_summary = {}
         for filename, metric in outputs:
             output_path = stats_dir / filename
@@ -537,33 +578,32 @@ def main() -> int:
             )
 
         print("\nСтатистика по словарям (train set):")
-        print(f"  Lane dict:     {merged_summary['lane'][0]:>6,} ключей, {merged_summary['lane'][1]:>7,} записей")
-        print(f"  Early dict:    {merged_summary['early'][0]:>6,} ключей, {merged_summary['early'][1]:>7,} записей")
-        print(f"  Late dict:     {merged_summary['late'][0]:>6,} ключей, {merged_summary['late'][1]:>7,} записей")
-        print(f"  Post-lane dict:{merged_summary['post_lane'][0]:>6,} ключей, {merged_summary['post_lane'][1]:>7,} записей")
+        for metric in metric_names:
+            label = LABELS_BY_METRIC[metric]
+            print(
+                f"  {label + ' dict:':15s}"
+                f"{merged_summary[metric][0]:>6,} ключей, {merged_summary[metric][1]:>7,} записей"
+            )
         if KEEP_SHARDS:
             print(f"  Shards сохранены: {shard_dir}")
         else:
             shutil.rmtree(shard_dir, ignore_errors=True)
             print(f"  Shards удалены: {shard_dir}")
     else:
-        lane_matches = sum(_stats_games(stats) for stats in lane_dict.values())
-        early_matches = sum(_stats_games(stats) for stats in early_dict.values())
-        late_matches = sum(_stats_games(stats) for stats in late_dict.values())
-        post_lane_matches = sum(_stats_games(stats) for stats in post_lane_dict.values())
-
         print("\nСтатистика по словарям (train set):")
-        print(f"  Lane dict:     {len(lane_dict):>6,} ключей, {lane_matches:>7,} записей")
-        print(f"  Early dict:    {len(early_dict):>6,} ключей, {early_matches:>7,} записей")
-        print(f"  Late dict:     {len(late_dict):>6,} ключей, {late_matches:>7,} записей")
-        print(f"  Post-lane dict:{len(post_lane_dict):>6,} ключей, {post_lane_matches:>7,} записей")
+        data_by_metric = {
+            "lane": lane_dict,
+            "early": early_dict,
+            "late": late_dict,
+            "post_lane": post_lane_dict,
+        }
+        for metric in metric_names:
+            data = data_by_metric[metric] or {}
+            matches = sum(_stats_games(stats) for stats in data.values())
+            label = LABELS_BY_METRIC[metric]
+            print(f"  {label + ' dict:':15s}{len(data):>6,} ключей, {matches:>7,} записей")
 
-        outputs = [
-            ("lane_dict_raw.json", lane_dict),
-            ("early_dict_raw.json", early_dict),
-            ("late_dict_raw.json", late_dict),
-            ("post_lane_dict_raw.json", post_lane_dict),
-        ]
+        outputs = [(OUTPUTS_BY_METRIC[metric], data_by_metric[metric] or {}) for metric in metric_names]
         for filename, data in outputs:
             output_path = stats_dir / filename
             started = time.monotonic()

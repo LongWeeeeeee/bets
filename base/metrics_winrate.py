@@ -325,6 +325,11 @@ def _is_internal_metric_key(metric_name: object) -> bool:
 
 def _winner_from_generated_fields(match: dict, phase: str) -> tuple[bool, Optional[str]]:
     if phase == 'early':
+        if 'is_early' in match or 'early_win' in match:
+            winner = match.get('early_win')
+            if match.get('is_early') and winner in ('radiant', 'dire'):
+                return True, winner
+            return False, None
         winner = match.get('early_win')
         if winner in ('radiant', 'dire'):
             return True, winner
@@ -340,6 +345,11 @@ def _winner_from_generated_fields(match: dict, phase: str) -> tuple[bool, Option
         return is_early_match_custom(match)
 
     if phase == 'late':
+        if 'is_late' in match or 'late_win' in match:
+            winner = match.get('late_win')
+            if match.get('is_late') and winner in ('radiant', 'dire'):
+                return True, winner
+            return False, None
         winner = match.get('late_win')
         if match.get('is_late') and winner in ('radiant', 'dire'):
             return True, winner
@@ -356,6 +366,11 @@ def _winner_from_generated_fields(match: dict, phase: str) -> tuple[bool, Option
         return is_late_match_custom(match, early_winner if early_ok else None)
 
     if phase == 'post_lane':
+        if 'is_post_lane' in match or 'post_lane_win' in match:
+            winner = match.get('post_lane_win')
+            if match.get('is_post_lane') and winner in ('radiant', 'dire'):
+                return True, winner
+            return False, None
         winner = match.get('post_lane_win')
         if match.get('is_post_lane') and winner in ('radiant', 'dire'):
             return True, winner

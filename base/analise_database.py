@@ -784,7 +784,8 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
     if exclude_match_ids and match_id and match_id in exclude_match_ids:
         return False  # Матч пропущен
     # 1. Обработка лайнов
-    lanes(match, lane_dict)
+    if lane_dict is not None:
+        lanes(match, lane_dict)
     
     # 2. Извлекаем героев и позиции для early/late/post-lane
     r_by_pos, d_by_pos = extract_heroes_by_position(match)
@@ -801,7 +802,7 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
     # 3. Обработка EARLY словаря
     # Используем новый фильтр is_early_match()
     early_result, dominator = is_early_match(match)
-    if early_result:
+    if early_dict is not None and early_result:
         # Для early_dict значение зависит от того, кто доминировал
         r_val = 1 if dominator == 'radiant' else 0
         d_val = 1 if dominator == 'dire' else 0
@@ -809,7 +810,7 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
     
     # Проверяем условия для late_dict
     # Используем улучшенный фильтр is_late_match()
-    if is_late_match(match, dominator):
+    if late_dict is not None and is_late_match(match, dominator):
         # Записываем кто выиграл матч
         r_val = 1 if did_radiant_win else 0
         d_val = 0 if did_radiant_win else 1
