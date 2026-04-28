@@ -485,18 +485,23 @@ class _ShardedStatsLookup(dict):
         super().__init__()
         self.shard_dir = Path(shard_dir)
         self.label = str(label)
-        self.max_cached_shards = max(1, int(max_cached_shards))
+        self.max_cached_shards = max(0, int(max_cached_shards))
         self._shards: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
 
     def __bool__(self) -> bool:
         return True
 
+    @property
+    def cache_enabled(self) -> bool:
+        return self.max_cached_shards > 0
+
     def _load_shard(self, shard_id: str) -> Dict[str, Any]:
         shard_id = str(shard_id or "misc")
-        cached = self._shards.get(shard_id)
-        if cached is not None:
-            self._shards.move_to_end(shard_id)
-            return cached
+        if self.cache_enabled:
+            cached = self._shards.get(shard_id)
+            if cached is not None:
+                self._shards.move_to_end(shard_id)
+                return cached
 
         shard_path = self.shard_dir / f"{shard_id}.jsonl"
         shard_data: Dict[str, Any] = {}
@@ -508,6 +513,9 @@ class _ShardedStatsLookup(dict):
                         continue
                     key, value = orjson.loads(line)
                     shard_data[str(key)] = value
+        if not self.cache_enabled:
+            return shard_data
+
         self._shards[shard_id] = shard_data
         self._shards.move_to_end(shard_id)
         while len(self._shards) > self.max_cached_shards:
@@ -515,6 +523,8 @@ class _ShardedStatsLookup(dict):
         return shard_data
 
     def warm_hero_ids(self, hero_ids: List[Any]) -> None:
+        if not self.cache_enabled:
+            return
         for hero_id in hero_ids:
             try:
                 shard_id = str(int(hero_id))
@@ -592,7 +602,8 @@ def _prepare_sharded_stats_lookup(source_path: str, label: str) -> _ShardedStats
         temp_dir.rename(shard_dir)
         print(f"✅ Built sharded {label} stats: {entries:,} rows -> {shard_dir}")
 
-    print(f"🧠 Using sharded {label} stats backend: {shard_dir}")
+    cache_label = "disabled" if STATS_SHARD_CACHE_MAX <= 0 else f"{STATS_SHARD_CACHE_MAX} shards"
+    print(f"🧠 Using sharded {label} stats backend: {shard_dir} (cache={cache_label})")
     return _ShardedStatsLookup(
         shard_dir,
         label=label,
@@ -5673,7 +5684,7 @@ STATS_SEQUENTIAL_WARMUP_ENABLED = _safe_bool_env("STATS_SEQUENTIAL_WARMUP_ENABLE
 STATS_WARMUP_STEP_DELAY_SECONDS = _safe_float_env("STATS_WARMUP_STEP_DELAY_SECONDS", 45.0)
 STATS_SHARDED_LOOKUP_MODE = str(os.getenv("STATS_SHARDED_LOOKUP_MODE", "auto")).strip().lower() or "auto"
 STATS_SHARDED_LOOKUP_MAX_RAM_GB = _safe_float_env("STATS_SHARDED_LOOKUP_MAX_RAM_GB", 8.0)
-STATS_SHARD_CACHE_MAX = _safe_int_env("STATS_SHARD_CACHE_MAX", 12)
+STATS_SHARD_CACHE_MAX = _safe_int_env("STATS_SHARD_CACHE_MAX", 0)
 STATS_SHARD_BUILD_PROGRESS_EVERY = _safe_int_env("STATS_SHARD_BUILD_PROGRESS_EVERY", 500000)
 stats_warmup_last_heavy_load_ts = 0.0
 
