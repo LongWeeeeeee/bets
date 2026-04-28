@@ -31,6 +31,7 @@ import re
 import shlex
 import shutil
 import tempfile
+from itertools import combinations, permutations
 import numpy as np
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -481,12 +482,21 @@ def _stats_key_leading_hero_id(key: Any) -> str:
 
 
 class _ShardedStatsLookup(dict):
-    def __init__(self, shard_dir: Path, *, label: str, max_cached_shards: int = 24):
+    def __init__(
+        self,
+        shard_dir: Path,
+        *,
+        label: str,
+        max_cached_shards: int = 24,
+        max_cached_keys: int = 0,
+    ):
         super().__init__()
         self.shard_dir = Path(shard_dir)
         self.label = str(label)
         self.max_cached_shards = max(0, int(max_cached_shards))
         self._shards: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+        self.max_cached_keys = max(0, int(max_cached_keys))
+        self._key_cache: "OrderedDict[str, Any]" = OrderedDict()
 
     def __bool__(self) -> bool:
         return True
@@ -494,6 +504,30 @@ class _ShardedStatsLookup(dict):
     @property
     def cache_enabled(self) -> bool:
         return self.max_cached_shards > 0
+
+    @property
+    def key_cache_enabled(self) -> bool:
+        return self.max_cached_keys > 0
+
+    def _get_cached_key(self, key: Any) -> Tuple[bool, Any]:
+        if not self.key_cache_enabled:
+            return False, None
+        key_str = str(key)
+        try:
+            value = self._key_cache[key_str]
+        except KeyError:
+            return False, None
+        self._key_cache.move_to_end(key_str)
+        return True, value
+
+    def _remember_key(self, key: Any, value: Any) -> None:
+        if not self.key_cache_enabled:
+            return
+        key_str = str(key)
+        self._key_cache[key_str] = value
+        self._key_cache.move_to_end(key_str)
+        while len(self._key_cache) > self.max_cached_keys:
+            self._key_cache.popitem(last=False)
 
     def _load_shard(self, shard_id: str) -> Dict[str, Any]:
         shard_id = str(shard_id or "misc")
@@ -524,6 +558,9 @@ class _ShardedStatsLookup(dict):
 
     def _get_uncached(self, key: Any, default=None):
         key_str = str(key)
+        found, cached = self._get_cached_key(key_str)
+        if found:
+            return cached
         shard_path = self.shard_dir / f"{_stats_key_leading_hero_id(key_str)}.jsonl"
         if not shard_path.exists():
             return default
@@ -537,8 +574,54 @@ class _ShardedStatsLookup(dict):
                 except Exception:
                     continue
                 if str(stored_key) == key_str:
+                    self._remember_key(key_str, value)
                     return value
         return default
+
+    def get_many(self, keys: Any) -> Dict[str, Any]:
+        requested_by_shard: Dict[str, set] = {}
+        result: Dict[str, Any] = {}
+        for key in keys or []:
+            key_str = str(key)
+            found, cached = self._get_cached_key(key_str)
+            if found:
+                result[key_str] = cached
+                continue
+            requested_by_shard.setdefault(_stats_key_leading_hero_id(key_str), set()).add(key_str)
+
+        for shard_id, wanted_keys in requested_by_shard.items():
+            if not wanted_keys:
+                continue
+            cached = self._shards.get(shard_id) if self.cache_enabled else None
+            if cached is not None:
+                for key in wanted_keys:
+                    if key in cached:
+                        result[key] = cached[key]
+                        self._remember_key(key, cached[key])
+                continue
+
+            remaining = set(wanted_keys)
+            shard_path = self.shard_dir / f"{shard_id}.jsonl"
+            if not shard_path.exists():
+                continue
+            with shard_path.open("rb") as f:
+                for raw_line in f:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        stored_key, value = orjson.loads(line)
+                    except Exception:
+                        continue
+                    stored_key = str(stored_key)
+                    if stored_key not in remaining:
+                        continue
+                    result[stored_key] = value
+                    self._remember_key(stored_key, value)
+                    remaining.remove(stored_key)
+                    if not remaining:
+                        break
+        return result
 
     def warm_hero_ids(self, hero_ids: List[Any]) -> None:
         if not self.cache_enabled:
@@ -551,11 +634,107 @@ class _ShardedStatsLookup(dict):
             self._load_shard(shard_id)
 
     def get(self, key: Any, default=None):
+        found, cached = self._get_cached_key(key)
+        if found:
+            return cached
         if not self.cache_enabled:
             return self._get_uncached(key, default)
         shard_id = _stats_key_leading_hero_id(key)
         shard = self._load_shard(shard_id)
-        return shard.get(str(key), default)
+        value = shard.get(str(key), default)
+        if value is not default:
+            self._remember_key(key, value)
+        return value
+
+
+class _DraftScopedStatsLookup(dict):
+    def __bool__(self) -> bool:
+        return True
+
+
+def _draft_hero_entries(side: Any) -> List[Tuple[str, str]]:
+    entries: List[Tuple[str, str]] = []
+    if not isinstance(side, dict):
+        return entries
+    for pos in ("pos1", "pos2", "pos3", "pos4", "pos5"):
+        hero_payload = side.get(pos) or {}
+        try:
+            hero_id = int(hero_payload.get("hero_id"))
+        except (TypeError, ValueError):
+            continue
+        if hero_id > 0:
+            entries.append((pos, str(hero_id)))
+    return entries
+
+
+def _draft_group_key_variants(group: Any) -> List[str]:
+    parts = str(group or "").split(",")
+    if len(parts) <= 1:
+        return [parts[0]] if parts and parts[0] else []
+    return sorted({",".join(perm) for perm in permutations(parts)})
+
+
+def _add_draft_with_lookup_keys(keys: set, left: str, right: str) -> None:
+    for left_variant in _draft_group_key_variants(left):
+        for right_variant in _draft_group_key_variants(right):
+            keys.add(f"{left_variant}_with_{right_variant}")
+            keys.add(f"{right_variant}_with_{left_variant}")
+
+
+def _add_draft_vs_lookup_keys(keys: set, left: str, right: str) -> None:
+    for left_variant in _draft_group_key_variants(left):
+        for right_variant in _draft_group_key_variants(right):
+            keys.add(f"{left_variant}_vs_{right_variant}")
+            keys.add(f"{right_variant}_vs_{left_variant}")
+
+
+def _draft_stats_lookup_keys(radiant_heroes_and_pos: Any, dire_heroes_and_pos: Any) -> set:
+    """All raw stat keys touched by synergy_and_counterpick for one fixed draft."""
+    keys = set()
+    radiant_entries = _draft_hero_entries(radiant_heroes_and_pos)
+    dire_entries = _draft_hero_entries(dire_heroes_and_pos)
+
+    def hero_key(entry: Tuple[str, str]) -> str:
+        pos, hero_id = entry
+        return f"{hero_id}{pos}"
+
+    for team_entries in (radiant_entries, dire_entries):
+        team_keys = [hero_key(entry) for entry in team_entries]
+        keys.update(team_keys)
+        for left, right in combinations(team_keys, 2):
+            _add_draft_with_lookup_keys(keys, left, right)
+        for trio in combinations(team_keys, 3):
+            for perm in permutations(trio):
+                keys.add(",".join(perm))
+
+    for team_entries, opp_entries in (
+        (radiant_entries, dire_entries),
+        (dire_entries, radiant_entries),
+    ):
+        team_keys = [hero_key(entry) for entry in team_entries]
+        opp_keys = [hero_key(entry) for entry in opp_entries]
+        for left in team_keys:
+            for right in opp_keys:
+                _add_draft_vs_lookup_keys(keys, left, right)
+            for opp_duo in combinations(opp_keys, 2):
+                duo_key = ",".join(sorted(opp_duo))
+                _add_draft_vs_lookup_keys(keys, left, duo_key)
+
+    return keys
+
+
+def _prepare_draft_scoped_stats_lookup(
+    stats_obj: Any,
+    radiant_heroes_and_pos: Any,
+    dire_heroes_and_pos: Any,
+    draft_lookup_keys: Optional[set] = None,
+) -> Any:
+    if not STATS_DRAFT_SCOPED_LOOKUP_ENABLED or not isinstance(stats_obj, _ShardedStatsLookup):
+        return stats_obj
+    keys = draft_lookup_keys
+    if keys is None:
+        keys = _draft_stats_lookup_keys(radiant_heroes_and_pos, dire_heroes_and_pos)
+    return _DraftScopedStatsLookup(stats_obj.get_many(keys))
 
 
 def _prepare_sharded_stats_lookup(source_path: str, label: str) -> _ShardedStatsLookup:
@@ -628,10 +807,13 @@ def _prepare_sharded_stats_lookup(source_path: str, label: str) -> _ShardedStats
         shard_dir,
         label=label,
         max_cached_shards=STATS_SHARD_CACHE_MAX,
+        max_cached_keys=STATS_SHARD_KEY_CACHE_MAX,
     )
 
 
 def _warm_draft_stats_shards(radiant_heroes_and_pos: dict, dire_heroes_and_pos: dict) -> None:
+    if STATS_DRAFT_SCOPED_LOOKUP_ENABLED:
+        return
     hero_ids: List[int] = []
     for side in (radiant_heroes_and_pos, dire_heroes_and_pos):
         if not isinstance(side, dict):
@@ -5705,7 +5887,9 @@ STATS_WARMUP_STEP_DELAY_SECONDS = _safe_float_env("STATS_WARMUP_STEP_DELAY_SECON
 STATS_SHARDED_LOOKUP_MODE = str(os.getenv("STATS_SHARDED_LOOKUP_MODE", "auto")).strip().lower() or "auto"
 STATS_SHARDED_LOOKUP_MAX_RAM_GB = _safe_float_env("STATS_SHARDED_LOOKUP_MAX_RAM_GB", 8.0)
 STATS_SHARD_CACHE_MAX = _safe_int_env("STATS_SHARD_CACHE_MAX", 0)
+STATS_SHARD_KEY_CACHE_MAX = _safe_int_env("STATS_SHARD_KEY_CACHE_MAX", 20000)
 STATS_SHARD_BUILD_PROGRESS_EVERY = _safe_int_env("STATS_SHARD_BUILD_PROGRESS_EVERY", 500000)
+STATS_DRAFT_SCOPED_LOOKUP_ENABLED = _safe_bool_env("STATS_DRAFT_SCOPED_LOOKUP_ENABLED", True)
 stats_warmup_last_heavy_load_ts = 0.0
 
 # Настройка прокси
@@ -12353,7 +12537,8 @@ def _runtime_object_summary(value: Any) -> str:
         if isinstance(value, _ShardedStatsLookup):
             cached_shards = len(value._shards)
             cached_rows = sum(len(shard) for shard in value._shards.values())
-            return f"sharded(cached_shards={cached_shards},cached_rows={cached_rows})"
+            cached_keys = len(value._key_cache)
+            return f"sharded(cached_shards={cached_shards},cached_rows={cached_rows},cached_keys={cached_keys})"
         if isinstance(value, dict):
             return f"dict(len={len(value)})"
         if isinstance(value, (set, list, tuple, deque)):
@@ -15921,12 +16106,34 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             prev_wrapper_enabled = os.getenv("SIGNAL_WRAPPER_ENABLED")
             os.environ["SIGNAL_WRAPPER_ENABLED"] = "0"
             try:
+                draft_lookup_keys = _draft_stats_lookup_keys(
+                    radiant_heroes_and_pos,
+                    dire_heroes_and_pos,
+                )
+                scoped_early_dict = _prepare_draft_scoped_stats_lookup(
+                    early_dict,
+                    radiant_heroes_and_pos,
+                    dire_heroes_and_pos,
+                    draft_lookup_keys,
+                )
+                scoped_late_dict = _prepare_draft_scoped_stats_lookup(
+                    late_dict,
+                    radiant_heroes_and_pos,
+                    dire_heroes_and_pos,
+                    draft_lookup_keys,
+                )
+                scoped_post_lane_dict = _prepare_draft_scoped_stats_lookup(
+                    post_lane_dict,
+                    radiant_heroes_and_pos,
+                    dire_heroes_and_pos,
+                    draft_lookup_keys,
+                )
                 return synergy_and_counterpick(
                     radiant_heroes_and_pos=radiant_heroes_and_pos,
                     dire_heroes_and_pos=dire_heroes_and_pos,
-                    early_dict=early_dict,
-                    mid_dict=late_dict,
-                    post_lane_dict=post_lane_dict,
+                    early_dict=scoped_early_dict,
+                    mid_dict=scoped_late_dict,
+                    post_lane_dict=scoped_post_lane_dict,
                 )
             finally:
                 if prev_wrapper_enabled is None:

@@ -152,6 +152,108 @@ def _valid_heroes(seed: int, positions: int = 5) -> Dict[str, Dict[str, int]]:
     }
 
 
+def _write_sharded_stats(shard_dir: Path, stats: Dict[str, Any]) -> None:
+    shard_dir.mkdir(parents=True, exist_ok=True)
+    grouped: Dict[str, List[tuple[str, Any]]] = {}
+    for key, value in stats.items():
+        shard_id = runtime._stats_key_leading_hero_id(key)
+        grouped.setdefault(shard_id, []).append((key, value))
+    for shard_id, rows in grouped.items():
+        payload = b"".join(orjson.dumps([key, value]) + b"\n" for key, value in rows)
+        (shard_dir / f"{shard_id}.jsonl").write_bytes(payload)
+
+
+def test_sharded_stats_get_many_returns_only_requested_keys_without_full_cache(tmp_path) -> None:
+    shard_dir = tmp_path / "stats.shards"
+    stats = {
+        "1pos1": {"wins": 12, "games": 20},
+        "1pos1_with_2pos2": {"wins": 11, "games": 20},
+        "1pos1_vs_6pos1": {"wins": 14, "games": 20},
+        "1pos1_with_999pos1": {"wins": 1, "games": 20},
+        "6pos1_vs_1pos1": {"wins": 6, "games": 20},
+    }
+    _write_sharded_stats(shard_dir, stats)
+    lookup = runtime._ShardedStatsLookup(shard_dir, label="unit", max_cached_shards=0, max_cached_keys=2)
+
+    result = lookup.get_many({"1pos1", "1pos1_vs_6pos1", "6pos1_vs_1pos1", "missing"})
+
+    assert result == {
+        "1pos1": stats["1pos1"],
+        "1pos1_vs_6pos1": stats["1pos1_vs_6pos1"],
+        "6pos1_vs_1pos1": stats["6pos1_vs_1pos1"],
+    }
+    assert lookup._shards == {}
+    assert len(lookup._key_cache) == 2
+    assert set(lookup._key_cache) <= set(result)
+    assert lookup.get_many({"1pos1_vs_6pos1"}) == {"1pos1_vs_6pos1": stats["1pos1_vs_6pos1"]}
+    assert lookup.get("1pos1_with_2pos2") == stats["1pos1_with_2pos2"]
+    assert len(lookup._key_cache) == 2
+    assert "1pos1_with_2pos2" in lookup._key_cache
+
+
+def test_draft_stats_lookup_keys_cover_synergy_accesses() -> None:
+    radiant = _valid_heroes(0)
+    dire = _valid_heroes(5)
+    observed_keys = set()
+
+    class _TracingStats(dict):
+        def __bool__(self) -> bool:
+            return True
+
+        def get(self, key: Any, default=None):
+            observed_keys.add(str(key))
+            return super().get(key, default)
+
+    tracing_stats = _TracingStats()
+
+    runtime.synergy_and_counterpick(
+        radiant,
+        dire,
+        tracing_stats,
+        tracing_stats,
+        post_lane_dict=tracing_stats,
+    )
+
+    assert observed_keys
+    assert observed_keys <= runtime._draft_stats_lookup_keys(radiant, dire)
+
+
+def test_draft_scoped_stats_lookup_preserves_synergy_results(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "STATS_DRAFT_SCOPED_LOOKUP_ENABLED", True, raising=False)
+    radiant = _valid_heroes(0)
+    dire = _valid_heroes(5)
+    required_keys = runtime._draft_stats_lookup_keys(radiant, dire)
+    stats = {key: {"wins": 14, "games": 20} for key in required_keys}
+    stats["1pos1_with_999pos1"] = {"wins": 1, "games": 20}
+    shard_dir = tmp_path / "stats.shards"
+    _write_sharded_stats(shard_dir, stats)
+    lookup = runtime._ShardedStatsLookup(shard_dir, label="unit", max_cached_shards=0, max_cached_keys=50)
+
+    scoped = runtime._prepare_draft_scoped_stats_lookup(lookup, radiant, dire)
+
+    assert isinstance(scoped, dict)
+    assert scoped
+    assert "1pos1_with_999pos1" not in scoped
+    assert lookup._shards == {}
+    assert len(lookup._key_cache) <= 50
+    full_stats = {key: stats[key] for key in required_keys}
+    full_result = runtime.synergy_and_counterpick(
+        radiant,
+        dire,
+        full_stats,
+        full_stats,
+        post_lane_dict=full_stats,
+    )
+    scoped_result = runtime.synergy_and_counterpick(
+        radiant,
+        dire,
+        scoped,
+        scoped,
+        post_lane_dict=scoped,
+    )
+    assert full_result == scoped_result
+
+
 def test_extract_live_listing_context_supports_cyberscore_cards() -> None:
     heads, bodies = _build_cyberscore_card()
     context = runtime._extract_live_listing_context(heads[0], bodies[0])
