@@ -785,8 +785,8 @@ def test_compute_schedule_recheck_sleep_seconds() -> None:
     assert runtime._compute_schedule_recheck_sleep_seconds(5 * 60) == 60
     assert runtime._compute_schedule_recheck_sleep_seconds(29 * 60) == 60
     assert runtime._compute_schedule_recheck_sleep_seconds(30 * 60) == 60
-    assert runtime._compute_schedule_recheck_sleep_seconds(45 * 60) == 5 * 60
-    assert runtime._compute_schedule_recheck_sleep_seconds(4 * 60 * 60) == 5 * 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(45 * 60) == 15 * 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(4 * 60 * 60) == 30 * 60
 
 
 def test_extract_nearest_cyberscore_scheduled_match_info_from_card() -> None:
@@ -934,7 +934,7 @@ def test_extract_nearest_scheduled_match_info() -> None:
     assert schedule is not None
     assert schedule["matchup"] == "Aurora vs PARIVISION"
     assert int(schedule["sleep_seconds_raw"]) == (3 * 60 * 60 + 14 * 60)
-    assert int(schedule["sleep_seconds"]) == (5 * 60)
+    assert int(schedule["sleep_seconds"]) == (30 * 60)
 
 
 def test_extract_nearest_scheduled_match_info_skips_denied_leagues() -> None:
