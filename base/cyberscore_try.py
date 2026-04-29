@@ -6807,6 +6807,40 @@ def _iter_cyberscore_schedule_time_values(payload: Any, *, depth: int = 0):
                 yield from _iter_cyberscore_schedule_time_values(value, depth=depth + 1)
 
 
+_CYBERSCORE_MATCH_SCHEDULE_CONTAINER_KEYS = {
+    "game",
+    "map",
+    "match",
+    "series",
+}
+
+
+def _iter_cyberscore_match_schedule_time_values(item: Dict[str, Any]):
+    # CyberScore item payloads include nested tournament/league date fields.
+    # Those are not match start times, so schedule selection must stay match-scoped.
+    for key, value in item.items():
+        key_text = str(key or "")
+        if isinstance(value, (dict, list, tuple)):
+            continue
+        if _CYBERSCORE_SCHEDULE_TIME_SKIP_KEY_RE.search(key_text):
+            continue
+        if _CYBERSCORE_SCHEDULE_TIME_KEY_RE.search(key_text):
+            yield value
+
+    for container_key in _CYBERSCORE_MATCH_SCHEDULE_CONTAINER_KEYS:
+        container = item.get(container_key)
+        if not isinstance(container, dict):
+            continue
+        for key, value in container.items():
+            key_text = str(key or "")
+            if isinstance(value, (dict, list, tuple)):
+                continue
+            if _CYBERSCORE_SCHEDULE_TIME_SKIP_KEY_RE.search(key_text):
+                continue
+            if _CYBERSCORE_SCHEDULE_TIME_KEY_RE.search(key_text):
+                yield value
+
+
 def _extract_cyberscore_item_scheduled_at(
     item: Optional[Dict[str, Any]],
     *,
@@ -6814,7 +6848,7 @@ def _extract_cyberscore_item_scheduled_at(
 ) -> Optional[datetime]:
     if not isinstance(item, dict):
         return None
-    for value in _iter_cyberscore_schedule_time_values(item):
+    for value in _iter_cyberscore_match_schedule_time_values(item):
         parsed = _parse_cyberscore_schedule_timestamp_value(value, now_utc=now_utc)
         if parsed is not None:
             return parsed

@@ -812,6 +812,47 @@ def test_extract_nearest_cyberscore_scheduled_match_info_from_card() -> None:
     assert info["source"] == "cyberscore"
 
 
+def test_cyberscore_schedule_ignores_nested_tournament_dates() -> None:
+    now_utc = datetime(2026, 4, 29, 8, 30, tzinfo=ZoneInfo("UTC"))  # 11:30 MSK
+    today_item = {
+        "id": 222,
+        "tournament": {
+            "title": "European Pro League 37",
+            "date_start": "2026-04-01T00:00:00+00:00",
+        },
+    }
+    tomorrow_item = {
+        "id": 333,
+        "date_start": "2026-04-30T06:00:00+00:00",
+        "tournament": {"title": "European Pro League 37"},
+    }
+    flight_chunk = (
+        f'prefix "item":{json.dumps(today_item, separators=(",", ":"))},'
+        f'mid "item":{json.dumps(tomorrow_item, separators=(",", ":"))}, suffix'
+    )
+    html = f"""
+    <html>
+      <a class="matches-item" href="/en/matches/222/today-match">
+        Today Today at 12:00 BO 3 0:0
+        <span class="team-name">Team Stels</span><span class="team-name">Inner Circle</span>
+      </a>
+      <a class="matches-item" href="/en/matches/333/tomorrow-match">
+        Tomorrow Tomorrow at 09:00 BO 3 0:0
+        <span class="team-name">MODUS Minus Modus</span><span class="team-name">DOGSENT</span>
+      </a>
+      <script>self.__next_f.push([1,{json.dumps(flight_chunk)}])</script>
+    </html>
+    """
+
+    info = runtime._extract_nearest_cyberscore_scheduled_match_info(html, now_utc=now_utc)
+
+    assert info is not None
+    assert info["matchup"] == "Team Stels vs Inner Circle"
+    assert info["href"] == "https://cyberscore.live/en/matches/222/today-match"
+    assert int(info["sleep_seconds_raw"]) == 30 * 60
+    assert info["sleep_seconds"] == 60
+
+
 def test_cyberscore_schedule_sleep_polls_near_midnight_quiet_window() -> None:
     now_utc = datetime(2026, 4, 1, 20, 50, tzinfo=ZoneInfo("UTC"))  # 23:50 MSK
     html = """
