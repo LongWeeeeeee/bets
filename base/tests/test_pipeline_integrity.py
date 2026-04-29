@@ -781,11 +781,12 @@ def test_compute_cyberscore_quiet_hours_sleep_seconds() -> None:
 
 def test_compute_schedule_recheck_sleep_seconds() -> None:
     assert runtime._compute_schedule_recheck_sleep_seconds(-1) == 3 * 60
-    assert runtime._compute_schedule_recheck_sleep_seconds(5 * 60) == 5 * 60
-    assert runtime._compute_schedule_recheck_sleep_seconds(29 * 60) == 29 * 60
-    assert runtime._compute_schedule_recheck_sleep_seconds(30 * 60) == 30 * 60
-    assert runtime._compute_schedule_recheck_sleep_seconds(45 * 60) == 30 * 60
-    assert runtime._compute_schedule_recheck_sleep_seconds(4 * 60 * 60) == 30 * 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(30) == 30
+    assert runtime._compute_schedule_recheck_sleep_seconds(5 * 60) == 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(29 * 60) == 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(30 * 60) == 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(45 * 60) == 5 * 60
+    assert runtime._compute_schedule_recheck_sleep_seconds(4 * 60 * 60) == 5 * 60
 
 
 def test_extract_nearest_cyberscore_scheduled_match_info_from_card() -> None:
@@ -807,11 +808,11 @@ def test_extract_nearest_cyberscore_scheduled_match_info_from_card() -> None:
     assert info["matchup"] == "Team A vs Team B"
     assert info["href"] == "https://cyberscore.live/en/matches/222/next-match"
     assert info["sleep_seconds_raw"] == 20 * 60
-    assert info["sleep_seconds"] == 20 * 60
+    assert info["sleep_seconds"] == 60
     assert info["source"] == "cyberscore"
 
 
-def test_cyberscore_schedule_sleep_is_capped_by_midnight_quiet_window() -> None:
+def test_cyberscore_schedule_sleep_polls_near_midnight_quiet_window() -> None:
     now_utc = datetime(2026, 4, 1, 20, 50, tzinfo=ZoneInfo("UTC"))  # 23:50 MSK
     html = """
     <html>
@@ -825,7 +826,7 @@ def test_cyberscore_schedule_sleep_is_capped_by_midnight_quiet_window() -> None:
 
     assert info is not None
     assert info["sleep_seconds_raw"] == 20 * 60
-    assert info["sleep_seconds"] == 10 * 60
+    assert info["sleep_seconds"] == 60
 
 
 def test_cyberscore_schedule_before_quiet_end_keeps_runtime_awake() -> None:
@@ -892,7 +893,7 @@ def test_extract_nearest_scheduled_match_info() -> None:
     assert schedule is not None
     assert schedule["matchup"] == "Aurora vs PARIVISION"
     assert int(schedule["sleep_seconds_raw"]) == (3 * 60 * 60 + 14 * 60)
-    assert int(schedule["sleep_seconds"]) == (30 * 60)
+    assert int(schedule["sleep_seconds"]) == (5 * 60)
 
 
 def test_extract_nearest_scheduled_match_info_skips_denied_leagues() -> None:

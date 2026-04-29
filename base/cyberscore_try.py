@@ -6254,7 +6254,7 @@ SCHEDULE_LIVE_WAIT_TARGET: Optional[Dict[str, Any]] = None
 LIVE_MATCHES_MISSING_ALERT_ACTIVE = False
 PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE = False
 SCHEDULE_WAKE_LEAD_SECONDS = _safe_float_env("SCHEDULE_WAKE_LEAD_SECONDS", 30.0 * 60.0)
-SCHEDULE_MAX_SLEEP_SECONDS = _safe_float_env("SCHEDULE_MAX_SLEEP_SECONDS", 30.0 * 60.0)
+SCHEDULE_MAX_SLEEP_SECONDS = _safe_float_env("SCHEDULE_MAX_SLEEP_SECONDS", 5.0 * 60.0)
 SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS = _safe_float_env("SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS", 30.0 * 60.0)
 SCHEDULE_NEAR_MATCH_POLL_SECONDS = _safe_float_env("SCHEDULE_NEAR_MATCH_POLL_SECONDS", 60.0)
 SCHEDULE_POST_START_POLL_SECONDS = _safe_float_env("SCHEDULE_POST_START_POLL_SECONDS", 3.0 * 60.0)
@@ -6595,9 +6595,16 @@ def _compute_schedule_recheck_sleep_seconds(raw_sleep_seconds: float) -> float:
         return float(SCHEDULE_POST_START_POLL_SECONDS)
     if raw_seconds <= 0:
         return float(SCHEDULE_POST_START_POLL_SECONDS)
+    max_sleep = max(1.0, float(SCHEDULE_MAX_SLEEP_SECONDS))
+    near_match_poll = max(1.0, float(SCHEDULE_NEAR_MATCH_POLL_SECONDS))
+    wake_lead = max(0.0, float(SCHEDULE_WAKE_LEAD_SECONDS))
+    if wake_lead > 0.0:
+        if raw_seconds <= wake_lead:
+            return min(raw_seconds, near_match_poll)
+        return min(max(raw_seconds - wake_lead, near_match_poll), max_sleep)
     if raw_seconds >= float(SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS):
-        return min(raw_seconds, float(SCHEDULE_MAX_SLEEP_SECONDS))
-    return raw_seconds
+        return min(raw_seconds, max_sleep)
+    return min(raw_seconds, max_sleep)
 
 
 def _should_poll_for_scheduled_live_target(now_utc: Optional[datetime] = None) -> bool:
