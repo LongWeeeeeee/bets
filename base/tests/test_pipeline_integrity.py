@@ -853,6 +853,49 @@ def test_cyberscore_schedule_ignores_nested_tournament_dates() -> None:
     assert info["sleep_seconds"] == 60
 
 
+def test_cyberscore_recent_live_empty_caps_idle_sleep(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "CYBERSCORE_RECENT_LIVE_EMPTY_GRACE_SECONDS", 45 * 60, raising=False)
+    monkeypatch.setattr(runtime, "CYBERSCORE_RECENT_LIVE_EMPTY_RECHECK_SECONDS", 60, raising=False)
+    monkeypatch.setattr(runtime, "LAST_CYBERSCORE_LIVE_SEEN_MONOTONIC", 1000.0, raising=False)
+    schedule_info = {
+        "sleep_seconds": 30 * 60,
+        "sleep_seconds_raw": 30 * 60,
+        "matchup": "no tier1/2 upcoming match",
+        "source": "cyberscore_no_upcoming",
+    }
+
+    capped = runtime._cap_cyberscore_empty_schedule_after_recent_live(
+        schedule_info,
+        now_monotonic=1120.0,
+    )
+
+    assert capped is True
+    assert schedule_info["sleep_seconds"] == 60
+    assert schedule_info["sleep_seconds_raw"] == 30 * 60
+    assert schedule_info["recent_live_empty"] is True
+
+
+def test_cyberscore_recent_live_empty_cap_expires(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "CYBERSCORE_RECENT_LIVE_EMPTY_GRACE_SECONDS", 45 * 60, raising=False)
+    monkeypatch.setattr(runtime, "CYBERSCORE_RECENT_LIVE_EMPTY_RECHECK_SECONDS", 60, raising=False)
+    monkeypatch.setattr(runtime, "LAST_CYBERSCORE_LIVE_SEEN_MONOTONIC", 1000.0, raising=False)
+    schedule_info = {
+        "sleep_seconds": 30 * 60,
+        "sleep_seconds_raw": 30 * 60,
+        "matchup": "no tier1/2 upcoming match",
+        "source": "cyberscore_no_upcoming",
+    }
+
+    capped = runtime._cap_cyberscore_empty_schedule_after_recent_live(
+        schedule_info,
+        now_monotonic=1000.0 + 60 * 60,
+    )
+
+    assert capped is False
+    assert schedule_info["sleep_seconds"] == 30 * 60
+    assert "recent_live_empty" not in schedule_info
+
+
 def test_cyberscore_schedule_sleep_polls_near_midnight_quiet_window() -> None:
     now_utc = datetime(2026, 4, 1, 20, 50, tzinfo=ZoneInfo("UTC"))  # 23:50 MSK
     html = """

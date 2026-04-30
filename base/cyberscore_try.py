@@ -6258,6 +6258,15 @@ SCHEDULE_MAX_SLEEP_SECONDS = _safe_float_env("SCHEDULE_MAX_SLEEP_SECONDS", 30.0 
 SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS = _safe_float_env("SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS", 30.0 * 60.0)
 SCHEDULE_NEAR_MATCH_POLL_SECONDS = _safe_float_env("SCHEDULE_NEAR_MATCH_POLL_SECONDS", 60.0)
 SCHEDULE_POST_START_POLL_SECONDS = _safe_float_env("SCHEDULE_POST_START_POLL_SECONDS", 3.0 * 60.0)
+CYBERSCORE_RECENT_LIVE_EMPTY_GRACE_SECONDS = _safe_float_env(
+    "CYBERSCORE_RECENT_LIVE_EMPTY_GRACE_SECONDS",
+    45.0 * 60.0,
+)
+CYBERSCORE_RECENT_LIVE_EMPTY_RECHECK_SECONDS = _safe_float_env(
+    "CYBERSCORE_RECENT_LIVE_EMPTY_RECHECK_SECONDS",
+    60.0,
+)
+LAST_CYBERSCORE_LIVE_SEEN_MONOTONIC = 0.0
 CYBERSCORE_QUIET_HOURS_START_HOUR_MSK = _safe_int_env("CYBERSCORE_QUIET_HOURS_START_HOUR_MSK", 0)
 CYBERSCORE_QUIET_HOURS_END_HOUR_MSK = _safe_int_env("CYBERSCORE_QUIET_HOURS_END_HOUR_MSK", 7)
 CYBERSCORE_SCHEDULE_POLL_SECONDS = _safe_float_env("CYBERSCORE_SCHEDULE_POLL_SECONDS", 30.0 * 60.0)
@@ -6605,6 +6614,49 @@ def _compute_schedule_recheck_sleep_seconds(raw_sleep_seconds: float) -> float:
     if raw_seconds >= float(SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS):
         return min(raw_seconds, max_sleep)
     return min(raw_seconds, max_sleep)
+
+
+def _note_cyberscore_live_seen(now_monotonic: Optional[float] = None) -> None:
+    global LAST_CYBERSCORE_LIVE_SEEN_MONOTONIC
+    try:
+        LAST_CYBERSCORE_LIVE_SEEN_MONOTONIC = float(
+            time.monotonic() if now_monotonic is None else now_monotonic
+        )
+    except (TypeError, ValueError):
+        LAST_CYBERSCORE_LIVE_SEEN_MONOTONIC = time.monotonic()
+
+
+def _recent_cyberscore_live_empty_recheck_seconds(
+    now_monotonic: Optional[float] = None,
+) -> float:
+    try:
+        last_seen = float(LAST_CYBERSCORE_LIVE_SEEN_MONOTONIC or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if last_seen <= 0.0:
+        return 0.0
+    grace_seconds = max(0.0, float(CYBERSCORE_RECENT_LIVE_EMPTY_GRACE_SECONDS))
+    if grace_seconds <= 0.0:
+        return 0.0
+    current = float(time.monotonic() if now_monotonic is None else now_monotonic)
+    age_seconds = max(0.0, current - last_seen)
+    if age_seconds > grace_seconds:
+        return 0.0
+    return max(1.0, float(CYBERSCORE_RECENT_LIVE_EMPTY_RECHECK_SECONDS))
+
+
+def _cap_cyberscore_empty_schedule_after_recent_live(
+    schedule_info: Dict[str, Any],
+    *,
+    now_monotonic: Optional[float] = None,
+) -> bool:
+    recheck_seconds = _recent_cyberscore_live_empty_recheck_seconds(now_monotonic)
+    if recheck_seconds <= 0.0:
+        return False
+    current_sleep = float(schedule_info.get("sleep_seconds", 0.0) or 0.0)
+    schedule_info["sleep_seconds"] = min(current_sleep, recheck_seconds) if current_sleep > 0 else recheck_seconds
+    schedule_info["recent_live_empty"] = True
+    return True
 
 
 def _should_poll_for_scheduled_live_target(now_utc: Optional[datetime] = None) -> bool:
@@ -13965,6 +14017,7 @@ def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[
     heads, bodies = _extract_cyberscore_live_cards_from_html(html)
     if heads:
         print(f"✅ CyberScore source: found {len(heads)} live cards")
+        _note_cyberscore_live_seen()
         GET_HEADS_LAST_FAILURE_REASON = None
         NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
         NEXT_SCHEDULE_MATCH_INFO = None
@@ -13978,9 +14031,16 @@ def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[
 
     schedule_info = _extract_nearest_cyberscore_scheduled_match_info(html)
     if schedule_info:
+        recent_live_empty = _cap_cyberscore_empty_schedule_after_recent_live(schedule_info)
         NEXT_SCHEDULE_MATCH_INFO = schedule_info
         NEXT_SCHEDULE_SLEEP_SECONDS = float(schedule_info.get("sleep_seconds", 0.0) or 0.0)
         GET_HEADS_LAST_FAILURE_REASON = None
+        if recent_live_empty:
+            print(
+                "⏳ CyberScore source: empty listing after a recent live card; "
+                f"treating it as map/series transition. Next recheck in "
+                f"{int(math.ceil(NEXT_SCHEDULE_SLEEP_SECONDS))}s"
+            )
         print(
             "🗓️ CyberScore source: no live cards. "
             f"Nearest tier1/2 scheduled match: {_format_schedule_match_label(schedule_info)}. "
@@ -14004,7 +14064,15 @@ def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[
         "league_title": "",
         "source": "cyberscore_no_upcoming",
     }
+    recent_live_empty = _cap_cyberscore_empty_schedule_after_recent_live(NEXT_SCHEDULE_MATCH_INFO)
+    NEXT_SCHEDULE_SLEEP_SECONDS = float(NEXT_SCHEDULE_MATCH_INFO.get("sleep_seconds", 0.0) or 0.0)
     GET_HEADS_LAST_FAILURE_REASON = None
+    if recent_live_empty:
+        print(
+            "⏳ CyberScore source: empty listing after a recent live card; "
+            "treating it as map/series transition. "
+            f"Next recheck in {int(math.ceil(NEXT_SCHEDULE_SLEEP_SECONDS))}s"
+        )
     print(
         "⚠️ CyberScore source: no live cards and no tier1/2 upcoming match found. "
         f"Next schedule poll in {int(math.ceil(NEXT_SCHEDULE_SLEEP_SECONDS))}s"
