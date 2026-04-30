@@ -8,7 +8,7 @@
 - Do not create or use a different virtualenv.
 - Do not start or restart the local `base/cyberscore_try.py` live runtime unless the user explicitly asks.
 - For any live runtime restart, first kill old `cyberscore` processes and clear `~/.local/state/ingame/map_id_check.txt`.
-- Production server: `root@212.113.104.102`, project path `/root/main`.
+- Production server: `root@147.45.216.225`, project path `/root/main`.
 - Runtime/output artifacts under `runtime/` are intentionally ignored.
 - Long-running local jobs must be launched in the background with `nohup` and logs/pid files under `runtime/`, so they survive Codex turn interruptions and can be monitored later.
 

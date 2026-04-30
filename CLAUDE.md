@@ -43,7 +43,7 @@ rm -f ~/.local/state/ingame/map_id_check.txt
 3. Если сервер без git — используем rsync:
    ```bash
    rsync -avz --exclude='venv*' --exclude='__pycache__' --exclude='*.log' \
-     ELO/ base/ root@212.113.104.102:/root/main/
+     ELO/ base/ root@147.45.216.225:/root/main/
    ```
 4. Очистить map_id_check: `rm -f ~/.local/state/ingame/map_id_check.txt`
 
@@ -301,7 +301,7 @@ pytest base/tests/ -v
 
 ## Production сервер
 
-**Адрес:** `root@212.113.104.102`
+**Адрес:** `root@147.45.216.225`
 
 Основная площадка для запуска live runtime.
 
