@@ -19,6 +19,74 @@ if str(BASE_DIR) not in sys.path:
 import cyberscore_try as runtime  # noqa: E402
 
 
+def test_live_entrypoint_defaults_keep_signal_gates_enabled(monkeypatch) -> None:
+    for env_name in (
+        "DOTA2PROTRACKER_ENABLED",
+        "PIPELINE_DISABLE_SIGNAL_GATES",
+        "PIPELINE_SEND_EVERY_PARSED_MATCH",
+        "PIPELINE_BYPASS_BOOKMAKER_GATE",
+        "PIPELINE_BYPASS_TIER_GATE",
+        "PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE",
+        "PIPELINE_BYPASS_PROTRACKER_GATE",
+        "PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
+    monkeypatch.setattr(runtime, "DOTA2PROTRACKER_ENABLED", False, raising=False)
+    monkeypatch.setattr(runtime, "PIPELINE_DISABLE_SIGNAL_GATES", False, raising=False)
+    monkeypatch.setattr(runtime, "PIPELINE_SEND_EVERY_PARSED_MATCH", False, raising=False)
+    monkeypatch.setattr(runtime, "PIPELINE_BYPASS_BOOKMAKER_GATE", False, raising=False)
+    monkeypatch.setattr(runtime, "PIPELINE_BYPASS_TIER_GATE", False, raising=False)
+    monkeypatch.setattr(runtime, "PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE", False, raising=False)
+    monkeypatch.setattr(runtime, "PIPELINE_BYPASS_PROTRACKER_GATE", False, raising=False)
+    monkeypatch.setattr(runtime, "PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND", False, raising=False)
+
+    runtime._apply_live_entrypoint_pipeline_defaults()
+
+    assert runtime.DOTA2PROTRACKER_ENABLED is False
+    assert runtime.PIPELINE_DISABLE_SIGNAL_GATES is False
+    assert runtime.PIPELINE_SEND_EVERY_PARSED_MATCH is False
+    assert runtime.PIPELINE_BYPASS_BOOKMAKER_GATE is False
+    assert runtime.PIPELINE_BYPASS_TIER_GATE is False
+    assert runtime.PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE is False
+    assert runtime.PIPELINE_BYPASS_PROTRACKER_GATE is False
+    assert runtime.PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND is False
+
+
+def test_recommend_odds_for_block_uses_all_output_thresholds(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {"all_output": [["counterpick_1vs2", 3]]},
+            65: {"all_output": [["counterpick_1vs2", 4]]},
+            70: {"all_output": [["counterpick_1vs2", 5]]},
+            75: {"all_output": [["counterpick_1vs2", 6]]},
+            80: {"all_output": [["counterpick_1vs2", 7]]},
+            85: {"all_output": [["counterpick_1vs2", 9]]},
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(runtime, "STAR_ODDS_USE_CALIBRATION", False, raising=False)
+
+    rec = runtime._recommend_odds_for_block({"counterpick_1vs2": "7*"}, "all")
+
+    assert rec is not None
+    assert rec["level"] == 80
+    assert rec["wr_pct"] == pytest.approx(80.0)
+    assert rec["min_odds"] == pytest.approx(1.25)
+
+
+def test_format_wr_estimate_line_includes_team_wr_and_min_odds() -> None:
+    line = runtime._format_wr_estimate_line(
+        "All",
+        "Inner Circle",
+        65.0,
+        {"level": 65, "min_odds": 1.54, "wr_pct": 65.0},
+    )
+
+    assert line == "All: Inner Circle WR≈65.0% от кэфа 1.54"
+
+
 class _FakeTextResponse:
     def __init__(self, text: str, status_code: int = 200) -> None:
         self.text = text

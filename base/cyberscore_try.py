@@ -1329,34 +1329,12 @@ PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND = _safe_bool_env(
 
 
 def _apply_live_entrypoint_pipeline_defaults() -> None:
-    """Enable the current live smoke-test behavior only for the executable entrypoint."""
-    global DOTA2PROTRACKER_ENABLED, DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED, DOTA2PROTRACKER_SUPERSEDE_OPENDOTA
-    global PIPELINE_DISABLE_SIGNAL_GATES, PIPELINE_SEND_EVERY_PARSED_MATCH
-    global PIPELINE_BYPASS_BOOKMAKER_GATE, PIPELINE_BYPASS_TIER_GATE, PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE
-    global PIPELINE_BYPASS_PROTRACKER_GATE, PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND
+    """Keep executable defaults production-safe.
 
-    if "DOTA2PROTRACKER_ENABLED" not in os.environ:
-        DOTA2PROTRACKER_ENABLED = True
-    if DOTA2PROTRACKER_ENABLED:
-        if "DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED" not in os.environ:
-            DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED = True
-        if "DOTA2PROTRACKER_SUPERSEDE_OPENDOTA" not in os.environ:
-            DOTA2PROTRACKER_SUPERSEDE_OPENDOTA = True
-
-    if "PIPELINE_DISABLE_SIGNAL_GATES" not in os.environ:
-        PIPELINE_DISABLE_SIGNAL_GATES = True
-    if "PIPELINE_SEND_EVERY_PARSED_MATCH" not in os.environ:
-        PIPELINE_SEND_EVERY_PARSED_MATCH = PIPELINE_DISABLE_SIGNAL_GATES
-    if "PIPELINE_BYPASS_BOOKMAKER_GATE" not in os.environ:
-        PIPELINE_BYPASS_BOOKMAKER_GATE = PIPELINE_DISABLE_SIGNAL_GATES
-    if "PIPELINE_BYPASS_TIER_GATE" not in os.environ:
-        PIPELINE_BYPASS_TIER_GATE = PIPELINE_DISABLE_SIGNAL_GATES
-    if "PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE" not in os.environ:
-        PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE = PIPELINE_DISABLE_SIGNAL_GATES
-    if "PIPELINE_BYPASS_PROTRACKER_GATE" not in os.environ:
-        PIPELINE_BYPASS_PROTRACKER_GATE = PIPELINE_DISABLE_SIGNAL_GATES
-    if "PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND" not in os.environ:
-        PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND = PIPELINE_DISABLE_SIGNAL_GATES
+    Smoke-test modes are controlled by PIPELINE_* env vars at import time.  The
+    live entrypoint must not silently enable send-every-parsed-match dispatch.
+    """
+    return
 
 # Testing helpers:
 # - optionally use separate MAP_ID_CHECK_PATH
@@ -1806,7 +1784,20 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
     if len(star_signs) > 1:
         return None
 
-    section = 'early_output' if phase == 'early' else 'mid_output'
+    phase_name = str(phase or "").strip().lower()
+    section = {
+        "early": "early_output",
+        "mid": "mid_output",
+        "late": "mid_output",
+        "all": "all_output",
+    }.get(phase_name, "mid_output")
+    calibration_phase_key = (
+        "early"
+        if section == "early_output"
+        else "all"
+        if section == "all_output"
+        else "late"
+    )
     available_levels = [
         int(level)
         for level, payload in STAR_THRESHOLDS_BY_WR.items()
@@ -1849,8 +1840,7 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
         best_level = max(STAR_LEVEL_MIN, min(STAR_LEVEL_MAX, best_level))
         wr_pct = float(best_level)
         if STAR_ODDS_USE_CALIBRATION:
-            phase_key = "early" if phase == "early" else "late"
-            calibrated_wr = STAR_CONFIDENCE_CALIBRATION.get(phase_key, {}).get(best_level)
+            calibrated_wr = STAR_CONFIDENCE_CALIBRATION.get(calibration_phase_key, {}).get(best_level)
             if calibrated_wr is not None:
                 wr_pct = float(calibrated_wr)
         if wr_pct <= 0:
@@ -1905,8 +1895,7 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
     # Минимальный кэф по уровню (шаг 0.01)
     wr_pct = float(best_level)
     if STAR_ODDS_USE_CALIBRATION:
-        phase_key = "early" if phase == "early" else "late"
-        calibrated_wr = STAR_CONFIDENCE_CALIBRATION.get(phase_key, {}).get(best_level)
+        calibrated_wr = STAR_CONFIDENCE_CALIBRATION.get(calibration_phase_key, {}).get(best_level)
         if calibrated_wr is not None:
             wr_pct = float(calibrated_wr)
     if wr_pct <= 0:
@@ -1917,6 +1906,33 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
         'min_odds': min_odds,
         'wr_pct': wr_pct,
     }
+
+
+def _format_wr_estimate_line(
+    label: str,
+    team_name: str,
+    wr_pct: Optional[float],
+    rec: Optional[dict],
+) -> Optional[str]:
+    if not rec:
+        return None
+    phase_label = str(label or "").strip() or "Signal"
+    clean_team_name = str(team_name or "").strip()
+    try:
+        wr_value = float(wr_pct) if wr_pct is not None else 0.0
+    except (TypeError, ValueError):
+        wr_value = 0.0
+    line = (
+        f"{phase_label}: {clean_team_name} WR≈{wr_value:.1f}%"
+        if clean_team_name
+        else f"{phase_label}: WR≈{wr_value:.1f}%"
+    )
+    if isinstance(rec, dict) and rec.get("min_odds"):
+        try:
+            line += f" от кэфа {float(rec['min_odds']):.2f}"
+        except (TypeError, ValueError):
+            pass
+    return line
 
 
 def _extract_ml_block_confidence_pct(data: dict, phase: str) -> Optional[float]:
@@ -17183,6 +17199,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
             early_rec = _recommend_odds_for_block(early_output, 'early')
             late_rec = _recommend_odds_for_block(mid_output, 'late')
+            all_rec = (
+                _recommend_odds_for_block(all_output, 'all')
+                if has_selected_all_star
+                else None
+            )
             telegram_early_rec = early_rec
             telegram_early_block = early_block
             early_wr_pct: Optional[float] = None
@@ -17197,6 +17218,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     late_wr_pct = float(late_rec.get("wr_pct"))
                 except (TypeError, ValueError):
                     late_wr_pct = None
+            all_wr_pct: Optional[float] = None
+            if isinstance(all_rec, dict):
+                try:
+                    all_wr_pct = float(all_rec.get("wr_pct"))
+                except (TypeError, ValueError):
+                    all_wr_pct = None
             opposite_sign_early_release_allowed = bool(
                 early_wr_pct is not None and early_wr_pct <= 65.0
             )
@@ -17751,27 +17778,40 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 late_display_sign = _star_block_sign(mid_output_log)
             if late_display_sign not in (-1, 1) and send_now_early_star_late_core_same_sign:
                 late_display_sign = selected_early_sign
+            all_display_sign = selected_all_sign
+            if all_display_sign not in (-1, 1):
+                all_display_sign = _star_block_sign(all_output_log)
 
             if telegram_early_rec:
                 early_team_name = _signal_team_name(early_display_sign)
-                early_line = (
-                    f"Early: {early_team_name} WR≈{float(early_wr_pct or 0.0):.1f}%"
-                    if early_team_name
-                    else f"Early: WR≈{float(early_wr_pct or 0.0):.1f}%"
+                early_line = _format_wr_estimate_line(
+                    "Early",
+                    early_team_name,
+                    early_wr_pct,
+                    telegram_early_rec,
                 )
-                if isinstance(telegram_early_rec, dict) and telegram_early_rec.get("min_odds"):
-                    early_line += f" от кэфа {float(telegram_early_rec['min_odds']):.2f}"
-                wr_lines.append(early_line)
+                if early_line:
+                    wr_lines.append(early_line)
             if late_rec:
                 late_team_name = _signal_team_name(late_display_sign)
-                late_line = (
-                    f"Late: {late_team_name} WR≈{float(late_wr_pct or 0.0):.1f}%"
-                    if late_team_name
-                    else f"Late: WR≈{float(late_wr_pct or 0.0):.1f}%"
+                late_line = _format_wr_estimate_line(
+                    "Late",
+                    late_team_name,
+                    late_wr_pct,
+                    late_rec,
                 )
-                if isinstance(late_rec, dict) and late_rec.get("min_odds"):
-                    late_line += f" от кэфа {float(late_rec['min_odds']):.2f}"
-                wr_lines.append(late_line)
+                if late_line:
+                    wr_lines.append(late_line)
+            if all_rec:
+                all_team_name = _signal_team_name(all_display_sign)
+                all_line = _format_wr_estimate_line(
+                    "All",
+                    all_team_name,
+                    all_wr_pct,
+                    all_rec,
+                )
+                if all_line:
+                    wr_lines.append(all_line)
             if wr_lines:
                 wr_block = "Оценка WR:\n" + "\n".join(wr_lines) + "\n"
 
