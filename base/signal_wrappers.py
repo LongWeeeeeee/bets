@@ -313,7 +313,7 @@ def _load_star_thresholds() -> Dict[int, Dict[str, list[tuple[str, int]]]]:
                 if not isinstance(payload, dict):
                     continue
                 block: Dict[str, list[tuple[str, int]]] = {}
-                for section in ("early_output", "mid_output"):
+                for section in ("early_output", "mid_output", "all_output"):
                     items = payload.get(section) or []
                     rows: list[tuple[str, int]] = []
                     if isinstance(items, list):
@@ -336,17 +336,17 @@ def _load_star_thresholds() -> Dict[int, Dict[str, list[tuple[str, int]]]]:
         hydrated: Dict[int, Dict[str, list[tuple[str, int]]]] = {}
         for wr, block in parsed.items():
             out_block: Dict[str, list[tuple[str, int]]] = {}
-            for section in ("early_output", "mid_output"):
+            for section in ("early_output", "mid_output", "all_output"):
                 section_rows = list(block.get(section) or [])
-                if not section_rows:
-                    raise RuntimeError(
-                        f"SIGNAL_WRAPPER thresholds file {STAR_THRESHOLDS_PATH} is missing WR{wr} section={section}"
-                    )
                 out_block[section] = section_rows
             hydrated[int(wr)] = out_block
         if 60 not in hydrated:
             raise RuntimeError(
                 f"SIGNAL_WRAPPER thresholds file {STAR_THRESHOLDS_PATH} is missing required WR60 block"
+            )
+        if not (hydrated[60].get("early_output") or hydrated[60].get("mid_output")):
+            raise RuntimeError(
+                f"SIGNAL_WRAPPER thresholds file {STAR_THRESHOLDS_PATH} is missing required WR60 early/mid blocks"
             )
         return hydrated
     except Exception as exc:

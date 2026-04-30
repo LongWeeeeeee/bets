@@ -144,7 +144,7 @@ def test_synergy_and_counterpick_emits_post_lane_output() -> None:
 
     post_lane_output = result.get("post_lane_output")
     assert isinstance(post_lane_output, dict)
-    assert post_lane_output["solo"] > 0
+    assert "solo" not in post_lane_output
     assert post_lane_output["counterpick_1vs1"] > 0
     assert post_lane_output["counterpick_1vs2"] > 0
     assert post_lane_output["synergy_duo"] > 0
@@ -251,7 +251,7 @@ def test_lane_with_lookup_accepts_either_pair_order() -> None:
     assert counts == (36, 0, 24, 60)
 
 
-def test_pos1_vs_pos1_uses_separate_sample_gate() -> None:
+def test_pos1_vs_pos1_is_not_emitted_even_with_enough_sample() -> None:
     radiant = _side(1)
     dire = _side(6)
     radiant_pos1 = f"{radiant['pos1']['hero_id']}pos1"
@@ -287,8 +287,8 @@ def test_pos1_vs_pos1_uses_separate_sample_gate() -> None:
         early_dict=enough_sample,
         mid_dict={},
     )
-    assert enough_result["early_output"]["pos1_vs_pos1"] > 0
-    assert enough_result["early_output"]["pos1_vs_pos1_games"] == functions.POS1_VS_POS1_MIN_MATCHES
+    assert "pos1_vs_pos1" not in enough_result["early_output"]
+    assert "pos1_vs_pos1_games" not in enough_result["early_output"]
 
 
 def test_pos1_vs_pos1_aggregates_directional_samples() -> None:
@@ -319,11 +319,8 @@ def test_pos1_vs_pos1_aggregates_directional_samples() -> None:
     )
 
     late_output = result["mid_output"]
-    assert late_output["pos1_vs_pos1_games"] == 68
-    assert late_output["pos1_vs_pos1"] == functions.get_diff(
-        [(9 / 68, 68)],
-        [(59 / 68, 68)],
-    )
+    assert "pos1_vs_pos1" not in late_output
+    assert "pos1_vs_pos1_games" not in late_output
 
 
 def test_pos1_vs_pos1_reads_reverse_only_direction() -> None:
@@ -345,8 +342,8 @@ def test_pos1_vs_pos1_reads_reverse_only_direction() -> None:
     )
 
     early_output = result["early_output"]
-    assert early_output["pos1_vs_pos1_games"] == functions.POS1_VS_POS1_MIN_MATCHES + 1
-    assert early_output["pos1_vs_pos1"] < 0
+    assert "pos1_vs_pos1" not in early_output
+    assert "pos1_vs_pos1_games" not in early_output
 
 
 def test_counterpick_1vs1_requires_two_of_three_core_matchups_per_core() -> None:

@@ -1834,13 +1834,21 @@ STAR_THRESHOLDS_PATH = Path(
     os.getenv('STAR_THRESHOLDS_PATH', str(PROJECT_ROOT / 'data' / 'star_thresholds_by_wr.json'))
 )
 STAR_DISABLED_METRICS = frozenset({
-    'synergy_duo',
-    'synergy_trio',
+    'pos1_vs_pos1',
 })
+STAR_THRESHOLD_SECTIONS = (
+    'early_output',
+    'mid_output',
+    'all_output',
+)
 
-
-def _is_star_metric_enabled(metric: Any) -> bool:
-    return str(metric).strip() not in STAR_DISABLED_METRICS
+def _is_star_metric_enabled(metric: Any, section: str = '') -> bool:
+    metric_name = str(metric).strip()
+    if metric_name in STAR_DISABLED_METRICS:
+        return False
+    if str(section or '').strip() == 'all_output' and metric_name == 'solo':
+        return False
+    return True
 
 
 def _load_star_thresholds() -> dict:
@@ -1861,7 +1869,7 @@ def _load_star_thresholds() -> dict:
                 if not isinstance(v, dict):
                     continue
                 block = {}
-                for section in ('early_output', 'mid_output'):
+                for section in STAR_THRESHOLD_SECTIONS:
                     items = v.get(section) or []
                     rows = []
                     if isinstance(items, list):
@@ -1883,17 +1891,17 @@ def _load_star_thresholds() -> dict:
         hydrated = {}
         for wr, block in parsed.items():
             out_block = {}
-            for section in ('early_output', 'mid_output'):
+            for section in STAR_THRESHOLD_SECTIONS:
                 section_rows = list(block.get(section) or [])
-                if not section_rows:
-                    raise RuntimeError(
-                        f"STAR thresholds file {STAR_THRESHOLDS_PATH} is missing WR{wr} section={section}"
-                    )
                 out_block[section] = section_rows
             hydrated[int(wr)] = out_block
         if 60 not in hydrated:
             raise RuntimeError(
                 f"STAR thresholds file {STAR_THRESHOLDS_PATH} is missing required WR60 block"
+            )
+        if not (hydrated[60].get('early_output') or hydrated[60].get('mid_output')):
+            raise RuntimeError(
+                f"STAR thresholds file {STAR_THRESHOLDS_PATH} is missing required WR60 early/mid blocks"
             )
         return hydrated
     except Exception as exc:
@@ -1976,13 +1984,9 @@ def format_output_dict(
             target_wr = 60
     thresholds = STAR_THRESHOLDS_BY_WR.get(target_wr)
     if not isinstance(thresholds, dict):
-        raise RuntimeError(
-            f"STAR thresholds are missing required WR{target_wr} block in {STAR_THRESHOLDS_PATH}"
-        )
-    if not (thresholds.get('early_output') or thresholds.get('mid_output')):
-        raise RuntimeError(
-            f"STAR thresholds are empty for WR{target_wr} in {STAR_THRESHOLDS_PATH}"
-        )
+        return False
+    if not any(thresholds.get(section) for section in STAR_THRESHOLD_SECTIONS):
+        return False
     if late_signal_gate_enabled is None:
         late_signal_gate_enabled = STAR_LATE_SIGNAL_GATE_ENABLED
 
@@ -1994,7 +1998,7 @@ def format_output_dict(
         block_conflict = False
         starred_original_values = {}
         for key, threshold in metrics:
-            if not _is_star_metric_enabled(key):
+            if not _is_star_metric_enabled(key, section=section):
                 continue
             original_value = data.get(key)
             hit, sign = mark_if_exceeds(data, key, threshold)
@@ -4087,17 +4091,10 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
             if r_games and d_games:
                 phase_bucket['counterpick_1vs1_games'] = min(r_games, d_games)
 
-        r_pos1_vs_pos1 = output.get('radiant_counterpick_pos1_vs_pos1')
-        d_pos1_vs_pos1 = output.get('dire_counterpick_pos1_vs_pos1')
-        if all_heroes_known and r_pos1_vs_pos1 and d_pos1_vs_pos1:
-            r_games = _sum_games_list(r_pos1_vs_pos1)
-            d_games = _sum_games_list(d_pos1_vs_pos1)
-            pos1_games = min(r_games, d_games) if r_games and d_games else 0
-            if pos1_games >= pos1_vs_pos1_threshold:
-                phase_bucket['pos1_vs_pos1'] = get_diff(r_pos1_vs_pos1, d_pos1_vs_pos1)
-                phase_bucket['pos1_vs_pos1_games'] = min(r_games, d_games)
+        # pos1_vs_pos1 is intentionally not emitted into phase outputs anymore:
+        # the current star/gate tables were rebuilt without this metric.
 
-        if has_all_solo and all(f'{side}_counterpick_solo' in output for side in ['radiant', 'dire']):
+        if name != 'post_lane_output' and has_all_solo and all(f'{side}_counterpick_solo' in output for side in ['radiant', 'dire']):
             # Для solo НЕ проверяем значимость (слишком мало данных)
             # ВНИМАНИЕ: solo теперь хранится по позициям и использует веса позиций
             phase_bucket['solo'] = get_diff(
@@ -4555,7 +4552,6 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
         metric_list = [
             ('trio_pos1_strong', 'Trio_pos1_strong'),
             ('counterpick_1vs1', 'Counterpick_1vs1'),
-            ('pos1_vs_pos1', 'Pos1_vs_pos1'),
             ('counterpick_1vs2', 'Counterpick_1vs2'),
             ('solo', 'Solo'),
             ('synergy_duo', 'Synergy_duo'),

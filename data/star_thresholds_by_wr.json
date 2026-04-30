@@ -6,12 +6,8 @@
         4
       ],
       [
-        "pos1_vs_pos1",
-        16
-      ],
-      [
         "counterpick_1vs2",
-        5
+        4
       ],
       [
         "solo",
@@ -19,7 +15,7 @@
       ],
       [
         "synergy_duo",
-        7
+        4
       ],
       [
         "synergy_trio",
@@ -29,27 +25,45 @@
     "mid_output": [
       [
         "counterpick_1vs1",
-        5
-      ],
-      [
-        "pos1_vs_pos1",
-        22
-      ],
-      [
-        "counterpick_1vs2",
-        6
-      ],
-      [
-        "solo",
         4
       ],
       [
+        "counterpick_1vs2",
+        4
+      ],
+      [
+        "solo",
+        3
+      ],
+      [
         "synergy_duo",
-        9
+        6
       ],
       [
         "synergy_trio",
-        6
+        4
+      ]
+    ],
+    "all_output": [
+      [
+        "counterpick_1vs1",
+        4
+      ],
+      [
+        "counterpick_1vs2",
+        3
+      ],
+      [
+        "synergy_duo",
+        5
+      ],
+      [
+        "synergy_trio",
+        3
+      ],
+      [
+        "dota2protracker_cp1vs1",
+        3
       ]
     ]
   },
@@ -60,12 +74,8 @@
         6
       ],
       [
-        "pos1_vs_pos1",
-        22
-      ],
-      [
         "counterpick_1vs2",
-        7
+        6
       ],
       [
         "solo",
@@ -73,7 +83,7 @@
       ],
       [
         "synergy_duo",
-        9
+        7
       ],
       [
         "synergy_trio",
@@ -83,15 +93,11 @@
     "mid_output": [
       [
         "counterpick_1vs1",
-        6
-      ],
-      [
-        "pos1_vs_pos1",
-        27
+        7
       ],
       [
         "counterpick_1vs2",
-        7
+        6
       ],
       [
         "solo",
@@ -99,11 +105,29 @@
       ],
       [
         "synergy_duo",
-        10
+        7
       ],
       [
         "synergy_trio",
-        7
+        6
+      ]
+    ],
+    "all_output": [
+      [
+        "counterpick_1vs1",
+        6
+      ],
+      [
+        "counterpick_1vs2",
+        4
+      ],
+      [
+        "synergy_trio",
+        4
+      ],
+      [
+        "dota2protracker_cp1vs1",
+        5
       ]
     ]
   },
@@ -111,15 +135,11 @@
     "early_output": [
       [
         "counterpick_1vs1",
-        8
-      ],
-      [
-        "pos1_vs_pos1",
-        31
+        9
       ],
       [
         "counterpick_1vs2",
-        9
+        8
       ],
       [
         "solo",
@@ -127,7 +147,7 @@
       ],
       [
         "synergy_duo",
-        13
+        10
       ],
       [
         "synergy_trio",
@@ -137,15 +157,11 @@
     "mid_output": [
       [
         "counterpick_1vs1",
-        9
-      ],
-      [
-        "pos1_vs_pos1",
-        34
+        10
       ],
       [
         "counterpick_1vs2",
-        10
+        8
       ],
       [
         "solo",
@@ -153,10 +169,28 @@
       ],
       [
         "synergy_duo",
-        13
+        9
       ],
       [
         "synergy_trio",
+        9
+      ]
+    ],
+    "all_output": [
+      [
+        "counterpick_1vs1",
+        8
+      ],
+      [
+        "counterpick_1vs2",
+        5
+      ],
+      [
+        "synergy_trio",
+        7
+      ],
+      [
+        "dota2protracker_cp1vs1",
         8
       ]
     ]
@@ -165,27 +199,23 @@
     "early_output": [
       [
         "counterpick_1vs1",
-        10
-      ],
-      [
-        "pos1_vs_pos1",
-        32
-      ],
-      [
-        "counterpick_1vs2",
         11
       ],
       [
+        "counterpick_1vs2",
+        10
+      ],
+      [
         "solo",
-        6
+        7
       ],
       [
         "synergy_duo",
-        17
+        12
       ],
       [
         "synergy_trio",
-        13
+        11
       ]
     ],
     "mid_output": [
@@ -194,8 +224,38 @@
         10
       ],
       [
-        "pos1_vs_pos1",
-        41
+        "counterpick_1vs2",
+        9
+      ],
+      [
+        "solo",
+        8
+      ],
+      [
+        "synergy_trio",
+        11
+      ]
+    ],
+    "all_output": [
+      [
+        "counterpick_1vs1",
+        11
+      ],
+      [
+        "counterpick_1vs2",
+        6
+      ],
+      [
+        "synergy_trio",
+        8
+      ]
+    ]
+  },
+  "80": {
+    "early_output": [
+      [
+        "counterpick_1vs1",
+        13
       ],
       [
         "counterpick_1vs2",
@@ -207,65 +267,35 @@
       ],
       [
         "synergy_duo",
-        17
+        16
       ],
       [
         "synergy_trio",
-        11
-      ]
-    ]
-  },
-  "80": {
-    "early_output": [
-      [
-        "counterpick_1vs1",
-        12
-      ],
-      [
-        "pos1_vs_pos1",
-        33
-      ],
-      [
-        "counterpick_1vs2",
-        11
-      ],
-      [
-        "solo",
-        7
-      ],
-      [
-        "synergy_duo",
-        18
-      ],
-      [
-        "synergy_trio",
-        15
+        14
       ]
     ],
     "mid_output": [
       [
         "counterpick_1vs1",
-        13
-      ],
-      [
-        "pos1_vs_pos1",
-        43
+        15
       ],
       [
         "counterpick_1vs2",
-        15
-      ],
-      [
-        "solo",
-        9
-      ],
-      [
-        "synergy_duo",
-        18
+        11
       ],
       [
         "synergy_trio",
-        15
+        13
+      ]
+    ],
+    "all_output": [
+      [
+        "counterpick_1vs2",
+        7
+      ],
+      [
+        "synergy_trio",
+        11
       ]
     ]
   },
@@ -273,15 +303,11 @@
     "early_output": [
       [
         "counterpick_1vs1",
-        14
-      ],
-      [
-        "pos1_vs_pos1",
-        35
+        19
       ],
       [
         "counterpick_1vs2",
-        14
+        15
       ],
       [
         "solo",
@@ -289,37 +315,31 @@
       ],
       [
         "synergy_duo",
-        22
+        19
       ],
       [
         "synergy_trio",
-        15
+        18
       ]
     ],
     "mid_output": [
       [
-        "counterpick_1vs1",
-        15
-      ],
-      [
-        "pos1_vs_pos1",
-        44
-      ],
-      [
         "counterpick_1vs2",
-        19
-      ],
-      [
-        "solo",
-        10
-      ],
-      [
-        "synergy_duo",
-        20
+        14
       ],
       [
         "synergy_trio",
-        15
+        19
+      ]
+    ],
+    "all_output": [
+      [
+        "counterpick_1vs2",
+        9
+      ],
+      [
+        "synergy_trio",
+        13
       ]
     ]
   },
@@ -327,53 +347,59 @@
     "early_output": [
       [
         "counterpick_1vs1",
-        17
-      ],
-      [
-        "pos1_vs_pos1",
-        36
+        19
       ],
       [
         "counterpick_1vs2",
-        15
-      ],
-      [
-        "solo",
-        9
-      ],
-      [
-        "synergy_duo",
-        23
-      ],
-      [
-        "synergy_trio",
-        16
+        18
       ]
     ],
     "mid_output": [
-      [
-        "counterpick_1vs1",
-        16
-      ],
-      [
-        "pos1_vs_pos1",
-        46
-      ],
       [
         "counterpick_1vs2",
         20
       ],
       [
-        "solo",
-        10
-      ],
+        "synergy_trio",
+        23
+      ]
+    ],
+    "all_output": [
       [
-        "synergy_duo",
-        21
+        "counterpick_1vs2",
+        12
       ],
       [
         "synergy_trio",
-        16
+        15
+      ]
+    ]
+  },
+  "95": {
+    "early_output": [
+      [
+        "counterpick_1vs2",
+        25
+      ]
+    ],
+    "mid_output": [
+      [
+        "counterpick_1vs2",
+        24
+      ],
+      [
+        "synergy_trio",
+        24
+      ]
+    ],
+    "all_output": [
+      [
+        "counterpick_1vs2",
+        15
+      ],
+      [
+        "synergy_trio",
+        19
       ]
     ]
   }

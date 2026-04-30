@@ -2003,11 +2003,11 @@ def _star_block_sign(block: Optional[dict]) -> Optional[int]:
 
 _STAR_METRIC_ORDER = (
     "counterpick_1vs1",
-    "pos1_vs_pos1",
     "counterpick_1vs2",
     "solo",
     "synergy_duo",
     "synergy_trio",
+    "dota2protracker_cp1vs1",
 )
 _STAR_SUPPORT_METRIC_ORDER = (
     "counterpick_1vs1",
@@ -2015,7 +2015,6 @@ _STAR_SUPPORT_METRIC_ORDER = (
 )
 _STAR_LATE_CORE_METRIC_ORDER = (
     "counterpick_1vs1",
-    "pos1_vs_pos1",
     "counterpick_1vs2",
     "solo",
 )
@@ -2024,12 +2023,21 @@ _STAR_LATE_CORE_MIN_ABS_BY_METRIC = {
 }
 _STAR_METRIC_SHORT = {
     "counterpick_1vs1": "cp1v1",
-    "pos1_vs_pos1": "pos1vpos1",
     "counterpick_1vs2": "cp1v2",
     "solo": "solo",
     "synergy_duo": "duo",
     "synergy_trio": "trio",
+    "dota2protracker_cp1vs1": "d2pt_cp1v1",
 }
+
+
+def _star_metric_enabled_for_section(metric_name: str, section: str) -> bool:
+    metric_key = str(metric_name or "").strip()
+    if metric_key in STAR_DISABLED_METRICS:
+        return False
+    if str(section or "").strip() == "all_output" and metric_key == "solo":
+        return False
+    return True
 
 
 def _star_thresholds_for_wr(target_wr: int, section: str) -> Dict[str, int]:
@@ -2045,7 +2053,7 @@ def _star_thresholds_for_wr(target_wr: int, section: str) -> Dict[str, int]:
     for metric, threshold in raw:
         try:
             metric_name = str(metric)
-            if metric_name in STAR_DISABLED_METRICS:
+            if not _star_metric_enabled_for_section(metric_name, section):
                 continue
             out[metric_name] = int(threshold)
         except (TypeError, ValueError):
@@ -2103,21 +2111,13 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
         }
 
     block_sign = next(iter(hit_signs)) if hit_signs else None
-    if len(hit_metrics) < 2:
-        return {
-            "valid": False,
-            "status": "insufficient_hits",
-            "sign": block_sign,
-            "hit_metrics": hit_metrics,
-            "conflict_metric": None,
-            "hit_count": len(hit_metrics),
-            "min_hit_count_required": 2,
-        }
     return {
         "valid": block_sign in (-1, 1),
         "status": "ok" if block_sign in (-1, 1) else "no_sign",
         "sign": block_sign,
         "hit_metrics": hit_metrics,
+        "hit_count": len(hit_metrics),
+        "min_hit_count_required": 1,
         "conflict_metric": None,
         "support_status": None,
         "support_nonzero_metrics": [],
@@ -2315,11 +2315,19 @@ def _dispatch_mode_reason_label(dispatch_mode: Optional[str]) -> str:
     return mapping.get(mode, mode or "unknown")
 
 
-def _star_match_status_from_diags(early_diag: Dict[str, Any], late_diag: Dict[str, Any], match_tier: int) -> str:
+def _star_match_status_from_diags(
+    early_diag: Dict[str, Any],
+    late_diag: Dict[str, Any],
+    match_tier: int,
+    all_diag: Optional[Dict[str, Any]] = None,
+) -> str:
     has_early_star = bool(early_diag.get("valid"))
     has_late_star = bool(late_diag.get("valid"))
+    has_all_star = bool((all_diag or {}).get("valid"))
+    if not (has_early_star or has_late_star or has_all_star):
+        return "skip_no_valid_star_block"
     if not has_late_star:
-        return "skip_no_late_star"
+        return "send_or_monitor_non_late_star"
     early_sign = early_diag.get("sign") if has_early_star else None
     late_sign = late_diag.get("sign") if has_late_star else None
     if match_tier == 2 and STAR_REQUIRE_TIER2_SAME_SIGN:
@@ -2428,15 +2436,19 @@ def _build_star_metrics_snapshot(
     *,
     early_block_log: str,
     mid_block_log: str,
-    raw_star_early_summary: str,
-    raw_star_late_summary: str,
-    star_diag_lines: list[str],
+    all_block_log: str = "",
+    raw_star_early_summary: str = "",
+    raw_star_late_summary: str = "",
+    raw_star_all_summary: str = "",
+    star_diag_lines: Optional[list[str]] = None,
 ) -> Dict[str, Any]:
     return {
         "early_block_log": str(early_block_log or ""),
         "mid_block_log": str(mid_block_log or ""),
+        "all_block_log": str(all_block_log or ""),
         "raw_star_early_summary": str(raw_star_early_summary or ""),
         "raw_star_late_summary": str(raw_star_late_summary or ""),
+        "raw_star_all_summary": str(raw_star_all_summary or ""),
         "star_diag_lines": [str(line) for line in (star_diag_lines or []) if str(line)],
     }
 
@@ -2452,6 +2464,9 @@ def _print_star_metrics_snapshot(snapshot: Optional[dict], label: str = "delayed
         print("      " + early_block_log.rstrip().replace("\n", "\n      "))
     if mid_block_log:
         print("      " + mid_block_log.rstrip().replace("\n", "\n      "))
+    all_block_log = str(snapshot.get("all_block_log") or "")
+    if all_block_log:
+        print("      " + all_block_log.rstrip().replace("\n", "\n      "))
     star_diag_lines = [str(line) for line in (snapshot.get("star_diag_lines") or []) if str(line)]
     if star_diag_lines:
         print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
@@ -3344,6 +3359,37 @@ def _format_dota2protracker_metric(
     return _format_dota2protracker_value(value)
 
 
+def _build_dota2protracker_star_output(
+    protracker_payload: Optional[Dict[str, Any]],
+) -> Dict[str, float]:
+    payload = dict(_blank_dota2protracker_result())
+    if isinstance(protracker_payload, dict):
+        payload.update(protracker_payload)
+    if not bool(payload.get("pro_cp1vs1_valid")):
+        return {}
+    raw_value = payload.get("pro_cp1vs1_late", payload.get("pro_cp1vs1_early", 0.0))
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        return {}
+    if not math.isfinite(value) or value == 0.0:
+        return {}
+    return {"dota2protracker_cp1vs1": value}
+
+
+def _build_all_star_output(
+    post_lane_output: Optional[Dict[str, Any]],
+    protracker_payload: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    all_output: Dict[str, Any] = {}
+    if isinstance(post_lane_output, dict):
+        for key in ("counterpick_1vs1", "counterpick_1vs2", "synergy_duo", "synergy_trio"):
+            if key in post_lane_output:
+                all_output[key] = post_lane_output.get(key)
+    all_output.update(_build_dota2protracker_star_output(protracker_payload))
+    return all_output
+
+
 def _build_dota2protracker_debug_summary(
     protracker_payload: Optional[Dict[str, Any]],
 ) -> str:
@@ -3425,7 +3471,10 @@ def _build_series_score_line_with_fallback(
     return f"{normalized}\n"
 
 
-def _build_dota2protracker_block(protracker_payload: Optional[Dict[str, Any]]) -> str:
+def _build_dota2protracker_block(
+    protracker_payload: Optional[Dict[str, Any]],
+    star_output: Optional[Dict[str, Any]] = None,
+) -> str:
     payload = dict(_blank_dota2protracker_result())
     if isinstance(protracker_payload, dict):
         payload.update(protracker_payload)
@@ -3433,10 +3482,15 @@ def _build_dota2protracker_block(protracker_payload: Optional[Dict[str, Any]]) -
     duo_value = payload.get("pro_duo_synergy_late", payload.get("pro_duo_synergy_early", 0.0))
     cp_valid = bool(payload.get("pro_cp1vs1_valid"))
     duo_valid = bool(payload.get("pro_duo_synergy_valid"))
+    cp_label = _format_dota2protracker_metric(value=cp_value, valid=cp_valid)
+    if cp_valid and isinstance(star_output, dict):
+        starred_cp = star_output.get("dota2protracker_cp1vs1")
+        if isinstance(starred_cp, str) and starred_cp.strip().endswith("*"):
+            cp_label = starred_cp.strip()
 
     return (
         "\ndota2protracker:\n"
-        f"cp1vs1: {_format_dota2protracker_metric(value=cp_value, valid=cp_valid)}\n"
+        f"cp1vs1: {cp_label}\n"
         f"synergy_duo: {_format_dota2protracker_metric(value=duo_value, valid=duo_valid)}\n"
     )
 
@@ -16727,6 +16781,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             return return_status
         star_base_early_output = dict(s.get('early_output', {}) or {})
         star_base_mid_output = dict(s.get('mid_output', {}) or {})
+        star_base_all_output = _build_all_star_output(s.get('post_lane_output', {}), s)
 
         # Подбор star-кандидата (отправка только если сигнал star).
         selected_star_wr = star_target_wr
@@ -16739,6 +16794,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             candidate = {
                 'early_output': dict(star_base_early_output),
                 'mid_output': dict(star_base_mid_output),
+                'all_output': dict(star_base_all_output),
             }
             has_any_star = format_output_dict(
                 candidate,
@@ -16762,10 +16818,18 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 target_wr=target_wr,
                 section="mid_output",
             )
+            all_diag = _star_block_diagnostics(
+                raw_block=candidate.get('all_output'),
+                target_wr=target_wr,
+                section="all_output",
+            )
             has_early_star = bool(early_diag.get("valid"))
             has_late_star = bool(late_diag.get("valid"))
+            has_all_star = bool(all_diag.get("valid"))
             early_sign = early_diag.get("sign") if has_early_star else None
             late_sign = late_diag.get("sign") if has_late_star else None
+            if not (has_early_star or has_late_star or has_all_star):
+                return False, "no_valid_star_block"
             if has_late_star and not has_early_star and STAR_REQUIRE_EARLY_WITH_LATE_SAME_SIGN:
                 return (
                     False,
@@ -16833,6 +16897,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             primary_wr=star_target_wr,
             fallback_wr=star_fallback_wr,
         )
+        raw_star_all_summary = _format_raw_star_block_metrics(
+            raw_block=star_base_all_output,
+            section="all_output",
+            primary_wr=star_target_wr,
+            fallback_wr=star_fallback_wr,
+        )
         primary_star_early_diag = _star_block_diagnostics(
             raw_block=star_base_early_output,
             target_wr=star_target_wr,
@@ -16843,16 +16913,23 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             target_wr=star_target_wr,
             section="mid_output",
         )
+        primary_star_all_diag = _star_block_diagnostics(
+            raw_block=star_base_all_output,
+            target_wr=star_target_wr,
+            section="all_output",
+        )
         primary_star_match_status = _star_match_status_from_diags(
             primary_star_early_diag,
             primary_star_late_diag,
             star_match_tier,
+            all_diag=primary_star_all_diag,
         )
         star_diag_lines = [
             (
                 f"WR{star_target_wr}: "
                 f"early={_format_star_block_status_with_side(primary_star_early_diag)}, "
                 f"late={_format_star_block_status_with_side(primary_star_late_diag)}, "
+                f"all={_format_star_block_status_with_side(primary_star_all_diag)}, "
                 f"match={primary_star_match_status}"
             )
         ]
@@ -16880,16 +16957,23 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 target_wr=star_fallback_wr,
                 section="mid_output",
             )
+            fallback_star_all_diag = _star_block_diagnostics(
+                raw_block=star_base_all_output,
+                target_wr=star_fallback_wr,
+                section="all_output",
+            )
             fallback_star_match_status = _star_match_status_from_diags(
                 fallback_star_early_diag,
                 fallback_star_late_diag,
                 star_match_tier,
+                all_diag=fallback_star_all_diag,
             )
             star_diag_lines.append(
                 (
                     f"WR{star_fallback_wr}: "
                     f"early={_format_star_block_status_with_side(fallback_star_early_diag)}, "
                     f"late={_format_star_block_status_with_side(fallback_star_late_diag)}, "
+                    f"all={_format_star_block_status_with_side(fallback_star_all_diag)}, "
                     f"match={fallback_star_match_status}"
                 )
             )
@@ -16907,6 +16991,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         if (has_valid_star_signal and selected_star_candidate is not None) or force_odds_signal_test_active:
             s['early_output'] = selected_star_candidate.get('early_output', {})
             s['mid_output'] = selected_star_candidate.get('mid_output', {})
+            s['all_output'] = selected_star_candidate.get('all_output', {})
             selected_early_diag = _star_block_diagnostics(
                 raw_block=s.get('early_output', {}),
                 target_wr=selected_star_wr,
@@ -16917,6 +17002,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 target_wr=selected_star_wr,
                 section="mid_output",
             )
+            selected_all_diag = _star_block_diagnostics(
+                raw_block=s.get('all_output', {}),
+                target_wr=selected_star_wr,
+                section="all_output",
+            )
             late_min60_diag = _star_block_diagnostics(
                 raw_block=s.get('mid_output', {}),
                 target_wr=60,
@@ -16924,8 +17014,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
             has_selected_early_star = bool(selected_early_diag.get("valid"))
             has_selected_late_star = bool(selected_late_diag.get("valid"))
+            has_selected_all_star = bool(selected_all_diag.get("valid"))
             selected_early_sign = selected_early_diag.get("sign") if has_selected_early_star else None
             selected_late_sign = selected_late_diag.get("sign") if has_selected_late_star else None
+            selected_all_sign = selected_all_diag.get("sign") if has_selected_all_star else None
             late_no_star_guard_against_early = _build_no_late_star_late_block_guard(
                 s.get('mid_output', {}),
                 expected_sign=selected_early_sign,
@@ -17017,16 +17109,23 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 section="mid_output",
                 target_wr=selected_star_wr,
             )
+            all_output_log = _decorate_star_block_for_display(
+                raw_block=s.get('all_output', {}),
+                section="all_output",
+                target_wr=selected_star_wr,
+            )
             early_output = early_output_log
             mid_output = mid_output_log
+            all_output = all_output_log
 
             pro_cp_early = s.get('pro_cp1vs1_early', 0)
             pro_duo_early = s.get('pro_duo_synergy_early', 0)
             pro_cp_late = s.get('pro_cp1vs1_late', 0)
             pro_duo_late = s.get('pro_duo_synergy_late', 0)
 
-            print(f"   📊 LANING (20-28 min): {early_output.get('counterpick_1vs1', 'N/A')}, {early_output.get('pos1_vs_pos1', 'N/A')}, {early_output.get('counterpick_1vs2', 'N/A')}, {early_output.get('solo', 'N/A')}, {early_output.get('synergy_duo', 'N/A')}, {early_output.get('synergy_trio', 'N/A')}")
-            print(f"   📊 LATE (28-60 min): {mid_output.get('counterpick_1vs1', 'N/A')}, {mid_output.get('pos1_vs_pos1', 'N/A')}, {mid_output.get('counterpick_1vs2', 'N/A')}, {mid_output.get('solo', 'N/A')}, {mid_output.get('synergy_duo', 'N/A')}, {mid_output.get('synergy_trio', 'N/A')}")
+            print(f"   📊 LANING (20-28 min): {early_output.get('counterpick_1vs1', 'N/A')}, {early_output.get('counterpick_1vs2', 'N/A')}, {early_output.get('solo', 'N/A')}, {early_output.get('synergy_duo', 'N/A')}, {early_output.get('synergy_trio', 'N/A')}")
+            print(f"   📊 LATE (28-60 min): {mid_output.get('counterpick_1vs1', 'N/A')}, {mid_output.get('counterpick_1vs2', 'N/A')}, {mid_output.get('solo', 'N/A')}, {mid_output.get('synergy_duo', 'N/A')}, {mid_output.get('synergy_trio', 'N/A')}")
+            print(f"   📊 ALL: {all_output.get('counterpick_1vs1', 'N/A')}, {all_output.get('counterpick_1vs2', 'N/A')}, {all_output.get('synergy_duo', 'N/A')}, {all_output.get('synergy_trio', 'N/A')}, d2pt={all_output.get('dota2protracker_cp1vs1', 'N/A')}")
             if DOTA2PROTRACKER_ENABLED and isinstance(s, dict):
                 for _line in _build_dota2protracker_log_lines(s):
                     print(_line)
@@ -17039,15 +17138,23 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
             metric_list = [
                 ('counterpick_1vs1', 'Counterpick_1vs1'),
-                ('pos1_vs_pos1', 'Pos1_vs_pos1'),
                 ('counterpick_1vs2', 'Counterpick_1vs2'),
                 ('solo', 'Solo'),
                 ('synergy_duo', 'Synergy_duo'),
                 ('synergy_trio', 'Synergy_trio'),
             ]
+            all_metric_list = [
+                ('counterpick_1vs1', 'Counterpick_1vs1'),
+                ('counterpick_1vs2', 'Counterpick_1vs2'),
+                ('synergy_duo', 'Synergy_duo'),
+                ('synergy_trio', 'Synergy_trio'),
+                ('dota2protracker_cp1vs1', 'Dota2ProTracker_cp1vs1'),
+            ]
             early_block = _format_metrics("Early 20-28:", early_output, metric_list)
+            all_block = _format_metrics("All:", all_output, all_metric_list)
             mid_block = _format_metrics("Late: (28-60 min):", mid_output, metric_list)
             early_block_log = _format_metrics("Early 20-28:", early_output_log, metric_list)
+            all_block_log = _format_metrics("All:", all_output_log, all_metric_list)
             mid_block_log = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
             dota2protracker_lane_adv_line = (
                 _build_dota2protracker_lane_adv_line(s)
@@ -17057,15 +17164,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if dota2protracker_lane_adv_line:
                 early_block = f"{early_block.rstrip()}\n{dota2protracker_lane_adv_line}"
             dota2protracker_block = (
-                _build_dota2protracker_block(s)
+                _build_dota2protracker_block(s, star_output=all_output_log)
                 if DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED and _has_valid_dota2protracker_signal(s)
                 else ""
             )
             star_metrics_snapshot = _build_star_metrics_snapshot(
                 early_block_log=early_block_log,
                 mid_block_log=mid_block_log,
+                all_block_log=all_block_log,
                 raw_star_early_summary=raw_star_early_summary,
                 raw_star_late_summary=raw_star_late_summary,
+                raw_star_all_summary=raw_star_all_summary,
                 star_diag_lines=star_diag_lines,
             )
 
@@ -17163,7 +17272,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 (
                     "ELO60: "
                     f"early={_format_star_block_status_with_side(selected_early_diag)}, "
-                    f"late={_format_star_block_status_with_side(selected_late_diag)}"
+                    f"late={_format_star_block_status_with_side(selected_late_diag)}, "
+                    f"all={_format_star_block_status_with_side(selected_all_diag)}"
                 )
             )
             if isinstance(star_metrics_snapshot, dict):
@@ -17171,8 +17281,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
             has_selected_early_star = bool(selected_early_diag.get("valid"))
             has_selected_late_star = bool(selected_late_diag.get("valid"))
+            has_selected_all_star = bool(selected_all_diag.get("valid"))
             selected_early_sign = selected_early_diag.get("sign") if has_selected_early_star else None
             selected_late_sign = selected_late_diag.get("sign") if has_selected_late_star else None
+            selected_all_sign = selected_all_diag.get("sign") if has_selected_all_star else None
             if verbose_match_log:
                 print(
                     "   "
@@ -17181,6 +17293,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         has_star=has_selected_early_star,
                         sign=selected_early_sign,
                         wr_pct=early_wr_pct,
+                        radiant_team_name=radiant_team_name_original,
+                        dire_team_name=dire_team_name_original,
+                    )
+                )
+                print(
+                    "   "
+                    + _format_admin_star_signal_summary_line(
+                        "All signal",
+                        has_star=has_selected_all_star,
+                        sign=selected_all_sign,
+                        wr_pct=None,
                         radiant_team_name=radiant_team_name_original,
                         dire_team_name=dire_team_name_original,
                     )
@@ -17329,42 +17452,45 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if top25_late_elo_block_override_active:
                 dispatch_mode = "delayed_late_elo_block_top25_opposite_monitor"
 
+            has_any_valid_star_block = bool(
+                has_selected_early_star
+                or has_selected_late_star
+                or has_selected_all_star
+            )
             if (
                 not force_odds_signal_test_active
-                and not has_selected_late_star
+                and not has_any_valid_star_block
                 and not top25_late_elo_block_override_active
-                and not send_now_early_star_late_core_same_sign
-                and not (
-                    early65_gate_active
-                    and float(game_time or 0.0) < NETWORTH_GATE_TIER1_EARLY65_WINDOW_END_SECONDS
-                )
             ):
                 print(
                     "   ⚠️ ВЕРДИКТ: ОТКАЗ "
-                    "(нет late star-сигнала) - матч пропущен"
+                    "(нет ни одного валидного STAR-блока) - матч пропущен"
                 )
                 print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
                 add_url(
                     check_uniq_url,
-                    reason="star_signal_rejected_no_late_star",
+                    reason="star_signal_rejected_no_valid_star_block",
                     details={
                         "status": status,
                         "selected_star_wr": selected_star_wr,
                         "selected_star_mode": selected_star_mode,
                         "selected_early_star": bool(has_selected_early_star),
                         "selected_late_star": bool(has_selected_late_star),
+                        "selected_all_star": bool(has_selected_all_star),
                         "selected_early_sign": selected_early_sign,
                         "selected_late_sign": selected_late_sign,
+                        "selected_all_sign": selected_all_sign,
                         "late_core_same_sign_diag": late_core_same_sign_diag,
                         "late_star_hits_against_early_diag": late_star_hits_against_early_diag,
                         "late_star_hits_against_early65_diag": late_star_hits_against_early65_diag,
                         "selected_early_diag": selected_early_diag,
                         "selected_late_diag": selected_late_diag,
+                        "selected_all_diag": selected_all_diag,
                         "early_star_no_late_same_sign_gate": early_star_no_late_same_sign_gate,
                         "json_retry_errors": json_retry_errors,
                     },
                 )
-                print("   ✅ map_id_check.txt обновлен: add_url после отказа no-late-star")
+                print("   ✅ map_id_check.txt обновлен: add_url после отказа no-valid-star-block")
                 return return_status
 
             if top25_late_elo_block_override_active and verbose_match_log:
@@ -17461,8 +17587,16 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             target_sign = (
                 int(top25_late_elo_block_override.get("target_sign"))
                 if top25_late_elo_block_override_active
-                else (selected_late_sign if has_selected_late_star else selected_early_sign)
-            )
+                else (
+                        selected_late_sign
+                        if has_selected_late_star
+                        else (
+                            selected_all_sign
+                            if has_selected_all_star
+                            else selected_early_sign
+                        )
+                    )
+                )
             target_side = _target_side_from_sign(target_sign)
             opposite_signs_early90_monitor = _opposite_signs_early90_monitor_config(
                 team_elo_meta=team_elo_meta,
@@ -17724,6 +17858,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 dispatch_message_sign = selected_late_sign
             elif has_selected_late_star and selected_late_sign is not None:
                 dispatch_message_sign = selected_late_sign
+            elif has_selected_all_star and selected_all_sign is not None:
+                dispatch_message_sign = selected_all_sign
             elif has_selected_early_star and selected_early_sign is not None:
                 dispatch_message_sign = selected_early_sign
 
@@ -17841,6 +17977,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"{team_elo_block}"
                 f"{wr_block}"
                 f"{telegram_early_block}"
+                f"{all_block}"
                 f"{mid_block}"
                 f"{dota2protracker_block}"
                 f"{live_state_block}"
