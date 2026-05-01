@@ -794,6 +794,15 @@ def test_build_dota2protracker_log_lines_include_games_and_reasons() -> None:
 def test_build_lane_block_omits_section_when_lanes_missing() -> None:
     assert runtime._build_lane_block("", "", "") == ""
     assert runtime._build_lane_block(None, "Mid: win 52%", "") == "Lanes:\nMid: win 52%\n\n"
+    assert (
+        runtime._build_lane_block(
+            "Top: lose 75%",
+            "Mid: lose 47%",
+            "Bot: win 40%",
+            lane_adv_line="lane_adv: +0.42\n",
+        )
+        == "Lanes:\nTop: lose 75%\nMid: lose 47%\nBot: win 40%\nlane_adv: +0.42\n\n"
+    )
 
 
 def test_load_map_id_check_urls_migrates_legacy_repo_file(tmp_path, monkeypatch) -> None:

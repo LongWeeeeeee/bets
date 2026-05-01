@@ -1321,6 +1321,10 @@ PIPELINE_BYPASS_PROTRACKER_GATE = _safe_bool_env(
     "PIPELINE_BYPASS_PROTRACKER_GATE",
     PIPELINE_DISABLE_SIGNAL_GATES,
 )
+STAR_SIGNAL_IMMEDIATE_ON_ANY_VALID_BLOCK = _safe_bool_env(
+    "STAR_SIGNAL_IMMEDIATE_ON_ANY_VALID_BLOCK",
+    True,
+)
 PIPELINE_BYPASS_PROCESSED_URL_GATE = _safe_bool_env("PIPELINE_BYPASS_PROCESSED_URL_GATE", False)
 PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND = _safe_bool_env(
     "PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND",
@@ -2083,11 +2087,12 @@ def _format_metric_value(value: float) -> str:
     return f"{value:.1f}"
 
 
-def _build_lane_block(top: Any, mid: Any, bot: Any) -> str:
+def _build_lane_block(top: Any, mid: Any, bot: Any, lane_adv_line: str = "") -> str:
     top_line = str(top or "").strip()
     mid_line = str(mid or "").strip()
     bot_line = str(bot or "").strip()
-    lane_lines = [line for line in (top_line, mid_line, bot_line) if line]
+    lane_adv = str(lane_adv_line or "").strip()
+    lane_lines = [line for line in (top_line, mid_line, bot_line, lane_adv) if line]
     if not lane_lines:
         return ""
     return "Lanes:\n" + "\n".join(lane_lines) + "\n\n"
@@ -16846,6 +16851,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             late_sign = late_diag.get("sign") if has_late_star else None
             if not (has_early_star or has_late_star or has_all_star):
                 return False, "no_valid_star_block"
+            if STAR_SIGNAL_IMMEDIATE_ON_ANY_VALID_BLOCK:
+                return True, "ok"
             if has_late_star and not has_early_star and STAR_REQUIRE_EARLY_WITH_LATE_SAME_SIGN:
                 return (
                     False,
@@ -17174,11 +17181,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             mid_block_log = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
             dota2protracker_lane_adv_line = (
                 _build_dota2protracker_lane_adv_line(s)
-                if DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED and _has_valid_dota2protracker_signal(s)
+                if DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED
                 else ""
             )
-            if dota2protracker_lane_adv_line:
-                early_block = f"{early_block.rstrip()}\n{dota2protracker_lane_adv_line}"
             dota2protracker_block = (
                 _build_dota2protracker_block(s, star_output=all_output_log)
                 if DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED and _has_valid_dota2protracker_signal(s)
@@ -17269,16 +17274,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             raw_selected_late_diag = dict(selected_late_diag)
             raw_selected_early_valid = bool(raw_selected_early_diag.get("valid"))
             raw_selected_late_valid = bool(raw_selected_late_diag.get("valid"))
-            selected_early_diag = _apply_elo_block_wr_guard(
-                diag=selected_early_diag,
-                block_wr_pct=early_wr_pct,
-                team_elo_meta=team_elo_meta,
-            )
-            selected_late_diag = _apply_elo_block_wr_guard(
-                diag=selected_late_diag,
-                block_wr_pct=late_wr_pct,
-                team_elo_meta=team_elo_meta,
-            )
+            if not STAR_SIGNAL_IMMEDIATE_ON_ANY_VALID_BLOCK:
+                selected_early_diag = _apply_elo_block_wr_guard(
+                    diag=selected_early_diag,
+                    block_wr_pct=early_wr_pct,
+                    team_elo_meta=team_elo_meta,
+                )
+                selected_late_diag = _apply_elo_block_wr_guard(
+                    diag=selected_late_diag,
+                    block_wr_pct=late_wr_pct,
+                    team_elo_meta=team_elo_meta,
+                )
             if raw_selected_early_valid and not bool(selected_early_diag.get("valid")):
                 if verbose_match_log:
                     print(
@@ -17685,7 +17691,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 late_wr_pct=late_wr_pct,
             )
             elo_underdog_guard = None
-            if not force_odds_signal_test_active and not top25_late_elo_block_override_active:
+            if (
+                not force_odds_signal_test_active
+                and not top25_late_elo_block_override_active
+                and not STAR_SIGNAL_IMMEDIATE_ON_ANY_VALID_BLOCK
+            ):
                 elo_underdog_guard = _elo_underdog_guard_decision(
                     team_elo_meta=team_elo_meta,
                     target_side=target_side,
@@ -18005,6 +18015,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 s.get('top'),
                 s.get('mid'),
                 s.get('bot'),
+                lane_adv_line=dota2protracker_lane_adv_line,
             )
 
             # Формирование сообщения
@@ -18060,6 +18071,69 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             early_core_monitor_threshold = float(NETWORTH_GATE_EARLY_CORE_HIGH_CONFIDENCE_MIN_LEAD)
             early_core_monitor_wait_status_label = NETWORTH_STATUS_EARLY_CORE_MONITOR_WAIT_NONNEGATIVE
             early_core_monitor_delay_reason = "early_star_late_core_wait_nonnegative"
+            if (
+                STAR_SIGNAL_IMMEDIATE_ON_ANY_VALID_BLOCK
+                and has_any_valid_star_block
+                and not force_odds_signal_test_active
+            ):
+                dispatch_mode = "immediate_any_valid_star_block"
+                networth_send_status_label = "any_valid_star_block_send"
+                if verbose_match_log:
+                    print(
+                        "   ✅ Dispatch rule: immediate on any valid STAR block "
+                        f"(early={has_selected_early_star}, late={has_selected_late_star}, "
+                        f"all={has_selected_all_star})"
+                    )
+                if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки STAR-сигнала any-valid"):
+                    return return_status
+                if not _acquire_signal_send_slot(check_uniq_url):
+                    print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
+                    return return_status
+                try:
+                    if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки STAR-сигнала any-valid после lock"):
+                        return return_status
+                    if verbose_match_log:
+                        _print_star_metrics_snapshot(star_metrics_snapshot, label="immediate")
+                    delivery_message_text = _refresh_stake_multiplier_message(
+                        message_text,
+                        stake_multiplier_context=stake_multiplier_context,
+                        game_time_seconds=current_game_time,
+                        radiant_lead=lead,
+                    )
+                    delivery_message_text = _refresh_message_bookmaker_block_for_dispatch(
+                        check_uniq_url,
+                        delivery_message_text,
+                    )
+                    add_url_details = {
+                        "status": status,
+                        "dispatch_mode": dispatch_mode,
+                        "dispatch_status_label": networth_send_status_label,
+                        "selected_star_wr": selected_star_wr,
+                        "selected_star_mode": selected_star_mode,
+                        "selected_early_star": bool(has_selected_early_star),
+                        "selected_late_star": bool(has_selected_late_star),
+                        "selected_all_star": bool(has_selected_all_star),
+                        "selected_early_sign": selected_early_sign,
+                        "selected_late_sign": selected_late_sign,
+                        "selected_all_sign": selected_all_sign,
+                        "game_time": int(current_game_time),
+                        "target_side": dispatch_message_side,
+                        "json_retry_errors": json_retry_errors,
+                    }
+                    if target_networth_diff is not None:
+                        add_url_details["target_networth_diff"] = float(target_networth_diff)
+                    delivery_confirmed = _deliver_and_persist_signal(
+                        check_uniq_url,
+                        delivery_message_text,
+                        add_url_reason="star_signal_sent_now_any_valid_block",
+                        add_url_details=add_url_details,
+                        bookmaker_decision="sent",
+                    )
+                    if delivery_confirmed:
+                        print("   ✅ ВЕРДИКТ: STAR-сигнал отправлен немедленно (any valid block)")
+                finally:
+                    _release_signal_send_slot(check_uniq_url)
+                return return_status
             if not force_odds_signal_test_active:
                 if tier1_early_kills_mode:
                     if target_networth_diff is None or target_side is None:
