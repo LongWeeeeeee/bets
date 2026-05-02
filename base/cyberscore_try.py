@@ -18,6 +18,7 @@ import sys
 import os
 import pickle
 import logging
+import warnings
 import asyncio
 import threading
 import queue
@@ -71,6 +72,12 @@ except ImportError:
     from keys import api_to_proxy, BOOKMAKER_PROXY_URL
     BOOKMAKER_PROXY_POOL = []
     DLTV_PROXY_POOL = []
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"When using a proxy, it is heavily recommended that you pass `geoip=True`\.",
+    category=Warning,
+)
 
 
 def _env_flag(name: str, default: str = "0") -> bool:
@@ -14214,8 +14221,6 @@ class _SharedCamoufoxSession:
             proxy_kwargs = _cyberscore_camoufox_proxy_kwargs()
             proxy_label = "with proxy" if proxy_kwargs else "without proxy"
             browser_options = {"headless": True, **proxy_kwargs}
-            if proxy_kwargs:
-                browser_options["geoip"] = True
             browser_cm = camoufox.Camoufox(**browser_options)
             browser = browser_cm.__enter__()
             launched_at = time.time()
