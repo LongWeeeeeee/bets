@@ -139,6 +139,7 @@ python3 base/cyberscore_try.py --no-odds
 **Переменные окружения:**
 - `BOOKMAKER_PROXY_URL`, `BOOKMAKER_PROXY_POOL` — прокси для букмекеров
 - `DLTV_PROXY_POOL` — прокси для OpenDota/DLTV
+- При удалении нерабочих прокси в `base/keys.py` чистим только runtime proxy constants/pools; не удаляем и не меняем записи `api_to_proxy` / `api_to_keys` и связанные API-ключи
 - `DLTV_CAMOUFOX_ENABLED=1` — включить Camoufox-first для DLTV HTML mode
 - `BOOKMAKER_CAMOUFOX_ENABLED=1` — включить Camoufox для bookmaker (ОСНОВНОЙ РЕЖИМ)
 - `SIGNAL_MINIMAL_ODDS_ONLY_MODE=1` — режим "только команды + счёт + кэфы"
