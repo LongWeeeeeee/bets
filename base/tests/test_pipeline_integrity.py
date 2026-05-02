@@ -502,6 +502,48 @@ def test_cyberscore_next_payload_extracts_draft_time_and_networth() -> None:
     assert payload["_cyberscore_heroes_and_pos"]["dire"]["pos5"]["hero_id"] == 10
 
 
+def test_delayed_match_state_reads_cyberscore_html_instead_of_json(monkeypatch) -> None:
+    item = _build_cyberscore_item()
+    item["game_time"] = 1234
+    item["networth"] = [{"team": "radiant", "time": 1234, "value": 2100}]
+    flight_chunk = f'prefix "item":{json.dumps(item, separators=(",", ":"))}, suffix'
+    html = f"<script>self.__next_f.push([1,{json.dumps(flight_chunk)}])</script>"
+    monkeypatch.setattr(runtime, "_get_cyberscore_html_via_camoufox", lambda _url: html)
+    monkeypatch.setattr(runtime, "CYBERSCORE_LISTING_ITEM_CACHE", {}, raising=False)
+
+    state = runtime._fetch_delayed_match_state("https://cyberscore.live/en/matches/172835/")
+
+    assert state == {"game_time": 1234.0, "radiant_lead": 2100.0}
+
+
+def test_delayed_match_state_prefers_newer_cyberscore_listing_cache(monkeypatch) -> None:
+    detail_item = _build_cyberscore_item()
+    detail_item["game_time"] = 1000
+    detail_item["networth"] = [{"team": "radiant", "time": 1000, "value": 500}]
+    listing_item = _build_cyberscore_item()
+    listing_item["game_time"] = 1300
+    listing_item["networth"] = [{"team": "dire", "time": 1300, "value": 2200}]
+    flight_chunk = f'prefix "item":{json.dumps(detail_item, separators=(",", ":"))}, suffix'
+    html = f"<script>self.__next_f.push([1,{json.dumps(flight_chunk)}])</script>"
+    monkeypatch.setattr(runtime, "_get_cyberscore_html_via_camoufox", lambda _url: html)
+    monkeypatch.setattr(runtime, "CYBERSCORE_LISTING_ITEM_CACHE", {"172835": listing_item}, raising=False)
+
+    state = runtime._fetch_delayed_match_state("https://cyberscore.live/en/matches/172835/")
+
+    assert state == {"game_time": 1300.0, "radiant_lead": -2200.0}
+
+
+def test_cyberscore_listing_cache_survives_empty_transition_html(monkeypatch) -> None:
+    item = _build_cyberscore_item()
+    monkeypatch.setattr(runtime, "CYBERSCORE_LISTING_ITEM_CACHE", {"172835": item}, raising=False)
+
+    heads, bodies = runtime._extract_cyberscore_live_cards_from_html("<main>No live matches</main>")
+
+    assert heads == []
+    assert bodies == []
+    assert runtime.CYBERSCORE_LISTING_ITEM_CACHE["172835"] is item
+
+
 def test_add_url_creates_json_array_and_deduplicates(tmp_path, monkeypatch) -> None:
     target_path = tmp_path / "map_id_check.json"
     monkeypatch.setattr(runtime, "MAP_ID_CHECK_PATH", str(target_path), raising=False)
@@ -712,7 +754,7 @@ def test_build_dota2protracker_lane_adv_line_accepts_legacy_payload_without_flag
                 "pro_lane_bot_duo_valid": False,
             }
         )
-        == ""
+        == "lane_adv_protracker: -2.36\n"
     )
 
 
@@ -862,6 +904,30 @@ def test_build_lane_dict_adv_line_uses_three_lane_edges() -> None:
         == "lane_adv_dict: +8.00\n"
     )
     assert runtime._build_lane_dict_adv_line("Top: None", "", None) == ""
+
+
+def test_pipeline_probe_message_places_protracker_lane_adv_under_dict() -> None:
+    message = runtime._build_pipeline_probe_message(
+        radiant_team_name="Radiant Team",
+        dire_team_name="Dire Team",
+        live_league={"radiant_series_wins": 0, "dire_series_wins": 0},
+        fallback_score_text="",
+        game_time_seconds=600,
+        radiant_lead=0,
+        radiant_heroes_and_pos={"pos1": {"hero_id": 1}},
+        dire_heroes_and_pos={"pos1": {"hero_id": 2}},
+        metrics_payload={
+            "top": "Top: lose 60%",
+            "mid": "Mid: win 55%",
+            "bot": "Bot: win 70%",
+            "early_output": {},
+            "mid_output": {},
+            "post_lane_output": {},
+        },
+        protracker_payload={"pro_lane_advantage": 4.2},
+    )
+
+    assert "lane_adv_dict: +8.00\nlane_adv_protracker: +4.20" in message
 
 
 def test_calculate_lanes_preserves_legacy_return_and_can_return_sources(monkeypatch) -> None:
@@ -1114,6 +1180,18 @@ def test_cyberscore_proxy_required_blocks_direct(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError):
         runtime._cyberscore_camoufox_proxy_kwargs()
+
+
+def test_cyberscore_proxy_parser_accepts_host_first_credentials() -> None:
+    proxy_kwargs = runtime._camoufox_proxy_kwargs_from_url("proxy.example:12345@login:password")
+
+    assert proxy_kwargs == {
+        "proxy": {
+            "server": "http://proxy.example:12345",
+            "username": "login",
+            "password": "password",
+        }
+    }
 
 
 def test_extract_nearest_scheduled_match_info() -> None:
@@ -1555,6 +1633,7 @@ def test_send_message_uses_curl_fallback_on_ssl_connection_error(tmp_path, monke
     monkeypatch.setattr(functions, "LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH", tmp_path / "legacy_telegram_subscribers_state.json", raising=False)
     monkeypatch.setattr(functions.keys, "Chat_id", "100", raising=False)
     monkeypatch.setattr(functions.keys, "Chat_ids", [], raising=False)
+    monkeypatch.setattr(functions, "_vk_is_enabled", lambda: False)
 
     class _CurlResult:
         returncode = 0
@@ -1612,6 +1691,7 @@ def test_send_message_uses_proxy_fallback_before_curl(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(functions, "LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH", tmp_path / "legacy_telegram_subscribers_state.json", raising=False)
     monkeypatch.setattr(functions.keys, "Chat_id", "100", raising=False)
     monkeypatch.setattr(functions.keys, "Chat_ids", [], raising=False)
+    monkeypatch.setattr(functions, "_vk_is_enabled", lambda: False)
 
     class _ProxyResponse:
         status_code = 200
@@ -1635,7 +1715,7 @@ def test_send_message_uses_proxy_fallback_before_curl(tmp_path, monkeypatch) -> 
     monkeypatch.setattr(functions.requests, "post", _fake_post)
     monkeypatch.setattr(
         functions.keys,
-        "BOOKMAKER_PROXIES",
+        "TELEGRAM_PROXIES",
         {"http": "http://proxy.example:8080", "https": "http://proxy.example:8080"},
         raising=False,
     )
@@ -3373,9 +3453,10 @@ def test_delayed_send_failure_schedules_backoff(tmp_path, monkeypatch) -> None:
     assert payload["next_retry_at"] == 1_700_000_030.0
 
 
-def test_delayed_early_core_timeout_rejects_without_send(tmp_path, monkeypatch) -> None:
+def test_delayed_early_core_timeout_transitions_to_wr_grid(tmp_path, monkeypatch) -> None:
     delayed_queue_path = tmp_path / "delayed_signal_queue.json"
     monkeypatch.setattr(runtime, "DELAYED_QUEUE_PATH", str(delayed_queue_path), raising=False)
+    monkeypatch.setattr(runtime, "late_pub_comeback_table_thresholds_by_wr", {60: {20: -1000.0}}, raising=False)
     monkeypatch.setattr(runtime.time, "time", lambda: 1_700_000_000.0)
     monkeypatch.setattr(runtime, "_is_url_processed", lambda _url: False)
     monkeypatch.setattr(runtime, "_skip_dispatch_for_processed_url", lambda *_args, **_kwargs: False)
@@ -3432,16 +3513,86 @@ def test_delayed_early_core_timeout_rejects_without_send(tmp_path, monkeypatch) 
     runtime._drain_due_delayed_signals_once()
 
     assert send_calls == []
-    assert add_url_calls
-    assert add_url_calls[-1]["reason"] == "star_signal_rejected_early_core_monitor_timeout"
-    assert add_url_calls[-1]["details"]["dispatch_status_label"] == "early_core_timeout_no_send"
+    assert add_url_calls == []
     with runtime.monitored_matches_lock:
-        assert "dltv.org/matches/test-early-core-timeout.0" not in runtime.monitored_matches
+        payload = dict(runtime.monitored_matches["dltv.org/matches/test-early-core-timeout.0"])
+    assert payload["reason"] == "post_20_30_wr_grid_monitor"
+    assert payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
+    assert payload["send_on_target_game_time"] is False
+    assert payload["late_pub_comeback_table_active"] is True
+    assert payload["late_pub_comeback_table_wr_level"] == 60
+    assert payload["target_game_time"] == pytest.approx(float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS))
 
 
-def test_delayed_fallback_uses_post_target_comeback_ceiling(tmp_path, monkeypatch) -> None:
+def test_delayed_wr_grid_sends_after_20_30_when_threshold_reached(tmp_path, monkeypatch) -> None:
     delayed_queue_path = tmp_path / "delayed_signal_queue.json"
     monkeypatch.setattr(runtime, "DELAYED_QUEUE_PATH", str(delayed_queue_path), raising=False)
+    monkeypatch.setattr(runtime, "late_pub_comeback_table_thresholds_by_wr", {60: {20: -1000.0}}, raising=False)
+    monkeypatch.setattr(runtime.time, "time", lambda: 1_700_000_000.0)
+    monkeypatch.setattr(runtime, "_is_url_processed", lambda _url: False)
+    monkeypatch.setattr(runtime, "_skip_dispatch_for_processed_url", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(runtime, "_acquire_signal_send_slot", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(runtime, "_release_signal_send_slot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        runtime,
+        "_fetch_delayed_match_state",
+        lambda _json_url: {
+            "game_time": float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS),
+            "radiant_lead": -500.0,
+        },
+    )
+
+    deliver_calls: List[Dict[str, Any]] = []
+    monkeypatch.setattr(
+        runtime,
+        "_deliver_and_persist_signal",
+        lambda *args, **kwargs: (deliver_calls.append({"args": args, "kwargs": kwargs}) or True),
+    )
+    monkeypatch.setattr(runtime, "add_url", lambda *_args, **_kwargs: None)
+
+    with runtime.monitored_matches_lock:
+        runtime.monitored_matches.clear()
+    runtime._set_delayed_match(
+        "dltv.org/matches/test-wr-grid-send.0",
+        {
+            "message": "payload",
+            "reason": "early_star_late_core_wait_1500",
+            "json_url": "https://dltv.org/live/test.json",
+            "target_game_time": float(runtime.DELAYED_SIGNAL_TARGET_GAME_TIME),
+            "queued_at": 1_699_999_000.0,
+            "queued_game_time": 1100.0,
+            "last_game_time": 1100.0,
+            "last_progress_at": 1_699_999_000.0,
+            "add_url_reason": "star_signal_sent_delayed",
+            "add_url_details": {"status": "draft...", "target_side": "radiant"},
+            "fallback_send_status_label": "early_core_fallback_20_20_send",
+            "send_on_target_game_time": False,
+            "timeout_add_url_reason": "star_signal_rejected_early_core_monitor_timeout",
+            "timeout_status_label": "early_core_timeout_no_send",
+            "allow_live_recheck": True,
+            "networth_monitor_threshold": 1500.0,
+            "networth_monitor_deadline_game_time": float(runtime.DELAYED_SIGNAL_TARGET_GAME_TIME),
+            "networth_target_side": "radiant",
+            "retry_attempt_count": 0,
+            "next_retry_at": 0.0,
+        },
+    )
+
+    runtime._drain_due_delayed_signals_once()
+
+    assert deliver_calls
+    details = deliver_calls[-1]["kwargs"]["add_url_details"]
+    assert details["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_PUB_TABLE_SEND
+    assert details["late_pub_comeback_table_reached"] is True
+    assert details["late_pub_comeback_table_wr_level"] == 60
+    assert details["late_pub_comeback_table_threshold"] == pytest.approx(-1000.0)
+    assert details["target_networth_diff"] == pytest.approx(-500.0)
+
+
+def test_delayed_opposite_fallback_waits_until_wr_grid_start(tmp_path, monkeypatch) -> None:
+    delayed_queue_path = tmp_path / "delayed_signal_queue.json"
+    monkeypatch.setattr(runtime, "DELAYED_QUEUE_PATH", str(delayed_queue_path), raising=False)
+    monkeypatch.setattr(runtime, "late_pub_comeback_table_thresholds_by_wr", {60: {20: -1000.0}}, raising=False)
     monkeypatch.setattr(runtime, "late_comeback_ceiling_thresholds", {"20": 13500.0, "21": 13698.0}, raising=False)
     monkeypatch.setattr(runtime, "late_comeback_ceiling_max_minute", 21, raising=False)
     monkeypatch.setattr(runtime.time, "time", lambda: 1_700_000_000.0)
@@ -3499,16 +3650,13 @@ def test_delayed_fallback_uses_post_target_comeback_ceiling(tmp_path, monkeypatc
 
     runtime._drain_due_delayed_signals_once()
 
-    assert send_calls == ["send"]
+    assert send_calls == []
     assert add_url_calls == []
-    assert deliver_calls
-    add_url_details = deliver_calls[-1]["kwargs"]["add_url_details"]
-    assert add_url_details["late_comeback_monitor_reached"] is True
-    assert add_url_details["target_networth_diff"] == pytest.approx(-3501.0)
-    assert add_url_details["late_comeback_monitor_minute"] == 20
-    assert add_url_details["late_comeback_monitor_threshold"] == pytest.approx(13500.0)
     with runtime.monitored_matches_lock:
-        assert "dltv.org/matches/test-late-fallback-guard.0" in runtime.monitored_matches
+        payload = dict(runtime.monitored_matches["dltv.org/matches/test-late-fallback-guard.0"])
+    assert payload["reason"] == "late_only_opposite_signs"
+    assert payload["target_game_time"] == pytest.approx(float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS))
+    assert payload["send_on_target_game_time"] is True
 
 
 def test_delayed_late_core_monitor_uses_post_target_comeback_ceiling(tmp_path, monkeypatch) -> None:
@@ -3581,9 +3729,10 @@ def test_delayed_late_core_monitor_uses_post_target_comeback_ceiling(tmp_path, m
     assert add_url_details["late_comeback_monitor_threshold"] == pytest.approx(13500.0)
 
 
-def test_delayed_fallback_transitions_into_post_target_comeback_monitor(tmp_path, monkeypatch) -> None:
+def test_delayed_fallback_stays_in_wr_grid_after_20_30_until_threshold(tmp_path, monkeypatch) -> None:
     delayed_queue_path = tmp_path / "delayed_signal_queue.json"
     monkeypatch.setattr(runtime, "DELAYED_QUEUE_PATH", str(delayed_queue_path), raising=False)
+    monkeypatch.setattr(runtime, "late_pub_comeback_table_thresholds_by_wr", {60: {20: -1000.0}}, raising=False)
     monkeypatch.setattr(runtime, "late_comeback_ceiling_thresholds", {"20": 13500.0, "21": 13698.0}, raising=False)
     monkeypatch.setattr(runtime, "late_comeback_ceiling_max_minute", 21, raising=False)
     monkeypatch.setattr(runtime.time, "time", lambda: 1_700_000_000.0)
@@ -3594,7 +3743,7 @@ def test_delayed_fallback_transitions_into_post_target_comeback_monitor(tmp_path
     monkeypatch.setattr(
         runtime,
         "_fetch_delayed_match_state",
-        lambda _json_url: {"game_time": float(runtime.DELAYED_SIGNAL_TARGET_GAME_TIME), "radiant_lead": -14000.0},
+        lambda _json_url: {"game_time": float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS), "radiant_lead": -14000.0},
     )
 
     send_calls: List[str] = []
@@ -3638,11 +3787,12 @@ def test_delayed_fallback_transitions_into_post_target_comeback_monitor(tmp_path
     assert add_url_calls == []
     with runtime.monitored_matches_lock:
         payload = dict(runtime.monitored_matches["dltv.org/matches/test-post-target-comeback-monitor.0"])
-    assert payload["reason"] == "post_target_comeback_ceiling_monitor"
-    assert payload["dispatch_status_label"] == "late_comeback_monitor_wait"
+    assert payload["reason"] == "post_20_30_wr_grid_monitor"
+    assert payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
     assert payload["send_on_target_game_time"] is False
-    assert payload["late_comeback_monitor_active"] is True
-    assert payload["target_game_time"] > float(runtime.DELAYED_SIGNAL_TARGET_GAME_TIME)
+    assert payload["late_pub_comeback_table_active"] is True
+    assert payload["late_pub_comeback_table_wr_level"] == 60
+    assert payload["target_game_time"] == pytest.approx(float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS))
 
 
 def test_legacy_functions_add_url_is_disabled() -> None:
@@ -4490,6 +4640,18 @@ def test_star_signal_dispatch_flags_match_new_gate_policy() -> None:
     )
     assert early_or_all_without_late["send_now_immediate"] is True
     assert early_or_all_without_late["late_star_wait_pub_table"] is False
+
+    late_all_same_sign = runtime._star_signal_dispatch_flags(
+        has_early_star=False,
+        early_sign=None,
+        has_late_star=True,
+        late_sign=-1,
+        has_all_star=True,
+        all_sign=-1,
+    )
+    assert late_all_same_sign["send_now_immediate"] is True
+    assert late_all_same_sign["send_now_late_all_same_sign"] is True
+    assert late_all_same_sign["late_star_wait_pub_table"] is False
 
 
 def test_format_output_dict_all_section_ignores_non_star_metrics(monkeypatch) -> None:

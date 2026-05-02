@@ -436,7 +436,7 @@ def _lane_metric_value(prediction: Optional[str]) -> Optional[float]:
         return None
     if side == 'win':
         return confidence
-    if side == 'loose':
+    if side in ('lose', 'loose'):
         return -confidence
     return None
 
@@ -503,11 +503,11 @@ def process_metrics_winrate_buckets(matches: list[dict]) -> dict:
                     _record_signed_metric(results, metric_name, metric_value, post_winner)
 
         lane_specs = (
-            ('top', 'topLaneOutcome'),
-            ('mid', 'midLaneOutcome'),
-            ('bot', 'bottomLaneOutcome'),
+            ('top', 'topLaneOutcome', 'top_source'),
+            ('mid', 'midLaneOutcome', 'mid_source'),
+            ('bot', 'bottomLaneOutcome', 'bot_source'),
         )
-        for lane_name, outcome_key in lane_specs:
+        for lane_name, outcome_key, source_key in lane_specs:
             lane_winner = _lane_winner_from_outcome(match.get(outcome_key))
             if lane_winner is None:
                 continue
@@ -515,6 +515,9 @@ def process_metrics_winrate_buckets(matches: list[dict]) -> dict:
             if lane_value is not None:
                 counters['lane'] += 1
                 _record_signed_metric(results, f'lane_{lane_name}', lane_value, lane_winner)
+                lane_source = str(match.get(source_key) or '').strip()
+                if lane_source:
+                    _record_signed_metric(results, f'lane_source_{lane_source}', lane_value, lane_winner)
 
             if isinstance(pro, dict):
                 for source_key in (f'pro_lane_{lane_name}_cp1vs1', f'pro_lane_{lane_name}_duo'):

@@ -62,6 +62,9 @@ class BranchScenario:
     expected_monitor_threshold: Optional[float] = None
     raw_early_output: Optional[Dict[str, Any]] = None
     raw_mid_output: Optional[Dict[str, Any]] = None
+    has_all_star: bool = False
+    all_sign: int = 1
+    raw_post_lane_output: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -237,6 +240,22 @@ def _star_diagnostics_for_case(
             "hit_metrics": [],
             "conflict_metric": None,
         }
+    if section == "all_output":
+        if case.has_all_star:
+            return {
+                "valid": True,
+                "status": "ok",
+                "sign": case.all_sign,
+                "hit_metrics": ["synergy_duo"],
+                "conflict_metric": None,
+            }
+        return {
+            "valid": False,
+            "status": "no_hits",
+            "sign": None,
+            "hit_metrics": [],
+            "conflict_metric": None,
+        }
     return {
         "valid": False,
         "status": "no_hits",
@@ -358,6 +377,7 @@ def _run_branch_scenario(
         lambda *_args, **_kwargs: {
             "early_output": dict(case.raw_early_output or {"solo": 0}),
             "mid_output": dict(case.raw_mid_output or {"solo": 0}),
+            "post_lane_output": dict(case.raw_post_lane_output or {"synergy_duo": 0}),
         },
     )
     monkeypatch.setattr(runtime, "calculate_lanes", lambda *_args, **_kwargs: lane_output)
@@ -801,6 +821,35 @@ def test_tier2_can_require_same_sign(monkeypatch) -> None:
     assert isinstance(details, dict)
     assert details["selected_early_star"] is False
     assert details["selected_late_star"] is True
+
+
+def test_late_all_same_sign_sends_immediately_without_early(monkeypatch) -> None:
+    case = BranchScenario(
+        name="late_all_same_sign_without_early",
+        game_time_seconds=12 * 60,
+        target_side="radiant",
+        target_networth_diff=0,
+        has_early_star=False,
+        early_sign=1,
+        has_late_star=True,
+        late_sign=1,
+        has_all_star=True,
+        all_sign=1,
+        expected_send_calls=1,
+        raw_mid_output={"solo": 3},
+        raw_post_lane_output={"synergy_duo": 3},
+    )
+    result = _run_branch_scenario(monkeypatch, case)
+
+    assert len(result.sent_messages) == 1
+    assert result.queued_payload is None
+    assert result.add_url_calls
+    assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now"
+    details = result.add_url_calls[-1]["details"]
+    assert isinstance(details, dict)
+    assert details["selected_early_star"] is False
+    assert details["selected_late_star"] is True
+    assert details["selected_all_star"] is True
 
 
 def test_early_star_and_late_core_same_sign_can_send_without_late_star(monkeypatch) -> None:

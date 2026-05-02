@@ -2414,6 +2414,7 @@ def _star_signal_dispatch_flags(
     has_late_star: bool,
     late_sign: Optional[int],
     has_all_star: bool,
+    all_sign: Optional[int] = None,
     force_odds_signal_test_active: bool = False,
 ) -> Dict[str, bool]:
     late_early_same_sign = bool(
@@ -2423,6 +2424,15 @@ def _star_signal_dispatch_flags(
         and late_sign in (-1, 1)
         and early_sign == late_sign
     )
+    late_all_same_sign = bool(
+        not has_early_star
+        and has_all_star
+        and has_late_star
+        and all_sign in (-1, 1)
+        and late_sign in (-1, 1)
+        and all_sign == late_sign
+    )
+    late_early_or_all_same_sign = bool(late_early_same_sign or late_all_same_sign)
     no_late_early_or_all = bool(
         not force_odds_signal_test_active
         and not has_late_star
@@ -2430,16 +2440,18 @@ def _star_signal_dispatch_flags(
     )
     send_now = bool(
         force_odds_signal_test_active
-        or late_early_same_sign
+        or late_early_or_all_same_sign
         or no_late_early_or_all
     )
     late_wait_pub_table = bool(
         has_late_star
-        and not late_early_same_sign
+        and not late_early_or_all_same_sign
         and not force_odds_signal_test_active
     )
     return {
         "send_now_late_early_same_sign": late_early_same_sign,
+        "send_now_late_all_same_sign": late_all_same_sign,
+        "send_now_late_early_or_all_same_sign": late_early_or_all_same_sign,
         "send_now_no_late_early_or_all": no_late_early_or_all,
         "send_now_immediate": send_now,
         "late_star_wait_pub_table": late_wait_pub_table,
@@ -2461,12 +2473,28 @@ def _star_match_status_from_diags(
         return "send_or_monitor_non_late_star"
     early_sign = early_diag.get("sign") if has_early_star else None
     late_sign = late_diag.get("sign") if has_late_star else None
+    all_sign = (all_diag or {}).get("sign") if has_all_star else None
+    all_can_replace_missing_early = bool(
+        not has_early_star
+        and has_all_star
+        and all_sign in (-1, 1)
+        and late_sign in (-1, 1)
+    )
     if match_tier == 2 and STAR_REQUIRE_TIER2_SAME_SIGN:
-        if not (has_early_star and early_sign == late_sign):
+        if not (
+            (has_early_star and early_sign == late_sign)
+            or (all_can_replace_missing_early and all_sign == late_sign)
+        ):
             return "skip_tier2_same_sign_required"
     if has_early_star and early_sign == late_sign:
         return "send_now_same_sign"
+    if all_can_replace_missing_early and all_sign == late_sign:
+        return "send_now_same_sign"
     if has_early_star and early_sign != late_sign:
+        if not STAR_DELAY_ON_OPPOSITE_SIGNS:
+            return "skip_opposite_signs_disabled"
+        return "delay_late_only_opposite_signs"
+    if all_can_replace_missing_early and all_sign != late_sign:
         if not STAR_DELAY_ON_OPPOSITE_SIGNS:
             return "skip_opposite_signs_disabled"
         return "delay_late_only_opposite_signs"
@@ -2766,60 +2794,6 @@ def _networth_monitor_hold_check(
     }
 
 
-def _fallback_max_deficit_abs_for_delay_reason(
-    delay_reason: Optional[str],
-    *,
-    monitor_threshold: Optional[float] = None,
-) -> Optional[float]:
-    if monitor_threshold is not None:
-        try:
-            return abs(float(monitor_threshold))
-        except (TypeError, ValueError):
-            return None
-    reason = str(delay_reason or "").strip().lower()
-    if reason in {"late_only_no_early_star_wait_2000", "late_only_no_early_same_sign"}:
-        return abs(float(NETWORTH_GATE_LATE_NO_EARLY_DIFF))
-    if reason == "late_only_opposite_signs":
-        return abs(float(NETWORTH_GATE_LATE_OPPOSITE_DIFF))
-    if reason == "early_star_late_core_wait_nonnegative":
-        return abs(float(NETWORTH_GATE_EARLY_CORE_HIGH_CONFIDENCE_MIN_LEAD))
-    if reason == "early_star_late_core_wait_1500":
-        return abs(float(NETWORTH_GATE_EARLY_CORE_MONITOR_DIFF))
-    if reason == "early_star_late_core_low_wr_wait_800":
-        return abs(float(NETWORTH_GATE_EARLY_CORE_LOW_WR_MIN_LEAD))
-    if reason == "late_star_early_core_wait_800":
-        return abs(float(NETWORTH_GATE_4_TO_10_MIN_DIFF))
-    if reason == "strong_same_sign_wait_800_then_comeback_ceiling":
-        return abs(float(NETWORTH_GATE_STRONG_SAME_SIGN_MAX_LOSS))
-    return None
-
-
-def _fallback_networth_deficit_guard_decision(
-    *,
-    target_networth_diff: Optional[float],
-    max_deficit_abs: Optional[float],
-) -> Dict[str, Any]:
-    try:
-        threshold_abs = float(max_deficit_abs) if max_deficit_abs is not None else None
-    except (TypeError, ValueError):
-        threshold_abs = None
-    try:
-        target_diff = float(target_networth_diff) if target_networth_diff is not None else None
-    except (TypeError, ValueError):
-        target_diff = None
-    deficit = abs(target_diff) if target_diff is not None and target_diff < 0 else 0.0
-    return {
-        "reject": bool(
-            threshold_abs is not None
-            and target_diff is not None
-            and target_diff < -threshold_abs
-        ),
-        "threshold_abs": threshold_abs,
-        "target_diff": target_diff,
-        "deficit": deficit,
-    }
-
-
 def _late_star_pub_table_wr_level(late_wr_pct: Optional[float]) -> Optional[int]:
     try:
         wr_value = float(late_wr_pct) if late_wr_pct is not None else None
@@ -2829,6 +2803,112 @@ def _late_star_pub_table_wr_level(late_wr_pct: Optional[float]) -> Optional[int]
         return None
     candidate_levels = [60, 65, 70, 75, 80, 85, 90]
     return min(candidate_levels, key=lambda level: (abs(level - wr_value), level))
+
+
+def _late_pub_table_has_thresholds(wr_level: Optional[int]) -> bool:
+    if not isinstance(late_pub_comeback_table_thresholds_by_wr, dict):
+        return False
+    if not late_pub_comeback_table_thresholds_by_wr:
+        return False
+    try:
+        normalized_wr = int(wr_level) if wr_level is not None else None
+    except (TypeError, ValueError):
+        normalized_wr = None
+    if normalized_wr is None:
+        return False
+    thresholds = late_pub_comeback_table_thresholds_by_wr.get(normalized_wr)
+    return isinstance(thresholds, dict) and bool(thresholds)
+
+
+def _default_late_pub_table_wr_level() -> Optional[int]:
+    if not isinstance(late_pub_comeback_table_thresholds_by_wr, dict):
+        return None
+    if 60 in late_pub_comeback_table_thresholds_by_wr:
+        return 60
+    available_levels = []
+    for raw_level, thresholds in late_pub_comeback_table_thresholds_by_wr.items():
+        if not isinstance(thresholds, dict) or not thresholds:
+            continue
+        try:
+            available_levels.append(int(raw_level))
+        except (TypeError, ValueError):
+            continue
+    return min(available_levels) if available_levels else None
+
+
+def _late_pub_table_wr_level_from_values(*wr_values: Any) -> Optional[int]:
+    for value in wr_values:
+        level = _late_star_pub_table_wr_level(value)
+        if _late_pub_table_has_thresholds(level):
+            return level
+    default_level = _default_late_pub_table_wr_level()
+    if _late_pub_table_has_thresholds(default_level):
+        return default_level
+    return None
+
+
+def _late_pub_table_wr_level_from_payload(payload: Optional[Dict[str, Any]]) -> Optional[int]:
+    if not isinstance(payload, dict):
+        return _late_pub_table_wr_level_from_values()
+
+    detail_payload = payload.get("add_url_details")
+    details = detail_payload if isinstance(detail_payload, dict) else {}
+    context_payload = payload.get("stake_multiplier_context")
+    context = context_payload if isinstance(context_payload, dict) else {}
+
+    for source in (payload, details):
+        raw_level = source.get("late_pub_comeback_table_wr_level")
+        try:
+            level = int(raw_level) if raw_level is not None else None
+        except (TypeError, ValueError):
+            level = None
+        if _late_pub_table_has_thresholds(level):
+            return level
+
+    target_side = str(
+        payload.get("networth_target_side")
+        or details.get("networth_target_side")
+        or details.get("target_side")
+        or context.get("target_side")
+        or ""
+    ).strip().lower()
+
+    side_aware_candidates: List[Any] = []
+    if target_side in {"radiant", "dire"}:
+        def _context_side(sign_value: Any) -> Optional[str]:
+            try:
+                normalized_sign = int(sign_value)
+            except (TypeError, ValueError):
+                normalized_sign = sign_value
+            return _target_side_from_sign(normalized_sign)
+
+        early_side = _context_side(context.get("selected_early_sign"))
+        late_side = _context_side(context.get("selected_late_sign"))
+        all_side = _context_side(context.get("selected_all_sign"))
+        if bool(context.get("has_selected_late_star")) and late_side == target_side:
+            side_aware_candidates.append(context.get("late_wr_pct"))
+        if bool(context.get("has_selected_early_star")) and early_side == target_side:
+            side_aware_candidates.append(context.get("early_wr_pct"))
+        if bool(context.get("has_selected_all_star")) and all_side == target_side:
+            side_aware_candidates.append(context.get("all_wr_pct"))
+
+    level = _late_pub_table_wr_level_from_values(*side_aware_candidates)
+    if level is not None:
+        return level
+
+    return _late_pub_table_wr_level_from_values(
+        context.get("late_wr_pct"),
+        details.get("late_wr_pct"),
+        payload.get("late_wr_pct"),
+        context.get("early_wr_pct"),
+        details.get("early_wr_pct"),
+        payload.get("early_wr_pct"),
+        context.get("all_wr_pct"),
+        details.get("all_wr_pct"),
+        payload.get("all_wr_pct"),
+        details.get("selected_star_wr"),
+        payload.get("selected_star_wr"),
+    )
 
 
 def _late_star_pub_table_decision(
@@ -2907,10 +2987,14 @@ def _resolve_signal_wr_for_elo_guard(
     selected_late_sign: Optional[int],
     early_wr_pct: Optional[float],
     late_wr_pct: Optional[float],
+    has_selected_all_star: bool = False,
+    selected_all_sign: Optional[int] = None,
+    all_wr_pct: Optional[float] = None,
 ) -> Optional[Dict[str, Any]]:
     candidates: List[Tuple[str, float]] = []
     early_side = _target_side_from_sign(selected_early_sign) if has_selected_early_star else None
     late_side = _target_side_from_sign(selected_late_sign) if has_selected_late_star else None
+    all_side = _target_side_from_sign(selected_all_sign) if has_selected_all_star else None
     if (
         has_selected_early_star
         and early_wr_pct is not None
@@ -2923,12 +3007,19 @@ def _resolve_signal_wr_for_elo_guard(
         and late_side == target_side
     ):
         candidates.append(("late", float(late_wr_pct)))
+    if (
+        has_selected_all_star
+        and all_wr_pct is not None
+        and all_side == target_side
+    ):
+        candidates.append(("all", float(all_wr_pct)))
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[1], reverse=True)
     best_source, best_wr_pct = candidates[0]
     if len(candidates) > 1:
-        best_source = "best_of_early_late"
+        candidate_sources = {label for label, _value in candidates}
+        best_source = "best_of_star_blocks" if "all" in candidate_sources else "best_of_early_late"
     return {
         "wr_pct": float(best_wr_pct),
         "source": best_source,
@@ -3352,6 +3443,9 @@ def _build_stake_multiplier_context(
     early_wr_pct: Optional[float],
     late_wr_pct: Optional[float],
     late_star_hit_count: Optional[int],
+    selected_all_sign: Optional[int] = None,
+    has_selected_all_star: bool = False,
+    all_wr_pct: Optional[float] = None,
     force_half_due_to_early_no_valid_late: bool = False,
     special_header_mode: str = "",
 ) -> Dict[str, Any]:
@@ -3363,10 +3457,13 @@ def _build_stake_multiplier_context(
         "dire_team_name": str(dire_team_name or ""),
         "selected_early_sign": selected_early_sign,
         "selected_late_sign": selected_late_sign,
+        "selected_all_sign": selected_all_sign,
         "has_selected_early_star": bool(has_selected_early_star),
         "has_selected_late_star": bool(has_selected_late_star),
+        "has_selected_all_star": bool(has_selected_all_star),
         "early_wr_pct": float(early_wr_pct) if early_wr_pct is not None else None,
         "late_wr_pct": float(late_wr_pct) if late_wr_pct is not None else None,
+        "all_wr_pct": float(all_wr_pct) if all_wr_pct is not None else None,
         "late_star_hit_count": int(late_star_hit_count) if late_star_hit_count is not None else None,
         "force_half_due_to_early_no_valid_late": bool(force_half_due_to_early_no_valid_late),
         "special_header_mode": str(special_header_mode or ""),
@@ -3629,32 +3726,10 @@ def _build_dota2protracker_block(
 def _build_dota2protracker_lane_adv_line(protracker_payload: Optional[Dict[str, Any]]) -> str:
     if not isinstance(protracker_payload, dict):
         return ""
+    if "pro_lane_advantage" not in protracker_payload:
+        return ""
     payload = dict(_blank_dota2protracker_result())
     payload.update(protracker_payload)
-    has_lane_data = any(
-        bool(payload.get(key))
-        for key in (
-            "pro_lane_mid_cp1vs1_valid",
-            "pro_lane_top_cp1vs1_valid",
-            "pro_lane_bot_cp1vs1_valid",
-            "pro_lane_top_duo_valid",
-            "pro_lane_bot_duo_valid",
-        )
-    )
-    has_lane_validity_flags = any(
-        key in protracker_payload
-        for key in (
-            "pro_lane_mid_cp1vs1_valid",
-            "pro_lane_top_cp1vs1_valid",
-            "pro_lane_bot_cp1vs1_valid",
-            "pro_lane_top_duo_valid",
-            "pro_lane_bot_duo_valid",
-        )
-    )
-    if has_lane_validity_flags and not has_lane_data:
-        return ""
-    if not has_lane_validity_flags and "pro_lane_advantage" not in protracker_payload:
-        return ""
     try:
         lane_adv = float(payload.get("pro_lane_advantage", 0.0))
     except (TypeError, ValueError):
@@ -3675,6 +3750,7 @@ def _build_dota2protracker_only_message(
         "DOTA2PROTRACKER\n"
         f"{radiant_team_name} VS {dire_team_name}\n"
         f"{_build_series_score_line(live_league)}"
+        f"{_build_dota2protracker_lane_adv_line(protracker_payload)}"
         f"{_build_dota2protracker_block(protracker_payload)}"
     )
 
@@ -4097,9 +4173,55 @@ def _post_target_comeback_ceiling_decision(
     }
 
 
+def _is_cyberscore_match_url(url: Optional[str]) -> bool:
+    return "cyberscore.live" in str(url or "").lower() and "/matches/" in str(url or "").lower()
+
+
+def _cyberscore_item_game_time(item: Any) -> int:
+    if not isinstance(item, dict):
+        return 0
+    try:
+        return int(item.get("game_time") or item.get("ticks_game_time") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _fetch_cyberscore_delayed_match_state(match_url: Optional[str]) -> Optional[Dict[str, Optional[float]]]:
+    if not match_url:
+        return None
+    match_id_match = re.search(r"/matches/(\d+)", str(match_url or ""))
+    match_id = match_id_match.group(1) if match_id_match else ""
+    response_text = _get_cyberscore_html_via_camoufox(str(match_url))
+    cyber_item = None
+    if response_text:
+        cyber_item = _extract_cyberscore_match_item_from_html(response_text, match_id=match_id or None)
+    listing_item = CYBERSCORE_LISTING_ITEM_CACHE.get(str(match_id)) if match_id else None
+    if isinstance(listing_item, dict) and (
+        not isinstance(cyber_item, dict)
+        or _cyberscore_item_game_time(listing_item) > _cyberscore_item_game_time(cyber_item)
+    ):
+        cyber_item = listing_item
+    if not isinstance(cyber_item, dict):
+        return None
+    payload = _cyberscore_item_to_runtime_payload(cyber_item)
+    game_time = payload.get("game_time")
+    radiant_lead = payload.get("radiant_lead")
+    try:
+        game_time_value = float(game_time)
+    except (TypeError, ValueError):
+        return None
+    try:
+        lead_value = float(radiant_lead) if radiant_lead is not None else None
+    except (TypeError, ValueError):
+        lead_value = None
+    return {"game_time": game_time_value, "radiant_lead": lead_value}
+
+
 def _fetch_delayed_match_state(json_url: Optional[str]) -> Optional[Dict[str, Optional[float]]]:
     if not json_url:
         return None
+    if _is_cyberscore_match_url(json_url):
+        return _fetch_cyberscore_delayed_match_state(json_url)
     try:
         resp = make_request_with_retry(
             json_url,
@@ -4239,16 +4361,6 @@ def _drain_due_delayed_signals_once() -> None:
                 monitor_threshold = float(monitor_threshold_raw)
             except (TypeError, ValueError):
                 monitor_threshold = None
-        fallback_max_deficit_abs = _fallback_max_deficit_abs_for_delay_reason(
-            payload.get("reason"),
-            monitor_threshold=monitor_threshold,
-        )
-        fallback_max_deficit_raw = payload.get("fallback_max_deficit_abs")
-        if fallback_max_deficit_raw is not None:
-            try:
-                fallback_max_deficit_abs = abs(float(fallback_max_deficit_raw))
-            except (TypeError, ValueError):
-                fallback_max_deficit_abs = fallback_max_deficit_abs
         monitor_target_side = str(payload.get("networth_target_side") or "").strip().lower()
         if monitor_target_side not in {"radiant", "dire"}:
             payload_details = payload.get("add_url_details")
@@ -4330,6 +4442,73 @@ def _drain_due_delayed_signals_once() -> None:
                 current_radiant_lead,
                 monitor_target_side,
             )
+        if late_pub_comeback_table_active and not _late_pub_table_has_thresholds(late_pub_comeback_table_wr_level):
+            resolved_wr_level = _late_pub_table_wr_level_from_payload(payload)
+            if _late_pub_table_has_thresholds(resolved_wr_level):
+                late_pub_comeback_table_wr_level = int(resolved_wr_level or 0)
+                _update_delayed_match(
+                    match_key,
+                    late_pub_comeback_table_wr_level=int(late_pub_comeback_table_wr_level),
+                )
+        if (
+            not late_pub_comeback_table_active
+            and monitor_target_side in {"radiant", "dire"}
+            and current_game_time >= float(DELAYED_SIGNAL_TARGET_GAME_TIME)
+        ):
+            resolved_wr_level = _late_pub_table_wr_level_from_payload(payload)
+            if _late_pub_table_has_thresholds(resolved_wr_level):
+                late_pub_comeback_table_active = True
+                late_pub_comeback_table_wr_level = int(resolved_wr_level or 0)
+                target_game_time = max(
+                    float(target_game_time),
+                    float(LATE_PUB_COMEBACK_TABLE_START_SECONDS),
+                )
+                base_add_url_details = payload.get("add_url_details")
+                updated_add_url_details = (
+                    dict(base_add_url_details)
+                    if isinstance(base_add_url_details, dict)
+                    else {}
+                )
+                updated_add_url_details.update(
+                    {
+                        "dispatch_status_label": NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
+                        "delay_reason": "post_20_30_wr_grid_monitor",
+                        "target_game_time": int(target_game_time),
+                        "target_side": monitor_target_side,
+                        "networth_target_side": monitor_target_side,
+                        "late_pub_comeback_table_wr_level": int(late_pub_comeback_table_wr_level),
+                    }
+                )
+                if monitor_target_diff is not None:
+                    updated_add_url_details["target_networth_diff"] = float(monitor_target_diff)
+                _update_delayed_match(
+                    match_key,
+                    reason="post_20_30_wr_grid_monitor",
+                    target_game_time=float(target_game_time),
+                    dispatch_status_label=NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
+                    add_url_details=updated_add_url_details,
+                    fallback_send_status_label=NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
+                    send_on_target_game_time=False,
+                    late_pub_comeback_table_active=True,
+                    late_pub_comeback_table_wr_level=int(late_pub_comeback_table_wr_level),
+                    networth_target_side=monitor_target_side,
+                    timeout_add_url_reason="star_signal_rejected_late_pub_comeback_table_timeout",
+                    timeout_status_label=NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND,
+                )
+                payload = dict(payload)
+                payload.update(
+                    {
+                        "reason": "post_20_30_wr_grid_monitor",
+                        "target_game_time": float(target_game_time),
+                        "dispatch_status_label": NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
+                        "add_url_details": updated_add_url_details,
+                        "fallback_send_status_label": NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
+                        "send_on_target_game_time": False,
+                        "late_pub_comeback_table_active": True,
+                        "late_pub_comeback_table_wr_level": int(late_pub_comeback_table_wr_level),
+                        "networth_target_side": monitor_target_side,
+                    }
+                )
         if late_pub_comeback_table_active:
             late_pub_comeback_table_decision = _late_star_pub_table_decision(
                 wr_level=late_pub_comeback_table_wr_level,
@@ -4338,6 +4517,35 @@ def _drain_due_delayed_signals_once() -> None:
             )
             if late_pub_comeback_table_decision.get("ready"):
                 monitor_ready = True
+            elif current_game_time >= float(LATE_PUB_COMEBACK_TABLE_START_SECONDS):
+                base_add_url_details = payload.get("add_url_details")
+                updated_add_url_details = (
+                    dict(base_add_url_details)
+                    if isinstance(base_add_url_details, dict)
+                    else {}
+                )
+                updated_add_url_details["dispatch_status_label"] = NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
+                updated_add_url_details["target_side"] = monitor_target_side
+                updated_add_url_details["networth_target_side"] = monitor_target_side
+                updated_add_url_details["late_pub_comeback_table_wr_level"] = int(late_pub_comeback_table_wr_level or 0)
+                if monitor_target_diff is not None:
+                    updated_add_url_details["target_networth_diff"] = float(monitor_target_diff)
+                if isinstance(late_pub_comeback_table_decision, dict):
+                    if late_pub_comeback_table_decision.get("source_minute") is not None:
+                        updated_add_url_details["late_pub_comeback_table_minute"] = int(
+                            late_pub_comeback_table_decision.get("source_minute") or 0
+                        )
+                    if late_pub_comeback_table_decision.get("threshold") is not None:
+                        updated_add_url_details["late_pub_comeback_table_threshold"] = float(
+                            late_pub_comeback_table_decision.get("threshold") or 0.0
+                        )
+                _update_delayed_match(
+                    match_key,
+                    add_url_details=updated_add_url_details,
+                    dispatch_status_label=NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
+                    last_checked_at=float(now_ts),
+                )
+                continue
         if late_comeback_monitor_active:
             late_comeback_check = _late_comeback_monitor_check(
                 game_time_seconds=current_game_time,
@@ -4507,29 +4715,6 @@ def _drain_due_delayed_signals_once() -> None:
                 )
             continue
 
-        if late_pub_comeback_table_active and not monitor_ready:
-            updated_add_url_details = dict(payload.get("add_url_details") or {})
-            updated_add_url_details["dispatch_status_label"] = NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
-            updated_add_url_details["target_side"] = monitor_target_side
-            if monitor_target_diff is not None:
-                updated_add_url_details["target_networth_diff"] = float(monitor_target_diff)
-            if isinstance(late_pub_comeback_table_decision, dict):
-                if late_pub_comeback_table_decision.get("source_minute") is not None:
-                    updated_add_url_details["late_pub_comeback_table_minute"] = int(
-                        late_pub_comeback_table_decision.get("source_minute") or 0
-                    )
-                if late_pub_comeback_table_decision.get("threshold") is not None:
-                    updated_add_url_details["late_pub_comeback_table_threshold"] = float(
-                        late_pub_comeback_table_decision.get("threshold") or 0.0
-                    )
-            _update_delayed_match(
-                match_key,
-                add_url_details=updated_add_url_details,
-                dispatch_status_label=NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
-                last_checked_at=float(now_ts),
-            )
-            continue
-
         if _skip_dispatch_for_processed_url(match_key, "delayed отправки перед lock", indent=""):
             continue
         if not _acquire_signal_send_slot(match_key):
@@ -4647,40 +4832,6 @@ def _drain_due_delayed_signals_once() -> None:
                 print(
                     f"⏱️ Отложенный сигнал отменен без отправки: {match_key} "
                     f"(reason={reason}, status={timeout_status_label}, game_time={int(current_game_time)})"
-                )
-                continue
-            fallback_guard = _fallback_networth_deficit_guard_decision(
-                target_networth_diff=monitor_target_diff,
-                max_deficit_abs=fallback_max_deficit_abs,
-            )
-            if not monitor_ready and bool(fallback_guard.get("reject")):
-                timeout_status_label = NETWORTH_STATUS_LATE_FALLBACK_20_20_DEFICIT_NO_SEND
-                add_url_details.setdefault("dispatch_status_label", timeout_status_label)
-                add_url_details.setdefault("sent_game_time", int(current_game_time))
-                add_url_details.setdefault("target_game_time", int(target_game_time))
-                add_url_details.setdefault("networth_monitor_reached", False)
-                if fallback_guard.get("threshold_abs") is not None:
-                    add_url_details.setdefault(
-                        "fallback_max_deficit_abs",
-                        float(fallback_guard.get("threshold_abs") or 0.0),
-                    )
-                if fallback_guard.get("target_diff") is not None:
-                    add_url_details.setdefault(
-                        "target_networth_diff",
-                        float(fallback_guard.get("target_diff") or 0.0),
-                    )
-                add_url(
-                    match_key,
-                    reason="star_signal_rejected_fallback_networth_guard",
-                    details=add_url_details,
-                )
-                _drop_delayed_match(match_key, reason="fallback_deficit_guard_no_send")
-                print(
-                    f"⏱️ Отложенный сигнал отменен без отправки: {match_key} "
-                    f"(reason={reason}, status={timeout_status_label}, "
-                    f"game_time={int(current_game_time)}, "
-                    f"target_networth_diff={int(fallback_guard.get('target_diff') or 0)}, "
-                    f"max_deficit={int(fallback_guard.get('threshold_abs') or 0)})"
                 )
                 continue
             player_denylist_block = payload.get("player_denylist_block")
@@ -6440,6 +6591,7 @@ PROXIES = {}
 USE_PROXY = None
 # Live source mode: "cyberscore" (Camoufox/proxy), "api" (curl/proxy), or "html" (Camoufox/Selenium).
 DLTV_SOURCE_MODE = str(os.getenv("DLTV_SOURCE_MODE", "cyberscore")).strip().lower() or "cyberscore"
+PURE_DLTV_MODE = _env_flag("PURE_DLTV_MODE", "0")
 CYBERSCORE_MATCHES_URL = str(
     os.getenv(
         "CYBERSCORE_MATCHES_URL",
@@ -6449,6 +6601,43 @@ CYBERSCORE_MATCHES_URL = str(
 CYBERSCORE_GET_HEADS_FALLBACK = _env_flag("CYBERSCORE_GET_HEADS_FALLBACK", "0")
 CYBERSCORE_CAMOUFOX_PROXY_URL = str(os.getenv("CYBERSCORE_CAMOUFOX_PROXY_URL", "")).strip()
 CYBERSCORE_CAMOUFOX_REQUIRE_PROXY = _env_flag("CYBERSCORE_CAMOUFOX_REQUIRE_PROXY", "1")
+CYBERSCORE_LONG_PAGE_ENABLED = _env_flag("CYBERSCORE_LONG_PAGE_ENABLED", "1")
+CYBERSCORE_LONG_PAGE_LISTING_ENABLED = _env_flag(
+    "CYBERSCORE_LONG_PAGE_LISTING_ENABLED",
+    "1" if CYBERSCORE_LONG_PAGE_ENABLED else "0",
+)
+CYBERSCORE_LONG_PAGE_MATCH_ENABLED = _env_flag(
+    "CYBERSCORE_LONG_PAGE_MATCH_ENABLED",
+    "1" if CYBERSCORE_LONG_PAGE_ENABLED else "0",
+)
+CYBERSCORE_LONG_PAGE_LISTING_RELOAD_SECONDS = _safe_float_env(
+    "CYBERSCORE_LONG_PAGE_LISTING_RELOAD_SECONDS",
+    900.0,
+)
+CYBERSCORE_LONG_PAGE_MATCH_RELOAD_SECONDS = _safe_float_env(
+    "CYBERSCORE_LONG_PAGE_MATCH_RELOAD_SECONDS",
+    900.0,
+)
+CYBERSCORE_LONG_PAGE_FIRST_WAIT_SECONDS = _safe_float_env(
+    "CYBERSCORE_LONG_PAGE_FIRST_WAIT_SECONDS",
+    2.0,
+)
+CYBERSCORE_LONG_PAGE_POLL_WAIT_SECONDS = _safe_float_env(
+    "CYBERSCORE_LONG_PAGE_POLL_WAIT_SECONDS",
+    1.0,
+)
+CYBERSCORE_LONG_PAGE_MATCH_CACHE_SIZE = max(
+    1,
+    _safe_int_env("CYBERSCORE_LONG_PAGE_MATCH_CACHE_SIZE", 6),
+)
+CYBERSCORE_LONG_PAGE_NETWORK_BLOB_MAX = max(
+    0,
+    _safe_int_env("CYBERSCORE_LONG_PAGE_NETWORK_BLOB_MAX", 20),
+)
+CYBERSCORE_LONG_PAGE_NETWORK_TEXT_MAX_BYTES = max(
+    10000,
+    _safe_int_env("CYBERSCORE_LONG_PAGE_NETWORK_TEXT_MAX_BYTES", 700000),
+)
 CYBERSCORE_LISTING_ITEM_CACHE: Dict[str, Dict[str, Any]] = {}
 GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES = "live_matches_missing_after_all_proxies"
 GET_HEADS_FAILURE_REASON_REQUEST_FAILED = "request_failed"
@@ -13834,6 +14023,15 @@ def _camoufox_proxy_kwargs_from_url(proxy_url: str) -> Dict[str, Any]:
     proxy_value = str(proxy_url or "").strip()
     if not proxy_value:
         return {}
+    if "://" not in proxy_value:
+        host_first = re.match(r"^(?P<host>[^:@/\s]+):(?P<port>\d+)@(?P<username>[^:@/\s]+):(?P<password>.+)$", proxy_value)
+        if host_first:
+            proxy_value = (
+                f"http://{host_first.group('username')}:{host_first.group('password')}"
+                f"@{host_first.group('host')}:{host_first.group('port')}"
+            )
+        else:
+            proxy_value = f"http://{proxy_value}"
     try:
         from bookmaker_selenium_odds import _parse_proxy
 
@@ -13935,6 +14133,10 @@ class _SharedCamoufoxSession:
 
         def _close_browser(reason: str) -> None:
             nonlocal browser_cm, browser, launched_at, jobs_since_launch
+            cached_long_pages = globals().get("_CYBERSCORE_LONG_PAGES")
+            if cached_long_pages is not None:
+                with contextlib.suppress(Exception):
+                    cached_long_pages.clear()
             if browser is not None:
                 with contextlib.suppress(Exception):
                     browser.close()
@@ -14120,36 +14322,40 @@ def _extract_balanced_json_object(text: str, start_index: int) -> Optional[str]:
 
 def _extract_cyberscore_match_item_from_html(html: str, match_id: Optional[Union[int, str]] = None) -> Optional[Dict[str, Any]]:
     chunks = _decode_next_flight_chunks_from_html(html)
-    if not chunks:
-        return None
-    blob = "\n".join(chunks)
+    blobs: List[str] = []
+    if chunks:
+        blobs.append("\n".join(chunks))
+    raw_blob = str(html or "")
+    if raw_blob:
+        blobs.append(raw_blob)
     candidates: List[str] = []
     if match_id:
         candidates.append(f'"item":{{"id":{match_id}')
         candidates.append(f'"item":{{"id":"{match_id}"')
     candidates.append('"item":{"id":')
-    for needle in candidates:
-        idx = blob.find(needle)
-        if idx < 0:
-            continue
-        start = blob.find("{", idx + len('"item":') - 1)
-        raw_object = _extract_balanced_json_object(blob, start)
-        if not raw_object:
-            continue
-        try:
-            item = json.loads(raw_object)
-        except Exception as exc:
-            logger.debug("Failed to parse CyberScore match item JSON: %s", exc)
-            continue
-        if not isinstance(item, dict):
-            continue
-        if match_id:
+    for blob in blobs:
+        for needle in candidates:
+            idx = blob.find(needle)
+            if idx < 0:
+                continue
+            start = blob.find("{", idx + len('"item":') - 1)
+            raw_object = _extract_balanced_json_object(blob, start)
+            if not raw_object:
+                continue
             try:
-                if int(item.get("id") or 0) != int(match_id):
-                    continue
-            except Exception:
-                pass
-        return item
+                item = json.loads(raw_object)
+            except Exception as exc:
+                logger.debug("Failed to parse CyberScore match item JSON: %s", exc)
+                continue
+            if not isinstance(item, dict):
+                continue
+            if match_id:
+                try:
+                    if int(item.get("id") or 0) != int(match_id):
+                        continue
+                except Exception:
+                    pass
+            return item
     return None
 
 
@@ -14165,6 +14371,175 @@ def _absolute_cyberscore_url(href: str) -> str:
     if raw.startswith("/"):
         return f"https://cyberscore.live{raw}"
     return f"https://cyberscore.live/{raw.lstrip('/')}"
+
+
+_CYBERSCORE_LONG_PAGES: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+
+
+def _cyberscore_long_page_kind_and_key(target_url: str) -> Tuple[str, str]:
+    match_id = _extract_cyberscore_match_id_from_href(target_url)
+    if match_id:
+        return "match", f"match:{match_id}"
+    return "listing", "listing"
+
+
+def _cyberscore_long_page_enabled_for_url(target_url: str) -> bool:
+    if not CYBERSCORE_LONG_PAGE_ENABLED:
+        return False
+    kind, _key = _cyberscore_long_page_kind_and_key(target_url)
+    if kind == "match":
+        return CYBERSCORE_LONG_PAGE_MATCH_ENABLED
+    return CYBERSCORE_LONG_PAGE_LISTING_ENABLED
+
+
+def _cyberscore_close_cached_long_page(key: str, reason: str = "") -> None:
+    entry = _CYBERSCORE_LONG_PAGES.pop(key, None)
+    if not isinstance(entry, dict):
+        return
+    page = entry.get("page")
+    with contextlib.suppress(Exception):
+        if page is not None:
+            page.close()
+    if reason:
+        print(f"   🔒 CyberScore long page closed ({reason}): {key}")
+
+
+def _cyberscore_prune_match_long_pages() -> None:
+    match_keys = [key for key in _CYBERSCORE_LONG_PAGES.keys() if str(key).startswith("match:")]
+    while len(match_keys) > CYBERSCORE_LONG_PAGE_MATCH_CACHE_SIZE:
+        key = match_keys.pop(0)
+        _cyberscore_close_cached_long_page(key, reason="cache limit")
+
+
+def _cyberscore_page_wait(page: Any, seconds: float) -> None:
+    wait_seconds = max(0.0, float(seconds or 0.0))
+    if wait_seconds <= 0:
+        return
+    try:
+        page.wait_for_timeout(int(wait_seconds * 1000))
+    except Exception:
+        time.sleep(wait_seconds)
+
+
+def _cyberscore_install_response_cache(page: Any, entry: Dict[str, Any]) -> None:
+    if entry.get("response_cache_installed"):
+        return
+
+    def _on_response(response: Any) -> None:
+        try:
+            url = str(getattr(response, "url", "") or "")
+            if "cyberscore.live" not in url and "/_next/" not in url:
+                return
+            headers = {}
+            with contextlib.suppress(Exception):
+                headers = response.headers or {}
+            content_type = str(headers.get("content-type") or headers.get("Content-Type") or "").lower()
+            if not any(token in content_type for token in ("json", "text", "javascript", "rsc", "octet-stream")):
+                return
+            text = response.text()
+            if not text:
+                return
+            if len(text) > CYBERSCORE_LONG_PAGE_NETWORK_TEXT_MAX_BYTES:
+                text = text[:CYBERSCORE_LONG_PAGE_NETWORK_TEXT_MAX_BYTES]
+            blobs = entry.setdefault("response_blobs", deque(maxlen=CYBERSCORE_LONG_PAGE_NETWORK_BLOB_MAX))
+            if CYBERSCORE_LONG_PAGE_NETWORK_BLOB_MAX > 0:
+                blobs.append(text)
+            entry["last_response_at"] = time.time()
+        except Exception:
+            return
+
+    try:
+        page.on("response", _on_response)
+        entry["response_cache_installed"] = True
+    except Exception:
+        entry["response_cache_installed"] = False
+
+
+def _cyberscore_long_page_response_blob(entry: Dict[str, Any]) -> str:
+    blobs = entry.get("response_blobs")
+    if not blobs:
+        return ""
+    try:
+        return "\n".join(str(blob or "") for blob in blobs)
+    except Exception:
+        return ""
+
+
+def _cyberscore_read_long_page_html(browser: Any, target_url: str) -> str:
+    kind, key = _cyberscore_long_page_kind_and_key(target_url)
+    now_ts = time.time()
+    reload_seconds = (
+        CYBERSCORE_LONG_PAGE_MATCH_RELOAD_SECONDS
+        if kind == "match"
+        else CYBERSCORE_LONG_PAGE_LISTING_RELOAD_SECONDS
+    )
+    entry = _CYBERSCORE_LONG_PAGES.get(key)
+    page = entry.get("page") if isinstance(entry, dict) else None
+    loaded_at = float(entry.get("loaded_at", 0.0) or 0.0) if isinstance(entry, dict) else 0.0
+    try:
+        if page is not None and page.is_closed():
+            _cyberscore_close_cached_long_page(key, reason="page already closed")
+            page = None
+            entry = None
+        if page is None:
+            page = browser.new_page()
+            _CYBERSCORE_LONG_PAGES[key] = {
+                "page": page,
+                "url": target_url,
+                "kind": kind,
+                "opened_at": now_ts,
+                "loaded_at": 0.0,
+                "reads": 0,
+                "reloads": 0,
+            }
+            _cyberscore_install_response_cache(page, _CYBERSCORE_LONG_PAGES[key])
+            _CYBERSCORE_LONG_PAGES.move_to_end(key)
+            _cyberscore_prune_match_long_pages()
+            print(f"🌐 CyberScore long page: opening {target_url}")
+            page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+            selector = "a.matches-item[href*='/matches/'], main" if kind == "listing" else "main"
+            with contextlib.suppress(Exception):
+                page.wait_for_selector(selector, timeout=20000)
+            _cyberscore_page_wait(page, CYBERSCORE_LONG_PAGE_FIRST_WAIT_SECONDS)
+            entry = _CYBERSCORE_LONG_PAGES.get(key) or {}
+            entry["loaded_at"] = time.time()
+            _CYBERSCORE_LONG_PAGES[key] = entry
+        elif reload_seconds > 0 and now_ts - loaded_at >= reload_seconds:
+            print(f"🔄 CyberScore long page: reload {target_url}")
+            page.reload(wait_until="domcontentloaded", timeout=60000)
+            selector = "a.matches-item[href*='/matches/'], main" if kind == "listing" else "main"
+            with contextlib.suppress(Exception):
+                page.wait_for_selector(selector, timeout=20000)
+            _cyberscore_page_wait(page, CYBERSCORE_LONG_PAGE_FIRST_WAIT_SECONDS)
+            entry = _CYBERSCORE_LONG_PAGES.get(key) or {}
+            entry["loaded_at"] = time.time()
+            entry["reloads"] = int(entry.get("reloads", 0) or 0) + 1
+            _CYBERSCORE_LONG_PAGES[key] = entry
+        else:
+            _cyberscore_page_wait(page, CYBERSCORE_LONG_PAGE_POLL_WAIT_SECONDS)
+        entry = _CYBERSCORE_LONG_PAGES.get(key) or {}
+        entry["last_read_at"] = time.time()
+        entry["reads"] = int(entry.get("reads", 0) or 0) + 1
+        _CYBERSCORE_LONG_PAGES[key] = entry
+        _CYBERSCORE_LONG_PAGES.move_to_end(key)
+        return (page.content() or "") + "\n" + _cyberscore_long_page_response_blob(entry)
+    except Exception:
+        _cyberscore_close_cached_long_page(key, reason="read error")
+        raise
+
+
+def _get_cyberscore_html_via_long_page(target_url: str) -> Optional[str]:
+    try:
+        return _run_shared_camoufox_job(
+            f"cyberscore-long:{target_url}",
+            lambda browser: _cyberscore_read_long_page_html(browser, target_url),
+            timeout=90,
+            retry=False,
+        )
+    except Exception as exc:
+        print(f"❌ CyberScore long page fetch failed: {exc}")
+        logger.warning("CyberScore long page fetch failed for %s: %s", target_url, exc)
+        return None
 
 
 def _extract_cyberscore_live_cards_from_html(html: str) -> Tuple[List[Any], List[Any]]:
@@ -14187,7 +14562,12 @@ def _extract_cyberscore_live_cards_from_html(html: str) -> Tuple[List[Any], List
             if isinstance(listing_item, dict):
                 listing_item_cache[str(match_id)] = listing_item
         cards.append(card)
-    CYBERSCORE_LISTING_ITEM_CACHE = listing_item_cache
+    if listing_item_cache:
+        merged_cache = dict(CYBERSCORE_LISTING_ITEM_CACHE or {})
+        merged_cache.update(listing_item_cache)
+        if len(merged_cache) > 100:
+            merged_cache = dict(list(merged_cache.items())[-100:])
+        CYBERSCORE_LISTING_ITEM_CACHE = merged_cache
     return list(cards), list(cards)
 
 
@@ -14196,6 +14576,11 @@ def _get_cyberscore_html_via_camoufox(url: Optional[str] = None) -> Optional[str
         print("⚠️ CyberScore source: Camoufox unavailable")
         return None
     target_url = str(url or CYBERSCORE_MATCHES_URL).strip()
+    if _cyberscore_long_page_enabled_for_url(target_url):
+        html = _get_cyberscore_html_via_long_page(target_url)
+        if html:
+            return html
+        print("⚠️ CyberScore long page failed; falling back to one-shot tab")
     try:
         def _job(browser) -> str:
             page = browser.new_page()
@@ -14640,14 +15025,14 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
         global GET_HEADS_LAST_FAILURE_REASON, NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO, SCHEDULE_LIVE_WAIT_TARGET
         global PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE
 
-        if DLTV_SOURCE_MODE == "cyberscore":
+        if response is None and DLTV_SOURCE_MODE == "cyberscore":
             GET_HEADS_LAST_FAILURE_REASON = None
             NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
             NEXT_SCHEDULE_MATCH_INFO = None
             return _get_cyberscore_heads_via_camoufox()
 
         # HTML mode: prefer Camoufox, fallback to Selenium instead of API
-        if DLTV_SOURCE_MODE == "html":
+        if response is None and DLTV_SOURCE_MODE == "html":
             if DLTV_CAMOUFOX_ENABLED:
                 heads, datas = _get_dltv_html_via_camoufox()
                 if heads is not None and datas is not None:
@@ -17212,9 +17597,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 has_late_star=has_selected_late_star,
                 late_sign=selected_late_sign,
                 has_all_star=has_selected_all_star,
+                all_sign=selected_all_sign,
                 force_odds_signal_test_active=force_odds_signal_test_active,
             )
-            send_now_full_star = bool(star_dispatch_flags["send_now_late_early_same_sign"])
+            send_now_full_star = bool(star_dispatch_flags["send_now_late_early_or_all_same_sign"])
             send_now_early_star_late_core_same_sign = bool(star_dispatch_flags["send_now_no_late_early_or_all"])
             send_now_late_star_early_core_same_sign = False
             early65_gate_active = False
@@ -17277,11 +17663,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             early_block_log = _format_metrics("Early 20-28:", early_output_log, metric_list)
             all_block_log = _format_metrics("All:", all_output_log, all_metric_list)
             mid_block_log = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
-            dota2protracker_lane_adv_line = (
-                _build_dota2protracker_lane_adv_line(s)
-                if DOTA2PROTRACKER_ENABLED
-                else ""
-            )
+            dota2protracker_lane_adv_line = _build_dota2protracker_lane_adv_line(s)
             dota2protracker_block = (
                 _build_dota2protracker_block(s, star_output=all_output_log)
                 if DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED and _has_valid_dota2protracker_signal(s)
@@ -17331,11 +17713,21 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early_wr_pct is not None and early_wr_pct <= 65.0
             )
             opposite_signs_selected = bool(
-                has_selected_early_star
-                and has_selected_late_star
-                and selected_early_sign in (-1, 1)
-                and selected_late_sign in (-1, 1)
-                and selected_early_sign != selected_late_sign
+                (
+                    has_selected_early_star
+                    and has_selected_late_star
+                    and selected_early_sign in (-1, 1)
+                    and selected_late_sign in (-1, 1)
+                    and selected_early_sign != selected_late_sign
+                )
+                or (
+                    not has_selected_early_star
+                    and has_selected_all_star
+                    and has_selected_late_star
+                    and selected_all_sign in (-1, 1)
+                    and selected_late_sign in (-1, 1)
+                    and selected_all_sign != selected_late_sign
+                )
             )
             team_elo_block = ""
             team_elo_summary = _build_team_elo_matchup_summary(
@@ -17538,9 +17930,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 has_late_star=has_selected_late_star,
                 late_sign=selected_late_sign,
                 has_all_star=has_selected_all_star,
+                all_sign=selected_all_sign,
                 force_odds_signal_test_active=force_odds_signal_test_active,
             )
-            send_now_full_star = bool(star_dispatch_flags["send_now_late_early_same_sign"])
+            send_now_full_star = bool(star_dispatch_flags["send_now_late_early_or_all_same_sign"])
             send_now_early_star_late_core_same_sign = bool(star_dispatch_flags["send_now_no_late_early_or_all"])
             send_now_late_star_early_core_same_sign = False
             early65_gate_active = False
@@ -17738,7 +18131,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"late_elo_wr={opposite_signs_early90_monitor.get('late_elo_wr')}, "
                         f"gap={elo_gap_label}, "
                         f"wait_until={_format_game_clock(opposite_signs_early90_monitor.get('target_game_time'))}, "
-                        "release=post_target_comeback_ceiling"
+                        "release=wr_grid_after_20_30"
                     )
             if isinstance(opposite_signs_early90_tier1_fast_release, dict) and opposite_signs_early90_tier1_fast_release.get("enabled"):
                 if verbose_match_log:
@@ -17766,6 +18159,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 selected_late_sign=selected_late_sign,
                 early_wr_pct=early_wr_pct,
                 late_wr_pct=late_wr_pct,
+                has_selected_all_star=bool(has_selected_all_star),
+                selected_all_sign=selected_all_sign,
+                all_wr_pct=all_wr_pct,
             )
             elo_underdog_guard = None
             if (
@@ -18060,6 +18456,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     if isinstance(selected_late_diag, dict) and has_selected_late_star
                     else None
                 ),
+                selected_all_sign=selected_all_sign,
+                has_selected_all_star=has_selected_all_star,
+                all_wr_pct=all_wr_pct,
                 force_half_due_to_early_no_valid_late=force_half_due_to_early_no_valid_late,
                 special_header_mode=("early_kills" if tier1_early_kills_mode else ""),
             )
@@ -18124,13 +18523,26 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early65_target_side,
             )
             target_networth_diff = _target_networth_diff_from_radiant_lead(lead, target_side)
-            late_pub_comeback_table_wr_level = _late_star_pub_table_wr_level(late_wr_pct)
+            late_pub_signal_wr_pct = (
+                signal_wr_guard_meta.get("wr_pct")
+                if isinstance(signal_wr_guard_meta, dict)
+                else None
+            )
+            if late_pub_signal_wr_pct is None and has_selected_all_star:
+                all_side = _target_side_from_sign(selected_all_sign)
+                if all_side == target_side:
+                    late_pub_signal_wr_pct = all_wr_pct
+            late_pub_comeback_table_wr_level = _late_pub_table_wr_level_from_values(
+                late_pub_signal_wr_pct,
+                late_wr_pct if has_selected_late_star else None,
+                early_wr_pct if has_selected_early_star else None,
+                all_wr_pct if has_selected_all_star else None,
+                selected_star_wr,
+            )
             late_pub_comeback_table_candidate = bool(
-                has_selected_late_star
-                and target_side in {"radiant", "dire"}
+                target_side in {"radiant", "dire"}
                 and late_pub_comeback_table_wr_level is not None
-                and isinstance(late_pub_comeback_table_thresholds_by_wr, dict)
-                and bool(late_pub_comeback_table_thresholds_by_wr)
+                and _late_pub_table_has_thresholds(late_pub_comeback_table_wr_level)
             )
             late_comeback_monitor_candidate = False
             networth_send_status_label: Optional[str] = None
@@ -18518,12 +18930,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"early_wr={early_wr_label}, target_side={target_side}, "
                         f"target_diff={int(target_networth_diff)}, wait until {target_human}"
                     )
-                fallback_max_deficit_abs = _fallback_max_deficit_abs_for_delay_reason(
-                    delay_reason,
-                    monitor_threshold=monitor_threshold,
-                )
-                if late_pub_comeback_table_candidate:
-                    fallback_max_deficit_abs = None
                 opposite_signs_dispatch_blocked = bool(
                     opposite_signs_selected
                     and current_game_time < float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
@@ -19243,32 +19649,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             },
                         )
                         return return_status
-                    fallback_guard = _fallback_networth_deficit_guard_decision(
-                        target_networth_diff=target_networth_diff,
-                        max_deficit_abs=fallback_max_deficit_abs,
-                    )
-                    if bool(fallback_guard.get("reject")):
-                        print(
-                            f"   ⚠️ ВЕРДИКТ: ОТКАЗ (fallback networth guard after {target_human}) "
-                            f"- матч пропущен"
-                        )
-                        add_url(
-                            check_uniq_url,
-                            reason="star_signal_rejected_fallback_networth_guard",
-                            details={
-                                "status": status,
-                                "dispatch_mode": dispatch_mode,
-                                "delay_reason": delay_reason,
-                                "dispatch_status_label": NETWORTH_STATUS_LATE_FALLBACK_20_20_DEFICIT_NO_SEND,
-                                "game_time": int(current_game_time),
-                                "target_game_time": int(target_game_time),
-                                "target_side": target_side,
-                                "target_networth_diff": float(fallback_guard.get("target_diff") or 0.0),
-                                "fallback_max_deficit_abs": float(fallback_guard.get("threshold_abs") or 0.0),
-                                "json_retry_errors": json_retry_errors,
-                            },
-                        )
-                        return return_status
                     print(
                         f"   ⏱️ game_time уже >= {target_human} ({int(current_game_time)}), "
                         f"отправляем сразу: {check_uniq_url}"
@@ -19330,12 +19710,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_add_url_details["networth_monitor_deadline_game_time"] = int(target_game_time)
                     delayed_add_url_details["networth_target_side"] = target_side
                     delayed_add_url_details["networth_monitor_hold_seconds"] = float(NETWORTH_MONITOR_HOLD_SECONDS)
-                    if target_networth_diff is not None:
-                        delayed_add_url_details["target_networth_diff"] = float(target_networth_diff)
-                if fallback_max_deficit_abs is not None:
-                    delayed_add_url_details["fallback_max_deficit_abs"] = float(fallback_max_deficit_abs)
-                    if target_side is not None:
-                        delayed_add_url_details["networth_target_side"] = target_side
                     if target_networth_diff is not None:
                         delayed_add_url_details["target_networth_diff"] = float(target_networth_diff)
                 if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"):
@@ -19474,10 +19848,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_payload['networth_monitor_hold_started_game_time'] = float(
                             hold_seed.get("hold_started_game_time") or 0.0
                         )
-                if fallback_max_deficit_abs is not None:
-                    delayed_payload['fallback_max_deficit_abs'] = float(fallback_max_deficit_abs)
-                    if target_side is not None:
-                        delayed_payload['networth_target_side'] = target_side
                 if late_pub_comeback_table_candidate:
                     delayed_payload['reason'] = "late_star_pub_comeback_table_monitor"
                     delayed_payload['dispatch_status_label'] = NETWORTH_STATUS_LATE_PUB_TABLE_WAIT

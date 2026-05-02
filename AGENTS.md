@@ -13,6 +13,7 @@
 - Production server: `root@147.45.216.225`, project path `/root/main`.
 - Runtime/output artifacts under `runtime/` are intentionally ignored.
 - Long-running local jobs must be launched in the background with `nohup` and logs/pid files under `runtime/`, so they survive Codex turn interruptions and can be monitored later.
+- Whenever launching or continuing a long-running process, always report a clickable local log/status file link and the exact command to check process state.
 
 ## Key Files
 

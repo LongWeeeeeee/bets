@@ -7,9 +7,11 @@ import math
 import os
 import re
 import resource
+import sqlite3
 import sys
 import time
 from collections import OrderedDict
+from itertools import combinations, permutations
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -180,6 +182,197 @@ class ShardedStatsLookup(dict):
         return shard.get(str(key), default)
 
 
+class SqliteStatsLookup(dict):
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        label: str,
+        query_chunk_size: int = 800,
+        max_cached_keys: int = 200000,
+    ):
+        super().__init__()
+        self.db_path = Path(db_path)
+        self.label = str(label)
+        self.query_chunk_size = max(1, min(int(query_chunk_size), 900))
+        self.max_cached_keys = max(0, int(max_cached_keys))
+        self._key_cache: OrderedDict[str, Any] = OrderedDict()
+        self._conn: sqlite3.Connection | None = None
+
+    def __bool__(self) -> bool:
+        return True
+
+    def _connect(self) -> sqlite3.Connection:
+        if self._conn is None:
+            uri = f"{self.db_path.resolve().as_uri()}?mode=ro&immutable=1"
+            self._conn = sqlite3.connect(uri, uri=True)
+            self._conn.execute("PRAGMA query_only=ON")
+            self._conn.execute("PRAGMA temp_store=MEMORY")
+            self._conn.execute("PRAGMA cache_size=-200000")
+            self._conn.execute("PRAGMA mmap_size=1073741824")
+        return self._conn
+
+    def close(self) -> None:
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    def _get_cached_key(self, key: Any) -> tuple[bool, Any]:
+        if self.max_cached_keys <= 0:
+            return False, None
+        key_str = str(key)
+        try:
+            value = self._key_cache[key_str]
+        except KeyError:
+            return False, None
+        self._key_cache.move_to_end(key_str)
+        return True, value
+
+    def _remember_key(self, key: Any, value: Any) -> None:
+        if self.max_cached_keys <= 0:
+            return
+        key_str = str(key)
+        self._key_cache[key_str] = value
+        self._key_cache.move_to_end(key_str)
+        while len(self._key_cache) > self.max_cached_keys:
+            self._key_cache.popitem(last=False)
+
+    def get_many(self, keys: Iterable[Any]) -> dict:
+        result: dict[str, Any] = {}
+        missing: list[str] = []
+        for key in sorted({str(key) for key in keys or []}):
+            found, cached = self._get_cached_key(key)
+            if found:
+                result[key] = cached
+            else:
+                missing.append(key)
+        if not missing:
+            return result
+
+        conn = self._connect()
+        for start in range(0, len(missing), self.query_chunk_size):
+            chunk = missing[start:start + self.query_chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            for key, value_blob in conn.execute(
+                f"SELECT key, value FROM stats WHERE key IN ({placeholders})",
+                chunk,
+            ):
+                value = orjson.loads(value_blob) if orjson is not None else json.loads(value_blob)
+                key = str(key)
+                result[key] = value
+                self._remember_key(key, value)
+        return result
+
+    def get(self, key: Any, default=None):
+        found, cached = self._get_cached_key(key)
+        if found:
+            return cached
+        conn = self._connect()
+        row = conn.execute("SELECT value FROM stats WHERE key = ?", (str(key),)).fetchone()
+        if row is None:
+            return default
+        value = orjson.loads(row[0]) if orjson is not None else json.loads(row[0])
+        self._remember_key(key, value)
+        return value
+
+
+def _stats_sqlite_db_path(source: Path) -> Path:
+    return source.parent / f"{source.stem}.sqlite3"
+
+
+def _sqlite_stats_meta_matches(db_path: Path, source: Path) -> bool:
+    if not db_path.exists() or not source.exists():
+        return False
+    try:
+        uri = f"{db_path.resolve().as_uri()}?mode=ro&immutable=1"
+        with sqlite3.connect(uri, uri=True) as conn:
+            rows = conn.execute("SELECT key, value FROM meta").fetchall()
+        meta = {str(key): orjson.loads(value) if orjson is not None else json.loads(value) for key, value in rows}
+    except Exception:
+        return False
+    return (
+        meta.get("format_version") == 1
+        and meta.get("source_name") == source.name
+        and meta.get("source_size") == source.stat().st_size
+        and meta.get("backend") in {None, "sqlite_kv"}
+    )
+
+
+def _load_stats_lookup(stats_dir: Path, filename: str, label: str) -> Any:
+    source = stats_dir / filename
+    db_path = _stats_sqlite_db_path(source)
+    if _sqlite_stats_meta_matches(db_path, source):
+        print(f"  ✓ {label}: SQLite lookup {db_path}, key_cache=200000, RSS≈{_rss_mb():.0f}MB")
+        return SqliteStatsLookup(db_path, label=label)
+    payload = _load_json(source)
+    print(f"  ✓ {label}: {len(payload):,} keys, RSS≈{_rss_mb():.0f}MB")
+    return payload
+
+
+def _draft_group_key_variants(group: Any) -> list[str]:
+    parts = str(group or "").split(",")
+    if len(parts) <= 1:
+        return [parts[0]] if parts and parts[0] else []
+    return sorted({",".join(perm) for perm in permutations(parts)})
+
+
+def _add_draft_with_lookup_keys(keys: set[str], left: str, right: str) -> None:
+    for left_variant in _draft_group_key_variants(left):
+        for right_variant in _draft_group_key_variants(right):
+            keys.add(f"{left_variant}_with_{right_variant}")
+            keys.add(f"{right_variant}_with_{left_variant}")
+
+
+def _add_draft_vs_lookup_keys(keys: set[str], left: str, right: str) -> None:
+    for left_variant in _draft_group_key_variants(left):
+        for right_variant in _draft_group_key_variants(right):
+            keys.add(f"{left_variant}_vs_{right_variant}")
+            keys.add(f"{right_variant}_vs_{left_variant}")
+
+
+def _draft_stats_lookup_keys(radiant_draft: dict, dire_draft: dict) -> set[str]:
+    def sorted_entries(payload: dict) -> list[tuple[str, str]]:
+        out = []
+        for pos in ("pos1", "pos2", "pos3", "pos4", "pos5"):
+            hero_id = str((payload.get(pos) or {}).get("hero_id") or "")
+            if hero_id:
+                out.append((pos, hero_id))
+        return out
+
+    def hero_key(entry: tuple[str, str]) -> str:
+        pos, hero_id = entry
+        return f"{hero_id}{pos}"
+
+    radiant_entries = sorted_entries(radiant_draft)
+    dire_entries = sorted_entries(dire_draft)
+    keys: set[str] = set()
+
+    for team_entries in (radiant_entries, dire_entries):
+        team_keys = [hero_key(entry) for entry in team_entries]
+        keys.update(team_keys)
+        for left, right in combinations(team_keys, 2):
+            _add_draft_with_lookup_keys(keys, left, right)
+        for trio in combinations(team_keys, 3):
+            for perm in permutations(trio):
+                keys.add(",".join(perm))
+
+    for team_entries, opp_entries in ((radiant_entries, dire_entries), (dire_entries, radiant_entries)):
+        team_keys = [hero_key(entry) for entry in team_entries]
+        opp_keys = [hero_key(entry) for entry in opp_entries]
+        for left in team_keys:
+            for right in opp_keys:
+                _add_draft_vs_lookup_keys(keys, left, right)
+            for opp_duo in combinations(opp_keys, 2):
+                _add_draft_vs_lookup_keys(keys, left, ",".join(sorted(opp_duo)))
+    return keys
+
+
+def _draft_scoped_stats_lookup(stats_obj: Any, keys: set[str]) -> Any:
+    if hasattr(stats_obj, "get_many"):
+        return stats_obj.get_many(keys)
+    return stats_obj
+
+
 def _load_stats_dicts(
     stats_dir: Path,
     *,
@@ -190,17 +383,19 @@ def _load_stats_dicts(
         return {}, {}, {}, {}
 
     stats_dir = Path(stats_dir)
-    early_dict = _load_json(stats_dir / "early_dict_raw.json")
-    print(f"  ✓ early_dict: {len(early_dict):,} keys, RSS≈{_rss_mb():.0f}MB")
-    late_dict = _load_json(stats_dir / "late_dict_raw.json")
-    print(f"  ✓ late_dict: {len(late_dict):,} keys, RSS≈{_rss_mb():.0f}MB")
+    early_dict = _load_stats_lookup(stats_dir, "early_dict_raw.json", "early_dict")
+    late_dict = _load_stats_lookup(stats_dir, "late_dict_raw.json", "late_dict")
     lane_dict = _load_json(stats_dir / "lane_dict_raw.json")
     lane_dict = structure_lane_dict(lane_dict)
     print(f"  ✓ lane_dict: structured, RSS≈{_rss_mb():.0f}MB")
 
     post_lane_path = stats_dir / "post_lane_dict_raw.json"
+    post_lane_sqlite = _stats_sqlite_db_path(post_lane_path)
     shard_dir = stats_dir / "post_lane_dict_raw.shards"
-    if shard_dir.exists() and (shard_dir / "_complete").exists():
+    if _sqlite_stats_meta_matches(post_lane_sqlite, post_lane_path):
+        post_lane_dict = SqliteStatsLookup(post_lane_sqlite, label="post_lane_dict")
+        print(f"  ✓ post_lane_dict: SQLite lookup {post_lane_sqlite}, key_cache=200000, RSS≈{_rss_mb():.0f}MB")
+    elif shard_dir.exists() and (shard_dir / "_complete").exists():
         post_lane_dict = ShardedStatsLookup(shard_dir, max_cached_shards=post_lane_max_cached_shards)
         print(f"  ✓ post_lane_dict: sharded lookup {shard_dir}")
     elif post_lane_path.exists():
@@ -376,12 +571,12 @@ def collect_matches(
     maps_paths: str | Path | Iterable[Path],
     start_date_time: int,
     max_matches: Optional[int],
-) -> list[tuple[str, dict, dict, dict]]:
+) -> list[dict]:
     if isinstance(maps_paths, (str, Path)):
         paths = [Path(maps_paths)]
     else:
         paths = [Path(path) for path in maps_paths]
-    rows: list[tuple[str, dict, dict, dict]] = []
+    records: list[dict] = []
     scanned = 0
     skipped = 0
     for path in paths:
@@ -398,15 +593,31 @@ def collect_matches(
                 skipped += 1
                 continue
             radiant_draft, dire_draft = parsed
-            rows.append((str(match_id), match, _team_payload(radiant_draft), _team_payload(dire_draft)))
-            if max_matches is not None and len(rows) >= int(max_matches):
+            records.append(
+                {
+                    "id": int(match.get("id") or match_id or 0),
+                    "startDateTime": int(match.get("startDateTime") or 0),
+                    "radiantTeam": match.get("radiantTeam"),
+                    "direTeam": match.get("direTeam"),
+                    "didRadiantWin": match.get("didRadiantWin"),
+                    "radiantNetworthLeads": match.get("radiantNetworthLeads", []),
+                    "winRates": match.get("winRates", []),
+                    "topLaneOutcome": match.get("topLaneOutcome"),
+                    "midLaneOutcome": match.get("midLaneOutcome"),
+                    "bottomLaneOutcome": match.get("bottomLaneOutcome"),
+                    "radiant_draft": _team_payload(radiant_draft),
+                    "dire_draft": _team_payload(dire_draft),
+                    **_match_outcomes(match),
+                }
+            )
+            if max_matches is not None and len(records) >= int(max_matches):
                 break
             if scanned % 5000 == 0:
-                print(f"  scanned={scanned:,} selected={len(rows):,} skipped={skipped:,}", flush=True)
-        if max_matches is not None and len(rows) >= int(max_matches):
+                print(f"  scanned={scanned:,} selected={len(records):,} skipped={skipped:,}", flush=True)
+        if max_matches is not None and len(records) >= int(max_matches):
             break
-    print(f"Selected matches: {len(rows):,} (scanned={scanned:,}, skipped={skipped:,})")
-    return rows
+    print(f"Selected matches: {len(records):,} (scanned={scanned:,}, skipped={skipped:,})")
+    return records
 
 
 def check_old_maps(
@@ -455,26 +666,7 @@ def check_old_maps(
     if dicts:
         print(f"post_lane_max_cached_shards: {post_lane_max_cached_shards}")
 
-    rows = collect_matches(maps_paths, int(start_date_time), max_matches)
-    records: list[dict] = []
-    for match_id, match, radiant_draft, dire_draft in rows:
-        records.append(
-            {
-                "id": int(match.get("id") or match_id or 0),
-                "startDateTime": int(match.get("startDateTime") or 0),
-                "radiantTeam": match.get("radiantTeam"),
-                "direTeam": match.get("direTeam"),
-                "didRadiantWin": match.get("didRadiantWin"),
-                "radiantNetworthLeads": match.get("radiantNetworthLeads", []),
-                "winRates": match.get("winRates", []),
-                "topLaneOutcome": match.get("topLaneOutcome"),
-                "midLaneOutcome": match.get("midLaneOutcome"),
-                "bottomLaneOutcome": match.get("bottomLaneOutcome"),
-                "radiant_draft": radiant_draft,
-                "dire_draft": dire_draft,
-                **_match_outcomes(match),
-            }
-        )
+    records = collect_matches(maps_paths, int(start_date_time), max_matches)
 
     if dicts:
         if autoload_dicts:
@@ -490,7 +682,11 @@ def check_old_maps(
             post_lane_dict = post_lane_dict or {}
 
         for idx, record in enumerate(records, 1):
-            if hasattr(post_lane_dict, "warm_hero_ids"):
+            draft_lookup_keys = _draft_stats_lookup_keys(record["radiant_draft"], record["dire_draft"])
+            early_lookup = _draft_scoped_stats_lookup(early_dict, draft_lookup_keys)
+            late_lookup = _draft_scoped_stats_lookup(late_dict, draft_lookup_keys)
+            post_lane_lookup = _draft_scoped_stats_lookup(post_lane_dict, draft_lookup_keys)
+            if hasattr(post_lane_dict, "warm_hero_ids") and not hasattr(post_lane_dict, "get_many"):
                 hero_ids = [
                     payload.get("hero_id")
                     for side_key in ("radiant_draft", "dire_draft")
@@ -500,24 +696,28 @@ def check_old_maps(
             metrics = synergy_and_counterpick(
                 radiant_heroes_and_pos=record["radiant_draft"],
                 dire_heroes_and_pos=record["dire_draft"],
-                early_dict=early_dict,
-                mid_dict=late_dict,
+                early_dict=early_lookup,
+                mid_dict=late_lookup,
                 custom_weights=custom_weights,
-                post_lane_dict=post_lane_dict,
+                post_lane_dict=post_lane_lookup,
             ) or {}
             record["early_output"] = _compact_bucket(metrics.get("early_output"))
             record["late_output"] = _compact_bucket(metrics.get("mid_output"))
             record["post_lane_output"] = _compact_bucket(metrics.get("post_lane_output"))
             if not disable_lanes:
-                top, bot, mid = calculate_lanes(
+                top, bot, mid, lane_sources = calculate_lanes(
                     record["radiant_draft"],
                     record["dire_draft"],
                     lane_data,
                     merge_side_lanes=merge_side_lanes,
+                    return_sources=True,
                 )
                 record["top"] = top
                 record["bot"] = bot
                 record["mid"] = mid
+                record["top_source"] = lane_sources.get("top")
+                record["bot_source"] = lane_sources.get("bot")
+                record["mid_source"] = lane_sources.get("mid")
             if idx == 1 or idx % 250 == 0 or idx == len(records):
                 print(f"  dicts [{idx:>5}/{len(records)}] RSS≈{_rss_mb():.0f}MB", flush=True)
 
