@@ -14610,8 +14610,8 @@ def _get_cyberscore_html_via_long_page(target_url: str) -> Optional[str]:
     except Exception as exc:
         short_error = _short_exception_message(exc)
         if _cyberscore_is_transient_fetch_error(exc):
-            print(f"⚠️ CyberScore long page fetch failed: {short_error}")
-            logger.info("CyberScore long page fetch failed for %s: %s", target_url, short_error)
+            print(f"⚠️ CyberScore long page transient fetch issue: {short_error}")
+            logger.debug("CyberScore long page transient fetch issue for %s: %s", target_url, short_error)
         else:
             _shared_camoufox_session.request_reset()
             print(f"❌ CyberScore long page fetch failed: {short_error}")
@@ -14684,8 +14684,8 @@ def _get_cyberscore_html_via_camoufox(url: Optional[str] = None) -> Optional[str
     except Exception as exc:
         short_error = _short_exception_message(exc)
         if _cyberscore_is_transient_fetch_error(exc):
-            print(f"⚠️ CyberScore Camoufox fetch failed: {short_error}")
-            logger.info("CyberScore Camoufox fetch failed for %s: %s", target_url, short_error)
+            print(f"⚠️ CyberScore Camoufox transient fetch issue: {short_error}")
+            logger.debug("CyberScore Camoufox transient fetch issue for %s: %s", target_url, short_error)
         else:
             _shared_camoufox_session.request_reset()
             print(f"❌ CyberScore Camoufox fetch failed: {short_error}")
