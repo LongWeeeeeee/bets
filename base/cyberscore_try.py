@@ -1744,6 +1744,13 @@ def _coerce_metric_value(value: Any) -> Optional[float]:
     return None
 
 
+def _short_exception_message(exc: BaseException) -> str:
+    message = str(exc or "").strip()
+    if not message:
+        return exc.__class__.__name__
+    return message.splitlines()[0].strip() or exc.__class__.__name__
+
+
 def _block_hits_thresholds(data: dict, thresholds: list[tuple]) -> bool:
     star_count = 0
     block_sign = None
@@ -3519,6 +3526,14 @@ def _format_dota2protracker_value(value: Any) -> str:
         return f"{float(value):+,.2f}".replace(",", "")
     except (TypeError, ValueError):
         return "+0.00"
+
+
+def _format_dota2protracker_output_value(value: Any) -> Any:
+    numeric_value = _coerce_metric_value(value)
+    if numeric_value is None:
+        return value
+    suffix = "*" if isinstance(value, str) and value.strip().endswith("*") else ""
+    return f"{_format_dota2protracker_value(numeric_value)}{suffix}"
 
 
 def _dota2protracker_metric_is_valid(
@@ -14097,6 +14112,27 @@ def _camoufox_env_int(name: str, default: int) -> int:
         return int(default)
 
 
+def _cyberscore_is_transient_fetch_error(exc: BaseException) -> bool:
+    message = str(exc or "")
+    fatal_tokens = (
+        "Target page, context or browser has been closed",
+        "Browser closed",
+        "Connection closed",
+    )
+    if any(token in message for token in fatal_tokens):
+        return False
+    transient_tokens = (
+        "NS_ERROR_NET_RESET",
+        "ERR_CONNECTION_RESET",
+        "ERR_NETWORK_CHANGED",
+        "ERR_TIMED_OUT",
+        "net::ERR_",
+        "Timeout",
+        "timed out",
+    )
+    return any(token in message for token in transient_tokens)
+
+
 class _SharedCamoufoxSession:
     """Owns the only Camoufox browser and runs all page work on one thread."""
 
@@ -14177,7 +14213,10 @@ class _SharedCamoufoxSession:
                 return browser
             proxy_kwargs = _cyberscore_camoufox_proxy_kwargs()
             proxy_label = "with proxy" if proxy_kwargs else "without proxy"
-            browser_cm = camoufox.Camoufox(headless=True, **proxy_kwargs)
+            browser_options = {"headless": True, **proxy_kwargs}
+            if proxy_kwargs:
+                browser_options["geoip"] = True
+            browser_cm = camoufox.Camoufox(**browser_options)
             browser = browser_cm.__enter__()
             launched_at = time.time()
             print(f"   🌐 Shared Camoufox browser created ({proxy_label})")
@@ -14564,8 +14603,14 @@ def _get_cyberscore_html_via_long_page(target_url: str) -> Optional[str]:
             reset_on_error=False,
         )
     except Exception as exc:
-        print(f"❌ CyberScore long page fetch failed: {exc}")
-        logger.warning("CyberScore long page fetch failed for %s: %s", target_url, exc)
+        short_error = _short_exception_message(exc)
+        if _cyberscore_is_transient_fetch_error(exc):
+            print(f"⚠️ CyberScore long page fetch failed: {short_error}")
+            logger.info("CyberScore long page fetch failed for %s: %s", target_url, short_error)
+        else:
+            _shared_camoufox_session.request_reset()
+            print(f"❌ CyberScore long page fetch failed: {short_error}")
+            logger.warning("CyberScore long page fetch failed for %s: %s", target_url, short_error)
         return None
 
 
@@ -14624,10 +14669,22 @@ def _get_cyberscore_html_via_camoufox(url: Optional[str] = None) -> Optional[str
                 with contextlib.suppress(Exception):
                     page.close()
 
-        return _run_shared_camoufox_job(f"cyberscore:{target_url}", _job, timeout=90)
+        return _run_shared_camoufox_job(
+            f"cyberscore:{target_url}",
+            _job,
+            timeout=90,
+            retry=False,
+            reset_on_error=False,
+        )
     except Exception as exc:
-        print(f"❌ CyberScore Camoufox fetch failed: {exc}")
-        logger.warning("CyberScore Camoufox fetch failed for %s: %s", target_url, exc)
+        short_error = _short_exception_message(exc)
+        if _cyberscore_is_transient_fetch_error(exc):
+            print(f"⚠️ CyberScore Camoufox fetch failed: {short_error}")
+            logger.info("CyberScore Camoufox fetch failed for %s: %s", target_url, short_error)
+        else:
+            _shared_camoufox_session.request_reset()
+            print(f"❌ CyberScore Camoufox fetch failed: {short_error}")
+            logger.warning("CyberScore Camoufox fetch failed for %s: %s", target_url, short_error)
         return None
 
 
@@ -17667,7 +17724,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             def _format_metrics(title, data, metrics):
                 lines = [title]
                 for key, label in metrics:
-                    lines.append(f"{label}: {data.get(key)}")
+                    value = data.get(key)
+                    if key == "dota2protracker_cp1vs1":
+                        value = _format_dota2protracker_output_value(value)
+                    lines.append(f"{label}: {value}")
                 return "\n".join(lines) + "\n"
 
             metric_list = [

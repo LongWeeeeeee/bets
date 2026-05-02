@@ -769,6 +769,12 @@ def test_build_dota2protracker_block_marks_invalid_metrics() -> None:
     assert runtime._build_dota2protracker_lane_adv_line(payload) == "lane_adv_protracker: +0.42\n"
 
 
+def test_format_dota2protracker_output_value_uses_two_decimals() -> None:
+    assert runtime._format_dota2protracker_output_value(1.0938095238095238) == "+1.09"
+    assert runtime._format_dota2protracker_output_value("-3*") == "-3.00*"
+    assert runtime._format_dota2protracker_output_value("N/A") == "N/A"
+
+
 def test_build_dota2protracker_lane_adv_line_accepts_legacy_payload_without_flags() -> None:
     assert (
         runtime._build_dota2protracker_lane_adv_line({"pro_lane_advantage": -2.36})
@@ -1283,6 +1289,26 @@ def test_cyberscore_long_page_job_does_not_reset_shared_browser(monkeypatch) -> 
     assert calls == [
         {
             "label": "cyberscore-long:https://cyberscore.live/en/matches/173557/",
+            "kwargs": {"timeout": 90, "retry": False, "reset_on_error": False},
+        }
+    ]
+
+
+def test_cyberscore_one_shot_job_does_not_reset_shared_browser(monkeypatch) -> None:
+    calls: List[Dict[str, Any]] = []
+
+    def _fake_run_shared_camoufox_job(label, callback, **kwargs):
+        calls.append({"label": label, "kwargs": dict(kwargs)})
+        return "<html></html>"
+
+    monkeypatch.setattr(runtime, "CAMOUFOX_AVAILABLE", True, raising=False)
+    monkeypatch.setattr(runtime, "_cyberscore_long_page_enabled_for_url", lambda _url: False)
+    monkeypatch.setattr(runtime, "_run_shared_camoufox_job", _fake_run_shared_camoufox_job)
+
+    assert runtime._get_cyberscore_html_via_camoufox("https://cyberscore.live/en/matches/173557/") == "<html></html>"
+    assert calls == [
+        {
+            "label": "cyberscore:https://cyberscore.live/en/matches/173557/",
             "kwargs": {"timeout": 90, "retry": False, "reset_on_error": False},
         }
     ]
