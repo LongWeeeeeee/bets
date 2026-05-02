@@ -3856,7 +3856,6 @@ def _build_pipeline_probe_message(
         f"{_format_pipeline_probe_phase_block('Early', metrics_payload.get('early_output'))}"
         f"{_format_pipeline_probe_phase_block('Late', metrics_payload.get('mid_output'))}"
         f"{_format_pipeline_probe_phase_block('Post-lane', metrics_payload.get('post_lane_output'))}"
-        f"{_build_dota2protracker_block(protracker_payload)}"
     )
 
 
@@ -3871,6 +3870,28 @@ def _build_minimal_odds_only_message(
         f"{radiant_team_name} VS {dire_team_name}\n"
         f"{_build_series_score_line_with_fallback(live_league, fallback_score_text)}"
     )
+
+
+def _strip_dota2protracker_message_block_lines(lines: List[str]) -> List[str]:
+    stripped_lines: List[str] = []
+    idx = 0
+    while idx < len(lines):
+        line = str(lines[idx])
+        compact = line.strip().lower()
+        if compact == "dota2protracker:":
+            if stripped_lines and not str(stripped_lines[-1]).strip():
+                stripped_lines.pop()
+            idx += 1
+            while idx < len(lines):
+                next_compact = str(lines[idx]).strip().lower()
+                if not next_compact or next_compact.startswith("cp1vs1:") or next_compact.startswith("synergy_duo:"):
+                    idx += 1
+                    continue
+                break
+            continue
+        stripped_lines.append(line)
+        idx += 1
+    return stripped_lines
 
 
 def _refresh_stake_multiplier_message(
@@ -3915,7 +3936,7 @@ def _refresh_stake_multiplier_message(
         stake_multiplier=multiplier,
         special_header_mode=special_header_mode,
     )
-    lines = message_text.splitlines()
+    lines = _strip_dota2protracker_message_block_lines(message_text.splitlines())
     if not lines:
         return message_text
     lines[0] = new_header
@@ -14087,7 +14108,7 @@ class _SharedCamoufoxSession:
         self._thread: Optional[threading.Thread] = None
         self._reset_requested = False
 
-    def submit(self, label: str, callback, timeout: float = 120.0) -> Any:
+    def submit(self, label: str, callback, timeout: float = 120.0, reset_on_error: bool = True) -> Any:
         if not CAMOUFOX_AVAILABLE or camoufox is None:
             raise RuntimeError("Camoufox unavailable")
         future: Future = Future()
@@ -14099,7 +14120,7 @@ class _SharedCamoufoxSession:
                     daemon=True,
                 )
                 self._thread.start()
-        self._jobs.put((future, str(label or "camoufox-job"), callback))
+        self._jobs.put((future, str(label or "camoufox-job"), callback, bool(reset_on_error)))
         return future.result(timeout=timeout)
 
     def request_reset(self) -> None:
@@ -14167,7 +14188,11 @@ class _SharedCamoufoxSession:
                 job = self._jobs.get()
                 if job is self._STOP:
                     break
-                future, label, callback = job
+                try:
+                    future, label, callback, reset_on_error = job
+                except ValueError:
+                    future, label, callback = job
+                    reset_on_error = True
                 if not future.set_running_or_notify_cancel():
                     continue
                 try:
@@ -14177,7 +14202,8 @@ class _SharedCamoufoxSession:
                     future.set_result(result)
                 except Exception as exc:
                     future.set_exception(exc)
-                    self.request_reset()
+                    if reset_on_error:
+                        self.request_reset()
                 finally:
                     browser_age = time.time() - launched_at if launched_at else 0.0
                     should_reset = (
@@ -14195,14 +14221,14 @@ _shared_camoufox_session = _SharedCamoufoxSession()
 atexit.register(_shared_camoufox_session.close)
 
 
-def _run_shared_camoufox_job(label: str, callback, timeout: float = 120.0, retry: bool = True) -> Any:
+def _run_shared_camoufox_job(label: str, callback, timeout: float = 120.0, retry: bool = True, reset_on_error: bool = True) -> Any:
     try:
-        return _shared_camoufox_session.submit(label, callback, timeout=timeout)
+        return _shared_camoufox_session.submit(label, callback, timeout=timeout, reset_on_error=reset_on_error)
     except Exception:
         if not retry:
             raise
         _shared_camoufox_session.request_reset()
-        return _shared_camoufox_session.submit(label, callback, timeout=timeout)
+        return _shared_camoufox_session.submit(label, callback, timeout=timeout, reset_on_error=reset_on_error)
 
 
 def _fetch_protracker_payload_via_shared_camoufox(
@@ -14233,7 +14259,7 @@ def _fetch_protracker_payload_via_shared_camoufox(
             with contextlib.suppress(Exception):
                 page.close()
 
-    return _run_shared_camoufox_job(f"dota2protracker:{slug}", _job, timeout=180)
+    return _run_shared_camoufox_job(f"dota2protracker:{slug}", _job, timeout=180, retry=False, reset_on_error=False)
 
 
 def _install_dota2protracker_shared_camoufox_fetcher() -> bool:
@@ -17664,11 +17690,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             all_block_log = _format_metrics("All:", all_output_log, all_metric_list)
             mid_block_log = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
             dota2protracker_lane_adv_line = _build_dota2protracker_lane_adv_line(s)
-            dota2protracker_block = (
-                _build_dota2protracker_block(s, star_output=all_output_log)
-                if DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED and _has_valid_dota2protracker_signal(s)
-                else ""
-            )
+            dota2protracker_block = ""
             star_metrics_snapshot = _build_star_metrics_snapshot(
                 early_block_log=early_block_log,
                 mid_block_log=mid_block_log,

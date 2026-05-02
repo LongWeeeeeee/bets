@@ -955,10 +955,55 @@ def test_pipeline_probe_message_places_protracker_lane_adv_under_dict() -> None:
             "mid_output": {},
             "post_lane_output": {},
         },
-        protracker_payload={"pro_lane_advantage": 4.2},
+        protracker_payload={
+            "pro_lane_advantage": 4.2,
+            "pro_cp1vs1_late": 1.09,
+            "pro_cp1vs1_valid": True,
+            "pro_duo_synergy_late": -0.68,
+            "pro_duo_synergy_valid": True,
+        },
     )
 
     assert "lane_adv_dict: +8.00\nlane_adv_protracker: +4.20" in message
+    assert "\ndota2protracker:\n" not in message
+    assert "cp1vs1: +1.09" not in message
+    assert "synergy_duo: -0.68" not in message
+
+
+def test_refresh_stake_multiplier_message_strips_legacy_protracker_block() -> None:
+    message = (
+        "СТАВКА НА Vici Gaming x1\n"
+        "Yakult Brothers VS Vici Gaming\n"
+        "Late: (28-60 min):\n"
+        "Synergy_trio: +1.00\n"
+        "\n"
+        "dota2protracker:\n"
+        "cp1vs1: +1.09\n"
+        "synergy_duo: -0.68\n"
+        "Time: 32:00\n"
+        "Networth: Yakult Brothers +1000\n"
+    )
+
+    updated = runtime._refresh_stake_multiplier_message(
+        message,
+        stake_multiplier_context={
+            "stake_team_name": "Vici Gaming",
+            "target_side": "dire",
+            "selected_late_sign": -1,
+            "has_selected_late_star": True,
+            "late_wr_pct": 85.0,
+            "radiant_team_name": "Yakult Brothers",
+            "dire_team_name": "Vici Gaming",
+        },
+        game_time_seconds=(36 * 60) + 30,
+        radiant_lead=33641,
+    )
+
+    assert "\ndota2protracker:\n" not in updated
+    assert "cp1vs1: +1.09" not in updated
+    assert "synergy_duo: -0.68" not in updated
+    assert "Time: 36:30" in updated
+    assert "Networth: Yakult Brothers +33641" in updated
 
 
 def test_calculate_lanes_preserves_legacy_return_and_can_return_sources(monkeypatch) -> None:
@@ -1223,6 +1268,44 @@ def test_cyberscore_proxy_parser_accepts_host_first_credentials() -> None:
             "password": "password",
         }
     }
+
+
+def test_shared_camoufox_job_can_fail_without_reset(monkeypatch) -> None:
+    close_events: List[str] = []
+
+    class _FakeBrowser:
+        def close(self) -> None:
+            close_events.append("browser")
+
+    fake_browser = _FakeBrowser()
+
+    class _FakeCamoufox:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return fake_browser
+
+        def __exit__(self, *_args) -> None:
+            close_events.append("context")
+
+    class _FakeCamoufoxModule:
+        Camoufox = _FakeCamoufox
+
+    def _fail(_browser):
+        raise RuntimeError("tab failed")
+
+    session = runtime._SharedCamoufoxSession()
+    monkeypatch.setattr(runtime, "CAMOUFOX_AVAILABLE", True, raising=False)
+    monkeypatch.setattr(runtime, "camoufox", _FakeCamoufoxModule(), raising=False)
+    monkeypatch.setattr(runtime, "_cyberscore_camoufox_proxy_kwargs", lambda: {}, raising=False)
+    try:
+        with pytest.raises(RuntimeError):
+            session.submit("dota2protracker:test", _fail, timeout=2, reset_on_error=False)
+        assert session.submit("after-error", lambda browser: browser is fake_browser, timeout=2) is True
+        assert close_events == []
+    finally:
+        session.close()
 
 
 def test_extract_nearest_scheduled_match_info() -> None:
