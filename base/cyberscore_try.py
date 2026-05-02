@@ -16437,8 +16437,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             match_log(f"   🌐 Запрос страницы CyberScore...")
             response_text = _get_cyberscore_html_via_camoufox(match_url)
             if not response_text:
-                print(f"   ❌ Не удалось получить страницу CyberScore")
-                print(f"   ❌ Матч пропущен (ошибка CyberScore Camoufox)")
+                print("   ⚠️ CyberScore detail page temporarily unavailable")
+                print("   ⚠️ Матч временно пропущен (CyberScore fetch unavailable)")
                 return return_status
             cyber_item = _extract_cyberscore_match_item_from_html(response_text, match_id=match_id or None)
             if not cyber_item and match_id:
