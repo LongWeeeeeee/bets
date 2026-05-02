@@ -1314,6 +1314,22 @@ def test_cyberscore_one_shot_job_does_not_reset_shared_browser(monkeypatch) -> N
     ]
 
 
+def test_cyberscore_camoufox_retries_after_empty_fetch(monkeypatch) -> None:
+    calls: List[str] = []
+
+    def _fake_one_shot(_url):
+        calls.append("one-shot")
+        return None if len(calls) == 1 else "<html></html>"
+
+    monkeypatch.setattr(runtime, "CAMOUFOX_AVAILABLE", True, raising=False)
+    monkeypatch.setattr(runtime, "CYBERSCORE_CAMOUFOX_FETCH_ATTEMPTS", 2, raising=False)
+    monkeypatch.setattr(runtime, "_cyberscore_long_page_enabled_for_url", lambda _url: False)
+    monkeypatch.setattr(runtime, "_get_cyberscore_html_via_one_shot", _fake_one_shot)
+
+    assert runtime._get_cyberscore_html_via_camoufox("https://cyberscore.live/en/matches/173557/") == "<html></html>"
+    assert calls == ["one-shot", "one-shot"]
+
+
 def test_cyberscore_transient_fetch_refreshes_network_path(monkeypatch) -> None:
     rotate_calls: List[str] = []
     reset_calls: List[str] = []

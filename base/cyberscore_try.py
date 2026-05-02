@@ -6690,6 +6690,7 @@ CYBERSCORE_LONG_PAGE_NETWORK_TEXT_MAX_BYTES = max(
     10000,
     _safe_int_env("CYBERSCORE_LONG_PAGE_NETWORK_TEXT_MAX_BYTES", 700000),
 )
+CYBERSCORE_CAMOUFOX_FETCH_ATTEMPTS = max(1, _safe_int_env("CYBERSCORE_CAMOUFOX_FETCH_ATTEMPTS", 2))
 CYBERSCORE_LISTING_ITEM_CACHE: Dict[str, Dict[str, Any]] = {}
 GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES = "live_matches_missing_after_all_proxies"
 GET_HEADS_FAILURE_REASON_REQUEST_FAILED = "request_failed"
@@ -14670,16 +14671,7 @@ def _extract_cyberscore_live_cards_from_html(html: str) -> Tuple[List[Any], List
     return list(cards), list(cards)
 
 
-def _get_cyberscore_html_via_camoufox(url: Optional[str] = None) -> Optional[str]:
-    if not CAMOUFOX_AVAILABLE:
-        print("⚠️ CyberScore source: Camoufox unavailable")
-        return None
-    target_url = str(url or CYBERSCORE_MATCHES_URL).strip()
-    if _cyberscore_long_page_enabled_for_url(target_url):
-        html = _get_cyberscore_html_via_long_page(target_url)
-        if html:
-            return html
-        print("⚠️ CyberScore long page unavailable; falling back to one-shot tab")
+def _get_cyberscore_html_via_one_shot(target_url: str) -> Optional[str]:
     try:
         def _job(browser) -> str:
             page = browser.new_page()
@@ -14712,6 +14704,26 @@ def _get_cyberscore_html_via_camoufox(url: Optional[str] = None) -> Optional[str
             print(f"❌ CyberScore Camoufox fetch failed: {short_error}")
             logger.warning("CyberScore Camoufox fetch failed for %s: %s", target_url, short_error)
         return None
+
+
+def _get_cyberscore_html_via_camoufox(url: Optional[str] = None) -> Optional[str]:
+    if not CAMOUFOX_AVAILABLE:
+        print("⚠️ CyberScore source: Camoufox unavailable")
+        return None
+    target_url = str(url or CYBERSCORE_MATCHES_URL).strip()
+    attempts = max(1, int(CYBERSCORE_CAMOUFOX_FETCH_ATTEMPTS or 1))
+    for attempt_index in range(attempts):
+        if _cyberscore_long_page_enabled_for_url(target_url):
+            html = _get_cyberscore_html_via_long_page(target_url)
+            if html:
+                return html
+            print("⚠️ CyberScore long page unavailable; falling back to one-shot tab")
+        html = _get_cyberscore_html_via_one_shot(target_url)
+        if html:
+            return html
+        if attempt_index + 1 < attempts:
+            print(f"🔁 CyberScore fetch retry {attempt_index + 2}/{attempts}: {target_url}")
+    return None
 
 
 def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[List[Any]]]:
