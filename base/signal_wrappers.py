@@ -34,6 +34,11 @@ TARGET_METRICS = (
     "synergy_duo",
     "synergy_trio",
 )
+STAR_SIGNAL_METRICS = frozenset({
+    "counterpick_1vs1",
+    "counterpick_1vs2",
+    "solo",
+})
 CORE_POSITIONS = (1, 2, 3)
 ROLE_KEYS = ("hard_carry", "has_initiator", "save_count", "has_control")
 
@@ -325,7 +330,7 @@ def _load_star_thresholds() -> Dict[int, Dict[str, list[tuple[str, int]]]]:
                                 thr = int(row[1])
                             except (TypeError, ValueError):
                                 continue
-                            if metric:
+                            if metric and metric in STAR_SIGNAL_METRICS:
                                 rows.append((metric, thr))
                     block[section] = rows
                 parsed[wr] = block

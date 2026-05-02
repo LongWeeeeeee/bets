@@ -1833,9 +1833,12 @@ def process_matchup_data(position, matchups, opposing_team_positions):
 STAR_THRESHOLDS_PATH = Path(
     os.getenv('STAR_THRESHOLDS_PATH', str(PROJECT_ROOT / 'data' / 'star_thresholds_by_wr.json'))
 )
-STAR_DISABLED_METRICS = frozenset({
-    'pos1_vs_pos1',
+STAR_SIGNAL_METRICS = frozenset({
+    'counterpick_1vs1',
+    'counterpick_1vs2',
+    'solo',
 })
+STAR_DISABLED_METRICS = frozenset()
 STAR_THRESHOLD_SECTIONS = (
     'early_output',
     'mid_output',
@@ -1844,11 +1847,7 @@ STAR_THRESHOLD_SECTIONS = (
 
 def _is_star_metric_enabled(metric: Any, section: str = '') -> bool:
     metric_name = str(metric).strip()
-    if metric_name in STAR_DISABLED_METRICS:
-        return False
-    if str(section or '').strip() == 'all_output' and metric_name == 'solo':
-        return False
-    return True
+    return metric_name in STAR_SIGNAL_METRICS and metric_name not in STAR_DISABLED_METRICS
 
 
 def _load_star_thresholds() -> dict:
@@ -1915,12 +1914,6 @@ STAR_THRESHOLDS_BY_WR = _load_star_thresholds()
 STAR_LATE_SIGNAL_GATE_ENABLED = os.getenv('STAR_LATE_SIGNAL_GATE_ENABLED', '1') == '1'
 STAR_LATE_SIGNAL_GATE_SOLO_MIN = int(os.getenv('STAR_LATE_SIGNAL_GATE_SOLO_MIN', '6'))
 STAR_LATE_SIGNAL_GATE_TRIO_MIN = int(os.getenv('STAR_LATE_SIGNAL_GATE_TRIO_MIN', '7'))
-STAR_LATE_STRONG_PAIR_ENABLED = os.getenv('STAR_LATE_STRONG_PAIR_ENABLED', '1') == '1'
-STAR_LATE_STRONG_PAIR_REQUIRED = os.getenv('STAR_LATE_STRONG_PAIR_REQUIRED', '0') == '1'
-STAR_LATE_STRONG_PAIR_TRIO_MIN = int(os.getenv('STAR_LATE_STRONG_PAIR_TRIO_MIN', '7'))
-STAR_LATE_STRONG_PAIR_POS1_MIN = int(os.getenv('STAR_LATE_STRONG_PAIR_POS1_MIN', '6'))
-
-
 def format_output_dict(
     output_dict,
     flag=False,
@@ -2024,12 +2017,10 @@ def format_output_dict(
         ):
             has_late_anchor = (
                 _coerce_metric_value(data.get('solo')) is not None
-                or _coerce_metric_value(data.get('synergy_trio')) is not None
             )
             if has_late_anchor:
                 late_gate_ok = (
                     _matches_sign_and_abs(data, 'solo', block_sign, STAR_LATE_SIGNAL_GATE_SOLO_MIN)
-                    or _matches_sign_and_abs(data, 'synergy_trio', block_sign, STAR_LATE_SIGNAL_GATE_TRIO_MIN)
                 )
                 if not late_gate_ok:
                     for key, original_value in starred_original_values.items():
@@ -2037,23 +2028,6 @@ def format_output_dict(
                     continue
         if section == 'mid_output':
             data.pop('trio_pos1_strong', None)
-        if (
-            block_star_count > 0
-            and not block_conflict
-            and section == 'mid_output'
-            and STAR_LATE_STRONG_PAIR_ENABLED
-            and block_sign is not None
-        ):
-            has_strong_pair = (
-                _matches_sign_and_abs(data, 'synergy_trio', block_sign, STAR_LATE_STRONG_PAIR_TRIO_MIN)
-                and _matches_sign_and_abs(data, 'pos1_vs_pos1', block_sign, STAR_LATE_STRONG_PAIR_POS1_MIN)
-            )
-            if has_strong_pair:
-                data['trio_pos1_strong'] = int(block_sign)
-            elif STAR_LATE_STRONG_PAIR_REQUIRED:
-                for key, original_value in starred_original_values.items():
-                    data[key] = original_value
-                continue
         if block_star_count > 0 and not block_conflict:
             any_valid_block = True
     return any_valid_block
@@ -5277,6 +5251,42 @@ LANE_2V1_MIN_GAMES = 20
 LANE_1V1_MIN_GAMES = 50
 LANE_SYNERGY_MIN_GAMES = 30
 LANE_SOLO_MIN_GAMES = 10
+LANE_SOURCE_CONFIDENCE_DELTAS = {
+    "2v2": -1.0,
+    "2v2m": -1.0,
+}
+
+
+def _lane_source_confidence_delta(source):
+    if source is None:
+        return 0.0
+    source_key = str(source).strip()
+    if not source_key:
+        return 0.0
+    env_key = f"LANE_SOURCE_CONFIDENCE_DELTA_{re.sub(r'[^A-Za-z0-9]+', '_', source_key).upper()}"
+    raw = os.getenv(env_key)
+    if raw is not None:
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return 0.0
+    try:
+        return float(LANE_SOURCE_CONFIDENCE_DELTAS.get(source_key, 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _apply_lane_source_calibration(outcome, conf, source):
+    if outcome is None or conf is None:
+        return outcome, conf
+    delta = _lane_source_confidence_delta(source)
+    if delta == 0:
+        return outcome, conf
+    try:
+        new_conf = float(conf) + delta
+    except (TypeError, ValueError):
+        return outcome, conf
+    return outcome, int(max(1, min(100, round(new_conf))))
 
 
 def _lane_raw_counts(stats, invert=False):
@@ -7907,7 +7917,7 @@ def calculate_lanes_old(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data
     return top_message, bot_message, mid_message
 
 
-def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, merge_side_lanes: bool = False):
+def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, merge_side_lanes: bool = False, return_sources: bool = False):
     """
     Человекочитаемый пайплайн лейнов:
     1) Пробуем 2v2 матчап.
@@ -8321,24 +8331,26 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
                 return 'draw', int(round((primary_conf + fb_conf) / 2))
             return _strip(primary)
 
-        def _finalize(res):
+        def _finalize(res, source):
             if not res or res[1] is None:
-                return res
+                return None, None, None
             if _stomp_mode.startswith("post"):
                 key, val = _apply_stomp(lane_name, res[0], res[1], "final")
-                return key, val
-            return res
+            else:
+                key, val = res[0], res[1]
+            key, val = _apply_lane_source_calibration(key, val, source)
+            return key, val, source
 
         # 1) 2v2 обычный
         two_by_two_outcome, two_by_two_conf = from_2v2(lane_name)
         if two_by_two_conf is not None:
-            return _finalize(_consensus_gate((two_by_two_outcome, two_by_two_conf)))
+            return _finalize(_consensus_gate((two_by_two_outcome, two_by_two_conf)), "2v2")
         
         # 1.5) 2v2 merged (перестановки позиций внутри дуо) — только для боковых лайнов
         if merge_side_lanes and lane_name != 'mid':
             merged_2v2_outcome, merged_2v2_conf = from_2v2_merged(lane_name)
             if merged_2v2_conf is not None:
-                return _finalize(_consensus_gate((merged_2v2_outcome, merged_2v2_conf)))
+                return _finalize(_consensus_gate((merged_2v2_outcome, merged_2v2_conf)), "2v2")
 
         # 2) 2v1
         counterpick_res, status = from_2v1(lane_name)
@@ -8346,9 +8358,9 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
         counterpick_conf = counterpick_res[1] if isinstance(counterpick_res, (tuple, list)) and len(counterpick_res) >= 2 else None
 
         if status == 'mid' and counterpick_conf is not None:
-            return _finalize((counterpick_outcome, counterpick_conf))
+            return _finalize((counterpick_outcome, counterpick_conf), "mid_1v1")
         if status == 'full' and counterpick_conf is not None:
-            return _finalize(_consensus_gate(counterpick_res))
+            return _finalize(_consensus_gate(counterpick_res), "2v1_full")
 
         if status == 'single' and counterpick_conf is not None:
             single_layer = lane_2vs1(
@@ -8366,7 +8378,7 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
                 radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name, return_probs=True
             )
             res_probs = _merge_lane_predictions(base_probs, lane_1v1_probs, return_probs=True) or base_probs
-            return _finalize(_lane_prediction_from_probs(res_probs))
+            return _finalize(_lane_prediction_from_probs(res_probs), "2v1_single_mix")
 
         # 3) Фолбэк 1v1 + синергия
         lane_1v1_probs = counterpick_lanes(
@@ -8377,21 +8389,27 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
         )
         merged_probs = _merge_lane_predictions(lane_1v1_probs, duo_synergy_probs, return_probs=True)
         if merged_probs is not None:
-            return _finalize(_lane_prediction_from_probs(merged_probs))
+            return _finalize(_lane_prediction_from_probs(merged_probs), "cp_synergy")
 
         solo_probs = from_solo(lane_name, return_probs=True)
         if solo_probs is not None:
-            return _finalize(_lane_prediction_from_probs(solo_probs))
-        return (None, None)
+            return _finalize(_lane_prediction_from_probs(solo_probs), "solo")
+        return None, None, None
 
-    top_key, top_val = process_lane('top')
-    bot_key, bot_val = process_lane('bot')
-    mid_key, mid_val = process_lane('mid')
+    top_key, top_val, top_source = process_lane('top')
+    bot_key, bot_val, bot_source = process_lane('bot')
+    mid_key, mid_val, mid_source = process_lane('mid')
 
     top_message = f'Top: {top_key} {top_val}%\n' if top_val is not None else 'Top: None\n'
     bot_message = f'Bot: {bot_key} {bot_val}%\n\n' if bot_val is not None else 'Bot: None\n\n'
     mid_message = f'Mid: {mid_key} {mid_val}%\n' if mid_val is not None else 'Mid: None\n'
 
+    if return_sources:
+        return top_message, bot_message, mid_message, {
+            'top': top_source,
+            'bot': bot_source,
+            'mid': mid_source,
+        }
     return top_message, bot_message, mid_message
 
 

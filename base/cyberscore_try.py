@@ -1197,7 +1197,6 @@ DELAYED_SIGNAL_POLL_SECONDS = 15
 DELAYED_SIGNAL_NO_PROGRESS_TIMEOUT_SECONDS = 2 * 60 * 60
 DELAYED_SIGNAL_NO_DATA_TIMEOUT_SECONDS = 4 * 60 * 60
 # Networth-gated dispatch rules (target team is resolved by star direction sign).
-NETWORTH_GATE_HARD_BLOCK_SECONDS = 4 * 60
 NETWORTH_GATE_EARLY_WINDOW_END_SECONDS = 10 * 60
 NETWORTH_GATE_4_TO_10_MIN_DIFF = 800.0
 NETWORTH_GATE_EARLY_CORE_HIGH_CONFIDENCE_MIN_LEAD = 0.0
@@ -1217,7 +1216,6 @@ NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_WINDOW_START_SECONDS = 17 * 60
 NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_DIFF = 3000.0
 NETWORTH_GATE_LATE_COMEBACK_LARGE_DEFICIT = 14000.0
 NETWORTH_MONITOR_HOLD_SECONDS = max(0, _safe_int_env("NETWORTH_MONITOR_HOLD_SECONDS", 60))
-NETWORTH_STATUS_PRE4_BLOCK = "pre4_block"
 NETWORTH_STATUS_4_10_SEND_800 = "4_10_send_800"
 NETWORTH_STATUS_MIN10_LOSS_LE800_SEND = "minute10_loss_le800_send"
 NETWORTH_STATUS_MIN10_TARGET_NONNEGATIVE_SEND = "minute10_target_nonnegative_send"
@@ -1771,10 +1769,20 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
     if not isinstance(data, dict):
         return None
 
+    phase_name = str(phase or "").strip().lower()
+    section = {
+        "early": "early_output",
+        "mid": "mid_output",
+        "late": "mid_output",
+        "all": "all_output",
+    }.get(phase_name, "mid_output")
+
     # Рекомендации считаем только по фактическим STAR-метрикам (с '*'),
     # чтобы не получать "высокие уровни" на незвездных числах.
     star_only_data: Dict[str, float] = {}
     for metric, raw in data.items():
+        if not _star_metric_enabled_for_section(str(metric), section):
+            continue
         if not isinstance(raw, str) or not raw.strip().endswith('*'):
             continue
         value = _coerce_metric_value(raw)
@@ -1788,13 +1796,6 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
     if len(star_signs) > 1:
         return None
 
-    phase_name = str(phase or "").strip().lower()
-    section = {
-        "early": "early_output",
-        "mid": "mid_output",
-        "late": "mid_output",
-        "all": "all_output",
-    }.get(phase_name, "mid_output")
     calibration_phase_key = (
         "early"
         if section == "early_output"
@@ -1816,7 +1817,10 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
         thresholds_by_metric: Dict[str, int] = {}
         for metric, raw_threshold in base_rows:
             try:
-                thresholds_by_metric[str(metric)] = max(1, int(raw_threshold))
+                metric_name = str(metric)
+                if not _star_metric_enabled_for_section(metric_name, section):
+                    continue
+                thresholds_by_metric[metric_name] = max(1, int(raw_threshold))
             except (TypeError, ValueError):
                 continue
         if not thresholds_by_metric:
@@ -1867,6 +1871,8 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
                 compact_metric = str(metric)
                 compact_threshold = int(threshold)
             except (TypeError, ValueError):
+                continue
+            if not _star_metric_enabled_for_section(compact_metric, section):
                 continue
             if compact_threshold < 1:
                 compact_threshold = 1
@@ -2029,6 +2035,11 @@ _STAR_METRIC_ORDER = (
     "synergy_trio",
     "dota2protracker_cp1vs1",
 )
+_STAR_SIGNAL_METRICS = frozenset({
+    "counterpick_1vs1",
+    "counterpick_1vs2",
+    "solo",
+})
 _STAR_SUPPORT_METRIC_ORDER = (
     "counterpick_1vs1",
     "solo",
@@ -2038,9 +2049,7 @@ _STAR_LATE_CORE_METRIC_ORDER = (
     "counterpick_1vs2",
     "solo",
 )
-_STAR_LATE_CORE_MIN_ABS_BY_METRIC = {
-    "pos1_vs_pos1": 5.0,
-}
+_STAR_LATE_CORE_MIN_ABS_BY_METRIC: Dict[str, float] = {}
 _STAR_METRIC_SHORT = {
     "counterpick_1vs1": "cp1v1",
     "counterpick_1vs2": "cp1v2",
@@ -2053,11 +2062,7 @@ _STAR_METRIC_SHORT = {
 
 def _star_metric_enabled_for_section(metric_name: str, section: str) -> bool:
     metric_key = str(metric_name or "").strip()
-    if metric_key in STAR_DISABLED_METRICS:
-        return False
-    if str(section or "").strip() == "all_output" and metric_key == "solo":
-        return False
-    return True
+    return metric_key in _STAR_SIGNAL_METRICS and metric_key not in STAR_DISABLED_METRICS
 
 
 def _star_thresholds_for_wr(target_wr: int, section: str) -> Dict[str, int]:
@@ -2087,12 +2092,76 @@ def _format_metric_value(value: float) -> str:
     return f"{value:.1f}"
 
 
-def _build_lane_block(top: Any, mid: Any, bot: Any, lane_adv_line: str = "") -> str:
+LANE_ADV_DICT_CONFIDENCE_BASELINE = 39.0
+LANE_ADV_DICT_WEIGHTS = {
+    "top": 1.0,
+    "mid": 0.75,
+    "bot": 1.0,
+}
+
+
+def _lane_prediction_edge_for_adv(raw: Any) -> Optional[float]:
+    if raw is None:
+        return None
+    cleaned = str(raw).strip()
+    if not cleaned:
+        return None
+    if ":" in cleaned:
+        cleaned = cleaned.split(":", 1)[1].strip()
+    parts = cleaned.split()
+    if len(parts) != 2:
+        return None
+    outcome = parts[0].strip().lower()
+    if outcome == "loose":
+        outcome = "lose"
+    try:
+        confidence = float(parts[1].rstrip("%"))
+    except (TypeError, ValueError):
+        return None
+    if outcome == "draw":
+        return 0.0
+    edge = max(0.0, confidence - LANE_ADV_DICT_CONFIDENCE_BASELINE)
+    if outcome == "win":
+        return edge
+    if outcome == "lose":
+        return -edge
+    return None
+
+
+def _build_lane_dict_adv_line(top: Any, mid: Any, bot: Any) -> str:
+    lane_inputs = (
+        ("top", top),
+        ("mid", mid),
+        ("bot", bot),
+    )
+    weighted_sum = 0.0
+    has_lane_data = False
+    for lane_name, raw in lane_inputs:
+        edge = _lane_prediction_edge_for_adv(raw)
+        if edge is None:
+            continue
+        has_lane_data = True
+        weighted_sum += edge * float(LANE_ADV_DICT_WEIGHTS.get(lane_name, 1.0))
+    if not has_lane_data:
+        return ""
+    weight_total = sum(float(weight) for weight in LANE_ADV_DICT_WEIGHTS.values()) or 1.0
+    lane_adv = weighted_sum / weight_total
+    return f"lane_adv_dict: {lane_adv:+.2f}\n"
+
+
+def _build_lane_block(
+    top: Any,
+    mid: Any,
+    bot: Any,
+    lane_adv_line: str = "",
+    lane_adv_dict_line: str = "",
+) -> str:
     top_line = str(top or "").strip()
     mid_line = str(mid or "").strip()
     bot_line = str(bot or "").strip()
+    lane_adv_dict = str(lane_adv_dict_line or "").strip()
     lane_adv = str(lane_adv_line or "").strip()
-    lane_lines = [line for line in (top_line, mid_line, bot_line, lane_adv) if line]
+    lane_lines = [line for line in (top_line, mid_line, bot_line, lane_adv_dict, lane_adv) if line]
     if not lane_lines:
         return ""
     return "Lanes:\n" + "\n".join(lane_lines) + "\n\n"
@@ -2329,11 +2398,52 @@ def _dispatch_mode_reason_label(dispatch_mode: Optional[str]) -> str:
         "immediate_early_late_same_sign": "same_sign,both_star",
         "immediate_early_star_late_core_same_sign": "early_star,no_valid_late",
         "immediate_late_star_early_core_same_sign": "same_sign,late_star+early_core",
+        "immediate_star_rule": "star_rule_immediate",
         "immediate_early_star65": "early65_gate",
         "delayed_late_only_20_20m": "late_only,20_20_monitor",
+        "delayed_late_only_20_30m": "late_only,20_30_comeback_table",
         "delayed_late_elo_block_top25_opposite_monitor": "opposite_signs,top25_late_elo_block_monitor",
     }
     return mapping.get(mode, mode or "unknown")
+
+
+def _star_signal_dispatch_flags(
+    *,
+    has_early_star: bool,
+    early_sign: Optional[int],
+    has_late_star: bool,
+    late_sign: Optional[int],
+    has_all_star: bool,
+    force_odds_signal_test_active: bool = False,
+) -> Dict[str, bool]:
+    late_early_same_sign = bool(
+        has_early_star
+        and has_late_star
+        and early_sign in (-1, 1)
+        and late_sign in (-1, 1)
+        and early_sign == late_sign
+    )
+    no_late_early_or_all = bool(
+        not force_odds_signal_test_active
+        and not has_late_star
+        and (has_early_star or has_all_star)
+    )
+    send_now = bool(
+        force_odds_signal_test_active
+        or late_early_same_sign
+        or no_late_early_or_all
+    )
+    late_wait_pub_table = bool(
+        has_late_star
+        and not late_early_same_sign
+        and not force_odds_signal_test_active
+    )
+    return {
+        "send_now_late_early_same_sign": late_early_same_sign,
+        "send_now_no_late_early_or_all": no_late_early_or_all,
+        "send_now_immediate": send_now,
+        "late_star_wait_pub_table": late_wait_pub_table,
+    }
 
 
 def _star_match_status_from_diags(
@@ -3534,7 +3644,7 @@ def _build_dota2protracker_lane_adv_line(protracker_payload: Optional[Dict[str, 
     if not has_lane_data:
         return ""
     try:
-        return f"lane_adv: {float(lane_adv):+.2f}\n"
+        return f"lane_adv_protracker: {float(lane_adv):+.2f}\n"
     except (TypeError, ValueError):
         return ""
 
@@ -3631,6 +3741,17 @@ def _build_pipeline_probe_message(
     metrics_payload: Dict[str, Any],
     protracker_payload: Optional[Dict[str, Any]],
 ) -> str:
+    lane_block = _build_lane_block(
+        metrics_payload.get('top'),
+        metrics_payload.get('mid'),
+        metrics_payload.get('bot'),
+        lane_adv_line=_build_dota2protracker_lane_adv_line(protracker_payload),
+        lane_adv_dict_line=_build_lane_dict_adv_line(
+            metrics_payload.get('top'),
+            metrics_payload.get('mid'),
+            metrics_payload.get('bot'),
+        ),
+    )
     return (
         f"{_format_signal_header(stake_team_name='PIPELINE CHECK', stake_multiplier=1)}\n"
         f"{radiant_team_name} VS {dire_team_name}\n"
@@ -3640,9 +3761,8 @@ def _build_pipeline_probe_message(
         "source: get_heads/cyberscore_try\n"
         f"Radiant draft: {_format_pipeline_probe_draft_side(radiant_heroes_and_pos)}\n"
         f"Dire draft: {_format_pipeline_probe_draft_side(dire_heroes_and_pos)}\n\n"
-        f"{_build_lane_block(metrics_payload.get('top'), metrics_payload.get('mid'), metrics_payload.get('bot'))}"
+        f"{lane_block}"
         f"{_format_pipeline_probe_phase_block('Early', metrics_payload.get('early_output'))}"
-        f"{_build_dota2protracker_lane_adv_line(protracker_payload)}"
         f"{_format_pipeline_probe_phase_block('Late', metrics_payload.get('mid_output'))}"
         f"{_format_pipeline_probe_phase_block('Post-lane', metrics_payload.get('post_lane_output'))}"
         f"{_build_dota2protracker_block(protracker_payload)}"
@@ -16847,27 +16967,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             has_early_star = bool(early_diag.get("valid"))
             has_late_star = bool(late_diag.get("valid"))
             has_all_star = bool(all_diag.get("valid"))
-            early_sign = early_diag.get("sign") if has_early_star else None
-            late_sign = late_diag.get("sign") if has_late_star else None
             if not (has_early_star or has_late_star or has_all_star):
                 return False, "no_valid_star_block"
-            if STAR_SIGNAL_IMMEDIATE_ON_ANY_VALID_BLOCK:
-                return True, "ok"
-            if has_late_star and not has_early_star and STAR_REQUIRE_EARLY_WITH_LATE_SAME_SIGN:
-                return (
-                    False,
-                    "late_star_requires_early_same_sign(early_star=no)",
-                )
-            if (
-                has_early_star
-                and has_late_star
-                and early_sign != late_sign
-                and not STAR_DELAY_ON_OPPOSITE_SIGNS
-            ):
-                return (
-                    False,
-                    f"opposite_signs_disabled(early_sign={early_sign},late_sign={late_sign})",
-                )
             return True, "ok"
 
         has_star_base, cand_base = _build_star_candidate(star_target_wr)
@@ -17086,41 +17187,23 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and early_core_same_or_zero_diag.get("nonzero_metrics")
             )
             early_core_conflict = bool(early_core_same_or_zero_diag.get("conflicting_metrics"))
-            # Приоритет dispatch:
-            # 1) full-star same-sign
-            # 2) early-star + no valid late block (WR60, min 2 hits)
-            # 3) late-star + early same-sign-or-zero
-            # 4) delayed ветки / reject
-            send_now_full_star = (
-                has_selected_early_star
-                and has_selected_late_star
-                and selected_early_sign == selected_late_sign
+            # Dispatch policy:
+            # 1) late STAR + early STAR same sign -> send now
+            # 2) no late STAR, but early/all STAR exists -> send now
+            # 3) late STAR without same-sign early -> wait until 20:30 and use pub comeback table
+            star_dispatch_flags = _star_signal_dispatch_flags(
+                has_early_star=has_selected_early_star,
+                early_sign=selected_early_sign,
+                has_late_star=has_selected_late_star,
+                late_sign=selected_late_sign,
+                has_all_star=has_selected_all_star,
+                force_odds_signal_test_active=force_odds_signal_test_active,
             )
-            send_now_early_star_late_core_same_sign = (
-                not force_odds_signal_test_active
-                and has_selected_early_star
-                and not bool(late_min60_diag.get("valid"))
-            )
-            send_now_late_star_early_core_same_sign = (
-                STAR_ALLOW_LATE_STAR_EARLY_SAME_OR_ZERO
-                and has_selected_late_star
-                and not has_selected_early_star
-                and early_core_same_sign_support
-            )
-            early65_gate_active = bool(
-                not force_odds_signal_test_active
-                and STAR_ALLOW_IMMEDIATE_EARLY_STAR65
-                and star_match_tier == 1
-                and early65_gate_diag is not None
-                and bool(early65_gate_diag.get("valid"))
-                and not bool(late_min60_diag.get("valid"))
-            )
-            send_now_immediate = (
-                send_now_full_star
-                or send_now_early_star_late_core_same_sign
-                or send_now_late_star_early_core_same_sign
-                or force_odds_signal_test_active
-            )
+            send_now_full_star = bool(star_dispatch_flags["send_now_late_early_same_sign"])
+            send_now_early_star_late_core_same_sign = bool(star_dispatch_flags["send_now_no_late_early_or_all"])
+            send_now_late_star_early_core_same_sign = False
+            early65_gate_active = False
+            send_now_immediate = bool(star_dispatch_flags["send_now_immediate"])
 
             early_output_log = _decorate_star_block_for_display(
                 raw_block=s.get('early_output', {}),
@@ -17434,37 +17517,19 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and raw_selected_late_diag.get("sign") == selected_early_sign
                 and str(selected_late_diag.get("status") or "") == "elo_wr_below_min60"
             )
-            send_now_full_star = (
-                has_selected_early_star
-                and has_selected_late_star
-                and selected_early_sign == selected_late_sign
+            star_dispatch_flags = _star_signal_dispatch_flags(
+                has_early_star=has_selected_early_star,
+                early_sign=selected_early_sign,
+                has_late_star=has_selected_late_star,
+                late_sign=selected_late_sign,
+                has_all_star=has_selected_all_star,
+                force_odds_signal_test_active=force_odds_signal_test_active,
             )
-            send_now_early_star_late_core_same_sign = (
-                not force_odds_signal_test_active
-                and bool(early_star_no_late_same_sign_gate.get("valid"))
-            )
-            send_now_late_star_early_core_same_sign = (
-                STAR_ALLOW_LATE_STAR_EARLY_SAME_OR_ZERO
-                and has_selected_late_star
-                and not has_selected_early_star
-                and early_core_same_sign_support
-            )
-            early65_gate_active = bool(
-                not force_odds_signal_test_active
-                and STAR_ALLOW_IMMEDIATE_EARLY_STAR65
-                and star_match_tier == 1
-                and early_wr_pct is not None
-                and float(early_wr_pct) >= 70.0
-                and early65_gate_diag is not None
-                and bool(early65_gate_diag.get("valid"))
-                and not bool(late_min60_diag.get("valid"))
-            )
-            send_now_immediate = (
-                send_now_full_star
-                or send_now_early_star_late_core_same_sign
-                or send_now_late_star_early_core_same_sign
-                or force_odds_signal_test_active
-            )
+            send_now_full_star = bool(star_dispatch_flags["send_now_late_early_same_sign"])
+            send_now_early_star_late_core_same_sign = bool(star_dispatch_flags["send_now_no_late_early_or_all"])
+            send_now_late_star_early_core_same_sign = False
+            early65_gate_active = False
+            send_now_immediate = bool(star_dispatch_flags["send_now_immediate"])
             dispatch_mode = (
                 "immediate_force_odds_signal_test"
                 if force_odds_signal_test_active
@@ -17477,7 +17542,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         else (
                             "immediate_late_star_early_core_same_sign"
                             if send_now_late_star_early_core_same_sign
-                            else "delayed_late_only_20_20m"
+                            else "delayed_late_only_20_30m"
                         )
                     )
                 )
@@ -17563,11 +17628,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if send_now_early_star_late_core_same_sign:
                 if verbose_match_log:
                     print(
-                        "   ✅ Override: early star without valid late star allowed "
-                        f"(early_wr>={float(early_star_no_late_same_sign_gate.get('min_wr_required') or 0.0):.0f}, "
-                        f"early_hit_count={int(early_star_no_late_same_sign_gate.get('early_hit_count') or 0)}, "
-                        f"late_wr60_has_star={bool(early_star_no_late_same_sign_gate.get('late_min_wr_has_star'))}) "
-                        f"(sign={selected_early_sign})"
+                        "   ✅ Dispatch rule: no late STAR, early/all STAR sends immediately "
+                        f"(early={has_selected_early_star}, all={has_selected_all_star})"
                     )
             elif (
                 verbose_match_log
@@ -17580,7 +17642,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     else "n/a"
                 )
                 print(
-                    "   ⚠️ Early-star no-valid-late override blocked by early gate "
+                    "   ⚠️ Early/all immediate branch blocked "
                     f"(early_wr={gate_wr_label}, "
                     f"min_wr_ok={bool(early_star_no_late_same_sign_gate.get('min_wr_ok'))}, "
                     f"early_hit_count={int(early_star_no_late_same_sign_gate.get('early_hit_count') or 0)}, "
@@ -18016,6 +18078,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 s.get('mid'),
                 s.get('bot'),
                 lane_adv_line=dota2protracker_lane_adv_line,
+                lane_adv_dict_line=_build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot')),
             )
 
             # Формирование сообщения
@@ -18072,25 +18135,24 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             early_core_monitor_wait_status_label = NETWORTH_STATUS_EARLY_CORE_MONITOR_WAIT_NONNEGATIVE
             early_core_monitor_delay_reason = "early_star_late_core_wait_nonnegative"
             if (
-                STAR_SIGNAL_IMMEDIATE_ON_ANY_VALID_BLOCK
-                and has_any_valid_star_block
+                send_now_immediate
                 and not force_odds_signal_test_active
             ):
-                dispatch_mode = "immediate_any_valid_star_block"
-                networth_send_status_label = "any_valid_star_block_send"
+                dispatch_mode = "immediate_star_rule"
+                networth_send_status_label = "star_rule_immediate_send"
                 if verbose_match_log:
                     print(
-                        "   ✅ Dispatch rule: immediate on any valid STAR block "
+                        "   ✅ Dispatch rule: immediate STAR branch "
                         f"(early={has_selected_early_star}, late={has_selected_late_star}, "
                         f"all={has_selected_all_star})"
                     )
-                if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки STAR-сигнала any-valid"):
+                if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки STAR-сигнала"):
                     return return_status
                 if not _acquire_signal_send_slot(check_uniq_url):
                     print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
                     return return_status
                 try:
-                    if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки STAR-сигнала any-valid после lock"):
+                    if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки STAR-сигнала после lock"):
                         return return_status
                     if verbose_match_log:
                         _print_star_metrics_snapshot(star_metrics_snapshot, label="immediate")
@@ -18125,29 +18187,25 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delivery_confirmed = _deliver_and_persist_signal(
                         check_uniq_url,
                         delivery_message_text,
-                        add_url_reason="star_signal_sent_now_any_valid_block",
+                        add_url_reason="star_signal_sent_now",
                         add_url_details=add_url_details,
                         bookmaker_decision="sent",
                     )
                     if delivery_confirmed:
-                        print("   ✅ ВЕРДИКТ: STAR-сигнал отправлен немедленно (any valid block)")
+                        print("   ✅ ВЕРДИКТ: STAR-сигнал отправлен немедленно")
                 finally:
                     _release_signal_send_slot(check_uniq_url)
                 return return_status
-            if not force_odds_signal_test_active:
+            late_star_wait_pub_table = bool(star_dispatch_flags["late_star_wait_pub_table"])
+            if late_star_wait_pub_table:
+                queue_top25_late_elo_block_monitor = False
+                dispatch_mode = "delayed_late_only_20_30m"
+            if not force_odds_signal_test_active and not late_star_wait_pub_table:
                 if tier1_early_kills_mode:
                     if target_networth_diff is None or target_side is None:
                         print(
                             "   ⏳ Ожидание dispatch: target-side networth gate не применен "
                             "(нет target_sign/lead)"
-                        )
-                        return return_status
-                    if current_game_time < NETWORTH_GATE_HARD_BLOCK_SECONDS:
-                        print(
-                            "   ⏳ Ожидание dispatch: tier1_early_kills "
-                            f"(gate={NETWORTH_STATUS_PRE4_BLOCK}, "
-                            f"now={_format_game_clock(current_game_time)}, "
-                            f"target_side={target_side}, target_diff={int(target_networth_diff)})"
                         )
                         return return_status
                     if current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_END_SECONDS:
@@ -18190,16 +18248,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     and early65_target_diff is not None
                     and early65_release_status_label is None
                 ):
-                    if current_game_time < NETWORTH_GATE_HARD_BLOCK_SECONDS:
-                        print(
-                            "   ⏳ Ожидание dispatch: immediate_early_star65 "
-                            f"(reason={_dispatch_mode_reason_label('immediate_early_star65')}, "
-                            f"gate=pre4_block_early65, "
-                            f"now={_format_game_clock(current_game_time)}, "
-                            f"target_side={early65_target_side}, "
-                            f"target_diff={int(early65_target_diff)})"
-                        )
-                        return return_status
                     if current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
                         if early65_target_diff >= NETWORTH_GATE_TIER1_EARLY65_4_TO_10_MIN_DIFF:
                             early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY65_4_10_SEND_600
@@ -18275,15 +18323,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             )
                     finally:
                         _release_signal_send_slot(check_uniq_url)
-                    return return_status
-                if current_game_time < NETWORTH_GATE_HARD_BLOCK_SECONDS:
-                    print(
-                        f"   ⏳ Ожидание dispatch: {dispatch_mode} "
-                        f"(reason={_dispatch_mode_reason_label(dispatch_mode)}, "
-                        f"gate={NETWORTH_STATUS_PRE4_BLOCK}, "
-                        f"now={_format_game_clock(current_game_time)}, "
-                        f"target_side={target_side}, target_diff={int(target_networth_diff)})"
-                    )
                     return return_status
                 if current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
                     if opposite_signs_selected:
@@ -18406,7 +18445,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
                 _ensure_delayed_sender_started()
                 target_game_time = float(DELAYED_SIGNAL_TARGET_GAME_TIME)
-                if late_pub_comeback_table_candidate or opposite_signs_selected:
+                if late_pub_comeback_table_candidate or opposite_signs_selected or late_star_wait_pub_table:
                     target_game_time = float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
                 target_human = _format_game_clock(target_game_time)
                 monitor_threshold: Optional[float] = None
@@ -18479,7 +18518,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     and
                     (not force_odds_signal_test_active)
                     and target_networth_diff is not None
-                    and NETWORTH_GATE_HARD_BLOCK_SECONDS <= current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS
+                    and current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS
                     and (
                         (
                             isinstance(dynamic_monitor_profile, dict)

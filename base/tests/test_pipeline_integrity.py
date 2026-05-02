@@ -76,6 +76,24 @@ def test_recommend_odds_for_block_uses_all_output_thresholds(monkeypatch) -> Non
     assert rec["min_odds"] == pytest.approx(1.25)
 
 
+def test_recommend_odds_for_block_ignores_non_star_metrics(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {
+                "mid_output": [["synergy_trio", 3], ["counterpick_1vs1", 4]],
+            },
+        },
+        raising=False,
+    )
+
+    assert runtime._recommend_odds_for_block({"synergy_trio": "99*"}, "late") is None
+    rec = runtime._recommend_odds_for_block({"counterpick_1vs1": "4*"}, "late")
+    assert rec is not None
+    assert rec["level"] == 60
+
+
 def test_format_wr_estimate_line_includes_team_wr_and_min_odds() -> None:
     line = runtime._format_wr_estimate_line(
         "All",
@@ -675,7 +693,7 @@ def test_build_dota2protracker_block_marks_invalid_metrics() -> None:
     assert "cp1vs1: invalid" in block
     assert "synergy_duo: +1.25" in block
     assert "mid_cp1vs1" not in block
-    assert runtime._build_dota2protracker_lane_adv_line(payload) == "lane_adv: +0.42\n"
+    assert runtime._build_dota2protracker_lane_adv_line(payload) == "lane_adv_protracker: +0.42\n"
 
 
 def test_has_valid_dota2protracker_signal_requires_at_least_one_valid_metric() -> None:
@@ -799,10 +817,71 @@ def test_build_lane_block_omits_section_when_lanes_missing() -> None:
             "Top: lose 75%",
             "Mid: lose 47%",
             "Bot: win 40%",
-            lane_adv_line="lane_adv: +0.42\n",
+            lane_adv_line="lane_adv_protracker: +0.42\n",
+            lane_adv_dict_line="lane_adv_dict: -16.00\n",
         )
-        == "Lanes:\nTop: lose 75%\nMid: lose 47%\nBot: win 40%\nlane_adv: +0.42\n\n"
+        == "Lanes:\nTop: lose 75%\nMid: lose 47%\nBot: win 40%\nlane_adv_dict: -16.00\nlane_adv_protracker: +0.42\n\n"
     )
+
+
+def test_build_lane_dict_adv_line_uses_three_lane_edges() -> None:
+    assert (
+        runtime._build_lane_dict_adv_line(
+            "Top: lose 53%",
+            "Mid: win 39%",
+            "Bot: win 53%",
+        )
+        == "lane_adv_dict: +0.00\n"
+    )
+    assert (
+        runtime._build_lane_dict_adv_line(
+            "Top: lose 60%",
+            "Mid: win 55%",
+            "Bot: win 70%",
+        )
+        == "lane_adv_dict: +8.00\n"
+    )
+    assert runtime._build_lane_dict_adv_line("Top: None", "", None) == ""
+
+
+def test_calculate_lanes_preserves_legacy_return_and_can_return_sources(monkeypatch) -> None:
+    monkeypatch.delenv("LANE_SOURCE_CONFIDENCE_DELTA_2V2", raising=False)
+    radiant = {
+        "pos1": {"hero_id": 1},
+        "pos2": {"hero_id": 2},
+        "pos3": {"hero_id": 3},
+        "pos4": {"hero_id": 4},
+        "pos5": {"hero_id": 5},
+    }
+    dire = {
+        "pos1": {"hero_id": 11},
+        "pos2": {"hero_id": 12},
+        "pos3": {"hero_id": 13},
+        "pos4": {"hero_id": 14},
+        "pos5": {"hero_id": 15},
+    }
+    lane_data = {
+        "2v2_lanes": {
+            "3pos3,4pos4_vs_11pos1,15pos5": {
+                "games": 10,
+                "wins": 8,
+                "draws": 1,
+            },
+        },
+        "2v1_lanes": {},
+        "1v1_lanes": {},
+        "1_with_1_lanes": {},
+        "solo_lanes": {},
+    }
+
+    legacy = runtime.calculate_lanes(radiant, dire, lane_data)
+    with_sources = runtime.calculate_lanes(radiant, dire, lane_data, return_sources=True)
+
+    assert len(legacy) == 3
+    assert legacy[0] == "Top: win 68%\n"
+    assert len(with_sources) == 4
+    assert with_sources[:3] == legacy
+    assert with_sources[3] == {"top": "2v2", "bot": None, "mid": None}
 
 
 def test_load_map_id_check_urls_migrates_legacy_repo_file(tmp_path, monkeypatch) -> None:
@@ -4276,7 +4355,7 @@ def test_format_output_dict_does_not_fallback_to_wr60_when_target_missing(monkey
     assert has_star is False
 
 
-def test_format_output_dict_stars_synergy_metrics_but_ignores_pos1(monkeypatch) -> None:
+def test_format_output_dict_stars_only_cp1vs1_cp1vs2_solo(monkeypatch) -> None:
     import functions
 
     monkeypatch.setattr(
@@ -4297,16 +4376,16 @@ def test_format_output_dict_stars_synergy_metrics_but_ignores_pos1(monkeypatch) 
 
     has_star = functions.format_output_dict(payload, target_wr=60, late_signal_gate_enabled=False)
 
-    assert has_star is True
-    assert str(payload["early_output"]["synergy_duo"]).endswith("*")
-    assert str(payload["early_output"]["synergy_trio"]).endswith("*")
+    assert has_star is False
+    assert payload["early_output"]["synergy_duo"] == 99
+    assert payload["early_output"]["synergy_trio"] == 99
     assert payload["early_output"]["pos1_vs_pos1"] == 99
-    assert str(payload["mid_output"]["synergy_duo"]).endswith("*")
-    assert str(payload["mid_output"]["synergy_trio"]).endswith("*")
+    assert payload["mid_output"]["synergy_duo"] == 99
+    assert payload["mid_output"]["synergy_trio"] == 99
     assert payload["mid_output"]["pos1_vs_pos1"] == 99
 
 
-def test_runtime_star_thresholds_skip_disabled_pos1(monkeypatch) -> None:
+def test_runtime_star_thresholds_keep_only_signal_metrics(monkeypatch) -> None:
     monkeypatch.setattr(
         runtime,
         "STAR_THRESHOLDS_BY_WR",
@@ -4322,8 +4401,8 @@ def test_runtime_star_thresholds_skip_disabled_pos1(monkeypatch) -> None:
     early_thresholds = runtime._star_thresholds_for_wr(60, "early_output")
     late_thresholds = runtime._star_thresholds_for_wr(60, "mid_output")
 
-    assert early_thresholds == {"solo": 3, "synergy_duo": 7, "synergy_trio": 6}
-    assert late_thresholds == {"counterpick_1vs1": 5, "synergy_duo": 9, "synergy_trio": 6}
+    assert early_thresholds == {"solo": 3}
+    assert late_thresholds == {"counterpick_1vs1": 5}
 
 
 def test_runtime_star_block_valid_with_single_non_conflicting_hit(monkeypatch) -> None:
@@ -4351,7 +4430,49 @@ def test_runtime_star_block_valid_with_single_non_conflicting_hit(monkeypatch) -
     assert diag["hit_count"] == 1
 
 
-def test_format_output_dict_stars_all_section_but_not_solo(monkeypatch) -> None:
+def test_star_signal_dispatch_flags_match_new_gate_policy() -> None:
+    same_sign = runtime._star_signal_dispatch_flags(
+        has_early_star=True,
+        early_sign=1,
+        has_late_star=True,
+        late_sign=1,
+        has_all_star=False,
+    )
+    assert same_sign["send_now_immediate"] is True
+    assert same_sign["late_star_wait_pub_table"] is False
+
+    late_only = runtime._star_signal_dispatch_flags(
+        has_early_star=False,
+        early_sign=None,
+        has_late_star=True,
+        late_sign=-1,
+        has_all_star=False,
+    )
+    assert late_only["send_now_immediate"] is False
+    assert late_only["late_star_wait_pub_table"] is True
+
+    opposite_sign = runtime._star_signal_dispatch_flags(
+        has_early_star=True,
+        early_sign=1,
+        has_late_star=True,
+        late_sign=-1,
+        has_all_star=False,
+    )
+    assert opposite_sign["send_now_immediate"] is False
+    assert opposite_sign["late_star_wait_pub_table"] is True
+
+    early_or_all_without_late = runtime._star_signal_dispatch_flags(
+        has_early_star=False,
+        early_sign=None,
+        has_late_star=False,
+        late_sign=None,
+        has_all_star=True,
+    )
+    assert early_or_all_without_late["send_now_immediate"] is True
+    assert early_or_all_without_late["late_star_wait_pub_table"] is False
+
+
+def test_format_output_dict_all_section_ignores_non_star_metrics(monkeypatch) -> None:
     import functions
 
     monkeypatch.setattr(
@@ -4373,9 +4494,9 @@ def test_format_output_dict_stars_all_section_but_not_solo(monkeypatch) -> None:
     has_star = functions.format_output_dict(payload, target_wr=60, late_signal_gate_enabled=False)
 
     assert has_star is True
-    assert payload["all_output"]["solo"] == 99
-    assert str(payload["all_output"]["synergy_trio"]).endswith("*")
-    assert str(payload["all_output"]["dota2protracker_cp1vs1"]).endswith("*")
+    assert str(payload["all_output"]["solo"]).endswith("*")
+    assert payload["all_output"]["synergy_trio"] == 3
+    assert payload["all_output"]["dota2protracker_cp1vs1"] == 3
 
 
 def test_format_output_dict_rejects_conflicting_all_section_stars(monkeypatch) -> None:
