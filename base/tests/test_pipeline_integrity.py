@@ -1270,6 +1270,24 @@ def test_cyberscore_proxy_parser_accepts_host_first_credentials() -> None:
     }
 
 
+def test_cyberscore_long_page_job_does_not_reset_shared_browser(monkeypatch) -> None:
+    calls: List[Dict[str, Any]] = []
+
+    def _fake_run_shared_camoufox_job(label, callback, **kwargs):
+        calls.append({"label": label, "kwargs": dict(kwargs)})
+        return "<html></html>"
+
+    monkeypatch.setattr(runtime, "_run_shared_camoufox_job", _fake_run_shared_camoufox_job)
+
+    assert runtime._get_cyberscore_html_via_long_page("https://cyberscore.live/en/matches/173557/") == "<html></html>"
+    assert calls == [
+        {
+            "label": "cyberscore-long:https://cyberscore.live/en/matches/173557/",
+            "kwargs": {"timeout": 90, "retry": False, "reset_on_error": False},
+        }
+    ]
+
+
 def test_shared_camoufox_job_can_fail_without_reset(monkeypatch) -> None:
     close_events: List[str] = []
 

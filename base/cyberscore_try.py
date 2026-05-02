@@ -14561,6 +14561,7 @@ def _get_cyberscore_html_via_long_page(target_url: str) -> Optional[str]:
             lambda browser: _cyberscore_read_long_page_html(browser, target_url),
             timeout=90,
             retry=False,
+            reset_on_error=False,
         )
     except Exception as exc:
         print(f"❌ CyberScore long page fetch failed: {exc}")
