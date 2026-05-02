@@ -1314,6 +1314,29 @@ def test_cyberscore_one_shot_job_does_not_reset_shared_browser(monkeypatch) -> N
     ]
 
 
+def test_cyberscore_transient_fetch_refreshes_network_path(monkeypatch) -> None:
+    rotate_calls: List[str] = []
+    reset_calls: List[str] = []
+
+    def _fake_run_shared_camoufox_job(*_args, **_kwargs):
+        raise RuntimeError("NS_ERROR_NET_RESET")
+
+    monkeypatch.setattr(runtime, "_run_shared_camoufox_job", _fake_run_shared_camoufox_job)
+    monkeypatch.setattr(runtime, "CYBERSCORE_CAMOUFOX_PROXY_URL", "", raising=False)
+    monkeypatch.setattr(runtime, "USE_PROXY", True, raising=False)
+    monkeypatch.setattr(runtime, "PROXY_LIST", ["proxy-a", "proxy-b"], raising=False)
+    monkeypatch.setattr(runtime, "rotate_proxy", lambda: rotate_calls.append("rotate"), raising=False)
+    monkeypatch.setattr(
+        runtime._shared_camoufox_session,
+        "request_reset",
+        lambda: reset_calls.append("reset"),
+    )
+
+    assert runtime._get_cyberscore_html_via_long_page("https://cyberscore.live/en/matches/173557/") is None
+    assert rotate_calls == ["rotate"]
+    assert reset_calls == ["reset"]
+
+
 def test_shared_camoufox_job_can_fail_without_reset(monkeypatch) -> None:
     close_events: List[str] = []
 
@@ -1348,6 +1371,44 @@ def test_shared_camoufox_job_can_fail_without_reset(monkeypatch) -> None:
             session.submit("dota2protracker:test", _fail, timeout=2, reset_on_error=False)
         assert session.submit("after-error", lambda browser: browser is fake_browser, timeout=2) is True
         assert close_events == []
+    finally:
+        session.close()
+
+
+def test_shared_camoufox_session_applies_requested_reset_before_next_job(monkeypatch) -> None:
+    close_events: List[str] = []
+    created_browsers: List[Any] = []
+
+    class _FakeBrowser:
+        def __init__(self, index: int) -> None:
+            self.index = index
+
+        def close(self) -> None:
+            close_events.append(f"browser:{self.index}")
+
+    class _FakeCamoufox:
+        def __init__(self, *args, **kwargs) -> None:
+            self.browser = _FakeBrowser(len(created_browsers))
+
+        def __enter__(self):
+            created_browsers.append(self.browser)
+            return self.browser
+
+        def __exit__(self, *_args) -> None:
+            close_events.append(f"context:{self.browser.index}")
+
+    class _FakeCamoufoxModule:
+        Camoufox = _FakeCamoufox
+
+    session = runtime._SharedCamoufoxSession()
+    monkeypatch.setattr(runtime, "CAMOUFOX_AVAILABLE", True, raising=False)
+    monkeypatch.setattr(runtime, "camoufox", _FakeCamoufoxModule(), raising=False)
+    monkeypatch.setattr(runtime, "_cyberscore_camoufox_proxy_kwargs", lambda: {}, raising=False)
+    try:
+        assert session.submit("first", lambda browser: browser.index, timeout=2) == 0
+        session.request_reset()
+        assert session.submit("second", lambda browser: browser.index, timeout=2) == 1
+        assert close_events == ["browser:0", "context:0"]
     finally:
         session.close()
 

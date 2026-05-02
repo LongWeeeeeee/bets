@@ -14149,6 +14149,18 @@ def _cyberscore_is_transient_fetch_error(exc: BaseException) -> bool:
     return any(token in message for token in transient_tokens)
 
 
+def _cyberscore_handle_transient_fetch_error(target_url: str, exc: BaseException, source_label: str) -> str:
+    short_error = _transient_exception_message(exc)
+    print(f"⚠️ CyberScore {source_label} transient fetch issue: {short_error}")
+    logger.debug("CyberScore %s transient fetch issue for %s: %s", source_label, target_url, short_error)
+    with contextlib.suppress(Exception):
+        if not CYBERSCORE_CAMOUFOX_PROXY_URL and USE_PROXY and PROXY_LIST:
+            rotate_proxy()
+    with contextlib.suppress(Exception):
+        _shared_camoufox_session.request_reset()
+    return short_error
+
+
 class _SharedCamoufoxSession:
     """Owns the only Camoufox browser and runs all page work on one thread."""
 
@@ -14249,6 +14261,8 @@ class _SharedCamoufoxSession:
                 if not future.set_running_or_notify_cancel():
                     continue
                 try:
+                    if self._pop_reset_requested():
+                        _close_browser("requested reset")
                     active_browser = _ensure_browser()
                     result = callback(active_browser)
                     jobs_since_launch += 1
@@ -14618,9 +14632,7 @@ def _get_cyberscore_html_via_long_page(target_url: str) -> Optional[str]:
         )
     except Exception as exc:
         if _cyberscore_is_transient_fetch_error(exc):
-            short_error = _transient_exception_message(exc)
-            print(f"⚠️ CyberScore long page transient fetch issue: {short_error}")
-            logger.debug("CyberScore long page transient fetch issue for %s: %s", target_url, short_error)
+            _cyberscore_handle_transient_fetch_error(target_url, exc, "long page")
         else:
             short_error = _short_exception_message(exc)
             _shared_camoufox_session.request_reset()
@@ -14693,9 +14705,7 @@ def _get_cyberscore_html_via_camoufox(url: Optional[str] = None) -> Optional[str
         )
     except Exception as exc:
         if _cyberscore_is_transient_fetch_error(exc):
-            short_error = _transient_exception_message(exc)
-            print(f"⚠️ CyberScore Camoufox transient fetch issue: {short_error}")
-            logger.debug("CyberScore Camoufox transient fetch issue for %s: %s", target_url, short_error)
+            _cyberscore_handle_transient_fetch_error(target_url, exc, "Camoufox")
         else:
             short_error = _short_exception_message(exc)
             _shared_camoufox_session.request_reset()
