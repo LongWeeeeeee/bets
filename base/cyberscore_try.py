@@ -3627,10 +3627,10 @@ def _build_dota2protracker_block(
 
 
 def _build_dota2protracker_lane_adv_line(protracker_payload: Optional[Dict[str, Any]]) -> str:
+    if not isinstance(protracker_payload, dict):
+        return ""
     payload = dict(_blank_dota2protracker_result())
-    if isinstance(protracker_payload, dict):
-        payload.update(protracker_payload)
-    lane_adv = payload.get("pro_lane_advantage", 0.0)
+    payload.update(protracker_payload)
     has_lane_data = any(
         bool(payload.get(key))
         for key in (
@@ -3641,12 +3641,27 @@ def _build_dota2protracker_lane_adv_line(protracker_payload: Optional[Dict[str, 
             "pro_lane_bot_duo_valid",
         )
     )
-    if not has_lane_data:
+    has_lane_validity_flags = any(
+        key in protracker_payload
+        for key in (
+            "pro_lane_mid_cp1vs1_valid",
+            "pro_lane_top_cp1vs1_valid",
+            "pro_lane_bot_cp1vs1_valid",
+            "pro_lane_top_duo_valid",
+            "pro_lane_bot_duo_valid",
+        )
+    )
+    if has_lane_validity_flags and not has_lane_data:
+        return ""
+    if not has_lane_validity_flags and "pro_lane_advantage" not in protracker_payload:
         return ""
     try:
-        return f"lane_adv_protracker: {float(lane_adv):+.2f}\n"
+        lane_adv = float(payload.get("pro_lane_advantage", 0.0))
     except (TypeError, ValueError):
         return ""
+    if not math.isfinite(lane_adv):
+        return ""
+    return f"lane_adv_protracker: {lane_adv:+.2f}\n"
 
 
 def _build_dota2protracker_only_message(
@@ -17264,7 +17279,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             mid_block_log = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
             dota2protracker_lane_adv_line = (
                 _build_dota2protracker_lane_adv_line(s)
-                if DOTA2PROTRACKER_MESSAGE_BLOCK_ENABLED
+                if DOTA2PROTRACKER_ENABLED
                 else ""
             )
             dota2protracker_block = (

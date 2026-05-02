@@ -696,6 +696,26 @@ def test_build_dota2protracker_block_marks_invalid_metrics() -> None:
     assert runtime._build_dota2protracker_lane_adv_line(payload) == "lane_adv_protracker: +0.42\n"
 
 
+def test_build_dota2protracker_lane_adv_line_accepts_legacy_payload_without_flags() -> None:
+    assert (
+        runtime._build_dota2protracker_lane_adv_line({"pro_lane_advantage": -2.36})
+        == "lane_adv_protracker: -2.36\n"
+    )
+    assert (
+        runtime._build_dota2protracker_lane_adv_line(
+            {
+                "pro_lane_advantage": -2.36,
+                "pro_lane_mid_cp1vs1_valid": False,
+                "pro_lane_top_cp1vs1_valid": False,
+                "pro_lane_bot_cp1vs1_valid": False,
+                "pro_lane_top_duo_valid": False,
+                "pro_lane_bot_duo_valid": False,
+            }
+        )
+        == ""
+    )
+
+
 def test_has_valid_dota2protracker_signal_requires_at_least_one_valid_metric() -> None:
     assert runtime._has_valid_dota2protracker_signal(
         {

@@ -8,6 +8,7 @@
 - Do not create or use a different virtualenv.
 - Do not start or restart the local `base/cyberscore_try.py` live runtime unless the user explicitly asks.
 - For any live runtime restart, first kill old `cyberscore` processes and clear `~/.local/state/ingame/map_id_check.txt`.
+- After code changes in the `cyberscore` live pipeline (`base/cyberscore_try.py`, `base/functions.py`, `base/dota2protracker.py`, bookmaker/live dispatch logic), push the git commit to `main`, pull the new code on production, kill the old server process, clear `~/.local/state/ingame/map_id_check.txt`, and restart the server runtime with the new code.
 - Production server: `root@147.45.216.225`, project path `/root/main`.
 - Runtime/output artifacts under `runtime/` are intentionally ignored.
 - Long-running local jobs must be launched in the background with `nohup` and logs/pid files under `runtime/`, so they survive Codex turn interruptions and can be monitored later.

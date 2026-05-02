@@ -47,6 +47,8 @@ rm -f ~/.local/state/ingame/map_id_check.txt
    ```
 4. Очистить map_id_check: `rm -f ~/.local/state/ingame/map_id_check.txt`
 
+**Важно для cyberscore pipeline:** после любых изменений live pipeline (`base/cyberscore_try.py`, `base/functions.py`, `base/dota2protracker.py`, букмекерский pipeline, Telegram/live dispatch) нужно запушить git-commit в `main`, подтянуть новый код на production-сервере, остановить старый `cyberscore` процесс, очистить `~/.local/state/ingame/map_id_check.txt` и перезапустить runtime уже с новым кодом.
+
 Затем запустить:
 ```bash
 cd /root/main
