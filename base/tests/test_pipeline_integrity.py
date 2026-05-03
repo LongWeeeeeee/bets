@@ -1183,6 +1183,43 @@ def test_refresh_stake_multiplier_message_strips_legacy_protracker_block() -> No
     assert "Networth: Yakult Brothers +33641" in updated
 
 
+def test_refresh_stake_multiplier_message_keeps_dota2protracker_cp1vs1_inside_all_block() -> None:
+    message = (
+        "СТАВКА НА PlayTime x1\n"
+        "nemiga VS playtime\n"
+        "All:\n"
+        "Counterpick_1vs1: None\n"
+        "Counterpick_1vs2: None\n"
+        "Synergy_duo: None\n"
+        "Synergy_trio: None\n"
+        "Dota2ProTracker_cp1vs1: -1.88\n"
+        "Time: 11:00\n"
+        "Networth: PlayTime +1000\n"
+    )
+
+    updated = runtime._refresh_stake_multiplier_message(
+        message,
+        stake_multiplier_context={
+            "stake_team_name": "PlayTime",
+            "target_side": "dire",
+            "selected_early_sign": -1,
+            "has_selected_early_star": True,
+            "early_wr_pct": 60.0,
+            "radiant_team_name": "Nemiga",
+            "dire_team_name": "PlayTime",
+        },
+        game_time_seconds=(11 * 60) + 58,
+        radiant_lead=-1752,
+    )
+
+    assert (
+        "Synergy_trio: None\n"
+        "Dota2ProTracker_cp1vs1: -1.88\n"
+        "Time: 11:58\n"
+        "Networth: PlayTime +1752\n"
+    ) in updated
+
+
 def test_calculate_lanes_preserves_legacy_return_and_can_return_sources(monkeypatch) -> None:
     monkeypatch.delenv("LANE_SOURCE_CONFIDENCE_DELTA_2V2", raising=False)
     radiant = {

@@ -65,6 +65,7 @@ class BranchScenario:
     has_all_star: bool = False
     all_sign: int = 1
     raw_post_lane_output: Optional[Dict[str, Any]] = None
+    metrics_extra: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -371,15 +372,17 @@ def _run_branch_scenario(
             [],
         ),
     )
-    monkeypatch.setattr(
-        runtime,
-        "synergy_and_counterpick",
-        lambda *_args, **_kwargs: {
+    def _metrics_payload(*_args, **_kwargs):
+        payload = {
             "early_output": dict(case.raw_early_output or {"solo": 0}),
             "mid_output": dict(case.raw_mid_output or {"solo": 0}),
             "post_lane_output": dict(case.raw_post_lane_output or {"synergy_duo": 0}),
-        },
-    )
+        }
+        payload.update(dict(case.metrics_extra or {}))
+        return payload
+
+    monkeypatch.setattr(runtime, "synergy_and_counterpick", _metrics_payload)
+    monkeypatch.setattr(runtime, "lane_data", {}, raising=False)
     monkeypatch.setattr(runtime, "calculate_lanes", lambda *_args, **_kwargs: lane_output)
     monkeypatch.setattr(runtime, "format_output_dict", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(

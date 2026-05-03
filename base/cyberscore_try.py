@@ -1206,6 +1206,8 @@ DELAYED_SIGNAL_NO_DATA_TIMEOUT_SECONDS = 4 * 60 * 60
 # Networth-gated dispatch rules (target team is resolved by star direction sign).
 NETWORTH_GATE_EARLY_WINDOW_END_SECONDS = 10 * 60
 NETWORTH_GATE_4_TO_10_MIN_DIFF = 800.0
+NETWORTH_GATE_SAME_SIGN_LANE_ADV_WINDOW_START_SECONDS = 4 * 60
+NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS = 10 * 60
 NETWORTH_GATE_EARLY_CORE_HIGH_CONFIDENCE_MIN_LEAD = 0.0
 NETWORTH_GATE_EARLY_CORE_LOW_WR_MIN_LEAD = 800.0
 NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_END_SECONDS = 13 * 60
@@ -1232,6 +1234,9 @@ NETWORTH_STATUS_TIER1_EARLY_KILLS_WINDOW_CLOSED = "tier1_early_kills_window_clos
 NETWORTH_STATUS_TIER1_EARLY65_4_10_SEND_600 = "early65_4_10_send_600"
 NETWORTH_STATUS_TIER1_EARLY65_10_17_SEND_600 = "early65_10_17_send_600"
 NETWORTH_STATUS_STRONG_SAME_SIGN_MONITOR_WAIT_800 = "strong_same_sign_monitor_wait_800"
+NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT = "same_sign_lane_adv_pre4_wait"
+NETWORTH_STATUS_SAME_SIGN_LANE_ADV_WAIT_800 = "same_sign_lane_adv_wait_800"
+NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND = "same_sign_lane_adv_fallback_10_send"
 NETWORTH_STATUS_EARLY_CORE_MONITOR_WAIT_NONNEGATIVE = "early_core_monitor_wait_nonnegative"
 NETWORTH_STATUS_EARLY_CORE_MONITOR_WAIT_800 = "early_core_monitor_wait_800"
 NETWORTH_STATUS_EARLY_CORE_FALLBACK_20_20_SEND = "early_core_fallback_20_20_send"
@@ -2159,8 +2164,33 @@ LANE_ADV_DICT_WEIGHTS = {
 }
 
 
+def _numeric_sign(value: Any) -> Optional[int]:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric) or abs(numeric) < 1e-9:
+        return None
+    return 1 if numeric > 0 else -1
+
+
 def _lane_prediction_edge_for_adv(raw: Any) -> Optional[float]:
     if raw is None:
+        return None
+    if isinstance(raw, dict):
+        confidence = _coerce_metric_value(raw.get("confidence"))
+        outcome = str(raw.get("outcome") or "").strip().lower()
+        if outcome == "loose":
+            outcome = "lose"
+        if confidence is None or not outcome:
+            return None
+        if outcome == "draw":
+            return 0.0
+        edge = max(0.0, confidence - LANE_ADV_DICT_CONFIDENCE_BASELINE)
+        if outcome == "win":
+            return edge
+        if outcome == "lose":
+            return -edge
         return None
     cleaned = str(raw).strip()
     if not cleaned:
@@ -2187,7 +2217,7 @@ def _lane_prediction_edge_for_adv(raw: Any) -> Optional[float]:
     return None
 
 
-def _build_lane_dict_adv_line(top: Any, mid: Any, bot: Any) -> str:
+def _lane_dict_adv_value(top: Any, mid: Any, bot: Any) -> Optional[float]:
     lane_inputs = (
         ("top", top),
         ("mid", mid),
@@ -2202,9 +2232,15 @@ def _build_lane_dict_adv_line(top: Any, mid: Any, bot: Any) -> str:
         has_lane_data = True
         weighted_sum += edge * float(LANE_ADV_DICT_WEIGHTS.get(lane_name, 1.0))
     if not has_lane_data:
-        return ""
+        return None
     weight_total = sum(float(weight) for weight in LANE_ADV_DICT_WEIGHTS.values()) or 1.0
-    lane_adv = weighted_sum / weight_total
+    return weighted_sum / weight_total
+
+
+def _build_lane_dict_adv_line(top: Any, mid: Any, bot: Any) -> str:
+    lane_adv = _lane_dict_adv_value(top, mid, bot)
+    if lane_adv is None:
+        return ""
     return f"lane_adv_dict: {lane_adv:+.2f}\n"
 
 
@@ -2461,6 +2497,7 @@ def _dispatch_mode_reason_label(dispatch_mode: Optional[str]) -> str:
         "immediate_early_star65": "early65_gate",
         "delayed_late_only_20_20m": "late_only,20_20_monitor",
         "delayed_late_only_20_30m": "late_only,20_30_comeback_table",
+        "delayed_same_sign_lane_adv_wait_4_10": "same_sign,lane_adv_wait_4_10",
         "delayed_late_elo_block_top25_opposite_monitor": "opposite_signs,top25_late_elo_block_monitor",
     }
     return mapping.get(mode, mode or "unknown")
@@ -3790,20 +3827,52 @@ def _build_dota2protracker_block(
     )
 
 
-def _build_dota2protracker_lane_adv_line(protracker_payload: Optional[Dict[str, Any]]) -> str:
+def _dota2protracker_lane_adv_value(protracker_payload: Optional[Dict[str, Any]]) -> Optional[float]:
     if not isinstance(protracker_payload, dict):
-        return ""
+        return None
     if "pro_lane_advantage" not in protracker_payload:
-        return ""
+        return None
     payload = dict(_blank_dota2protracker_result())
     payload.update(protracker_payload)
     try:
         lane_adv = float(payload.get("pro_lane_advantage", 0.0))
     except (TypeError, ValueError):
-        return ""
+        return None
     if not math.isfinite(lane_adv):
+        return None
+    return lane_adv
+
+
+def _build_dota2protracker_lane_adv_line(protracker_payload: Optional[Dict[str, Any]]) -> str:
+    lane_adv = _dota2protracker_lane_adv_value(protracker_payload)
+    if lane_adv is None:
         return ""
     return f"lane_adv_protracker: {lane_adv:+.2f}\n"
+
+
+def _same_sign_lane_adv_guard(
+    *,
+    star_sign: Optional[int],
+    lane_adv_dict_value: Optional[float],
+    lane_adv_protracker_value: Optional[float],
+) -> Dict[str, Any]:
+    star_side = _target_side_from_sign(star_sign)
+    dict_sign = _numeric_sign(lane_adv_dict_value)
+    protracker_sign = _numeric_sign(lane_adv_protracker_value)
+    return {
+        "enabled": star_side in {"radiant", "dire"},
+        "star_sign": star_sign,
+        "star_side": star_side,
+        "lane_adv_dict": lane_adv_dict_value,
+        "lane_adv_dict_sign": dict_sign,
+        "lane_adv_protracker": lane_adv_protracker_value,
+        "lane_adv_protracker_sign": protracker_sign,
+        "aligned": bool(
+            star_side in {"radiant", "dire"}
+            and dict_sign == star_sign
+            and protracker_sign == star_sign
+        ),
+    }
 
 
 def _build_dota2protracker_only_message(
@@ -4025,9 +4094,17 @@ def _refresh_stake_multiplier_message(
         for line in lines
         if not str(line).startswith("Time:") and not str(line).startswith("Networth:")
     ]
+    live_state_insert_prefixes = (
+        "Counterpick_1vs1:",
+        "Counterpick_1vs2:",
+        "Solo:",
+        "Synergy_duo:",
+        "Synergy_trio:",
+        "Dota2ProTracker_cp1vs1:",
+    )
     insert_after_idx = -1
     for idx, line in enumerate(filtered_lines):
-        if str(line).startswith("Synergy_trio:"):
+        if any(str(line).startswith(prefix) for prefix in live_state_insert_prefixes):
             insert_after_idx = idx
     if insert_after_idx >= 0:
         filtered_lines[insert_after_idx + 1 : insert_after_idx + 1] = live_state_lines
@@ -4086,6 +4163,46 @@ def _dynamic_monitor_snapshot_for_payload(
         )
         snapshot["threshold"] = next_threshold
         snapshot["status_label"] = next_status_label
+        return snapshot
+
+    if snapshot["profile"] == "same_sign_lane_adv_wait_4_10":
+        target_game_time_raw = payload.get("target_game_time")
+        try:
+            target_game_time = (
+                float(target_game_time_raw)
+                if target_game_time_raw is not None
+                else float(NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS)
+            )
+        except (TypeError, ValueError):
+            target_game_time = float(NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS)
+        if current_game_time < float(NETWORTH_GATE_SAME_SIGN_LANE_ADV_WINDOW_START_SECONDS):
+            snapshot["threshold"] = None
+            snapshot["status_label"] = str(
+                payload.get("networth_monitor_status_pre4")
+                or payload.get("dispatch_status_label")
+                or NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT
+            )
+            return snapshot
+        if current_game_time < target_game_time:
+            next_threshold_raw = payload.get(
+                "networth_monitor_threshold_4_to_10",
+                payload.get("networth_monitor_threshold"),
+            )
+            try:
+                next_threshold = float(next_threshold_raw) if next_threshold_raw is not None else None
+            except (TypeError, ValueError):
+                next_threshold = None
+            snapshot["threshold"] = next_threshold
+            snapshot["status_label"] = str(
+                payload.get("networth_monitor_status_4_to_10")
+                or NETWORTH_STATUS_SAME_SIGN_LANE_ADV_WAIT_800
+            )
+            return snapshot
+        snapshot["threshold"] = None
+        snapshot["status_label"] = str(
+            payload.get("fallback_send_status_label")
+            or NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
+        )
         return snapshot
 
     if snapshot["profile"] == "late_only_opposite_signs_early90_tier1_fast_release":
@@ -5070,6 +5187,10 @@ def _drain_due_delayed_signals_once() -> None:
                     )
             elif monitor_ready and monitor_target_diff is not None:
                 add_url_details.setdefault("networth_monitor_early_release", True)
+                if reason == "same_sign_lane_adv_wait_4_10":
+                    add_url_details["dispatch_status_label"] = NETWORTH_STATUS_4_10_SEND_800
+                    add_url_details["release_reason"] = NETWORTH_STATUS_4_10_SEND_800
+                    add_url_details["networth_monitor_hold_seconds"] = 0.0
                 if monitor_threshold is not None:
                     add_url_details.setdefault("networth_monitor_threshold", float(monitor_threshold))
                 if isinstance(monitor_hold_check, dict) and monitor_hold_check.get("enabled"):
@@ -5088,7 +5209,13 @@ def _drain_due_delayed_signals_once() -> None:
                     )
                 add_url_details.setdefault("target_networth_diff", float(monitor_target_diff))
             else:
-                add_url_details.setdefault("dispatch_status_label", fallback_send_status_label)
+                if reason == "same_sign_lane_adv_wait_4_10":
+                    add_url_details["dispatch_status_label"] = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
+                    add_url_details["release_reason"] = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
+                    if monitor_target_diff is not None:
+                        add_url_details["target_networth_diff"] = float(monitor_target_diff)
+                else:
+                    add_url_details.setdefault("dispatch_status_label", fallback_send_status_label)
             _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
             delivery_message_text = _refresh_stake_multiplier_message(
                 payload.get('message', ''),
@@ -17944,6 +18071,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             early_block_log = _format_metrics("Early 20-28:", early_output_log, metric_list)
             all_block_log = _format_metrics("All:", all_output_log, all_metric_list)
             mid_block_log = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
+            lane_adv_dict_value = _lane_dict_adv_value(s.get('top'), s.get('mid'), s.get('bot'))
+            lane_adv_dict_line = _build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot'))
+            dota2protracker_lane_adv_value = _dota2protracker_lane_adv_value(s)
             dota2protracker_lane_adv_line = _build_dota2protracker_lane_adv_line(s)
             dota2protracker_block = ""
             star_metrics_snapshot = _build_star_metrics_snapshot(
@@ -18378,6 +18508,16 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     )
                 )
             target_side = _target_side_from_sign(target_sign)
+            same_sign_lane_adv_guard = _same_sign_lane_adv_guard(
+                star_sign=target_sign if send_now_full_star else None,
+                lane_adv_dict_value=lane_adv_dict_value,
+                lane_adv_protracker_value=dota2protracker_lane_adv_value,
+            )
+            same_sign_lane_adv_wait_required = bool(
+                send_now_full_star
+                and not force_odds_signal_test_active
+                and not bool(same_sign_lane_adv_guard.get("aligned"))
+            )
             opposite_signs_early90_monitor = _opposite_signs_early90_monitor_config(
                 team_elo_meta=team_elo_meta,
                 early_wr_pct=early_wr_pct,
@@ -18769,7 +18909,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 s.get('mid'),
                 s.get('bot'),
                 lane_adv_line=dota2protracker_lane_adv_line,
-                lane_adv_dict_line=_build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot')),
+                lane_adv_dict_line=lane_adv_dict_line,
             )
 
             # Формирование сообщения
@@ -18824,6 +18964,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             queue_early_core_monitor = False
             queue_late_core_monitor = False
             queue_strong_same_sign_monitor = False
+            queue_same_sign_lane_adv_monitor = bool(same_sign_lane_adv_wait_required)
             queue_top25_late_elo_block_monitor = bool(top25_late_elo_block_override_active)
             early65_release_status_label: Optional[str] = None
             early_release_dispatch_mode = "immediate_early_star65"
@@ -18839,6 +18980,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if (
                 send_now_immediate
                 and not force_odds_signal_test_active
+                and not queue_same_sign_lane_adv_monitor
             ):
                 dispatch_mode = "immediate_star_rule"
                 networth_send_status_label = "star_rule_immediate_send"
@@ -18978,7 +19120,28 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         "(нет target_sign/lead)"
                     )
                     return return_status
-                if early65_release_status_label is not None:
+                if queue_same_sign_lane_adv_monitor:
+                    dispatch_mode = "delayed_same_sign_lane_adv_wait_4_10"
+                    if current_game_time < NETWORTH_GATE_SAME_SIGN_LANE_ADV_WINDOW_START_SECONDS:
+                        print(
+                            "   ⏳ Ожидание dispatch: same_sign_lane_adv_guard до 4:00 "
+                            f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                            f"lane_adv_dict={same_sign_lane_adv_guard.get('lane_adv_dict')}, "
+                            f"lane_adv_protracker={same_sign_lane_adv_guard.get('lane_adv_protracker')})"
+                        )
+                    elif current_game_time < NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS:
+                        if target_networth_diff >= NETWORTH_GATE_4_TO_10_MIN_DIFF:
+                            networth_send_status_label = NETWORTH_STATUS_4_10_SEND_800
+                        else:
+                            print(
+                                "   ⏳ Ожидание dispatch: same_sign_lane_adv_guard_04_10 "
+                                f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                                f"need>={int(NETWORTH_GATE_4_TO_10_MIN_DIFF)}) -> delayed fallback "
+                                f"{_format_game_clock(NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS)}"
+                            )
+                    else:
+                        networth_send_status_label = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
+                elif early65_release_status_label is not None:
                     if _skip_dispatch_for_processed_url(check_uniq_url, "early WR65 немедленной отправки"):
                         return return_status
                     if not _acquire_signal_send_slot(check_uniq_url):
@@ -19026,7 +19189,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     finally:
                         _release_signal_send_slot(check_uniq_url)
                     return return_status
-                if current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
+                elif current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
                     if opposite_signs_selected:
                         print(
                             "   ⏳ Opposite-sign dispatch is disabled before "
@@ -19128,6 +19291,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 or queue_early_core_monitor
                 or queue_late_core_monitor
                 or queue_strong_same_sign_monitor
+                or (queue_same_sign_lane_adv_monitor and networth_send_status_label is None)
                 or queue_top25_late_elo_block_monitor
             ):
                 delay_reason = "late_only_no_early_same_sign"
@@ -19137,6 +19301,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delay_reason = "late_star_early_core_wait_800"
                 elif queue_strong_same_sign_monitor:
                     delay_reason = "strong_same_sign_wait_800_then_comeback_ceiling"
+                elif queue_same_sign_lane_adv_monitor:
+                    delay_reason = "same_sign_lane_adv_wait_4_10"
                 elif queue_top25_late_elo_block_monitor:
                     delay_reason = "late_top25_elo_block_opposite_monitor"
                 elif opposite_signs_selected:
@@ -19149,6 +19315,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 target_game_time = float(DELAYED_SIGNAL_TARGET_GAME_TIME)
                 if late_pub_comeback_table_candidate or opposite_signs_selected or late_star_wait_pub_table:
                     target_game_time = float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
+                if queue_same_sign_lane_adv_monitor:
+                    target_game_time = float(NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS)
                 target_human = _format_game_clock(target_game_time)
                 monitor_threshold: Optional[float] = None
                 monitor_wait_status_label: Optional[str] = None
@@ -19168,6 +19336,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     monitor_threshold = NETWORTH_GATE_STRONG_SAME_SIGN_MAX_LOSS
                     monitor_wait_status_label = NETWORTH_STATUS_STRONG_SAME_SIGN_MONITOR_WAIT_800
                     fallback_send_status_label = NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT
+                elif queue_same_sign_lane_adv_monitor:
+                    dynamic_monitor_profile = {
+                        "enabled": True,
+                        "profile": "same_sign_lane_adv_wait_4_10",
+                        "threshold_4_to_10": float(NETWORTH_GATE_4_TO_10_MIN_DIFF),
+                        "status_4_to_10": NETWORTH_STATUS_SAME_SIGN_LANE_ADV_WAIT_800,
+                        "target_game_time": float(target_game_time),
+                    }
+                    if current_game_time >= NETWORTH_GATE_SAME_SIGN_LANE_ADV_WINDOW_START_SECONDS:
+                        monitor_threshold = NETWORTH_GATE_4_TO_10_MIN_DIFF
+                        monitor_wait_status_label = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_WAIT_800
+                    else:
+                        monitor_wait_status_label = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT
+                    fallback_send_status_label = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
                 elif queue_top25_late_elo_block_monitor:
                     dynamic_monitor_profile = dict(top25_late_elo_block_override or {})
                     allow_live_recheck = True
@@ -19390,7 +19572,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         isinstance(dynamic_monitor_profile, dict)
                         and dynamic_monitor_profile.get("profile") == "late_only_opposite_signs_early90"
                     )
-                    if late_pub_comeback_table_candidate:
+                    if late_pub_comeback_table_candidate and not queue_same_sign_lane_adv_monitor:
                         late_pub_table_decision = _late_star_pub_table_decision(
                             wr_level=late_pub_comeback_table_wr_level,
                             game_time_seconds=current_game_time,
@@ -19510,7 +19692,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         _set_delayed_match(check_uniq_url, delayed_payload)
                         print("   ✅ ВЕРДИКТ: Сигнал оставлен в delayed-очереди для pub late comeback table")
                         return return_status
-                    if queue_top25_late_elo_block_monitor:
+                    if queue_top25_late_elo_block_monitor and not queue_same_sign_lane_adv_monitor:
                         if target_networth_diff is not None and target_networth_diff > 0:
                             if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки (top25 late elo block {target_human})"):
                                 return return_status
@@ -19980,11 +20162,24 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_add_url_details["top25_late_elo_block_raw_wr"] = top25_late_elo_block_override.get("elo_target_wr")
                     if target_networth_diff is not None:
                         delayed_add_url_details["target_networth_diff"] = float(target_networth_diff)
+                if queue_same_sign_lane_adv_monitor:
+                    delayed_add_url_details["dispatch_status_label"] = monitor_wait_status_label
+                    delayed_add_url_details["target_side"] = target_side
+                    delayed_add_url_details["networth_target_side"] = target_side
+                    delayed_add_url_details["target_networth_diff"] = float(target_networth_diff or 0.0)
+                    delayed_add_url_details["networth_monitor_threshold_4_to_10"] = float(NETWORTH_GATE_4_TO_10_MIN_DIFF)
+                    delayed_add_url_details["networth_monitor_hold_seconds"] = 0.0
+                    delayed_add_url_details["lane_adv_dict"] = same_sign_lane_adv_guard.get("lane_adv_dict")
+                    delayed_add_url_details["lane_adv_dict_sign"] = same_sign_lane_adv_guard.get("lane_adv_dict_sign")
+                    delayed_add_url_details["lane_adv_protracker"] = same_sign_lane_adv_guard.get("lane_adv_protracker")
+                    delayed_add_url_details["lane_adv_protracker_sign"] = same_sign_lane_adv_guard.get("lane_adv_protracker_sign")
                 if monitor_threshold is not None:
                     delayed_add_url_details["networth_monitor_threshold"] = float(monitor_threshold)
                     delayed_add_url_details["networth_monitor_deadline_game_time"] = int(target_game_time)
                     delayed_add_url_details["networth_target_side"] = target_side
-                    delayed_add_url_details["networth_monitor_hold_seconds"] = float(NETWORTH_MONITOR_HOLD_SECONDS)
+                    delayed_add_url_details["networth_monitor_hold_seconds"] = (
+                        0.0 if queue_same_sign_lane_adv_monitor else float(NETWORTH_MONITOR_HOLD_SECONDS)
+                    )
                     if target_networth_diff is not None:
                         delayed_add_url_details["target_networth_diff"] = float(target_networth_diff)
                 if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"):
@@ -20015,7 +20210,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_add_url_details["opposite_signs_early90_elo_gap_pp"] = dynamic_monitor_profile.get("elo_gap_pp")
                         delayed_add_url_details["opposite_signs_early90_early_elo_wr"] = dynamic_monitor_profile.get("early_elo_wr")
                         delayed_add_url_details["opposite_signs_early90_late_elo_wr"] = dynamic_monitor_profile.get("late_elo_wr")
-                if late_pub_comeback_table_candidate:
+                if late_pub_comeback_table_candidate and not queue_same_sign_lane_adv_monitor:
                     late_pub_table_decision = _late_star_pub_table_decision(
                         wr_level=late_pub_comeback_table_wr_level,
                         game_time_seconds=current_game_time,
@@ -20047,18 +20242,22 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     'add_url_reason': 'star_signal_sent_delayed',
                     'add_url_details': delayed_add_url_details,
                     'fallback_send_status_label': fallback_send_status_label,
-                    'send_on_target_game_time': not (
-                        queue_early_core_monitor
-                        or queue_late_core_monitor
-                        or queue_strong_same_sign_monitor
-                        or queue_top25_late_elo_block_monitor
-                        or late_pub_comeback_table_candidate
-                        or (
-                            isinstance(dynamic_monitor_profile, dict)
-                            and dynamic_monitor_profile.get("profile") in {
-                                "late_only_opposite_signs_early90",
-                                "late_only_opposite_signs_early90_tier1_fast_release",
-                            }
+                    'send_on_target_game_time': (
+                        True
+                        if queue_same_sign_lane_adv_monitor
+                        else not (
+                            queue_early_core_monitor
+                            or queue_late_core_monitor
+                            or queue_strong_same_sign_monitor
+                            or queue_top25_late_elo_block_monitor
+                            or late_pub_comeback_table_candidate
+                            or (
+                                isinstance(dynamic_monitor_profile, dict)
+                                and dynamic_monitor_profile.get("profile") in {
+                                    "late_only_opposite_signs_early90",
+                                    "late_only_opposite_signs_early90_tier1_fast_release",
+                                }
+                            )
                         )
                     ),
                     'allow_live_recheck': allow_live_recheck,
@@ -20111,19 +20310,28 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_payload['networth_monitor_threshold'] = float(monitor_threshold)
                     delayed_payload['networth_monitor_deadline_game_time'] = float(target_game_time)
                     delayed_payload['networth_target_side'] = target_side
-                    delayed_payload['networth_monitor_hold_seconds'] = float(NETWORTH_MONITOR_HOLD_SECONDS)
+                    delayed_payload['networth_monitor_hold_seconds'] = (
+                        0.0 if queue_same_sign_lane_adv_monitor else float(NETWORTH_MONITOR_HOLD_SECONDS)
+                    )
                     hold_seed = _networth_monitor_hold_check(
                         current_game_time=current_game_time,
                         target_networth_diff=target_networth_diff,
                         monitor_threshold=monitor_threshold,
                         hold_started_game_time=existing_monitor_hold_started,
-                        hold_seconds=NETWORTH_MONITOR_HOLD_SECONDS,
+                        hold_seconds=0.0 if queue_same_sign_lane_adv_monitor else NETWORTH_MONITOR_HOLD_SECONDS,
                     )
                     if hold_seed.get("enabled") and hold_seed.get("hold_started_game_time") is not None:
                         delayed_payload['networth_monitor_hold_started_game_time'] = float(
                             hold_seed.get("hold_started_game_time") or 0.0
                         )
-                if late_pub_comeback_table_candidate:
+                if queue_same_sign_lane_adv_monitor:
+                    delayed_payload['networth_monitor_hold_seconds'] = 0.0
+                    delayed_payload['networth_target_side'] = target_side
+                    delayed_payload['lane_adv_dict'] = same_sign_lane_adv_guard.get("lane_adv_dict")
+                    delayed_payload['lane_adv_dict_sign'] = same_sign_lane_adv_guard.get("lane_adv_dict_sign")
+                    delayed_payload['lane_adv_protracker'] = same_sign_lane_adv_guard.get("lane_adv_protracker")
+                    delayed_payload['lane_adv_protracker_sign'] = same_sign_lane_adv_guard.get("lane_adv_protracker_sign")
+                if late_pub_comeback_table_candidate and not queue_same_sign_lane_adv_monitor:
                     delayed_payload['reason'] = "late_star_pub_comeback_table_monitor"
                     delayed_payload['dispatch_status_label'] = NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
                     delayed_payload['late_pub_comeback_table_active'] = True
@@ -20186,18 +20394,38 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     check_uniq_url,
                     delivery_message_text,
                 )
+                immediate_add_url_reason = "star_signal_sent_now"
+                immediate_add_url_details = {
+                    "status": status,
+                    "dispatch_mode": dispatch_mode,
+                    "dispatch_status_label": networth_send_status_label,
+                    "selected_star_wr": selected_star_wr,
+                    "selected_star_mode": selected_star_mode,
+                    "json_retry_errors": json_retry_errors,
+                }
+                if queue_same_sign_lane_adv_monitor and networth_send_status_label is not None:
+                    if networth_send_status_label == NETWORTH_STATUS_4_10_SEND_800:
+                        immediate_add_url_reason = "star_signal_sent_now_networth_gate"
+                    elif networth_send_status_label == NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND:
+                        immediate_add_url_reason = "star_signal_sent_now_target_reached"
+                    immediate_add_url_details.update(
+                        {
+                            "release_reason": networth_send_status_label,
+                            "target_side": target_side,
+                            "target_networth_diff": float(target_networth_diff or 0.0),
+                            "networth_monitor_threshold": float(NETWORTH_GATE_4_TO_10_MIN_DIFF),
+                            "networth_monitor_hold_seconds": 0.0,
+                            "lane_adv_dict": same_sign_lane_adv_guard.get("lane_adv_dict"),
+                            "lane_adv_dict_sign": same_sign_lane_adv_guard.get("lane_adv_dict_sign"),
+                            "lane_adv_protracker": same_sign_lane_adv_guard.get("lane_adv_protracker"),
+                            "lane_adv_protracker_sign": same_sign_lane_adv_guard.get("lane_adv_protracker_sign"),
+                        }
+                    )
                 delivery_confirmed = _deliver_and_persist_signal(
                     check_uniq_url,
                     delivery_message_text,
-                    add_url_reason="star_signal_sent_now",
-                    add_url_details={
-                        "status": status,
-                        "dispatch_mode": dispatch_mode,
-                        "dispatch_status_label": networth_send_status_label,
-                        "selected_star_wr": selected_star_wr,
-                        "selected_star_mode": selected_star_mode,
-                        "json_retry_errors": json_retry_errors,
-                    },
+                    add_url_reason=immediate_add_url_reason,
+                    add_url_details=immediate_add_url_details,
                     bookmaker_decision="sent",
                 )
                 if delivery_confirmed:
