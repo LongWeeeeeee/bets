@@ -76,6 +76,74 @@ def test_recommend_odds_for_block_uses_all_output_thresholds(monkeypatch) -> Non
     assert rec["min_odds"] == pytest.approx(1.25)
 
 
+def test_recommend_odds_for_block_averages_star_metric_levels(monkeypatch) -> None:
+    thresholds = {}
+    for level, threshold in (
+        (60, 4),
+        (65, 5),
+        (70, 6),
+        (75, 7),
+        (80, 8),
+        (85, 9),
+        (90, 10),
+    ):
+        thresholds[level] = {
+            "early_output": [
+                ["solo", threshold],
+                ["counterpick_1vs1", threshold],
+                ["counterpick_1vs2", threshold],
+            ],
+        }
+    monkeypatch.setattr(runtime, "STAR_THRESHOLDS_BY_WR", thresholds, raising=False)
+    monkeypatch.setattr(runtime, "STAR_ODDS_USE_CALIBRATION", False, raising=False)
+
+    rec = runtime._recommend_odds_for_block(
+        {
+            "solo": "4*",
+            "counterpick_1vs1": "5*",
+            "counterpick_1vs2": "9*",
+        },
+        "early",
+    )
+
+    assert rec is not None
+    assert rec["level"] == 70
+    assert rec["wr_pct"] == pytest.approx(70.0)
+    assert rec["min_odds"] == pytest.approx(1.43)
+
+
+def test_recommend_odds_for_block_averages_single_table_dynamic_levels(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {
+                "early_output": [
+                    ["solo", 4],
+                    ["counterpick_1vs1", 4],
+                    ["counterpick_1vs2", 4],
+                ],
+            },
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(runtime, "STAR_ODDS_USE_CALIBRATION", False, raising=False)
+
+    rec = runtime._recommend_odds_for_block(
+        {
+            "solo": "4*",
+            "counterpick_1vs1": "8*",
+            "counterpick_1vs2": "10*",
+        },
+        "early",
+    )
+
+    assert rec is not None
+    assert rec["level"] == 75
+    assert rec["wr_pct"] == pytest.approx(75.0)
+    assert rec["min_odds"] == pytest.approx(1.33)
+
+
 def test_recommend_odds_for_block_ignores_non_star_metrics(monkeypatch) -> None:
     monkeypatch.setattr(
         runtime,
@@ -92,6 +160,17 @@ def test_recommend_odds_for_block_ignores_non_star_metrics(monkeypatch) -> None:
     rec = runtime._recommend_odds_for_block({"counterpick_1vs1": "4*"}, "late")
     assert rec is not None
     assert rec["level"] == 60
+
+
+def test_compose_star_metric_blocks_for_message_uses_early_late_all_order() -> None:
+    message = runtime._compose_star_metric_blocks_for_message(
+        "Early 20-28:\nE\n",
+        "Late: (28-60 min):\nL\n",
+        "All:\nA\n",
+    )
+
+    assert message == "Early 20-28:\nE\nLate: (28-60 min):\nL\nAll:\nA\n"
+    assert message.index("Early 20-28:") < message.index("Late: (28-60 min):") < message.index("All:")
 
 
 def test_format_wr_estimate_line_includes_team_wr_and_min_odds() -> None:

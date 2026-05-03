@@ -1788,6 +1788,65 @@ def _block_hits_thresholds(data: dict, thresholds: list[tuple]) -> bool:
     return star_count > 0 and not conflict
 
 
+def _nearest_star_wr_level(raw_level: float, candidate_levels: List[int]) -> Optional[int]:
+    try:
+        value = float(raw_level)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    levels = sorted(
+        {
+            int(level)
+            for level in candidate_levels
+            if STAR_LEVEL_MIN <= int(level) <= STAR_LEVEL_MAX
+        }
+    )
+    if not levels:
+        levels = list(range(int(STAR_LEVEL_MIN), int(STAR_LEVEL_MAX) + 1))
+    return min(levels, key=lambda level: (abs(float(level) - value), -int(level)))
+
+
+def _recommendation_from_star_levels(
+    metric_levels: List[int],
+    *,
+    candidate_levels: List[int],
+    calibration_phase_key: str,
+) -> Optional[dict]:
+    if not metric_levels:
+        return None
+    average_level = sum(float(level) for level in metric_levels) / float(len(metric_levels))
+    recommended_level = _nearest_star_wr_level(average_level, candidate_levels)
+    if recommended_level is None:
+        return None
+    wr_pct = float(recommended_level)
+    if STAR_ODDS_USE_CALIBRATION:
+        calibrated_wr = STAR_CONFIDENCE_CALIBRATION.get(calibration_phase_key, {}).get(recommended_level)
+        if calibrated_wr is not None:
+            wr_pct = float(calibrated_wr)
+    if wr_pct <= 0:
+        wr_pct = float(recommended_level)
+    min_odds = round(100.0 / wr_pct, 2)
+    return {
+        'level': recommended_level,
+        'min_odds': min_odds,
+        'wr_pct': wr_pct,
+    }
+
+
+def _star_level_from_base_ratio(ratio: float) -> Optional[int]:
+    try:
+        ratio_value = float(ratio)
+    except (TypeError, ValueError):
+        return None
+    if ratio_value < 1.0:
+        return None
+    for min_ratio, wr_level in _STAR_INDEX_WR_MULTIPLIER_TO_LEVEL:
+        if ratio_value >= float(min_ratio):
+            return max(STAR_LEVEL_MIN, min(STAR_LEVEL_MAX, int(wr_level)))
+    return None
+
+
 def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
     if not isinstance(data, dict):
         return None
@@ -1849,39 +1908,20 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
         if not thresholds_by_metric:
             return None
 
-        # Ориентируемся на самый сильный starred-индекс.
-        metric_ratios: List[float] = []
+        # Ориентируемся на средний WR starred-индексов.
+        metric_levels: List[int] = []
         for metric, value in star_only_data.items():
             threshold = thresholds_by_metric.get(metric)
             if threshold is None:
                 return None
-            metric_ratios.append(abs(value) / float(threshold))
-        if not metric_ratios:
-            return None
-
-        strongest_ratio = max(metric_ratios)
-        if strongest_ratio < 1.0:
-            return None
-
-        best_level = 60
-        for min_ratio, wr_level in _STAR_INDEX_WR_MULTIPLIER_TO_LEVEL:
-            if strongest_ratio >= min_ratio:
-                best_level = int(wr_level)
-                break
-        best_level = max(STAR_LEVEL_MIN, min(STAR_LEVEL_MAX, best_level))
-        wr_pct = float(best_level)
-        if STAR_ODDS_USE_CALIBRATION:
-            calibrated_wr = STAR_CONFIDENCE_CALIBRATION.get(calibration_phase_key, {}).get(best_level)
-            if calibrated_wr is not None:
-                wr_pct = float(calibrated_wr)
-        if wr_pct <= 0:
-            wr_pct = float(best_level)
-        min_odds = round(100.0 / wr_pct, 2)
-        return {
-            'level': best_level,
-            'min_odds': min_odds,
-            'wr_pct': wr_pct,
-        }
+            metric_level = _star_level_from_base_ratio(abs(value) / float(threshold))
+            if metric_level is not None:
+                metric_levels.append(metric_level)
+        return _recommendation_from_star_levels(
+            metric_levels,
+            candidate_levels=[int(level) for _, level in _STAR_INDEX_WR_MULTIPLIER_TO_LEVEL],
+            calibration_phase_key=calibration_phase_key,
+        )
 
     thresholds_by_level: Dict[int, Dict[str, int]] = {}
     for level in sorted(set(available_levels)):
@@ -1903,7 +1943,7 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
         if threshold_map:
             thresholds_by_level[int(level)] = threshold_map
 
-    best_level = None
+    metric_levels: List[int] = []
     for metric, value in star_only_data.items():
         metric_best_level = None
         metric_max_threshold = 0
@@ -1921,24 +1961,12 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
                 metric_best_level = int(level)
         if metric_best_level is None:
             continue
-        if best_level is None or metric_best_level > best_level:
-            best_level = metric_best_level
-    if best_level is None:
-        return None
-    # Минимальный кэф по уровню (шаг 0.01)
-    wr_pct = float(best_level)
-    if STAR_ODDS_USE_CALIBRATION:
-        calibrated_wr = STAR_CONFIDENCE_CALIBRATION.get(calibration_phase_key, {}).get(best_level)
-        if calibrated_wr is not None:
-            wr_pct = float(calibrated_wr)
-    if wr_pct <= 0:
-        wr_pct = float(best_level)
-    min_odds = round(100.0 / wr_pct, 2)
-    return {
-        'level': best_level,
-        'min_odds': min_odds,
-        'wr_pct': wr_pct,
-    }
+        metric_levels.append(metric_best_level)
+    return _recommendation_from_star_levels(
+        metric_levels,
+        candidate_levels=list(thresholds_by_level.keys()),
+        calibration_phase_key=calibration_phase_key,
+    )
 
 
 def _format_wr_estimate_line(
@@ -1966,6 +1994,14 @@ def _format_wr_estimate_line(
         except (TypeError, ValueError):
             pass
     return line
+
+
+def _compose_star_metric_blocks_for_message(
+    early_block: str,
+    late_block: str,
+    all_block: str,
+) -> str:
+    return f"{str(early_block or '')}{str(late_block or '')}{str(all_block or '')}"
 
 
 def _extract_ml_block_confidence_pct(data: dict, phase: str) -> Optional[float]:
@@ -18745,9 +18781,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"{problem_block}"
                 f"{team_elo_block}"
                 f"{wr_block}"
-                f"{telegram_early_block}"
-                f"{all_block}"
-                f"{mid_block}"
+                f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block)}"
                 f"{dota2protracker_block}"
                 f"{live_state_block}"
                 f"{odds_block}"
