@@ -682,6 +682,67 @@ def test_cyberscore_live_watcher_keeps_latest_progress() -> None:
     assert entry["latest_state"]["game_time"] == pytest.approx(1680.0)
 
 
+def test_cyberscore_empty_live_draft_forces_fresh_fetch(monkeypatch) -> None:
+    calls: List[str] = []
+    fresh_item = {"id": 173627, "game_time": 576}
+    fresh_data = {
+        "game_time": 576,
+        "fast_picks": {
+            "first_team": [{"hero_id": 73}],
+            "second_team": [{"hero_id": 63}],
+        },
+    }
+
+    monkeypatch.setattr(
+        runtime,
+        "_get_cyberscore_delayed_html_via_camoufox",
+        lambda url: calls.append(url) or "fresh-html",
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_extract_cyberscore_match_item_from_html",
+        lambda text, match_id=None: fresh_item
+        if text == "fresh-html" and str(match_id) == "173627"
+        else None,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_cyberscore_item_to_runtime_payload",
+        lambda item: fresh_data if item is fresh_item else {},
+    )
+
+    data, item, refreshed = runtime._maybe_refresh_cyberscore_empty_live_draft_payload(
+        match_url="https://cyberscore.live/en/matches/173627/",
+        match_id="173627",
+        data={"game_time": 457, "fast_picks": {"first_team": [], "second_team": []}},
+    )
+
+    assert refreshed is True
+    assert item is fresh_item
+    assert data is fresh_data
+    assert calls == ["https://cyberscore.live/en/matches/173627/"]
+
+
+def test_cyberscore_empty_draft_does_not_refetch_before_game_time(monkeypatch) -> None:
+    calls: List[str] = []
+    monkeypatch.setattr(
+        runtime,
+        "_get_cyberscore_delayed_html_via_camoufox",
+        lambda url: calls.append(url) or "fresh-html",
+    )
+
+    data, item, refreshed = runtime._maybe_refresh_cyberscore_empty_live_draft_payload(
+        match_url="https://cyberscore.live/en/matches/173627/",
+        match_id="173627",
+        data={"game_time": 0, "fast_picks": {"first_team": [], "second_team": []}},
+    )
+
+    assert refreshed is False
+    assert item is None
+    assert data["game_time"] == 0
+    assert calls == []
+
+
 def test_late_pub_table_releases_acceptable_deficit_and_target_lead(monkeypatch) -> None:
     monkeypatch.setattr(
         runtime,

@@ -15037,6 +15037,57 @@ def _cyberscore_live_state_from_item(item: Any) -> Optional[Dict[str, Optional[f
     return state
 
 
+def _runtime_payload_has_fast_picks(data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    fast_picks_payload = data.get("fast_picks")
+    if isinstance(fast_picks_payload, dict):
+        return any(bool(value) for value in fast_picks_payload.values())
+    return bool(fast_picks_payload)
+
+
+def _maybe_refresh_cyberscore_empty_live_draft_payload(
+    *,
+    match_url: str,
+    match_id: str,
+    data: Dict[str, Any],
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], bool]:
+    if _runtime_payload_has_fast_picks(data):
+        return data, None, False
+    try:
+        game_time_value = float(data.get("game_time") or 0.0)
+    except (TypeError, ValueError):
+        game_time_value = 0.0
+    if game_time_value <= 0:
+        return data, None, False
+
+    print(
+        "   🔄 CyberScore draft missing while game is live; "
+        "forcing fresh detail fetch"
+    )
+    fresh_text = _get_cyberscore_delayed_html_via_camoufox(match_url)
+    if not fresh_text:
+        return data, None, False
+    fresh_item = _extract_cyberscore_match_item_from_html(
+        fresh_text,
+        match_id=match_id or None,
+    )
+    if not isinstance(fresh_item, dict):
+        return data, None, False
+    fresh_data = _cyberscore_item_to_runtime_payload(fresh_item)
+    if not _runtime_payload_has_fast_picks(fresh_data):
+        return data, fresh_item, False
+
+    fresh_picks = fresh_data.get("fast_picks") or {}
+    radiant_count = len(fresh_picks.get("first_team") or []) if isinstance(fresh_picks, dict) else 0
+    dire_count = len(fresh_picks.get("second_team") or []) if isinstance(fresh_picks, dict) else 0
+    print(
+        "   ✅ CyberScore fresh detail restored draft: "
+        f"radiant={radiant_count}, dire={dire_count}"
+    )
+    return fresh_data, fresh_item, True
+
+
 def _cyberscore_live_watcher_update_item(
     entry: Dict[str, Any],
     item: Any,
@@ -17060,6 +17111,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 print(f"   ❌ Матч пропущен (нет CyberScore item)")
                 return return_status
             data = _cyberscore_item_to_runtime_payload(cyber_item)
+            data, fresh_cyber_item, restored_empty_draft = _maybe_refresh_cyberscore_empty_live_draft_payload(
+                match_url=match_url,
+                match_id=match_id,
+                data=data,
+            )
+            if restored_empty_draft and isinstance(fresh_cyber_item, dict):
+                cyber_item = fresh_cyber_item
             soup = BeautifulSoup("", "lxml")
             json_url = match_url
             match_id = str(data.get("match_id") or match_id or "").strip()
@@ -17612,11 +17670,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 _release_signal_send_slot(check_uniq_url)
             return return_status
 
-        fast_picks_payload = data.get('fast_picks')
-        if isinstance(fast_picks_payload, dict):
-            has_fast_picks = any(bool(value) for value in fast_picks_payload.values())
-        else:
-            has_fast_picks = bool(fast_picks_payload)
+        has_fast_picks = _runtime_payload_has_fast_picks(data)
         if not has_fast_picks:
             print(f"   ❌ Нет 'fast_picks' в данных - драфт не начался")
             print(f"   ℹ️ Драфт еще не начался")
