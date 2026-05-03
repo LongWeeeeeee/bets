@@ -682,11 +682,11 @@ def test_cyberscore_live_watcher_keeps_latest_progress() -> None:
     assert entry["latest_state"]["game_time"] == pytest.approx(1680.0)
 
 
-def test_late_pub_table_releases_acceptable_deficit_not_snowball_lead(monkeypatch) -> None:
+def test_late_pub_table_releases_acceptable_deficit_and_target_lead(monkeypatch) -> None:
     monkeypatch.setattr(
         runtime,
         "late_pub_comeback_table_thresholds_by_wr",
-        {60: {28: -6257.58, 38: -8788.17}},
+        {60: {20: -3569.63, 28: -6257.58, 38: -8788.17}},
         raising=False,
     )
 
@@ -700,7 +700,12 @@ def test_late_pub_table_releases_acceptable_deficit_not_snowball_lead(monkeypatc
         game_time_seconds=28 * 60,
         target_networth_diff=-7000.0,
     )
-    snowball_lead = runtime._late_star_pub_table_decision(
+    target_lead_at_start = runtime._late_star_pub_table_decision(
+        wr_level=60,
+        game_time_seconds=float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS),
+        target_networth_diff=1200.0,
+    )
+    target_lead_late = runtime._late_star_pub_table_decision(
         wr_level=60,
         game_time_seconds=(38 * 60) + 24,
         target_networth_diff=9064.0,
@@ -709,7 +714,9 @@ def test_late_pub_table_releases_acceptable_deficit_not_snowball_lead(monkeypatc
     assert ready_deficit["ready"] is True
     assert ready_deficit["source_minute"] == 28
     assert too_deep["ready"] is False
-    assert snowball_lead["ready"] is False
+    assert target_lead_at_start["ready"] is True
+    assert target_lead_at_start["source_minute"] == 20
+    assert target_lead_late["ready"] is True
 
 
 def test_delayed_cyberscore_stale_state_requests_browser_reset(tmp_path, monkeypatch) -> None:

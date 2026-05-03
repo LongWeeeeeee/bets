@@ -3071,12 +3071,7 @@ def _late_star_pub_table_decision(
     result["available"] = True
     result["source_minute"] = source_minute
     result["threshold"] = threshold_value
-    if target_diff is not None and threshold_value < 0:
-        # Comeback-table thresholds are target-side deficits; a target that is
-        # already leading should not be released by this delayed branch.
-        result["ready"] = bool(0.0 > float(target_diff) >= float(threshold_value))
-    else:
-        result["ready"] = bool(target_diff is not None and float(target_diff) >= float(threshold_value))
+    result["ready"] = bool(target_diff is not None and float(target_diff) >= float(threshold_value))
     return result
 
 
