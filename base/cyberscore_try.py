@@ -4332,6 +4332,53 @@ def _fetch_delayed_match_game_time(json_url: Optional[str]) -> Optional[float]:
         return None
 
 
+def _maybe_refresh_stale_cyberscore_delayed_state(
+    match_key: str,
+    payload: Dict[str, Any],
+    *,
+    current_game_time: float,
+    target_game_time: float,
+    now_ts: float,
+    last_progress_at: float,
+) -> bool:
+    json_url = str(payload.get("json_url") or "")
+    if not _is_cyberscore_match_url(json_url):
+        return False
+    if current_game_time >= target_game_time:
+        return False
+    stale_age = float(now_ts) - float(last_progress_at)
+    if stale_age < float(CYBERSCORE_DELAYED_STALE_REFRESH_SECONDS):
+        return False
+    try:
+        last_refresh_at = float(payload.get("last_cyberscore_stale_refresh_at") or 0.0)
+    except (TypeError, ValueError):
+        last_refresh_at = 0.0
+    if last_refresh_at and now_ts - last_refresh_at < float(CYBERSCORE_DELAYED_STALE_REFRESH_SECONDS):
+        return False
+    match_id_match = re.search(r"/matches/(\d+)", json_url)
+    if match_id_match:
+        with contextlib.suppress(Exception):
+            CYBERSCORE_LISTING_ITEM_CACHE.pop(match_id_match.group(1), None)
+    with contextlib.suppress(Exception):
+        _shared_camoufox_session.request_reset()
+    try:
+        refresh_count = int(payload.get("cyberscore_stale_refresh_count") or 0) + 1
+    except (TypeError, ValueError):
+        refresh_count = 1
+    _update_delayed_match(
+        match_key,
+        last_cyberscore_stale_refresh_at=float(now_ts),
+        cyberscore_stale_refresh_count=refresh_count,
+    )
+    print(
+        "🔄 CyberScore delayed stale state refresh requested: "
+        f"{match_key} (game_time={int(current_game_time)}, "
+        f"target={_format_game_clock(target_game_time)}, "
+        f"stale_age={int(stale_age)}s, count={refresh_count})"
+    )
+    return True
+
+
 def _drain_due_delayed_signals_once() -> None:
     with monitored_matches_lock:
         queued_items = list(monitored_matches.items())
@@ -4366,6 +4413,28 @@ def _drain_due_delayed_signals_once() -> None:
             continue
         current_radiant_lead = delayed_state.get("radiant_lead")
         delayed_reason = str(payload.get("reason") or "").strip().lower()
+        with monitored_matches_lock:
+            current_payload = monitored_matches.get(match_key)
+            if current_payload is None:
+                continue
+            prev_game_time = float(current_payload.get('last_game_time', current_game_time))
+            last_progress_at = float(current_payload.get('last_progress_at', current_payload.get('queued_at', now_ts)))
+            if current_game_time > prev_game_time + 1:
+                last_progress_at = now_ts
+        _update_delayed_match(
+            match_key,
+            last_game_time=float(current_game_time),
+            last_checked_at=float(now_ts),
+            last_progress_at=float(last_progress_at),
+        )
+        payload = dict(payload)
+        payload.update(
+            {
+                "last_game_time": float(current_game_time),
+                "last_checked_at": float(now_ts),
+                "last_progress_at": float(last_progress_at),
+            }
+        )
         if delayed_reason == "late_only_opposite_signs":
             opposite_min_dispatch_time = float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
             opposite_payload_updates: Dict[str, Any] = {}
@@ -4388,22 +4457,15 @@ def _drain_due_delayed_signals_once() -> None:
                 payload = dict(payload)
                 payload.update(opposite_payload_updates)
             if current_game_time < opposite_min_dispatch_time:
+                _maybe_refresh_stale_cyberscore_delayed_state(
+                    match_key,
+                    payload,
+                    current_game_time=current_game_time,
+                    target_game_time=opposite_min_dispatch_time,
+                    now_ts=now_ts,
+                    last_progress_at=last_progress_at,
+                )
                 continue
-
-        with monitored_matches_lock:
-            current_payload = monitored_matches.get(match_key)
-            if current_payload is None:
-                continue
-            prev_game_time = float(current_payload.get('last_game_time', current_game_time))
-            last_progress_at = float(current_payload.get('last_progress_at', current_payload.get('queued_at', now_ts)))
-            if current_game_time > prev_game_time + 1:
-                last_progress_at = now_ts
-        _update_delayed_match(
-            match_key,
-            last_game_time=float(current_game_time),
-            last_checked_at=float(now_ts),
-            last_progress_at=float(last_progress_at),
-        )
 
         monitor_snapshot = _dynamic_monitor_snapshot_for_payload(payload, current_game_time)
         monitor_threshold: Optional[float] = None
@@ -4759,6 +4821,14 @@ def _drain_due_delayed_signals_once() -> None:
                     monitor_ready = True
 
         if not monitor_ready and current_game_time < target_game_time:
+            _maybe_refresh_stale_cyberscore_delayed_state(
+                match_key,
+                payload,
+                current_game_time=current_game_time,
+                target_game_time=target_game_time,
+                now_ts=now_ts,
+                last_progress_at=last_progress_at,
+            )
             if now_ts - last_progress_at > DELAYED_SIGNAL_NO_PROGRESS_TIMEOUT_SECONDS:
                 _drop_delayed_match(match_key, reason="no_progress_timeout")
                 print(
@@ -6691,6 +6761,10 @@ CYBERSCORE_LONG_PAGE_NETWORK_TEXT_MAX_BYTES = max(
     _safe_int_env("CYBERSCORE_LONG_PAGE_NETWORK_TEXT_MAX_BYTES", 700000),
 )
 CYBERSCORE_CAMOUFOX_FETCH_ATTEMPTS = max(1, _safe_int_env("CYBERSCORE_CAMOUFOX_FETCH_ATTEMPTS", 2))
+CYBERSCORE_DELAYED_STALE_REFRESH_SECONDS = max(
+    30,
+    _safe_int_env("CYBERSCORE_DELAYED_STALE_REFRESH_SECONDS", 90),
+)
 CYBERSCORE_LISTING_ITEM_CACHE: Dict[str, Dict[str, Any]] = {}
 GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES = "live_matches_missing_after_all_proxies"
 GET_HEADS_FAILURE_REASON_REQUEST_FAILED = "request_failed"
@@ -16517,6 +16591,52 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"radiant_lead={data.get('radiant_lead')}, "
                 f"kills={data.get('radiant_score')}:{data.get('dire_score')}"
             )
+            if not SIGNAL_MINIMAL_ODDS_ONLY_MODE and delayed_payload is not None:
+                allow_live_recheck = bool(delayed_payload.get("allow_live_recheck"))
+                target_game_time = float(
+                    delayed_payload.get('target_game_time', DELAYED_SIGNAL_TARGET_GAME_TIME)
+                )
+                target_human = f"{int(target_game_time // 60):02d}:{int(target_game_time % 60):02d}"
+                last_game_time = delayed_payload.get('last_game_time', delayed_payload.get('queued_game_time'))
+                try:
+                    last_game_time_value = float(last_game_time)
+                except (TypeError, ValueError):
+                    last_game_time_value = None
+                try:
+                    last_game_time_human = str(int(float(last_game_time)))
+                except (TypeError, ValueError):
+                    last_game_time_human = "n/a"
+                queue_reason = str(delayed_payload.get('reason', 'unknown'))
+                monitor_snapshot = _dynamic_monitor_snapshot_for_payload(
+                    delayed_payload,
+                    last_game_time_value,
+                )
+                queue_status_label = str(monitor_snapshot.get("status_label") or delayed_payload.get("dispatch_status_label") or "")
+                monitor_threshold_raw = monitor_snapshot.get("threshold")
+                monitor_suffix = ""
+                try:
+                    if bool(delayed_payload.get("late_comeback_monitor_active")):
+                        monitor_side = str(delayed_payload.get("networth_target_side") or "").strip().lower() or "unknown"
+                        monitor_suffix = f", monitor={monitor_side} comeback_ceiling"
+                    elif monitor_threshold_raw is not None:
+                        monitor_side = str(delayed_payload.get("networth_target_side") or "").strip().lower() or "unknown"
+                        monitor_suffix = f", monitor={monitor_side}>={int(float(monitor_threshold_raw))}"
+                except (TypeError, ValueError):
+                    monitor_suffix = ""
+                print(
+                    "   ⏳ Матч уже в delayed-очереди "
+                    + (
+                        "- продолжаем live recheck "
+                        if allow_live_recheck
+                        else "- пропускаем повторный расчет "
+                    )
+                    + (
+                    f"(target={target_human}, last_game_time={last_game_time_human}, "
+                    f"reason={queue_reason}, status={queue_status_label or 'n/a'}{monitor_suffix})"
+                    )
+                )
+                if not allow_live_recheck:
+                    return return_status
         elif is_match_card_v2:
             live_match_id = str(listing_context.get("live_match_id") or "").strip()
             if not live_match_id:

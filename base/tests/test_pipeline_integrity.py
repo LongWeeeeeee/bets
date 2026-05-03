@@ -533,6 +533,98 @@ def test_delayed_match_state_prefers_newer_cyberscore_listing_cache(monkeypatch)
     assert state == {"game_time": 1300.0, "radiant_lead": -2200.0}
 
 
+def test_delayed_cyberscore_stale_state_requests_browser_reset(tmp_path, monkeypatch) -> None:
+    delayed_queue_path = tmp_path / "delayed_signal_queue.json"
+    reset_calls: List[str] = []
+
+    monkeypatch.setattr(runtime, "DELAYED_QUEUE_PATH", str(delayed_queue_path), raising=False)
+    monkeypatch.setattr(runtime, "CYBERSCORE_DELAYED_STALE_REFRESH_SECONDS", 30, raising=False)
+    monkeypatch.setattr(runtime.time, "time", lambda: 1_700_000_000.0)
+    monkeypatch.setattr(runtime, "_is_url_processed", lambda _url: False)
+    monkeypatch.setattr(
+        runtime,
+        "_fetch_delayed_match_state",
+        lambda _json_url: {"game_time": 1171.0, "radiant_lead": -368.0},
+    )
+    monkeypatch.setattr(runtime._shared_camoufox_session, "request_reset", lambda: reset_calls.append("reset"))
+    monkeypatch.setattr(runtime, "CYBERSCORE_LISTING_ITEM_CACHE", {"173593": {"game_time": 1171}}, raising=False)
+
+    with runtime.monitored_matches_lock:
+        runtime.monitored_matches.clear()
+    runtime._set_delayed_match(
+        "cyberscore.live/en/matches/173593.map2",
+        {
+            "message": "payload",
+            "reason": "late_only_opposite_signs",
+            "json_url": "https://cyberscore.live/en/matches/173593/",
+            "target_game_time": float(runtime.DELAYED_SIGNAL_TARGET_GAME_TIME),
+            "queued_at": 1_699_999_000.0,
+            "queued_game_time": 1171.0,
+            "last_game_time": 1171.0,
+            "last_progress_at": 1_699_999_900.0,
+            "add_url_reason": "star_signal_sent_delayed",
+            "add_url_details": {"target_side": "dire"},
+            "fallback_send_status_label": runtime.NETWORTH_STATUS_LATE_FALLBACK_20_20_SEND,
+            "send_on_target_game_time": True,
+            "allow_live_recheck": False,
+            "networth_target_side": "dire",
+            "retry_attempt_count": 0,
+            "next_retry_at": 0.0,
+        },
+    )
+
+    runtime._drain_due_delayed_signals_once()
+
+    assert reset_calls == ["reset"]
+    assert "173593" not in runtime.CYBERSCORE_LISTING_ITEM_CACHE
+    with runtime.monitored_matches_lock:
+        payload = dict(runtime.monitored_matches["cyberscore.live/en/matches/173593.map2"])
+    assert payload["last_game_time"] == pytest.approx(1171.0)
+    assert payload["target_game_time"] == pytest.approx(float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS))
+    assert payload["last_cyberscore_stale_refresh_at"] == pytest.approx(1_700_000_000.0)
+    assert payload["cyberscore_stale_refresh_count"] == 1
+    with runtime.monitored_matches_lock:
+        runtime.monitored_matches.clear()
+
+
+def test_check_head_skips_existing_cyberscore_delayed_payload_after_map_key(monkeypatch, capsys) -> None:
+    heads, bodies = _build_cyberscore_card()
+    item = _build_cyberscore_item()
+    item["game_time"] = 1600
+    item["game_map_number"] = 3
+    item["networth"] = [{"team": "dire", "time": 1600, "value": 1200}]
+    flight_chunk = f'prefix "item":{json.dumps(item, separators=(",", ":"))}, suffix'
+    html = f"<script>self.__next_f.push([1,{json.dumps(flight_chunk)}])</script>"
+
+    monkeypatch.setattr(runtime, "_get_cyberscore_html_via_camoufox", lambda _url: html)
+    monkeypatch.setattr(runtime, "_dispatch_block_reason", lambda _url: None)
+    monkeypatch.setattr(runtime, "SIGNAL_MINIMAL_ODDS_ONLY_MODE", False, raising=False)
+
+    with runtime.monitored_matches_lock:
+        runtime.monitored_matches.clear()
+        runtime.monitored_matches["cyberscore.live/en/matches/172835.map3"] = {
+            "message": "payload",
+            "reason": "late_star_pub_comeback_table_monitor",
+            "json_url": "https://cyberscore.live/en/matches/172835/",
+            "target_game_time": float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS),
+            "queued_game_time": 845.0,
+            "last_game_time": 1230.0,
+            "dispatch_status_label": runtime.NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
+            "allow_live_recheck": False,
+        }
+
+    runtime.check_head(heads, bodies, 0, set())
+
+    output = capsys.readouterr().out
+    assert "пропускаем повторный расчет" in output
+    with runtime.monitored_matches_lock:
+        payload = dict(runtime.monitored_matches["cyberscore.live/en/matches/172835.map3"])
+    assert payload["reason"] == "late_star_pub_comeback_table_monitor"
+    assert payload["last_game_time"] == pytest.approx(1230.0)
+    with runtime.monitored_matches_lock:
+        runtime.monitored_matches.clear()
+
+
 def test_cyberscore_listing_cache_survives_empty_transition_html(monkeypatch) -> None:
     item = _build_cyberscore_item()
     monkeypatch.setattr(runtime, "CYBERSCORE_LISTING_ITEM_CACHE", {"172835": item}, raising=False)
