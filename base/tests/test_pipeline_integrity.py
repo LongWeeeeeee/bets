@@ -743,6 +743,48 @@ def test_cyberscore_empty_draft_does_not_refetch_before_game_time(monkeypatch) -
     assert calls == []
 
 
+def test_cyberscore_empty_online_draft_forces_fresh_fetch_even_at_zero_time(monkeypatch) -> None:
+    calls: List[str] = []
+    fresh_item = {"id": 173630, "status": "online", "game_time": 641}
+    fresh_data = {
+        "game_time": 641,
+        "fast_picks": {
+            "first_team": [{"hero_id": 131}],
+            "second_team": [{"hero_id": 145}],
+        },
+    }
+
+    monkeypatch.setattr(
+        runtime,
+        "_get_cyberscore_delayed_html_via_camoufox",
+        lambda url: calls.append(url) or "fresh-html",
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_extract_cyberscore_match_item_from_html",
+        lambda text, match_id=None: fresh_item
+        if text == "fresh-html" and str(match_id) == "173630"
+        else None,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_cyberscore_item_to_runtime_payload",
+        lambda item: fresh_data if item is fresh_item else {},
+    )
+
+    data, item, refreshed = runtime._maybe_refresh_cyberscore_empty_live_draft_payload(
+        match_url="https://cyberscore.live/en/matches/173630/",
+        match_id="173630",
+        data={"game_time": 0, "fast_picks": {"first_team": [], "second_team": []}},
+        cyber_item={"id": 173630, "status": "online", "game_time": 0},
+    )
+
+    assert refreshed is True
+    assert item is fresh_item
+    assert data is fresh_data
+    assert calls == ["https://cyberscore.live/en/matches/173630/"]
+
+
 def test_late_pub_table_releases_acceptable_deficit_and_target_lead(monkeypatch) -> None:
     monkeypatch.setattr(
         runtime,

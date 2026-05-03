@@ -15051,6 +15051,7 @@ def _maybe_refresh_cyberscore_empty_live_draft_payload(
     match_url: str,
     match_id: str,
     data: Dict[str, Any],
+    cyber_item: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]], bool]:
     if _runtime_payload_has_fast_picks(data):
         return data, None, False
@@ -15058,7 +15059,11 @@ def _maybe_refresh_cyberscore_empty_live_draft_payload(
         game_time_value = float(data.get("game_time") or 0.0)
     except (TypeError, ValueError):
         game_time_value = 0.0
-    if game_time_value <= 0:
+    item_status = ""
+    if isinstance(cyber_item, dict):
+        item_status = str(cyber_item.get("status") or "").strip().lower()
+    status_looks_live = item_status in {"online", "live", "running", "inprogress", "in_progress"}
+    if game_time_value <= 0 and not status_looks_live:
         return data, None, False
 
     print(
@@ -17115,6 +17120,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 match_url=match_url,
                 match_id=match_id,
                 data=data,
+                cyber_item=cyber_item,
             )
             if restored_empty_draft and isinstance(fresh_cyber_item, dict):
                 cyber_item = fresh_cyber_item
