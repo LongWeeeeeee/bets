@@ -186,6 +186,92 @@ def test_early_only_star_with_aligned_lane_adv_still_dispatches_immediately(monk
     assert result.add_url_calls[-1]["details"]["dispatch_mode"] == "immediate_star_rule"
 
 
+def test_no_late_immediate_star_waits_when_lane_adv_dict_opposes_target(monkeypatch) -> None:
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="yellow_submarine_mouz_map3_lane_dict_guard",
+            game_time_seconds=38,
+            target_side="radiant",
+            target_networth_diff=647,
+            has_early_star=True,
+            early_sign=1,
+            has_late_star=False,
+            late_sign=-1,
+            has_all_star=True,
+            all_sign=1,
+            expected_send_calls=0,
+            raw_early_output={"counterpick_1vs1": 6, "solo": 4},
+            raw_mid_output={"counterpick_1vs1": 3, "solo": 1},
+            raw_post_lane_output={"counterpick_1vs1": 8, "counterpick_1vs2": 12, "synergy_duo": 8},
+        ),
+        lane_output=OPPOSITE_LANE_OUTPUT,
+    )
+
+    assert result.sent_messages == []
+    assert result.queued_payload is not None
+    assert result.queued_payload["reason"] == "same_sign_lane_adv_wait_4_10"
+    assert result.queued_payload["dynamic_monitor_profile"] == "same_sign_lane_adv_wait_4_10"
+    assert result.queued_payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT
+    assert result.queued_payload["lane_adv_dict_sign"] == -1
+    assert result.queued_payload["lane_adv_protracker_sign"] is None
+
+
+def test_no_late_immediate_star_waits_when_protracker_lane_adv_opposes_target(monkeypatch) -> None:
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="no_late_protracker_lane_adv_guard",
+            game_time_seconds=(3 * 60) + 30,
+            target_side="radiant",
+            target_networth_diff=5000,
+            has_early_star=True,
+            early_sign=1,
+            has_late_star=False,
+            late_sign=-1,
+            has_all_star=True,
+            all_sign=1,
+            expected_send_calls=0,
+            metrics_extra=OPPOSITE_LANE_ADV,
+        ),
+        lane_output=ALIGNED_LANE_OUTPUT,
+    )
+
+    assert result.sent_messages == []
+    assert result.queued_payload is not None
+    assert result.queued_payload["reason"] == "same_sign_lane_adv_wait_4_10"
+    assert result.queued_payload["lane_adv_dict_sign"] == 1
+    assert result.queued_payload["lane_adv_protracker_sign"] == -1
+
+
+def test_no_late_lane_adv_guard_sends_after_four_when_target_leads_by_800(monkeypatch) -> None:
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="no_late_lane_adv_guard_send_800",
+            game_time_seconds=5 * 60,
+            target_side="radiant",
+            target_networth_diff=800,
+            has_early_star=True,
+            early_sign=1,
+            has_late_star=False,
+            late_sign=-1,
+            has_all_star=True,
+            all_sign=1,
+            expected_send_calls=0,
+        ),
+        lane_output=OPPOSITE_LANE_OUTPUT,
+    )
+
+    assert len(result.sent_messages) == 1
+    assert result.queued_payload is None
+    assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now_networth_gate"
+    details = result.add_url_calls[-1]["details"]
+    assert details["dispatch_status_label"] == runtime.NETWORTH_STATUS_4_10_SEND_800
+    assert details["release_reason"] == runtime.NETWORTH_STATUS_4_10_SEND_800
+    assert details["lane_adv_dict_sign"] == -1
+
+
 def _same_sign_delayed_payload() -> dict:
     return {
         "message": "test message",

@@ -3860,6 +3860,12 @@ def _same_sign_lane_adv_guard(
     star_side = _target_side_from_sign(star_sign)
     dict_sign = _numeric_sign(lane_adv_dict_value)
     protracker_sign = _numeric_sign(lane_adv_protracker_value)
+    opposing_sources: List[str] = []
+    if star_sign in (-1, 1):
+        if dict_sign == -int(star_sign):
+            opposing_sources.append("lane_adv_dict")
+        if protracker_sign == -int(star_sign):
+            opposing_sources.append("lane_adv_protracker")
     return {
         "enabled": star_side in {"radiant", "dire"},
         "star_sign": star_sign,
@@ -3868,6 +3874,8 @@ def _same_sign_lane_adv_guard(
         "lane_adv_dict_sign": dict_sign,
         "lane_adv_protracker": lane_adv_protracker_value,
         "lane_adv_protracker_sign": protracker_sign,
+        "opposes_target": bool(opposing_sources),
+        "opposing_sources": opposing_sources,
         "aligned": bool(
             star_side in {"radiant", "dire"}
             and dict_sign == star_sign
@@ -18917,17 +18925,27 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             else selected_early_sign
                         )
                     )
-                )
+            )
             target_side = _target_side_from_sign(target_sign)
             same_sign_lane_adv_guard = _same_sign_lane_adv_guard(
-                star_sign=target_sign if send_now_full_star else None,
+                star_sign=target_sign if send_now_immediate else None,
                 lane_adv_dict_value=lane_adv_dict_value,
                 lane_adv_protracker_value=dota2protracker_lane_adv_value,
             )
             same_sign_lane_adv_wait_required = bool(
-                send_now_full_star
+                send_now_immediate
                 and not force_odds_signal_test_active
-                and not bool(same_sign_lane_adv_guard.get("aligned"))
+                and (
+                    (
+                        send_now_full_star
+                        and not bool(same_sign_lane_adv_guard.get("aligned"))
+                    )
+                    or (
+                        send_now_immediate
+                        and not send_now_full_star
+                        and bool(same_sign_lane_adv_guard.get("opposes_target"))
+                    )
+                )
             )
             opposite_signs_early90_monitor = _opposite_signs_early90_monitor_config(
                 team_elo_meta=team_elo_meta,
