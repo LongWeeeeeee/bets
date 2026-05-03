@@ -3071,7 +3071,12 @@ def _late_star_pub_table_decision(
     result["available"] = True
     result["source_minute"] = source_minute
     result["threshold"] = threshold_value
-    result["ready"] = bool(target_diff is not None and float(target_diff) >= float(threshold_value))
+    if target_diff is not None and threshold_value < 0:
+        # Comeback-table thresholds are target-side deficits; a target that is
+        # already leading should not be released by this delayed branch.
+        result["ready"] = bool(0.0 > float(target_diff) >= float(threshold_value))
+    else:
+        result["ready"] = bool(target_diff is not None and float(target_diff) >= float(threshold_value))
     return result
 
 
@@ -4392,12 +4397,43 @@ def _cyberscore_item_game_time(item: Any) -> int:
         return 0
 
 
+def _cyberscore_cache_bust_url(target_url: str) -> str:
+    separator = "&" if "?" in str(target_url or "") else "?"
+    return f"{target_url}{separator}_delayed_ts={int(time.time() * 1000)}"
+
+
+def _get_cyberscore_delayed_html_via_camoufox(target_url: str) -> Optional[str]:
+    if not CAMOUFOX_AVAILABLE:
+        print("⚠️ CyberScore delayed state: Camoufox unavailable")
+        return None
+    target_url = str(target_url or "").strip()
+    if not target_url:
+        return None
+    try:
+        _kind, cache_key = _cyberscore_long_page_kind_and_key(target_url)
+        _cyberscore_close_cached_long_page(cache_key, reason="delayed fresh fetch")
+    except Exception:
+        pass
+    fresh_url = _cyberscore_cache_bust_url(target_url)
+    attempts = max(1, int(CYBERSCORE_CAMOUFOX_FETCH_ATTEMPTS or 1))
+    for attempt_index in range(attempts):
+        html = _get_cyberscore_html_via_one_shot(fresh_url)
+        if html:
+            return html
+        if attempt_index + 1 < attempts:
+            print(f"🔁 CyberScore delayed fetch retry {attempt_index + 2}/{attempts}: {target_url}")
+    return None
+
+
 def _fetch_cyberscore_delayed_match_state(match_url: Optional[str]) -> Optional[Dict[str, Optional[float]]]:
     if not match_url:
         return None
     match_id_match = re.search(r"/matches/(\d+)", str(match_url or ""))
     match_id = match_id_match.group(1) if match_id_match else ""
-    response_text = _get_cyberscore_html_via_camoufox(str(match_url))
+    watcher_state = _fetch_cyberscore_live_watcher_state(str(match_url))
+    if isinstance(watcher_state, dict):
+        return watcher_state
+    response_text = _get_cyberscore_delayed_html_via_camoufox(str(match_url))
     cyber_item = None
     if response_text:
         cyber_item = _extract_cyberscore_match_item_from_html(response_text, match_id=match_id or None)
@@ -4497,8 +4533,6 @@ def _maybe_refresh_stale_cyberscore_delayed_state(
 ) -> bool:
     json_url = str(payload.get("json_url") or "")
     if not _is_cyberscore_match_url(json_url):
-        return False
-    if current_game_time >= target_game_time:
         return False
     stale_age = float(now_ts) - float(last_progress_at)
     if stale_age < float(CYBERSCORE_DELAYED_STALE_REFRESH_SECONDS):
@@ -4812,6 +4846,14 @@ def _drain_due_delayed_signals_once() -> None:
                     add_url_details=updated_add_url_details,
                     dispatch_status_label=NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
                     last_checked_at=float(now_ts),
+                )
+                _maybe_refresh_stale_cyberscore_delayed_state(
+                    match_key,
+                    payload,
+                    current_game_time=current_game_time,
+                    target_game_time=target_game_time,
+                    now_ts=now_ts,
+                    last_progress_at=last_progress_at,
                 )
                 continue
         if late_comeback_monitor_active:
@@ -6928,6 +6970,23 @@ CYBERSCORE_CAMOUFOX_FETCH_ATTEMPTS = max(1, _safe_int_env("CYBERSCORE_CAMOUFOX_F
 CYBERSCORE_DELAYED_STALE_REFRESH_SECONDS = max(
     30,
     _safe_int_env("CYBERSCORE_DELAYED_STALE_REFRESH_SECONDS", 90),
+)
+CYBERSCORE_LIVE_WATCHER_ENABLED = _env_flag("CYBERSCORE_LIVE_WATCHER_ENABLED", "1")
+CYBERSCORE_LIVE_WATCHER_POLL_SECONDS = _safe_float_env(
+    "CYBERSCORE_LIVE_WATCHER_POLL_SECONDS",
+    1.0,
+)
+CYBERSCORE_LIVE_WATCHER_FIRST_WAIT_SECONDS = _safe_float_env(
+    "CYBERSCORE_LIVE_WATCHER_FIRST_WAIT_SECONDS",
+    2.0,
+)
+CYBERSCORE_LIVE_WATCHER_STALE_SECONDS = max(
+    30.0,
+    _safe_float_env("CYBERSCORE_LIVE_WATCHER_STALE_SECONDS", 75.0),
+)
+CYBERSCORE_LIVE_WATCHER_MATCH_CACHE_SIZE = max(
+    1,
+    _safe_int_env("CYBERSCORE_LIVE_WATCHER_MATCH_CACHE_SIZE", 6),
 )
 CYBERSCORE_LISTING_ITEM_CACHE: Dict[str, Dict[str, Any]] = {}
 GET_HEADS_FAILURE_REASON_LIVE_MATCHES_MISSING_ALL_PROXIES = "live_matches_missing_after_all_proxies"
@@ -14116,6 +14175,8 @@ def _drop_delayed_match(match_key: str, reason: str = "") -> bool:
             print(f"   🧹 Delayed очередь очищена для {match_key} ({reason})")
         else:
             print(f"   🧹 Delayed очередь очищена для {match_key}")
+        if _is_cyberscore_match_url(match_key):
+            _cyberscore_live_watcher_request_close(match_key, reason=f"delayed drop: {reason or 'unknown'}")
         return True
     return False
 
@@ -14461,6 +14522,10 @@ class _SharedCamoufoxSession:
             if cached_long_pages is not None:
                 with contextlib.suppress(Exception):
                     cached_long_pages.clear()
+            live_watchers = globals().get("_CYBERSCORE_LIVE_WATCHERS")
+            if live_watchers is not None:
+                with contextlib.suppress(Exception):
+                    live_watchers.clear()
             if browser is not None:
                 with contextlib.suppress(Exception):
                     browser.close()
@@ -14706,6 +14771,7 @@ def _absolute_cyberscore_url(href: str) -> str:
 
 
 _CYBERSCORE_LONG_PAGES: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+_CYBERSCORE_LIVE_WATCHERS: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
 
 
 def _cyberscore_long_page_kind_and_key(target_url: str) -> Tuple[str, str]:
@@ -14941,6 +15007,295 @@ def _get_cyberscore_html_via_one_shot(target_url: str) -> Optional[str]:
             _shared_camoufox_session.request_reset()
             print(f"❌ CyberScore Camoufox fetch failed: {short_error}")
             logger.warning("CyberScore Camoufox fetch failed for %s: %s", target_url, short_error)
+        return None
+
+
+def _cyberscore_live_watcher_key(match_id: Union[int, str]) -> str:
+    return f"match:{str(match_id or '').strip()}"
+
+
+def _cyberscore_live_state_from_item(item: Any) -> Optional[Dict[str, Optional[float]]]:
+    if not isinstance(item, dict):
+        return None
+    payload = _cyberscore_item_to_runtime_payload(item)
+    try:
+        game_time_value = float(payload.get("game_time"))
+    except (TypeError, ValueError):
+        return None
+    try:
+        lead_value = (
+            float(payload.get("radiant_lead"))
+            if payload.get("radiant_lead") is not None
+            else None
+        )
+    except (TypeError, ValueError):
+        lead_value = None
+    state: Dict[str, Optional[float]] = {
+        "game_time": game_time_value,
+        "radiant_lead": lead_value,
+    }
+    for key in ("radiant_score", "dire_score"):
+        try:
+            state[key] = float(payload.get(key)) if payload.get(key) is not None else None
+        except (TypeError, ValueError):
+            state[key] = None
+    return state
+
+
+def _cyberscore_live_watcher_update_item(
+    entry: Dict[str, Any],
+    item: Any,
+    *,
+    source: str,
+) -> bool:
+    state = _cyberscore_live_state_from_item(item)
+    if not isinstance(state, dict):
+        return False
+    now_ts = time.time()
+    current_game_time = float(state.get("game_time") or 0.0)
+    previous = entry.get("latest_state")
+    previous_game_time: Optional[float] = None
+    if isinstance(previous, dict):
+        try:
+            previous_game_time = float(previous.get("game_time") or 0.0)
+        except (TypeError, ValueError):
+            previous_game_time = None
+    if previous_game_time is not None and current_game_time < previous_game_time:
+        return False
+
+    changed = not isinstance(previous, dict)
+    if not changed and isinstance(previous, dict):
+        comparable_keys = ("game_time", "radiant_lead", "radiant_score", "dire_score")
+        changed = any(previous.get(key) != state.get(key) for key in comparable_keys)
+    entry["last_seen_at"] = now_ts
+    if not changed:
+        return False
+
+    entry["latest_item"] = item
+    entry["latest_state"] = state
+    entry["latest_source"] = str(source or "unknown")
+    entry["last_update_at"] = now_ts
+    return True
+
+
+def _cyberscore_live_watcher_update_from_text(
+    entry: Dict[str, Any],
+    text: Any,
+    *,
+    match_id: str,
+    source: str,
+) -> bool:
+    raw_text = str(text or "")
+    if not raw_text:
+        return False
+    item = _extract_cyberscore_match_item_from_html(raw_text, match_id=match_id or None)
+    if not isinstance(item, dict):
+        return False
+    return _cyberscore_live_watcher_update_item(entry, item, source=source)
+
+
+def _cyberscore_install_live_watcher_handlers(
+    page: Any,
+    entry: Dict[str, Any],
+    *,
+    match_id: str,
+) -> None:
+    if entry.get("live_handlers_installed"):
+        return
+
+    def _handle_text(text: Any, source: str) -> None:
+        with contextlib.suppress(Exception):
+            updated = _cyberscore_live_watcher_update_from_text(
+                entry,
+                text,
+                match_id=match_id,
+                source=source,
+            )
+            if updated:
+                state = entry.get("latest_state") or {}
+                print(
+                    "🔄 CyberScore live watcher update: "
+                    f"match={match_id}, time={_format_game_clock(state.get('game_time'))}, "
+                    f"radiant_lead={state.get('radiant_lead')}, source={source}"
+                )
+
+    def _on_response(response: Any) -> None:
+        try:
+            url = str(getattr(response, "url", "") or "")
+            if "cyberscore.live" not in url and "/_next/" not in url:
+                return
+            headers = {}
+            with contextlib.suppress(Exception):
+                headers = response.headers or {}
+            content_type = str(headers.get("content-type") or headers.get("Content-Type") or "").lower()
+            if not any(token in content_type for token in ("json", "text", "javascript", "rsc", "octet-stream")):
+                return
+            text = response.text()
+            if text:
+                _handle_text(text[:CYBERSCORE_LONG_PAGE_NETWORK_TEXT_MAX_BYTES], "response")
+        except Exception:
+            return
+
+    def _on_websocket(ws: Any) -> None:
+        try:
+            ws.on("framereceived", lambda payload: _handle_text(payload, "websocket"))
+        except Exception:
+            return
+
+    try:
+        page.on("response", _on_response)
+        with contextlib.suppress(Exception):
+            page.on("websocket", _on_websocket)
+        entry["live_handlers_installed"] = True
+    except Exception:
+        entry["live_handlers_installed"] = False
+
+
+def _cyberscore_close_live_watcher_entry(key: str, reason: str = "") -> None:
+    entry = _CYBERSCORE_LIVE_WATCHERS.pop(key, None)
+    if not isinstance(entry, dict):
+        return
+    page = entry.get("page")
+    with contextlib.suppress(Exception):
+        if page is not None:
+            page.close()
+    if reason:
+        print(f"   🔒 CyberScore live watcher closed ({reason}): {key}")
+
+
+def _cyberscore_prune_live_watchers() -> None:
+    while len(_CYBERSCORE_LIVE_WATCHERS) > CYBERSCORE_LIVE_WATCHER_MATCH_CACHE_SIZE:
+        key = next(iter(_CYBERSCORE_LIVE_WATCHERS))
+        _cyberscore_close_live_watcher_entry(key, reason="cache limit")
+
+
+def _cyberscore_live_watcher_request_close(match_url: Optional[str], reason: str = "") -> None:
+    if not CYBERSCORE_LIVE_WATCHER_ENABLED:
+        return
+    match_id = _extract_cyberscore_match_id_from_href(str(match_url or ""))
+    if not match_id:
+        return
+    key = _cyberscore_live_watcher_key(match_id)
+    if key not in _CYBERSCORE_LIVE_WATCHERS:
+        return
+    if threading.current_thread().name == "shared-camoufox":
+        _cyberscore_close_live_watcher_entry(key, reason=reason or "requested close")
+        return
+    try:
+        _run_shared_camoufox_job(
+            f"cyberscore-live-watch-close:{match_id}",
+            lambda _browser: _cyberscore_close_live_watcher_entry(key, reason=reason or "requested close"),
+            timeout=10,
+            retry=False,
+            reset_on_error=False,
+        )
+    except Exception:
+        return
+
+
+def _cyberscore_read_live_watcher_state(
+    browser: Any,
+    target_url: str,
+    *,
+    match_id: str,
+) -> Optional[Dict[str, Optional[float]]]:
+    key = _cyberscore_live_watcher_key(match_id)
+    now_ts = time.time()
+    entry = _CYBERSCORE_LIVE_WATCHERS.get(key)
+    page = entry.get("page") if isinstance(entry, dict) else None
+    loaded_at = float(entry.get("loaded_at", 0.0) or 0.0) if isinstance(entry, dict) else 0.0
+    last_update_at = float(entry.get("last_update_at", loaded_at) or loaded_at) if isinstance(entry, dict) else 0.0
+    try:
+        if page is not None and page.is_closed():
+            _cyberscore_close_live_watcher_entry(key, reason="page already closed")
+            page = None
+            entry = None
+        if page is None:
+            with contextlib.suppress(Exception):
+                _cyberscore_close_cached_long_page(_cyberscore_live_watcher_key(match_id), reason="live watcher owns match page")
+            page = browser.new_page()
+            entry = {
+                "page": page,
+                "url": target_url,
+                "match_id": str(match_id),
+                "opened_at": now_ts,
+                "loaded_at": 0.0,
+                "reads": 0,
+                "reloads": 0,
+            }
+            _CYBERSCORE_LIVE_WATCHERS[key] = entry
+            _CYBERSCORE_LIVE_WATCHERS.move_to_end(key)
+            _cyberscore_prune_live_watchers()
+            _cyberscore_install_live_watcher_handlers(page, entry, match_id=str(match_id))
+            print(f"🌐 CyberScore live watcher: opening {target_url}")
+            page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+            with contextlib.suppress(Exception):
+                page.wait_for_selector("main", timeout=20000)
+            _cyberscore_page_wait(page, CYBERSCORE_LIVE_WATCHER_FIRST_WAIT_SECONDS)
+            entry["loaded_at"] = time.time()
+            entry["last_update_at"] = entry.get("last_update_at", entry["loaded_at"])
+        else:
+            if last_update_at and now_ts - last_update_at >= CYBERSCORE_LIVE_WATCHER_STALE_SECONDS:
+                print(
+                    "🔄 CyberScore live watcher stale reload: "
+                    f"match={match_id}, stale_age={int(now_ts - last_update_at)}s"
+                )
+                page.goto(_cyberscore_cache_bust_url(target_url), wait_until="domcontentloaded", timeout=60000)
+                with contextlib.suppress(Exception):
+                    page.wait_for_selector("main", timeout=20000)
+                _cyberscore_page_wait(page, CYBERSCORE_LIVE_WATCHER_FIRST_WAIT_SECONDS)
+                entry["loaded_at"] = time.time()
+                entry["reloads"] = int(entry.get("reloads", 0) or 0) + 1
+            else:
+                _cyberscore_page_wait(page, CYBERSCORE_LIVE_WATCHER_POLL_SECONDS)
+        with contextlib.suppress(Exception):
+            _cyberscore_live_watcher_update_from_text(
+                entry,
+                page.content() or "",
+                match_id=str(match_id),
+                source="dom",
+            )
+        entry["last_read_at"] = time.time()
+        entry["reads"] = int(entry.get("reads", 0) or 0) + 1
+        _CYBERSCORE_LIVE_WATCHERS[key] = entry
+        _CYBERSCORE_LIVE_WATCHERS.move_to_end(key)
+        state = entry.get("latest_state")
+        if not isinstance(state, dict):
+            return None
+        return {
+            "game_time": state.get("game_time"),
+            "radiant_lead": state.get("radiant_lead"),
+        }
+    except Exception:
+        _cyberscore_close_live_watcher_entry(key, reason="read error")
+        raise
+
+
+def _fetch_cyberscore_live_watcher_state(match_url: Optional[str]) -> Optional[Dict[str, Optional[float]]]:
+    if not CYBERSCORE_LIVE_WATCHER_ENABLED or not CAMOUFOX_AVAILABLE:
+        return None
+    target_url = str(match_url or "").strip()
+    if not target_url:
+        return None
+    match_id = _extract_cyberscore_match_id_from_href(target_url)
+    if not match_id:
+        return None
+    try:
+        return _run_shared_camoufox_job(
+            f"cyberscore-live-watch:{match_id}",
+            lambda browser: _cyberscore_read_live_watcher_state(browser, target_url, match_id=match_id),
+            timeout=90,
+            retry=False,
+            reset_on_error=False,
+        )
+    except Exception as exc:
+        if _cyberscore_is_transient_fetch_error(exc):
+            _cyberscore_handle_transient_fetch_error(target_url, exc, "live watcher")
+        else:
+            short_error = _short_exception_message(exc)
+            _shared_camoufox_session.request_reset()
+            print(f"❌ CyberScore live watcher failed: {short_error}")
+            logger.warning("CyberScore live watcher failed for %s: %s", target_url, short_error)
         return None
 
 
