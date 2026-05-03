@@ -966,6 +966,15 @@ def test_build_dota2protracker_lane_adv_line_accepts_legacy_payload_without_flag
     )
 
 
+def test_build_dota2protracker_lane_adv_line_emits_none_when_unavailable() -> None:
+    assert runtime._build_dota2protracker_lane_adv_line(None) == "lane_adv_protracker: None\n"
+    assert runtime._build_dota2protracker_lane_adv_line({}) == "lane_adv_protracker: None\n"
+    assert (
+        runtime._build_dota2protracker_lane_adv_line({"pro_lane_advantage": "bad"})
+        == "lane_adv_protracker: None\n"
+    )
+
+
 def test_has_valid_dota2protracker_signal_requires_at_least_one_valid_metric() -> None:
     assert runtime._has_valid_dota2protracker_signal(
         {

@@ -3846,7 +3846,7 @@ def _dota2protracker_lane_adv_value(protracker_payload: Optional[Dict[str, Any]]
 def _build_dota2protracker_lane_adv_line(protracker_payload: Optional[Dict[str, Any]]) -> str:
     lane_adv = _dota2protracker_lane_adv_value(protracker_payload)
     if lane_adv is None:
-        return ""
+        return "lane_adv_protracker: None\n"
     return f"lane_adv_protracker: {lane_adv:+.2f}\n"
 
 
