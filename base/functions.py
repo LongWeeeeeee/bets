@@ -1836,6 +1836,7 @@ STAR_THRESHOLDS_PATH = Path(
 STAR_SIGNAL_METRICS = frozenset({
     'counterpick_1vs1',
     'counterpick_1vs2',
+    'dota2protracker_cp1vs1',
     'solo',
 })
 STAR_DISABLED_METRICS = frozenset()

@@ -2102,6 +2102,7 @@ _STAR_METRIC_ORDER = (
 _STAR_SIGNAL_METRICS = frozenset({
     "counterpick_1vs1",
     "counterpick_1vs2",
+    "dota2protracker_cp1vs1",
     "solo",
 })
 _STAR_SUPPORT_METRIC_ORDER = (

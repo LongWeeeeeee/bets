@@ -5062,7 +5062,7 @@ def test_format_output_dict_does_not_fallback_to_wr60_when_target_missing(monkey
     assert has_star is False
 
 
-def test_format_output_dict_stars_only_cp1vs1_cp1vs2_solo(monkeypatch) -> None:
+def test_format_output_dict_ignores_synergy_and_unknown_metrics(monkeypatch) -> None:
     import functions
 
     monkeypatch.setattr(
@@ -5100,6 +5100,11 @@ def test_runtime_star_thresholds_keep_only_signal_metrics(monkeypatch) -> None:
             60: {
                 "early_output": [("solo", 3), ("synergy_duo", 7), ("synergy_trio", 6)],
                 "mid_output": [("counterpick_1vs1", 5), ("synergy_duo", 9), ("synergy_trio", 6)],
+                "all_output": [
+                    ("dota2protracker_cp1vs1", 3),
+                    ("synergy_duo", 5),
+                    ("synergy_trio", 3),
+                ],
             }
         },
         raising=False,
@@ -5107,9 +5112,11 @@ def test_runtime_star_thresholds_keep_only_signal_metrics(monkeypatch) -> None:
 
     early_thresholds = runtime._star_thresholds_for_wr(60, "early_output")
     late_thresholds = runtime._star_thresholds_for_wr(60, "mid_output")
+    all_thresholds = runtime._star_thresholds_for_wr(60, "all_output")
 
     assert early_thresholds == {"solo": 3}
     assert late_thresholds == {"counterpick_1vs1": 5}
+    assert all_thresholds == {"dota2protracker_cp1vs1": 3}
 
 
 def test_runtime_star_block_valid_with_single_non_conflicting_hit(monkeypatch) -> None:
@@ -5135,6 +5142,43 @@ def test_runtime_star_block_valid_with_single_non_conflicting_hit(monkeypatch) -
     assert diag["valid"] is True
     assert diag["hit_metrics"] == ["solo"]
     assert diag["hit_count"] == 1
+
+
+def test_runtime_all_star_block_valid_from_dota2protracker_cp1vs1(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {
+                "early_output": [],
+                "mid_output": [],
+                "all_output": [
+                    ("counterpick_1vs1", 4),
+                    ("counterpick_1vs2", 3),
+                    ("synergy_duo", 5),
+                    ("synergy_trio", 3),
+                    ("dota2protracker_cp1vs1", 3),
+                ],
+            }
+        },
+        raising=False,
+    )
+
+    diag = runtime._star_block_diagnostics(
+        raw_block={
+            "counterpick_1vs1": 3,
+            "counterpick_1vs2": None,
+            "synergy_duo": 3,
+            "synergy_trio": 3,
+            "dota2protracker_cp1vs1": 5.97,
+        },
+        target_wr=60,
+        section="all_output",
+    )
+
+    assert diag["valid"] is True
+    assert diag["sign"] == 1
+    assert diag["hit_metrics"] == ["dota2protracker_cp1vs1"]
 
 
 def test_star_signal_dispatch_flags_match_new_gate_policy() -> None:
@@ -5191,7 +5235,7 @@ def test_star_signal_dispatch_flags_match_new_gate_policy() -> None:
     assert late_all_same_sign["late_star_wait_pub_table"] is False
 
 
-def test_format_output_dict_all_section_ignores_non_star_metrics(monkeypatch) -> None:
+def test_format_output_dict_all_section_stars_d2pt_and_ignores_synergy(monkeypatch) -> None:
     import functions
 
     monkeypatch.setattr(
@@ -5215,10 +5259,10 @@ def test_format_output_dict_all_section_ignores_non_star_metrics(monkeypatch) ->
     assert has_star is True
     assert str(payload["all_output"]["solo"]).endswith("*")
     assert payload["all_output"]["synergy_trio"] == 3
-    assert payload["all_output"]["dota2protracker_cp1vs1"] == 3
+    assert str(payload["all_output"]["dota2protracker_cp1vs1"]).endswith("*")
 
 
-def test_format_output_dict_rejects_conflicting_all_section_stars(monkeypatch) -> None:
+def test_format_output_dict_all_section_ignores_synergy_conflict_against_d2pt(monkeypatch) -> None:
     import functions
 
     monkeypatch.setattr(
@@ -5239,9 +5283,9 @@ def test_format_output_dict_rejects_conflicting_all_section_stars(monkeypatch) -
 
     has_star = functions.format_output_dict(payload, target_wr=60, late_signal_gate_enabled=False)
 
-    assert has_star is False
+    assert has_star is True
     assert payload["all_output"]["synergy_trio"] == 3
-    assert payload["all_output"]["dota2protracker_cp1vs1"] == -3
+    assert str(payload["all_output"]["dota2protracker_cp1vs1"]).endswith("*")
 
 
 def test_finalize_orphaned_live_elo_series_uses_finished_page_score(tmp_path, monkeypatch) -> None:

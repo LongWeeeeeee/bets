@@ -102,6 +102,14 @@ python3 base/cyberscore_try.py --no-odds
 ### Star System
 Метрики comeback-моделей с порогами `STAR_THRESHOLDS_BY_WR` (Win Rate based).
 
+Текущий набор метрик, которые участвуют именно в STAR-сигнале:
+- `counterpick_1vs1`;
+- `dota2protracker_cp1vs1`;
+- `counterpick_1vs2`;
+- `solo`.
+
+`synergy_duo` и `synergy_trio` могут выводиться в Telegram-блоках и пороговых таблицах, но сейчас не должны участвовать в принятии решения о STAR-сигнале.
+
 ### ML-модели
 - **Ultimate Inference**: `src/live_predictor.py` — предсказание live-матчей
 - **CatBoost**: используется для различных классификаций
