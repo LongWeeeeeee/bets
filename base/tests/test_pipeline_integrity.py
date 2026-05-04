@@ -1813,12 +1813,19 @@ def test_cyberscore_camoufox_retries_after_empty_fetch(monkeypatch) -> None:
     assert calls == ["one-shot", "one-shot"]
 
 
-def test_cyberscore_transient_fetch_refreshes_network_path(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "error_message",
+    [
+        "NS_ERROR_NET_RESET",
+        "Page.goto: NS_ERROR_NET_INTERRUPT",
+    ],
+)
+def test_cyberscore_transient_fetch_refreshes_network_path(monkeypatch, error_message: str) -> None:
     rotate_calls: List[str] = []
     reset_calls: List[str] = []
 
     def _fake_run_shared_camoufox_job(*_args, **_kwargs):
-        raise RuntimeError("NS_ERROR_NET_RESET")
+        raise RuntimeError(error_message)
 
     monkeypatch.setattr(runtime, "_run_shared_camoufox_job", _fake_run_shared_camoufox_job)
     monkeypatch.setattr(runtime, "CYBERSCORE_CAMOUFOX_PROXY_URL", "", raising=False)

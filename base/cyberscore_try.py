@@ -1767,6 +1767,8 @@ def _transient_exception_message(exc: BaseException) -> str:
     message = _short_exception_message(exc)
     if "NS_ERROR_NET_RESET" in message or "ERR_CONNECTION_RESET" in message:
         return "network reset"
+    if "NS_ERROR_NET_INTERRUPT" in message:
+        return "network interrupted"
     if "ERR_TIMED_OUT" in message or "Timeout" in message or "timed out" in message:
         return "network timeout"
     return message
@@ -14446,6 +14448,7 @@ def _cyberscore_is_transient_fetch_error(exc: BaseException) -> bool:
         return False
     transient_tokens = (
         "NS_ERROR_NET_RESET",
+        "NS_ERROR_NET_INTERRUPT",
         "ERR_CONNECTION_RESET",
         "ERR_NETWORK_CHANGED",
         "ERR_TIMED_OUT",
