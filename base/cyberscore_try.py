@@ -3866,6 +3866,10 @@ def _same_sign_lane_adv_guard(
             opposing_sources.append("lane_adv_dict")
         if protracker_sign == -int(star_sign):
             opposing_sources.append("lane_adv_protracker")
+    present_lane_signs = [
+        sign for sign in (dict_sign, protracker_sign)
+        if sign in (-1, 1)
+    ]
     return {
         "enabled": star_side in {"radiant", "dire"},
         "star_sign": star_sign,
@@ -3878,8 +3882,8 @@ def _same_sign_lane_adv_guard(
         "opposing_sources": opposing_sources,
         "aligned": bool(
             star_side in {"radiant", "dire"}
-            and dict_sign == star_sign
-            and protracker_sign == star_sign
+            and present_lane_signs
+            and all(sign == star_sign for sign in present_lane_signs)
         ),
     }
 

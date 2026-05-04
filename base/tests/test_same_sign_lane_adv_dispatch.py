@@ -58,6 +58,38 @@ def test_same_sign_star_dispatches_immediately_when_lane_adv_matches(monkeypatch
     assert details["dispatch_mode"] == "immediate_star_rule"
 
 
+def test_same_sign_star_dispatches_immediately_when_only_lane_adv_dict_matches(monkeypatch) -> None:
+    result = _run_branch_scenario(
+        monkeypatch,
+        _same_sign_case(
+            game_time_seconds=2 * 60,
+            target_networth_diff=-1200,
+            metrics_extra={},
+        ),
+        lane_output=ALIGNED_LANE_OUTPUT,
+    )
+
+    assert len(result.sent_messages) == 1
+    assert result.queued_payload is None
+    assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now"
+
+
+def test_same_sign_star_dispatches_immediately_when_only_protracker_lane_adv_matches(monkeypatch) -> None:
+    result = _run_branch_scenario(
+        monkeypatch,
+        _same_sign_case(
+            game_time_seconds=2 * 60,
+            target_networth_diff=-1200,
+            metrics_extra=ALIGNED_LANE_ADV,
+        ),
+        lane_output=("", "", ""),
+    )
+
+    assert len(result.sent_messages) == 1
+    assert result.queued_payload is None
+    assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now"
+
+
 def test_late_all_same_sign_dispatches_immediately_when_lane_adv_matches(monkeypatch) -> None:
     case = replace(
         _same_sign_case(
