@@ -5247,7 +5247,7 @@ def _apply_stomp_weighted_counts(wins, draws, losses, stats, invert=False):
     return (float(wins) + weight * sw, float(draws), float(losses) + weight * sl)
 
 
-LANE_2V2_MIN_GAMES = 6
+LANE_2V2_MIN_GAMES = 2
 LANE_2V1_MIN_GAMES = 20
 LANE_1V1_MIN_GAMES = 50
 LANE_SYNERGY_MIN_GAMES = 30
