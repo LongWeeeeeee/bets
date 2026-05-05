@@ -5262,12 +5262,56 @@ def _split_vs_key(key):
     return left_raw, right_raw, left_parts, right_parts, left_sorted, right_sorted
 
 
-def _get_lane_stats_for_key(key, heroes_data):
+def _lane_hero_pos_token(token):
+    text = str(token or "")
+    for pos in ("pos1", "pos2", "pos3", "pos4", "pos5"):
+        if text.endswith(pos):
+            hero_id = text[:-len(pos)]
+            if hero_id:
+                return hero_id, pos
+    return None, None
+
+
+def _lane_core_support_token_variants(token, core_support_side_lanes=False):
+    if not core_support_side_lanes:
+        return [token]
+    hero_id, pos = _lane_hero_pos_token(token)
+    if not hero_id or not pos:
+        return [token]
+    if pos in ("pos1", "pos3"):
+        return [f"{hero_id}pos1", f"{hero_id}pos3"]
+    if pos in ("pos4", "pos5"):
+        return [f"{hero_id}pos4", f"{hero_id}pos5"]
+    return [token]
+
+
+def _lane_part_variant_groups(parts, core_support_side_lanes=False):
+    groups = [[]]
+    for part in parts or []:
+        variants = _lane_core_support_token_variants(part, core_support_side_lanes)
+        groups = [group + [variant] for group in groups for variant in variants]
+    unique = []
+    seen = set()
+    for group in groups:
+        signature = tuple(group)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        unique.append(group)
+    return unique
+
+
+def _get_lane_stats_for_key(key, heroes_data, core_support_side_lanes=False):
     split = _split_vs_key(key)
     if split is None:
         return heroes_data.get(key, {}), False, None, None
     _left_raw, _right_raw, left_parts, right_parts, _left_sorted, _right_sorted = split
-    stats = _aggregate_lane_vs_stats(heroes_data, left_parts, right_parts)
+    stats = _aggregate_lane_vs_stats(
+        heroes_data,
+        left_parts,
+        right_parts,
+        core_support_side_lanes=core_support_side_lanes,
+    )
     if stats:
         return stats, False, left_parts, right_parts
     return {}, False, left_parts, right_parts
@@ -5368,7 +5412,7 @@ def _aggregate_lane_entry_group(entries, *, invert=False):
         counts = _lane_raw_counts(entry, invert=invert)
         if counts is None:
             continue
-        signature = tuple(counts)
+        signature = id(entry) if isinstance(entry, dict) else tuple(counts)
         if signature in seen_stats:
             continue
         seen_stats.add(signature)
@@ -5390,19 +5434,21 @@ def _lane_group_variants(parts):
     return sorted({",".join(perm) for perm in permutations(parts)})
 
 
-def _aggregate_lane_vs_stats(data, left_parts, right_parts):
+def _aggregate_lane_vs_stats(data, left_parts, right_parts, core_support_side_lanes=False):
     if not isinstance(data, dict):
         return {}
     direct_entries = []
     reverse_entries = []
-    for left_key in _lane_group_variants(left_parts):
-        for right_key in _lane_group_variants(right_parts):
-            entry = data.get(f"{left_key}_vs_{right_key}")
-            if isinstance(entry, dict) and _lane_raw_counts(entry) is not None:
-                direct_entries.append(entry)
-            rev_entry = data.get(f"{right_key}_vs_{left_key}")
-            if isinstance(rev_entry, dict) and _lane_raw_counts(rev_entry) is not None:
-                reverse_entries.append(rev_entry)
+    for left_group in _lane_part_variant_groups(left_parts, core_support_side_lanes):
+        for right_group in _lane_part_variant_groups(right_parts, core_support_side_lanes):
+            for left_key in _lane_group_variants(left_group):
+                for right_key in _lane_group_variants(right_group):
+                    entry = data.get(f"{left_key}_vs_{right_key}")
+                    if isinstance(entry, dict) and _lane_raw_counts(entry) is not None:
+                        direct_entries.append(entry)
+                    rev_entry = data.get(f"{right_key}_vs_{left_key}")
+                    if isinstance(rev_entry, dict) and _lane_raw_counts(rev_entry) is not None:
+                        reverse_entries.append(rev_entry)
 
     d_w, d_d, d_l, d_g, d_sw, d_sl = _aggregate_lane_entry_group(direct_entries, invert=False)
     r_w, r_d, r_l, r_g, r_sw, r_sl = _aggregate_lane_entry_group(reverse_entries, invert=True)
@@ -5421,19 +5467,41 @@ def _aggregate_lane_vs_stats(data, left_parts, right_parts):
     }
 
 
-def _aggregate_lane_with_stats(data, left, right):
+def _aggregate_lane_with_stats(data, left, right, core_support_side_lanes=False):
     if not isinstance(data, dict):
         return {}
     entries = []
-    for left_key in _group_key_variants(left):
-        for right_key in _group_key_variants(right):
-            for key in (
-                f"{left_key}_with_{right_key}",
-                f"{right_key}_with_{left_key}",
-            ):
-                entry = data.get(key)
-                if isinstance(entry, dict) and _lane_raw_counts(entry) is not None:
-                    entries.append(entry)
+    for left_variant in _lane_core_support_token_variants(left, core_support_side_lanes):
+        for right_variant in _lane_core_support_token_variants(right, core_support_side_lanes):
+            for left_key in _group_key_variants(left_variant):
+                for right_key in _group_key_variants(right_variant):
+                    for key in (
+                        f"{left_key}_with_{right_key}",
+                        f"{right_key}_with_{left_key}",
+                    ):
+                        entry = data.get(key)
+                        if isinstance(entry, dict) and _lane_raw_counts(entry) is not None:
+                            entries.append(entry)
+    wins, draws, losses, games, stomp_win, stomp_lose = _aggregate_lane_entry_group(entries, invert=False)
+    if games <= 0:
+        return {}
+    return {
+        'wins': wins,
+        'draws': draws,
+        'games': games,
+        'stomp_win': stomp_win,
+        'stomp_lose': stomp_lose,
+    }
+
+
+def _aggregate_lane_solo_stats(data, token, core_support_side_lanes=False):
+    if not isinstance(data, dict):
+        return {}
+    entries = []
+    for variant in _lane_core_support_token_variants(token, core_support_side_lanes):
+        entry = data.get(variant)
+        if isinstance(entry, dict) and _lane_raw_counts(entry) is not None:
+            entries.append(entry)
     wins, draws, losses, games, stomp_win, stomp_lose = _aggregate_lane_entry_group(entries, invert=False)
     if games <= 0:
         return {}
@@ -5564,7 +5632,7 @@ def _predict_matchup_probs_from_side_probs(radiant_probs, dire_probs, shrink_gam
     }
 
 
-def lane_2vs2(radiant, dire, heroes_data, output):
+def lane_2vs2(radiant, dire, heroes_data, output, core_support_side_lanes=False):
     data_2vs2 = heroes_data['2v2_lanes']
 
     bot_lane = f'{radiant["pos1"]["hero_id"]}pos1,{radiant["pos5"]["hero_id"]}pos5_vs_' \
@@ -5572,7 +5640,11 @@ def lane_2vs2(radiant, dire, heroes_data, output):
     top_lane = f'{radiant["pos3"]["hero_id"]}pos3,{radiant["pos4"]["hero_id"]}pos4_vs_' \
                f'{dire["pos1"]["hero_id"]}pos1,{dire["pos5"]["hero_id"]}pos5'
     for lane, key in [[top_lane, 'top'], [bot_lane, 'bot']]:
-        stats, invert, _, _ = _get_lane_stats_for_key(lane, data_2vs2)
+        stats, invert, _, _ = _get_lane_stats_for_key(
+            lane,
+            data_2vs2,
+            core_support_side_lanes=core_support_side_lanes,
+        )
         probs = _lane_probs_from_stats(stats, LANE_2V2_MIN_GAMES, invert=invert)
         if probs:
             output.setdefault(key, {}).update(probs)
@@ -5608,8 +5680,12 @@ def multiply_list(lst, result=1):
 
 
 
-def get_values(lane_side, key, heroes_data, output):
-    stats, invert, left_parts, right_parts = _get_lane_stats_for_key(key, heroes_data)
+def get_values(lane_side, key, heroes_data, output, core_support_side_lanes=False):
+    stats, invert, left_parts, right_parts = _get_lane_stats_for_key(
+        key,
+        heroes_data,
+        core_support_side_lanes=core_support_side_lanes,
+    )
     probs = _lane_probs_from_stats(stats, LANE_2V1_MIN_GAMES, invert=invert)
     if probs:
         games = float(probs.get('games', 0.0) or 0.0)
@@ -5633,7 +5709,7 @@ def get_values(lane_side, key, heroes_data, output):
         output.setdefault(lane_side, {}).setdefault('not_used_hero_pos', []).append(solo)
 
 
-def lane_2vs1(radiant, dire, heroes_data, lane):
+def lane_2vs1(radiant, dire, heroes_data, lane, core_support_side_lanes=False):
     # Для mid матчей подходящие ключи лежат в 1v1_lanes, для боковых лайнов – в 2v1_lanes
     if lane == 'mid' and isinstance(heroes_data, dict) and '1v1_lanes' in heroes_data:
         heroes_data = heroes_data['1v1_lanes']
@@ -5645,21 +5721,21 @@ def lane_2vs1(radiant, dire, heroes_data, lane):
                 f'{radiant["pos1"]["hero_id"]}pos1,{radiant["pos5"]["hero_id"]}pos5_vs_{dire["pos3"]["hero_id"]}pos3',
                 f'{radiant["pos1"]["hero_id"]}pos1,{radiant["pos5"]["hero_id"]}pos5_vs_'
                 f'{dire["pos4"]["hero_id"]}pos4']:
-            get_values('bot_radiant', key, heroes_data, output)
+            get_values('bot_radiant', key, heroes_data, output, core_support_side_lanes=core_support_side_lanes)
         for key in [
                 f'{radiant["pos1"]["hero_id"]}pos1_vs_{dire["pos3"]["hero_id"]}pos3,{dire["pos4"]["hero_id"]}pos4',
                 f'{radiant["pos5"]["hero_id"]}pos5_vs_{dire["pos3"]["hero_id"]}pos3,{dire["pos4"]["hero_id"]}pos4']:
-            get_values('bot_dire', key, heroes_data, output)
+            get_values('bot_dire', key, heroes_data, output, core_support_side_lanes=core_support_side_lanes)
     elif lane == 'top':
         for key in [
                 f'{radiant["pos3"]["hero_id"]}pos3,{radiant["pos4"]["hero_id"]}pos4_vs_{dire["pos1"]["hero_id"]}pos1',
                 f'{radiant["pos3"]["hero_id"]}pos3,{radiant["pos4"]["hero_id"]}pos4_vs_'
                 f'{dire["pos5"]["hero_id"]}pos5']:
-            get_values('top_radiant', key, heroes_data, output)
+            get_values('top_radiant', key, heroes_data, output, core_support_side_lanes=core_support_side_lanes)
         for key in [
                 f'{radiant["pos3"]["hero_id"]}pos3_vs_{dire["pos1"]["hero_id"]}pos1,{dire["pos5"]["hero_id"]}pos5',
                 f'{radiant["pos4"]["hero_id"]}pos4_vs_{dire["pos1"]["hero_id"]}pos1,{dire["pos5"]["hero_id"]}pos5']:
-            get_values('top_dire', key, heroes_data, output)
+            get_values('top_dire', key, heroes_data, output, core_support_side_lanes=core_support_side_lanes)
     elif lane == 'mid':
         key = f'{radiant["pos2"]["hero_id"]}pos2_vs_{dire["pos2"]["hero_id"]}pos2'
         stats, invert, _, _ = _get_lane_stats_for_key(key, heroes_data)
@@ -5702,14 +5778,18 @@ def both_found(lane, data, output=None, return_probs=False):
     return _lane_prediction_from_probs(probs)
 
 
-def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane, return_probs=False):
+def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane, return_probs=False, core_support_side_lanes=False):
     """Анализ индивидуальных 1v1 матчапов на лайне (контрпики)"""
     heroes_data_1v1 = heroes_data.get('1v1_lanes', {})
 
     def _aggregate_matchups(matchups):
         buckets = []
         for matchup_key in matchups:
-            stats, invert, _, _ = _get_lane_stats_for_key(matchup_key, heroes_data_1v1)
+            stats, invert, _, _ = _get_lane_stats_for_key(
+                matchup_key,
+                heroes_data_1v1,
+                core_support_side_lanes=core_support_side_lanes,
+            )
             probs = _lane_probs_from_stats(stats, LANE_1V1_MIN_GAMES, invert=invert)
             if probs:
                 buckets.append(probs)
@@ -5748,7 +5828,7 @@ def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, 
     return None
 
 
-def synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane, return_probs=False):
+def synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane, return_probs=False, core_support_side_lanes=False):
     heroes_data = heroes_data['1_with_1_lanes']
     if lane == 'bot':
         radiant_pair = sorted([
@@ -5771,8 +5851,18 @@ def synergy_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane
     else:
         return None
 
-    radiant_stats = _aggregate_lane_with_stats(heroes_data, radiant_pair[0], radiant_pair[1])
-    dire_stats = _aggregate_lane_with_stats(heroes_data, dire_pair[0], dire_pair[1])
+    radiant_stats = _aggregate_lane_with_stats(
+        heroes_data,
+        radiant_pair[0],
+        radiant_pair[1],
+        core_support_side_lanes=core_support_side_lanes,
+    )
+    dire_stats = _aggregate_lane_with_stats(
+        heroes_data,
+        dire_pair[0],
+        dire_pair[1],
+        core_support_side_lanes=core_support_side_lanes,
+    )
     radiant_probs = _lane_probs_from_stats(radiant_stats, LANE_SYNERGY_MIN_GAMES, invert=False)
     dire_probs = _lane_probs_from_stats(dire_stats, LANE_SYNERGY_MIN_GAMES, invert=False)
     matchup_probs = _predict_matchup_probs_from_side_probs(radiant_probs, dire_probs)
@@ -7960,7 +8050,7 @@ def calculate_lanes_old(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data
     return top_message, bot_message, mid_message
 
 
-def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, merge_side_lanes: bool = False, return_sources: bool = False):
+def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, merge_side_lanes: bool = False, return_sources: bool = False, core_support_side_lanes: bool = False):
     """
     Человекочитаемый пайплайн лейнов:
     1) Пробуем 2v2 матчап.
@@ -8034,7 +8124,12 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
                 f"{dire_heroes_and_pos['pos3']['hero_id']}pos3",
                 f"{dire_heroes_and_pos['pos4']['hero_id']}pos4",
             ]
-        stats = _aggregate_lane_vs_stats(data_2v2, left_parts, right_parts)
+        stats = _aggregate_lane_vs_stats(
+            data_2v2,
+            left_parts,
+            right_parts,
+            core_support_side_lanes=core_support_side_lanes,
+        )
         st = _stomp_stats(stats, invert=False)
         if not st:
             return None
@@ -8069,7 +8164,12 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
             ]
         vals = []
         for left, right in matchups:
-            stats = _aggregate_lane_vs_stats(data_1v1, [left], [right])
+            stats = _aggregate_lane_vs_stats(
+                data_1v1,
+                [left],
+                [right],
+                core_support_side_lanes=core_support_side_lanes,
+            )
             st = _stomp_stats(stats, invert=False)
             if st:
                 balance, _rate, games = st
@@ -8104,8 +8204,14 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
             ]))
         r_left, r_right = r_key.split(",", 1)
         d_left, d_right = d_key.split(",", 1)
-        r_st = _stomp_stats(_aggregate_lane_with_stats(data_sy, r_left, r_right), invert=False)
-        d_st = _stomp_stats(_aggregate_lane_with_stats(data_sy, d_left, d_right), invert=False)
+        r_st = _stomp_stats(
+            _aggregate_lane_with_stats(data_sy, r_left, r_right, core_support_side_lanes=core_support_side_lanes),
+            invert=False,
+        )
+        d_st = _stomp_stats(
+            _aggregate_lane_with_stats(data_sy, d_left, d_right, core_support_side_lanes=core_support_side_lanes),
+            invert=False,
+        )
         if not r_st or not d_st:
             return None
         return (r_st[0] - d_st[0])
@@ -8175,7 +8281,13 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
     def from_2v2(lane_name):
         """Возвращает (outcome, confidence) из 2v2 словаря, либо (None, None)."""
         bucket = {}
-        lane_2vs2(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, bucket)
+        lane_2vs2(
+            radiant_heroes_and_pos,
+            dire_heroes_and_pos,
+            heroes_data,
+            bucket,
+            core_support_side_lanes=core_support_side_lanes,
+        )
         if lane_name in bucket and bucket[lane_name]:
             key, val = _lane_prediction_from_probs(bucket[lane_name])
             return _apply_stomp(lane_name, key, val, "2v2")
@@ -8273,7 +8385,8 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
         - None если данных нет.
         """
         layer = lane_2vs1(radiant=radiant_heroes_and_pos, dire=dire_heroes_and_pos,
-                          heroes_data=heroes_data, lane=lane_name)
+                          heroes_data=heroes_data, lane=lane_name,
+                          core_support_side_lanes=core_support_side_lanes and lane_name != 'mid')
         if lane_name == 'mid':
             mid_stats = layer.get('mid_radiant')
             if mid_stats:
@@ -8302,7 +8415,15 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
             prob_entries = []
 
             for k in keys:
-                probs = _lane_probs_from_stats(solo_data.get(k, {}), LANE_SOLO_MIN_GAMES, invert=False)
+                probs = _lane_probs_from_stats(
+                    _aggregate_lane_solo_stats(
+                        solo_data,
+                        k,
+                        core_support_side_lanes=core_support_side_lanes and lane_name != 'mid',
+                    ),
+                    LANE_SOLO_MIN_GAMES,
+                    invert=False,
+                )
                 if probs:
                     prob_entries.append((probs, 1.0))
 
@@ -8359,10 +8480,20 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
             if primary_outcome not in ('win', 'lose'):
                 return _strip(primary)
             lane_1v1_probs = counterpick_lanes(
-                radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name, return_probs=True
+                radiant_heroes_and_pos,
+                dire_heroes_and_pos,
+                heroes_data,
+                lane_name,
+                return_probs=True,
+                core_support_side_lanes=core_support_side_lanes and lane_name != 'mid',
             )
             duo_synergy_probs = synergy_lanes(
-                radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name, return_probs=True
+                radiant_heroes_and_pos,
+                dire_heroes_and_pos,
+                heroes_data,
+                lane_name,
+                return_probs=True,
+                core_support_side_lanes=core_support_side_lanes and lane_name != 'mid',
             )
             fallback = _merge_lane_predictions(lane_1v1_probs, duo_synergy_probs)
             if not fallback or fallback[1] is None:
@@ -8411,24 +8542,45 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
                 dire=dire_heroes_and_pos,
                 heroes_data=heroes_data,
                 lane=lane_name,
+                core_support_side_lanes=core_support_side_lanes and lane_name != 'mid',
             )
             single_probs = _single_side_2v1_prediction(single_layer, lane_name, return_probs=True)
             duo_synergy_probs = synergy_lanes(
-                radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name, return_probs=True
+                radiant_heroes_and_pos,
+                dire_heroes_and_pos,
+                heroes_data,
+                lane_name,
+                return_probs=True,
+                core_support_side_lanes=core_support_side_lanes and lane_name != 'mid',
             )
             base_probs = _merge_lane_predictions(single_probs, duo_synergy_probs, return_probs=True) or single_probs
             lane_1v1_probs = counterpick_lanes(
-                radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name, return_probs=True
+                radiant_heroes_and_pos,
+                dire_heroes_and_pos,
+                heroes_data,
+                lane_name,
+                return_probs=True,
+                core_support_side_lanes=core_support_side_lanes and lane_name != 'mid',
             )
             res_probs = _merge_lane_predictions(base_probs, lane_1v1_probs, return_probs=True) or base_probs
             return _finalize(_lane_prediction_from_probs(res_probs), "2v1_single_mix")
 
         # 3) Фолбэк 1v1 + синергия
         lane_1v1_probs = counterpick_lanes(
-            radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name, return_probs=True
+            radiant_heroes_and_pos,
+            dire_heroes_and_pos,
+            heroes_data,
+            lane_name,
+            return_probs=True,
+            core_support_side_lanes=core_support_side_lanes and lane_name != 'mid',
         )
         duo_synergy_probs = synergy_lanes(
-            radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane_name, return_probs=True
+            radiant_heroes_and_pos,
+            dire_heroes_and_pos,
+            heroes_data,
+            lane_name,
+            return_probs=True,
+            core_support_side_lanes=core_support_side_lanes and lane_name != 'mid',
         )
         merged_probs = _merge_lane_predictions(lane_1v1_probs, duo_synergy_probs, return_probs=True)
         if merged_probs is not None:

@@ -18090,6 +18090,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 radiant_heroes_and_pos,
                 dire_heroes_and_pos,
                 lane_data,
+                core_support_side_lanes=True,
             )
         else:
             s['top'], s['bot'], s['mid'] = "", "", ""
