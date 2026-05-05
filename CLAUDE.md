@@ -121,7 +121,7 @@ python3 base/cyberscore_try.py --no-odds
 
 ### `base/cyberscore_try.py` (750KB+)
 Главный файл. Содержит:
-- Live-парсинг OpenDota API и DLTV (Camoufox-first, Selenium fallback)
+- Live-парсинг DLTV (Camoufox-first, Selenium fallback)
 - Краулинг букмекеров (Camoufox-first через subprocess, Selenium fallback)
 - Telegram-нотификации
 - ML-предиктор интеграция
@@ -146,18 +146,17 @@ python3 base/cyberscore_try.py --no-odds
 
 **Переменные окружения:**
 - `BOOKMAKER_PROXY_URL`, `BOOKMAKER_PROXY_POOL` — прокси для букмекеров
-- `DLTV_PROXY_POOL` — прокси для OpenDota/DLTV
+- `DLTV_PROXY_POOL` — прокси для DLTV
 - При удалении нерабочих прокси в `base/keys.py` чистим только runtime proxy constants/pools; не удаляем и не меняем записи `api_to_proxy` / `api_to_keys` и связанные API-ключи
 - `DLTV_CAMOUFOX_ENABLED=1` — включить Camoufox-first для DLTV HTML mode
 - `BOOKMAKER_CAMOUFOX_ENABLED=1` — включить Camoufox для bookmaker (ОСНОВНОЙ РЕЖИМ)
 - `SIGNAL_MINIMAL_ODDS_ONLY_MODE=1` — режим "только команды + счёт + кэфы"
 - `DOTA2PROTRACKER_ENABLED=0` — отключить парсинг pro-tracker
-- `OPENDOTA_ENABLED=1` — включить OpenDota enrichment
 - `BOOKMAKER_PREFETCH_MESSAGE_WAIT_SECONDS=10` — время ожидания кэфов перед отправкой
 
 **Пример запуска локально:**
 ```bash
-SIGNAL_MINIMAL_ODDS_ONLY_MODE=1 DOTA2PROTRACKER_ENABLED=0 OPENDOTA_ENABLED=1 \
+SIGNAL_MINIMAL_ODDS_ONLY_MODE=1 DOTA2PROTRACKER_ENABLED=0 \
 BOOKMAKER_CAMOUFOX_ENABLED=1 BOOKMAKER_PREFETCH_MESSAGE_WAIT_SECONDS=10 \
 /Users/alex/Documents/ingame/venv_catboost/bin/python3 \
 /Users/alex/Documents/ingame/base/cyberscore_try.py --odds
@@ -165,7 +164,7 @@ BOOKMAKER_CAMOUFOX_ENABLED=1 BOOKMAKER_PREFETCH_MESSAGE_WAIT_SECONDS=10 \
 
 **Пример запуска на сервере:**
 ```bash
-SIGNAL_MINIMAL_ODDS_ONLY_MODE=1 DOTA2PROTRACKER_ENABLED=0 OPENDOTA_ENABLED=1 \
+SIGNAL_MINIMAL_ODDS_ONLY_MODE=1 DOTA2PROTRACKER_ENABLED=0 \
 BOOKMAKER_CAMOUFOX_ENABLED=1 BOOKMAKER_PREFETCH_MESSAGE_WAIT_SECONDS=10 \
 python3 base/cyberscore_try.py --odds
 ```
@@ -275,7 +274,6 @@ python ELO/run_series_experiment.py
 
 ## Букмекеры и API
 
-- OpenDota API (free tier)
 - DLTV Selenium (headless Chrome) — парсинг live-матчей
 - Букмекерские сайты через Selenium (headless)
 - Прокси-пулы для обхода лимитов
@@ -286,6 +284,8 @@ python ELO/run_series_experiment.py
 
 ## Правила для агента (из AGENTS.md)
 
+- Агент не делает ничего своевольного сверх поставленной пользователем задачи или явных предписаний в проектных `.md` файлах; агент выполняет поставленную задачу и ничего больше
+- Если запрос пользователя неоднозначен, агент не уверен в чём-то, или у пользователя есть логическая ошибка, агент сначала спрашивает пользователя
 - Всегда используй `venv_catboost` как виртуальное окружение
 - Активация: `source venv_catboost/bin/activate` из `/Users/alex/Documents/ingame`
 - Не создавай и не используй другие виртуальные окружения

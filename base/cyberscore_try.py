@@ -100,10 +100,6 @@ DOTA2PROTRACKER_SKIP_BOOKMAKER_GATE = _env_flag(
     'DOTA2PROTRACKER_SKIP_BOOKMAKER_GATE',
     '1' if DOTA2PROTRACKER_BYPASS_GATES else '0',
 )
-DOTA2PROTRACKER_SUPERSEDE_OPENDOTA = _env_flag(
-    'DOTA2PROTRACKER_SUPERSEDE_OPENDOTA',
-    '1' if DOTA2PROTRACKER_ENABLED else '0',
-)
 DOTA2PROTRACKER_CP1VS1_GATE_ABS = float(os.getenv('DOTA2PROTRACKER_CP1VS1_GATE_ABS', '3'))
 DOTA2PROTRACKER_DUO_GATE_ABS = float(os.getenv('DOTA2PROTRACKER_DUO_GATE_ABS', '7'))
 SIGNAL_MINIMAL_ODDS_ONLY_MODE = _env_flag('SIGNAL_MINIMAL_ODDS_ONLY_MODE', '0')
@@ -139,17 +135,6 @@ if DOTA2PROTRACKER_ENABLED or _env_flag('DOTA2PROTRACKER_PRELOAD', '1'):
 else:
     enrich_with_pro_tracker = None
 
-# OpenDota API integration (preferred - no Cloudflare blocking)
-OPENDOTA_ENABLED = os.getenv('OPENDOTA_ENABLED', '1') == '1'
-OPENDOTA_MIN_GAMES = int(os.getenv('OPENDOTA_MIN_GAMES', '10'))
-if OPENDOTA_ENABLED:
-    try:
-        from opendota_matchups import enrich_with_opendota
-    except ImportError:
-        enrich_with_opendota = None
-        print("   ⚠️ OpenDota integration disabled (module not found)")
-else:
-    enrich_with_opendota = None
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -18066,24 +18051,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
         if DOTA2PROTRACKER_ENABLED and isinstance(protracker_payload, dict):
             s.update(protracker_payload)
-
-        # Обогащение данными с OpenDota API (cp1vs1, duo synergy из pub-игр)
-        if enrich_with_opendota and not (
-            DOTA2PROTRACKER_ENABLED and DOTA2PROTRACKER_SUPERSEDE_OPENDOTA
-        ):
-            try:
-                s = enrich_with_opendota(
-                    radiant_heroes_and_pos=radiant_heroes_and_pos,
-                    dire_heroes_and_pos=dire_heroes_and_pos,
-                    synergy_dict=s,
-                    min_games=OPENDOTA_MIN_GAMES
-                )
-                if verbose_match_log:
-                    pro_cp = s.get('pro_cp1vs1_early', 0)
-                    pro_duo = s.get('pro_duo_synergy_early', 0)
-                    print(f"   📊 OpenDota: cp1vs1={pro_cp:+.1f}%, duo_synergy={pro_duo:+.1f}%")
-            except Exception as e:
-                print(f"   ⚠️ OpenDota enrichment failed: {e}")
 
         if LIVE_LANE_ANALYSIS_ENABLED and lane_data is not None:
             s['top'], s['bot'], s['mid'] = calculate_lanes(
