@@ -394,6 +394,105 @@ def test_counterpick_1vs1_rejects_one_of_three_core_matchups() -> None:
     assert result["early_output"]["counterpick_1vs1_games"] == 0
 
 
+def test_counterpick_1vs1_uses_core_position_fallback_for_missing_matchup() -> None:
+    radiant = _side(1)
+    dire = _side(6)
+    games = functions.COUNTERPICK_1VS1_MIN_MATCHES
+    data: dict = {}
+
+    for radiant_pos, dire_pos in (
+        ("pos1", "pos1"),
+        ("pos1", "pos2"),
+        ("pos2", "pos1"),
+        ("pos2", "pos2"),
+        ("pos2", "pos3"),
+        ("pos3", "pos1"),
+        ("pos3", "pos2"),
+        ("pos3", "pos3"),
+    ):
+        _put_vs(
+            data,
+            f"{int(radiant[radiant_pos]['hero_id'])}{radiant_pos}",
+            f"{int(dire[dire_pos]['hero_id'])}{dire_pos}",
+            0.8,
+            games,
+        )
+
+    _put_vs(
+        data,
+        f"{int(radiant['pos1']['hero_id'])}pos1",
+        f"{int(dire['pos3']['hero_id'])}pos2",
+        0.8,
+        games,
+    )
+
+    result = functions.synergy_and_counterpick(
+        radiant_heroes_and_pos=radiant,
+        dire_heroes_and_pos=dire,
+        early_dict=data,
+        mid_dict={},
+    )
+
+    assert result["early_output"]["counterpick_1vs1"] > 0
+    assert result["early_output"]["counterpick_1vs1_games"] > 0
+
+
+def test_counterpick_1vs1_uses_support_position_fallback() -> None:
+    radiant = _side(1)
+    dire = _side(6)
+    output: dict = {}
+    games = functions.COUNTERPICK_1VS1_MIN_MATCHES
+    data: dict = {}
+
+    _put_vs(
+        data,
+        f"{int(radiant['pos1']['hero_id'])}pos1",
+        f"{int(dire['pos4']['hero_id'])}pos5",
+        0.8,
+        games,
+    )
+
+    functions.counterpick_team(
+        radiant,
+        dire,
+        output,
+        "radiant_counterpick",
+        data,
+    )
+
+    assert output["radiant_counterpick_1vs1"]["pos1"] == [(0.8, games, "pos4")]
+
+
+def test_counterpick_1vs2_does_not_use_position_fallback() -> None:
+    radiant = _side(1)
+    dire = _side(6)
+    output: dict = {}
+    games = functions.COUNTERPICK_1VS2_MIN_MATCHES
+    data: dict = {}
+
+    fallback_duo = ",".join(sorted([
+        f"{int(dire['pos1']['hero_id'])}pos2",
+        f"{int(dire['pos4']['hero_id'])}pos4",
+    ]))
+    _put_vs(
+        data,
+        f"{int(radiant['pos1']['hero_id'])}pos1",
+        fallback_duo,
+        0.8,
+        games,
+    )
+
+    functions.counterpick_team(
+        radiant,
+        dire,
+        output,
+        "radiant_counterpick",
+        data,
+    )
+
+    assert "radiant_counterpick_1vs2" not in output
+
+
 def test_post_lane_counterpick_1vs1_uses_two_of_three_core_gate() -> None:
     radiant = _side(1)
     dire = _side(6)

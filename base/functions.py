@@ -137,6 +137,7 @@ GET_DIFF_MIN_WR_GAP = 0.0  # Порог отключен
 COUNTERPICK_1VS1_MIN_ABS = 0
 # Core позиции и покрытие для global counterpick_1vs1.
 CORE_POSITIONS = ('pos1', 'pos2', 'pos3')
+SUPPORT_POSITIONS = ('pos4', 'pos5')
 COUNTERPICK_1VS1_CORE_MATCHUPS_REQUIRED = math.ceil(len(CORE_POSITIONS) * 2 / 3)
 # Пороги по количеству матчей для early/late фаз
 SOLO_MIN_MATCHES = 50
@@ -2403,6 +2404,47 @@ def _lookup_vs_winrate(data, left, right):
     return total_score / total_games, total_games
 
 
+def _split_hero_position_key(key):
+    text = str(key or "")
+    for pos in ('pos1', 'pos2', 'pos3', 'pos4', 'pos5'):
+        if text.endswith(pos):
+            hero_id = text[:-len(pos)]
+            if hero_id:
+                return hero_id, pos
+    return None, None
+
+
+def _counterpick_1vs1_fallback_positions(pos):
+    if pos in CORE_POSITIONS:
+        return tuple(p for p in CORE_POSITIONS if p != pos)
+    if pos in SUPPORT_POSITIONS:
+        return tuple(p for p in SUPPORT_POSITIONS if p != pos)
+    return ()
+
+
+def _lookup_counterpick_1vs1_winrate(data, left, right, min_matches):
+    value, games = _lookup_vs_winrate(data, left, right)
+    if games >= min_matches:
+        return value, games
+
+    enemy_hero_id, enemy_pos = _split_hero_position_key(right)
+    if not enemy_hero_id or not enemy_pos:
+        return value, games
+
+    fallback_samples = []
+    for fallback_pos in _counterpick_1vs1_fallback_positions(enemy_pos):
+        fallback_value, fallback_games = _lookup_vs_winrate(data, left, f"{enemy_hero_id}{fallback_pos}")
+        if fallback_games >= min_matches and fallback_value is not None:
+            fallback_samples.append((float(fallback_value), int(fallback_games)))
+    if not fallback_samples:
+        return value, games
+
+    return (
+        sum(sample_value for sample_value, _sample_games in fallback_samples) / len(fallback_samples),
+        sum(sample_games for _sample_value, sample_games in fallback_samples),
+    )
+
+
 def counterpick_team(
     heroes_and_pos,
     heroes_and_pos_opposite,
@@ -2437,7 +2479,7 @@ def counterpick_team(
             enemy_hero_id = str(enemy_data['hero_id'])
             enemy_key = f"{enemy_hero_id}{enemy_pos}"
 
-            value, games = _lookup_vs_winrate(data, hero_key, enemy_key)
+            value, games = _lookup_counterpick_1vs1_winrate(data, hero_key, enemy_key, min_matches_1vs1)
             if games >= min_matches_1vs1:
                 # Сохраняем (winrate, count, enemy_pos) для pair-weights в get_diff.
                 output.setdefault(f'{mkdir}_1vs1', {}).setdefault(pos, []).append((value, games, enemy_pos))
@@ -3801,7 +3843,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     continue
                 left = f"{int(hero_i)}{pos_i}"
                 right = f"{int(hero_j)}{pos_j}"
-                _, games = _lookup_vs_winrate(data, left, right)
+                _, games = _lookup_counterpick_1vs1_winrate(data, left, right, min_matches_1vs1)
                 if games >= min_matches_1vs1:
                     covered_core_matchups += 1
             if covered_core_matchups < COUNTERPICK_1VS1_CORE_MATCHUPS_REQUIRED:
