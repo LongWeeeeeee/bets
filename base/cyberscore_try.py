@@ -19478,6 +19478,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and late_pub_comeback_table_wr_level is not None
                 and _late_pub_table_has_thresholds(late_pub_comeback_table_wr_level)
             )
+            late_all_same_target_weak_early_opposite = bool(
+                has_selected_early_star
+                and has_selected_late_star
+                and has_selected_all_star
+                and selected_early_sign in (-1, 1)
+                and selected_late_sign in (-1, 1)
+                and selected_all_sign in (-1, 1)
+                and selected_late_sign == selected_all_sign
+                and selected_early_sign != selected_late_sign
+                and early_wr_pct is not None
+                and float(early_wr_pct) <= 70.0
+            )
+            if late_all_same_target_weak_early_opposite:
+                opposite_signs_selected = True
             late_comeback_monitor_candidate = False
             networth_send_status_label: Optional[str] = None
             queue_early_core_monitor = False
@@ -19485,6 +19499,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             queue_strong_same_sign_monitor = False
             queue_same_sign_lane_adv_monitor = bool(same_sign_lane_adv_wait_required)
             queue_top25_late_elo_block_monitor = bool(top25_late_elo_block_override_active)
+            queue_late_all_weak_early_monitor = False
             early65_release_status_label: Optional[str] = None
             early_release_dispatch_mode = "immediate_early_star65"
             early_release_delay_reason = "early65_gate"
@@ -19559,7 +19574,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 finally:
                     _release_signal_send_slot(check_uniq_url)
                 return return_status
-            late_star_wait_pub_table = bool(star_dispatch_flags["late_star_wait_pub_table"])
+            late_star_wait_pub_table = bool(
+                star_dispatch_flags["late_star_wait_pub_table"]
+                and not late_all_same_target_weak_early_opposite
+            )
             if late_star_wait_pub_table:
                 queue_top25_late_elo_block_monitor = False
                 dispatch_mode = "delayed_late_only_20_30m"
@@ -19639,6 +19657,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         "(нет target_sign/lead)"
                     )
                     return return_status
+                if late_all_same_target_weak_early_opposite:
+                    queue_late_all_weak_early_monitor = True
+                    dispatch_mode = "delayed_late_all_same_weak_early_20_30m"
+                    print(
+                        "   ⏳ Late+All same target with weak opposite Early: "
+                        f"early_wr={float(early_wr_pct or 0.0):.1f}%, "
+                        f"target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                        f"need>={int(NETWORTH_GATE_LATE_NO_EARLY_DIFF)} before "
+                        f"{_format_game_clock(LATE_PUB_COMEBACK_TABLE_START_SECONDS)}, "
+                        "then pub late comeback table"
+                    )
                 if queue_same_sign_lane_adv_monitor:
                     dispatch_mode = "delayed_same_sign_lane_adv_wait_4_10"
                     if current_game_time < NETWORTH_GATE_SAME_SIGN_LANE_ADV_WINDOW_START_SECONDS:
@@ -19799,7 +19828,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         )
                     else:
                         networth_send_status_label = NETWORTH_STATUS_MIN10_LOSS_LE800_SEND
-                elif opposite_signs_selected:
+                elif opposite_signs_selected and not queue_late_all_weak_early_monitor:
                     print(
                         "   ⏳ Opposite-sign dispatch is disabled before "
                         f"{_format_game_clock(LATE_PUB_COMEBACK_TABLE_START_SECONDS)} "
@@ -19812,6 +19841,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 or queue_strong_same_sign_monitor
                 or (queue_same_sign_lane_adv_monitor and networth_send_status_label is None)
                 or queue_top25_late_elo_block_monitor
+                or queue_late_all_weak_early_monitor
             ):
                 delay_reason = "late_only_no_early_same_sign"
                 if queue_early_core_monitor:
@@ -19820,6 +19850,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delay_reason = "late_star_early_core_wait_800"
                 elif queue_strong_same_sign_monitor:
                     delay_reason = "strong_same_sign_wait_800_then_comeback_ceiling"
+                elif queue_late_all_weak_early_monitor:
+                    delay_reason = "late_all_same_weak_early_wait_2000_then_pub_table"
                 elif queue_same_sign_lane_adv_monitor:
                     delay_reason = "same_sign_lane_adv_wait_4_10"
                 elif queue_top25_late_elo_block_monitor:
@@ -19855,6 +19887,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     monitor_threshold = NETWORTH_GATE_STRONG_SAME_SIGN_MAX_LOSS
                     monitor_wait_status_label = NETWORTH_STATUS_STRONG_SAME_SIGN_MONITOR_WAIT_800
                     fallback_send_status_label = NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT
+                elif queue_late_all_weak_early_monitor:
+                    monitor_threshold = NETWORTH_GATE_LATE_NO_EARLY_DIFF
+                    monitor_wait_status_label = NETWORTH_STATUS_LATE_MONITOR_WAIT_2000
+                    fallback_send_status_label = NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
+                    allow_live_recheck = True
                 elif queue_same_sign_lane_adv_monitor:
                     dynamic_monitor_profile = {
                         "enabled": True,
@@ -19908,6 +19945,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     )
                 opposite_signs_dispatch_blocked = bool(
                     opposite_signs_selected
+                    and not queue_late_all_weak_early_monitor
                     and current_game_time < float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
                 )
                 release_4_10_now = bool(
@@ -19924,7 +19962,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             and target_networth_diff >= monitor_threshold
                         )
                         or (
+                            queue_late_all_weak_early_monitor
+                            and monitor_threshold is not None
+                            and target_networth_diff >= monitor_threshold
+                        )
+                        or (
                             not (isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"))
+                            and not queue_late_all_weak_early_monitor
                             and
                             target_networth_diff >= NETWORTH_GATE_4_TO_10_MIN_DIFF
                             and early_core_same_sign_support
@@ -19951,10 +19995,22 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     except (TypeError, ValueError):
                         existing_monitor_hold_started = None
                 if release_4_10_now or monitor_ready_now:
+                    release_uses_monitor_threshold = bool(
+                        monitor_threshold is not None
+                        and (
+                            monitor_ready_now
+                            or queue_late_all_weak_early_monitor
+                            or (
+                                release_4_10_now
+                                and isinstance(dynamic_monitor_profile, dict)
+                                and dynamic_monitor_profile.get("enabled")
+                            )
+                        )
+                    )
                     release_reason = (
                         (
                             f"networth_monitor_{int(monitor_threshold or 0)}"
-                            if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled")
+                            if release_uses_monitor_threshold
                             else NETWORTH_STATUS_4_10_SEND_800
                         )
                         if release_4_10_now
@@ -19968,7 +20024,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         (
                             monitor_wait_status_label or NETWORTH_STATUS_4_10_SEND_800
                         )
-                        if release_4_10_now and isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled")
+                        if release_4_10_now and release_uses_monitor_threshold
                         else (
                             NETWORTH_STATUS_4_10_SEND_800
                             if release_4_10_now
@@ -19977,15 +20033,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     )
                     release_threshold = (
                         float(monitor_threshold)
-                        if monitor_ready_now and monitor_threshold is not None
-                        else (
-                            float(monitor_threshold)
-                            if release_4_10_now
-                            and isinstance(dynamic_monitor_profile, dict)
-                            and dynamic_monitor_profile.get("enabled")
-                            and monitor_threshold is not None
-                            else float(NETWORTH_GATE_4_TO_10_MIN_DIFF)
-                        )
+                        if release_uses_monitor_threshold and monitor_threshold is not None
+                        else float(NETWORTH_GATE_4_TO_10_MIN_DIFF)
                     )
                     hold_check = _networth_monitor_hold_check(
                         current_game_time=current_game_time,
@@ -20735,8 +20784,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         game_time_seconds=current_game_time,
                         target_networth_diff=target_networth_diff,
                     )
-                    delayed_add_url_details["dispatch_status_label"] = NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
-                    delayed_add_url_details["delay_reason"] = "late_star_pub_comeback_table_monitor"
+                    if not queue_late_all_weak_early_monitor:
+                        delayed_add_url_details["dispatch_status_label"] = NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
+                        delayed_add_url_details["delay_reason"] = "late_star_pub_comeback_table_monitor"
+                    else:
+                        delayed_add_url_details["post_target_late_pub_comeback_table"] = True
                     delayed_add_url_details["target_side"] = target_side
                     delayed_add_url_details["networth_target_side"] = target_side
                     delayed_add_url_details["late_pub_comeback_table_wr_level"] = int(late_pub_comeback_table_wr_level or 0)
@@ -20768,6 +20820,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             queue_early_core_monitor
                             or queue_late_core_monitor
                             or queue_strong_same_sign_monitor
+                            or queue_late_all_weak_early_monitor
                             or queue_top25_late_elo_block_monitor
                             or late_pub_comeback_table_candidate
                             or (
@@ -20851,8 +20904,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_payload['lane_adv_protracker'] = same_sign_lane_adv_guard.get("lane_adv_protracker")
                     delayed_payload['lane_adv_protracker_sign'] = same_sign_lane_adv_guard.get("lane_adv_protracker_sign")
                 if late_pub_comeback_table_candidate and not queue_same_sign_lane_adv_monitor:
-                    delayed_payload['reason'] = "late_star_pub_comeback_table_monitor"
-                    delayed_payload['dispatch_status_label'] = NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
+                    if not queue_late_all_weak_early_monitor:
+                        delayed_payload['reason'] = "late_star_pub_comeback_table_monitor"
+                        delayed_payload['dispatch_status_label'] = NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
                     delayed_payload['late_pub_comeback_table_active'] = True
                     delayed_payload['late_pub_comeback_table_wr_level'] = int(late_pub_comeback_table_wr_level or 0)
                     delayed_payload['networth_target_side'] = target_side
