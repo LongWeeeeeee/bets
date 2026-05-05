@@ -4561,9 +4561,101 @@ def _maybe_refresh_stale_cyberscore_delayed_state(
     return True
 
 
-def _drain_due_delayed_signals_once() -> None:
+def _runtime_payload_delayed_state(payload: Optional[Dict[str, Any]]) -> Optional[Dict[str, Optional[float]]]:
+    if not isinstance(payload, dict):
+        return None
+    game_time = payload.get("game_time")
+    if game_time is None:
+        live_league = payload.get("live_league_data") or {}
+        game_time = live_league.get("game_time")
+    if game_time is None:
+        live_match = (payload.get("live_league_data") or {}).get("match") or {}
+        game_time = live_match.get("game_time")
+    try:
+        game_time_value = float(game_time)
+    except (TypeError, ValueError):
+        return None
+    radiant_lead = payload.get("radiant_lead")
+    if radiant_lead is None:
+        live_league = payload.get("live_league_data") or {}
+        radiant_lead = live_league.get("radiant_lead")
+    if radiant_lead is None:
+        live_match = (payload.get("live_league_data") or {}).get("match") or {}
+        radiant_lead = live_match.get("radiant_lead")
+    try:
+        lead_value = float(radiant_lead) if radiant_lead is not None else None
+    except (TypeError, ValueError):
+        lead_value = None
+    return {"game_time": game_time_value, "radiant_lead": lead_value}
+
+
+def _queue_delayed_state_override(match_key: str, state: Optional[Dict[str, Optional[float]]]) -> bool:
+    if not match_key or not isinstance(state, dict):
+        return False
+    try:
+        game_time_value = float(state.get("game_time"))
+    except (TypeError, ValueError):
+        return False
+    radiant_lead = state.get("radiant_lead")
+    try:
+        lead_value = float(radiant_lead) if radiant_lead is not None else None
+    except (TypeError, ValueError):
+        lead_value = None
+    with delayed_state_overrides_lock:
+        delayed_state_overrides[str(match_key)] = {
+            "game_time": game_time_value,
+            "radiant_lead": lead_value,
+        }
+    return True
+
+
+def _pop_delayed_state_override(match_key: str) -> Optional[Dict[str, Optional[float]]]:
+    with delayed_state_overrides_lock:
+        return delayed_state_overrides.pop(str(match_key), None)
+
+
+def _try_release_delayed_from_live_recheck(
+    match_key: str,
+    payload: Dict[str, Any],
+    runtime_payload: Optional[Dict[str, Any]],
+    target_game_time: float,
+) -> bool:
+    state = _runtime_payload_delayed_state(runtime_payload)
+    if not isinstance(state, dict):
+        return False
+    try:
+        current_game_time = float(state.get("game_time"))
+    except (TypeError, ValueError):
+        return False
+    if current_game_time < float(target_game_time):
+        return False
+    if not _queue_delayed_state_override(match_key, state):
+        return False
+    target_side = str(payload.get("networth_target_side") or "").strip().lower()
+    if target_side not in {"radiant", "dire"}:
+        details = payload.get("add_url_details")
+        if isinstance(details, dict):
+            target_side = str(details.get("target_side") or "").strip().lower()
+    target_diff = _target_networth_diff_from_radiant_lead(state.get("radiant_lead"), target_side)
+    print(
+        "   ⚡ Delayed live fast-check: "
+        f"{match_key} crossed target={_format_game_clock(target_game_time)} "
+        f"at game_time={_format_game_clock(current_game_time)}, "
+        f"target_side={target_side or 'n/a'}, "
+        f"target_diff={int(target_diff) if target_diff is not None else 'n/a'}, "
+        f"reason={payload.get('reason', 'unknown')}"
+    )
+    _drain_due_delayed_signals_once(only_match_key=match_key)
+    return True
+
+
+def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> None:
     with monitored_matches_lock:
-        queued_items = list(monitored_matches.items())
+        if only_match_key is None:
+            queued_items = list(monitored_matches.items())
+        else:
+            only_payload = monitored_matches.get(str(only_match_key))
+            queued_items = [(str(only_match_key), only_payload)] if only_payload is not None else []
     if not queued_items:
         return
 
@@ -4580,7 +4672,14 @@ def _drain_due_delayed_signals_once() -> None:
         if next_retry_at > now_ts:
             continue
         target_game_time = float(payload.get('target_game_time', DELAYED_SIGNAL_TARGET_GAME_TIME))
-        delayed_state = _fetch_delayed_match_state(payload.get('json_url'))
+        delayed_state = _pop_delayed_state_override(match_key)
+        if isinstance(delayed_state, dict):
+            print(
+                "⚡ Delayed sender: using live recheck state "
+                f"for {match_key} (game_time={int(float(delayed_state.get('game_time') or 0))})"
+            )
+        else:
+            delayed_state = _fetch_delayed_match_state(payload.get('json_url'))
         if not isinstance(delayed_state, dict):
             queued_at = float(payload.get('queued_at', now_ts))
             # После 4 часов без game_time считаем сигнал устаревшим.
@@ -6805,6 +6904,8 @@ from urllib.parse import urlparse  # Добавьте импорт
 # Глобальный словарь для отслеживания матчей с отложенной отправкой
 monitored_matches = {}
 monitored_matches_lock = threading.Lock()
+delayed_state_overrides = {}
+delayed_state_overrides_lock = threading.Lock()
 delayed_sender_thread = None
 delayed_sender_stop_event = threading.Event()
 bookmaker_prefetch_thread = None
@@ -17214,6 +17315,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     )
                 )
                 if not allow_live_recheck:
+                    if _try_release_delayed_from_live_recheck(
+                        check_uniq_url,
+                        delayed_payload,
+                        data,
+                        target_game_time,
+                    ):
+                        return return_status
                     return return_status
         elif is_match_card_v2:
             live_match_id = str(listing_context.get("live_match_id") or "").strip()
@@ -17405,6 +17513,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     )
                 )
                 if not allow_live_recheck:
+                    if _try_release_delayed_from_live_recheck(
+                        check_uniq_url,
+                        delayed_payload,
+                        data,
+                        target_game_time,
+                    ):
+                        return return_status
                     return return_status
 
             url = f"https://dltv.org{path}"
