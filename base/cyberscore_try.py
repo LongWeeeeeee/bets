@@ -7584,12 +7584,19 @@ def _prune_current_live_proxy_if_dead(
             f"{source_label}: {_redact_proxy_url(current_proxy)} ({result.get('reason')})"
         )
         return False
-    PROXY_LIST = [proxy for proxy in PROXY_LIST if str(proxy).strip() != current_proxy]
-    dead_item = {
-        "proxy": current_proxy,
-        "attempts": result.get("attempts"),
-        "reason": result.get("reason"),
-    }
+    remaining_pool = [proxy for proxy in PROXY_LIST if str(proxy).strip() != current_proxy]
+    if not remaining_pool:
+        print(
+            "⚠️ Last live proxy failed runtime recheck after "
+            f"{source_label}, keeping it until the next startup preflight: "
+            f"{_redact_proxy_url(current_proxy)} ({result.get('reason')})"
+        )
+        logger.warning(
+            "Last live proxy failed runtime recheck after %s; keeping it until startup preflight",
+            source_label,
+        )
+        return False
+    PROXY_LIST = remaining_pool
     print(
         "🧹 Live proxy removed after runtime failure: "
         f"{_redact_proxy_url(current_proxy)} ({result.get('reason')})"
@@ -7599,11 +7606,6 @@ def _prune_current_live_proxy_if_dead(
         source_label,
         len(PROXY_LIST),
     )
-    if not PROXY_LIST:
-        _set_active_proxy_from_pool(0)
-        if LIVE_PROXY_EMPTY_POOL_FATAL:
-            _fatal_live_proxy_pool_empty(f"{source_label}: current live proxy is dead", [dead_item])
-        return True
     _set_active_proxy_from_pool(min(CURRENT_PROXY_INDEX, len(PROXY_LIST) - 1))
     with contextlib.suppress(Exception):
         _shared_camoufox_session.request_reset()

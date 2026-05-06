@@ -1885,6 +1885,48 @@ def test_runtime_dead_proxy_error_prunes_current_live_proxy(monkeypatch) -> None
     assert reset_calls == ["reset"]
 
 
+def test_runtime_last_dead_proxy_recheck_does_not_send_fatal_alert(monkeypatch) -> None:
+    messages: List[str] = []
+    reset_calls: List[str] = []
+
+    monkeypatch.setattr(runtime, "PROXY_LIST", ["http://last-dead.example:1000"], raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY_INDEX", 0, raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY", "http://last-dead.example:1000", raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "PROXIES",
+        {"http": "http://last-dead.example:1000", "https": "http://last-dead.example:1000"},
+        raising=False,
+    )
+    monkeypatch.setattr(runtime, "USE_PROXY", True, raising=False)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_RUNTIME_PRUNE_ENABLED", True, raising=False)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_PREFLIGHT_ATTEMPTS", 3, raising=False)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_EMPTY_POOL_FATAL", True, raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "_validate_live_proxy",
+        lambda proxy, **_kwargs: {"ok": False, "attempts": 3, "reason": "Proxy CONNECT aborted"},
+    )
+    monkeypatch.setattr(runtime, "send_message", lambda text, **_kwargs: messages.append(text))
+    monkeypatch.setattr(runtime._shared_camoufox_session, "request_reset", lambda: reset_calls.append("reset"))
+
+    pruned = runtime._prune_current_live_proxy_if_dead(
+        "Page.goto: NS_ERROR_NET_RESET",
+        source_label="long page",
+        target_url="https://cyberscore.live/en/matches/",
+    )
+
+    assert pruned is False
+    assert runtime.PROXY_LIST == ["http://last-dead.example:1000"]
+    assert runtime.CURRENT_PROXY == "http://last-dead.example:1000"
+    assert runtime.PROXIES == {
+        "http": "http://last-dead.example:1000",
+        "https": "http://last-dead.example:1000",
+    }
+    assert messages == []
+    assert reset_calls == []
+
+
 def test_validate_live_proxy_requires_generic_connectivity_before_target(monkeypatch) -> None:
     run_calls: List[str] = []
 
