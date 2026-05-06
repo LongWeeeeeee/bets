@@ -14,6 +14,7 @@ from test_networth_dispatch_gates import BranchScenario, _run_branch_scenario, r
 
 ALIGNED_LANE_OUTPUT = ("Top: win 70%", "Bot: win 70%", "Mid: win 70%")
 OPPOSITE_LANE_OUTPUT = ("Top: lose 70%", "Bot: lose 70%", "Mid: lose 70%")
+WEAK_OPPOSITE_LANE_OUTPUT = ("Top: lose 48%", "Bot: win 39%", "Mid: win 39%")
 ALIGNED_LANE_ADV = {
     "pro_lane_advantage": 5.0,
 }
@@ -21,6 +22,32 @@ ALIGNED_LANE_ADV = {
 OPPOSITE_LANE_ADV = {
     "pro_lane_advantage": -5.0,
 }
+
+
+def test_same_sign_lane_adv_guard_ignores_weak_values() -> None:
+    guard = runtime._same_sign_lane_adv_guard(
+        star_sign=1,
+        lane_adv_dict_value=-4.99,
+        lane_adv_protracker_value=-2.99,
+    )
+
+    assert guard["lane_adv_dict_sign"] is None
+    assert guard["lane_adv_protracker_sign"] is None
+    assert guard["opposes_target"] is False
+    assert guard["aligned"] is False
+
+
+def test_same_sign_lane_adv_guard_keeps_strong_values() -> None:
+    guard = runtime._same_sign_lane_adv_guard(
+        star_sign=1,
+        lane_adv_dict_value=-5.0,
+        lane_adv_protracker_value=3.0,
+    )
+
+    assert guard["lane_adv_dict_sign"] == -1
+    assert guard["lane_adv_protracker_sign"] == 1
+    assert guard["opposes_target"] is True
+    assert guard["opposing_sources"] == ["lane_adv_dict"]
 
 
 def _same_sign_case(*, game_time_seconds: int, target_networth_diff: int, metrics_extra: dict) -> BranchScenario:
@@ -247,6 +274,69 @@ def test_no_late_immediate_star_waits_when_lane_adv_dict_opposes_target(monkeypa
     assert result.queued_payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT
     assert result.queued_payload["lane_adv_dict_sign"] == -1
     assert result.queued_payload["lane_adv_protracker_sign"] is None
+
+
+def test_no_late_immediate_star_ignores_weak_lane_adv_dict_opposition(monkeypatch) -> None:
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="weak_lane_dict_guard_neutral",
+            game_time_seconds=38,
+            target_side="radiant",
+            target_networth_diff=647,
+            has_early_star=True,
+            early_sign=1,
+            has_late_star=False,
+            late_sign=-1,
+            has_all_star=True,
+            all_sign=1,
+            expected_send_calls=0,
+            raw_early_output={"counterpick_1vs1": 6, "solo": 4},
+            raw_mid_output={"counterpick_1vs1": 3, "solo": 1},
+            raw_post_lane_output={"counterpick_1vs1": 8, "counterpick_1vs2": 12, "synergy_duo": 8},
+        ),
+        lane_output=WEAK_OPPOSITE_LANE_OUTPUT,
+    )
+
+    assert len(result.sent_messages) == 1
+    assert result.queued_payload is None
+    assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now"
+
+
+def test_no_late_early_and_all_opposite_signs_are_rejected(monkeypatch) -> None:
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="no_late_early_all_opposite_signs_reject",
+            game_time_seconds=12 * 60,
+            target_side="radiant",
+            target_networth_diff=3200,
+            has_early_star=True,
+            early_sign=1,
+            has_late_star=False,
+            late_sign=1,
+            has_all_star=True,
+            all_sign=-1,
+            expected_send_calls=0,
+            raw_early_output={"solo": 3},
+            raw_mid_output={"solo": 0},
+            raw_post_lane_output={"dota2protracker_cp1vs1": -3},
+        ),
+    )
+
+    assert result.sent_messages == []
+    assert result.queued_payload is None
+    assert result.add_url_calls
+    assert result.add_url_calls[-1]["reason"] == "star_signal_rejected_no_late_early_all_opposite_signs"
+    details = result.add_url_calls[-1]["details"]
+    assert isinstance(details, dict)
+    assert details["selected_early_star"] is True
+    assert details["selected_late_star"] is False
+    assert details["selected_all_star"] is True
+    assert details["selected_early_sign"] == 1
+    assert details["selected_all_sign"] == -1
+    assert details["star_dispatch_flags"]["no_late_early_all_opposite_signs"] is True
+    assert details["star_dispatch_flags"]["send_now_no_late_early_or_all"] is False
 
 
 def test_no_late_immediate_star_waits_when_protracker_lane_adv_opposes_target(monkeypatch) -> None:

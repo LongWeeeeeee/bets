@@ -1369,7 +1369,7 @@ def test_build_lane_block_omits_section_when_lanes_missing() -> None:
     )
 
 
-def test_build_lane_dict_adv_line_uses_three_lane_edges() -> None:
+def test_build_lane_dict_adv_line_averages_available_lane_edges() -> None:
     assert (
         runtime._build_lane_dict_adv_line(
             "Top: lose 53%",
@@ -1384,7 +1384,7 @@ def test_build_lane_dict_adv_line_uses_three_lane_edges() -> None:
             "Mid: win 55%",
             "Bot: win 70%",
         )
-        == "lane_adv_dict: +8.00\n"
+        == "lane_adv_dict: +8.67\n"
     )
     assert runtime._build_lane_dict_adv_line("Top: None", "", None) == ""
 
@@ -1416,7 +1416,7 @@ def test_pipeline_probe_message_places_protracker_lane_adv_under_dict() -> None:
         },
     )
 
-    assert "lane_adv_dict: +8.00\nlane_adv_protracker: +4.20" in message
+    assert "lane_adv_dict: +8.67\nlane_adv_protracker: +4.20" in message
     assert "\ndota2protracker:\n" not in message
     assert "cp1vs1: +1.09" not in message
     assert "synergy_duo: -0.68" not in message
@@ -5494,6 +5494,19 @@ def test_star_signal_dispatch_flags_match_new_gate_policy() -> None:
     )
     assert early_or_all_without_late["send_now_immediate"] is True
     assert early_or_all_without_late["late_star_wait_pub_table"] is False
+
+    no_late_early_all_opposite = runtime._star_signal_dispatch_flags(
+        has_early_star=True,
+        early_sign=1,
+        has_late_star=False,
+        late_sign=None,
+        has_all_star=True,
+        all_sign=-1,
+    )
+    assert no_late_early_all_opposite["send_now_immediate"] is False
+    assert no_late_early_all_opposite["send_now_no_late_early_or_all"] is False
+    assert no_late_early_all_opposite["no_late_early_all_opposite_signs"] is True
+    assert no_late_early_all_opposite["late_star_wait_pub_table"] is False
 
     late_all_same_sign = runtime._star_signal_dispatch_flags(
         has_early_star=False,

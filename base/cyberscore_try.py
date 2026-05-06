@@ -2147,24 +2147,25 @@ def _format_metric_value(value: float) -> str:
 
 
 LANE_ADV_DICT_CONFIDENCE_BASELINE = 39.0
-LANE_ADV_DICT_WEIGHTS = {
-    "top": 1.0,
-    "mid": 0.75,
-    "bot": 1.0,
-}
+LANE_ADV_DICT_SIGN_MIN_ABS = 5.0
+LANE_ADV_PROTRACKER_SIGN_MIN_ABS = 3.0
 
 
-def _numeric_sign(value: Any) -> Optional[int]:
+def _numeric_sign(value: Any, *, min_abs: float = 1e-9) -> Optional[int]:
     try:
         numeric = float(value)
     except (TypeError, ValueError):
         return None
-    if not math.isfinite(numeric) or abs(numeric) < 1e-9:
+    try:
+        threshold = max(0.0, float(min_abs))
+    except (TypeError, ValueError):
+        threshold = 1e-9
+    if not math.isfinite(numeric) or abs(numeric) < max(threshold, 1e-9):
         return None
     return 1 if numeric > 0 else -1
 
 
-def _lane_prediction_edge_for_adv(raw: Any) -> Optional[float]:
+def _lane_prediction_outcome_confidence_for_adv(raw: Any) -> Optional[Tuple[str, float]]:
     if raw is None:
         return None
     if isinstance(raw, dict):
@@ -2172,16 +2173,9 @@ def _lane_prediction_edge_for_adv(raw: Any) -> Optional[float]:
         outcome = str(raw.get("outcome") or "").strip().lower()
         if outcome == "loose":
             outcome = "lose"
-        if confidence is None or not outcome:
+        if confidence is None or outcome not in {"win", "lose", "draw"}:
             return None
-        if outcome == "draw":
-            return 0.0
-        edge = max(0.0, confidence - LANE_ADV_DICT_CONFIDENCE_BASELINE)
-        if outcome == "win":
-            return edge
-        if outcome == "lose":
-            return -edge
-        return None
+        return outcome, confidence
     cleaned = str(raw).strip()
     if not cleaned:
         return None
@@ -2197,6 +2191,16 @@ def _lane_prediction_edge_for_adv(raw: Any) -> Optional[float]:
         confidence = float(parts[1].rstrip("%"))
     except (TypeError, ValueError):
         return None
+    if outcome not in {"win", "lose", "draw"}:
+        return None
+    return outcome, confidence
+
+
+def _lane_prediction_edge_for_adv(raw: Any) -> Optional[float]:
+    parsed = _lane_prediction_outcome_confidence_for_adv(raw)
+    if parsed is None:
+        return None
+    outcome, confidence = parsed
     if outcome == "draw":
         return 0.0
     edge = max(0.0, confidence - LANE_ADV_DICT_CONFIDENCE_BASELINE)
@@ -2209,22 +2213,18 @@ def _lane_prediction_edge_for_adv(raw: Any) -> Optional[float]:
 
 def _lane_dict_adv_value(top: Any, mid: Any, bot: Any) -> Optional[float]:
     lane_inputs = (
-        ("top", top),
-        ("mid", mid),
-        ("bot", bot),
+        top,
+        mid,
+        bot,
     )
-    weighted_sum = 0.0
-    has_lane_data = False
-    for lane_name, raw in lane_inputs:
+    lane_edges: List[float] = []
+    for raw in lane_inputs:
         edge = _lane_prediction_edge_for_adv(raw)
-        if edge is None:
-            continue
-        has_lane_data = True
-        weighted_sum += edge * float(LANE_ADV_DICT_WEIGHTS.get(lane_name, 1.0))
-    if not has_lane_data:
+        if edge is not None:
+            lane_edges.append(edge)
+    if not lane_edges:
         return None
-    weight_total = sum(float(weight) for weight in LANE_ADV_DICT_WEIGHTS.values()) or 1.0
-    return weighted_sum / weight_total
+    return sum(lane_edges) / len(lane_edges)
 
 
 def _build_lane_dict_adv_line(top: Any, mid: Any, bot: Any) -> str:
@@ -2493,6 +2493,24 @@ def _dispatch_mode_reason_label(dispatch_mode: Optional[str]) -> str:
     return mapping.get(mode, mode or "unknown")
 
 
+def _no_late_early_all_opposite_signs(
+    *,
+    has_early_star: bool,
+    early_sign: Optional[int],
+    has_late_star: bool,
+    has_all_star: bool,
+    all_sign: Optional[int],
+) -> bool:
+    return bool(
+        not has_late_star
+        and has_early_star
+        and has_all_star
+        and early_sign in (-1, 1)
+        and all_sign in (-1, 1)
+        and early_sign != all_sign
+    )
+
+
 def _star_signal_dispatch_flags(
     *,
     has_early_star: bool,
@@ -2519,10 +2537,18 @@ def _star_signal_dispatch_flags(
         and all_sign == late_sign
     )
     late_early_or_all_same_sign = bool(late_early_same_sign or late_all_same_sign)
+    no_late_early_all_opposite = _no_late_early_all_opposite_signs(
+        has_early_star=has_early_star,
+        early_sign=early_sign,
+        has_late_star=has_late_star,
+        has_all_star=has_all_star,
+        all_sign=all_sign,
+    )
     no_late_early_or_all = bool(
         not force_odds_signal_test_active
         and not has_late_star
         and (has_early_star or has_all_star)
+        and not no_late_early_all_opposite
     )
     send_now = bool(
         force_odds_signal_test_active
@@ -2539,6 +2565,7 @@ def _star_signal_dispatch_flags(
         "send_now_late_all_same_sign": late_all_same_sign,
         "send_now_late_early_or_all_same_sign": late_early_or_all_same_sign,
         "send_now_no_late_early_or_all": no_late_early_or_all,
+        "no_late_early_all_opposite_signs": no_late_early_all_opposite,
         "send_now_immediate": send_now,
         "late_star_wait_pub_table": late_wait_pub_table,
     }
@@ -2555,11 +2582,19 @@ def _star_match_status_from_diags(
     has_all_star = bool((all_diag or {}).get("valid"))
     if not (has_early_star or has_late_star or has_all_star):
         return "skip_no_valid_star_block"
-    if not has_late_star:
-        return "send_or_monitor_non_late_star"
     early_sign = early_diag.get("sign") if has_early_star else None
     late_sign = late_diag.get("sign") if has_late_star else None
     all_sign = (all_diag or {}).get("sign") if has_all_star else None
+    if _no_late_early_all_opposite_signs(
+        has_early_star=has_early_star,
+        early_sign=early_sign,
+        has_late_star=has_late_star,
+        has_all_star=has_all_star,
+        all_sign=all_sign,
+    ):
+        return "skip_no_late_early_all_opposite_signs"
+    if not has_late_star:
+        return "send_or_monitor_non_late_star"
     all_can_replace_missing_early = bool(
         not has_early_star
         and has_all_star
@@ -3847,8 +3882,8 @@ def _same_sign_lane_adv_guard(
     lane_adv_protracker_value: Optional[float],
 ) -> Dict[str, Any]:
     star_side = _target_side_from_sign(star_sign)
-    dict_sign = _numeric_sign(lane_adv_dict_value)
-    protracker_sign = _numeric_sign(lane_adv_protracker_value)
+    dict_sign = _numeric_sign(lane_adv_dict_value, min_abs=LANE_ADV_DICT_SIGN_MIN_ABS)
+    protracker_sign = _numeric_sign(lane_adv_protracker_value, min_abs=LANE_ADV_PROTRACKER_SIGN_MIN_ABS)
     opposing_sources: List[str] = []
     if star_sign in (-1, 1):
         if dict_sign == -int(star_sign):
@@ -3865,8 +3900,10 @@ def _same_sign_lane_adv_guard(
         "star_side": star_side,
         "lane_adv_dict": lane_adv_dict_value,
         "lane_adv_dict_sign": dict_sign,
+        "lane_adv_dict_sign_min_abs": LANE_ADV_DICT_SIGN_MIN_ABS,
         "lane_adv_protracker": lane_adv_protracker_value,
         "lane_adv_protracker_sign": protracker_sign,
+        "lane_adv_protracker_sign_min_abs": LANE_ADV_PROTRACKER_SIGN_MIN_ABS,
         "opposes_target": bool(opposing_sources),
         "opposing_sources": opposing_sources,
         "aligned": bool(
@@ -18505,8 +18542,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             early_core_conflict = bool(early_core_same_or_zero_diag.get("conflicting_metrics"))
             # Dispatch policy:
             # 1) late STAR + early STAR same sign -> send now
-            # 2) no late STAR, but early/all STAR exists -> send now
-            # 3) late STAR without same-sign early -> wait until 20:30 and use pub comeback table
+            # 2) no late STAR, but early/all STAR exists without early/all conflict -> send now
+            # 3) no late STAR with opposite-sign early/all -> reject
+            # 4) late STAR without same-sign early -> wait until 20:30 and use pub comeback table
             star_dispatch_flags = _star_signal_dispatch_flags(
                 has_early_star=has_selected_early_star,
                 early_sign=selected_early_sign,
@@ -18856,6 +18894,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             send_now_late_star_early_core_same_sign = False
             early65_gate_active = False
             send_now_immediate = bool(star_dispatch_flags["send_now_immediate"])
+            no_late_early_all_opposite_signs = bool(
+                star_dispatch_flags["no_late_early_all_opposite_signs"]
+            )
             dispatch_mode = (
                 "immediate_force_odds_signal_test"
                 if force_odds_signal_test_active
@@ -18915,6 +18956,39 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     },
                 )
                 print("   ✅ map_id_check.txt обновлен: add_url после отказа no-valid-star-block")
+                return return_status
+
+            if (
+                not force_odds_signal_test_active
+                and no_late_early_all_opposite_signs
+            ):
+                print(
+                    "   ⚠️ ВЕРДИКТ: ОТКАЗ "
+                    "(нет late STAR, early/all в разных знаках) - матч пропущен"
+                )
+                print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
+                add_url(
+                    check_uniq_url,
+                    reason="star_signal_rejected_no_late_early_all_opposite_signs",
+                    details={
+                        "status": status,
+                        "dispatch_mode": "rejected_no_late_early_all_opposite_signs",
+                        "selected_star_wr": selected_star_wr,
+                        "selected_star_mode": selected_star_mode,
+                        "selected_early_star": bool(has_selected_early_star),
+                        "selected_late_star": bool(has_selected_late_star),
+                        "selected_all_star": bool(has_selected_all_star),
+                        "selected_early_sign": selected_early_sign,
+                        "selected_late_sign": selected_late_sign,
+                        "selected_all_sign": selected_all_sign,
+                        "selected_early_diag": selected_early_diag,
+                        "selected_late_diag": selected_late_diag,
+                        "selected_all_diag": selected_all_diag,
+                        "star_dispatch_flags": dict(star_dispatch_flags),
+                        "json_retry_errors": json_retry_errors,
+                    },
+                )
+                print("   ✅ map_id_check.txt обновлен: add_url после отказа no-late early/all opposite")
                 return return_status
 
             if top25_late_elo_block_override_active and verbose_match_log:
