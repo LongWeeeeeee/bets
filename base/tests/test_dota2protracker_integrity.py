@@ -45,7 +45,7 @@ def _add_precise_synergy(
     pos1_num = protracker.POSITION_MAP[pos1]
     pos2_num = protracker.POSITION_MAP[pos2]
     entry = hero_data.setdefault(hero1_key, {"_synergies_by_hero_pos": {}})
-    entry["_synergies_by_hero_pos"].setdefault(hero2_key, {}).setdefault(pos2_num, {})[pos1_num] = {
+    entry.setdefault("_synergies_by_hero_pos", {}).setdefault(hero2_key, {}).setdefault(pos2_num, {})[pos1_num] = {
         "wr": wr,
         "games": games,
     }
@@ -112,6 +112,51 @@ def test_global_pro_cp1vs1_rejects_one_of_three_core_matchups() -> None:
     assert data["required_core_vs_core"] == 2
     assert data["radiant_core_vs_core_coverage"]["pos3"] == 1
     assert data["dire_core_vs_core_coverage"]["pos3"] == 1
+
+
+def test_global_pro_cp1vs1_core_support_mode_uses_role_position_variants() -> None:
+    radiant, dire = _pro_core_sides()
+    hero_data: dict = {}
+
+    role_variant_pairs = {
+        ("pos1", "pos1"): ("pos3", "pos3"),
+        ("pos1", "pos2"): ("pos3", "pos2"),
+        ("pos2", "pos1"): ("pos2", "pos3"),
+        ("pos2", "pos3"): ("pos2", "pos1"),
+        ("pos3", "pos2"): ("pos1", "pos2"),
+        ("pos3", "pos3"): ("pos1", "pos1"),
+    }
+    for (radiant_pos, dire_pos), (stored_radiant_pos, stored_dire_pos) in role_variant_pairs.items():
+        _add_precise_matchup(
+            hero_data,
+            dict(radiant)[radiant_pos],
+            dict(dire)[dire_pos],
+            stored_radiant_pos,
+            stored_dire_pos,
+            wr=61.0,
+            games=20,
+        )
+
+    exact_valid, exact_data = protracker._calculate_cp1vs1_all_positions(
+        radiant_positions=radiant,
+        dire_positions=dire,
+        hero_data=hero_data,
+        min_games=10,
+    )
+    role_valid, role_data = protracker._calculate_cp1vs1_all_positions(
+        radiant_positions=radiant,
+        dire_positions=dire,
+        hero_data=hero_data,
+        min_games=10,
+        core_support_side_lanes=True,
+    )
+
+    assert exact_valid is False
+    assert exact_data["count"] == 0
+    assert role_valid is True
+    assert role_data["count"] == 6
+    assert role_data["radiant_core_vs_core_coverage"] == {"pos1": 2, "pos2": 2, "pos3": 2}
+    assert role_data["dire_core_vs_core_coverage"] == {"pos1": 2, "pos2": 2, "pos3": 2}
 
 
 def test_global_pro_duo_synergy_accepts_reverse_hero_page_direction() -> None:
@@ -322,3 +367,77 @@ def test_calculate_lane_advantage_uses_team_specific_lane_pairs(monkeypatch) -> 
 
     assert result["top"]["cp1vs1"] != -result["bot"]["cp1vs1"]
     assert result["top"]["duo"] != -result["bot"]["duo"]
+
+
+def test_calculate_lane_advantage_core_support_mode_uses_side_role_variants() -> None:
+    radiant_positions = [
+        ("pos1", "RadiantCarry"),
+        ("pos2", "RadiantMid"),
+        ("pos3", "RadiantOfflane"),
+        ("pos4", "RadiantSoft"),
+        ("pos5", "RadiantHard"),
+    ]
+    dire_positions = [
+        ("pos1", "DireCarry"),
+        ("pos2", "DireMid"),
+        ("pos3", "DireOfflane"),
+        ("pos4", "DireSoft"),
+        ("pos5", "DireHard"),
+    ]
+    hero_data: dict = {}
+
+    for radiant_hero, dire_hero, stored_radiant_pos, stored_dire_pos, wr in (
+        ("RadiantOfflane", "DireCarry", "pos1", "pos3", 61.0),
+        ("RadiantOfflane", "DireHard", "pos1", "pos4", 62.0),
+        ("RadiantSoft", "DireCarry", "pos5", "pos3", 63.0),
+        ("RadiantSoft", "DireHard", "pos5", "pos4", 64.0),
+    ):
+        _add_precise_matchup(
+            hero_data,
+            radiant_hero,
+            dire_hero,
+            stored_radiant_pos,
+            stored_dire_pos,
+            wr=wr,
+            games=20,
+        )
+
+    _add_precise_synergy(
+        hero_data,
+        "RadiantOfflane",
+        "RadiantSoft",
+        "pos1",
+        "pos5",
+        wr=60.0,
+        games=20,
+    )
+    _add_precise_synergy(
+        hero_data,
+        "DireCarry",
+        "DireHard",
+        "pos3",
+        "pos4",
+        wr=52.0,
+        games=20,
+    )
+
+    exact_result = protracker.calculate_lane_advantage(
+        radiant_positions=radiant_positions,
+        dire_positions=dire_positions,
+        hero_data=hero_data,
+        min_games=10,
+    )
+    role_result = protracker.calculate_lane_advantage(
+        radiant_positions=radiant_positions,
+        dire_positions=dire_positions,
+        hero_data=hero_data,
+        min_games=10,
+        core_support_side_lanes=True,
+    )
+
+    assert exact_result["top"]["cp1vs1_valid"] is False
+    assert exact_result["top"]["duo_valid"] is False
+    assert role_result["top"]["cp1vs1_valid"] is True
+    assert role_result["top"]["duo_valid"] is True
+    assert role_result["top"]["cp1vs1"] == 12.5
+    assert role_result["top"]["duo"] == 8.0

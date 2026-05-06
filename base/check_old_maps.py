@@ -520,7 +520,8 @@ def _protracker_metrics_for_match(radiant_draft: dict, dire_draft: dict, hero_da
         return result
 
     cp_valid, cp_data = dota2protracker._calculate_cp1vs1_all_positions(
-        radiant_positions, dire_positions, hero_data, min_games
+        radiant_positions, dire_positions, hero_data, min_games,
+        core_support_side_lanes=True,
     )
     result["pro_cp1vs1_valid"] = bool(cp_valid)
     result["pro_cp1vs1_reason"] = "ok" if cp_valid else "insufficient_core_vs_core_coverage"
@@ -545,7 +546,8 @@ def _protracker_metrics_for_match(radiant_draft: dict, dire_draft: dict, hero_da
         result["pro_duo_synergy_late"] = duo_score
 
     lane_data = dota2protracker.calculate_lane_advantage(
-        radiant_positions, dire_positions, hero_data, min_games
+        radiant_positions, dire_positions, hero_data, min_games,
+        core_support_side_lanes=True,
     )
     result.update(
         {
