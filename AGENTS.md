@@ -4,10 +4,12 @@
 
 ## Runtime Rules
 
+- Agents must not take initiative beyond the user's requested task or explicit instructions in project `.md` files; complete the requested task and nothing more.
+- If the user's request is ambiguous, the agent is unsure, or the user appears to have made a logical mistake, ask the user before acting.
 - Always use `/Users/alex/Documents/ingame/venv_catboost/bin/python3` locally.
 - Do not create or use a different virtualenv.
 - Do not start or restart the local `base/cyberscore_try.py` live runtime unless the user explicitly asks.
-- For any live runtime restart, first kill old `cyberscore` processes and clear `~/.local/state/ingame/map_id_check.txt`.
+- For any live runtime restart, first kill old `cyberscore` processes, clear `~/.local/state/ingame/map_id_check.txt`, and truncate the active server log (`/root/main/log.txt`) before starting the new process.
 - After code changes in the `cyberscore` live pipeline (`base/cyberscore_try.py`, `base/functions.py`, `base/dota2protracker.py`, bookmaker/live dispatch logic), push the git commit to `main`, pull the new code on production, kill the old server process, clear `~/.local/state/ingame/map_id_check.txt`, and restart the server runtime with the new code.
 - When pruning dead proxies in `base/keys.py`, only remove them from runtime proxy constants/pools; do not delete or edit `api_to_proxy` / `api_to_keys` entries or their API keys.
 - Production server: `root@147.45.216.225`, project path `/root/main`.
