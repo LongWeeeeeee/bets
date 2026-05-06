@@ -1759,6 +1759,132 @@ def test_cyberscore_proxy_parser_accepts_host_first_credentials() -> None:
     }
 
 
+def test_init_proxy_pool_prunes_dead_live_proxies_and_keeps_alive(monkeypatch) -> None:
+    messages: List[str] = []
+    validation_calls: List[str] = []
+
+    def _fake_validate(proxy, **_kwargs):
+        validation_calls.append(proxy)
+        return {
+            "ok": proxy == "http://live.example:2000",
+            "attempts": 3,
+            "reason": "http 200" if proxy == "http://live.example:2000" else "connection refused",
+        }
+
+    monkeypatch.setattr(runtime, "PROXY_LIST", ["http://dead.example:1000", "http://live.example:2000"], raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY_INDEX", 0, raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY", None, raising=False)
+    monkeypatch.setattr(runtime, "PROXIES", {}, raising=False)
+    monkeypatch.setattr(runtime, "USE_PROXY", None, raising=False)
+    monkeypatch.setattr(runtime, "CYBERSCORE_CAMOUFOX_PROXY_URL", "", raising=False)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_PREFLIGHT_ENABLED", True, raising=False)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_PREFLIGHT_ATTEMPTS", 3, raising=False)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_EMPTY_POOL_FATAL", True, raising=False)
+    monkeypatch.setattr(runtime, "_validate_live_proxy", _fake_validate)
+    monkeypatch.setattr(runtime, "send_message", lambda text, **_kwargs: messages.append(text))
+
+    runtime._init_proxy_pool(True)
+
+    assert validation_calls == ["http://dead.example:1000", "http://live.example:2000"]
+    assert runtime.PROXY_LIST == ["http://live.example:2000"]
+    assert runtime.CURRENT_PROXY == "http://live.example:2000"
+    assert runtime.PROXIES == {
+        "http": "http://live.example:2000",
+        "https": "http://live.example:2000",
+    }
+    assert messages == []
+
+
+def test_init_proxy_pool_exits_and_alerts_when_all_live_proxies_dead(monkeypatch) -> None:
+    messages: List[str] = []
+
+    monkeypatch.setattr(
+        runtime,
+        "PROXY_LIST",
+        [
+            "http://user:secret@dead-one.example:1000",
+            "http://user:secret@dead-two.example:2000",
+        ],
+        raising=False,
+    )
+    monkeypatch.setattr(runtime, "CURRENT_PROXY_INDEX", 0, raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY", None, raising=False)
+    monkeypatch.setattr(runtime, "PROXIES", {}, raising=False)
+    monkeypatch.setattr(runtime, "USE_PROXY", None, raising=False)
+    monkeypatch.setattr(runtime, "CYBERSCORE_CAMOUFOX_PROXY_URL", "", raising=False)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_PREFLIGHT_ENABLED", True, raising=False)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_PREFLIGHT_ATTEMPTS", 3, raising=False)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_EMPTY_POOL_FATAL", True, raising=False)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_EMPTY_POOL_ALERT_SENT", False, raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "_validate_live_proxy",
+        lambda proxy, **_kwargs: {"ok": False, "attempts": 3, "reason": "connection refused"},
+    )
+    monkeypatch.setattr(runtime, "send_message", lambda text, **_kwargs: messages.append(text))
+
+    with pytest.raises(SystemExit) as exc_info:
+        runtime._init_proxy_pool(True)
+
+    assert exc_info.value.code == 2
+    assert runtime.PROXY_LIST == []
+    assert messages
+    assert "Все live proxies мертвы" in messages[0]
+    assert "secret" not in messages[0]
+
+
+def test_cyberscore_proxy_kwargs_uses_pruned_live_pool_not_raw_dltv_pool(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "CYBERSCORE_CAMOUFOX_REQUIRE_PROXY", True, raising=False)
+    monkeypatch.setattr(runtime, "CYBERSCORE_CAMOUFOX_PROXY_URL", "", raising=False)
+    monkeypatch.setattr(runtime, "USE_PROXY", True, raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY", None, raising=False)
+    monkeypatch.setattr(runtime, "DLTV_PROXY_POOL", ["http://user:secret@dead.example:1000"], raising=False)
+    monkeypatch.setattr(runtime, "PROXY_LIST", ["http://user:secret@live.example:2000"], raising=False)
+
+    proxy_kwargs = runtime._cyberscore_camoufox_proxy_kwargs()
+
+    assert proxy_kwargs["proxy"]["server"] == "http://live.example:2000"
+
+
+def test_runtime_dead_proxy_error_prunes_current_live_proxy(monkeypatch) -> None:
+    reset_calls: List[str] = []
+
+    monkeypatch.setattr(runtime, "PROXY_LIST", ["http://dead.example:1000", "http://live.example:2000"], raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY_INDEX", 0, raising=False)
+    monkeypatch.setattr(runtime, "CURRENT_PROXY", "http://dead.example:1000", raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "PROXIES",
+        {"http": "http://dead.example:1000", "https": "http://dead.example:1000"},
+        raising=False,
+    )
+    monkeypatch.setattr(runtime, "USE_PROXY", True, raising=False)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_RUNTIME_PRUNE_ENABLED", True, raising=False)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_PREFLIGHT_ATTEMPTS", 3, raising=False)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_EMPTY_POOL_FATAL", True, raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "_validate_live_proxy",
+        lambda proxy, **_kwargs: {"ok": False, "attempts": 3, "reason": "connection refused"},
+    )
+    monkeypatch.setattr(runtime._shared_camoufox_session, "request_reset", lambda: reset_calls.append("reset"))
+
+    pruned = runtime._prune_current_live_proxy_if_dead(
+        "Page.goto: NS_ERROR_PROXY_CONNECTION_REFUSED",
+        source_label="Camoufox",
+        target_url="https://cyberscore.live/en/matches/",
+    )
+
+    assert pruned is True
+    assert runtime.PROXY_LIST == ["http://live.example:2000"]
+    assert runtime.CURRENT_PROXY == "http://live.example:2000"
+    assert runtime.PROXIES == {
+        "http": "http://live.example:2000",
+        "https": "http://live.example:2000",
+    }
+    assert reset_calls == ["reset"]
+
+
 def test_cyberscore_long_page_job_does_not_reset_shared_browser(monkeypatch) -> None:
     calls: List[Dict[str, Any]] = []
 

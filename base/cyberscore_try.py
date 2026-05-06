@@ -7159,6 +7159,19 @@ TELEGRAM_ADMIN_COMMAND_POLL_INTERVAL_SECONDS = _safe_float_env(
     15.0,
 )
 PROXY_POOL_ROTATION_ROUNDS = max(1, _safe_int_env("PROXY_POOL_ROTATION_ROUNDS", 3))
+LIVE_PROXY_PREFLIGHT_ENABLED = _safe_bool_env("LIVE_PROXY_PREFLIGHT_ENABLED", True)
+LIVE_PROXY_PREFLIGHT_ATTEMPTS = max(1, _safe_int_env("LIVE_PROXY_PREFLIGHT_ATTEMPTS", 3))
+LIVE_PROXY_PREFLIGHT_TIMEOUT_SECONDS = max(
+    1.0,
+    _safe_float_env("LIVE_PROXY_PREFLIGHT_TIMEOUT_SECONDS", 12.0),
+)
+LIVE_PROXY_PREFLIGHT_URL = (
+    str(os.getenv("LIVE_PROXY_PREFLIGHT_URL", CYBERSCORE_MATCHES_URL)).strip()
+    or CYBERSCORE_MATCHES_URL
+)
+LIVE_PROXY_RUNTIME_PRUNE_ENABLED = _safe_bool_env("LIVE_PROXY_RUNTIME_PRUNE_ENABLED", True)
+LIVE_PROXY_EMPTY_POOL_FATAL = _safe_bool_env("LIVE_PROXY_EMPTY_POOL_FATAL", True)
+LIVE_PROXY_EMPTY_POOL_ALERT_SENT = False
 
 
 def _env_use_proxy_default() -> bool:
@@ -7228,6 +7241,309 @@ def _perform_http_get(
         timeout=timeout,
         proxies=proxies,
     )
+
+
+def _proxy_url_for_http_client(proxy_url: Any) -> str:
+    candidate = str(proxy_url or "").strip()
+    if not candidate:
+        return ""
+    if "://" in candidate:
+        return candidate
+    host_first = re.match(
+        r"^(?P<host>[^:@/\s]+):(?P<port>\d+)@(?P<username>[^:@/\s]+):(?P<password>.+)$",
+        candidate,
+    )
+    if host_first:
+        return (
+            f"http://{host_first.group('username')}:{host_first.group('password')}"
+            f"@{host_first.group('host')}:{host_first.group('port')}"
+        )
+    return f"http://{candidate}"
+
+
+def _redact_proxy_url(proxy_url: Any) -> str:
+    raw_value = str(proxy_url or "").strip()
+    if not raw_value:
+        return ""
+    host_first = re.match(
+        r"^(?P<host>[^:@/\s]+):(?P<port>\d+)@(?P<username>[^:@/\s]+):(?P<password>.+)$",
+        raw_value,
+    )
+    if host_first:
+        return f"http://***:***@{host_first.group('host')}:{host_first.group('port')}"
+    candidate = _proxy_url_for_http_client(raw_value)
+    try:
+        parsed = urlparse(candidate)
+    except Exception:
+        return "<proxy>"
+    host = parsed.hostname or raw_value.split("@")[-1].split("/")[0]
+    port = f":{parsed.port}" if parsed.port else ""
+    scheme = parsed.scheme or "http"
+    if parsed.username or parsed.password:
+        return f"{scheme}://***:***@{host}{port}"
+    return f"{scheme}://{host}{port}"
+
+
+def _sanitize_proxy_error_text(text: Any, proxy_url: Any) -> str:
+    value = str(text or "").strip()
+    if not value:
+        return ""
+    raw_proxy = str(proxy_url or "").strip()
+    normalized_proxy = _proxy_url_for_http_client(raw_proxy)
+    for token in {raw_proxy, normalized_proxy}:
+        if token:
+            value = value.replace(token, "<proxy>")
+    return value[:400]
+
+
+def _validate_live_proxy_once(proxy_url: Any, target_url: Optional[str] = None) -> Tuple[bool, str]:
+    proxy_value = _proxy_url_for_http_client(proxy_url)
+    if not proxy_value:
+        return False, "empty proxy"
+    url = str(target_url or LIVE_PROXY_PREFLIGHT_URL or CYBERSCORE_MATCHES_URL).strip()
+    timeout_seconds = max(1.0, float(LIVE_PROXY_PREFLIGHT_TIMEOUT_SECONDS or 1.0))
+    curl_path = shutil.which("curl")
+    if curl_path:
+        command = [
+            curl_path,
+            "-L",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            str(timeout_seconds),
+            "--connect-timeout",
+            str(min(timeout_seconds, 5.0)),
+            "--proxy",
+            proxy_value,
+            "-o",
+            os.devnull,
+            "-w",
+            "%{http_code}",
+            url,
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds + 3.0,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            reason = _sanitize_proxy_error_text(exc.stderr or exc.stdout or "curl timeout", proxy_value)
+            return False, reason or "curl timeout"
+        http_code = (completed.stdout or "").strip()
+        stderr = _sanitize_proxy_error_text(completed.stderr, proxy_value)
+        if completed.returncode == 0 and http_code and http_code != "000":
+            return True, f"http {http_code}"
+        reason = stderr or (f"curl exit {completed.returncode}, http {http_code or '000'}")
+        return False, reason
+    try:
+        response = _perform_http_get(
+            url,
+            headers=_matches_request_headers(None),
+            verify=False,
+            timeout=timeout_seconds,
+            proxies={"http": proxy_value, "https": proxy_value},
+        )
+    except _http_request_exceptions() as exc:
+        return False, _sanitize_proxy_error_text(f"{type(exc).__name__}: {exc}", proxy_value)
+    return True, f"http {getattr(response, 'status_code', 'unknown')}"
+
+
+def _validate_live_proxy(
+    proxy_url: Any,
+    *,
+    attempts: Optional[int] = None,
+    target_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    max_attempts = max(1, int(attempts or LIVE_PROXY_PREFLIGHT_ATTEMPTS or 1))
+    last_reason = ""
+    for attempt_index in range(max_attempts):
+        ok, reason = _validate_live_proxy_once(proxy_url, target_url=target_url)
+        if ok:
+            return {"ok": True, "attempts": attempt_index + 1, "reason": reason}
+        last_reason = reason
+        if attempt_index + 1 < max_attempts:
+            time.sleep(0.25)
+    return {"ok": False, "attempts": max_attempts, "reason": last_reason}
+
+
+def _set_active_proxy_from_pool(index: int = 0) -> None:
+    global CURRENT_PROXY_INDEX, CURRENT_PROXY, PROXIES
+    if not USE_PROXY or not PROXY_LIST:
+        CURRENT_PROXY_INDEX = 0
+        CURRENT_PROXY = None
+        PROXIES = {}
+        return
+    CURRENT_PROXY_INDEX = max(0, min(int(index or 0), len(PROXY_LIST) - 1))
+    CURRENT_PROXY = PROXY_LIST[CURRENT_PROXY_INDEX]
+    PROXIES = {"http": CURRENT_PROXY, "https": CURRENT_PROXY}
+
+
+def _format_dead_live_proxy_diagnostics(dead_proxies: List[Dict[str, Any]], *, limit: int = 6) -> str:
+    if not dead_proxies:
+        return ""
+    lines = []
+    for item in dead_proxies[: max(1, int(limit or 1))]:
+        proxy_label = _redact_proxy_url(item.get("proxy"))
+        attempts = item.get("attempts")
+        reason = str(item.get("reason") or "").strip()
+        if reason:
+            lines.append(f"- {proxy_label} ({attempts}x): {reason[:160]}")
+        else:
+            lines.append(f"- {proxy_label} ({attempts}x)")
+    if len(dead_proxies) > len(lines):
+        lines.append(f"- ... ещё {len(dead_proxies) - len(lines)}")
+    return "\n".join(lines)
+
+
+def _fatal_live_proxy_pool_empty(reason: str, dead_proxies: Optional[List[Dict[str, Any]]] = None) -> None:
+    global LIVE_PROXY_EMPTY_POOL_ALERT_SENT
+    dead_proxies = list(dead_proxies or [])
+    diagnostics = _format_dead_live_proxy_diagnostics(dead_proxies)
+    message = (
+        "🚨 Все live proxies мертвы. Останавливаю cyberscore runtime.\n"
+        f"Причина: {reason}"
+    )
+    if diagnostics:
+        message += "\n" + diagnostics
+    print(message)
+    logger.error("All live proxies are dead; stopping runtime: %s", reason)
+    if not LIVE_PROXY_EMPTY_POOL_ALERT_SENT:
+        try:
+            send_message(message, admin_only=True, mirror_to_vk=False)
+        except Exception as exc:
+            print(f"⚠️ Не удалось отправить Telegram-alert про мертвые live proxy: {exc}")
+            logger.warning("Failed to send live proxy fatal alert: %s", exc)
+        LIVE_PROXY_EMPTY_POOL_ALERT_SENT = True
+    with contextlib.suppress(Exception):
+        _release_runtime_instance_lock()
+    raise SystemExit(2)
+
+
+def _prune_dead_live_proxy_pool(*, context: str = "startup") -> List[Dict[str, Any]]:
+    global PROXY_LIST
+    if not USE_PROXY or not PROXY_LIST or not LIVE_PROXY_PREFLIGHT_ENABLED:
+        return []
+    original_pool = [str(proxy).strip() for proxy in PROXY_LIST if str(proxy or "").strip()]
+    if not original_pool:
+        PROXY_LIST = []
+        if LIVE_PROXY_EMPTY_POOL_FATAL:
+            _fatal_live_proxy_pool_empty(f"{context}: live proxy pool is empty", [])
+        return []
+    print(
+        "🔎 Проверяю live proxy pool перед основным циклом: "
+        f"{len(original_pool)} прокси, attempts={LIVE_PROXY_PREFLIGHT_ATTEMPTS}"
+    )
+    alive: List[str] = []
+    dead: List[Dict[str, Any]] = []
+    for proxy in original_pool:
+        result = _validate_live_proxy(
+            proxy,
+            attempts=LIVE_PROXY_PREFLIGHT_ATTEMPTS,
+            target_url=LIVE_PROXY_PREFLIGHT_URL,
+        )
+        if result.get("ok"):
+            alive.append(proxy)
+            print(f"✅ Live proxy OK: {_redact_proxy_url(proxy)} ({result.get('reason')})")
+            continue
+        dead_item = {
+            "proxy": proxy,
+            "attempts": result.get("attempts"),
+            "reason": result.get("reason"),
+        }
+        dead.append(dead_item)
+        print(
+            "🧹 Live proxy removed from runtime pool: "
+            f"{_redact_proxy_url(proxy)} ({result.get('reason')})"
+        )
+    PROXY_LIST = alive
+    if dead:
+        logger.warning(
+            "Pruned %s dead live proxies from runtime pool during %s; alive=%s",
+            len(dead),
+            context,
+            len(PROXY_LIST),
+        )
+    if not PROXY_LIST:
+        _set_active_proxy_from_pool(0)
+        if LIVE_PROXY_EMPTY_POOL_FATAL:
+            _fatal_live_proxy_pool_empty(f"{context}: no live proxies survived preflight", dead)
+    _set_active_proxy_from_pool(0)
+    return dead
+
+
+def _live_proxy_error_looks_dead(exc_or_message: Any) -> bool:
+    message = str(exc_or_message or "")
+    dead_tokens = (
+        "NS_ERROR_PROXY_CONNECTION_REFUSED",
+        "ERR_PROXY_CONNECTION_FAILED",
+        "ERR_TUNNEL_CONNECTION_FAILED",
+        "Cannot connect to proxy",
+        "Failed to connect to",
+        "Couldn't connect to server",
+        "ProxyError",
+        "proxy connection refused",
+        "connection refused",
+        "SSL_ERROR_SYSCALL",
+    )
+    return any(token.lower() in message.lower() for token in dead_tokens)
+
+
+def _prune_current_live_proxy_if_dead(
+    exc_or_message: Any,
+    *,
+    source_label: str,
+    target_url: Optional[str] = None,
+) -> bool:
+    global PROXY_LIST
+    if (
+        not LIVE_PROXY_RUNTIME_PRUNE_ENABLED
+        or not USE_PROXY
+        or not CURRENT_PROXY
+        or not PROXY_LIST
+        or not _live_proxy_error_looks_dead(exc_or_message)
+    ):
+        return False
+    current_proxy = str(CURRENT_PROXY).strip()
+    if current_proxy not in PROXY_LIST:
+        return False
+    result = _validate_live_proxy(
+        current_proxy,
+        attempts=LIVE_PROXY_PREFLIGHT_ATTEMPTS,
+        target_url=target_url or LIVE_PROXY_PREFLIGHT_URL,
+    )
+    if result.get("ok"):
+        print(
+            "✅ Live proxy survived runtime recheck after "
+            f"{source_label}: {_redact_proxy_url(current_proxy)} ({result.get('reason')})"
+        )
+        return False
+    PROXY_LIST = [proxy for proxy in PROXY_LIST if str(proxy).strip() != current_proxy]
+    dead_item = {
+        "proxy": current_proxy,
+        "attempts": result.get("attempts"),
+        "reason": result.get("reason"),
+    }
+    print(
+        "🧹 Live proxy removed after runtime failure: "
+        f"{_redact_proxy_url(current_proxy)} ({result.get('reason')})"
+    )
+    logger.warning(
+        "Removed dead live proxy after %s failure; alive=%s",
+        source_label,
+        len(PROXY_LIST),
+    )
+    if not PROXY_LIST:
+        _set_active_proxy_from_pool(0)
+        if LIVE_PROXY_EMPTY_POOL_FATAL:
+            _fatal_live_proxy_pool_empty(f"{source_label}: current live proxy is dead", [dead_item])
+        return True
+    _set_active_proxy_from_pool(min(CURRENT_PROXY_INDEX, len(PROXY_LIST) - 1))
+    with contextlib.suppress(Exception):
+        _shared_camoufox_session.request_reset()
+    return True
 
 
 def _build_live_series_lookup(series_payload: Any) -> Dict[str, dict]:
@@ -8714,21 +9030,41 @@ def _sleep_interruptible(total_seconds: float, *, raw_odds: Any, label: str) -> 
 def _init_proxy_pool(use_proxy: bool) -> None:
     global CURRENT_PROXY_INDEX, CURRENT_PROXY, PROXIES, USE_PROXY
     USE_PROXY = use_proxy
-    if not use_proxy or not PROXY_LIST:
+    if not use_proxy:
         CURRENT_PROXY_INDEX = 0
         CURRENT_PROXY = None
         PROXIES = {}
         print("🌐 Прокси отключены, используется прямое подключение")
         logger.info("Прокси отключены")
         return
-    CURRENT_PROXY_INDEX = 0
-    CURRENT_PROXY = PROXY_LIST[CURRENT_PROXY_INDEX]
-    PROXIES = {
-        'http': CURRENT_PROXY,
-        'https': CURRENT_PROXY
-    }
-    print(f"🌐 Используется прокси: {CURRENT_PROXY}")
-    logger.info(f"Инициализация прокси: {CURRENT_PROXY} (индекс {CURRENT_PROXY_INDEX})")
+    if not PROXY_LIST:
+        CURRENT_PROXY_INDEX = 0
+        CURRENT_PROXY = None
+        PROXIES = {}
+        if CYBERSCORE_CAMOUFOX_PROXY_URL:
+            print("🌐 Live proxy pool empty; using explicit CyberScore Camoufox proxy")
+            logger.info("Live proxy pool empty; explicit CyberScore proxy is configured")
+            return
+        if CYBERSCORE_CAMOUFOX_REQUIRE_PROXY and LIVE_PROXY_EMPTY_POOL_FATAL:
+            _fatal_live_proxy_pool_empty("startup: live proxy pool is empty", [])
+        print("🌐 Прокси отключены, используется прямое подключение")
+        logger.info("Прокси отключены")
+        return
+    _prune_dead_live_proxy_pool(context="startup")
+    if not PROXY_LIST:
+        CURRENT_PROXY_INDEX = 0
+        CURRENT_PROXY = None
+        PROXIES = {}
+        print("🌐 Прокси отключены, используется прямое подключение")
+        logger.info("Прокси отключены")
+        return
+    _set_active_proxy_from_pool(0)
+    print(f"🌐 Используется прокси: {_redact_proxy_url(CURRENT_PROXY)}")
+    logger.info(
+        "Инициализация прокси: %s (индекс %s)",
+        _redact_proxy_url(CURRENT_PROXY),
+        CURRENT_PROXY_INDEX,
+    )
 
 
 # Инициализация выполняется явно в general() или в main.
@@ -8747,8 +9083,13 @@ def rotate_proxy():
         'https': CURRENT_PROXY
     }
     
-    logger.info(f"🔄 СМЕНА ПРОКСИ: {CURRENT_PROXY} (индекс {CURRENT_PROXY_INDEX}/{len(PROXY_LIST)-1})")
-    print(f"🔄 Переключен прокси: {CURRENT_PROXY}")
+    logger.info(
+        "🔄 СМЕНА ПРОКСИ: %s (индекс %s/%s)",
+        _redact_proxy_url(CURRENT_PROXY),
+        CURRENT_PROXY_INDEX,
+        len(PROXY_LIST) - 1,
+    )
+    print(f"🔄 Переключен прокси: {_redact_proxy_url(CURRENT_PROXY)}")
 
 
 def _get_current_proxy_marker() -> str:
@@ -14537,10 +14878,9 @@ def _camoufox_proxy_kwargs_from_url(proxy_url: str) -> Dict[str, Any]:
 def _cyberscore_camoufox_proxy_kwargs() -> Dict[str, Any]:
     proxy_candidates = [
         CYBERSCORE_CAMOUFOX_PROXY_URL,
-        CURRENT_PROXY,
     ]
-    if isinstance(DLTV_PROXY_POOL, (list, tuple)):
-        proxy_candidates.extend(DLTV_PROXY_POOL)
+    if USE_PROXY and CURRENT_PROXY:
+        proxy_candidates.append(CURRENT_PROXY)
     proxy_candidates.extend(PROXY_LIST)
     proxy_value = next((str(candidate).strip() for candidate in proxy_candidates if str(candidate or "").strip()), "")
     if not proxy_value:
@@ -14589,7 +14929,12 @@ def _cyberscore_handle_transient_fetch_error(target_url: str, exc: BaseException
     print(f"⚠️ CyberScore {source_label} transient fetch issue: {short_error}")
     logger.debug("CyberScore %s transient fetch issue for %s: %s", source_label, target_url, short_error)
     with contextlib.suppress(Exception):
-        if not CYBERSCORE_CAMOUFOX_PROXY_URL and USE_PROXY and PROXY_LIST:
+        pruned = _prune_current_live_proxy_if_dead(
+            exc,
+            source_label=source_label,
+            target_url=target_url,
+        )
+        if not pruned and not CYBERSCORE_CAMOUFOX_PROXY_URL and USE_PROXY and PROXY_LIST:
             rotate_proxy()
     with contextlib.suppress(Exception):
         _shared_camoufox_session.request_reset()
@@ -15078,6 +15423,11 @@ def _get_cyberscore_html_via_long_page(target_url: str) -> Optional[str]:
             _shared_camoufox_session.request_reset()
             print(f"❌ CyberScore long page fetch failed: {short_error}")
             logger.warning("CyberScore long page fetch failed for %s: %s", target_url, short_error)
+            _prune_current_live_proxy_if_dead(
+                exc,
+                source_label="long page",
+                target_url=target_url,
+            )
         return None
 
 
@@ -15142,6 +15492,11 @@ def _get_cyberscore_html_via_one_shot(target_url: str) -> Optional[str]:
             _shared_camoufox_session.request_reset()
             print(f"❌ CyberScore Camoufox fetch failed: {short_error}")
             logger.warning("CyberScore Camoufox fetch failed for %s: %s", target_url, short_error)
+            _prune_current_live_proxy_if_dead(
+                exc,
+                source_label="Camoufox",
+                target_url=target_url,
+            )
         return None
 
 
@@ -15487,6 +15842,11 @@ def _fetch_cyberscore_live_watcher_state(match_url: Optional[str]) -> Optional[D
             _shared_camoufox_session.request_reset()
             print(f"❌ CyberScore live watcher failed: {short_error}")
             logger.warning("CyberScore live watcher failed for %s: %s", target_url, short_error)
+            _prune_current_live_proxy_if_dead(
+                exc,
+                source_label="live watcher",
+                target_url=target_url,
+            )
         return None
 
 

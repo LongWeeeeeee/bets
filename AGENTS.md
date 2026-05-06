@@ -10,6 +10,7 @@
 - Do not create or use a different virtualenv.
 - Do not start or restart the local `base/cyberscore_try.py` live runtime unless the user explicitly asks.
 - For any live runtime restart, first kill old `cyberscore` processes, clear `~/.local/state/ingame/map_id_check.txt`, and truncate the active server log (`/root/main/log.txt`) before starting the new process.
+- Before the live runtime enters its main CyberScore/DLTV loop, validate every live proxy up to 3 times; remove dead proxies from the in-memory live proxy pool immediately so they do not keep cycling or spam logs. Do not delete or edit the API key mappings in `base/keys.py` for this runtime pruning.
 - After code changes in the `cyberscore` live pipeline (`base/cyberscore_try.py`, `base/functions.py`, `base/dota2protracker.py`, bookmaker/live dispatch logic), push the git commit to `main`, pull the new code on production, kill the old server process, clear `~/.local/state/ingame/map_id_check.txt`, and restart the server runtime with the new code.
 - When pruning dead proxies in `base/keys.py`, only remove them from runtime proxy constants/pools; do not delete or edit `api_to_proxy` / `api_to_keys` entries or their API keys.
 - Production server: `root@147.45.216.225`, project path `/root/main`.
