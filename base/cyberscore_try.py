@@ -174,9 +174,11 @@ SKIPPED_LIVE_LEAGUE_TITLES = {
 # Current banned-player denylist:
 # Norma -> 187123736
 # queezy -> 360263638
+# alberkaaa -> 363739653
 SKIPPED_PLAYER_ACCOUNT_IDS = {
     187123736,
     360263638,
+    363739653,
 }
 
 # Импорт Ultimate Inference предсказателя
