@@ -7092,6 +7092,10 @@ CYBERSCORE_LONG_PAGE_MATCH_CACHE_SIZE = max(
     1,
     _safe_int_env("CYBERSCORE_LONG_PAGE_MATCH_CACHE_SIZE", 6),
 )
+CYBERSCORE_LONG_PAGE_TRANSIENT_COOLDOWN_SECONDS = max(
+    0.0,
+    _safe_float_env("CYBERSCORE_LONG_PAGE_TRANSIENT_COOLDOWN_SECONDS", 600.0),
+)
 CYBERSCORE_LONG_PAGE_NETWORK_BLOB_MAX = max(
     0,
     _safe_int_env("CYBERSCORE_LONG_PAGE_NETWORK_BLOB_MAX", 20),
@@ -15317,6 +15321,7 @@ def _absolute_cyberscore_url(href: str) -> str:
 
 _CYBERSCORE_LONG_PAGES: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
 _CYBERSCORE_LIVE_WATCHERS: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+_CYBERSCORE_LONG_PAGE_COOLDOWN_UNTIL: Dict[str, float] = {}
 
 
 def _cyberscore_long_page_kind_and_key(target_url: str) -> Tuple[str, str]:
@@ -15329,10 +15334,34 @@ def _cyberscore_long_page_kind_and_key(target_url: str) -> Tuple[str, str]:
 def _cyberscore_long_page_enabled_for_url(target_url: str) -> bool:
     if not CYBERSCORE_LONG_PAGE_ENABLED:
         return False
-    kind, _key = _cyberscore_long_page_kind_and_key(target_url)
+    kind, key = _cyberscore_long_page_kind_and_key(target_url)
+    cooldown_until = float(_CYBERSCORE_LONG_PAGE_COOLDOWN_UNTIL.get(key, 0.0) or 0.0)
+    if cooldown_until > time.time():
+        return False
+    if cooldown_until:
+        _CYBERSCORE_LONG_PAGE_COOLDOWN_UNTIL.pop(key, None)
     if kind == "match":
         return CYBERSCORE_LONG_PAGE_MATCH_ENABLED
     return CYBERSCORE_LONG_PAGE_LISTING_ENABLED
+
+
+def _cyberscore_note_long_page_transient_failure(target_url: str, exc: BaseException) -> None:
+    cooldown_seconds = float(CYBERSCORE_LONG_PAGE_TRANSIENT_COOLDOWN_SECONDS or 0.0)
+    if cooldown_seconds <= 0:
+        return
+    _kind, key = _cyberscore_long_page_kind_and_key(target_url)
+    _CYBERSCORE_LONG_PAGE_COOLDOWN_UNTIL[key] = time.time() + cooldown_seconds
+    short_error = _transient_exception_message(exc)
+    print(
+        "⏸️ CyberScore long page cooldown: "
+        f"{key} for {int(math.ceil(cooldown_seconds))}s after {short_error}; using one-shot fallback"
+    )
+    logger.warning(
+        "CyberScore long page cooldown for %s: %.1fs after %s",
+        key,
+        cooldown_seconds,
+        short_error,
+    )
 
 
 def _cyberscore_close_cached_long_page(key: str, reason: str = "") -> None:
@@ -15482,6 +15511,7 @@ def _get_cyberscore_html_via_long_page(target_url: str) -> Optional[str]:
         )
     except Exception as exc:
         if _cyberscore_is_transient_fetch_error(exc):
+            _cyberscore_note_long_page_transient_failure(target_url, exc)
             _cyberscore_handle_transient_fetch_error(target_url, exc, "long page")
         else:
             short_error = _short_exception_message(exc)

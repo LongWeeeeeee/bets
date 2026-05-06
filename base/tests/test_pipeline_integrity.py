@@ -1953,6 +1953,31 @@ def test_cyberscore_long_page_job_does_not_reset_shared_browser(monkeypatch) -> 
     ]
 
 
+def test_cyberscore_long_page_transient_failure_sets_cooldown(monkeypatch) -> None:
+    now = {"value": 1000.0}
+
+    monkeypatch.setattr(runtime, "CYBERSCORE_LONG_PAGE_ENABLED", True, raising=False)
+    monkeypatch.setattr(runtime, "CYBERSCORE_LONG_PAGE_LISTING_ENABLED", True, raising=False)
+    monkeypatch.setattr(runtime, "CYBERSCORE_LONG_PAGE_TRANSIENT_COOLDOWN_SECONDS", 600.0, raising=False)
+    monkeypatch.setattr(runtime.time, "time", lambda: now["value"])
+    runtime._CYBERSCORE_LONG_PAGE_COOLDOWN_UNTIL.clear()
+
+    target_url = "https://cyberscore.live/en/matches/?type=liveOrUpcoming"
+
+    assert runtime._cyberscore_long_page_enabled_for_url(target_url) is True
+
+    runtime._cyberscore_note_long_page_transient_failure(
+        target_url,
+        RuntimeError("Page.goto: NS_ERROR_NET_RESET"),
+    )
+
+    assert runtime._cyberscore_long_page_enabled_for_url(target_url) is False
+
+    now["value"] = 1601.0
+
+    assert runtime._cyberscore_long_page_enabled_for_url(target_url) is True
+
+
 def test_cyberscore_one_shot_job_does_not_reset_shared_browser(monkeypatch) -> None:
     calls: List[Dict[str, Any]] = []
 
