@@ -7169,6 +7169,10 @@ LIVE_PROXY_PREFLIGHT_URL = (
     str(os.getenv("LIVE_PROXY_PREFLIGHT_URL", CYBERSCORE_MATCHES_URL)).strip()
     or CYBERSCORE_MATCHES_URL
 )
+LIVE_PROXY_PREFLIGHT_CONNECTIVITY_URL = (
+    str(os.getenv("LIVE_PROXY_PREFLIGHT_CONNECTIVITY_URL", "https://api.ipify.org")).strip()
+    or "https://api.ipify.org"
+)
 LIVE_PROXY_RUNTIME_PRUNE_ENABLED = _safe_bool_env("LIVE_PROXY_RUNTIME_PRUNE_ENABLED", True)
 LIVE_PROXY_EMPTY_POOL_FATAL = _safe_bool_env("LIVE_PROXY_EMPTY_POOL_FATAL", True)
 LIVE_PROXY_EMPTY_POOL_ALERT_SENT = False
@@ -7296,59 +7300,110 @@ def _sanitize_proxy_error_text(text: Any, proxy_url: Any) -> str:
     return value[:400]
 
 
+def _run_curl_proxy_check(
+    *,
+    curl_path: str,
+    proxy_value: str,
+    url: str,
+    require_status_below_400: bool,
+) -> Tuple[bool, str]:
+    timeout_seconds = max(1.0, float(LIVE_PROXY_PREFLIGHT_TIMEOUT_SECONDS or 1.0))
+    command = [
+        curl_path,
+        "-L",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        str(timeout_seconds),
+        "--connect-timeout",
+        str(min(timeout_seconds, 5.0)),
+        "--proxy",
+        proxy_value,
+        "-o",
+        os.devnull,
+        "-w",
+        "%{http_code}",
+        url,
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds + 3.0,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        reason = _sanitize_proxy_error_text(exc.stderr or exc.stdout or "curl timeout", proxy_value)
+        return False, reason or "curl timeout"
+    http_code = (completed.stdout or "").strip()
+    stderr = _sanitize_proxy_error_text(completed.stderr, proxy_value)
+    if completed.returncode == 0 and http_code and http_code != "000":
+        try:
+            status_code = int(http_code)
+        except (TypeError, ValueError):
+            status_code = 0
+        if not require_status_below_400 or 200 <= status_code < 400:
+            return True, f"http {http_code}"
+        return False, f"http {http_code}"
+    reason = stderr or (f"curl exit {completed.returncode}, http {http_code or '000'}")
+    return False, reason
+
+
 def _validate_live_proxy_once(proxy_url: Any, target_url: Optional[str] = None) -> Tuple[bool, str]:
     proxy_value = _proxy_url_for_http_client(proxy_url)
     if not proxy_value:
         return False, "empty proxy"
     url = str(target_url or LIVE_PROXY_PREFLIGHT_URL or CYBERSCORE_MATCHES_URL).strip()
-    timeout_seconds = max(1.0, float(LIVE_PROXY_PREFLIGHT_TIMEOUT_SECONDS or 1.0))
+    connectivity_url = str(LIVE_PROXY_PREFLIGHT_CONNECTIVITY_URL or "").strip()
     curl_path = shutil.which("curl")
     if curl_path:
-        command = [
-            curl_path,
-            "-L",
-            "--silent",
-            "--show-error",
-            "--max-time",
-            str(timeout_seconds),
-            "--connect-timeout",
-            str(min(timeout_seconds, 5.0)),
-            "--proxy",
-            proxy_value,
-            "-o",
-            os.devnull,
-            "-w",
-            "%{http_code}",
-            url,
-        ]
-        try:
-            completed = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds + 3.0,
-                check=False,
+        if connectivity_url:
+            ok, reason = _run_curl_proxy_check(
+                curl_path=curl_path,
+                proxy_value=proxy_value,
+                url=connectivity_url,
+                require_status_below_400=True,
             )
-        except subprocess.TimeoutExpired as exc:
-            reason = _sanitize_proxy_error_text(exc.stderr or exc.stdout or "curl timeout", proxy_value)
-            return False, reason or "curl timeout"
-        http_code = (completed.stdout or "").strip()
-        stderr = _sanitize_proxy_error_text(completed.stderr, proxy_value)
-        if completed.returncode == 0 and http_code and http_code != "000":
-            return True, f"http {http_code}"
-        reason = stderr or (f"curl exit {completed.returncode}, http {http_code or '000'}")
-        return False, reason
+            if not ok:
+                return False, f"connectivity failed: {reason}"
+        ok, target_reason = _run_curl_proxy_check(
+            curl_path=curl_path,
+            proxy_value=proxy_value,
+            url=url,
+            require_status_below_400=False,
+        )
+        if not ok:
+            return False, f"target failed: {target_reason}"
+        if connectivity_url:
+            return True, f"connectivity ok, target {target_reason}"
+        return True, f"target {target_reason}"
     try:
+        connectivity_status = None
+        if connectivity_url:
+            connectivity_response = _perform_http_get(
+                connectivity_url,
+                headers=_matches_request_headers(None),
+                verify=False,
+                timeout=LIVE_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
+                proxies={"http": proxy_value, "https": proxy_value},
+            )
+            connectivity_status = getattr(connectivity_response, "status_code", 0)
+            if not (200 <= int(connectivity_status or 0) < 400):
+                return False, f"connectivity http {connectivity_status}"
         response = _perform_http_get(
             url,
             headers=_matches_request_headers(None),
             verify=False,
-            timeout=timeout_seconds,
+            timeout=LIVE_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
             proxies={"http": proxy_value, "https": proxy_value},
         )
     except _http_request_exceptions() as exc:
         return False, _sanitize_proxy_error_text(f"{type(exc).__name__}: {exc}", proxy_value)
-    return True, f"http {getattr(response, 'status_code', 'unknown')}"
+    target_status = getattr(response, "status_code", "unknown")
+    if connectivity_status is not None:
+        return True, f"connectivity http {connectivity_status}, target http {target_status}"
+    return True, f"target http {target_status}"
 
 
 def _validate_live_proxy(
@@ -7487,6 +7542,11 @@ def _live_proxy_error_looks_dead(exc_or_message: Any) -> bool:
         "proxy connection refused",
         "connection refused",
         "SSL_ERROR_SYSCALL",
+        "NS_ERROR_NET_RESET",
+        "network reset",
+        "Connection reset by peer",
+        "Recv failure",
+        "Proxy CONNECT aborted",
     )
     return any(token.lower() in message.lower() for token in dead_tokens)
 
@@ -14934,7 +14994,12 @@ def _cyberscore_handle_transient_fetch_error(target_url: str, exc: BaseException
             source_label=source_label,
             target_url=target_url,
         )
-        if not pruned and not CYBERSCORE_CAMOUFOX_PROXY_URL and USE_PROXY and PROXY_LIST:
+        if (
+            not pruned
+            and not CYBERSCORE_CAMOUFOX_PROXY_URL
+            and USE_PROXY
+            and len(PROXY_LIST) > 1
+        ):
             rotate_proxy()
     with contextlib.suppress(Exception):
         _shared_camoufox_session.request_reset()

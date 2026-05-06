@@ -1885,6 +1885,56 @@ def test_runtime_dead_proxy_error_prunes_current_live_proxy(monkeypatch) -> None
     assert reset_calls == ["reset"]
 
 
+def test_validate_live_proxy_requires_generic_connectivity_before_target(monkeypatch) -> None:
+    run_calls: List[str] = []
+
+    def _fake_run(command, **_kwargs):
+        run_calls.append(command[-1])
+        return runtime.subprocess.CompletedProcess(
+            command,
+            56,
+            stdout="000",
+            stderr="curl: (56) Recv failure: Connection reset by peer",
+        )
+
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/usr/bin/curl")
+    monkeypatch.setattr(runtime.subprocess, "run", _fake_run)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_PREFLIGHT_CONNECTIVITY_URL", "https://api.ipify.org", raising=False)
+
+    ok, reason = runtime._validate_live_proxy_once(
+        "http://user:secret@dead.example:1000",
+        target_url="https://cyberscore.live/en/matches/",
+    )
+
+    assert ok is False
+    assert "connectivity failed" in reason
+    assert "secret" not in reason
+    assert run_calls == ["https://api.ipify.org"]
+
+
+def test_validate_live_proxy_allows_target_forbidden_after_connectivity_ok(monkeypatch) -> None:
+    run_calls: List[str] = []
+
+    def _fake_run(command, **_kwargs):
+        run_calls.append(command[-1])
+        if command[-1] == "https://api.ipify.org":
+            return runtime.subprocess.CompletedProcess(command, 0, stdout="200", stderr="")
+        return runtime.subprocess.CompletedProcess(command, 0, stdout="403", stderr="")
+
+    monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/usr/bin/curl")
+    monkeypatch.setattr(runtime.subprocess, "run", _fake_run)
+    monkeypatch.setattr(runtime, "LIVE_PROXY_PREFLIGHT_CONNECTIVITY_URL", "https://api.ipify.org", raising=False)
+
+    ok, reason = runtime._validate_live_proxy_once(
+        "http://user:secret@maybe-live.example:1000",
+        target_url="https://cyberscore.live/en/matches/",
+    )
+
+    assert ok is True
+    assert "target http 403" in reason
+    assert run_calls == ["https://api.ipify.org", "https://cyberscore.live/en/matches/"]
+
+
 def test_cyberscore_long_page_job_does_not_reset_shared_browser(monkeypatch) -> None:
     calls: List[Dict[str, Any]] = []
 
