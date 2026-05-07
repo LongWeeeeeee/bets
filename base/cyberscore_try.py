@@ -2149,6 +2149,8 @@ def _format_metric_value(value: float) -> str:
 LANE_ADV_DICT_CONFIDENCE_BASELINE = 39.0
 LANE_ADV_DICT_SIGN_MIN_ABS = 5.0
 LANE_ADV_PROTRACKER_SIGN_MIN_ABS = 3.0
+LANE_ADV_DICT_PAIR_SIGN_MIN_ABS = 4.0
+LANE_ADV_PROTRACKER_PAIR_SIGN_MIN_ABS = 0.5
 
 
 def _numeric_sign(value: Any, *, min_abs: float = 1e-9) -> Optional[int]:
@@ -3884,16 +3886,38 @@ def _same_sign_lane_adv_guard(
     star_side = _target_side_from_sign(star_sign)
     dict_sign = _numeric_sign(lane_adv_dict_value, min_abs=LANE_ADV_DICT_SIGN_MIN_ABS)
     protracker_sign = _numeric_sign(lane_adv_protracker_value, min_abs=LANE_ADV_PROTRACKER_SIGN_MIN_ABS)
+    dict_pair_sign = _numeric_sign(lane_adv_dict_value, min_abs=LANE_ADV_DICT_PAIR_SIGN_MIN_ABS)
+    protracker_pair_sign = _numeric_sign(
+        lane_adv_protracker_value,
+        min_abs=LANE_ADV_PROTRACKER_PAIR_SIGN_MIN_ABS,
+    )
+    lane_adv_pair_sign = (
+        dict_pair_sign
+        if dict_pair_sign in (-1, 1) and dict_pair_sign == protracker_pair_sign
+        else None
+    )
     opposing_sources: List[str] = []
     if star_sign in (-1, 1):
         if dict_sign == -int(star_sign):
             opposing_sources.append("lane_adv_dict")
         if protracker_sign == -int(star_sign):
             opposing_sources.append("lane_adv_protracker")
+        if lane_adv_pair_sign == -int(star_sign):
+            opposing_sources.append("lane_adv_pair")
     present_lane_signs = [
         sign for sign in (dict_sign, protracker_sign)
         if sign in (-1, 1)
     ]
+    strict_aligned = bool(
+        star_side in {"radiant", "dire"}
+        and present_lane_signs
+        and all(sign == star_sign for sign in present_lane_signs)
+    )
+    pair_aligned = bool(
+        star_side in {"radiant", "dire"}
+        and lane_adv_pair_sign in (-1, 1)
+        and lane_adv_pair_sign == star_sign
+    )
     return {
         "enabled": star_side in {"radiant", "dire"},
         "star_sign": star_sign,
@@ -3901,16 +3925,17 @@ def _same_sign_lane_adv_guard(
         "lane_adv_dict": lane_adv_dict_value,
         "lane_adv_dict_sign": dict_sign,
         "lane_adv_dict_sign_min_abs": LANE_ADV_DICT_SIGN_MIN_ABS,
+        "lane_adv_dict_pair_sign": dict_pair_sign,
+        "lane_adv_dict_pair_sign_min_abs": LANE_ADV_DICT_PAIR_SIGN_MIN_ABS,
         "lane_adv_protracker": lane_adv_protracker_value,
         "lane_adv_protracker_sign": protracker_sign,
         "lane_adv_protracker_sign_min_abs": LANE_ADV_PROTRACKER_SIGN_MIN_ABS,
+        "lane_adv_protracker_pair_sign": protracker_pair_sign,
+        "lane_adv_protracker_pair_sign_min_abs": LANE_ADV_PROTRACKER_PAIR_SIGN_MIN_ABS,
+        "lane_adv_pair_sign": lane_adv_pair_sign,
         "opposes_target": bool(opposing_sources),
         "opposing_sources": opposing_sources,
-        "aligned": bool(
-            star_side in {"radiant", "dire"}
-            and present_lane_signs
-            and all(sign == star_sign for sign in present_lane_signs)
-        ),
+        "aligned": bool(strict_aligned or pair_aligned),
     }
 
 
@@ -21274,6 +21299,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_add_url_details["lane_adv_dict_sign"] = same_sign_lane_adv_guard.get("lane_adv_dict_sign")
                     delayed_add_url_details["lane_adv_protracker"] = same_sign_lane_adv_guard.get("lane_adv_protracker")
                     delayed_add_url_details["lane_adv_protracker_sign"] = same_sign_lane_adv_guard.get("lane_adv_protracker_sign")
+                    delayed_add_url_details["lane_adv_pair_sign"] = same_sign_lane_adv_guard.get("lane_adv_pair_sign")
+                    delayed_add_url_details["lane_adv_opposing_sources"] = list(
+                        same_sign_lane_adv_guard.get("opposing_sources") or []
+                    )
                 if monitor_threshold is not None:
                     delayed_add_url_details["networth_monitor_threshold"] = float(monitor_threshold)
                     delayed_add_url_details["networth_monitor_deadline_game_time"] = int(target_game_time)
@@ -21436,6 +21465,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_payload['lane_adv_dict_sign'] = same_sign_lane_adv_guard.get("lane_adv_dict_sign")
                     delayed_payload['lane_adv_protracker'] = same_sign_lane_adv_guard.get("lane_adv_protracker")
                     delayed_payload['lane_adv_protracker_sign'] = same_sign_lane_adv_guard.get("lane_adv_protracker_sign")
+                    delayed_payload['lane_adv_pair_sign'] = same_sign_lane_adv_guard.get("lane_adv_pair_sign")
+                    delayed_payload['lane_adv_opposing_sources'] = list(
+                        same_sign_lane_adv_guard.get("opposing_sources") or []
+                    )
                 if late_pub_comeback_table_candidate and not queue_same_sign_lane_adv_monitor:
                     if not queue_late_all_weak_early_monitor:
                         delayed_payload['reason'] = "late_star_pub_comeback_table_monitor"
@@ -21525,6 +21558,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             "lane_adv_dict_sign": same_sign_lane_adv_guard.get("lane_adv_dict_sign"),
                             "lane_adv_protracker": same_sign_lane_adv_guard.get("lane_adv_protracker"),
                             "lane_adv_protracker_sign": same_sign_lane_adv_guard.get("lane_adv_protracker_sign"),
+                            "lane_adv_pair_sign": same_sign_lane_adv_guard.get("lane_adv_pair_sign"),
+                            "lane_adv_opposing_sources": list(
+                                same_sign_lane_adv_guard.get("opposing_sources") or []
+                            ),
                         }
                     )
                 delivery_confirmed = _deliver_and_persist_signal(

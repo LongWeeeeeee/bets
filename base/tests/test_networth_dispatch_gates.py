@@ -285,6 +285,7 @@ def _run_branch_scenario(
             runtime.monitored_matches["dltv.org/matches/test-match.0"] = dict(existing_delayed_payload)
 
     monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", False, raising=False)
+    monkeypatch.setattr(runtime, "DOTA2PROTRACKER_ENABLED", False, raising=False)
     monkeypatch.setattr(runtime, "FORCE_ODDS_SIGNAL_TEST", False, raising=False)
     monkeypatch.setattr(
         runtime,
@@ -302,11 +303,18 @@ def _run_branch_scenario(
     monkeypatch.setattr(runtime, "_ensure_delayed_sender_started", lambda: None)
     monkeypatch.setattr(runtime, "_is_url_processed", lambda _url: False)
     monkeypatch.setattr(runtime, "_drop_delayed_match", lambda *_args, **_kwargs: False)
+
+    def _record_delayed_match(match_key: str, payload: Dict[str, Any]) -> None:
+        with runtime.monitored_matches_lock:
+            runtime.monitored_matches[str(match_key)] = dict(payload)
+
+    monkeypatch.setattr(runtime, "_set_delayed_match", _record_delayed_match)
     monkeypatch.setattr(runtime, "_skip_dispatch_for_processed_url", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(runtime, "_acquire_signal_send_slot", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(runtime, "_release_signal_send_slot", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runtime, "_mark_url_processed", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runtime, "_log_bookmaker_source_snapshot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runtime, "_refresh_message_bookmaker_block_for_dispatch", lambda _match_key, message: message)
 
     monkeypatch.setattr(runtime, "send_message", lambda message, **_kwargs: sent_messages.append(str(message)))
 

@@ -24,7 +24,7 @@ OPPOSITE_LANE_ADV = {
 }
 
 
-def test_same_sign_lane_adv_guard_ignores_weak_values() -> None:
+def test_same_sign_lane_adv_guard_uses_pair_thresholds_for_soft_same_sign_values() -> None:
     guard = runtime._same_sign_lane_adv_guard(
         star_sign=1,
         lane_adv_dict_value=-4.99,
@@ -33,6 +33,22 @@ def test_same_sign_lane_adv_guard_ignores_weak_values() -> None:
 
     assert guard["lane_adv_dict_sign"] is None
     assert guard["lane_adv_protracker_sign"] is None
+    assert guard["lane_adv_pair_sign"] == -1
+    assert guard["opposing_sources"] == ["lane_adv_pair"]
+    assert guard["opposes_target"] is True
+    assert guard["aligned"] is False
+
+
+def test_same_sign_lane_adv_guard_ignores_values_below_pair_thresholds() -> None:
+    guard = runtime._same_sign_lane_adv_guard(
+        star_sign=1,
+        lane_adv_dict_value=-4.33,
+        lane_adv_protracker_value=-0.49,
+    )
+
+    assert guard["lane_adv_dict_sign"] is None
+    assert guard["lane_adv_protracker_sign"] is None
+    assert guard["lane_adv_pair_sign"] is None
     assert guard["opposes_target"] is False
     assert guard["aligned"] is False
 
@@ -301,6 +317,41 @@ def test_no_late_immediate_star_ignores_weak_lane_adv_dict_opposition(monkeypatc
     assert len(result.sent_messages) == 1
     assert result.queued_payload is None
     assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now"
+
+
+def test_no_late_immediate_star_waits_when_soft_pair_lane_adv_opposes_target(monkeypatch) -> None:
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="dfamily_5sillymice_map2_soft_pair_lane_guard",
+            game_time_seconds=0,
+            target_side="dire",
+            target_networth_diff=0,
+            has_early_star=True,
+            early_sign=-1,
+            has_late_star=False,
+            late_sign=1,
+            has_all_star=True,
+            all_sign=-1,
+            expected_send_calls=0,
+            raw_early_output={"solo": -3},
+            raw_mid_output={"solo": 0},
+            raw_post_lane_output={"dota2protracker_cp1vs1": -3},
+            metrics_extra={"pro_lane_advantage": 0.61},
+        ),
+        lane_output=("Top: win 61%", "Bot: win 39%", "Mid: lose 48%"),
+    )
+
+    assert result.sent_messages == []
+    assert result.queued_payload is not None
+    assert result.queued_payload["reason"] == "same_sign_lane_adv_wait_4_10"
+    assert result.queued_payload["dynamic_monitor_profile"] == "same_sign_lane_adv_wait_4_10"
+    assert result.queued_payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT
+    assert result.queued_payload["lane_adv_dict_sign"] is None
+    assert result.queued_payload["lane_adv_protracker_sign"] is None
+    assert result.queued_payload["lane_adv_pair_sign"] == 1
+    assert result.queued_payload["lane_adv_opposing_sources"] == ["lane_adv_pair"]
+    assert float(result.queued_payload["target_game_time"]) == float(runtime.NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS)
 
 
 def test_no_late_early_and_all_opposite_signs_are_rejected(monkeypatch) -> None:
