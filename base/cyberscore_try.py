@@ -2122,6 +2122,7 @@ _STAR_BLOCK_SIGN_CONSISTENCY_METRICS_BY_SECTION = {
         "dota2protracker_cp1vs1",
     ),
 }
+_STAR_BLOCK_SIGN_CONSISTENCY_OVERRIDE_MIN_HITS = 2
 _STAR_METRIC_SHORT = {
     "counterpick_1vs1": "cp1v1",
     "counterpick_1vs2": "cp1v2",
@@ -2387,6 +2388,30 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
 
     block_sign = next(iter(hit_signs)) if hit_signs else None
     if not bool(sign_consistency.get("valid")):
+        consistency_status = str(sign_consistency.get("status") or "")
+        sign_consistency_override = bool(
+            consistency_status == "conflict_required_signs"
+            and len(hit_metrics) >= _STAR_BLOCK_SIGN_CONSISTENCY_OVERRIDE_MIN_HITS
+            and block_sign in (-1, 1)
+        )
+        if sign_consistency_override:
+            return {
+                "valid": True,
+                "status": "ok",
+                "sign": block_sign,
+                "hit_metrics": hit_metrics,
+                "hit_count": len(hit_metrics),
+                "min_hit_count_required": 1,
+                "sign_consistency_override": True,
+                "sign_consistency_override_min_hit_count": _STAR_BLOCK_SIGN_CONSISTENCY_OVERRIDE_MIN_HITS,
+                "conflict_metric": None,
+                "support_status": sign_consistency.get("status"),
+                "support_nonzero_metrics": list(sign_consistency.get("nonzero_metrics") or []),
+                "support_conflicting_metrics": list(sign_consistency.get("conflicting_metrics") or []),
+                "support_zero_metrics": list(sign_consistency.get("zero_metrics") or []),
+                "support_missing_metrics": list(sign_consistency.get("missing_metrics") or []),
+                **consistency_fields,
+            }
         consistency_sign = sign_consistency.get("sign")
         return {
             "valid": False,
@@ -2395,6 +2420,8 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
             "hit_metrics": hit_metrics,
             "hit_count": len(hit_metrics),
             "min_hit_count_required": 1,
+            "sign_consistency_override": False,
+            "sign_consistency_override_min_hit_count": _STAR_BLOCK_SIGN_CONSISTENCY_OVERRIDE_MIN_HITS,
             "conflict_metric": None,
             "support_status": sign_consistency.get("status"),
             "support_nonzero_metrics": list(sign_consistency.get("nonzero_metrics") or []),
@@ -2411,6 +2438,8 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
         "hit_metrics": hit_metrics,
         "hit_count": len(hit_metrics),
         "min_hit_count_required": 1,
+        "sign_consistency_override": False,
+        "sign_consistency_override_min_hit_count": _STAR_BLOCK_SIGN_CONSISTENCY_OVERRIDE_MIN_HITS,
         "conflict_metric": None,
         "support_status": None,
         "support_nonzero_metrics": [],
