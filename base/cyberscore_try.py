@@ -1186,7 +1186,7 @@ ML_CONFIDENCE_SOURCE_LATE = _normalize_ml_confidence_source(
     "model_only",
 )
 DELAYED_SIGNAL_TARGET_GAME_TIME = (20 * 60) + 20
-LATE_PUB_COMEBACK_TABLE_START_SECONDS = (20 * 60) + 30
+LATE_PUB_COMEBACK_TABLE_START_SECONDS = 27 * 60
 DELAYED_SIGNAL_POLL_SECONDS = 15
 DELAYED_SIGNAL_NO_PROGRESS_TIMEOUT_SECONDS = 2 * 60 * 60
 DELAYED_SIGNAL_NO_DATA_TIMEOUT_SECONDS = 4 * 60 * 60
@@ -2709,7 +2709,7 @@ def _dispatch_mode_reason_label(dispatch_mode: Optional[str]) -> str:
         "immediate_early_only_target_half": "early_only,target_half",
         "immediate_early_only_kills_from": "early_only,kills_from",
         "delayed_late_only_20_20m": "late_only,20_20_monitor",
-        "delayed_late_only_20_30m": "late_only,20_30_comeback_table",
+        "delayed_late_only_27_00m": "late_only,27_00_comeback_table",
         "delayed_same_sign_lane_adv_wait_4_10": "same_sign,lane_adv_wait_4_10",
         "delayed_late_elo_block_top25_opposite_monitor": "opposite_signs,top25_late_elo_block_monitor",
     }
@@ -5119,6 +5119,28 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
         ):
             resolved_wr_level = _late_pub_table_wr_level_from_payload(payload)
             if _late_pub_table_has_thresholds(resolved_wr_level):
+                if current_game_time < float(LATE_PUB_COMEBACK_TABLE_START_SECONDS):
+                    updated_target_game_time = max(
+                        float(target_game_time),
+                        float(LATE_PUB_COMEBACK_TABLE_START_SECONDS),
+                    )
+                    if float(target_game_time) < updated_target_game_time:
+                        _update_delayed_match(
+                            match_key,
+                            target_game_time=float(updated_target_game_time),
+                        )
+                        target_game_time = float(updated_target_game_time)
+                        payload = dict(payload)
+                        payload["target_game_time"] = float(updated_target_game_time)
+                    _maybe_refresh_stale_cyberscore_delayed_state(
+                        match_key,
+                        payload,
+                        current_game_time=current_game_time,
+                        target_game_time=target_game_time,
+                        now_ts=now_ts,
+                        last_progress_at=last_progress_at,
+                    )
+                    continue
                 late_pub_comeback_table_active = True
                 late_pub_comeback_table_wr_level = int(resolved_wr_level or 0)
                 target_game_time = max(
@@ -5134,7 +5156,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 updated_add_url_details.update(
                     {
                         "dispatch_status_label": NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
-                        "delay_reason": "post_20_30_wr_grid_monitor",
+                        "delay_reason": "post_27_00_wr_grid_monitor",
                         "target_game_time": int(target_game_time),
                         "target_side": monitor_target_side,
                         "networth_target_side": monitor_target_side,
@@ -5145,7 +5167,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                     updated_add_url_details["target_networth_diff"] = float(monitor_target_diff)
                 _update_delayed_match(
                     match_key,
-                    reason="post_20_30_wr_grid_monitor",
+                    reason="post_27_00_wr_grid_monitor",
                     target_game_time=float(target_game_time),
                     dispatch_status_label=NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
                     add_url_details=updated_add_url_details,
@@ -5160,7 +5182,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 payload = dict(payload)
                 payload.update(
                     {
-                        "reason": "post_20_30_wr_grid_monitor",
+                        "reason": "post_27_00_wr_grid_monitor",
                         "target_game_time": float(target_game_time),
                         "dispatch_status_label": NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
                         "add_url_details": updated_add_url_details,
@@ -19229,7 +19251,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # 1) late STAR + early STAR same sign -> send now
             # 2) no late STAR, but early/all STAR exists without early/all conflict -> send now
             # 3) no late STAR with opposite-sign early/all -> reject
-            # 4) late STAR without same-sign early -> wait until 20:30 and use pub comeback table
+            # 4) late STAR without same-sign early -> wait until late pub-table start and use it.
             star_dispatch_flags = _star_signal_dispatch_flags(
                 has_early_star=has_selected_early_star,
                 early_sign=selected_early_sign,
@@ -19608,7 +19630,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         else (
                             "immediate_late_star_early_core_same_sign"
                             if send_now_late_star_early_core_same_sign
-                            else "delayed_late_only_20_30m"
+                            else "delayed_late_only_27_00m"
                         )
                     )
                 )
@@ -19875,7 +19897,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"late_elo_wr={opposite_signs_early90_monitor.get('late_elo_wr')}, "
                         f"gap={elo_gap_label}, "
                         f"wait_until={_format_game_clock(opposite_signs_early90_monitor.get('target_game_time'))}, "
-                        "release=wr_grid_after_20_30"
+                        "release=wr_grid_after_27_00"
                     )
             if isinstance(opposite_signs_early90_tier1_fast_release, dict) and opposite_signs_early90_tier1_fast_release.get("enabled"):
                 if verbose_match_log:
@@ -20397,7 +20419,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
             if late_star_wait_pub_table:
                 queue_top25_late_elo_block_monitor = False
-                dispatch_mode = "delayed_late_only_20_30m"
+                dispatch_mode = "delayed_late_only_27_00m"
             if not force_odds_signal_test_active and not late_star_wait_pub_table:
                 if tier1_early_kills_mode:
                     if target_networth_diff is None or target_side is None:
@@ -20476,7 +20498,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     return return_status
                 if late_all_same_target_weak_early_opposite:
                     queue_late_all_weak_early_monitor = True
-                    dispatch_mode = "delayed_late_all_same_weak_early_20_30m"
+                    dispatch_mode = "delayed_late_all_same_weak_early_27_00m"
                     print(
                         "   ⏳ Late+All same target with weak opposite Early: "
                         f"early_wr={float(early_wr_pct or 0.0):.1f}%, "

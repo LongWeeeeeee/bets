@@ -4428,7 +4428,7 @@ def test_delayed_send_failure_schedules_backoff(tmp_path, monkeypatch) -> None:
     assert payload["next_retry_at"] == 1_700_000_030.0
 
 
-def test_delayed_early_core_timeout_transitions_to_wr_grid(tmp_path, monkeypatch) -> None:
+def test_delayed_early_core_timeout_waits_until_late_pub_start_before_wr_grid(tmp_path, monkeypatch) -> None:
     delayed_queue_path = tmp_path / "delayed_signal_queue.json"
     monkeypatch.setattr(runtime, "DELAYED_QUEUE_PATH", str(delayed_queue_path), raising=False)
     monkeypatch.setattr(runtime, "late_pub_comeback_table_thresholds_by_wr", {60: {20: -1000.0}}, raising=False)
@@ -4491,7 +4491,72 @@ def test_delayed_early_core_timeout_transitions_to_wr_grid(tmp_path, monkeypatch
     assert add_url_calls == []
     with runtime.monitored_matches_lock:
         payload = dict(runtime.monitored_matches["dltv.org/matches/test-early-core-timeout.0"])
-    assert payload["reason"] == "post_20_30_wr_grid_monitor"
+    assert payload["reason"] == "early_star_late_core_wait_1500"
+    assert payload["send_on_target_game_time"] is False
+    assert payload.get("late_pub_comeback_table_active") is not True
+    assert "late_pub_comeback_table_wr_level" not in payload
+    assert payload["target_game_time"] == pytest.approx(float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS))
+
+
+def test_delayed_early_core_timeout_transitions_to_wr_grid_at_late_pub_start(tmp_path, monkeypatch) -> None:
+    delayed_queue_path = tmp_path / "delayed_signal_queue.json"
+    monkeypatch.setattr(runtime, "DELAYED_QUEUE_PATH", str(delayed_queue_path), raising=False)
+    monkeypatch.setattr(runtime, "late_pub_comeback_table_thresholds_by_wr", {60: {20: 1000.0}}, raising=False)
+    monkeypatch.setattr(runtime.time, "time", lambda: 1_700_000_000.0)
+    monkeypatch.setattr(runtime, "_is_url_processed", lambda _url: False)
+    monkeypatch.setattr(runtime, "_skip_dispatch_for_processed_url", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(runtime, "_acquire_signal_send_slot", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(runtime, "_release_signal_send_slot", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        runtime,
+        "_fetch_delayed_match_state",
+        lambda _json_url: {"game_time": float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS), "radiant_lead": 0.0},
+    )
+
+    send_calls: List[str] = []
+    add_url_calls: List[Dict[str, Any]] = []
+    monkeypatch.setattr(runtime, "_deliver_and_persist_signal", lambda *_args, **_kwargs: send_calls.append("send"))
+    monkeypatch.setattr(
+        runtime,
+        "add_url",
+        lambda url, **kwargs: add_url_calls.append({"url": url, **kwargs}),
+    )
+
+    with runtime.monitored_matches_lock:
+        runtime.monitored_matches.clear()
+    runtime._set_delayed_match(
+        "dltv.org/matches/test-early-core-timeout-start.0",
+        {
+            "message": "payload",
+            "reason": "early_star_late_core_wait_1500",
+            "json_url": "https://dltv.org/live/test.json",
+            "target_game_time": float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS),
+            "queued_at": 1_699_999_000.0,
+            "queued_game_time": 1100.0,
+            "last_game_time": 1100.0,
+            "last_progress_at": 1_699_999_000.0,
+            "add_url_reason": "star_signal_sent_delayed",
+            "add_url_details": {"status": "draft..."},
+            "fallback_send_status_label": "early_core_fallback_20_20_send",
+            "send_on_target_game_time": False,
+            "timeout_add_url_reason": "star_signal_rejected_early_core_monitor_timeout",
+            "timeout_status_label": "early_core_timeout_no_send",
+            "allow_live_recheck": True,
+            "networth_monitor_threshold": 1500.0,
+            "networth_monitor_deadline_game_time": float(runtime.DELAYED_SIGNAL_TARGET_GAME_TIME),
+            "networth_target_side": "radiant",
+            "retry_attempt_count": 0,
+            "next_retry_at": 0.0,
+        },
+    )
+
+    runtime._drain_due_delayed_signals_once()
+
+    assert send_calls == []
+    assert add_url_calls == []
+    with runtime.monitored_matches_lock:
+        payload = dict(runtime.monitored_matches["dltv.org/matches/test-early-core-timeout-start.0"])
+    assert payload["reason"] == "post_27_00_wr_grid_monitor"
     assert payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
     assert payload["send_on_target_game_time"] is False
     assert payload["late_pub_comeback_table_active"] is True
@@ -4499,7 +4564,7 @@ def test_delayed_early_core_timeout_transitions_to_wr_grid(tmp_path, monkeypatch
     assert payload["target_game_time"] == pytest.approx(float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS))
 
 
-def test_delayed_wr_grid_sends_after_20_30_when_threshold_reached(tmp_path, monkeypatch) -> None:
+def test_delayed_wr_grid_sends_after_27_00_when_threshold_reached(tmp_path, monkeypatch) -> None:
     delayed_queue_path = tmp_path / "delayed_signal_queue.json"
     monkeypatch.setattr(runtime, "DELAYED_QUEUE_PATH", str(delayed_queue_path), raising=False)
     monkeypatch.setattr(runtime, "late_pub_comeback_table_thresholds_by_wr", {60: {20: -1000.0}}, raising=False)
@@ -4564,7 +4629,7 @@ def test_delayed_wr_grid_sends_after_20_30_when_threshold_reached(tmp_path, monk
     assert details["target_networth_diff"] == pytest.approx(-500.0)
 
 
-def test_delayed_late_wr85_after_20_30_waits_for_wr_grid_threshold(tmp_path, monkeypatch) -> None:
+def test_delayed_late_wr85_after_27_00_waits_for_wr_grid_threshold(tmp_path, monkeypatch) -> None:
     delayed_queue_path = tmp_path / "delayed_signal_queue.json"
     monkeypatch.setattr(runtime, "DELAYED_QUEUE_PATH", str(delayed_queue_path), raising=False)
     monkeypatch.setattr(runtime, "late_pub_comeback_table_thresholds_by_wr", {85: {36: -9598.96}}, raising=False)
@@ -4632,7 +4697,7 @@ def test_delayed_late_wr85_after_20_30_waits_for_wr_grid_threshold(tmp_path, mon
     assert add_url_calls == []
     with runtime.monitored_matches_lock:
         payload = dict(runtime.monitored_matches["cyberscore.live/en/matches/173556.map2"])
-    assert payload["reason"] == "post_20_30_wr_grid_monitor"
+    assert payload["reason"] == "post_27_00_wr_grid_monitor"
     assert payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
     assert payload["send_on_target_game_time"] is False
     assert payload["late_pub_comeback_table_active"] is True
@@ -4782,7 +4847,7 @@ def test_delayed_late_core_monitor_uses_post_target_comeback_ceiling(tmp_path, m
     assert add_url_details["late_comeback_monitor_threshold"] == pytest.approx(13500.0)
 
 
-def test_delayed_fallback_stays_in_wr_grid_after_20_30_until_threshold(tmp_path, monkeypatch) -> None:
+def test_delayed_fallback_stays_in_wr_grid_after_27_00_until_threshold(tmp_path, monkeypatch) -> None:
     delayed_queue_path = tmp_path / "delayed_signal_queue.json"
     monkeypatch.setattr(runtime, "DELAYED_QUEUE_PATH", str(delayed_queue_path), raising=False)
     monkeypatch.setattr(runtime, "late_pub_comeback_table_thresholds_by_wr", {60: {20: -1000.0}}, raising=False)
@@ -4840,7 +4905,7 @@ def test_delayed_fallback_stays_in_wr_grid_after_20_30_until_threshold(tmp_path,
     assert add_url_calls == []
     with runtime.monitored_matches_lock:
         payload = dict(runtime.monitored_matches["dltv.org/matches/test-post-target-comeback-monitor.0"])
-    assert payload["reason"] == "post_20_30_wr_grid_monitor"
+    assert payload["reason"] == "post_27_00_wr_grid_monitor"
     assert payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
     assert payload["send_on_target_game_time"] is False
     assert payload["late_pub_comeback_table_active"] is True
