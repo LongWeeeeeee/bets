@@ -5635,13 +5635,13 @@ def test_runtime_star_thresholds_keep_only_signal_metrics(monkeypatch) -> None:
     assert all_thresholds == {"dota2protracker_cp1vs1": 3}
 
 
-def test_runtime_star_block_valid_with_single_non_conflicting_hit(monkeypatch) -> None:
+def test_runtime_star_block_valid_with_single_hit_and_core_sign_consistency(monkeypatch) -> None:
     monkeypatch.setattr(
         runtime,
         "STAR_THRESHOLDS_BY_WR",
         {
             60: {
-                "early_output": [("solo", 3), ("counterpick_1vs1", 4)],
+                "early_output": [("solo", 3), ("counterpick_1vs1", 4), ("counterpick_1vs2", 4)],
                 "mid_output": [],
                 "all_output": [],
             }
@@ -5650,7 +5650,7 @@ def test_runtime_star_block_valid_with_single_non_conflicting_hit(monkeypatch) -
     )
 
     diag = runtime._star_block_diagnostics(
-        raw_block={"solo": 3, "counterpick_1vs1": 0},
+        raw_block={"solo": 3, "counterpick_1vs1": 1, "counterpick_1vs2": 1},
         target_wr=60,
         section="early_output",
     )
@@ -5658,6 +5658,63 @@ def test_runtime_star_block_valid_with_single_non_conflicting_hit(monkeypatch) -
     assert diag["valid"] is True
     assert diag["hit_metrics"] == ["solo"]
     assert diag["hit_count"] == 1
+    assert diag["sign_consistency_status"] == "ok"
+
+
+def test_runtime_star_block_invalid_when_core_signs_conflict(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {
+                "early_output": [("solo", 3), ("counterpick_1vs1", 4), ("counterpick_1vs2", 4)],
+                "mid_output": [],
+                "all_output": [],
+            }
+        },
+        raising=False,
+    )
+
+    diag = runtime._star_block_diagnostics(
+        raw_block={"solo": 3, "counterpick_1vs1": 4, "counterpick_1vs2": -1},
+        target_wr=60,
+        section="early_output",
+    )
+
+    assert diag["valid"] is False
+    assert diag["status"] == "required_sign_consistency_invalid"
+    assert diag["sign_consistency_status"] == "conflict_required_signs"
+    assert set(diag["sign_consistency_conflicting_metrics"]) == {
+        "counterpick_1vs1",
+        "counterpick_1vs2",
+        "solo",
+    }
+
+
+def test_runtime_star_block_invalid_when_core_metric_missing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {
+                "early_output": [("solo", 3), ("counterpick_1vs1", 4), ("counterpick_1vs2", 4)],
+                "mid_output": [],
+                "all_output": [],
+            }
+        },
+        raising=False,
+    )
+
+    diag = runtime._star_block_diagnostics(
+        raw_block={"solo": 3, "counterpick_1vs1": 4},
+        target_wr=60,
+        section="early_output",
+    )
+
+    assert diag["valid"] is False
+    assert diag["status"] == "required_sign_consistency_invalid"
+    assert diag["sign_consistency_status"] == "missing_required_metrics"
+    assert diag["sign_consistency_missing_metrics"] == ["counterpick_1vs2"]
 
 
 def test_runtime_all_star_block_valid_from_dota2protracker_cp1vs1(monkeypatch) -> None:
@@ -5683,7 +5740,8 @@ def test_runtime_all_star_block_valid_from_dota2protracker_cp1vs1(monkeypatch) -
     diag = runtime._star_block_diagnostics(
         raw_block={
             "counterpick_1vs1": 3,
-            "counterpick_1vs2": None,
+            "counterpick_1vs2": 1,
+            "solo": 1,
             "synergy_duo": 3,
             "synergy_trio": 3,
             "dota2protracker_cp1vs1": 5.97,
@@ -5695,6 +5753,87 @@ def test_runtime_all_star_block_valid_from_dota2protracker_cp1vs1(monkeypatch) -
     assert diag["valid"] is True
     assert diag["sign"] == 1
     assert diag["hit_metrics"] == ["dota2protracker_cp1vs1"]
+    assert diag["sign_consistency_status"] == "ok"
+
+
+def test_runtime_all_star_block_requires_dota2protracker_same_sign(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {
+                "early_output": [],
+                "mid_output": [],
+                "all_output": [
+                    ("counterpick_1vs1", 4),
+                    ("counterpick_1vs2", 3),
+                    ("dota2protracker_cp1vs1", 3),
+                ],
+            }
+        },
+        raising=False,
+    )
+
+    diag = runtime._star_block_diagnostics(
+        raw_block={
+            "counterpick_1vs1": 4,
+            "counterpick_1vs2": 3,
+            "solo": 1,
+            "dota2protracker_cp1vs1": -3,
+        },
+        target_wr=60,
+        section="all_output",
+    )
+
+    assert diag["valid"] is False
+    assert diag["status"] == "conflict_hits"
+    assert diag["sign_consistency_status"] == "conflict_required_signs"
+    assert "dota2protracker_cp1vs1" in diag["sign_consistency_conflicting_metrics"]
+
+
+def test_runtime_all_star_block_requires_dota2protracker_present(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {
+                "early_output": [],
+                "mid_output": [],
+                "all_output": [("counterpick_1vs1", 4), ("counterpick_1vs2", 3)],
+            }
+        },
+        raising=False,
+    )
+
+    diag = runtime._star_block_diagnostics(
+        raw_block={"counterpick_1vs1": 4, "counterpick_1vs2": 3, "solo": 1},
+        target_wr=60,
+        section="all_output",
+    )
+
+    assert diag["valid"] is False
+    assert diag["status"] == "required_sign_consistency_invalid"
+    assert diag["sign_consistency_status"] == "missing_required_metrics"
+    assert diag["sign_consistency_missing_metrics"] == ["dota2protracker_cp1vs1"]
+
+
+def test_runtime_all_star_output_includes_solo_for_sign_consistency() -> None:
+    payload = runtime._build_all_star_output(
+        {
+            "counterpick_1vs1": 4,
+            "counterpick_1vs2": 3,
+            "solo": 2,
+            "synergy_duo": 5,
+            "synergy_trio": 3,
+        },
+        {
+            "pro_cp1vs1_valid": True,
+            "pro_cp1vs1_late": 3.5,
+        },
+    )
+
+    assert payload["solo"] == 2
+    assert payload["dota2protracker_cp1vs1"] == 3.5
 
 
 def test_star_signal_dispatch_flags_match_new_gate_policy() -> None:

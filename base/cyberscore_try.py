@@ -2104,6 +2104,24 @@ _STAR_LATE_CORE_METRIC_ORDER = (
     "solo",
 )
 _STAR_LATE_CORE_MIN_ABS_BY_METRIC: Dict[str, float] = {}
+_STAR_BLOCK_SIGN_CONSISTENCY_METRICS_BY_SECTION = {
+    "early_output": (
+        "counterpick_1vs1",
+        "counterpick_1vs2",
+        "solo",
+    ),
+    "mid_output": (
+        "counterpick_1vs1",
+        "counterpick_1vs2",
+        "solo",
+    ),
+    "all_output": (
+        "counterpick_1vs1",
+        "counterpick_1vs2",
+        "solo",
+        "dota2protracker_cp1vs1",
+    ),
+}
 _STAR_METRIC_SHORT = {
     "counterpick_1vs1": "cp1v1",
     "counterpick_1vs2": "cp1v2",
@@ -2138,6 +2156,82 @@ def _star_thresholds_for_wr(target_wr: int, section: str) -> Dict[str, int]:
         except (TypeError, ValueError):
             continue
     return out
+
+
+def _star_block_sign_consistency(raw_block: Optional[dict], section: str) -> Dict[str, Any]:
+    block = raw_block if isinstance(raw_block, dict) else {}
+    required_metrics = tuple(_STAR_BLOCK_SIGN_CONSISTENCY_METRICS_BY_SECTION.get(str(section), ()))
+    if not required_metrics:
+        return {
+            "valid": True,
+            "status": "not_required",
+            "sign": None,
+            "required_metrics": [],
+            "nonzero_metrics": [],
+            "missing_metrics": [],
+            "zero_metrics": [],
+            "conflicting_metrics": [],
+            "metric_signs": {},
+        }
+
+    missing_metrics: List[str] = []
+    zero_metrics: List[str] = []
+    nonzero_metrics: List[str] = []
+    metric_signs: Dict[str, int] = {}
+    for metric in required_metrics:
+        value = _coerce_metric_value(block.get(metric))
+        if value is None:
+            missing_metrics.append(metric)
+            continue
+        if value == 0:
+            zero_metrics.append(metric)
+            continue
+        metric_signs[metric] = 1 if value > 0 else -1
+        nonzero_metrics.append(metric)
+
+    unique_signs = {sign for sign in metric_signs.values() if sign in (-1, 1)}
+    conflicting_metrics = list(nonzero_metrics) if len(unique_signs) > 1 else []
+    sign = next(iter(unique_signs)) if len(unique_signs) == 1 else (0 if unique_signs else None)
+    valid = bool(
+        not missing_metrics
+        and not zero_metrics
+        and not conflicting_metrics
+        and sign in (-1, 1)
+    )
+    if valid:
+        status = "ok"
+    elif missing_metrics:
+        status = "missing_required_metrics"
+    elif zero_metrics:
+        status = "zero_required_metrics"
+    elif conflicting_metrics:
+        status = "conflict_required_signs"
+    else:
+        status = "no_required_sign"
+
+    return {
+        "valid": valid,
+        "status": status,
+        "sign": sign,
+        "required_metrics": list(required_metrics),
+        "nonzero_metrics": nonzero_metrics,
+        "missing_metrics": missing_metrics,
+        "zero_metrics": zero_metrics,
+        "conflicting_metrics": conflicting_metrics,
+        "metric_signs": metric_signs,
+    }
+
+
+def _star_block_consistency_fields(consistency: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "sign_consistency_status": consistency.get("status"),
+        "sign_consistency_required_metrics": list(consistency.get("required_metrics") or []),
+        "sign_consistency_nonzero_metrics": list(consistency.get("nonzero_metrics") or []),
+        "sign_consistency_missing_metrics": list(consistency.get("missing_metrics") or []),
+        "sign_consistency_zero_metrics": list(consistency.get("zero_metrics") or []),
+        "sign_consistency_conflicting_metrics": list(consistency.get("conflicting_metrics") or []),
+        "sign_consistency_metric_signs": dict(consistency.get("metric_signs") or {}),
+    }
 
 
 def _format_metric_value(value: float) -> str:
@@ -2257,6 +2351,8 @@ def _build_lane_block(
 def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: str) -> Dict[str, Any]:
     block = raw_block if isinstance(raw_block, dict) else {}
     thresholds = _star_thresholds_for_wr(target_wr, section)
+    sign_consistency = _star_block_sign_consistency(block, section)
+    consistency_fields = _star_block_consistency_fields(sign_consistency)
     hit_metrics: List[str] = []
     hit_signs: set[int] = set()
 
@@ -2276,7 +2372,9 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
             "status": "no_hits",
             "sign": None,
             "hit_metrics": [],
+            "hit_count": 0,
             "conflict_metric": None,
+            **consistency_fields,
         }
     if len(hit_signs) > 1:
         return {
@@ -2284,10 +2382,30 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
             "status": "conflict_hits",
             "sign": 0,
             "hit_metrics": hit_metrics,
+            "hit_count": len(hit_metrics),
             "conflict_metric": None,
+            **consistency_fields,
         }
 
     block_sign = next(iter(hit_signs)) if hit_signs else None
+    if not bool(sign_consistency.get("valid")):
+        consistency_sign = sign_consistency.get("sign")
+        return {
+            "valid": False,
+            "status": "required_sign_consistency_invalid",
+            "sign": consistency_sign if consistency_sign in (-1, 1) else block_sign,
+            "hit_metrics": hit_metrics,
+            "hit_count": len(hit_metrics),
+            "min_hit_count_required": 1,
+            "conflict_metric": None,
+            "support_status": sign_consistency.get("status"),
+            "support_nonzero_metrics": list(sign_consistency.get("nonzero_metrics") or []),
+            "support_conflicting_metrics": list(sign_consistency.get("conflicting_metrics") or []),
+            "support_zero_metrics": list(sign_consistency.get("zero_metrics") or []),
+            "support_missing_metrics": list(sign_consistency.get("missing_metrics") or []),
+            **consistency_fields,
+        }
+
     return {
         "valid": block_sign in (-1, 1),
         "status": "ok" if block_sign in (-1, 1) else "no_sign",
@@ -2301,6 +2419,7 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
         "support_conflicting_metrics": [],
         "support_zero_metrics": [],
         "support_missing_metrics": [],
+        **consistency_fields,
     }
 
 
@@ -2442,6 +2561,21 @@ def _format_star_block_status(diag: Dict[str, Any]) -> str:
         metric = str(diag.get("conflict_metric") or "")
         short = _STAR_METRIC_SHORT.get(metric, metric or "?")
         return f"conflict_sign({short})"
+    if status == "required_sign_consistency_invalid":
+        consistency_status = str(diag.get("sign_consistency_status") or diag.get("support_status") or "unknown")
+        consistency_parts: List[str] = []
+        for key in (
+            "sign_consistency_conflicting_metrics",
+            "sign_consistency_zero_metrics",
+            "sign_consistency_missing_metrics",
+        ):
+            for metric in diag.get(key) or []:
+                short = _STAR_METRIC_SHORT.get(str(metric), str(metric))
+                if short and short not in consistency_parts:
+                    consistency_parts.append(short)
+        if consistency_parts:
+            return f"sign_consistency_invalid({consistency_status}:{','.join(consistency_parts)})"
+        return f"sign_consistency_invalid({consistency_status})"
     if status == "support_invalid":
         support_status = str(diag.get("support_status") or "unknown")
         support_parts: List[str] = []
@@ -2767,6 +2901,13 @@ def _decorate_star_block_for_display(
         section=section,
     )
     if not bool(diag.get("valid")):
+        for metric in _STAR_METRIC_ORDER:
+            raw = out.get(metric)
+            if not isinstance(raw, str) or not raw.strip().endswith("*"):
+                continue
+            value = _coerce_metric_value(raw)
+            if value is not None:
+                out[metric] = _format_metric_value(value)
         return out
     block_sign = int(diag.get("sign") or 0)
     if block_sign not in (-1, 1):
@@ -3742,7 +3883,7 @@ def _build_all_star_output(
 ) -> Dict[str, Any]:
     all_output: Dict[str, Any] = {}
     if isinstance(post_lane_output, dict):
-        for key in ("counterpick_1vs1", "counterpick_1vs2", "synergy_duo", "synergy_trio"):
+        for key in ("counterpick_1vs1", "counterpick_1vs2", "solo", "synergy_duo", "synergy_trio"):
             if key in post_lane_output:
                 all_output[key] = post_lane_output.get(key)
     all_output.update(_build_dota2protracker_star_output(protracker_payload))
@@ -19068,7 +19209,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
             print(f"   📊 LANING (20-28 min): {early_output.get('counterpick_1vs1', 'N/A')}, {early_output.get('counterpick_1vs2', 'N/A')}, {early_output.get('solo', 'N/A')}, {early_output.get('synergy_duo', 'N/A')}, {early_output.get('synergy_trio', 'N/A')}")
             print(f"   📊 LATE (28-60 min): {mid_output.get('counterpick_1vs1', 'N/A')}, {mid_output.get('counterpick_1vs2', 'N/A')}, {mid_output.get('solo', 'N/A')}, {mid_output.get('synergy_duo', 'N/A')}, {mid_output.get('synergy_trio', 'N/A')}")
-            print(f"   📊 ALL: {all_output.get('counterpick_1vs1', 'N/A')}, {all_output.get('counterpick_1vs2', 'N/A')}, {all_output.get('synergy_duo', 'N/A')}, {all_output.get('synergy_trio', 'N/A')}, d2pt={all_output.get('dota2protracker_cp1vs1', 'N/A')}")
+            print(f"   📊 ALL: {all_output.get('counterpick_1vs1', 'N/A')}, {all_output.get('counterpick_1vs2', 'N/A')}, {all_output.get('solo', 'N/A')}, {all_output.get('synergy_duo', 'N/A')}, {all_output.get('synergy_trio', 'N/A')}, d2pt={all_output.get('dota2protracker_cp1vs1', 'N/A')}")
             if DOTA2PROTRACKER_ENABLED and isinstance(s, dict):
                 for _line in _build_dota2protracker_log_lines(s):
                     print(_line)
@@ -19092,6 +19233,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             all_metric_list = [
                 ('counterpick_1vs1', 'Counterpick_1vs1'),
                 ('counterpick_1vs2', 'Counterpick_1vs2'),
+                ('solo', 'Solo'),
                 ('synergy_duo', 'Synergy_duo'),
                 ('synergy_trio', 'Synergy_trio'),
                 ('dota2protracker_cp1vs1', 'Dota2ProTracker_cp1vs1'),
