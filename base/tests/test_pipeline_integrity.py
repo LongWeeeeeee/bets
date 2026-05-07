@@ -5721,7 +5721,7 @@ def test_runtime_star_block_invalid_when_starred_core_signs_conflict(monkeypatch
     assert diag["hit_metrics"] == ["solo", "counterpick_1vs1", "counterpick_1vs2"]
 
 
-def test_runtime_star_block_invalid_when_core_metric_missing(monkeypatch) -> None:
+def test_runtime_star_block_valid_when_optional_core_metric_missing(monkeypatch) -> None:
     monkeypatch.setattr(
         runtime,
         "STAR_THRESHOLDS_BY_WR",
@@ -5741,10 +5741,64 @@ def test_runtime_star_block_invalid_when_core_metric_missing(monkeypatch) -> Non
         section="early_output",
     )
 
+    assert diag["valid"] is True
+    assert diag["status"] == "ok"
+    assert diag["sign"] == 1
+    assert diag["sign_consistency_status"] == "ok"
+    assert diag["sign_consistency_missing_metrics"] == ["counterpick_1vs2"]
+
+
+def test_runtime_star_block_valid_when_cp1v1_is_missing_but_other_core_metrics_align(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {
+                "early_output": [("solo", 3), ("counterpick_1vs1", 4), ("counterpick_1vs2", 4)],
+                "mid_output": [],
+                "all_output": [],
+            }
+        },
+        raising=False,
+    )
+
+    diag = runtime._star_block_diagnostics(
+        raw_block={"solo": -3, "counterpick_1vs2": -4},
+        target_wr=60,
+        section="early_output",
+    )
+
+    assert diag["valid"] is True
+    assert diag["status"] == "ok"
+    assert diag["sign"] == -1
+    assert diag["sign_consistency_status"] == "ok"
+    assert diag["sign_consistency_missing_metrics"] == ["counterpick_1vs1"]
+
+
+def test_runtime_star_block_invalid_when_core_metric_is_zero(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {
+                "early_output": [("solo", 3), ("counterpick_1vs1", 4), ("counterpick_1vs2", 4)],
+                "mid_output": [],
+                "all_output": [],
+            }
+        },
+        raising=False,
+    )
+
+    diag = runtime._star_block_diagnostics(
+        raw_block={"solo": 3, "counterpick_1vs1": 4, "counterpick_1vs2": 0},
+        target_wr=60,
+        section="early_output",
+    )
+
     assert diag["valid"] is False
     assert diag["status"] == "required_sign_consistency_invalid"
-    assert diag["sign_consistency_status"] == "missing_required_metrics"
-    assert diag["sign_consistency_missing_metrics"] == ["counterpick_1vs2"]
+    assert diag["sign_consistency_status"] == "zero_required_metrics"
+    assert diag["sign_consistency_zero_metrics"] == ["counterpick_1vs2"]
 
 
 def test_runtime_all_star_block_valid_from_dota2protracker_cp1vs1(monkeypatch) -> None:
@@ -5859,7 +5913,7 @@ def test_runtime_all_star_block_valid_when_two_stars_override_nonstar_dota2protr
     assert "dota2protracker_cp1vs1" in diag["sign_consistency_conflicting_metrics"]
 
 
-def test_runtime_all_star_block_requires_dota2protracker_present(monkeypatch) -> None:
+def test_runtime_all_star_block_valid_when_dota2protracker_missing(monkeypatch) -> None:
     monkeypatch.setattr(
         runtime,
         "STAR_THRESHOLDS_BY_WR",
@@ -5879,9 +5933,10 @@ def test_runtime_all_star_block_requires_dota2protracker_present(monkeypatch) ->
         section="all_output",
     )
 
-    assert diag["valid"] is False
-    assert diag["status"] == "required_sign_consistency_invalid"
-    assert diag["sign_consistency_status"] == "missing_required_metrics"
+    assert diag["valid"] is True
+    assert diag["status"] == "ok"
+    assert diag["sign"] == 1
+    assert diag["sign_consistency_status"] == "ok"
     assert diag["sign_consistency_missing_metrics"] == ["dota2protracker_cp1vs1"]
 
 

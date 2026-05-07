@@ -236,6 +236,8 @@ def test_same_sign_star_sends_at_ten_even_without_800_lead(monkeypatch) -> None:
 
 
 def test_early_only_star_with_aligned_lane_adv_still_dispatches_immediately(monkeypatch) -> None:
+    _patch_early_wr(monkeypatch, 65.0)
+
     result = _run_branch_scenario(
         monkeypatch,
         BranchScenario(
@@ -249,7 +251,7 @@ def test_early_only_star_with_aligned_lane_adv_still_dispatches_immediately(monk
             late_sign=1,
             expected_send_calls=0,
             raw_early_output={"solo": -3},
-            raw_mid_output={"solo": 0},
+            raw_mid_output={"counterpick_1vs1": -1, "counterpick_1vs2": -1, "solo": -1},
             raw_post_lane_output={"dota2protracker_cp1vs1": -1.88},
             metrics_extra={"pro_lane_advantage": -1.96},
         ),
@@ -257,9 +259,146 @@ def test_early_only_star_with_aligned_lane_adv_still_dispatches_immediately(monk
     )
 
     assert len(result.sent_messages) == 1
+    assert result.sent_messages[0].startswith("СТАВКА НА Dire Team x0.5\n")
     assert result.queued_payload is None
     assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now"
-    assert result.add_url_calls[-1]["details"]["dispatch_mode"] == "immediate_star_rule"
+    assert result.add_url_calls[-1]["details"]["dispatch_mode"] == "immediate_early_only_target_half"
+
+
+def _patch_early_wr(monkeypatch, wr_pct: float) -> None:
+    def _recommend(_data, phase):
+        if str(phase) == "early":
+            return {"wr_pct": float(wr_pct), "min_odds": 1.67}
+        return None
+
+    monkeypatch.setattr(runtime, "_recommend_odds_for_block", _recommend)
+
+
+def test_early_only_signal_rejects_when_wr_below_65(monkeypatch) -> None:
+    _patch_early_wr(monkeypatch, 60.0)
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="mouz_l1ga_early_only_wr60_reject",
+            game_time_seconds=(10 * 60) + 33,
+            target_side="radiant",
+            target_networth_diff=-2305,
+            has_early_star=True,
+            early_sign=1,
+            has_late_star=False,
+            late_sign=-1,
+            has_all_star=False,
+            expected_send_calls=0,
+            raw_early_output={"counterpick_1vs2": 5},
+            raw_mid_output={"counterpick_1vs1": 0, "counterpick_1vs2": -3, "solo": -1},
+            raw_post_lane_output={"dota2protracker_cp1vs1": 1.74},
+        ),
+        lane_output=("Top: draw 32%", "Mid: win 47%", "Bot: lose 43%"),
+    )
+
+    assert result.sent_messages == []
+    assert result.queued_payload is None
+    assert result.add_url_calls
+    assert result.add_url_calls[-1]["reason"] == "star_signal_rejected_early_only_wr_below_65"
+    details = result.add_url_calls[-1]["details"]
+    assert details["early_only_no_late_all_gate"]["min_wr_ok"] is False
+    assert details["early_only_no_late_all_gate"]["early_wr_pct"] == 60.0
+
+
+def test_early_only_signal_sends_target_half_when_late_core_same_sign(monkeypatch) -> None:
+    _patch_early_wr(monkeypatch, 65.0)
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="early_only_late_core_same_sign_target_half",
+            game_time_seconds=2 * 60,
+            target_side="radiant",
+            target_networth_diff=-1200,
+            has_early_star=True,
+            early_sign=1,
+            has_late_star=False,
+            late_sign=1,
+            has_all_star=False,
+            expected_send_calls=0,
+            raw_early_output={"counterpick_1vs2": 5},
+            raw_mid_output={"counterpick_1vs1": 1, "counterpick_1vs2": 3, "solo": 1},
+        ),
+        lane_output=("Top: draw 32%", "Mid: win 47%", "Bot: lose 43%"),
+    )
+
+    assert len(result.sent_messages) == 1
+    assert result.sent_messages[0].startswith("СТАВКА НА Radiant Team x0.5\n")
+    assert result.queued_payload is None
+    assert result.add_url_calls[-1]["details"]["dispatch_mode"] == "immediate_early_only_target_half"
+    gate = result.add_url_calls[-1]["details"]["early_only_no_late_all_gate"]
+    assert gate["signal_mode"] == "target_half"
+    assert gate["late_core_same_sign"] is True
+
+
+def test_early_only_signal_sends_target_half_when_late_cp1v2_missing(monkeypatch) -> None:
+    _patch_early_wr(monkeypatch, 65.0)
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="early_only_late_core_cp1v2_missing_target_half",
+            game_time_seconds=2 * 60,
+            target_side="radiant",
+            target_networth_diff=-1200,
+            has_early_star=True,
+            early_sign=1,
+            has_late_star=False,
+            late_sign=1,
+            has_all_star=False,
+            expected_send_calls=0,
+            raw_early_output={"counterpick_1vs2": 5},
+            raw_mid_output={"counterpick_1vs1": 1, "solo": 1},
+        ),
+        lane_output=("Top: draw 32%", "Mid: win 47%", "Bot: lose 43%"),
+    )
+
+    assert len(result.sent_messages) == 1
+    assert result.sent_messages[0].startswith("СТАВКА НА Radiant Team x0.5\n")
+    assert result.queued_payload is None
+    gate = result.add_url_calls[-1]["details"]["early_only_no_late_all_gate"]
+    assert gate["signal_mode"] == "target_half"
+    assert gate["late_core_same_sign"] is True
+    assert gate["late_core_missing_metrics"] == ["counterpick_1vs2"]
+
+
+def test_early_only_signal_sends_kills_header_when_late_core_zero_or_opposite(monkeypatch) -> None:
+    _patch_early_wr(monkeypatch, 65.0)
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="early_only_late_core_opposite_kills_from",
+            game_time_seconds=2 * 60,
+            target_side="radiant",
+            target_networth_diff=-1200,
+            has_early_star=True,
+            early_sign=1,
+            has_late_star=False,
+            late_sign=-1,
+            has_all_star=False,
+            expected_send_calls=0,
+            raw_early_output={"counterpick_1vs2": 5},
+            raw_mid_output={"counterpick_1vs1": 0, "counterpick_1vs2": -3, "solo": -1},
+        ),
+        lane_output=("Top: draw 32%", "Mid: win 47%", "Bot: lose 43%"),
+    )
+
+    assert len(result.sent_messages) == 1
+    first_line = result.sent_messages[0].splitlines()[0]
+    assert first_line == "СТАВКА НА килы от Radiant Team"
+    assert " x" not in first_line
+    assert result.queued_payload is None
+    assert result.add_url_calls[-1]["details"]["dispatch_mode"] == "immediate_early_only_kills_from"
+    gate = result.add_url_calls[-1]["details"]["early_only_no_late_all_gate"]
+    assert gate["signal_mode"] == "kills_from"
+    assert gate["late_core_same_sign"] is False
 
 
 def test_no_late_immediate_star_waits_when_lane_adv_dict_opposes_target(monkeypatch) -> None:
