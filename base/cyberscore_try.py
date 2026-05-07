@@ -2241,10 +2241,8 @@ def _format_metric_value(value: float) -> str:
 
 
 LANE_ADV_DICT_CONFIDENCE_BASELINE = 39.0
-LANE_ADV_DICT_SIGN_MIN_ABS = 5.0
+LANE_ADV_DICT_SIGN_MIN_ABS = 3.0
 LANE_ADV_PROTRACKER_SIGN_MIN_ABS = 3.0
-LANE_ADV_DICT_PAIR_SIGN_MIN_ABS = 4.0
-LANE_ADV_PROTRACKER_PAIR_SIGN_MIN_ABS = 0.5
 
 
 def _numeric_sign(value: Any, *, min_abs: float = 1e-9) -> Optional[int]:
@@ -4027,37 +4025,14 @@ def _same_sign_lane_adv_guard(
     star_side = _target_side_from_sign(star_sign)
     dict_sign = _numeric_sign(lane_adv_dict_value, min_abs=LANE_ADV_DICT_SIGN_MIN_ABS)
     protracker_sign = _numeric_sign(lane_adv_protracker_value, min_abs=LANE_ADV_PROTRACKER_SIGN_MIN_ABS)
-    dict_pair_sign = _numeric_sign(lane_adv_dict_value, min_abs=LANE_ADV_DICT_PAIR_SIGN_MIN_ABS)
-    protracker_pair_sign = _numeric_sign(
-        lane_adv_protracker_value,
-        min_abs=LANE_ADV_PROTRACKER_PAIR_SIGN_MIN_ABS,
-    )
-    lane_adv_pair_sign = (
-        dict_pair_sign
-        if dict_pair_sign in (-1, 1) and dict_pair_sign == protracker_pair_sign
-        else None
-    )
     opposing_sources: List[str] = []
     if star_sign in (-1, 1):
         if dict_sign == -int(star_sign):
             opposing_sources.append("lane_adv_dict")
-        if protracker_sign == -int(star_sign):
-            opposing_sources.append("lane_adv_protracker")
-        if lane_adv_pair_sign == -int(star_sign):
-            opposing_sources.append("lane_adv_pair")
-    present_lane_signs = [
-        sign for sign in (dict_sign, protracker_sign)
-        if sign in (-1, 1)
-    ]
-    strict_aligned = bool(
+    dict_aligned = bool(
         star_side in {"radiant", "dire"}
-        and present_lane_signs
-        and all(sign == star_sign for sign in present_lane_signs)
-    )
-    pair_aligned = bool(
-        star_side in {"radiant", "dire"}
-        and lane_adv_pair_sign in (-1, 1)
-        and lane_adv_pair_sign == star_sign
+        and dict_sign in (-1, 1)
+        and dict_sign == star_sign
     )
     return {
         "enabled": star_side in {"radiant", "dire"},
@@ -4066,17 +4041,13 @@ def _same_sign_lane_adv_guard(
         "lane_adv_dict": lane_adv_dict_value,
         "lane_adv_dict_sign": dict_sign,
         "lane_adv_dict_sign_min_abs": LANE_ADV_DICT_SIGN_MIN_ABS,
-        "lane_adv_dict_pair_sign": dict_pair_sign,
-        "lane_adv_dict_pair_sign_min_abs": LANE_ADV_DICT_PAIR_SIGN_MIN_ABS,
         "lane_adv_protracker": lane_adv_protracker_value,
         "lane_adv_protracker_sign": protracker_sign,
         "lane_adv_protracker_sign_min_abs": LANE_ADV_PROTRACKER_SIGN_MIN_ABS,
-        "lane_adv_protracker_pair_sign": protracker_pair_sign,
-        "lane_adv_protracker_pair_sign_min_abs": LANE_ADV_PROTRACKER_PAIR_SIGN_MIN_ABS,
-        "lane_adv_pair_sign": lane_adv_pair_sign,
+        "lane_adv_pair_sign": None,
         "opposes_target": bool(opposing_sources),
         "opposing_sources": opposing_sources,
-        "aligned": bool(strict_aligned or pair_aligned),
+        "aligned": bool(dict_aligned),
     }
 
 
@@ -19725,17 +19696,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             same_sign_lane_adv_wait_required = bool(
                 send_now_immediate
                 and not force_odds_signal_test_active
-                and (
-                    (
-                        send_now_full_star
-                        and not bool(same_sign_lane_adv_guard.get("aligned"))
-                    )
-                    or (
-                        send_now_immediate
-                        and not send_now_full_star
-                        and bool(same_sign_lane_adv_guard.get("opposes_target"))
-                    )
-                )
+                and bool(same_sign_lane_adv_guard.get("enabled"))
+                and not bool(same_sign_lane_adv_guard.get("aligned"))
             )
             opposite_signs_early90_monitor = _opposite_signs_early90_monitor_config(
                 team_elo_meta=team_elo_meta,

@@ -14,7 +14,6 @@ from test_networth_dispatch_gates import BranchScenario, _run_branch_scenario, r
 
 ALIGNED_LANE_OUTPUT = ("Top: win 70%", "Bot: win 70%", "Mid: win 70%")
 OPPOSITE_LANE_OUTPUT = ("Top: lose 70%", "Bot: lose 70%", "Mid: lose 70%")
-WEAK_OPPOSITE_LANE_OUTPUT = ("Top: lose 48%", "Bot: win 39%", "Mid: win 39%")
 ALIGNED_LANE_ADV = {
     "pro_lane_advantage": 5.0,
 }
@@ -24,39 +23,39 @@ OPPOSITE_LANE_ADV = {
 }
 
 
-def test_same_sign_lane_adv_guard_uses_pair_thresholds_for_soft_same_sign_values() -> None:
+def test_same_sign_lane_adv_guard_uses_dict_only_threshold_for_direction() -> None:
     guard = runtime._same_sign_lane_adv_guard(
         star_sign=1,
-        lane_adv_dict_value=-4.99,
-        lane_adv_protracker_value=-2.99,
+        lane_adv_dict_value=3.0,
+        lane_adv_protracker_value=-5.0,
+    )
+
+    assert guard["lane_adv_dict_sign"] == 1
+    assert guard["lane_adv_protracker_sign"] == -1
+    assert guard["lane_adv_pair_sign"] is None
+    assert guard["opposing_sources"] == []
+    assert guard["opposes_target"] is False
+    assert guard["aligned"] is True
+
+
+def test_same_sign_lane_adv_guard_rejects_weak_dict_even_if_protracker_matches() -> None:
+    guard = runtime._same_sign_lane_adv_guard(
+        star_sign=1,
+        lane_adv_dict_value=2.99,
+        lane_adv_protracker_value=5.0,
     )
 
     assert guard["lane_adv_dict_sign"] is None
-    assert guard["lane_adv_protracker_sign"] is None
-    assert guard["lane_adv_pair_sign"] == -1
-    assert guard["opposing_sources"] == ["lane_adv_pair"]
-    assert guard["opposes_target"] is True
-    assert guard["aligned"] is False
-
-
-def test_same_sign_lane_adv_guard_ignores_values_below_pair_thresholds() -> None:
-    guard = runtime._same_sign_lane_adv_guard(
-        star_sign=1,
-        lane_adv_dict_value=-4.33,
-        lane_adv_protracker_value=-0.49,
-    )
-
-    assert guard["lane_adv_dict_sign"] is None
-    assert guard["lane_adv_protracker_sign"] is None
+    assert guard["lane_adv_protracker_sign"] == 1
     assert guard["lane_adv_pair_sign"] is None
     assert guard["opposes_target"] is False
     assert guard["aligned"] is False
 
 
-def test_same_sign_lane_adv_guard_keeps_strong_values() -> None:
+def test_same_sign_lane_adv_guard_marks_dict_opposition() -> None:
     guard = runtime._same_sign_lane_adv_guard(
         star_sign=1,
-        lane_adv_dict_value=-5.0,
+        lane_adv_dict_value=-3.0,
         lane_adv_protracker_value=3.0,
     )
 
@@ -117,7 +116,7 @@ def test_same_sign_star_dispatches_immediately_when_only_lane_adv_dict_matches(m
     assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now"
 
 
-def test_same_sign_star_dispatches_immediately_when_only_protracker_lane_adv_matches(monkeypatch) -> None:
+def test_same_sign_star_waits_when_only_protracker_lane_adv_matches(monkeypatch) -> None:
     result = _run_branch_scenario(
         monkeypatch,
         _same_sign_case(
@@ -128,9 +127,11 @@ def test_same_sign_star_dispatches_immediately_when_only_protracker_lane_adv_mat
         lane_output=("", "", ""),
     )
 
-    assert len(result.sent_messages) == 1
-    assert result.queued_payload is None
-    assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now"
+    assert result.sent_messages == []
+    assert result.queued_payload is not None
+    assert result.queued_payload["reason"] == "same_sign_lane_adv_wait_4_10"
+    assert result.queued_payload["lane_adv_dict_sign"] is None
+    assert result.queued_payload["lane_adv_protracker_sign"] == 1
 
 
 def test_late_all_same_sign_dispatches_immediately_when_lane_adv_matches(monkeypatch) -> None:
@@ -292,7 +293,7 @@ def test_no_late_immediate_star_waits_when_lane_adv_dict_opposes_target(monkeypa
     assert result.queued_payload["lane_adv_protracker_sign"] is None
 
 
-def test_no_late_immediate_star_ignores_weak_lane_adv_dict_opposition(monkeypatch) -> None:
+def test_no_late_immediate_star_waits_when_lane_adv_dict_is_weak(monkeypatch) -> None:
     result = _run_branch_scenario(
         monkeypatch,
         BranchScenario(
@@ -311,12 +312,14 @@ def test_no_late_immediate_star_ignores_weak_lane_adv_dict_opposition(monkeypatc
             raw_mid_output={"counterpick_1vs1": 3, "solo": 1},
             raw_post_lane_output={"counterpick_1vs1": 8, "counterpick_1vs2": 12, "synergy_duo": 8},
         ),
-        lane_output=WEAK_OPPOSITE_LANE_OUTPUT,
+        lane_output=("Top: lose 47%", "Bot: win 39%", "Mid: win 39%"),
     )
 
-    assert len(result.sent_messages) == 1
-    assert result.queued_payload is None
-    assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now"
+    assert result.sent_messages == []
+    assert result.queued_payload is not None
+    assert result.queued_payload["reason"] == "same_sign_lane_adv_wait_4_10"
+    assert result.queued_payload["lane_adv_dict_sign"] is None
+    assert result.queued_payload["lane_adv_protracker_sign"] is None
 
 
 def test_no_late_immediate_star_waits_when_soft_pair_lane_adv_opposes_target(monkeypatch) -> None:
@@ -347,10 +350,10 @@ def test_no_late_immediate_star_waits_when_soft_pair_lane_adv_opposes_target(mon
     assert result.queued_payload["reason"] == "same_sign_lane_adv_wait_4_10"
     assert result.queued_payload["dynamic_monitor_profile"] == "same_sign_lane_adv_wait_4_10"
     assert result.queued_payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT
-    assert result.queued_payload["lane_adv_dict_sign"] is None
+    assert result.queued_payload["lane_adv_dict_sign"] == 1
     assert result.queued_payload["lane_adv_protracker_sign"] is None
-    assert result.queued_payload["lane_adv_pair_sign"] == 1
-    assert result.queued_payload["lane_adv_opposing_sources"] == ["lane_adv_pair"]
+    assert result.queued_payload["lane_adv_pair_sign"] is None
+    assert result.queued_payload["lane_adv_opposing_sources"] == ["lane_adv_dict"]
     assert float(result.queued_payload["target_game_time"]) == float(runtime.NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS)
 
 
@@ -390,7 +393,7 @@ def test_no_late_early_and_all_opposite_signs_are_rejected(monkeypatch) -> None:
     assert details["star_dispatch_flags"]["send_now_no_late_early_or_all"] is False
 
 
-def test_no_late_immediate_star_waits_when_protracker_lane_adv_opposes_target(monkeypatch) -> None:
+def test_no_late_immediate_star_ignores_protracker_lane_adv_opposition(monkeypatch) -> None:
     result = _run_branch_scenario(
         monkeypatch,
         BranchScenario(
@@ -410,11 +413,9 @@ def test_no_late_immediate_star_waits_when_protracker_lane_adv_opposes_target(mo
         lane_output=ALIGNED_LANE_OUTPUT,
     )
 
-    assert result.sent_messages == []
-    assert result.queued_payload is not None
-    assert result.queued_payload["reason"] == "same_sign_lane_adv_wait_4_10"
-    assert result.queued_payload["lane_adv_dict_sign"] == 1
-    assert result.queued_payload["lane_adv_protracker_sign"] == -1
+    assert len(result.sent_messages) == 1
+    assert result.queued_payload is None
+    assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now"
 
 
 def test_no_late_lane_adv_guard_sends_after_four_when_target_leads_by_800(monkeypatch) -> None:
