@@ -5137,6 +5137,13 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 "last_progress_at": float(last_progress_at),
             }
         )
+        if now_ts - last_progress_at > DELAYED_SIGNAL_NO_PROGRESS_TIMEOUT_SECONDS:
+            _drop_delayed_match(match_key, reason="no_progress_timeout")
+            print(
+                f"⚠️ Delayed сигнал удален (нет прогресса game_time): "
+                f"{match_key}, last_game_time={int(current_game_time)}"
+            )
+            continue
         if delayed_reason == "late_only_opposite_signs":
             opposite_min_dispatch_time = float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
             opposite_payload_updates: Dict[str, Any] = {}
@@ -5577,12 +5584,6 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 now_ts=now_ts,
                 last_progress_at=last_progress_at,
             )
-            if now_ts - last_progress_at > DELAYED_SIGNAL_NO_PROGRESS_TIMEOUT_SECONDS:
-                _drop_delayed_match(match_key, reason="no_progress_timeout")
-                print(
-                    f"⚠️ Delayed сигнал удален (нет прогресса game_time): "
-                    f"{match_key}, last_game_time={int(current_game_time)}"
-                )
             continue
 
         if _skip_dispatch_for_processed_url(match_key, "delayed отправки перед lock", indent=""):

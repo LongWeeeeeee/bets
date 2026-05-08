@@ -888,10 +888,10 @@ def test_delayed_pub_table_wait_refreshes_stale_cyberscore_after_target(tmp_path
     monkeypatch.setattr(
         runtime,
         "_fetch_delayed_match_state",
-        lambda _json_url: {"game_time": 1284.0, "radiant_lead": -4092.0},
+        lambda _json_url: {"game_time": 1700.0, "radiant_lead": -4092.0},
     )
     monkeypatch.setattr(runtime._shared_camoufox_session, "request_reset", lambda: reset_calls.append("reset"))
-    monkeypatch.setattr(runtime, "CYBERSCORE_LISTING_ITEM_CACHE", {"173102": {"game_time": 1284}}, raising=False)
+    monkeypatch.setattr(runtime, "CYBERSCORE_LISTING_ITEM_CACHE", {"173102": {"game_time": 1700}}, raising=False)
 
     with runtime.monitored_matches_lock:
         runtime.monitored_matches.clear()
@@ -904,7 +904,7 @@ def test_delayed_pub_table_wait_refreshes_stale_cyberscore_after_target(tmp_path
             "target_game_time": float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS),
             "queued_at": 1_699_999_000.0,
             "queued_game_time": 19.0,
-            "last_game_time": 1284.0,
+            "last_game_time": 1700.0,
             "last_progress_at": 1_699_999_900.0,
             "add_url_reason": "star_signal_sent_delayed",
             "add_url_details": {"target_side": "radiant"},
@@ -930,6 +930,56 @@ def test_delayed_pub_table_wait_refreshes_stale_cyberscore_after_target(tmp_path
     assert payload["cyberscore_stale_refresh_count"] == 1
     with runtime.monitored_matches_lock:
         runtime.monitored_matches.clear()
+
+
+def test_delayed_pub_table_wait_drops_after_no_progress_timeout(tmp_path, monkeypatch) -> None:
+    delayed_queue_path = tmp_path / "delayed_signal_queue.json"
+    reset_calls: List[str] = []
+
+    monkeypatch.setattr(runtime, "DELAYED_QUEUE_PATH", str(delayed_queue_path), raising=False)
+    monkeypatch.setattr(runtime, "CYBERSCORE_DELAYED_STALE_REFRESH_SECONDS", 30, raising=False)
+    monkeypatch.setattr(runtime, "late_pub_comeback_table_thresholds_by_wr", {60: {21: -3809.48}}, raising=False)
+    monkeypatch.setattr(runtime.time, "time", lambda: 1_700_000_000.0)
+    monkeypatch.setattr(runtime, "_is_url_processed", lambda _url: False)
+    monkeypatch.setattr(
+        runtime,
+        "_fetch_delayed_match_state",
+        lambda _json_url: {"game_time": 1284.0, "radiant_lead": 4200.0},
+    )
+    monkeypatch.setattr(runtime._shared_camoufox_session, "request_reset", lambda: reset_calls.append("reset"))
+
+    match_key = "cyberscore.live/en/matches/173102.map1"
+    with runtime.monitored_matches_lock:
+        runtime.monitored_matches.clear()
+    runtime._set_delayed_match(
+        match_key,
+        {
+            "message": "payload",
+            "reason": "late_star_pub_comeback_table_monitor",
+            "json_url": "https://cyberscore.live/en/matches/173102/",
+            "target_game_time": float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS),
+            "queued_at": 1_699_990_000.0,
+            "queued_game_time": 19.0,
+            "last_game_time": 1284.0,
+            "last_progress_at": 1_699_990_000.0,
+            "add_url_reason": "star_signal_sent_delayed",
+            "add_url_details": {"target_side": "radiant"},
+            "fallback_send_status_label": runtime.NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
+            "send_on_target_game_time": False,
+            "allow_live_recheck": False,
+            "late_pub_comeback_table_active": True,
+            "late_pub_comeback_table_wr_level": 60,
+            "networth_target_side": "radiant",
+            "retry_attempt_count": 0,
+            "next_retry_at": 0.0,
+        },
+    )
+
+    runtime._drain_due_delayed_signals_once()
+
+    assert reset_calls == []
+    with runtime.monitored_matches_lock:
+        assert match_key not in runtime.monitored_matches
 
 
 def test_check_head_skips_existing_cyberscore_delayed_payload_after_map_key(monkeypatch, capsys) -> None:
