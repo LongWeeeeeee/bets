@@ -1245,6 +1245,8 @@ NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT = "late_comeback_monitor_wait"
 NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND = "late_comeback_timeout_no_send"
 NETWORTH_STATUS_LATE_PUB_TABLE_WAIT = "late_pub_table_wait"
 NETWORTH_STATUS_LATE_PUB_TABLE_SEND = "late_pub_table_send"
+NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT = "late_pre27_dominance_wait"
+LATE_PRE27_DOMINANCE_PROFILE = "late_pre27_dominance"
 TIER_SIGNAL_MIN_THRESHOLD_TIER1_BASE = 60
 TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE = 60
 ELO_UNDERDOG_GUARD_FAVORITE_EDGE_PP = 15.0
@@ -3069,6 +3071,7 @@ def _networth_monitor_hold_check(
     monitor_threshold: Optional[float],
     hold_started_game_time: Optional[float],
     hold_seconds: Optional[float] = None,
+    allow_zero_threshold: bool = False,
 ) -> Dict[str, Any]:
     try:
         hold_required_seconds = (
@@ -3105,7 +3108,10 @@ def _networth_monitor_hold_check(
 
     enabled = bool(
         threshold_value is not None
-        and threshold_value > 0
+        and (
+            threshold_value > 0
+            or (allow_zero_threshold and threshold_value >= 0)
+        )
         and hold_required_seconds > 0.0
     )
     threshold_met = bool(
@@ -3613,6 +3619,143 @@ def _opposite_signs_early90_monitor_config(
         "dispatch_status_label": NETWORTH_STATUS_LATE_OPPOSITE_EARLY90_WAIT_20_20,
         "send_on_target_game_time": False,
         "wait_until_target_then_post_target_comeback": True,
+    }
+
+
+def _star_recommendation_level(
+    rec: Optional[Dict[str, Any]],
+    wr_pct: Optional[float],
+) -> Optional[int]:
+    raw_level = rec.get("level") if isinstance(rec, dict) else None
+    for candidate in (raw_level, wr_pct):
+        try:
+            value = float(candidate) if candidate is not None else None
+        except (TypeError, ValueError):
+            value = None
+        if value is None or not math.isfinite(value):
+            continue
+        return _nearest_star_wr_level(value, [60, 65, 70, 75, 80, 85, 90])
+    return None
+
+
+def _late_pre27_dominance_thresholds_for_delta(delta_level: int) -> Tuple[str, float, float, float]:
+    if delta_level <= -15:
+        return "late_much_weaker", 3000.0, 3000.0, 5000.0
+    if delta_level < 0:
+        return "late_weaker", 4000.0, 2500.0, 2500.0
+    if delta_level == 0:
+        return "equal", 2500.0, 800.0, 500.0
+    if delta_level < 15:
+        return "late_stronger", 2000.0, 500.0, 0.0
+    return "late_much_stronger", 800.0, 0.0, 0.0
+
+
+def _late_pre27_dominance_monitor_config(
+    *,
+    has_selected_early_star: bool,
+    selected_early_sign: Optional[int],
+    has_selected_late_star: bool,
+    selected_late_sign: Optional[int],
+    early_rec: Optional[Dict[str, Any]],
+    late_rec: Optional[Dict[str, Any]],
+    early_wr_pct: Optional[float],
+    late_wr_pct: Optional[float],
+) -> Optional[Dict[str, Any]]:
+    if not (
+        has_selected_early_star
+        and has_selected_late_star
+        and selected_early_sign in (-1, 1)
+        and selected_late_sign in (-1, 1)
+        and selected_early_sign != selected_late_sign
+    ):
+        return None
+
+    early_level = _star_recommendation_level(early_rec, early_wr_pct)
+    late_level = _star_recommendation_level(late_rec, late_wr_pct)
+    if early_level is None or late_level is None:
+        return None
+
+    delta_level = int(late_level) - int(early_level)
+    bucket, threshold_10_to_16, threshold_17_to_19, threshold_20_to_26 = (
+        _late_pre27_dominance_thresholds_for_delta(delta_level)
+    )
+    return {
+        "enabled": True,
+        "profile": LATE_PRE27_DOMINANCE_PROFILE,
+        "target_game_time": float(LATE_PUB_COMEBACK_TABLE_START_SECONDS),
+        "target_sign": int(selected_late_sign),
+        "target_side": _target_side_from_sign(selected_late_sign),
+        "early_wr_level": int(early_level),
+        "late_wr_level": int(late_level),
+        "delta_level": int(delta_level),
+        "delta_bucket": bucket,
+        "threshold_10_to_16": float(threshold_10_to_16),
+        "threshold_17_to_19": float(threshold_17_to_19),
+        "threshold_20_to_26": float(threshold_20_to_26),
+        "status_10_to_16": NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT,
+        "status_17_to_19": NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT,
+        "status_20_to_26": NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT,
+        "hold_zero_threshold": True,
+    }
+
+
+def _late_pre27_dominance_snapshot(
+    source: Optional[Dict[str, Any]],
+    game_time_seconds: Optional[float],
+) -> Dict[str, Any]:
+    try:
+        current_game_time = float(game_time_seconds) if game_time_seconds is not None else None
+    except (TypeError, ValueError):
+        current_game_time = None
+    if current_game_time is None or not isinstance(source, dict):
+        return {"threshold": None, "status_label": ""}
+
+    try:
+        target_game_time = float(
+            source.get("target_game_time")
+            if source.get("target_game_time") is not None
+            else LATE_PUB_COMEBACK_TABLE_START_SECONDS
+        )
+    except (TypeError, ValueError):
+        target_game_time = float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
+
+    if current_game_time < float(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS):
+        return {
+            "threshold": None,
+            "status_label": str(
+                source.get("dispatch_status_label")
+                or NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT
+            ),
+        }
+    if current_game_time >= target_game_time:
+        return {"threshold": None, "status_label": ""}
+
+    if current_game_time < 17 * 60:
+        threshold_key = "threshold_10_to_16"
+        status_key = "status_10_to_16"
+    elif current_game_time < 20 * 60:
+        threshold_key = "threshold_17_to_19"
+        status_key = "status_17_to_19"
+    else:
+        threshold_key = "threshold_20_to_26"
+        status_key = "status_20_to_26"
+
+    threshold_raw = source.get(
+        f"networth_monitor_{threshold_key}",
+        source.get(threshold_key),
+    )
+    try:
+        threshold = float(threshold_raw) if threshold_raw is not None else None
+    except (TypeError, ValueError):
+        threshold = None
+    return {
+        "threshold": threshold,
+        "status_label": str(
+            source.get(f"networth_monitor_{status_key}")
+            or source.get(status_key)
+            or source.get("dispatch_status_label")
+            or NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT
+        ),
     }
 
 
@@ -4472,6 +4615,17 @@ def _dynamic_monitor_snapshot_for_payload(
         )
         return snapshot
 
+    if snapshot["profile"] == LATE_PRE27_DOMINANCE_PROFILE:
+        pre27_snapshot = _late_pre27_dominance_snapshot(payload, current_game_time)
+        snapshot["threshold"] = pre27_snapshot.get("threshold")
+        snapshot["status_label"] = str(
+            pre27_snapshot.get("status_label")
+            or payload.get("dispatch_status_label")
+            or snapshot["status_label"]
+            or ""
+        )
+        return snapshot
+
     if snapshot["profile"] == "late_only_opposite_signs_early90_tier1_fast_release":
         target_game_time_raw = payload.get("target_game_time")
         try:
@@ -4986,6 +5140,9 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
         if delayed_reason == "late_only_opposite_signs":
             opposite_min_dispatch_time = float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
             opposite_payload_updates: Dict[str, Any] = {}
+            late_pre27_dominance_active = bool(
+                payload.get("dynamic_monitor_profile") == LATE_PRE27_DOMINANCE_PROFILE
+            )
             if target_game_time < opposite_min_dispatch_time:
                 target_game_time = opposite_min_dispatch_time
                 opposite_payload_updates["target_game_time"] = float(opposite_min_dispatch_time)
@@ -4994,17 +5151,26 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 "late_only_opposite_signs_early90_tier1_fast_release",
             }:
                 opposite_payload_updates["dynamic_monitor_profile"] = ""
-            if payload.get("networth_monitor_threshold") is not None:
+            if (
+                not late_pre27_dominance_active
+                and payload.get("networth_monitor_threshold") is not None
+            ):
                 opposite_payload_updates["networth_monitor_threshold"] = None
-            if payload.get("networth_monitor_deadline_game_time") is not None:
+            if (
+                not late_pre27_dominance_active
+                and payload.get("networth_monitor_deadline_game_time") is not None
+            ):
                 opposite_payload_updates["networth_monitor_deadline_game_time"] = None
-            if payload.get("send_on_target_game_time") is not True:
+            if (
+                not late_pre27_dominance_active
+                and payload.get("send_on_target_game_time") is not True
+            ):
                 opposite_payload_updates["send_on_target_game_time"] = True
             if opposite_payload_updates:
                 _update_delayed_match(match_key, **opposite_payload_updates)
                 payload = dict(payload)
                 payload.update(opposite_payload_updates)
-            if current_game_time < opposite_min_dispatch_time:
+            if current_game_time < opposite_min_dispatch_time and not late_pre27_dominance_active:
                 _maybe_refresh_stale_cyberscore_delayed_state(
                     match_key,
                     payload,
@@ -5051,6 +5217,9 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
             monitor_hold_seconds = max(0.0, float(monitor_hold_seconds_raw))
         except (TypeError, ValueError):
             monitor_hold_seconds = float(NETWORTH_MONITOR_HOLD_SECONDS)
+        monitor_hold_allow_zero_threshold = bool(
+            payload.get("networth_monitor_hold_allow_zero_threshold")
+        )
         monitor_hold_started_raw = payload.get("networth_monitor_hold_started_game_time")
         try:
             monitor_hold_started_game_time = (
@@ -5388,6 +5557,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                     monitor_threshold=monitor_threshold,
                     hold_started_game_time=monitor_hold_started_game_time,
                     hold_seconds=monitor_hold_seconds,
+                    allow_zero_threshold=monitor_hold_allow_zero_threshold,
                 )
                 next_hold_started = monitor_hold_check.get("hold_started_game_time")
                 if next_hold_started != monitor_hold_started_game_time:
@@ -5584,7 +5754,16 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                     )
                     continue
             add_url_details.setdefault('sent_game_time', int(current_game_time))
-            if late_pub_comeback_table_active and monitor_ready and monitor_target_diff is not None:
+            late_pub_comeback_table_ready = bool(
+                isinstance(late_pub_comeback_table_decision, dict)
+                and late_pub_comeback_table_decision.get("ready")
+            )
+            if (
+                late_pub_comeback_table_active
+                and late_pub_comeback_table_ready
+                and monitor_ready
+                and monitor_target_diff is not None
+            ):
                 add_url_details["dispatch_status_label"] = NETWORTH_STATUS_LATE_PUB_TABLE_SEND
                 add_url_details["late_pub_comeback_table_reached"] = True
                 add_url_details["target_networth_diff"] = float(monitor_target_diff)
@@ -5616,6 +5795,10 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                     add_url_details["dispatch_status_label"] = NETWORTH_STATUS_4_10_SEND_800
                     add_url_details["release_reason"] = NETWORTH_STATUS_4_10_SEND_800
                     add_url_details["networth_monitor_hold_seconds"] = 0.0
+                elif payload.get("dynamic_monitor_profile") == LATE_PRE27_DOMINANCE_PROFILE:
+                    add_url_details["dispatch_status_label"] = NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT
+                    if monitor_threshold is not None:
+                        add_url_details["release_reason"] = f"networth_monitor_{int(monitor_threshold)}"
                 if monitor_threshold is not None:
                     add_url_details.setdefault("networth_monitor_threshold", float(monitor_threshold))
                 if isinstance(monitor_hold_check, dict) and monitor_hold_check.get("enabled"):
@@ -5659,7 +5842,12 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 add_url_details=add_url_details,
             )
             if delivery_confirmed:
-                if late_pub_comeback_table_active and monitor_ready and monitor_target_diff is not None:
+                if (
+                    late_pub_comeback_table_active
+                    and late_pub_comeback_table_ready
+                    and monitor_ready
+                    and monitor_target_diff is not None
+                ):
                     print(
                         f"⏱️ Отложенный сигнал отправлен по pub late comeback table: {match_key} "
                         f"(game_time={int(current_game_time)}, "
@@ -19881,6 +20069,16 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 radiant_team_id=radiant_team_id,
                 dire_team_id=dire_team_id,
             )
+            late_pre27_dominance_profile = _late_pre27_dominance_monitor_config(
+                has_selected_early_star=bool(has_selected_early_star),
+                selected_early_sign=selected_early_sign,
+                has_selected_late_star=bool(has_selected_late_star),
+                selected_late_sign=selected_late_sign,
+                early_rec=early_rec,
+                late_rec=late_rec,
+                early_wr_pct=early_wr_pct,
+                late_wr_pct=late_wr_pct,
+            )
             if isinstance(opposite_signs_early90_monitor, dict) and opposite_signs_early90_monitor.get("enabled"):
                 elo_gap_log = opposite_signs_early90_monitor.get("elo_gap_pp")
                 elo_gap_label = (
@@ -19907,6 +20105,18 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"4-10 need>={int(opposite_signs_early90_tier1_fast_release.get('threshold_4_to_10') or 0)}, "
                         f"10-20 need>={int(opposite_signs_early90_tier1_fast_release.get('threshold_10_to_20') or 0)}, "
                         f"fallback_at={_format_game_clock(opposite_signs_early90_tier1_fast_release.get('target_game_time'))}"
+                    )
+            if isinstance(late_pre27_dominance_profile, dict) and late_pre27_dominance_profile.get("enabled"):
+                if verbose_match_log:
+                    print(
+                        "   📈 Late pre-27 dominance grid: "
+                        f"early_wr={int(late_pre27_dominance_profile.get('early_wr_level') or 0)}, "
+                        f"late_wr={int(late_pre27_dominance_profile.get('late_wr_level') or 0)}, "
+                        f"delta={int(late_pre27_dominance_profile.get('delta_level') or 0):+d}, "
+                        f"10-16>={int(late_pre27_dominance_profile.get('threshold_10_to_16') or 0)}, "
+                        f"17-19>={int(late_pre27_dominance_profile.get('threshold_17_to_19') or 0)}, "
+                        f"20-26>={int(late_pre27_dominance_profile.get('threshold_20_to_26') or 0)}, "
+                        f"fallback_at={_format_game_clock(late_pre27_dominance_profile.get('target_game_time'))}"
                     )
             if raw_early_opposite_single_hit_against_late and verbose_match_log:
                 print(
@@ -20782,9 +20992,54 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"early_wr={early_wr_label}, target_side={target_side}, "
                         f"target_diff={int(target_networth_diff)}, wait until {target_human}"
                     )
+                late_pre27_dominance_active = bool(
+                    isinstance(late_pre27_dominance_profile, dict)
+                    and late_pre27_dominance_profile.get("enabled")
+                    and opposite_signs_selected
+                    and target_side == late_pre27_dominance_profile.get("target_side")
+                )
+                if late_pre27_dominance_active:
+                    target_game_time = float(
+                        late_pre27_dominance_profile.get("target_game_time")
+                        or LATE_PUB_COMEBACK_TABLE_START_SECONDS
+                    )
+                    target_human = _format_game_clock(target_game_time)
+                    dynamic_monitor_profile = dict(late_pre27_dominance_profile)
+                    dominance_snapshot = _late_pre27_dominance_snapshot(
+                        dynamic_monitor_profile,
+                        current_game_time,
+                    )
+                    monitor_threshold_raw = dominance_snapshot.get("threshold")
+                    monitor_threshold = (
+                        float(monitor_threshold_raw)
+                        if monitor_threshold_raw is not None
+                        else None
+                    )
+                    monitor_wait_status_label = str(
+                        dominance_snapshot.get("status_label")
+                        or NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT
+                    )
+                    fallback_send_status_label = NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
+                    allow_live_recheck = True
+                    dispatch_mode = "delayed_late_pre27_dominance_grid"
+                    if verbose_match_log:
+                        threshold_label = (
+                            f">={int(monitor_threshold)}"
+                            if monitor_threshold is not None
+                            else "inactive_before_10"
+                        )
+                        print(
+                            "   ⏳ Late pre-27 dominance monitor: "
+                            f"target_side={target_side}, "
+                            f"target_diff={int(target_networth_diff or 0)}, "
+                            f"threshold={threshold_label}, "
+                            f"delta={int(dynamic_monitor_profile.get('delta_level') or 0):+d}, "
+                            f"deadline={target_human}"
+                        )
                 opposite_signs_dispatch_blocked = bool(
                     opposite_signs_selected
                     and not queue_late_all_weak_early_monitor
+                    and not late_pre27_dominance_active
                     and current_game_time < float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
                 )
                 release_4_10_now = bool(
@@ -20881,6 +21136,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         monitor_threshold=release_threshold,
                         hold_started_game_time=existing_monitor_hold_started,
                         hold_seconds=NETWORTH_MONITOR_HOLD_SECONDS,
+                        allow_zero_threshold=late_pre27_dominance_active,
                     )
                     if hold_check.get("enabled") and not hold_check.get("ready"):
                         monitor_threshold = release_threshold
@@ -21601,6 +21857,21 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_add_url_details["networth_monitor_window_start_game_time"] = int(dynamic_monitor_profile.get("window_start_seconds") or 0.0)
                         delayed_add_url_details["top25_late_elo_block_rank"] = int(dynamic_monitor_profile.get("leaderboard_rank") or 0)
                         delayed_add_url_details["top25_late_elo_block_raw_wr"] = dynamic_monitor_profile.get("elo_target_wr")
+                    elif dynamic_monitor_profile.get("profile") == LATE_PRE27_DOMINANCE_PROFILE:
+                        delayed_add_url_details["target_game_time"] = int(
+                            float(dynamic_monitor_profile.get("target_game_time") or target_game_time)
+                        )
+                        delayed_add_url_details["networth_monitor_threshold_10_to_16"] = float(dynamic_monitor_profile.get("threshold_10_to_16") or 0.0)
+                        delayed_add_url_details["networth_monitor_threshold_17_to_19"] = float(dynamic_monitor_profile.get("threshold_17_to_19") or 0.0)
+                        delayed_add_url_details["networth_monitor_threshold_20_to_26"] = float(dynamic_monitor_profile.get("threshold_20_to_26") or 0.0)
+                        delayed_add_url_details["networth_monitor_status_10_to_16"] = str(dynamic_monitor_profile.get("status_10_to_16") or "")
+                        delayed_add_url_details["networth_monitor_status_17_to_19"] = str(dynamic_monitor_profile.get("status_17_to_19") or "")
+                        delayed_add_url_details["networth_monitor_status_20_to_26"] = str(dynamic_monitor_profile.get("status_20_to_26") or "")
+                        delayed_add_url_details["late_pre27_early_wr_level"] = int(dynamic_monitor_profile.get("early_wr_level") or 0)
+                        delayed_add_url_details["late_pre27_late_wr_level"] = int(dynamic_monitor_profile.get("late_wr_level") or 0)
+                        delayed_add_url_details["late_pre27_delta_level"] = int(dynamic_monitor_profile.get("delta_level") or 0)
+                        delayed_add_url_details["late_pre27_delta_bucket"] = str(dynamic_monitor_profile.get("delta_bucket") or "")
+                        delayed_add_url_details["networth_monitor_hold_allow_zero_threshold"] = True
                     elif dynamic_monitor_profile.get("profile") == "late_only_opposite_signs_early90":
                         delayed_add_url_details["target_game_time"] = int(
                             float(dynamic_monitor_profile.get("target_game_time") or target_game_time)
@@ -21700,6 +21971,21 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_payload['networth_monitor_window_start_game_time'] = float(dynamic_monitor_profile.get("window_start_seconds") or 0.0)
                         delayed_payload['top25_late_elo_block_rank'] = int(dynamic_monitor_profile.get("leaderboard_rank") or 0)
                         delayed_payload['top25_late_elo_block_raw_wr'] = dynamic_monitor_profile.get("elo_target_wr")
+                    elif dynamic_monitor_profile.get("profile") == LATE_PRE27_DOMINANCE_PROFILE:
+                        delayed_payload['target_game_time'] = float(
+                            dynamic_monitor_profile.get("target_game_time") or target_game_time
+                        )
+                        delayed_payload['networth_monitor_threshold_10_to_16'] = float(dynamic_monitor_profile.get("threshold_10_to_16") or 0.0)
+                        delayed_payload['networth_monitor_threshold_17_to_19'] = float(dynamic_monitor_profile.get("threshold_17_to_19") or 0.0)
+                        delayed_payload['networth_monitor_threshold_20_to_26'] = float(dynamic_monitor_profile.get("threshold_20_to_26") or 0.0)
+                        delayed_payload['networth_monitor_status_10_to_16'] = str(dynamic_monitor_profile.get("status_10_to_16") or "")
+                        delayed_payload['networth_monitor_status_17_to_19'] = str(dynamic_monitor_profile.get("status_17_to_19") or "")
+                        delayed_payload['networth_monitor_status_20_to_26'] = str(dynamic_monitor_profile.get("status_20_to_26") or "")
+                        delayed_payload['late_pre27_early_wr_level'] = int(dynamic_monitor_profile.get("early_wr_level") or 0)
+                        delayed_payload['late_pre27_late_wr_level'] = int(dynamic_monitor_profile.get("late_wr_level") or 0)
+                        delayed_payload['late_pre27_delta_level'] = int(dynamic_monitor_profile.get("delta_level") or 0)
+                        delayed_payload['late_pre27_delta_bucket'] = str(dynamic_monitor_profile.get("delta_bucket") or "")
+                        delayed_payload['networth_monitor_hold_allow_zero_threshold'] = True
                     elif dynamic_monitor_profile.get("profile") == "late_only_opposite_signs_early90":
                         delayed_payload['target_game_time'] = float(
                             dynamic_monitor_profile.get("target_game_time") or target_game_time
@@ -21734,6 +22020,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         monitor_threshold=monitor_threshold,
                         hold_started_game_time=existing_monitor_hold_started,
                         hold_seconds=0.0 if queue_same_sign_lane_adv_monitor else NETWORTH_MONITOR_HOLD_SECONDS,
+                        allow_zero_threshold=bool(
+                            isinstance(dynamic_monitor_profile, dict)
+                            and dynamic_monitor_profile.get("profile") == LATE_PRE27_DOMINANCE_PROFILE
+                        ),
                     )
                     if hold_seed.get("enabled") and hold_seed.get("hold_started_game_time") is not None:
                         delayed_payload['networth_monitor_hold_started_game_time'] = float(

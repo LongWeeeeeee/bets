@@ -274,6 +274,110 @@ def _patch_early_wr(monkeypatch, wr_pct: float) -> None:
     monkeypatch.setattr(runtime, "_recommend_odds_for_block", _recommend)
 
 
+def _patch_early_late_wr(monkeypatch, *, early_level: int, late_level: int) -> None:
+    def _recommend(_data, phase):
+        phase_name = str(phase)
+        if phase_name == "early":
+            return {
+                "level": int(early_level),
+                "wr_pct": float(early_level),
+                "min_odds": round(100.0 / float(early_level), 2),
+            }
+        if phase_name in {"late", "mid"}:
+            return {
+                "level": int(late_level),
+                "wr_pct": float(late_level),
+                "min_odds": round(100.0 / float(late_level), 2),
+            }
+        return None
+
+    monkeypatch.setattr(runtime, "_recommend_odds_for_block", _recommend)
+
+
+def test_late_pre27_dominance_grid_keeps_zero_threshold_with_hold(monkeypatch) -> None:
+    _patch_early_late_wr(monkeypatch, early_level=60, late_level=80)
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="late_pre27_dominance_zero_threshold",
+            game_time_seconds=18 * 60,
+            target_side="radiant",
+            target_networth_diff=0,
+            has_early_star=True,
+            early_sign=-1,
+            has_late_star=True,
+            late_sign=1,
+            expected_send_calls=0,
+            raw_early_output={"solo": -3},
+            raw_mid_output={"solo": 3},
+        ),
+    )
+
+    assert result.sent_messages == []
+    assert result.queued_payload is not None
+    assert result.queued_payload["dynamic_monitor_profile"] == runtime.LATE_PRE27_DOMINANCE_PROFILE
+    assert float(result.queued_payload["networth_monitor_threshold"]) == 0.0
+    assert result.queued_payload["networth_monitor_hold_allow_zero_threshold"] is True
+    assert float(result.queued_payload["networth_monitor_hold_seconds"]) == float(runtime.NETWORTH_MONITOR_HOLD_SECONDS)
+    assert float(result.queued_payload["networth_monitor_hold_started_game_time"]) == 18 * 60
+    assert int(result.queued_payload["late_pre27_early_wr_level"]) == 60
+    assert int(result.queued_payload["late_pre27_late_wr_level"]) == 80
+    assert int(result.queued_payload["late_pre27_delta_level"]) == 20
+
+
+def test_late_pre27_dominance_dynamic_snapshot_uses_wr_delta_grid() -> None:
+    payload = {
+        "dynamic_monitor_profile": runtime.LATE_PRE27_DOMINANCE_PROFILE,
+        "target_game_time": float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS),
+        "networth_monitor_threshold_10_to_16": 4000.0,
+        "networth_monitor_threshold_17_to_19": 2500.0,
+        "networth_monitor_threshold_20_to_26": 2500.0,
+        "networth_monitor_status_10_to_16": runtime.NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT,
+        "networth_monitor_status_17_to_19": runtime.NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT,
+        "networth_monitor_status_20_to_26": runtime.NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT,
+    }
+
+    pre10 = runtime._dynamic_monitor_snapshot_for_payload(payload, (9 * 60) + 59)
+    assert pre10["threshold"] is None
+
+    ten_to_16 = runtime._dynamic_monitor_snapshot_for_payload(payload, 12 * 60)
+    assert float(ten_to_16["threshold"]) == 4000.0
+
+    seventeen_to_19 = runtime._dynamic_monitor_snapshot_for_payload(payload, 18 * 60)
+    assert float(seventeen_to_19["threshold"]) == 2500.0
+
+    twenty_to_26 = runtime._dynamic_monitor_snapshot_for_payload(payload, 22 * 60)
+    assert float(twenty_to_26["threshold"]) == 2500.0
+
+    after_27 = runtime._dynamic_monitor_snapshot_for_payload(payload, 27 * 60)
+    assert after_27["threshold"] is None
+
+
+def test_zero_threshold_hold_can_require_confirmation() -> None:
+    started = runtime._networth_monitor_hold_check(
+        current_game_time=18 * 60,
+        target_networth_diff=0.0,
+        monitor_threshold=0.0,
+        hold_started_game_time=None,
+        hold_seconds=60.0,
+        allow_zero_threshold=True,
+    )
+    assert started["enabled"] is True
+    assert started["ready"] is False
+    assert float(started["hold_started_game_time"]) == 18 * 60
+
+    ready = runtime._networth_monitor_hold_check(
+        current_game_time=(18 * 60) + 60,
+        target_networth_diff=0.0,
+        monitor_threshold=0.0,
+        hold_started_game_time=started["hold_started_game_time"],
+        hold_seconds=60.0,
+        allow_zero_threshold=True,
+    )
+    assert ready["ready"] is True
+
+
 def test_early_only_signal_rejects_when_wr_below_65(monkeypatch) -> None:
     _patch_early_wr(monkeypatch, 60.0)
 
@@ -630,12 +734,18 @@ def test_same_sign_lane_adv_dynamic_monitor_snapshot_transitions() -> None:
     assert fallback["status_label"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
 
 
-def _run_same_sign_delayed_worker(monkeypatch, *, game_time: float, radiant_lead: float) -> list[dict]:
+def _run_same_sign_delayed_worker(
+    monkeypatch,
+    *,
+    game_time: float,
+    radiant_lead: float,
+    payload=None,
+) -> list[dict]:
     deliveries: list[dict] = []
     match_key = "dltv.org/matches/test-match.0"
     with runtime.monitored_matches_lock:
         runtime.monitored_matches.clear()
-        runtime.monitored_matches[match_key] = _same_sign_delayed_payload()
+        runtime.monitored_matches[match_key] = dict(payload or _same_sign_delayed_payload())
 
     monkeypatch.setattr(runtime.time, "time", lambda: 1_700_000_120.0)
     monkeypatch.setattr(runtime, "_is_url_processed", lambda _match_key: False)
@@ -688,3 +798,57 @@ def test_same_sign_delayed_worker_sends_at_ten_without_800_lead(monkeypatch) -> 
     assert details["dispatch_status_label"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
     assert details["release_reason"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
     assert float(details["target_networth_diff"]) == -1500.0
+
+
+def test_late_pre27_delayed_worker_labels_zero_release_as_pre27_monitor(monkeypatch) -> None:
+    payload = {
+        "message": "test message",
+        "reason": "late_star_pub_comeback_table_monitor",
+        "json_url": "https://dltv.org/live/test.json",
+        "target_game_time": float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS),
+        "queued_at": 1_700_000_000.0,
+        "queued_game_time": 17 * 60,
+        "last_game_time": 17 * 60,
+        "last_progress_at": 1_700_000_000.0,
+        "dispatch_status_label": runtime.NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
+        "add_url_reason": "star_signal_sent_delayed",
+        "add_url_details": {
+            "status": "live",
+            "dispatch_mode": "delayed_late_pre27_dominance_grid",
+            "delay_reason": "late_star_pub_comeback_table_monitor",
+            "dispatch_status_label": runtime.NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
+        },
+        "fallback_send_status_label": runtime.NETWORTH_STATUS_LATE_PUB_TABLE_WAIT,
+        "send_on_target_game_time": False,
+        "dynamic_monitor_profile": runtime.LATE_PRE27_DOMINANCE_PROFILE,
+        "networth_monitor_threshold_10_to_16": 800.0,
+        "networth_monitor_threshold_17_to_19": 0.0,
+        "networth_monitor_threshold_20_to_26": 0.0,
+        "networth_monitor_status_10_to_16": runtime.NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT,
+        "networth_monitor_status_17_to_19": runtime.NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT,
+        "networth_monitor_status_20_to_26": runtime.NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT,
+        "networth_monitor_hold_allow_zero_threshold": True,
+        "networth_monitor_hold_seconds": 60.0,
+        "networth_monitor_hold_started_game_time": (17 * 60),
+        "networth_target_side": "radiant",
+        "late_pub_comeback_table_active": True,
+        "late_pub_comeback_table_wr_level": 80,
+        "timeout_add_url_reason": "star_signal_rejected_late_pub_comeback_table_timeout",
+        "timeout_status_label": runtime.NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND,
+        "retry_attempt_count": 0,
+        "next_retry_at": 0.0,
+    }
+
+    deliveries = _run_same_sign_delayed_worker(
+        monkeypatch,
+        game_time=18 * 60,
+        radiant_lead=0.0,
+        payload=payload,
+    )
+
+    assert len(deliveries) == 1
+    details = deliveries[0]["details"]
+    assert details["dispatch_status_label"] == runtime.NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT
+    assert details["release_reason"] == "networth_monitor_0"
+    assert details["networth_monitor_early_release"] is True
+    assert "late_pub_comeback_table_reached" not in details
