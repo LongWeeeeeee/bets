@@ -2997,6 +2997,41 @@ def _print_star_metrics_snapshot(snapshot: Optional[dict], label: str = "delayed
         print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
 
 
+def _print_compact_draft_metrics(
+    early_output: Optional[dict],
+    mid_output: Optional[dict],
+    all_output: Optional[dict],
+) -> None:
+    early_payload = early_output if isinstance(early_output, dict) else {}
+    mid_payload = mid_output if isinstance(mid_output, dict) else {}
+    all_payload = all_output if isinstance(all_output, dict) else {}
+    print(
+        "   📊 EARLY (20-28 min): "
+        f"{early_payload.get('counterpick_1vs1', 'N/A')}, "
+        f"{early_payload.get('counterpick_1vs2', 'N/A')}, "
+        f"{early_payload.get('solo', 'N/A')}, "
+        f"{early_payload.get('synergy_duo', 'N/A')}, "
+        f"{early_payload.get('synergy_trio', 'N/A')}"
+    )
+    print(
+        "   📊 LATE (28-60 min): "
+        f"{mid_payload.get('counterpick_1vs1', 'N/A')}, "
+        f"{mid_payload.get('counterpick_1vs2', 'N/A')}, "
+        f"{mid_payload.get('solo', 'N/A')}, "
+        f"{mid_payload.get('synergy_duo', 'N/A')}, "
+        f"{mid_payload.get('synergy_trio', 'N/A')}"
+    )
+    print(
+        "   📊 ALL: "
+        f"{all_payload.get('counterpick_1vs1', 'N/A')}, "
+        f"{all_payload.get('counterpick_1vs2', 'N/A')}, "
+        f"{all_payload.get('solo', 'N/A')}, "
+        f"{all_payload.get('synergy_duo', 'N/A')}, "
+        f"{all_payload.get('synergy_trio', 'N/A')}, "
+        f"d2pt={all_payload.get('dota2protracker_cp1vs1', 'N/A')}"
+    )
+
+
 def _decorate_star_block_for_display(
     raw_block: Optional[dict],
     section: str,
@@ -19501,9 +19536,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             pro_cp_late = s.get('pro_cp1vs1_late', 0)
             pro_duo_late = s.get('pro_duo_synergy_late', 0)
 
-            print(f"   📊 LANING (20-28 min): {early_output.get('counterpick_1vs1', 'N/A')}, {early_output.get('counterpick_1vs2', 'N/A')}, {early_output.get('solo', 'N/A')}, {early_output.get('synergy_duo', 'N/A')}, {early_output.get('synergy_trio', 'N/A')}")
-            print(f"   📊 LATE (28-60 min): {mid_output.get('counterpick_1vs1', 'N/A')}, {mid_output.get('counterpick_1vs2', 'N/A')}, {mid_output.get('solo', 'N/A')}, {mid_output.get('synergy_duo', 'N/A')}, {mid_output.get('synergy_trio', 'N/A')}")
-            print(f"   📊 ALL: {all_output.get('counterpick_1vs1', 'N/A')}, {all_output.get('counterpick_1vs2', 'N/A')}, {all_output.get('solo', 'N/A')}, {all_output.get('synergy_duo', 'N/A')}, {all_output.get('synergy_trio', 'N/A')}, d2pt={all_output.get('dota2protracker_cp1vs1', 'N/A')}")
+            _print_compact_draft_metrics(early_output, mid_output, all_output)
             if DOTA2PROTRACKER_ENABLED and isinstance(s, dict):
                 for _line in _build_dota2protracker_log_lines(s):
                     print(_line)
@@ -22281,6 +22314,26 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 finally:
                     _release_signal_send_slot(check_uniq_url)
                 return return_status
+            rejected_early_output_log = _decorate_star_block_for_display(
+                raw_block=star_base_early_output,
+                section="early_output",
+                target_wr=star_target_wr,
+            )
+            rejected_mid_output_log = _decorate_star_block_for_display(
+                raw_block=star_base_mid_output,
+                section="mid_output",
+                target_wr=star_target_wr,
+            )
+            rejected_all_output_log = _decorate_star_block_for_display(
+                raw_block=star_base_all_output,
+                section="all_output",
+                target_wr=star_target_wr,
+            )
+            _print_compact_draft_metrics(
+                rejected_early_output_log,
+                rejected_mid_output_log,
+                rejected_all_output_log,
+            )
             print(
                 "   ⚠️ ВЕРДИКТ: ОТКАЗ "
                 "(нет star-сигнала) - матч пропущен"
