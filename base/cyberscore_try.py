@@ -859,7 +859,14 @@ def _stats_meta_matches(actual: Dict[str, Any], expected: Dict[str, Any]) -> boo
 def _sqlite_stats_meta_matches_source(actual: Dict[str, Any], expected: Dict[str, Any]) -> bool:
     if actual.get("backend") not in {None, "sqlite_kv"}:
         return False
-    for key in ("format_version", "source_name", "source_size"):
+    if actual.get("format_version") != 1:
+        return False
+    if not STATS_SQLITE_REQUIRE_SOURCE_MATCH:
+        try:
+            return int(actual.get("entries", 0)) > 0
+        except Exception:
+            return False
+    for key in ("source_name", "source_size"):
         if actual.get(key) != expected.get(key):
             return False
     return True
@@ -978,9 +985,11 @@ def _build_sqlite_stats_db(source: Path, db_path: Path, label: str, expected_met
 
 def _prepare_sqlite_stats_lookup(source_path: str, label: str) -> _SqliteStatsLookup:
     source = Path(source_path)
-    expected_meta = _stats_expected_meta(source)
+    expected_meta = _stats_expected_meta(source) if STATS_SQLITE_REQUIRE_SOURCE_MATCH else {}
     db_path = _stats_sqlite_db_path(source)
     if not _sqlite_stats_meta_matches(db_path, expected_meta):
+        if not STATS_SQLITE_REQUIRE_SOURCE_MATCH:
+            raise RuntimeError(f"SQLite {label} stats DB missing/invalid: {db_path}")
         _build_sqlite_stats_db(source, db_path, label, expected_meta)
 
     print(
@@ -1078,16 +1087,27 @@ def _stats_indexed_lookup_enabled(label: str) -> bool:
     return _stats_lookup_backend(label) != "auto" or _stats_sharded_mode_enabled(label)
 
 
+def _stats_source_available_for_lookup(source_path: str, label: str) -> bool:
+    source = Path(source_path)
+    if source.exists():
+        return True
+    if not _stats_indexed_lookup_enabled(label) or STATS_SQLITE_REQUIRE_SOURCE_MATCH:
+        return False
+    return _sqlite_stats_meta_matches(_stats_sqlite_db_path(source), {})
+
+
 def _prepare_indexed_stats_lookup(source_path: str, label: str):
     backend = _stats_lookup_backend(label)
     if backend == "auto":
         source = Path(source_path)
         db_path = _stats_sqlite_db_path(source)
-        try:
-            expected_meta = _stats_expected_meta(source)
-        except Exception:
-            expected_meta = {}
-        if expected_meta and _sqlite_stats_meta_matches(db_path, expected_meta):
+        expected_meta = {}
+        if STATS_SQLITE_REQUIRE_SOURCE_MATCH:
+            try:
+                expected_meta = _stats_expected_meta(source)
+            except Exception:
+                expected_meta = {}
+        if _sqlite_stats_meta_matches(db_path, expected_meta):
             print(
                 f"🧠 Using SQLite {label} stats backend: {db_path} "
                 f"(key_cache={STATS_SHARD_KEY_CACHE_MAX})"
@@ -7469,6 +7489,7 @@ STATS_SQLITE_BUILD_BATCH_SIZE = _safe_int_env("STATS_SQLITE_BUILD_BATCH_SIZE", 5
 STATS_SQLITE_BUILD_PROGRESS_EVERY = _safe_int_env("STATS_SQLITE_BUILD_PROGRESS_EVERY", 500000)
 STATS_SQLITE_QUERY_CHUNK_SIZE = _safe_int_env("STATS_SQLITE_QUERY_CHUNK_SIZE", 800)
 STATS_SQLITE_FALLBACK_TO_JSONL = _safe_bool_env("STATS_SQLITE_FALLBACK_TO_JSONL", True)
+STATS_SQLITE_REQUIRE_SOURCE_MATCH = _safe_bool_env("STATS_SQLITE_REQUIRE_SOURCE_MATCH", True)
 STATS_DRAFT_SCOPED_LOOKUP_ENABLED = _safe_bool_env("STATS_DRAFT_SCOPED_LOOKUP_ENABLED", True)
 stats_warmup_last_heavy_load_ts = 0.0
 
@@ -22425,7 +22446,7 @@ def _load_stats_dicts():
                 late_dict = _load_json_object(late_path, "late_dict_raw")
             gc.collect()
         if post_lane_dict is None:
-            if Path(post_lane_path).exists():
+            if _stats_source_available_for_lookup(post_lane_path, "post_lane"):
                 if _stats_indexed_lookup_enabled("post_lane"):
                     post_lane_dict = _prepare_indexed_stats_lookup(post_lane_path, "post_lane")
                 else:
@@ -22466,7 +22487,7 @@ def _load_stats_dicts():
         return False
 
     next_label, next_path = remaining_heavy[0]
-    if next_label == "post_lane" and not Path(next_path).exists():
+    if next_label == "post_lane" and not _stats_source_available_for_lookup(next_path, next_label):
         logger.warning("Post-lane stats file not found: %s", next_path)
         print(f"⚠️ Post-lane stats file not found: {next_path}")
         _report_missing_runtime_file("post_lane_dict_raw.json", Path(next_path))
