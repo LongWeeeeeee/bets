@@ -22436,7 +22436,10 @@ def _load_stats_dicts():
                         try:
                             wr_level = int(row.get("wr_level"))
                             minute = int(row.get("minute"))
-                            threshold = float(row.get("avg_target_networth_diff"))
+                            threshold_raw = row.get("median_target_networth_diff")
+                            if threshold_raw is None:
+                                threshold_raw = row.get("avg_target_networth_diff")
+                            threshold = float(threshold_raw)
                         except (TypeError, ValueError):
                             continue
                         thresholds_by_wr.setdefault(wr_level, {})[minute] = threshold

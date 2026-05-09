@@ -1211,8 +1211,18 @@ def test_load_stats_dicts_loads_late_pub_comeback_table(tmp_path, monkeypatch) -
         json.dumps(
             {
                 "table_rows": [
-                    {"wr_level": 85, "minute": 36, "avg_target_networth_diff": -9598.96},
-                    {"wr_level": 85, "minute": 37, "avg_target_networth_diff": -9853.70},
+                    {
+                        "wr_level": 85,
+                        "minute": 36,
+                        "avg_target_networth_diff": -9598.96,
+                        "median_target_networth_diff": -12345.67,
+                    },
+                    {
+                        "wr_level": 85,
+                        "minute": 37,
+                        "avg_target_networth_diff": -9853.70,
+                        "median_target_networth_diff": -23456.78,
+                    },
                 ]
             }
         ),
@@ -1231,7 +1241,7 @@ def test_load_stats_dicts_loads_late_pub_comeback_table(tmp_path, monkeypatch) -
 
     assert runtime._load_stats_dicts() is True
 
-    assert runtime.late_pub_comeback_table_thresholds_by_wr[85][36] == pytest.approx(-9598.96)
+    assert runtime.late_pub_comeback_table_thresholds_by_wr[85][36] == pytest.approx(-12345.67)
     assert runtime.late_pub_comeback_table_max_minute_by_wr[85] == 37
     assert runtime.late_pub_comeback_table_global_max_minute == 37
 
