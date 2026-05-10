@@ -641,6 +641,7 @@ TELEGRAM_ADMIN_COMMANDS_LOCK = threading.Lock()
 TELEGRAM_PENDING_ADMIN_COMMANDS = deque()
 TELEGRAM_ADMIN_COMMAND_RESTART = "restart_bot"
 TELEGRAM_ADMIN_COMMAND_TAIL_LOG = "tail_log_100"
+TELEGRAM_ADMIN_COMMAND_AVITO = "avito"
 
 
 def _iter_telegram_state_paths() -> list[Path]:
@@ -847,6 +848,10 @@ def _normalize_telegram_admin_command(text: str) -> str:
     if not raw_text:
         return ""
     lowered = raw_text.lower().strip()
+    if lowered in {"avito", "/avito"}:
+        return TELEGRAM_ADMIN_COMMAND_AVITO
+    if lowered.startswith("avito "):
+        return TELEGRAM_ADMIN_COMMAND_AVITO
     if lowered in {"tail -n 100 log.txt", "tail_log", "tail_log_100"}:
         return TELEGRAM_ADMIN_COMMAND_TAIL_LOG
     if lowered in {"reboot", "restart_bot"}:
@@ -855,6 +860,8 @@ def _normalize_telegram_admin_command(text: str) -> str:
         return ""
     first_token = lowered.split(None, 1)[0]
     command_token = first_token.split("@", 1)[0]
+    if command_token in {"/avito", "/avito_add", "/avito_del", "/avito_remove", "/avito_list"}:
+        return TELEGRAM_ADMIN_COMMAND_AVITO
     if command_token == "/restart_bot":
         return TELEGRAM_ADMIN_COMMAND_RESTART
     if command_token in {"/tail_log", "/tail_log_100", "/log100"}:
@@ -866,6 +873,7 @@ def _build_admin_telegram_reply_markup() -> dict:
     return {
         "keyboard": [
             [{"text": "tail_log"}, {"text": "reboot"}],
+            [{"text": "avito"}],
         ],
         "resize_keyboard": True,
         "one_time_keyboard": False,

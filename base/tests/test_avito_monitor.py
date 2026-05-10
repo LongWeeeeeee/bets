@@ -1,0 +1,123 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Any, Dict
+
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+
+def test_parse_avito_items_extracts_unique_listing_links() -> None:
+    import avito_monitor
+
+    html = """
+    <html><body>
+      <div data-marker="item">
+        <a href="/naberezhnye_chelny/velosipedy/stels_navigator_1234567890?context=abc">
+          Stels Navigator
+        </a>
+        <span data-marker="item-price">12 000 ₽</span>
+      </div>
+      <div data-marker="item">
+        <a href="https://www.avito.ru/kazan/velosipedy/format_9876543210">
+          Format 1412
+        </a>
+      </div>
+      <a href="/naberezhnye_chelny/velosipedy/stels_navigator_1234567890">duplicate</a>
+      <a href="/favorites">not a listing</a>
+    </body></html>
+    """
+
+    items = avito_monitor.parse_avito_items(html, "https://www.avito.ru/search")
+
+    assert [item.item_id for item in items] == ["1234567890", "9876543210"]
+    assert items[0].title == "Stels Navigator"
+    assert items[0].price == "12 000 ₽"
+    assert items[0].url.startswith("https://www.avito.ru/")
+
+
+def test_detect_avito_ip_block_message() -> None:
+    import avito_monitor
+
+    html = "<html><title>Доступ ограничен: проблема с IP</title><body>Продолжить для решения капчи</body></html>"
+
+    assert avito_monitor._detect_avito_block(html) == "Avito ограничил доступ по IP"
+
+
+def test_avito_state_add_list_remove_roundtrip(tmp_path, monkeypatch) -> None:
+    import avito_monitor
+
+    state_path = tmp_path / "avito_state.json"
+    lock_path = tmp_path / "avito_state.json.lock"
+    monkeypatch.setattr(avito_monitor, "AVITO_STATE_PATH", state_path, raising=False)
+    monkeypatch.setattr(avito_monitor, "AVITO_LOCK_PATH", lock_path, raising=False)
+
+    ok, message = avito_monitor.add_watch_url("www.avito.ru/kazan/velosipedy?q=test")
+
+    assert ok is True
+    assert "ссылка добавлена" in message
+    listed = avito_monitor.format_watch_list()
+    assert "id=" in listed
+    assert "https://www.avito.ru/kazan/velosipedy?q=test" in listed
+
+    ok, message = avito_monitor.remove_watch("1")
+
+    assert ok is True
+    assert "удалил" in message
+    assert "пул пуст" in avito_monitor.format_watch_list()
+
+
+def test_drain_telegram_admin_commands_extracts_avito_command(tmp_path, monkeypatch) -> None:
+    import functions
+
+    state_path = tmp_path / "telegram_subscribers_state.json"
+    legacy_path = tmp_path / "legacy_telegram_subscribers_state.json"
+    monkeypatch.setattr(functions, "TELEGRAM_SUBSCRIBERS_STATE_PATH", state_path, raising=False)
+    monkeypatch.setattr(functions, "LEGACY_TELEGRAM_SUBSCRIBERS_STATE_PATH", legacy_path, raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_id", "100", raising=False)
+    monkeypatch.setattr(functions.keys, "Chat_ids", [], raising=False)
+
+    class _Response:
+        status_code = 200
+
+        def __init__(self, payload: Dict[str, Any]) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> Dict[str, Any]:
+            return self._payload
+
+    def _fake_post(url, **_kwargs):
+        if url.endswith("/getUpdates"):
+            return _Response(
+                {
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 301,
+                            "message": {
+                                "chat": {"id": 100},
+                                "from": {"id": 100},
+                                "text": "avito add https://www.avito.ru/kazan/velosipedy?q=test",
+                            },
+                        }
+                    ],
+                }
+            )
+        return _Response({"ok": True, "result": {"message_id": 1}})
+
+    with functions.TELEGRAM_ADMIN_COMMANDS_LOCK:
+        functions.TELEGRAM_PENDING_ADMIN_COMMANDS.clear()
+
+    monkeypatch.setattr(functions.requests, "post", _fake_post)
+
+    commands = functions.drain_telegram_admin_commands(refresh=True)
+
+    assert len(commands) == 1
+    assert commands[0]["command"] == "avito"
+    assert commands[0]["raw_text"].startswith("avito add")

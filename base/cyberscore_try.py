@@ -9566,6 +9566,23 @@ def _handle_pending_telegram_admin_commands(raw_odds: Any) -> None:
                 except Exception:
                     pass
             continue
+        if command_name == "avito":
+            try:
+                from avito_monitor import handle_telegram_admin_command
+
+                response_text = handle_telegram_admin_command(raw_text)
+                if response_text:
+                    send_message(response_text, admin_only=True, mirror_to_vk=False)
+            except Exception as exc:
+                try:
+                    send_message(
+                        f"⚠️ avito command failed: {exc}",
+                        admin_only=True,
+                        mirror_to_vk=False,
+                    )
+                except Exception:
+                    pass
+            continue
         if command_name == "restart_bot":
             _restart_current_runtime_from_admin_command(raw_odds)
 
