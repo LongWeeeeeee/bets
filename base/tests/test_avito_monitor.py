@@ -47,6 +47,28 @@ def test_detect_avito_ip_block_message() -> None:
     assert avito_monitor._detect_avito_block(html) == "Avito ограничил доступ по IP"
 
 
+def test_parse_avito_items_stops_before_other_cities_block() -> None:
+    import avito_monitor
+
+    html = """
+    <html><body>
+      <div data-marker="item">
+        <a data-marker="item-title" href="/naberezhnye_chelny/velosipedy/local_1111111111">Local</a>
+        <span data-marker="item-location">р-н Автозаводский</span>
+      </div>
+      <h2>1 918 объявлений есть в других городах</h2>
+      <div data-marker="item">
+        <a data-marker="item-title" href="/nizhnekamsk/velosipedy/other_2222222222">Other city</a>
+      </div>
+    </body></html>
+    """
+
+    items = avito_monitor.parse_avito_items(html, "https://www.avito.ru/naberezhnye_chelny/velosipedy")
+
+    assert [item.item_id for item in items] == ["1111111111"]
+    assert items[0].title == "Local"
+
+
 def test_avito_state_add_list_remove_roundtrip(tmp_path, monkeypatch) -> None:
     import avito_monitor
 

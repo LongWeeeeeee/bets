@@ -40,7 +40,29 @@ AVITO_ACTIVE_FROM = os.getenv("AVITO_ACTIVE_FROM", "06:00").strip()
 AVITO_ACTIVE_UNTIL = os.getenv("AVITO_ACTIVE_UNTIL", "23:59").strip()
 AVITO_TIMEZONE = os.getenv("AVITO_MONITOR_TZ", "Europe/Moscow").strip() or "Europe/Moscow"
 AVITO_PAGE_TIMEOUT_MS = int(os.getenv("AVITO_PAGE_TIMEOUT_MS", "45000"))
-AVITO_SCROLL_STEPS = int(os.getenv("AVITO_SCROLL_STEPS", "3"))
+AVITO_SCROLL_STEPS = int(os.getenv("AVITO_SCROLL_STEPS", "0"))
+AVITO_CAMOUFOX_LOCALE = os.getenv("AVITO_CAMOUFOX_LOCALE", "ru-RU").strip()
+AVITO_CAMOUFOX_OS = os.getenv("AVITO_CAMOUFOX_OS", "windows").strip()
+AVITO_CAMOUFOX_HUMANIZE = os.getenv("AVITO_CAMOUFOX_HUMANIZE", "0.7").strip()
+AVITO_CAMOUFOX_WINDOW = os.getenv("AVITO_CAMOUFOX_WINDOW", "1366x768").strip()
+AVITO_CAMOUFOX_PROFILE_DIR = os.getenv(
+    "AVITO_CAMOUFOX_PROFILE_DIR",
+    str(Path.home() / ".local" / "state" / "ingame" / "avito_camoufox_profile"),
+).strip()
+AVITO_CAMOUFOX_BLOCK_WEBRTC = str(os.getenv("AVITO_CAMOUFOX_BLOCK_WEBRTC", "1")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "y",
+    "on",
+}
+AVITO_CAMOUFOX_ENABLE_CACHE = str(os.getenv("AVITO_CAMOUFOX_ENABLE_CACHE", "1")).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "y",
+    "on",
+}
 AVITO_CAMOUFOX_GEOIP = str(os.getenv("AVITO_CAMOUFOX_GEOIP", "0")).strip().lower() in {
     "1",
     "true",
@@ -309,10 +331,78 @@ def _safe_text(value: str, *, limit: int = 180) -> str:
     return " ".join(str(value or "").split())[:limit]
 
 
+def _parse_humanize(value: str) -> bool | float | None:
+    raw = str(value or "").strip().lower()
+    if not raw or raw in {"0", "false", "no", "off"}:
+        return None
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    try:
+        return float(raw)
+    except ValueError:
+        return True
+
+
+def _parse_window(value: str) -> tuple[int, int] | None:
+    match = re.match(r"^\s*(\d{3,5})\s*[xX]\s*(\d{3,5})\s*$", str(value or ""))
+    if not match:
+        return None
+    width = int(match.group(1))
+    height = int(match.group(2))
+    if width < 800 or height < 600:
+        return None
+    return width, height
+
+
 def parse_avito_items(html: str, base_url: str) -> list[AvitoItem]:
     soup = BeautifulSoup(html or "", "lxml")
     by_id: dict[str, AvitoItem] = {}
-    for anchor in soup.find_all("a", href=True):
+
+    def _is_other_cities_heading(tag) -> bool:
+        if not getattr(tag, "name", None):
+            return False
+        if tag.name not in {"h1", "h2", "h3", "div", "section"}:
+            return False
+        text = _safe_text(tag.get_text(" ", strip=True), limit=300).lower()
+        return bool(re.search(r"\bобъявлен\w*\s+есть\s+в\s+других\s+город", text))
+
+    def _iter_city_listing_cards():
+        seen: set[int] = set()
+        root = soup.body or soup
+        for tag in root.descendants:
+            if not getattr(tag, "name", None):
+                continue
+            if _is_other_cities_heading(tag):
+                break
+            if tag.get("data-marker") != "item":
+                continue
+            marker = id(tag)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            yield tag
+
+    def _iter_listing_anchors():
+        yielded = False
+        for card in _iter_city_listing_cards():
+            yielded = True
+            title_anchor = card.select_one('[data-marker="item-title"][href]')
+            if title_anchor is not None:
+                yield title_anchor
+                continue
+            first_listing_anchor = None
+            for anchor in card.find_all("a", href=True):
+                if ITEM_ID_RE.search(urlparse(str(anchor.get("href") or "")).path):
+                    first_listing_anchor = anchor
+                    break
+            if first_listing_anchor is not None:
+                yield first_listing_anchor
+        if not yielded:
+            for anchor in soup.find_all("a", href=True):
+                if ITEM_ID_RE.search(urlparse(str(anchor.get("href") or "")).path):
+                    yield anchor
+
+    for anchor in _iter_listing_anchors():
         href = str(anchor.get("href") or "").strip()
         absolute_url = urljoin(base_url, href)
         parsed = urlparse(absolute_url)
@@ -483,6 +573,23 @@ def run_once(*, proxy_url: str = "") -> dict[str, Any]:
 
     proxy_kwargs = _parse_proxy(proxy_url or AVITO_DEFAULT_PROXY_URL)
     browser_kwargs = {"headless": True, **proxy_kwargs}
+    if AVITO_CAMOUFOX_LOCALE:
+        browser_kwargs["locale"] = AVITO_CAMOUFOX_LOCALE
+    if AVITO_CAMOUFOX_OS:
+        browser_kwargs["os"] = AVITO_CAMOUFOX_OS
+    humanize = _parse_humanize(AVITO_CAMOUFOX_HUMANIZE)
+    if humanize is not None:
+        browser_kwargs["humanize"] = humanize
+    window = _parse_window(AVITO_CAMOUFOX_WINDOW)
+    if window is not None:
+        browser_kwargs["window"] = window
+    if AVITO_CAMOUFOX_PROFILE_DIR:
+        profile_dir = Path(AVITO_CAMOUFOX_PROFILE_DIR).expanduser()
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        browser_kwargs["persistent_context"] = True
+        browser_kwargs["user_data_dir"] = str(profile_dir)
+    browser_kwargs["block_webrtc"] = AVITO_CAMOUFOX_BLOCK_WEBRTC
+    browser_kwargs["enable_cache"] = AVITO_CAMOUFOX_ENABLE_CACHE
     if proxy_kwargs and AVITO_CAMOUFOX_GEOIP:
         browser_kwargs["geoip"] = True
     with camoufox.Camoufox(**browser_kwargs) as browser:

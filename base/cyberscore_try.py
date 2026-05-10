@@ -15480,6 +15480,68 @@ def _camoufox_env_int(name: str, default: int) -> int:
         return int(default)
 
 
+def _camoufox_env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _camoufox_parse_humanize(value: str) -> Optional[Union[bool, float]]:
+    raw = str(value or "").strip().lower()
+    if not raw or raw in {"0", "false", "no", "off"}:
+        return None
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    try:
+        return float(raw)
+    except ValueError:
+        return True
+
+
+def _camoufox_parse_window(value: str) -> Optional[Tuple[int, int]]:
+    match = re.match(r"^\s*(\d{3,5})\s*[xX]\s*(\d{3,5})\s*$", str(value or ""))
+    if not match:
+        return None
+    width = int(match.group(1))
+    height = int(match.group(2))
+    if width < 800 or height < 600:
+        return None
+    return width, height
+
+
+def _shared_camoufox_browser_options(proxy_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    options: Dict[str, Any] = {"headless": True, **proxy_kwargs}
+    locale = str(os.getenv("CYBERSCORE_CAMOUFOX_LOCALE", "ru-RU")).strip()
+    os_name = str(os.getenv("CYBERSCORE_CAMOUFOX_OS", "windows")).strip()
+    humanize = _camoufox_parse_humanize(os.getenv("CYBERSCORE_CAMOUFOX_HUMANIZE", "0.7"))
+    window = _camoufox_parse_window(os.getenv("CYBERSCORE_CAMOUFOX_WINDOW", "1366x768"))
+    if locale:
+        options["locale"] = locale
+    if os_name:
+        options["os"] = os_name
+    if humanize is not None:
+        options["humanize"] = humanize
+    if window is not None:
+        options["window"] = window
+    options["block_webrtc"] = _camoufox_env_bool("CYBERSCORE_CAMOUFOX_BLOCK_WEBRTC", True)
+    options["enable_cache"] = _camoufox_env_bool("CYBERSCORE_CAMOUFOX_ENABLE_CACHE", True)
+    if proxy_kwargs and _camoufox_env_bool("CYBERSCORE_CAMOUFOX_GEOIP", True):
+        options["geoip"] = True
+    profile_dir = str(os.getenv("CYBERSCORE_CAMOUFOX_PROFILE_DIR", "")).strip()
+    if profile_dir:
+        profile_path = Path(profile_dir).expanduser()
+        profile_path.mkdir(parents=True, exist_ok=True)
+        options["persistent_context"] = True
+        options["user_data_dir"] = str(profile_path)
+    return options
+
+
+def _is_camoufox_geoip_launch_error(exc: BaseException) -> bool:
+    message = str(exc or "").lower()
+    return "geoip" in message or "maxmind" in message
+
+
 def _cyberscore_is_transient_fetch_error(exc: BaseException) -> bool:
     message = str(exc or "")
     fatal_tokens = (
@@ -15608,9 +15670,21 @@ class _SharedCamoufoxSession:
                 return browser
             proxy_kwargs = _cyberscore_camoufox_proxy_kwargs()
             proxy_label = "with proxy" if proxy_kwargs else "without proxy"
-            browser_options = {"headless": True, **proxy_kwargs}
-            browser_cm = camoufox.Camoufox(**browser_options)
-            browser = browser_cm.__enter__()
+            browser_options = _shared_camoufox_browser_options(proxy_kwargs)
+            try:
+                browser_cm = camoufox.Camoufox(**browser_options)
+                browser = browser_cm.__enter__()
+            except Exception as exc:
+                if not browser_options.get("geoip") or not _is_camoufox_geoip_launch_error(exc):
+                    raise
+                with contextlib.suppress(Exception):
+                    if browser_cm is not None:
+                        browser_cm.__exit__(None, None, None)
+                fallback_options = dict(browser_options)
+                fallback_options.pop("geoip", None)
+                print(f"⚠️ Shared Camoufox geoip launch failed, retrying without geoip: {exc}")
+                browser_cm = camoufox.Camoufox(**fallback_options)
+                browser = browser_cm.__enter__()
             launched_at = time.time()
             print(f"   🌐 Shared Camoufox browser created ({proxy_label})")
             return browser
