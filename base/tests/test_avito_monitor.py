@@ -95,6 +95,29 @@ def test_parse_avito_items_uses_catalog_serp_and_base_city() -> None:
     assert [item.item_id for item in items] == ["1111111111"]
 
 
+def test_parse_avito_items_excludes_carousel_inside_catalog_serp() -> None:
+    import avito_monitor
+
+    html = """
+    <html><body>
+      <div data-marker="catalog-serp">
+        <div data-marker="item">
+          <a data-marker="item-title" href="/naberezhnye_chelny/velosipedy/local_1111111111">Local</a>
+        </div>
+        <section data-marker="recommendations-carousel">
+          <div data-marker="item">
+            <a data-marker="item-title" href="/naberezhnye_chelny/velosipedy/carousel_2222222222">Carousel</a>
+          </div>
+        </section>
+      </div>
+    </body></html>
+    """
+
+    items = avito_monitor.parse_avito_items(html, "https://www.avito.ru/naberezhnye_chelny/velosipedy")
+
+    assert [item.item_id for item in items] == ["1111111111"]
+
+
 def test_parse_avito_items_uses_city_count_from_page_title() -> None:
     import avito_monitor
 
@@ -119,9 +142,45 @@ def test_parse_avito_items_uses_city_count_from_page_title() -> None:
     items = avito_monitor.parse_avito_items(html, "https://www.avito.ru/naberezhnye_chelny/velosipedy")
 
     assert [item.item_id for item in items] == ["1111111111", "2222222222"]
+    assert avito_monitor.extract_avito_local_count(html) == 2
 
 
-def test_merge_watch_items_requires_second_sighting_before_new_notification(tmp_path, monkeypatch) -> None:
+def test_merge_watch_items_sends_new_id_even_when_count_does_not_grow(tmp_path, monkeypatch) -> None:
+    import avito_monitor
+
+    state_path = tmp_path / "avito_state.json"
+    lock_path = tmp_path / "avito_state.json.lock"
+    monkeypatch.setattr(avito_monitor, "AVITO_STATE_PATH", state_path, raising=False)
+    monkeypatch.setattr(avito_monitor, "AVITO_LOCK_PATH", lock_path, raising=False)
+
+    ok, _message = avito_monitor.add_watch_url("https://www.avito.ru/naberezhnye_chelny/velosipedy")
+    assert ok is True
+    watch_id = avito_monitor._watch_id_for_url("https://www.avito.ru/naberezhnye_chelny/velosipedy")
+
+    avito_monitor._merge_watch_items(
+        watch_id,
+        [avito_monitor.AvitoItem("1111111111", "https://www.avito.ru/naberezhnye_chelny/velosipedy/a_1111111111", "Old")],
+        result_count=37,
+    )
+
+    first_success, new_items = avito_monitor._merge_watch_items(
+        watch_id,
+        [
+            avito_monitor.AvitoItem("1111111111", "https://www.avito.ru/naberezhnye_chelny/velosipedy/a_1111111111", "Old"),
+            avito_monitor.AvitoItem("2222222222", "https://www.avito.ru/naberezhnye_chelny/velosipedy/b_2222222222", "New"),
+        ],
+        result_count=37,
+    )
+
+    assert first_success is False
+    assert [item.item_id for item in new_items] == ["2222222222"]
+    state = avito_monitor.load_state()
+    watch = state["watches"][0]
+    assert "2222222222" in watch["known_items"]
+    assert watch["pending_items"] == {}
+
+
+def test_merge_watch_items_keeps_baseline_silent(tmp_path, monkeypatch) -> None:
     import avito_monitor
 
     state_path = tmp_path / "avito_state.json"
@@ -136,29 +195,10 @@ def test_merge_watch_items_requires_second_sighting_before_new_notification(tmp_
     first_success, new_items = avito_monitor._merge_watch_items(
         watch_id,
         [avito_monitor.AvitoItem("1111111111", "https://www.avito.ru/naberezhnye_chelny/velosipedy/a_1111111111", "Old")],
+        result_count=37,
     )
     assert first_success is True
     assert new_items == []
-
-    first_success, new_items = avito_monitor._merge_watch_items(
-        watch_id,
-        [
-            avito_monitor.AvitoItem("1111111111", "https://www.avito.ru/naberezhnye_chelny/velosipedy/a_1111111111", "Old"),
-            avito_monitor.AvitoItem("2222222222", "https://www.avito.ru/naberezhnye_chelny/velosipedy/b_2222222222", "New"),
-        ],
-    )
-    assert first_success is False
-    assert new_items == []
-
-    first_success, new_items = avito_monitor._merge_watch_items(
-        watch_id,
-        [
-            avito_monitor.AvitoItem("1111111111", "https://www.avito.ru/naberezhnye_chelny/velosipedy/a_1111111111", "Old"),
-            avito_monitor.AvitoItem("2222222222", "https://www.avito.ru/naberezhnye_chelny/velosipedy/b_2222222222", "New"),
-        ],
-    )
-    assert first_success is False
-    assert [item.item_id for item in new_items] == ["2222222222"]
 
 
 def test_avito_state_add_list_remove_roundtrip(tmp_path, monkeypatch) -> None:

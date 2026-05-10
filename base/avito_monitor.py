@@ -354,6 +354,32 @@ def _parse_window(value: str) -> tuple[int, int] | None:
     return width, height
 
 
+def extract_avito_local_count(html: str) -> int | None:
+    soup = BeautifulSoup(html or "", "lxml")
+    title_candidates = []
+    marker_root = soup.select_one('[data-marker="page-title"]')
+    if marker_root is not None:
+        title_candidates.append(marker_root.get_text(" ", strip=True))
+    marker_title = soup.select_one('[data-marker="page-title/text"]')
+    if marker_title is not None:
+        title_candidates.append(marker_title.get_text(" ", strip=True))
+    title_candidates.extend(tag.get_text(" ", strip=True) for tag in soup.find_all(["h1", "h2"], limit=6))
+    for text_value in title_candidates:
+        normalized = _safe_text(text_value, limit=300).lower()
+        if "объявлен" not in normalized or "для" not in normalized:
+            continue
+        numbers = re.findall(r"\d[\d\s]*", normalized)
+        if not numbers:
+            continue
+        try:
+            value = int(numbers[-1].replace(" ", ""))
+        except ValueError:
+            continue
+        if value > 0:
+            return value
+    return None
+
+
 def parse_avito_items(html: str, base_url: str) -> list[AvitoItem]:
     soup = BeautifulSoup(html or "", "lxml")
     by_id: dict[str, AvitoItem] = {}
@@ -361,30 +387,6 @@ def parse_avito_items(html: str, base_url: str) -> list[AvitoItem]:
     if base_city_slug in {"", "search"}:
         base_city_slug = ""
     base_city_prefix = f"/{base_city_slug}/" if base_city_slug else ""
-
-    def _extract_city_result_limit() -> int | None:
-        title_candidates = []
-        marker_root = soup.select_one('[data-marker="page-title"]')
-        if marker_root is not None:
-            title_candidates.append(marker_root.get_text(" ", strip=True))
-        marker_title = soup.select_one('[data-marker="page-title/text"]')
-        if marker_title is not None:
-            title_candidates.append(marker_title.get_text(" ", strip=True))
-        title_candidates.extend(tag.get_text(" ", strip=True) for tag in soup.find_all(["h1", "h2"], limit=6))
-        for text_value in title_candidates:
-            normalized = _safe_text(text_value, limit=300).lower()
-            if "объявлен" not in normalized or "для" not in normalized:
-                continue
-            numbers = re.findall(r"\d[\d\s]*", normalized)
-            if not numbers:
-                continue
-            try:
-                value = int(numbers[-1].replace(" ", ""))
-            except ValueError:
-                continue
-            if value > 0:
-                return value
-        return None
 
     def _is_other_cities_heading(tag) -> bool:
         if not getattr(tag, "name", None):
@@ -398,6 +400,27 @@ def parse_avito_items(html: str, base_url: str) -> list[AvitoItem]:
         parent = getattr(tag, "parent", None)
         while getattr(parent, "name", None):
             if parent.get("data-marker") == "catalog-serp":
+                return True
+            parent = parent.parent
+        return False
+
+    def _has_carousel_ancestor(tag) -> bool:
+        blocked_tokens = (
+            "carousel",
+            "slider",
+            "recommend",
+            "related",
+            "promoted",
+            "vas",
+        )
+        parent = getattr(tag, "parent", None)
+        while getattr(parent, "name", None):
+            marker = str(parent.get("data-marker") or "").lower()
+            class_text = " ".join(str(item) for item in parent.get("class", [])).lower()
+            role = str(parent.get("role") or "").lower()
+            aria = str(parent.get("aria-label") or "").lower()
+            haystack = " ".join((marker, class_text, role, aria))
+            if any(token in haystack for token in blocked_tokens):
                 return True
             parent = parent.parent
         return False
@@ -417,13 +440,15 @@ def parse_avito_items(html: str, base_url: str) -> list[AvitoItem]:
                 break
             if tag.get("data-marker") != "item":
                 continue
+            if _has_carousel_ancestor(tag):
+                continue
             cards.append(tag)
         catalog_cards = [card for card in cards if _has_catalog_serp_ancestor(card)]
         yield from (catalog_cards or cards)
 
     def _iter_listing_anchors():
         yielded = False
-        city_limit = _extract_city_result_limit()
+        city_limit = extract_avito_local_count(html)
         emitted = 0
         for card in _iter_city_listing_cards():
             if city_limit is not None and emitted >= city_limit:
@@ -522,7 +547,12 @@ def _record_watch_error(watch_id: str, message: str) -> None:
         _write_state_unlocked(state)
 
 
-def _merge_watch_items(watch_id: str, items: list[AvitoItem]) -> tuple[bool, list[AvitoItem]]:
+def _merge_watch_items(
+    watch_id: str,
+    items: list[AvitoItem],
+    *,
+    result_count: int | None = None,
+) -> tuple[bool, list[AvitoItem]]:
     now = _now_iso()
     with _state_lock():
         state = _read_state_unlocked()
@@ -554,16 +584,14 @@ def _merge_watch_items(watch_id: str, items: list[AvitoItem]) -> tuple[bool, lis
                     payload["first_seen_at"] = now
                     known_items[item.item_id] = payload
                     continue
-                previous_pending = pending_items.get(item.item_id)
-                if isinstance(previous_pending, dict):
-                    payload["first_seen_at"] = previous_pending.get("first_seen_at") or now
-                    known_items[item.item_id] = payload
-                    pending_items.pop(item.item_id, None)
-                    new_items.append(item)
-                else:
-                    pending_payload = dict(payload)
-                    pending_payload["first_seen_at"] = now
-                    pending_items[item.item_id] = pending_payload
+                previous_pending = pending_items.pop(item.item_id, None)
+                payload["first_seen_at"] = (
+                    previous_pending.get("first_seen_at")
+                    if isinstance(previous_pending, dict)
+                    else now
+                ) or now
+                known_items[item.item_id] = payload
+                new_items.append(item)
             else:
                 previous = known_items[item.item_id]
                 if isinstance(previous, dict):
@@ -576,6 +604,8 @@ def _merge_watch_items(watch_id: str, items: list[AvitoItem]) -> tuple[bool, lis
         watch["last_checked_at"] = now
         watch["last_ok_at"] = now
         watch["last_error"] = ""
+        if result_count is not None:
+            watch["last_result_count"] = int(result_count)
         _write_state_unlocked(state)
     return first_success, new_items
 
@@ -668,10 +698,11 @@ def run_once(*, proxy_url: str = "") -> dict[str, Any]:
                 block_message = _detect_avito_block(html)
                 if block_message:
                     raise RuntimeError(block_message)
+                result_count = extract_avito_local_count(html)
                 items = parse_avito_items(html, url)
                 if not items:
                     raise RuntimeError("на странице не найдены объявления; возможно, блокировка или капча")
-                first_success, new_items = _merge_watch_items(watch_id, items)
+                first_success, new_items = _merge_watch_items(watch_id, items, result_count=result_count)
                 result["checked"] += 1
                 if first_success:
                     result["baseline"] += 1
