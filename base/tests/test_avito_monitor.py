@@ -74,7 +74,10 @@ def test_parse_avito_items_uses_city_count_from_page_title() -> None:
 
     html = """
     <html><body>
-      <h1 data-marker="page-title/text">«Велосипед»: объявления для Набережных Челнов 2</h1>
+      <div data-marker="page-title">
+        <h1 data-marker="page-title/text">«Велосипед»: объявления для Набережных Челнов</h1>
+        <span data-marker="page-title/count">2</span>
+      </div>
       <div data-marker="item">
         <a data-marker="item-title" href="/naberezhnye_chelny/velosipedy/local_1111111111">Local 1</a>
       </div>

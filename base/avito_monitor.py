@@ -360,6 +360,9 @@ def parse_avito_items(html: str, base_url: str) -> list[AvitoItem]:
 
     def _extract_city_result_limit() -> int | None:
         title_candidates = []
+        marker_root = soup.select_one('[data-marker="page-title"]')
+        if marker_root is not None:
+            title_candidates.append(marker_root.get_text(" ", strip=True))
         marker_title = soup.select_one('[data-marker="page-title/text"]')
         if marker_title is not None:
             title_candidates.append(marker_title.get_text(" ", strip=True))
