@@ -581,6 +581,34 @@ def test_cyberscore_next_payload_extracts_draft_time_and_networth() -> None:
     assert payload["_cyberscore_heroes_and_pos"]["dire"]["pos5"]["hero_id"] == 10
 
 
+def test_cyberscore_draft_resolves_duplicate_roles_by_position_frequency(monkeypatch) -> None:
+    item = _build_cyberscore_item()
+    for pick in item["picks"]:
+        if pick["team"] == "radiant" and pick["player"]["role"] == 3:
+            pick["hero"]["id_steam"] = 101
+        if pick["team"] == "radiant" and pick["player"]["role"] == 4:
+            pick["player"]["role"] = 3
+            pick["hero"]["id_steam"] = 102
+
+    monkeypatch.setattr(
+        runtime,
+        "HERO_POSITION_COUNTS",
+        {
+            "101": {"POSITION_3": 900, "POSITION_4": 100},
+            "102": {"POSITION_3": 50, "POSITION_4": 950},
+        },
+        raising=False,
+    )
+
+    radiant, dire, error = runtime._parse_cyberscore_draft_and_positions(item)
+
+    assert error is None
+    assert radiant["pos3"]["hero_id"] == 101
+    assert radiant["pos4"]["hero_id"] == 102
+    assert len(radiant) == 5
+    assert len(dire) == 5
+
+
 def test_delayed_match_state_reads_cyberscore_html_instead_of_json(monkeypatch) -> None:
     item = _build_cyberscore_item()
     item["game_time"] = 1234

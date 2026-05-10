@@ -16666,9 +16666,134 @@ def _latest_cyberscore_radiant_lead(item: Dict[str, Any]) -> int:
     return -abs(value) if team == "dire" else abs(value)
 
 
+def _hero_position_counts_for_draft(hero_id: int) -> Dict[str, int]:
+    raw = HERO_POSITION_COUNTS.get(str(hero_id)) or HERO_POSITION_COUNTS.get(hero_id) or {}
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, int] = {}
+    for pos_key, value in raw.items():
+        s = str(pos_key).strip().upper()
+        if not s.startswith("POSITION_"):
+            continue
+        try:
+            pos_num = int(s.replace("POSITION_", ""))
+            count = int(value)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= pos_num <= 5 and count > 0:
+            out[f"POSITION_{pos_num}"] = count
+    return out
+
+
+def _hero_valid_positions_for_draft(hero_id: int) -> List[str]:
+    raw_positions = HERO_VALID_POSITIONS_DICT.get(str(hero_id)) or HERO_VALID_POSITIONS_DICT.get(hero_id)
+    if not raw_positions:
+        return []
+    if isinstance(raw_positions, str):
+        raw_positions = [raw_positions]
+    result: List[str] = []
+    for item in raw_positions:
+        s = str(item).strip().upper()
+        if not s.startswith("POSITION_"):
+            continue
+        try:
+            pos_num = int(s.replace("POSITION_", ""))
+        except ValueError:
+            continue
+        if 1 <= pos_num <= 5:
+            result.append(f"pos{pos_num}")
+    return result
+
+
+def _hero_pos_score_for_draft(hero_id: int, pos: str) -> int:
+    counts = _hero_position_counts_for_draft(hero_id)
+    total = sum(counts.values())
+    try:
+        pos_key = f"POSITION_{int(str(pos)[-1])}"
+    except (TypeError, ValueError):
+        pos_key = ""
+    if total > 0 and pos_key:
+        count = float(counts.get(pos_key, 0))
+        if count > 0:
+            return int((count / float(total)) * 1_000_000 + min(count, 20_000.0))
+
+    valid_positions = _hero_valid_positions_for_draft(hero_id)
+    if not valid_positions:
+        return 0
+    if pos in valid_positions:
+        return 100 - valid_positions.index(pos)
+    return -100
+
+
+def _resolve_cyberscore_team_duplicate_roles(
+    entries: List[Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
+    pos_keys = [f"pos{idx}" for idx in range(1, 6)]
+    by_declared: Dict[str, List[Dict[str, Any]]] = {}
+    for entry in entries:
+        declared_pos = str(entry.get("_declared_pos") or "").strip()
+        if declared_pos in pos_keys:
+            by_declared.setdefault(declared_pos, []).append(entry)
+
+    resolved: Dict[str, Dict[str, Any]] = {}
+    ambiguous_entries: List[Dict[str, Any]] = []
+    duplicate_positions: List[str] = []
+    for pos in pos_keys:
+        pos_entries = by_declared.get(pos) or []
+        if len(pos_entries) == 1:
+            resolved[pos] = pos_entries[0]
+        elif len(pos_entries) > 1:
+            duplicate_positions.append(pos)
+            ambiguous_entries.extend(pos_entries)
+
+    if not ambiguous_entries:
+        return resolved
+
+    for pos in duplicate_positions:
+        resolved.pop(pos, None)
+
+    missing_positions = [pos for pos in pos_keys if pos not in resolved and pos not in duplicate_positions]
+    candidate_positions = duplicate_positions + missing_positions
+
+    if len(candidate_positions) == len(ambiguous_entries) and len(candidate_positions) <= 5:
+        best_perm: Optional[Tuple[str, ...]] = None
+        best_score: Optional[Tuple[int, int]] = None
+        for perm in permutations(candidate_positions):
+            total_score = 0
+            declared_matches = 0
+            for entry, pos in zip(ambiguous_entries, perm):
+                total_score += _hero_pos_score_for_draft(int(entry.get("hero_id") or 0), pos)
+                if entry.get("_declared_pos") == pos:
+                    declared_matches += 1
+            score = (total_score, declared_matches)
+            if best_score is None or score > best_score:
+                best_score = score
+                best_perm = tuple(perm)
+        if best_perm is not None:
+            for entry, pos in zip(ambiguous_entries, best_perm):
+                resolved[pos] = entry
+            return resolved
+
+    for entry in ambiguous_entries:
+        free_positions = [pos for pos in pos_keys if pos not in resolved]
+        if not free_positions:
+            break
+        declared_pos = str(entry.get("_declared_pos") or "").strip()
+        if declared_pos in free_positions:
+            target_pos = declared_pos
+        else:
+            target_pos = max(
+                free_positions,
+                key=lambda pos: (_hero_pos_score_for_draft(int(entry.get("hero_id") or 0), pos), -int(pos[-1])),
+            )
+        resolved[target_pos] = entry
+
+    return resolved
+
+
 def _parse_cyberscore_draft_and_positions(item: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]], Optional[str]]:
-    radiant: Dict[str, Dict[str, Any]] = {}
-    dire: Dict[str, Dict[str, Any]] = {}
+    radiant_entries: List[Dict[str, Any]] = []
+    dire_entries: List[Dict[str, Any]] = []
     picks = item.get("picks")
     if not isinstance(picks, list):
         return {}, {}, "CyberScore item has no picks list"
@@ -16685,21 +16810,26 @@ def _parse_cyberscore_draft_and_positions(item: Dict[str, Any]) -> Tuple[Dict[st
             hero_id = _coerce_int(hero.get("idSteam") or hero.get("dota_id"))
         if role < 1 or role > 5 or hero_id <= 0:
             continue
-        target = radiant if team == "radiant" else dire if team == "dire" else None
-        if target is None:
-            continue
         pos_key = f"pos{role}"
-        target[pos_key] = {
+        entry = {
             "hero_id": int(hero_id),
             # CyberScore exposes its own player id here, not Steam account id.
             # Keep account_id=0 so skipped-player and live-ELO code do not read it as Steam id.
             "account_id": 0,
             "_cyberscore_player_id": _coerce_int(player.get("id")),
+            "_declared_pos": pos_key,
             "_player_name": str(player.get("game_name") or player.get("full_name") or "").strip(),
             "_hero_name": str(hero.get("name") or "").strip(),
         }
+        if team == "radiant":
+            radiant_entries.append(entry)
+        elif team == "dire":
+            dire_entries.append(entry)
+    radiant = _resolve_cyberscore_team_duplicate_roles(radiant_entries)
+    dire = _resolve_cyberscore_team_duplicate_roles(dire_entries)
     for payload in list(radiant.values()) + list(dire.values()):
         payload.pop("_player_name", None)
+        payload.pop("_declared_pos", None)
     missing = []
     for team_name, payload in (("radiant", radiant), ("dire", dire)):
         for idx in range(1, 6):
