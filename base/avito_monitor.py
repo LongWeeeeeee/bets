@@ -358,6 +358,27 @@ def parse_avito_items(html: str, base_url: str) -> list[AvitoItem]:
     soup = BeautifulSoup(html or "", "lxml")
     by_id: dict[str, AvitoItem] = {}
 
+    def _extract_city_result_limit() -> int | None:
+        title_candidates = []
+        marker_title = soup.select_one('[data-marker="page-title/text"]')
+        if marker_title is not None:
+            title_candidates.append(marker_title.get_text(" ", strip=True))
+        title_candidates.extend(tag.get_text(" ", strip=True) for tag in soup.find_all(["h1", "h2"], limit=6))
+        for text_value in title_candidates:
+            normalized = _safe_text(text_value, limit=300).lower()
+            if "объявлен" not in normalized or "для" not in normalized:
+                continue
+            numbers = re.findall(r"\d[\d\s]*", normalized)
+            if not numbers:
+                continue
+            try:
+                value = int(numbers[-1].replace(" ", ""))
+            except ValueError:
+                continue
+            if value > 0:
+                return value
+        return None
+
     def _is_other_cities_heading(tag) -> bool:
         if not getattr(tag, "name", None):
             return False
@@ -384,10 +405,15 @@ def parse_avito_items(html: str, base_url: str) -> list[AvitoItem]:
 
     def _iter_listing_anchors():
         yielded = False
+        city_limit = _extract_city_result_limit()
+        emitted = 0
         for card in _iter_city_listing_cards():
+            if city_limit is not None and emitted >= city_limit:
+                break
             yielded = True
             title_anchor = card.select_one('[data-marker="item-title"][href]')
             if title_anchor is not None:
+                emitted += 1
                 yield title_anchor
                 continue
             first_listing_anchor = None
@@ -396,6 +422,7 @@ def parse_avito_items(html: str, base_url: str) -> list[AvitoItem]:
                     first_listing_anchor = anchor
                     break
             if first_listing_anchor is not None:
+                emitted += 1
                 yield first_listing_anchor
         if not yielded:
             for anchor in soup.find_all("a", href=True):

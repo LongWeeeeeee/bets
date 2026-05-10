@@ -69,6 +69,29 @@ def test_parse_avito_items_stops_before_other_cities_block() -> None:
     assert items[0].title == "Local"
 
 
+def test_parse_avito_items_uses_city_count_from_page_title() -> None:
+    import avito_monitor
+
+    html = """
+    <html><body>
+      <h1 data-marker="page-title/text">«Велосипед»: объявления для Набережных Челнов 2</h1>
+      <div data-marker="item">
+        <a data-marker="item-title" href="/naberezhnye_chelny/velosipedy/local_1111111111">Local 1</a>
+      </div>
+      <div data-marker="item">
+        <a data-marker="item-title" href="/naberezhnye_chelny/velosipedy/local_2222222222">Local 2</a>
+      </div>
+      <div data-marker="item">
+        <a data-marker="item-title" href="/nizhnekamsk/velosipedy/other_3333333333">Other city</a>
+      </div>
+    </body></html>
+    """
+
+    items = avito_monitor.parse_avito_items(html, "https://www.avito.ru/naberezhnye_chelny/velosipedy")
+
+    assert [item.item_id for item in items] == ["1111111111", "2222222222"]
+
+
 def test_avito_state_add_list_remove_roundtrip(tmp_path, monkeypatch) -> None:
     import avito_monitor
 
