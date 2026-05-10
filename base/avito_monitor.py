@@ -357,6 +357,10 @@ def _parse_window(value: str) -> tuple[int, int] | None:
 def parse_avito_items(html: str, base_url: str) -> list[AvitoItem]:
     soup = BeautifulSoup(html or "", "lxml")
     by_id: dict[str, AvitoItem] = {}
+    base_city_slug = urlparse(base_url).path.strip("/").split("/", 1)[0]
+    if base_city_slug in {"", "search"}:
+        base_city_slug = ""
+    base_city_prefix = f"/{base_city_slug}/" if base_city_slug else ""
 
     def _extract_city_result_limit() -> int | None:
         title_candidates = []
@@ -390,8 +394,21 @@ def parse_avito_items(html: str, base_url: str) -> list[AvitoItem]:
         text = _safe_text(tag.get_text(" ", strip=True), limit=300).lower()
         return bool(re.search(r"\bобъявлен\w*\s+есть\s+в\s+других\s+город", text))
 
+    def _has_catalog_serp_ancestor(tag) -> bool:
+        parent = getattr(tag, "parent", None)
+        while getattr(parent, "name", None):
+            if parent.get("data-marker") == "catalog-serp":
+                return True
+            parent = parent.parent
+        return False
+
+    def _matches_base_city(href: str) -> bool:
+        if not base_city_prefix:
+            return True
+        return urlparse(str(href or "")).path.startswith(base_city_prefix)
+
     def _iter_city_listing_cards():
-        seen: set[int] = set()
+        cards = []
         root = soup.body or soup
         for tag in root.descendants:
             if not getattr(tag, "name", None):
@@ -400,11 +417,9 @@ def parse_avito_items(html: str, base_url: str) -> list[AvitoItem]:
                 break
             if tag.get("data-marker") != "item":
                 continue
-            marker = id(tag)
-            if marker in seen:
-                continue
-            seen.add(marker)
-            yield tag
+            cards.append(tag)
+        catalog_cards = [card for card in cards if _has_catalog_serp_ancestor(card)]
+        yield from (catalog_cards or cards)
 
     def _iter_listing_anchors():
         yielded = False
@@ -416,12 +431,15 @@ def parse_avito_items(html: str, base_url: str) -> list[AvitoItem]:
             yielded = True
             title_anchor = card.select_one('[data-marker="item-title"][href]')
             if title_anchor is not None:
+                if not _matches_base_city(str(title_anchor.get("href") or "")):
+                    continue
                 emitted += 1
                 yield title_anchor
                 continue
             first_listing_anchor = None
             for anchor in card.find_all("a", href=True):
-                if ITEM_ID_RE.search(urlparse(str(anchor.get("href") or "")).path):
+                href = str(anchor.get("href") or "")
+                if _matches_base_city(href) and ITEM_ID_RE.search(urlparse(href).path):
                     first_listing_anchor = anchor
                     break
             if first_listing_anchor is not None:
@@ -516,9 +534,14 @@ def _merge_watch_items(watch_id: str, items: list[AvitoItem]) -> tuple[bool, lis
         if not isinstance(known_items, dict):
             known_items = {}
             watch["known_items"] = known_items
+        pending_items = watch.get("pending_items")
+        if not isinstance(pending_items, dict):
+            pending_items = {}
+            watch["pending_items"] = pending_items
 
         first_success = not bool(known_items)
         new_items: list[AvitoItem] = []
+        current_ids = {item.item_id for item in items}
         for item in items:
             payload = {
                 "url": item.url,
@@ -527,14 +550,28 @@ def _merge_watch_items(watch_id: str, items: list[AvitoItem]) -> tuple[bool, lis
                 "last_seen_at": now,
             }
             if item.item_id not in known_items:
-                payload["first_seen_at"] = now
-                known_items[item.item_id] = payload
-                if not first_success:
+                if first_success:
+                    payload["first_seen_at"] = now
+                    known_items[item.item_id] = payload
+                    continue
+                previous_pending = pending_items.get(item.item_id)
+                if isinstance(previous_pending, dict):
+                    payload["first_seen_at"] = previous_pending.get("first_seen_at") or now
+                    known_items[item.item_id] = payload
+                    pending_items.pop(item.item_id, None)
                     new_items.append(item)
+                else:
+                    pending_payload = dict(payload)
+                    pending_payload["first_seen_at"] = now
+                    pending_items[item.item_id] = pending_payload
             else:
                 previous = known_items[item.item_id]
                 if isinstance(previous, dict):
                     previous.update(payload)
+
+        for pending_id in list(pending_items):
+            if pending_id not in current_ids:
+                pending_items.pop(pending_id, None)
 
         watch["last_checked_at"] = now
         watch["last_ok_at"] = now
