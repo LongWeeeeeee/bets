@@ -370,7 +370,7 @@ def _patch_early_wr(monkeypatch, wr_pct: float) -> None:
     monkeypatch.setattr(runtime, "_recommend_odds_for_block", _recommend)
 
 
-def _patch_early_late_wr(monkeypatch, *, early_level: int, late_level: int) -> None:
+def _patch_early_late_wr(monkeypatch, *, early_level: int, late_level: int, all_level=None) -> None:
     def _recommend(_data, phase):
         phase_name = str(phase)
         if phase_name == "early":
@@ -384,6 +384,12 @@ def _patch_early_late_wr(monkeypatch, *, early_level: int, late_level: int) -> N
                 "level": int(late_level),
                 "wr_pct": float(late_level),
                 "min_odds": round(100.0 / float(late_level), 2),
+            }
+        if phase_name == "all" and all_level is not None:
+            return {
+                "level": int(all_level),
+                "wr_pct": float(all_level),
+                "min_odds": round(100.0 / float(all_level), 2),
             }
         return None
 
@@ -420,6 +426,45 @@ def test_late_pre27_dominance_grid_keeps_zero_threshold_with_hold(monkeypatch) -
     assert int(result.queued_payload["late_pre27_early_wr_level"]) == 60
     assert int(result.queued_payload["late_pre27_late_wr_level"]) == 80
     assert int(result.queued_payload["late_pre27_delta_level"]) == 20
+
+
+def test_late_all_weak_early_uses_watcher_instead_of_dominance_grid(monkeypatch) -> None:
+    _patch_early_late_wr(monkeypatch, early_level=60, late_level=65, all_level=75)
+    monkeypatch.setattr(
+        runtime,
+        "late_pre27_watcher_thresholds_by_group_wr",
+        {"late_all": {70: {10: -1000.0, 23: -4000.0}}},
+        raising=False,
+    )
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="late_all_weak_early_pre27_watcher_not_dominance",
+            game_time_seconds=(23 * 60) + 51,
+            target_side="radiant",
+            target_networth_diff=-5000,
+            has_early_star=True,
+            early_sign=-1,
+            has_late_star=True,
+            late_sign=1,
+            has_all_star=True,
+            all_sign=1,
+            expected_send_calls=0,
+            raw_early_output={"counterpick_1vs2": -4},
+            raw_mid_output={"counterpick_1vs1": 6, "counterpick_1vs2": 8, "solo": 3},
+            raw_post_lane_output={"counterpick_1vs1": 5, "counterpick_1vs2": 6},
+        ),
+    )
+
+    assert result.sent_messages == []
+    assert result.queued_payload is not None
+    assert result.queued_payload["reason"] == "late_all_same_weak_early_pre27_watcher"
+    assert result.queued_payload["dynamic_monitor_profile"] == runtime.LATE_PRE27_WATCHER_PROFILE
+    assert result.queued_payload["late_pre27_watcher_group"] == "late_all"
+    assert int(result.queued_payload["late_pre27_watcher_wr_level"]) == 70
+    assert float(result.queued_payload["networth_monitor_threshold"]) == -4000.0
+    assert "late_pre27_delta_level" not in result.queued_payload
 
 
 def test_late_pre27_dominance_dynamic_snapshot_uses_wr_delta_grid() -> None:

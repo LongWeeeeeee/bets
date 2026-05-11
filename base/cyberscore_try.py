@@ -21536,6 +21536,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     isinstance(late_pre27_dominance_profile, dict)
                     and late_pre27_dominance_profile.get("enabled")
                     and opposite_signs_selected
+                    and not queue_late_all_weak_early_monitor
                     and target_side == late_pre27_dominance_profile.get("target_side")
                 )
                 if late_pre27_dominance_active:
