@@ -230,11 +230,18 @@ def test_same_sign_star_waits_when_only_protracker_lane_adv_matches(monkeypatch)
     assert result.queued_payload["lane_adv_protracker_sign"] == 1
 
 
-def test_late_all_same_sign_dispatches_immediately_when_lane_adv_matches(monkeypatch) -> None:
+def test_late_all_no_early_uses_pre27_watcher_even_when_lane_adv_matches(monkeypatch) -> None:
+    _patch_early_late_wr(monkeypatch, early_level=60, late_level=65, all_level=75)
+    monkeypatch.setattr(
+        runtime,
+        "late_pre27_watcher_thresholds_by_group_wr",
+        {"late_all": {70: {10: -1000.0, 11: -1200.0}}},
+        raising=False,
+    )
     case = replace(
         _same_sign_case(
-            game_time_seconds=2 * 60,
-            target_networth_diff=-1200,
+            game_time_seconds=(10 * 60) + 50,
+            target_networth_diff=-2656,
             metrics_extra=ALIGNED_LANE_ADV,
         ),
         has_early_star=False,
@@ -248,9 +255,14 @@ def test_late_all_same_sign_dispatches_immediately_when_lane_adv_matches(monkeyp
         lane_output=ALIGNED_LANE_OUTPUT,
     )
 
-    assert len(result.sent_messages) == 1
-    assert result.queued_payload is None
-    assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now"
+    assert result.sent_messages == []
+    assert result.queued_payload is not None
+    assert result.queued_payload["reason"] == "late_all_no_early_star_pre27_watcher"
+    assert result.queued_payload["dynamic_monitor_profile"] == runtime.LATE_PRE27_WATCHER_PROFILE
+    assert result.queued_payload["late_pre27_watcher_group"] == "late_all"
+    assert int(result.queued_payload["late_pre27_watcher_wr_level"]) == 70
+    assert float(result.queued_payload["networth_monitor_threshold"]) == -1000.0
+    assert result.queued_payload["send_on_target_game_time"] is False
 
 
 def test_same_sign_star_waits_until_four_when_lane_adv_not_matching(monkeypatch) -> None:
