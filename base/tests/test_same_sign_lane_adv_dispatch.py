@@ -23,6 +23,102 @@ OPPOSITE_LANE_ADV = {
 }
 
 
+def test_late_pre27_watcher_config_uses_late_all_average_wr(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "late_pre27_watcher_thresholds_by_group_wr",
+        {
+            "late_all": {
+                70: {10: -900.0, 11: -1200.0},
+                75: {10: -1100.0, 11: -1400.0},
+            }
+        },
+        raising=False,
+    )
+
+    config = runtime._late_pre27_watcher_monitor_config(
+        signal_group="late_all",
+        target_sign=1,
+        late_wr_pct=70.0,
+        all_wr_pct=80.0,
+        selected_star_wr=60,
+    )
+
+    assert config is not None
+    assert config["profile"] == runtime.LATE_PRE27_WATCHER_PROFILE
+    assert config["target_side"] == "radiant"
+    assert config["wr_level"] == 75
+    assert config["thresholds_by_minute"] == {10: -1100.0, 11: -1400.0}
+
+
+def test_late_pre27_watcher_snapshot_uses_latest_elapsed_minute() -> None:
+    payload = {
+        "dynamic_monitor_profile": runtime.LATE_PRE27_WATCHER_PROFILE,
+        "target_game_time": 27 * 60,
+        "networth_monitor_thresholds_by_minute": {
+            10: -900.0,
+            11: -1200.0,
+            12: -1500.0,
+        },
+        "networth_monitor_status": runtime.NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT,
+    }
+
+    before_10 = runtime._dynamic_monitor_snapshot_for_payload(payload, (9 * 60) + 59)
+    at_11 = runtime._dynamic_monitor_snapshot_for_payload(payload, (11 * 60) + 30)
+    at_27 = runtime._dynamic_monitor_snapshot_for_payload(payload, 27 * 60)
+
+    assert before_10["threshold"] is None
+    assert at_11["threshold"] == -1200.0
+    assert at_11["source_minute"] == 11
+    assert at_11["status_label"] == runtime.NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT
+    assert at_27["threshold"] is None
+
+
+def test_late_only_no_early_queues_pre27_watcher(monkeypatch) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "late_pre27_watcher_thresholds_by_group_wr",
+        {"late_only": {90: {10: -900.0, 11: -1200.0, 12: -1500.0}}},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_recommend_odds_for_block",
+        lambda _data, phase: (
+            {"level": 90, "min_odds": 1.11, "wr_pct": 90.0}
+            if phase == "late"
+            else None
+        ),
+    )
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="late_only_pre27_watcher",
+            game_time_seconds=12 * 60,
+            target_side="radiant",
+            target_networth_diff=-2000,
+            has_early_star=False,
+            early_sign=1,
+            has_late_star=True,
+            late_sign=1,
+            expected_send_calls=0,
+            expected_queue=True,
+            raw_early_output={"counterpick_1vs1": 1, "solo": 1},
+            raw_mid_output={"counterpick_1vs1": 10, "solo": 8},
+        ),
+    )
+
+    assert result.sent_messages == []
+    assert result.queued_payload is not None
+    assert result.queued_payload["reason"] == "late_only_no_early_star_pre27_watcher"
+    assert result.queued_payload["dynamic_monitor_profile"] == runtime.LATE_PRE27_WATCHER_PROFILE
+    assert result.queued_payload["late_pre27_watcher_group"] == "late_only"
+    assert int(result.queued_payload["late_pre27_watcher_wr_level"]) == 90
+    assert float(result.queued_payload["networth_monitor_threshold"]) == -1500.0
+    assert result.queued_payload["send_on_target_game_time"] is False
+
+
 def test_same_sign_lane_adv_guard_uses_dict_only_threshold_for_direction() -> None:
     guard = runtime._same_sign_lane_adv_guard(
         star_sign=1,
@@ -429,7 +525,7 @@ def test_early_only_signal_sends_target_half_when_late_core_same_sign(monkeypatc
             raw_early_output={"counterpick_1vs2": 5},
             raw_mid_output={"counterpick_1vs1": 1, "counterpick_1vs2": 3, "solo": 1},
         ),
-        lane_output=("Top: draw 32%", "Mid: win 47%", "Bot: lose 43%"),
+        lane_output=ALIGNED_LANE_OUTPUT,
     )
 
     assert len(result.sent_messages) == 1
@@ -460,7 +556,7 @@ def test_early_only_signal_sends_target_half_when_late_cp1v2_missing(monkeypatch
             raw_early_output={"counterpick_1vs2": 5},
             raw_mid_output={"counterpick_1vs1": 1, "solo": 1},
         ),
-        lane_output=("Top: draw 32%", "Mid: win 47%", "Bot: lose 43%"),
+        lane_output=ALIGNED_LANE_OUTPUT,
     )
 
     assert len(result.sent_messages) == 1
@@ -491,7 +587,7 @@ def test_early_only_signal_sends_kills_header_when_late_core_zero_or_opposite(mo
             raw_early_output={"counterpick_1vs2": 5},
             raw_mid_output={"counterpick_1vs1": 0, "counterpick_1vs2": -3, "solo": -1},
         ),
-        lane_output=("Top: draw 32%", "Mid: win 47%", "Bot: lose 43%"),
+        lane_output=ALIGNED_LANE_OUTPUT,
     )
 
     assert len(result.sent_messages) == 1
@@ -503,6 +599,36 @@ def test_early_only_signal_sends_kills_header_when_late_core_zero_or_opposite(mo
     gate = result.add_url_calls[-1]["details"]["early_only_no_late_all_gate"]
     assert gate["signal_mode"] == "kills_from"
     assert gate["late_core_same_sign"] is False
+
+
+def test_early_only_kills_waits_when_lane_adv_dict_is_weak(monkeypatch) -> None:
+    _patch_early_wr(monkeypatch, 65.0)
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="early_only_kills_weak_lane_adv_wait",
+            game_time_seconds=2 * 60,
+            target_side="radiant",
+            target_networth_diff=-1200,
+            has_early_star=True,
+            early_sign=1,
+            has_late_star=False,
+            late_sign=-1,
+            has_all_star=False,
+            expected_send_calls=0,
+            raw_early_output={"counterpick_1vs2": 5},
+            raw_mid_output={"counterpick_1vs1": 0, "counterpick_1vs2": -3, "solo": -1},
+        ),
+        lane_output=("Top: draw 32%", "Mid: win 47%", "Bot: lose 43%"),
+    )
+
+    assert result.sent_messages == []
+    assert result.queued_payload is not None
+    assert result.queued_payload["reason"] == "same_sign_lane_adv_wait_4_10"
+    assert result.queued_payload["dynamic_monitor_profile"] == "same_sign_lane_adv_wait_4_10"
+    assert result.queued_payload["dispatch_status_label"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT
+    assert result.queued_payload["lane_adv_dict_sign"] is None
 
 
 def test_no_late_immediate_star_waits_when_lane_adv_dict_opposes_target(monkeypatch) -> None:

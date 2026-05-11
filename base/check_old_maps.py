@@ -40,6 +40,10 @@ from functions import (
     structure_lane_dict,
     synergy_and_counterpick,
 )
+try:
+    from keys import DOTA_PATCH_START_TIMES
+except ImportError:
+    DOTA_PATCH_START_TIMES = {}
 
 
 DEFAULT_MAPS_PATH = ROOT_DIR / "pro_heroes_data" / "pro.json"
@@ -47,6 +51,7 @@ DEFAULT_STATS_DIR = ROOT_DIR / "bets_data" / "analise_pub_matches"
 DEFAULT_OUTPUT_PATH = ROOT_DIR / "runtime" / "pro_maps_metrics_2025-12-15.json"
 DEC_15_2025_UTC = 1765756800
 PATCH_START_TIMES = {
+    **DOTA_PATCH_START_TIMES,
     "7.40": 1765756800,
     "7.41": 1774310400,
 }
@@ -377,6 +382,7 @@ def _load_stats_dicts(
     stats_dir: Path,
     *,
     include_dicts: bool,
+    include_lanes: bool = True,
     post_lane_max_cached_shards: int = 48,
 ) -> tuple[dict, dict, Any, Any]:
     if not include_dicts:
@@ -385,9 +391,13 @@ def _load_stats_dicts(
     stats_dir = Path(stats_dir)
     early_dict = _load_stats_lookup(stats_dir, "early_dict_raw.json", "early_dict")
     late_dict = _load_stats_lookup(stats_dir, "late_dict_raw.json", "late_dict")
-    lane_dict = _load_json(stats_dir / "lane_dict_raw.json")
-    lane_dict = structure_lane_dict(lane_dict)
-    print(f"  ✓ lane_dict: structured, RSS≈{_rss_mb():.0f}MB")
+    if include_lanes:
+        lane_dict = _load_json(stats_dir / "lane_dict_raw.json")
+        lane_dict = structure_lane_dict(lane_dict)
+        print(f"  ✓ lane_dict: structured, RSS≈{_rss_mb():.0f}MB")
+    else:
+        lane_dict = {}
+        print(f"  ✓ lane_dict: skipped (--disable-lanes), RSS≈{_rss_mb():.0f}MB")
 
     post_lane_path = stats_dir / "post_lane_dict_raw.json"
     post_lane_sqlite = _stats_sqlite_db_path(post_lane_path)
@@ -675,6 +685,7 @@ def check_old_maps(
             early_dict, late_dict, lane_data, post_lane_dict = _load_stats_dicts(
                 Path(stats_dir),
                 include_dicts=True,
+                include_lanes=not disable_lanes,
                 post_lane_max_cached_shards=post_lane_max_cached_shards,
             )
         else:
