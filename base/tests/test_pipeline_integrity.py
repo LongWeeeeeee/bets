@@ -1665,13 +1665,13 @@ def test_compute_cyberscore_quiet_hours_sleep_seconds() -> None:
         datetime(2026, 3, 28, 23, 59, tzinfo=tz)
     ) == 0.0
     assert runtime._compute_cyberscore_quiet_hours_sleep_seconds(
-        datetime(2026, 3, 28, 7, 0, tzinfo=tz)
+        datetime(2026, 3, 28, 6, 0, tzinfo=tz)
     ) == 0.0
 
     sleep_seconds = runtime._compute_cyberscore_quiet_hours_sleep_seconds(
         datetime(2026, 3, 28, 0, 15, tzinfo=tz)
     )
-    assert sleep_seconds == 6.75 * 60 * 60
+    assert sleep_seconds == 5.75 * 60 * 60
 
 
 def test_compute_schedule_recheck_sleep_seconds() -> None:
@@ -1816,7 +1816,7 @@ def test_cyberscore_schedule_before_quiet_end_keeps_runtime_awake() -> None:
         "matchup": "Lynx vs Sa Reject",
     }
     after_quiet = {
-        "scheduled_at_msk": datetime(2026, 4, 2, 7, 30, tzinfo=tz),
+        "scheduled_at_msk": datetime(2026, 4, 2, 6, 30, tzinfo=tz),
         "matchup": "Late Match",
     }
 

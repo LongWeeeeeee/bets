@@ -7888,7 +7888,7 @@ CYBERSCORE_RECENT_LIVE_EMPTY_RECHECK_SECONDS = _safe_float_env(
 )
 LAST_CYBERSCORE_LIVE_SEEN_MONOTONIC = 0.0
 CYBERSCORE_QUIET_HOURS_START_HOUR_MSK = _safe_int_env("CYBERSCORE_QUIET_HOURS_START_HOUR_MSK", 0)
-CYBERSCORE_QUIET_HOURS_END_HOUR_MSK = _safe_int_env("CYBERSCORE_QUIET_HOURS_END_HOUR_MSK", 7)
+CYBERSCORE_QUIET_HOURS_END_HOUR_MSK = _safe_int_env("CYBERSCORE_QUIET_HOURS_END_HOUR_MSK", 6)
 CYBERSCORE_SCHEDULE_POLL_SECONDS = _safe_float_env("CYBERSCORE_SCHEDULE_POLL_SECONDS", 30.0 * 60.0)
 CYBERSCORE_QUIET_HOURS_PROBE_ENABLED = _env_flag("CYBERSCORE_QUIET_HOURS_PROBE_ENABLED", "1")
 TELEGRAM_ADMIN_COMMAND_POLL_INTERVAL_SECONDS = _safe_float_env(
@@ -8551,7 +8551,8 @@ def _cyberscore_quiet_hours_sleep_seconds_with_probe() -> float:
     for known_schedule in (SCHEDULE_LIVE_WAIT_TARGET, NEXT_SCHEDULE_MATCH_INFO):
         if _cyberscore_schedule_before_quiet_end(known_schedule, now=now_msk):
             print(
-                "🌙 CyberScore quiet hours skipped: known scheduled match before 07:00 MSK "
+                "🌙 CyberScore quiet hours skipped: known scheduled match before "
+                f"{CYBERSCORE_QUIET_HOURS_END_HOUR_MSK:02d}:00 MSK "
                 f"({_format_schedule_match_label(known_schedule)})"
             )
             return 0.0
@@ -8568,12 +8569,14 @@ def _cyberscore_quiet_hours_sleep_seconds_with_probe() -> float:
         retry_sleep = min(float(quiet_sleep_seconds), float(CYBERSCORE_SCHEDULE_POLL_SECONDS))
         print(
             "🌙 CyberScore quiet-hours probe failed. "
-            f"Will retry after {int(math.ceil(retry_sleep))}s instead of sleeping until 07:00"
+            f"Will retry after {int(math.ceil(retry_sleep))}s instead of sleeping until "
+            f"{CYBERSCORE_QUIET_HOURS_END_HOUR_MSK:02d}:00"
         )
         return retry_sleep
     if _cyberscore_schedule_before_quiet_end(NEXT_SCHEDULE_MATCH_INFO, now=now_msk):
         print(
-            "🌙 CyberScore quiet hours skipped: nearest scheduled match is before 07:00 MSK "
+            "🌙 CyberScore quiet hours skipped: nearest scheduled match is before "
+            f"{CYBERSCORE_QUIET_HOURS_END_HOUR_MSK:02d}:00 MSK "
             f"({_format_schedule_match_label(NEXT_SCHEDULE_MATCH_INFO)})"
         )
         return 0.0
