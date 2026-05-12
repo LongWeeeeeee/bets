@@ -1215,6 +1215,10 @@ NETWORTH_GATE_EARLY_WINDOW_END_SECONDS = 10 * 60
 NETWORTH_GATE_4_TO_10_MIN_DIFF = 800.0
 NETWORTH_GATE_SAME_SIGN_LANE_ADV_WINDOW_START_SECONDS = 4 * 60
 NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS = 10 * 60
+NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS = max(
+    0,
+    _safe_int_env("NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS", 120),
+)
 NETWORTH_GATE_EARLY_CORE_HIGH_CONFIDENCE_MIN_LEAD = 0.0
 NETWORTH_GATE_EARLY_CORE_LOW_WR_MIN_LEAD = 800.0
 NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_END_SECONDS = 13 * 60
@@ -1244,6 +1248,7 @@ NETWORTH_STATUS_STRONG_SAME_SIGN_MONITOR_WAIT_800 = "strong_same_sign_monitor_wa
 NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT = "same_sign_lane_adv_pre4_wait"
 NETWORTH_STATUS_SAME_SIGN_LANE_ADV_WAIT_800 = "same_sign_lane_adv_wait_800"
 NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND = "same_sign_lane_adv_fallback_10_send"
+NETWORTH_STATUS_SAME_SIGN_LANE_ADV_STALE_NO_SEND = "same_sign_lane_adv_stale_no_send"
 NETWORTH_STATUS_EARLY_CORE_MONITOR_WAIT_NONNEGATIVE = "early_core_monitor_wait_nonnegative"
 NETWORTH_STATUS_EARLY_CORE_MONITOR_WAIT_800 = "early_core_monitor_wait_800"
 NETWORTH_STATUS_EARLY_CORE_FALLBACK_20_20_SEND = "early_core_fallback_20_20_send"
@@ -5837,6 +5842,38 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 target_game_time=target_game_time,
                 now_ts=now_ts,
                 last_progress_at=last_progress_at,
+            )
+            continue
+        if (
+            delayed_reason == "same_sign_lane_adv_wait_4_10"
+            and not monitor_ready
+            and current_game_time
+            > (
+                NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS
+                + NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS
+            )
+        ):
+            add_url_details = payload.get("add_url_details")
+            if not isinstance(add_url_details, dict):
+                add_url_details = {}
+            add_url_details = dict(add_url_details)
+            add_url_details.setdefault("dispatch_status_label", NETWORTH_STATUS_SAME_SIGN_LANE_ADV_STALE_NO_SEND)
+            add_url_details.setdefault("sent_game_time", int(current_game_time))
+            add_url_details.setdefault("target_game_time", int(NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS))
+            add_url_details.setdefault("stale_grace_seconds", int(NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS))
+            add_url_details.setdefault("target_side", monitor_target_side)
+            if monitor_target_diff is not None:
+                add_url_details.setdefault("target_networth_diff", float(monitor_target_diff))
+            add_url(
+                match_key,
+                reason="star_signal_rejected_same_sign_lane_adv_stale",
+                details=add_url_details,
+            )
+            _drop_delayed_match(match_key, reason="same_sign_lane_adv_stale")
+            print(
+                f"⏱️ Отложенный сигнал отменен без отправки: {match_key} "
+                f"(reason={delayed_reason}, status={NETWORTH_STATUS_SAME_SIGN_LANE_ADV_STALE_NO_SEND}, "
+                f"game_time={int(current_game_time)})"
             )
             continue
 
@@ -21035,6 +21072,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
             queue_top25_late_elo_block_monitor = bool(top25_late_elo_block_override_active)
             queue_late_all_weak_early_monitor = False
+            same_sign_lane_adv_stale_after_fallback = False
             early65_release_status_label: Optional[str] = None
             early_release_dispatch_mode = "immediate_early_star65"
             early_release_delay_reason = "early65_gate"
@@ -21236,7 +21274,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 f"{_format_game_clock(NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS)}"
                             )
                     else:
-                        networth_send_status_label = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
+                        same_sign_lane_adv_stale_after_fallback = bool(
+                            current_game_time
+                            > (
+                                NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS
+                                + NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS
+                            )
+                        )
+                        if not same_sign_lane_adv_stale_after_fallback:
+                            networth_send_status_label = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
                 elif early65_release_status_label is not None:
                     if _skip_dispatch_for_processed_url(check_uniq_url, "early WR65 немедленной отправки"):
                         return return_status
@@ -21382,6 +21428,39 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"{_format_game_clock(LATE_PUB_COMEBACK_TABLE_START_SECONDS)} "
                         f"(target_side={target_side}, target_diff={int(target_networth_diff)})"
                     )
+            if same_sign_lane_adv_stale_after_fallback:
+                print(
+                    "   ⚠️ ВЕРДИКТ: ОТКАЗ (same_sign_lane_adv fallback stale) "
+                    f"target={_format_game_clock(NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS)}, "
+                    f"game_time={_format_game_clock(current_game_time)}, "
+                    f"grace={int(NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS)}s"
+                )
+                add_url(
+                    check_uniq_url,
+                    reason="star_signal_rejected_same_sign_lane_adv_stale",
+                    details={
+                        "status": status,
+                        "dispatch_mode": dispatch_mode,
+                        "delay_reason": "same_sign_lane_adv_wait_4_10",
+                        "dispatch_status_label": NETWORTH_STATUS_SAME_SIGN_LANE_ADV_STALE_NO_SEND,
+                        "game_time": int(current_game_time),
+                        "target_game_time": int(NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS),
+                        "stale_grace_seconds": int(NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS),
+                        "target_side": target_side,
+                        "target_networth_diff": float(target_networth_diff or 0.0),
+                        "networth_monitor_threshold": float(NETWORTH_GATE_4_TO_10_MIN_DIFF),
+                        "lane_adv_dict": same_sign_lane_adv_guard.get("lane_adv_dict"),
+                        "lane_adv_dict_sign": same_sign_lane_adv_guard.get("lane_adv_dict_sign"),
+                        "lane_adv_protracker": same_sign_lane_adv_guard.get("lane_adv_protracker"),
+                        "lane_adv_protracker_sign": same_sign_lane_adv_guard.get("lane_adv_protracker_sign"),
+                        "lane_adv_pair_sign": same_sign_lane_adv_guard.get("lane_adv_pair_sign"),
+                        "lane_adv_opposing_sources": list(
+                            same_sign_lane_adv_guard.get("opposing_sources") or []
+                        ),
+                        "json_retry_errors": json_retry_errors,
+                    },
+                )
+                return return_status
             if (
                 (not send_now_immediate and networth_send_status_label is None)
                 or queue_early_core_monitor

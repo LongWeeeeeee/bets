@@ -343,6 +343,41 @@ def test_same_sign_star_sends_at_ten_even_without_800_lead(monkeypatch) -> None:
     assert details["release_reason"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
 
 
+def test_same_sign_star_rejects_stale_fallback_first_seen_after_quiet_hours(monkeypatch) -> None:
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="flame_jr_quiet_hours_stale_fallback",
+            game_time_seconds=(31 * 60) + 7,
+            target_side="dire",
+            target_networth_diff=21159,
+            has_early_star=True,
+            early_sign=-1,
+            has_late_star=True,
+            late_sign=-1,
+            has_all_star=True,
+            all_sign=-1,
+            expected_send_calls=0,
+            raw_early_output={"counterpick_1vs1": -8, "solo": -1},
+            raw_mid_output={"counterpick_1vs1": -5, "solo": -1},
+            raw_post_lane_output={"counterpick_1vs1": -8, "dota2protracker_cp1vs1": -3.5},
+            metrics_extra={"pro_lane_advantage": -2.3544800162274084},
+        ),
+        lane_output=("Top: win 40%", "Mid: lose 47%", "Bot: win 45%"),
+    )
+
+    assert result.sent_messages == []
+    assert result.queued_payload is None
+    assert result.add_url_calls
+    assert result.add_url_calls[-1]["reason"] == "star_signal_rejected_same_sign_lane_adv_stale"
+    details = result.add_url_calls[-1]["details"]
+    assert details["dispatch_status_label"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_STALE_NO_SEND
+    assert details["target_side"] == "dire"
+    assert float(details["target_networth_diff"]) == 21159.0
+    assert details["lane_adv_dict_sign"] is None
+    assert details["lane_adv_protracker_sign"] is None
+
+
 def test_early_only_star_with_aligned_lane_adv_still_dispatches_immediately(monkeypatch) -> None:
     _patch_early_wr(monkeypatch, 65.0)
 
@@ -981,6 +1016,35 @@ def test_same_sign_delayed_worker_sends_at_ten_without_800_lead(monkeypatch) -> 
     assert details["dispatch_status_label"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
     assert details["release_reason"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
     assert float(details["target_networth_diff"]) == -1500.0
+
+
+def test_same_sign_delayed_worker_rejects_stale_fallback(monkeypatch) -> None:
+    rejections = []
+    monkeypatch.setattr(
+        runtime,
+        "add_url",
+        lambda url, reason="unspecified", details=None: rejections.append(
+            {
+                "url": url,
+                "reason": reason,
+                "details": dict(details) if isinstance(details, dict) else details,
+            }
+        ),
+    )
+
+    deliveries = _run_same_sign_delayed_worker(
+        monkeypatch,
+        game_time=(31 * 60) + 7,
+        radiant_lead=21159.0,
+    )
+
+    assert deliveries == []
+    assert rejections
+    assert rejections[-1]["reason"] == "star_signal_rejected_same_sign_lane_adv_stale"
+    details = rejections[-1]["details"]
+    assert details["dispatch_status_label"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_STALE_NO_SEND
+    assert int(details["sent_game_time"]) == (31 * 60) + 7
+    assert float(details["target_networth_diff"]) == 21159.0
 
 
 def test_late_pre27_delayed_worker_labels_zero_release_as_pre27_monitor(monkeypatch) -> None:
