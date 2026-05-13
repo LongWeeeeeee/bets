@@ -19116,28 +19116,28 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         if is_cyberscore_card:
             match_id = str(listing_context.get("live_match_id") or series_key_from_path or "").strip()
             match_url = _absolute_cyberscore_url(href or f"/en/matches/{match_id}/")
-            match_log(f"   🌐 Запрос страницы CyberScore...")
-            response_text = _get_cyberscore_html_via_camoufox(match_url)
-            if not response_text:
-                print("   ⚠️ CyberScore detail page temporarily unavailable")
-                print("   ⚠️ Матч временно пропущен (CyberScore fetch unavailable)")
-                return return_status
-            cyber_item = _extract_cyberscore_match_item_from_html(response_text, match_id=match_id or None)
-            if not cyber_item and match_id:
-                cyber_item = CYBERSCORE_LISTING_ITEM_CACHE.get(str(match_id))
-                if isinstance(cyber_item, dict):
-                    print("   ℹ️ CyberScore detail item missing; using get_heads listing item cache")
-            if not cyber_item:
-                print(f"   ❌ Не найден CyberScore embedded match item")
-                print(f"   ❌ Матч пропущен (нет CyberScore item)")
-                return return_status
+            # Prefer listing item cache (populated by get_heads listing fetch) — no extra request
+            cyber_item = CYBERSCORE_LISTING_ITEM_CACHE.get(str(match_id)) if match_id else None
+            need_detail_fetch = not isinstance(cyber_item, dict)
+            # If listing item has no picks (draft not started yet), try detail fetch for fresh data
+            if isinstance(cyber_item, dict) and not _runtime_payload_has_fast_picks(_cyberscore_item_to_runtime_payload(cyber_item)):
+                need_detail_fetch = True
+            if need_detail_fetch:
+                match_log(f"   🌐 Запрос страницы CyberScore...")
+                response_text = _get_cyberscore_html_via_camoufox(match_url)
+                if response_text:
+                    detail_item = _extract_cyberscore_match_item_from_html(response_text, match_id=match_id or None)
+                    if isinstance(detail_item, dict):
+                        cyber_item = detail_item
+                if not isinstance(cyber_item, dict):
+                    print(f"   ❌ Не найден CyberScore item (listing cache пуст, detail fetch failed)")
+                    print(f"   ❌ Матч пропущен (нет CyberScore item)")
+                    return return_status
             data = _cyberscore_item_to_runtime_payload(cyber_item)
-            data, fresh_cyber_item, restored_empty_draft = _maybe_refresh_cyberscore_empty_live_draft_payload(
-                match_url=match_url,
-                match_id=match_id,
-                data=data,
-                cyber_item=cyber_item,
-            )
+            # Draft refresh is already handled above via need_detail_fetch;
+            # skip the legacy _maybe_refresh that would do yet another fetch.
+            fresh_cyber_item = None
+            restored_empty_draft = False
             if restored_empty_draft and isinstance(fresh_cyber_item, dict):
                 cyber_item = fresh_cyber_item
             soup = BeautifulSoup("", "lxml")
