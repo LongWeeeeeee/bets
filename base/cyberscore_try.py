@@ -4463,6 +4463,15 @@ def _late_pre27_dominance_monitor_config(
     bucket, threshold_10_to_16, threshold_17_to_19, threshold_20_to_26 = (
         _late_pre27_dominance_thresholds_for_delta(delta_level)
     )
+    # For opposite-sign scenarios with equal or similar WR, the early-star is ALWAYS
+    # on the opposite side of the late-star target. Block dispatch before 20:00 to let
+    # the early window fully play out.
+    has_opposite_early = bool(
+        has_selected_early_star
+        and selected_early_sign in (-1, 1)
+        and selected_late_sign in (-1, 1)
+        and selected_early_sign != selected_late_sign
+    )
     return {
         "enabled": True,
         "profile": LATE_PRE27_DOMINANCE_PROFILE,
@@ -4480,6 +4489,7 @@ def _late_pre27_dominance_monitor_config(
         "status_17_to_19": NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT,
         "status_20_to_26": NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT,
         "hold_zero_threshold": True,
+        "has_opposite_early_star": has_opposite_early,
     }
 
 
@@ -4513,6 +4523,18 @@ def _late_pre27_dominance_snapshot(
         }
     if current_game_time >= target_game_time:
         return {"threshold": None, "status_label": ""}
+
+    # Gate: if the opposite team has an early star, block dispatch before 20:00
+    # (opposite early = early-star on a different side than target/late). This prevents
+    # short-lived netw spikes at 10-19 min from triggering against still-active early window.
+    if bool(source.get("has_opposite_early_star")) and current_game_time < 20 * 60:
+        return {
+            "threshold": None,
+            "status_label": str(
+                source.get("dispatch_status_label")
+                or NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT
+            ),
+        }
 
     if current_game_time < 17 * 60:
         threshold_key = "threshold_10_to_16"
@@ -19114,6 +19136,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     )
                 )
                 if not allow_live_recheck:
+                    # Push fresh state from listing cache to delayed sender
+                    if match_id:
+                        _listing_item = CYBERSCORE_LISTING_ITEM_CACHE.get(str(match_id))
+                        if isinstance(_listing_item, dict):
+                            _listing_payload = _cyberscore_item_to_runtime_payload(_listing_item)
+                            _queue_delayed_state_override(check_uniq_url, {
+                                "game_time": _listing_payload.get("game_time"),
+                                "radiant_lead": _listing_payload.get("radiant_lead"),
+                            })
                     return return_status
 
 
