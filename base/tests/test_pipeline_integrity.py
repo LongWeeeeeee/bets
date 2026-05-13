@@ -1677,10 +1677,15 @@ def test_compute_cyberscore_quiet_hours_sleep_seconds() -> None:
 def test_compute_schedule_recheck_sleep_seconds() -> None:
     assert runtime._compute_schedule_recheck_sleep_seconds(-1) == 3 * 60
     assert runtime._compute_schedule_recheck_sleep_seconds(30) == 30
-    assert runtime._compute_schedule_recheck_sleep_seconds(5 * 60) == 60
-    assert runtime._compute_schedule_recheck_sleep_seconds(29 * 60) == 60
-    assert runtime._compute_schedule_recheck_sleep_seconds(30 * 60) == 60
-    assert runtime._compute_schedule_recheck_sleep_seconds(45 * 60) == 15 * 60
+    # 5 min until match → sleep 5 min (exact wait)
+    assert runtime._compute_schedule_recheck_sleep_seconds(5 * 60) == 5 * 60
+    # 29 min until match → sleep 29 min
+    assert runtime._compute_schedule_recheck_sleep_seconds(29 * 60) == 29 * 60
+    # 30 min until match → sleep 30 min (cap)
+    assert runtime._compute_schedule_recheck_sleep_seconds(30 * 60) == 30 * 60
+    # 45 min until match → sleep 30 min (cap)
+    assert runtime._compute_schedule_recheck_sleep_seconds(45 * 60) == 30 * 60
+    # 4 hours until match → sleep 30 min (cap)
     assert runtime._compute_schedule_recheck_sleep_seconds(4 * 60 * 60) == 30 * 60
 
 
@@ -1703,7 +1708,7 @@ def test_extract_nearest_cyberscore_scheduled_match_info_from_card() -> None:
     assert info["matchup"] == "Team A vs Team B"
     assert info["href"] == "https://cyberscore.live/en/matches/222/next-match"
     assert info["sleep_seconds_raw"] == 20 * 60
-    assert info["sleep_seconds"] == 60
+    assert info["sleep_seconds"] == 20 * 60
     assert info["source"] == "cyberscore"
 
 
@@ -1745,7 +1750,7 @@ def test_cyberscore_schedule_ignores_nested_tournament_dates() -> None:
     assert info["matchup"] == "Team Stels vs Inner Circle"
     assert info["href"] == "https://cyberscore.live/en/matches/222/today-match"
     assert int(info["sleep_seconds_raw"]) == 30 * 60
-    assert info["sleep_seconds"] == 60
+    assert info["sleep_seconds"] == 30 * 60
 
 
 def test_cyberscore_recent_live_empty_caps_idle_sleep(monkeypatch) -> None:
@@ -1805,7 +1810,7 @@ def test_cyberscore_schedule_sleep_polls_near_midnight_quiet_window() -> None:
 
     assert info is not None
     assert info["sleep_seconds_raw"] == 20 * 60
-    assert info["sleep_seconds"] == 60
+    assert info["sleep_seconds"] == 10 * 60  # capped by quiet hours (10 min until 0:00 MSK)
 
 
 def test_cyberscore_schedule_before_quiet_end_keeps_runtime_awake() -> None:

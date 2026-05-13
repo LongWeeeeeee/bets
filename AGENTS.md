@@ -26,7 +26,40 @@
 - `base/check_old_maps.py`: offline historical metric collector.
 - `base/metrics_winrate.py`: bucket winrate analysis for JSON collected by `check_old_maps.py`.
 
-## Offline Metric Validation
+## Camoufox Browser Configuration
+
+The live runtime uses Camoufox (anti-detect Firefox) for all CyberScore page fetches. Key settings:
+
+- **Mode**: One-shot per cycle (no long-living pages, no live-watcher). Each cycle opens a fresh page, fetches, parses, closes.
+- **Humanize**: `True` (max cursor movement realism, up to 1.5s per move).
+- **Window**: Auto-generated random realistic size (no fixed dimensions — avoids fingerprinting).
+- **Locale**: Auto-detected from proxy IP via GeoIP (no hardcoded locale).
+- **OS fingerprint**: `windows` (most common, blends in).
+- **GeoIP**: Enabled — timezone, geolocation, locale all match the proxy IP.
+- **WebRTC**: Blocked (`block_webrtc=True`).
+- **Cache**: Disabled (`enable_cache=False`) — prevents cache-timing fingerprinting, ensures fresh responses.
+- **Proxy**: Required; direct requests to CyberScore are disabled.
+
+Env overrides (all optional):
+| Variable | Default | Description |
+|---|---|---|
+| `CYBERSCORE_CAMOUFOX_HUMANIZE` | `true` | Cursor humanization (true/false/float) |
+| `CYBERSCORE_CAMOUFOX_OS` | `windows` | Target OS fingerprint |
+| `CYBERSCORE_CAMOUFOX_LOCALE` | _(empty, auto from geoip)_ | Force locale |
+| `CYBERSCORE_CAMOUFOX_WINDOW` | _(empty, auto random)_ | Force window size e.g. `1920x1080` |
+| `CYBERSCORE_CAMOUFOX_BLOCK_WEBRTC` | `1` | Block WebRTC |
+| `CYBERSCORE_CAMOUFOX_ENABLE_CACHE` | `0` | Browser cache |
+| `CYBERSCORE_CAMOUFOX_GEOIP` | `1` | GeoIP locale/timezone matching |
+| `CYBERSCORE_LONG_PAGE_ENABLED` | `0` | Long-living page mode (disabled) |
+| `CYBERSCORE_LIVE_WATCHER_ENABLED` | `0` | Live watcher mode (disabled) |
+
+## Schedule Sleep Policy
+
+When no live matches are found on CyberScore:
+- If nearest scheduled match is **>30 min** away → sleep **30 min** (cap).
+- If nearest scheduled match is **≤30 min** away → sleep **exactly** that many seconds until match start.
+- If match already started (schedule says 0 or negative) → poll every 3 min.
+- Quiet hours (0:00–6:00 MSK): sleep is capped by time until quiet window starts.
 
 Use `base/check_old_maps.py` to collect historical draft metrics into a JSON file, then `base/metrics_winrate.py` to compute bucket winrate.
 

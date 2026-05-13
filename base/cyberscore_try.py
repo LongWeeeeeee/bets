@@ -9137,6 +9137,13 @@ def _parse_dltv_schedule_timestamp(raw_value: str) -> Optional[datetime]:
 
 
 def _compute_schedule_recheck_sleep_seconds(raw_sleep_seconds: float) -> float:
+    """Compute how long to sleep until next listing check.
+
+    Policy:
+    - If nearest match is >30 min away → sleep 30 min (cap).
+    - If nearest match is ≤30 min away → sleep exactly that many seconds.
+    - If match already started (raw ≤ 0) → poll quickly.
+    """
     try:
         raw_seconds = float(raw_sleep_seconds)
     except (TypeError, ValueError):
@@ -9144,14 +9151,7 @@ def _compute_schedule_recheck_sleep_seconds(raw_sleep_seconds: float) -> float:
     if raw_seconds <= 0:
         return float(SCHEDULE_POST_START_POLL_SECONDS)
     max_sleep = max(1.0, float(SCHEDULE_MAX_SLEEP_SECONDS))
-    near_match_poll = max(1.0, float(SCHEDULE_NEAR_MATCH_POLL_SECONDS))
-    wake_lead = max(0.0, float(SCHEDULE_WAKE_LEAD_SECONDS))
-    if wake_lead > 0.0:
-        if raw_seconds <= wake_lead:
-            return min(raw_seconds, near_match_poll)
-        return min(max(raw_seconds - wake_lead, near_match_poll), max_sleep)
-    if raw_seconds >= float(SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS):
-        return min(raw_seconds, max_sleep)
+    # Sleep the lesser of raw seconds until match or the max cap (30 min)
     return min(raw_seconds, max_sleep)
 
 
