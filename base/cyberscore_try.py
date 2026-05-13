@@ -24540,9 +24540,16 @@ if __name__ == "__main__":
                     label="wait_for_live_after_schedule",
                 )
             elif status == "series_finished":
-                # All live matches are final-map processed — treat as idle, go to schedule sleep
-                scheduled_sleep_seconds = max(1, int(math.ceil(float(NEXT_SCHEDULE_SLEEP_SECONDS or 60.0))))
-                print(f"✅ Все серии завершены. Сплю {scheduled_sleep_seconds} секунд до следующего расписания")
+                # All live matches are final-map processed — fetch schedule for proper sleep
+                schedule_html = _get_cyberscore_html_via_camoufox(CYBERSCORE_MATCHES_URL)
+                schedule_info = _extract_nearest_cyberscore_scheduled_match_info(schedule_html) if schedule_html else None
+                if schedule_info and float(schedule_info.get("sleep_seconds", 0) or 0) > 0:
+                    NEXT_SCHEDULE_SLEEP_SECONDS = float(schedule_info["sleep_seconds"])
+                    NEXT_SCHEDULE_MATCH_INFO = schedule_info
+                else:
+                    NEXT_SCHEDULE_SLEEP_SECONDS = float(SCHEDULE_MAX_SLEEP_SECONDS)
+                scheduled_sleep_seconds = max(1, int(math.ceil(NEXT_SCHEDULE_SLEEP_SECONDS)))
+                print(f"✅ Все серии завершены. Сплю {scheduled_sleep_seconds} секунд до следующего матча")
                 _sleep_interruptible(
                     scheduled_sleep_seconds,
                     raw_odds=args.odds,
