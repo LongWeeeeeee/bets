@@ -15571,37 +15571,7 @@ def _build_runtime_object_snapshot() -> Dict[str, str]:
 
 
 def _maybe_log_runtime_memory_snapshot(*, cycle_number: int, context: str, force: bool = False) -> None:
-    snapshot = _build_runtime_memory_snapshot()
-    object_snapshot = _build_runtime_object_snapshot()
-    rss_mb = float(snapshot.get("rss_mb") or 0.0)
-    should_log = force or (cycle_number % max(1, int(RUNTIME_MEMORY_SNAPSHOT_EVERY_CYCLES)) == 0)
-    if not should_log and rss_mb < float(RUNTIME_MEMORY_SNAPSHOT_RSS_ALERT_MB):
-        return
-    print(
-        "🧠 Memory snapshot: "
-        f"cycle={cycle_number}, context={context}, rss={rss_mb:.1f}MB, "
-        f"monitored={snapshot['monitored_matches']}, "
-        f"processed={snapshot['processed_urls_cache']}, "
-        f"verbose={snapshot['verbose_match_log_cache']}, "
-        f"uncertain={snapshot['uncertain_delivery_urls_cache']}, "
-        f"send_guard={snapshot['signal_send_guard']}, "
-        f"gc={snapshot['gc_count']}, "
-        f"lane={object_snapshot['lane_data']}, "
-        f"early={object_snapshot['early_dict']}, "
-        f"late={object_snapshot['late_dict']}, "
-        f"post_lane={object_snapshot['post_lane_dict']}, "
-        f"late_pub_table={object_snapshot['late_pub_comeback_table_thresholds']}, "
-        f"history={object_snapshot['match_history']}, "
-        f"prefetch_q={object_snapshot['bookmaker_prefetch_queue']}, "
-        f"prefetch_r={object_snapshot['bookmaker_prefetch_results']}, "
-        f"kills={object_snapshot['kills_models_loaded']}, "
-        f"kills_patch={object_snapshot['kills_models_by_patch']}, "
-        f"kills_tier={object_snapshot['kills_models_by_tier']}, "
-        f"predictability={object_snapshot['team_predictability_cache']}, "
-        f"tempo_solo={object_snapshot['tempo_solo_dict']}, "
-        f"tempo_duo={object_snapshot['tempo_duo_dict']}, "
-        f"tempo_cp1v1={object_snapshot['tempo_cp1v1_dict']}"
-    )
+    return  # Memory snapshot logging disabled
 
 
 def _backup_corrupted_state_file(path: Path, suffix: str) -> Optional[Path]:
