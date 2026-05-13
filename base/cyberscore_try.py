@@ -1744,7 +1744,7 @@ def _write_json_atomic(path: Path, data: Any) -> None:
     )
     try:
         with os.fdopen(fd, "wb") as temp_file:
-            temp_file.write(orjson.dumps(data))
+            temp_file.write(orjson.dumps(data, option=orjson.OPT_NON_STR_KEYS))
             temp_file.flush()
             os.fsync(temp_file.fileno())
         os.replace(temp_path, path)
