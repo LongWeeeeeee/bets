@@ -16217,14 +16217,18 @@ def _camoufox_proxy_kwargs_from_url(proxy_url: str) -> Dict[str, Any]:
         else:
             proxy_value = f"http://{proxy_value}"
     try:
-        from bookmaker_selenium_odds import _parse_proxy
+        from urllib.parse import urlparse
 
-        parsed = _parse_proxy(proxy_value)
+        parsed = urlparse(proxy_value)
+        if not parsed.hostname or not parsed.port:
+            raise ValueError(f"Invalid proxy URL: {proxy_value}")
+        if parsed.username is None or parsed.password is None:
+            raise ValueError("Proxy URL must contain auth credentials")
         return {
             "proxy": {
-                "server": f"http://{parsed['host']}:{parsed['port']}",
-                "username": parsed["username"],
-                "password": parsed["password"],
+                "server": f"http://{parsed.hostname}:{parsed.port}",
+                "username": parsed.username,
+                "password": parsed.password,
             }
         }
     except Exception as exc:
