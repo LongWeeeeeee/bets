@@ -16650,30 +16650,53 @@ def _extract_cyberscore_match_item_from_html(html: str, match_id: Optional[Union
         candidates.append(f'"item":{{"id":{match_id}')
         candidates.append(f'"item":{{"id":"{match_id}"')
     candidates.append('"item":{"id":')
+
+    def _snapshot_rank(item_obj: Dict[str, Any]) -> Tuple[int, int, int]:
+        """Rank an item: prefer live/online, then picks completeness, then game_time."""
+        status_text = str(item_obj.get("status") or "").strip().lower()
+        status_rank = 1 if status_text in {"online", "live", "running", "inprogress", "in_progress"} else 0
+        picks_list = item_obj.get("picks")
+        picks_count = len(picks_list) if isinstance(picks_list, list) else 0
+        try:
+            game_time = int(item_obj.get("game_time") or item_obj.get("ticks_game_time") or 0)
+        except (TypeError, ValueError):
+            game_time = 0
+        return (status_rank, picks_count, game_time)
+
+    best_item: Optional[Dict[str, Any]] = None
+    best_rank: Tuple[int, int, int] = (-1, -1, -1)
+
     for blob in blobs:
         for needle in candidates:
-            idx = blob.find(needle)
-            if idx < 0:
-                continue
-            start = blob.find("{", idx + len('"item":') - 1)
-            raw_object = _extract_balanced_json_object(blob, start)
-            if not raw_object:
-                continue
-            try:
-                item = json.loads(raw_object)
-            except Exception as exc:
-                logger.debug("Failed to parse CyberScore match item JSON: %s", exc)
-                continue
-            if not isinstance(item, dict):
-                continue
-            if match_id:
+            search_start = 0
+            while True:
+                idx = blob.find(needle, search_start)
+                if idx < 0:
+                    break
+                start = blob.find("{", idx + len('"item":') - 1)
+                raw_object = _extract_balanced_json_object(blob, start)
+                if not raw_object:
+                    search_start = idx + len(needle)
+                    continue
+                search_start = start + len(raw_object)
                 try:
-                    if int(item.get("id") or 0) != int(match_id):
-                        continue
-                except Exception:
-                    pass
-            return item
-    return None
+                    item = json.loads(raw_object)
+                except Exception as exc:
+                    logger.debug("Failed to parse CyberScore match item JSON: %s", exc)
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                if match_id:
+                    try:
+                        if int(item.get("id") or 0) != int(match_id):
+                            continue
+                    except Exception:
+                        pass
+                rank = _snapshot_rank(item)
+                if rank > best_rank:
+                    best_rank = rank
+                    best_item = item
+    return best_item
 
 
 def _extract_cyberscore_match_id_from_href(href: str) -> str:
