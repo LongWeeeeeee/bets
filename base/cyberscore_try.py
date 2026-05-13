@@ -5894,6 +5894,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 f"for {match_key} (game_time={int(float(delayed_state.get('game_time') or 0))})"
             )
         else:
+            # Fallback: fetch only if no override arrived (main cycle should push overrides)
             delayed_state = _fetch_delayed_match_state(payload.get('json_url'))
         if not isinstance(delayed_state, dict):
             queued_at = float(payload.get('queued_at', now_ts))
@@ -19190,6 +19191,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"radiant_lead={data.get('radiant_lead')}, "
                 f"kills={data.get('radiant_score')}:{data.get('dire_score')}"
             )
+            # Push fresh state to delayed sender so it doesn't need its own fetch
+            if not SIGNAL_MINIMAL_ODDS_ONLY_MODE and delayed_payload is not None:
+                _queue_delayed_state_override(check_uniq_url, {
+                    "game_time": data.get("game_time"),
+                    "radiant_lead": data.get("radiant_lead"),
+                })
             if not SIGNAL_MINIMAL_ODDS_ONLY_MODE and delayed_payload is not None:
                 allow_live_recheck = bool(delayed_payload.get("allow_live_recheck"))
                 target_game_time = float(
