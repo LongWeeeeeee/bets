@@ -9338,6 +9338,28 @@ def _parse_cyberscore_schedule_timestamp_value(
         except ValueError:
             continue
 
+    # Parse CyberScore countdown format: "Starts in : HH : MM" or "... Starts in : MM : SS ..."
+    countdown_match = re.search(r"Starts\s+in\s*:\s*(\d{1,3})\s*:\s*(\d{1,2})", text, re.IGNORECASE)
+    if countdown_match:
+        current_utc = now_utc if now_utc is not None else datetime.now(timezone.utc)
+        if current_utc.tzinfo is None:
+            current_utc = current_utc.replace(tzinfo=timezone.utc)
+        h_or_m = int(countdown_match.group(1))
+        m_or_s = int(countdown_match.group(2))
+        # If first number > 59, treat as minutes:seconds; otherwise hours:minutes
+        if h_or_m > 59:
+            total_seconds = h_or_m * 60 + m_or_s
+        else:
+            # Assume HH:MM for values like "01:30", MM:SS for values like "08:53"
+            # CyberScore uses MM:SS for countdowns under 1 hour
+            if h_or_m < 24 and m_or_s < 60:
+                # Heuristic: if h_or_m < 1 hour range, treat as MM:SS
+                total_seconds = h_or_m * 60 + m_or_s
+            else:
+                total_seconds = h_or_m * 3600 + m_or_s * 60
+        if total_seconds > 0:
+            return current_utc + timedelta(seconds=total_seconds)
+
     current_msk = (now_utc.astimezone(MOSCOW_TZ) if now_utc is not None else datetime.now(MOSCOW_TZ))
     time_match = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", text)
     if not time_match:
