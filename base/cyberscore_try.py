@@ -1272,8 +1272,12 @@ NETWORTH_STATUS_LATE_PUB_TABLE_WAIT = "late_pub_table_wait"
 NETWORTH_STATUS_LATE_PUB_TABLE_SEND = "late_pub_table_send"
 NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT = "late_pre27_dominance_wait"
 NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT = "late_pre27_watcher_wait"
+NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT = "all_only_watcher_wait"
+NETWORTH_STATUS_ALL_ONLY_WATCHER_TIMEOUT_NO_SEND = "all_only_watcher_timeout_no_send"
 LATE_PRE27_DOMINANCE_PROFILE = "late_pre27_dominance"
 LATE_PRE27_WATCHER_PROFILE = "late_pre27_watcher"
+ALL_ONLY_WATCHER_PROFILE = "all_only_watcher"
+ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS = 50 * 60
 TIER_SIGNAL_MIN_THRESHOLD_TIER1_BASE = 60
 TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE = 60
 ELO_UNDERDOG_GUARD_FAVORITE_EDGE_PP = 15.0
@@ -2025,6 +2029,349 @@ def _compose_star_metric_blocks_for_message(
     all_block: str,
 ) -> str:
     return f"{str(early_block or '')}{str(late_block or '')}{str(all_block or '')}"
+
+
+_STAR_HITS_SUMMARY_WR_LEVELS: Tuple[int, ...] = (60, 65, 70, 75, 80, 85, 90)
+
+_STAR_HITS_SUMMARY_METRIC_LABELS: Dict[str, str] = {
+    "counterpick_1vs1": "Counterpick_1vs1",
+    "counterpick_1vs2": "Counterpick_1vs2",
+    "solo": "Solo",
+    "synergy_duo": "Synergy_duo",
+    "synergy_trio": "Synergy_trio",
+    "dota2protracker_cp1vs1": "Dota2ProTracker_cp1vs1",
+}
+
+
+def _max_star_wr_level_for_metric(
+    *,
+    metric: str,
+    value: float,
+    section: str,
+) -> Optional[int]:
+    """Return the highest WR level whose threshold the absolute value reaches.
+
+    Uses the same threshold table as runtime STAR diagnostics.  Considers only
+    metrics enabled for STAR signal decisions (gated by
+    ``_star_metric_enabled_for_section``).  Returns ``None`` when no level is
+    satisfied or when the metric is disabled for the given section.
+    """
+
+    metric_name = str(metric or "").strip()
+    if not metric_name:
+        return None
+    if not _star_metric_enabled_for_section(metric_name, section):
+        return None
+    try:
+        abs_value = abs(float(value))
+    except (TypeError, ValueError):
+        return None
+    if abs_value <= 0:
+        return None
+    best_level: Optional[int] = None
+    for wr_level in _STAR_HITS_SUMMARY_WR_LEVELS:
+        thresholds = _star_thresholds_for_wr(wr_level, section)
+        threshold = thresholds.get(metric_name)
+        if threshold is None:
+            continue
+        if abs_value >= float(threshold):
+            if best_level is None or wr_level > best_level:
+                best_level = int(wr_level)
+    return best_level
+
+
+def _collect_star_hits_for_block(
+    raw_block: Optional[dict],
+    section: str,
+) -> List[Dict[str, Any]]:
+    block = raw_block if isinstance(raw_block, dict) else {}
+    hits: List[Dict[str, Any]] = []
+    for metric in _STAR_METRIC_ORDER:
+        value = _coerce_metric_value(block.get(metric))
+        if value is None or value == 0:
+            continue
+        level = _max_star_wr_level_for_metric(
+            metric=metric,
+            value=float(value),
+            section=section,
+        )
+        if level is None:
+            continue
+        hits.append(
+            {
+                "metric": metric,
+                "value": float(value),
+                "wr_level": int(level),
+            }
+        )
+    return hits
+
+
+def _format_star_hits_line(hits: List[Dict[str, Any]]) -> str:
+    parts: List[str] = []
+    for hit in hits:
+        metric = str(hit.get("metric") or "")
+        label = _STAR_HITS_SUMMARY_METRIC_LABELS.get(metric, metric or "?")
+        try:
+            value = float(hit.get("value"))
+        except (TypeError, ValueError):
+            continue
+        try:
+            wr_level = int(hit.get("wr_level"))
+        except (TypeError, ValueError):
+            continue
+        formatted_value = _format_metric_value(value)
+        if not formatted_value.startswith("-"):
+            formatted_value = f"+{formatted_value}"
+        parts.append(f"{label} {formatted_value} (WR{wr_level})")
+    return ", ".join(parts)
+
+
+def _build_star_hits_summary_block(
+    *,
+    early_output: Optional[dict],
+    mid_output: Optional[dict],
+    all_output: Optional[dict],
+) -> str:
+    """Return multi-line ``⭐ Star hits (WR60+):`` block for Telegram/log output.
+
+    Returns an empty string when no STAR-signal metric in any block reaches the
+    WR60 threshold.  Only metrics that participate in STAR decisions (governed
+    by ``_star_metric_enabled_for_section``) are considered.
+    """
+
+    early_hits = _collect_star_hits_for_block(early_output, "early_output")
+    mid_hits = _collect_star_hits_for_block(mid_output, "mid_output")
+    all_hits = _collect_star_hits_for_block(all_output, "all_output")
+
+    if not any((early_hits, mid_hits, all_hits)):
+        return ""
+
+    lines: List[str] = ["⭐ Star hits (WR60+):"]
+    for label, hits in (("Early", early_hits), ("Late", mid_hits), ("All", all_hits)):
+        if not hits:
+            continue
+        lines.append(f"  {label}: {_format_star_hits_line(hits)}")
+    return "\n".join(lines) + "\n"
+
+
+def _late_star_hits_by_sign(raw_mid_output: Optional[dict]) -> Dict[str, Any]:
+    """Partition STAR-signal metric hits in the Late block by sign (WR60 only).
+
+    Returns a dict with three lists of metric names: ``same_sign_pos``,
+    ``same_sign_neg``, ``zero_metrics`` (values that are numerically zero).
+    The helper only counts metrics enabled for STAR signal decisions and uses
+    WR60 thresholds because Late is promoted / routed to kills exactly at that
+    base level.
+    """
+
+    block = raw_mid_output if isinstance(raw_mid_output, dict) else {}
+    thresholds = _star_thresholds_for_wr(60, "mid_output")
+    pos_hits: List[str] = []
+    neg_hits: List[str] = []
+    zero_metrics: List[str] = []
+    nonzero_by_sign: Dict[int, List[str]] = {1: [], -1: []}
+
+    for metric in _STAR_METRIC_ORDER:
+        if not _star_metric_enabled_for_section(metric, "mid_output"):
+            continue
+        value = _coerce_metric_value(block.get(metric))
+        if value is None:
+            continue
+        if value == 0:
+            zero_metrics.append(metric)
+            continue
+        sign = 1 if value > 0 else -1
+        nonzero_by_sign[sign].append(metric)
+        threshold = thresholds.get(metric)
+        if threshold is None:
+            continue
+        if abs(value) < float(threshold):
+            continue
+        if sign > 0:
+            pos_hits.append(metric)
+        else:
+            neg_hits.append(metric)
+
+    return {
+        "same_sign_pos": pos_hits,
+        "same_sign_neg": neg_hits,
+        "zero_metrics": zero_metrics,
+        "nonzero_by_sign": nonzero_by_sign,
+    }
+
+
+def _late_hits_for_expected_sign(
+    late_hit_summary: Dict[str, Any],
+    expected_sign: Optional[int],
+) -> Tuple[List[str], List[str]]:
+    """Return ``(same_sign_hits, opposite_sign_hits)`` relative to ``expected_sign``."""
+
+    if expected_sign not in (-1, 1):
+        return [], []
+    if int(expected_sign) > 0:
+        return list(late_hit_summary.get("same_sign_pos") or []), list(
+            late_hit_summary.get("same_sign_neg") or []
+        )
+    return list(late_hit_summary.get("same_sign_neg") or []), list(
+        late_hit_summary.get("same_sign_pos") or []
+    )
+
+
+def _evaluate_late_all_same_sign_promote(
+    *,
+    has_early_star: bool,
+    has_late_star: bool,
+    has_all_star: bool,
+    early_sign: Optional[int],
+    all_sign: Optional[int],
+    raw_mid_output: Optional[dict],
+) -> Dict[str, Any]:
+    """Decide whether the Late block can be promoted to a valid same-sign star.
+
+    Promotion requires (pt2 from the kills-gate spec):
+      * Early and All are both valid STAR blocks of the same sign
+      * Late is **not** already a valid STAR block
+      * Late has at least one WR60 star-hit of the same sign
+      * Late has no WR60 star-hit of the opposite sign
+      * Late has no nonzero metric of the opposite sign
+    """
+
+    active = bool(
+        has_early_star
+        and has_all_star
+        and not has_late_star
+        and early_sign in (-1, 1)
+        and all_sign in (-1, 1)
+        and int(early_sign) == int(all_sign)
+    )
+    late_summary = _late_star_hits_by_sign(raw_mid_output)
+    same_sign_hits, opposite_sign_hits = _late_hits_for_expected_sign(
+        late_summary,
+        early_sign if active else None,
+    )
+    opposite_sign_nonzero: List[str] = []
+    if active and early_sign in (-1, 1):
+        opposite_sign_nonzero = list(
+            late_summary.get("nonzero_by_sign", {}).get(-int(early_sign), [])
+        )
+    valid = bool(
+        active
+        and same_sign_hits
+        and not opposite_sign_hits
+        and not opposite_sign_nonzero
+    )
+    return {
+        "active": active,
+        "valid": valid,
+        "same_sign_hits": same_sign_hits,
+        "opposite_sign_hits": opposite_sign_hits,
+        "opposite_sign_nonzero": opposite_sign_nonzero,
+        "late_hits_summary": late_summary,
+    }
+
+
+def _late_block_has_any_star_hit(raw_mid_output: Optional[dict]) -> bool:
+    """True if Late contains ≥1 STAR-signal metric hit at WR60 (any sign)."""
+
+    late_summary = _late_star_hits_by_sign(raw_mid_output)
+    return bool(late_summary.get("same_sign_pos") or late_summary.get("same_sign_neg"))
+
+
+def _early_star_meets_kills_wr_gate(
+    *,
+    early_wr_pct: Optional[float],
+    early_hit_count: Optional[int],
+) -> Dict[str, Any]:
+    """Decide whether the Early STAR block passes the kills-gate WR bar.
+
+    Criteria (pt3 from the kills-gate spec):
+      * ``early_wr_pct >= 70``, OR
+      * ``early_wr_pct >= 65`` AND ``early_hit_count >= 2``
+    """
+
+    try:
+        wr_value = float(early_wr_pct) if early_wr_pct is not None else None
+    except (TypeError, ValueError):
+        wr_value = None
+    try:
+        hit_count_value = int(early_hit_count) if early_hit_count is not None else 0
+    except (TypeError, ValueError):
+        hit_count_value = 0
+    passes_wr70 = bool(wr_value is not None and wr_value >= 70.0)
+    passes_wr65_two_hits = bool(
+        wr_value is not None
+        and wr_value >= 65.0
+        and hit_count_value >= 2
+    )
+    return {
+        "valid": passes_wr70 or passes_wr65_two_hits,
+        "early_wr_pct": wr_value,
+        "early_hit_count": hit_count_value,
+        "passes_wr70": passes_wr70,
+        "passes_wr65_two_hits": passes_wr65_two_hits,
+    }
+
+
+def _evaluate_kills_gate(
+    *,
+    has_early_star: bool,
+    has_late_star: bool,
+    has_all_star: bool,
+    early_sign: Optional[int],
+    all_sign: Optional[int],
+    early_wr_pct: Optional[float],
+    early_hit_count: Optional[int],
+    raw_mid_output: Optional[dict],
+    late_all_same_sign_promote_valid: bool,
+) -> Dict[str, Any]:
+    """Decide whether the match should fall through to the kills betting gate.
+
+    The gate activates when:
+      * Early is a valid STAR block
+      * Late is **not** a valid STAR block (primary) **and** the pt2 promote
+        did **not** succeed
+      * Late contains at least one WR60 STAR-signal hit (any sign)
+      * Either All is absent **or** All is a valid STAR of the same sign as
+        Early (the opposite-sign All is blocked earlier by
+        ``no_late_early_all_opposite_signs``)
+
+    A positive ``valid`` result means the kills header/path is authorised.
+    ``active_but_blocked`` signals that we reached the gate but the Early WR
+    bar rejected the match, meaning we must add_url instead of firing any
+    other branch.
+    """
+
+    active = bool(
+        has_early_star
+        and not has_late_star
+        and not late_all_same_sign_promote_valid
+        and early_sign in (-1, 1)
+        and _late_block_has_any_star_hit(raw_mid_output)
+    )
+    all_same_sign_ok = bool(
+        not has_all_star
+        or (
+            has_all_star
+            and all_sign in (-1, 1)
+            and early_sign in (-1, 1)
+            and int(all_sign) == int(early_sign)
+        )
+    )
+    active = active and all_same_sign_ok
+    wr_gate = _early_star_meets_kills_wr_gate(
+        early_wr_pct=early_wr_pct,
+        early_hit_count=early_hit_count,
+    )
+    valid = bool(active and wr_gate.get("valid"))
+    return {
+        "active": active,
+        "valid": valid,
+        "active_but_blocked": bool(active and not wr_gate.get("valid")),
+        "wr_gate": wr_gate,
+        "has_all_star_same_sign": bool(has_all_star and all_same_sign_ok),
+        "early_sign": early_sign,
+    }
 
 
 def _extract_ml_block_confidence_pct(data: dict, phase: str) -> Optional[float]:
@@ -2812,6 +3159,12 @@ def _star_signal_dispatch_flags(
         and not late_early_or_all_same_sign
         and not force_odds_signal_test_active
     )
+    all_only_no_early_no_late = bool(
+        not has_early_star
+        and not has_late_star
+        and has_all_star
+        and all_sign in (-1, 1)
+    )
     return {
         "send_now_late_early_same_sign": late_early_same_sign,
         "send_now_late_all_same_sign": late_all_same_sign,
@@ -2820,6 +3173,7 @@ def _star_signal_dispatch_flags(
         "no_late_early_all_opposite_signs": no_late_early_all_opposite,
         "send_now_immediate": send_now,
         "late_star_wait_pub_table": late_wait_pub_table,
+        "all_only_no_early_no_late": all_only_no_early_no_late,
     }
 
 
@@ -3578,6 +3932,172 @@ def _late_pre27_watcher_snapshot(
             or NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT
         ),
         "source_minute": int(source_minute),
+    }
+
+
+def _all_only_watcher_available_levels() -> List[int]:
+    payload = all_only_watcher_thresholds_by_wr
+    if not isinstance(payload, dict):
+        return []
+    levels: List[int] = []
+    for raw_level, thresholds in payload.items():
+        if not isinstance(thresholds, dict) or not thresholds:
+            continue
+        try:
+            levels.append(int(raw_level))
+        except (TypeError, ValueError):
+            continue
+    return sorted(set(levels))
+
+
+def _all_only_watcher_has_thresholds(wr_level: Optional[int]) -> bool:
+    try:
+        normalized_wr = int(wr_level) if wr_level is not None else None
+    except (TypeError, ValueError):
+        normalized_wr = None
+    if normalized_wr is None:
+        return False
+    payload = all_only_watcher_thresholds_by_wr
+    if not isinstance(payload, dict):
+        return False
+    thresholds = payload.get(normalized_wr)
+    return isinstance(thresholds, dict) and bool(thresholds)
+
+
+def _all_only_watcher_wr_level(raw_wr: Any) -> Optional[int]:
+    levels = _all_only_watcher_available_levels()
+    if not levels:
+        return None
+    try:
+        wr_value = float(raw_wr) if raw_wr is not None else None
+    except (TypeError, ValueError):
+        wr_value = None
+    if wr_value is None or not math.isfinite(wr_value):
+        return levels[0]
+    return min(levels, key=lambda level: (abs(float(level) - wr_value), -int(level)))
+
+
+def _all_only_watcher_monitor_config(
+    *,
+    target_sign: Optional[int],
+    all_wr_pct: Optional[float],
+    selected_star_wr: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    target_side = _target_side_from_sign(target_sign)
+    if target_side not in {"radiant", "dire"}:
+        return None
+    try:
+        signal_wr = float(all_wr_pct) if all_wr_pct is not None else None
+    except (TypeError, ValueError):
+        signal_wr = None
+    if signal_wr is None:
+        try:
+            signal_wr = float(selected_star_wr) if selected_star_wr is not None else None
+        except (TypeError, ValueError):
+            signal_wr = None
+    wr_level = _all_only_watcher_wr_level(signal_wr)
+    if not _all_only_watcher_has_thresholds(wr_level):
+        return None
+    thresholds = all_only_watcher_thresholds_by_wr.get(int(wr_level), {})
+    return {
+        "enabled": True,
+        "profile": ALL_ONLY_WATCHER_PROFILE,
+        "target_game_time": float(ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS),
+        "target_sign": int(target_sign),
+        "target_side": target_side,
+        "wr_level": int(wr_level),
+        "signal_wr": float(signal_wr) if signal_wr is not None else None,
+        "thresholds_by_minute": {int(k): float(v) for k, v in thresholds.items()},
+        "status_label": NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT,
+        "timeout_add_url_reason": "star_signal_rejected_all_only_watcher_timeout",
+        "timeout_status_label": NETWORTH_STATUS_ALL_ONLY_WATCHER_TIMEOUT_NO_SEND,
+    }
+
+
+def _all_only_watcher_snapshot(
+    source: Optional[Dict[str, Any]],
+    game_time_seconds: Optional[float],
+) -> Dict[str, Any]:
+    try:
+        current_game_time = float(game_time_seconds) if game_time_seconds is not None else None
+    except (TypeError, ValueError):
+        current_game_time = None
+    if current_game_time is None or not isinstance(source, dict):
+        return {"threshold": None, "status_label": "", "drop_without_fallback": False}
+
+    try:
+        target_game_time = float(
+            source.get("target_game_time")
+            if source.get("target_game_time") is not None
+            else ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS
+        )
+    except (TypeError, ValueError):
+        target_game_time = float(ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS)
+    if current_game_time < float(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS):
+        return {
+            "threshold": None,
+            "status_label": str(
+                source.get("dispatch_status_label")
+                or source.get("status_label")
+                or NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT
+            ),
+            "drop_without_fallback": False,
+        }
+    if current_game_time >= target_game_time:
+        return {
+            "threshold": None,
+            "status_label": str(
+                source.get("timeout_status_label")
+                or NETWORTH_STATUS_ALL_ONLY_WATCHER_TIMEOUT_NO_SEND
+            ),
+            "drop_without_fallback": True,
+        }
+
+    raw_thresholds = source.get("networth_monitor_thresholds_by_minute")
+    if raw_thresholds is None:
+        raw_thresholds = source.get("thresholds_by_minute")
+    if not isinstance(raw_thresholds, dict) or not raw_thresholds:
+        return {
+            "threshold": None,
+            "status_label": str(
+                source.get("dispatch_status_label")
+                or source.get("status_label")
+                or NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT
+            ),
+            "drop_without_fallback": False,
+        }
+
+    current_minute = int(max(0.0, current_game_time) // 60)
+    thresholds_by_minute: Dict[int, float] = {}
+    for raw_minute, raw_threshold in raw_thresholds.items():
+        try:
+            minute = int(raw_minute)
+            threshold = float(raw_threshold)
+        except (TypeError, ValueError):
+            continue
+        thresholds_by_minute[minute] = threshold
+    eligible_minutes = [minute for minute in thresholds_by_minute if minute <= current_minute]
+    if not eligible_minutes:
+        return {
+            "threshold": None,
+            "status_label": str(
+                source.get("dispatch_status_label")
+                or source.get("status_label")
+                or NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT
+            ),
+            "drop_without_fallback": False,
+        }
+    source_minute = max(eligible_minutes)
+    return {
+        "threshold": thresholds_by_minute.get(source_minute),
+        "status_label": str(
+            source.get("networth_monitor_status")
+            or source.get("status_label")
+            or source.get("dispatch_status_label")
+            or NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT
+        ),
+        "source_minute": int(source_minute),
+        "drop_without_fallback": False,
     }
 
 
@@ -4885,6 +5405,21 @@ def _dynamic_monitor_snapshot_for_payload(
             snapshot["source_minute"] = pre27_snapshot.get("source_minute")
         return snapshot
 
+    if snapshot["profile"] == ALL_ONLY_WATCHER_PROFILE:
+        all_only_snap = _all_only_watcher_snapshot(payload, current_game_time)
+        snapshot["threshold"] = all_only_snap.get("threshold")
+        snapshot["status_label"] = str(
+            all_only_snap.get("status_label")
+            or payload.get("dispatch_status_label")
+            or snapshot["status_label"]
+            or ""
+        )
+        if all_only_snap.get("source_minute") is not None:
+            snapshot["source_minute"] = all_only_snap.get("source_minute")
+        if all_only_snap.get("drop_without_fallback"):
+            snapshot["drop_without_fallback"] = True
+        return snapshot
+
     if snapshot["profile"] == "late_only_opposite_signs_early90_tier1_fast_release":
         target_game_time_raw = payload.get("target_game_time")
         try:
@@ -5551,6 +6086,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
             not late_pub_comeback_table_active
             and monitor_target_side in {"radiant", "dire"}
             and current_game_time >= float(DELAYED_SIGNAL_TARGET_GAME_TIME)
+            and str(payload.get("dynamic_monitor_profile") or "") != ALL_ONLY_WATCHER_PROFILE
         ):
             resolved_wr_level = _late_pub_table_wr_level_from_payload(payload)
             if _late_pub_table_has_thresholds(resolved_wr_level):
@@ -7748,6 +8284,8 @@ late_pub_comeback_table_max_minute_by_wr = {}
 late_pub_comeback_table_global_max_minute = None
 late_pre27_watcher_data = None
 late_pre27_watcher_thresholds_by_group_wr = {}
+all_only_watcher_data = None
+all_only_watcher_thresholds_by_wr = {}
 STATS_SEQUENTIAL_WARMUP_ENABLED = _safe_bool_env("STATS_SEQUENTIAL_WARMUP_ENABLED", True)
 STATS_WARMUP_STEP_DELAY_SECONDS = _safe_float_env("STATS_WARMUP_STEP_DELAY_SECONDS", 45.0)
 STATS_SHARDED_LOOKUP_MODE = str(os.getenv("STATS_SHARDED_LOOKUP_MODE", "auto")).strip().lower() or "auto"
@@ -20293,6 +20831,40 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and raw_selected_late_diag.get("sign") == selected_early_sign
                 and str(selected_late_diag.get("status") or "") == "elo_wr_below_min60"
             )
+            # pt2: promote Late to a valid star block when All is already same
+            # sign as Early and Late has ≥1 same-sign STAR hit without any
+            # conflicting opposite-sign hits/values.  This routes matches like
+            # Early+All both positive with Late cp1vs1=+4, duo=0, solo=0 to
+            # the normal target_half dispatch instead of hitting the kills
+            # fallback.
+            late_all_same_sign_promote = _evaluate_late_all_same_sign_promote(
+                has_early_star=has_selected_early_star,
+                has_late_star=has_selected_late_star,
+                has_all_star=has_selected_all_star,
+                early_sign=selected_early_sign,
+                all_sign=selected_all_sign,
+                raw_mid_output=s.get('mid_output', {}),
+            )
+            late_all_same_sign_promote_valid = bool(late_all_same_sign_promote.get("valid"))
+            if late_all_same_sign_promote_valid:
+                if verbose_match_log:
+                    print(
+                        "   🔁 Late promoted via All same-sign: "
+                        f"sign={int(selected_early_sign) if selected_early_sign in (-1, 1) else 0}, "
+                        f"hits={late_all_same_sign_promote.get('same_sign_hits')}"
+                    )
+                has_selected_late_star = True
+                selected_late_sign = selected_early_sign
+                selected_late_diag = dict(selected_late_diag)
+                selected_late_diag["valid"] = True
+                selected_late_diag["status"] = "late_promoted_by_all_same_sign"
+                selected_late_diag["sign"] = selected_early_sign
+                existing_hits = list(selected_late_diag.get("hit_metrics") or [])
+                for metric in late_all_same_sign_promote.get("same_sign_hits") or []:
+                    if metric not in existing_hits:
+                        existing_hits.append(metric)
+                selected_late_diag["hit_metrics"] = existing_hits
+                selected_late_diag["late_promoted_by_all_same_sign"] = True
             star_dispatch_flags = _star_signal_dispatch_flags(
                 has_early_star=has_selected_early_star,
                 early_sign=selected_early_sign,
@@ -20318,6 +20890,29 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early_only_no_late_all_gate.get("valid")
                 and early_only_no_late_all_gate.get("signal_mode") == "kills_from"
             )
+            # pt3: kills gate — when there is no valid Late star (primary or
+            # pt2-promoted) and the Late block still contains at least one
+            # WR60 STAR-signal hit, route the match to the kills-from header
+            # provided Early passes the WR70 / WR65+2hits bar.  Opposite-sign
+            # All is still rejected earlier by no_late_early_all_opposite.
+            selected_early_hit_count = 0
+            try:
+                selected_early_hit_count = int(selected_early_diag.get("hit_count") or 0)
+            except (TypeError, ValueError):
+                selected_early_hit_count = len(selected_early_diag.get("hit_metrics") or [])
+            kills_gate_decision = _evaluate_kills_gate(
+                has_early_star=has_selected_early_star,
+                has_late_star=has_selected_late_star,
+                has_all_star=has_selected_all_star,
+                early_sign=selected_early_sign,
+                all_sign=selected_all_sign,
+                early_wr_pct=early_wr_pct,
+                early_hit_count=selected_early_hit_count,
+                raw_mid_output=s.get('mid_output', {}),
+                late_all_same_sign_promote_valid=late_all_same_sign_promote_valid,
+            )
+            if kills_gate_decision.get("valid"):
+                early_only_kills_mode = True
             early65_gate_active = False
             send_now_immediate = bool(star_dispatch_flags["send_now_immediate"])
             no_late_early_all_opposite_signs = bool(
@@ -20451,12 +21046,52 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 print("   ✅ map_id_check.txt обновлен: add_url после отказа early-only WR<65")
                 return return_status
 
+            if (
+                not force_odds_signal_test_active
+                and bool(kills_gate_decision.get("active_but_blocked"))
+            ):
+                wr_gate_info = kills_gate_decision.get("wr_gate") or {}
+                print(
+                    "   ⚠️ ВЕРДИКТ: ОТКАЗ "
+                    "(Late содержит STAR-метрику, но Early WR<70 и не было ≥2 hits при WR>=65) "
+                    "- матч пропущен"
+                )
+                print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
+                add_url(
+                    check_uniq_url,
+                    reason="star_signal_rejected_kills_gate_early_wr_below_threshold",
+                    details={
+                        "status": status,
+                        "dispatch_mode": "rejected_kills_gate_early_wr_below_threshold",
+                        "selected_star_wr": selected_star_wr,
+                        "selected_star_mode": selected_star_mode,
+                        "selected_early_star": bool(has_selected_early_star),
+                        "selected_late_star": bool(has_selected_late_star),
+                        "selected_all_star": bool(has_selected_all_star),
+                        "selected_early_sign": selected_early_sign,
+                        "selected_late_sign": selected_late_sign,
+                        "selected_all_sign": selected_all_sign,
+                        "selected_early_diag": selected_early_diag,
+                        "selected_late_diag": selected_late_diag,
+                        "selected_all_diag": selected_all_diag,
+                        "kills_gate_decision": kills_gate_decision,
+                        "late_all_same_sign_promote": late_all_same_sign_promote,
+                        "early_wr_pct": wr_gate_info.get("early_wr_pct"),
+                        "early_hit_count": wr_gate_info.get("early_hit_count"),
+                        "json_retry_errors": json_retry_errors,
+                    },
+                )
+                print("   ✅ map_id_check.txt обновлен: add_url после отказа kills-gate WR")
+                return return_status
+
             if early_only_no_late_all_active and bool(early_only_no_late_all_gate.get("valid")):
                 dispatch_mode = (
                     "immediate_early_only_kills_from"
                     if early_only_kills_mode
                     else "immediate_early_only_target_half"
                 )
+            elif bool(kills_gate_decision.get("valid")):
+                dispatch_mode = "immediate_early_only_kills_from"
 
             if top25_late_elo_block_override_active and verbose_match_log:
                 override_target_side = str(top25_late_elo_block_override.get("target_side") or "")
@@ -20994,6 +21629,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
 
             # Формирование сообщения
+            star_hits_summary_block = _build_star_hits_summary_block(
+                early_output=s.get('early_output', {}),
+                mid_output=s.get('mid_output', {}),
+                all_output=s.get('all_output', {}),
+            )
             message_text = (
                 f"{_format_signal_header(stake_team_name=stake_team_name, stake_multiplier=stake_multiplier, special_header_mode=str(stake_multiplier_context.get('special_header_mode') or ''))}\n"
                 f"{radiant_team_name} VS {dire_team_name}\n"
@@ -21002,6 +21642,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"{problem_block}"
                 f"{team_elo_block}"
                 f"{wr_block}"
+                f"{star_hits_summary_block}"
                 f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block)}"
                 f"{dota2protracker_block}"
                 f"{live_state_block}"
@@ -21061,6 +21702,48 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and selected_late_sign == selected_all_sign
                 and current_game_time < LATE_PUB_COMEBACK_TABLE_START_SECONDS
             )
+            all_only_no_early_no_late_active = bool(
+                star_dispatch_flags.get("all_only_no_early_no_late")
+                and target_side in {"radiant", "dire"}
+                and _target_side_from_sign(selected_all_sign) == target_side
+            )
+            all_only_watcher_wr_level_resolved = (
+                _all_only_watcher_wr_level(all_wr_pct)
+                if all_only_no_early_no_late_active
+                else None
+            )
+            all_only_watcher_threshold_now: Optional[float] = None
+            if all_only_no_early_no_late_active and _all_only_watcher_has_thresholds(
+                all_only_watcher_wr_level_resolved
+            ):
+                _all_only_watcher_minute_map = all_only_watcher_thresholds_by_wr.get(
+                    int(all_only_watcher_wr_level_resolved), {}
+                )
+                _all_only_watcher_minute_now = int(max(0.0, current_game_time) // 60)
+                _all_only_watcher_eligible_minutes = [
+                    m for m in _all_only_watcher_minute_map if m <= _all_only_watcher_minute_now
+                ]
+                if _all_only_watcher_eligible_minutes:
+                    all_only_watcher_threshold_now = float(
+                        _all_only_watcher_minute_map.get(max(_all_only_watcher_eligible_minutes))
+                    )
+            all_only_watcher_release_now = bool(
+                all_only_no_early_no_late_active
+                and all_only_watcher_threshold_now is not None
+                and target_networth_diff is not None
+                and float(target_networth_diff) >= float(all_only_watcher_threshold_now)
+            )
+            all_only_watcher_timeout_active = bool(
+                all_only_no_early_no_late_active
+                and current_game_time >= float(ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS)
+                and _all_only_watcher_has_thresholds(all_only_watcher_wr_level_resolved)
+            )
+            queue_all_only_watcher_monitor = bool(
+                all_only_no_early_no_late_active
+                and current_game_time < float(ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS)
+                and _all_only_watcher_has_thresholds(all_only_watcher_wr_level_resolved)
+                and not all_only_watcher_release_now
+            )
             if late_all_same_target_weak_early_opposite:
                 opposite_signs_selected = True
             late_comeback_monitor_candidate = False
@@ -21072,8 +21755,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             queue_same_sign_lane_adv_monitor = bool(
                 same_sign_lane_adv_wait_required
                 and not queue_late_all_no_early_monitor
+                and not queue_all_only_watcher_monitor
             )
-            queue_top25_late_elo_block_monitor = bool(top25_late_elo_block_override_active)
+            queue_top25_late_elo_block_monitor = bool(
+                top25_late_elo_block_override_active
+                and not queue_all_only_watcher_monitor
+            )
             queue_late_all_weak_early_monitor = False
             same_sign_lane_adv_stale_after_fallback = False
             early65_release_status_label: Optional[str] = None
@@ -21087,11 +21774,41 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             early_core_monitor_threshold = float(NETWORTH_GATE_EARLY_CORE_HIGH_CONFIDENCE_MIN_LEAD)
             early_core_monitor_wait_status_label = NETWORTH_STATUS_EARLY_CORE_MONITOR_WAIT_NONNEGATIVE
             early_core_monitor_delay_reason = "early_star_late_core_wait_nonnegative"
+            if all_only_watcher_timeout_active and not force_odds_signal_test_active:
+                print(
+                    "   ⛔ ВЕРДИКТ: All-only watcher истёк за "
+                    f"{_format_game_clock(ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS)} "
+                    f"(wr_level={all_only_watcher_wr_level_resolved}); URL отмечен без отправки"
+                )
+                add_url(
+                    check_uniq_url,
+                    "star_signal_rejected_all_only_watcher_timeout",
+                    {
+                        "status": status,
+                        "dispatch_mode": "drop_all_only_watcher_timeout",
+                        "dispatch_status_label": NETWORTH_STATUS_ALL_ONLY_WATCHER_TIMEOUT_NO_SEND,
+                        "selected_star_wr": selected_star_wr,
+                        "selected_star_mode": selected_star_mode,
+                        "selected_all_star": bool(has_selected_all_star),
+                        "selected_all_sign": selected_all_sign,
+                        "all_wr_pct": all_wr_pct,
+                        "all_only_watcher_wr_level": all_only_watcher_wr_level_resolved,
+                        "game_time": int(current_game_time),
+                        "target_side": dispatch_message_side,
+                        "target_networth_diff": (
+                            float(target_networth_diff)
+                            if target_networth_diff is not None
+                            else None
+                        ),
+                    },
+                )
+                return return_status
             if (
                 send_now_immediate
                 and not force_odds_signal_test_active
                 and not queue_same_sign_lane_adv_monitor
                 and not queue_late_all_no_early_monitor
+                and not queue_all_only_watcher_monitor
             ):
                 if not bool(early_only_no_late_all_gate.get("valid")):
                     dispatch_mode = "immediate_star_rule"
@@ -21257,6 +21974,22 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"{_format_game_clock(LATE_PUB_COMEBACK_TABLE_START_SECONDS)}, "
                         "then pub late comeback table"
                     )
+                if queue_all_only_watcher_monitor:
+                    dispatch_mode = "delayed_all_only_watcher"
+                    threshold_log = (
+                        f"{int(all_only_watcher_threshold_now):d}"
+                        if all_only_watcher_threshold_now is not None
+                        else "wait_min10"
+                    )
+                    print(
+                        "   ⏳ All-only watcher (no Early, no Late): "
+                        f"target_side={target_side}, target_diff="
+                        f"{int(target_networth_diff) if target_networth_diff is not None else 'n/a'}, "
+                        f"wr_level={all_only_watcher_wr_level_resolved}, "
+                        f"need>={threshold_log} until "
+                        f"{_format_game_clock(ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS)}, "
+                        "then drop without fallback"
+                    )
                 if queue_same_sign_lane_adv_monitor:
                     dispatch_mode = "delayed_same_sign_lane_adv_wait_4_10"
                     if current_game_time < NETWORTH_GATE_SAME_SIGN_LANE_ADV_WINDOW_START_SECONDS:
@@ -21368,7 +22101,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             )
                         else:
                             networth_send_status_label = NETWORTH_STATUS_4_10_SEND_800
-                elif send_now_early_star_late_core_same_sign:
+                elif send_now_early_star_late_core_same_sign and not queue_all_only_watcher_monitor:
                     if early_star_gate_wr_pct >= EARLY_STAR_LATE_CORE_HIGH_CONFIDENCE_WR:
                         if target_networth_diff < NETWORTH_GATE_EARLY_CORE_HIGH_CONFIDENCE_MIN_LEAD:
                             queue_early_core_monitor = True
@@ -21473,6 +22206,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 or queue_top25_late_elo_block_monitor
                 or queue_late_all_weak_early_monitor
                 or queue_late_all_no_early_monitor
+                or queue_all_only_watcher_monitor
             ):
                 delay_reason = "late_only_no_early_same_sign"
                 if queue_early_core_monitor:
@@ -21485,6 +22219,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delay_reason = "late_all_same_weak_early_pre27_watcher"
                 elif queue_late_all_no_early_monitor:
                     delay_reason = "late_all_no_early_star_pre27_watcher"
+                elif queue_all_only_watcher_monitor:
+                    delay_reason = "all_only_watcher_no_early_no_late"
                 elif queue_same_sign_lane_adv_monitor:
                     delay_reason = "same_sign_lane_adv_wait_4_10"
                 elif queue_top25_late_elo_block_monitor:
@@ -21550,6 +22286,36 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         monitor_threshold = NETWORTH_GATE_LATE_NO_EARLY_DIFF
                         monitor_wait_status_label = NETWORTH_STATUS_LATE_MONITOR_WAIT_2000
                     fallback_send_status_label = NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
+                    allow_live_recheck = True
+                elif queue_all_only_watcher_monitor:
+                    dynamic_monitor_profile = _all_only_watcher_monitor_config(
+                        target_sign=selected_all_sign,
+                        all_wr_pct=all_wr_pct,
+                    )
+                    if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"):
+                        target_game_time = float(
+                            dynamic_monitor_profile.get("target_game_time") or target_game_time
+                        )
+                        target_human = _format_game_clock(target_game_time)
+                        watcher_snapshot = _all_only_watcher_snapshot(
+                            dynamic_monitor_profile,
+                            current_game_time,
+                        )
+                        monitor_threshold_raw = watcher_snapshot.get("threshold")
+                        monitor_threshold = (
+                            float(monitor_threshold_raw)
+                            if monitor_threshold_raw is not None
+                            else None
+                        )
+                        monitor_wait_status_label = str(
+                            watcher_snapshot.get("status_label")
+                            or NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT
+                        )
+                        dispatch_mode = "delayed_all_only_watcher"
+                    else:
+                        monitor_threshold = None
+                        monitor_wait_status_label = NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT
+                    fallback_send_status_label = None
                     allow_live_recheck = True
                 elif queue_same_sign_lane_adv_monitor:
                     dynamic_monitor_profile = {
@@ -22555,7 +23321,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_add_url_details["opposite_signs_early90_elo_gap_pp"] = dynamic_monitor_profile.get("elo_gap_pp")
                         delayed_add_url_details["opposite_signs_early90_early_elo_wr"] = dynamic_monitor_profile.get("early_elo_wr")
                         delayed_add_url_details["opposite_signs_early90_late_elo_wr"] = dynamic_monitor_profile.get("late_elo_wr")
-                if late_pub_comeback_table_candidate and not queue_same_sign_lane_adv_monitor:
+                if (
+                    late_pub_comeback_table_candidate
+                    and not queue_same_sign_lane_adv_monitor
+                    and not queue_all_only_watcher_monitor
+                ):
                     late_pub_table_decision = _late_star_pub_table_decision(
                         wr_level=late_pub_comeback_table_wr_level,
                         game_time_seconds=current_game_time,
@@ -22600,6 +23370,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             or queue_late_all_weak_early_monitor
                             or queue_late_all_no_early_monitor
                             or queue_top25_late_elo_block_monitor
+                            or queue_all_only_watcher_monitor
                             or late_pub_comeback_table_candidate
                             or (
                                 isinstance(dynamic_monitor_profile, dict)
@@ -22607,6 +23378,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     "late_only_opposite_signs_early90",
                                     "late_only_opposite_signs_early90_tier1_fast_release",
                                     LATE_PRE27_WATCHER_PROFILE,
+                                    ALL_ONLY_WATCHER_PROFILE,
                                 }
                             )
                         )
@@ -22664,6 +23436,25 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_payload['late_pre27_watcher_wr_level'] = int(dynamic_monitor_profile.get("wr_level") or 0)
                         if dynamic_monitor_profile.get("signal_wr") is not None:
                             delayed_payload['late_pre27_watcher_signal_wr'] = float(dynamic_monitor_profile.get("signal_wr") or 0.0)
+                    elif dynamic_monitor_profile.get("profile") == ALL_ONLY_WATCHER_PROFILE:
+                        delayed_payload['target_game_time'] = float(
+                            dynamic_monitor_profile.get("target_game_time") or target_game_time
+                        )
+                        delayed_payload['networth_monitor_thresholds_by_minute'] = dict(
+                            dynamic_monitor_profile.get("thresholds_by_minute") or {}
+                        )
+                        delayed_payload['networth_monitor_status'] = NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT
+                        delayed_payload['networth_target_side'] = target_side
+                        delayed_payload['all_only_watcher_wr_level'] = int(
+                            dynamic_monitor_profile.get("wr_level") or 0
+                        )
+                        if dynamic_monitor_profile.get("signal_wr") is not None:
+                            delayed_payload['all_only_watcher_signal_wr'] = float(
+                                dynamic_monitor_profile.get("signal_wr") or 0.0
+                            )
+                        delayed_payload['timeout_add_url_reason'] = "star_signal_rejected_all_only_watcher_timeout"
+                        delayed_payload['timeout_status_label'] = NETWORTH_STATUS_ALL_ONLY_WATCHER_TIMEOUT_NO_SEND
+                        delayed_payload['all_only_watcher_drop_without_fallback'] = True
                     elif dynamic_monitor_profile.get("profile") == "late_only_opposite_signs_early90":
                         delayed_payload['target_game_time'] = float(
                             dynamic_monitor_profile.get("target_game_time") or target_game_time
@@ -22718,7 +23509,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_payload['lane_adv_opposing_sources'] = list(
                         same_sign_lane_adv_guard.get("opposing_sources") or []
                     )
-                if late_pub_comeback_table_candidate and not queue_same_sign_lane_adv_monitor:
+                if (
+                    late_pub_comeback_table_candidate
+                    and not queue_same_sign_lane_adv_monitor
+                    and not queue_all_only_watcher_monitor
+                ):
                     if not (queue_late_all_weak_early_monitor or queue_late_all_no_early_monitor):
                         delayed_payload['reason'] = "late_star_pub_comeback_table_monitor"
                         delayed_payload['dispatch_status_label'] = NETWORTH_STATUS_LATE_PUB_TABLE_WAIT
@@ -23035,6 +23830,7 @@ def _load_stats_dicts():
         global late_pub_comeback_table_data, late_pub_comeback_table_thresholds_by_wr
         global late_pub_comeback_table_max_minute_by_wr, late_pub_comeback_table_global_max_minute
         global late_pre27_watcher_data, late_pre27_watcher_thresholds_by_group_wr
+        global all_only_watcher_data, all_only_watcher_thresholds_by_wr
 
         if not LIVE_LANE_ANALYSIS_ENABLED:
             lane_data = None
@@ -23133,6 +23929,46 @@ def _load_stats_dicts():
                     Path(late_pre27_watcher_path),
                 )
 
+        if all_only_watcher_data is None:
+            all_only_watcher_data = {}
+            all_only_watcher_thresholds_by_wr = {}
+            if Path(all_only_watcher_path).exists():
+                try:
+                    with open(all_only_watcher_path, "r", encoding="utf-8") as f:
+                        all_only_watcher_data = json.load(f)
+                    rows = (all_only_watcher_data or {}).get("table_rows") or []
+                    thresholds_by_wr: Dict[int, Dict[int, float]] = {}
+                    for row in rows:
+                        if not isinstance(row, dict):
+                            continue
+                        try:
+                            group_key = str(row.get("signal_group") or "").strip().lower()
+                            wr_level = int(row.get("wr_level"))
+                            minute = int(row.get("minute"))
+                            threshold_raw = row.get("median_target_networth_diff")
+                            if threshold_raw is None:
+                                threshold_raw = row.get("threshold_median")
+                            threshold = float(threshold_raw)
+                        except (TypeError, ValueError):
+                            continue
+                        if group_key not in {"all_only", ""}:
+                            continue
+                        thresholds_by_wr.setdefault(wr_level, {})[minute] = threshold
+                    all_only_watcher_thresholds_by_wr = thresholds_by_wr
+                except Exception:
+                    all_only_watcher_data = {}
+                    all_only_watcher_thresholds_by_wr = {}
+                    _report_missing_runtime_file(
+                        "pub_all_only_watcher_thresholds.json",
+                        Path(all_only_watcher_path),
+                        details="failed to parse all-only watcher table",
+                    )
+            else:
+                _report_missing_runtime_file(
+                    "pub_all_only_watcher_thresholds.json",
+                    Path(all_only_watcher_path),
+                )
+
     default_stats_dir = str(ANALYSE_PUB_DIR)
     stats_dir = os.getenv("STATS_DIR", default_stats_dir)
     lane_path = os.getenv("STATS_LANE_PATH", f"{stats_dir}/lane_dict_raw.json")
@@ -23146,6 +23982,10 @@ def _load_stats_dicts():
     late_pre27_watcher_path = os.getenv(
         "STATS_LATE_PRE27_WATCHER_PATH",
         str(BASE_DIR / "pub_late_pre27_watcher_thresholds.json"),
+    )
+    all_only_watcher_path = os.getenv(
+        "STATS_ALL_ONLY_WATCHER_PATH",
+        str(BASE_DIR / "pub_all_only_watcher_thresholds.json"),
     )
 
     # If lane analysis is enabled and test stats folder has no lane dict, fallback to baseline lane dict.

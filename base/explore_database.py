@@ -319,12 +319,10 @@ def _load_test_match_ids(test_set_path: Path) -> set[str]:
 
 
 def _discover_pub_files(json_dir: Path) -> list[Path]:
-    pub_files = sorted(json_dir.glob("combined*.json"))
-    if not pub_files:
-        pub_files = sorted(
-            p for p in json_dir.glob("*.json")
-            if p.name != "merge_patch_summary.json"
-        )
+    pub_files = sorted(
+        p for p in json_dir.glob("*.json")
+        if p.name != "merge_patch_summary.json"
+    )
 
     max_files = int(os.getenv("EXPLORE_MAX_FILES", "0") or "0")
     if max_files > 0:

@@ -14,12 +14,30 @@ except Exception:
 import orjson
 import os
 from pathlib import Path
-from keys import api_to_proxy, start_date_time_739, start_date_time_736
+from keys import api_to_proxy, start_date_time, start_date_time_739, start_date_time_736
+try:
+    from keys import DOTA_PATCH_SPECS
+except ImportError:
+    DOTA_PATCH_SPECS = (
+        ("7.39", 1747785600, 1748476800),
+        ("7.39b", 1748476800, 1750723200),
+        ("7.39c", 1750723200, 1754352000),
+        ("7.39d", 1754352000, 1759363200),
+        ("7.39e", 1759363200, 1765756800),
+        ("7.40", 1765756800, 1766448000),
+        ("7.40b", 1766448000, 1768953600),
+        ("7.40c", 1768953600, 1774310400),
+        ("7.41", 1774310400, 1774656000),
+        ("7.41a", 1774656000, 1775606400),
+        ("7.41b", 1775606400, 1778025600),
+        ("7.41c", 1778025600, None),
+    )
 import asyncio
 try:
     import aiohttp
 except Exception:
     aiohttp = None
+import requests
 from collections import deque, Counter
 from datetime import datetime, timedelta
 import time
@@ -31,7 +49,7 @@ BASE_DIR = PROJECT_ROOT / "base"
 DOCS_DIR = PROJECT_ROOT / "docs"
 PRO_HEROES_DIR = PROJECT_ROOT / "pro_heroes_data"
 ANALYSE_PUB_DIR = PROJECT_ROOT / "bets_data" / "analise_pub_matches"
-PUBS_SOURCE_DIR = ANALYSE_PUB_DIR / "json_parts_split_from_object_since_2025_12_15"
+PUBS_SOURCE_DIR = ANALYSE_PUB_DIR / "json_parts_split_from_object"
 
 # Загрузка валидных позиций героев
 HERO_VALID_POSITIONS = {}
@@ -117,7 +135,49 @@ def _position_is_valid_for_hero(hero_id, position):
 def _has_position_catalog():
     return bool(HERO_POSITION_STATS or HERO_VALID_POSITIONS)
 
-# Rate limits для API
+
+def _normalize_map_id(value):
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit() or (stripped.startswith("-") and stripped[1:].isdigit()):
+            try:
+                return int(stripped)
+            except Exception:
+                return None
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _iter_json_object_keys(file_path):
+    if ijson is not None:
+        with open(file_path, "rb") as f:
+            for prefix, event, value in ijson.parse(f):
+                if prefix == "" and event == "map_key":
+                    yield value
+        return
+
+    with open(file_path, "rb") as f:
+        data = orjson.loads(f.read())
+    if isinstance(data, dict):
+        yield from data.keys()
+
+
+def _load_hero_ids_from_json(path: Path) -> set[int]:
+    hero_ids = set()
+    for key in _iter_json_object_keys(path):
+        map_id = _normalize_map_id(key)
+        if map_id is not None:
+            hero_ids.add(map_id)
+    return hero_ids
+
+
 RATE_LIMITS = {
     'second': 7,
     'minute': 138,
@@ -213,29 +273,31 @@ class ProxyAPIPool:
             for proxy_url, api_token in api_to_proxy_dict.items()
         ]
         self.current_index = 0
+        self.selection_lock = asyncio.Lock()
         self.semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
     
     async def get_available_tracker(self):
         """Получает доступный tracker или ждет, пока он освободится"""
         max_attempts = len(self.trackers) * 10
         attempt = 0
-        previous_index = self.current_index
         
         while attempt < max_attempts:
-            # Проверяем все trackers начиная с текущего
-            for i in range(len(self.trackers)):
-                idx = (self.current_index + i) % len(self.trackers)
-                tracker = self.trackers[idx]
-                
-                if await tracker.can_make_request():
-                    # Выводим информацию при смене пары
-                    if idx != previous_index:
-                        proxy_short = tracker.proxy_url.split('@')[-1] if '@' in tracker.proxy_url else tracker.proxy_url[:30]
-                        api_short = tracker.api_token[:20] + '...' if len(tracker.api_token) > 20 else tracker.api_token
-                        print(f"🔄 Переключение на пару #{idx + 1}: Прокси={proxy_short}, API={api_short}")
+            async with self.selection_lock:
+                previous_index = self.current_index
+                # Проверяем все trackers начиная с текущего
+                for i in range(len(self.trackers)):
+                    idx = (self.current_index + i) % len(self.trackers)
+                    tracker = self.trackers[idx]
                     
-                    self.current_index = idx
-                    return tracker
+                    if await tracker.can_make_request():
+                        # Выводим информацию при смене пары
+                        if idx != previous_index:
+                            proxy_short = tracker.proxy_url.split('@')[-1] if '@' in tracker.proxy_url else tracker.proxy_url[:30]
+                            api_short = tracker.api_token[:20] + '...' if len(tracker.api_token) > 20 else tracker.api_token
+                            print(f"🔄 Переключение на пару #{idx + 1}: Прокси={proxy_short}, API={api_short}")
+                        
+                        self.current_index = (idx + 1) % len(self.trackers)
+                        return tracker
             
             # Если ни один не доступен, ждем немного
             print(f"⏳ Все API достигли лимитов, ожидание 0.5 сек...")
@@ -245,6 +307,27 @@ class ProxyAPIPool:
         # Если после всех попыток все еще нет доступных, берем первый
         print("⚠️ Превышено время ожидания, использую первый доступный tracker")
         return self.trackers[0]
+
+    @staticmethod
+    def _post_json_with_requests(url, proxy_url, **kwargs):
+        request_kwargs = dict(kwargs)
+        headers = dict(request_kwargs.get('headers') or {})
+        request_kwargs['headers'] = headers
+        request_kwargs.pop('ssl', None)
+        timeout = request_kwargs.pop('timeout', 120)
+        with requests.Session() as session:
+            session.trust_env = False
+            response = session.post(
+                url,
+                proxies={'http': proxy_url, 'https': proxy_url},
+                timeout=timeout,
+                **request_kwargs,
+            )
+            try:
+                return response.json()
+            except ValueError as exc:
+                body = response.text[:300].replace('\n', ' ')
+                raise RuntimeError(f"HTTP {response.status_code}: {body}") from exc
     
     async def make_request(self, url, **kwargs):
         """Выполняет запрос с автоматическим выбором tracker и rate limiting"""
@@ -260,40 +343,43 @@ class ProxyAPIPool:
                     kwargs['headers']['Authorization'] = f"Bearer {tracker.api_token}"
                 
                 try:
-                    # Используем стандартный aiohttp с HTTP прокси
-                    async with aiohttp.ClientSession() as proxy_session:
-                        async with proxy_session.post(url, proxy=tracker.proxy_url, ssl=False, **kwargs) as response:
-                            data = await response.json()
+                    # Используем requests с HTTP прокси
+                    data = await asyncio.to_thread(
+                        self._post_json_with_requests,
+                        url,
+                        tracker.proxy_url,
+                        **kwargs,
+                    )
                             
-                            # Проверяем на rate limit от API
-                            if isinstance(data, dict) and data.get('message') == 'API rate limit exceeded':
-                                proxy_short = tracker.proxy_url.split('@')[-1] if '@' in tracker.proxy_url else tracker.proxy_url[:30]
-                                print(f"⛔ API rate limit exceeded для прокси {proxy_short}")
-                                
-                                # Помечаем tracker как заблокированный
-                                await tracker.mark_rate_limited()
-                                
-                                # Переключаемся на следующий tracker
-                                old_index = self.current_index
-                                self.current_index = (self.current_index + 1) % len(self.trackers)
-                                retry_count += 1
-                                
-                                # Проверяем, все ли пары заблокированы
-                                all_limited = all(t.is_rate_limited for t in self.trackers)
-                                if all_limited:
-                                    print(f"😴 Все пары заблокированы rate limit! Сон на 3 минуты...")
-                                    await asyncio.sleep(180)  # 3 минуты
-                                    # Сбрасываем флаги после сна
-                                    for t in self.trackers:
-                                        t.is_rate_limited = False
-                                    print(f"⏰ Пробуждение! Продолжаем работу...")
-                                    retry_count = 0  # Сбрасываем счетчик после сна
-                                
-                                continue  # Пробуем следующую пару
-                            
-                            # Если все ок, записываем запрос и возвращаем данные
-                            await tracker.record_request()
-                            return data
+                    # Проверяем на rate limit от API
+                    if isinstance(data, dict) and data.get('message') == 'API rate limit exceeded':
+                        proxy_short = tracker.proxy_url.split('@')[-1] if '@' in tracker.proxy_url else tracker.proxy_url[:30]
+                        print(f"⛔ API rate limit exceeded для прокси {proxy_short}")
+                        
+                        # Помечаем tracker как заблокированный
+                        await tracker.mark_rate_limited()
+                        
+                        # Переключаемся на следующий tracker
+                        old_index = self.current_index
+                        self.current_index = (self.current_index + 1) % len(self.trackers)
+                        retry_count += 1
+                        
+                        # Проверяем, все ли пары заблокированы
+                        all_limited = all(t.is_rate_limited for t in self.trackers)
+                        if all_limited:
+                            print(f"😴 Все пары заблокированы rate limit! Сон на 3 минуты...")
+                            await asyncio.sleep(180)  # 3 минуты
+                            # Сбрасываем флаги после сна
+                            for t in self.trackers:
+                                t.is_rate_limited = False
+                            print(f"⏰ Пробуждение! Продолжаем работу...")
+                            retry_count = 0  # Сбрасываем счетчик после сна
+                        
+                        continue  # Пробуем следующую пару
+                    
+                    # Если все ок, записываем запрос и возвращаем данные
+                    await tracker.record_request()
+                    return data
                             
                 except Exception as e:
                     proxy_short = tracker.proxy_url.split('@')[-1] if '@' in tracker.proxy_url else tracker.proxy_url[:30]
@@ -556,7 +642,8 @@ async def retry_request_with_proxy_rotation(request_func, *args, max_retries=Non
 
 async def get_maps_new(ids, mkdir,
                  show_prints=True, skip=0, count=0, pro=False,
-                 skip_auxiliary_files=False, batch_size=5, batch_concurrency=1):
+                 skip_auxiliary_files=False, batch_size=5, batch_concurrency=1,
+                 start_date_time=None):
     """
     Объединенная функция для сбора и обработки матчей.
     Включает логику фильтрации trash maps и сохранения во временные файлы.
@@ -656,6 +743,12 @@ async def get_maps_new(ids, mkdir,
     # Преобразуем все входные ID в int для консистентности
     ids_set = set(int(id) for id in ids)
     maps_counter = 0
+    run_map_ids = set()
+    for map_id in output_data.keys():
+        try:
+            run_map_ids.add(int(map_id))
+        except Exception:
+            continue
     allowed_team_ids = _build_tier_team_ids() if pro else None
     existing_match_ids = set()
     if pro:
@@ -673,6 +766,19 @@ async def get_maps_new(ids, mkdir,
     if not os.path.exists(temp_folder):
         os.makedirs(temp_folder)
         print(f"📁 Создана папка: {temp_folder}")
+    else:
+        temp_seen = 0
+        for temp_path in sorted(Path(temp_folder).glob("*.txt")):
+            try:
+                for raw_map_id in _iter_json_object_keys(temp_path):
+                    map_id = _normalize_map_id(raw_map_id)
+                    if map_id is not None:
+                        run_map_ids.add(map_id)
+                        temp_seen += 1
+            except Exception as e:
+                print(f"⚠️ Не удалось просканировать temp файл {temp_path}: {e}")
+        if temp_seen:
+            print(f"📋 Загружено {len(run_map_ids)} map_id из текущих temp_files")
 
     # Фаза 1: Обработка исходных ID
     if phase == 1:
@@ -715,6 +821,7 @@ async def get_maps_new(ids, mkdir,
                     player_ids_check=False,
                     pro=pro,
                     existing_match_ids=existing_match_ids,
+                    start_date_time=start_date_time,
                 )
                 for batch in batch_group
             ]
@@ -747,13 +854,17 @@ async def get_maps_new(ids, mkdir,
                         match['league'] = league
                         if league.get('tier') == 'AMATEUR':
                             continue
-                        output_data[str(map_id)] = match
-                        maps_counter += 1
+                        if map_id not in run_map_ids:
+                            output_data[str(map_id)] = match
+                            run_map_ids.add(map_id)
+                            maps_counter += 1
                     else:
                         # Для pub матчей - записываем только валидные
                         if is_valid:
-                            output_data[str(map_id)] = match
-                            maps_counter += 1
+                            if map_id not in run_map_ids:
+                                output_data[str(map_id)] = match
+                                run_map_ids.add(map_id)
+                                maps_counter += 1
                     
                     if not is_valid:
                         trash_maps.add(map_id)
@@ -852,7 +963,7 @@ async def get_maps_new(ids, mkdir,
 
     # Объединение temp_files в файлы по 500 МБ
     print(f"\n📦 Объединяем временные файлы...")
-    merged_files = merge_temp_files_by_size(
+    merged_files = merge_temp_files_by_patch(
         mkdir=mkdir,
         max_size_mb=500,
         cleanup=False  # Удаляем temp_files после объединения
@@ -930,13 +1041,16 @@ def collect_all_maps(folder_path, maps=None, output=None):
 
 async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=None,
                                     game_mods=None, all_teams=None, player_ids_check=False,
-                                    pro=False, existing_match_ids=None):
+                                    pro=False, existing_match_ids=None,
+                                    start_date_time=None):
     """
     Получает полные данные матчей вместо только ID.
     Возвращает: (matches, player_ids) - список матчей и множество ID игроков
 
     """
-    from keys import start_date_time_738
+    if start_date_time is None:
+        from keys import start_date_time as start_date_time_default
+        start_date_time = start_date_time_default
     matches = []
     player_ids = set()
     check = True
@@ -950,7 +1064,7 @@ async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=Non
                   isAnonymous
                 }}
             matches(request:
-             {{startDateTime: {start_date_time_738},
+             {{startDateTime: {start_date_time},
              take: 100,
               skip: {skip},
                gameModeIds: [22],
@@ -1329,6 +1443,13 @@ def merge_temp_files_by_size(mkdir, max_size_mb=500, output_dir=None, cleanup=Fa
     Returns:
         list: список путей к созданным файлам
     """
+    return merge_temp_files_by_patch(
+        mkdir=mkdir,
+        max_size_mb=max_size_mb,
+        output_dir=output_dir,
+        cleanup=cleanup,
+    )
+
     temp_folder = f"{mkdir}/temp_files"
 
     if not os.path.exists(temp_folder):
@@ -1695,10 +1816,7 @@ def merge_temp_files_by_patch(
     os.makedirs(output_dir, exist_ok=True)
 
     if patch_specs is None:
-        patch_specs = [
-            ("7.40", 1765756800, 1774310400),
-            ("7.41", 1774310400, None),
-        ]
+        patch_specs = DOTA_PATCH_SPECS
 
     def _normalize_match_id(value):
         if value is None:
@@ -2006,10 +2124,7 @@ def merge_temp_files_by_patch_streaming(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if patch_specs is None:
-        patch_specs = [
-            ("7.40", 1765756800, 1774310400),
-            ("7.41", 1774310400, None),
-        ]
+        patch_specs = DOTA_PATCH_SPECS
 
     if clear_output_dir and any(output_dir.iterdir()):
         backup_dir = output_dir.parent / f"{output_dir.name}__backup_before_stream_merge_{int(time.time())}"
@@ -2065,6 +2180,26 @@ def merge_temp_files_by_patch_streaming(
     max_size_bytes = int(max_size_mb * 1024 * 1024)
     output_files = []
     processed_ids = set()
+    processed_ids_file = output_dir / "processed_ids.txt"
+    if processed_ids_file.exists():
+        try:
+            existing_ids = orjson.loads(processed_ids_file.read_bytes())
+            if isinstance(existing_ids, list):
+                for value in existing_ids:
+                    normalized = _normalize_match_id(value)
+                    if normalized is not None:
+                        processed_ids.add(normalized)
+        except Exception as e:
+            print(f"⚠️ Не удалось прочитать processed_ids.txt, начинаю с пустого набора: {e}")
+    existing_processed_ids_count = len(processed_ids)
+    patch_part_numbers = {}
+    for patch_name, *_ in patch_specs:
+        max_part = 0
+        for path in output_dir.glob(f"{patch_name}_part*.json"):
+            match = re.match(rf"^{re.escape(str(patch_name))}_part(\d+)\.json$", path.name)
+            if match:
+                max_part = max(max_part, int(match.group(1)))
+        patch_part_numbers[str(patch_name)] = max_part + 1
     duplicates_count = 0
     invalid_id_count = 0
     skipped_outside_patch = 0
@@ -2074,7 +2209,7 @@ def merge_temp_files_by_patch_streaming(
         str(patch_name): {
             "fh": None,
             "path": None,
-            "part_number": 1,
+            "part_number": patch_part_numbers[str(patch_name)],
             "current_size": 0,
             "current_matches": 0,
             "written_matches": 0,
@@ -2206,7 +2341,6 @@ def merge_temp_files_by_patch_streaming(
         for patch_name in sorted(states, key=_patch_sort_key):
             _close_part(patch_name)
 
-    processed_ids_file = output_dir / "processed_ids.txt"
     with open(processed_ids_file, "wb") as f:
         f.write(orjson.dumps(sorted(processed_ids)))
 
@@ -2219,7 +2353,7 @@ def merge_temp_files_by_patch_streaming(
             }
             for patch, state in sorted(states.items(), key=lambda item: _patch_sort_key(item[0]))
         },
-        "unique_matches_added": len(processed_ids),
+        "unique_matches_added": len(processed_ids) - existing_processed_ids_count,
         "duplicates_filtered": duplicates_count,
         "invalid_ids_skipped": invalid_id_count,
         "outside_patch_skipped": skipped_outside_patch,
@@ -2578,7 +2712,13 @@ def get_pubs():
         if f.startswith('combined') and f.endswith('.json')
     ]
     if not files:
-        raise RuntimeError(f"No combined*.json files found in PUBS ids source dir: {json_dir}")
+        files = [
+            os.path.join(json_dir, f)
+            for f in os.listdir(json_dir)
+            if f.endswith('.json') and f not in {'processed_ids.txt', 'merge_patch_summary.json'}
+        ]
+    if not files:
+        raise RuntimeError(f"No source json files found in PUBS ids source dir: {json_dir}")
 
     print(f"📂 PUB ids source dir: {json_dir}")
     print(f"📄 PUB ids source files: {len(files)}")
@@ -2605,7 +2745,8 @@ def get_pubs():
                              mkdir=str(ANALYSE_PUB_DIR),
                              show_prints=False,
                              batch_size=batch_size,
-                             batch_concurrency=batch_concurrency))
+                             batch_concurrency=batch_concurrency,
+                             start_date_time=start_date_time))
 
 
 def _process_json_file(filepath):
@@ -2632,8 +2773,8 @@ def _process_json_file(filepath):
     return ids
 
 def update_my_protracker(show_prints=True, num_workers=1, concurrent_requests=5):
-    # get_pubs()
-    get_pros()
+    get_pubs()
+    # get_pros()
 
 
 

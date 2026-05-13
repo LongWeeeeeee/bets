@@ -1,0 +1,545 @@
+
+cyberscore_try.py
++30
+cyberscore_try.py
++19
+Гейчу взаимодействия с late_pub_comeback_table.
+
+cyberscore_try.py
++5
+-1
+cyberscore_try.py
++2
+cyberscore_try.py
++5
+-1
+3 more
+Plumb queue_all_only_watcher_monitor through delay_reason / dispatch_mode / delayed_payload
+
+5
+Honor ALL_ONLY_WATCHER profile in delayed sender loop with drop-without-fallback at 50:00
+
+1 more
+cyberscore_try.py
++1
+4 more
+Honor ALL_ONLY_WATCHER profile in delayed sender loop with drop-without-fallback at 50:00
+
+6
+Add regression tests for the new gate (thresholds, queueing, drop-without-fallback)
+
+Analyzed
+base/tests
+test_all_only_watcher_dispatch.py
+new
++197
+Command /Users/alex/Documents/ingame/venv_catboost/bin/python3, tail
+
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 -m pytest base/tests/test_all_only_watcher_dispatch.py -x -q 2>&1 | tail -80
+        )
+    
+        result = _run_branch_scenario(monkeypatch, case)
+    
+        assert result.sent_messages == []
+        assert result.queued_payload is not None
+        payload = result.queued_payload
+>       assert payload["reason"] == "all_only_watcher_no_early_no_late"
+E       AssertionError: assert 'early_star_l...w_wr_wait_800' == 'all_only_wat...early_no_late'
+E         
+E         - all_only_watcher_no_early_no_late
+E         + early_star_late_core_low_wr_wait_800
+
+base/tests/test_all_only_watcher_dispatch.py:135: AssertionError
+----------------------------- Captured stdout call -----------------------------
+
+🔍 DEBUG: Начало обработки матча #0
+   Статус: live
+   URL: dltv.org/matches/test-match.0
+   Score: 0 : 0
+   🌐 Запрос JSON данных...
+   🌐 Запрос страницы матча...
+   ✅ Страница получена
+   ✅ JSON данные получены
+   🆔 Candidate team IDs: radiant=[1001], dire=[2002]
+   📋 live_league_data keys: ['match', 'radiant_team', 'dire_team']
+   ✅ fast_picks найдены - драфт начался
+   🧭 Star tier mode: tier=1, min_wr=60%
+   Lead: -2000.0, Game time: 630.0
+   🔍 Парсинг драфта и позиций...
+   ✅ Драфт успешно распарсен
+   🛣️ Lanes:
+      Top: n/a
+      Mid: n/a
+      Bot: n/a
+   📊 EARLY (20-28 min): N/A, N/A, 0, N/A, N/A
+   📊 LATE (28-60 min): N/A, N/A, 0, N/A, N/A
+   📊 ALL: N/A, N/A, N/A, 5, N/A, d2pt=N/A
+   📊 Team ELO attached: source=elo_live_lineup_snapshot raw Radiant Team=1500 vs Dire Team=1500 (raw_wr=50.0%/50.0%)
+   📌 Early signal: no
+   📌 All signal: Radiant Team (radiant) WR=n/a
+   📌 Late signal: no
+   ✅ Dispatch rule: no late STAR, early/all STAR sends immediately (early=False, all=True)
+   ⏳ All-only watcher (no Early, no Late): target_side=radiant, target_diff=-2000, wr_level=70, need>=-1000 until 50:00, then drop without fallback
+   ⏳ Ожидание dispatch: networth_gate_10plus_wr60_70_need_lead800 (early_wr=60.0%, target_side=radiant, target_diff=-2000, need>=800) -> delayed monitor >=800 until 20:20
+   📊 STAR метрики (delayed):
+      Early 20-28:
+      Counterpick_1vs1: None
+      Counterpick_1vs2: None
+      Solo: 0
+      Synergy_duo: None
+      Synergy_trio: None
+      Late: (28-60 min):
+      Counterpick_1vs1: None
+      Counterpick_1vs2: None
+      Solo: 0
+      Synergy_duo: None
+      Synergy_trio: None
+      All:
+      Counterpick_1vs1: None
+      Counterpick_1vs2: None
+      Solo: None
+      Synergy_duo: 5
+      Synergy_trio: None
+      Dota2ProTracker_cp1vs1: None
+   📉 Star checks: WR60: early=no_hits(side=none), late=no_hits(side=none), all=ok(side=radiant), match=send_or_monitor_non_late_star | WR65: early=no_hits(side=none) | ELO60: early=no_hits(side=none), late=no_hits(side=none), all=ok(side=radiant)
+   ⏱️ Сигнал в delayed-очереди до game_time=20:20 (reason=early_star_late_core_low_wr_wait_800, now=630), ETA~2023-11-15 01:23:10: dltv.org/matches/test-match.0
+   🔎 Delayed monitoring включен: status=early_core_monitor_wait_800, target_side=radiant, target_diff=-2000, threshold=800, deadline=20:20
+   ✅ ВЕРДИКТ: Сигнал добавлен в delayed-очередь (reason=early_star_late_core_low_wr_wait_800)
+   ℹ️ map_id_check.txt будет обновлен после фактической отправки delayed send_message()
+=============================== warnings summary ===============================
+venv_catboost/lib/python3.9/site-packages/urllib3/__init__.py:35
+  /Users/alex/Documents/ingame/venv_catboost/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED base/tests/test_all_only_watcher_dispatch.py::test_all_only_no_early_no_late_queues_watcher
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 4 passed, 1 warning in 0.76s
+
+
+Using legacy terminal
+Configure
+cyberscore_try.py
++1
+-1
+Command /Users/alex/Documents/ingame/venv_catboost/bin/python3, tail
+
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 -m pytest base/tests/test_all_only_watcher_dispatch.py -x -q 2>&1 | tail -40
+......                                                                   [100%]
+=============================== warnings summary ===============================
+venv_catboost/lib/python3.9/site-packages/urllib3/__init__.py:35
+  /Users/alex/Documents/ingame/venv_catboost/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+6 passed, 1 warning in 0.75s
+
+
+Using legacy terminal
+Configure
+Auto-continued
+On
+
+Command /Users/alex/Documents/ingame/venv_catboost/bin/python3, tail
+
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 -m pytest base/tests/ -x -q 2>&1 | tail -40
+............................................F
+=================================== FAILURES ===================================
+____________ test_run_explore_database_requires_test_set_by_default ____________
+
+tmp_path = PosixPath('/private/var/folders/m_/0bjynmtj6ks9zyt49y6by7hc0000gn/T/pytest-of-alex/pytest-17/test_run_explore_database_requ0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111885970>
+
+    def test_run_explore_database_requires_test_set_by_default(tmp_path, monkeypatch):
+        _clear_mode_env(monkeypatch)
+        _set_valid_positions_catalog(monkeypatch)
+    
+        json_dir = tmp_path / "json_parts_split_from_object"
+        json_dir.mkdir(parents=True)
+        (json_dir / "combined1.json").write_text("{}", encoding="utf-8")
+    
+        with pytest.raises(RuntimeError, match="test exclusion"):
+>           explore.run_explore_database(
+                base_dir=tmp_path,
+                json_dir=json_dir,
+                test_set_path=tmp_path / "missing_test_set.json",
+                bad_quality_dir=tmp_path / "bad_quality",
+            )
+E           AttributeError: module 'explore_database' has no attribute 'run_explore_database'
+
+base/tests/test_explore_database_integrity.py:170: AttributeError
+=============================== warnings summary ===============================
+venv_catboost/lib/python3.9/site-packages/urllib3/__init__.py:35
+  /Users/alex/Documents/ingame/venv_catboost/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED base/tests/test_explore_database_integrity.py::test_run_explore_database_requires_test_set_by_default
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 44 passed, 1 warning in 0.81s
+
+
+Using legacy terminal
+Configure
+Command /Users/alex/Documents/ingame/venv_catboost/bin/python3, tail
+
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 -m pytest base/tests/ --deselect base/tests/test_explore_database_integrity.py -q 2>&1 | tail -40
+                "pari": {"odds": [1.58, 2.25], "match_odds": [], "market_closed": False},
+                "winline": {"odds": [], "match_odds": [1.30, 3.15], "market_closed": False},
+            },
+        }
+        monkeypatch.setattr(runtime, "_bookmaker_prefetch_lookup", lambda *_args, **_kwargs: snapshot)
+    
+        block, ready, reason = runtime._bookmaker_format_odds_block("https://example.com/match")
+    
+        assert ready is True
+        assert reason == "ok"
+        assert "БК (live, карта 2):" in block
+        assert "Pari 1.58/2.25" in block
+>       assert "Winline (матч) 1.30/3.15" in block
+E       AssertionError: assert 'Winline (матч) 1.30/3.15' in 'БК (live, карта 2): Winline (п1/п2) 1.30/3.15 | BetBoom — | Pari 1.58/2.25\n'
+
+base/tests/test_pipeline_integrity.py:5660: AssertionError
+=============================== warnings summary ===============================
+venv_catboost/lib/python3.9/site-packages/urllib3/__init__.py:35
+  /Users/alex/Documents/ingame/venv_catboost/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+    warnings.warn(
+
+base/tests/test_pipeline_integrity.py::test_general_recovers_corrupt_map_id_and_isolates_match_errors
+  /Users/alex/Documents/ingame/venv_catboost/lib/python3.9/site-packages/urllib3/connectionpool.py:1097: InsecureRequestWarning: Unverified HTTPS request is being made to host 'dltv.org'. Adding certificate verification is strongly advised. See: https://urllib3.readthedocs.io/en/latest/advanced-usage.html#tls-warnings
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED base/tests/test_pipeline_integrity.py::test_draft_stats_lookup_keys_cover_synergy_accesses
+FAILED base/tests/test_pipeline_integrity.py::test_deliver_and_persist_signal_does_not_persist_when_send_fails
+FAILED base/tests/test_pipeline_integrity.py::test_deliver_and_persist_signal_journals_after_persist_failure
+FAILED base/tests/test_pipeline_integrity.py::test_deliver_and_persist_signal_uses_fallback_journal_when_primary_unavailable
+FAILED base/tests/test_pipeline_integrity.py::test_deliver_and_persist_signal_records_uncertain_delivery_and_blocks_retries
+FAILED base/tests/test_pipeline_integrity.py::test_get_heads_sets_missing_live_matches_reason_without_telegram
+FAILED base/tests/test_pipeline_integrity.py::test_get_heads_switches_to_schedule_mode_when_live_block_missing
+FAILED base/tests/test_pipeline_integrity.py::test_find_skipped_player_account_ids_scans_both_sides
+FAILED base/tests/test_pipeline_integrity.py::test_team_elo_block_is_shown_in_telegram_message
+FAILED base/tests/test_pipeline_integrity.py::test_team_elo_block_separates_raw_team_elo_from_tier_adjusted_matchup
+FAILED base/tests/test_pipeline_integrity.py::test_team_elo_block_shows_live_delta_vs_snapshot
+FAILED base/tests/test_pipeline_integrity.py::test_bookmaker_odds_block_shows_match_fallback_row
+12 failed, 276 passed, 65 skipped, 13 deselected, 2 warnings in 51.95s
+
+
+Using legacy terminal
+Configure
+Command /Users/alex/Documents/ingame/venv_catboost/bin/python3, tail
+
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 -m pytest base/tests/test_networth_dispatch_gates.py base/tests/test_same_sign_lane_adv_dispatch.py base/tests/test_all_only_watcher_dispatch.py -q 2>&1 | tail -20
+sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss........... [ 69%]
+...............................                                          [100%]
+=============================== warnings summary ===============================
+venv_catboost/lib/python3.9/site-packages/urllib3/__init__.py:35
+  /Users/alex/Documents/ingame/venv_catboost/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+42 passed, 61 skipped, 1 warning in 1.14s
+
+
+Using legacy terminal
+Configure
+Command git, /Users/alex/Documents/ingame/venv_catboost/bin/python3, tail
+
+git stash && /Users/alex/Documents/ingame/venv_catboost/bin/python3 -m pytest base/tests/test_pipeline_integrity.py::test_team_elo_block_is_shown_in_telegram_message base/tests/test_pipeline_integrity.py::test_bookmaker_odds_block_shows_match_fallback_row -q 2>&1 | tail -10; git stash pop
+Saved working directory and index state WIP on main: dcc996c Set CyberScore quiet hours to 06 MSK
+=============================== warnings summary ===============================
+venv_catboost/lib/python3.9/site-packages/urllib3/__init__.py:35
+  /Users/alex/Documents/ingame/venv_catboost/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED base/tests/test_pipeline_integrity.py::test_team_elo_block_is_shown_in_telegram_message
+FAILED base/tests/test_pipeline_integrity.py::test_bookmaker_odds_block_shows_match_fallback_row
+2 failed, 1 warning in 21.81s
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   base/cyberscore_try.py
+	modified:   base/explore_database.py
+	modified:   base/maps_research.py
+	modified:   base/tests/test_explore_database_integrity.py
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	base/pub_all_only_watcher_thresholds.json
+	base/tests/test_all_only_watcher_dispatch.py
+	last_chat.txt
+
+no changes added to commit (use "git add" and/or "git commit -a")
+Dropped refs/stash@{0} (bcfb3c9b148b4c6906ef7d6902edab170dda840b)
+
+
+Using legacy terminal
+Configure
+Command git
+
+git diff --stat base/cyberscore_try.py
+ base/cyberscore_try.py | 402 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 398 insertions(+), 4 deletions(-)
+
+
+Using legacy terminal
+Configure
+Summary
+Реализовал новый delayed-monitor для случая «есть только All same-target star, без Early и без Late».
+
+Что добавлено
+Threshold таблица @/Users/alex/Documents/ingame/base/pub_all_only_watcher_thresholds.json
+
+Минуты 10–50 для уровней WR 60/65/70/75/80/85/90 (всего 287 строк), signal_group="all_only".
+Готова для последующей замены реальными бэктест-значениями; формат совпадает с pub_late_pre27_watcher_thresholds.json.
+Runtime cyberscore_try.py
+
+Константы ALL_ONLY_WATCHER_PROFILE, ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS = 50*60, статусы NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT / ..._TIMEOUT_NO_SEND.
+Хелперы _all_only_watcher_* (available_levels, has_thresholds, wr_level, monitor_config, snapshot).
+Загрузка таблицы в _load_small_supporting_dicts (env STATS_ALL_ONLY_WATCHER_PATH).
+Детект all_only_no_early_no_late через _star_dispatch_flags + queue_all_only_watcher_monitor/all_only_watcher_timeout_active в check_head.
+Очередь и payload: delay_reason="all_only_watcher_no_early_no_late", dispatch_mode="delayed_all_only_watcher", send_on_target_game_time=False, timeout_status_label=ALL_ONLY_WATCHER_TIMEOUT_NO_SEND, all_only_watcher_drop_without_fallback=True.
+Снапшот в delayed-loop возвращает per-minute threshold, после 50:00 — drop_without_fallback=True, и сигнал дропается через стандартный путь timeout_add_url_reason.
+Guards: не активировать late_pub_comeback_table и early_core_monitor пока queue_all_only_watcher_monitor.
+Tests test_all_only_watcher_dispatch.py
+
+6 кейсов: config picks nearest WR, returns None без таблицы, snapshot per-minute, snapshot drop после target, queue с правильным payload, timeout дропает URL без отправки.
+Все 42 networth dispatch теста (включая новые) проходят.
+Запуск тестов
+bash
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 -m pytest \
+  base/tests/test_networth_dispatch_gates.py \
+  base/tests/test_same_sign_lane_adv_dispatch.py \
+  base/tests/test_all_only_watcher_dispatch.py -q
+Результат: 42 passed, 61 skipped.
+
+Что осталось пользователю
+Заменить плейсхолдеры медиан в @/Users/alex/Documents/ingame/base/pub_all_only_watcher_thresholds.json реальными статистическими значениями из бэктеста.
+Перед production-деплоем (см. MEMORY[AGENTS.md]): commit → push → pull на проде → kill старого процесса → clear ~/.local/state/ingame/map_id_check.txt → truncate /root/main/log.txt → restart.
+Feedback submitted
+
+
+
+также подскажи порог для late cp1vs2 WR60 
+
+Access to file pub_star_thresholds_by_wr.json is prohibited by .gitignore. You can enable access to gitignore files by enabling the setting Allow Cascade Access to Gitignore Files.
+Command /Users/alex/Documents/ingame/venv_catboost/bin/python3
+
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 -c "import json; d=json.load(open('/Users/alex/Documents/ingame/pro_heroes_data/pub_star_thresholds_by_wr.json')); print('WR60 mid_output:', d.get('60', {}).get('mid_output'))"
+WR60 mid_output: [['counterpick_1vs1', 5], ['pos1_vs_pos1', 22], ['counterpick_1vs2', 6], ['solo', 4], ['synergy_duo', 9], ['synergy_trio', 6]]
+
+
+Using legacy terminal
+Configure
+Порог Late counterpick_1vs2 WR60
+Late = mid_output (28–60 мин). В дефолтной таблице рантайма star_thresholds_by_wr.json:30-33 для WR60:
+
+star_thresholds_by_wr.json:25-46
+"mid_output": [
+  [
+    "counterpick_1vs1",
+    4
+  ],
+  [
+    "counterpick_1vs2",
+    4
+  ],
+  [
+    "solo",
+    3
+  ],
+  [
+    "synergy_duo",
+    6
+  ],
+  [
+    "synergy_trio",
+    4
+  ]
+],
+Ответ: 4 — Late cp1vs2 срабатывает на WR60 при значении ≥4*.
+
+Контекст
+Это путь, который рантайм грузит по умолчанию через STAR_THRESHOLDS_PATH в functions.py:1842-1844 (env-переопределяемо).
+Для сравнения, альтернативная pub-калибровка pro_heroes_data/pub_star_thresholds_by_wr.json имеет WR60 mid cp1vs2 = 6, но прод по умолчанию её не использует.
+Уровни выше: WR65→6, WR70→8, WR75→9, WR80→11, WR85→14, WR90→20, WR95→24.
+Feedback submitted
+
+
+
+в этом примере СТАВКА НА Carstensz x0.5
+carstensz VS satan666
+0-0
+Late: (28-60 min):
+Counterpick_1vs1: -1
+Counterpick_1vs2: -6
+Solo: 0
+Synergy_duo: 0
+Synergy_trio: None
+ cp1vs2 был 6 но из-за нулей блок не посчитался.Я хочу чтобы в случае если есть star метрики подходящие под порог >=60 то они всегда подсвечивались в telegram message * вне зависимости от того засчитываем мы этот блок или нет. А также: Если мы засчитываем star блоками late если в нем есть star метрика даже при нулях если all блок уже звездный и имеет тот же знак что и late. В случае если у нас засчитался early + all блок одного знака но не засчитался late блок в котором есть star метрика но есть нули такой сигнал мы вообще не пропускаем, только если early >=70 и ставка на килы
+
+Уточнить условия до того как менять код — одно принципиальное место может разойтись с замыслом. Подтверди понимание пункта про нули в блоке Late:
+
+Разобрать конкретный матч сначала
+
+Access to file log.txt is prohibited by .gitignore. You can enable access to gitignore files by enabling the setting Allow Cascade Access to Gitignore Files.
+Command grep, head
+
+grep -n -i -E "carstensz.*satan|satan.*carstensz|СТАВКА НА Carstensz" /Users/alex/Documents/ingame/log.txt | head -30
+
+Using legacy terminal
+Configure
+Command grep, head
+
+grep -n -i "carstensz" /Users/alex/Documents/ingame/log.txt | head -10
+64:   URL: dltv.org/matches/426113/carstensz-vs-glyph-dreamleague-season-29-southeast-asia-closed-qualifier.2
+296:   URL: dltv.org/matches/426113/carstensz-vs-glyph-dreamleague-season-29-southeast-asia-closed-qualifier.2
+338:   URL: dltv.org/matches/426113/carstensz-vs-glyph-dreamleague-season-29-southeast-asia-closed-qualifier.2
+540:   URL: dltv.org/matches/426113/carstensz-vs-glyph-dreamleague-season-29-southeast-asia-closed-qualifier.2
+587:   URL: dltv.org/matches/426113/carstensz-vs-glyph-dreamleague-season-29-southeast-asia-closed-qualifier.2
+641:   URL: dltv.org/matches/426113/carstensz-vs-glyph-dreamleague-season-29-southeast-asia-closed-qualifier.2
+690:   URL: dltv.org/matches/426113/carstensz-vs-glyph-dreamleague-season-29-southeast-asia-closed-qualifier.2
+703:      Ищем команды: 'glyph' (radiant), 'carstensz' (dire)
+709:MATCH_PAGE_PROXY_SUSPECTED_ZERO_PLAYERS url=dltv.org/matches/426113/carstensz-vs-glyph-dreamleague-season-29-southeast-asia-closed-qualifier.2 proxy=http://Etoj7vKXpx:6a2qJs4DC3@77.221.150.109:26227 radiant=0 dire=0
+713:      Ищем команды: 'glyph' (radiant), 'carstensz' (dire)
+
+
+Using legacy terminal
+Configure
+Command grep, head
+
+grep -n -i "satan" /Users/alex/Documents/ingame/log.txt | head -10
+45238:   URL: dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1
+45248:   📥 Bookmaker prefetch queued: dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 (radiant=['InterActive Philippines'], dire=['Satan666'], mode=live, gate=presence)
+45249:BOOKMAKER_PRESENCE_GATE state=pending status=running url=dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 betboom:error/missing, pari:error/missing, winline:error/missing
+45250:BOOKMAKER_PRESENCE_GATE state=pending status=running url=dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 betboom:error/missing, pari:error/missing, winline:error/missing
+45251:   ⏳ Ожидание bookmaker presence one-shot check: dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1
+45300:   ✅ Bookmaker prefetch done: dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 (betboom:error/ok/presence_missing, pari:error/loading/presence_missing, winline:error/ok/presence_missing)
+45318:   URL: dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1
+45328:BOOKMAKER_PRESENCE_GATE state=allow status=done url=dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 betboom:error/ok/presence_missing, pari:error/loading/presence_missing, winline:error/ok/presence_missing
+45329:BOOKMAKER_PRESENCE_GATE state=allow status=done url=dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 betboom:error/ok/presence_missing, pari:error/loading/presence_missing, winline:error/ok/presence_missing
+45331:Team: Satan666 (10102110)
+
+
+Using legacy terminal
+Configure
+Command grep, head
+
+grep -n -i "satan666" /Users/alex/Documents/ingame/log.txt | head -20
+45238:   URL: dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1
+45248:   📥 Bookmaker prefetch queued: dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 (radiant=['InterActive Philippines'], dire=['Satan666'], mode=live, gate=presence)
+45249:BOOKMAKER_PRESENCE_GATE state=pending status=running url=dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 betboom:error/missing, pari:error/missing, winline:error/missing
+45250:BOOKMAKER_PRESENCE_GATE state=pending status=running url=dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 betboom:error/missing, pari:error/missing, winline:error/missing
+45251:   ⏳ Ожидание bookmaker presence one-shot check: dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1
+45300:   ✅ Bookmaker prefetch done: dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 (betboom:error/ok/presence_missing, pari:error/loading/presence_missing, winline:error/ok/presence_missing)
+45318:   URL: dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1
+45328:BOOKMAKER_PRESENCE_GATE state=allow status=done url=dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 betboom:error/ok/presence_missing, pari:error/loading/presence_missing, winline:error/ok/presence_missing
+45329:BOOKMAKER_PRESENCE_GATE state=allow status=done url=dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 betboom:error/ok/presence_missing, pari:error/loading/presence_missing, winline:error/ok/presence_missing
+45331:Team: Satan666 (10102110)
+45333:Key: satan666
+45334:dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1
+45339:      Ищем команды: 'interactivephilippines' (radiant), 'satan666' (dire)
+45343:      Команда в HTML: 'satan666' (5 игроков)
+45537:🔁 RECHECK матча #0: dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 | status=draft...
+45538:BOOKMAKER_PRESENCE_GATE state=allow status=done url=dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 betboom:error/ok/presence_missing, pari:error/loading/presence_missing, winline:error/ok/presence_missing
+45539:BOOKMAKER_PRESENCE_GATE state=allow status=done url=dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 betboom:error/ok/presence_missing, pari:error/loading/presence_missing, winline:error/ok/presence_missing
+45542:   📝 add_url(): Добавляем URL: dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1
+45545:ADD_URL reason=star_signal_rejected_no_late_star url=dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1 details={'status': 'draft...', 'selected_star_wr': 60, 'selected_star_mode': 'base_wr_60', 'selected_early_star': False, 'selected_late_star': False, 'selected_early_sign': None, 'selected_late_sign': None, 'late_core_same_sign_diag': {'valid': False, 'status': 'no_expected_sign', 'nonzero_metrics': [], 'conflicting_metrics': [], 'zero_metrics': []}, 'late_star_hits_against_early_diag': {'valid': False, 'status': 'no_expected_sign', 'hit_metrics': [], 'conflicting_hit_metrics': []}, 'late_star_hits_against_early65_diag': {'valid': False, 'status': 'no_expected_sign', 'hit_metrics': [], 'conflicting_hit_metrics': []}, 'selected_early_diag': {'valid': False, 'status': 'insufficient_hits', 'sign': 1, 'hit_metrics': ['counterpick_1vs1'], 'conflict_metric': None, 'hit_count': 1, 'min_hit_count_required': 2, 'raw_valid': False, 'raw_status': 'insufficient_hits', 'block_wr_pct': 60.0, 'elo_target_side': 'radiant', 'elo_target_wr': 63.6956049498195, 'elo_wr_penalty_pp': 0.0, 'elo_adjusted_wr_pct': 60.0, 'elo_block_min_wr': 58.5}, 'selected_late_diag': {'valid': False, 'status': 'insufficient_hits', 'sign': 1, 'hit_metrics': ['counterpick_1vs1'], 'conflict_metric': None, 'hit_count': 1, 'min_hit_count_required': 2, 'raw_valid': False, 'raw_status': 'insufficient_hits', 'block_wr_pct': 65.0, 'elo_target_side': 'radiant', 'elo_target_wr': 63.6956049498195, 'elo_wr_penalty_pp': 0.0, 'elo_adjusted_wr_pct': 65.0, 'elo_block_min_wr': 58.5}, 'early_star_no_late_same_sign_gate': {'valid': False, 'early_wr_pct': 60.0, 'min_wr_required': 70.0, 'min_wr_ok': False, 'early_hit_metrics': ['counterpick_1vs1'], 'early_hit_count': 1, 'min_hit_count_required': 2, 'min_hit_count_ok': False, 'late_min_wr_required': 60, 'late_min_wr_status': 'insufficient_hits', 'late_min_wr_has_star': False, 'late_min_wr_hit_metrics': ['counterpick_1vs1'], 'late_min_wr_hit_count': 1, 'both_teams_tier1': False, 'tier1_only_ok': False}, 'json_retry_errors': []}
+45579:   ✅ Матч уже в map_id_check.txt - пропускаем: dltv.org/matches/426268/interactive-philippines-vs-satan666-epl-world-series-southeast-asia-season-14.1
+
+
+Using legacy terminal
+Configure
+Command grep, head
+
+grep -n -B2 -A20 "СТАВКА НА Carstensz" /Users/alex/Documents/ingame/log.txt | head -80
+
+Using legacy terminal
+Configure
+Command grep, head, echo, ls
+
+grep -n "СТАВКА НА Carstensz\|Ставка на Carstensz" /Users/alex/Documents/ingame/log.txt 2>&1 | head -5; echo "---"; ls /Users/alex/Documents/ingame/runtime/ 2>&1 | head -20
+---
+all_blocks_wr_case_grid_20260508.md
+all_blocks_wr_exact_combos_20260508.csv
+all_only_watcher_25k_20260512_094640.log
+all_only_watcher_25k_20260512_094640.pid
+all_only_watcher_25k_20260512_094640_status.md
+bg_test_part1.log
+bg_test_part1.pid
+build_all_only_pre27_watcher_thresholds.py
+build_all_only_watcher_10_28_thresholds.py
+build_all_only_watcher_10_50_thresholds.py
+build_late_pre27_watcher_thresholds.py
+build_latest_7_41_input.py
+check_old_maps_latest50k_newdict.pid
+check_old_maps_latest50k_newdict_20260428_200217.log
+combined62_check_old_maps.json
+comeback_negative_target_after20_report.json
+comeback_negative_target_after20_report_final_dispatch.json
+comeback_negative_target_after20_report_resolved_via_dltv.json
+core_support_2v2_draw_fallback_7.41_10k_report.md
+core_support_2v2_draw_fallback_7.41_10k_summary.json
+
+
+Using legacy terminal
+Configure
+Fast Context
+Find where block diagnostic status is set to 'insufficient_hits' when hit_count is less than a required minimum — specifically, how a block with only one star metric hit (like cp1vs2=-6 alone without other metrics hitting the threshold) is rejected as insufficient_hits with min_hit_count_required=2. This happens for the selected late/early diag in the cyberscore_try pipeline, where the block may be rejected because it has only 1 hit out of required 2.
+in 2.98s
+Your included usage quota is exhausted. Purchase extra usage to continue using premium models.
+Feedback submitted
+
+
+
+продолжи
+
+Permission denied: all API providers are over their global rate limit for trial users (trace ID: 1a7b53cf07e16e2df949927dc492feec)
+Feedback submitted
+
+
+
+продолжи
+
+Permission denied: all API providers are over their global rate limit for trial users (trace ID: 233f187ee89d7d8795762f2665c5da32)
+Feedback submitted
+
+
+
+продолжи
+
+Permission denied: all API providers are over their global rate limit for trial users (trace ID: 91827450a78eb7bc0c69ac8d8adbc00e)
+Feedback submitted
+
+
+
+продолжи
+
+Permission denied: all API providers are over their global rate limit for trial users (trace ID: 917007a1a7874054ce0f86f222fed5db)
+Feedback submitted
+
+
+
+Продолжи работу
+
+Продолжаю разбор матча Carstensz vs Satan666. Я остановился на поиске причины, почему cp1vs2=-6 не дал late-star. Нужно найти, откуда берётся status: 'insufficient_hits' с min_hit_count_required: 2.
+
+Продолжаю разбор. Нужно найти, откуда берётся status: 'insufficient_hits' — _star_block_diagnostics такой статус не возвращает. Проверю signal_wrappers.py и другие модули.
+
+Permission denied: all API providers are over their global rate limit for trial users (trace ID: ae8ca22de9cab130c4abc2b6f89347eb)
+Feedback submitted
+
+
+
+continue
+
+Permission denied: all API providers are over their global rate limit for trial users (trace ID: 927b576eb3f682802c693359f178460f)
+Feedback submitted

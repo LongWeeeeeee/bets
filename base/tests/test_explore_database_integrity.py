@@ -98,6 +98,27 @@ def _valid_match(match_id: str = "101"):
     }
 
 
+def test_discover_pub_files_includes_combined_and_patch_parts(tmp_path, monkeypatch):
+    monkeypatch.delenv("EXPLORE_MAX_FILES", raising=False)
+    json_dir = tmp_path / "json_parts_split_from_object"
+    json_dir.mkdir(parents=True)
+    for filename in (
+        "combined1.json",
+        "7.40_part001.json",
+        "7.41_part001.json",
+        "merge_patch_summary.json",
+    ):
+        (json_dir / filename).write_text("{}", encoding="utf-8")
+
+    files = explore._discover_pub_files(json_dir)
+
+    assert [path.name for path in files] == [
+        "7.40_part001.json",
+        "7.41_part001.json",
+        "combined1.json",
+    ]
+
+
 def test_check_match_quality_swaps_lane_roles_with_percentage_catalog(monkeypatch):
     _set_percentage_position_catalog(monkeypatch)
 
@@ -202,7 +223,7 @@ def test_get_maps_new_skips_processed_ids_to_graph_when_auxiliary_files_disabled
     monkeypatch.setattr(maps_research, "_build_tier_team_ids", lambda: {1, 2})
     monkeypatch.setattr(maps_research, "check_match_quality", lambda match: (True, "ok"))
     monkeypatch.setattr(maps_research, "save_temp_file", lambda *args, **kwargs: None)
-    monkeypatch.setattr(maps_research, "merge_temp_files_by_size", lambda *args, **kwargs: [])
+    monkeypatch.setattr(maps_research, "merge_temp_files_by_patch", lambda *args, **kwargs: [])
     monkeypatch.setattr(maps_research, "load_get_maps_state", lambda: None)
     monkeypatch.setattr(maps_research, "save_get_maps_state", lambda *args, **kwargs: None)
     monkeypatch.setattr(maps_research, "clear_get_maps_state", lambda *args, **kwargs: None)
@@ -221,6 +242,92 @@ def test_get_maps_new_skips_processed_ids_to_graph_when_auxiliary_files_disabled
     assert not (tmp_path / "trash_maps.txt").exists()
     assert not (tmp_path / "player_ids.txt").exists()
     assert not (tmp_path / "all_teams.txt").exists()
+
+
+def test_get_maps_new_deduplicates_maps_before_temp_save(tmp_path, monkeypatch):
+    _set_valid_positions_catalog(monkeypatch)
+    saved_batches = []
+
+    duplicate_match = _valid_match("777")
+    unique_match = _valid_match("888")
+
+    async def _fake_retry(_func, **_kwargs):
+        return ([duplicate_match, duplicate_match, unique_match], set())
+
+    monkeypatch.setattr(maps_research, "retry_request_with_proxy_rotation", _fake_retry)
+    monkeypatch.setattr(maps_research, "check_match_quality", lambda match: (True, "ok"))
+    monkeypatch.setattr(maps_research, "save_temp_file", lambda data, *_args, **_kwargs: saved_batches.append(dict(data)))
+    monkeypatch.setattr(maps_research, "merge_temp_files_by_patch", lambda *args, **kwargs: [])
+    monkeypatch.setattr(maps_research, "load_get_maps_state", lambda: None)
+    monkeypatch.setattr(maps_research, "save_get_maps_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(maps_research, "clear_get_maps_state", lambda *args, **kwargs: None)
+
+    asyncio.run(
+        maps_research.get_maps_new(
+            ids=[1],
+            mkdir=str(tmp_path),
+            show_prints=False,
+            skip_auxiliary_files=True,
+        )
+    )
+
+    assert len(saved_batches) == 1
+    assert sorted(saved_batches[0]) == ["777", "888"]
+
+
+def test_merge_temp_files_by_patch_splits_by_patch_and_filters_duplicates(tmp_path):
+    temp_dir = tmp_path / "temp_files"
+    temp_dir.mkdir(parents=True)
+    match_739 = _valid_match("100")
+    match_739["startDateTime"] = 1748000000
+    match_740 = _valid_match("200")
+    match_740["startDateTime"] = 1766000000
+    match_741c = _valid_match("300")
+    match_741c["startDateTime"] = 1778100000
+    duplicate_739 = _valid_match("100")
+    duplicate_739["startDateTime"] = 1748000000
+    (temp_dir / "001.txt").write_bytes(orjson.dumps({"100": match_739, "200": match_740}))
+    (temp_dir / "002.txt").write_bytes(orjson.dumps({"100": duplicate_739, "300": match_741c}))
+
+    output_files = maps_research.merge_temp_files_by_patch(
+        mkdir=str(tmp_path),
+        max_size_mb=1,
+        cleanup=False,
+    )
+
+    output_names = sorted(Path(path).name for path in output_files)
+    assert output_names == ["7.39_part001.json", "7.40_part001.json", "7.41c_part001.json"]
+    payload_739 = orjson.loads((tmp_path / "json_parts_split_from_object" / "7.39_part001.json").read_bytes())
+    payload_740 = orjson.loads((tmp_path / "json_parts_split_from_object" / "7.40_part001.json").read_bytes())
+    payload_741c = orjson.loads((tmp_path / "json_parts_split_from_object" / "7.41c_part001.json").read_bytes())
+    assert sorted(payload_739) == ["100"]
+    assert sorted(payload_740) == ["200"]
+    assert sorted(payload_741c) == ["300"]
+    processed_ids = orjson.loads((tmp_path / "json_parts_split_from_object" / "processed_ids.txt").read_bytes())
+    assert processed_ids == [100, 200, 300]
+    summary = orjson.loads((tmp_path / "json_parts_split_from_object" / "merge_patch_summary.json").read_bytes())
+    assert summary["duplicates_filtered"] == 1
+
+
+def test_merge_temp_files_by_patch_continues_existing_part_numbers(tmp_path):
+    temp_dir = tmp_path / "temp_files"
+    output_dir = tmp_path / "json_parts_split_from_object"
+    temp_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True)
+    (output_dir / "7.40_part001.json").write_text("{}", encoding="utf-8")
+    match_740 = _valid_match("900")
+    match_740["startDateTime"] = 1766000000
+    (temp_dir / "001.txt").write_bytes(orjson.dumps({"900": match_740}))
+
+    output_files = maps_research.merge_temp_files_by_patch(
+        mkdir=str(tmp_path),
+        max_size_mb=1,
+        cleanup=False,
+    )
+
+    assert [Path(path).name for path in output_files] == ["7.40_part002.json"]
+    assert (output_dir / "7.40_part001.json").read_text(encoding="utf-8") == "{}"
+    assert (output_dir / "7.40_part002.json").exists()
 
 
 def test_run_explore_database_reads_env_paths_when_args_omitted(tmp_path, monkeypatch):
