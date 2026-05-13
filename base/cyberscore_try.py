@@ -1574,6 +1574,31 @@ class _Tee:
         return stream.fileno()
 
 
+# --- Dual logging: log.txt (user-facing) via print(), log_detailed.txt via detail_log() ---
+_DETAIL_LOG_FILE = None
+
+
+def _init_detail_log() -> None:
+    global _DETAIL_LOG_FILE
+    if _DETAIL_LOG_FILE is not None:
+        return
+    root_dir = Path(__file__).resolve().parent.parent
+    detail_path = root_dir / "log_detailed.txt"
+    _DETAIL_LOG_FILE = open(detail_path, "a", encoding="utf-8", buffering=1)
+
+
+def detail_log(*args, **kwargs) -> None:
+    """Write to log_detailed.txt only (verbose/debug output)."""
+    global _DETAIL_LOG_FILE
+    if _DETAIL_LOG_FILE is None:
+        _init_detail_log()
+    try:
+        text = " ".join(str(a) for a in args)
+        _DETAIL_LOG_FILE.write(text + "\n")
+    except Exception:
+        pass
+
+
 def _setup_run_logging():
     root_dir = Path(__file__).resolve().parent.parent
     log_path = root_dir / "log.txt"
@@ -16522,7 +16547,7 @@ def _fetch_protracker_payload_via_shared_camoufox(
     def _job(browser) -> Dict[str, Any]:
         page = browser.new_page()
         try:
-            page.goto(f"{base_url}/hero/{slug}", wait_until="networkidle", timeout=30000)
+            page.goto(f"{base_url}/hero/{slug}", wait_until="domcontentloaded", timeout=45000)
             payload = {"matchups": {}, "synergies": {}}
             for pos in ["1", "2", "3", "4", "5"]:
                 api_url = f"{base_url}/hero/{slug}/api/matchup-payload?heroId={int(hero_id)}&position=pos+{pos}"
