@@ -19176,6 +19176,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 not PIPELINE_BYPASS_PROCESSED_URL_GATE
                 and (check_uniq_url in maps_data or block_reason == "processed")
             ):
+                # Check if this is the final map of the series (bo3 map3, bo5 map5, etc.)
+                best_of_value = _coerce_int(cyber_item.get("best_of")) if isinstance(cyber_item, dict) else 0
+                is_final_map = bool(best_of_value > 0 and map_num >= best_of_value)
+                if is_final_map:
+                    print(f"   ✅ Последняя карта серии (bo{best_of_value} map{map_num}) уже обработана - серия завершена: {check_uniq_url}")
+                    return "series_finished"
                 print(f"   ✅ Матч уже в map_id_check.txt - пропускаем: {check_uniq_url}")
                 _drop_delayed_match(check_uniq_url, reason="already_in_map_id_check")
                 return
@@ -20516,6 +20522,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 raw_star_all_summary=raw_star_all_summary,
                 star_diag_lines=star_diag_lines,
             )
+            # Always log metrics (even when signal is rejected)
+            _print_star_metrics_snapshot(star_metrics_snapshot, label="")
 
             # Серия: только счет
             series_score_line = _build_series_score_line(data.get('live_league_data') or {})
@@ -24530,6 +24538,15 @@ if __name__ == "__main__":
                     wait_for_live_seconds,
                     raw_odds=args.odds,
                     label="wait_for_live_after_schedule",
+                )
+            elif status == "series_finished":
+                # All live matches are final-map processed — treat as idle, go to schedule sleep
+                scheduled_sleep_seconds = max(1, int(math.ceil(float(NEXT_SCHEDULE_SLEEP_SECONDS or 60.0))))
+                print(f"✅ Все серии завершены. Сплю {scheduled_sleep_seconds} секунд до следующего расписания")
+                _sleep_interruptible(
+                    scheduled_sleep_seconds,
+                    raw_odds=args.odds,
+                    label="series_finished_schedule",
                 )
             elif status is None:
                 print('Сплю 60 секунд')
