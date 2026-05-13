@@ -16997,7 +16997,9 @@ def _get_cyberscore_html_via_one_shot(target_url: str) -> Optional[str]:
                     page.wait_for_selector("a.matches-item[href*='/matches/'], main", timeout=20000)
                 except Exception:
                     pass
-                time.sleep(2.0)
+                # Wait longer for match detail pages (Next.js streams picks data after initial DOM)
+                wait_seconds = 4.0 if "/matches/" in target_url and "type=" not in target_url else 2.0
+                time.sleep(wait_seconds)
                 return page.content() or ""
             finally:
                 with contextlib.suppress(Exception):
