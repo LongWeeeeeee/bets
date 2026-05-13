@@ -29,17 +29,9 @@ try:
 except ImportError:
     CAMOUFOX_AVAILABLE = False
 
-# Optional Selenium imports (fallback)
-try:
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.chrome.service import Service
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.webdriver.support import expected_conditions as EC
-    SELENIUM_AVAILABLE = True
-except ImportError:
-    SELENIUM_AVAILABLE = False
+# Selenium support fully removed from this module (Camoufox-only).
+# Kept SELENIUM_AVAILABLE=False so any legacy caller hits the graceful path.
+SELENIUM_AVAILABLE = False
 
 import requests
 

@@ -8322,7 +8322,7 @@ CURRENT_PROXY_INDEX = 0
 CURRENT_PROXY = None
 PROXIES = {}
 USE_PROXY = None
-# Live source mode: "cyberscore" (Camoufox/proxy), "api" (curl/proxy), or "html" (Camoufox/Selenium).
+# Live source mode: "cyberscore" (Camoufox/proxy), "api" (curl/proxy), or "html" (Camoufox).
 DLTV_SOURCE_MODE = str(os.getenv("DLTV_SOURCE_MODE", "cyberscore")).strip().lower() or "cyberscore"
 PURE_DLTV_MODE = _env_flag("PURE_DLTV_MODE", "0")
 CYBERSCORE_MATCHES_URL = str(
@@ -16200,7 +16200,7 @@ def _deliver_and_persist_signal(
     return True
 
 
-_dltv_selenium_driver = None
+_dltv_selenium_driver = None  # retained for backward compat; unused after Selenium removal
 
 
 def _camoufox_proxy_kwargs_from_url(proxy_url: str) -> Dict[str, Any]:
@@ -17778,109 +17778,9 @@ def _get_dltv_html_via_camoufox():
 
 
 def _get_dltv_html_via_selenium():
-        """Fetch DLTV live matches page via Selenium/Chrome (reuses driver between cycles)."""
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-        from selenium.webdriver.common.by import By
-        from seleniumwire import webdriver
-        from selenium.webdriver.chrome.options import Options
-        from bs4 import BeautifulSoup
-        import tempfile
-
-        global _dltv_selenium_driver
-        from bookmaker_selenium_odds import _parse_proxy
-
-        if _dltv_selenium_driver is None:
-            try:
-                proxy_for_dltv = None
-                if DLTV_PROXY_POOL:
-                    proxy_for_dltv = DLTV_PROXY_POOL[0]
-
-                chrome_options = Options()
-                chrome_options.page_load_strategy = "eager"
-                chrome_options.add_argument("--headless=new")
-                chrome_options.add_argument("--disable-gpu")
-                chrome_options.add_argument("--no-sandbox")
-                chrome_options.add_argument("--window-size=1920,1080")
-                chrome_options.add_argument("--disable-dev-shm-usage")
-                chrome_options.add_argument("--disable-popup-blocking")
-                chrome_options.add_argument("--disable-background-timer-throttling")
-                chrome_options.add_argument("--disable-backgrounding-occluded-windows")
-                chrome_options.add_argument("--disable-renderer-backgrounding")
-                chrome_options.add_argument("--disable-extensions")
-                chrome_options.add_argument("--blink-settings=imagesEnabled=false")
-                # Use unique temp profile per session
-                dltv_profile = tempfile.mkdtemp(prefix="dltv_selenium_")
-                chrome_options.add_argument(f"--user-data-dir={dltv_profile}")
-
-                sw_options = {}
-                if proxy_for_dltv:
-                    parsed = _parse_proxy(proxy_for_dltv)
-                    sw_options = {
-                        "proxy": {
-                            "http": f"http://{parsed['username']}:{parsed['password']}@{parsed['host']}:{parsed['port']}",
-                            "https": f"https://{parsed['username']}:{parsed['password']}@{parsed['host']}:{parsed['port']}",
-                            "no_proxy": "localhost,127.0.0.1",
-                        },
-                        "verify_ssl": False,
-                        "suppress_connection_errors": True,
-                        "request_storage": "memory",
-                        "request_storage_max_size": 150,
-                    }
-                    print(f"🌐 DLTV HTML mode: init Chrome with proxy {proxy_for_dltv[:50]}...")
-                else:
-                    print("🌐 DLTV HTML mode: init Chrome without proxy...")
-                    sw_options = {
-                        "verify_ssl": False,
-                        "suppress_connection_errors": True,
-                        "request_storage": "memory",
-                        "request_storage_max_size": 150,
-                    }
-
-                drv = webdriver.Chrome(options=chrome_options, seleniumwire_options=sw_options)
-                drv.set_page_load_timeout(30)
-                _dltv_selenium_driver = drv
-            except Exception as exc:
-                print(f"❌ Failed to init Chrome for DLTV HTML: {exc}")
-                return None, None
-
-        driver = _dltv_selenium_driver
-
-        try:
-            print("🌐 DLTV HTML mode: loading dltv.org/matches...")
-            driver.get("https://dltv.org/matches")
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "div.live__matches, div.match.live"))
-            )
-            html = driver.page_source
-            soup = BeautifulSoup(html, 'lxml')
-            live_matches = soup.find('div', class_='live__matches')
-            live_cards = list(soup.select("div.match.live"))
-
-            if live_matches:
-                cards = list(live_matches.select("div.match.live")) if live_matches else []
-                if cards:
-                    print(f"✅ DLTV HTML: found {len(cards)} live cards from section")
-                    return [None] * len(cards), cards
-                print(f"✅ DLTV HTML: found live_matches section (no cards)")
-                return [None], [soup]
-            elif live_cards:
-                print(f"✅ DLTV HTML: found {len(live_cards)} live cards")
-                return [None] * len(live_cards), live_cards
-            else:
-                print("⚠️ DLTV HTML: no live matches found")
-                return [], []
-        except Exception as exc:
-            print(f"❌ DLTV HTML fetch failed: {exc}")
-            # Driver might be dead, reset so next cycle recreates it
-            _dltv_selenium_driver = None
-            return None, None
-        finally:
-            if driver:
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
+        """DLTV HTML Selenium fetch is disabled: Camoufox is the only supported browser."""
+        print("⚠️ DLTV HTML mode: Selenium fallback disabled (Camoufox-only)")
+        return None, None
 
 
 def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.214.49", path = "/matches"):
@@ -17893,13 +17793,13 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             NEXT_SCHEDULE_MATCH_INFO = None
             return _get_cyberscore_heads_via_camoufox()
 
-        # HTML mode: prefer Camoufox, fallback to Selenium instead of API
+        # HTML mode: Camoufox only (Selenium fallback removed)
         if response is None and DLTV_SOURCE_MODE == "html":
             if DLTV_CAMOUFOX_ENABLED:
                 heads, datas = _get_dltv_html_via_camoufox()
                 if heads is not None and datas is not None:
                     return heads, datas
-                print("⚠️ DLTV HTML mode: Camoufox failed, fallback to Selenium")
+                print("⚠️ DLTV HTML mode: Camoufox failed; no Selenium fallback available")
             return _get_dltv_html_via_selenium()
 
         GET_HEADS_LAST_FAILURE_REASON = None
@@ -24523,7 +24423,7 @@ if __name__ == "__main__":
         "--pure-dltv",
         dest="pure_dltv",
         action="store_true",
-        help="Disable all bookmaker prefetch/presence checks, use only DLTV Selenium for draft parsing",
+        help="Disable all bookmaker prefetch/presence checks, use only DLTV (Camoufox) for draft parsing",
     )
     parser.set_defaults(odds=None, pure_dltv=False)
     args = parser.parse_args()
