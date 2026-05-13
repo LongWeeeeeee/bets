@@ -1577,26 +1577,19 @@ class _Tee:
 def _setup_run_logging():
     root_dir = Path(__file__).resolve().parent.parent
     log_path = root_dir / "log.txt"
-    log_file = open(log_path, "a", encoding="utf-8", buffering=1)
     session_started_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
-    log_file.write(
+    # Write session header directly (nohup redirects stdout/stderr to log.txt)
+    print(
         "\n"
         + "=" * 24
         + f" RUN START {session_started_at} pid={os.getpid()} "
         + "=" * 24
-        + "\n"
     )
-    log_file.flush()
-
-    stdout = sys.stdout
-    stderr = sys.stderr
-    sys.stdout = _Tee(stdout, log_file)
-    sys.stderr = _Tee(stderr, log_file)
     root_logger = logging.getLogger()
     if root_logger.level == logging.NOTSET or root_logger.level > logging.INFO:
         root_logger.setLevel(logging.INFO)
     if not root_logger.handlers:
-        logging.basicConfig(level=logging.INFO, format="%(message)s")
+        logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
     else:
         for handler in root_logger.handlers:
             try:
@@ -1604,8 +1597,8 @@ def _setup_run_logging():
             except Exception:
                 pass
             if isinstance(handler, logging.StreamHandler):
-                handler.setStream(sys.stderr)
-    logger.info("Logging to %s", log_path)
+                handler.setStream(sys.stdout)
+    print(f"Logging to {log_path}")
 
 
 def _release_runtime_instance_lock() -> None:
@@ -24220,14 +24213,6 @@ def general(return_status=None, use_proxy=None, odds=None, bookmaker_gate_mode=N
         print("🎯 Signal mode: minimal_odds_only (metrics/gates disabled)")
     elif not CLASSIC_SIGNAL_PIPELINE_ENABLED:
         print("🎯 Signal mode: classic pipeline disabled")
-    logger.info(
-        "Odds pipeline mode: %s (source=%s, requested=%s, available=%s, gate_mode=%s)",
-        "ON" if BOOKMAKER_PREFETCH_ENABLED else "OFF",
-        odds_source,
-        odds_requested,
-        BOOKMAKER_PREFETCH_AVAILABLE,
-        BOOKMAKER_PREFETCH_GATE_MODE,
-    )
 
     if use_proxy is None:
         # Локальная настройка при запуске
