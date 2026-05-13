@@ -23296,6 +23296,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_add_url_details["late_pre27_delta_level"] = int(dynamic_monitor_profile.get("delta_level") or 0)
                         delayed_add_url_details["late_pre27_delta_bucket"] = str(dynamic_monitor_profile.get("delta_bucket") or "")
                         delayed_add_url_details["networth_monitor_hold_allow_zero_threshold"] = True
+                        delayed_add_url_details["has_opposite_early_star"] = bool(
+                            dynamic_monitor_profile.get("has_opposite_early_star")
+                        )
                     elif dynamic_monitor_profile.get("profile") == LATE_PRE27_WATCHER_PROFILE:
                         delayed_add_url_details["target_game_time"] = int(
                             float(dynamic_monitor_profile.get("target_game_time") or target_game_time)
@@ -23310,6 +23313,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_add_url_details["late_pre27_watcher_wr_level"] = int(dynamic_monitor_profile.get("wr_level") or 0)
                         if dynamic_monitor_profile.get("signal_wr") is not None:
                             delayed_add_url_details["late_pre27_watcher_signal_wr"] = float(dynamic_monitor_profile.get("signal_wr") or 0.0)
+                        delayed_add_url_details["has_opposite_early_star"] = bool(
+                            dynamic_monitor_profile.get("has_opposite_early_star")
+                        )
                     elif dynamic_monitor_profile.get("profile") == "late_only_opposite_signs_early90":
                         delayed_add_url_details["target_game_time"] = int(
                             float(dynamic_monitor_profile.get("target_game_time") or target_game_time)
@@ -23432,6 +23438,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_payload['late_pre27_delta_level'] = int(dynamic_monitor_profile.get("delta_level") or 0)
                         delayed_payload['late_pre27_delta_bucket'] = str(dynamic_monitor_profile.get("delta_bucket") or "")
                         delayed_payload['networth_monitor_hold_allow_zero_threshold'] = True
+                        delayed_payload['has_opposite_early_star'] = bool(
+                            dynamic_monitor_profile.get("has_opposite_early_star")
+                        )
                     elif dynamic_monitor_profile.get("profile") == LATE_PRE27_WATCHER_PROFILE:
                         delayed_payload['target_game_time'] = float(
                             dynamic_monitor_profile.get("target_game_time") or target_game_time
@@ -23445,6 +23454,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_payload['late_pre27_watcher_wr_level'] = int(dynamic_monitor_profile.get("wr_level") or 0)
                         if dynamic_monitor_profile.get("signal_wr") is not None:
                             delayed_payload['late_pre27_watcher_signal_wr'] = float(dynamic_monitor_profile.get("signal_wr") or 0.0)
+                        delayed_payload['has_opposite_early_star'] = bool(
+                            dynamic_monitor_profile.get("has_opposite_early_star")
+                        )
                     elif dynamic_monitor_profile.get("profile") == ALL_ONLY_WATCHER_PROFILE:
                         delayed_payload['target_game_time'] = float(
                             dynamic_monitor_profile.get("target_game_time") or target_game_time
