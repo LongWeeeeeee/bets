@@ -3846,6 +3846,7 @@ def _late_pre27_watcher_monitor_config(
     late_wr_pct: Optional[float],
     all_wr_pct: Optional[float],
     selected_star_wr: Optional[int] = None,
+    has_opposite_early_star: bool = False,
 ) -> Optional[Dict[str, Any]]:
     target_side = _target_side_from_sign(target_sign)
     if target_side not in {"radiant", "dire"}:
@@ -3874,6 +3875,7 @@ def _late_pre27_watcher_monitor_config(
         "signal_wr": float(signal_wr) if signal_wr is not None else None,
         "thresholds_by_minute": {int(k): float(v) for k, v in thresholds.items()},
         "status_label": NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT,
+        "has_opposite_early_star": bool(has_opposite_early_star),
     }
 
 
@@ -3907,6 +3909,17 @@ def _late_pre27_watcher_snapshot(
         }
     if current_game_time >= target_game_time:
         return {"threshold": None, "status_label": ""}
+
+    # Gate: if opposite team has an early star, block dispatch before 21:00
+    if bool(source.get("has_opposite_early_star")) and current_game_time < 21 * 60:
+        return {
+            "threshold": None,
+            "status_label": str(
+                source.get("dispatch_status_label")
+                or source.get("status_label")
+                or NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT
+            ),
+        }
 
     raw_thresholds = source.get("networth_monitor_thresholds_by_minute")
     if raw_thresholds is None:
@@ -22246,12 +22259,19 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     monitor_wait_status_label = NETWORTH_STATUS_STRONG_SAME_SIGN_MONITOR_WAIT_800
                     fallback_send_status_label = NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT
                 elif queue_late_all_weak_early_monitor or queue_late_all_no_early_monitor:
+                    _has_opposite_early_for_watcher = bool(
+                        has_selected_early_star
+                        and selected_early_sign in (-1, 1)
+                        and selected_late_sign in (-1, 1)
+                        and selected_early_sign != selected_late_sign
+                    )
                     dynamic_monitor_profile = _late_pre27_watcher_monitor_config(
                         signal_group="late_all",
                         target_sign=selected_late_sign,
                         late_wr_pct=late_wr_pct,
                         all_wr_pct=all_wr_pct,
                         selected_star_wr=selected_star_wr,
+                        has_opposite_early_star=_has_opposite_early_for_watcher,
                     )
                     if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"):
                         target_game_time = float(dynamic_monitor_profile.get("target_game_time") or target_game_time)
