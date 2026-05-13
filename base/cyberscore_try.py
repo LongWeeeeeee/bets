@@ -8334,7 +8334,7 @@ CYBERSCORE_MATCHES_URL = str(
 CYBERSCORE_GET_HEADS_FALLBACK = _env_flag("CYBERSCORE_GET_HEADS_FALLBACK", "0")
 CYBERSCORE_CAMOUFOX_PROXY_URL = str(os.getenv("CYBERSCORE_CAMOUFOX_PROXY_URL", "")).strip()
 CYBERSCORE_CAMOUFOX_REQUIRE_PROXY = _env_flag("CYBERSCORE_CAMOUFOX_REQUIRE_PROXY", "1")
-CYBERSCORE_LONG_PAGE_ENABLED = _env_flag("CYBERSCORE_LONG_PAGE_ENABLED", "1")
+CYBERSCORE_LONG_PAGE_ENABLED = _env_flag("CYBERSCORE_LONG_PAGE_ENABLED", "0")
 CYBERSCORE_LONG_PAGE_LISTING_ENABLED = _env_flag(
     "CYBERSCORE_LONG_PAGE_LISTING_ENABLED",
     "1" if CYBERSCORE_LONG_PAGE_ENABLED else "0",
@@ -8380,7 +8380,7 @@ CYBERSCORE_DELAYED_STALE_REFRESH_SECONDS = max(
     30,
     _safe_int_env("CYBERSCORE_DELAYED_STALE_REFRESH_SECONDS", 90),
 )
-CYBERSCORE_LIVE_WATCHER_ENABLED = _env_flag("CYBERSCORE_LIVE_WATCHER_ENABLED", "1")
+CYBERSCORE_LIVE_WATCHER_ENABLED = _env_flag("CYBERSCORE_LIVE_WATCHER_ENABLED", "0")
 CYBERSCORE_LIVE_WATCHER_POLL_SECONDS = _safe_float_env(
     "CYBERSCORE_LIVE_WATCHER_POLL_SECONDS",
     1.0,
@@ -16295,10 +16295,13 @@ def _camoufox_parse_window(value: str) -> Optional[Tuple[int, int]]:
 
 def _shared_camoufox_browser_options(proxy_kwargs: Dict[str, Any]) -> Dict[str, Any]:
     options: Dict[str, Any] = {"headless": True, **proxy_kwargs}
-    locale = str(os.getenv("CYBERSCORE_CAMOUFOX_LOCALE", "ru-RU")).strip()
+    # Let Camoufox auto-generate locale from geoip when proxy is set;
+    # fallback to env override only if explicitly provided.
+    locale = str(os.getenv("CYBERSCORE_CAMOUFOX_LOCALE", "")).strip()
     os_name = str(os.getenv("CYBERSCORE_CAMOUFOX_OS", "windows")).strip()
-    humanize = _camoufox_parse_humanize(os.getenv("CYBERSCORE_CAMOUFOX_HUMANIZE", "0.7"))
-    window = _camoufox_parse_window(os.getenv("CYBERSCORE_CAMOUFOX_WINDOW", "1366x768"))
+    humanize = _camoufox_parse_humanize(os.getenv("CYBERSCORE_CAMOUFOX_HUMANIZE", "true"))
+    # Do NOT set fixed window — let Camoufox generate a random realistic size
+    window = _camoufox_parse_window(os.getenv("CYBERSCORE_CAMOUFOX_WINDOW", ""))
     if locale:
         options["locale"] = locale
     if os_name:
@@ -16308,7 +16311,8 @@ def _shared_camoufox_browser_options(proxy_kwargs: Dict[str, Any]) -> Dict[str, 
     if window is not None:
         options["window"] = window
     options["block_webrtc"] = _camoufox_env_bool("CYBERSCORE_CAMOUFOX_BLOCK_WEBRTC", True)
-    options["enable_cache"] = _camoufox_env_bool("CYBERSCORE_CAMOUFOX_ENABLE_CACHE", True)
+    # Disable cache to avoid fingerprinting via cache timing and ensure fresh responses
+    options["enable_cache"] = _camoufox_env_bool("CYBERSCORE_CAMOUFOX_ENABLE_CACHE", False)
     if proxy_kwargs and _camoufox_env_bool("CYBERSCORE_CAMOUFOX_GEOIP", True):
         options["geoip"] = True
     profile_dir = str(os.getenv("CYBERSCORE_CAMOUFOX_PROFILE_DIR", "")).strip()
