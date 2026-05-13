@@ -4527,7 +4527,7 @@ def _late_pre27_dominance_snapshot(
     # Gate: if the opposite team has an early star, block dispatch before 20:00
     # (opposite early = early-star on a different side than target/late). This prevents
     # short-lived netw spikes at 10-19 min from triggering against still-active early window.
-    if bool(source.get("has_opposite_early_star")) and current_game_time < 20 * 60:
+    if bool(source.get("has_opposite_early_star")) and current_game_time < 21 * 60:
         return {
             "threshold": None,
             "status_label": str(
