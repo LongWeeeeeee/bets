@@ -3876,6 +3876,9 @@ def _late_pre27_watcher_monitor_config(
         "thresholds_by_minute": {int(k): float(v) for k, v in thresholds.items()},
         "status_label": NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT,
         "has_opposite_early_star": bool(has_opposite_early_star),
+        # Flat 800 threshold for minutes 10-20 (watcher grid starts at 21)
+        "flat_threshold_until_minute": 21,
+        "flat_threshold_value": 800.0,
     }
 
 
@@ -3898,7 +3901,8 @@ def _late_pre27_watcher_snapshot(
         )
     except (TypeError, ValueError):
         target_game_time = float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
-    if current_game_time < float(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS):
+    if current_game_time < float(NETWORTH_GATE_SAME_SIGN_LANE_ADV_WINDOW_START_SECONDS):
+        # Pre-4 min block: no dispatch before 4:00
         return {
             "threshold": None,
             "status_label": str(
@@ -3935,6 +3939,23 @@ def _late_pre27_watcher_snapshot(
         }
 
     current_minute = int(max(0.0, current_game_time) // 60)
+
+    # For late-only/late+all without early: use flat 800 threshold for minutes 10-20,
+    # watcher grid only kicks in at minute 21+.
+    flat_threshold_until_minute = int(source.get("flat_threshold_until_minute") or 0)
+    flat_threshold_value = float(source.get("flat_threshold_value") or 0.0)
+    if flat_threshold_until_minute > 0 and current_minute < flat_threshold_until_minute:
+        return {
+            "threshold": flat_threshold_value if flat_threshold_value > 0 else None,
+            "status_label": str(
+                source.get("networth_monitor_status")
+                or source.get("status_label")
+                or source.get("dispatch_status_label")
+                or NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT
+            ),
+            "source_minute": int(current_minute),
+        }
+
     thresholds_by_minute: Dict[int, float] = {}
     for raw_minute, raw_threshold in raw_thresholds.items():
         try:
@@ -23326,6 +23347,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delayed_add_url_details["has_opposite_early_star"] = bool(
                             dynamic_monitor_profile.get("has_opposite_early_star")
                         )
+                        delayed_add_url_details["flat_threshold_until_minute"] = int(
+                            dynamic_monitor_profile.get("flat_threshold_until_minute") or 0
+                        )
+                        delayed_add_url_details["flat_threshold_value"] = float(
+                            dynamic_monitor_profile.get("flat_threshold_value") or 0.0
+                        )
                     elif dynamic_monitor_profile.get("profile") == "late_only_opposite_signs_early90":
                         delayed_add_url_details["target_game_time"] = int(
                             float(dynamic_monitor_profile.get("target_game_time") or target_game_time)
@@ -23466,6 +23493,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             delayed_payload['late_pre27_watcher_signal_wr'] = float(dynamic_monitor_profile.get("signal_wr") or 0.0)
                         delayed_payload['has_opposite_early_star'] = bool(
                             dynamic_monitor_profile.get("has_opposite_early_star")
+                        )
+                        delayed_payload['flat_threshold_until_minute'] = int(
+                            dynamic_monitor_profile.get("flat_threshold_until_minute") or 0
+                        )
+                        delayed_payload['flat_threshold_value'] = float(
+                            dynamic_monitor_profile.get("flat_threshold_value") or 0.0
                         )
                     elif dynamic_monitor_profile.get("profile") == ALL_ONLY_WATCHER_PROFILE:
                         delayed_payload['target_game_time'] = float(
