@@ -3876,9 +3876,9 @@ def _late_pre27_watcher_monitor_config(
         "thresholds_by_minute": {int(k): float(v) for k, v in thresholds.items()},
         "status_label": NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT,
         "has_opposite_early_star": bool(has_opposite_early_star),
-        # Flat 800 threshold for minutes 10-20 (watcher grid starts at 21)
+        # Flat 1000 threshold for minutes 4-20 (watcher grid starts at 21)
         "flat_threshold_until_minute": 21,
-        "flat_threshold_value": 800.0,
+        "flat_threshold_value": 1000.0,
     }
 
 
