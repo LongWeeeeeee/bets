@@ -4633,6 +4633,16 @@ def _stake_multiplier_for_signal(
     if force_half_due_to_early_no_valid_late:
         return 0.5
 
+    # Rule: if only 1 valid block total with 1 star-hit → 0.5
+    # This covers: all-only with 1 hit, early-only with 1 hit, late-only with 1 hit
+    valid_block_count = sum([
+        bool(has_selected_early_star),
+        bool(has_selected_late_star),
+    ])
+    if valid_block_count == 0:
+        # Only All-block (no early, no late) → always 0.5
+        return 0.5
+
     try:
         early_wr_value = float(early_wr_pct) if early_wr_pct is not None else None
     except (TypeError, ValueError):
