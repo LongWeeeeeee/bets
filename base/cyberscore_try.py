@@ -4686,89 +4686,12 @@ def _stake_multiplier_for_signal(
     if not has_selected_late_star or late_wr_value is None:
         return 1
 
-    target_rating_value: Optional[float] = None
-    opposite_rating_value: Optional[float] = None
-    try:
-        target_rating_value = float(target_rating) if target_rating is not None else None
-    except (TypeError, ValueError):
-        target_rating_value = None
-    try:
-        opposite_rating_value = float(opposite_rating) if opposite_rating is not None else None
-    except (TypeError, ValueError):
-        opposite_rating_value = None
-    if target_rating_value is None:
-        inferred_target_rating = _team_elo_base_rating_for_side(team_elo_meta, target_side)
-        try:
-            target_rating_value = float(inferred_target_rating) if inferred_target_rating is not None else None
-        except (TypeError, ValueError):
-            target_rating_value = None
-    if opposite_rating_value is None:
-        opposite_side = "dire" if target_side == "radiant" else "radiant"
-        inferred_opposite_rating = _team_elo_base_rating_for_side(team_elo_meta, opposite_side)
-        try:
-            opposite_rating_value = float(inferred_opposite_rating) if inferred_opposite_rating is not None else None
-        except (TypeError, ValueError):
-            opposite_rating_value = None
-
-    target_not_too_far_behind_by_elo: Optional[bool] = None
-    if target_rating_value is not None and opposite_rating_value is not None:
-        target_not_too_far_behind_by_elo = (
-            float(target_rating_value) >= (float(opposite_rating_value) - 50.0)
-        )
-
-    if (
-        late_star_hit_count_value is not None
-        and late_star_hit_count_value >= 2
-        and target_not_too_far_behind_by_elo is True
-    ):
+    # ELO gate removed — multiplier depends only on late hit count and WR.
+    if late_star_hit_count_value is not None and late_star_hit_count_value >= 2:
         if late_wr_value >= 85.0:
             return 3
         if late_wr_value >= 70.0:
             return 2
-
-    try:
-        target_elo_wr_value = float(target_elo_wr) if target_elo_wr is not None else None
-    except (TypeError, ValueError):
-        target_elo_wr_value = None
-    if target_elo_wr_value is None:
-        inferred_target_elo_wr = _team_elo_wr_for_side(team_elo_meta, target_side)
-        try:
-            target_elo_wr_value = (
-                float(inferred_target_elo_wr)
-                if inferred_target_elo_wr is not None
-                else None
-            )
-        except (TypeError, ValueError):
-            target_elo_wr_value = None
-    if target_elo_wr_value is None and target_rating is not None and opposite_rating is not None:
-        try:
-            target_elo_wr_value = (
-                float(_elo_probability_from_ratings(float(target_rating), float(opposite_rating))) * 100.0
-            )
-        except (TypeError, ValueError):
-            target_elo_wr_value = None
-    opposite_elo_wr_value: Optional[float] = None
-    if target_elo_wr_value is not None:
-        opposite_side = "dire" if target_side == "radiant" else "radiant"
-        opposite_elo_wr = _team_elo_wr_for_side(team_elo_meta, opposite_side)
-        try:
-            opposite_elo_wr_value = (
-                float(opposite_elo_wr)
-                if opposite_elo_wr is not None
-                else 100.0 - float(target_elo_wr_value)
-            )
-        except (TypeError, ValueError):
-            opposite_elo_wr_value = None
-
-    if (
-        late_wr_value is not None
-        and target_elo_wr_value is not None
-        and opposite_elo_wr_value is not None
-    ):
-        elo_wr_diff_value = float(target_elo_wr_value) - float(opposite_elo_wr_value)
-        late_elo_gate_score = float(late_wr_value) + float(elo_wr_diff_value)
-        if elo_wr_diff_value <= -5.0 and late_elo_gate_score < 59.0:
-            return 0.5
 
     return 1
 
