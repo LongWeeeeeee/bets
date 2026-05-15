@@ -20842,10 +20842,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 raw_late_block=s.get('mid_output', {}),
             )
             early_only_no_late_all_active = bool(early_only_no_late_all_gate.get("active"))
-            early_only_kills_mode = bool(
-                early_only_no_late_all_gate.get("valid")
-                and early_only_no_late_all_gate.get("signal_mode") == "kills_from"
-            )
+            early_only_kills_mode = False  # Kills dispatch disabled
+            # early_only_kills_mode = bool(
+            #     early_only_no_late_all_gate.get("valid")
+            #     and early_only_no_late_all_gate.get("signal_mode") == "kills_from"
+            # )
             # pt3: kills gate — when there is no valid Late star (primary or
             # pt2-promoted) and the Late block still contains at least one
             # WR60 STAR-signal hit, route the match to the kills-from header
@@ -20868,7 +20869,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 late_all_same_sign_promote_valid=late_all_same_sign_promote_valid,
             )
             if kills_gate_decision.get("valid"):
-                early_only_kills_mode = True
+                pass  # Kills dispatch disabled
+                # early_only_kills_mode = True
             early65_gate_active = False
             send_now_immediate = bool(star_dispatch_flags["send_now_immediate"])
             no_late_early_all_opposite_signs = bool(
@@ -21514,15 +21516,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and not early_only_kills_mode
             )
             tier1_early_kills_mode = bool(
-                star_match_tier == 1
-                and not early_only_no_late_all_active
+                has_selected_early_star
                 and not has_selected_late_star
                 and early_wr_pct is not None
                 and float(early_wr_pct) >= 70.0
-                and (
-                    send_now_early_star_late_core_same_sign
-                    or early65_gate_active
-                )
+                and isinstance(selected_early_diag, dict)
+                and len(selected_early_diag.get("hit_metrics") or []) >= 2
             )
             stake_multiplier_context = _build_stake_multiplier_context(
                 stake_team_name=stake_team_name,
@@ -21842,39 +21841,52 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             "(нет target_sign/lead)"
                         )
                         return return_status
-                    if current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_END_SECONDS:
-                        if target_networth_diff >= NETWORTH_GATE_TIER1_EARLY_KILLS_4_TO_12_MIN_DIFF:
+                    # Kills dispatch: pre4 block already handled by cycle timing.
+                    # 4-10 min: wait for target >= 0 NW. At 10 min if target < 0 → cancel.
+                    if current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
+                        if target_networth_diff >= 0:
                             early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY_KILLS_4_12_SEND_500
                             early_release_dispatch_mode = "immediate_tier1_early_kills"
                             early_release_delay_reason = "tier1_early_kills"
                         else:
                             print(
-                                "   ⏳ Ожидание dispatch: tier1_early_kills_04_12 "
+                                "   ⏳ Ожидание dispatch: early_kills_wait "
                                 f"(target_side={target_side}, "
                                 f"target_diff={int(target_networth_diff)}, "
-                                f"need>={int(NETWORTH_GATE_TIER1_EARLY_KILLS_4_TO_12_MIN_DIFF)})"
+                                f"need>=0, window closes at 10:00)"
                             )
                             return return_status
                     else:
-                        add_url(
-                            check_uniq_url,
-                            reason="star_signal_rejected_no_late_star",
-                            details={
-                                "status": status,
-                                "dispatch_mode": "tier1_early_kills_window_closed",
-                                "dispatch_status_label": NETWORTH_STATUS_TIER1_EARLY_KILLS_WINDOW_CLOSED,
-                                "game_time": int(current_game_time),
-                                "target_side": target_side,
-                                "target_networth_diff": float(target_networth_diff or 0.0),
-                                "selected_early_star": has_selected_early_star,
-                                "selected_late_star": has_selected_late_star,
-                                "selected_early_diag": selected_early_diag,
-                                "selected_late_diag": selected_late_diag,
-                                "early_star_no_late_same_sign_gate": early_star_no_late_same_sign_gate,
-                                "json_retry_errors": json_retry_errors,
-                            },
-                        )
-                        print("   ⚠️ ВЕРДИКТ: ОТКАЗ (tier1 early kills окно 4-12 закрыто)")
+                        # Window closed (>=10 min): if target still negative → cancel
+                        if target_networth_diff < 0:
+                            add_url(
+                                check_uniq_url,
+                                reason="star_signal_rejected_early_kills_target_negative",
+                                details={
+                                    "status": status,
+                                    "dispatch_mode": "tier1_early_kills_window_closed",
+                                    "dispatch_status_label": NETWORTH_STATUS_TIER1_EARLY_KILLS_WINDOW_CLOSED,
+                                    "game_time": int(current_game_time),
+                                    "target_side": target_side,
+                                    "target_networth_diff": float(target_networth_diff or 0.0),
+                                    "selected_early_star": has_selected_early_star,
+                                    "selected_late_star": has_selected_late_star,
+                                    "selected_early_diag": selected_early_diag,
+                                    "selected_late_diag": selected_late_diag,
+                                    "early_star_no_late_same_sign_gate": early_star_no_late_same_sign_gate,
+                                    "json_retry_errors": json_retry_errors,
+                                },
+                            )
+                            print(
+                                "   ⚠️ ВЕРДИКТ: ОТКАЗ (early kills: target в минусе на 10+ мин, "
+                                f"target_diff={int(target_networth_diff)})"
+                            )
+                            return return_status
+                        else:
+                            # Target >= 0 after 10 min → dispatch
+                            early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY_KILLS_4_12_SEND_500
+                            early_release_dispatch_mode = "immediate_tier1_early_kills"
+                            early_release_delay_reason = "tier1_early_kills"
                         return return_status
                 if (
                     early65_gate_active
