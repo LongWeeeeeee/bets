@@ -15,6 +15,7 @@ import json
 import os
 import resource
 import shutil
+import sqlite3
 import sys
 import time
 import zlib
@@ -383,6 +384,70 @@ def _match_is_train_candidate(match_id, match, min_start_ts: int, test_match_ids
     return True, None
 
 
+def _build_sqlite_dicts(stats_dir: Path, metric_names: tuple) -> None:
+    """Convert JSON stats dicts to SQLite3 for fast runtime key-value lookup."""
+    for metric in metric_names:
+        filename = OUTPUTS_BY_METRIC.get(metric)
+        if not filename:
+            continue
+        json_path = stats_dir / filename
+        sqlite_path = json_path.with_suffix(".sqlite3")
+        if not json_path.exists():
+            print(f"  ⚠️ {filename} не найден, пропускаем sqlite build")
+            continue
+        print(f"  🧱 Building {sqlite_path.name}...", end=" ", flush=True)
+        started = time.monotonic()
+        temp_path = sqlite_path.with_suffix(".sqlite3.tmp")
+        if temp_path.exists():
+            temp_path.unlink()
+
+        conn = sqlite3.connect(str(temp_path))
+        try:
+            conn.execute("PRAGMA journal_mode=OFF")
+            conn.execute("PRAGMA synchronous=OFF")
+            conn.execute("PRAGMA page_size=8192")
+            conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value BLOB)")
+            conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB)")
+
+            entries = 0
+            batch = []
+            batch_size = 5000
+            encode = orjson.dumps if orjson is not None else lambda v: json.dumps(v).encode()
+
+            for key, stats in _iter_stats_object_items(json_path):
+                batch.append((key, sqlite3.Binary(encode(stats))))
+                entries += 1
+                if len(batch) >= batch_size:
+                    conn.executemany("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", batch)
+                    batch.clear()
+            if batch:
+                conn.executemany("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", batch)
+                batch.clear()
+
+            # Write meta
+            source_stat = json_path.stat()
+            meta = {
+                "backend": "sqlite_kv",
+                "source_filename": json_path.name,
+                "source_size": source_stat.st_size,
+                "source_mtime_ns": source_stat.st_mtime_ns,
+                "entries": entries,
+            }
+            for mk, mv in meta.items():
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                    (mk, sqlite3.Binary(encode(mv))),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        if sqlite_path.exists():
+            sqlite_path.unlink()
+        temp_path.rename(sqlite_path)
+        print(f"✓ {entries:,} keys, {time.monotonic() - started:.1f}s")
+
+
 def main() -> int:
     print("=" * 80)
     print("ПОСТРОЕНИЕ СТАТИСТИКИ (ИСКЛЮЧАЯ TEST SET)")
@@ -616,6 +681,11 @@ def main() -> int:
     print(f"RSS peak≈{_rss_mb():.0f}MB")
     print("Для валидации запустите: python check_metrics.py")
     print(f"{'=' * 80}\n")
+
+    # Build SQLite3 versions of stats dicts for fast runtime lookup
+    print("\n[ШАГ 4/4] Построение SQLite3 версий словарей...")
+    _build_sqlite_dicts(stats_dir, metric_names)
+
     return 0
 
 
