@@ -16,7 +16,7 @@
 - When pruning dead proxies in `base/keys.py`, only remove them from runtime proxy constants/pools; do not delete or edit `api_to_proxy` / `api_to_keys` entries or their API keys.
 - Production server: `root@147.45.216.225`, project path `/root/main`.
 - Runtime/output artifacts under `runtime/` are intentionally ignored.
-- Long-running local jobs must be launched in the background with `nohup` and logs/pid files under `runtime/`, so they survive Codex turn interruptions and can be monitored later.
+- Long-running local jobs must be launched in the background with `nohup` and logs/pid files under `runtime/`, so they survive Codex turn interruptions and can be monitored later. **NEVER** use Kiro's built-in background process tool for long-running tasks — always `nohup ... > runtime/<name>.log 2>&1 &` with `echo $!` to capture PID.
 - Whenever launching or continuing a long-running process, always report a clickable local log/status file link and the exact command to check process state.
 
 ## Key Files
