@@ -19016,12 +19016,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             block_reason = _dispatch_block_reason(check_uniq_url)
             delayed_payload = None
 
-            if not is_match_card_v2 and verbose_match_log:
+            if not is_match_card_v2 and not is_cyberscore_card and verbose_match_log:
                 print(f"\n🔍 DEBUG: Начало обработки матча #{i}")
                 print(f"   Статус: {status}")
                 print(f"   URL: {check_uniq_url}")
                 print(f"   Score: {score}")
-            elif not is_match_card_v2 and check_uniq_url not in maps_data and block_reason != "processed":
+            elif not is_match_card_v2 and not is_cyberscore_card and check_uniq_url not in maps_data and block_reason != "processed":
                 print(f"\n🔁 RECHECK матча #{i}: {check_uniq_url} | status={status}")
 
             if status == 'finished':
@@ -19122,8 +19122,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             print(f"   ❌ Матч пропущен (ошибка парсинга URL/score)")
             return return_status
 
-        match_log(f"   🌐 Запрос JSON данных...")
-
         # Получаем JSON данные с retry логикой
         data = None
         max_json_retries = 3
@@ -19141,7 +19139,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if isinstance(cyber_item, dict) and not _runtime_payload_has_fast_picks(_cyberscore_item_to_runtime_payload(cyber_item)):
                 need_detail_fetch = True
             if need_detail_fetch:
-                match_log(f"   🌐 Запрос страницы CyberScore...")
                 response_text = _get_cyberscore_html_via_camoufox(match_url)
                 if response_text:
                     detail_item = _extract_cyberscore_match_item_from_html(response_text, match_id=match_id or None)
