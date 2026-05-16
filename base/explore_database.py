@@ -424,11 +424,12 @@ def _build_sqlite_dicts(stats_dir: Path, metric_names: tuple) -> None:
                 conn.executemany("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", batch)
                 batch.clear()
 
-            # Write meta
+            # Write meta (must match runtime _stats_expected_meta keys)
             source_stat = json_path.stat()
             meta = {
+                "format_version": 1,
                 "backend": "sqlite_kv",
-                "source_filename": json_path.name,
+                "source_name": json_path.name,
                 "source_size": source_stat.st_size,
                 "source_mtime_ns": source_stat.st_mtime_ns,
                 "entries": entries,
