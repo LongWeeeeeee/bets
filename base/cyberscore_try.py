@@ -1091,37 +1091,27 @@ def _stats_source_available_for_lookup(source_path: str, label: str) -> bool:
     source = Path(source_path)
     if source.exists():
         return True
-    if not _stats_indexed_lookup_enabled(label) or STATS_SQLITE_REQUIRE_SOURCE_MATCH:
-        return False
-    return _sqlite_stats_meta_matches(_stats_sqlite_db_path(source), {})
+    # sqlite-only mode: source JSON may not exist, but sqlite does
+    return _stats_sqlite_db_path(source).exists()
 
 
 def _prepare_indexed_stats_lookup(source_path: str, label: str):
+    source = Path(source_path)
+    db_path = _stats_sqlite_db_path(source)
+    # Simple: just open sqlite if it exists, no meta validation
+    if db_path.exists():
+        print(
+            f"🧠 Using SQLite {label} stats backend: {db_path} "
+            f"(key_cache={STATS_SHARD_KEY_CACHE_MAX})"
+        )
+        return _SqliteStatsLookup(
+            db_path,
+            label=label,
+            max_cached_keys=STATS_SHARD_KEY_CACHE_MAX,
+        )
+    # Fallback: try shards or build
     backend = _stats_lookup_backend(label)
-    if backend == "auto":
-        source = Path(source_path)
-        db_path = _stats_sqlite_db_path(source)
-        expected_meta = {}
-        if STATS_SQLITE_REQUIRE_SOURCE_MATCH:
-            try:
-                expected_meta = _stats_expected_meta(source)
-            except Exception:
-                expected_meta = {}
-        if _sqlite_stats_meta_matches(db_path, expected_meta):
-            print(
-                f"🧠 Using SQLite {label} stats backend: {db_path} "
-                f"(key_cache={STATS_SHARD_KEY_CACHE_MAX})"
-            )
-            return _SqliteStatsLookup(
-                db_path,
-                label=label,
-                max_cached_keys=STATS_SHARD_KEY_CACHE_MAX,
-            )
-        if not STATS_SQLITE_AUTOBUILD:
-            print(f"🧠 SQLite {label} stats DB missing/stale; using JSONL shards backend")
-            return _prepare_sharded_stats_lookup(source_path, label)
-
-    if backend in {"auto", "sqlite"}:
+    if backend in {"auto", "sqlite"} and STATS_SQLITE_AUTOBUILD:
         try:
             return _prepare_sqlite_stats_lookup(source_path, label)
         except Exception as exc:
