@@ -720,7 +720,7 @@ class _SqliteStatsLookup(dict):
                 chunk = missing[start:start + chunk_size]
                 placeholders = ",".join("?" for _ in chunk)
                 rows = conn.execute(
-                    f"SELECT key, value FROM stats WHERE key IN ({placeholders})",
+                    f"SELECT key, value FROM kv WHERE key IN ({placeholders})",
                     chunk,
                 )
                 for key, value_blob in rows:
@@ -737,7 +737,7 @@ class _SqliteStatsLookup(dict):
             return cached
         with self._lock:
             conn = self._connect()
-            row = conn.execute("SELECT value FROM stats WHERE key = ?", (key_str,)).fetchone()
+            row = conn.execute("SELECT value FROM kv WHERE key = ?", (key_str,)).fetchone()
         if row is None:
             return default
         value = orjson.loads(row[0])
@@ -973,14 +973,14 @@ def _build_sqlite_stats_db(source: Path, db_path: Path, label: str, expected_met
         conn.execute("PRAGMA synchronous=OFF")
         conn.execute("PRAGMA temp_store=MEMORY")
         conn.execute("PRAGMA locking_mode=EXCLUSIVE")
-        conn.execute("CREATE TABLE stats (key TEXT NOT NULL, value BLOB NOT NULL)")
+        conn.execute("CREATE TABLE kv (key TEXT NOT NULL, value BLOB NOT NULL)")
         conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) WITHOUT ROWID")
 
         def flush_batch() -> None:
             nonlocal batch
             if not batch:
                 return
-            conn.executemany("INSERT INTO stats (key, value) VALUES (?, ?)", batch)
+            conn.executemany("INSERT INTO kv (key, value) VALUES (?, ?)", batch)
             batch = []
 
         for key, value_blob in _iter_stats_records_for_sqlite(source, shard_dir, expected_meta):
@@ -993,7 +993,7 @@ def _build_sqlite_stats_db(source: Path, db_path: Path, label: str, expected_met
 
         flush_batch()
         print(f"   🔎 Creating SQLite index for {label}: {entries:,} rows")
-        conn.execute("CREATE UNIQUE INDEX stats_key_idx ON stats(key)")
+        conn.execute("CREATE UNIQUE INDEX kv_key_idx ON kv(key)")
         meta_payload = dict(expected_meta)
         meta_payload["backend"] = "sqlite_kv"
         meta_payload["entries"] = int(entries)
