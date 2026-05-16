@@ -842,6 +842,35 @@ def _stats_sqlite_db_path(source: Path) -> Path:
     return source.parent / f"{source.stem}.sqlite3"
 
 
+def _load_lane_dict_from_source(source_path: str):
+    """Load lane dict from sqlite if present, otherwise from JSON.
+
+    Lane dict is small enough (~4.5M keys, ~700MB in RAM) to fit in memory
+    and is consumed wholesale by ``calculate_lanes``. We materialise it as a
+    plain dict regardless of the on-disk backend.
+    """
+    source = Path(source_path)
+    sqlite_path = _stats_sqlite_db_path(source)
+    if sqlite_path.exists():
+        print(f"📦 Loading lane stats from SQLite: {sqlite_path}")
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(str(sqlite_path))
+        try:
+            return {
+                row[0]: orjson.loads(row[1])
+                for row in conn.execute("SELECT key, value FROM kv")
+            }
+        finally:
+            conn.close()
+    # JSON fallback
+    if source.exists():
+        print(f"📦 Loading lane stats from JSON: {source}")
+        return _load_json_object(str(source), "lane_dict_raw")
+    raise FileNotFoundError(
+        f"lane source not found: neither {sqlite_path} nor {source}"
+    )
+
+
 def _stats_expected_meta(source: Path) -> Dict[str, Any]:
     source_stat = source.stat()
     return {
@@ -23821,8 +23850,7 @@ def _load_stats_dicts():
         if not LIVE_LANE_ANALYSIS_ENABLED:
             lane_data = None
         elif lane_data is None:
-            print(f"📦 Loading lane stats: {lane_path}")
-            lane_data = _load_json_object(lane_path, "lane_dict_raw")
+            lane_data = _load_lane_dict_from_source(lane_path)
             gc.collect()
 
         if late_pub_comeback_table_data is None:
@@ -23974,11 +24002,16 @@ def _load_stats_dicts():
         str(BASE_DIR / "pub_all_only_watcher_thresholds.json"),
     )
 
-    # If lane analysis is enabled and test stats folder has no lane dict, fallback to baseline lane dict.
-    if LIVE_LANE_ANALYSIS_ENABLED and not Path(lane_path).exists():
-        fallback_lane = f"{default_stats_dir}/lane_dict_raw.json"
-        if Path(fallback_lane).exists():
-            lane_path = fallback_lane
+    # If lane analysis is enabled and test stats folder has no lane dict (sqlite or json),
+    # fallback to baseline lane dict.
+    if LIVE_LANE_ANALYSIS_ENABLED:
+        lane_source = Path(lane_path)
+        lane_sqlite = _stats_sqlite_db_path(lane_source)
+        if not lane_source.exists() and not lane_sqlite.exists():
+            fallback_lane = f"{default_stats_dir}/lane_dict_raw.json"
+            fallback_sqlite = _stats_sqlite_db_path(Path(fallback_lane))
+            if Path(fallback_lane).exists() or fallback_sqlite.exists():
+                lane_path = fallback_lane
 
     _load_small_supporting_dicts()
 
