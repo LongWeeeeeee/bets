@@ -115,7 +115,8 @@ def test_late_only_no_early_queues_pre27_watcher(monkeypatch) -> None:
     assert result.queued_payload["dynamic_monitor_profile"] == runtime.LATE_PRE27_WATCHER_PROFILE
     assert result.queued_payload["late_pre27_watcher_group"] == "late_only"
     assert int(result.queued_payload["late_pre27_watcher_wr_level"]) == 90
-    assert float(result.queued_payload["networth_monitor_threshold"]) == -1500.0
+    # Phase 1 [0,20): flat 1000 за target. Watcher comeback grid отключён до 27:00.
+    assert float(result.queued_payload["networth_monitor_threshold"]) == 1000.0
     assert result.queued_payload["send_on_target_game_time"] is False
 
 
@@ -261,7 +262,8 @@ def test_late_all_no_early_uses_pre27_watcher_even_when_lane_adv_matches(monkeyp
     assert result.queued_payload["dynamic_monitor_profile"] == runtime.LATE_PRE27_WATCHER_PROFILE
     assert result.queued_payload["late_pre27_watcher_group"] == "late_all"
     assert int(result.queued_payload["late_pre27_watcher_wr_level"]) == 70
-    assert float(result.queued_payload["networth_monitor_threshold"]) == -1000.0
+    # Phase 1 [0,20): flat 1000 за target. Watcher comeback grid отключён до 27:00.
+    assert float(result.queued_payload["networth_monitor_threshold"]) == 1000.0
     assert result.queued_payload["send_on_target_game_time"] is False
 
 
@@ -444,6 +446,13 @@ def _patch_early_late_wr(monkeypatch, *, early_level: int, late_level: int, all_
 
 
 def test_late_pre27_dominance_grid_keeps_zero_threshold_with_hold(monkeypatch) -> None:
+    """Историческая проверка hold-механизма для dominance threshold=0.0.
+
+    Этот сценарий теперь блокируется новой opposite-early gate (`has_opposite_early_star`
+    + game_time<21:00 → threshold=None) и всё равно не релевантен после введения
+    flat 800 в окне [20:00, 27:00) для всех веток с late star. Проверяем лишь
+    что payload помечен профилем dominance, конкретные пороги — не задача этого теста.
+    """
     _patch_early_late_wr(monkeypatch, early_level=60, late_level=80)
 
     result = _run_branch_scenario(
@@ -466,10 +475,6 @@ def test_late_pre27_dominance_grid_keeps_zero_threshold_with_hold(monkeypatch) -
     assert result.sent_messages == []
     assert result.queued_payload is not None
     assert result.queued_payload["dynamic_monitor_profile"] == runtime.LATE_PRE27_DOMINANCE_PROFILE
-    assert float(result.queued_payload["networth_monitor_threshold"]) == 0.0
-    assert result.queued_payload["networth_monitor_hold_allow_zero_threshold"] is True
-    assert float(result.queued_payload["networth_monitor_hold_seconds"]) == float(runtime.NETWORTH_MONITOR_HOLD_SECONDS)
-    assert float(result.queued_payload["networth_monitor_hold_started_game_time"]) == 18 * 60
     assert int(result.queued_payload["late_pre27_early_wr_level"]) == 60
     assert int(result.queued_payload["late_pre27_late_wr_level"]) == 80
     assert int(result.queued_payload["late_pre27_delta_level"]) == 20
@@ -510,7 +515,9 @@ def test_late_all_weak_early_uses_watcher_instead_of_dominance_grid(monkeypatch)
     assert result.queued_payload["dynamic_monitor_profile"] == runtime.LATE_PRE27_WATCHER_PROFILE
     assert result.queued_payload["late_pre27_watcher_group"] == "late_all"
     assert int(result.queued_payload["late_pre27_watcher_wr_level"]) == 70
-    assert float(result.queued_payload["networth_monitor_threshold"]) == -4000.0
+    # Phase 2 [20,27): flat 800 за target. Watcher comeback grid (-4000)
+    # для late с late star отключён до 27:00.
+    assert float(result.queued_payload["networth_monitor_threshold"]) == 800.0
     assert "late_pre27_delta_level" not in result.queued_payload
 
 
@@ -536,7 +543,9 @@ def test_late_pre27_dominance_dynamic_snapshot_uses_wr_delta_grid() -> None:
     assert float(seventeen_to_19["threshold"]) == 2500.0
 
     twenty_to_26 = runtime._dynamic_monitor_snapshot_for_payload(payload, 22 * 60)
-    assert float(twenty_to_26["threshold"]) == 2500.0
+    # Phase 2 [20:00, 27:00): для всех веток с late star — flat 800 за target.
+    # Старая сетка (threshold_20_to_26) больше не используется.
+    assert float(twenty_to_26["threshold"]) == 800.0
 
     after_27 = runtime._dynamic_monitor_snapshot_for_payload(payload, 27 * 60)
     assert after_27["threshold"] is None

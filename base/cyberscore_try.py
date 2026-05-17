@@ -3895,9 +3895,16 @@ def _late_pre27_watcher_monitor_config(
         "thresholds_by_minute": {int(k): float(v) for k, v in thresholds.items()},
         "status_label": NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT,
         "has_opposite_early_star": bool(has_opposite_early_star),
-        # Flat 1000 threshold for minutes 4-20 (watcher grid starts at 21)
-        "flat_threshold_until_minute": 21,
+        # Phase 1 — flat 1000 за target в окне [4:00, 20:00).
+        "flat_threshold_until_minute": 20,
         "flat_threshold_value": 1000.0,
+        # Phase 2 — flat 800 за target в окне [20:00, 27:00).
+        # Watcher comeback grid (исторические медианы) намеренно не используется
+        # в этой ветке: для late star (с/без early/all) до 27:00 dispatch
+        # допустим только когда target ведёт минимум на 800.
+        "flat_phase2_from_minute": 20,
+        "flat_phase2_until_minute": 27,
+        "flat_phase2_value": 800.0,
     }
 
 
@@ -3959,13 +3966,35 @@ def _late_pre27_watcher_snapshot(
 
     current_minute = int(max(0.0, current_game_time) // 60)
 
-    # For late-only/late+all without early: use flat 800 threshold for minutes 10-20,
-    # watcher grid only kicks in at minute 21+.
+    # Phase 1 — flat threshold (например 1000) до flat_threshold_until_minute.
     flat_threshold_until_minute = int(source.get("flat_threshold_until_minute") or 0)
     flat_threshold_value = float(source.get("flat_threshold_value") or 0.0)
     if flat_threshold_until_minute > 0 and current_minute < flat_threshold_until_minute:
         return {
             "threshold": flat_threshold_value if flat_threshold_value > 0 else None,
+            "status_label": str(
+                source.get("networth_monitor_status")
+                or source.get("status_label")
+                or source.get("dispatch_status_label")
+                or NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT
+            ),
+            "source_minute": int(current_minute),
+        }
+
+    # Phase 2 — flat threshold (например 800) в окне
+    # [flat_phase2_from_minute, flat_phase2_until_minute). Заменяет watcher grid
+    # для веток с late star: до конца окна dispatch допустим только когда target
+    # ведёт минимум на flat_phase2_value.
+    flat_phase2_from_minute = int(source.get("flat_phase2_from_minute") or 0)
+    flat_phase2_until_minute = int(source.get("flat_phase2_until_minute") or 0)
+    flat_phase2_value = float(source.get("flat_phase2_value") or 0.0)
+    if (
+        flat_phase2_from_minute > 0
+        and flat_phase2_until_minute > flat_phase2_from_minute
+        and flat_phase2_from_minute <= current_minute < flat_phase2_until_minute
+    ):
+        return {
+            "threshold": flat_phase2_value if flat_phase2_value > 0 else None,
             "status_label": str(
                 source.get("networth_monitor_status")
                 or source.get("status_label")
@@ -4596,8 +4625,19 @@ def _late_pre27_dominance_snapshot(
         threshold_key = "threshold_17_to_19"
         status_key = "status_17_to_19"
     else:
-        threshold_key = "threshold_20_to_26"
-        status_key = "status_20_to_26"
+        # Окно [20:00, 27:00): для всех dominance-веток с late star
+        # требуется только flat 800 за target. Старая сетка по delta_level
+        # (threshold_20_to_26) намеренно не используется здесь — dispatch
+        # допустим только когда target ведёт минимум на 800 NW.
+        return {
+            "threshold": 800.0,
+            "status_label": str(
+                source.get("networth_monitor_status_20_to_26")
+                or source.get("status_20_to_26")
+                or source.get("dispatch_status_label")
+                or NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT
+            ),
+        }
 
     threshold_raw = source.get(
         f"networth_monitor_{threshold_key}",
