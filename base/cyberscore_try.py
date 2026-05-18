@@ -8398,6 +8398,20 @@ CYBERSCORE_MATCHES_URL = str(
         "https://cyberscore.live/en/matches/?type=liveOrUpcoming&tournament_tier=1%2C2",
     )
 ).strip()
+# Дополнительные tier-X турниры, которые мы хотим обрабатывать наравне с tier1/tier2
+# (CyberScore классифицирует их ниже, но мы явно хотим брать их матчи).
+# По умолчанию: BB Streamers Battle 13 (tournament_id=46178 на cyberscore.live).
+# Список через запятую, можно переопределить через CYBERSCORE_EXTRA_MATCHES_URLS.
+_DEFAULT_CYBERSCORE_EXTRA_MATCHES_URLS = (
+    "https://cyberscore.live/en/matches/?type=liveOrUpcoming&tournament=46178"
+)
+CYBERSCORE_EXTRA_MATCHES_URLS: List[str] = [
+    candidate.strip()
+    for candidate in str(
+        os.getenv("CYBERSCORE_EXTRA_MATCHES_URLS", _DEFAULT_CYBERSCORE_EXTRA_MATCHES_URLS)
+    ).split(",")
+    if candidate.strip()
+]
 CYBERSCORE_GET_HEADS_FALLBACK = _env_flag("CYBERSCORE_GET_HEADS_FALLBACK", "0")
 CYBERSCORE_CAMOUFOX_PROXY_URL = str(os.getenv("CYBERSCORE_CAMOUFOX_PROXY_URL", "")).strip()
 CYBERSCORE_CAMOUFOX_REQUIRE_PROXY = _env_flag("CYBERSCORE_CAMOUFOX_REQUIRE_PROXY", "1")
@@ -17424,14 +17438,121 @@ def _get_cyberscore_html_via_camoufox(url: Optional[str] = None) -> Optional[str
     return None
 
 
+def _merge_cyberscore_live_cards(
+    primary_heads: List[Any],
+    primary_bodies: List[Any],
+    extra_heads: List[Any],
+    extra_bodies: List[Any],
+) -> Tuple[List[Any], List[Any]]:
+    """Merge live cards from an extra listing into the primary list, deduped by href."""
+    seen_keys: set = set()
+
+    def _card_key(card: Any) -> str:
+        if not getattr(card, "get", None):
+            return ""
+        match_id = str(card.get("data-cyberscore-match-id") or "").strip()
+        if match_id:
+            return f"id:{match_id}"
+        href = str(card.get("data-cyberscore-href") or card.get("href") or "").strip()
+        return f"href:{href}" if href else ""
+
+    merged_heads: List[Any] = []
+    merged_bodies: List[Any] = []
+    for head, body in zip(primary_heads or [], primary_bodies or []):
+        key = _card_key(head) or _card_key(body)
+        if key:
+            seen_keys.add(key)
+        merged_heads.append(head)
+        merged_bodies.append(body)
+    for head, body in zip(extra_heads or [], extra_bodies or []):
+        key = _card_key(head) or _card_key(body)
+        if key and key in seen_keys:
+            continue
+        if key:
+            seen_keys.add(key)
+        merged_heads.append(head)
+        merged_bodies.append(body)
+    return merged_heads, merged_bodies
+
+
+def _fetch_cyberscore_extra_listings(
+    extra_urls: Optional[List[str]] = None,
+) -> List[Tuple[str, str]]:
+    """Fetch HTML for each extra tournament listing URL. Returns list of (url, html)."""
+    urls = [
+        str(candidate or "").strip()
+        for candidate in (extra_urls if extra_urls is not None else CYBERSCORE_EXTRA_MATCHES_URLS)
+        if str(candidate or "").strip()
+    ]
+    results: List[Tuple[str, str]] = []
+    for extra_url in urls:
+        try:
+            extra_html = _get_cyberscore_html_via_camoufox(extra_url)
+        except Exception as exc:  # pragma: no cover - defensive
+            short_error = _short_exception_message(exc)
+            print(f"⚠️ CyberScore extra listing fetch failed ({extra_url}): {short_error}")
+            logger.warning(
+                "CyberScore extra listing fetch failed for %s: %s",
+                extra_url,
+                short_error,
+            )
+            continue
+        if not extra_html:
+            continue
+        results.append((extra_url, extra_html))
+    return results
+
+
+def _pick_nearest_schedule_info(
+    candidates: List[Optional[Dict[str, Any]]],
+) -> Optional[Dict[str, Any]]:
+    best: Optional[Dict[str, Any]] = None
+    best_raw: Optional[float] = None
+    for info in candidates:
+        if not isinstance(info, dict):
+            continue
+        try:
+            raw_sleep = float(
+                info.get("sleep_seconds_raw")
+                if info.get("sleep_seconds_raw") is not None
+                else info.get("sleep_seconds", 0.0)
+            )
+        except (TypeError, ValueError):
+            continue
+        if best_raw is None or raw_sleep < best_raw:
+            best_raw = raw_sleep
+            best = info
+    return best
+
+
 def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[List[Any]]]:
     global GET_HEADS_LAST_FAILURE_REASON, NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO, SCHEDULE_LIVE_WAIT_TARGET
     html = _get_cyberscore_html_via_camoufox(CYBERSCORE_MATCHES_URL)
     if html is None:
         return None, None
     heads, bodies = _extract_cyberscore_live_cards_from_html(html)
+
+    extra_listings = _fetch_cyberscore_extra_listings()
+    extra_heads_total = 0
+    for extra_url, extra_html in extra_listings:
+        extra_heads, extra_bodies = _extract_cyberscore_live_cards_from_html(extra_html)
+        if extra_heads:
+            before = len(heads)
+            heads, bodies = _merge_cyberscore_live_cards(
+                heads, bodies, extra_heads, extra_bodies
+            )
+            added = len(heads) - before
+            if added > 0:
+                extra_heads_total += added
+                print(
+                    f"✅ CyberScore extra listing: +{added} live card(s) from {extra_url}"
+                )
+
     if heads:
-        print(f"✅ CyberScore source: found {len(heads)} live cards")
+        print(
+            f"✅ CyberScore source: found {len(heads)} live cards"
+            + (f" (incl. {extra_heads_total} from extra tournaments)" if extra_heads_total else "")
+        )
         _note_cyberscore_live_seen()
         GET_HEADS_LAST_FAILURE_REASON = None
         NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
@@ -17444,7 +17565,14 @@ def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[
         )
         return heads, bodies
 
-    schedule_info = _extract_nearest_cyberscore_scheduled_match_info(html)
+    schedule_candidates: List[Optional[Dict[str, Any]]] = [
+        _extract_nearest_cyberscore_scheduled_match_info(html)
+    ]
+    for _extra_url, extra_html in extra_listings:
+        schedule_candidates.append(
+            _extract_nearest_cyberscore_scheduled_match_info(extra_html)
+        )
+    schedule_info = _pick_nearest_schedule_info(schedule_candidates)
     if schedule_info:
         recent_live_empty = _cap_cyberscore_empty_schedule_after_recent_live(schedule_info)
         NEXT_SCHEDULE_MATCH_INFO = schedule_info
@@ -17458,7 +17586,7 @@ def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[
             )
         print(
             "🗓️ CyberScore source: no live cards. "
-            f"Nearest tier1/2 scheduled match: {_format_schedule_match_label(schedule_info)}. "
+            f"Nearest scheduled match: {_format_schedule_match_label(schedule_info)}. "
             f"Next recheck in {int(math.ceil(NEXT_SCHEDULE_SLEEP_SECONDS))}s"
         )
         _emit_pending_schedule_wake_audit(
@@ -17475,7 +17603,7 @@ def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[
     NEXT_SCHEDULE_MATCH_INFO = {
         "sleep_seconds": NEXT_SCHEDULE_SLEEP_SECONDS,
         "sleep_seconds_raw": NEXT_SCHEDULE_SLEEP_SECONDS,
-        "matchup": "no tier1/2 upcoming match",
+        "matchup": "no upcoming match",
         "league_title": "",
         "source": "cyberscore_no_upcoming",
     }
@@ -17489,7 +17617,7 @@ def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[
             f"Next recheck in {int(math.ceil(NEXT_SCHEDULE_SLEEP_SECONDS))}s"
         )
     print(
-        "⚠️ CyberScore source: no live cards and no tier1/2 upcoming match found. "
+        "⚠️ CyberScore source: no live cards and no upcoming match found. "
         f"Next schedule poll in {int(math.ceil(NEXT_SCHEDULE_SLEEP_SECONDS))}s"
     )
     _emit_pending_schedule_wake_audit(
@@ -24654,7 +24782,16 @@ if __name__ == "__main__":
             elif status == "series_finished":
                 # All live matches are final-map processed — fetch schedule for proper sleep
                 schedule_html = _get_cyberscore_html_via_camoufox(CYBERSCORE_MATCHES_URL)
-                schedule_info = _extract_nearest_cyberscore_scheduled_match_info(schedule_html) if schedule_html else None
+                schedule_candidates: List[Optional[Dict[str, Any]]] = []
+                if schedule_html:
+                    schedule_candidates.append(
+                        _extract_nearest_cyberscore_scheduled_match_info(schedule_html)
+                    )
+                for _extra_url, extra_schedule_html in _fetch_cyberscore_extra_listings():
+                    schedule_candidates.append(
+                        _extract_nearest_cyberscore_scheduled_match_info(extra_schedule_html)
+                    )
+                schedule_info = _pick_nearest_schedule_info(schedule_candidates)
                 if schedule_info and float(schedule_info.get("sleep_seconds", 0) or 0) > 0:
                     NEXT_SCHEDULE_SLEEP_SECONDS = float(schedule_info["sleep_seconds"])
                     NEXT_SCHEDULE_MATCH_INFO = schedule_info
