@@ -24157,9 +24157,12 @@ def _load_stats_dicts():
                         try:
                             wr_level = int(row.get("wr_level"))
                             minute = int(row.get("minute"))
-                            threshold_raw = row.get("median_target_networth_diff")
+                            # Switched 27+ comeback watcher back to avg_target_networth_diff —
+                            # the piecewise-normalized median is too aggressive past min 40
+                            # (e.g. WR60 min41 median=-18992 vs avg=-9922; WR60 min57 median=-288489 vs avg=-29912).
+                            threshold_raw = row.get("avg_target_networth_diff")
                             if threshold_raw is None:
-                                threshold_raw = row.get("avg_target_networth_diff")
+                                threshold_raw = row.get("median_target_networth_diff")
                             threshold = float(threshold_raw)
                         except (TypeError, ValueError):
                             continue
