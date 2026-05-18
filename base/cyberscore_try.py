@@ -8401,17 +8401,38 @@ CYBERSCORE_MATCHES_URL = str(
 # Дополнительные tier-X турниры, которые мы хотим обрабатывать наравне с tier1/tier2
 # (CyberScore классифицирует их ниже, но мы явно хотим брать их матчи).
 # По умолчанию: BB Streamers Battle 13 (tournament_id=46178 на cyberscore.live).
-# Список через запятую, можно переопределить через CYBERSCORE_EXTRA_MATCHES_URLS.
-_DEFAULT_CYBERSCORE_EXTRA_MATCHES_URLS = (
-    "https://cyberscore.live/en/matches/?type=liveOrUpcoming&tournament=46178"
+# CSV из числовых tournament_id, можно переопределить через CYBERSCORE_EXTRA_TOURNAMENT_IDS.
+# ВНИМАНИЕ: cyberscore-листинг НЕ фильтрует серверно по ?tournament=<id> когда страница
+# рендерится JS, поэтому мы обязательно фильтруем результаты по item.tournament_id.
+_DEFAULT_CYBERSCORE_EXTRA_TOURNAMENT_IDS = "46178"
+
+
+def _parse_extra_tournament_ids(raw_value: str) -> List[int]:
+    parsed: List[int] = []
+    for chunk in str(raw_value or "").split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            tournament_id_int = int(chunk)
+        except (TypeError, ValueError):
+            continue
+        if tournament_id_int <= 0 or tournament_id_int in parsed:
+            continue
+        parsed.append(tournament_id_int)
+    return parsed
+
+
+CYBERSCORE_EXTRA_TOURNAMENT_IDS: List[int] = _parse_extra_tournament_ids(
+    os.getenv("CYBERSCORE_EXTRA_TOURNAMENT_IDS", _DEFAULT_CYBERSCORE_EXTRA_TOURNAMENT_IDS)
 )
-CYBERSCORE_EXTRA_MATCHES_URLS: List[str] = [
-    candidate.strip()
-    for candidate in str(
-        os.getenv("CYBERSCORE_EXTRA_MATCHES_URLS", _DEFAULT_CYBERSCORE_EXTRA_MATCHES_URLS)
-    ).split(",")
-    if candidate.strip()
-]
+
+
+def _build_cyberscore_extra_tournament_url(tournament_id: int) -> str:
+    return (
+        "https://cyberscore.live/en/matches/"
+        f"?type=liveOrUpcoming&tournament={int(tournament_id)}"
+    )
 CYBERSCORE_GET_HEADS_FALLBACK = _env_flag("CYBERSCORE_GET_HEADS_FALLBACK", "0")
 CYBERSCORE_CAMOUFOX_PROXY_URL = str(os.getenv("CYBERSCORE_CAMOUFOX_PROXY_URL", "")).strip()
 CYBERSCORE_CAMOUFOX_REQUIRE_PROXY = _env_flag("CYBERSCORE_CAMOUFOX_REQUIRE_PROXY", "1")
@@ -17438,54 +17459,134 @@ def _get_cyberscore_html_via_camoufox(url: Optional[str] = None) -> Optional[str
     return None
 
 
-def _merge_cyberscore_live_cards(
-    primary_heads: List[Any],
-    primary_bodies: List[Any],
-    extra_heads: List[Any],
-    extra_bodies: List[Any],
+def _card_dedup_key(card: Any) -> str:
+    if not getattr(card, "get", None):
+        return ""
+    match_id = str(card.get("data-cyberscore-match-id") or "").strip()
+    if match_id:
+        return f"id:{match_id}"
+    href = str(card.get("data-cyberscore-href") or card.get("href") or "").strip()
+    return f"href:{href}" if href else ""
+
+
+def _filter_cards_by_tournament_id(
+    heads: List[Any],
+    bodies: List[Any],
+    html: str,
+    allowed_tournament_id: int,
 ) -> Tuple[List[Any], List[Any]]:
-    """Merge live cards from an extra listing into the primary list, deduped by href."""
-    seen_keys: set = set()
+    """Return only cards whose CyberScore item.tournament_id matches the allowed id.
 
-    def _card_key(card: Any) -> str:
-        if not getattr(card, "get", None):
-            return ""
-        match_id = str(card.get("data-cyberscore-match-id") or "").strip()
-        if match_id:
-            return f"id:{match_id}"
-        href = str(card.get("data-cyberscore-href") or card.get("href") or "").strip()
-        return f"href:{href}" if href else ""
-
-    merged_heads: List[Any] = []
-    merged_bodies: List[Any] = []
-    for head, body in zip(primary_heads or [], primary_bodies or []):
-        key = _card_key(head) or _card_key(body)
-        if key:
-            seen_keys.add(key)
-        merged_heads.append(head)
-        merged_bodies.append(body)
-    for head, body in zip(extra_heads or [], extra_bodies or []):
-        key = _card_key(head) or _card_key(body)
-        if key and key in seen_keys:
+    CyberScore renders the listing fully on the client, so the URL filter
+    `?tournament=<id>` does not strip out other tournaments. We must filter
+    client-side using the parsed item payload.
+    """
+    if not heads:
+        return [], []
+    filtered_heads: List[Any] = []
+    filtered_bodies: List[Any] = []
+    for head, body in zip(heads, bodies):
+        match_id = ""
+        if getattr(head, "get", None):
+            match_id = str(head.get("data-cyberscore-match-id") or "").strip()
+        if not match_id and getattr(body, "get", None):
+            match_id = str(body.get("data-cyberscore-match-id") or "").strip()
+        if not match_id:
             continue
-        if key:
-            seen_keys.add(key)
-        merged_heads.append(head)
-        merged_bodies.append(body)
-    return merged_heads, merged_bodies
+        item = _extract_cyberscore_match_item_from_html(html, match_id=match_id)
+        if not isinstance(item, dict):
+            continue
+        try:
+            item_tournament_id = int(item.get("tournament_id") or 0)
+        except (TypeError, ValueError):
+            item_tournament_id = 0
+        if item_tournament_id != int(allowed_tournament_id):
+            continue
+        filtered_heads.append(head)
+        filtered_bodies.append(body)
+    return filtered_heads, filtered_bodies
+
+
+def _filter_schedule_info_by_tournament_id(
+    html: str,
+    tournament_id: int,
+    *,
+    now_utc: Optional[datetime] = None,
+) -> Optional[Dict[str, Any]]:
+    """Find the nearest scheduled match for `tournament_id` only.
+
+    We reuse `_extract_nearest_cyberscore_scheduled_match_info` semantics but
+    enforce client-side filtering by `item.tournament_id`.
+    """
+    current_utc = (
+        now_utc.astimezone(timezone.utc) if now_utc is not None else datetime.now(timezone.utc)
+    )
+    soup = BeautifulSoup(html or "", "lxml")
+    best_payload: Optional[Dict[str, Any]] = None
+    best_raw_sleep: Optional[float] = None
+
+    for card in soup.select("a.matches-item[href*='/matches/']"):
+        classes = {str(item).strip().lower() for item in (card.get("class") or [])}
+        text = card.get_text(" ", strip=True)
+        if "online" in classes or "LIVE" in text.upper():
+            continue
+        href = _absolute_cyberscore_url(str(card.get("href") or ""))
+        match_id = _extract_cyberscore_match_id_from_href(href)
+        item = _extract_cyberscore_match_item_from_html(html, match_id=match_id or None)
+        if not isinstance(item, dict):
+            continue
+        try:
+            item_tournament_id = int(item.get("tournament_id") or 0)
+        except (TypeError, ValueError):
+            item_tournament_id = 0
+        if item_tournament_id != int(tournament_id):
+            continue
+        scheduled_at = (
+            _extract_cyberscore_item_scheduled_at(item, now_utc=current_utc)
+            or _extract_cyberscore_card_scheduled_at(card, now_utc=current_utc)
+        )
+        if scheduled_at is None or scheduled_at <= current_utc:
+            continue
+        raw_sleep = max(0.0, (scheduled_at - current_utc).total_seconds())
+        if best_raw_sleep is not None and raw_sleep >= best_raw_sleep:
+            continue
+        team_names = _extract_cyberscore_team_names_from_item(item) or _extract_cyberscore_team_names_from_card(card)
+        matchup = " vs ".join(team_names[:2]) if len(team_names) >= 2 else "unknown"
+        league_title = _extract_cyberscore_league_title_from_item(item)
+        sleep_seconds = _cap_cyberscore_schedule_sleep_seconds(
+            _compute_schedule_recheck_sleep_seconds(raw_sleep),
+            now_utc=current_utc,
+        )
+        best_raw_sleep = raw_sleep
+        best_payload = {
+            "scheduled_at_utc": scheduled_at,
+            "scheduled_at_msk": scheduled_at.astimezone(MOSCOW_TZ),
+            "sleep_seconds": sleep_seconds,
+            "sleep_seconds_raw": raw_sleep,
+            "matchup": matchup,
+            "league_title": league_title,
+            "href": href,
+            "source": f"cyberscore_tournament_{int(tournament_id)}",
+        }
+    return best_payload
 
 
 def _fetch_cyberscore_extra_listings(
-    extra_urls: Optional[List[str]] = None,
-) -> List[Tuple[str, str]]:
-    """Fetch HTML for each extra tournament listing URL. Returns list of (url, html)."""
-    urls = [
-        str(candidate or "").strip()
-        for candidate in (extra_urls if extra_urls is not None else CYBERSCORE_EXTRA_MATCHES_URLS)
-        if str(candidate or "").strip()
-    ]
-    results: List[Tuple[str, str]] = []
-    for extra_url in urls:
+    tournament_ids: Optional[List[int]] = None,
+) -> List[Tuple[int, str, str]]:
+    """Fetch HTML for each extra tournament. Returns list of (tournament_id, url, html)."""
+    ids = list(
+        tournament_ids if tournament_ids is not None else CYBERSCORE_EXTRA_TOURNAMENT_IDS
+    )
+    results: List[Tuple[int, str, str]] = []
+    for tournament_id in ids:
+        try:
+            tournament_id_int = int(tournament_id)
+        except (TypeError, ValueError):
+            continue
+        if tournament_id_int <= 0:
+            continue
+        extra_url = _build_cyberscore_extra_tournament_url(tournament_id_int)
         try:
             extra_html = _get_cyberscore_html_via_camoufox(extra_url)
         except Exception as exc:  # pragma: no cover - defensive
@@ -17499,7 +17600,7 @@ def _fetch_cyberscore_extra_listings(
             continue
         if not extra_html:
             continue
-        results.append((extra_url, extra_html))
+        results.append((tournament_id_int, extra_url, extra_html))
     return results
 
 
@@ -17532,26 +17633,42 @@ def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[
         return None, None
     heads, bodies = _extract_cyberscore_live_cards_from_html(html)
 
+    seen_keys: set = {key for key in (_card_dedup_key(head) for head in heads) if key}
+
     extra_listings = _fetch_cyberscore_extra_listings()
     extra_heads_total = 0
-    for extra_url, extra_html in extra_listings:
-        extra_heads, extra_bodies = _extract_cyberscore_live_cards_from_html(extra_html)
-        if extra_heads:
-            before = len(heads)
-            heads, bodies = _merge_cyberscore_live_cards(
-                heads, bodies, extra_heads, extra_bodies
+    for tournament_id_int, extra_url, extra_html in extra_listings:
+        raw_extra_heads, raw_extra_bodies = _extract_cyberscore_live_cards_from_html(extra_html)
+        extra_heads, extra_bodies = _filter_cards_by_tournament_id(
+            raw_extra_heads, raw_extra_bodies, extra_html, tournament_id_int
+        )
+        if not extra_heads:
+            continue
+        added_for_tournament = 0
+        for head, body in zip(extra_heads, extra_bodies):
+            key = _card_dedup_key(head) or _card_dedup_key(body)
+            if key and key in seen_keys:
+                continue
+            if key:
+                seen_keys.add(key)
+            heads.append(head)
+            bodies.append(body)
+            added_for_tournament += 1
+        if added_for_tournament > 0:
+            extra_heads_total += added_for_tournament
+            print(
+                f"✅ CyberScore extra listing: +{added_for_tournament} live card(s) "
+                f"for tournament {tournament_id_int} from {extra_url}"
             )
-            added = len(heads) - before
-            if added > 0:
-                extra_heads_total += added
-                print(
-                    f"✅ CyberScore extra listing: +{added} live card(s) from {extra_url}"
-                )
 
     if heads:
         print(
             f"✅ CyberScore source: found {len(heads)} live cards"
-            + (f" (incl. {extra_heads_total} from extra tournaments)" if extra_heads_total else "")
+            + (
+                f" (incl. {extra_heads_total} from extra tournaments)"
+                if extra_heads_total
+                else ""
+            )
         )
         _note_cyberscore_live_seen()
         GET_HEADS_LAST_FAILURE_REASON = None
@@ -17568,9 +17685,9 @@ def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[
     schedule_candidates: List[Optional[Dict[str, Any]]] = [
         _extract_nearest_cyberscore_scheduled_match_info(html)
     ]
-    for _extra_url, extra_html in extra_listings:
+    for tournament_id_int, _extra_url, extra_html in extra_listings:
         schedule_candidates.append(
-            _extract_nearest_cyberscore_scheduled_match_info(extra_html)
+            _filter_schedule_info_by_tournament_id(extra_html, tournament_id_int)
         )
     schedule_info = _pick_nearest_schedule_info(schedule_candidates)
     if schedule_info:
@@ -24787,9 +24904,11 @@ if __name__ == "__main__":
                     schedule_candidates.append(
                         _extract_nearest_cyberscore_scheduled_match_info(schedule_html)
                     )
-                for _extra_url, extra_schedule_html in _fetch_cyberscore_extra_listings():
+                for tournament_id_int, _extra_url, extra_schedule_html in _fetch_cyberscore_extra_listings():
                     schedule_candidates.append(
-                        _extract_nearest_cyberscore_scheduled_match_info(extra_schedule_html)
+                        _filter_schedule_info_by_tournament_id(
+                            extra_schedule_html, tournament_id_int
+                        )
                     )
                 schedule_info = _pick_nearest_schedule_info(schedule_candidates)
                 if schedule_info and float(schedule_info.get("sleep_seconds", 0) or 0) > 0:
