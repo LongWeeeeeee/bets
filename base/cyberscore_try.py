@@ -24060,6 +24060,55 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     f"counterpick_1vs1_kills_pm={tempo_over_fallback['indices']['counterpick_1vs1_kills_pm']}, "
                     f"counterpick_1vs1_deaths_pm={tempo_over_fallback['indices']['counterpick_1vs1_deaths_pm']}"
                 )
+                # Print STAR metrics snapshot for Tempo dispatch (mirrors star-signal logging).
+                # Tempo path bypasses STAR gate, but we still want the per-block metrics in the log.
+                tempo_early_output_log = _decorate_star_block_for_display(
+                    raw_block=s.get('early_output', {}),
+                    section="early_output",
+                    target_wr=star_target_wr,
+                )
+                tempo_mid_output_log = _decorate_star_block_for_display(
+                    raw_block=s.get('mid_output', {}),
+                    section="mid_output",
+                    target_wr=star_target_wr,
+                )
+                tempo_all_output_log = _decorate_star_block_for_display(
+                    raw_block=s.get('all_output', {}),
+                    section="all_output",
+                    target_wr=star_target_wr,
+                )
+                tempo_metric_list = [
+                    ('counterpick_1vs1', 'Counterpick_1vs1'),
+                    ('counterpick_1vs2', 'Counterpick_1vs2'),
+                    ('solo', 'Solo'),
+                    ('synergy_duo', 'Synergy_duo'),
+                    ('synergy_trio', 'Synergy_trio'),
+                ]
+                tempo_all_metric_list = tempo_metric_list + [
+                    ('dota2protracker_cp1vs1', 'Dota2ProTracker_cp1vs1'),
+                ]
+
+                def _tempo_format_metrics(title: str, data: dict, metrics: list) -> str:
+                    lines = [title]
+                    for key, label in metrics:
+                        value = (data or {}).get(key)
+                        if key == "dota2protracker_cp1vs1":
+                            value = _format_dota2protracker_output_value(value)
+                        lines.append(f"{label}: {value}")
+                    return "\n".join(lines) + "\n"
+
+                tempo_star_metrics_snapshot = _build_star_metrics_snapshot(
+                    early_block_log=_tempo_format_metrics(
+                        "Early 20-28:", tempo_early_output_log, tempo_metric_list
+                    ),
+                    mid_block_log=_tempo_format_metrics(
+                        "Late: (28-60 min):", tempo_mid_output_log, tempo_metric_list
+                    ),
+                    all_block_log=_tempo_format_metrics(
+                        "All:", tempo_all_output_log, tempo_all_metric_list
+                    ),
+                )
+                _print_star_metrics_snapshot(tempo_star_metrics_snapshot, label="tempo")
                 if not _acquire_signal_send_slot(check_uniq_url):
                     print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
                     return return_status
