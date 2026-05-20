@@ -4693,17 +4693,24 @@ def _stake_multiplier_for_signal(
     opposite_rating: Optional[float] = None,
     target_elo_wr: Optional[float] = None,
     force_half_due_to_early_no_valid_late: bool = False,
+    selected_all_sign: Optional[int] = None,
+    has_selected_all_star: bool = False,
+    all_star_hit_count: Optional[int] = None,
+    early_star_hit_count: Optional[int] = None,
 ) -> float:
     if target_side not in {"radiant", "dire"}:
         return 1
 
     early_side = _target_side_from_sign(selected_early_sign)
     late_side = _target_side_from_sign(selected_late_sign)
+    all_side = _target_side_from_sign(selected_all_sign)
     dispatch_side = (
         late_side
         if late_side in {"radiant", "dire"}
         else early_side
         if early_side in {"radiant", "dire"}
+        else all_side
+        if all_side in {"radiant", "dire"}
         else None
     )
     if dispatch_side not in {"radiant", "dire"}:
@@ -4713,14 +4720,33 @@ def _stake_multiplier_for_signal(
     if force_half_due_to_early_no_valid_late:
         return 0.5
 
-    # Rule: if only 1 valid block total with 1 star-hit → 0.5
-    # This covers: all-only with 1 hit, early-only with 1 hit, late-only with 1 hit
+    # Count total valid blocks and total hit metrics across all valid blocks
     valid_block_count = sum([
         bool(has_selected_early_star),
         bool(has_selected_late_star),
+        bool(has_selected_all_star),
     ])
-    if valid_block_count == 0:
-        # Only All-block (no early, no late) → always 0.5
+
+    # Rule: if only 1 valid block total with only 1 star-hit metric → 0.5
+    if valid_block_count == 1:
+        try:
+            early_hits = int(early_star_hit_count or 0) if has_selected_early_star else 0
+        except (TypeError, ValueError):
+            early_hits = 0
+        try:
+            late_hits = int(late_star_hit_count or 0) if has_selected_late_star else 0
+        except (TypeError, ValueError):
+            late_hits = 0
+        try:
+            all_hits = int(all_star_hit_count or 0) if has_selected_all_star else 0
+        except (TypeError, ValueError):
+            all_hits = 0
+        total_hits = early_hits + late_hits + all_hits
+        if total_hits <= 1:
+            return 0.5
+
+    # All-only (no early, no late) → always 0.5 regardless of hit count
+    if not has_selected_early_star and not has_selected_late_star:
         return 0.5
 
     try:
@@ -4774,6 +4800,8 @@ def _build_stake_multiplier_context(
     all_wr_pct: Optional[float] = None,
     force_half_due_to_early_no_valid_late: bool = False,
     special_header_mode: str = "",
+    all_star_hit_count: Optional[int] = None,
+    early_star_hit_count: Optional[int] = None,
 ) -> Dict[str, Any]:
     opposite_side = "dire" if target_side == "radiant" else "radiant"
     return {
@@ -4791,6 +4819,8 @@ def _build_stake_multiplier_context(
         "late_wr_pct": float(late_wr_pct) if late_wr_pct is not None else None,
         "all_wr_pct": float(all_wr_pct) if all_wr_pct is not None else None,
         "late_star_hit_count": int(late_star_hit_count) if late_star_hit_count is not None else None,
+        "all_star_hit_count": int(all_star_hit_count) if all_star_hit_count is not None else None,
+        "early_star_hit_count": int(early_star_hit_count) if early_star_hit_count is not None else None,
         "force_half_due_to_early_no_valid_late": bool(force_half_due_to_early_no_valid_late),
         "special_header_mode": str(special_header_mode or ""),
         "target_rating": _team_elo_base_rating_for_side(team_elo_meta, target_side),
@@ -5307,6 +5337,10 @@ def _refresh_stake_multiplier_message(
         force_half_due_to_early_no_valid_late=bool(
             stake_multiplier_context.get("force_half_due_to_early_no_valid_late")
         ),
+        selected_all_sign=stake_multiplier_context.get("selected_all_sign"),
+        has_selected_all_star=bool(stake_multiplier_context.get("has_selected_all_star")),
+        all_star_hit_count=stake_multiplier_context.get("all_star_hit_count"),
+        early_star_hit_count=stake_multiplier_context.get("early_star_hit_count"),
     )
 
     new_header = _format_signal_header(
@@ -21850,6 +21884,16 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     if early_only_kills_mode
                     else ("early_kills" if tier1_early_kills_mode else "")
                 ),
+                all_star_hit_count=(
+                    len(selected_all_diag.get("hit_metrics") or [])
+                    if isinstance(selected_all_diag, dict) and has_selected_all_star
+                    else None
+                ),
+                early_star_hit_count=(
+                    len(selected_early_diag.get("hit_metrics") or [])
+                    if isinstance(selected_early_diag, dict) and has_selected_early_star
+                    else None
+                ),
             )
             stake_multiplier = _stake_multiplier_for_signal(
                 team_elo_meta=team_elo_meta,
@@ -21869,6 +21913,18 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 ),
                 target_elo_wr=_team_elo_wr_for_side(team_elo_meta, dispatch_message_side),
                 force_half_due_to_early_no_valid_late=force_half_due_to_early_no_valid_late,
+                selected_all_sign=selected_all_sign,
+                has_selected_all_star=has_selected_all_star,
+                all_star_hit_count=(
+                    len(selected_all_diag.get("hit_metrics") or [])
+                    if isinstance(selected_all_diag, dict) and has_selected_all_star
+                    else None
+                ),
+                early_star_hit_count=(
+                    len(selected_early_diag.get("hit_metrics") or [])
+                    if isinstance(selected_early_diag, dict) and has_selected_early_star
+                    else None
+                ),
             )
             live_state_block = _format_live_message_state_block(
                 game_time_seconds=game_time,
