@@ -3334,84 +3334,100 @@ def test_build_recent_match_summaries_text_normalizes_map_suffix_in_urls(tmp_pat
     assert "dltv.org/matches/425878/1win-team-vs-enjoy-boys-blast-slam-vii-europe-open-qualifier-1" in payload
 
 
-def _tail_entry(url: str, *lines: str, line_no: int = 1) -> Dict[str, Any]:
+def _make_queued_payload(
+    *,
+    message: str = "СТАВКА НА Foo Team x1\nFoo Team VS Bar Team\n0-0",
+    reason: str = "late_star_pub_comeback_table_monitor",
+    last_game_time: float = 1500.0,
+    target_game_time: float = 1620.0,
+    target_side: str = "radiant",
+    target_networth_diff: float = -2400.0,
+    queued_at: float = 1_700_000_000.0,
+    last_progress_at: float = 1_700_000_010.0,
+    dispatch_status_label: str = "late_pre27_dominance_wait",
+) -> Dict[str, Any]:
     return {
-        "url": url,
-        "lines": list(lines),
-        "line_no": line_no,
+        "message": message,
+        "reason": reason,
+        "last_game_time": float(last_game_time),
+        "target_game_time": float(target_game_time),
+        "queued_at": float(queued_at),
+        "last_progress_at": float(last_progress_at),
+        "dispatch_status_label": dispatch_status_label,
+        "add_url_details": {
+            "dispatch_status_label": dispatch_status_label,
+            "networth_target_side": target_side,
+            "target_networth_diff": float(target_networth_diff),
+        },
     }
 
 
-def test_send_admin_log_tail_sends_one_message_per_match(monkeypatch) -> None:
-    entries = [
-        _tail_entry(
-            "dltv.org/matches/1/older-match.0",
-            "   Статус: live",
-            "   URL: dltv.org/matches/1/older-match",
-            line_no=10,
+def _install_monitored_matches(monkeypatch, snapshot: Dict[str, Dict[str, Any]]) -> None:
+    fresh = {key: dict(payload) for key, payload in snapshot.items()}
+    monkeypatch.setattr(runtime, "monitored_matches", fresh, raising=False)
+
+
+def test_send_admin_log_tail_sends_one_message_per_queued_bet(monkeypatch) -> None:
+    queued = {
+        "dltv.org/matches/1/older-match.0": _make_queued_payload(
+            message="СТАВКА НА Foo x1\nFoo VS Bar",
+            queued_at=1.0,
+            last_progress_at=1.0,
         ),
-        _tail_entry(
-            "dltv.org/matches/2/newer-match.0",
-            "   Статус: live",
-            "   URL: dltv.org/matches/2/newer-match",
-            line_no=20,
+        "dltv.org/matches/2/newer-match.0": _make_queued_payload(
+            message="СТАВКА НА Baz x0.5\nBaz VS Qux",
+            queued_at=2.0,
+            last_progress_at=2.0,
         ),
-    ]
+    }
     sent_messages: List[Dict[str, Any]] = []
-    requested_limits: List[int] = []
     saved_seen_urls: List[List[str]] = []
 
-    def _fake_build_recent_match_summaries_entries(limit=10, scan_lines=12000):
-        requested_limits.append(int(limit))
-        return entries
-
-    def _fake_send_message(message, **kwargs):
-        sent_messages.append({"message": str(message), "kwargs": dict(kwargs)})
-
-    monkeypatch.setattr(runtime, "_build_recent_match_summaries_entries", _fake_build_recent_match_summaries_entries)
+    _install_monitored_matches(monkeypatch, queued)
     monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
-    monkeypatch.setattr(runtime, "send_message", _fake_send_message)
     monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
     monkeypatch.setattr(
         runtime,
         "_save_admin_tail_log_seen_urls",
         lambda urls, **_kwargs: saved_seen_urls.append(list(urls)),
     )
+    monkeypatch.setattr(
+        runtime,
+        "send_message",
+        lambda message, **kwargs: sent_messages.append({"message": str(message), "kwargs": dict(kwargs)}),
+    )
 
     runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
-    assert requested_limits == [runtime._ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT]
     assert len(sent_messages) == 2
-    assert "dltv.org/matches/2/newer-match" in sent_messages[0]["message"]
-    assert "dltv.org/matches/1/older-match" in sent_messages[1]["message"]
+    assert "Baz VS Qux" in sent_messages[0]["message"]
+    assert "Foo VS Bar" in sent_messages[1]["message"]
     assert sent_messages[0]["kwargs"]["admin_only"] is True
     assert sent_messages[0]["kwargs"]["mirror_to_vk"] is False
-    assert saved_seen_urls == [["dltv.org/matches/2/newer-match.0", "dltv.org/matches/1/older-match.0"]]
+    # Each queued bet message is augmented with a status footer.
+    assert "Reason:" in sent_messages[0]["message"]
+    assert "Status:" in sent_messages[0]["message"]
+    assert saved_seen_urls == [[
+        "dltv.org/matches/2/newer-match.0",
+        "dltv.org/matches/1/older-match.0",
+    ]]
 
 
-def test_send_admin_log_tail_skips_seen_matches_and_only_sends_new(monkeypatch) -> None:
-    entries = [
-        _tail_entry(
-            "dltv.org/matches/1/already-seen.0",
-            "   Статус: live",
-            "   URL: dltv.org/matches/1/already-seen",
-            line_no=10,
+def test_send_admin_log_tail_skips_seen_queued_bets(monkeypatch) -> None:
+    queued = {
+        "dltv.org/matches/1/already-seen.0": _make_queued_payload(
+            message="СТАВКА НА AlreadySeen x1\nA VS B",
+            queued_at=1.0,
         ),
-        _tail_entry(
-            "dltv.org/matches/2/new-match.0",
-            "   Статус: live",
-            "   URL: dltv.org/matches/2/new-match",
-            line_no=20,
+        "dltv.org/matches/2/new-match.0": _make_queued_payload(
+            message="СТАВКА НА FreshOne x1\nF VS G",
+            queued_at=2.0,
         ),
-    ]
+    }
     sent_messages: List[Dict[str, Any]] = []
     saved_seen_urls: List[List[str]] = []
 
-    monkeypatch.setattr(
-        runtime,
-        "_build_recent_match_summaries_entries",
-        lambda **_kwargs: entries,
-    )
+    _install_monitored_matches(monkeypatch, queued)
     monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
     monkeypatch.setattr(
         runtime,
@@ -3432,27 +3448,20 @@ def test_send_admin_log_tail_skips_seen_matches_and_only_sends_new(monkeypatch) 
     runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
     assert len(sent_messages) == 1
-    assert "dltv.org/matches/2/new-match" in sent_messages[0]["message"]
-    assert "dltv.org/matches/1/already-seen" not in sent_messages[0]["message"]
+    assert "F VS G" in sent_messages[0]["message"]
+    assert "A VS B" not in sent_messages[0]["message"]
     assert saved_seen_urls == [["dltv.org/matches/1/already-seen.0", "dltv.org/matches/2/new-match.0"]]
 
 
-def test_send_admin_log_tail_reports_no_new_matches(monkeypatch) -> None:
-    entries = [
-        _tail_entry(
-            "dltv.org/matches/1/already-seen.0",
-            "   Статус: live",
-            "   URL: dltv.org/matches/1/already-seen",
-            line_no=10,
-        )
-    ]
+def test_send_admin_log_tail_reports_no_new_queued_bets(monkeypatch) -> None:
+    queued = {
+        "dltv.org/matches/1/already-seen.0": _make_queued_payload(
+            message="СТАВКА НА AlreadySeen x1\nA VS B",
+        ),
+    }
     sent_messages: List[Dict[str, Any]] = []
 
-    monkeypatch.setattr(
-        runtime,
-        "_build_recent_match_summaries_entries",
-        lambda **_kwargs: entries,
-    )
+    _install_monitored_matches(monkeypatch, queued)
     monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
     monkeypatch.setattr(
         runtime,
@@ -3480,19 +3489,19 @@ def test_send_admin_log_tail_reports_no_new_matches(monkeypatch) -> None:
     ]
 
 
-def test_send_admin_log_tail_prefers_send_limit_freshest_unseen_matches(monkeypatch) -> None:
-    entries = [
-        _tail_entry(f"dltv.org/matches/{idx}/match-{idx}.0", "   Статус: live", f"   URL: dltv.org/matches/{idx}/match-{idx}", line_no=idx)
+def test_send_admin_log_tail_truncates_to_send_limit(monkeypatch) -> None:
+    queued = {
+        f"dltv.org/matches/{idx}/match-{idx}.0": _make_queued_payload(
+            message=f"СТАВКА НА Team{idx}\nTeam{idx} VS Other{idx}",
+            queued_at=float(idx),
+            last_progress_at=float(idx),
+        )
         for idx in range(1, 6)
-    ]
+    }
     sent_messages: List[Dict[str, Any]] = []
     saved_seen_urls: List[List[str]] = []
 
-    monkeypatch.setattr(
-        runtime,
-        "_build_recent_match_summaries_entries",
-        lambda **_kwargs: entries,
-    )
+    _install_monitored_matches(monkeypatch, queued)
     monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
     monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
     monkeypatch.setattr(
@@ -3509,42 +3518,33 @@ def test_send_admin_log_tail_prefers_send_limit_freshest_unseen_matches(monkeypa
     runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
     assert len(sent_messages) == runtime._ADMIN_TAIL_LOG_SEND_LIMIT
-    assert "dltv.org/matches/5/match-5" in sent_messages[0]["message"]
-    assert "dltv.org/matches/4/match-4" in sent_messages[1]["message"]
-    assert "dltv.org/matches/3/match-3" in sent_messages[2]["message"]
-    assert "dltv.org/matches/2/match-2" in sent_messages[3]["message"]
+    # newest first
+    assert "Team5" in sent_messages[0]["message"]
+    assert "Team4" in sent_messages[1]["message"]
+    assert "Team3" in sent_messages[2]["message"]
+    assert "Team2" in sent_messages[3]["message"]
 
 
-def test_send_admin_log_tail_expands_window_until_three_unseen_found(monkeypatch) -> None:
-    entries_small = [
-        _tail_entry("dltv.org/matches/10/seen-a.0", "   Статус: live", "   URL: dltv.org/matches/10/seen-a", line_no=10),
-        _tail_entry("dltv.org/matches/11/seen-b.0", "   Статус: live", "   URL: dltv.org/matches/11/seen-b", line_no=11),
-        _tail_entry("dltv.org/matches/12/new-c.0", "   Статус: live", "   URL: dltv.org/matches/12/new-c", line_no=12),
-    ]
-    entries_large = [
-        _tail_entry("dltv.org/matches/8/new-a.0", "   Статус: live", "   URL: dltv.org/matches/8/new-a", line_no=8),
-        _tail_entry("dltv.org/matches/9/new-b.0", "   Статус: live", "   URL: dltv.org/matches/9/new-b", line_no=9),
-        _tail_entry("dltv.org/matches/10/seen-a.0", "   Статус: live", "   URL: dltv.org/matches/10/seen-a", line_no=10),
-        _tail_entry("dltv.org/matches/11/seen-b.0", "   Статус: live", "   URL: dltv.org/matches/11/seen-b", line_no=11),
-        _tail_entry("dltv.org/matches/12/new-c.0", "   Статус: live", "   URL: dltv.org/matches/12/new-c", line_no=12),
-    ]
-    requested_limits: List[int] = []
+def test_send_admin_log_tail_filters_by_live_listing(monkeypatch) -> None:
+    queued = {
+        "dltv.org/matches/100/live-now.0": _make_queued_payload(
+            message="СТАВКА НА Live100\nLive100 VS Foe",
+        ),
+        "dltv.org/matches/200/already-finished.0": _make_queued_payload(
+            message="СТАВКА НА Done200\nDone200 VS Foe",
+        ),
+    }
     sent_messages: List[Dict[str, Any]] = []
     saved_seen_urls: List[List[str]] = []
 
-    def _fake_build_recent_match_summaries_entries(limit=10, scan_lines=12000):
-        requested_limits.append(int(limit))
-        if int(limit) <= runtime._ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT:
-            return entries_small
-        return entries_large
-
-    monkeypatch.setattr(runtime, "_build_recent_match_summaries_entries", _fake_build_recent_match_summaries_entries)
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
+    _install_monitored_matches(monkeypatch, queued)
+    # Live listing only contains match 100 → match 200 must be filtered out.
     monkeypatch.setattr(
         runtime,
-        "_load_admin_tail_log_seen_urls",
-        lambda **_kwargs: ["dltv.org/matches/10/seen-a.0", "dltv.org/matches/11/seen-b.0"],
+        "_admin_tail_current_live_map_urls",
+        lambda: {"dltv.org/matches/100/anything.0"},
     )
+    monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
     monkeypatch.setattr(
         runtime,
         "_save_admin_tail_log_seen_urls",
@@ -3558,75 +3558,10 @@ def test_send_admin_log_tail_expands_window_until_three_unseen_found(monkeypatch
 
     runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
-    assert requested_limits[:2] == [runtime._ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT, runtime._ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT * 2]
-    assert len(sent_messages) == 3
-    assert "dltv.org/matches/12/new-c" in sent_messages[0]["message"]
-    assert "dltv.org/matches/9/new-b" in sent_messages[1]["message"]
-    assert "dltv.org/matches/8/new-a" in sent_messages[2]["message"]
-    assert saved_seen_urls == [[
-        "dltv.org/matches/10/seen-a.0",
-        "dltv.org/matches/11/seen-b.0",
-        "dltv.org/matches/12/new-c.0",
-        "dltv.org/matches/9/new-b.0",
-        "dltv.org/matches/8/new-a.0",
-    ]]
-
-
-def test_send_admin_log_tail_keeps_distinct_series_maps_unseen(monkeypatch) -> None:
-    entries = [
-        _tail_entry(
-            "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.0",
-            "   Статус: live",
-            "   URL: dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series",
-            "   Score: 1 : 0",
-            line_no=10,
-        ),
-        _tail_entry(
-            "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.1",
-            "   Статус: live",
-            "   URL: dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series",
-            "   Score: 1 : 1",
-            line_no=20,
-        ),
-        _tail_entry(
-            "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.2",
-            "   Статус: live",
-            "   URL: dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series",
-            "   Score: 2 : 1",
-            line_no=30,
-        ),
-    ]
-    sent_messages: List[Dict[str, Any]] = []
-    saved_seen_urls: List[List[str]] = []
-
-    monkeypatch.setattr(runtime, "_build_recent_match_summaries_entries", lambda **_kwargs: entries)
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
-    monkeypatch.setattr(
-        runtime,
-        "_load_admin_tail_log_seen_urls",
-        lambda **_kwargs: ["dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.0"],
-    )
-    monkeypatch.setattr(
-        runtime,
-        "_save_admin_tail_log_seen_urls",
-        lambda urls, **_kwargs: saved_seen_urls.append(list(urls)),
-    )
-    monkeypatch.setattr(
-        runtime,
-        "send_message",
-        lambda message, **kwargs: sent_messages.append({"message": str(message), "kwargs": dict(kwargs)}),
-    )
-
-    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
-
-    assert len(sent_messages) == 2
-    assert "Score: 2 : 1" in sent_messages[0]["message"]
-    assert "Score: 1 : 1" in sent_messages[1]["message"]
-    assert saved_seen_urls == [[
-        "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.0",
-        "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.2",
-        "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.1",
-    ]]
+    assert len(sent_messages) == 1
+    assert "Live100" in sent_messages[0]["message"]
+    assert "Done200" not in sent_messages[0]["message"]
+    assert saved_seen_urls == [["dltv.org/matches/100/live-now.0"]]
 
 
 def test_load_telegram_subscribers_state_merges_primary_and_legacy(tmp_path, monkeypatch) -> None:

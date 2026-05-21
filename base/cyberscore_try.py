@@ -10407,19 +10407,98 @@ def _admin_tail_url_match_id(url: str) -> str:
     return match.group(1) if match else ""
 
 
+def _admin_tail_format_queued_bet_message(payload: Dict[str, Any]) -> str:
+    """Format a delayed-queue payload into the same text used for Telegram delivery,
+    plus a short status footer (verdict/threshold/last game time)."""
+    if not isinstance(payload, dict):
+        return ""
+
+    raw_message = str(payload.get("message") or "").strip()
+
+    footer_lines: List[str] = []
+    delay_reason = str(payload.get("reason") or payload.get("delay_reason") or "").strip()
+    if delay_reason:
+        footer_lines.append(f"⏳ Reason: {delay_reason}")
+
+    add_url_details_payload = payload.get("add_url_details")
+    add_url_details = add_url_details_payload if isinstance(add_url_details_payload, dict) else {}
+    dispatch_status = str(
+        add_url_details.get("dispatch_status_label")
+        or payload.get("dispatch_status_label")
+        or ""
+    ).strip()
+    if dispatch_status:
+        footer_lines.append(f"📍 Status: {dispatch_status}")
+
+    target_side = str(
+        add_url_details.get("networth_target_side")
+        or add_url_details.get("target_side")
+        or payload.get("networth_target_side")
+        or ""
+    ).strip()
+    target_diff_raw = (
+        add_url_details.get("target_networth_diff")
+        if isinstance(add_url_details, dict)
+        else None
+    )
+    if target_diff_raw is None:
+        target_diff_raw = payload.get("target_networth_diff")
+    try:
+        target_diff_value = float(target_diff_raw) if target_diff_raw is not None else None
+    except (TypeError, ValueError):
+        target_diff_value = None
+    if target_side or target_diff_value is not None:
+        parts: List[str] = []
+        if target_side:
+            parts.append(f"side={target_side}")
+        if target_diff_value is not None:
+            parts.append(f"diff={target_diff_value:+.0f}")
+        if parts:
+            footer_lines.append("🎯 Target: " + ", ".join(parts))
+
+    try:
+        target_game_time = float(payload.get("target_game_time")) if payload.get("target_game_time") is not None else None
+    except (TypeError, ValueError):
+        target_game_time = None
+    try:
+        last_game_time = float(payload.get("last_game_time")) if payload.get("last_game_time") is not None else None
+    except (TypeError, ValueError):
+        last_game_time = None
+    timing_parts: List[str] = []
+    if last_game_time is not None:
+        last_minutes = int(last_game_time // 60)
+        last_seconds = int(last_game_time % 60)
+        timing_parts.append(f"last={last_minutes:02d}:{last_seconds:02d}")
+    if target_game_time is not None:
+        target_minutes = int(target_game_time // 60)
+        target_seconds = int(target_game_time % 60)
+        timing_parts.append(f"target={target_minutes:02d}:{target_seconds:02d}")
+    if timing_parts:
+        footer_lines.append("⏱️ Game time: " + ", ".join(timing_parts))
+
+    footer = "\n".join(footer_lines).strip()
+    if raw_message and footer:
+        return f"{raw_message}\n\n{footer}"
+    if raw_message:
+        return raw_message
+    return footer
+
+
 def _collect_admin_tail_unseen_messages(
     *,
     mode_label: str,
     line_count: int,
 ) -> Tuple[List[str], List[Tuple[str, str]], List[int]]:
-    # tail_log shows the currently-live (in-progress) bets, not finished ones.
-    # An entry qualifies when:
-    #   - the live cyberscore listing still contains the match url, OR
-    #   - the last 'Статус:' line in the entry says 'live' (fallback when the
-    #     live listing is temporarily unavailable).
-    # Finished/disappeared maps are intentionally excluded; the seen-state is
-    # still maintained so each call only re-sends entries that have not been
-    # delivered yet.
+    """Collect unseen messages for currently-active queued (delayed) bets.
+
+    Source of truth is the in-memory ``monitored_matches`` map (mirrored to the
+    delayed-queue file), not the textual log. Each entry returns the same
+    rich Telegram-style message body that would be sent on dispatch, plus a
+    short footer describing the queue state. Finished/disappeared matches are
+    skipped; if the live listing is unavailable we fall back to including all
+    queued entries (we still skip ones that the runtime already removed from
+    the queue).
+    """
     seen_urls = _load_admin_tail_log_seen_urls(mode_label=mode_label)
     seen_url_set = set(seen_urls)
     current_live_map_urls = _admin_tail_current_live_map_urls()
@@ -10430,45 +10509,48 @@ def _collect_admin_tail_unseen_messages(
             for mid in (_admin_tail_url_match_id(u) for u in current_live_map_urls)
             if mid
         }
-    requested_limits: List[int] = []
-    unseen_messages: List[Tuple[str, str]] = []
-    base_scan_lines = max(3000, int(line_count) * 60)
-    limit = max(1, int(_ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT))
-    scan_lines = base_scan_lines
 
-    for _attempt in range(max(1, int(_ADMIN_TAIL_LOG_MAX_EXPANSION_STEPS))):
-        requested_limits.append(limit)
-        entries = _build_recent_match_summaries_entries(limit=limit, scan_lines=scan_lines)
-        unseen_messages = []
-        for entry in entries:
-            match_url = str(entry.get("url") or "").strip()
-            is_finished_map = _admin_tail_entry_is_finished_map(entry)
-            if is_finished_map:
+    with monitored_matches_lock:
+        queued_snapshot: List[Tuple[str, Dict[str, Any]]] = [
+            (str(match_key), copy.deepcopy(payload))
+            for match_key, payload in monitored_matches.items()
+            if isinstance(payload, dict)
+        ]
+
+    # Sort by recency ascending (oldest first) so that the consumer's
+    # ``reversed(unseen_messages[-K:])`` slice yields newest entries first
+    # while preserving compatibility with the legacy log-tail ordering.
+    def _entry_recency(item: Tuple[str, Dict[str, Any]]) -> float:
+        _key, _payload = item
+        for field in ("last_progress_at", "last_checked_at", "queued_at"):
+            try:
+                value = _payload.get(field)
+            except Exception:
+                value = None
+            try:
+                if value is not None:
+                    return float(value)
+            except (TypeError, ValueError):
                 continue
-            entry_match_id = _admin_tail_url_match_id(match_url)
-            present_in_live_listing = bool(
-                current_live_match_ids is not None
-                and entry_match_id
-                and entry_match_id in current_live_match_ids
-            )
-            entry_status_is_live = _admin_tail_entry_is_live_map(entry)
-            if not (present_in_live_listing or entry_status_is_live):
+        return 0.0
+
+    queued_snapshot.sort(key=_entry_recency)
+
+    unseen_messages: List[Tuple[str, str]] = []
+    requested_limits: List[int] = [len(queued_snapshot)]
+
+    for match_key, payload in queued_snapshot:
+        entry_match_id = _admin_tail_url_match_id(match_key)
+        if current_live_match_ids is not None and entry_match_id:
+            if entry_match_id not in current_live_match_ids:
+                # Match no longer live on cyberscore listing → skip
                 continue
-            lines = [str(line).rstrip() for line in entry.get("lines") or [] if str(line).strip()]
-            message = "\n".join(lines).strip()
-            if not message:
-                continue
-            if match_url and match_url in seen_url_set:
-                continue
-            unseen_messages.append((match_url, message))
-        if len(unseen_messages) >= int(_ADMIN_TAIL_LOG_SEND_LIMIT):
-            break
-        if not entries:
-            break
-        if len(entries) <= int(_ADMIN_TAIL_LOG_SEND_LIMIT) and len(unseen_messages) == len(entries):
-            break
-        limit *= 2
-        scan_lines *= 2
+        if match_key in seen_url_set:
+            continue
+        message = _admin_tail_format_queued_bet_message(payload)
+        if not message:
+            continue
+        unseen_messages.append((match_key, message))
 
     return seen_urls, unseen_messages, requested_limits
 
