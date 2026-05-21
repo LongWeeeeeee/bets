@@ -3346,13 +3346,13 @@ def test_send_admin_log_tail_sends_one_message_per_match(monkeypatch) -> None:
     entries = [
         _tail_entry(
             "dltv.org/matches/1/older-match.0",
-            "   Статус: draft...",
+            "   Статус: live",
             "   URL: dltv.org/matches/1/older-match",
             line_no=10,
         ),
         _tail_entry(
             "dltv.org/matches/2/newer-match.0",
-            "   Статус: draft...",
+            "   Статус: live",
             "   URL: dltv.org/matches/2/newer-match",
             line_no=20,
         ),
@@ -3369,7 +3369,7 @@ def test_send_admin_log_tail_sends_one_message_per_match(monkeypatch) -> None:
         sent_messages.append({"message": str(message), "kwargs": dict(kwargs)})
 
     monkeypatch.setattr(runtime, "_build_recent_match_summaries_entries", _fake_build_recent_match_summaries_entries)
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: set())
+    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
     monkeypatch.setattr(runtime, "send_message", _fake_send_message)
     monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
     monkeypatch.setattr(
@@ -3393,13 +3393,13 @@ def test_send_admin_log_tail_skips_seen_matches_and_only_sends_new(monkeypatch) 
     entries = [
         _tail_entry(
             "dltv.org/matches/1/already-seen.0",
-            "   Статус: draft...",
+            "   Статус: live",
             "   URL: dltv.org/matches/1/already-seen",
             line_no=10,
         ),
         _tail_entry(
             "dltv.org/matches/2/new-match.0",
-            "   Статус: draft...",
+            "   Статус: live",
             "   URL: dltv.org/matches/2/new-match",
             line_no=20,
         ),
@@ -3412,7 +3412,7 @@ def test_send_admin_log_tail_skips_seen_matches_and_only_sends_new(monkeypatch) 
         "_build_recent_match_summaries_entries",
         lambda **_kwargs: entries,
     )
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: set())
+    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
     monkeypatch.setattr(
         runtime,
         "_load_admin_tail_log_seen_urls",
@@ -3441,7 +3441,7 @@ def test_send_admin_log_tail_reports_no_new_matches(monkeypatch) -> None:
     entries = [
         _tail_entry(
             "dltv.org/matches/1/already-seen.0",
-            "   Статус: draft...",
+            "   Статус: live",
             "   URL: dltv.org/matches/1/already-seen",
             line_no=10,
         )
@@ -3453,7 +3453,7 @@ def test_send_admin_log_tail_reports_no_new_matches(monkeypatch) -> None:
         "_build_recent_match_summaries_entries",
         lambda **_kwargs: entries,
     )
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: set())
+    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
     monkeypatch.setattr(
         runtime,
         "_load_admin_tail_log_seen_urls",
@@ -3474,7 +3474,7 @@ def test_send_admin_log_tail_reports_no_new_matches(monkeypatch) -> None:
 
     assert sent_messages == [
         {
-            "message": "tail_log: новых ставок нет",
+            "message": "tail_log: текущих live ставок нет",
             "kwargs": {"admin_only": True, "mirror_to_vk": False},
         }
     ]
@@ -3482,7 +3482,7 @@ def test_send_admin_log_tail_reports_no_new_matches(monkeypatch) -> None:
 
 def test_send_admin_log_tail_prefers_send_limit_freshest_unseen_matches(monkeypatch) -> None:
     entries = [
-        _tail_entry(f"dltv.org/matches/{idx}/match-{idx}.0", "   Статус: draft...", f"   URL: dltv.org/matches/{idx}/match-{idx}", line_no=idx)
+        _tail_entry(f"dltv.org/matches/{idx}/match-{idx}.0", "   Статус: live", f"   URL: dltv.org/matches/{idx}/match-{idx}", line_no=idx)
         for idx in range(1, 6)
     ]
     sent_messages: List[Dict[str, Any]] = []
@@ -3493,7 +3493,7 @@ def test_send_admin_log_tail_prefers_send_limit_freshest_unseen_matches(monkeypa
         "_build_recent_match_summaries_entries",
         lambda **_kwargs: entries,
     )
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: set())
+    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
     monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
     monkeypatch.setattr(
         runtime,
@@ -3517,16 +3517,16 @@ def test_send_admin_log_tail_prefers_send_limit_freshest_unseen_matches(monkeypa
 
 def test_send_admin_log_tail_expands_window_until_three_unseen_found(monkeypatch) -> None:
     entries_small = [
-        _tail_entry("dltv.org/matches/10/seen-a.0", "   Статус: draft...", "   URL: dltv.org/matches/10/seen-a", line_no=10),
-        _tail_entry("dltv.org/matches/11/seen-b.0", "   Статус: draft...", "   URL: dltv.org/matches/11/seen-b", line_no=11),
-        _tail_entry("dltv.org/matches/12/new-c.0", "   Статус: draft...", "   URL: dltv.org/matches/12/new-c", line_no=12),
+        _tail_entry("dltv.org/matches/10/seen-a.0", "   Статус: live", "   URL: dltv.org/matches/10/seen-a", line_no=10),
+        _tail_entry("dltv.org/matches/11/seen-b.0", "   Статус: live", "   URL: dltv.org/matches/11/seen-b", line_no=11),
+        _tail_entry("dltv.org/matches/12/new-c.0", "   Статус: live", "   URL: dltv.org/matches/12/new-c", line_no=12),
     ]
     entries_large = [
-        _tail_entry("dltv.org/matches/8/new-a.0", "   Статус: draft...", "   URL: dltv.org/matches/8/new-a", line_no=8),
-        _tail_entry("dltv.org/matches/9/new-b.0", "   Статус: draft...", "   URL: dltv.org/matches/9/new-b", line_no=9),
-        _tail_entry("dltv.org/matches/10/seen-a.0", "   Статус: draft...", "   URL: dltv.org/matches/10/seen-a", line_no=10),
-        _tail_entry("dltv.org/matches/11/seen-b.0", "   Статус: draft...", "   URL: dltv.org/matches/11/seen-b", line_no=11),
-        _tail_entry("dltv.org/matches/12/new-c.0", "   Статус: draft...", "   URL: dltv.org/matches/12/new-c", line_no=12),
+        _tail_entry("dltv.org/matches/8/new-a.0", "   Статус: live", "   URL: dltv.org/matches/8/new-a", line_no=8),
+        _tail_entry("dltv.org/matches/9/new-b.0", "   Статус: live", "   URL: dltv.org/matches/9/new-b", line_no=9),
+        _tail_entry("dltv.org/matches/10/seen-a.0", "   Статус: live", "   URL: dltv.org/matches/10/seen-a", line_no=10),
+        _tail_entry("dltv.org/matches/11/seen-b.0", "   Статус: live", "   URL: dltv.org/matches/11/seen-b", line_no=11),
+        _tail_entry("dltv.org/matches/12/new-c.0", "   Статус: live", "   URL: dltv.org/matches/12/new-c", line_no=12),
     ]
     requested_limits: List[int] = []
     sent_messages: List[Dict[str, Any]] = []
@@ -3539,7 +3539,7 @@ def test_send_admin_log_tail_expands_window_until_three_unseen_found(monkeypatch
         return entries_large
 
     monkeypatch.setattr(runtime, "_build_recent_match_summaries_entries", _fake_build_recent_match_summaries_entries)
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: set())
+    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
     monkeypatch.setattr(
         runtime,
         "_load_admin_tail_log_seen_urls",
@@ -3576,21 +3576,21 @@ def test_send_admin_log_tail_keeps_distinct_series_maps_unseen(monkeypatch) -> N
     entries = [
         _tail_entry(
             "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.0",
-            "   Статус: finished",
+            "   Статус: live",
             "   URL: dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series",
             "   Score: 1 : 0",
             line_no=10,
         ),
         _tail_entry(
             "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.1",
-            "   Статус: finished",
+            "   Статус: live",
             "   URL: dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series",
             "   Score: 1 : 1",
             line_no=20,
         ),
         _tail_entry(
             "dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series.2",
-            "   Статус: finished",
+            "   Статус: live",
             "   URL: dltv.org/matches/425854/pipsqueak4-vs-virtuspro-premier-series",
             "   Score: 2 : 1",
             line_no=30,
@@ -3600,7 +3600,7 @@ def test_send_admin_log_tail_keeps_distinct_series_maps_unseen(monkeypatch) -> N
     saved_seen_urls: List[List[str]] = []
 
     monkeypatch.setattr(runtime, "_build_recent_match_summaries_entries", lambda **_kwargs: entries)
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: set())
+    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
     monkeypatch.setattr(
         runtime,
         "_load_admin_tail_log_seen_urls",

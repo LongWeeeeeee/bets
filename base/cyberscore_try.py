@@ -10306,6 +10306,19 @@ def _save_admin_tail_log_seen_urls(urls: List[str], *, mode_label: str) -> None:
     )
 
 
+def _admin_tail_entry_is_live_map(entry: Dict[str, Any]) -> bool:
+    """Return True when the entry's last 'Статус:' line indicates an active map."""
+    status_value: Optional[str] = None
+    for raw_line in entry.get("lines") or []:
+        compact = str(raw_line or "").strip()
+        if not compact.startswith("Статус:"):
+            continue
+        status_value = compact.split(":", 1)[1].strip().lower()
+    if status_value is None:
+        return False
+    return status_value not in {"finished", "draft...", "draft"}
+
+
 def _admin_tail_entry_is_finished_map(entry: Dict[str, Any]) -> bool:
     for raw_line in entry.get("lines") or []:
         compact = str(raw_line or "").strip()
@@ -10368,6 +10381,14 @@ def _collect_admin_tail_unseen_messages(
     mode_label: str,
     line_count: int,
 ) -> Tuple[List[str], List[Tuple[str, str]], List[int]]:
+    # tail_log shows the currently-live (in-progress) bets, not finished ones.
+    # An entry qualifies when:
+    #   - the live cyberscore listing still contains the match url, OR
+    #   - the last 'Статус:' line in the entry says 'live' (fallback when the
+    #     live listing is temporarily unavailable).
+    # Finished/disappeared maps are intentionally excluded; the seen-state is
+    # still maintained so each call only re-sends entries that have not been
+    # delivered yet.
     seen_urls = _load_admin_tail_log_seen_urls(mode_label=mode_label)
     seen_url_set = set(seen_urls)
     current_live_map_urls = _admin_tail_current_live_map_urls()
@@ -10384,12 +10405,15 @@ def _collect_admin_tail_unseen_messages(
         for entry in entries:
             match_url = str(entry.get("url") or "").strip()
             is_finished_map = _admin_tail_entry_is_finished_map(entry)
-            disappeared_from_live = bool(
+            if is_finished_map:
+                continue
+            present_in_live_listing = bool(
                 current_live_map_urls is not None
                 and match_url
-                and match_url not in current_live_map_urls
+                and match_url in current_live_map_urls
             )
-            if not (is_finished_map or disappeared_from_live):
+            entry_status_is_live = _admin_tail_entry_is_live_map(entry)
+            if not (present_in_live_listing or entry_status_is_live):
                 continue
             lines = [str(line).rstrip() for line in entry.get("lines") or [] if str(line).strip()]
             message = "\n".join(lines).strip()
@@ -10417,7 +10441,7 @@ def _send_admin_log_tail(*, line_count: int = 100, raw_odds: Any = None) -> None
         line_count=line_count,
     )
     if not unseen_messages:
-        send_message("tail_log: новых ставок нет", admin_only=True, mirror_to_vk=False)
+        send_message("tail_log: текущих live ставок нет", admin_only=True, mirror_to_vk=False)
         return
     newly_sent_urls: List[str] = []
     selected_messages = list(reversed(unseen_messages[-_ADMIN_TAIL_LOG_SEND_LIMIT:]))
