@@ -10153,13 +10153,22 @@ def _build_recent_match_summaries_entries(*, limit: int = 10, scan_lines: int = 
             }
         current_block = None
 
+    _RECHECK_HEADER_RE = re.compile(
+        r"^🔁\s*RECHECK(?:\s+CyberScore)?\s+матча(?:\s+#\d+)?\s*:\s*(?P<url>\S+)(?:\s*\|\s*status=(?P<status>\S+))?"
+    )
+
     for line_no, raw_line in enumerate(raw_lines):
         raw = str(raw_line or "").rstrip()
         compact = raw.strip()
         if not compact:
             continue
 
-        if compact.startswith("🔍 DEBUG: Начало обработки матча") or compact.startswith("🔁 RECHECK матча"):
+        if (
+            compact.startswith("🔍 DEBUG: Начало обработки матча")
+            or compact.startswith("🔍 DEBUG: CyberScore match")
+            or compact.startswith("🔁 RECHECK матча")
+            or compact.startswith("🔁 RECHECK CyberScore матча")
+        ):
             _finalize_block()
             current_block = {
                 "url": "",
@@ -10168,6 +10177,19 @@ def _build_recent_match_summaries_entries(*, limit: int = 10, scan_lines: int = 
                 "interesting_count": 0,
                 "informative_count": 0,
             }
+            recheck_match = _RECHECK_HEADER_RE.match(compact)
+            if recheck_match:
+                recheck_url = str(recheck_match.group("url") or "").strip()
+                recheck_status = str(recheck_match.group("status") or "").strip()
+                if recheck_url:
+                    current_block["url"] = recheck_url
+                    synth_url_line = f"   URL: {recheck_url}"
+                    current_block["lines"].append(synth_url_line)
+                    current_block["interesting_count"] += 1
+                if recheck_status:
+                    synth_status_line = f"   Статус: {recheck_status}"
+                    current_block["lines"].append(synth_status_line)
+                    current_block["interesting_count"] += 1
             continue
 
         for pattern in _ADMIN_DELAYED_OUTCOME_PATTERNS:
@@ -10376,6 +10398,15 @@ def _admin_tail_current_live_map_urls() -> Optional[set[str]]:
     return live_urls
 
 
+def _admin_tail_url_match_id(url: str) -> str:
+    """Extract numeric match id from various URL flavors used in entries/listings."""
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    match = re.search(r"/matches/(\d+)", raw)
+    return match.group(1) if match else ""
+
+
 def _collect_admin_tail_unseen_messages(
     *,
     mode_label: str,
@@ -10392,6 +10423,13 @@ def _collect_admin_tail_unseen_messages(
     seen_urls = _load_admin_tail_log_seen_urls(mode_label=mode_label)
     seen_url_set = set(seen_urls)
     current_live_map_urls = _admin_tail_current_live_map_urls()
+    current_live_match_ids: Optional[set[str]] = None
+    if current_live_map_urls is not None:
+        current_live_match_ids = {
+            mid
+            for mid in (_admin_tail_url_match_id(u) for u in current_live_map_urls)
+            if mid
+        }
     requested_limits: List[int] = []
     unseen_messages: List[Tuple[str, str]] = []
     base_scan_lines = max(3000, int(line_count) * 60)
@@ -10407,10 +10445,11 @@ def _collect_admin_tail_unseen_messages(
             is_finished_map = _admin_tail_entry_is_finished_map(entry)
             if is_finished_map:
                 continue
+            entry_match_id = _admin_tail_url_match_id(match_url)
             present_in_live_listing = bool(
-                current_live_map_urls is not None
-                and match_url
-                and match_url in current_live_map_urls
+                current_live_match_ids is not None
+                and entry_match_id
+                and entry_match_id in current_live_match_ids
             )
             entry_status_is_live = _admin_tail_entry_is_live_map(entry)
             if not (present_in_live_listing or entry_status_is_live):
