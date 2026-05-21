@@ -17513,10 +17513,13 @@ def _filter_cards_by_tournament_id(
 
     CyberScore renders the listing fully on the client, so the URL filter
     `?tournament=<id>` does not strip out other tournaments. We must filter
-    client-side using the parsed item payload.
+    client-side. Primary source of truth is the parsed Next.js flight item
+    (`item.tournament_id`); when it cannot be parsed we fall back to checking
+    whether the rendered card markup links to `/tournaments/{tournament_id}/`.
     """
     if not heads:
         return [], []
+    tournament_link_marker = f"/tournaments/{int(allowed_tournament_id)}/"
     filtered_heads: List[Any] = []
     filtered_bodies: List[Any] = []
     for head, body in zip(heads, bodies):
@@ -17528,16 +17531,26 @@ def _filter_cards_by_tournament_id(
         if not match_id:
             continue
         item = _extract_cyberscore_match_item_from_html(html, match_id=match_id)
-        if not isinstance(item, dict):
+        item_tournament_id = 0
+        if isinstance(item, dict):
+            try:
+                item_tournament_id = int(item.get("tournament_id") or 0)
+            except (TypeError, ValueError):
+                item_tournament_id = 0
+        if item_tournament_id == int(allowed_tournament_id):
+            filtered_heads.append(head)
+            filtered_bodies.append(body)
             continue
+        # Fallback when the flight blob is missing/incomplete: check if the
+        # rendered card markup itself references the tournament.
         try:
-            item_tournament_id = int(item.get("tournament_id") or 0)
-        except (TypeError, ValueError):
-            item_tournament_id = 0
-        if item_tournament_id != int(allowed_tournament_id):
+            card_html = str(head) if head is not None else ""
+        except Exception:
+            card_html = ""
+        if tournament_link_marker in card_html:
+            filtered_heads.append(head)
+            filtered_bodies.append(body)
             continue
-        filtered_heads.append(head)
-        filtered_bodies.append(body)
     return filtered_heads, filtered_bodies
 
 
@@ -17558,6 +17571,7 @@ def _filter_schedule_info_by_tournament_id(
     soup = BeautifulSoup(html or "", "lxml")
     best_payload: Optional[Dict[str, Any]] = None
     best_raw_sleep: Optional[float] = None
+    tournament_link_marker = f"/tournaments/{int(tournament_id)}/"
 
     for card in soup.select("a.matches-item[href*='/matches/']"):
         classes = {str(item).strip().lower() for item in (card.get("class") or [])}
@@ -17567,14 +17581,23 @@ def _filter_schedule_info_by_tournament_id(
         href = _absolute_cyberscore_url(str(card.get("href") or ""))
         match_id = _extract_cyberscore_match_id_from_href(href)
         item = _extract_cyberscore_match_item_from_html(html, match_id=match_id or None)
-        if not isinstance(item, dict):
-            continue
-        try:
-            item_tournament_id = int(item.get("tournament_id") or 0)
-        except (TypeError, ValueError):
-            item_tournament_id = 0
+        item_tournament_id = 0
+        if isinstance(item, dict):
+            try:
+                item_tournament_id = int(item.get("tournament_id") or 0)
+            except (TypeError, ValueError):
+                item_tournament_id = 0
         if item_tournament_id != int(tournament_id):
-            continue
+            # Fallback: rendered card markup references the tournament link
+            try:
+                card_html = str(card)
+            except Exception:
+                card_html = ""
+            if tournament_link_marker not in card_html:
+                continue
+            if not isinstance(item, dict):
+                # No item payload at all → cannot extract scheduled time reliably
+                continue
         scheduled_at = (
             _extract_cyberscore_item_scheduled_at(item, now_utc=current_utc)
             or _extract_cyberscore_card_scheduled_at(card, now_utc=current_utc)
@@ -17677,6 +17700,11 @@ def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[
             raw_extra_heads, raw_extra_bodies, extra_html, tournament_id_int
         )
         if not extra_heads:
+            if raw_extra_heads:
+                print(
+                    f"   ℹ️ CyberScore extra listing for tournament {tournament_id_int}: "
+                    f"{len(raw_extra_heads)} live card(s) seen, none matched the tournament filter"
+                )
             continue
         added_for_tournament = 0
         for head, body in zip(extra_heads, extra_bodies):
@@ -17692,7 +17720,13 @@ def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[
             extra_heads_total += added_for_tournament
             print(
                 f"✅ CyberScore extra listing: +{added_for_tournament} live card(s) "
-                f"for tournament {tournament_id_int} from {extra_url}"
+                f"for tournament {tournament_id_int} (matched {len(extra_heads)}/"
+                f"{len(raw_extra_heads)} from {extra_url})"
+            )
+        elif extra_heads:
+            print(
+                f"   ℹ️ CyberScore extra listing for tournament {tournament_id_int}: "
+                f"{len(extra_heads)} matching live card(s) already in primary listing"
             )
 
     if heads:
