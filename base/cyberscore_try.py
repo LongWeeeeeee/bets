@@ -17720,6 +17720,11 @@ def _filter_cards_by_tournament_id(
             filtered_bodies.append(body)
             continue
         if title_marker:
+            card_html_lower = card_html.lower()
+            if title_marker in card_html_lower:
+                filtered_heads.append(head)
+                filtered_bodies.append(body)
+                continue
             try:
                 card_text = (
                     head.get_text(" ", strip=True)
@@ -17896,6 +17901,33 @@ def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[
                     f"   ℹ️ CyberScore extra listing for tournament {tournament_id_int}: "
                     f"{len(raw_extra_heads)} live card(s) seen, none matched the tournament filter"
                 )
+                # Diagnostic: dump a short text/markup excerpt for the first
+                # raw card so we can see why the tournament filter rejected it.
+                first_card = raw_extra_heads[0]
+                try:
+                    first_text = (
+                        first_card.get_text(" ", strip=True)
+                        if getattr(first_card, "get_text", None)
+                        else ""
+                    )
+                except Exception:
+                    first_text = ""
+                if first_text:
+                    print(
+                        f"      first card text: {first_text[:240]}"
+                    )
+                title_marker = CYBERSCORE_EXTRA_TOURNAMENT_TITLES.get(tournament_id_int)
+                if title_marker:
+                    try:
+                        markup_excerpt = str(first_card)[:400]
+                    except Exception:
+                        markup_excerpt = ""
+                    contains_title_text = title_marker.lower() in (first_text or "").lower()
+                    contains_title_markup = title_marker.lower() in (markup_excerpt or "").lower()
+                    print(
+                        f"      title check ({title_marker!r}): in_text={contains_title_text}, "
+                        f"in_markup={contains_title_markup}"
+                    )
             continue
         added_for_tournament = 0
         for head, body in zip(extra_heads, extra_bodies):
