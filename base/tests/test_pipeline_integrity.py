@@ -3365,6 +3365,14 @@ def _make_queued_payload(
 def _install_monitored_matches(monkeypatch, snapshot: Dict[str, Dict[str, Any]]) -> None:
     fresh = {key: dict(payload) for key, payload in snapshot.items()}
     monkeypatch.setattr(runtime, "monitored_matches", fresh, raising=False)
+    # By default the tail-log path also scans the textual log via
+    # _build_recent_match_summaries_entries; isolate the queue tests by stubbing
+    # it to an empty list. Tests that exercise the log-source path can override.
+    monkeypatch.setattr(
+        runtime,
+        "_build_recent_match_summaries_entries",
+        lambda **_kwargs: [],
+    )
 
 
 def test_send_admin_log_tail_sends_one_message_per_queued_bet(monkeypatch) -> None:
@@ -3562,6 +3570,102 @@ def test_send_admin_log_tail_filters_by_live_listing(monkeypatch) -> None:
     assert "Live100" in sent_messages[0]["message"]
     assert "Done200" not in sent_messages[0]["message"]
     assert saved_seen_urls == [["dltv.org/matches/100/live-now.0"]]
+
+
+def test_send_admin_log_tail_falls_back_to_log_entries_for_processed_matches(monkeypatch) -> None:
+    """Live matches that ran through check_head but were not queued (rejected
+    by the star-signal gate, sent immediately, etc) should still appear in
+    tail_log via the log-summary fallback."""
+    log_entry_url = "cyberscore.live/en/matches/174356.map1"
+    log_entries = [
+        {
+            "url": log_entry_url,
+            "lines": [
+                "   Статус: live",
+                f"   URL: {log_entry_url}",
+                "   Score: 0 : 0",
+                "   ⚠️ ВЕРДИКТ: ОТКАЗ (нет star-сигнала)",
+            ],
+            "line_no": 100,
+        }
+    ]
+    sent_messages: List[Dict[str, Any]] = []
+    saved_seen_urls: List[List[str]] = []
+
+    monkeypatch.setattr(runtime, "monitored_matches", {}, raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "_build_recent_match_summaries_entries",
+        lambda **_kwargs: log_entries,
+    )
+    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
+    monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        runtime,
+        "_save_admin_tail_log_seen_urls",
+        lambda urls, **_kwargs: saved_seen_urls.append(list(urls)),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "send_message",
+        lambda message, **kwargs: sent_messages.append({"message": str(message), "kwargs": dict(kwargs)}),
+    )
+
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
+
+    assert len(sent_messages) == 1
+    assert "174356" in sent_messages[0]["message"]
+    assert "ВЕРДИКТ" in sent_messages[0]["message"]
+    assert saved_seen_urls == [[log_entry_url]]
+
+
+def test_send_admin_log_tail_prefers_queue_over_log_for_same_match(monkeypatch) -> None:
+    """When a match is in both the delayed queue and the recent log, the
+    queue payload (rich Telegram-style body) wins; the log entry is skipped."""
+    queue_url = "dltv.org/matches/100/live-now.0"
+    log_entries = [
+        {
+            "url": "cyberscore.live/en/matches/100.map1",
+            "lines": [
+                "   Статус: live",
+                "   URL: cyberscore.live/en/matches/100.map1",
+                "   Score: 0 : 0",
+            ],
+            "line_no": 5,
+        }
+    ]
+    queued = {
+        queue_url: _make_queued_payload(message="СТАВКА НА Foo\\nFoo VS Bar"),
+    }
+    sent_messages: List[Dict[str, Any]] = []
+
+    _install_monitored_matches(monkeypatch, queued)
+    monkeypatch.setattr(
+        runtime,
+        "_build_recent_match_summaries_entries",
+        lambda **_kwargs: log_entries,
+    )
+    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
+    monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        runtime,
+        "_save_admin_tail_log_seen_urls",
+        lambda urls, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "send_message",
+        lambda message, **kwargs: sent_messages.append({"message": str(message), "kwargs": dict(kwargs)}),
+    )
+
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
+
+    assert len(sent_messages) == 1
+    # Queue payload wins (header line СТАВКА НА Foo, footer with Reason etc.)
+    assert "Foo VS Bar" in sent_messages[0]["message"]
+    assert "Reason:" in sent_messages[0]["message"]
+    # Log entry was deduped by match id; its plain Score line should not appear.
+    assert "Score: 0 : 0" not in sent_messages[0]["message"]
 
 
 def test_load_telegram_subscribers_state_merges_primary_and_legacy(tmp_path, monkeypatch) -> None:

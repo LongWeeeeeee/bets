@@ -10506,15 +10506,22 @@ def _collect_admin_tail_unseen_messages(
     mode_label: str,
     line_count: int,
 ) -> Tuple[List[str], List[Tuple[str, str]], List[int]]:
-    """Collect unseen messages for currently-active queued (delayed) bets.
+    """Collect unseen messages for currently-active live matches.
 
-    Source of truth is the in-memory ``monitored_matches`` map (mirrored to the
-    delayed-queue file), not the textual log. Each entry returns the same
-    rich Telegram-style message body that would be sent on dispatch, plus a
-    short footer describing the queue state. Finished/disappeared matches are
-    skipped; if the live listing is unavailable we fall back to including all
-    queued entries (we still skip ones that the runtime already removed from
-    the queue).
+    Two sources are merged, deduped by match_id:
+
+    1. Delayed queue (``monitored_matches``): rich Telegram-style message body
+       that would be sent on dispatch, plus a short status footer.
+    2. Recent log entries (``_build_recent_match_summaries_entries``): for
+       matches that the runtime already processed but did not queue (e.g.
+       rejected by the star-signal gate, or sent immediately and stored in
+       map_id_check). The log block carries URL/Status/Score/lanes/star
+       metrics/verdict, which is enough to see what the runtime decided.
+
+    Finished/disappeared matches are skipped; if the live listing is
+    unavailable we keep all candidates as a fallback. The seen-state still
+    applies so each call re-emits only entries that have not been delivered
+    yet.
     """
     seen_urls = _load_admin_tail_log_seen_urls(mode_label=mode_label)
     seen_url_set = set(seen_urls)
@@ -10555,6 +10562,7 @@ def _collect_admin_tail_unseen_messages(
 
     unseen_messages: List[Tuple[str, str]] = []
     requested_limits: List[int] = [len(queued_snapshot)]
+    covered_match_ids: set[str] = set()
 
     for match_key, payload in queued_snapshot:
         entry_match_id = _admin_tail_url_match_id(match_key)
@@ -10563,11 +10571,60 @@ def _collect_admin_tail_unseen_messages(
                 # Match no longer live on cyberscore listing → skip
                 continue
         if match_key in seen_url_set:
+            if entry_match_id:
+                covered_match_ids.add(entry_match_id)
             continue
         message = _admin_tail_format_queued_bet_message(payload)
         if not message:
             continue
         unseen_messages.append((match_key, message))
+        if entry_match_id:
+            covered_match_ids.add(entry_match_id)
+
+    # Second source: recent log entries (matches that ran through check_head
+    # but did not end up in the delayed queue — rejected, instantly sent, etc).
+    base_scan_lines = max(3000, int(line_count) * 60)
+    log_limit = max(1, int(_ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT))
+    log_entries: List[Dict[str, Any]] = []
+    try:
+        log_entries = _build_recent_match_summaries_entries(
+            limit=log_limit,
+            scan_lines=base_scan_lines,
+        )
+    except Exception:
+        log_entries = []
+    requested_limits.append(len(log_entries))
+
+    for entry in log_entries:
+        match_url = str(entry.get("url") or "").strip()
+        if not match_url:
+            continue
+        if match_url in seen_url_set:
+            continue
+        entry_match_id = _admin_tail_url_match_id(match_url)
+        if entry_match_id and entry_match_id in covered_match_ids:
+            continue  # Already represented by the delayed-queue payload above
+        if _admin_tail_entry_is_finished_map(entry):
+            continue
+        present_in_live_listing = bool(
+            current_live_match_ids is not None
+            and entry_match_id
+            and entry_match_id in current_live_match_ids
+        )
+        entry_status_is_live = _admin_tail_entry_is_live_map(entry)
+        if not (present_in_live_listing or entry_status_is_live):
+            continue
+        lines = [
+            str(line).rstrip()
+            for line in entry.get("lines") or []
+            if str(line).strip()
+        ]
+        message = "\n".join(lines).strip()
+        if not message:
+            continue
+        unseen_messages.append((match_url, message))
+        if entry_match_id:
+            covered_match_ids.add(entry_match_id)
 
     return seen_urls, unseen_messages, requested_limits
 
