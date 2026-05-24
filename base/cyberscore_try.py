@@ -3435,35 +3435,39 @@ def _decorate_star_block_for_display(
     section: str,
     target_wr: int,
 ) -> Dict[str, Any]:
+    """Render block with ``*`` markers on metric cells.
+
+    The marker is purely a *visual* hint — it tells the reader which metric
+    cells crossed the WR60 (or higher) absolute-value threshold for this
+    section. It is intentionally decoupled from the block-level STAR
+    diagnostics (``_star_block_diagnostics``), which can reject a block for
+    reasons like sign-consistency or required-zero-metric checks even when
+    one or more individual cells did pass the threshold. Without this
+    decoupling the ``⭐ Star hits (WR60+):`` summary line and the per-section
+    grid would disagree (e.g. summary shows ``All: Counterpick_1vs2 +6
+    (WR75)`` but the grid prints ``Counterpick_1vs2: 6`` without a star).
+    """
     src = raw_block if isinstance(raw_block, dict) else {}
     out = dict(src)
-    diag = _star_block_diagnostics(
-        raw_block=src,
-        target_wr=target_wr,
-        section=section,
-    )
-    if not bool(diag.get("valid")):
-        for metric in _STAR_METRIC_ORDER:
-            raw = out.get(metric)
-            if not isinstance(raw, str) or not raw.strip().endswith("*"):
-                continue
-            value = _coerce_metric_value(raw)
-            if value is not None:
-                out[metric] = _format_metric_value(value)
-        return out
-    block_sign = int(diag.get("sign") or 0)
-    if block_sign not in (-1, 1):
-        return out
-    thresholds = _star_thresholds_for_wr(target_wr, section)
-    for metric, threshold in thresholds.items():
+    for metric in _STAR_METRIC_ORDER:
         value = _coerce_metric_value(src.get(metric))
         if value is None or value == 0:
+            # Re-format any leftover ``*``-suffixed string to plain numeric form.
+            raw = out.get(metric)
+            if isinstance(raw, str) and raw.strip().endswith("*"):
+                if value is not None:
+                    out[metric] = _format_metric_value(value)
             continue
-        if block_sign > 0 and value <= 0:
-            continue
-        if block_sign < 0 and value >= 0:
-            continue
-        if abs(value) < threshold:
+        wr_level = _max_star_wr_level_for_metric(
+            metric=metric,
+            value=float(value),
+            section=section,
+        )
+        if wr_level is None:
+            # No WR level passes for this metric → leave the cell as plain number.
+            raw = out.get(metric)
+            if isinstance(raw, str) and raw.strip().endswith("*"):
+                out[metric] = _format_metric_value(value)
             continue
         out[metric] = f"{_format_metric_value(value)}*"
     return out
