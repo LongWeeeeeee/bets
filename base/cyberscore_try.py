@@ -1243,9 +1243,13 @@ NETWORTH_GATE_EARLY_CORE_LOW_WR_MIN_LEAD = 800.0
 NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_END_SECONDS = 13 * 60
 NETWORTH_GATE_TIER1_EARLY_KILLS_4_TO_12_MIN_DIFF = 500.0
 # Kills dispatch — new prep6 window:
-#   * pre-6 min: wait, unless lane_adv_dict aligned with target AND |adv| >= immediate threshold
+#   * pre-3 min: wait, unless lane_adv_dict aligned with target AND |adv| >= immediate threshold
+#   * 3:00 ≤ t < 6:00: target_diff >= +800 → release (early lead bypass)
 #   * 6:00 ≤ t < 10:00: target_diff >= 0 → release
 #   * 10:00 fallback: release unconditionally (existing behaviour)
+NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS = 3 * 60
+NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_END_SECONDS = 6 * 60
+NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_MIN_DIFF = 800.0
 NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS = 6 * 60
 NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS = max(
     0.0,
@@ -1256,6 +1260,7 @@ NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS = max(
 )
 NETWORTH_STATUS_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_SEND = "tier1_early_kills_lane_adv_immediate_send"
 NETWORTH_STATUS_TIER1_EARLY_KILLS_PRE6_WAIT = "tier1_early_kills_pre6_wait"
+NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND = "tier1_early_kills_3_6_lead_send_800"
 NETWORTH_STATUS_TIER1_EARLY_KILLS_6_10_TARGET_NONNEG_SEND = "tier1_early_kills_6_10_target_nonneg_send"
 NETWORTH_GATE_TIER1_EARLY65_WINDOW_END_SECONDS = 17 * 60
 NETWORTH_GATE_TIER1_EARLY65_4_TO_10_MIN_DIFF = 600.0
@@ -22619,6 +22624,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     kills_release_status_label_pp: Optional[str] = None
                     if lane_adv_dict_kills_immediate_pp:
                         kills_release_status_label_pp = NETWORTH_STATUS_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_SEND
+                    elif (
+                        current_game_time
+                        >= NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS
+                        and current_game_time
+                        < NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_END_SECONDS
+                        and target_networth_diff
+                        >= NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_MIN_DIFF
+                    ):
+                        kills_release_status_label_pp = NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND
                     elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS:
                         if verbose_match_log:
                             print(
@@ -22744,6 +22758,25 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 f"(value={lane_adv_dict_kills_value:+.2f}, "
                                 f"min_abs={NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS:.2f}, "
                                 f"target_side={target_side}, game_time={int(current_game_time)})"
+                            )
+                    elif (
+                        current_game_time
+                        >= NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS
+                        and current_game_time
+                        < NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_END_SECONDS
+                        and target_networth_diff
+                        >= NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_MIN_DIFF
+                    ):
+                        early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND
+                        early_release_dispatch_mode = "immediate_tier1_early_kills"
+                        early_release_delay_reason = "tier1_early_kills_3_6_lead"
+                        if verbose_match_log:
+                            print(
+                                "   ✅ Early kills release: 3-6 min lead bypass "
+                                f"(target_side={target_side}, "
+                                f"target_diff={int(target_networth_diff)}, "
+                                f"need>={int(NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_MIN_DIFF)}, "
+                                f"game_time={int(current_game_time)})"
                             )
                     elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS:
                         print(
