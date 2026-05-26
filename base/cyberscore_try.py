@@ -1242,6 +1242,21 @@ NETWORTH_GATE_EARLY_CORE_HIGH_CONFIDENCE_MIN_LEAD = 0.0
 NETWORTH_GATE_EARLY_CORE_LOW_WR_MIN_LEAD = 800.0
 NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_END_SECONDS = 13 * 60
 NETWORTH_GATE_TIER1_EARLY_KILLS_4_TO_12_MIN_DIFF = 500.0
+# Kills dispatch — new prep6 window:
+#   * pre-6 min: wait, unless lane_adv_dict aligned with target AND |adv| >= immediate threshold
+#   * 6:00 ≤ t < 10:00: target_diff >= 0 → release
+#   * 10:00 fallback: release unconditionally (existing behaviour)
+NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS = 6 * 60
+NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS = max(
+    0.0,
+    _safe_float_env(
+        "NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS",
+        6.0,
+    ),
+)
+NETWORTH_STATUS_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_SEND = "tier1_early_kills_lane_adv_immediate_send"
+NETWORTH_STATUS_TIER1_EARLY_KILLS_PRE6_WAIT = "tier1_early_kills_pre6_wait"
+NETWORTH_STATUS_TIER1_EARLY_KILLS_6_10_TARGET_NONNEG_SEND = "tier1_early_kills_6_10_target_nonneg_send"
 NETWORTH_GATE_TIER1_EARLY65_WINDOW_END_SECONDS = 17 * 60
 NETWORTH_GATE_TIER1_EARLY65_4_TO_10_MIN_DIFF = 600.0
 NETWORTH_GATE_TIER1_EARLY65_10_TO_17_MIN_DIFF = 600.0
@@ -22174,7 +22189,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
             tier1_early_kills_mode = bool(
                 has_selected_early_star
-                and not has_selected_late_star
                 and early_wr_pct is not None
                 and float(early_wr_pct) >= 70.0
                 and isinstance(selected_early_diag, dict)
@@ -22520,19 +22534,63 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             "(нет target_sign/lead)"
                         )
                         return return_status
-                    # Kills dispatch: pre4 block already handled by cycle timing.
-                    # 4-10 min: wait for target >= 0 NW. At 10 min if target < 0 → cancel.
-                    if current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
+                    # Kills dispatch — new prep6 watcher:
+                    #   * any minute: lane_adv_dict aligned with target AND |adv| >= immediate threshold → release
+                    #   * pre-6:00: wait
+                    #   * 6:00 ≤ t < 10:00: target_diff >= 0 → release
+                    #   * 10:00 fallback: release unconditionally; if target_diff < 0 cancel
+                    lane_adv_dict_kills_aligned = bool(
+                        same_sign_lane_adv_guard.get("lane_adv_dict_sign") is not None
+                        and selected_early_sign in (-1, 1)
+                        and int(same_sign_lane_adv_guard.get("lane_adv_dict_sign") or 0) == int(selected_early_sign)
+                    )
+                    lane_adv_dict_kills_value_raw = same_sign_lane_adv_guard.get("lane_adv_dict")
+                    try:
+                        lane_adv_dict_kills_value = (
+                            float(lane_adv_dict_kills_value_raw)
+                            if lane_adv_dict_kills_value_raw is not None
+                            else None
+                        )
+                    except (TypeError, ValueError):
+                        lane_adv_dict_kills_value = None
+                    lane_adv_dict_kills_immediate = bool(
+                        lane_adv_dict_kills_aligned
+                        and lane_adv_dict_kills_value is not None
+                        and abs(lane_adv_dict_kills_value)
+                        >= float(NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS)
+                    )
+                    if lane_adv_dict_kills_immediate:
+                        early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_SEND
+                        early_release_dispatch_mode = "immediate_tier1_early_kills"
+                        early_release_delay_reason = "tier1_early_kills_lane_adv_immediate"
+                        if verbose_match_log:
+                            print(
+                                "   ✅ Early kills release: lane_adv_dict immediate "
+                                f"(value={lane_adv_dict_kills_value:+.2f}, "
+                                f"min_abs={NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS:.2f}, "
+                                f"target_side={target_side}, game_time={int(current_game_time)})"
+                            )
+                    elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS:
+                        print(
+                            "   ⏳ Ожидание dispatch: early_kills_pre6_wait "
+                            f"(target_side={target_side}, "
+                            f"target_diff={int(target_networth_diff)}, "
+                            f"window opens at "
+                            f"{_format_game_clock(NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS)})"
+                        )
+                        return return_status
+                    elif current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
                         if target_networth_diff >= 0:
-                            early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY_KILLS_4_12_SEND_500
+                            early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY_KILLS_6_10_TARGET_NONNEG_SEND
                             early_release_dispatch_mode = "immediate_tier1_early_kills"
                             early_release_delay_reason = "tier1_early_kills"
                         else:
                             print(
-                                "   ⏳ Ожидание dispatch: early_kills_wait "
+                                "   ⏳ Ожидание dispatch: early_kills_6_10_wait "
                                 f"(target_side={target_side}, "
                                 f"target_diff={int(target_networth_diff)}, "
-                                f"need>=0, window closes at 10:00)"
+                                f"need>=0, window closes at "
+                                f"{_format_game_clock(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS)})"
                             )
                             return return_status
                     else:

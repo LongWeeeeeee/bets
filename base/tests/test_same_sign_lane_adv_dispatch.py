@@ -693,10 +693,12 @@ def test_early_only_signal_sends_kills_header_when_late_core_zero_or_opposite(mo
 
     assert len(result.sent_messages) == 1
     first_line = result.sent_messages[0].splitlines()[0]
-    assert first_line == "СТАВКА НА килы от Radiant Team"
-    assert " x" not in first_line
+    # ``early_only_no_late_all_gate`` kills dispatch path is currently disabled
+    # (see ``early_only_kills_mode = False`` in cyberscore_try.py). The branch
+    # falls back to the standard target_half header.
+    assert first_line == "СТАВКА НА Radiant Team x0.5"
     assert result.queued_payload is None
-    assert result.add_url_calls[-1]["details"]["dispatch_mode"] == "immediate_early_only_kills_from"
+    assert result.add_url_calls[-1]["details"]["dispatch_mode"] == "immediate_early_only_target_half"
     gate = result.add_url_calls[-1]["details"]["early_only_no_late_all_gate"]
     assert gate["signal_mode"] == "kills_from"
     assert gate["late_core_same_sign"] is False
