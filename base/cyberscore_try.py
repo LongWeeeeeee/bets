@@ -6701,6 +6701,42 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                         f"hits={blocked_player_account_ids})"
                     )
                     continue
+            # Dual-signal coordination: if a kills signal was already sent for
+            # this match (defer_add_url=True path) AND the late watcher is
+            # about to dispatch on the SAME side as the kills target, cancel
+            # the late dispatch (we don't want two bets on the same team) and
+            # finalize add_url so the match is marked processed.
+            kills_already_sent_for_match = bool(payload.get("kills_already_sent"))
+            kills_target_side_for_match = str(payload.get("kills_target_side") or "").strip().lower()
+            late_target_side_for_match = str(
+                payload.get("networth_target_side")
+                or add_url_details.get("target_side")
+                or ""
+            ).strip().lower()
+            if (
+                kills_already_sent_for_match
+                and kills_target_side_for_match in {"radiant", "dire"}
+                and late_target_side_for_match in {"radiant", "dire"}
+                and kills_target_side_for_match == late_target_side_for_match
+            ):
+                add_url_details.setdefault(
+                    "dispatch_status_label",
+                    "late_already_covered_by_kills",
+                )
+                add_url_details["late_already_covered_by_kills"] = True
+                add_url_details["kills_target_side"] = kills_target_side_for_match
+                add_url(
+                    match_key,
+                    reason="late_already_covered_by_kills",
+                    details=add_url_details,
+                )
+                _drop_delayed_match(match_key, reason="late_already_covered_by_kills")
+                print(
+                    f"⏱️ Отложенный late сигнал отменен (kills уже покрыл этот side): {match_key} "
+                    f"(kills_target_side={kills_target_side_for_match}, "
+                    f"late_target_side={late_target_side_for_match})"
+                )
+                continue
             add_url_details.setdefault('sent_game_time', int(current_game_time))
             late_pub_comeback_table_ready = bool(
                 isinstance(late_pub_comeback_table_decision, dict)
@@ -16509,6 +16545,7 @@ def _deliver_and_persist_signal(
     add_url_details: Optional[dict] = None,
     bookmaker_decision: Optional[str] = None,
     skip_bookmaker_prepare: bool = False,
+    defer_add_url: bool = False,
 ) -> bool:
     if not skip_bookmaker_prepare:
         message_text, bookmaker_ready, bookmaker_reason = _bookmaker_prepare_message_for_delivery(
@@ -16544,6 +16581,16 @@ def _deliver_and_persist_signal(
         raise
     if bookmaker_decision:
         _log_bookmaker_source_snapshot(match_key, decision=bookmaker_decision)
+    if defer_add_url:
+        # Caller wants to keep the match alive in monitored_matches so a second
+        # signal (typically the opposite-side late dispatch) can still fire
+        # later. add_url() will be invoked when the second signal completes
+        # (or the late watcher times out / is cancelled).
+        print(
+            f"   ⏸️ add_url отложен для {match_key} (defer_add_url=True): "
+            "ожидаем second-signal dispatch (например, late watcher)"
+        )
+        return True
     try:
         add_url(
             match_key,
@@ -22526,6 +22573,134 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if late_star_wait_pub_table:
                 queue_top25_late_elo_block_monitor = False
                 dispatch_mode = "delayed_late_only_27_00m"
+
+            # Dual-signal kills pre-pass: when both kills (tier1_early_kills_mode)
+            # and a late_star_wait_pub_table watcher are eligible (typical
+            # opposite-sign case), run the kills prep6 watcher here. If it
+            # releases the kills signal we set kills_already_sent in
+            # monitored_matches and fall through to the late branch below so
+            # the late-star can keep watching its own side.
+            kills_dual_pre_pass_sent = False
+            kills_dual_pre_pass_target_side: Optional[str] = None
+            if (
+                not force_odds_signal_test_active
+                and late_star_wait_pub_table
+                and tier1_early_kills_mode
+                and selected_early_sign in (-1, 1)
+                and selected_late_sign in (-1, 1)
+                and int(selected_early_sign) != int(selected_late_sign)
+            ):
+                # Same prep6 logic as the non-late kills path:
+                if target_networth_diff is None or target_side is None:
+                    print(
+                        "   ⏳ kills pre-pass: target-side networth gate не применен "
+                        "(нет target_sign/lead) — продолжаем late watcher"
+                    )
+                else:
+                    lane_adv_dict_kills_aligned_pp = bool(
+                        same_sign_lane_adv_guard.get("lane_adv_dict_sign") is not None
+                        and int(same_sign_lane_adv_guard.get("lane_adv_dict_sign") or 0) == int(selected_early_sign)
+                    )
+                    lane_adv_dict_kills_value_raw_pp = same_sign_lane_adv_guard.get("lane_adv_dict")
+                    try:
+                        lane_adv_dict_kills_value_pp = (
+                            float(lane_adv_dict_kills_value_raw_pp)
+                            if lane_adv_dict_kills_value_raw_pp is not None
+                            else None
+                        )
+                    except (TypeError, ValueError):
+                        lane_adv_dict_kills_value_pp = None
+                    lane_adv_dict_kills_immediate_pp = bool(
+                        lane_adv_dict_kills_aligned_pp
+                        and lane_adv_dict_kills_value_pp is not None
+                        and abs(lane_adv_dict_kills_value_pp)
+                        >= float(NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS)
+                    )
+                    kills_release_status_label_pp: Optional[str] = None
+                    if lane_adv_dict_kills_immediate_pp:
+                        kills_release_status_label_pp = NETWORTH_STATUS_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_SEND
+                    elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS:
+                        if verbose_match_log:
+                            print(
+                                "   ⏳ kills pre-pass: pre6 wait "
+                                f"(target_side={target_side}, target_diff={int(target_networth_diff)}) "
+                                "— продолжаем late watcher"
+                            )
+                    elif current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
+                        if target_networth_diff >= 0:
+                            kills_release_status_label_pp = NETWORTH_STATUS_TIER1_EARLY_KILLS_6_10_TARGET_NONNEG_SEND
+                        else:
+                            if verbose_match_log:
+                                print(
+                                    "   ⏳ kills pre-pass: 6_10 wait target_diff<0 "
+                                    f"(target_side={target_side}, target_diff={int(target_networth_diff)}) "
+                                    "— продолжаем late watcher"
+                                )
+                    else:
+                        if target_networth_diff >= 0:
+                            kills_release_status_label_pp = NETWORTH_STATUS_TIER1_EARLY_KILLS_4_12_SEND_500
+                        else:
+                            # 10+ min and target negative → cancel kills,
+                            # but still let late watcher proceed.
+                            if verbose_match_log:
+                                print(
+                                    "   ⚠️ kills pre-pass: cancelled (target в минусе на 10+ мин) "
+                                    "— продолжаем late watcher"
+                                )
+
+                    if kills_release_status_label_pp is not None:
+                        if not _skip_dispatch_for_processed_url(
+                            check_uniq_url, "kills pre-pass dispatch"
+                        ) and _acquire_signal_send_slot(check_uniq_url):
+                            try:
+                                if verbose_match_log:
+                                    _print_star_metrics_snapshot(
+                                        star_metrics_snapshot, label="kills pre-pass"
+                                    )
+                                # Build kills-only message header: special_header_mode=early_kills.
+                                kills_pp_header = _format_signal_header(
+                                    stake_team_name=stake_team_name,
+                                    stake_multiplier=stake_multiplier,
+                                    special_header_mode="early_kills",
+                                )
+                                kills_pp_body_lines = message_text.splitlines()
+                                if kills_pp_body_lines:
+                                    kills_pp_body_lines[0] = kills_pp_header
+                                kills_pp_message = "\n".join(kills_pp_body_lines)
+                                kills_pp_delivered = _deliver_and_persist_signal(
+                                    check_uniq_url,
+                                    kills_pp_message,
+                                    add_url_reason="star_signal_sent_now_kills_dual",
+                                    add_url_details={
+                                        "status": status,
+                                        "dispatch_mode": "immediate_tier1_early_kills_dual",
+                                        "delay_reason": "tier1_early_kills_dual_signal",
+                                        "release_reason": kills_release_status_label_pp,
+                                        "dispatch_status_label": kills_release_status_label_pp,
+                                        "game_time": int(current_game_time),
+                                        "target_side": target_side,
+                                        "target_networth_diff": float(target_networth_diff),
+                                        "kills_dual_signal_defer": True,
+                                        "selected_star_wr": selected_star_wr,
+                                        "selected_star_mode": selected_star_mode,
+                                        "json_retry_errors": json_retry_errors,
+                                    },
+                                    bookmaker_decision="sent",
+                                    defer_add_url=True,
+                                )
+                                if kills_pp_delivered:
+                                    kills_dual_pre_pass_sent = True
+                                    kills_dual_pre_pass_target_side = str(target_side or "")
+                                    print(
+                                        "   ✅ ВЕРДИКТ (kills pre-pass): СТАВКА НА Ранние килы отправлена "
+                                        f"(reason={kills_release_status_label_pp}, "
+                                        f"target_side={target_side}, "
+                                        f"target_diff={int(target_networth_diff)}) "
+                                        "— продолжаем late watcher"
+                                    )
+                            finally:
+                                _release_signal_send_slot(check_uniq_url)
+
             if not force_odds_signal_test_active and not late_star_wait_pub_table:
                 if tier1_early_kills_mode:
                     if target_networth_diff is None or target_side is None:
@@ -22730,6 +22905,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     if not _acquire_signal_send_slot(check_uniq_url):
                         print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
                         return return_status
+                    # Dual-signal: when kills fires AND a valid late-star signal
+                    # exists on the OPPOSITE side, keep the match alive in
+                    # monitored_matches so the late watcher can still fire its
+                    # own dispatch on a different side later.
+                    kills_dual_signal_defer = bool(
+                        tier1_early_kills_mode
+                        and has_selected_late_star
+                        and selected_early_sign in (-1, 1)
+                        and selected_late_sign in (-1, 1)
+                        and int(selected_early_sign) != int(selected_late_sign)
+                    )
                     try:
                         if _skip_dispatch_for_processed_url(check_uniq_url, "early WR65 немедленной отправки после lock"):
                             return return_status
@@ -22758,9 +22944,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 ),
                                 "selected_star_wr": selected_star_wr,
                                 "selected_star_mode": selected_star_mode,
+                                "kills_dual_signal_defer": bool(kills_dual_signal_defer),
                                 "json_retry_errors": json_retry_errors,
                             },
                             bookmaker_decision="sent",
+                            defer_add_url=kills_dual_signal_defer,
                         )
                         if delivery_confirmed:
                             print(
@@ -22769,9 +22957,35 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 f"target_side={target_side if tier1_early_kills_mode else early65_target_side}, "
                                 f"target_diff={int(target_networth_diff if tier1_early_kills_mode else (early65_target_diff or 0))})"
                             )
+                            if kills_dual_signal_defer:
+                                kills_target_side_resolved = (
+                                    target_side
+                                    if tier1_early_kills_mode
+                                    else early65_target_side
+                                )
+                                _update_delayed_match(
+                                    check_uniq_url,
+                                    kills_already_sent=True,
+                                    kills_target_side=str(kills_target_side_resolved or ""),
+                                    kills_sent_at=float(time.time()),
+                                    kills_sent_game_time=int(current_game_time),
+                                    kills_release_reason=str(early65_release_status_label or ""),
+                                    pending_late_after_kills=True,
+                                    kills_add_url_pending_reason="star_signal_sent_now_networth_gate",
+                                )
+                                print(
+                                    "   🔁 Dual-signal mode: kills отправлен, продолжаем мониторинг late "
+                                    f"(kills_target_side={kills_target_side_resolved}, "
+                                    f"late_target_side={_target_side_from_sign(selected_late_sign)})"
+                                )
                     finally:
                         _release_signal_send_slot(check_uniq_url)
-                    return return_status
+                    if kills_dual_signal_defer and delivery_confirmed:
+                        # Do NOT return — fall through so the late branch below
+                        # gets a chance to queue itself in monitored_matches.
+                        pass
+                    else:
+                        return return_status
                 elif current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
                     if opposite_signs_selected:
                         print(
@@ -23479,6 +23693,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 dire_account_ids=dire_account_ids,
                             ),
                         }
+                        if kills_dual_pre_pass_sent:
+                            delayed_payload["kills_already_sent"] = True
+                            delayed_payload["kills_target_side"] = str(
+                                kills_dual_pre_pass_target_side or ""
+                            )
+                            delayed_payload["kills_sent_game_time"] = int(current_game_time)
+                            delayed_payload["pending_late_after_kills"] = True
+                            delayed_add_url_details["kills_dual_signal_active"] = True
+                            delayed_add_url_details["kills_target_side"] = str(
+                                kills_dual_pre_pass_target_side or ""
+                            )
                         _set_delayed_match(check_uniq_url, delayed_payload)
                         print("   ✅ ВЕРДИКТ: Сигнал оставлен в delayed-очереди для pub late comeback table")
                         return return_status
