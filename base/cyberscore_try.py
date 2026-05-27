@@ -4773,6 +4773,17 @@ def _stake_multiplier_for_signal(
     if not has_selected_early_star and not has_selected_late_star:
         return 0.5
 
+    # Rule: if late and all blocks point at opposite sides, the signal is
+    # contradictory enough to cap the stake at 0.5.
+    if (
+        has_selected_late_star
+        and has_selected_all_star
+        and late_side in {"radiant", "dire"}
+        and all_side in {"radiant", "dire"}
+        and late_side != all_side
+    ):
+        return 0.5
+
     try:
         early_wr_value = float(early_wr_pct) if early_wr_pct is not None else None
     except (TypeError, ValueError):
