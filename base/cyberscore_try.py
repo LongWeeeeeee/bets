@@ -22616,6 +22616,21 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # the late-star can keep watching its own side.
             kills_dual_pre_pass_sent = False
             kills_dual_pre_pass_target_side: Optional[str] = None
+            # If kills pre-pass already fired in a previous cycle for this
+            # match, the match stays in monitored_matches with
+            # ``kills_already_sent=True`` (waiting for the late delayed
+            # dispatch). Skip running the prep6 watcher again — otherwise we
+            # keep re-sending kills every cycle until late triggers.
+            kills_already_sent_prev = False
+            try:
+                with monitored_matches_lock:
+                    _existing_payload = monitored_matches.get(check_uniq_url)
+                    kills_already_sent_prev = bool(
+                        isinstance(_existing_payload, dict)
+                        and _existing_payload.get("kills_already_sent")
+                    )
+            except Exception:
+                kills_already_sent_prev = False
             if (
                 not force_odds_signal_test_active
                 and late_star_wait_pub_table
@@ -22623,6 +22638,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and selected_early_sign in (-1, 1)
                 and selected_late_sign in (-1, 1)
                 and int(selected_early_sign) != int(selected_late_sign)
+                and not kills_already_sent_prev
             ):
                 # Same prep6 logic as the non-late kills path:
                 # Important: in opposite-signs cases ``target_side`` /
