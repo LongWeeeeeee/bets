@@ -22242,7 +22242,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             tier1_early_kills_mode = bool(
                 has_selected_early_star
                 and early_wr_pct is not None
-                and float(early_wr_pct) >= 70.0
+                and float(early_wr_pct) >= 65.0
                 and isinstance(selected_early_diag, dict)
                 and len(selected_early_diag.get("hit_metrics") or []) >= 2
             )
