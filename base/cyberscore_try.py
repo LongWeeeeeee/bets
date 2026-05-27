@@ -8381,6 +8381,15 @@ from urllib.parse import urlparse  # Добавьте импорт
 # Глобальный словарь для отслеживания матчей с отложенной отправкой
 monitored_matches = {}
 monitored_matches_lock = threading.Lock()
+
+# Tracks match URLs for which the kills pre-pass already fired in the current
+# pipeline lifetime. Used by the dual-signal guard so we don't keep re-sending
+# kills every cycle while the late delayed dispatch waits for its watcher.
+# We use a separate set instead of relying on monitored_matches because the
+# late side can (re-)write its own delayed_payload through several branches
+# without preserving the kills_already_sent flag.
+_kills_pre_pass_sent_urls: set = set()
+_kills_pre_pass_sent_lock = threading.Lock()
 delayed_state_overrides = {}
 delayed_state_overrides_lock = threading.Lock()
 delayed_sender_thread = None
@@ -16417,6 +16426,11 @@ def _drop_delayed_match(match_key: str, reason: str = "") -> bool:
     with monitored_matches_lock:
         removed = monitored_matches.pop(match_key, None)
         snapshot = copy.deepcopy(monitored_matches)
+    try:
+        with _kills_pre_pass_sent_lock:
+            _kills_pre_pass_sent_urls.discard(match_key)
+    except Exception:
+        pass
     if removed is not None:
         try:
             _persist_delayed_queue_snapshot(snapshot)
@@ -22623,14 +22637,21 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # keep re-sending kills every cycle until late triggers.
             kills_already_sent_prev = False
             try:
-                with monitored_matches_lock:
-                    _existing_payload = monitored_matches.get(check_uniq_url)
-                    kills_already_sent_prev = bool(
-                        isinstance(_existing_payload, dict)
-                        and _existing_payload.get("kills_already_sent")
-                    )
+                with _kills_pre_pass_sent_lock:
+                    if check_uniq_url in _kills_pre_pass_sent_urls:
+                        kills_already_sent_prev = True
             except Exception:
                 kills_already_sent_prev = False
+            if not kills_already_sent_prev:
+                try:
+                    with monitored_matches_lock:
+                        _existing_payload = monitored_matches.get(check_uniq_url)
+                        kills_already_sent_prev = bool(
+                            isinstance(_existing_payload, dict)
+                            and _existing_payload.get("kills_already_sent")
+                        )
+                except Exception:
+                    kills_already_sent_prev = False
             if (
                 not force_odds_signal_test_active
                 and late_star_wait_pub_table
@@ -22772,6 +22793,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 if kills_pp_delivered:
                                     kills_dual_pre_pass_sent = True
                                     kills_dual_pre_pass_target_side = str(kills_pp_target_side or "")
+                                    try:
+                                        with _kills_pre_pass_sent_lock:
+                                            _kills_pre_pass_sent_urls.add(check_uniq_url)
+                                    except Exception:
+                                        pass
                                     print(
                                         "   ✅ ВЕРДИКТ (kills pre-pass): СТАВКА НА Ранние килы отправлена "
                                         f"(reason={kills_release_status_label_pp}, "
