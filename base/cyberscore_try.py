@@ -23788,6 +23788,32 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             delayed_add_url_details["kills_target_side"] = str(
                                 kills_dual_pre_pass_target_side or ""
                             )
+                            # The base ``message_text`` and
+                            # ``stake_multiplier_context`` were built for the
+                            # kills/early signal (header "Ранние килы …" on the
+                            # early-side team). For the late delayed dispatch
+                            # we need a regular "СТАВКА НА <late team>"
+                            # header, since kills was already covered by the
+                            # pre-pass.
+                            late_dispatch_team_name = str(stake_team_name or "").strip()
+                            late_delayed_context = dict(stake_multiplier_context)
+                            late_delayed_context["special_header_mode"] = ""
+                            delayed_payload["stake_multiplier_context"] = late_delayed_context
+                            try:
+                                late_delayed_header = _format_signal_header(
+                                    stake_team_name=late_dispatch_team_name
+                                    or "НЕИЗВЕСТНАЯ КОМАНДА",
+                                    stake_multiplier=stake_multiplier,
+                                    special_header_mode="",
+                                )
+                                late_delayed_body_lines = message_text.splitlines()
+                                if late_delayed_body_lines:
+                                    late_delayed_body_lines[0] = late_delayed_header
+                                    delayed_payload["message"] = "\n".join(
+                                        late_delayed_body_lines
+                                    )
+                            except Exception:
+                                pass
                         _set_delayed_match(check_uniq_url, delayed_payload)
                         print("   ✅ ВЕРДИКТ: Сигнал оставлен в delayed-очереди для pub late comeback table")
                         return return_status
