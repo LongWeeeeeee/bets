@@ -8540,9 +8540,11 @@ CYBERSCORE_EXTRA_TOURNAMENT_TITLES: Dict[int, str] = _extra_tournament_titles_pa
 
 
 def _build_cyberscore_extra_tournament_url(tournament_id: int) -> str:
+    cache_buster = int(time.time())
     return (
         "https://cyberscore.live/en/matches/"
         f"?type=liveOrUpcoming&tournament={int(tournament_id)}"
+        f"&__cb={cache_buster}"
     )
 CYBERSCORE_GET_HEADS_FALLBACK = _env_flag("CYBERSCORE_GET_HEADS_FALLBACK", "0")
 CYBERSCORE_CAMOUFOX_PROXY_URL = str(os.getenv("CYBERSCORE_CAMOUFOX_PROXY_URL", "")).strip()
@@ -18011,7 +18013,17 @@ def _pick_nearest_schedule_info(
 
 def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[List[Any]]]:
     global GET_HEADS_LAST_FAILURE_REASON, NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO, SCHEDULE_LIVE_WAIT_TARGET
-    html = _get_cyberscore_html_via_camoufox(CYBERSCORE_MATCHES_URL)
+    # CyberScore puts an aggressive backend / CDN cache in front of the
+    # listing endpoint; without a cache-buster query the same response can
+    # linger for many minutes after a new live match actually started, which
+    # causes the runtime to miss those matches entirely (e.g. OG vs Tundra
+    # was live for ~16 minutes before showing up in tournament_tier=1,2).
+    cache_buster = int(time.time())
+    if "?" in CYBERSCORE_MATCHES_URL:
+        listing_url = f"{CYBERSCORE_MATCHES_URL}&__cb={cache_buster}"
+    else:
+        listing_url = f"{CYBERSCORE_MATCHES_URL}?__cb={cache_buster}"
+    html = _get_cyberscore_html_via_camoufox(listing_url)
     if html is None:
         return None, None
     heads, bodies = _extract_cyberscore_live_cards_from_html(html)
@@ -25672,7 +25684,16 @@ if __name__ == "__main__":
                 )
             elif status == "series_finished":
                 # All live matches are final-map processed — fetch schedule for proper sleep
-                schedule_html = _get_cyberscore_html_via_camoufox(CYBERSCORE_MATCHES_URL)
+                _series_finished_cache_buster = int(time.time())
+                if "?" in CYBERSCORE_MATCHES_URL:
+                    _series_finished_url = (
+                        f"{CYBERSCORE_MATCHES_URL}&__cb={_series_finished_cache_buster}"
+                    )
+                else:
+                    _series_finished_url = (
+                        f"{CYBERSCORE_MATCHES_URL}?__cb={_series_finished_cache_buster}"
+                    )
+                schedule_html = _get_cyberscore_html_via_camoufox(_series_finished_url)
                 schedule_candidates: List[Optional[Dict[str, Any]]] = []
                 if schedule_html:
                     schedule_candidates.append(
