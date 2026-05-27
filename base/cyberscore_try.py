@@ -24623,6 +24623,45 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 elif queue_top25_late_elo_block_monitor:
                     delayed_payload['timeout_add_url_reason'] = 'star_signal_rejected_top25_late_elo_block_timeout'
                     delayed_payload['timeout_status_label'] = NETWORTH_STATUS_LATE_TOP25_ELO_BLOCK_TIMEOUT_NO_SEND
+                if kills_dual_pre_pass_sent:
+                    # Same dual-signal lifecycle as the late_pub_comeback_table
+                    # branch above: mark this delayed payload as "kills
+                    # already covered separately" so the next cycle's kills
+                    # pre-pass guard sees ``kills_already_sent=True`` and
+                    # skips re-sending kills every minute.
+                    delayed_payload["kills_already_sent"] = True
+                    delayed_payload["kills_target_side"] = str(
+                        kills_dual_pre_pass_target_side or ""
+                    )
+                    delayed_payload["kills_sent_game_time"] = int(current_game_time)
+                    delayed_payload["pending_late_after_kills"] = True
+                    delayed_add_url_details["kills_dual_signal_active"] = True
+                    delayed_add_url_details["kills_target_side"] = str(
+                        kills_dual_pre_pass_target_side or ""
+                    )
+                    # Rewrite the queued message header so the eventual late
+                    # delayed dispatch shows "СТАВКА НА <late team>" instead
+                    # of "Ранние килы <late team>" inherited from the base
+                    # message.
+                    late_dispatch_team_name = str(stake_team_name or "").strip()
+                    late_delayed_context = dict(stake_multiplier_context)
+                    late_delayed_context["special_header_mode"] = ""
+                    delayed_payload["stake_multiplier_context"] = late_delayed_context
+                    try:
+                        late_delayed_header = _format_signal_header(
+                            stake_team_name=late_dispatch_team_name
+                            or "НЕИЗВЕСТНАЯ КОМАНДА",
+                            stake_multiplier=stake_multiplier,
+                            special_header_mode="",
+                        )
+                        late_delayed_body_lines = message_text.splitlines()
+                        if late_delayed_body_lines:
+                            late_delayed_body_lines[0] = late_delayed_header
+                            delayed_payload["message"] = "\n".join(
+                                late_delayed_body_lines
+                            )
+                    except Exception:
+                        pass
                 _set_delayed_match(check_uniq_url, delayed_payload)
                 print(
                     f"   ⏱️ Сигнал в delayed-очереди до game_time={target_human} "
