@@ -22596,12 +22596,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and int(selected_early_sign) != int(selected_late_sign)
             ):
                 # Same prep6 logic as the non-late kills path:
-                if target_networth_diff is None or target_side is None:
+                # Important: in opposite-signs cases ``target_side`` /
+                # ``target_networth_diff`` /``stake_team_name`` are computed
+                # for the LATE side (which becomes the late delayed dispatch).
+                # The kills pre-pass needs its own EARLY-side mirror.
+                kills_pp_target_side = _target_side_from_sign(selected_early_sign)
+                if kills_pp_target_side not in {"radiant", "dire"} or target_networth_diff is None:
                     print(
                         "   ⏳ kills pre-pass: target-side networth gate не применен "
-                        "(нет target_sign/lead) — продолжаем late watcher"
+                        "(нет early target_sign/lead) — продолжаем late watcher"
                     )
                 else:
+                    # Networth diff for kills target: invert sign if late and
+                    # early are on opposite sides (which they always are when
+                    # we entered this pre-pass branch).
+                    kills_pp_target_diff = (
+                        float(target_networth_diff)
+                        if str(target_side or "").strip().lower() == kills_pp_target_side
+                        else -float(target_networth_diff)
+                    )
+                    kills_pp_team_name = (
+                        (radiant_team_name_original or radiant_team_name)
+                        if kills_pp_target_side == "radiant"
+                        else (dire_team_name_original or dire_team_name)
+                    )
                     lane_adv_dict_kills_aligned_pp = bool(
                         same_sign_lane_adv_guard.get("lane_adv_dict_sign") is not None
                         and int(same_sign_lane_adv_guard.get("lane_adv_dict_sign") or 0) == int(selected_early_sign)
@@ -22629,7 +22647,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         >= NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS
                         and current_game_time
                         < NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_END_SECONDS
-                        and target_networth_diff
+                        and kills_pp_target_diff
                         >= NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_MIN_DIFF
                     ):
                         kills_release_status_label_pp = NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND
@@ -22637,28 +22655,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         if verbose_match_log:
                             print(
                                 "   ⏳ kills pre-pass: pre6 wait "
-                                f"(target_side={target_side}, target_diff={int(target_networth_diff)}) "
+                                f"(kills_target_side={kills_pp_target_side}, "
+                                f"kills_target_diff={int(kills_pp_target_diff)}) "
                                 "— продолжаем late watcher"
                             )
                     elif current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
-                        if target_networth_diff >= 0:
+                        if kills_pp_target_diff >= 0:
                             kills_release_status_label_pp = NETWORTH_STATUS_TIER1_EARLY_KILLS_6_10_TARGET_NONNEG_SEND
                         else:
                             if verbose_match_log:
                                 print(
-                                    "   ⏳ kills pre-pass: 6_10 wait target_diff<0 "
-                                    f"(target_side={target_side}, target_diff={int(target_networth_diff)}) "
+                                    "   ⏳ kills pre-pass: 6_10 wait kills_target_diff<0 "
+                                    f"(kills_target_side={kills_pp_target_side}, "
+                                    f"kills_target_diff={int(kills_pp_target_diff)}) "
                                     "— продолжаем late watcher"
                                 )
                     else:
-                        if target_networth_diff >= 0:
+                        if kills_pp_target_diff >= 0:
                             kills_release_status_label_pp = NETWORTH_STATUS_TIER1_EARLY_KILLS_4_12_SEND_500
                         else:
-                            # 10+ min and target negative → cancel kills,
+                            # 10+ min and kills target negative → cancel kills,
                             # but still let late watcher proceed.
                             if verbose_match_log:
                                 print(
-                                    "   ⚠️ kills pre-pass: cancelled (target в минусе на 10+ мин) "
+                                    "   ⚠️ kills pre-pass: cancelled (kills target в минусе на 10+ мин) "
                                     "— продолжаем late watcher"
                                 )
 
@@ -22671,9 +22691,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     _print_star_metrics_snapshot(
                                         star_metrics_snapshot, label="kills pre-pass"
                                     )
-                                # Build kills-only message header: special_header_mode=early_kills.
+                                # Build kills-only message header on the EARLY
+                                # side (kills team), not the late dispatch
+                                # team.
                                 kills_pp_header = _format_signal_header(
-                                    stake_team_name=stake_team_name,
+                                    stake_team_name=str(kills_pp_team_name or "НЕИЗВЕСТНАЯ КОМАНДА"),
                                     stake_multiplier=stake_multiplier,
                                     special_header_mode="early_kills",
                                 )
@@ -22692,8 +22714,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                         "release_reason": kills_release_status_label_pp,
                                         "dispatch_status_label": kills_release_status_label_pp,
                                         "game_time": int(current_game_time),
-                                        "target_side": target_side,
-                                        "target_networth_diff": float(target_networth_diff),
+                                        "target_side": kills_pp_target_side,
+                                        "target_networth_diff": float(kills_pp_target_diff),
                                         "kills_dual_signal_defer": True,
                                         "selected_star_wr": selected_star_wr,
                                         "selected_star_mode": selected_star_mode,
@@ -22704,12 +22726,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 )
                                 if kills_pp_delivered:
                                     kills_dual_pre_pass_sent = True
-                                    kills_dual_pre_pass_target_side = str(target_side or "")
+                                    kills_dual_pre_pass_target_side = str(kills_pp_target_side or "")
                                     print(
                                         "   ✅ ВЕРДИКТ (kills pre-pass): СТАВКА НА Ранние килы отправлена "
                                         f"(reason={kills_release_status_label_pp}, "
-                                        f"target_side={target_side}, "
-                                        f"target_diff={int(target_networth_diff)}) "
+                                        f"kills_target_side={kills_pp_target_side}, "
+                                        f"kills_target_diff={int(kills_pp_target_diff)}) "
                                         "— продолжаем late watcher"
                                     )
                             finally:
