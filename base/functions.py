@@ -1567,6 +1567,26 @@ def send_message(
             )
         if mirror_to_vk and not vk_delivered and _vk_is_enabled():
             logger.warning("VK mirror did not confirm delivery for message mirrored after Telegram success")
+        try:
+            failed_chat_summary: list = []
+            for chat_id, exc in uncertain_errors:
+                failed_chat_summary.append(f"{chat_id}=uncertain:{type(exc).__name__}")
+            for chat_id, exc in hard_errors:
+                failed_chat_summary.append(f"{chat_id}=hard:{type(exc).__name__}")
+            for chat_id, exc in terminal_chat_errors:
+                failed_chat_summary.append(f"{chat_id}=terminal:{type(exc).__name__}")
+            print(
+                "📨 Telegram broadcast: delivered={} (admin_only={}, mirror_to_vk={}, vk_delivered={}, total_targets={}, failures={})".format(
+                    delivered,
+                    admin_only,
+                    mirror_to_vk,
+                    vk_delivered if mirror_to_vk else "n/a",
+                    len(target_chat_ids),
+                    failed_chat_summary or "none",
+                )
+            )
+        except Exception:
+            pass
         return True
 
     if mirror_to_vk and vk_delivered:
@@ -1577,6 +1597,21 @@ def send_message(
                 [chat_id for chat_id, _ in hard_errors],
                 [chat_id for chat_id, _ in terminal_chat_errors],
             )
+        try:
+            failed_chat_summary_vk: list = []
+            for chat_id, exc in uncertain_errors:
+                failed_chat_summary_vk.append(f"{chat_id}=uncertain:{type(exc).__name__}")
+            for chat_id, exc in hard_errors:
+                failed_chat_summary_vk.append(f"{chat_id}=hard:{type(exc).__name__}")
+            for chat_id, exc in terminal_chat_errors:
+                failed_chat_summary_vk.append(f"{chat_id}=terminal:{type(exc).__name__}")
+            print(
+                "📨 Telegram broadcast: ALL Telegram targets failed but VK mirror OK "
+                f"(admin_only={admin_only}, total_targets={len(target_chat_ids)}, "
+                f"failures={failed_chat_summary_vk or 'none'})"
+            )
+        except Exception:
+            pass
         return True
 
     if uncertain_errors:

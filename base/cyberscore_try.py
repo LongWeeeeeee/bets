@@ -16584,6 +16584,12 @@ def _deliver_and_persist_signal(
             )
             return False
         raise
+    print(
+        f"   📨 send_message OK для {match_key} "
+        f"(admin_only={SIGNAL_SEND_ADMIN_ONLY}, "
+        f"mirror_to_vk={not SIGNAL_SEND_ADMIN_ONLY}, "
+        f"reason={add_url_reason})"
+    )
     if bookmaker_decision:
         _log_bookmaker_source_snapshot(match_key, decision=bookmaker_decision)
     if defer_add_url:
