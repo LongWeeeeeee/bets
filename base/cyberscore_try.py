@@ -6872,6 +6872,37 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                         add_url_details["target_networth_diff"] = float(monitor_target_diff)
                 else:
                     add_url_details.setdefault("dispatch_status_label", fallback_send_status_label)
+            # When delayed payload originated from a tier1_early_kills / opposite-signs
+            # cycle, the message was built with ``special_header_mode="early_kills"``
+            # and reads "СТАВКА НА Ранние килы …". Late delayed dispatches must
+            # surface the regular "СТАВКА НА <late team>" header instead — even for
+            # payloads that were persisted before the in-cycle header rewrite was in
+            # place. Normalize here so downstream rendering picks up the correct
+            # header regardless of payload origin.
+            late_payload_reasons = {
+                "late_star_pub_comeback_table_monitor",
+                "late_only_opposite_signs",
+                "late_only_no_early_star_pre27_watcher",
+                "late_all_no_early_star_pre27_watcher",
+                "late_all_same_weak_early_pre27_watcher",
+                "late_top25_elo_block_opposite_monitor",
+                "late_star_comeback_ceiling_monitor",
+                "post_target_comeback_ceiling_monitor",
+                "strong_same_sign_comeback_ceiling_monitor",
+            }
+            payload_reason_lc = str(payload.get("reason") or "").strip().lower()
+            try:
+                _payload_smc = payload.get("stake_multiplier_context")
+                if (
+                    payload_reason_lc in late_payload_reasons
+                    and isinstance(_payload_smc, dict)
+                    and str(_payload_smc.get("special_header_mode") or "").strip() == "early_kills"
+                ):
+                    _normalized_smc = dict(_payload_smc)
+                    _normalized_smc["special_header_mode"] = ""
+                    payload["stake_multiplier_context"] = _normalized_smc
+            except Exception:
+                pass
             delivery_message_text = _refresh_stake_multiplier_message(
                 payload.get('message', ''),
                 stake_multiplier_context=payload.get("stake_multiplier_context"),
