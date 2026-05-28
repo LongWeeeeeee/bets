@@ -284,6 +284,14 @@ def _run_branch_scenario(
         if existing_delayed_payload is not None:
             runtime.monitored_matches["dltv.org/matches/test-match.0"] = dict(existing_delayed_payload)
 
+    # Clear the kills-already-sent set between scenarios so prior tests
+    # don't suppress the kills/standalone path in the next test.
+    try:
+        with runtime._kills_pre_pass_sent_lock:
+            runtime._kills_pre_pass_sent_urls.clear()
+    except Exception:
+        pass
+
     monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", False, raising=False)
     monkeypatch.setattr(runtime, "DOTA2PROTRACKER_ENABLED", False, raising=False)
     monkeypatch.setattr(runtime, "FORCE_ODDS_SIGNAL_TEST", False, raising=False)
