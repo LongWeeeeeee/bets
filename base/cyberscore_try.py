@@ -6824,7 +6824,6 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                         add_url_details["target_networth_diff"] = float(monitor_target_diff)
                 else:
                     add_url_details.setdefault("dispatch_status_label", fallback_send_status_label)
-            _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
             delivery_message_text = _refresh_stake_multiplier_message(
                 payload.get('message', ''),
                 stake_multiplier_context=payload.get("stake_multiplier_context"),
@@ -21258,9 +21257,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             pro_duo_late = s.get('pro_duo_synergy_late', 0)
 
             _print_compact_draft_metrics(early_output, mid_output, all_output)
-            if DOTA2PROTRACKER_ENABLED and isinstance(s, dict):
-                for _line in _build_dota2protracker_log_lines(s):
-                    print(_line)
+            # Note: dota2protracker log lines are already emitted right after
+            # the protracker fetch at the top of the cycle. Avoid a second
+            # full block here — the cp1vs1 value is also surfaced inside the
+            # All star metrics block below.
 
             def _format_metrics(title, data, metrics):
                 lines = [title]
@@ -21296,6 +21296,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             lane_adv_dict_line = _build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot'))
             dota2protracker_lane_adv_value = _dota2protracker_lane_adv_value(s)
             dota2protracker_lane_adv_line = _build_dota2protracker_lane_adv_line(s)
+            # Surface lane advantage signals into the log unconditionally so
+            # rejected/no-star matches still record them for postmortem.
+            _lane_adv_log_dict = (
+                f"{lane_adv_dict_value:+.2f}" if lane_adv_dict_value is not None else "n/a"
+            )
+            _lane_adv_log_pro = (
+                f"{dota2protracker_lane_adv_value:+.2f}"
+                if dota2protracker_lane_adv_value is not None
+                else "n/a"
+            )
+            print(
+                f"   📐 Lane advantage: dict={_lane_adv_log_dict}, "
+                f"protracker={_lane_adv_log_pro}"
+            )
             dota2protracker_block = ""
             star_metrics_snapshot = _build_star_metrics_snapshot(
                 early_block_log=early_block_log,
@@ -22570,8 +22584,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 try:
                     if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки STAR-сигнала после lock"):
                         return return_status
-                    if verbose_match_log:
-                        _print_star_metrics_snapshot(star_metrics_snapshot, label="immediate")
                     delivery_message_text = _refresh_stake_multiplier_message(
                         message_text,
                         stake_multiplier_context=stake_multiplier_context,
@@ -22753,10 +22765,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             check_uniq_url, "kills pre-pass dispatch"
                         ) and _acquire_signal_send_slot(check_uniq_url):
                             try:
-                                if verbose_match_log:
-                                    _print_star_metrics_snapshot(
-                                        star_metrics_snapshot, label="kills pre-pass"
-                                    )
                                 # Build kills-only message header on the EARLY
                                 # side (kills team), not the late dispatch
                                 # team.
@@ -23045,8 +23053,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     try:
                         if _skip_dispatch_for_processed_url(check_uniq_url, "early WR65 немедленной отправки после lock"):
                             return return_status
-                        if verbose_match_log:
-                            _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
                         delivery_message_text = _refresh_stake_multiplier_message(
                             message_text,
                             stake_multiplier_context=stake_multiplier_context,
@@ -23274,8 +23280,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delay_reason = "late_only_opposite_signs"
                 elif not has_selected_early_star:
                     delay_reason = "late_only_no_early_star_pre27_watcher"
-                if verbose_match_log:
-                    _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
                 _ensure_delayed_sender_started()
                 target_game_time = float(DELAYED_SIGNAL_TARGET_GAME_TIME)
                 if late_pub_comeback_table_candidate or opposite_signs_selected or late_star_wait_pub_table:
@@ -23624,8 +23628,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         try:
                             if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки после lock (networth_gate)"):
                                 return return_status
-                            if verbose_match_log:
-                                _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
                             delivery_message_text = _refresh_stake_multiplier_message(
                                 message_text,
                                 stake_multiplier_context=stake_multiplier_context,
@@ -23672,8 +23674,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     try:
                         if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки после lock (no_json_url)"):
                             return return_status
-                        if verbose_match_log:
-                            _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
                         delivery_message_text = _refresh_stake_multiplier_message(
                             message_text,
                             stake_multiplier_context=stake_multiplier_context,
@@ -23726,8 +23726,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             try:
                                 if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки после lock (late pub table {target_human})"):
                                     return return_status
-                                if verbose_match_log:
-                                    _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
                                 delivery_message_text = _refresh_stake_multiplier_message(
                                     message_text,
                                     stake_multiplier_context=stake_multiplier_context,
@@ -23877,8 +23875,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             try:
                                 if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки после lock (top25 late elo block {target_human})"):
                                     return return_status
-                                if verbose_match_log:
-                                    _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
                                 delivery_message_text = _refresh_stake_multiplier_message(
                                     message_text,
                                     stake_multiplier_context=stake_multiplier_context,
@@ -24019,8 +24015,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             try:
                                 if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки после lock (late comeback ceiling {target_human})"):
                                     return return_status
-                                if verbose_match_log:
-                                    _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
                                 delivery_message_text = _refresh_stake_multiplier_message(
                                     message_text,
                                     stake_multiplier_context=stake_multiplier_context,
@@ -24156,8 +24150,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             try:
                                 if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки после lock (post-target comeback ceiling {target_human})"):
                                     return return_status
-                                if verbose_match_log:
-                                    _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
                                 delivery_confirmed = _deliver_and_persist_signal(
                                     check_uniq_url,
                                     message_text,
@@ -24293,8 +24285,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     try:
                         if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки после lock (game_time >= {target_human})"):
                             return return_status
-                        if verbose_match_log:
-                            _print_star_metrics_snapshot(star_metrics_snapshot, label="delayed")
                         delivery_confirmed = _deliver_and_persist_signal(
                             check_uniq_url,
                             message_text,
@@ -24732,8 +24722,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             try:
                 if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки STAR-сигнала после lock"):
                     return return_status
-                if verbose_match_log:
-                    _print_star_metrics_snapshot(star_metrics_snapshot, label="immediate")
                 delivery_message_text = _refresh_stake_multiplier_message(
                     message_text,
                     stake_multiplier_context=stake_multiplier_context,
