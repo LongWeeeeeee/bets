@@ -23830,13 +23830,21 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             delayed_add_url_details["kills_target_side"] = str(
                                 kills_dual_pre_pass_target_side or ""
                             )
-                            # The base ``message_text`` and
-                            # ``stake_multiplier_context`` were built for the
-                            # kills/early signal (header "Ранние килы …" on the
-                            # early-side team). For the late delayed dispatch
-                            # we need a regular "СТАВКА НА <late team>"
-                            # header, since kills was already covered by the
-                            # pre-pass.
+                        # The base ``message_text`` and ``stake_multiplier_context``
+                        # are built with ``special_header_mode="early_kills"``
+                        # whenever ``tier1_early_kills_mode=True`` (which holds
+                        # for any opposite-signs case eligible for the kills
+                        # dual signal). Rewrite the queued message header so
+                        # the eventual late delayed dispatch always shows
+                        # "СТАВКА НА <late team>" instead of inheriting the
+                        # "Ранние килы <late team>" template — regardless of
+                        # whether the kills pre-pass actually fired.
+                        if (
+                            tier1_early_kills_mode
+                            and selected_early_sign in (-1, 1)
+                            and selected_late_sign in (-1, 1)
+                            and int(selected_early_sign) != int(selected_late_sign)
+                        ):
                             late_dispatch_team_name = str(stake_team_name or "").strip()
                             late_delayed_context = dict(stake_multiplier_context)
                             late_delayed_context["special_header_mode"] = ""
@@ -24665,10 +24673,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_add_url_details["kills_target_side"] = str(
                         kills_dual_pre_pass_target_side or ""
                     )
-                    # Rewrite the queued message header so the eventual late
-                    # delayed dispatch shows "СТАВКА НА <late team>" instead
-                    # of "Ранние килы <late team>" inherited from the base
-                    # message.
+                # Rewrite the queued message header so the eventual late
+                # delayed dispatch shows "СТАВКА НА <late team>" instead of
+                # "Ранние килы <late team>" inherited from the base message —
+                # whenever ``tier1_early_kills_mode=True`` and signs are
+                # opposite (regardless of whether the kills pre-pass fired).
+                if (
+                    tier1_early_kills_mode
+                    and selected_early_sign in (-1, 1)
+                    and selected_late_sign in (-1, 1)
+                    and int(selected_early_sign) != int(selected_late_sign)
+                ):
                     late_dispatch_team_name = str(stake_team_name or "").strip()
                     late_delayed_context = dict(stake_multiplier_context)
                     late_delayed_context["special_header_mode"] = ""
@@ -25839,11 +25854,11 @@ if __name__ == "__main__":
                     label="series_finished_schedule",
                 )
             elif status is None:
-                print('Сплю 60 секунд')
-                _sleep_interruptible(60, raw_odds=args.odds, label="default_idle")
+                print('Сплю 30 секунд')
+                _sleep_interruptible(30, raw_odds=args.odds, label="default_idle")
             else:
-                print('Сплю 60 секунд')
-                _sleep_interruptible(60, raw_odds=args.odds, label="default_status")
+                print('Сплю 30 секунд')
+                _sleep_interruptible(30, raw_odds=args.odds, label="default_status")
         except Exception as e:
             print(f"⚠️ Ошибка главного цикла: {e}")
             logger.exception("Main loop error")
