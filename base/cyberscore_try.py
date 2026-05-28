@@ -23226,90 +23226,121 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         if not same_sign_lane_adv_stale_after_fallback:
                             networth_send_status_label = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
                 elif early65_release_status_label is not None:
-                    if _skip_dispatch_for_processed_url(check_uniq_url, "early WR65 немедленной отправки"):
+                    # Skip if kills was already sent for this match this cycle
+                    # or in a previous cycle (e.g. via kills pre-pass or this
+                    # very release path). The set is the source of truth for
+                    # "kills bet already on the wire" because monitored_matches
+                    # may not yet hold an entry when we get here, and the
+                    # match URL stays out of map_id_check.txt while we keep
+                    # the late watcher alive (defer_add_url=True for the
+                    # dual-signal case).
+                    _kills_already_sent_for_match = False
+                    try:
+                        with _kills_pre_pass_sent_lock:
+                            _kills_already_sent_for_match = check_uniq_url in _kills_pre_pass_sent_urls
+                    except Exception:
+                        _kills_already_sent_for_match = False
+                    if _kills_already_sent_for_match:
+                        if verbose_match_log:
+                            print(
+                                "   ⏭️ early65/kills release skipped: kills already sent "
+                                f"for {check_uniq_url} earlier — продолжаем late watcher"
+                            )
+                    elif _skip_dispatch_for_processed_url(check_uniq_url, "early WR65 немедленной отправки"):
                         return return_status
-                    if not _acquire_signal_send_slot(check_uniq_url):
+                    elif not _acquire_signal_send_slot(check_uniq_url):
                         print(f"   ⚠️ Пропуск: dispatch уже выполняется для {check_uniq_url}")
                         return return_status
-                    # Dual-signal: when kills fires AND a valid late-star signal
-                    # exists on the OPPOSITE side, keep the match alive in
-                    # monitored_matches so the late watcher can still fire its
-                    # own dispatch on a different side later.
-                    kills_dual_signal_defer = bool(
-                        tier1_early_kills_mode
-                        and has_selected_late_star
-                        and selected_early_sign in (-1, 1)
-                        and selected_late_sign in (-1, 1)
-                        and int(selected_early_sign) != int(selected_late_sign)
-                    )
-                    try:
-                        if _skip_dispatch_for_processed_url(check_uniq_url, "early WR65 немедленной отправки после lock"):
-                            return return_status
-                        delivery_message_text = _refresh_stake_multiplier_message(
-                            message_text,
-                            stake_multiplier_context=stake_multiplier_context,
-                            game_time_seconds=current_game_time,
-                            radiant_lead=lead,
-                        )
-                        delivery_confirmed = _deliver_and_persist_signal(
-                            check_uniq_url,
-                            delivery_message_text,
-                            add_url_reason="star_signal_sent_now_networth_gate",
-                            add_url_details={
-                                "status": status,
-                                "dispatch_mode": early_release_dispatch_mode,
-                                "delay_reason": early_release_delay_reason,
-                                "release_reason": early65_release_status_label,
-                                "dispatch_status_label": early65_release_status_label,
-                                "game_time": int(current_game_time),
-                                "target_side": target_side if tier1_early_kills_mode else early65_target_side,
-                                "target_networth_diff": float(
-                                    target_networth_diff if tier1_early_kills_mode else (early65_target_diff or 0.0)
-                                ),
-                                "selected_star_wr": selected_star_wr,
-                                "selected_star_mode": selected_star_mode,
-                                "kills_dual_signal_defer": bool(kills_dual_signal_defer),
-                                "json_retry_errors": json_retry_errors,
-                            },
-                            bookmaker_decision="sent",
-                            defer_add_url=kills_dual_signal_defer,
-                        )
-                        if delivery_confirmed:
-                            print(
-                                "   ✅ ВЕРДИКТ: Сигнал отправлен "
-                                f"(reason={early65_release_status_label}, "
-                                f"target_side={target_side if tier1_early_kills_mode else early65_target_side}, "
-                                f"target_diff={int(target_networth_diff if tier1_early_kills_mode else (early65_target_diff or 0))})"
-                            )
-                            if kills_dual_signal_defer:
-                                kills_target_side_resolved = (
-                                    target_side
-                                    if tier1_early_kills_mode
-                                    else early65_target_side
-                                )
-                                _update_delayed_match(
-                                    check_uniq_url,
-                                    kills_already_sent=True,
-                                    kills_target_side=str(kills_target_side_resolved or ""),
-                                    kills_sent_at=float(time.time()),
-                                    kills_sent_game_time=int(current_game_time),
-                                    kills_release_reason=str(early65_release_status_label or ""),
-                                    pending_late_after_kills=True,
-                                    kills_add_url_pending_reason="star_signal_sent_now_networth_gate",
-                                )
-                                print(
-                                    "   🔁 Dual-signal mode: kills отправлен, продолжаем мониторинг late "
-                                    f"(kills_target_side={kills_target_side_resolved}, "
-                                    f"late_target_side={_target_side_from_sign(selected_late_sign)})"
-                                )
-                    finally:
-                        _release_signal_send_slot(check_uniq_url)
-                    if kills_dual_signal_defer and delivery_confirmed:
-                        # Do NOT return — fall through so the late branch below
-                        # gets a chance to queue itself in monitored_matches.
-                        pass
                     else:
-                        return return_status
+                        # Dual-signal: when kills fires AND a valid late-star signal
+                        # exists on the OPPOSITE side, keep the match alive in
+                        # monitored_matches so the late watcher can still fire its
+                        # own dispatch on a different side later.
+                        kills_dual_signal_defer = bool(
+                            tier1_early_kills_mode
+                            and has_selected_late_star
+                            and selected_early_sign in (-1, 1)
+                            and selected_late_sign in (-1, 1)
+                            and int(selected_early_sign) != int(selected_late_sign)
+                        )
+                        try:
+                            if _skip_dispatch_for_processed_url(check_uniq_url, "early WR65 немедленной отправки после lock"):
+                                return return_status
+                            delivery_message_text = _refresh_stake_multiplier_message(
+                                message_text,
+                                stake_multiplier_context=stake_multiplier_context,
+                                game_time_seconds=current_game_time,
+                                radiant_lead=lead,
+                            )
+                            delivery_confirmed = _deliver_and_persist_signal(
+                                check_uniq_url,
+                                delivery_message_text,
+                                add_url_reason="star_signal_sent_now_networth_gate",
+                                add_url_details={
+                                    "status": status,
+                                    "dispatch_mode": early_release_dispatch_mode,
+                                    "delay_reason": early_release_delay_reason,
+                                    "release_reason": early65_release_status_label,
+                                    "dispatch_status_label": early65_release_status_label,
+                                    "game_time": int(current_game_time),
+                                    "target_side": target_side if tier1_early_kills_mode else early65_target_side,
+                                    "target_networth_diff": float(
+                                        target_networth_diff if tier1_early_kills_mode else (early65_target_diff or 0.0)
+                                    ),
+                                    "selected_star_wr": selected_star_wr,
+                                    "selected_star_mode": selected_star_mode,
+                                    "kills_dual_signal_defer": bool(kills_dual_signal_defer),
+                                    "json_retry_errors": json_retry_errors,
+                                },
+                                bookmaker_decision="sent",
+                                defer_add_url=kills_dual_signal_defer,
+                            )
+                            if delivery_confirmed:
+                                # Mark URL as kills-sent so subsequent cycles
+                                # don't re-fire this same release path while the
+                                # late watcher is still pending (defer_add_url
+                                # leaves the URL out of map_id_check.txt, so we
+                                # need our own in-process guard).
+                                try:
+                                    with _kills_pre_pass_sent_lock:
+                                        _kills_pre_pass_sent_urls.add(check_uniq_url)
+                                except Exception:
+                                    pass
+                                print(
+                                    "   ✅ ВЕРДИКТ: Сигнал отправлен "
+                                    f"(reason={early65_release_status_label}, "
+                                    f"target_side={target_side if tier1_early_kills_mode else early65_target_side}, "
+                                    f"target_diff={int(target_networth_diff if tier1_early_kills_mode else (early65_target_diff or 0))})"
+                                )
+                                if kills_dual_signal_defer:
+                                    kills_target_side_resolved = (
+                                        target_side
+                                        if tier1_early_kills_mode
+                                        else early65_target_side
+                                    )
+                                    _update_delayed_match(
+                                        check_uniq_url,
+                                        kills_already_sent=True,
+                                        kills_target_side=str(kills_target_side_resolved or ""),
+                                        kills_sent_at=float(time.time()),
+                                        kills_sent_game_time=int(current_game_time),
+                                        kills_release_reason=str(early65_release_status_label or ""),
+                                        pending_late_after_kills=True,
+                                        kills_add_url_pending_reason="star_signal_sent_now_networth_gate",
+                                    )
+                                    print(
+                                        "   🔁 Dual-signal mode: kills отправлен, продолжаем мониторинг late "
+                                        f"(kills_target_side={kills_target_side_resolved}, "
+                                        f"late_target_side={_target_side_from_sign(selected_late_sign)})"
+                                    )
+                        finally:
+                            _release_signal_send_slot(check_uniq_url)
+                        if kills_dual_signal_defer and delivery_confirmed:
+                            # Do NOT return — fall through so the late branch below
+                            # gets a chance to queue itself in monitored_matches.
+                            pass
+                        else:
+                            return return_status
                 elif current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
                     if opposite_signs_selected:
                         print(
