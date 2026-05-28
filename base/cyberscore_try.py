@@ -5385,6 +5385,28 @@ def _strip_dota2protracker_message_block_lines(lines: List[str]) -> List[str]:
     return stripped_lines
 
 
+def _normalize_late_dispatch_smc(
+    stake_multiplier_context: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Strip ``special_header_mode="early_kills"`` from a stake_multiplier_context
+    so a late dispatch renders ``СТАВКА НА <team>`` instead of inheriting the
+    early/kills header from the original cycle's base build.
+
+    Returns a fresh dict copy when normalization is needed, otherwise returns
+    the original context untouched. Callers feed the result to
+    ``_refresh_stake_multiplier_message`` for late dispatches that share the
+    same base ``message_text`` as the early/kills release.
+    """
+    if not isinstance(stake_multiplier_context, dict):
+        return stake_multiplier_context
+    mode = str(stake_multiplier_context.get("special_header_mode") or "").strip()
+    if mode != "early_kills":
+        return stake_multiplier_context
+    normalized = dict(stake_multiplier_context)
+    normalized["special_header_mode"] = ""
+    return normalized
+
+
 def _refresh_stake_multiplier_message(
     message_text: str,
     *,
@@ -6872,13 +6894,13 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                         add_url_details["target_networth_diff"] = float(monitor_target_diff)
                 else:
                     add_url_details.setdefault("dispatch_status_label", fallback_send_status_label)
-            # When delayed payload originated from a tier1_early_kills / opposite-signs
-            # cycle, the message was built with ``special_header_mode="early_kills"``
-            # and reads "СТАВКА НА Ранние килы …". Late delayed dispatches must
-            # surface the regular "СТАВКА НА <late team>" header instead — even for
-            # payloads that were persisted before the in-cycle header rewrite was in
-            # place. Normalize here so downstream rendering picks up the correct
-            # header regardless of payload origin.
+            # When delayed payload originated from a tier1_early_kills /
+            # opposite-signs cycle, ``stake_multiplier_context`` may carry
+            # ``special_header_mode="early_kills"``. For any late delayed
+            # dispatch we want the regular "СТАВКА НА <late team>" header
+            # instead. Restrict normalization to reasons that we actually
+            # send as late dispatches (so kills-only delayed paths, if any,
+            # would keep the "Ранние килы" header).
             late_payload_reasons = {
                 "late_star_pub_comeback_table_monitor",
                 "late_only_opposite_signs",
@@ -6891,18 +6913,14 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 "strong_same_sign_comeback_ceiling_monitor",
             }
             payload_reason_lc = str(payload.get("reason") or "").strip().lower()
-            try:
-                _payload_smc = payload.get("stake_multiplier_context")
-                if (
-                    payload_reason_lc in late_payload_reasons
-                    and isinstance(_payload_smc, dict)
-                    and str(_payload_smc.get("special_header_mode") or "").strip() == "early_kills"
-                ):
-                    _normalized_smc = dict(_payload_smc)
-                    _normalized_smc["special_header_mode"] = ""
-                    payload["stake_multiplier_context"] = _normalized_smc
-            except Exception:
-                pass
+            if payload_reason_lc in late_payload_reasons:
+                try:
+                    _payload_smc = payload.get("stake_multiplier_context")
+                    _normalized_smc = _normalize_late_dispatch_smc(_payload_smc)
+                    if _normalized_smc is not _payload_smc:
+                        payload["stake_multiplier_context"] = _normalized_smc
+                except Exception:
+                    pass
             delivery_message_text = _refresh_stake_multiplier_message(
                 payload.get('message', ''),
                 stake_multiplier_context=payload.get("stake_multiplier_context"),
@@ -23982,7 +24000,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     return return_status
                                 delivery_message_text = _refresh_stake_multiplier_message(
                                     message_text,
-                                    stake_multiplier_context=stake_multiplier_context,
+                                    stake_multiplier_context=_normalize_late_dispatch_smc(stake_multiplier_context),
                                     game_time_seconds=current_game_time,
                                     radiant_lead=lead,
                                 )
@@ -24131,7 +24149,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     return return_status
                                 delivery_message_text = _refresh_stake_multiplier_message(
                                     message_text,
-                                    stake_multiplier_context=stake_multiplier_context,
+                                    stake_multiplier_context=_normalize_late_dispatch_smc(stake_multiplier_context),
                                     game_time_seconds=current_game_time,
                                     radiant_lead=lead,
                                 )
@@ -24271,7 +24289,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     return return_status
                                 delivery_message_text = _refresh_stake_multiplier_message(
                                     message_text,
-                                    stake_multiplier_context=stake_multiplier_context,
+                                    stake_multiplier_context=_normalize_late_dispatch_smc(stake_multiplier_context),
                                     game_time_seconds=current_game_time,
                                     radiant_lead=lead,
                                 )
