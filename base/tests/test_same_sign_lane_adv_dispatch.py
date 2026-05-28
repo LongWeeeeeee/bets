@@ -190,10 +190,17 @@ def test_same_sign_star_dispatches_immediately_when_lane_adv_matches(monkeypatch
         lane_output=ALIGNED_LANE_OUTPUT,
     )
 
-    assert len(result.sent_messages) == 1
+    # ALIGNED_LANE_OUTPUT (Top/Mid/Bot win 70%) yields lane_adv_dict ≈ 31,
+    # which also triggers the standalone "lane_adv_dict ≥ 6" kills bet
+    # alongside the regular immediate STAR dispatch.
+    assert len(result.sent_messages) == 2
     assert result.queued_payload is None
-    assert result.add_url_calls[-1]["reason"] == "star_signal_sent_now"
-    details = result.add_url_calls[-1]["details"]
+    star_now_calls = [
+        call for call in result.add_url_calls
+        if call["reason"] == "star_signal_sent_now"
+    ]
+    assert star_now_calls, "expected star_signal_sent_now add_url call"
+    details = star_now_calls[-1]["details"]
     assert details["dispatch_mode"] == "immediate_star_rule"
 
 

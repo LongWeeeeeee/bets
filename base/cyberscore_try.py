@@ -1259,6 +1259,7 @@ NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS = max(
     ),
 )
 NETWORTH_STATUS_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_SEND = "tier1_early_kills_lane_adv_immediate_send"
+NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND = "lane_adv_dict_standalone_kills_send"
 NETWORTH_STATUS_TIER1_EARLY_KILLS_PRE6_WAIT = "tier1_early_kills_pre6_wait"
 NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND = "tier1_early_kills_3_6_lead_send_800"
 NETWORTH_STATUS_TIER1_EARLY_KILLS_6_10_TARGET_NONNEG_SEND = "tier1_early_kills_6_10_target_nonneg_send"
@@ -5195,6 +5196,53 @@ def _build_dota2protracker_only_message(
         f"{_build_series_score_line(live_league)}"
         f"{_build_dota2protracker_lane_adv_line(protracker_payload)}"
         f"{_build_dota2protracker_block(protracker_payload)}"
+    )
+
+
+def _build_lane_adv_standalone_kills_message(
+    *,
+    radiant_team_name: str,
+    dire_team_name: str,
+    target_team_name: str,
+    live_league: Optional[Dict[str, Any]],
+    top: Any,
+    mid: Any,
+    bot: Any,
+    protracker_payload: Optional[Dict[str, Any]],
+    team_elo_block: str,
+    game_time_seconds: Any,
+    radiant_lead: Any,
+    lane_adv_dict_value: Optional[float],
+) -> str:
+    """Build the dispatch message for the standalone "lane_adv_dict ≥ 6" kills
+    trigger. Used when the regular STAR signal block is empty/rejected — we
+    still want to send a kills bet on the team that is dominating the lanes.
+    """
+    header = _format_signal_header(
+        stake_team_name=str(target_team_name or "НЕИЗВЕСТНАЯ КОМАНДА"),
+        stake_multiplier=1.0,
+        special_header_mode="early_kills",
+    )
+    lane_block = _build_lane_block(
+        top,
+        mid,
+        bot,
+        lane_adv_line=_build_dota2protracker_lane_adv_line(protracker_payload),
+        lane_adv_dict_line=_build_lane_dict_adv_line(top, mid, bot),
+    )
+    live_state_block = _format_live_message_state_block(
+        game_time_seconds=game_time_seconds,
+        radiant_lead=radiant_lead,
+        radiant_team_name=radiant_team_name,
+        dire_team_name=dire_team_name,
+    )
+    return (
+        f"{header}\n"
+        f"{radiant_team_name} VS {dire_team_name}\n"
+        f"{_build_series_score_line(live_league)}"
+        f"{lane_block}"
+        f"{team_elo_block or ''}"
+        f"{live_state_block}"
     )
 
 
@@ -16463,6 +16511,145 @@ def _release_signal_send_slot(match_key: str) -> None:
         signal_send_guard.discard(match_key)
 
 
+def _try_dispatch_lane_adv_standalone_kills(
+    *,
+    match_key: str,
+    status: str,
+    radiant_team_name: str,
+    dire_team_name: str,
+    live_league: Optional[Dict[str, Any]],
+    top: Any,
+    mid: Any,
+    bot: Any,
+    protracker_payload: Optional[Dict[str, Any]],
+    team_elo_block: str,
+    game_time_seconds: Any,
+    radiant_lead: Any,
+    lane_adv_dict_value: Optional[float],
+    selected_star_wr: Optional[int] = None,
+    selected_star_mode: Optional[str] = None,
+    json_retry_errors: Any = None,
+) -> bool:
+    """Standalone kills trigger: when ``|lane_adv_dict| ≥ 6`` we dispatch a
+    kills bet on the dominating side, regardless of star block availability.
+
+    Runs with ``defer_add_url=True`` so other watchers (late star, all-only,
+    pub-comeback, etc.) can keep operating in the same cycle. The match URL
+    is recorded in the global ``_kills_pre_pass_sent_urls`` set so we
+    deliver this kills bet at most once per match lifetime.
+    """
+    if not match_key:
+        return False
+    try:
+        lane_adv_value = (
+            float(lane_adv_dict_value) if lane_adv_dict_value is not None else None
+        )
+    except (TypeError, ValueError):
+        lane_adv_value = None
+    if lane_adv_value is None:
+        return False
+    threshold = float(NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS)
+    if abs(lane_adv_value) < threshold:
+        return False
+
+    target_side = "radiant" if lane_adv_value > 0 else "dire"
+    target_team_name = (
+        str(radiant_team_name or "").strip()
+        if target_side == "radiant"
+        else str(dire_team_name or "").strip()
+    ) or "НЕИЗВЕСТНАЯ КОМАНДА"
+
+    # One kills bet per match. Guard against duplicate dispatch even when
+    # different code paths (has_valid_star vs no-star) both reach this call
+    # within the same cycle, or across cycles when watchers re-evaluate.
+    try:
+        with _kills_pre_pass_sent_lock:
+            if match_key in _kills_pre_pass_sent_urls:
+                return False
+    except Exception:
+        pass
+    if _skip_dispatch_for_processed_url(
+        match_key, "lane_adv_dict standalone kills dispatch"
+    ):
+        return False
+    if not _acquire_signal_send_slot(match_key):
+        return False
+    try:
+        if _skip_dispatch_for_processed_url(
+            match_key, "lane_adv_dict standalone kills (after lock)"
+        ):
+            return False
+        message_text = _build_lane_adv_standalone_kills_message(
+            radiant_team_name=str(radiant_team_name or ""),
+            dire_team_name=str(dire_team_name or ""),
+            target_team_name=target_team_name,
+            live_league=live_league,
+            top=top,
+            mid=mid,
+            bot=bot,
+            protracker_payload=protracker_payload,
+            team_elo_block=team_elo_block or "",
+            game_time_seconds=game_time_seconds,
+            radiant_lead=radiant_lead,
+            lane_adv_dict_value=lane_adv_value,
+        )
+        try:
+            current_game_time_int = int(float(game_time_seconds or 0.0))
+        except (TypeError, ValueError):
+            current_game_time_int = 0
+        try:
+            target_networth_diff = _target_networth_diff_from_radiant_lead(
+                radiant_lead, target_side
+            )
+        except Exception:
+            target_networth_diff = None
+        details = {
+            "status": status,
+            "dispatch_mode": "immediate_lane_adv_standalone_kills",
+            "delay_reason": "lane_adv_dict_standalone_kills",
+            "release_reason": NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND,
+            "dispatch_status_label": NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND,
+            "game_time": current_game_time_int,
+            "target_side": target_side,
+            "lane_adv_dict": float(lane_adv_value),
+            "lane_adv_dict_threshold": threshold,
+            "kills_dual_signal_defer": True,
+            "selected_star_wr": selected_star_wr,
+            "selected_star_mode": selected_star_mode,
+            "json_retry_errors": json_retry_errors,
+        }
+        if target_networth_diff is not None:
+            try:
+                details["target_networth_diff"] = float(target_networth_diff)
+            except (TypeError, ValueError):
+                pass
+        delivered = _deliver_and_persist_signal(
+            match_key,
+            message_text,
+            add_url_reason="star_signal_sent_now_lane_adv_standalone_kills",
+            add_url_details=details,
+            bookmaker_decision="sent",
+            defer_add_url=True,
+        )
+        if delivered:
+            try:
+                with _kills_pre_pass_sent_lock:
+                    _kills_pre_pass_sent_urls.add(match_key)
+            except Exception:
+                pass
+            print(
+                "   ✅ ВЕРДИКТ: lane_adv_dict standalone kills отправлен "
+                f"(target_side={target_side}, "
+                f"lane_adv_dict={lane_adv_value:+.2f}, "
+                f"min_abs={threshold:.2f}, "
+                f"game_time={current_game_time_int}) — другие ватчеры продолжают"
+            )
+            return True
+        return False
+    finally:
+        _release_signal_send_slot(match_key)
+
+
 def _schedule_delayed_retry(match_key: str, exc: Exception, now_ts: Optional[float] = None) -> bool:
     if not match_key:
         return False
@@ -21404,6 +21591,29 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"{radiant_team_name_original} vs {dire_team_name_original}"
                     )
 
+            # Standalone "lane_adv_dict ≥ 6" kills trigger:
+            # — fires regardless of star-block availability or sign matchup,
+            # — at most one kills bet per match (tracked via the global set),
+            # — does not block other watchers (defer_add_url=True, no return).
+            _try_dispatch_lane_adv_standalone_kills(
+                match_key=check_uniq_url,
+                status=status,
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=data.get('live_league_data') or {},
+                top=s.get('top'),
+                mid=s.get('mid'),
+                bot=s.get('bot'),
+                protracker_payload=s,
+                team_elo_block=team_elo_block,
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                lane_adv_dict_value=lane_adv_dict_value,
+                selected_star_wr=selected_star_wr,
+                selected_star_mode=selected_star_mode,
+                json_retry_errors=json_retry_errors,
+            )
+
             raw_selected_early_diag = dict(selected_early_diag)
             raw_selected_late_diag = dict(selected_late_diag)
             raw_selected_early_valid = bool(raw_selected_early_diag.get("valid"))
@@ -24969,6 +25179,52 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
             if star_filter_rejections:
                 print(f"   📉 Star filter reject: {'; '.join(star_filter_rejections)}")
+
+            # Standalone "lane_adv_dict ≥ 6" kills trigger for the no-star
+            # rejection path: even when no star block is valid, dominate-on-
+            # lanes case still warrants a kills bet on the dominating side.
+            try:
+                noskip_lane_adv_dict_value = _lane_dict_adv_value(
+                    s.get('top'), s.get('mid'), s.get('bot')
+                )
+            except Exception:
+                noskip_lane_adv_dict_value = None
+            try:
+                noskip_team_elo_summary = _build_team_elo_matchup_summary(
+                    radiant_team_id=radiant_team_id,
+                    dire_team_id=dire_team_id,
+                    radiant_team_name=radiant_team_name_original,
+                    dire_team_name=dire_team_name_original,
+                    radiant_account_ids=radiant_account_ids,
+                    dire_account_ids=dire_account_ids,
+                    match_tier=star_match_tier,
+                )
+                noskip_team_elo_block, _noskip_team_elo_meta = _format_team_elo_block(
+                    noskip_team_elo_summary,
+                    radiant_team_name=radiant_team_name_original,
+                    dire_team_name=dire_team_name_original,
+                )
+            except Exception:
+                noskip_team_elo_block = ""
+            _try_dispatch_lane_adv_standalone_kills(
+                match_key=check_uniq_url,
+                status=status,
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=data.get('live_league_data') or {},
+                top=s.get('top'),
+                mid=s.get('mid'),
+                bot=s.get('bot'),
+                protracker_payload=s,
+                team_elo_block=noskip_team_elo_block,
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                lane_adv_dict_value=noskip_lane_adv_dict_value,
+                selected_star_wr=selected_star_wr,
+                selected_star_mode=selected_star_mode,
+                json_retry_errors=json_retry_errors,
+            )
+
             add_url(
                 check_uniq_url,
                 reason="star_signal_rejected_no_star_signal",
