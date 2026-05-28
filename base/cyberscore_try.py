@@ -23315,9 +23315,38 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         try:
                             if _skip_dispatch_for_processed_url(check_uniq_url, "early WR65 немедленной отправки после lock"):
                                 return return_status
+                            # When ``tier1_early_kills_mode=True`` and signs
+                            # are opposite, the global ``stake_multiplier_context``
+                            # holds the late-side ``stake_team_name`` (because
+                            # ``dispatch_message_side`` may have resolved to the
+                            # late side for cases like Late+All same target with
+                            # weak opposite Early). Kills bet must go on the
+                            # EARLY-side team — override here.
+                            kills_release_smc = stake_multiplier_context
+                            kills_release_target_side_for_message = target_side
+                            if (
+                                tier1_early_kills_mode
+                                and selected_early_sign in (-1, 1)
+                            ):
+                                early_kills_side = _target_side_from_sign(selected_early_sign)
+                                early_kills_team_name = (
+                                    (radiant_team_name_original or radiant_team_name)
+                                    if early_kills_side == "radiant"
+                                    else (dire_team_name_original or dire_team_name)
+                                )
+                                if isinstance(stake_multiplier_context, dict):
+                                    kills_release_smc = dict(stake_multiplier_context)
+                                    kills_release_smc["stake_team_name"] = str(
+                                        early_kills_team_name or "НЕИЗВЕСТНАЯ КОМАНДА"
+                                    )
+                                    kills_release_smc["target_side"] = early_kills_side
+                                    # ``special_header_mode`` already set to
+                                    # "early_kills" upstream; keep it so the
+                                    # rendered header reads "Ранние килы …".
+                                    kills_release_target_side_for_message = early_kills_side
                             delivery_message_text = _refresh_stake_multiplier_message(
                                 message_text,
-                                stake_multiplier_context=stake_multiplier_context,
+                                stake_multiplier_context=kills_release_smc,
                                 game_time_seconds=current_game_time,
                                 radiant_lead=lead,
                             )
@@ -23332,7 +23361,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     "release_reason": early65_release_status_label,
                                     "dispatch_status_label": early65_release_status_label,
                                     "game_time": int(current_game_time),
-                                    "target_side": target_side if tier1_early_kills_mode else early65_target_side,
+                                    "target_side": kills_release_target_side_for_message if tier1_early_kills_mode else early65_target_side,
                                     "target_networth_diff": float(
                                         target_networth_diff if tier1_early_kills_mode else (early65_target_diff or 0.0)
                                     ),
@@ -23358,12 +23387,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 print(
                                     "   ✅ ВЕРДИКТ: Сигнал отправлен "
                                     f"(reason={early65_release_status_label}, "
-                                    f"target_side={target_side if tier1_early_kills_mode else early65_target_side}, "
+                                    f"target_side={kills_release_target_side_for_message if tier1_early_kills_mode else early65_target_side}, "
                                     f"target_diff={int(target_networth_diff if tier1_early_kills_mode else (early65_target_diff or 0))})"
                                 )
                                 if kills_dual_signal_defer:
                                     kills_target_side_resolved = (
-                                        target_side
+                                        kills_release_target_side_for_message
                                         if tier1_early_kills_mode
                                         else early65_target_side
                                     )
