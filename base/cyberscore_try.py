@@ -1264,6 +1264,13 @@ NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND = "lane_adv_dict_standalone_
 # at minute 00 on the lane-dominating side, in parallel with other watchers.
 # Default ON in production; tests disable it unless explicitly exercising it.
 LANE_ADV_STANDALONE_KILLS_ENABLED = _env_flag("LANE_ADV_STANDALONE_KILLS_ENABLED", "1")
+# The standalone trigger only fires in the very early window (ideally at 00,
+# but as soon as the match becomes visible). After this cutoff the regular
+# kills logic (which requires an early star) takes over instead.
+LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS = _safe_float_env(
+    "LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS",
+    3 * 60.0,
+)
 NETWORTH_STATUS_TIER1_EARLY_KILLS_PRE6_WAIT = "tier1_early_kills_pre6_wait"
 NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND = "tier1_early_kills_3_6_lead_send_800"
 NETWORTH_STATUS_TIER1_EARLY_KILLS_6_10_TARGET_NONNEG_SEND = "tier1_early_kills_6_10_target_nonneg_send"
@@ -16623,6 +16630,15 @@ def _try_dispatch_lane_adv_standalone_kills(
     if not match_key:
         return False
     if not LANE_ADV_STANDALONE_KILLS_ENABLED:
+        return False
+    # Only fire in the very early window (0-3 min). Ideally at 00, but if the
+    # match becomes visible later we still send as soon as we see it — up to
+    # the cutoff. After that the regular kills logic (early star) takes over.
+    try:
+        _gt = float(game_time_seconds or 0.0)
+    except (TypeError, ValueError):
+        _gt = 0.0
+    if _gt > float(LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS):
         return False
     try:
         lane_adv_value = (
