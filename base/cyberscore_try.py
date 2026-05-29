@@ -21639,10 +21639,33 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"{radiant_team_name_original} vs {dire_team_name_original}"
                     )
 
-            # Standalone "lane_adv_dict ≥ 6" kills trigger is invoked only
-            # in the no-star rejected path below. The has-valid-star flow
-            # already has its own kills release path (see
-            # ``Early kills release: lane_adv_dict immediate``).
+            # Standalone "lane_adv_dict ≥ 6" kills trigger for the
+            # has-valid-star flow: only when there is NO valid early star.
+            # The early-kills release path (tier1_early_kills_mode) requires
+            # an early star, so it cannot handle late-only / all-only cases.
+            # When lanes are dominated (|lane_adv_dict| ≥ 6) we still want an
+            # immediate kills bet on the dominating side, in parallel with the
+            # late/all watcher (defer_add_url=True, one bet per match guarded
+            # by _kills_pre_pass_sent_urls).
+            if not has_selected_early_star:
+                _try_dispatch_lane_adv_standalone_kills(
+                    match_key=check_uniq_url,
+                    status=status,
+                    radiant_team_name=radiant_team_name_original or radiant_team_name,
+                    dire_team_name=dire_team_name_original or dire_team_name,
+                    live_league=data.get('live_league_data') or {},
+                    top=s.get('top'),
+                    mid=s.get('mid'),
+                    bot=s.get('bot'),
+                    protracker_payload=s,
+                    team_elo_block=team_elo_block,
+                    game_time_seconds=game_time,
+                    radiant_lead=lead,
+                    lane_adv_dict_value=lane_adv_dict_value,
+                    selected_star_wr=selected_star_wr,
+                    selected_star_mode=selected_star_mode,
+                    json_retry_errors=json_retry_errors,
+                )
 
             raw_selected_early_diag = dict(selected_early_diag)
             raw_selected_late_diag = dict(selected_late_diag)

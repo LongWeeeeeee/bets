@@ -256,7 +256,11 @@ def test_late_all_no_early_uses_pre27_watcher_even_when_lane_adv_matches(monkeyp
         lane_output=ALIGNED_LANE_OUTPUT,
     )
 
-    assert result.sent_messages == []
+    # ALIGNED_LANE_OUTPUT yields lane_adv_dict ≈ 31 (>= 6) with no early star,
+    # so the standalone lane_adv kills bet fires immediately on the dominating
+    # side, while the late/all pre27 watcher still queues in parallel.
+    assert len(result.sent_messages) == 1
+    assert result.sent_messages[0].startswith("СТАВКА НА Ранние килы")
     assert result.queued_payload is not None
     assert result.queued_payload["reason"] == "late_all_no_early_star_pre27_watcher"
     assert result.queued_payload["dynamic_monitor_profile"] == runtime.LATE_PRE27_WATCHER_PROFILE
