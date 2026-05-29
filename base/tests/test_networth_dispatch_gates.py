@@ -274,6 +274,7 @@ def _run_branch_scenario(
     allow_late_star_early_core_same_or_zero: bool = False,
     existing_delayed_payload: Optional[Dict[str, Any]] = None,
     lane_output: tuple[str, str, str] = ("", "", ""),
+    lane_adv_standalone_kills_enabled: bool = False,
 ) -> BranchResult:
     heads, bodies = _build_heads_and_bodies()
     sent_messages: List[str] = []
@@ -295,6 +296,15 @@ def _run_branch_scenario(
     monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", False, raising=False)
     monkeypatch.setattr(runtime, "DOTA2PROTRACKER_ENABLED", False, raising=False)
     monkeypatch.setattr(runtime, "FORCE_ODDS_SIGNAL_TEST", False, raising=False)
+    # Standalone lane_adv kills trigger defaults OFF in the harness so the
+    # other dispatch-branch tests are not perturbed by an extra kills bet.
+    # Dedicated tests re-enable it explicitly via the parameter.
+    monkeypatch.setattr(
+        runtime,
+        "LANE_ADV_STANDALONE_KILLS_ENABLED",
+        bool(lane_adv_standalone_kills_enabled),
+        raising=False,
+    )
     monkeypatch.setattr(
         runtime,
         "STAR_ALLOW_TIER1_EARLY_STAR_LATE_SAME_OR_ZERO",

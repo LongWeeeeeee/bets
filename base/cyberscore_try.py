@@ -1260,6 +1260,10 @@ NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS = max(
 )
 NETWORTH_STATUS_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_SEND = "tier1_early_kills_lane_adv_immediate_send"
 NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND = "lane_adv_dict_standalone_kills_send"
+# Standalone "lane_adv_dict ≥ 6" kills trigger: fires in any dispatch branch
+# at minute 00 on the lane-dominating side, in parallel with other watchers.
+# Default ON in production; tests disable it unless explicitly exercising it.
+LANE_ADV_STANDALONE_KILLS_ENABLED = _env_flag("LANE_ADV_STANDALONE_KILLS_ENABLED", "1")
 NETWORTH_STATUS_TIER1_EARLY_KILLS_PRE6_WAIT = "tier1_early_kills_pre6_wait"
 NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND = "tier1_early_kills_3_6_lead_send_800"
 NETWORTH_STATUS_TIER1_EARLY_KILLS_6_10_TARGET_NONNEG_SEND = "tier1_early_kills_6_10_target_nonneg_send"
@@ -16589,6 +16593,8 @@ def _try_dispatch_lane_adv_standalone_kills(
     """
     if not match_key:
         return False
+    if not LANE_ADV_STANDALONE_KILLS_ENABLED:
+        return False
     try:
         lane_adv_value = (
             float(lane_adv_dict_value) if lane_adv_dict_value is not None else None
@@ -21639,33 +21645,31 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"{radiant_team_name_original} vs {dire_team_name_original}"
                     )
 
-            # Standalone "lane_adv_dict ≥ 6" kills trigger for the
-            # has-valid-star flow: only when there is NO valid early star.
-            # The early-kills release path (tier1_early_kills_mode) requires
-            # an early star, so it cannot handle late-only / all-only cases.
-            # When lanes are dominated (|lane_adv_dict| ≥ 6) we still want an
-            # immediate kills bet on the dominating side, in parallel with the
-            # late/all watcher (defer_add_url=True, one bet per match guarded
-            # by _kills_pre_pass_sent_urls).
-            if not has_selected_early_star:
-                _try_dispatch_lane_adv_standalone_kills(
-                    match_key=check_uniq_url,
-                    status=status,
-                    radiant_team_name=radiant_team_name_original or radiant_team_name,
-                    dire_team_name=dire_team_name_original or dire_team_name,
-                    live_league=data.get('live_league_data') or {},
-                    top=s.get('top'),
-                    mid=s.get('mid'),
-                    bot=s.get('bot'),
-                    protracker_payload=s,
-                    team_elo_block=team_elo_block,
-                    game_time_seconds=game_time,
-                    radiant_lead=lead,
-                    lane_adv_dict_value=lane_adv_dict_value,
-                    selected_star_wr=selected_star_wr,
-                    selected_star_mode=selected_star_mode,
-                    json_retry_errors=json_retry_errors,
-                )
+            # Standalone "lane_adv_dict ≥ 6" kills trigger: fires in ANY
+            # branch at minute 00 when lanes are dominated
+            # (|lane_adv_dict| ≥ 6), regardless of early/late/all star
+            # presence. Sends an immediate kills bet on the dominating side
+            # and does NOT block the rest of the dispatch flow (other
+            # watchers keep operating). One kills bet per match is guaranteed
+            # by the _kills_pre_pass_sent_urls set (defer_add_url=True).
+            _try_dispatch_lane_adv_standalone_kills(
+                match_key=check_uniq_url,
+                status=status,
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=data.get('live_league_data') or {},
+                top=s.get('top'),
+                mid=s.get('mid'),
+                bot=s.get('bot'),
+                protracker_payload=s,
+                team_elo_block=team_elo_block,
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                lane_adv_dict_value=lane_adv_dict_value,
+                selected_star_wr=selected_star_wr,
+                selected_star_mode=selected_star_mode,
+                json_retry_errors=json_retry_errors,
+            )
 
             raw_selected_early_diag = dict(selected_early_diag)
             raw_selected_late_diag = dict(selected_late_diag)

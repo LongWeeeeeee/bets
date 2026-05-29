@@ -256,11 +256,7 @@ def test_late_all_no_early_uses_pre27_watcher_even_when_lane_adv_matches(monkeyp
         lane_output=ALIGNED_LANE_OUTPUT,
     )
 
-    # ALIGNED_LANE_OUTPUT yields lane_adv_dict ≈ 31 (>= 6) with no early star,
-    # so the standalone lane_adv kills bet fires immediately on the dominating
-    # side, while the late/all pre27 watcher still queues in parallel.
-    assert len(result.sent_messages) == 1
-    assert result.sent_messages[0].startswith("СТАВКА НА Ранние килы")
+    assert result.sent_messages == []
     assert result.queued_payload is not None
     assert result.queued_payload["reason"] == "late_all_no_early_star_pre27_watcher"
     assert result.queued_payload["dynamic_monitor_profile"] == runtime.LATE_PRE27_WATCHER_PROFILE
@@ -269,6 +265,38 @@ def test_late_all_no_early_uses_pre27_watcher_even_when_lane_adv_matches(monkeyp
     # Phase 1 [0,20): flat 1000 за target. Watcher comeback grid отключён до 27:00.
     assert float(result.queued_payload["networth_monitor_threshold"]) == 1000.0
     assert result.queued_payload["send_on_target_game_time"] is False
+
+
+def test_lane_adv_standalone_kills_fires_in_late_only_branch_when_enabled(monkeypatch) -> None:
+    # Late-only case (no early star) with dominated lanes (lane_adv_dict ≈ 31).
+    # With the standalone trigger enabled, a kills bet fires immediately on the
+    # lane-dominating side AND the late watcher still queues in parallel.
+    case = replace(
+        _same_sign_case(
+            game_time_seconds=30,
+            target_networth_diff=-1000,
+            metrics_extra=ALIGNED_LANE_ADV,
+        ),
+        has_early_star=False,
+        early_sign=1,
+        has_late_star=True,
+        late_sign=1,
+    )
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        case,
+        lane_output=ALIGNED_LANE_OUTPUT,
+        lane_adv_standalone_kills_enabled=True,
+    )
+
+    kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
+    assert kills_msgs, "expected a standalone kills bet to fire"
+    # Standalone kills uses defer_add_url=True, so add_url is not recorded
+    # immediately; assert on the sent message + that the late watcher queued.
+    assert "lane_adv_dict: +31.00" in kills_msgs[0]
+    assert result.queued_payload is not None
+    assert result.queued_payload["reason"] == "late_only_no_early_star_pre27_watcher"
 
 
 def test_same_sign_star_waits_until_four_when_lane_adv_not_matching(monkeypatch) -> None:
