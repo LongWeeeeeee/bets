@@ -2169,6 +2169,34 @@ def _collect_star_hits_for_block(
     return hits
 
 
+def _has_opposite_early_wr60_hit(
+    raw_early_output: Optional[dict],
+    late_sign: Optional[int],
+) -> bool:
+    """Return True when the EARLY block has at least one STAR-eligible WR60+
+    hit whose sign is opposite to the late side.
+
+    Used to keep the late-only pre27 watcher blocked before ~21:00 even when
+    the early STAR block is not a fully-valid signal (e.g. sign conflict among
+    required metrics) but still shows an opposite-side early edge. Mirrors the
+    multi-hit opposite-signs waiting behaviour for the single-hit case.
+    """
+    if late_sign not in (-1, 1):
+        return False
+    hits = _collect_star_hits_for_block(raw_early_output, "early_output")
+    for hit in hits:
+        try:
+            value = float(hit.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if value == 0:
+            continue
+        sign = 1 if value > 0 else -1
+        if sign != int(late_sign):
+            return True
+    return False
+
+
 def _format_star_hits_line(hits: List[Dict[str, Any]]) -> str:
     parts: List[str] = []
     for hit in hits:
@@ -23773,12 +23801,24 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         )
                         else "late_only"
                     )
+                    # Even when the early STAR block is not a fully-valid
+                    # signal (e.g. sign conflict among required metrics), an
+                    # opposite-side early WR60 hit should keep the watcher
+                    # blocked until ~21:00 — same as the multi-hit
+                    # opposite-signs case. This prevents early flat-1000
+                    # releases at 4-5 min when the early lanes lean the other
+                    # way.
+                    _late_only_opposite_early = _has_opposite_early_wr60_hit(
+                        s.get('early_output', {}),
+                        selected_late_sign,
+                    )
                     dynamic_monitor_profile = _late_pre27_watcher_monitor_config(
                         signal_group=late_pre27_signal_group,
                         target_sign=selected_late_sign,
                         late_wr_pct=late_wr_pct,
                         all_wr_pct=all_wr_pct if late_pre27_signal_group == "late_all" else None,
                         selected_star_wr=selected_star_wr,
+                        has_opposite_early_star=_late_only_opposite_early,
                     )
                     if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"):
                         target_game_time = float(dynamic_monitor_profile.get("target_game_time") or target_game_time)
