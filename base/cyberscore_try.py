@@ -23058,6 +23058,31 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 _release_signal_send_slot(check_uniq_url)
 
             if not force_odds_signal_test_active and not late_star_wait_pub_table:
+                # If kills was already sent for this match (dual-signal), do
+                # NOT re-enter the kills dispatch flow on later cycles. The
+                # late watcher is alive in monitored_matches and must be left
+                # intact — otherwise the window-closed reject path below would
+                # drop the delayed queue and kill the pending late signal.
+                _kills_already_sent_guard = False
+                try:
+                    with _kills_pre_pass_sent_lock:
+                        _kills_already_sent_guard = check_uniq_url in _kills_pre_pass_sent_urls
+                except Exception:
+                    _kills_already_sent_guard = False
+                if _kills_already_sent_guard and tier1_early_kills_mode:
+                    _existing_late_payload = None
+                    try:
+                        with monitored_matches_lock:
+                            _existing_late_payload = monitored_matches.get(check_uniq_url)
+                    except Exception:
+                        _existing_late_payload = None
+                    if isinstance(_existing_late_payload, dict):
+                        if verbose_match_log:
+                            print(
+                                "   ⏭️ kills уже отправлен — пропускаем kills dispatch, "
+                                "late watcher остается в delayed-очереди"
+                            )
+                        return return_status
                 if tier1_early_kills_mode:
                     if target_networth_diff is None or target_side is None:
                         print(
