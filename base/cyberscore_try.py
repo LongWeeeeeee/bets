@@ -16610,6 +16610,7 @@ def _try_dispatch_lane_adv_standalone_kills(
     selected_star_wr: Optional[int] = None,
     selected_star_mode: Optional[str] = None,
     json_retry_errors: Any = None,
+    full_message_text: Optional[str] = None,
 ) -> bool:
     """Standalone kills trigger: when ``|lane_adv_dict| ≥ 6`` we dispatch a
     kills bet on the dominating side, regardless of star block availability.
@@ -16662,20 +16663,39 @@ def _try_dispatch_lane_adv_standalone_kills(
             match_key, "lane_adv_dict standalone kills (after lock)"
         ):
             return False
-        message_text = _build_lane_adv_standalone_kills_message(
-            radiant_team_name=str(radiant_team_name or ""),
-            dire_team_name=str(dire_team_name or ""),
-            target_team_name=target_team_name,
-            live_league=live_league,
-            top=top,
-            mid=mid,
-            bot=bot,
-            protracker_payload=protracker_payload,
-            team_elo_block=team_elo_block or "",
-            game_time_seconds=game_time_seconds,
-            radiant_lead=radiant_lead,
-            lane_adv_dict_value=lane_adv_value,
-        )
+        # Prefer the full signal body (WR block, star hits, metric blocks)
+        # when the caller provides it — only the header line is rewritten to
+        # the kills header for the dominating team. Fall back to the compact
+        # builder otherwise (e.g. no-star path where no full body exists).
+        message_text = None
+        if isinstance(full_message_text, str) and full_message_text.startswith("СТАВКА НА "):
+            try:
+                kills_header = _format_signal_header(
+                    stake_team_name=target_team_name,
+                    stake_multiplier=1.0,
+                    special_header_mode="early_kills",
+                )
+                body_lines = full_message_text.splitlines()
+                if body_lines:
+                    body_lines[0] = kills_header
+                    message_text = "\n".join(body_lines)
+            except Exception:
+                message_text = None
+        if message_text is None:
+            message_text = _build_lane_adv_standalone_kills_message(
+                radiant_team_name=str(radiant_team_name or ""),
+                dire_team_name=str(dire_team_name or ""),
+                target_team_name=target_team_name,
+                live_league=live_league,
+                top=top,
+                mid=mid,
+                bot=bot,
+                protracker_payload=protracker_payload,
+                team_elo_block=team_elo_block or "",
+                game_time_seconds=game_time_seconds,
+                radiant_lead=radiant_lead,
+                lane_adv_dict_value=lane_adv_value,
+            )
         try:
             current_game_time_int = int(float(game_time_seconds or 0.0))
         except (TypeError, ValueError):
@@ -21673,31 +21693,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"{radiant_team_name_original} vs {dire_team_name_original}"
                     )
 
-            # Standalone "lane_adv_dict ≥ 6" kills trigger: fires in ANY
-            # branch at minute 00 when lanes are dominated
-            # (|lane_adv_dict| ≥ 6), regardless of early/late/all star
-            # presence. Sends an immediate kills bet on the dominating side
-            # and does NOT block the rest of the dispatch flow (other
-            # watchers keep operating). One kills bet per match is guaranteed
-            # by the _kills_pre_pass_sent_urls set (defer_add_url=True).
-            _try_dispatch_lane_adv_standalone_kills(
-                match_key=check_uniq_url,
-                status=status,
-                radiant_team_name=radiant_team_name_original or radiant_team_name,
-                dire_team_name=dire_team_name_original or dire_team_name,
-                live_league=data.get('live_league_data') or {},
-                top=s.get('top'),
-                mid=s.get('mid'),
-                bot=s.get('bot'),
-                protracker_payload=s,
-                team_elo_block=team_elo_block,
-                game_time_seconds=game_time,
-                radiant_lead=lead,
-                lane_adv_dict_value=lane_adv_dict_value,
-                selected_star_wr=selected_star_wr,
-                selected_star_mode=selected_star_mode,
-                json_retry_errors=json_retry_errors,
-            )
+            # Standalone "lane_adv_dict ≥ 6" kills trigger is dispatched
+            # later, after the full signal ``message_text`` is built, so the
+            # kills bet carries the complete body (WR/star/metric blocks).
 
             raw_selected_early_diag = dict(selected_early_diag)
             raw_selected_late_diag = dict(selected_late_diag)
@@ -22699,6 +22697,32 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"{dota2protracker_block}"
                 f"{live_state_block}"
                 f"{odds_block}"
+            )
+            # Standalone "lane_adv_dict ≥ 6" kills trigger: fires in ANY
+            # branch when lanes are dominated (|lane_adv_dict| ≥ 6),
+            # regardless of early/late/all star presence. Uses the full
+            # signal body (only the header is rewritten to the kills header),
+            # and does NOT block the rest of the dispatch flow (other watchers
+            # keep operating). One kills bet per match guaranteed by the
+            # _kills_pre_pass_sent_urls set (defer_add_url=True).
+            _try_dispatch_lane_adv_standalone_kills(
+                match_key=check_uniq_url,
+                status=status,
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=data.get('live_league_data') or {},
+                top=s.get('top'),
+                mid=s.get('mid'),
+                bot=s.get('bot'),
+                protracker_payload=s,
+                team_elo_block=team_elo_block,
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                lane_adv_dict_value=lane_adv_dict_value,
+                selected_star_wr=selected_star_wr,
+                selected_star_mode=selected_star_mode,
+                json_retry_errors=json_retry_errors,
+                full_message_text=message_text,
             )
             current_game_time = float(game_time or 0.0)
             early65_sign = (
