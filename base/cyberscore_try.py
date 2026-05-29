@@ -21517,7 +21517,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             all_metric_list = [
                 ('counterpick_1vs1', 'Counterpick_1vs1'),
                 ('counterpick_1vs2', 'Counterpick_1vs2'),
-                ('solo', 'Solo'),
                 ('synergy_duo', 'Synergy_duo'),
                 ('synergy_trio', 'Synergy_trio'),
                 ('dota2protracker_cp1vs1', 'Dota2ProTracker_cp1vs1'),
@@ -25209,7 +25208,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     ('synergy_duo', 'Synergy_duo'),
                     ('synergy_trio', 'Synergy_trio'),
                 ]
-                tempo_all_metric_list = tempo_metric_list + [
+                # All block omits Solo (post-lane solo is never computed, so
+                # it is always None there).
+                tempo_all_metric_list = [
+                    ('counterpick_1vs1', 'Counterpick_1vs1'),
+                    ('counterpick_1vs2', 'Counterpick_1vs2'),
+                    ('synergy_duo', 'Synergy_duo'),
+                    ('synergy_trio', 'Synergy_trio'),
                     ('dota2protracker_cp1vs1', 'Dota2ProTracker_cp1vs1'),
                 ]
 
