@@ -5546,6 +5546,14 @@ def _format_recheck_metrics_summary(payload: Optional[Dict[str, Any]]) -> str:
     if not isinstance(payload, dict):
         return ""
     smc = payload.get("stake_multiplier_context")
+    return _format_recheck_metrics_summary_from_smc(smc)
+
+
+def _format_recheck_metrics_summary_from_smc(smc: Optional[Dict[str, Any]]) -> str:
+    """Compact ``early=.., late=.., all=..`` summary built directly from a
+    stake_multiplier_context-shaped dict (team names + per-phase star sign / WR).
+    Shared by the delayed-queue recheck path and the pre-queue wait path so both
+    surface the same one-line WR view without recomputing draft metrics."""
     if not isinstance(smc, dict):
         return ""
     radiant_name = str(smc.get("radiant_team_name") or "Radiant").strip() or "Radiant"
@@ -8626,6 +8634,19 @@ runtime_cycle_counter = 0
 VERBOSE_MATCH_LOG_CACHE_MAX_SIZE = 5000
 RUNTIME_MEMORY_SNAPSHOT_EVERY_CYCLES = 5
 RUNTIME_MEMORY_SNAPSHOT_RSS_ALERT_MB = 1536.0
+
+# Per-map draft-metrics cache. The synergy/counterpick dictionaries and the
+# Dota2ProTracker enrichment are a pure function of the (fixed) draft, so they
+# only need to be computed once per map. During the pre-dispatch networth-gate
+# wait phase (and again once the match sits in the delayed queue) the live
+# recheck loop revisits the same map every ~30s; without this cache it would
+# re-run the sqlite lookups and the ProTracker network fetch every cycle and
+# re-print the full draft/metrics block each time. We key by match URL plus a
+# draft signature so a draft that is still completing (partial picks early)
+# invalidates the cache automatically once it locks.
+draft_metrics_cache: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+draft_metrics_cache_lock = threading.Lock()
+DRAFT_METRICS_CACHE_MAX_SIZE = 2000
 
 # Extreme predictor singleton
 extreme_predictor = None
@@ -16182,6 +16203,79 @@ def _sync_uncertain_delivery_urls_cache(urls: Any) -> None:
         uncertain_delivery_urls_cache.update(normalized)
 
 
+def _draft_metrics_signature(
+    radiant_heroes_and_pos: Any,
+    dire_heroes_and_pos: Any,
+) -> str:
+    """Stable signature of a parsed draft (hero ids per position, both sides).
+
+    The synergy/counterpick metrics + ProTracker enrichment are a pure
+    function of this signature, so it doubles as a cache-invalidation key: if
+    the draft is still completing (a pick changes/arrives), the signature
+    changes and the cached metrics are recomputed once.
+    """
+    def _side_sig(side: Any) -> str:
+        side = side if isinstance(side, dict) else {}
+        parts = []
+        for pos in ("pos1", "pos2", "pos3", "pos4", "pos5"):
+            payload = side.get(pos) or {}
+            hero_id = payload.get("hero_id") if isinstance(payload, dict) else None
+            try:
+                hero_id = int(hero_id or 0)
+            except (TypeError, ValueError):
+                hero_id = 0
+            parts.append(str(hero_id))
+        return ",".join(parts)
+
+    return f"R:{_side_sig(radiant_heroes_and_pos)}|D:{_side_sig(dire_heroes_and_pos)}"
+
+
+def _get_cached_draft_metrics(match_key: Any, signature: str) -> Optional[Dict[str, Any]]:
+    key = str(match_key or "").strip()
+    if not key or not signature:
+        return None
+    with draft_metrics_cache_lock:
+        entry = draft_metrics_cache.get(key)
+        if not isinstance(entry, dict):
+            return None
+        if str(entry.get("signature") or "") != signature:
+            return None
+        draft_metrics_cache.move_to_end(key)
+        return entry
+
+
+def _store_cached_draft_metrics(
+    match_key: Any,
+    signature: str,
+    *,
+    s: Dict[str, Any],
+    protracker_payload: Optional[Dict[str, Any]],
+    protracker_log_lines: Optional[List[str]] = None,
+) -> None:
+    key = str(match_key or "").strip()
+    if not key or not signature:
+        return
+    entry = {
+        "signature": signature,
+        "s": copy.deepcopy(s),
+        "protracker_payload": copy.deepcopy(protracker_payload),
+        "protracker_log_lines": [str(line) for line in (protracker_log_lines or [])],
+    }
+    with draft_metrics_cache_lock:
+        draft_metrics_cache[key] = entry
+        draft_metrics_cache.move_to_end(key)
+        while len(draft_metrics_cache) > max(1, int(DRAFT_METRICS_CACHE_MAX_SIZE)):
+            draft_metrics_cache.popitem(last=False)
+
+
+def _drop_cached_draft_metrics(match_key: Any) -> None:
+    key = str(match_key or "").strip()
+    if not key:
+        return
+    with draft_metrics_cache_lock:
+        draft_metrics_cache.pop(key, None)
+
+
 def _should_emit_verbose_match_log(match_key: Any) -> bool:
     key = str(match_key or "").strip()
     if not key:
@@ -16662,6 +16756,10 @@ def _mark_url_processed(url: str) -> None:
         return
     with processed_urls_lock:
         processed_urls_cache.add(normalized_url)
+    # Once a map is fully processed (signal sent / dropped) its draft metrics
+    # cache entry is no longer needed — free it so the cache stays bounded to
+    # active maps.
+    _drop_cached_draft_metrics(normalized_url)
 
 
 def _is_url_processed(url: str) -> bool:
@@ -21192,20 +21290,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     "   ✅ CyberScore draft parsed: "
                     f"radiant={len(radiant_heroes_and_pos)}, dire={len(dire_heroes_and_pos)}"
                 )
-                # Log the full roster (hero + position) once at first parse so
-                # the draft is recoverable from the log later. Rechecks do not
-                # reach this branch (they return early), so this prints once.
-                try:
-                    _rad_name = str(radiant_team_name_original or radiant_team_name or "Radiant").strip() or "Radiant"
-                    _dire_name = str(dire_team_name_original or dire_team_name or "Dire").strip() or "Dire"
-                    print(
-                        f"   🧩 Draft [{_rad_name}] {_format_pipeline_probe_draft_side(radiant_heroes_and_pos)}"
-                    )
-                    print(
-                        f"   🧩 Draft [{_dire_name}] {_format_pipeline_probe_draft_side(dire_heroes_and_pos)}"
-                    )
-                except Exception:
-                    pass
         elif verbose_match_log:
             radiant_heroes_and_pos, dire_heroes_and_pos, parse_error, problem_summary, problem_candidates = parse_draft_and_positions(
                 soup, data, radiant_team_name_original, dire_team_name_original
@@ -21400,20 +21484,57 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 else:
                     os.environ["SIGNAL_WRAPPER_ENABLED"] = prev_wrapper_enabled
 
-        if PIPELINE_METRICS_PARALLEL_ENABLED and DOTA2PROTRACKER_ENABLED:
-            print("   🧵 Draft metrics: local dictionaries + Dota2ProTracker in parallel")
-            with ThreadPoolExecutor(max_workers=2, thread_name_prefix="draft-metrics") as executor:
-                local_future = executor.submit(_run_local_dictionary_metrics)
-                protracker_future = executor.submit(_run_dota2protracker_enrichment)
-                s = local_future.result()
-                protracker_payload = protracker_future.result()
+        # Draft metrics (synergy/counterpick dicts + Dota2ProTracker) are a
+        # pure function of the fixed draft, so compute them once per map and
+        # reuse on every later recheck cycle. This avoids re-running the sqlite
+        # lookups and the ProTracker network fetch (and re-printing the full
+        # draft/metrics block) during the pre-dispatch networth-gate wait phase
+        # and while the match sits in the delayed queue.
+        _draft_signature = _draft_metrics_signature(radiant_heroes_and_pos, dire_heroes_and_pos)
+        _cached_metrics = _get_cached_draft_metrics(check_uniq_url, _draft_signature)
+        metrics_from_cache = bool(_cached_metrics)
+        # Show the full draft/metrics block only at first compute (cache miss);
+        # on rechecks emit a single compact summary line instead.
+        first_draft_metrics_compute = not metrics_from_cache
+        if metrics_from_cache:
+            s = copy.deepcopy(_cached_metrics.get("s") or {})
+            protracker_payload = copy.deepcopy(_cached_metrics.get("protracker_payload"))
         else:
-            protracker_payload = _run_dota2protracker_enrichment()
-            s = _run_local_dictionary_metrics()
+            # Log the full roster (hero + position) once at first parse so the
+            # draft is recoverable from the log later.
+            try:
+                _rad_name = str(radiant_team_name_original or radiant_team_name or "Radiant").strip() or "Radiant"
+                _dire_name = str(dire_team_name_original or dire_team_name or "Dire").strip() or "Dire"
+                print(
+                    f"   🧩 Draft [{_rad_name}] {_format_pipeline_probe_draft_side(radiant_heroes_and_pos)}"
+                )
+                print(
+                    f"   🧩 Draft [{_dire_name}] {_format_pipeline_probe_draft_side(dire_heroes_and_pos)}"
+                )
+            except Exception:
+                pass
+            if PIPELINE_METRICS_PARALLEL_ENABLED and DOTA2PROTRACKER_ENABLED:
+                print("   🧵 Draft metrics: local dictionaries + Dota2ProTracker in parallel")
+                with ThreadPoolExecutor(max_workers=2, thread_name_prefix="draft-metrics") as executor:
+                    local_future = executor.submit(_run_local_dictionary_metrics)
+                    protracker_future = executor.submit(_run_dota2protracker_enrichment)
+                    s = local_future.result()
+                    protracker_payload = protracker_future.result()
+            else:
+                protracker_payload = _run_dota2protracker_enrichment()
+                s = _run_local_dictionary_metrics()
 
-        if DOTA2PROTRACKER_ENABLED:
-            for _line in _build_dota2protracker_log_lines(protracker_payload):
-                print(_line)
+            if DOTA2PROTRACKER_ENABLED:
+                for _line in _build_dota2protracker_log_lines(protracker_payload):
+                    print(_line)
+
+            _store_cached_draft_metrics(
+                check_uniq_url,
+                _draft_signature,
+                s=s,
+                protracker_payload=protracker_payload,
+            )
+
 
         if DOTA2PROTRACKER_ENABLED and DOTA2PROTRACKER_ONLY_MODE and not PIPELINE_BYPASS_PROTRACKER_GATE:
             if not _has_valid_dota2protracker_signal(protracker_payload):
@@ -21848,7 +21969,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             pro_cp_late = s.get('pro_cp1vs1_late', 0)
             pro_duo_late = s.get('pro_duo_synergy_late', 0)
 
-            _print_compact_draft_metrics(early_output, mid_output, all_output)
+            if first_draft_metrics_compute:
+                _print_compact_draft_metrics(early_output, mid_output, all_output)
             # Note: dota2protracker log lines are already emitted right after
             # the protracker fetch at the top of the cycle. Avoid a second
             # full block here — the cp1vs1 value is also surfaced inside the
@@ -21897,10 +22019,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 if dota2protracker_lane_adv_value is not None
                 else "n/a"
             )
-            print(
-                f"   📐 Lane advantage: dict={_lane_adv_log_dict}, "
-                f"protracker={_lane_adv_log_pro}"
-            )
+            if first_draft_metrics_compute:
+                print(
+                    f"   📐 Lane advantage: dict={_lane_adv_log_dict}, "
+                    f"protracker={_lane_adv_log_pro}"
+                )
             dota2protracker_block = ""
             star_metrics_snapshot = _build_star_metrics_snapshot(
                 early_block_log=early_block_log,
@@ -21911,8 +22034,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 raw_star_all_summary=raw_star_all_summary,
                 star_diag_lines=star_diag_lines,
             )
-            # Always log metrics (even when signal is rejected)
-            _print_star_metrics_snapshot(star_metrics_snapshot, label="")
+            # Log full metrics block only at first compute (even when signal
+            # is rejected); rechecks emit a compact summary line further below.
+            if first_draft_metrics_compute:
+                _print_star_metrics_snapshot(star_metrics_snapshot, label="")
 
             # Серия: только счет
             series_score_line = _build_series_score_line(data.get('live_league_data') or {})
@@ -23038,6 +23163,27 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early65_target_side,
             )
             target_networth_diff = _target_networth_diff_from_radiant_lead(lead, target_side)
+            # On rechecks (metrics reused from cache) we suppress the full
+            # draft/metrics/STAR block above; emit one compact summary line so
+            # the recheck still shows the target + early/late/all WR view.
+            if not first_draft_metrics_compute:
+                try:
+                    _recheck_metrics_line = _format_recheck_metrics_summary_from_smc(
+                        stake_multiplier_context
+                    )
+                    _target_side_txt = str(target_side or "n/a")
+                    _target_diff_txt = (
+                        f"{int(target_networth_diff):+d}"
+                        if target_networth_diff is not None
+                        else "n/a"
+                    )
+                    print(
+                        "   \U0001F4CA Recheck: "
+                        f"target={_target_side_txt} diff={_target_diff_txt}"
+                        + (f", {_recheck_metrics_line}" if _recheck_metrics_line else "")
+                    )
+                except Exception:
+                    pass
             late_pub_signal_wr_pct = (
                 signal_wr_guard_meta.get("wr_pct")
                 if isinstance(signal_wr_guard_meta, dict)
@@ -25675,24 +25821,26 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 section="all_output",
                 target_wr=star_target_wr,
             )
-            _print_compact_draft_metrics(
-                rejected_early_output_log,
-                rejected_mid_output_log,
-                rejected_all_output_log,
-            )
+            if first_draft_metrics_compute:
+                _print_compact_draft_metrics(
+                    rejected_early_output_log,
+                    rejected_mid_output_log,
+                    rejected_all_output_log,
+                )
             print(
                 "   ⚠️ ВЕРДИКТ: ОТКАЗ "
                 "(нет star-сигнала) - матч пропущен"
             )
-            print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
-            print(
-                "   📉 Threshold block: "
-                f"reason={tier_threshold_block_reason_label}, "
-                f"status={tier_threshold_block_status_label}, "
-                f"min_wr={int(star_target_wr)}%"
-            )
-            if star_filter_rejections:
-                print(f"   📉 Star filter reject: {'; '.join(star_filter_rejections)}")
+            if first_draft_metrics_compute:
+                print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
+                print(
+                    "   📉 Threshold block: "
+                    f"reason={tier_threshold_block_reason_label}, "
+                    f"status={tier_threshold_block_status_label}, "
+                    f"min_wr={int(star_target_wr)}%"
+                )
+                if star_filter_rejections:
+                    print(f"   📉 Star filter reject: {'; '.join(star_filter_rejections)}")
 
             # Standalone "lane_adv_dict ≥ 6" kills trigger for the no-star
             # rejection path: even when no star block is valid, dominate-on-

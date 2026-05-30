@@ -293,6 +293,16 @@ def _run_branch_scenario(
     except Exception:
         pass
 
+    # Clear the per-map draft-metrics cache between scenarios. The harness
+    # reuses a single match URL across scenarios while monkeypatching the
+    # metrics each time, so a leftover cache entry from a prior scenario would
+    # otherwise be reused (and suppress the first-parse log block).
+    try:
+        with runtime.draft_metrics_cache_lock:
+            runtime.draft_metrics_cache.clear()
+    except Exception:
+        pass
+
     monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", False, raising=False)
     monkeypatch.setattr(runtime, "DOTA2PROTRACKER_ENABLED", False, raising=False)
     monkeypatch.setattr(runtime, "FORCE_ODDS_SIGNAL_TEST", False, raising=False)
