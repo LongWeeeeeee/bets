@@ -8658,6 +8658,17 @@ CYBERSCORE_MATCHES_URL = str(
 # Можно переопределить через CYBERSCORE_EXTRA_TOURNAMENT_IDS.
 _DEFAULT_CYBERSCORE_EXTRA_TOURNAMENT_IDS = "46178:BB Streamers Battle 13"
 
+# Дополнительные турниры, которые матчим по ПОДСТРОКЕ названия (а не по
+# tournament_id), потому что у них много региональных под-турниров с разными
+# id (например EWC 2026 Open Qualifier: Eastern Europe / Western Europe / ...).
+# Любое название, содержащее одну из этих подстрок (case-insensitive), будет
+# включено наравне с tier1/tier2, даже если cyberscore классифицирует его ниже
+# (tier3/tier4). CSV-список подстрок, переопределяется через
+# CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS.
+_DEFAULT_CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS = "EWC 2026 Open Qualifier"
+# Тиры, которые мы дополнительно опрашиваем для name-substring матчинга.
+_DEFAULT_CYBERSCORE_EXTRA_NAME_TIERS = "3"
+
 
 def _parse_extra_tournament_ids(
     raw_value: str,
@@ -8694,11 +8705,60 @@ CYBERSCORE_EXTRA_TOURNAMENT_IDS: List[int] = _extra_tournament_ids_parsed
 CYBERSCORE_EXTRA_TOURNAMENT_TITLES: Dict[int, str] = _extra_tournament_titles_parsed
 
 
+def _parse_csv_substrings(raw_value: str) -> List[str]:
+    out: List[str] = []
+    for chunk in str(raw_value or "").split(","):
+        chunk = chunk.strip()
+        if chunk and chunk not in out:
+            out.append(chunk)
+    return out
+
+
+def _parse_csv_int_list(raw_value: str) -> List[int]:
+    out: List[int] = []
+    for chunk in str(raw_value or "").split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            value = int(chunk)
+        except (TypeError, ValueError):
+            continue
+        if value > 0 and value not in out:
+            out.append(value)
+    return out
+
+
+# Name-substring matched extra tournaments (e.g. EWC 2026 Open Qualifier: *).
+CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS: List[str] = _parse_csv_substrings(
+    os.getenv(
+        "CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS",
+        _DEFAULT_CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS,
+    )
+)
+# Tiers to additionally poll when name-substring matching is enabled.
+CYBERSCORE_EXTRA_NAME_TIERS: List[int] = _parse_csv_int_list(
+    os.getenv(
+        "CYBERSCORE_EXTRA_NAME_TIERS",
+        _DEFAULT_CYBERSCORE_EXTRA_NAME_TIERS,
+    )
+)
+
+
 def _build_cyberscore_extra_tournament_url(tournament_id: int) -> str:
     cache_buster = int(time.time())
     return (
         "https://cyberscore.live/en/matches/"
         f"?type=liveOrUpcoming&tournament={int(tournament_id)}"
+        f"&__cb={cache_buster}"
+    )
+
+
+def _build_cyberscore_tier_listing_url(tier: int) -> str:
+    cache_buster = int(time.time())
+    return (
+        "https://cyberscore.live/en/matches/"
+        f"?type=liveOrUpcoming&tournament_tier={int(tier)}"
         f"&__cb={cache_buster}"
     )
 CYBERSCORE_GET_HEADS_FALLBACK = _env_flag("CYBERSCORE_GET_HEADS_FALLBACK", "0")
@@ -18131,6 +18191,44 @@ def _card_dedup_key(card: Any) -> str:
     return f"href:{href}" if href else ""
 
 
+def _filter_cards_by_name_substrings(
+    heads: List[Any],
+    bodies: List[Any],
+    name_substrings: List[str],
+) -> Tuple[List[Any], List[Any]]:
+    """Return only cards whose rendered markup/text contains one of the given
+    tournament name substrings (case-insensitive).
+
+    Used for name-matched extra tournaments that have many regional sub-events
+    with different tournament_ids (e.g. EWC 2026 Open Qualifier: *), where an
+    id-based filter is impractical.
+    """
+    if not heads or not name_substrings:
+        return [], []
+    markers = [str(s or "").strip().lower() for s in name_substrings if str(s or "").strip()]
+    if not markers:
+        return [], []
+    filtered_heads: List[Any] = []
+    filtered_bodies: List[Any] = []
+    for head, body in zip(heads, bodies):
+        try:
+            card_html = (str(head) if head is not None else "").lower()
+        except Exception:
+            card_html = ""
+        try:
+            card_text = (
+                head.get_text(" ", strip=True)
+                if getattr(head, "get_text", None)
+                else ""
+            ).lower()
+        except Exception:
+            card_text = ""
+        if any((m in card_html) or (m in card_text) for m in markers):
+            filtered_heads.append(head)
+            filtered_bodies.append(body)
+    return filtered_heads, filtered_bodies
+
+
 def _filter_cards_by_tournament_id(
     heads: List[Any],
     bodies: List[Any],
@@ -18319,6 +18417,40 @@ def _fetch_cyberscore_extra_listings(
     return results
 
 
+def _fetch_cyberscore_extra_name_tier_listings() -> List[Tuple[int, str, str]]:
+    """Fetch HTML for each configured extra-name tier listing.
+
+    Returns list of (tier, url, html). Used for name-substring matched
+    tournaments (EWC qualifiers etc.) that live in tier3/tier4.
+    """
+    if not CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS or not CYBERSCORE_EXTRA_NAME_TIERS:
+        return []
+    results: List[Tuple[int, str, str]] = []
+    for tier in CYBERSCORE_EXTRA_NAME_TIERS:
+        try:
+            tier_int = int(tier)
+        except (TypeError, ValueError):
+            continue
+        if tier_int <= 0:
+            continue
+        tier_url = _build_cyberscore_tier_listing_url(tier_int)
+        try:
+            tier_html = _get_cyberscore_html_via_camoufox(tier_url)
+        except Exception as exc:  # pragma: no cover - defensive
+            short_error = _short_exception_message(exc)
+            print(f"⚠️ CyberScore tier listing fetch failed ({tier_url}): {short_error}")
+            logger.warning(
+                "CyberScore tier listing fetch failed for %s: %s",
+                tier_url,
+                short_error,
+            )
+            continue
+        if not tier_html:
+            continue
+        results.append((tier_int, tier_url, tier_html))
+    return results
+
+
 def _pick_nearest_schedule_info(
     candidates: List[Optional[Dict[str, Any]]],
 ) -> Optional[Dict[str, Any]]:
@@ -18428,12 +18560,51 @@ def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[
                 f"{len(extra_heads)} matching live card(s) already in primary listing"
             )
 
+    # Name-substring matched extra tournaments (EWC qualifiers etc.) living in
+    # tier3/tier4. Fetch the configured tiers and keep only cards whose markup
+    # contains one of the configured name substrings.
+    name_tier_listings = _fetch_cyberscore_extra_name_tier_listings()
+    name_matched_total = 0
+    for tier_int, tier_url, tier_html in name_tier_listings:
+        raw_tier_heads, raw_tier_bodies = _extract_cyberscore_live_cards_from_html(tier_html)
+        if not raw_tier_heads:
+            continue
+        name_heads, name_bodies = _filter_cards_by_name_substrings(
+            raw_tier_heads,
+            raw_tier_bodies,
+            CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS,
+        )
+        if not name_heads:
+            continue
+        added_for_tier = 0
+        for head, body in zip(name_heads, name_bodies):
+            key = _card_dedup_key(head) or _card_dedup_key(body)
+            if key and key in seen_keys:
+                continue
+            if key:
+                seen_keys.add(key)
+            heads.append(head)
+            bodies.append(body)
+            added_for_tier += 1
+        if added_for_tier > 0:
+            name_matched_total += added_for_tier
+            print(
+                f"✅ CyberScore name-matched listing: +{added_for_tier} live card(s) "
+                f"from tier {tier_int} matching {CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS} "
+                f"({tier_url})"
+            )
+
     if heads:
         print(
             f"✅ CyberScore source: found {len(heads)} live cards"
             + (
                 f" (incl. {extra_heads_total} from extra tournaments)"
                 if extra_heads_total
+                else ""
+            )
+            + (
+                f" (incl. {name_matched_total} name-matched)"
+                if name_matched_total
                 else ""
             )
         )
