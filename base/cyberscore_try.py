@@ -5536,6 +5536,73 @@ def _refresh_stake_multiplier_message(
     return "\n".join(filtered_lines) + trailing_newline
 
 
+def _format_recheck_metrics_summary(payload: Optional[Dict[str, Any]]) -> str:
+    """Build a compact one-line metrics summary for a delayed-queue recheck,
+    reusing the metrics computed at first parse (stored in
+    ``stake_multiplier_context``). No recomputation — this keeps re-checks cheap.
+
+    Returns e.g.: ``early=None, late=Dire 70%WR, all=Dire 75%WR``.
+    """
+    if not isinstance(payload, dict):
+        return ""
+    smc = payload.get("stake_multiplier_context")
+    if not isinstance(smc, dict):
+        return ""
+    radiant_name = str(smc.get("radiant_team_name") or "Radiant").strip() or "Radiant"
+    dire_name = str(smc.get("dire_team_name") or "Dire").strip() or "Dire"
+
+    def _side_label(sign: Any) -> Optional[str]:
+        try:
+            s = int(sign)
+        except (TypeError, ValueError):
+            return None
+        if s == 1:
+            return radiant_name
+        if s == -1:
+            return dire_name
+        return None
+
+    def _block(has_key: str, sign_key: str, wr_key: str) -> str:
+        if not bool(smc.get(has_key)):
+            return "None"
+        side = _side_label(smc.get(sign_key))
+        wr = smc.get(wr_key)
+        try:
+            wr_txt = f"{int(round(float(wr)))}%WR" if wr is not None else "?"
+        except (TypeError, ValueError):
+            wr_txt = "?"
+        if side is None:
+            return wr_txt
+        return f"{side} {wr_txt}"
+
+    early = _block("has_selected_early_star", "selected_early_sign", "early_wr_pct")
+    late = _block("has_selected_late_star", "selected_late_sign", "late_wr_pct")
+    all_ = _block("has_selected_all_star", "selected_all_sign", "all_wr_pct")
+    return f"early={early}, late={late}, all={all_}"
+
+
+def _format_recheck_target_summary(payload: Optional[Dict[str, Any]]) -> str:
+    """Return ``target=<side>±<diff>`` for a delayed-queue recheck, reusing the
+    stored monitor target side and the freshest known networth diff."""
+    if not isinstance(payload, dict):
+        return ""
+    side = str(
+        payload.get("networth_target_side")
+        or (payload.get("add_url_details") or {}).get("target_side")
+        or ""
+    ).strip().lower()
+    if side not in {"radiant", "dire"}:
+        return ""
+    diff_raw = payload.get("target_networth_diff")
+    if diff_raw is None:
+        diff_raw = (payload.get("add_url_details") or {}).get("target_networth_diff")
+    try:
+        diff_txt = f"{int(float(diff_raw)):+d}" if diff_raw is not None else "n/a"
+    except (TypeError, ValueError):
+        diff_txt = "n/a"
+    return f"target={side} diff={diff_txt}"
+
+
 def _dynamic_monitor_snapshot_for_payload(
     payload: Optional[Dict[str, Any]],
     game_time_seconds: Optional[float],
@@ -20350,6 +20417,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     f"reason={queue_reason}, status={queue_status_label or 'n/a'}{monitor_suffix})"
                     )
                 )
+                _recheck_target_line = _format_recheck_target_summary(delayed_payload)
+                _recheck_metrics_line = _format_recheck_metrics_summary(delayed_payload)
+                if _recheck_target_line or _recheck_metrics_line:
+                    print(
+                        "   \U0001F4CA Recheck: "
+                        + ", ".join(
+                            part for part in (_recheck_target_line, _recheck_metrics_line) if part
+                        )
+                    )
                 if not allow_live_recheck:
                     # Push fresh state from listing cache to delayed sender
                     if match_id:
@@ -20502,15 +20578,31 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     f"reason={queue_reason}, status={queue_status_label or 'n/a'}{monitor_suffix})"
                     )
                 )
-                if not allow_live_recheck:
-                    if _try_release_delayed_from_live_recheck(
-                        check_uniq_url,
-                        delayed_payload,
-                        data,
-                        target_game_time,
-                    ):
-                        return return_status
-                    return return_status
+                _recheck_target_line = _format_recheck_target_summary(delayed_payload)
+                _recheck_metrics_line = _format_recheck_metrics_summary(delayed_payload)
+                if _recheck_target_line or _recheck_metrics_line:
+                    print(
+                        "   \U0001F4CA Recheck: "
+                        + ", ".join(
+                            part for part in (_recheck_target_line, _recheck_metrics_line) if part
+                        )
+                    )
+                # Match is already in the delayed queue: do NOT recompute the
+                # draft star metrics (they are fixed after the draft phase and
+                # were computed once at first parse). The fresh live state
+                # (game_time + radiant_lead) was already pushed to the delayed
+                # sender via _queue_delayed_state_override above, and the
+                # background delayed sender re-evaluates the monitor from that
+                # override. Attempt an immediate fast-check release, then
+                # return early in BOTH allow_live_recheck modes to avoid the
+                # redundant per-cycle metric recompute.
+                _try_release_delayed_from_live_recheck(
+                    check_uniq_url,
+                    delayed_payload,
+                    data,
+                    target_game_time,
+                )
+                return return_status
         elif is_match_card_v2:
             live_match_id = str(listing_context.get("live_match_id") or "").strip()
             if not live_match_id:
@@ -20700,6 +20792,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     f"reason={queue_reason}, status={queue_status_label or 'n/a'}{monitor_suffix})"
                     )
                 )
+                _recheck_target_line = _format_recheck_target_summary(delayed_payload)
+                _recheck_metrics_line = _format_recheck_metrics_summary(delayed_payload)
+                if _recheck_target_line or _recheck_metrics_line:
+                    print(
+                        "   \U0001F4CA Recheck: "
+                        + ", ".join(
+                            part for part in (_recheck_target_line, _recheck_metrics_line) if part
+                        )
+                    )
                 if not allow_live_recheck:
                     if _try_release_delayed_from_live_recheck(
                         check_uniq_url,
