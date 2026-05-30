@@ -21192,6 +21192,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     "   ✅ CyberScore draft parsed: "
                     f"radiant={len(radiant_heroes_and_pos)}, dire={len(dire_heroes_and_pos)}"
                 )
+                # Log the full roster (hero + position) once at first parse so
+                # the draft is recoverable from the log later. Rechecks do not
+                # reach this branch (they return early), so this prints once.
+                try:
+                    _rad_name = str(radiant_team_name_original or radiant_team_name or "Radiant").strip() or "Radiant"
+                    _dire_name = str(dire_team_name_original or dire_team_name or "Dire").strip() or "Dire"
+                    print(
+                        f"   🧩 Draft [{_rad_name}] {_format_pipeline_probe_draft_side(radiant_heroes_and_pos)}"
+                    )
+                    print(
+                        f"   🧩 Draft [{_dire_name}] {_format_pipeline_probe_draft_side(dire_heroes_and_pos)}"
+                    )
+                except Exception:
+                    pass
         elif verbose_match_log:
             radiant_heroes_and_pos, dire_heroes_and_pos, parse_error, problem_summary, problem_candidates = parse_draft_and_positions(
                 soup, data, radiant_team_name_original, dire_team_name_original
