@@ -299,6 +299,110 @@ def test_lane_adv_standalone_kills_fires_in_late_only_branch_when_enabled(monkey
     assert result.queued_payload["reason"] == "late_only_no_early_star_pre27_watcher"
 
 
+# lane_adv_dict ≈ +8 (radiant-dominated lanes, below the opposite-early-star
+# threshold of 12 but above the default 6).
+LANE_ADV_DICT_8_OUTPUT = ("Top: win 47%", "Bot: win 47%", "Mid: win 47%")
+# lane_adv_dict ≈ +13 (radiant-dominated lanes, above the opposite-early-star
+# threshold of 12).
+LANE_ADV_DICT_13_OUTPUT = ("Top: win 52%", "Bot: win 52%", "Mid: win 52%")
+
+
+def _opposite_early_kills_case(*, game_time_seconds: int) -> BranchScenario:
+    # Early star points to DIRE (sign=-1) while the lanes favour RADIANT
+    # (positive lane_adv_dict). This is the "early star opposes lanes" shape
+    # from the Ex-Pipsqueak vs Team Lynx example.
+    return BranchScenario(
+        name="opposite_early_kills_lane_adv_threshold",
+        game_time_seconds=game_time_seconds,
+        target_side="dire",
+        target_networth_diff=0,
+        has_early_star=True,
+        early_sign=-1,
+        has_late_star=False,
+        late_sign=1,
+        expected_send_calls=0,
+        raw_early_output={"solo": -3},
+        raw_mid_output={"solo": 0},
+    )
+
+
+def test_lane_adv_standalone_kills_blocked_when_opposite_early_star_and_lane_adv_below_12(monkeypatch) -> None:
+    # Early star (dire) opposes lane_adv_dict (radiant ≈ +8). Since |8| < 12,
+    # the standalone kills bet must NOT fire on the lane-dominating side.
+    _patch_early_wr(monkeypatch, 70.0)
+    result = _run_branch_scenario(
+        monkeypatch,
+        _opposite_early_kills_case(game_time_seconds=30),
+        lane_output=LANE_ADV_DICT_8_OUTPUT,
+        lane_adv_standalone_kills_enabled=True,
+    )
+
+    kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
+    assert kills_msgs == [], "kills must be blocked when early star opposes lanes and |lane_adv_dict| < 12"
+
+
+def test_lane_adv_standalone_kills_fires_when_opposite_early_star_and_lane_adv_at_least_12(monkeypatch) -> None:
+    # Early star (dire) opposes lane_adv_dict (radiant ≈ +13). Since |13| ≥ 12,
+    # the standalone kills bet fires on the lane-dominating side (radiant).
+    _patch_early_wr(monkeypatch, 70.0)
+    result = _run_branch_scenario(
+        monkeypatch,
+        _opposite_early_kills_case(game_time_seconds=30),
+        lane_output=LANE_ADV_DICT_13_OUTPUT,
+        lane_adv_standalone_kills_enabled=True,
+    )
+
+    kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
+    assert kills_msgs, "kills must fire when |lane_adv_dict| >= 12 even with opposite early star"
+    assert "lane_adv_dict: +13.00" in kills_msgs[0]
+
+
+def test_lane_adv_standalone_kills_fires_at_6_when_no_opposite_early_star(monkeypatch) -> None:
+    # No early star at all: the default |lane_adv_dict| >= 6 threshold applies,
+    # so lane_adv_dict ≈ +8 still fires the standalone kills bet.
+    case = replace(
+        _opposite_early_kills_case(game_time_seconds=30),
+        has_early_star=False,
+        early_sign=1,
+        target_side="radiant",
+        raw_early_output={"solo": 0},
+    )
+    result = _run_branch_scenario(
+        monkeypatch,
+        case,
+        lane_output=LANE_ADV_DICT_8_OUTPUT,
+        lane_adv_standalone_kills_enabled=True,
+    )
+
+    kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
+    assert kills_msgs, "kills must fire at |lane_adv_dict| >= 6 when there is no opposite early star"
+    assert "lane_adv_dict: +8.00" in kills_msgs[0]
+
+
+def test_lane_adv_standalone_kills_fires_when_early_star_same_side_as_lanes(monkeypatch) -> None:
+    # Early star on the SAME side as the lanes (radiant). Even at lane_adv_dict
+    # ≈ +8 (< 12) the kills bet fires because the early star agrees with the
+    # lane dominance (opposite-early-star guard does not apply).
+    case = replace(
+        _opposite_early_kills_case(game_time_seconds=30),
+        has_early_star=True,
+        early_sign=1,
+        target_side="radiant",
+        raw_early_output={"solo": 3},
+    )
+    _patch_early_wr(monkeypatch, 70.0)
+    result = _run_branch_scenario(
+        monkeypatch,
+        case,
+        lane_output=LANE_ADV_DICT_8_OUTPUT,
+        lane_adv_standalone_kills_enabled=True,
+    )
+
+    kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
+    assert kills_msgs, "kills must fire when early star is same-side as lanes at |lane_adv_dict| >= 6"
+    assert "lane_adv_dict: +8.00" in kills_msgs[0]
+
+
 def test_same_sign_star_waits_until_four_when_lane_adv_not_matching(monkeypatch) -> None:
     result = _run_branch_scenario(
         monkeypatch,

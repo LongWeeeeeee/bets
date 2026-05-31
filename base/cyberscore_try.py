@@ -1258,6 +1258,18 @@ NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS = max(
         6.0,
     ),
 )
+# When an EARLY star signal exists and it points to the OPPOSITE team from the
+# lane_adv_dict-dominating side, the lanes alone are not enough confirmation —
+# require a stronger lane dominance (|lane_adv_dict| ≥ 12) before firing the
+# standalone early-kills bet. With no opposite-side early star the regular
+# |lane_adv_dict| ≥ 6 threshold applies.
+NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_OPPOSITE_EARLY_STAR_MIN_ABS = max(
+    0.0,
+    _safe_float_env(
+        "NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_OPPOSITE_EARLY_STAR_MIN_ABS",
+        12.0,
+    ),
+)
 NETWORTH_STATUS_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_SEND = "tier1_early_kills_lane_adv_immediate_send"
 NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND = "lane_adv_dict_standalone_kills_send"
 # Standalone "lane_adv_dict ≥ 6" kills trigger: fires in any dispatch branch
@@ -16843,6 +16855,8 @@ def _try_dispatch_lane_adv_standalone_kills(
     selected_star_mode: Optional[str] = None,
     json_retry_errors: Any = None,
     full_message_text: Optional[str] = None,
+    early_star_sign: Optional[int] = None,
+    has_early_star: bool = False,
 ) -> bool:
     """Standalone kills trigger: when ``|lane_adv_dict| ≥ 6`` we dispatch a
     kills bet on the dominating side, regardless of star block availability.
@@ -16851,6 +16865,13 @@ def _try_dispatch_lane_adv_standalone_kills(
     pub-comeback, etc.) can keep operating in the same cycle. The match URL
     is recorded in the global ``_kills_pre_pass_sent_urls`` set so we
     deliver this kills bet at most once per match lifetime.
+
+    Threshold policy:
+      * default ``|lane_adv_dict| ≥ 6``;
+      * if an EARLY star exists whose sign points to the OPPOSITE team from
+        the lane_adv_dict-dominating side, require the stronger
+        ``|lane_adv_dict| ≥ 12`` — the early star contradicts the lanes, so we
+        only trust the lanes when they are clearly dominant.
     """
     if not match_key:
         return False
@@ -16873,11 +16894,34 @@ def _try_dispatch_lane_adv_standalone_kills(
         lane_adv_value = None
     if lane_adv_value is None:
         return False
-    threshold = float(NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS)
-    if abs(lane_adv_value) < threshold:
-        return False
 
     target_side = "radiant" if lane_adv_value > 0 else "dire"
+    lane_adv_sign = 1 if lane_adv_value > 0 else -1
+
+    # Resolve the effective min-abs threshold. When an early star exists on the
+    # OPPOSITE side from the lane dominance, demand the stronger threshold.
+    threshold = float(NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS)
+    try:
+        early_sign_int = int(early_star_sign) if early_star_sign is not None else 0
+    except (TypeError, ValueError):
+        early_sign_int = 0
+    opposite_early_star = bool(
+        has_early_star and early_sign_int in (-1, 1) and early_sign_int != lane_adv_sign
+    )
+    if opposite_early_star:
+        threshold = float(
+            NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_OPPOSITE_EARLY_STAR_MIN_ABS
+        )
+    if abs(lane_adv_value) < threshold:
+        if opposite_early_star:
+            print(
+                "   ⛔ lane_adv_dict standalone kills заблокирован: early star на "
+                "противоположной команде, "
+                f"|lane_adv_dict|={abs(lane_adv_value):.2f} < {threshold:.2f} "
+                f"(target_side={target_side}, early_sign={early_sign_int})"
+            )
+        return False
+
     target_team_name = (
         str(radiant_team_name or "").strip()
         if target_side == "radiant"
@@ -16957,6 +17001,7 @@ def _try_dispatch_lane_adv_standalone_kills(
             "target_side": target_side,
             "lane_adv_dict": float(lane_adv_value),
             "lane_adv_dict_threshold": threshold,
+            "lane_adv_dict_opposite_early_star": bool(opposite_early_star),
             "kills_dual_signal_defer": True,
             "selected_star_wr": selected_star_wr,
             "selected_star_mode": selected_star_mode,
@@ -16986,6 +17031,7 @@ def _try_dispatch_lane_adv_standalone_kills(
                 f"(target_side={target_side}, "
                 f"lane_adv_dict={lane_adv_value:+.2f}, "
                 f"min_abs={threshold:.2f}, "
+                f"opposite_early_star={bool(opposite_early_star)}, "
                 f"game_time={current_game_time_int}) — другие ватчеры продолжают"
             )
             return True
@@ -23150,6 +23196,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 selected_star_mode=selected_star_mode,
                 json_retry_errors=json_retry_errors,
                 full_message_text=message_text,
+                early_star_sign=selected_early_sign,
+                has_early_star=has_selected_early_star,
             )
             current_game_time = float(game_time or 0.0)
             early65_sign = (
@@ -25885,6 +25933,16 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 selected_star_wr=selected_star_wr,
                 selected_star_mode=selected_star_mode,
                 json_retry_errors=json_retry_errors,
+                early_star_sign=(
+                    primary_star_early_diag.get("sign")
+                    if isinstance(primary_star_early_diag, dict)
+                    and primary_star_early_diag.get("valid")
+                    else None
+                ),
+                has_early_star=bool(
+                    isinstance(primary_star_early_diag, dict)
+                    and primary_star_early_diag.get("valid")
+                ),
             )
 
             add_url(
