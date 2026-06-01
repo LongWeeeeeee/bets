@@ -1232,6 +1232,19 @@ DELAYED_SIGNAL_NO_DATA_TIMEOUT_SECONDS = 4 * 60 * 60
 # Networth-gated dispatch rules (target team is resolved by star direction sign).
 NETWORTH_GATE_EARLY_WINDOW_END_SECONDS = 10 * 60
 NETWORTH_GATE_4_TO_10_MIN_DIFF = 800.0
+# All-only watcher early-window release (mirrors the regular 4-10 networth gate):
+# before this start we never send (pre-4 block), and between it and the 10-min
+# table window we allow an immediate send when the target's networth lead meets
+# the 4-10 threshold. This lets a clearly-dominating all-only signal go out
+# before minute 10 instead of always waiting for the table window.
+NETWORTH_GATE_ALL_ONLY_EARLY_WINDOW_START_SECONDS = max(
+    0.0,
+    _safe_float_env("NETWORTH_GATE_ALL_ONLY_EARLY_WINDOW_START_SECONDS", 4 * 60.0),
+)
+NETWORTH_GATE_ALL_ONLY_EARLY_MIN_DIFF = _safe_float_env(
+    "NETWORTH_GATE_ALL_ONLY_EARLY_MIN_DIFF",
+    NETWORTH_GATE_4_TO_10_MIN_DIFF,
+)
 NETWORTH_GATE_SAME_SIGN_LANE_ADV_WINDOW_START_SECONDS = 4 * 60
 NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS = 10 * 60
 NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS = max(
@@ -1337,6 +1350,8 @@ NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT = "late_pre27_dominance_wait"
 NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT = "late_pre27_watcher_wait"
 NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT = "all_only_watcher_wait"
 NETWORTH_STATUS_ALL_ONLY_WATCHER_TIMEOUT_NO_SEND = "all_only_watcher_timeout_no_send"
+NETWORTH_STATUS_ALL_ONLY_EARLY_PRE4_WAIT = "all_only_early_pre4_wait"
+NETWORTH_STATUS_ALL_ONLY_EARLY_4_10_SEND = "all_only_early_4_10_send"
 LATE_PRE27_DOMINANCE_PROFILE = "late_pre27_dominance"
 LATE_PRE27_WATCHER_PROFILE = "late_pre27_watcher"
 ALL_ONLY_WATCHER_PROFILE = "all_only_watcher"
@@ -4210,12 +4225,26 @@ def _all_only_watcher_snapshot(
     except (TypeError, ValueError):
         target_game_time = float(ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS)
     if current_game_time < float(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS):
+        # Early window: before 4:00 we never send (pre-4 block); between 4:00
+        # and 10:00 expose the 4-10 networth gate threshold so a clearly
+        # dominating all-only signal can be released before the minute-10 table
+        # window kicks in.
+        if current_game_time >= float(NETWORTH_GATE_ALL_ONLY_EARLY_WINDOW_START_SECONDS):
+            return {
+                "threshold": float(NETWORTH_GATE_ALL_ONLY_EARLY_MIN_DIFF),
+                "status_label": str(
+                    source.get("dispatch_status_label")
+                    or source.get("status_label")
+                    or NETWORTH_STATUS_ALL_ONLY_EARLY_4_10_SEND
+                ),
+                "drop_without_fallback": False,
+            }
         return {
             "threshold": None,
             "status_label": str(
                 source.get("dispatch_status_label")
                 or source.get("status_label")
-                or NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT
+                or NETWORTH_STATUS_ALL_ONLY_EARLY_PRE4_WAIT
             ),
             "drop_without_fallback": False,
         }
@@ -23588,6 +23617,22 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and target_networth_diff is not None
                 and float(target_networth_diff) >= float(all_only_watcher_threshold_now)
             )
+            # Early-window release (before the minute-10 table window): mirror
+            # the regular 4-10 networth gate so a clearly-dominating all-only
+            # signal can be sent before minute 10 instead of always waiting for
+            # the table. Blocked before 4:00 (pre-4 block); between 4:00 and
+            # 10:00 release immediately when the target's networth lead meets
+            # the 4-10 threshold.
+            all_only_watcher_early_release_now = bool(
+                all_only_no_early_no_late_active
+                and _all_only_watcher_has_thresholds(all_only_watcher_wr_level_resolved)
+                and current_game_time >= float(NETWORTH_GATE_ALL_ONLY_EARLY_WINDOW_START_SECONDS)
+                and current_game_time < float(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS)
+                and target_networth_diff is not None
+                and float(target_networth_diff) >= float(NETWORTH_GATE_ALL_ONLY_EARLY_MIN_DIFF)
+            )
+            if all_only_watcher_early_release_now:
+                all_only_watcher_release_now = True
             all_only_watcher_timeout_active = bool(
                 all_only_no_early_no_late_active
                 and current_game_time >= float(ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS)
