@@ -4,6 +4,7 @@
 
 ## Runtime Rules
 
+- Always respond to the user in Russian (по-русски). Code, identifiers, commit messages, and log strings stay in their original language, but all explanations, summaries, and chat replies must be written in Russian.
 - Agents must not take initiative beyond the user's requested task or explicit instructions in project `.md` files; complete the requested task and nothing more.
 - If the user's request is ambiguous, the agent is unsure, or the user appears to have made a logical mistake, ask the user before acting.
 - Always use `/Users/alex/Documents/ingame/venv_catboost/bin/python3` locally.

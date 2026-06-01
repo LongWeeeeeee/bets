@@ -403,7 +403,44 @@ def test_lane_adv_standalone_kills_fires_when_early_star_same_side_as_lanes(monk
     assert "lane_adv_dict: +8.00" in kills_msgs[0]
 
 
-def test_same_sign_star_waits_until_four_when_lane_adv_not_matching(monkeypatch) -> None:
+def test_lane_adv_standalone_kills_message_carries_full_local_body(monkeypatch) -> None:
+    # The early (pre-ProTracker) kills release must still carry the full local
+    # body — lanes + lane_adv_dict + the early/late/all star metric blocks —
+    # not a stripped teams-only message. ProTracker lines are allowed to be
+    # absent (fetch not yet complete).
+    case = replace(
+        _same_sign_case(
+            game_time_seconds=30,
+            target_networth_diff=-1000,
+            metrics_extra=ALIGNED_LANE_ADV,
+        ),
+        has_early_star=False,
+        early_sign=1,
+        has_late_star=True,
+        late_sign=1,
+        raw_early_output={"solo": 1},
+        raw_mid_output={"counterpick_1vs1": 9, "solo": 5},
+        raw_post_lane_output={"counterpick_1vs1": 5, "counterpick_1vs2": 5},
+    )
+    result = _run_branch_scenario(
+        monkeypatch,
+        case,
+        lane_output=ALIGNED_LANE_OUTPUT,
+        lane_adv_standalone_kills_enabled=True,
+    )
+
+    kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
+    assert kills_msgs, "expected a standalone kills bet to fire"
+    body = kills_msgs[0]
+    assert "lane_adv_dict: +31.00" in body
+    # Full local body markers (these come from the local star blocks, no
+    # ProTracker needed).
+    assert "Early 20-28:" in body
+    assert "Late: (28-60 min):" in body
+    assert "All:" in body
+
+
+
     result = _run_branch_scenario(
         monkeypatch,
         _same_sign_case(

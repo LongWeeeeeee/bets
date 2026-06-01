@@ -5297,6 +5297,166 @@ def _build_lane_adv_standalone_kills_message(
     )
 
 
+def _build_early_local_kills_message(
+    *,
+    radiant_team_name: str,
+    dire_team_name: str,
+    target_team_name: str,
+    live_league: Optional[Dict[str, Any]],
+    metrics_payload: Dict[str, Any],
+    team_elo_block: str,
+    game_time_seconds: Any,
+    radiant_lead: Any,
+    star_target_wr: int,
+) -> str:
+    """Build a FULL kills-bet body from LOCAL metrics only (no Dota2ProTracker).
+
+    The standalone lane_adv_dict kills bet must go out within the first 0-3
+    minutes. The ProTracker network fetch (10 heroes, sequential) adds ~20-60s
+    to the critical path, so for the early kills release we assemble the body
+    from data that is already available before the fetch: the local
+    synergy/counterpick star blocks (early/late/all), the lane_adv_dict line and
+    the team ELO block. The two ProTracker-derived lines (``lane_adv_protracker``
+    and ``Dota2ProTracker_cp1vs1``) are intentionally omitted here so the bet is
+    not blocked waiting on the fetch.
+    """
+    s = metrics_payload if isinstance(metrics_payload, dict) else {}
+    header = _format_signal_header(
+        stake_team_name=str(target_team_name or "НЕИЗВЕСТНАЯ КОМАНДА"),
+        stake_multiplier=1.0,
+        special_header_mode="early_kills",
+    )
+    top = s.get('top')
+    mid = s.get('mid')
+    bot = s.get('bot')
+    # Lanes + lane_adv_dict only (skip the protracker lane-adv line).
+    lane_block = _build_lane_block(
+        top,
+        mid,
+        bot,
+        lane_adv_line="",
+        lane_adv_dict_line=_build_lane_dict_adv_line(top, mid, bot),
+    )
+
+    early_output_log = _decorate_star_block_for_display(
+        raw_block=s.get('early_output', {}),
+        section="early_output",
+        target_wr=star_target_wr,
+    )
+    mid_output_log = _decorate_star_block_for_display(
+        raw_block=s.get('mid_output', {}),
+        section="mid_output",
+        target_wr=star_target_wr,
+    )
+    # all_output is normally post_lane_output + ProTracker star output; here we
+    # build the LOCAL part only (post_lane), omitting the ProTracker cp1vs1.
+    local_all_output = _build_all_star_output(s.get('post_lane_output', {}), None)
+    all_output_log = _decorate_star_block_for_display(
+        raw_block=local_all_output,
+        section="all_output",
+        target_wr=star_target_wr,
+    )
+
+    def _signal_team_name(sign: Optional[int]) -> str:
+        side = _target_side_from_sign(sign)
+        if side == "radiant":
+            return str(radiant_team_name or "Radiant")
+        if side == "dire":
+            return str(dire_team_name or "Dire")
+        return ""
+
+    early_rec = _recommend_odds_for_block(early_output_log, 'early')
+    late_rec = _recommend_odds_for_block(mid_output_log, 'late')
+    all_rec = _recommend_odds_for_block(all_output_log, 'all')
+
+    def _wr_pct_from_rec(rec: Optional[dict]) -> Optional[float]:
+        if isinstance(rec, dict):
+            try:
+                return float(rec.get("wr_pct"))
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    wr_lines: List[str] = []
+    if early_rec:
+        line = _format_wr_estimate_line(
+            "Early",
+            _signal_team_name(_star_block_sign(early_output_log)),
+            _wr_pct_from_rec(early_rec),
+            early_rec,
+        )
+        if line:
+            wr_lines.append(line)
+    if late_rec:
+        line = _format_wr_estimate_line(
+            "Late",
+            _signal_team_name(_star_block_sign(mid_output_log)),
+            _wr_pct_from_rec(late_rec),
+            late_rec,
+        )
+        if line:
+            wr_lines.append(line)
+    if all_rec:
+        line = _format_wr_estimate_line(
+            "All",
+            _signal_team_name(_star_block_sign(all_output_log)),
+            _wr_pct_from_rec(all_rec),
+            all_rec,
+        )
+        if line:
+            wr_lines.append(line)
+    wr_block = "Оценка WR:\n" + "\n".join(wr_lines) + "\n" if wr_lines else ""
+
+    star_hits_summary_block = _build_star_hits_summary_block(
+        early_output=s.get('early_output', {}),
+        mid_output=s.get('mid_output', {}),
+        all_output=local_all_output,
+    )
+
+    metric_list = [
+        ('counterpick_1vs1', 'Counterpick_1vs1'),
+        ('counterpick_1vs2', 'Counterpick_1vs2'),
+        ('solo', 'Solo'),
+        ('synergy_duo', 'Synergy_duo'),
+        ('synergy_trio', 'Synergy_trio'),
+    ]
+    # All block omits Solo and the Dota2ProTracker line (protracker not ready).
+    all_metric_list = [
+        ('counterpick_1vs1', 'Counterpick_1vs1'),
+        ('counterpick_1vs2', 'Counterpick_1vs2'),
+        ('synergy_duo', 'Synergy_duo'),
+        ('synergy_trio', 'Synergy_trio'),
+    ]
+
+    def _format_metrics(title: str, data: dict, metrics: list) -> str:
+        lines = [title]
+        for key, label in metrics:
+            lines.append(f"{label}: {(data or {}).get(key)}")
+        return "\n".join(lines) + "\n"
+
+    early_block = _format_metrics("Early 20-28:", early_output_log, metric_list)
+    mid_block = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
+    all_block = _format_metrics("All:", all_output_log, all_metric_list)
+
+    live_state_block = _format_live_message_state_block(
+        game_time_seconds=game_time_seconds,
+        radiant_lead=radiant_lead,
+        radiant_team_name=radiant_team_name,
+        dire_team_name=dire_team_name,
+    )
+    return (
+        f"{header}\n"
+        f"{radiant_team_name} VS {dire_team_name}\n"
+        f"{_build_series_score_line(live_league)}"
+        f"{lane_block}"
+        f"{team_elo_block or ''}"
+        f"{wr_block}"
+        f"{star_hits_summary_block}"
+        f"{_compose_star_metric_blocks_for_message(early_block, mid_block, all_block)}"
+        f"{live_state_block}"
+    )
+
+
 _PIPELINE_PROBE_METRICS = (
     "counterpick_1vs1",
     "pos1_vs_pos1",
@@ -21530,6 +21690,121 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 else:
                     os.environ["SIGNAL_WRAPPER_ENABLED"] = prev_wrapper_enabled
 
+        _early_local_kills_done = {"sent": False}
+
+        def _try_dispatch_early_local_lane_adv_kills(local_metrics: Dict[str, Any]) -> None:
+            """Fire the standalone lane_adv_dict early-kills bet using only the
+            LOCAL metrics (lanes + dictionary star blocks), before the slow
+            Dota2ProTracker fetch completes. lane_adv_dict depends solely on the
+            lanes, so we can decide and dispatch the kills bet immediately and
+            shave the ~20-60s ProTracker fetch off its critical path.
+
+            Idempotent within a cycle (guarded by ``_early_local_kills_done``)
+            and across cycles (the dispatcher records the URL in
+            ``_kills_pre_pass_sent_urls``).
+            """
+            if _early_local_kills_done["sent"]:
+                return
+            if not LANE_ADV_STANDALONE_KILLS_ENABLED:
+                return
+            if not isinstance(local_metrics, dict):
+                return
+            try:
+                _gt_local = float(game_time or 0.0)
+            except (TypeError, ValueError):
+                _gt_local = 0.0
+            # Only worth the early path inside the 0-3 min window.
+            if _gt_local > float(LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS):
+                return
+            # Lanes are not computed inside _run_local_dictionary_metrics — do it
+            # here so lane_adv_dict is available before ProTracker.
+            try:
+                if LIVE_LANE_ANALYSIS_ENABLED and lane_data is not None:
+                    local_metrics['top'], local_metrics['bot'], local_metrics['mid'] = calculate_lanes(
+                        radiant_heroes_and_pos,
+                        dire_heroes_and_pos,
+                        lane_data,
+                        core_support_side_lanes=True,
+                    )
+                else:
+                    local_metrics.setdefault('top', "")
+                    local_metrics.setdefault('bot', "")
+                    local_metrics.setdefault('mid', "")
+            except Exception:
+                return
+            local_lane_adv_dict_value = _lane_dict_adv_value(
+                local_metrics.get('top'), local_metrics.get('mid'), local_metrics.get('bot')
+            )
+            if local_lane_adv_dict_value is None:
+                return
+            # Early-star sign from the LOCAL early block (no ProTracker needed)
+            # so the opposite-early-star >=12 threshold rule is honoured.
+            early_local_diag = _star_block_diagnostics(
+                raw_block=local_metrics.get('early_output', {}),
+                target_wr=star_target_wr,
+                section="early_output",
+            )
+            has_early_local_star = bool(early_local_diag.get("valid"))
+            early_local_sign = early_local_diag.get("sign") if has_early_local_star else None
+            # Local ELO block (in-memory snapshot lookup, no network).
+            early_local_elo_block = ""
+            try:
+                _early_elo_summary = _build_team_elo_matchup_summary(
+                    radiant_team_id=radiant_team_id,
+                    dire_team_id=dire_team_id,
+                    radiant_team_name=radiant_team_name_original,
+                    dire_team_name=dire_team_name_original,
+                    radiant_account_ids=radiant_account_ids,
+                    dire_account_ids=dire_account_ids,
+                    match_tier=star_match_tier,
+                )
+                early_local_elo_block, _ = _format_team_elo_block(
+                    _early_elo_summary,
+                    radiant_team_name=radiant_team_name_original,
+                    dire_team_name=dire_team_name_original,
+                )
+            except Exception:
+                early_local_elo_block = ""
+            target_team_name_local = (
+                str(radiant_team_name_original or radiant_team_name or "").strip()
+                if local_lane_adv_dict_value > 0
+                else str(dire_team_name_original or dire_team_name or "").strip()
+            ) or "НЕИЗВЕСТНАЯ КОМАНДА"
+            early_local_body = _build_early_local_kills_message(
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                target_team_name=target_team_name_local,
+                live_league=data.get('live_league_data') or {},
+                metrics_payload=local_metrics,
+                team_elo_block=early_local_elo_block,
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                star_target_wr=star_target_wr,
+            )
+            sent = _try_dispatch_lane_adv_standalone_kills(
+                match_key=check_uniq_url,
+                status=status,
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=data.get('live_league_data') or {},
+                top=local_metrics.get('top'),
+                mid=local_metrics.get('mid'),
+                bot=local_metrics.get('bot'),
+                protracker_payload=None,
+                team_elo_block=early_local_elo_block,
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                lane_adv_dict_value=local_lane_adv_dict_value,
+                selected_star_wr=star_target_wr,
+                selected_star_mode="early_local_pre_protracker",
+                json_retry_errors=json_retry_errors,
+                full_message_text=early_local_body,
+                early_star_sign=early_local_sign,
+                has_early_star=has_early_local_star,
+            )
+            if sent:
+                _early_local_kills_done["sent"] = True
+
         # Draft metrics (synergy/counterpick dicts + Dota2ProTracker) are a
         # pure function of the fixed draft, so compute them once per map and
         # reuse on every later recheck cycle. This avoids re-running the sqlite
@@ -21564,11 +21839,19 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 with ThreadPoolExecutor(max_workers=2, thread_name_prefix="draft-metrics") as executor:
                     local_future = executor.submit(_run_local_dictionary_metrics)
                     protracker_future = executor.submit(_run_dota2protracker_enrichment)
+                    # Await the LOCAL metrics first (fast: sqlite dicts, no
+                    # network) and immediately try to release the standalone
+                    # lane_adv_dict early-kills bet — it depends only on the
+                    # lanes, not on Dota2ProTracker. This shaves the ~20-60s
+                    # ProTracker fetch off the kills critical path. The rest of
+                    # the dispatch flow still waits for ProTracker below.
                     s = local_future.result()
+                    _try_dispatch_early_local_lane_adv_kills(s)
                     protracker_payload = protracker_future.result()
             else:
                 protracker_payload = _run_dota2protracker_enrichment()
                 s = _run_local_dictionary_metrics()
+                _try_dispatch_early_local_lane_adv_kills(s)
 
             if DOTA2PROTRACKER_ENABLED:
                 for _line in _build_dota2protracker_log_lines(protracker_payload):
