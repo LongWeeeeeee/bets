@@ -5376,11 +5376,20 @@ def _apply_stomp_weighted_counts(wins, draws, losses, stats, invert=False):
     return (float(wins) + weight * sw, float(draws), float(losses) + weight * sl)
 
 
-LANE_2V2_MIN_GAMES = 2
-LANE_2V1_MIN_GAMES = 20
-LANE_1V1_MIN_GAMES = 50
-LANE_SYNERGY_MIN_GAMES = 30
-LANE_SOLO_MIN_GAMES = 10
+def _lane_min_games_env(name: str, default: int) -> int:
+    """Allow backtest A/B of lane min-games gates without code edits.
+    Defaults preserve production behaviour."""
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+LANE_2V2_MIN_GAMES = _lane_min_games_env("LANE_2V2_MIN_GAMES", 2)
+LANE_2V1_MIN_GAMES = _lane_min_games_env("LANE_2V1_MIN_GAMES", 20)
+LANE_1V1_MIN_GAMES = _lane_min_games_env("LANE_1V1_MIN_GAMES", 50)
+LANE_SYNERGY_MIN_GAMES = _lane_min_games_env("LANE_SYNERGY_MIN_GAMES", 30)
+LANE_SOLO_MIN_GAMES = _lane_min_games_env("LANE_SOLO_MIN_GAMES", 10)
 LANE_SOURCE_CONFIDENCE_DELTAS = {
     "2v2": -1.0,
     "2v2m": -1.0,

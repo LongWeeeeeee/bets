@@ -456,6 +456,7 @@ def process_metrics_winrate_buckets(matches: list[dict]) -> dict:
         'post_lane': 0,
         'dota2protracker': 0,
         'lane': 0,
+        'lane_adv_dict': 0,
     }
 
     if MIN_START_DATE:
@@ -527,6 +528,41 @@ def process_metrics_winrate_buckets(matches: list[dict]) -> dict:
                     if valid_key in pro and not bool(pro.get(valid_key)):
                         continue
                     _record_signed_metric(results, f'dota2protracker_{source_key}', pro[source_key], lane_winner)
+
+        # --- Composite lane_adv_dict (radiant-positive) ---
+        # Bucket against the MAP winner (the 00-min kills-bet target) and the
+        # early-game winner. Coverage-segmented map-winner variants expose the
+        # missing-lane scale bias. Denominator variants (fixed3/minlanes2) come
+        # straight from check_old_maps records for A/B comparison.
+        did_radiant_win = match.get('didRadiantWin')
+        map_winner = None
+        if did_radiant_win is not None:
+            map_winner = 'radiant' if did_radiant_win else 'dire'
+        early_ok, early_winner = _winner_from_generated_fields(match, 'early')
+        adv_specs = (
+            ('lane_adv_dict', 'lane_adv_dict'),
+            ('lane_adv_dict_fixed3', 'lane_adv_dict_fixed3'),
+            ('lane_adv_dict_minlanes2', 'lane_adv_dict_minlanes2'),
+        )
+        adv_present = match.get('lane_adv_dict')
+        if _is_number(adv_present) and map_winner is not None:
+            counters['lane_adv_dict'] += 1
+        for out_name, rec_key in adv_specs:
+            adv_value = match.get(rec_key)
+            if not _is_number(adv_value):
+                continue
+            # vs map winner
+            if map_winner is not None:
+                _record_signed_metric(results, f'{out_name}_map', adv_value, map_winner)
+            # vs early-game winner
+            if early_ok and early_winner in ('radiant', 'dire'):
+                _record_signed_metric(results, f'{out_name}_early', adv_value, early_winner)
+        # Coverage-segmented (only the production "present" denominator)
+        resolved = match.get('lane_resolved_count')
+        if _is_number(adv_present) and map_winner is not None and _is_number(resolved):
+            cov = int(resolved)
+            cov_tag = f'cov{cov}' if cov in (1, 2, 3) else 'covX'
+            _record_signed_metric(results, f'lane_adv_dict_map_{cov_tag}', adv_present, map_winner)
 
     print()
     print("Фазовые фильтры:")

@@ -259,7 +259,7 @@ class SqliteStatsLookup(dict):
             chunk = missing[start:start + self.query_chunk_size]
             placeholders = ",".join("?" for _ in chunk)
             for key, value_blob in conn.execute(
-                f"SELECT key, value FROM stats WHERE key IN ({placeholders})",
+                f"SELECT key, value FROM kv WHERE key IN ({placeholders})",
                 chunk,
             ):
                 value = orjson.loads(value_blob) if orjson is not None else json.loads(value_blob)
@@ -273,7 +273,7 @@ class SqliteStatsLookup(dict):
         if found:
             return cached
         conn = self._connect()
-        row = conn.execute("SELECT value FROM stats WHERE key = ?", (str(key),)).fetchone()
+        row = conn.execute("SELECT value FROM kv WHERE key = ?", (str(key),)).fetchone()
         if row is None:
             return default
         value = orjson.loads(row[0]) if orjson is not None else json.loads(row[0])
@@ -426,6 +426,63 @@ def _compact_bucket(bucket: Any) -> dict:
         for key, value in bucket.items()
         if not key.endswith("_games") and (key == "synergy_duo" or not key.startswith("synergy_duo_"))
     }
+
+
+# --- lane_adv_dict replica (must match base/cyberscore_try.py exactly) ---
+# Keep these in sync with _lane_prediction_edge_for_adv / _lane_dict_adv_value
+# and LANE_ADV_DICT_CONFIDENCE_BASELINE in base/cyberscore_try.py.
+LANE_ADV_DICT_CONFIDENCE_BASELINE = 39.0
+
+
+def _lane_edge_for_adv(raw: Any) -> Optional[float]:
+    """Signed per-lane edge: sign(win/lose) * max(0, confidence - 39). draw -> 0.
+
+    Mirrors _lane_prediction_edge_for_adv in cyberscore_try.py. Accepts the
+    "Top: win 47%" style strings produced by calculate_lanes.
+    """
+    if raw is None:
+        return None
+    cleaned = str(raw).strip()
+    if not cleaned:
+        return None
+    if ":" in cleaned:
+        cleaned = cleaned.split(":", 1)[1].strip()
+    parts = cleaned.split()
+    if len(parts) != 2:
+        return None
+    outcome = parts[0].strip().lower()
+    if outcome == "loose":
+        outcome = "lose"
+    try:
+        confidence = float(parts[1].rstrip("%"))
+    except (TypeError, ValueError):
+        return None
+    if outcome not in ("win", "lose", "draw"):
+        return None
+    if outcome == "draw":
+        return 0.0
+    edge = max(0.0, confidence - LANE_ADV_DICT_CONFIDENCE_BASELINE)
+    return edge if outcome == "win" else -edge
+
+
+def _lane_dict_adv_value(top: Any, mid: Any, bot: Any, denom_mode: str = "present"):
+    """Aggregate per-lane edges into lane_adv_dict.
+
+    Returns (value, resolved_count). ``present`` divides by the number of
+    resolved (non-None) lanes (current production behaviour). ``fixed3`` always
+    divides by 3. ``minlanes2`` divides by max(resolved, 2).
+    """
+    lane_edges = [e for e in (_lane_edge_for_adv(top), _lane_edge_for_adv(mid), _lane_edge_for_adv(bot)) if e is not None]
+    resolved = len(lane_edges)
+    if resolved == 0:
+        return None, 0
+    if denom_mode == "fixed3":
+        denom = 3.0
+    elif denom_mode == "minlanes2":
+        denom = float(max(resolved, 2))
+    else:
+        denom = float(resolved)
+    return sum(lane_edges) / denom, resolved
 
 
 def _team_payload(team: dict) -> dict:
@@ -643,6 +700,7 @@ def check_old_maps(
     maps_path: Optional[str | Path] = None,
     output_path: Optional[str | Path] = None,
     merge_side_lanes: bool = False,
+    core_support_side_lanes: bool = True,
     disable_lanes: bool = False,
     max_matches: Optional[int] = None,
     autoload_dicts: bool = True,
@@ -724,6 +782,7 @@ def check_old_maps(
                     lane_data,
                     merge_side_lanes=merge_side_lanes,
                     return_sources=True,
+                    core_support_side_lanes=core_support_side_lanes,
                 )
                 record["top"] = top
                 record["bot"] = bot
@@ -731,6 +790,13 @@ def check_old_maps(
                 record["top_source"] = lane_sources.get("top")
                 record["bot_source"] = lane_sources.get("bot")
                 record["mid_source"] = lane_sources.get("mid")
+                # Composite lane_adv_dict (radiant-positive), matching live.
+                # Emit all denominator variants so the backtest can A/B them.
+                adv_present, resolved = _lane_dict_adv_value(top, mid, bot, "present")
+                record["lane_adv_dict"] = adv_present
+                record["lane_adv_dict_fixed3"] = _lane_dict_adv_value(top, mid, bot, "fixed3")[0]
+                record["lane_adv_dict_minlanes2"] = _lane_dict_adv_value(top, mid, bot, "minlanes2")[0]
+                record["lane_resolved_count"] = resolved
             if idx == 1 or idx % 250 == 0 or idx == len(records):
                 print(f"  dicts [{idx:>5}/{len(records)}] RSS≈{_rss_mb():.0f}MB", flush=True)
 
@@ -778,6 +844,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dota2protracker-sleep", type=float, default=0.0)
     parser.add_argument("--post-lane-max-cached-shards", type=int, default=48)
     parser.add_argument("--merge-side-lanes", action="store_true", default=False)
+    # Production runs calculate_lanes with core_support_side_lanes=True
+    # (cyberscore_try.py). Default True here so the backtest matches live; use
+    # --no-core-support-side-lanes to reproduce the old (skewed) offline path.
+    parser.add_argument("--core-support-side-lanes", dest="core_support_side_lanes", action="store_true", default=True)
+    parser.add_argument("--no-core-support-side-lanes", dest="core_support_side_lanes", action="store_false")
     parser.add_argument("--disable-lanes", action="store_true", default=False)
     return parser
 
@@ -802,6 +873,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         dota2protracker_sleep=args.dota2protracker_sleep,
         post_lane_max_cached_shards=args.post_lane_max_cached_shards,
         merge_side_lanes=args.merge_side_lanes,
+        core_support_side_lanes=args.core_support_side_lanes,
         disable_lanes=args.disable_lanes,
     )
     return 0

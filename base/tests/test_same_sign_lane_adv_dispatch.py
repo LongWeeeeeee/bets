@@ -341,9 +341,10 @@ def test_lane_adv_standalone_kills_blocked_when_opposite_early_star_and_lane_adv
     assert kills_msgs == [], "kills must be blocked when early star opposes lanes and |lane_adv_dict| < 12"
 
 
-def test_lane_adv_standalone_kills_fires_when_opposite_early_star_and_lane_adv_at_least_12(monkeypatch) -> None:
-    # Early star (dire) opposes lane_adv_dict (radiant ≈ +13). Since |13| ≥ 12,
-    # the standalone kills bet fires on the lane-dominating side (radiant).
+def test_lane_adv_standalone_kills_blocked_when_opposite_early_star_even_at_high_lane_adv(monkeypatch) -> None:
+    # Early star (dire) opposes lane_adv_dict (radiant ≈ +13). An opposite-side
+    # early star is now a HARD BLOCK regardless of lane dominance magnitude —
+    # the 00-minute kills bet must NOT fire even though |13| ≥ 12.
     _patch_early_wr(monkeypatch, 70.0)
     result = _run_branch_scenario(
         monkeypatch,
@@ -353,8 +354,7 @@ def test_lane_adv_standalone_kills_fires_when_opposite_early_star_and_lane_adv_a
     )
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
-    assert kills_msgs, "kills must fire when |lane_adv_dict| >= 12 even with opposite early star"
-    assert "lane_adv_dict: +13.00" in kills_msgs[0]
+    assert kills_msgs == [], "kills must be blocked when an opposite early star exists, regardless of lane_adv magnitude"
 
 
 def test_lane_adv_standalone_kills_fires_at_6_when_no_opposite_early_star(monkeypatch) -> None:
@@ -376,6 +376,51 @@ def test_lane_adv_standalone_kills_fires_at_6_when_no_opposite_early_star(monkey
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
     assert kills_msgs, "kills must fire at |lane_adv_dict| >= 6 when there is no opposite early star"
+    assert "lane_adv_dict: +8.00" in kills_msgs[0]
+
+
+def test_lane_adv_standalone_kills_blocked_when_early_metric_opposes_lanes_without_star(monkeypatch) -> None:
+    # No early STAR (sub-threshold), but a raw early metric (counterpick_1vs2)
+    # has the OPPOSITE sign to lane_adv_dict (radiant +8). The consistency gate
+    # must block the 00-minute kills bet even though no full early star formed.
+    case = replace(
+        _opposite_early_kills_case(game_time_seconds=30),
+        has_early_star=False,
+        early_sign=1,
+        target_side="radiant",
+        raw_early_output={"counterpick_1vs1": 1, "solo": 0, "counterpick_1vs2": -2},
+    )
+    result = _run_branch_scenario(
+        monkeypatch,
+        case,
+        lane_output=LANE_ADV_DICT_8_OUTPUT,
+        lane_adv_standalone_kills_enabled=True,
+    )
+
+    kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
+    assert kills_msgs == [], "kills must be blocked when a raw early metric opposes lane_adv_dict sign"
+
+
+def test_lane_adv_standalone_kills_fires_when_early_metrics_aligned_or_zero(monkeypatch) -> None:
+    # No early star. The three raw early metrics are all same-sign-as-lanes or
+    # zero (cp1vs1 +1, cp1vs2 0, solo +2) — the consistency gate passes and the
+    # kills bet fires at |lane_adv_dict| >= 6.
+    case = replace(
+        _opposite_early_kills_case(game_time_seconds=30),
+        has_early_star=False,
+        early_sign=1,
+        target_side="radiant",
+        raw_early_output={"counterpick_1vs1": 1, "counterpick_1vs2": 0, "solo": 2},
+    )
+    result = _run_branch_scenario(
+        monkeypatch,
+        case,
+        lane_output=LANE_ADV_DICT_8_OUTPUT,
+        lane_adv_standalone_kills_enabled=True,
+    )
+
+    kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
+    assert kills_msgs, "kills must fire when all early metrics are same-sign or zero"
     assert "lane_adv_dict: +8.00" in kills_msgs[0]
 
 

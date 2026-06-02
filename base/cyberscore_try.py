@@ -1271,11 +1271,12 @@ NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS = max(
         6.0,
     ),
 )
-# When an EARLY star signal exists and it points to the OPPOSITE team from the
-# lane_adv_dict-dominating side, the lanes alone are not enough confirmation —
-# require a stronger lane dominance (|lane_adv_dict| ≥ 12) before firing the
-# standalone early-kills bet. With no opposite-side early star the regular
-# |lane_adv_dict| ≥ 6 threshold applies.
+# Legacy threshold: previously, when an EARLY star pointed to the OPPOSITE team
+# from the lane_adv_dict-dominating side, the standalone early-kills bet still
+# fired if |lane_adv_dict| ≥ 12. This is now a HARD BLOCK instead (an opposite
+# early star cancels the 00-minute bet entirely), so this constant is no longer
+# consulted by the standalone-kills dispatcher. Kept for backward compat / env
+# override expectations.
 NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_OPPOSITE_EARLY_STAR_MIN_ABS = max(
     0.0,
     _safe_float_env(
@@ -17046,6 +17047,7 @@ def _try_dispatch_lane_adv_standalone_kills(
     full_message_text: Optional[str] = None,
     early_star_sign: Optional[int] = None,
     has_early_star: bool = False,
+    early_output_block: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Standalone kills trigger: when ``|lane_adv_dict| ≥ 6`` we dispatch a
     kills bet on the dominating side, regardless of star block availability.
@@ -17055,12 +17057,17 @@ def _try_dispatch_lane_adv_standalone_kills(
     is recorded in the global ``_kills_pre_pass_sent_urls`` set so we
     deliver this kills bet at most once per match lifetime.
 
-    Threshold policy:
+    Threshold / gating policy:
       * default ``|lane_adv_dict| ≥ 6``;
       * if an EARLY star exists whose sign points to the OPPOSITE team from
-        the lane_adv_dict-dominating side, require the stronger
-        ``|lane_adv_dict| ≥ 12`` — the early star contradicts the lanes, so we
-        only trust the lanes when they are clearly dominant.
+        the lane_adv_dict-dominating side, the bet is BLOCKED outright — the
+        early star contradicts the lanes, so we do not fire the 00-minute bet
+        at all;
+      * EARLY metric consistency gate: each of the three raw early metrics
+        (``counterpick_1vs1``, ``counterpick_1vs2``, ``solo``) read from
+        ``early_output_block`` must either share the lane_adv_dict sign or be
+        zero / missing. A single opposite-sign early metric blocks the bet.
+        All-zero / all-missing early metrics pass the gate.
     """
     if not match_key:
         return False
@@ -17087,9 +17094,9 @@ def _try_dispatch_lane_adv_standalone_kills(
     target_side = "radiant" if lane_adv_value > 0 else "dire"
     lane_adv_sign = 1 if lane_adv_value > 0 else -1
 
-    # Resolve the effective min-abs threshold. When an early star exists on the
-    # OPPOSITE side from the lane dominance, demand the stronger threshold.
-    threshold = float(NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS)
+    # Opposite early star → hard block: if an EARLY star exists whose sign
+    # points to the OPPOSITE team from the lane_adv_dict-dominating side, do
+    # NOT fire the 00-minute bet at all (the early star contradicts the lanes).
     try:
         early_sign_int = int(early_star_sign) if early_star_sign is not None else 0
     except (TypeError, ValueError):
@@ -17098,17 +17105,33 @@ def _try_dispatch_lane_adv_standalone_kills(
         has_early_star and early_sign_int in (-1, 1) and early_sign_int != lane_adv_sign
     )
     if opposite_early_star:
-        threshold = float(
-            NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_OPPOSITE_EARLY_STAR_MIN_ABS
+        print(
+            "   ⛔ lane_adv_dict standalone kills заблокирован: early star на "
+            "противоположной команде "
+            f"(target_side={target_side}, early_sign={early_sign_int})"
         )
-    if abs(lane_adv_value) < threshold:
-        if opposite_early_star:
+        return False
+
+    # EARLY metric consistency gate: each of the three raw early metrics
+    # (counterpick_1vs1, counterpick_1vs2, solo) must share the lane_adv_dict
+    # sign or be zero / missing. A single opposite-sign metric blocks the bet;
+    # all-zero / all-missing early metrics pass.
+    early_block = early_output_block if isinstance(early_output_block, dict) else {}
+    for _metric in ("counterpick_1vs1", "counterpick_1vs2", "solo"):
+        _metric_value = _coerce_metric_value(early_block.get(_metric))
+        if _metric_value is None:
+            continue
+        _metric_sign = 1 if _metric_value > 0 else (-1 if _metric_value < 0 else 0)
+        if _metric_sign != 0 and _metric_sign != lane_adv_sign:
             print(
-                "   ⛔ lane_adv_dict standalone kills заблокирован: early star на "
-                "противоположной команде, "
-                f"|lane_adv_dict|={abs(lane_adv_value):.2f} < {threshold:.2f} "
-                f"(target_side={target_side}, early_sign={early_sign_int})"
+                "   ⛔ lane_adv_dict standalone kills заблокирован: early "
+                f"{_metric}={_metric_value:+.2f} противоположен lane_adv_dict "
+                f"(target_side={target_side}, lane_adv_sign={lane_adv_sign:+d})"
             )
+            return False
+
+    threshold = float(NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS)
+    if abs(lane_adv_value) < threshold:
         return False
 
     target_team_name = (
@@ -21830,6 +21853,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 full_message_text=early_local_body,
                 early_star_sign=early_local_sign,
                 has_early_star=has_early_local_star,
+                early_output_block=local_metrics.get('early_output'),
             )
             if sent:
                 _early_local_kills_done["sent"] = True
@@ -23510,6 +23534,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 full_message_text=message_text,
                 early_star_sign=selected_early_sign,
                 has_early_star=has_selected_early_star,
+                early_output_block=s.get('early_output'),
             )
             current_game_time = float(game_time or 0.0)
             early65_sign = (
@@ -26271,6 +26296,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     isinstance(primary_star_early_diag, dict)
                     and primary_star_early_diag.get("valid")
                 ),
+                early_output_block=s.get('early_output'),
             )
 
             add_url(
