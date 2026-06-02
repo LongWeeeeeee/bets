@@ -2410,7 +2410,8 @@ def test_stake_multiplier_wr60_late_is_half_even_with_multiple_hits() -> None:
 
 
 def test_stake_multiplier_wr65_late_not_forced_half() -> None:
-    # The WR60 cap applies only to the 60 level; WR65+ keeps its normal tiers.
+    # The WR60 cap applies only to the 60 level; WR65+ with >=2 late hits keeps
+    # its normal tiers.
     mult = runtime._stake_multiplier_for_signal(
         team_elo_meta=None,
         target_side="radiant",
@@ -2426,6 +2427,29 @@ def test_stake_multiplier_wr65_late_not_forced_half() -> None:
         early_star_hit_count=2,
     )
     assert mult != 0.5
+
+
+def test_stake_multiplier_requires_two_late_hits_for_above_half() -> None:
+    # Any multiplier above 0.5 requires >=2 late star-hits. A single late hit
+    # (even at WR65, with a strong early block) stays 0.5.
+    common = dict(
+        team_elo_meta=None,
+        target_side="radiant",
+        selected_early_sign=1,
+        selected_late_sign=1,
+        has_selected_early_star=True,
+        has_selected_late_star=True,
+        early_wr_pct=70.0,
+        late_wr_pct=65.0,
+        game_time_seconds=30 * 60,
+        radiant_lead=2000.0,
+        early_star_hit_count=2,
+    )
+    assert runtime._stake_multiplier_for_signal(late_star_hit_count=1, **common) == 0.5
+    # Unknown late hit count is treated strictly as <2 -> 0.5.
+    assert runtime._stake_multiplier_for_signal(late_star_hit_count=None, **common) == 0.5
+    # Two late hits unlocks the normal tier (>0.5).
+    assert runtime._stake_multiplier_for_signal(late_star_hit_count=2, **common) != 0.5
 
 
 def test_refresh_stake_multiplier_message_uses_x3_for_opposite_signs_late_wr70() -> None:

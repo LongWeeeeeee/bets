@@ -4882,7 +4882,9 @@ def _stake_multiplier_for_signal(
     if not has_selected_late_star:
         late_star_hit_count_value = 0
 
-    if late_star_hit_count_value is not None and late_star_hit_count_value <= 1:
+    # Any multiplier above 0.5 requires at least 2 late star-hits. Fewer than 2
+    # hits — including an unknown (None) hit count — caps the stake at 0.5.
+    if late_star_hit_count_value is None or late_star_hit_count_value < 2:
         return 0.5
 
     if not has_selected_late_star or late_wr_value is None:
@@ -4894,11 +4896,11 @@ def _stake_multiplier_for_signal(
         return 0.5
 
     # ELO gate removed — multiplier depends only on late hit count and WR.
-    if late_star_hit_count_value is not None and late_star_hit_count_value >= 2:
-        if late_wr_value >= 85.0:
-            return 3
-        if late_wr_value >= 70.0:
-            return 2
+    # (late_star_hit_count_value >= 2 is guaranteed here.)
+    if late_wr_value >= 85.0:
+        return 3
+    if late_wr_value >= 70.0:
+        return 2
 
     return 1
 
