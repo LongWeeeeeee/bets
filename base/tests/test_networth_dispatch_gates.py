@@ -2247,13 +2247,14 @@ def test_stake_multiplier_is_x2_for_early_same_sign_stronger_elo_lead(monkeypatc
         raw_early_output={"counterpick_1vs1": 4, "solo": 3},
         raw_mid_output={"counterpick_1vs1": 4, "solo": 3},
     )
+    # Late WR70 with >=2 late star-hits yields the x2 tier.
     monkeypatch.setattr(
         runtime,
         "_recommend_odds_for_block",
         lambda _data, phase: {
             "level": 60,
             "min_odds": 1.80,
-            "wr_pct": 60.0 if phase == "early" else 62.0,
+            "wr_pct": 60.0 if phase == "early" else 70.0,
         },
     )
     _patch_team_elo_summary(monkeypatch, radiant_wr=56.0, dire_wr=44.0)
@@ -2281,13 +2282,14 @@ def test_stake_multiplier_is_x2_for_late_same_sign_stronger_elo_lead(monkeypatch
         raw_early_output={"counterpick_1vs1": 4, "solo": 3},
         raw_mid_output={"counterpick_1vs1": 4, "solo": 3},
     )
+    # Late WR70 with >=2 late star-hits yields the x2 tier.
     monkeypatch.setattr(
         runtime,
         "_recommend_odds_for_block",
         lambda _data, phase: {
             "level": 60,
             "min_odds": 1.80,
-            "wr_pct": 62.0 if phase == "early" else 64.0,
+            "wr_pct": 62.0 if phase == "early" else 70.0,
         },
     )
     _patch_team_elo_summary(monkeypatch, radiant_wr=56.0, dire_wr=44.0)
@@ -2317,7 +2319,8 @@ def test_refresh_stake_multiplier_message_uses_current_send_state_for_early_bran
             "has_selected_early_star": True,
             "has_selected_late_star": True,
             "early_wr_pct": 60.0,
-            "late_wr_pct": 62.0,
+            "late_wr_pct": 70.0,
+            "late_star_hit_count": 2,
             "target_rating": 1600.0,
             "opposite_rating": 1500.0,
         },
@@ -2343,7 +2346,8 @@ def test_refresh_stake_multiplier_message_uses_current_send_state_for_late_branc
             "has_selected_early_star": True,
             "has_selected_late_star": True,
             "early_wr_pct": 60.0,
-            "late_wr_pct": 65.0,
+            "late_wr_pct": 85.0,
+            "late_star_hit_count": 2,
             "target_rating": 1600.0,
             "opposite_rating": 1500.0,
         },
@@ -2452,7 +2456,9 @@ def test_stake_multiplier_requires_two_late_hits_for_above_half() -> None:
     assert runtime._stake_multiplier_for_signal(late_star_hit_count=2, **common) != 0.5
 
 
-def test_refresh_stake_multiplier_message_uses_x3_for_opposite_signs_late_wr70() -> None:
+def test_refresh_stake_multiplier_message_uses_x2_for_opposite_signs_late_wr70() -> None:
+    # Opposite early/late signs: the bet follows the late side (dire), and the
+    # multiplier is driven by the late block alone (WR70 + >=2 late hits -> x2).
     message = "СТАВКА НА Dire Team x1\nRadiant Team VS Dire Team\n"
     refreshed = runtime._refresh_stake_multiplier_message(
         message,
@@ -2465,6 +2471,7 @@ def test_refresh_stake_multiplier_message_uses_x3_for_opposite_signs_late_wr70()
             "has_selected_late_star": True,
             "early_wr_pct": 90.0,
             "late_wr_pct": 70.0,
+            "late_star_hit_count": 2,
             "target_rating": 1550.0,
             "opposite_rating": 1450.0,
         },
@@ -2472,4 +2479,4 @@ def test_refresh_stake_multiplier_message_uses_x3_for_opposite_signs_late_wr70()
         radiant_lead=-2500.0,
     )
 
-    assert refreshed.startswith("СТАВКА НА Dire Team x3\n")
+    assert refreshed.startswith("СТАВКА НА Dire Team x2\n")
