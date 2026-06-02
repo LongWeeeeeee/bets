@@ -4888,6 +4888,11 @@ def _stake_multiplier_for_signal(
     if not has_selected_late_star or late_wr_value is None:
         return 1
 
+    # A WR60-level late signal is the lowest-confidence late tier: always cap at
+    # 0.5 regardless of how many late star-hits it has.
+    if _late_star_pub_table_wr_level(late_wr_value) == 60:
+        return 0.5
+
     # ELO gate removed — multiplier depends only on late hit count and WR.
     if late_star_hit_count_value is not None and late_star_hit_count_value >= 2:
         if late_wr_value >= 85.0:

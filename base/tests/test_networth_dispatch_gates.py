@@ -2354,7 +2354,8 @@ def test_refresh_stake_multiplier_message_uses_current_send_state_for_late_branc
     assert refreshed.startswith("СТАВКА НА Radiant Team x3\n")
 
 
-def test_refresh_stake_multiplier_message_uses_x2_for_late_only_stronger_elo_lead() -> None:
+def test_refresh_stake_multiplier_message_uses_half_for_late_only_wr60() -> None:
+    # A WR60-level late signal is always 0.5, even with multiple late star-hits.
     message = (
         "СТАВКА НА Dire Team x1\n"
         "Radiant Team VS Dire Team\n"
@@ -2374,6 +2375,7 @@ def test_refresh_stake_multiplier_message_uses_x2_for_late_only_stronger_elo_lea
             "has_selected_late_star": True,
             "early_wr_pct": None,
             "late_wr_pct": 60.0,
+            "late_star_hit_count": 3,
             "target_rating": 1550.0,
             "opposite_rating": 1450.0,
         },
@@ -2381,9 +2383,49 @@ def test_refresh_stake_multiplier_message_uses_x2_for_late_only_stronger_elo_lea
         radiant_lead=-1200.0,
     )
 
-    assert refreshed.startswith("СТАВКА НА Dire Team x2\n")
+    assert refreshed.startswith("СТАВКА НА Dire Team x0.5\n")
     assert "Time: 12:00" in refreshed
     assert "Networth: Dire Team +1200" in refreshed
+
+
+def test_stake_multiplier_wr60_late_is_half_even_with_multiple_hits() -> None:
+    # WR60 late signal must always be 0.5, even with several late star-hits and
+    # multiple valid blocks (so the single-block/single-hit 0.5 rule is not what
+    # triggers it).
+    mult = runtime._stake_multiplier_for_signal(
+        team_elo_meta=None,
+        target_side="radiant",
+        selected_early_sign=1,
+        selected_late_sign=1,
+        has_selected_early_star=True,
+        has_selected_late_star=True,
+        early_wr_pct=70.0,
+        late_wr_pct=60.0,
+        game_time_seconds=30 * 60,
+        radiant_lead=2000.0,
+        late_star_hit_count=3,
+        early_star_hit_count=2,
+    )
+    assert mult == 0.5
+
+
+def test_stake_multiplier_wr65_late_not_forced_half() -> None:
+    # The WR60 cap applies only to the 60 level; WR65+ keeps its normal tiers.
+    mult = runtime._stake_multiplier_for_signal(
+        team_elo_meta=None,
+        target_side="radiant",
+        selected_early_sign=1,
+        selected_late_sign=1,
+        has_selected_early_star=True,
+        has_selected_late_star=True,
+        early_wr_pct=70.0,
+        late_wr_pct=65.0,
+        game_time_seconds=30 * 60,
+        radiant_lead=2000.0,
+        late_star_hit_count=3,
+        early_star_hit_count=2,
+    )
+    assert mult != 0.5
 
 
 def test_refresh_stake_multiplier_message_uses_x3_for_opposite_signs_late_wr70() -> None:
