@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "deny": ["Edit(AGENTS.md)", "Edit(CLAUDE.md)", "Edit(GEMINI.md)"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|Bash",
+        "hooks": [
+          { "type": "command", "command": ".claude/hooks/protect-canonical.sh" }
+        ]
+      }
+    ]
+  }
+}
