@@ -1226,7 +1226,7 @@ ML_CONFIDENCE_SOURCE_LATE = _normalize_ml_confidence_source(
 )
 DELAYED_SIGNAL_TARGET_GAME_TIME = (20 * 60) + 20
 LATE_PUB_COMEBACK_TABLE_START_SECONDS = 27 * 60
-DELAYED_SIGNAL_POLL_SECONDS = 60
+DELAYED_SIGNAL_POLL_SECONDS = 30
 DELAYED_SIGNAL_NO_PROGRESS_TIMEOUT_SECONDS = 2 * 60 * 60
 DELAYED_SIGNAL_NO_DATA_TIMEOUT_SECONDS = 4 * 60 * 60
 # Networth-gated dispatch rules (target team is resolved by star direction sign).
@@ -4969,7 +4969,7 @@ def _format_signal_header(
     stake_multiplier: Optional[float],
     special_header_mode: str = "",
 ) -> str:
-    team_name = str(stake_team_name or "").strip() or "НЕИЗВЕСТНАЯ КОМАНДА"
+    team_name = normalize_team_name_display(str(stake_team_name or "")) or "НЕИЗВЕСТНАЯ КОМАНДА"
     if special_header_mode == "kills_from":
         return f"СТАВКА НА килы от {team_name}"
     if special_header_mode == "early_kills":
@@ -5280,7 +5280,7 @@ def _build_dota2protracker_only_message(
 ) -> str:
     return (
         "DOTA2PROTRACKER\n"
-        f"{radiant_team_name} VS {dire_team_name}\n"
+        f"{normalize_team_name_display(str(radiant_team_name or ''))} VS {normalize_team_name_display(str(dire_team_name or ''))}\n"
         f"{_build_series_score_line(live_league)}"
         f"{_build_dota2protracker_lane_adv_line(protracker_payload)}"
         f"{_build_dota2protracker_block(protracker_payload)}"
@@ -5326,7 +5326,7 @@ def _build_lane_adv_standalone_kills_message(
     )
     return (
         f"{header}\n"
-        f"{radiant_team_name} VS {dire_team_name}\n"
+        f"{normalize_team_name_display(str(radiant_team_name or ''))} VS {normalize_team_name_display(str(dire_team_name or ''))}\n"
         f"{_build_series_score_line(live_league)}"
         f"{lane_block}"
         f"{team_elo_block or ''}"
@@ -5483,7 +5483,7 @@ def _build_early_local_kills_message(
     )
     return (
         f"{header}\n"
-        f"{radiant_team_name} VS {dire_team_name}\n"
+        f"{normalize_team_name_display(str(radiant_team_name or ''))} VS {normalize_team_name_display(str(dire_team_name or ''))}\n"
         f"{_build_series_score_line(live_league)}"
         f"{lane_block}"
         f"{team_elo_block or ''}"
@@ -5584,7 +5584,7 @@ def _build_pipeline_probe_message(
     )
     return (
         f"{_format_signal_header(stake_team_name='PIPELINE CHECK', stake_multiplier=1)}\n"
-        f"{radiant_team_name} VS {dire_team_name}\n"
+        f"{normalize_team_name_display(str(radiant_team_name or ''))} VS {normalize_team_name_display(str(dire_team_name or ''))}\n"
         f"{_build_series_score_line_with_fallback(live_league, fallback_score_text)}"
         f"{_format_live_message_state_block(game_time_seconds=game_time_seconds, radiant_lead=radiant_lead, radiant_team_name=radiant_team_name, dire_team_name=dire_team_name)}"
         "mode: send_every_parsed_match\n"
@@ -5606,7 +5606,7 @@ def _build_minimal_odds_only_message(
     fallback_score_text: str,
 ) -> str:
     return (
-        f"{radiant_team_name} VS {dire_team_name}\n"
+        f"{normalize_team_name_display(str(radiant_team_name or ''))} VS {normalize_team_name_display(str(dire_team_name or ''))}\n"
         f"{_build_series_score_line_with_fallback(live_league, fallback_score_text)}"
     )
 
@@ -5653,6 +5653,50 @@ def _normalize_late_dispatch_smc(
     normalized = dict(stake_multiplier_context)
     normalized["special_header_mode"] = ""
     return normalized
+
+
+# Game-time cutoff past which the "Ранние килы" header is stripped even when
+# the delayed-payload reason is NOT in ``late_payload_reasons`` (e.g. a
+# tier1_early_kills bet that waited for the networth gate and fired late).
+EARLY_KILLS_HEADER_MAX_GAME_TIME_SECONDS = _safe_float_env(
+    "EARLY_KILLS_HEADER_MAX_GAME_TIME_SECONDS",
+    12.0 * 60.0,
+)
+
+
+def _maybe_strip_early_kills_header_late(
+    payload: Dict[str, Any],
+    game_time_seconds: Optional[float],
+) -> None:
+    """Strip ``early_kills`` header when game time is past the early window.
+
+    Safety-net guard: even when the delayed-payload reason is NOT in the
+    ``late_payload_reasons`` set, if we are dispatching past
+    ``EARLY_KILLS_HEADER_MAX_GAME_TIME_SECONDS`` we force the regular
+    ``СТАВКА НА <team>`` header.
+    """
+    import math as _math
+    if game_time_seconds is None:
+        return
+    try:
+        gt = float(game_time_seconds)
+    except (TypeError, ValueError):
+        return
+    cutoff = float(EARLY_KILLS_HEADER_MAX_GAME_TIME_SECONDS)
+    if _math.isnan(gt) or gt < cutoff:
+        return
+    smc = payload.get("stake_multiplier_context")
+    if not isinstance(smc, dict):
+        return
+    if str(smc.get("special_header_mode") or "").strip() != "early_kills":
+        return
+    normalized = _normalize_late_dispatch_smc(smc)
+    if normalized is not smc:
+        payload["stake_multiplier_context"] = normalized
+        print(
+            "   🏷️  late kills-header strip: game_time="
+            f"{int(gt)}s >= {int(cutoff)}s cutoff → regular header"
+        )
 
 
 def _refresh_stake_multiplier_message(
@@ -7244,6 +7288,10 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                         payload["stake_multiplier_context"] = _normalized_smc
                 except Exception:
                     pass
+            # Safety-net: strip early_kills header when dispatching past the
+            # early game window regardless of delayed-payload reason. This
+            # catches tier1_early_kills payloads that fired late (e.g. 21:31).
+            _maybe_strip_early_kills_header_late(payload, current_game_time)
             delivery_message_text = _refresh_stake_multiplier_message(
                 payload.get('message', ''),
                 stake_multiplier_context=payload.get("stake_multiplier_context"),
@@ -9141,7 +9189,7 @@ PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE = False
 SCHEDULE_WAKE_LEAD_SECONDS = _safe_float_env("SCHEDULE_WAKE_LEAD_SECONDS", 30.0 * 60.0)
 SCHEDULE_MAX_SLEEP_SECONDS = _safe_float_env("SCHEDULE_MAX_SLEEP_SECONDS", 30.0 * 60.0)
 SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS = _safe_float_env("SCHEDULE_LONG_IDLE_THRESHOLD_SECONDS", 30.0 * 60.0)
-SCHEDULE_NEAR_MATCH_POLL_SECONDS = _safe_float_env("SCHEDULE_NEAR_MATCH_POLL_SECONDS", 60.0)
+SCHEDULE_NEAR_MATCH_POLL_SECONDS = _safe_float_env("SCHEDULE_NEAR_MATCH_POLL_SECONDS", 30.0)
 SCHEDULE_POST_START_POLL_SECONDS = _safe_float_env("SCHEDULE_POST_START_POLL_SECONDS", 3.0 * 60.0)
 CYBERSCORE_RECENT_LIVE_EMPTY_GRACE_SECONDS = _safe_float_env(
     "CYBERSCORE_RECENT_LIVE_EMPTY_GRACE_SECONDS",
@@ -19844,9 +19892,54 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
 
 
 def normalize_team_name(team_name):
+    """Normalize a team name for internal lookups (lowercase, trash removed).
+
+    Display should use the raw API name, not this normalized form.
+    """
     for i in trash_list:
         team_name = team_name.lower().replace(i, '')
     return team_name
+
+
+def normalize_team_name_display(team_name: str) -> str:
+    """Format a team name for human-readable display.
+
+    When the API returns a name that is all-lowercase (or becomes
+    all-lowercase after trash-word removal), title-case it so
+    ``nigma galaxy`` → ``Nigma Galaxy``.  Names that already carry
+    at least one uppercase letter pass through unchanged (``OG``,
+    ``TSM``, ``PSG.LGD``).
+    """
+    raw = str(team_name or "").strip()
+    if not raw:
+        return raw
+    # Determine mixed-case threshold from the raw value, not the
+    # trash-stripped form — a name like "PSG.LGD" already has uppercase
+    # letters before we touch it.
+    has_upper = any(ch.isupper() for ch in raw)
+    if has_upper:
+        return raw
+    # Clean trash words but keep spaces so title() can work on word
+    # boundaries.
+    cleaned = raw.lower()
+    for i in trash_list:
+        if i == ' ':
+            continue
+        cleaned = cleaned.replace(i, '')
+    import re as _re
+    cleaned = _re.sub(r'\s+', ' ', cleaned).strip()
+    if not cleaned:
+        return raw
+    titled = cleaned.title()
+    # Fix common esports acronyms that title() breaks.
+    _acronym_fixes = {
+        'Og': 'OG', 'Tsm': 'TSM', 'Lgd': 'LGD',
+        'Psg': 'PSG', 'Eg': 'EG', 'Vp': 'VP',
+        'Bc': 'BC', 'Xg': 'XG',
+    }
+    for wrong, right in _acronym_fixes.items():
+        titled = titled.replace(wrong, right)
+    return titled
 
 
 def validate_heroes_data(radiant_heroes_and_pos, dire_heroes_and_pos, check_account_ids=True):
@@ -23502,7 +23595,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
             message_text = (
                 f"{_format_signal_header(stake_team_name=stake_team_name, stake_multiplier=stake_multiplier, special_header_mode=str(stake_multiplier_context.get('special_header_mode') or ''))}\n"
-                f"{radiant_team_name} VS {dire_team_name}\n"
+                f"{normalize_team_name_display(str(radiant_team_name or ''))} VS {normalize_team_name_display(str(dire_team_name or ''))}\n"
                 f"{series_score_line}"
                 f"{lane_block}"
                 f"{problem_block}"
@@ -27089,8 +27182,17 @@ if __name__ == "__main__":
 
     # Абсолютные пути к данным (вынесены за пределы проекта для оптимизации Cursor)
     STATS_DIR = str(ANALYSE_PUB_DIR)
+    # Target poll cycle: 30 seconds wall-clock from start of one general()
+    # call to start of the next. Fixed sleep(30) + processing_time ≈ 60s
+    # before this change; now we track elapsed time and sleep only the
+    # remainder to keep the total cycle tight.
+    _POLL_CYCLE_TARGET_SECONDS = _safe_float_env(
+        "CYBERSCORE_POLL_CYCLE_TARGET_SECONDS",
+        float(SCHEDULE_NEAR_MATCH_POLL_SECONDS),
+    )
     while True:
         try:
+            cycle_start = time.time()
             runtime_cycle_counter += 1
             cycle_number = int(runtime_cycle_counter)
             _handle_pending_telegram_admin_commands(args.odds)
@@ -27179,11 +27281,15 @@ if __name__ == "__main__":
                     label="series_finished_schedule",
                 )
             elif status is None:
-                print('Сплю 30 секунд')
-                _sleep_interruptible(30, raw_odds=args.odds, label="default_idle")
+                cycle_elapsed = time.time() - cycle_start
+                target_sleep = max(0.5, _POLL_CYCLE_TARGET_SECONDS - cycle_elapsed)
+                print(f'Сплю {target_sleep:.0f} секунд (cycle elapsed: {cycle_elapsed:.0f}s)')
+                _sleep_interruptible(target_sleep, raw_odds=args.odds, label="default_idle")
             else:
-                print('Сплю 30 секунд')
-                _sleep_interruptible(30, raw_odds=args.odds, label="default_status")
+                cycle_elapsed = time.time() - cycle_start
+                target_sleep = max(0.5, _POLL_CYCLE_TARGET_SECONDS - cycle_elapsed)
+                print(f'Сплю {target_sleep:.0f} секунд (cycle elapsed: {cycle_elapsed:.0f}s)')
+                _sleep_interruptible(target_sleep, raw_odds=args.odds, label="default_status")
         except Exception as e:
             print(f"⚠️ Ошибка главного цикла: {e}")
             logger.exception("Main loop error")
