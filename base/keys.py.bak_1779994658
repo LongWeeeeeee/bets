@@ -1,0 +1,165 @@
+from urllib.parse import urlparse
+
+Token = '5967722772:AAHeXJ3jvfY3XPK_OdTxwUnxU6t114TPtFk'
+Chat_id = 7543801207
+Chat_ids = [1179836674, 312550797]
+VK_GROUP_ID = "237301744"
+VK_PEER_ID = "717099073"
+VK_PEER_IDS = ["717099073", "64086675"]
+VK_API_VERSION = "5.199"
+VK_GROUP_TOKEN = "vk1.a.52kujTSa6c2AwDvJcJzo2Taiqfktfd1CMi714XLK6CBS0wSnXd6HJcENNp0F7pjzR_UupzuI1qUaHu2jEM2tWLR9RiGmESLTy2ZQaEh38_IGIP908ZPdu_7VRndT7DZwJ1RjZ_ghk0epG4OOtsIKr740zabjIDVadTLiELaQADQHlYH7B8ALWQD7H0ldFzlRPMcb5MTaBPPvFoHOKOif0Q"
+STEAM_API_KEY = "81D7C24338E1682DA8CB5131098471D0"
+start_date_time_739 = '1747872000'
+start_date_time_738 = '1740096000'
+start_date_time_736 = '1774742400'
+start_date_time = '1774396800'
+DOTA_PATCH_EVENTS = (
+    {"label": "7.39", "date": "2025-05-21", "start_ts": 1747785600, "kind": "version"},
+    {"label": "7.39b", "date": "2025-05-29", "start_ts": 1748476800, "kind": "version"},
+    {"label": "7.39c", "date": "2025-06-24", "start_ts": 1750723200, "kind": "version"},
+    {"label": "7.39d", "date": "2025-08-05", "start_ts": 1754352000, "kind": "version"},
+    {"label": "minor_2025_08_08", "date": "2025-08-08", "start_ts": 1754611200, "kind": "minor"},
+    {"label": "minor_2025_08_22", "date": "2025-08-22", "start_ts": 1755820800, "kind": "minor"},
+    {"label": "7.39e", "date": "2025-10-02", "start_ts": 1759363200, "kind": "version"},
+    {"label": "minor_2025_10_09", "date": "2025-10-09", "start_ts": 1759968000, "kind": "minor"},
+    {"label": "minor_2025_11_10", "date": "2025-11-10", "start_ts": 1762732800, "kind": "minor"},
+    {"label": "minor_2025_12_12", "date": "2025-12-12", "start_ts": 1765497600, "kind": "minor"},
+    {"label": "7.40", "date": "2025-12-15", "start_ts": 1765756800, "kind": "version"},
+    {"label": "7.40b", "date": "2025-12-23", "start_ts": 1766448000, "kind": "version"},
+    {"label": "minor_2026_01_06", "date": "2026-01-06", "start_ts": 1767657600, "kind": "minor"},
+    {"label": "7.40c", "date": "2026-01-21", "start_ts": 1768953600, "kind": "version"},
+    {"label": "7.41", "date": "2026-03-24", "start_ts": 1774310400, "kind": "version"},
+    {"label": "7.41a", "date": "2026-03-28", "start_ts": 1774656000, "kind": "version"},
+    {"label": "7.41b", "date": "2026-04-08", "start_ts": 1775606400, "kind": "version"},
+    {"label": "7.41c", "date": "2026-05-06", "start_ts": 1778025600, "kind": "version"},
+)
+DOTA_PATCH_START_TIMES = {event["label"]: int(event["start_ts"]) for event in DOTA_PATCH_EVENTS}
+DOTA_VERSION_PATCH_EVENTS = tuple(event for event in DOTA_PATCH_EVENTS if event.get("kind") == "version")
+DOTA_PATCH_SPECS = tuple(
+    (
+        str(event["label"]),
+        int(event["start_ts"]),
+        int(DOTA_VERSION_PATCH_EVENTS[index + 1]["start_ts"])
+        if index + 1 < len(DOTA_VERSION_PATCH_EVENTS)
+        else None,
+    )
+    for index, event in enumerate(DOTA_VERSION_PATCH_EVENTS)
+)
+
+#1742908800
+# Proxy for bookmaker odds scraping (proxy-only mode).
+# Raw format kept for readability: host:port@user:password
+BOOKMAKER_PROXY_RAW = "109.120.147.141:27100@BD68mb0N3G:hEWYpLWLSj"
+BOOKMAKER_PROXY_URL = "http://BD68mb0N3G:hEWYpLWLSj@109.120.147.141:27100"
+# Fallback proxy (for DLTV if main fails)
+BOOKMAKER_PROXY_FALLBACK = "http://BD68mb0N3G:hEWYpLWLSj@109.120.147.141:27100"
+
+
+# Proxies banned by DLTV (returning 404 or timeouts).
+# Add a hostname here when confirmed banned.
+DLTV_BANNED_PROXIES = {
+    "103.127.76.53",      # 404 on dltv.org
+    "77.221.150.75",      # timeout on dltv.org
+    "77.221.150.109",     # connection refused
+    "77.221.150.121",     # connection refused
+}
+
+
+def _dedupe_proxy_pool(items):
+    result = []
+    for item in items:
+        candidate = str(item or "").strip()
+        if candidate and candidate not in result:
+            result.append(candidate)
+    return result
+
+
+def _proxy_hostname(proxy_url):
+    try:
+        return (urlparse(str(proxy_url or "")).hostname or "").strip()
+    except Exception:
+        return ""
+
+
+def _sort_dltv_proxy_pool(items):
+    # Stable order by hostname for deterministic rotation; banned hosts go last.
+    def _rank(proxy_url):
+        host = _proxy_hostname(proxy_url)
+        if host in DLTV_BANNED_PROXIES:
+            return (100, host, str(proxy_url))
+        return (0, host, str(proxy_url))
+
+    return sorted(_dedupe_proxy_pool(items), key=_rank)
+
+
+
+
+api_to_proxy = {
+    'http://knpeUzfUM8:bDoUawtwXb@194.31.73.35:28172': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJTdWJqZWN0IjoiMWM5MDkyYTgtMGY0OS00OTExLTliMjQtNjM2OWZlNDQ2NzFhIiwiU3RlYW1JZCI6IjQ1MDgzMDI2MCIsIkFQSVVzZXIiOiJ0cnVlIiwibmJmIjoxNzU5NzgzNzkxLCJleHAiOjE3OTEzMTk3OTEsImlhdCI6MTc1OTc4Mzc5MSwiaXNzIjoiaHR0cHM6Ly9hcGkuc3RyYXR6LmNvbSJ9.Yulci2rwKxuZa0WyuRpRC6d-2Eptmt2j_A3zGHOg4Ss',
+    'http://MwIvtfM00l:FjMrolBS50@45.12.63.154:23601': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJTdWJqZWN0IjoiOTliNmZmNWItNjBlYS00N2Y2LTk0ZmYtMWE2OWI0NWM0N2FkIiwiU3RlYW1JZCI6IjgzODgyNzY5MyIsIkFQSVVzZXIiOiJ0cnVlIiwibmJmIjoxNzU5NzU3Nzg1LCJleHAiOjE3OTEyOTM3ODUsImlhdCI6MTc1OTc1Nzc4NSwiaXNzIjoiaHR0cHM6Ly9hcGkuc3RyYXR6LmNvbSJ9.EJBQNSIucr2FVT0B3puvjfi9nb0vt5isdBh4W0Ywm0Y',
+    'http://SgPzdROUth:nGZz0Nd3rA@194.31.73.111:61711': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJTdWJqZWN0IjoiNWJlZThlNGMtZjk4Mi00YTNiLWFmZTMtNDNlNjAzMThlMDU3IiwiU3RlYW1JZCI6IjQzMjkzOTI5NCIsIkFQSVVzZXIiOiJ0cnVlIiwibmJmIjoxNzU5Nzc3NjA4LCJleHAiOjE3OTEzMTM2MDgsImlhdCI6MTc1OTc3NzYwOCwiaXNzIjoiaHR0cHM6Ly9hcGkuc3RyYXR6LmNvbSJ9.jeBsSaK5ZwCTSv_Ckq53eazI6tledxx8N5c4d9AZTEo',
+    'http://Q1ZhXK4dAG:tcn4gVD2jd@45.12.63.169:43499': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJTdWJqZWN0IjoiNGU3NzI0OTctZmEyMS00Y2Y5LWJiOWItZDQ2MDgyMGJlYjdiIiwiU3RlYW1JZCI6IjEyNjEyNTM5MzgiLCJBUElVc2VyIjoidHJ1ZSIsIm5iZiI6MTc2OTU5NDQ5MywiZXhwIjoxODAxMTMwNDkzLCJpYXQiOjE3Njk1OTQ0OTMsImlzcyI6Imh0dHBzOi8vYXBpLnN0cmF0ei5jb20ifQ.8cN9OPPAmnHNG_YLBwWthPmmI2HU5AGZ4y9JETMnaOg',
+    'http://zYmRM1B3LS:blsnVfxWVf@45.147.31.107:21158': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJTdWJqZWN0IjoiOTViMmFiMzUtNGZiMC00NDc2LWI1MWQtYmIxMzM2ZDM3NWYzIiwiU3RlYW1JZCI6IjEyNTg5Njg3OTYiLCJBUElVc2VyIjoidHJ1ZSIsIm5iZiI6MTc3NjQzODQ0NiwiZXhwIjoxODA3OTc0NDQ2LCJpYXQiOjE3NzY0Mzg0NDYsImlzcyI6Imh0dHBzOi8vYXBpLnN0cmF0ei5jb20ifQ.FpDdOhNCtqzJUv67z6rxoo6NhR_dfj-ysY5w38WdmTI',
+    'http://BD68mb0N3G:hEWYpLWLSj@109.120.147.141:27100': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJTdWJqZWN0IjoiNGU3NzI0OTctZmEyMS00Y2Y5LWJiOWItZDQ2MDgyMGJlYjdiIiwiU3RlYW1JZCI6IjEyNjEyNTM5MzgiLCJBUElVc2VyIjoidHJ1ZSIsIm5iZiI6MTc3NzkyNDE5MywiZXhwIjoxODA5NDYwMTkzLCJpYXQiOjE3Nzc5MjQxOTMsImlzcyI6Imh0dHBzOi8vYXBpLnN0cmF0ei5jb20ifQ.qTyliTQSPTS0fMCVz5ok1ez3oMA0YWbhW94TMMhjOpU',
+    # Live-only proxies (no Stratz JWT yet) — verified live (HTTP 200 from prod).
+    'http://hbXhzs:h5RUMP@178.171.43.121:9042': '',
+    'http://hbXhzs:h5RUMP@212.102.146.216:9174': '',
+}
+
+# ============================================================
+# UNIFIED PROXY POOL: single source = api_to_proxy.keys()
+# All consumers (live runtime, bookmaker, dota2protracker, DLTV) build their
+# pools by filtering this single source. Add/remove a proxy in api_to_proxy
+# above and it propagates everywhere.
+# ============================================================
+SHARED_PROXY_POOL = _dedupe_proxy_pool(list(api_to_proxy.keys()))
+
+
+def _filter_banned_proxies(pool):
+    """Remove DLTV-banned proxies from pool."""
+    result = []
+    for proxy in pool:
+        host = _proxy_hostname(proxy)
+        if host and host not in DLTV_BANNED_PROXIES:
+            result.append(proxy)
+        else:
+            print(f"   🚫 DLTV banned proxy filtered: {proxy}")
+    return result
+
+
+# All scraper pools derive from SHARED_PROXY_POOL (= api_to_proxy keys).
+# Live runtime, Dota2ProTracker, and DLTV use the full deduped pool.
+RU_PROXY_POOL = _dedupe_proxy_pool(
+    [
+        proxy
+        for proxy in SHARED_PROXY_POOL
+        if _proxy_hostname(proxy).startswith("77.221.150.")
+        or _proxy_hostname(proxy).startswith("109.120.147.")
+    ]
+)
+
+BOOKMAKER_PROXY_POOL = list(RU_PROXY_POOL) if RU_PROXY_POOL else list(SHARED_PROXY_POOL)
+DOTA2PROTRACKER_PROXY_POOL = list(SHARED_PROXY_POOL)
+DLTV_PROXY_POOL = _filter_banned_proxies(_sort_dltv_proxy_pool(SHARED_PROXY_POOL))
+
+
+def get_dltv_proxy_pool():
+    return list(DLTV_PROXY_POOL)
+
+
+def get_dota2protracker_proxy_pool():
+    return list(DOTA2PROTRACKER_PROXY_POOL)
+
+BOOKMAKER_PROXIES = {
+    "http": BOOKMAKER_PROXY_URL,
+    "https": BOOKMAKER_PROXY_URL,
+}
+# with open('./count_synergy_10th_2000/1722505765_top600_output.json', 'r') as f:
+#     data = json.load(f)
+# with open('./count_synergy_10th_2000/1722505765_top600_output_new.txt', 'r') as f:
+#     data1 = json.load(f)
+# for i in data1:
+#     if i not in data:
+#         data[i] = data1[i]
+# with open('./count_synergy_10th_2000/1722505765_top600_output.json', 'w') as f:
+#     json.dump(data, f)

@@ -1,88 +1,71 @@
-# Ingame Agent Notes
+# Ingame — Dota 2 Analytics Platform
 
-`CLAUDE.md` has the full project guide. This file keeps the operational rules that future Codex-style agents must see immediately.
+> **Единый источник правды для всех ИИ-агентов.** Этот файл (`AGENTS.md`) — канонический.
+> `CLAUDE.md`, `GEMINI.md`, `.cursorrules` и `.github/copilot-instructions.md` — симлинки на него.
+> Правь ТОЛЬКО `AGENTS.md`. Claude Code, Codex, Gemini CLI, Cursor, Copilot читают одно и то же.
 
-## Runtime Rules
+Система анализа и прогнозирования Dota 2 матчей: live-данные, букмекерские кэфы, ML-модели и ELO-рейтинги, связка с Telegram-ботом. Автор: alex.
 
-- Always respond to the user in Russian (по-русски). Code, identifiers, commit messages, and log strings stay in their original language, but all explanations, summaries, and chat replies must be written in Russian.
-- Agents must not take initiative beyond the user's requested task or explicit instructions in project `.md` files; complete the requested task and nothing more.
-- If the user's request is ambiguous, the agent is unsure, or the user appears to have made a logical mistake, ask the user before acting.
-- Always use `/Users/alex/Documents/ingame/venv_catboost/bin/python3` locally.
-- Do not create or use a different virtualenv.
-- Do not start or restart the local `base/cyberscore_try.py` live runtime unless the user explicitly asks.
-- For any live runtime restart, first kill old `cyberscore` processes, clear `~/.local/state/ingame/map_id_check.txt`, and truncate the active server log (`/root/main/log.txt`) before starting the new process.
-- Do NOT truncate `log.txt` during testing, probes, or mid-investigation restarts. Only truncate the log when applying a **bug fix** (git push → production pull → restart). Logic changes (new thresholds, new dispatch rules, multiplier tweaks) must NOT clear the log — keep it intact so previous match data is preserved for comparison.
-- Before the live runtime enters its main CyberScore/DLTV loop, validate every live proxy up to 3 times; remove dead proxies from the in-memory live proxy pool immediately so they do not keep cycling or spam logs. Do not delete or edit the API key mappings in `base/keys.py` for this runtime pruning.
-- After code changes in the `cyberscore` live pipeline (`base/cyberscore_try.py`, `base/functions.py`, `base/dota2protracker.py`, bookmaker/live dispatch logic), push the git commit to `main`, pull the new code on production, kill the old server process, clear `~/.local/state/ingame/map_id_check.txt`, and restart the server runtime with the new code.
-- When pruning dead proxies in `base/keys.py`, only remove them from runtime proxy constants/pools; do not delete or edit `api_to_proxy` / `api_to_keys` entries or their API keys.
-- Production server: `root@147.45.216.225`, project path `/root/main`.
-- Runtime/output artifacts under `runtime/` are intentionally ignored.
-- **Never delete files, directories, backups, or artifacts (locally or on the server) without explicit user confirmation.** This includes `.json` source dicts, sqlite DBs, `*.bak_*` backups, `*.shards/` directories, log files, runtime caches, and any "stale" or "old version" files. If unsure whether something is needed, ask.
-- **Rebuild-then-replace, never delete-then-create.** When regenerating a dictionary, sqlite DB, snapshot, or any other data artifact, write the new version to a temporary path (e.g. `<target>.tmp`) and atomically rename it over the existing file only after the build succeeds. Never delete the existing artifact before the new one is fully written and verified — the user must never be left with neither version on disk.
-- Long-running local jobs must be launched in the background with `nohup` and logs/pid files under `runtime/`, so they survive Codex turn interruptions and can be monitored later. **NEVER** use Kiro's built-in background process tool for long-running tasks — always `nohup ... > runtime/<name>.log 2>&1 &` with `echo $!` to capture PID.
-- Whenever launching or continuing a long-running process, always report a clickable local log/status file link and the exact command to check process state.
+> **Этот файл — горячее ядро (always-loaded).** Здесь только то, что нужно В КАЖДОЙ задаче: правила, безопасность, команды и индекс знаний. Подробные справочники вынесены в `docs/` и подгружаются ПО НЕОБХОДИМОСТИ через индекс ниже — чтобы не держать их в контексте постоянно.
 
-## Key Files
+**Hero ID = OpenDota IDs.** Единый справочник: `base/hero_features_processed.json` (ключ = hero_id). Геттеры в коде: `get_hero_id(name)`, `get_hero_name(id)`, `get_hero_slug(name)`. Те же ID использует `base/dota2protracker.py`.
 
-- `base/cyberscore_try.py`: live runtime and Telegram dispatch.
-- `base/functions.py`: draft dictionary metrics, lane metrics, output formatting.
-- `base/dota2protracker.py`: Dota2ProTracker cache/parser and protracker draft metrics.
-- `base/check_old_maps.py`: offline historical metric collector.
-- `base/metrics_winrate.py`: bucket winrate analysis for JSON collected by `check_old_maps.py`.
+---
 
-## Camoufox Browser Configuration
+## 📑 Индекс знаний (читай нужный док под задачу)
 
-The live runtime uses Camoufox (anti-detect Firefox) for all CyberScore page fetches. Key settings:
+Перед работой определи область задачи и прочитай ТОЛЬКО релевантные доки (инструментом Read). НЕ сканируй исходники заново, если ответ есть в доке.
 
-- **Mode**: One-shot per cycle (no long-living pages, no live-watcher). Each cycle opens a fresh page, fetches, parses, closes.
-- **Humanize**: `True` (max cursor movement realism, up to 1.5s per move).
-- **Window**: Auto-generated random realistic size (no fixed dimensions — avoids fingerprinting).
-- **Locale**: Auto-detected from proxy IP via GeoIP (no hardcoded locale).
-- **OS fingerprint**: `windows` (most common, blends in).
-- **GeoIP**: Enabled — timezone, geolocation, locale all match the proxy IP.
-- **WebRTC**: Blocked (`block_webrtc=True`).
-- **Cache**: Disabled (`enable_cache=False`) — prevents cache-timing fingerprinting, ensures fresh responses.
-- **Proxy**: Required; direct requests to CyberScore are disabled.
+| Если задача касается… | Прочитай |
+|---|---|
+| структуры проекта, «какой файл за что отвечает», где функция | `docs/CODE_MAP.md` |
+| логики сигналов, tier/roster/star, ML, потока данных | `docs/ARCHITECTURE.md` |
+| правок `cyberscore_try.py`, режимов запуска, env-переменных | `docs/CODE_MAP.md` → раздел `cyberscore_try.py` |
+| draft-метрик, dota2protracker, cp1vs1 / synergy / lane | `docs/CODE_MAP.md` → `dota2protracker.py` + `check_old_maps.py` |
+| Camoufox / антидетект / парсинг страниц | `docs/CAMOUFOX.md` |
+| sleep-политики, расписания опроса, quiet hours | `docs/SCHEDULING.md` |
+| полного объяснения операционных правил, деплоя, примеров запуска | `docs/RUNTIME_RULES.md` |
 
-Env overrides (all optional):
-| Variable | Default | Description |
-|---|---|---|
-| `CYBERSCORE_CAMOUFOX_HUMANIZE` | `true` | Cursor humanization (true/false/float) |
-| `CYBERSCORE_CAMOUFOX_OS` | `windows` | Target OS fingerprint |
-| `CYBERSCORE_CAMOUFOX_LOCALE` | _(empty, auto from geoip)_ | Force locale |
-| `CYBERSCORE_CAMOUFOX_WINDOW` | _(empty, auto random)_ | Force window size e.g. `1920x1080` |
-| `CYBERSCORE_CAMOUFOX_BLOCK_WEBRTC` | `1` | Block WebRTC |
-| `CYBERSCORE_CAMOUFOX_ENABLE_CACHE` | `0` | Browser cache |
-| `CYBERSCORE_CAMOUFOX_GEOIP` | `1` | GeoIP locale/timezone matching |
-| `CYBERSCORE_LONG_PAGE_ENABLED` | `0` | Long-living page mode (disabled) |
-| `CYBERSCORE_LIVE_WATCHER_ENABLED` | `0` | Live watcher mode (disabled) |
+> **Правило свежести:** если содержимое дока противоречит реальному коду — **верь коду** и отметь расхождение (док устарел → обнови через subagent `scribe`).
 
-## Schedule Sleep Policy
+---
 
-When no live matches are found on CyberScore:
-- If nearest scheduled match is **>30 min** away → sleep **30 min** (cap).
-- If nearest scheduled match is **≤30 min** away → sleep **exactly** that many seconds until match start.
-- If match already started (schedule says 0 or negative) → poll every 3 min.
-- Quiet hours (0:00–6:00 MSK): sleep is capped by time until quiet window starts.
+## Multi-agent workflow (Opus / DeepSeek)
 
-Use `base/check_old_maps.py` to collect historical draft metrics into a JSON file, then `base/metrics_winrate.py` to compute bucket winrate.
+Роли моделей:
+- **Opus** — планирование и ревью (НЕ пишет код сам).
+- **DeepSeek** — реализация по утверждённому плану.
 
-Public patch 7.41 50k example:
-```bash
-/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/check_old_maps.py \
-  --maps-path bets_data/analise_pub_matches/json_parts_split_from_object \
-  --patch 7.41 \
-  --max-matches 50000 \
-  --dicts \
-  --dota2protracker \
-  --post-lane-max-cached-shards 127 \
-  --output runtime/pub_7.41_50k_metrics.json
+Правила исполнения (checkpoint-review):
+1. Работай строго по плану/todo, пошагово. Один пункт плана = один этап.
+2. После завершения КАЖДОГО этапа, который меняет код, вызови subagent `reviewer` для проверки изменений именно этого этапа — ДО начала следующего.
+3. Если `reviewer` вернул **REQUEST CHANGES** или **BLOCK**: исправь все пункты Critical; перезапусти `reviewer` на исправленных изменениях; переходи дальше только после **APPROVE**.
+4. Не объединяй несколько этапов в одну непроверенную пачку правок.
+5. Не помечай задачу завершённой, пока финальный diff не получил **APPROVE**.
+6. **Любая правка любого файла отслеживается автоматически** (хук `PostToolUse` пишет путь в `.claude/.pending-review`). Это относится ко ВСЕМ файлам, включая git-игнорируемые эксперименты в `runtime/`.
+7. **Реакция на Stop-блок — железное правило.** Если хук завершения сообщает о непроверенных изменённых файлах, твоё НЕМЕДЛЕННОЕ и ЕДИНСТВЕННОЕ следующее действие — вызвать subagent `reviewer`. Не пиши код, не запускай команды и не отвечай пользователю до этого. `reviewer` читает `.claude/.pending-review`, проверяет файлы и очищает маркер только при **APPROVE**.
 
-/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/metrics_winrate.py \
-  --input runtime/pub_7.41_50k_metrics.json \
-  --bucket-mode \
-  --min-matches 6 \
-  > runtime/pub_7.41_50k_winrate.txt
-```
+Цель: Opus контролирует промежуточные результаты DeepSeek по этапам и корректирует курс на лету, а не только в конце. Финальный Stop-хук гарантирует, что ни одна задача не завершится без ревью — даже если правила выше были пропущены.
 
-`--patch 7.41` resolves split files like `7.41_part*.json` and uses start timestamp `1774310400` when `--start-date-time` is not provided. `--post-lane-max-cached-shards 127` is for offline public backtests only; it avoids sharded post-lane cache thrashing and does not change live runtime defaults.
+---
+
+## Runtime Rules (безопасность — обязательно к соблюдению)
+
+Краткие правила-инварианты. Развёрнутые пояснения, деплой и примеры запуска — в `docs/RUNTIME_RULES.md`.
+
+- **Отвечай пользователю на русском.** Код, идентификаторы, commit-сообщения и строки логов — на исходном языке.
+- Делай только поставленную задачу; ничего своевольного сверх неё. Неоднозначность / логическая ошибка у пользователя → сначала **спроси**.
+- **venv:** ТОЛЬКО `/Users/alex/Documents/ingame/venv_catboost/bin/python3`. Других venv не создавай и не используй.
+- **НИКОГДА не удаляй** файлы, папки, бэкапы, `.json` source dicts, sqlite DB, `*.bak_*`, `*.shards/`, логи, кэши — локально или на сервере — **без явного подтверждения**. Сомневаешься — спроси.
+- **Rebuild-then-replace, никогда delete-then-create.** Пиши новую версию в `<target>.tmp` и атомарно переименовывай поверх только после успешной сборки и проверки.
+- **Не запускай / не перезапускай локальный `base/cyberscore_try.py` runtime** без явного запроса. Изменения в live pipeline реализуй и тестируй без локального запуска по умолчанию.
+- **`log.txt`:** усекать ТОЛЬКО при bug-fix деплое (git push → pull → restart). На тестах, пробах и логических изменениях (пороги, dispatch-правила, множители) — НЕ трогать (сохраняем данные прошлых матчей).
+- **`map_id_check.txt`** (`~/.local/state/ingame/`, `MAP_ID_CHECK_PATH`) — единый для всех режимов; при любом перезапуске чисти, чтобы матчи переанализировались.
+- В `base/keys.py` при чистке мёртвых прокси трогай только runtime proxy constants/pools; **НЕ трогай** `api_to_proxy` / `api_to_keys` и API-ключи.
+- **Долгие задачи** — только `nohup ... > runtime/<name>.log 2>&1 &` + `echo $!` для PID. Никогда не используй встроенный background-инструмент. Всегда давай кликабельную ссылку на лог и команду проверки статуса.
+- **Деплой live pipeline:** git push `main` → на сервере `git pull` → kill старого процесса → чисти `map_id_check.txt` → рестарт с новым кодом. (полная процедура: `docs/RUNTIME_RULES.md`)
+- **Production:** `root@147.45.216.225`, путь `/root/main`. `runtime/` — намеренно git-ignored scratch.
+
+---
+
+## Быстрые команды

@@ -16,13 +16,10 @@ except Exception:
 import time
 import sys
 import os
-import pickle
 import logging
 import warnings
-import asyncio
 import threading
 import queue
-import glob
 import copy
 import mmap
 import gc
@@ -12875,6 +12872,10 @@ def _load_kills_models() -> bool:
     return True
 
 
+def _get_kills_draft_predictor():
+    return KILLS_DRAFT_PREDICTOR
+
+
 def _load_kills_group_models(kind: str, key: Any) -> Optional[Dict[str, Any]]:
     global KILLS_MODELS_BY_PATCH, KILLS_MODELS_BY_TIER
     cache = KILLS_MODELS_BY_PATCH if kind == "patch" else KILLS_MODELS_BY_TIER
@@ -20076,7 +20077,7 @@ def parse_draft_and_positions(soup, data, radiant_team_name, dire_team_name):
         if counts:
             total = float(sum(counts.values()))
             strong_positions = 0
-            for pos_key in POSITION_ORDER:
+            for pos_key in ("POSITION_1", "POSITION_2", "POSITION_3", "POSITION_4", "POSITION_5"):
                 c = float(counts.get(pos_key, 0))
                 if c >= 100 and (c / total) >= 0.08:
                     strong_positions += 1
@@ -20884,8 +20885,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     )
                 if not allow_live_recheck:
                     # Push fresh state from listing cache to delayed sender
-                    if match_id:
-                        _listing_item = CYBERSCORE_LISTING_ITEM_CACHE.get(str(match_id))
+                    if series_key_from_path:
+                        _listing_item = CYBERSCORE_LISTING_ITEM_CACHE.get(str(series_key_from_path))
                         if isinstance(_listing_item, dict):
                             _listing_payload = _cyberscore_item_to_runtime_payload(_listing_item)
                             _queue_delayed_state_override(check_uniq_url, {

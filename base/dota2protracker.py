@@ -30,8 +30,6 @@ except ImportError:
     CAMOUFOX_AVAILABLE = False
 
 # Selenium support fully removed from this module (Camoufox-only).
-# Kept SELENIUM_AVAILABLE=False so any legacy caller hits the graceful path.
-SELENIUM_AVAILABLE = False
 
 import requests
 
@@ -396,34 +394,6 @@ print(json.dumps(payload))
     if not stdout:
         raise RuntimeError("empty subprocess stdout")
     return json.loads(stdout)
-
-
-def _create_driver(proxy: Optional[str] = None):
-    """Create headless Chrome driver with optional proxy."""
-    if not SELENIUM_AVAILABLE:
-        raise RuntimeError("Selenium not available")
-
-    options = Options()
-    options.add_argument('--headless=new')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--window-size=1920,1080')
-    options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-    options.add_argument('--accept-lang=en-US,en;q=0.9')
-    options.add_experimental_option('excludeSwitches', ['enable-automation'])
-    options.add_experimental_option('useAutomationExtension', False)
-
-    if proxy:
-        options.add_argument(f'--proxy-server={proxy}')
-
-    service = Service()
-    driver = webdriver.Chrome(service=service, options=options)
-    driver.set_page_load_timeout(30)
-    driver.implicitly_wait(3)
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-    return driver
 
 
 def _extract_matchups_from_js(driver) -> Dict:
