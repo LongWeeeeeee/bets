@@ -9103,6 +9103,51 @@ def _build_cyberscore_tier_listing_url(tier: int) -> str:
         f"?type=liveOrUpcoming&tournament_tier={int(tier)}"
         f"&__cb={cache_buster}"
     )
+
+
+# Combined-tier listing: instead of fetching tier1,2 + each extra tournament id +
+# each extra name-tier separately (N Camoufox fetches per cycle), fetch a SINGLE
+# `tournament_tier=1,2,3` listing and classify each live card client-side from the
+# match-row `tournament` object ({"id", "name", "tier"}). tier<=2 cards are always
+# admitted; tier==3 cards only if their tournament id is in
+# CYBERSCORE_EXTRA_TOURNAMENT_IDS or the name matches one of
+# CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS. This cuts the per-cycle listing
+# fetches from 3 to 1, which is the dominant per-cycle latency.
+CYBERSCORE_COMBINED_TIER_LISTING = _env_flag("CYBERSCORE_COMBINED_TIER_LISTING", "1")
+# Tiers admitted unconditionally (the "primary" tiers).
+CYBERSCORE_COMBINED_PRIMARY_TIERS: List[int] = _parse_csv_int_list(
+    os.getenv("CYBERSCORE_COMBINED_PRIMARY_TIERS", "1,2")
+)
+# Full set of tiers requested in the single combined listing URL. Must be wide
+# enough to also surface extra-id tournaments (CYBERSCORE_EXTRA_TOURNAMENT_IDS),
+# whose tier is arbitrary and NOT bounded by the legacy `?tournament=<id>` fetch
+# (which had no tier filter). We therefore request tiers 1..4 by default so a
+# low-tier extra-id showmatch (e.g. 46178 "BB Streamers Battle 13") still appears
+# in the combined listing and can be admitted client-side by id. Default is
+# primary tiers ∪ extra-name tiers ∪ {3,4} to cover that range.
+_combined_all_tiers = sorted(
+    set(CYBERSCORE_COMBINED_PRIMARY_TIERS)
+    | set(CYBERSCORE_EXTRA_NAME_TIERS)
+    | {3, 4}
+)
+CYBERSCORE_COMBINED_TIERS: List[int] = _parse_csv_int_list(
+    os.getenv(
+        "CYBERSCORE_COMBINED_TIERS",
+        ",".join(str(t) for t in _combined_all_tiers) or "1,2,3,4",
+    )
+)
+
+
+def _build_cyberscore_combined_tier_listing_url() -> str:
+    cache_buster = int(time.time())
+    tiers_csv = "%2C".join(str(int(t)) for t in CYBERSCORE_COMBINED_TIERS)
+    return (
+        "https://cyberscore.live/en/matches/"
+        f"?type=liveOrUpcoming&tournament_tier={tiers_csv}"
+        f"&__cb={cache_buster}"
+    )
+
+
 CYBERSCORE_GET_HEADS_FALLBACK = _env_flag("CYBERSCORE_GET_HEADS_FALLBACK", "0")
 CYBERSCORE_CAMOUFOX_PROXY_URL = str(os.getenv("CYBERSCORE_CAMOUFOX_PROXY_URL", "")).strip()
 CYBERSCORE_CAMOUFOX_REQUIRE_PROXY = _env_flag("CYBERSCORE_CAMOUFOX_REQUIRE_PROXY", "1")
@@ -17044,9 +17089,18 @@ def _drop_delayed_match(match_key: str, reason: str = "") -> bool:
     with monitored_matches_lock:
         removed = monitored_matches.pop(match_key, None)
         snapshot = copy.deepcopy(monitored_matches)
+    # Clear the "kills already sent" guard ONLY when the match is genuinely
+    # finalized (its URL has landed in map_id_check.txt). Dropping the late
+    # watcher for any other reason (timeout / stale / target-reached) must NOT
+    # erase this flag: the kills bet was dispatched with defer_add_url=True, so
+    # the URL is not yet in map_id_check.txt, the match is usually still live
+    # under the same check_uniq_url, and wiping the flag here lets the kills
+    # pre-pass re-fire next cycle — the "1-0 пришла дважды" duplicate. The set
+    # is the only lifetime guard during the deferred window.
     try:
-        with _kills_pre_pass_sent_lock:
-            _kills_pre_pass_sent_urls.discard(match_key)
+        if _is_url_processed(match_key):
+            with _kills_pre_pass_sent_lock:
+                _kills_pre_pass_sent_urls.discard(match_key)
     except Exception:
         pass
     if removed is not None:
@@ -18670,6 +18724,174 @@ def _card_dedup_key(card: Any) -> str:
     return f"href:{href}" if href else ""
 
 
+def _extract_cyberscore_match_row(html: str, match_id: Union[int, str]) -> Optional[Dict[str, Any]]:
+    """Extract the listing match-row object ({"id":<match_id>,"id_steam":...}) from
+    the Next.js flight payload. Unlike :func:`_extract_cyberscore_match_item_from_html`
+    (which targets the ``"item":{"id":...}`` detail object), the combined-tier listing
+    embeds each live card as a flat row that carries a nested ``tournament`` object
+    with ``id``/``name``/``tier``.
+    """
+    try:
+        match_id_int = int(match_id)
+    except (TypeError, ValueError):
+        return None
+    chunks = _decode_next_flight_chunks_from_html(html)
+    blobs: List[str] = []
+    if chunks:
+        blobs.append("\n".join(chunks))
+    raw_blob = str(html or "")
+    if raw_blob:
+        blobs.append(raw_blob)
+    needle = f'{{"id":{match_id_int},"id_steam"'
+    for blob in blobs:
+        idx = blob.find(needle)
+        if idx < 0:
+            continue
+        raw_object = _extract_balanced_json_object(blob, idx)
+        if not raw_object:
+            continue
+        try:
+            row = json.loads(raw_object)
+        except Exception as exc:
+            logger.debug("Failed to parse CyberScore match row JSON: %s", exc)
+            continue
+        if isinstance(row, dict) and int(row.get("id") or 0) == match_id_int:
+            return row
+    return None
+
+
+def _classify_cyberscore_card_admission(
+    html: str,
+    match_id: str,
+) -> Tuple[bool, Optional[int], Optional[int], str]:
+    """Decide whether a live card from the combined ``tier=1,2,3`` listing should
+    be admitted, based on its tournament tier/id/name.
+
+    Returns ``(admitted, tier, tournament_id, reason)``. When the tournament tier
+    cannot be determined the card is admitted (fail-open) so a parsing gap never
+    silently drops a live match.
+    """
+    row = _extract_cyberscore_match_row(html, match_id)
+    tournament = row.get("tournament") if isinstance(row, dict) else None
+    if not isinstance(tournament, dict):
+        return True, None, None, "no_tournament_object"
+    tier: Optional[int]
+    try:
+        tier = int(tournament.get("tier"))
+    except (TypeError, ValueError):
+        tier = None
+    tournament_id: Optional[int]
+    try:
+        tournament_id = int(tournament.get("id"))
+    except (TypeError, ValueError):
+        tournament_id = None
+    name = str(tournament.get("name") or "")
+    if tier is None:
+        return True, None, tournament_id, "tier_unknown"
+    if tier in CYBERSCORE_COMBINED_PRIMARY_TIERS:
+        return True, tier, tournament_id, f"primary_tier_{tier}"
+    # Non-primary tier (e.g. tier 3): admit only if it matches an extra tournament
+    # id or one of the configured name substrings.
+    if tournament_id is not None and tournament_id in CYBERSCORE_EXTRA_TOURNAMENT_IDS:
+        return True, tier, tournament_id, f"extra_id_{tournament_id}"
+    name_lower = name.lower()
+    for marker in CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS:
+        marker_lower = str(marker or "").strip().lower()
+        if marker_lower and marker_lower in name_lower:
+            return True, tier, tournament_id, f"extra_name:{marker}"
+    return False, tier, tournament_id, f"skip_tier_{tier}"
+
+
+def _get_cyberscore_heads_via_combined_listing() -> Optional[Tuple[List[Any], List[Any], str]]:
+    """Single-fetch combined ``tier=1,2,3,4`` listing path. Returns
+    ``(heads, bodies, html)`` of admitted live cards, or ``None`` if the fetch
+    failed (caller falls back to the legacy multi-fetch path).
+
+    Safety net: an extra-id tournament (``CYBERSCORE_EXTRA_TOURNAMENT_IDS``) has an
+    arbitrary tier and the legacy ``?tournament=<id>`` fetch had no tier filter, so
+    an extra-id event whose tier is outside ``CYBERSCORE_COMBINED_TIERS`` would not
+    appear in the combined listing. If any configured extra-id is NOT present in the
+    combined HTML, we top up with the legacy per-id fetch so no live match is ever
+    silently dropped. In the common case (no extra-ids, or all present) this stays a
+    single listing fetch.
+    """
+    listing_url = _build_cyberscore_combined_tier_listing_url()
+    html = _get_cyberscore_html_via_camoufox(listing_url)
+    if not html:
+        return None
+    raw_heads, raw_bodies = _extract_cyberscore_live_cards_from_html(html)
+    heads: List[Any] = []
+    bodies: List[Any] = []
+    seen_keys: set = set()
+    skipped: List[str] = []
+    admitted_extra = 0
+    seen_tournament_ids: set = set()
+    for head, body in zip(raw_heads, raw_bodies):
+        match_id = ""
+        if getattr(head, "get", None):
+            match_id = str(head.get("data-cyberscore-match-id") or "").strip()
+        admitted, tier, tournament_id, reason = _classify_cyberscore_card_admission(
+            html, match_id
+        )
+        if tournament_id is not None:
+            seen_tournament_ids.add(int(tournament_id))
+        if not admitted:
+            skipped.append(f"{match_id}(tier={tier},tournament={tournament_id})")
+            continue
+        key = _card_dedup_key(head) or _card_dedup_key(body)
+        if key and key in seen_keys:
+            continue
+        if key:
+            seen_keys.add(key)
+        if tier is not None and tier not in CYBERSCORE_COMBINED_PRIMARY_TIERS:
+            admitted_extra += 1
+        heads.append(head)
+        bodies.append(body)
+    if skipped:
+        print(
+            f"   ℹ️ CyberScore combined listing: skipped {len(skipped)} non-primary "
+            f"tier card(s): {', '.join(skipped[:6])}"
+        )
+    if admitted_extra:
+        print(
+            f"✅ CyberScore combined listing: +{admitted_extra} extra-tier "
+            f"live card(s) admitted by id/name"
+        )
+    # Safety net: top up any extra-id tournament that did not appear in the combined
+    # listing (its tier may be outside CYBERSCORE_COMBINED_TIERS).
+    missing_extra_ids = [
+        tid for tid in CYBERSCORE_EXTRA_TOURNAMENT_IDS if int(tid) not in seen_tournament_ids
+    ]
+    if missing_extra_ids:
+        for tournament_id_int, extra_url, extra_html in _fetch_cyberscore_extra_listings(
+            missing_extra_ids
+        ):
+            raw_extra_heads, raw_extra_bodies = _extract_cyberscore_live_cards_from_html(extra_html)
+            extra_heads, extra_bodies = _filter_cards_by_tournament_id(
+                raw_extra_heads,
+                raw_extra_bodies,
+                extra_html,
+                tournament_id_int,
+                title_substring=CYBERSCORE_EXTRA_TOURNAMENT_TITLES.get(tournament_id_int),
+            )
+            added = 0
+            for head, body in zip(extra_heads, extra_bodies):
+                key = _card_dedup_key(head) or _card_dedup_key(body)
+                if key and key in seen_keys:
+                    continue
+                if key:
+                    seen_keys.add(key)
+                heads.append(head)
+                bodies.append(body)
+                added += 1
+            if added:
+                print(
+                    f"✅ CyberScore combined listing top-up: +{added} live card(s) "
+                    f"for extra tournament {tournament_id_int} (outside combined tiers)"
+                )
+    return heads, bodies, html
+
+
 def _filter_cards_by_name_substrings(
     heads: List[Any],
     bodies: List[Any],
@@ -18954,6 +19176,27 @@ def _pick_nearest_schedule_info(
 
 def _get_cyberscore_heads_via_camoufox() -> Tuple[Optional[List[Any]], Optional[List[Any]]]:
     global GET_HEADS_LAST_FAILURE_REASON, NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO, SCHEDULE_LIVE_WAIT_TARGET
+    # Combined single-fetch path: one `tier=1,2,3,4` listing instead of
+    # tier1,2 + each extra tournament + each extra name-tier (3 fetches -> 1).
+    # Falls through to the legacy multi-fetch path when it finds no live cards,
+    # so the schedule-only fallback (nearest upcoming match) still works.
+    if CYBERSCORE_COMBINED_TIER_LISTING:
+        combined = _get_cyberscore_heads_via_combined_listing()
+        if combined is not None:
+            combined_heads, combined_bodies, combined_html = combined
+            if combined_heads:
+                print(f"✅ CyberScore source: found {len(combined_heads)} live cards")
+                _note_cyberscore_live_seen()
+                GET_HEADS_LAST_FAILURE_REASON = None
+                NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
+                NEXT_SCHEDULE_MATCH_INFO = None
+                SCHEDULE_LIVE_WAIT_TARGET = None
+                _emit_pending_schedule_wake_audit(
+                    heads_count=len(combined_heads),
+                    bodies_count=len(combined_bodies),
+                    request_status="cyberscore_live_found",
+                )
+                return combined_heads, combined_bodies
     # CyberScore puts an aggressive backend / CDN cache in front of the
     # listing endpoint; without a cache-buster query the same response can
     # linger for many minutes after a new live match actually started, which
