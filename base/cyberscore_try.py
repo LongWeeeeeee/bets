@@ -1312,6 +1312,7 @@ NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_DIFF = 3000.0
 NETWORTH_GATE_LATE_COMEBACK_LARGE_DEFICIT = 14000.0
 NETWORTH_MONITOR_HOLD_SECONDS = max(0, _safe_int_env("NETWORTH_MONITOR_HOLD_SECONDS", 0))
 NETWORTH_STATUS_4_10_SEND_800 = "4_10_send_800"
+NETWORTH_STATUS_PRE3_BLOCK = "pre3_block"
 NETWORTH_STATUS_MIN10_LOSS_LE800_SEND = "minute10_loss_le800_send"
 NETWORTH_STATUS_MIN10_TARGET_NONNEGATIVE_SEND = "minute10_target_nonnegative_send"
 NETWORTH_STATUS_MIN10_LEAD_GE800_SEND = "minute10_lead_ge800_send"
@@ -1321,6 +1322,7 @@ NETWORTH_STATUS_TIER1_EARLY65_4_10_SEND_600 = "early65_4_10_send_600"
 NETWORTH_STATUS_TIER1_EARLY65_10_17_SEND_600 = "early65_10_17_send_600"
 NETWORTH_STATUS_STRONG_SAME_SIGN_MONITOR_WAIT_800 = "strong_same_sign_monitor_wait_800"
 NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE3_WAIT = "same_sign_lane_adv_pre3_wait"
+NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT = "same_sign_lane_adv_pre3_wait"
 NETWORTH_STATUS_SAME_SIGN_LANE_ADV_WAIT_800 = "same_sign_lane_adv_wait_800"
 NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND = "same_sign_lane_adv_fallback_10_send"
 NETWORTH_STATUS_SAME_SIGN_LANE_ADV_STALE_NO_SEND = "same_sign_lane_adv_stale_no_send"
@@ -24283,6 +24285,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         >= NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_MIN_DIFF
                     ):
                         kills_release_status_label_pp = NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND
+                    elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS:
+                        if verbose_match_log:
+                            print(
+                                "   ⏳ kills pre-pass: pre3 wait "
+                                f"(kills_target_side={kills_pp_target_side}, "
+                                f"kills_target_diff={int(kills_pp_target_diff)}) "
+                                "— продолжаем late watcher"
+                            )
                     elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS:
                         if verbose_match_log:
                             print(
@@ -24458,6 +24468,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 f"need>={int(NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_MIN_DIFF)}, "
                                 f"game_time={int(current_game_time)})"
                             )
+                    elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS:
+                        print(
+                            "   ⏳ Ожидание dispatch: pre3_block "
+                            f"(target_side={target_side}, "
+                            f"target_diff={int(target_networth_diff)}, "
+                            f"window opens at "
+                            f"{_format_game_clock(NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS)})"
+                        )
+                        return return_status
                     elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS:
                         print(
                             "   ⏳ Ожидание dispatch: early_kills_pre6_wait "
@@ -24583,36 +24602,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"{_format_game_clock(ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS)}, "
                         "then drop without fallback"
                     )
-                if queue_same_sign_lane_adv_monitor:
-                    dispatch_mode = "delayed_same_sign_lane_adv_wait_4_10"
-                    if current_game_time < NETWORTH_GATE_SAME_SIGN_LANE_ADV_WINDOW_START_SECONDS:
-                        print(
-                            "   ⏳ Ожидание dispatch: same_sign_lane_adv_guard до 4:00 "
-                            f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
-                            f"lane_adv_dict={same_sign_lane_adv_guard.get('lane_adv_dict')}, "
-                            f"lane_adv_protracker={same_sign_lane_adv_guard.get('lane_adv_protracker')})"
-                        )
-                    elif current_game_time < NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS:
-                        if target_networth_diff >= NETWORTH_GATE_4_TO_10_MIN_DIFF:
-                            networth_send_status_label = NETWORTH_STATUS_4_10_SEND_800
-                        else:
-                            print(
-                                "   ⏳ Ожидание dispatch: same_sign_lane_adv_guard_04_10 "
-                                f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
-                                f"need>={int(NETWORTH_GATE_4_TO_10_MIN_DIFF)}) -> delayed fallback "
-                                f"{_format_game_clock(NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS)}"
-                            )
-                    else:
-                        same_sign_lane_adv_stale_after_fallback = bool(
-                            current_game_time
-                            > (
-                                NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS
-                                + NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS
-                            )
-                        )
-                        if not same_sign_lane_adv_stale_after_fallback:
-                            networth_send_status_label = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
-                elif early65_release_status_label is not None:
+                if early65_release_status_label is not None:
                     # Skip if kills was already sent for this match this cycle
                     # or in a previous cycle (e.g. via kills pre-pass or this
                     # very release path). The set is the source of truth for
@@ -24757,6 +24747,35 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             pass
                         else:
                             return return_status
+                elif queue_same_sign_lane_adv_monitor:
+                    dispatch_mode = "delayed_same_sign_lane_adv_wait_4_10"
+                    if current_game_time < NETWORTH_GATE_SAME_SIGN_LANE_ADV_WINDOW_START_SECONDS:
+                        print(
+                            "   ⏳ Ожидание dispatch: same_sign_lane_adv_guard до 3:00 "
+                            f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                            f"lane_adv_dict={same_sign_lane_adv_guard.get('lane_adv_dict')}, "
+                            f"lane_adv_protracker={same_sign_lane_adv_guard.get('lane_adv_protracker')})"
+                        )
+                    elif current_game_time < NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS:
+                        if target_networth_diff >= NETWORTH_GATE_4_TO_10_MIN_DIFF:
+                            networth_send_status_label = NETWORTH_STATUS_4_10_SEND_800
+                        else:
+                            print(
+                                "   ⏳ Ожидание dispatch: same_sign_lane_adv_guard_04_10 "
+                                f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
+                                f"need>={int(NETWORTH_GATE_4_TO_10_MIN_DIFF)}) -> delayed fallback "
+                                f"{_format_game_clock(NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS)}"
+                            )
+                    else:
+                        same_sign_lane_adv_stale_after_fallback = bool(
+                            current_game_time
+                            > (
+                                NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS
+                                + NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS
+                            )
+                        )
+                        if not same_sign_lane_adv_stale_after_fallback:
+                            networth_send_status_label = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
                 elif current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
                     if opposite_signs_selected:
                         print(

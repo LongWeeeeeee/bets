@@ -18,7 +18,7 @@ import cyberscore_try as runtime  # noqa: E402
 
 
 REQUIRED_STATUS_CONSTS = (
-    "NETWORTH_STATUS_PRE4_BLOCK",
+    "NETWORTH_STATUS_PRE3_BLOCK",
     "NETWORTH_STATUS_4_10_SEND_800",
     "NETWORTH_STATUS_MIN10_LOSS_LE1500_SEND",
     "NETWORTH_STATUS_MIN10_LEAD_GE800_SEND",
@@ -452,7 +452,7 @@ def _run_branch_scenario(
 
 
 def test_networth_status_labels_are_pinned() -> None:
-    assert runtime.NETWORTH_STATUS_PRE4_BLOCK == "pre4_block"
+    assert runtime.NETWORTH_STATUS_PRE3_BLOCK == "pre3_block"
     assert runtime.NETWORTH_STATUS_4_10_SEND_800 == "4_10_send_800"
     assert runtime.NETWORTH_STATUS_MIN10_LOSS_LE1500_SEND == "minute10_loss_le1500_send"
     assert runtime.NETWORTH_STATUS_MIN10_LEAD_GE800_SEND == "minute10_lead_ge800_send"
@@ -470,8 +470,8 @@ def test_networth_status_labels_are_pinned() -> None:
 
 SCENARIOS = (
     BranchScenario(
-        name="pre4_block_wait",
-        game_time_seconds=(3 * 60) + 30,
+        name="pre3_block_wait",
+        game_time_seconds=(2 * 60) + 30,
         target_side="radiant",
         target_networth_diff=5000,
         has_early_star=True,
@@ -479,7 +479,7 @@ SCENARIOS = (
         has_late_star=True,
         late_sign=1,
         expected_send_calls=0,
-        expected_wait_token="pre4_block",
+        expected_wait_token="pre3_block",
     ),
     BranchScenario(
         name="full_star_4_10_at_800",

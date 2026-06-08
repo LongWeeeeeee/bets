@@ -489,7 +489,7 @@ def test_lane_adv_standalone_kills_message_carries_full_local_body(monkeypatch) 
     result = _run_branch_scenario(
         monkeypatch,
         _same_sign_case(
-            game_time_seconds=(3 * 60) + 30,
+            game_time_seconds=(2 * 60) + 30,
             target_networth_diff=5000,
             metrics_extra=OPPOSITE_LANE_ADV,
         ),
@@ -1168,7 +1168,7 @@ def _same_sign_delayed_payload() -> dict:
 def test_same_sign_lane_adv_dynamic_monitor_snapshot_transitions() -> None:
     payload = _same_sign_delayed_payload()
 
-    pre4 = runtime._dynamic_monitor_snapshot_for_payload(payload, (3 * 60) + 59)
+    pre4 = runtime._dynamic_monitor_snapshot_for_payload(payload, (2 * 60) + 59)
     assert pre4["threshold"] is None
     assert pre4["status_label"] == runtime.NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT
 
