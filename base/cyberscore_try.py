@@ -1229,20 +1229,20 @@ DELAYED_SIGNAL_NO_DATA_TIMEOUT_SECONDS = 4 * 60 * 60
 # Networth-gated dispatch rules (target team is resolved by star direction sign).
 NETWORTH_GATE_EARLY_WINDOW_END_SECONDS = 10 * 60
 NETWORTH_GATE_4_TO_10_MIN_DIFF = 800.0
-# All-only watcher early-window release (mirrors the regular 4-10 networth gate):
-# before this start we never send (pre-4 block), and between it and the 10-min
+# All-only watcher early-window release (mirrors the regular 3-10 networth gate):
+# before this start we never send (pre-3 block), and between it and the 10-min
 # table window we allow an immediate send when the target's networth lead meets
-# the 4-10 threshold. This lets a clearly-dominating all-only signal go out
+# the 3-10 threshold. This lets a clearly-dominating all-only signal go out
 # before minute 10 instead of always waiting for the table window.
 NETWORTH_GATE_ALL_ONLY_EARLY_WINDOW_START_SECONDS = max(
     0.0,
-    _safe_float_env("NETWORTH_GATE_ALL_ONLY_EARLY_WINDOW_START_SECONDS", 4 * 60.0),
+    _safe_float_env("NETWORTH_GATE_ALL_ONLY_EARLY_WINDOW_START_SECONDS", 3 * 60.0),
 )
 NETWORTH_GATE_ALL_ONLY_EARLY_MIN_DIFF = _safe_float_env(
     "NETWORTH_GATE_ALL_ONLY_EARLY_MIN_DIFF",
     NETWORTH_GATE_4_TO_10_MIN_DIFF,
 )
-NETWORTH_GATE_SAME_SIGN_LANE_ADV_WINDOW_START_SECONDS = 4 * 60
+NETWORTH_GATE_SAME_SIGN_LANE_ADV_WINDOW_START_SECONDS = 3 * 60
 NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS = 10 * 60
 NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS = max(
     0,
@@ -1287,12 +1287,13 @@ NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND = "lane_adv_dict_standalone_
 # at minute 00 on the lane-dominating side, in parallel with other watchers.
 # Default ON in production; tests disable it unless explicitly exercising it.
 LANE_ADV_STANDALONE_KILLS_ENABLED = _env_flag("LANE_ADV_STANDALONE_KILLS_ENABLED", "1")
-# The standalone trigger only fires in the very early window (ideally at 00,
-# but as soon as the match becomes visible). After this cutoff the regular
+# The standalone trigger fires in the early kills window (up to 10:00).
+# Ideally at 00, but if the match becomes visible later we still send as soon
+# as we see it, as long as the gates hold. After this cutoff the regular
 # kills logic (which requires an early star) takes over instead.
 LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS = _safe_float_env(
     "LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS",
-    3 * 60.0,
+    10 * 60.0,
 )
 NETWORTH_STATUS_TIER1_EARLY_KILLS_PRE6_WAIT = "tier1_early_kills_pre6_wait"
 NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND = "tier1_early_kills_3_6_lead_send_800"
@@ -1319,7 +1320,7 @@ NETWORTH_STATUS_TIER1_EARLY_KILLS_WINDOW_CLOSED = "tier1_early_kills_window_clos
 NETWORTH_STATUS_TIER1_EARLY65_4_10_SEND_600 = "early65_4_10_send_600"
 NETWORTH_STATUS_TIER1_EARLY65_10_17_SEND_600 = "early65_10_17_send_600"
 NETWORTH_STATUS_STRONG_SAME_SIGN_MONITOR_WAIT_800 = "strong_same_sign_monitor_wait_800"
-NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT = "same_sign_lane_adv_pre4_wait"
+NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE3_WAIT = "same_sign_lane_adv_pre3_wait"
 NETWORTH_STATUS_SAME_SIGN_LANE_ADV_WAIT_800 = "same_sign_lane_adv_wait_800"
 NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND = "same_sign_lane_adv_fallback_10_send"
 NETWORTH_STATUS_SAME_SIGN_LANE_ADV_STALE_NO_SEND = "same_sign_lane_adv_stale_no_send"
@@ -1348,8 +1349,8 @@ NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT = "late_pre27_dominance_wait"
 NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT = "late_pre27_watcher_wait"
 NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT = "all_only_watcher_wait"
 NETWORTH_STATUS_ALL_ONLY_WATCHER_TIMEOUT_NO_SEND = "all_only_watcher_timeout_no_send"
-NETWORTH_STATUS_ALL_ONLY_EARLY_PRE4_WAIT = "all_only_early_pre4_wait"
-NETWORTH_STATUS_ALL_ONLY_EARLY_4_10_SEND = "all_only_early_4_10_send"
+NETWORTH_STATUS_ALL_ONLY_EARLY_PRE3_WAIT = "all_only_early_pre3_wait"
+NETWORTH_STATUS_ALL_ONLY_EARLY_3_10_SEND = "all_only_early_3_10_send"
 LATE_PRE27_DOMINANCE_PROFILE = "late_pre27_dominance"
 LATE_PRE27_WATCHER_PROFILE = "late_pre27_watcher"
 ALL_ONLY_WATCHER_PROFILE = "all_only_watcher"
@@ -1500,7 +1501,7 @@ DELAYED_SIGNAL_RETRY_BACKOFF_BASE_SECONDS = _safe_int_env("DELAYED_SIGNAL_RETRY_
 DELAYED_SIGNAL_RETRY_BACKOFF_MAX_SECONDS = _safe_int_env("DELAYED_SIGNAL_RETRY_BACKOFF_MAX_SECONDS", 15 * 60)
 TEMPO_OVER_FALLBACK_ENABLED = _safe_bool_env("TEMPO_OVER_FALLBACK_ENABLED", True)
 TEMPO_OVER_SCORE_THRESHOLD = _safe_float_env("TEMPO_OVER_SCORE_THRESHOLD", 0.9965)
-TEMPO_OVER_SCORE_LABEL = str(os.getenv("TEMPO_OVER_SCORE_LABEL", "Ставка >=48")).strip() or "Ставка >=48"
+TEMPO_OVER_SCORE_LABEL = str(os.getenv("TEMPO_OVER_SCORE_LABEL", "Ставка >=51")).strip() or "Ставка >=51"
 TEMPO_STATS_DIR_DEFAULT = str(
     os.getenv("TEMPO_STATS_DIR", str(TEMPO_EXPERIMENT_DIR))
 ).strip() or str(TEMPO_EXPERIMENT_DIR)
@@ -4233,7 +4234,7 @@ def _all_only_watcher_snapshot(
                 "status_label": str(
                     source.get("dispatch_status_label")
                     or source.get("status_label")
-                    or NETWORTH_STATUS_ALL_ONLY_EARLY_4_10_SEND
+                    or NETWORTH_STATUS_ALL_ONLY_EARLY_3_10_SEND
                 ),
                 "drop_without_fallback": False,
             }
@@ -4242,7 +4243,7 @@ def _all_only_watcher_snapshot(
             "status_label": str(
                 source.get("dispatch_status_label")
                 or source.get("status_label")
-                or NETWORTH_STATUS_ALL_ONLY_EARLY_PRE4_WAIT
+                or NETWORTH_STATUS_ALL_ONLY_EARLY_PRE3_WAIT
             ),
             "drop_without_fallback": False,
         }
@@ -5925,7 +5926,7 @@ def _dynamic_monitor_snapshot_for_payload(
             snapshot["status_label"] = str(
                 payload.get("networth_monitor_status_pre4")
                 or payload.get("dispatch_status_label")
-                or NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT
+                or NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE3_WAIT
             )
             return snapshot
         if current_game_time < target_game_time:
@@ -6208,19 +6209,30 @@ def _fetch_cyberscore_delayed_match_state(match_url: Optional[str]) -> Optional[
         return None
     match_id_match = re.search(r"/matches/(\d+)", str(match_url or ""))
     match_id = match_id_match.group(1) if match_id_match else ""
+
+    # 1. Сначала проверяем кэш листинга (0 сетевых запросов)
+    listing_item = CYBERSCORE_LISTING_ITEM_CACHE.get(str(match_id)) if match_id else None
+    if isinstance(listing_item, dict):
+        payload = _cyberscore_item_to_runtime_payload(listing_item)
+        game_time = payload.get("game_time")
+        radiant_lead = payload.get("radiant_lead")
+        try:
+            game_time_value = float(game_time)
+            lead_value = float(radiant_lead) if radiant_lead is not None else None
+            return {"game_time": game_time_value, "radiant_lead": lead_value}
+        except (TypeError, ValueError):
+            pass
+
+    # 2. Проверяем состояние живого ватчера (websocket/page, если включен)
     watcher_state = _fetch_cyberscore_live_watcher_state(str(match_url))
     if isinstance(watcher_state, dict):
         return watcher_state
+
+    # 3. Фолбек: детальный сетевой запрос (если матча нет в кэше)
     response_text = _get_cyberscore_delayed_html_via_camoufox(str(match_url))
     cyber_item = None
     if response_text:
         cyber_item = _extract_cyberscore_match_item_from_html(response_text, match_id=match_id or None)
-    listing_item = CYBERSCORE_LISTING_ITEM_CACHE.get(str(match_id)) if match_id else None
-    if isinstance(listing_item, dict) and (
-        not isinstance(cyber_item, dict)
-        or _cyberscore_item_game_time(listing_item) > _cyberscore_item_game_time(cyber_item)
-    ):
-        cyber_item = listing_item
     if not isinstance(cyber_item, dict):
         return None
     payload = _cyberscore_item_to_runtime_payload(cyber_item)
@@ -8854,6 +8866,8 @@ monitored_matches_lock = threading.Lock()
 # without preserving the kills_already_sent flag.
 _kills_pre_pass_sent_urls: set = set()
 _kills_pre_pass_sent_lock = threading.Lock()
+_tempo_over_sent_urls: set = set()
+_tempo_over_sent_lock = threading.Lock()
 delayed_state_overrides = {}
 delayed_state_overrides_lock = threading.Lock()
 delayed_sender_thread = None
@@ -9651,8 +9665,7 @@ def _prune_current_live_proxy_if_dead(
 ) -> bool:
     global PROXY_LIST
     if (
-        not LIVE_PROXY_RUNTIME_PRUNE_ENABLED
-        or not USE_PROXY
+        not USE_PROXY
         or not CURRENT_PROXY
         or not PROXY_LIST
         or not _live_proxy_error_looks_dead(exc_or_message)
@@ -9661,40 +9674,22 @@ def _prune_current_live_proxy_if_dead(
     current_proxy = str(CURRENT_PROXY).strip()
     if current_proxy not in PROXY_LIST:
         return False
-    result = _validate_live_proxy(
-        current_proxy,
-        attempts=LIVE_PROXY_PREFLIGHT_ATTEMPTS,
-        target_url=target_url or LIVE_PROXY_PREFLIGHT_URL,
-    )
-    if result.get("ok"):
+
+    _note_proxy_failure(current_proxy)
+    failures = _PROXY_CONSECUTIVE_FAILURES_MAP.get(current_proxy, 0)
+
+    if len(PROXY_LIST) > 1:
+        rotate_proxy()
         print(
-            "✅ Live proxy survived runtime recheck after "
-            f"{source_label}: {_redact_proxy_url(current_proxy)} ({result.get('reason')})"
+            f"⚠️ Прокси {_redact_proxy_url(current_proxy)} временно пессимизирован после "
+            f"{source_label} (последовательных ошибок: {failures}), переключаемся на следующий"
         )
-        return False
-    remaining_pool = [proxy for proxy in PROXY_LIST if str(proxy).strip() != current_proxy]
-    if not remaining_pool:
+    else:
         print(
-            "⚠️ Last live proxy failed runtime recheck after "
-            f"{source_label}, keeping it until the next startup preflight: "
-            f"{_redact_proxy_url(current_proxy)} ({result.get('reason')})"
+            f"⚠️ Единственный прокси {_redact_proxy_url(current_proxy)} зафиксировал ошибку "
+            f"в {source_label} (последовательных ошибок: {failures}), продолжаем использовать"
         )
-        logger.warning(
-            "Last live proxy failed runtime recheck after %s; keeping it until startup preflight",
-            source_label,
-        )
-        return False
-    PROXY_LIST = remaining_pool
-    print(
-        "🧹 Live proxy removed after runtime failure: "
-        f"{_redact_proxy_url(current_proxy)} ({result.get('reason')})"
-    )
-    logger.warning(
-        "Removed dead live proxy after %s failure; alive=%s",
-        source_label,
-        len(PROXY_LIST),
-    )
-    _set_active_proxy_from_pool(min(CURRENT_PROXY_INDEX, len(PROXY_LIST) - 1))
+
     with contextlib.suppress(Exception):
         _shared_camoufox_session.request_reset()
     return True
@@ -11468,26 +11463,70 @@ def _init_proxy_pool(use_proxy: bool) -> None:
 # Инициализация выполняется явно в general() или в main.
 
 
+_PROXY_CONSECUTIVE_FAILURES_MAP: dict[str, int] = {}
+
+def _note_proxy_success(proxy_url: Any) -> None:
+    if not proxy_url:
+        return
+    proxy_str = str(proxy_url).strip()
+    _PROXY_CONSECUTIVE_FAILURES_MAP[proxy_str] = 0
+
+def _note_proxy_failure(proxy_url: Any) -> None:
+    if not proxy_url:
+        return
+    proxy_str = str(proxy_url).strip()
+    _PROXY_CONSECUTIVE_FAILURES_MAP[proxy_str] = _PROXY_CONSECUTIVE_FAILURES_MAP.get(proxy_str, 0) + 1
+
+
 def rotate_proxy():
-    """Переключает на следующий прокси в списке"""
+    """Переключает на следующий прокси в списке живых с учетом ранжирования по сбоям"""
     global CURRENT_PROXY_INDEX, CURRENT_PROXY, PROXIES
-    
+
     if not PROXY_LIST or not USE_PROXY:
         return
-    CURRENT_PROXY_INDEX = (CURRENT_PROXY_INDEX + 1) % len(PROXY_LIST)
-    CURRENT_PROXY = PROXY_LIST[CURRENT_PROXY_INDEX]
+
+    def _rank_key(p: str):
+        p_str = str(p).strip()
+        try:
+            orig_idx = PROXY_LIST.index(p)
+        except ValueError:
+            orig_idx = 999
+        return (_PROXY_CONSECUTIVE_FAILURES_MAP.get(p_str, 0), orig_idx)
+
+    ranked_pool = sorted(PROXY_LIST, key=_rank_key)
+    current_str = str(CURRENT_PROXY).strip() if CURRENT_PROXY else ""
+    try:
+        current_rank_idx = [str(rp).strip() for rp in ranked_pool].index(current_str)
+    except ValueError:
+        current_rank_idx = -1
+
+    if current_rank_idx != -1:
+        next_idx = (current_rank_idx + 1) % len(ranked_pool)
+    else:
+        next_idx = 0
+
+    CURRENT_PROXY = ranked_pool[next_idx]
+    try:
+        CURRENT_PROXY_INDEX = PROXY_LIST.index(CURRENT_PROXY)
+    except ValueError:
+        CURRENT_PROXY_INDEX = 0
+
     PROXIES = {
         'http': CURRENT_PROXY,
         'https': CURRENT_PROXY
     }
-    
+
     logger.info(
-        "🔄 СМЕНА ПРОКСИ: %s (индекс %s/%s)",
+        "🔄 СМЕНА ПРОКСИ: %s (ошибок: %s, индекс %s/%s)",
         _redact_proxy_url(CURRENT_PROXY),
+        _PROXY_CONSECUTIVE_FAILURES_MAP.get(str(CURRENT_PROXY).strip(), 0),
         CURRENT_PROXY_INDEX,
         len(PROXY_LIST) - 1,
     )
-    print(f"🔄 Переключен прокси: {_redact_proxy_url(CURRENT_PROXY)}")
+    print(
+        f"🔄 Переключен прокси: {_redact_proxy_url(CURRENT_PROXY)} "
+        f"(ошибок последовательно: {_PROXY_CONSECUTIVE_FAILURES_MAP.get(str(CURRENT_PROXY).strip(), 0)})"
+    )
 
 
 def _get_current_proxy_marker() -> str:
@@ -17101,6 +17140,8 @@ def _drop_delayed_match(match_key: str, reason: str = "") -> bool:
         if _is_url_processed(match_key):
             with _kills_pre_pass_sent_lock:
                 _kills_pre_pass_sent_urls.discard(match_key)
+            with _tempo_over_sent_lock:
+                _tempo_over_sent_urls.discard(match_key)
     except Exception:
         pass
     if removed is not None:
@@ -17183,7 +17224,7 @@ def _try_dispatch_lane_adv_standalone_kills(
         return False
     if not LANE_ADV_STANDALONE_KILLS_ENABLED:
         return False
-    # Only fire in the very early window (0-3 min). Ideally at 00, but if the
+    # Only fire in the early kills window (0-10 min). Ideally at 00, but if the
     # match becomes visible later we still send as soon as we see it — up to
     # the cutoff. After that the regular kills logic (early star) takes over.
     try:
@@ -17844,6 +17885,7 @@ class _SharedCamoufoxSession:
                     result = callback(active_browser)
                     jobs_since_launch += 1
                     future.set_result(result)
+                    _note_proxy_success(CURRENT_PROXY)
                 except Exception as exc:
                     future.set_exception(exc)
                     if reset_on_error:
@@ -22109,7 +22151,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 _gt_local = float(game_time or 0.0)
             except (TypeError, ValueError):
                 _gt_local = 0.0
-            # Only worth the early path inside the 0-3 min window.
+            # Only worth the early path inside the 0-10 min window.
             if _gt_local > float(LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS):
                 return
             # Lanes are not computed inside _run_local_dictionary_metrics — do it
@@ -24982,7 +25024,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         monitor_threshold = NETWORTH_GATE_4_TO_10_MIN_DIFF
                         monitor_wait_status_label = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_WAIT_800
                     else:
-                        monitor_wait_status_label = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE4_WAIT
+                        monitor_wait_status_label = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_PRE3_WAIT
                     fallback_send_status_label = NETWORTH_STATUS_SAME_SIGN_LANE_ADV_FALLBACK_10_SEND
                 elif queue_top25_late_elo_block_monitor:
                     dynamic_monitor_profile = dict(top25_late_elo_block_override or {})
@@ -26384,10 +26426,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             finally:
                 _release_signal_send_slot(check_uniq_url)
         else:
+            tempo_team_elo_summary = _build_team_elo_matchup_summary(
+                radiant_team_id=radiant_team_id,
+                dire_team_id=dire_team_id,
+                radiant_team_name=radiant_team_name_original,
+                dire_team_name=dire_team_name_original,
+                radiant_account_ids=radiant_account_ids,
+                dire_account_ids=dire_account_ids,
+                match_tier=star_match_tier,
+            )
             tempo_over_fallback = _compute_tempo_over_fallback_payload(
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
                 dire_heroes_and_pos=dire_heroes_and_pos,
                 match_tier=star_match_tier,
+                elo_summary=tempo_team_elo_summary,
             )
             tempo_over_diag = None
             if tempo_over_fallback is None:
@@ -26395,16 +26447,19 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     radiant_heroes_and_pos=radiant_heroes_and_pos,
                     dire_heroes_and_pos=dire_heroes_and_pos,
                     match_tier=star_match_tier,
+                    elo_summary=tempo_team_elo_summary,
                 )
             if tempo_over_fallback is None and int(star_match_tier or 0) == 1 and isinstance(tempo_over_diag, dict):
                 tempo_score = tempo_over_diag.get("score")
                 tempo_threshold = tempo_over_diag.get("threshold")
                 tempo_reason = str(tempo_over_diag.get("reason") or "unknown")
+                tempo_elo_reason = str(tempo_over_diag.get("elo_reason") or "standard")
+                tempo_elo_delta = tempo_over_diag.get("elo_delta")
                 if tempo_score is not None and tempo_threshold is not None:
                     print(
                         "   📈 Tempo fallback score="
                         f"{float(tempo_score):.4f} "
-                        f"(threshold={float(tempo_threshold):.4f}, status={tempo_reason})"
+                        f"(threshold={float(tempo_threshold):.4f}, status={tempo_reason}, elo_reason={tempo_elo_reason}, elo_delta={tempo_elo_delta})"
                     )
                     tempo_indices = tempo_over_diag.get("indices") or {}
                     print(
@@ -26417,16 +26472,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 elif tempo_reason not in {"threshold_met"}:
                     print(f"   📈 Tempo fallback unavailable: status={tempo_reason}")
             if tempo_over_fallback is not None:
+                try:
+                    with _tempo_over_sent_lock:
+                        if check_uniq_url in _tempo_over_sent_urls:
+                            print(f"   ℹ️ Tempo over>=51 уже отправлен для {check_uniq_url} — пропускаем дубль")
+                            tempo_over_fallback = None
+                except Exception:
+                    pass
+            if tempo_over_fallback is not None:
                 tempo_team_elo_block = ""
-                tempo_team_elo_summary = _build_team_elo_matchup_summary(
-                    radiant_team_id=radiant_team_id,
-                    dire_team_id=dire_team_id,
-                    radiant_team_name=radiant_team_name_original,
-                    dire_team_name=dire_team_name_original,
-                    radiant_account_ids=radiant_account_ids,
-                    dire_account_ids=dire_account_ids,
-                    match_tier=star_match_tier,
-                )
                 tempo_team_elo_block, tempo_team_elo_meta = _format_team_elo_block(
                     tempo_team_elo_summary,
                     radiant_team_name=radiant_team_name_original,
@@ -26544,10 +26598,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             "selected_star_wr": selected_star_wr,
                             "selected_star_mode": selected_star_mode,
                             "json_retry_errors": json_retry_errors,
+                            "tempo_over_defer": True,
                         },
+                        defer_add_url=True,
                     )
                     if delivery_confirmed:
-                        print("   ✅ ВЕРДИКТ: Tempo fallback отправлен немедленно")
+                        with _tempo_over_sent_lock:
+                            _tempo_over_sent_urls.add(check_uniq_url)
+                        print("   ✅ ВЕРДИКТ: Tempo over>=51 отправлен немедленно — другие сигналы продолжают")
                 finally:
                     _release_signal_send_slot(check_uniq_url)
                 return return_status
@@ -27003,11 +27061,13 @@ def _compute_tempo_over_fallback_payload(
     radiant_heroes_and_pos: dict,
     dire_heroes_and_pos: dict,
     match_tier: Optional[int],
+    elo_summary: Optional[dict] = None,
 ) -> Optional[Dict[str, Any]]:
     diag = _compute_tempo_over_fallback_diagnostics(
         radiant_heroes_and_pos=radiant_heroes_and_pos,
         dire_heroes_and_pos=dire_heroes_and_pos,
         match_tier=match_tier,
+        elo_summary=elo_summary,
     )
     if not isinstance(diag, dict):
         return None
@@ -27019,16 +27079,41 @@ def _compute_tempo_over_fallback_diagnostics(
     radiant_heroes_and_pos: dict,
     dire_heroes_and_pos: dict,
     match_tier: Optional[int],
+    elo_summary: Optional[dict] = None,
 ) -> Dict[str, Any]:
+    base_threshold = float(TEMPO_OVER_SCORE_THRESHOLD)
+    elo_delta = None
+    applied_threshold = base_threshold
+    elo_reason = "standard"
+
+    if isinstance(elo_summary, dict):
+        radiant_payload = elo_summary.get("radiant") or {}
+        dire_payload = elo_summary.get("dire") or {}
+        try:
+            r_rating = float(radiant_payload.get("base_rating", radiant_payload.get("rating", 1500.0)))
+            d_rating = float(dire_payload.get("base_rating", dire_payload.get("rating", 1500.0)))
+            elo_delta = abs(r_rating - d_rating)
+
+            if elo_delta < 50.0:
+                applied_threshold = 0.8500
+                elo_reason = "elo_equals_relaxed"
+            elif elo_delta > 150.0:
+                applied_threshold = 1.2500
+                elo_reason = "elo_stomp_strict"
+        except (TypeError, ValueError):
+            pass
+
     diag: Dict[str, Any] = {
         "enabled": bool(TEMPO_OVER_FALLBACK_ENABLED),
         "match_tier": int(match_tier or 0),
-        "threshold": float(TEMPO_OVER_SCORE_THRESHOLD),
+        "threshold": float(applied_threshold),
         "bet_label": TEMPO_OVER_SCORE_LABEL,
         "reason": "unknown",
         "score": None,
         "indices": {},
         "payload": None,
+        "elo_delta": elo_delta,
+        "elo_reason": elo_reason,
     }
     if not TEMPO_OVER_FALLBACK_ENABLED:
         diag["reason"] = "disabled"
@@ -27053,11 +27138,47 @@ def _compute_tempo_over_fallback_diagnostics(
                 continue
         return normalized
 
+    r_normalized = _normalize_team_payload(radiant_heroes_and_pos)
+    d_normalized = _normalize_team_payload(dire_heroes_and_pos)
+
+    match_hero_ids = set()
+    for side in (r_normalized, d_normalized):
+        for pos_key, val in side.items():
+            try:
+                match_hero_ids.add(int(val["hero_id"]))
+            except (TypeError, ValueError, KeyError):
+                continue
+
+    PUSH_BLOCKLIST = {66, 111, 61, 76, 80, 91, 92, 77}
+    if any(h_id in PUSH_BLOCKLIST for h_id in match_hero_ids):
+        diag["reason"] = "push_hero_blocked"
+        return diag
+
+    BLOODY_HEROES = {67, 14}
+    if any(h_id in BLOODY_HEROES for h_id in match_hero_ids):
+        applied_threshold = min(applied_threshold, 0.7000)
+        diag["threshold"] = applied_threshold
+
+    ACTIVE_MIDS = {106, 13, 17, 126, 120}
+    FARMING_MIDS = {46, 73, 94, 69}
+    try:
+        r_mid = int(r_normalized["pos2"]["hero_id"])
+        d_mid = int(d_normalized["pos2"]["hero_id"])
+        mid_set = {r_mid, d_mid}
+        if len(mid_set & ACTIVE_MIDS) == 2:
+            applied_threshold = min(applied_threshold, 0.7000)
+            diag["threshold"] = applied_threshold
+        elif mid_set & FARMING_MIDS:
+            applied_threshold = applied_threshold + 0.15
+            diag["threshold"] = applied_threshold
+    except (TypeError, ValueError, KeyError):
+        pass
+
     try:
         build_tempo_draft_metrics, _ = _get_tempo_helpers()
         tempo_metrics = build_tempo_draft_metrics(
-            _normalize_team_payload(radiant_heroes_and_pos),
-            _normalize_team_payload(dire_heroes_and_pos),
+            r_normalized,
+            d_normalized,
             tempo_solo_dict,
             tempo_duo_dict,
             tempo_cp1v1_dict,
@@ -27106,18 +27227,31 @@ def _compute_tempo_over_fallback_diagnostics(
         + 0.3517 * max(0, int(cp_deaths_idx) - 20)
     )
     diag["score"] = float(score)
+
+    tempo_stake = 1.0
+    if float(score) >= 1.2500:
+        tempo_stake = 2.0
+    elif float(score) < 0.9965:
+        tempo_stake = 0.5
+
+    tempo_stake_label = "0.5" if tempo_stake == 0.5 else "1.0" if tempo_stake == 1.0 else "2.0"
+    bet_label_with_multiplier = f"{TEMPO_OVER_SCORE_LABEL} x{tempo_stake_label}"
+
     payload = {
         "score": float(score),
-        "threshold": float(TEMPO_OVER_SCORE_THRESHOLD),
-        "bet_label": TEMPO_OVER_SCORE_LABEL,
+        "threshold": float(applied_threshold),
+        "bet_label": bet_label_with_multiplier,
         "indices": {
             "solo_kills_pm": int(solo_kills_idx),
             "synergy_duo_kills_pm": int(duo_kills_idx),
             "counterpick_1vs1_kills_pm": int(cp_kills_idx),
             "counterpick_1vs1_deaths_pm": int(cp_deaths_idx),
         },
+        "elo_delta": elo_delta,
+        "elo_reason": elo_reason,
+        "tempo_stake": tempo_stake,
     }
-    if float(score) < float(TEMPO_OVER_SCORE_THRESHOLD):
+    if float(score) < float(applied_threshold):
         diag["reason"] = "below_threshold"
         return diag
     diag["reason"] = "threshold_met"
