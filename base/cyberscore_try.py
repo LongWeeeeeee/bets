@@ -18191,11 +18191,29 @@ def _run_shared_camoufox_job(label: str, callback, timeout: float = 120.0, retry
         return _shared_camoufox_session.submit(label, callback, timeout=timeout, reset_on_error=reset_on_error)
 
 
+# Shared-сессия Camoufox для pro-tracker может быть фатально сломана в данном
+# процессе (Playwright Sync API внутри asyncio loop / зависший браузер с
+# таймаутами по 180с на героя). Тогда переключаемся на чистый Camoufox
+# subprocess из dota2protracker (_fetch_protracker_payload_via_subprocess) и
+# больше не возвращаемся к shared-сессии до конца жизни процесса.
+_PROTRACKER_SHARED_CAMOUFOX_BROKEN = False
+
+
+def _protracker_subprocess_fetcher() -> Optional[Any]:
+    module = globals().get("_dota2protracker_module")
+    if module is None and enrich_with_pro_tracker is not None:
+        module = sys.modules.get(getattr(enrich_with_pro_tracker, "__module__", ""))
+    if module is None:
+        return None
+    return getattr(module, "_fetch_protracker_payload_via_subprocess", None)
+
+
 def _fetch_protracker_payload_via_shared_camoufox(
     slug: str,
     hero_id: int,
     proxy_candidate: Optional[str] = None,
 ) -> Dict[str, Any]:
+    global _PROTRACKER_SHARED_CAMOUFOX_BROKEN
     base_url = "https://dota2protracker.com"
 
     def _job(browser) -> Dict[str, Any]:
@@ -18219,7 +18237,33 @@ def _fetch_protracker_payload_via_shared_camoufox(
             with contextlib.suppress(Exception):
                 page.close()
 
-    return _run_shared_camoufox_job(f"dota2protracker:{slug}", _job, timeout=180, retry=False, reset_on_error=False)
+    if not _PROTRACKER_SHARED_CAMOUFOX_BROKEN:
+        try:
+            return _run_shared_camoufox_job(
+                f"dota2protracker:{slug}", _job, timeout=180, retry=False, reset_on_error=False
+            )
+        except Exception as exc:
+            fatal = (
+                "Sync API inside the asyncio loop" in str(exc)
+                or isinstance(exc, TimeoutError)
+                or type(exc).__name__ == "TimeoutError"
+            )
+            if fatal:
+                _PROTRACKER_SHARED_CAMOUFOX_BROKEN = True
+                print(
+                    "   ⚠️ Shared Camoufox для pro-tracker помечен сломанным "
+                    f"({type(exc).__name__}: {exc}) — все следующие фетчи через Camoufox subprocess"
+                )
+            else:
+                print(
+                    f"   ⚠️ Shared Camoufox pro-tracker fetch failed ({type(exc).__name__}: {exc}) "
+                    "— fallback на Camoufox subprocess для этого героя"
+                )
+    fallback_fetcher = _protracker_subprocess_fetcher()
+    if fallback_fetcher is None:
+        raise RuntimeError("Camoufox subprocess fetcher недоступен (dota2protracker module not found)")
+    print(f"   📊 Fetching pro-tracker: {slug} (Camoufox subprocess fallback)")
+    return fallback_fetcher(slug, hero_id, proxy_candidate)
 
 
 def _install_dota2protracker_shared_camoufox_fetcher() -> bool:
