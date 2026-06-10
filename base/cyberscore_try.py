@@ -6307,9 +6307,39 @@ def _fetch_cyberscore_delayed_match_state(match_url: Optional[str]) -> Optional[
     return {"game_time": game_time_value, "radiant_lead": lead_value}
 
 
+def _fetch_sourcetv_delayed_match_state(json_url: str) -> Optional[Dict[str, Optional[float]]]:
+    """game_time/radiant_lead для delayed-watcher из runtime/sourcetv_matches.json (URL sourcetv://matches/<id>)."""
+    id_match = re.search(r"sourcetv://matches/(\d+)", str(json_url))
+    if not id_match:
+        return None
+    try:
+        with open("runtime/sourcetv_matches.json") as f:
+            matches = json.load(f)
+    except Exception:
+        return None
+    payload = matches.get(id_match.group(1))
+    if not isinstance(payload, dict):
+        return None
+    # протухшая запись (probe не обновлял >300с) — данных нет
+    if time.time() - float(payload.get("timestamp") or 0) > 300:
+        return None
+    try:
+        game_time_value = float(payload.get("game_time"))
+    except (TypeError, ValueError):
+        return None
+    try:
+        radiant_lead = payload.get("radiant_lead")
+        lead_value = float(radiant_lead) if radiant_lead is not None else None
+    except (TypeError, ValueError):
+        lead_value = None
+    return {"game_time": game_time_value, "radiant_lead": lead_value}
+
+
 def _fetch_delayed_match_state(json_url: Optional[str]) -> Optional[Dict[str, Optional[float]]]:
     if not json_url:
         return None
+    if str(json_url).startswith("sourcetv://"):
+        return _fetch_sourcetv_delayed_match_state(str(json_url))
     if _is_cyberscore_match_url(json_url):
         return _fetch_cyberscore_delayed_match_state(json_url)
     try:
