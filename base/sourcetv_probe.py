@@ -21,6 +21,48 @@ HERO_MAP = {int(v["hero_id"]): v["hero_name"] for v in _raw.values()}
 def hero(hid): return HERO_MAP.get(hid, f"?{hid}") if hid else "—"
 def fmt(t): t = abs(int(t)); return f"{t//60}:{t%60:02d}"
 
+def _fetch_imap_guard_code(imap_login, imap_password, after_ts, timeout=90):
+    """Wait for a new Steam Guard email via IMAP and return the 5-char code."""
+    import imaplib, email as _email, re as _re
+    from email.utils import parsedate_to_datetime
+    deadline = time.time() + timeout
+    log.info("IMAP: ждём Guard-код на %s (таймаут %ds)...", imap_login, timeout)
+    while time.time() < deadline:
+        try:
+            mail = imaplib.IMAP4_SSL("imap.yandex.ru", 993)
+            mail.login(imap_login, imap_password)
+            mail.select("INBOX")
+            _, ids = mail.search(None, 'FROM "noreply@steampowered.com"')
+            if ids[0]:
+                for uid in reversed(ids[0].split()[-5:]):
+                    _, data = mail.fetch(uid, "(RFC822)")
+                    msg = _email.message_from_bytes(data[0][1])
+                    try:
+                        msg_ts = parsedate_to_datetime(msg["Date"]).timestamp()
+                    except Exception:
+                        msg_ts = 0
+                    if msg_ts < after_ts - 5:
+                        continue
+                    body = ""
+                    if msg.is_multipart():
+                        for part in msg.walk():
+                            if part.get_content_type() == "text/plain":
+                                body = part.get_payload(decode=True).decode(errors="ignore")
+                                break
+                    else:
+                        body = msg.get_payload(decode=True).decode(errors="ignore")
+                    m = _re.search(r'\b([A-Z0-9]{5})\b', body)
+                    if m:
+                        mail.logout()
+                        return m.group(1)
+            mail.logout()
+        except Exception as e:
+            log.warning("IMAP ошибка: %s", e)
+        gevent.sleep(5)
+    log.warning("IMAP: Guard-код не получен за %ds", timeout)
+    return None
+
+
 def _prompt(prompt, env_var=None):
     """Read interactive input safely. In background (no TTY on stdin) returns
     the value of env_var if set, otherwise None — never blocks or raises EOFError."""
@@ -450,9 +492,18 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
     @client.on("auth_code_required")
     def _on_auth(is_2fa, _):
         code = _prompt("Steam Guard: ", env_var="STEAM_GUARD_CODE")
+        if not code and not is_2fa:
+            imap_login = os.environ.get("YANDEX_LOGIN")
+            imap_pass  = os.environ.get("YANDEX_APP_PASSWORD")
+            if imap_login and imap_pass:
+                code = _fetch_imap_guard_code(imap_login, imap_pass,
+                                              after_ts=_login_started_at, timeout=90)
+                if code:
+                    log.info("Guard код из почты: %s", code)
         if not code:
             log.error("Требуется Steam Guard код, но stdin недоступен (фон). "
-                      "Задай STEAM_GUARD_CODE или запусти интерактивно для обновления login_key.")
+                      "Задай STEAM_GUARD_CODE / YANDEX_LOGIN+YANDEX_APP_PASSWORD "
+                      "или запусти интерактивно.")
             return
         kw = {"two_factor_code": code} if is_2fa else {"auth_code": code}
         client.login(username, password, **kw)
@@ -746,6 +797,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
 
     gevent.spawn(_poll_loop)
     login_key = creds.get("login_key")
+    _login_started_at = time.time()
     if login_key:
         log.info("Входим с сохранённым login_key (без Steam Guard)")
         client.login(username=username, login_key=login_key)
