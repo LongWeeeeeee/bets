@@ -14326,6 +14326,50 @@ def _find_stale_live_map_payload(
     return None
 
 
+def _sourcetv_match_id_from_series_url(series_url: str) -> Optional[int]:
+    """Dota match_id из sourcetv-псевдо-URL (dltv.org/matches/<match_id>).
+
+    Настоящие dltv series id — 6-7 цифр; sourcetv пишет в путь полноценный
+    dota match_id (10+ цифр), по которому страница dltv не существует (404).
+    """
+    id_match = re.search(r"/matches/(\d{9,})(?:/|$)", str(series_url or ""))
+    return int(id_match.group(1)) if id_match else None
+
+
+def _fetch_finished_sourcetv_series_scores(
+    match_id: int,
+    previous_scores: Optional[Dict[str, Any]],
+) -> Optional[Tuple[int, int]]:
+    """Счёт серии после завершённой sourcetv-карты: исход карты из OpenDota.
+
+    sourcetv-серии регистрируются с first_team_is_radiant=True, поэтому слот
+    победителя = first при radiant_win. HTTP к dltv.org для псевдо-URL даёт
+    только 404-ретраи — поэтому одна быстрая попытка в OpenDota без прокси.
+    Возвращает None, пока матч ещё не появился в OpenDota (повтор в следующем
+    цикле sweep'а).
+    """
+    try:
+        resp = requests.get(
+            f"https://api.opendota.com/api/matches/{int(match_id)}",
+            timeout=10,
+        )
+    except Exception:
+        return None
+    if resp.status_code != 200:
+        return None
+    try:
+        radiant_win = resp.json().get("radiant_win")
+    except Exception:
+        return None
+    if radiant_win is None:
+        return None
+    prev_first = max(_coerce_int((previous_scores or {}).get("first")), 0)
+    prev_second = max(_coerce_int((previous_scores or {}).get("second")), 0)
+    if radiant_win:
+        return prev_first + 1, prev_second
+    return prev_first, prev_second + 1
+
+
 def _finalize_orphaned_live_elo_series(seen_series_keys: set[str]) -> List[Dict[str, Any]]:
     if not ELO_LIVE_SNAPSHOT_AVAILABLE or _elo_live_finalize_series_from_scores is None:
         return []
@@ -14365,12 +14409,21 @@ def _finalize_orphaned_live_elo_series(seen_series_keys: set[str]) -> List[Dict[
         if age_seconds < LIVE_ELO_ORPHAN_PENDING_MIN_AGE_SECONDS:
             continue
 
-        finished_scores = _fetch_finished_series_scores_from_page(series_url)
+        previous_scores = raw_state.get("last_scores") if isinstance(raw_state.get("last_scores"), dict) else {}
+        sourcetv_match_id = (
+            _coerce_int(pending_map.get("match_id"))
+            or _sourcetv_match_id_from_series_url(series_url)
+        )
+        if _sourcetv_match_id_from_series_url(series_url):
+            finished_scores = _fetch_finished_sourcetv_series_scores(
+                sourcetv_match_id, previous_scores
+            )
+        else:
+            finished_scores = _fetch_finished_series_scores_from_page(series_url)
         if finished_scores is None:
             continue
 
         current_scores = {"first": int(finished_scores[0]), "second": int(finished_scores[1])}
-        previous_scores = raw_state.get("last_scores") if isinstance(raw_state.get("last_scores"), dict) else {}
         winner_slot = _winner_slot_from_series_scores(previous_scores, current_scores)
         if winner_slot is None:
             continue
@@ -17635,6 +17688,84 @@ def add_url(url, reason: str = "unspecified", details: Any = None):
         print(f"   🗑️ Очищена история для {match_key}")
 
 
+# ── Межинстансный дедуп сигналов ────────────────────────────────────────────
+# Несколько runtime-инстансов (sourcetv-режим и cyberscore-режим под systemd)
+# могут вести один и тот же матч под разными URL (dltv.org/matches/<match_id>
+# vs cyberscore.live/en/matches/<id>), поэтому map_id_check.txt дубли НЕ ловит.
+# Общий отпечаток карты: отсортированная пара нормализованных команд + номер
+# карты — хранится в общем файле в LOCAL_STATE_DIR с TTL.
+SENT_SIGNAL_FINGERPRINT_PATH = str(
+    Path(MAP_ID_CHECK_PATH).parent / "sent_signal_fingerprints.json"
+)
+SENT_SIGNAL_FINGERPRINT_TTL_SECONDS = 6 * 3600
+
+
+def _sent_signal_fingerprint_path() -> str:
+    # env-override нужен тестам (изоляция от общего state-файла)
+    override = str(os.getenv("SENT_SIGNAL_FINGERPRINT_PATH", "")).strip()
+    return override or SENT_SIGNAL_FINGERPRINT_PATH
+_SIGNAL_DEDUP_FINGERPRINTS: Dict[str, str] = {}
+
+
+def _signal_fingerprint_register(
+    match_key: str,
+    radiant_team_name: Any,
+    dire_team_name: Any,
+    first_team_score: Any,
+    second_team_score: Any,
+) -> None:
+    try:
+        rad = re.sub(r"[^a-z0-9]", "", str(radiant_team_name or "").lower())
+        dire = re.sub(r"[^a-z0-9]", "", str(dire_team_name or "").lower())
+        if not rad or not dire:
+            return
+        map_num = max(_coerce_int(first_team_score), 0) + max(_coerce_int(second_team_score), 0) + 1
+        pair = "|".join(sorted((rad, dire)))
+        _SIGNAL_DEDUP_FINGERPRINTS[str(match_key)] = f"{pair}|map{map_num}"
+    except Exception:
+        pass
+
+
+def _load_sent_signal_fingerprints() -> Dict[str, float]:
+    try:
+        with open(_sent_signal_fingerprint_path()) as f:
+            raw = json.load(f)
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    now = time.time()
+    return {
+        str(key): float(value)
+        for key, value in raw.items()
+        if isinstance(value, (int, float))
+        and now - float(value) < SENT_SIGNAL_FINGERPRINT_TTL_SECONDS
+    }
+
+
+def _signal_fingerprint_already_sent(match_key: str) -> Optional[str]:
+    fingerprint = _SIGNAL_DEDUP_FINGERPRINTS.get(str(match_key))
+    if not fingerprint:
+        return None
+    return fingerprint if fingerprint in _load_sent_signal_fingerprints() else None
+
+
+def _signal_fingerprint_mark_sent(match_key: str) -> None:
+    fingerprint = _SIGNAL_DEDUP_FINGERPRINTS.get(str(match_key))
+    if not fingerprint:
+        return
+    entries = _load_sent_signal_fingerprints()
+    entries[fingerprint] = time.time()
+    store_path = _sent_signal_fingerprint_path()
+    try:
+        tmp_path = store_path + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump(entries, f)
+        os.replace(tmp_path, store_path)
+    except Exception:
+        logger.exception("Failed to persist sent signal fingerprint")
+
+
 def _deliver_and_persist_signal(
     match_key: str,
     message_text: str,
@@ -17656,6 +17787,21 @@ def _deliver_and_persist_signal(
                 f"(reason={bookmaker_reason}) для {match_key}"
             )
             return False
+    duplicate_fingerprint = _signal_fingerprint_already_sent(match_key)
+    if duplicate_fingerprint:
+        print(
+            "   🔁 Дубль: сигнал по этой карте уже отправлен другим инстансом "
+            f"(fingerprint={duplicate_fingerprint}) — отправка пропущена для {match_key}"
+        )
+        try:
+            add_url(
+                match_key,
+                reason=f"{add_url_reason}_cross_instance_dedup",
+                details=dict(add_url_details or {}, dedup_fingerprint=duplicate_fingerprint),
+            )
+        except Exception:
+            logger.exception("add_url failed after cross-instance dedup for %s", match_key)
+        return True
     try:
         send_message(
             message_text,
@@ -17683,6 +17829,7 @@ def _deliver_and_persist_signal(
         f"mirror_to_vk={not SIGNAL_SEND_ADMIN_ONLY}, "
         f"reason={add_url_reason})"
     )
+    _signal_fingerprint_mark_sent(match_key)
     if bookmaker_decision:
         _log_bookmaker_source_snapshot(match_key, decision=bookmaker_decision)
     if defer_add_url:
@@ -22014,6 +22161,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 or str((db_payload.get('league') or {}).get('title') or "").strip()
             )
             league_name_normalized = _normalize_live_league_title(league_name)
+        # Отпечаток карты для межинстансного дедупа сигналов (команды + map_num)
+        _signal_fingerprint_register(
+            check_uniq_url,
+            radiant_team_name_original,
+            dire_team_name_original,
+            first_team_score,
+            second_team_score,
+        )
         if (
             not SIGNAL_MINIMAL_ODDS_ONLY_MODE
             and not PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE
