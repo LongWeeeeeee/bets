@@ -19955,7 +19955,19 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             heads = []
             bodies = []
             print(f"✅ SourceTV mode: прочитано {len(matches)} активных live матчей")
+            # Allowlist лиг: обрабатываем только известные tier-турниры по ключевым словам.
+            # league_name приходит из probe (справочник OpenDota); пустое имя → матч пропускается.
+            _SOURCETV_LEAGUE_KEYWORDS = (
+                'dreamleague', 'blast', 'dacha', 'betboom',
+                'fissure', 'pgl', 'esports', 'international',
+                'european', 'epl', 'esl', 'cct',
+            )
+            _skipped_by_league = 0
             for mid, m in matches.items():
+                _lname_filter = str(m.get("league_name") or "").lower()
+                if not any(k in _lname_filter for k in _SOURCETV_LEAGUE_KEYWORDS):
+                    _skipped_by_league += 1
+                    continue
                 # Строим mock ноду в exact формате который кушает check_head и _extract_live_listing_context
                 # { "layout": "match_card_v2", "source": "sourcetv", "status": "live", "uniq_score": 0, "href": "/matches/mid" }
                 attrs_head = {
@@ -19984,6 +19996,9 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
 
                 heads.append(mock_head)
                 bodies.append(mock_body)
+
+            if _skipped_by_league:
+                print(f"   🚫 SourceTV league filter: пропущено {_skipped_by_league} матчей вне allowlist лиг")
 
             return heads, bodies
 

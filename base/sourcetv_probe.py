@@ -21,6 +21,33 @@ HERO_MAP = {int(v["hero_id"]): v["hero_name"] for v in _raw.values()}
 def hero(hid): return HERO_MAP.get(hid, f"?{hid}") if hid else "—"
 def fmt(t): t = abs(int(t)); return f"{t//60}:{t%60:02d}"
 
+_LEAGUE_NAMES = {}          # league_id -> name (OpenDota /api/leagues)
+_LEAGUE_NAMES_FETCHED_AT = 0.0
+_LEAGUE_NAMES_TTL = 6 * 3600
+_LEAGUE_NAMES_RETRY = 600   # при пустом кэше пробуем чаще
+
+def league_name(league_id):
+    """Название лиги по league_id; справочник кэшируется с OpenDota."""
+    global _LEAGUE_NAMES, _LEAGUE_NAMES_FETCHED_AT
+    now = time.time()
+    age = now - _LEAGUE_NAMES_FETCHED_AT
+    if (not _LEAGUE_NAMES and age > _LEAGUE_NAMES_RETRY) or age > _LEAGUE_NAMES_TTL:
+        _LEAGUE_NAMES_FETCHED_AT = now
+        try:
+            req = urllib.request.Request(
+                "https://api.opendota.com/api/leagues",
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            rows = json.load(urllib.request.urlopen(req, timeout=30))
+            _LEAGUE_NAMES = {
+                int(r["leagueid"]): str(r.get("name") or "")
+                for r in rows if r.get("leagueid")
+            }
+            log.info("Справочник лиг загружен: %d записей (OpenDota)", len(_LEAGUE_NAMES))
+        except Exception as e:
+            log.warning("Не удалось загрузить справочник лиг OpenDota: %s", e)
+    return _LEAGUE_NAMES.get(int(league_id or 0), "")
+
 def _build_fast_picks(rad_picks, dire_picks):
     """fast_picks в формате cyberscore_try.check_head: {first_team, second_team}.
 
@@ -751,8 +778,8 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                 "radiant_team_id": int(t["rad_id"]) if t.get("rad_id") else 0,
                                 "dire_team_id": int(t["dire_id"]) if t.get("dire_id") else 0,
                                 "league_id": int(t.get("league_id") or league_ids[0]),
-                                # league_name недоступно из GC напрямую; check_head нормализует по league_id
-                                "league_name": "",
+                                # league_name из справочника OpenDota (GC названий не даёт)
+                                "league_name": league_name(t.get("league_id") or league_ids[0]),
                                 # Серийный контекст: WebAPI-данные как основной источник (stable series_id)
                                 "series_id":           t.get("series_id"),
                                 "series_game_number":  _fin_game_num,
