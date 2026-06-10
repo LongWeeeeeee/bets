@@ -9112,11 +9112,9 @@ _DEFAULT_CYBERSCORE_EXTRA_TOURNAMENT_IDS = "46178:BB Streamers Battle 13"
 # включено наравне с tier1/tier2, даже если cyberscore классифицирует его ниже
 # (tier3/tier4). CSV-список подстрок, переопределяется через
 # CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS.
-_DEFAULT_CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS = (
-    "EWC 2026 Open Qualifier,The International 2026"
-)
+_DEFAULT_CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS = "EWC 2026 Open Qualifier"
 # Тиры, которые мы дополнительно опрашиваем для name-substring матчинга.
-_DEFAULT_CYBERSCORE_EXTRA_NAME_TIERS = "3"
+_DEFAULT_CYBERSCORE_EXTRA_NAME_TIERS = "3,4"
 
 
 def _parse_extra_tournament_ids(
@@ -9192,6 +9190,20 @@ CYBERSCORE_EXTRA_NAME_TIERS: List[int] = _parse_csv_int_list(
         _DEFAULT_CYBERSCORE_EXTRA_NAME_TIERS,
     )
 )
+
+# Однословные ключевые слова известных tier-турниров. Правило: название
+# турнира/лиги lower() + split() по пробелам; если хотя бы один токен входит
+# в этот список — матч разрешаем. Используется и для cyberscore tier3/4
+# admission, и для sourcetv league filter.
+TOURNAMENT_TITLE_ALLOW_KEYWORDS = frozenset({
+    'dreamleague', 'blast', 'dacha', 'betboom',
+    'fissure', 'pgl', 'esports', 'international',
+    'european', 'epl', 'esl', 'cct',
+})
+
+
+def _title_matches_allow_keywords(title: Any) -> bool:
+    return bool(TOURNAMENT_TITLE_ALLOW_KEYWORDS & set(str(title or "").lower().split()))
 
 
 def _build_cyberscore_extra_tournament_url(tournament_id: int) -> str:
@@ -18951,6 +18963,8 @@ def _classify_cyberscore_card_admission(
     # id or one of the configured name substrings.
     if tournament_id is not None and tournament_id in CYBERSCORE_EXTRA_TOURNAMENT_IDS:
         return True, tier, tournament_id, f"extra_id_{tournament_id}"
+    if _title_matches_allow_keywords(name):
+        return True, tier, tournament_id, "extra_keyword"
     name_lower = name.lower()
     for marker in CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS:
         marker_lower = str(marker or "").strip().lower()
@@ -19081,7 +19095,10 @@ def _filter_cards_by_name_substrings(
             ).lower()
         except Exception:
             card_text = ""
-        if any((m in card_html) or (m in card_text) for m in markers):
+        if (
+            any((m in card_html) or (m in card_text) for m in markers)
+            or _title_matches_allow_keywords(card_text)
+        ):
             filtered_heads.append(head)
             filtered_bodies.append(body)
     return filtered_heads, filtered_bodies
@@ -19987,17 +20004,12 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             heads = []
             bodies = []
             print(f"✅ SourceTV mode: прочитано {len(matches)} активных live матчей")
-            # Allowlist лиг: обрабатываем только известные tier-турниры по ключевым словам.
+            # Allowlist лиг: обрабатываем только известные tier-турниры
+            # (TOURNAMENT_TITLE_ALLOW_KEYWORDS, токен-матчинг по словам названия).
             # league_name приходит из probe (справочник OpenDota); пустое имя → матч пропускается.
-            _SOURCETV_LEAGUE_KEYWORDS = (
-                'dreamleague', 'blast', 'dacha', 'betboom',
-                'fissure', 'pgl', 'esports', 'international',
-                'european', 'epl', 'esl', 'cct',
-            )
             _skipped_by_league = 0
             for mid, m in matches.items():
-                _lname_filter = str(m.get("league_name") or "").lower()
-                if not any(k in _lname_filter for k in _SOURCETV_LEAGUE_KEYWORDS):
+                if not _title_matches_allow_keywords(m.get("league_name")):
                     _skipped_by_league += 1
                     continue
                 # Строим mock ноду в exact формате который кушает check_head и _extract_live_listing_context
