@@ -431,6 +431,23 @@ def _get_tempo_helpers():
     return _tempo_build_tempo_draft_metrics, _tempo_load_tempo_dicts
 
 
+def _tempo_score_from_indices(
+    solo_k: int, duo_k: int, cp_k: int, cp_d: int
+) -> float:
+    """
+    D5: Single-source-of-truth scorer for Tempo-Over >=51.
+
+    Reads env-configurable weights so harness and serving never diverge.
+    Formula: sum over each component of w * max(0, idx - TEMPO_INDEX_OFFSET).
+    """
+    return (
+        TEMPO_W_SOLO_KILLS * max(0, solo_k - TEMPO_INDEX_OFFSET)
+        + TEMPO_W_DUO_KILLS * max(0, duo_k - TEMPO_INDEX_OFFSET)
+        + TEMPO_W_CP_KILLS * max(0, cp_k - TEMPO_INDEX_OFFSET)
+        + TEMPO_W_CP_DEATHS * max(0, cp_d - TEMPO_INDEX_OFFSET)
+    )
+
+
 def _detect_total_memory_bytes() -> Optional[int]:
     try:
         page_size = int(os.sysconf("SC_PAGE_SIZE"))
@@ -1507,6 +1524,45 @@ TEMPO_OVER_SCORE_LABEL = str(os.getenv("TEMPO_OVER_SCORE_LABEL", "Ставка >
 TEMPO_STATS_DIR_DEFAULT = str(
     os.getenv("TEMPO_STATS_DIR", str(TEMPO_EXPERIMENT_DIR))
 ).strip() or str(TEMPO_EXPERIMENT_DIR)
+
+# ---------------------------------------------------------------------------
+# D5: Tempo score weights — env-configurable, defaults = current magic values.
+# Extract into constants so serving and backtest harness share ONE scorer.
+# ---------------------------------------------------------------------------
+TEMPO_W_SOLO_KILLS: float = _safe_float_env("TEMPO_W_SOLO_KILLS", 0.2414)
+TEMPO_W_DUO_KILLS: float = _safe_float_env("TEMPO_W_DUO_KILLS", 0.2492)
+TEMPO_W_CP_KILLS: float = _safe_float_env("TEMPO_W_CP_KILLS", 0.2931)
+TEMPO_W_CP_DEATHS: float = _safe_float_env("TEMPO_W_CP_DEATHS", 0.3517)
+try:
+    TEMPO_INDEX_OFFSET: int = int(os.getenv("TEMPO_INDEX_OFFSET", "20"))
+except ValueError:
+    TEMPO_INDEX_OFFSET = 20
+
+# Minimum fraction of required dict-keys that must be found for a family to
+# be considered «usable» (partial-completeness, issue #3).
+# Default 1.0 = current all-or-nothing behaviour.
+TEMPO_MIN_FOUND_FRACTION: float = _safe_float_env("TEMPO_MIN_FOUND_FRACTION", 1.0)
+
+# Stomp-guard floor: when ELO delta > 150, no hero-adjustment can drop the
+# applied threshold below this value (issue #5, interaction order).
+TEMPO_STOMP_FLOOR: float = _safe_float_env("TEMPO_STOMP_FLOOR", 1.2500)
+
+# Stake high margin: score >= applied_threshold + MARGIN → x2.0 stake (D3).
+TEMPO_STAKE_HIGH_MARGIN: float = _safe_float_env("TEMPO_STAKE_HIGH_MARGIN", 0.2535)
+
+# Blend mode for dict loading (D7).
+TEMPO_STATS_BLEND_MODE: bool = _safe_bool_env("TEMPO_STATS_BLEND_MODE", False)
+TEMPO_STATS_PUB_DIR: str = str(os.getenv("TEMPO_STATS_PUB_DIR", "")).strip()
+try:
+    TEMPO_STATS_BLEND_PRIOR_STRENGTH: float = float(os.getenv("TEMPO_STATS_BLEND_PRIOR_STRENGTH", "20"))
+except ValueError:
+    TEMPO_STATS_BLEND_PRIOR_STRENGTH = 20.0
+
+# D6: TTL for tempo dedup set entries (seconds); 0 = unlimited (legacy).
+try:
+    TEMPO_OVER_SENT_TTL_SECONDS: int = int(os.getenv("TEMPO_OVER_SENT_TTL_SECONDS", "43200"))
+except ValueError:
+    TEMPO_OVER_SENT_TTL_SECONDS = 43200  # 12 hours default
 
 try:
     STAR_THRESHOLD_WR_TIER1 = int(os.getenv("STAR_THRESHOLD_WR_TIER1", "60"))
@@ -8868,7 +8924,10 @@ monitored_matches_lock = threading.Lock()
 # without preserving the kills_already_sent flag.
 _kills_pre_pass_sent_urls: set = set()
 _kills_pre_pass_sent_lock = threading.Lock()
-_tempo_over_sent_urls: set = set()
+# D6: bounded TTL dict {url: insert_monotonic_ts} instead of plain set.
+# Entries older than TEMPO_OVER_SENT_TTL_SECONDS are pruned at insert time.
+# Finalize-time discard (:17224) still works (dict.pop/discard semantics).
+_tempo_over_sent_urls: dict = {}  # {url: monotonic_ts_of_insert}
 _tempo_over_sent_lock = threading.Lock()
 delayed_state_overrides = {}
 delayed_state_overrides_lock = threading.Lock()
@@ -10486,6 +10545,28 @@ def _extract_live_listing_context(head_node: Any, body_node: Any) -> Dict[str, A
         source_marker = str(body_node.get("data-source") or "").strip().lower()
     if not source_marker and getattr(head_node, "get", None):
         source_marker = str(head_node.get("data-source") or "").strip().lower()
+
+    # Поддержка mock-нод от нашего SourceTV парсера
+    if source_marker == "sourcetv":
+        card = body_node if getattr(body_node, "get", None) else head_node
+        match_id = str(card.get("data-sourcetv-match-id") or "").strip()
+        text = card.get_text(" ", strip=True) if getattr(card, "get_text", None) else ""
+        score_match = re.search(r"\b(\d+)\s*:\s*(\d+)\b", text)
+        left_score, right_score = (int(score_match.group(1)), int(score_match.group(2))) if score_match else (0, 0)
+        return {
+            "layout": "match_card_v2",
+            "source": "sourcetv",
+            "status": "live",
+            "score": f"{left_score} : {right_score}",
+            "uniq_score": left_score + right_score,
+            "href": f"/matches/{match_id}",
+            "series_id": match_id,
+            "live_match_id": match_id,
+            "league_title": "",  # league_name читается из payload внутри check_head
+            "match_card": card,
+            "data-sourcetv-payload": card.get("data-sourcetv-payload")
+        }
+
     if (
         source_marker == "cyberscore"
         or "matches-item" in body_classes
@@ -17143,7 +17224,7 @@ def _drop_delayed_match(match_key: str, reason: str = "") -> bool:
             with _kills_pre_pass_sent_lock:
                 _kills_pre_pass_sent_urls.discard(match_key)
             with _tempo_over_sent_lock:
-                _tempo_over_sent_urls.discard(match_key)
+                _tempo_over_sent_urls.pop(match_key, None)  # D6: dict, use pop
     except Exception:
         pass
     if removed is not None:
@@ -19828,6 +19909,84 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
         global GET_HEADS_LAST_FAILURE_REASON, NEXT_SCHEDULE_SLEEP_SECONDS, NEXT_SCHEDULE_MATCH_INFO, SCHEDULE_LIVE_WAIT_TARGET
         global PROXY_POOL_DIRECT_FALLBACK_ALERT_ACTIVE
 
+        if response is None and DLTV_SOURCE_MODE == "sourcetv":
+            GET_HEADS_LAST_FAILURE_REASON = None
+            NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
+            NEXT_SCHEDULE_MATCH_INFO = None
+            # Для режима sourcetv мы полностью берем и мапим матчи из нашего pre-parsed JSON файла!
+            # Чтобы удовлетворять check_head, мы соберем mock объекты BeautifulSoup.
+            # Класс MockTag переопределяет нужные get() методы и возвращает структурированный контекст.
+            class MockTag:
+                def __init__(self, attrs={}, text=""):
+                    self.attrs = attrs
+                    self.text = text
+                def get(self, name, default=None):
+                    return self.attrs.get(name, default)
+                def find_all(self, *args, **kwargs):
+                    return []
+                def find(self, name=None, *args, **kwargs):
+                    return None  # заглушка; конкретные экземпляры переопределяют find через lambda
+                def get_text(self, *args, **kwargs):
+                    return self.text
+
+            json_path = "runtime/sourcetv_matches.json"
+            if not os.path.exists(json_path):
+                print(f"⚠️ SourceTV mode: файл {json_path} не найден! Запустите sourcetv_probe.py")
+                return [], []
+            try:
+                with open(json_path) as f:
+                    matches = json.load(f)
+            except Exception as e:
+                print(f"❌ SourceTV mode: не удалось прочитать {json_path}: {e}")
+                return [], []
+
+            # Отбрасываем протухшие записи (probe не обновлял >300 с — значит умер или матч кончился)
+            _now = time.time()
+            _SOURCETV_STALE_SECONDS = 300
+            matches = {
+                k: v for k, v in matches.items()
+                if _now - float(v.get("timestamp") or 0) < _SOURCETV_STALE_SECONDS
+            }
+            if not matches:
+                print(f"⚠️ SourceTV mode: нет свежих матчей в {json_path} (все старше {_SOURCETV_STALE_SECONDS}s). "
+                      f"Проверьте, запущен ли sourcetv_probe.py")
+                return [], []
+
+            heads = []
+            bodies = []
+            print(f"✅ SourceTV mode: прочитано {len(matches)} активных live матчей")
+            for mid, m in matches.items():
+                # Строим mock ноду в exact формате который кушает check_head и _extract_live_listing_context
+                # { "layout": "match_card_v2", "source": "sourcetv", "status": "live", "uniq_score": 0, "href": "/matches/mid" }
+                attrs_head = {
+                    "class": ["match", "live"],
+                    "data-source": "sourcetv",
+                    "data-sourcetv-match-id": str(mid),
+                    "data-sourcetv-payload": json.dumps(m),
+                    "href": f"/matches/{mid}"
+                }
+                # Название лиги и счет
+                r_team = m.get("radiant_team_name") or "Radiant"
+                d_team = m.get("dire_team_name") or "Dire"
+                rs = m.get("radiant_score", 0)
+                ds = m.get("dire_score", 0)
+                lname = m.get("league_name") or ""  # нет league_name → пустая строка (probe пишет "")
+
+                # mock a tag
+                mock_a = MockTag(attrs={"href": f"/matches/{mid}"})
+
+                # _extract_live_listing_context берёт текст из body_node (card=body_node)
+                # → score-регекс должен находить счёт именно там
+                mock_head = MockTag(attrs=attrs_head, text=lname)
+                mock_body = MockTag(attrs=attrs_head, text=f"{r_team} {rs}:{ds} {d_team}")
+                # Подменим find чтобы check_head извлекал link
+                mock_body.find = lambda name, *args, **kwargs: mock_a if name == "a" else None
+
+                heads.append(mock_head)
+                bodies.append(mock_body)
+
+            return heads, bodies
+
         if response is None and DLTV_SOURCE_MODE == "cyberscore":
             GET_HEADS_LAST_FAILURE_REASON = None
             NEXT_SCHEDULE_SLEEP_SECONDS = 0.0
@@ -21195,7 +21354,80 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         json_url = ""
         response = None
         soup = None
-        if is_cyberscore_card:
+
+        is_sourcetv_card = (listing_context.get("source") == "sourcetv")
+        if is_sourcetv_card:
+            raw_payload = listing_context.get("data-sourcetv-payload")
+            try:
+                data = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
+                match_id = str(data.get("match_id"))
+                json_url = f"sourcetv://matches/{match_id}"
+                soup = BeautifulSoup("", "lxml")
+                score = data.get("score") or f"{data.get('radiant_score', 0)} : {data.get('dire_score', 0)}"
+                uniq_score = int(data.get("radiant_score", 0)) + int(data.get("dire_score", 0))
+                series_key_from_path = match_id
+                path = f"/matches/{match_id}"
+                series_url = f"dltv.org{path}"
+                check_uniq_url = f"dltv.org{path}.{uniq_score}"
+                verbose_match_log = _should_emit_verbose_match_log(check_uniq_url)
+                match_log = print if verbose_match_log else (lambda *args, **kwargs: None)
+                block_reason = _dispatch_block_reason(check_uniq_url)
+
+                if verbose_match_log:
+                    print(f"\n🔍 DEBUG: SourceTV match #{i}")
+                    print(f"   Статус: {status}")
+                    print(f"   URL: {check_uniq_url}")
+                    print(f"   Score: {score}")
+                elif check_uniq_url not in maps_data and block_reason != "processed":
+                    print(f"\n🔁 RECHECK SourceTV матча #{i}: {check_uniq_url} | status={status}")
+
+                if (
+                    not PIPELINE_BYPASS_PROCESSED_URL_GATE
+                    and (check_uniq_url in maps_data or block_reason == "processed")
+                ):
+                    print(f"   ✅ Матч уже в map_id_check.txt - пропускаем: {check_uniq_url}")
+                    _drop_delayed_match(check_uniq_url, reason="already_in_map_id_check")
+                    return
+                if not SIGNAL_MINIMAL_ODDS_ONLY_MODE and block_reason == "uncertain_delivery":
+                    print(f"   ⚠️  Матч заблокирован после uncertain delivery - пропускаем")
+                    _drop_delayed_match(check_uniq_url, reason="uncertain_delivery_block")
+                    return
+                if not SIGNAL_MINIMAL_ODDS_ONLY_MODE:
+                    with monitored_matches_lock:
+                        delayed_payload = monitored_matches.get(check_uniq_url)
+
+                print(
+                    "   ✅ SourceTV data: "
+                    f"time={_format_game_clock(data.get('game_time'))}, "
+                    f"radiant_lead={data.get('radiant_lead')}, "
+                    f"kills={data.get('radiant_score')}:{data.get('dire_score')}"
+                )
+                if not SIGNAL_MINIMAL_ODDS_ONLY_MODE and delayed_payload is not None:
+                    _queue_delayed_state_override(check_uniq_url, {
+                        "game_time": data.get("game_time"),
+                        "radiant_lead": data.get("radiant_lead"),
+                    })
+                    allow_live_recheck = bool(delayed_payload.get("allow_live_recheck"))
+                    target_game_time = float(
+                        delayed_payload.get('target_game_time', DELAYED_SIGNAL_TARGET_GAME_TIME)
+                    )
+                    target_human = f"{int(target_game_time // 60):02d}:{int(target_game_time % 60):02d}"
+                    last_game_time = delayed_payload.get('last_game_time', delayed_payload.get('queued_game_time'))
+                    last_game_time_human = str(int(float(last_game_time))) if last_game_time else "n/a"
+                    print(f"   ⏳  Матч уже в delayed-очереди (target={target_human}, last_game_time={last_game_time_human})")
+                    if not allow_live_recheck:
+                        _try_release_delayed_from_live_recheck(
+                            check_uniq_url,
+                            delayed_payload,
+                            data,
+                            target_game_time,
+                        )
+                        return return_status
+            except Exception as e:
+                print(f"   ❌ Ошибка при чтении SourceTV payload: {e}")
+                return return_status
+
+        if data is None and is_cyberscore_card:
             match_id = str(listing_context.get("live_match_id") or series_key_from_path or "").strip()
             match_url = _absolute_cyberscore_url(href or f"/en/matches/{match_id}/")
             # Prefer listing item cache (populated by get_heads listing fetch) — no extra request
@@ -21348,12 +21580,19 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
                 return return_status
         elif is_match_card_v2:
-            live_match_id = str(listing_context.get("live_match_id") or "").strip()
-            if not live_match_id:
-                print("   ❌ Не найден data-match у live карточки")
-                print("   ❌ Матч пропущен (нет live match id)")
-                return return_status
-            json_url = f"https://dltv.org/live/{live_match_id}.json"
+            if is_sourcetv_card:
+                # В SourceTV режиме мы полностью пропускаем сетевые скачивания HTML и JSON!
+                # Перенаправляем урлы и заполняем lineups
+                path = f"/matches/{match_id}"
+                series_url = f'dltv.org{path}'
+                check_uniq_url = f'dltv.org{path}.{uniq_score}'
+            else:
+                live_match_id = str(listing_context.get("live_match_id") or "").strip()
+                if not live_match_id:
+                    print("   ❌ Не найден data-match у live карточки")
+                    print("   ❌ Матч пропущен (нет live match id)")
+                    return return_status
+                json_url = f"https://dltv.org/live/{live_match_id}.json"
         else:
             # HTTP запрос страницы матча нужен для получения JSON path и lineups
             url = f"https://dltv.org{path}"
@@ -21379,6 +21618,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             json_url = urljoin(base, json_path)
 
         if data is None:
+            if is_sourcetv_card:
+                print("   ❌ SourceTV mode: не удалось получить данные")
+                return return_status
             for json_attempt in range(max_json_retries):
                 attempt_no = json_attempt + 1
                 try:
@@ -21453,45 +21695,68 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             return return_status
 
         if is_match_card_v2:
-            series_info = data.get("db", {}).get("series", {}) if isinstance(data, dict) else {}
-            series_slug = str(series_info.get("slug") or "").strip()
-            if not series_key_from_path:
-                series_key_from_path = str(series_info.get("id") or "").strip()
-            if not series_key_from_path:
-                print("   ❌ Не найден series id в live JSON")
-                print("   ❌ Матч пропущен (нет series id)")
-                return return_status
-            if not series_slug:
-                print("   ❌ Не найден series slug в live JSON")
-                print("   ❌ Матч пропущен (нет series slug)")
-                return return_status
-            path = f"/matches/{series_key_from_path}/{series_slug}"
-            series_url = f'dltv.org{path}'
-            check_uniq_url = f'dltv.org{path}.{uniq_score}'
-            verbose_match_log = _should_emit_verbose_match_log(check_uniq_url)
-            match_log = print if verbose_match_log else (lambda *args, **kwargs: None)
-            block_reason = _dispatch_block_reason(check_uniq_url)
-            if verbose_match_log:
-                print(f"\n🔍 DEBUG: Начало обработки матча #{i}")
-                print(f"   Статус: {status}")
-                print(f"   URL: {check_uniq_url}")
-                print(f"   Score: {score}")
-            elif check_uniq_url not in maps_data and block_reason != "processed":
-                print(f"\n🔁 RECHECK матча #{i}: {check_uniq_url} | status={status}")
+            if is_sourcetv_card:
+                # В SourceTV режиме мы полностью пропускаем сетевые скачивания HTML и JSON!
+                # Перенаправляем урлы и заполняем lineups
+                path = f"/matches/{match_id}"
+                series_url = f'dltv.org{path}'
+                check_uniq_url = f'dltv.org{path}.{uniq_score}'
+                verbose_match_log = _should_emit_verbose_match_log(check_uniq_url)
+                match_log = print if verbose_match_log else (lambda *args, **kwargs: None)
+                block_reason = _dispatch_block_reason(check_uniq_url)
+                if (
+                    not PIPELINE_BYPASS_PROCESSED_URL_GATE
+                    and (check_uniq_url in maps_data or block_reason == "processed")
+                ):
+                    print(f"   ✅ Матч уже в map_id_check.txt - пропускаем: {check_uniq_url}")
+                    _drop_delayed_match(check_uniq_url, reason="already_in_map_id_check")
+                    return
+                if block_reason == "uncertain_delivery":
+                    print(f"   ⚠️  Матч заблокирован после uncertain delivery - пропускаем")
+                    _drop_delayed_match(check_uniq_url, reason="uncertain_delivery_block")
+                    return
+                with monitored_matches_lock:
+                    delayed_payload = monitored_matches.get(check_uniq_url)
+            else:
+                series_info = data.get("db", {}).get("series", {}) if isinstance(data, dict) else {}
+                series_slug = str(series_info.get("slug") or "").strip()
+                if not series_key_from_path:
+                    series_key_from_path = str(series_info.get("id") or "").strip()
+                if not series_key_from_path:
+                    print("   ❌ Не найден series id в live JSON")
+                    print("   ❌ Матч пропущен (нет series id)")
+                    return return_status
+                if not series_slug:
+                    print("   ❌ Не найден series slug в live JSON")
+                    print("   ❌ Матч пропущен (нет series slug)")
+                    return return_status
+                path = f"/matches/{series_key_from_path}/{series_slug}"
+                series_url = f'dltv.org{path}'
+                check_uniq_url = f'dltv.org{path}.{uniq_score}'
+                verbose_match_log = _should_emit_verbose_match_log(check_uniq_url)
+                match_log = print if verbose_match_log else (lambda *args, **kwargs: None)
+                block_reason = _dispatch_block_reason(check_uniq_url)
+                if verbose_match_log:
+                    print(f"\n🔍 DEBUG: Начало обработки матча #{i}")
+                    print(f"   Статус: {status}")
+                    print(f"   URL: {check_uniq_url}")
+                    print(f"   Score: {score}")
+                elif check_uniq_url not in maps_data and block_reason != "processed":
+                    print(f"\n🔁 RECHECK матча #{i}: {check_uniq_url} | status={status}")
 
-            if (
-                not PIPELINE_BYPASS_PROCESSED_URL_GATE
-                and (check_uniq_url in maps_data or block_reason == "processed")
-            ):
-                print(f"   ✅ Матч уже в map_id_check.txt - пропускаем: {check_uniq_url}")
-                _drop_delayed_match(check_uniq_url, reason="already_in_map_id_check")
-                return
-            if block_reason == "uncertain_delivery":
-                print(f"   ⚠️ Матч заблокирован после uncertain delivery - пропускаем")
-                _drop_delayed_match(check_uniq_url, reason="uncertain_delivery_block")
-                return
-            with monitored_matches_lock:
-                delayed_payload = monitored_matches.get(check_uniq_url)
+                if (
+                    not PIPELINE_BYPASS_PROCESSED_URL_GATE
+                    and (check_uniq_url in maps_data or block_reason == "processed")
+                ):
+                    print(f"   ✅  Матч уже в map_id_check.txt - пропускаем: {check_uniq_url}")
+                    _drop_delayed_match(check_uniq_url, reason="already_in_map_id_check")
+                    return
+                if block_reason == "uncertain_delivery":
+                    print(f"   ⚠️  Матч заблокирован после uncertain delivery - пропускаем")
+                    _drop_delayed_match(check_uniq_url, reason="uncertain_delivery_block")
+                    return
+                with monitored_matches_lock:
+                    delayed_payload = monitored_matches.get(check_uniq_url)
             if delayed_payload is not None:
                 allow_live_recheck = bool(delayed_payload.get("allow_live_recheck"))
                 target_game_time = float(
@@ -21555,66 +21820,117 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         return return_status
                     return return_status
 
-            url = f"https://dltv.org{path}"
-            match_log(f"   🌐 Запрос страницы матча...")
-            response = make_request_with_retry(url, MAX_RETRIES, RETRY_DELAY)
+            if is_sourcetv_card:
+                # В SourceTV режиме мы полностью пропускаем сетевые скачивания HTML и JSON!
+                pass
+            else:
+                url = f"https://dltv.org{path}"
+                match_log(f"   🌐 Запрос страницы матча...")
+                response = make_request_with_retry(url, MAX_RETRIES, RETRY_DELAY)
 
-            if not response or response.status_code != 200:
-                print(f"   ❌ Не удалось получить страницу. Status code: {response.status_code if response else 'No response'}")
-                print(f"   ❌ Матч пропущен (ошибка HTTP запроса)")
-                return return_status
+                if not response or response.status_code != 200:
+                    print(f"   ❌ Не удалось получить страницу. Status code: {response.status_code if response else 'No response'}")
+                    print(f"   ❌ Матч пропущен (ошибка HTTP запроса)")
+                    return return_status
 
-            match_log(f"   ✅ Страница получена")
-            soup = BeautifulSoup(response.text, 'lxml')
+                match_log(f"   ✅ Страница получена")
+                soup = BeautifulSoup(response.text, 'lxml')
         
         # Определяем какая команда radiant, какая dire
-        db_payload = data.get('db') or {}
-        db_series_payload = db_payload.get('series') or {}
-        db_scores_payload = db_payload.get('scores') or {}
-        first_team_payload = db_payload.get('first_team') or {}
-        second_team_payload = db_payload.get('second_team') or {}
-        if first_team_payload.get('is_radiant'):
-            radiant_team_name_original = first_team_payload.get('title') or ""
-            dire_team_name_original = second_team_payload.get('title') or ""
-            radiant_db_team_payload = first_team_payload
-            dire_db_team_payload = second_team_payload
+        # Для sourcetv мы полностью берем названия и IDs из распакованного data объекта!
+        is_sourcetv_card = (listing_context.get("source") == "sourcetv")
+        if is_sourcetv_card:
+            radiant_team_name_original = data.get("radiant_team_name") or "Radiant"
+            dire_team_name_original = data.get("dire_team_name") or "Dire"
+            radiant_team_ids = [data.get("radiant_team_id") or 0]
+            dire_team_ids = [data.get("dire_team_id") or 0]
+            league_id = data.get("league_id") or None
+            series_id = data.get("series_id") or data.get("match_id")
+            # GC series_type — enum (0=BO1, 1=BO3, 2=BO5), но весь downstream ожидает best_of-счётчик (1/3/5).
+            # Нормализуем здесь; без конвертации GC=1 (BO3) ошибочно трактуется как is_decider_game=1.
+            _GC_SERIES_TYPE_TO_BO = {0: 1, 1: 3, 2: 5}
+            _raw_st = data.get("series_type")
+            series_type = (
+                _GC_SERIES_TYPE_TO_BO.get(int(_raw_st))
+                if _raw_st is not None and str(_raw_st).lstrip("-").isdigit()
+                else None
+            )
+            # Счёт серии из probe; по умолчанию 0:0 (карта 1)
+            _rad_wins  = int(data.get("radiant_series_wins") or 0)
+            _dire_wins = int(data.get("dire_series_wins") or 0)
+            first_team_is_radiant = True  # «первая команда» = radiant (нет DLTV-контекста)
+            first_team_score  = _rad_wins
+            second_team_score = _dire_wins
+            series_url = f"dltv.org{path}"
+            # league_name из payload (probe пишет "" если GC не даёт); нормализуем через общую функцию
+            league_name = str(data.get("league_name") or "").strip()
+            league_name_normalized = _normalize_live_league_title(league_name) if league_name else ""
+            if not league_name_normalized and league_id:
+                log.debug(
+                    "sourcetv: league_name пустой для league_id=%s (match %s) — "
+                    "фильтрация по названию лиги недоступна, используется только league_id",
+                    league_id, data.get("match_id"),
+                )
+            live_league_data = {
+                "league_id": league_id,
+                "series_id": series_id,
+                "radiant_team_id": radiant_team_ids[0],
+                "dire_team_id": dire_team_ids[0],
+                # Для _bookmaker_infer_map_num: wins → номер карты = sum+1
+                "radiant_series_wins": _rad_wins,
+                "dire_series_wins":    _dire_wins,
+                # Для build_extract_result / серийного контекста
+                "series_game":    int(data.get("series_game_number") or (_rad_wins + _dire_wins + 1)),
+                "series_type":    series_type,
+            }
         else:
-            dire_team_name_original = first_team_payload.get('title') or ""
-            radiant_team_name_original = second_team_payload.get('title') or ""
-            dire_db_team_payload = first_team_payload
-            radiant_db_team_payload = second_team_payload
+            db_payload = data.get('db') or {}
+            db_series_payload = db_payload.get('series') or {}
+            db_scores_payload = db_payload.get('scores') or {}
+            first_team_payload = db_payload.get('first_team') or {}
+            second_team_payload = db_payload.get('second_team') or {}
+            if first_team_payload.get('is_radiant'):
+                radiant_team_name_original = first_team_payload.get('title') or ""
+                dire_team_name_original = second_team_payload.get('title') or ""
+                radiant_db_team_payload = first_team_payload
+                dire_db_team_payload = second_team_payload
+            else:
+                dire_team_name_original = first_team_payload.get('title') or ""
+                radiant_team_name_original = second_team_payload.get('title') or ""
+                dire_db_team_payload = first_team_payload
+                radiant_db_team_payload = second_team_payload
 
-        live_league_data = data.get('live_league_data') or {}
-        live_match_payload = live_league_data.get('match') or {}
-        radiant_live_team_payload = live_league_data.get('radiant_team') or {}
-        dire_live_team_payload = live_league_data.get('dire_team') or {}
+            live_league_data = data.get('live_league_data') or {}
+            live_match_payload = live_league_data.get('match') or {}
+            radiant_live_team_payload = live_league_data.get('radiant_team') or {}
+            dire_live_team_payload = live_league_data.get('dire_team') or {}
 
-        radiant_team_ids = _extract_candidate_team_ids(
-            radiant_live_team_payload,
-            radiant_live_team_payload.get('team_id'),
-            radiant_live_team_payload.get('team_ids'),
-            live_league_data.get('radiant_team_id'),
-            live_league_data.get('radiant_team_ids'),
-            live_match_payload.get('radiant_team_id'),
-            live_match_payload.get('radiant_team_ids'),
-            radiant_db_team_payload,
-            radiant_db_team_payload.get('team_id'),
-            radiant_db_team_payload.get('team_ids'),
-            radiant_db_team_payload.get('id'),
-        )
-        dire_team_ids = _extract_candidate_team_ids(
-            dire_live_team_payload,
-            dire_live_team_payload.get('team_id'),
-            dire_live_team_payload.get('team_ids'),
-            live_league_data.get('dire_team_id'),
-            live_league_data.get('dire_team_ids'),
-            live_match_payload.get('dire_team_id'),
-            live_match_payload.get('dire_team_ids'),
-            dire_db_team_payload,
-            dire_db_team_payload.get('team_id'),
-            dire_db_team_payload.get('team_ids'),
-            dire_db_team_payload.get('id'),
-        )
+            radiant_team_ids = _extract_candidate_team_ids(
+                radiant_live_team_payload,
+                radiant_live_team_payload.get('team_id'),
+                radiant_live_team_payload.get('team_ids'),
+                live_league_data.get('radiant_team_id'),
+                live_league_data.get('radiant_team_ids'),
+                live_match_payload.get('radiant_team_id'),
+                live_match_payload.get('radiant_team_ids'),
+                radiant_db_team_payload,
+                radiant_db_team_payload.get('team_id'),
+                radiant_db_team_payload.get('team_ids'),
+                radiant_db_team_payload.get('id'),
+            )
+            dire_team_ids = _extract_candidate_team_ids(
+                dire_live_team_payload,
+                dire_live_team_payload.get('team_id'),
+                dire_live_team_payload.get('team_ids'),
+                live_league_data.get('dire_team_id'),
+                live_league_data.get('dire_team_ids'),
+                live_match_payload.get('dire_team_id'),
+                live_match_payload.get('dire_team_ids'),
+                dire_db_team_payload,
+                dire_db_team_payload.get('team_id'),
+                dire_db_team_payload.get('team_ids'),
+                dire_db_team_payload.get('id'),
+            )
 
         match_log(f"   🆔 Candidate team IDs: radiant={radiant_team_ids}, dire={dire_team_ids}")
         if (
@@ -21626,18 +21942,19 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             print(f"   ❌ Матч пропущен (нет team_id)")
             return return_status
         # Extract league_id if available
-        league_id = live_league_data.get('league_id')
-        series_id = live_league_data.get('series_id') or db_series_payload.get('id')
-        series_type = live_league_data.get('series_type') or db_series_payload.get('type')
-        first_team_score = db_scores_payload.get('first_team')
-        second_team_score = db_scores_payload.get('second_team')
-        first_team_is_radiant = bool(first_team_payload.get('is_radiant'))
-        series_url = f'dltv.org{path}'
-        league_name = (
-            str(live_league_data.get('league_name') or "").strip()
-            or str((db_payload.get('league') or {}).get('title') or "").strip()
-        )
-        league_name_normalized = _normalize_live_league_title(league_name)
+        if not is_sourcetv_card:
+            league_id = live_league_data.get('league_id')
+            series_id = live_league_data.get('series_id') or db_series_payload.get('id')
+            series_type = live_league_data.get('series_type') or db_series_payload.get('type')
+            first_team_score = db_scores_payload.get('first_team')
+            second_team_score = db_scores_payload.get('second_team')
+            first_team_is_radiant = bool(first_team_payload.get('is_radiant'))
+            series_url = f'dltv.org{path}'
+            league_name = (
+                str(live_league_data.get('league_name') or "").strip()
+                or str((db_payload.get('league') or {}).get('title') or "").strip()
+            )
+            league_name_normalized = _normalize_live_league_title(league_name)
         if (
             not SIGNAL_MINIMAL_ODDS_ONLY_MODE
             and not PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE
@@ -26493,6 +26810,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if tempo_over_fallback is not None:
                 try:
                     with _tempo_over_sent_lock:
+                        # D6: TTL-pruned dedup check
+                        _now_ts = time.monotonic()
+                        _ttl = int(TEMPO_OVER_SENT_TTL_SECONDS)
+                        if _ttl > 0:
+                            expired = [k for k, ts in list(_tempo_over_sent_urls.items()) if _now_ts - ts > _ttl]
+                            for _k in expired:
+                                _tempo_over_sent_urls.pop(_k, None)
                         if check_uniq_url in _tempo_over_sent_urls:
                             print(f"   ℹ️ Tempo over>=51 уже отправлен для {check_uniq_url} — пропускаем дубль")
                             tempo_over_fallback = None
@@ -26623,7 +26947,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     )
                     if delivery_confirmed:
                         with _tempo_over_sent_lock:
-                            _tempo_over_sent_urls.add(check_uniq_url)
+                            _tempo_over_sent_urls[check_uniq_url] = time.monotonic()  # D6: record insert ts
                         print("   ✅ ВЕРДИКТ: Tempo over>=51 отправлен немедленно — другие сигналы продолжают")
                 finally:
                     _release_signal_send_slot(check_uniq_url)
@@ -27051,8 +27375,20 @@ def _load_tempo_stats_dicts() -> bool:
         return True
     try:
         base_dir = Path(TEMPO_STATS_DIR_DEFAULT)
-        _, load_tempo_dicts = _get_tempo_helpers()
-        tempo_solo_dict, tempo_duo_dict, tempo_cp1v1_dict = load_tempo_dicts(base_dir)
+        # D7: blend mode — load pub+pro and blend at read time
+        if TEMPO_STATS_BLEND_MODE and TEMPO_STATS_PUB_DIR:
+            try:
+                from tempo_analise_database_experiment import load_tempo_dicts_blended as _ltdb
+            except ImportError:
+                from base.tempo_analise_database_experiment import load_tempo_dicts_blended as _ltdb
+            tempo_solo_dict, tempo_duo_dict, tempo_cp1v1_dict = _ltdb(
+                pro_dir=base_dir,
+                pub_dir=Path(TEMPO_STATS_PUB_DIR),
+                prior_strength=TEMPO_STATS_BLEND_PRIOR_STRENGTH,
+            )
+        else:
+            _, load_tempo_dicts = _get_tempo_helpers()
+            tempo_solo_dict, tempo_duo_dict, tempo_cp1v1_dict = load_tempo_dicts(base_dir)
         return True
     except FileNotFoundError as exc:
         missing_path = Path(getattr(exc, "filename", "") or (base_dir / "tempo_solo_dict_raw.json"))
@@ -27104,23 +27440,37 @@ def _compute_tempo_over_fallback_diagnostics(
     elo_delta = None
     applied_threshold = base_threshold
     elo_reason = "standard"
+    # Track which rule last set the threshold (for observability, D2)
+    threshold_rule = "base"
 
+    # ------------------------------------------------------------------
+    # D1 (fix): ELO gate — only applied when BOTH ratings are present.
+    # Old code defaulted to 1500.0, making delta=0 → permissive 0.85.
+    # New code: missing rating → standard threshold, elo_reason=elo_unavailable_standard.
+    # ------------------------------------------------------------------
     if isinstance(elo_summary, dict):
         radiant_payload = elo_summary.get("radiant") or {}
         dire_payload = elo_summary.get("dire") or {}
-        try:
-            r_rating = float(radiant_payload.get("base_rating", radiant_payload.get("rating", 1500.0)))
-            d_rating = float(dire_payload.get("base_rating", dire_payload.get("rating", 1500.0)))
-            elo_delta = abs(r_rating - d_rating)
-
-            if elo_delta < 50.0:
-                applied_threshold = 0.8500
-                elo_reason = "elo_equals_relaxed"
-            elif elo_delta > 150.0:
-                applied_threshold = 1.2500
-                elo_reason = "elo_stomp_strict"
-        except (TypeError, ValueError):
-            pass
+        r_rating_raw = radiant_payload.get("base_rating", radiant_payload.get("rating"))
+        d_rating_raw = dire_payload.get("base_rating", dire_payload.get("rating"))
+        if r_rating_raw is not None and d_rating_raw is not None:
+            try:
+                r_rating = float(r_rating_raw)
+                d_rating = float(d_rating_raw)
+                elo_delta = abs(r_rating - d_rating)
+                if elo_delta < 50.0:
+                    applied_threshold = 0.8500
+                    elo_reason = "elo_equals_relaxed"
+                    threshold_rule = "elo_equals"
+                elif elo_delta > 150.0:
+                    applied_threshold = float(TEMPO_STOMP_FLOOR)
+                    elo_reason = "elo_stomp_strict"
+                    threshold_rule = "elo_stomp"
+            except (TypeError, ValueError):
+                pass
+        else:
+            # D1: ratings absent — standard threshold, no ELO adjustment
+            elo_reason = "elo_unavailable_standard"
 
     diag: Dict[str, Any] = {
         "enabled": bool(TEMPO_OVER_FALLBACK_ENABLED),
@@ -27133,6 +27483,7 @@ def _compute_tempo_over_fallback_diagnostics(
         "payload": None,
         "elo_delta": elo_delta,
         "elo_reason": elo_reason,
+        "threshold_rule": threshold_rule,
     }
     if not TEMPO_OVER_FALLBACK_ENABLED:
         diag["reason"] = "disabled"
@@ -27173,9 +27524,15 @@ def _compute_tempo_over_fallback_diagnostics(
         diag["reason"] = "push_hero_blocked"
         return diag
 
+    # ------------------------------------------------------------------
+    # D2 (fix): hero adjustments — applied AFTER ELO; stomp guard at end.
+    # Order: (a) base (b) ELO → (c) hero lower/raise → (d) stomp floor guard.
+    # This prevents bloody/active-mids from negating stomp protection.
+    # ------------------------------------------------------------------
     BLOODY_HEROES = {67, 14}
     if any(h_id in BLOODY_HEROES for h_id in match_hero_ids):
         applied_threshold = min(applied_threshold, 0.7000)
+        threshold_rule = "bloody_hero"
         diag["threshold"] = applied_threshold
 
     ACTIVE_MIDS = {106, 13, 17, 126, 120}
@@ -27186,21 +27543,35 @@ def _compute_tempo_over_fallback_diagnostics(
         mid_set = {r_mid, d_mid}
         if len(mid_set & ACTIVE_MIDS) == 2:
             applied_threshold = min(applied_threshold, 0.7000)
+            threshold_rule = "active_mids"
             diag["threshold"] = applied_threshold
         elif mid_set & FARMING_MIDS:
             applied_threshold = applied_threshold + 0.15
+            threshold_rule = "farming_mid"
             diag["threshold"] = applied_threshold
     except (TypeError, ValueError, KeyError):
         pass
 
+    # D2: stomp floor guard — stomp ELO wins ties against hero relaxations.
+    if elo_reason == "elo_stomp_strict":
+        stomp_floor = float(TEMPO_STOMP_FLOOR)
+        if applied_threshold < stomp_floor:
+            applied_threshold = stomp_floor
+            threshold_rule = "stomp_floor_guard"
+            diag["threshold"] = applied_threshold
+
+    diag["threshold_rule"] = threshold_rule
+
     try:
         build_tempo_draft_metrics, _ = _get_tempo_helpers()
+        # D4: pass min_found_fraction so partial-completeness is respected when configured.
         tempo_metrics = build_tempo_draft_metrics(
             r_normalized,
             d_normalized,
             tempo_solo_dict,
             tempo_duo_dict,
             tempo_cp1v1_dict,
+            min_found_fraction=float(TEMPO_MIN_FOUND_FRACTION),
         )
     except Exception as exc:
         logger.warning("Tempo fallback disabled: failed to build tempo metrics: %s", exc)
@@ -27210,10 +27581,13 @@ def _compute_tempo_over_fallback_diagnostics(
     solo_payload = (tempo_metrics.get("solo") or {})
     duo_payload = (tempo_metrics.get("synergy_duo") or {})
     cp_payload = (tempo_metrics.get("counterpick_1vs1") or {})
+
+    # D4: use `usable` flag (respects TEMPO_MIN_FOUND_FRACTION) instead of `complete`.
+    # When TEMPO_MIN_FOUND_FRACTION == 1.0 (default), usable == complete — no behavior change.
     if not (
-        bool(solo_payload.get("complete"))
-        and bool(duo_payload.get("complete"))
-        and bool(cp_payload.get("complete"))
+        bool(solo_payload.get("usable", solo_payload.get("complete")))
+        and bool(duo_payload.get("usable", duo_payload.get("complete")))
+        and bool(cp_payload.get("usable", cp_payload.get("complete")))
     ):
         diag["reason"] = "incomplete_metrics"
         return diag
@@ -27239,18 +27613,21 @@ def _compute_tempo_over_fallback_diagnostics(
         diag["reason"] = "missing_indices"
         return diag
 
-    score = (
-        0.2414 * max(0, int(solo_kills_idx) - 20)
-        + 0.2492 * max(0, int(duo_kills_idx) - 20)
-        + 0.2931 * max(0, int(cp_kills_idx) - 20)
-        + 0.3517 * max(0, int(cp_deaths_idx) - 20)
+    # D5: use env-configurable scorer (single source of truth with harness).
+    score = _tempo_score_from_indices(
+        int(solo_kills_idx), int(duo_kills_idx), int(cp_kills_idx), int(cp_deaths_idx)
     )
     diag["score"] = float(score)
 
+    # D3 (fix): stake bands relative to dynamic applied_threshold, not hardcoded constants.
+    # score >= applied_threshold + TEMPO_STAKE_HIGH_MARGIN → x2.0
+    # score >= applied_threshold → x1.0
+    # below threshold → never fires, but x0.5 kept in diag for diagnostics
+    stake_high_threshold = float(applied_threshold) + float(TEMPO_STAKE_HIGH_MARGIN)
     tempo_stake = 1.0
-    if float(score) >= 1.2500:
+    if float(score) >= stake_high_threshold:
         tempo_stake = 2.0
-    elif float(score) < 0.9965:
+    elif float(score) < float(applied_threshold):
         tempo_stake = 0.5
 
     tempo_stake_label = "0.5" if tempo_stake == 0.5 else "1.0" if tempo_stake == 1.0 else "2.0"
@@ -27269,6 +27646,7 @@ def _compute_tempo_over_fallback_diagnostics(
         "elo_delta": elo_delta,
         "elo_reason": elo_reason,
         "tempo_stake": tempo_stake,
+        "threshold_rule": threshold_rule,
     }
     if float(score) < float(applied_threshold):
         diag["reason"] = "below_threshold"
@@ -27541,9 +27919,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--dltv-source",
-        choices=["api", "html", "cyberscore"],
-        default=DLTV_SOURCE_MODE if DLTV_SOURCE_MODE in {"api", "html", "cyberscore"} else "cyberscore",
-        help="Live matches source: api/html for DLTV, or cyberscore for CyberScore Camoufox",
+        choices=["api", "html", "cyberscore", "sourcetv"],
+        default=DLTV_SOURCE_MODE if DLTV_SOURCE_MODE in {"api", "html", "cyberscore", "sourcetv"} else "cyberscore",
+        help="Live matches source: api/html for DLTV, or cyberscore for CyberScore, or sourcetv for SourceTV GC Bot",
     )
     parser.add_argument(
         "--pure-dltv",
