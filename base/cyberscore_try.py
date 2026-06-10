@@ -17962,14 +17962,17 @@ def _shared_camoufox_browser_options(proxy_kwargs: Dict[str, Any]) -> Dict[str, 
     # Let Camoufox auto-generate locale from geoip when proxy is set;
     # fallback to env override only if explicitly provided.
     locale = str(os.getenv("CYBERSCORE_CAMOUFOX_LOCALE", "")).strip()
-    os_name = str(os.getenv("CYBERSCORE_CAMOUFOX_OS", "windows")).strip()
+    # CSV нескольких ОС => Camoufox сам выбирает случайную на каждый launch и
+    # генерирует согласованный fingerprint (UA, navigator, fonts) под неё.
+    os_name = str(os.getenv("CYBERSCORE_CAMOUFOX_OS", "windows,macos,linux")).strip()
     humanize = _camoufox_parse_humanize(os.getenv("CYBERSCORE_CAMOUFOX_HUMANIZE", "true"))
     # Do NOT set fixed window — let Camoufox generate a random realistic size
     window = _camoufox_parse_window(os.getenv("CYBERSCORE_CAMOUFOX_WINDOW", ""))
     if locale:
         options["locale"] = locale
     if os_name:
-        options["os"] = os_name
+        os_values = [chunk.strip() for chunk in os_name.split(",") if chunk.strip()]
+        options["os"] = os_values if len(os_values) > 1 else os_values[0]
     if humanize is not None:
         options["humanize"] = humanize
     if window is not None:
@@ -18089,8 +18092,10 @@ class _SharedCamoufoxSession:
         browser = None
         launched_at = 0.0
         jobs_since_launch = 0
-        reset_after_jobs = max(1, _camoufox_env_int("CAMOUFOX_RESET_AFTER_JOBS", 250))
-        reset_after_seconds = max(60, _camoufox_env_int("CAMOUFOX_RESET_AFTER_SECONDS", 3600))
+        # Перезапуск браузера = новый случайный fingerprint (UA/ОС/screen/WebGL):
+        # ротируем чаще, чтобы не светить один отпечаток часами.
+        reset_after_jobs = max(1, _camoufox_env_int("CAMOUFOX_RESET_AFTER_JOBS", 60))
+        reset_after_seconds = max(60, _camoufox_env_int("CAMOUFOX_RESET_AFTER_SECONDS", 1200))
 
         def _close_browser(reason: str) -> None:
             nonlocal browser_cm, browser, launched_at, jobs_since_launch

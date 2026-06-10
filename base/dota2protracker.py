@@ -329,6 +329,7 @@ def _fetch_protracker_payload_via_subprocess(
     """
     helper_code = r"""
 import json
+import random
 import sys
 from urllib.parse import urlparse
 import camoufox
@@ -357,10 +358,24 @@ def proxy_kwargs(proxy_url):
 
 payload = {"matchups": {}, "synergies": {}}
 
+# Каждый запуск subprocess = свежий случайный fingerprint Camoufox;
+# случайная ОС даёт ротацию User-Agent/navigator между запусками.
+launch_kwargs = {
+    "headless": True,
+    "os": random.choice(["windows", "macos", "linux"]),
+    "block_webrtc": True,
+    "enable_cache": False,
+    "humanize": True,
+}
+_proxy = proxy_kwargs(proxy_url)
+if _proxy:
+    # geoip согласует timezone/locale fingerprint с IP прокси
+    launch_kwargs["geoip"] = True
+launch_kwargs.update(_proxy)
+
 with camoufox.Camoufox(
-    headless=True,
     args=["--disable-blink-features=AutomationControlled"],
-    **proxy_kwargs(proxy_url),
+    **launch_kwargs,
 ) as browser:
     page = browser.new_page()
     page.goto(f"{BASE_URL}/hero/{slug}", wait_until="networkidle", timeout=30000)
