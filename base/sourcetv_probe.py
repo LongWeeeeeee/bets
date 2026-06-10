@@ -21,6 +21,30 @@ HERO_MAP = {int(v["hero_id"]): v["hero_name"] for v in _raw.values()}
 def hero(hid): return HERO_MAP.get(hid, f"?{hid}") if hid else "—"
 def fmt(t): t = abs(int(t)); return f"{t//60}:{t%60:02d}"
 
+def _build_fast_picks(rad_picks, dire_picks):
+    """fast_picks в формате cyberscore_try.check_head: {first_team, second_team}.
+
+    Возвращает непустые списки только если у ОБЕИХ сторон разрешены все 5 героев,
+    иначе {} — гейт _runtime_payload_has_fast_picks остаётся закрыт до полного драфта.
+    """
+    def _team(picks):
+        out = []
+        for i in range(1, 6):
+            e = picks.get(f"pos{i}")
+            if not e or not e.get("hero_id"):
+                return None
+            out.append({
+                "hero_id": int(e["hero_id"]),
+                "account_id": int(e.get("account_id") or 0),
+                "player": {"title": f"sourcetv_pos{i}"},
+            })
+        return out
+    rad = _team(rad_picks)
+    dire = _team(dire_picks)
+    if rad is None or dire is None:
+        return {}
+    return {"first_team": rad, "second_team": dire}
+
 def _fetch_imap_guard_code(imap_login, imap_password, after_ts, timeout=90):
     """Wait for a new Steam Guard email via IMAP and return the 5-char code."""
     import imaplib, email as _email, re as _re
@@ -739,6 +763,11 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                     "radiant": rad_picks if len(rad_picks) == 5 else None,
                                     "dire": dire_picks if len(dire_picks) == 5 else None
                                 },
+                                # fast_picks — формат, который check_head ждёт как маркер
+                                # «драфт начался». Заполняем ТОЛЬКО когда обе стороны
+                                # разрешены полностью (5x5 героев), иначе cyberscore-ветка
+                                # парсинга получит пустой драфт и метрики уйдут в мусор.
+                                "fast_picks": _build_fast_picks(rad_picks, dire_picks),
                                 "status": "live",
                                 "timestamp": time.time()
                             }
