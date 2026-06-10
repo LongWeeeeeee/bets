@@ -18263,7 +18263,19 @@ def _fetch_protracker_payload_via_shared_camoufox(
     if fallback_fetcher is None:
         raise RuntimeError("Camoufox subprocess fetcher недоступен (dota2protracker module not found)")
     print(f"   📊 Fetching pro-tracker: {slug} (Camoufox subprocess fallback)")
-    return fallback_fetcher(slug, hero_id, proxy_candidate)
+    # Сначала напрямую: прокси из пула на сервере зависает на dota2protracker
+    # (goto networkidle не завершается -> 180с таймаут на каждого героя),
+    # а прямой Camoufox проходит за ~30с. Прокси оставляем запасным путём.
+    try:
+        return fallback_fetcher(slug, hero_id, None)
+    except Exception as exc:
+        if not proxy_candidate:
+            raise
+        print(
+            f"   ⚠️ Subprocess direct failed ({type(exc).__name__}) — "
+            f"повтор через прокси {proxy_candidate}"
+        )
+        return fallback_fetcher(slug, hero_id, proxy_candidate)
 
 
 def _install_dota2protracker_shared_camoufox_fetcher() -> bool:
