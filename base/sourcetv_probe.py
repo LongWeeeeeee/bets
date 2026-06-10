@@ -15,7 +15,7 @@ log.setLevel(logging.INFO)
 KEY       = "4C5768B425A5FBDCE3C04C67815BAAD4"
 CREDS_DIR = os.path.expanduser("~/.config/dota_probe")
 
-with open("/Users/alex/Documents/ingame/base/hero_features_processed.json") as _f:
+with open(os.path.join(os.path.dirname(__file__), "hero_features_processed.json")) as _f:
     _raw = json.load(_f)
 HERO_MAP = {int(v["hero_id"]): v["hero_name"] for v in _raw.values()}
 def hero(hid): return HERO_MAP.get(hid, f"?{hid}") if hid else "—"
