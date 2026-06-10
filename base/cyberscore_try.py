@@ -9112,7 +9112,9 @@ _DEFAULT_CYBERSCORE_EXTRA_TOURNAMENT_IDS = "46178:BB Streamers Battle 13"
 # включено наравне с tier1/tier2, даже если cyberscore классифицирует его ниже
 # (tier3/tier4). CSV-список подстрок, переопределяется через
 # CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS.
-_DEFAULT_CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS = "EWC 2026 Open Qualifier"
+_DEFAULT_CYBERSCORE_EXTRA_TOURNAMENT_NAME_SUBSTRINGS = (
+    "EWC 2026 Open Qualifier,The International 2026"
+)
 # Тиры, которые мы дополнительно опрашиваем для name-substring матчинга.
 _DEFAULT_CYBERSCORE_EXTRA_NAME_TIERS = "3"
 
