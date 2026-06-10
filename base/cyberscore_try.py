@@ -21866,7 +21866,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             league_name = str(data.get("league_name") or "").strip()
             league_name_normalized = _normalize_live_league_title(league_name) if league_name else ""
             if not league_name_normalized and league_id:
-                log.debug(
+                logger.debug(
                     "sourcetv: league_name пустой для league_id=%s (match %s) — "
                     "фильтрация по названию лиги недоступна, используется только league_id",
                     league_id, data.get("match_id"),
