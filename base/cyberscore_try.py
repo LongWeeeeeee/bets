@@ -2946,10 +2946,24 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
     block_sign = next(iter(hit_signs)) if hit_signs else None
     if not bool(sign_consistency.get("valid")):
         consistency_status = str(sign_consistency.get("status") or "")
+        required_metric_names = set(sign_consistency.get("required_metrics") or [])
+        required_hit_count = len([m for m in hit_metrics if m in required_metric_names])
         sign_consistency_override = bool(
-            consistency_status == "conflict_required_signs"
-            and len(hit_metrics) >= _STAR_BLOCK_SIGN_CONSISTENCY_OVERRIDE_MIN_HITS
-            and block_sign in (-1, 1)
+            block_sign in (-1, 1)
+            and (
+                (
+                    consistency_status == "conflict_required_signs"
+                    and len(hit_metrics) >= _STAR_BLOCK_SIGN_CONSISTENCY_OVERRIDE_MIN_HITS
+                )
+                # ≥2 хита среди required-метрик (cp1vs1/cp1vs2/solo) одного знака
+                # допускают 0 в оставшейся метрике; конфликт знаков среди
+                # ненулевых required при этом по-прежнему блокирует.
+                or (
+                    consistency_status == "zero_required_metrics"
+                    and required_hit_count >= _STAR_BLOCK_SIGN_CONSISTENCY_OVERRIDE_MIN_HITS
+                    and not (sign_consistency.get("conflicting_metrics") or [])
+                )
+            )
         )
         if sign_consistency_override:
             return {

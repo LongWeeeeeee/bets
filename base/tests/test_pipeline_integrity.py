@@ -5972,7 +5972,9 @@ def test_runtime_star_block_valid_when_cp1v1_is_missing_but_other_core_metrics_a
     assert diag["sign_consistency_missing_metrics"] == ["counterpick_1vs1"]
 
 
-def test_runtime_star_block_invalid_when_core_metric_is_zero(monkeypatch) -> None:
+def test_runtime_star_block_zero_core_metric_overridden_by_two_hits(monkeypatch) -> None:
+    # ≥2 хита среди required-метрик (cp1vs1/cp1vs2/solo) одного знака
+    # допускают 0 в оставшейся метрике (sign_consistency_override).
     monkeypatch.setattr(
         runtime,
         "STAR_THRESHOLDS_BY_WR",
@@ -5992,10 +5994,39 @@ def test_runtime_star_block_invalid_when_core_metric_is_zero(monkeypatch) -> Non
         section="early_output",
     )
 
-    assert diag["valid"] is False
-    assert diag["status"] == "required_sign_consistency_invalid"
+    assert diag["valid"] is True
+    assert diag["status"] == "ok"
+    assert diag["sign"] == 1
+    assert diag["sign_consistency_override"] is True
     assert diag["sign_consistency_status"] == "zero_required_metrics"
     assert diag["sign_consistency_zero_metrics"] == ["counterpick_1vs2"]
+
+
+def test_runtime_star_block_invalid_when_zero_core_metric_and_single_hit(monkeypatch) -> None:
+    # 1 хит + нулевые required-метрики — override НЕ применяется, блок invalid.
+    monkeypatch.setattr(
+        runtime,
+        "STAR_THRESHOLDS_BY_WR",
+        {
+            60: {
+                "early_output": [("solo", 3), ("counterpick_1vs1", 4), ("counterpick_1vs2", 4)],
+                "mid_output": [],
+                "all_output": [],
+            }
+        },
+        raising=False,
+    )
+
+    diag = runtime._star_block_diagnostics(
+        raw_block={"solo": 0, "counterpick_1vs1": 4, "counterpick_1vs2": 0},
+        target_wr=60,
+        section="early_output",
+    )
+
+    assert diag["valid"] is False
+    assert diag["status"] == "required_sign_consistency_invalid"
+    assert diag["sign_consistency_override"] is False
+    assert diag["sign_consistency_status"] == "zero_required_metrics"
 
 
 def test_runtime_all_star_block_valid_from_dota2protracker_cp1vs1(monkeypatch) -> None:
