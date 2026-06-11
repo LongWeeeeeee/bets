@@ -22164,6 +22164,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 "series_game":    int(data.get("series_game_number") or (_rad_wins + _dire_wins + 1)),
                 "series_type":    series_type,
             }
+            # Часть билдеров сообщений (строка счёта серии «0-0»/«1-0», bookmaker
+            # map_num) читает data['live_league_data'], а не локальную переменную —
+            # без этого в sourcetv-сообщениях пропадает счёт карт.
+            data["live_league_data"] = live_league_data
         else:
             db_payload = data.get('db') or {}
             db_series_payload = db_payload.get('series') or {}
