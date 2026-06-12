@@ -521,9 +521,45 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
         log.info("Steam: залогинен как %s", client.user.name if client.user else username)
         dota.launch()
 
+    # Holder для времени старта логина (нужен IMAP-фильтру писем Steam Guard);
+    # mutable, т.к. обновляется и из reconnect-гринлета.
+    login_state = {"started_at": 0.0}
+    reconnect_state = {"in_progress": False, "shutdown": False}
+
     @client.on("disconnected")
     def _on_disconnect():
         log.warning("Steam: отключён")
+        gc_ready.clear()
+        if reconnect_state["shutdown"] or reconnect_state["in_progress"]:
+            return
+        reconnect_state["in_progress"] = True
+
+        def _relogin_loop():
+            try:
+                delay = 10
+                while not reconnect_state["shutdown"]:
+                    gevent.sleep(delay)
+                    if client.logged_on:
+                        log.info("Steam: соединение восстановлено")
+                        return
+                    log.info("Steam: повторный вход после обрыва...")
+                    login_state["started_at"] = time.time()
+                    try:
+                        if creds.get("login_key"):
+                            client.login(username=username, login_key=creds["login_key"])
+                        else:
+                            client.login(username=username, password=password)
+                    except Exception as e:
+                        log.warning("Повторный вход не удался: %s", e)
+                    gevent.sleep(5)
+                    if client.logged_on:
+                        log.info("Steam: соединение восстановлено")
+                        return
+                    delay = min(delay * 2, 300)
+            finally:
+                reconnect_state["in_progress"] = False
+
+        gevent.spawn(_relogin_loop)
 
     @client.on("error")
     def _on_error(result):
@@ -548,7 +584,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
             imap_pass  = os.environ.get("YANDEX_APP_PASSWORD")
             if imap_login and imap_pass:
                 code = _fetch_imap_guard_code(imap_login, imap_pass,
-                                              after_ts=_login_started_at, timeout=90)
+                                              after_ts=login_state["started_at"], timeout=90)
                 if code:
                     log.info("Guard код из почты: %s", code)
         if not code:
@@ -849,11 +885,12 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                 log.warning("ошибка: %s", e)
             gevent.sleep(interval)
 
+        reconnect_state["shutdown"] = True
         client.logout()
 
     gevent.spawn(_poll_loop)
     login_key = creds.get("login_key")
-    _login_started_at = time.time()
+    login_state["started_at"] = time.time()
     if login_key:
         log.info("Входим с сохранённым login_key (без Steam Guard)")
         client.login(username=username, login_key=login_key)
