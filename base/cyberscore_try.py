@@ -16811,8 +16811,18 @@ def _draft_metrics_signature(
     return f"R:{_side_sig(radiant_heroes_and_pos)}|D:{_side_sig(dire_heroes_and_pos)}"
 
 
+def _draft_metrics_cache_key(match_key: Any) -> str:
+    """Стабильный ключ кэша метрик: URL без numeric uniq-суффикса.
+
+    В sourcetv-режиме check_uniq_url меняется с каждым киллом — без
+    нормализации кэш промахивался каждый цикл и весь блок метрик
+    (sqlite-словари + ProTracker) пересчитывался заново. База URL
+    стабильна для карты; смена драфта ловится сигнатурой."""
+    return _signal_fingerprint_registry_key(str(match_key or "").strip())
+
+
 def _get_cached_draft_metrics(match_key: Any, signature: str) -> Optional[Dict[str, Any]]:
-    key = str(match_key or "").strip()
+    key = _draft_metrics_cache_key(match_key)
     if not key or not signature:
         return None
     with draft_metrics_cache_lock:
@@ -16833,7 +16843,7 @@ def _store_cached_draft_metrics(
     protracker_payload: Optional[Dict[str, Any]],
     protracker_log_lines: Optional[List[str]] = None,
 ) -> None:
-    key = str(match_key or "").strip()
+    key = _draft_metrics_cache_key(match_key)
     if not key or not signature:
         return
     entry = {
@@ -16850,7 +16860,7 @@ def _store_cached_draft_metrics(
 
 
 def _drop_cached_draft_metrics(match_key: Any) -> None:
-    key = str(match_key or "").strip()
+    key = _draft_metrics_cache_key(match_key)
     if not key:
         return
     with draft_metrics_cache_lock:
