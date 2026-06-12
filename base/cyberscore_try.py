@@ -5635,7 +5635,7 @@ def _maybe_alert_low_confidence_sourcetv_positions(
         ):
             low_sides.append((side_name or side_key, side_meta, side_draft))
     if not low_sides:
-        _SOURCETV_POS_WARNING_BY_KEY.pop(str(match_key), None)
+        _SOURCETV_POS_WARNING_BY_KEY.pop(_signal_fingerprint_registry_key(match_key), None)
         return
     lines = ["⚠️ Низкая уверенность позиций — перепроверь драфт:"]
     for side_name, side_meta, side_draft in low_sides:
@@ -5644,7 +5644,7 @@ def _maybe_alert_low_confidence_sourcetv_positions(
             f"(история: {side_meta.get('raw_known')}/5 игроков)"
         )
         lines.append(_format_pipeline_probe_draft_side(side_draft))
-    _SOURCETV_POS_WARNING_BY_KEY[str(match_key)] = "\n".join(lines)
+    _SOURCETV_POS_WARNING_BY_KEY[_signal_fingerprint_registry_key(match_key)] = "\n".join(lines)
     print(f"   ⚠️ Низкая уверенность позиций — варнинг будет добавлен к сигналу: {match_key}")
 
 
@@ -17766,6 +17766,18 @@ def _sent_signal_fingerprint_path() -> str:
 _SIGNAL_DEDUP_FINGERPRINTS: Dict[str, str] = {}
 
 
+def _signal_fingerprint_registry_key(match_key: str) -> str:
+    """Ключ реестра отпечатков: URL без numeric-суффикса uniq_score.
+
+    В sourcetv-режиме check_uniq_url = dltv.org/matches/<id>.<kills_sum> —
+    суффикс растёт по ходу карты, и одна карта живёт под многими URL
+    (включая записи delayed-очереди, пережившие рестарт). База URL
+    стабильна для карты. Cyberscore-суффиксы вида .map1 не numeric и
+    не срезаются.
+    """
+    return re.sub(r"\.\d+$", "", str(match_key or ""))
+
+
 def _signal_fingerprint_register(
     match_key: str,
     radiant_team_name: Any,
@@ -17780,7 +17792,7 @@ def _signal_fingerprint_register(
             return
         map_num = max(_coerce_int(first_team_score), 0) + max(_coerce_int(second_team_score), 0) + 1
         pair = "|".join(sorted((rad, dire)))
-        _SIGNAL_DEDUP_FINGERPRINTS[str(match_key)] = f"{pair}|map{map_num}"
+        _SIGNAL_DEDUP_FINGERPRINTS[_signal_fingerprint_registry_key(match_key)] = f"{pair}|map{map_num}"
     except Exception:
         pass
 
@@ -17809,7 +17821,7 @@ def _signal_dedup_key(match_key: str, message_text: Any) -> Optional[str]:
     карты (early kills / late / обычная ставка) — дедупим только идентичные
     ставки между инстансами, а не все сигналы карты подряд.
     """
-    fingerprint = _SIGNAL_DEDUP_FINGERPRINTS.get(str(match_key))
+    fingerprint = _SIGNAL_DEDUP_FINGERPRINTS.get(_signal_fingerprint_registry_key(match_key))
     if not fingerprint:
         return None
     text = str(message_text or "").strip()
@@ -17864,7 +17876,7 @@ def _deliver_and_persist_signal(
             return False
     # Варнинг о неуверенных позициях sourcetv добавляется в текст основного
     # сигнала (не отдельным сообщением).
-    pos_warning = _SOURCETV_POS_WARNING_BY_KEY.get(str(match_key))
+    pos_warning = _SOURCETV_POS_WARNING_BY_KEY.get(_signal_fingerprint_registry_key(match_key))
     if pos_warning and pos_warning not in message_text:
         message_text = f"{message_text.rstrip()}\n\n{pos_warning}"
     duplicate_fingerprint = _signal_fingerprint_already_sent(match_key, message_text)
