@@ -313,15 +313,29 @@ def _resolve_positions(team_players, team_id=0):
         scored_heroes = len([h for h in hids if h])
         best_raw_matches = sum(1 for i, a in enumerate(aids) if raw.get(a) == best_perm[i])
         stats_conf = (best_score - best_raw_matches) / max(1, scored_heroes)
+        # Комбинированная уверенность: слот, совпавший с историей игрока, = 1.0;
+        # остальные оцениваются по статистике героя на позиции. Иначе команда с
+        # полной историей и одним конфликтом получала пессимистичный conf
+        # (stats_conf игнорирует совпадения с историей).
+        per_slot = []
+        for i in range(5):
+            if raw.get(aids[i]) == best_perm[i]:
+                per_slot.append(1.0)
+            elif hids[i]:
+                per_slot.append(_pos_score(hids[i], best_perm[i]))
+            else:
+                per_slot.append(0.0)
+        combined_conf = sum(per_slot) / 5.0
         _LAST_POS_RESOLUTION = {
             "method": "permutation",
             "raw_known": len(raw),
             "raw_matched": best_raw_matches,
             "stats_conf": round(stats_conf, 3),
+            "conf": round(combined_conf, 3),
         }
         log.info(
-            "Позиции: разрешено перестановкой: %s (score=%.2f, stats_conf=%.2f, raw_matched=%d)",
-            resolved, best_score, stats_conf, best_raw_matches,
+            "Позиции: разрешено перестановкой: %s (conf=%.2f, stats_conf=%.2f, raw_matched=%d/%d)",
+            resolved, combined_conf, stats_conf, best_raw_matches, len(raw),
         )
         return resolved
     _LAST_POS_RESOLUTION = {"method": "raw_fallback", "raw_known": len(raw)}

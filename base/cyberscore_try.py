@@ -5627,7 +5627,9 @@ def _maybe_alert_low_confidence_sourcetv_positions(
         ("dire", dire_team_name, dire_heroes_and_pos),
     ):
         side_meta = meta.get(side_key) or {}
-        conf = side_meta.get("stats_conf")
+        # conf — комбинированная уверенность (совпадения с историей игрока = 1.0,
+        # остальные слоты по статистике героя); stats_conf — фолбэк для старых payload.
+        conf = side_meta.get("conf", side_meta.get("stats_conf"))
         if (
             str(side_meta.get("method") or "") == "permutation"
             and isinstance(conf, (int, float))
@@ -5639,9 +5641,11 @@ def _maybe_alert_low_confidence_sourcetv_positions(
         return
     lines = ["⚠️ Низкая уверенность позиций — перепроверь драфт:"]
     for side_name, side_meta, side_draft in low_sides:
+        conf_value = side_meta.get("conf", side_meta.get("stats_conf"))
         lines.append(
-            f"{side_name}: conf={float(side_meta.get('stats_conf') or 0):.2f} "
-            f"(история: {side_meta.get('raw_known')}/5 игроков)"
+            f"{side_name}: conf={float(conf_value or 0):.2f} "
+            f"(совпало с историей: {side_meta.get('raw_matched') or 0}/5, "
+            f"история есть у {side_meta.get('raw_known') or 0}/5 игроков)"
         )
         lines.append(_format_pipeline_probe_draft_side(side_draft))
     _SOURCETV_POS_WARNING_BY_KEY[_signal_fingerprint_registry_key(match_key)] = "\n".join(lines)
