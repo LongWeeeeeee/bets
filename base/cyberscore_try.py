@@ -5603,6 +5603,59 @@ def _format_pipeline_probe_phase_block(title: str, data: Optional[Dict[str, Any]
     return f"{title}:\n" + "\n".join(lines) + "\n"
 
 
+# Порог уверенности позиций sourcetv (stats_conf перестановочного резолвера
+# probe): ниже порога — шлём админ-алерт с драфтом для ручной перепроверки.
+SOURCETV_POS_RECHECK_CONF = float(os.getenv("SOURCETV_POS_RECHECK_CONF", "0.65"))
+_SOURCETV_POS_ALERTED_KEYS: set = set()
+
+
+def _maybe_alert_low_confidence_sourcetv_positions(
+    match_key: str,
+    data: Dict[str, Any],
+    radiant_team_name: str,
+    dire_team_name: str,
+    radiant_heroes_and_pos: Optional[Dict[str, Any]],
+    dire_heroes_and_pos: Optional[Dict[str, Any]],
+) -> None:
+    if match_key in _SOURCETV_POS_ALERTED_KEYS:
+        return
+    meta = data.get("_pos_resolution") if isinstance(data, dict) else None
+    if not isinstance(meta, dict):
+        return
+    low_sides = []
+    for side_key, side_name, side_draft in (
+        ("radiant", radiant_team_name, radiant_heroes_and_pos),
+        ("dire", dire_team_name, dire_heroes_and_pos),
+    ):
+        side_meta = meta.get(side_key) or {}
+        conf = side_meta.get("stats_conf")
+        if (
+            str(side_meta.get("method") or "") == "permutation"
+            and isinstance(conf, (int, float))
+            and float(conf) < SOURCETV_POS_RECHECK_CONF
+        ):
+            low_sides.append((side_name or side_key, side_meta, side_draft))
+    if not low_sides:
+        return
+    _SOURCETV_POS_ALERTED_KEYS.add(match_key)
+    lines = [
+        "⚠️ Низкая уверенность позиций (sourcetv) — перепроверь драфт:",
+        f"{radiant_team_name} vs {dire_team_name}",
+        str(match_key),
+    ]
+    for side_name, side_meta, side_draft in low_sides:
+        lines.append(
+            f"\n{side_name}: stats_conf={float(side_meta.get('stats_conf') or 0):.2f}, "
+            f"raw_known={side_meta.get('raw_known')}, raw_matched={side_meta.get('raw_matched')}"
+        )
+        lines.append(_format_pipeline_probe_draft_side(side_draft))
+    try:
+        send_message("\n".join(lines), admin_only=True)
+        print(f"   📨 Админ-алерт о низкой уверенности позиций отправлен: {match_key}")
+    except Exception as exc:
+        print(f"   ⚠️ Не удалось отправить алерт позиций: {exc}")
+
+
 def _format_pipeline_probe_draft_side(side: Optional[Dict[str, Any]]) -> str:
     side = side if isinstance(side, dict) else {}
     chunks: List[str] = []
@@ -22882,6 +22935,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
                 print(
                     f"   🧩 Draft [{_dire_name}] {_format_pipeline_probe_draft_side(dire_heroes_and_pos)}"
+                )
+                _maybe_alert_low_confidence_sourcetv_positions(
+                    check_uniq_url,
+                    data,
+                    _rad_name,
+                    _dire_name,
+                    radiant_heroes_and_pos,
+                    dire_heroes_and_pos,
                 )
             except Exception:
                 pass

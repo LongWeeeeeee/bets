@@ -217,6 +217,12 @@ def _ensure_pro_index():
     log.info("Pro index: %d игроков из про-матчей", len(_PRO_POSITIONS_INDEX))
 
 
+# Мета последнего вызова _resolve_positions (метод/уверенность) — probe
+# однопоточный (gevent), вызов синхронный, поэтому простого глобала достаточно.
+# Уходит в мост (_pos_resolution), где pipeline решает, алертить ли драфт.
+_LAST_POS_RESOLUTION = {}
+
+
 def _resolve_positions(team_players, team_id=0):
     """Resolve positions for 5 players [{account_id, hero_id}, ...] → {account_id: pos_int}.
 
@@ -269,8 +275,11 @@ def _resolve_positions(team_players, team_id=0):
     hids = [p.get("hero_id") for p in team_players]
     n = len(aids)
 
+    global _LAST_POS_RESOLUTION
+
     if n != 5:
         # Fewer than 5 known players — just return what we have
+        _LAST_POS_RESOLUTION = {"method": "partial", "raw_known": len(raw)}
         return raw
 
     # Check if raw assignment is valid (no duplicates, all 1-5 covered)
@@ -279,6 +288,7 @@ def _resolve_positions(team_players, team_id=0):
     missing = set(range(1, 6)) - set(p for p in assigned_pos if p)
 
     if not has_dupes and not missing:
+        _LAST_POS_RESOLUTION = {"method": "raw", "raw_known": len(raw)}
         return raw  # perfect, no conflict
 
     log.info(
@@ -300,8 +310,21 @@ def _resolve_positions(team_players, team_id=0):
 
     if best_perm:
         resolved = {aids[i]: best_perm[i] for i in range(5)}
-        log.info("Позиции: разрешено перестановкой: %s (score=%.2f)", resolved, best_score)
+        scored_heroes = len([h for h in hids if h])
+        best_raw_matches = sum(1 for i, a in enumerate(aids) if raw.get(a) == best_perm[i])
+        stats_conf = (best_score - best_raw_matches) / max(1, scored_heroes)
+        _LAST_POS_RESOLUTION = {
+            "method": "permutation",
+            "raw_known": len(raw),
+            "raw_matched": best_raw_matches,
+            "stats_conf": round(stats_conf, 3),
+        }
+        log.info(
+            "Позиции: разрешено перестановкой: %s (score=%.2f, stats_conf=%.2f, raw_matched=%d)",
+            resolved, best_score, stats_conf, best_raw_matches,
+        )
         return resolved
+    _LAST_POS_RESOLUTION = {"method": "raw_fallback", "raw_known": len(raw)}
     return raw
 
 
@@ -763,6 +786,9 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                     side_tid = t.get("side_tid", {})
                                     tid = side_tid.get(aids[0], t.get("rad_id" if side_radiant else "dire_id", 0))
                                     st["pos_map"].update(load_player_positions(aids, hids, team_id=tid))
+                                    st.setdefault("pos_meta", {})[
+                                        "radiant" if side_radiant else "dire"
+                                    ] = dict(_LAST_POS_RESOLUTION)
                                 else:
                                     log.warning(
                                         "match %s: assign_sides дал %d игроков на %s-стороне "
@@ -840,6 +866,10 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                     "radiant": rad_picks if len(rad_picks) == 5 else None,
                                     "dire": dire_picks if len(dire_picks) == 5 else None
                                 },
+                                # Метод/уверенность разрешения позиций по сторонам
+                                # (raw | permutation + stats_conf) — для алертов
+                                # «перепроверь драфт» на стороне pipeline.
+                                "_pos_resolution": st.get("pos_meta") or {},
                                 # fast_picks — формат, который check_head ждёт как маркер
                                 # «драфт начался». Заполняем ТОЛЬКО когда обе стороны
                                 # разрешены полностью (5x5 героев), иначе cyberscore-ветка
