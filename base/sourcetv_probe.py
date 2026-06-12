@@ -281,6 +281,12 @@ def _resolve_positions(team_players, team_id=0):
     if not has_dupes and not missing:
         return raw  # perfect, no conflict
 
+    log.info(
+        "Позиции: конфликт raw-разметки (team=%s, dupes=%s, missing=%s, raw=%s) — "
+        "перебор перестановок по hero_position_stats",
+        team_id, has_dupes, sorted(missing), raw,
+    )
+
     # Need to resolve: try all permutations of positions 1-5
     best_score = -1
     best_perm = None
@@ -293,7 +299,9 @@ def _resolve_positions(team_players, team_id=0):
             best_perm = perm
 
     if best_perm:
-        return {aids[i]: best_perm[i] for i in range(5)}
+        resolved = {aids[i]: best_perm[i] for i in range(5)}
+        log.info("Позиции: разрешено перестановкой: %s (score=%.2f)", resolved, best_score)
+        return resolved
     return raw
 
 
@@ -739,11 +747,17 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                 if not p["known"] and p["account_id"] in steam_names:
                                     p["name"] = steam_names[p["account_id"]]
                                     p["known"] = True
-                        if not st["pos_map"] and sum(1 for h in hk if h != "—") >= 8:
+                        if sum(1 for h in hk if h != "—") >= 8:
+                            # Резолвим позиции ПО СТОРОНАМ: уже разрешённая сторона
+                            # (все 5 аккаунтов в pos_map) не пересчитывается, а
+                            # недоразрешённая ретраится на каждом heroes_changed —
+                            # иначе один кривой assign_sides замораживал матч навсегда.
                             for side_radiant in (True, False):
                                 side_players = [p for p in g["players"] if p.get("is_radiant") == side_radiant]
                                 if len(side_players) == 5:
                                     aids = [p["account_id"] for p in side_players]
+                                    if all(a in st["pos_map"] for a in aids):
+                                        continue  # сторона уже разрешена
                                     hids = [p.get("hero_id") for p in side_players]
                                     # Use team_id from targets so position overrides/team filter work
                                     side_tid = t.get("side_tid", {})
@@ -752,8 +766,8 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                 else:
                                     log.warning(
                                         "match %s: assign_sides дал %d игроков на %s-стороне "
-                                        "(ожидалось 5) — pos_map не будет разрешён, "
-                                        "матч не попадёт в sourcetv_matches.json",
+                                        "(ожидалось 5) — pos_map стороны не разрешён, "
+                                        "ретрай на следующем изменении драфта",
                                         mid, len(side_players),
                                         "radiant" if side_radiant else "dire",
                                     )
