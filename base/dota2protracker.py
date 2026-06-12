@@ -394,18 +394,35 @@ with camoufox.Camoufox(
 print(json.dumps(payload))
 """
 
-    completed = subprocess.run(
+    # start_new_session + killpg: subprocess.run(timeout=...) убивает только
+    # python-хелпер, а дерево Camoufox (node-драйвер + firefox) сиротеет
+    # (PPID=1) и висит навсегда. Убиваем всю process group.
+    proc = subprocess.Popen(
         [sys.executable, "-c", helper_code, slug, str(hero_id), str(proxy_candidate or "")],
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=180,
+        start_new_session=True,
     )
-    if completed.returncode != 0:
-        stderr = (completed.stderr or "").strip()
-        stdout = (completed.stdout or "").strip()
-        detail = stderr or stdout or f"subprocess exited with code {completed.returncode}"
+    try:
+        stdout_text, stderr_text = proc.communicate(timeout=180)
+    except subprocess.TimeoutExpired:
+        import signal as _signal
+        try:
+            os.killpg(os.getpgid(proc.pid), _signal.SIGKILL)
+        except Exception:
+            proc.kill()
+        try:
+            proc.communicate(timeout=10)
+        except Exception:
+            pass
+        raise RuntimeError("camoufox subprocess timed out after 180s (process group killed)")
+    if proc.returncode != 0:
+        detail = (stderr_text or "").strip() or (stdout_text or "").strip() or (
+            f"subprocess exited with code {proc.returncode}"
+        )
         raise RuntimeError(detail)
-    stdout = (completed.stdout or "").strip()
+    stdout = (stdout_text or "").strip()
     if not stdout:
         raise RuntimeError("empty subprocess stdout")
     return json.loads(stdout)

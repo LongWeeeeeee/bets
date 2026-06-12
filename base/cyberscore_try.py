@@ -17981,6 +17981,13 @@ def _camoufox_proxy_kwargs_from_url(proxy_url: str) -> Dict[str, Any]:
 
 
 def _cyberscore_camoufox_proxy_kwargs() -> Dict[str, Any]:
+    # В sourcetv-режиме shared-браузер обслуживает только dota2protracker
+    # (листинги cyberscore не фетчатся), а прокси из пула на d2pt виснет —
+    # первый же герой ловил 180с таймаут и каждый следующий уходил в
+    # Camoufox-subprocess (лишние браузеры). Без явного
+    # CYBERSCORE_CAMOUFOX_PROXY_URL запускаемся напрямую.
+    if DLTV_SOURCE_MODE == "sourcetv" and not CYBERSCORE_CAMOUFOX_PROXY_URL:
+        return {}
     proxy_candidates = [
         CYBERSCORE_CAMOUFOX_PROXY_URL,
     ]
@@ -18247,6 +18254,14 @@ class _SharedCamoufoxSession:
                     _note_proxy_success(CURRENT_PROXY)
                 except Exception as exc:
                     future.set_exception(exc)
+                    if "inside the asyncio loop" in str(exc):
+                        # Поток «отравлен» незакрытым event loop'ом playwright
+                        # (после краха браузера) — любой следующий запуск в этом
+                        # потоке падает той же ошибкой. Завершаем поток; submit()
+                        # поднимет свежий с чистым состоянием.
+                        print("   🔄 Shared Camoufox: поток отравлен asyncio loop'ом — перезапуск потока")
+                        _close_browser("asyncio-poisoned thread")
+                        break
                     if reset_on_error:
                         self.request_reset()
                 finally:
@@ -18276,12 +18291,13 @@ def _run_shared_camoufox_job(label: str, callback, timeout: float = 120.0, retry
         return _shared_camoufox_session.submit(label, callback, timeout=timeout, reset_on_error=reset_on_error)
 
 
-# Shared-сессия Camoufox для pro-tracker может быть фатально сломана в данном
-# процессе (Playwright Sync API внутри asyncio loop / зависший браузер с
-# таймаутами по 180с на героя). Тогда переключаемся на чистый Camoufox
-# subprocess из dota2protracker (_fetch_protracker_payload_via_subprocess) и
-# больше не возвращаемся к shared-сессии до конца жизни процесса.
+# Дизайн: ВСЯ работа Camoufox идёт в одном shared-браузере. Subprocess-фолбэк
+# для pro-tracker — крайняя мера: помечаем shared-сессию сломанной только после
+# 2 НЕУДАЧ ПОДРЯД (между попытками — reset браузера; отравленный asyncio-loop
+# поток самолечится перезапуском потока и не считается фатальным).
 _PROTRACKER_SHARED_CAMOUFOX_BROKEN = False
+_PROTRACKER_SHARED_CONSECUTIVE_FAILS = 0
+_PROTRACKER_SHARED_FAILS_TO_BREAK = 2
 
 
 def _protracker_subprocess_fetcher() -> Optional[Any]:
@@ -18322,27 +18338,39 @@ def _fetch_protracker_payload_via_shared_camoufox(
             with contextlib.suppress(Exception):
                 page.close()
 
+    global _PROTRACKER_SHARED_CONSECUTIVE_FAILS
     if not _PROTRACKER_SHARED_CAMOUFOX_BROKEN:
         try:
-            return _run_shared_camoufox_job(
+            result = _run_shared_camoufox_job(
                 f"dota2protracker:{slug}", _job, timeout=180, retry=False, reset_on_error=False
             )
+            _PROTRACKER_SHARED_CONSECUTIVE_FAILS = 0
+            return result
         except Exception as exc:
-            fatal = (
-                "Sync API inside the asyncio loop" in str(exc)
-                or isinstance(exc, TimeoutError)
-                or type(exc).__name__ == "TimeoutError"
-            )
-            if fatal:
+            _PROTRACKER_SHARED_CONSECUTIVE_FAILS += 1
+            if "inside the asyncio loop" in str(exc):
+                # Поток shared-сессии перезапустится сам (см. _worker) —
+                # не считаем это фатальным для shared-режима.
+                print(
+                    "   ⚠️ Shared Camoufox pro-tracker: asyncio-poisoned поток "
+                    f"(fail {_PROTRACKER_SHARED_CONSECUTIVE_FAILS}/{_PROTRACKER_SHARED_FAILS_TO_BREAK}) "
+                    "— этот герой через subprocess, поток перезапущен"
+                )
+            else:
+                # Зависший браузер/страница: просим reset, чтобы следующий
+                # герой получил свежий браузер.
+                _shared_camoufox_session.request_reset()
+                print(
+                    f"   ⚠️ Shared Camoufox pro-tracker fetch failed ({type(exc).__name__}: {exc}) "
+                    f"(fail {_PROTRACKER_SHARED_CONSECUTIVE_FAILS}/{_PROTRACKER_SHARED_FAILS_TO_BREAK}) "
+                    "— этот герой через subprocess, браузер будет пересоздан"
+                )
+            if _PROTRACKER_SHARED_CONSECUTIVE_FAILS >= _PROTRACKER_SHARED_FAILS_TO_BREAK:
                 _PROTRACKER_SHARED_CAMOUFOX_BROKEN = True
                 print(
                     "   ⚠️ Shared Camoufox для pro-tracker помечен сломанным "
-                    f"({type(exc).__name__}: {exc}) — все следующие фетчи через Camoufox subprocess"
-                )
-            else:
-                print(
-                    f"   ⚠️ Shared Camoufox pro-tracker fetch failed ({type(exc).__name__}: {exc}) "
-                    "— fallback на Camoufox subprocess для этого героя"
+                    f"({_PROTRACKER_SHARED_CONSECUTIVE_FAILS} неудачи подряд) — "
+                    "все следующие фетчи через Camoufox subprocess"
                 )
     fallback_fetcher = _protracker_subprocess_fetcher()
     if fallback_fetcher is None:
