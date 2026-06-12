@@ -4102,8 +4102,8 @@ def _late_pre27_watcher_snapshot(
     if current_game_time >= target_game_time:
         return {"threshold": None, "status_label": ""}
 
-    # Gate: if opposite team has an early star, block dispatch before 21:00
-    if bool(source.get("has_opposite_early_star")) and current_game_time < 21 * 60:
+    # Gate: if opposite team has an early star, block dispatch before 24:00
+    if bool(source.get("has_opposite_early_star")) and current_game_time < 24 * 60:
         return {
             "threshold": None,
             "status_label": str(
@@ -4782,10 +4782,10 @@ def _late_pre27_dominance_snapshot(
     if current_game_time >= target_game_time:
         return {"threshold": None, "status_label": ""}
 
-    # Gate: if the opposite team has an early star, block dispatch before 20:00
+    # Gate: if the opposite team has an early star, block dispatch before 24:00
     # (opposite early = early-star on a different side than target/late). This prevents
-    # short-lived netw spikes at 10-19 min from triggering against still-active early window.
-    if bool(source.get("has_opposite_early_star")) and current_game_time < 21 * 60:
+    # short-lived netw spikes at 10-23 min from triggering against still-active early window.
+    if bool(source.get("has_opposite_early_star")) and current_game_time < 24 * 60:
         return {
             "threshold": None,
             "status_label": str(
@@ -5604,9 +5604,10 @@ def _format_pipeline_probe_phase_block(title: str, data: Optional[Dict[str, Any]
 
 
 # Порог уверенности позиций sourcetv (stats_conf перестановочного резолвера
-# probe): ниже порога — шлём админ-алерт с драфтом для ручной перепроверки.
+# probe): ниже порога — варнинг с драфтом добавляется в текст основного
+# сигнала этой карты (НЕ отдельным сообщением).
 SOURCETV_POS_RECHECK_CONF = float(os.getenv("SOURCETV_POS_RECHECK_CONF", "0.65"))
-_SOURCETV_POS_ALERTED_KEYS: set = set()
+_SOURCETV_POS_WARNING_BY_KEY: Dict[str, str] = {}
 
 
 def _maybe_alert_low_confidence_sourcetv_positions(
@@ -5617,8 +5618,6 @@ def _maybe_alert_low_confidence_sourcetv_positions(
     radiant_heroes_and_pos: Optional[Dict[str, Any]],
     dire_heroes_and_pos: Optional[Dict[str, Any]],
 ) -> None:
-    if match_key in _SOURCETV_POS_ALERTED_KEYS:
-        return
     meta = data.get("_pos_resolution") if isinstance(data, dict) else None
     if not isinstance(meta, dict):
         return
@@ -5636,24 +5635,17 @@ def _maybe_alert_low_confidence_sourcetv_positions(
         ):
             low_sides.append((side_name or side_key, side_meta, side_draft))
     if not low_sides:
+        _SOURCETV_POS_WARNING_BY_KEY.pop(str(match_key), None)
         return
-    _SOURCETV_POS_ALERTED_KEYS.add(match_key)
-    lines = [
-        "⚠️ Низкая уверенность позиций (sourcetv) — перепроверь драфт:",
-        f"{radiant_team_name} vs {dire_team_name}",
-        str(match_key),
-    ]
+    lines = ["⚠️ Низкая уверенность позиций — перепроверь драфт:"]
     for side_name, side_meta, side_draft in low_sides:
         lines.append(
-            f"\n{side_name}: stats_conf={float(side_meta.get('stats_conf') or 0):.2f}, "
-            f"raw_known={side_meta.get('raw_known')}, raw_matched={side_meta.get('raw_matched')}"
+            f"{side_name}: conf={float(side_meta.get('stats_conf') or 0):.2f} "
+            f"(история: {side_meta.get('raw_known')}/5 игроков)"
         )
         lines.append(_format_pipeline_probe_draft_side(side_draft))
-    try:
-        send_message("\n".join(lines), admin_only=True)
-        print(f"   📨 Админ-алерт о низкой уверенности позиций отправлен: {match_key}")
-    except Exception as exc:
-        print(f"   ⚠️ Не удалось отправить алерт позиций: {exc}")
+    _SOURCETV_POS_WARNING_BY_KEY[str(match_key)] = "\n".join(lines)
+    print(f"   ⚠️ Низкая уверенность позиций — варнинг будет добавлен к сигналу: {match_key}")
 
 
 def _format_pipeline_probe_draft_side(side: Optional[Dict[str, Any]]) -> str:
@@ -17810,15 +17802,31 @@ def _load_sent_signal_fingerprints() -> Dict[str, float]:
     }
 
 
-def _signal_fingerprint_already_sent(match_key: str) -> Optional[str]:
+def _signal_dedup_key(match_key: str, message_text: Any) -> Optional[str]:
+    """Ключ дедупа = отпечаток карты + нормализованный заголовок ставки.
+
+    Заголовок (первая строка «СТАВКА НА …») различает РАЗНЫЕ сигналы одной
+    карты (early kills / late / обычная ставка) — дедупим только идентичные
+    ставки между инстансами, а не все сигналы карты подряд.
+    """
     fingerprint = _SIGNAL_DEDUP_FINGERPRINTS.get(str(match_key))
     if not fingerprint:
         return None
-    return fingerprint if fingerprint in _load_sent_signal_fingerprints() else None
+    text = str(message_text or "").strip()
+    header = text.splitlines()[0] if text else ""
+    header_norm = re.sub(r"[^a-z0-9а-яё]+", "", header.lower())
+    return f"{fingerprint}|{header_norm}"
 
 
-def _signal_fingerprint_mark_sent(match_key: str) -> None:
-    fingerprint = _SIGNAL_DEDUP_FINGERPRINTS.get(str(match_key))
+def _signal_fingerprint_already_sent(match_key: str, message_text: Any) -> Optional[str]:
+    dedup_key = _signal_dedup_key(match_key, message_text)
+    if not dedup_key:
+        return None
+    return dedup_key if dedup_key in _load_sent_signal_fingerprints() else None
+
+
+def _signal_fingerprint_mark_sent(match_key: str, message_text: Any) -> None:
+    fingerprint = _signal_dedup_key(match_key, message_text)
     if not fingerprint:
         return
     entries = _load_sent_signal_fingerprints()
@@ -17854,7 +17862,12 @@ def _deliver_and_persist_signal(
                 f"(reason={bookmaker_reason}) для {match_key}"
             )
             return False
-    duplicate_fingerprint = _signal_fingerprint_already_sent(match_key)
+    # Варнинг о неуверенных позициях sourcetv добавляется в текст основного
+    # сигнала (не отдельным сообщением).
+    pos_warning = _SOURCETV_POS_WARNING_BY_KEY.get(str(match_key))
+    if pos_warning and pos_warning not in message_text:
+        message_text = f"{message_text.rstrip()}\n\n{pos_warning}"
+    duplicate_fingerprint = _signal_fingerprint_already_sent(match_key, message_text)
     if duplicate_fingerprint:
         print(
             "   🔁 Дубль: сигнал по этой карте уже отправлен другим инстансом "
@@ -17896,7 +17909,7 @@ def _deliver_and_persist_signal(
         f"mirror_to_vk={not SIGNAL_SEND_ADMIN_ONLY}, "
         f"reason={add_url_reason})"
     )
-    _signal_fingerprint_mark_sent(match_key)
+    _signal_fingerprint_mark_sent(match_key, message_text)
     if bookmaker_decision:
         _log_bookmaker_source_snapshot(match_key, decision=bookmaker_decision)
     if defer_add_url:

@@ -711,7 +711,8 @@ def test_late_all_weak_early_uses_watcher_instead_of_dominance_grid(monkeypatch)
         monkeypatch,
         BranchScenario(
             name="late_all_weak_early_pre27_watcher_not_dominance",
-            game_time_seconds=(23 * 60) + 51,
+            # 24:51 — за гейтом opposite-early (блок до 24:00), внутри окна [24,27)
+            game_time_seconds=(24 * 60) + 51,
             target_side="radiant",
             target_networth_diff=-5000,
             has_early_star=True,
