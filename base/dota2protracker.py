@@ -358,25 +358,41 @@ def proxy_kwargs(proxy_url):
 
 payload = {"matchups": {}, "synergies": {}}
 
-# Каждый запуск subprocess = свежий случайный fingerprint Camoufox;
-# случайная ОС даёт ротацию User-Agent/navigator между запусками.
-launch_kwargs = {
-    "headless": True,
-    "os": random.choice(["windows", "macos", "linux"]),
-    "block_webrtc": True,
-    "enable_cache": False,
-    "humanize": True,
-}
 _proxy = proxy_kwargs(proxy_url)
-if _proxy:
-    # geoip согласует timezone/locale fingerprint с IP прокси
-    launch_kwargs["geoip"] = True
-launch_kwargs.update(_proxy)
 
-with camoufox.Camoufox(
-    args=["--disable-blink-features=AutomationControlled"],
-    **launch_kwargs,
-) as browser:
+def build_launch_kwargs(os_choice):
+    kw = {
+        "headless": True,
+        "block_webrtc": True,
+        "enable_cache": False,
+        "humanize": True,
+    }
+    if os_choice is not None:
+        kw["os"] = os_choice
+    if _proxy:
+        # geoip согласует timezone/locale fingerprint с IP прокси
+        kw["geoip"] = True
+    kw.update(_proxy)
+    return kw
+
+def launch_browser():
+    # Случайная ОС = ротация UA/navigator. Но browserforge иногда не может
+    # сгенерировать fingerprint для конкретной комбинации (ValueError: No
+    # headers...). Поэтому ретраим по разным ОС, затем без os-ограничения.
+    candidates = list(random.sample(["windows", "macos", "linux"], 3)) + [None]
+    last_err = None
+    for os_choice in candidates:
+        try:
+            return camoufox.Camoufox(
+                args=["--disable-blink-features=AutomationControlled"],
+                **build_launch_kwargs(os_choice),
+            )
+        except ValueError as e:
+            last_err = e
+            continue
+    raise last_err
+
+with launch_browser() as browser:
     page = browser.new_page()
     page.goto(f"{BASE_URL}/hero/{slug}", wait_until="networkidle", timeout=30000)
     for pos in ["1", "2", "3", "4", "5"]:

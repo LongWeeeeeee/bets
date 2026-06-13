@@ -18286,14 +18286,23 @@ class _SharedCamoufoxSession:
                 browser_cm = camoufox.Camoufox(**browser_options)
                 browser = browser_cm.__enter__()
             except Exception as exc:
-                if not browser_options.get("geoip") or not _is_camoufox_geoip_launch_error(exc):
-                    raise
                 with contextlib.suppress(Exception):
                     if browser_cm is not None:
                         browser_cm.__exit__(None, None, None)
+                    browser_cm = None
+                geoip_fail = browser_options.get("geoip") and _is_camoufox_geoip_launch_error(exc)
+                # browserforge не может сгенерировать fingerprint для части
+                # комбинаций рандомной ОС (ValueError: No headers...). Фолбэк:
+                # фиксируем os=windows (плюс снимаем geoip, если это он упал).
+                headers_fail = "No headers based on this input" in str(exc) or isinstance(exc, ValueError)
+                if not geoip_fail and not headers_fail:
+                    raise
                 fallback_options = dict(browser_options)
-                fallback_options.pop("geoip", None)
-                print(f"⚠️ Shared Camoufox geoip launch failed, retrying without geoip: {exc}")
+                if geoip_fail:
+                    fallback_options.pop("geoip", None)
+                if headers_fail:
+                    fallback_options["os"] = "windows"
+                print(f"⚠️ Shared Camoufox launch failed ({type(exc).__name__}), retry fallback: {exc}")
                 browser_cm = camoufox.Camoufox(**fallback_options)
                 browser = browser_cm.__enter__()
             launched_at = time.time()
