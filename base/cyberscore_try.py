@@ -9258,15 +9258,31 @@ CYBERSCORE_EXTRA_NAME_TIERS: List[int] = _parse_csv_int_list(
 # турнира/лиги lower() + split() по пробелам; если хотя бы один токен входит
 # в этот список — матч разрешаем. Используется и для cyberscore tier3/4
 # admission, и для sourcetv league filter.
+# ВНИМАНИЕ: одиночный 'esports' НАМЕРЕННО убран — он ловил организаторов
+# ('Being Esports', 'X Esports') и протаскивал мусорные лиги. Конкретные
+# esports-турниры разрешаем через многословные фразы ниже.
 TOURNAMENT_TITLE_ALLOW_KEYWORDS = frozenset({
     'dreamleague', 'blast', 'dacha', 'betboom',
-    'fissure', 'pgl', 'esports', 'international',
+    'fissure', 'pgl', 'international',
     'european', 'epl', 'esl', 'cct',
 })
 
+# Многословные фразы — матч по ПОДСТРОКЕ в полном названии (не по токену),
+# чтобы пропускать только конкретные esports-турниры, а не любую лигу
+# с организатором '... Esports'.
+TOURNAMENT_TITLE_ALLOW_PHRASES = (
+    'esports nations',
+    'esports world',
+    'global esports',
+    'esports championship',
+)
+
 
 def _title_matches_allow_keywords(title: Any) -> bool:
-    return bool(TOURNAMENT_TITLE_ALLOW_KEYWORDS & set(str(title or "").lower().split()))
+    title_lower = str(title or "").lower()
+    if TOURNAMENT_TITLE_ALLOW_KEYWORDS & set(title_lower.split()):
+        return True
+    return any(phrase in title_lower for phrase in TOURNAMENT_TITLE_ALLOW_PHRASES)
 
 
 def _build_cyberscore_extra_tournament_url(tournament_id: int) -> str:
