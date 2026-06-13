@@ -6398,6 +6398,22 @@ def _fetch_sourcetv_delayed_match_state(json_url: str) -> Optional[Dict[str, Opt
     return {"game_time": game_time_value, "radiant_lead": lead_value}
 
 
+def _sourcetv_delayed_league_name(json_url: Optional[str]) -> Optional[str]:
+    """league_name матча из моста по sourcetv://-URL (None если матча нет в мосте)."""
+    id_match = re.search(r"sourcetv://matches/(\d+)", str(json_url or ""))
+    if not id_match:
+        return None
+    try:
+        with open("runtime/sourcetv_matches.json") as f:
+            matches = json.load(f)
+    except Exception:
+        return None
+    payload = matches.get(id_match.group(1))
+    if not isinstance(payload, dict):
+        return None
+    return str(payload.get("league_name") or "")
+
+
 def _fetch_delayed_match_state(json_url: Optional[str]) -> Optional[Dict[str, Optional[float]]]:
     if not json_url:
         return None
@@ -6611,6 +6627,16 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
         if _is_url_processed(match_key):
             _drop_delayed_match(match_key, reason="already_processed")
             continue
+        # League-guard: фильтр лиг применяется в get_heads только при первичном
+        # приёме, но delayed-очередь живёт независимо (и переживает рестарт со
+        # старым кодом). Если sourcetv-матч жив в мосте и его лига вне allowlist —
+        # дропаем, чтобы мусорный турнир не ушёл по таймеру watcher'а.
+        if str(payload.get("json_url") or "").startswith("sourcetv://"):
+            _gd_league = _sourcetv_delayed_league_name(payload.get("json_url"))
+            if _gd_league and not _title_matches_allow_keywords(_gd_league):
+                _drop_delayed_match(match_key, reason="league_not_in_allowlist")
+                print(f"   🚫 Delayed дроп: лига вне allowlist ({_gd_league}) — {match_key}")
+                continue
         next_retry_at_raw = payload.get("next_retry_at")
         try:
             next_retry_at = float(next_retry_at_raw) if next_retry_at_raw is not None else 0.0
