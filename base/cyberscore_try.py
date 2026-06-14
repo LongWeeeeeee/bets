@@ -167,16 +167,11 @@ SKIPPED_LIVE_LEAGUE_TITLES = {
     "blast slam 7: southeast asia open qualifier 2",
 }
 
-# Dota account ids / steam ids for lineups we never want to process in live runtime.
-# Current banned-player denylist:
-# Norma -> 187123736
-# queezy -> 360263638
-# alberkaaa -> 363739653
-SKIPPED_PLAYER_ACCOUNT_IDS = {
-    187123736,
-    360263638,
-    363739653,
-}
+# Player denylist ОТКЛЮЧЁН по запросу: ни один игрок не банится, гейт
+# skip_player_denylist никогда не срабатывает (см. _find_skipped_player_account_ids,
+# который короткозамкнут на пустой результат). Множество оставлено пустым,
+# чтобы downstream-плюмбинг (inert) не требовал правок во всех dispatch-сайтах.
+SKIPPED_PLAYER_ACCOUNT_IDS: set = set()
 
 # Импорт Ultimate Inference предсказателя
 if str(SRC_DIR) not in sys.path:
@@ -239,24 +234,9 @@ def _find_skipped_player_account_ids(
     radiant_account_ids: Optional[List[int]],
     dire_account_ids: Optional[List[int]],
 ) -> Dict[str, List[int]]:
-    radiant_hits = sorted(
-        {
-            int(pid)
-            for pid in (radiant_account_ids or [])
-            if _coerce_int(pid) > 0 and int(pid) in SKIPPED_PLAYER_ACCOUNT_IDS
-        }
-    )
-    dire_hits = sorted(
-        {
-            int(pid)
-            for pid in (dire_account_ids or [])
-            if _coerce_int(pid) > 0 and int(pid) in SKIPPED_PLAYER_ACCOUNT_IDS
-        }
-    )
-    return {
-        "radiant": radiant_hits,
-        "dire": dire_hits,
-    }
+    # Player denylist отключён: всегда нет хитов → гейт skip_player_denylist
+    # никогда не блокирует матчи/команды.
+    return {"radiant": [], "dire": []}
 
 
 def _target_side_skipped_player_hits(
