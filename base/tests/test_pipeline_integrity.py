@@ -6691,3 +6691,56 @@ def test_stale_duplicate_live_map_payload_is_not_added_to_map_id_check_for_later
 
     assert parse_called["value"] is False
     assert add_url_calls == []
+
+
+def test_late_star_pub_table_decision_threshold_multiplier_deepens_threshold() -> None:
+    # Спекулятивный watcher x0.5: пороги 27+ comeback-таблицы умножаются на
+    # коэффициент, порог становится «глубже» → срабатывает на более глубоком
+    # дефиците, где основной (×1.0) ещё не готов.
+    saved = runtime.late_pub_comeback_table_thresholds_by_wr
+    runtime.late_pub_comeback_table_thresholds_by_wr = {70: {27: -6000.0}}
+    try:
+        base = runtime._late_star_pub_table_decision(
+            wr_level=70, game_time_seconds=27 * 60 + 5, target_networth_diff=-7000.0
+        )
+        spec = runtime._late_star_pub_table_decision(
+            wr_level=70,
+            game_time_seconds=27 * 60 + 5,
+            target_networth_diff=-7000.0,
+            threshold_multiplier=1.3,
+        )
+        assert base["ready"] is False
+        assert base["threshold"] == -6000.0
+        assert spec["ready"] is True
+        assert spec["threshold"] == pytest.approx(-7800.0)
+        assert spec["base_threshold"] == -6000.0
+        too_deep = runtime._late_star_pub_table_decision(
+            wr_level=70,
+            game_time_seconds=27 * 60 + 5,
+            target_networth_diff=-9000.0,
+            threshold_multiplier=1.3,
+        )
+        assert too_deep["ready"] is False
+    finally:
+        runtime.late_pub_comeback_table_thresholds_by_wr = saved
+
+
+def test_refresh_stake_multiplier_message_force_multiplier_half() -> None:
+    # force_multiplier навязывает фиксированный x0.5, минуя динамический расчёт
+    # (который для late WR70 + 2 хита дал бы x2).
+    message = "СТАВКА НА Team Alpha x2\nRadiant VS Dire\n"
+    refreshed = runtime._refresh_stake_multiplier_message(
+        message,
+        stake_multiplier_context={
+            "stake_team_name": "Team Alpha",
+            "target_side": "radiant",
+            "selected_late_sign": 1,
+            "has_selected_late_star": True,
+            "late_wr_pct": 70.0,
+            "late_star_hit_count": 2,
+        },
+        game_time_seconds=28 * 60,
+        radiant_lead=-5000.0,
+        force_multiplier=0.5,
+    )
+    assert refreshed.startswith("СТАВКА НА Team Alpha x0.5\n")

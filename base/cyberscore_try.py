@@ -1240,6 +1240,24 @@ ML_CONFIDENCE_SOURCE_LATE = _normalize_ml_confidence_source(
 )
 DELAYED_SIGNAL_TARGET_GAME_TIME = (20 * 60) + 20
 LATE_PUB_COMEBACK_TABLE_START_SECONDS = 27 * 60
+# Спекулятивный x0.5 watcher для 27+ comeback-таблицы: пороги основной таблицы
+# умножаются на этот коэффициент (порог «глубже» → более ранний/рисковый вход),
+# отправляется ставка x0.5. Активен только при late WR >= MIN_WR и >= MIN_LATE_HITS
+# late star-хитов. Не отправляется, если основной watcher уже отправил по карте
+# (тогда delayed-запись уже закрыта), и не отправляется повторно (флаг
+# speculative_half_sent). Основной watcher работает независимо.
+LATE_PUB_COMEBACK_SPECULATIVE_THRESHOLD_MULT = _safe_float_env(
+    "LATE_PUB_COMEBACK_SPECULATIVE_THRESHOLD_MULT", 1.3
+)
+LATE_PUB_COMEBACK_SPECULATIVE_MIN_WR = _safe_int_env(
+    "LATE_PUB_COMEBACK_SPECULATIVE_MIN_WR", 70
+)
+LATE_PUB_COMEBACK_SPECULATIVE_MIN_LATE_HITS = _safe_int_env(
+    "LATE_PUB_COMEBACK_SPECULATIVE_MIN_LATE_HITS", 2
+)
+LATE_PUB_COMEBACK_SPECULATIVE_STAKE = _safe_float_env(
+    "LATE_PUB_COMEBACK_SPECULATIVE_STAKE", 0.5
+)
 DELAYED_SIGNAL_POLL_SECONDS = 30
 DELAYED_SIGNAL_NO_PROGRESS_TIMEOUT_SECONDS = 2 * 60 * 60
 DELAYED_SIGNAL_NO_DATA_TIMEOUT_SECONDS = 4 * 60 * 60
@@ -1364,6 +1382,7 @@ NETWORTH_STATUS_LATE_COMEBACK_MONITOR_WAIT = "late_comeback_monitor_wait"
 NETWORTH_STATUS_LATE_COMEBACK_TIMEOUT_NO_SEND = "late_comeback_timeout_no_send"
 NETWORTH_STATUS_LATE_PUB_TABLE_WAIT = "late_pub_table_wait"
 NETWORTH_STATUS_LATE_PUB_TABLE_SEND = "late_pub_table_send"
+NETWORTH_STATUS_LATE_PUB_TABLE_SPECULATIVE_SEND = "late_pub_table_speculative_half_send"
 NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT = "late_pre27_dominance_wait"
 NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT = "late_pre27_watcher_wait"
 NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT = "all_only_watcher_wait"
@@ -3888,6 +3907,7 @@ def _late_star_pub_table_decision(
     wr_level: Optional[int],
     game_time_seconds: Any,
     target_networth_diff: Optional[float],
+    threshold_multiplier: float = 1.0,
 ) -> Dict[str, Any]:
     try:
         current_game_time = float(game_time_seconds) if game_time_seconds is not None else None
@@ -3937,14 +3957,21 @@ def _late_star_pub_table_decision(
     source_minute = max(eligible_minutes)
     threshold = wr_thresholds.get(source_minute)
     try:
-        threshold_value = float(threshold) if threshold is not None else None
+        base_threshold_value = float(threshold) if threshold is not None else None
     except (TypeError, ValueError):
-        threshold_value = None
-    if threshold_value is None:
+        base_threshold_value = None
+    if base_threshold_value is None:
         return result
+    try:
+        mult = float(threshold_multiplier)
+    except (TypeError, ValueError):
+        mult = 1.0
+    threshold_value = base_threshold_value * mult
 
     result["available"] = True
     result["source_minute"] = source_minute
+    result["base_threshold"] = base_threshold_value
+    result["threshold_multiplier"] = mult
     result["threshold"] = threshold_value
     result["ready"] = bool(target_diff is not None and float(target_diff) >= float(threshold_value))
     return result
@@ -5824,6 +5851,7 @@ def _refresh_stake_multiplier_message(
     stake_multiplier_context: Optional[Dict[str, Any]],
     game_time_seconds: Optional[float],
     radiant_lead: Optional[float],
+    force_multiplier: Optional[float] = None,
 ) -> str:
     if not isinstance(message_text, str) or not message_text.startswith("СТАВКА НА "):
         return message_text
@@ -5835,7 +5863,18 @@ def _refresh_stake_multiplier_message(
         return message_text
     special_header_mode = str(stake_multiplier_context.get("special_header_mode") or "").strip()
 
-    multiplier = _stake_multiplier_for_signal(
+    if force_multiplier is not None:
+        # Спекулятивный watcher навязывает фиксированный множитель (x0.5),
+        # обходя динамический расчёт по hit-count/WR.
+        try:
+            multiplier = float(force_multiplier)
+        except (TypeError, ValueError):
+            multiplier = 0.5
+        multiplier_skip_recompute = True
+    else:
+        multiplier_skip_recompute = False
+    if not multiplier_skip_recompute:
+        multiplier = _stake_multiplier_for_signal(
         team_elo_meta=None,
         target_side=stake_multiplier_context.get("target_side"),
         selected_early_sign=stake_multiplier_context.get("selected_early_sign"),
@@ -6953,6 +6992,89 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                         updated_add_url_details["late_pub_comeback_table_threshold"] = float(
                             late_pub_comeback_table_decision.get("threshold") or 0.0
                         )
+                # ── Спекулятивный x0.5 watcher (27+) ────────────────────────
+                # Мы здесь = основной порог ещё НЕ достигнут (main not ready).
+                # Если глубокий порог (×MULT) достигнут, late WR >= MIN_WR и
+                # >= MIN_LATE_HITS late star-хитов, и спекулятив ещё не слался —
+                # шлём ставку x0.5 с defer_add_url=True (watcher остаётся жить,
+                # основной сигнал может прийти позже независимо). Если основной
+                # уже отправлен — delayed-запись закрыта и сюда мы не попадём.
+                if (
+                    not payload.get("speculative_half_sent")
+                    and monitor_target_diff is not None
+                    and late_pub_comeback_table_wr_level is not None
+                    and int(late_pub_comeback_table_wr_level) >= LATE_PUB_COMEBACK_SPECULATIVE_MIN_WR
+                ):
+                    _spec_smc = payload.get("stake_multiplier_context") or {}
+                    try:
+                        _spec_late_hits = int(_spec_smc.get("late_star_hit_count") or 0)
+                    except (TypeError, ValueError):
+                        _spec_late_hits = 0
+                    if (
+                        bool(_spec_smc.get("has_selected_late_star"))
+                        and _spec_late_hits >= LATE_PUB_COMEBACK_SPECULATIVE_MIN_LATE_HITS
+                    ):
+                        _spec_decision = _late_star_pub_table_decision(
+                            wr_level=late_pub_comeback_table_wr_level,
+                            game_time_seconds=current_game_time,
+                            target_networth_diff=monitor_target_diff,
+                            threshold_multiplier=LATE_PUB_COMEBACK_SPECULATIVE_THRESHOLD_MULT,
+                        )
+                        if _spec_decision.get("ready"):
+                            _spec_details = dict(updated_add_url_details)
+                            _spec_details["dispatch_status_label"] = (
+                                NETWORTH_STATUS_LATE_PUB_TABLE_SPECULATIVE_SEND
+                            )
+                            _spec_details["late_pub_comeback_speculative"] = True
+                            _spec_details["stake_multiplier"] = float(LATE_PUB_COMEBACK_SPECULATIVE_STAKE)
+                            _spec_details["late_pub_comeback_table_wr_level"] = int(
+                                late_pub_comeback_table_wr_level or 0
+                            )
+                            _spec_details["target_networth_diff"] = float(monitor_target_diff)
+                            if _spec_decision.get("source_minute") is not None:
+                                _spec_details["late_pub_comeback_table_minute"] = int(
+                                    _spec_decision.get("source_minute") or 0
+                                )
+                            if _spec_decision.get("threshold") is not None:
+                                _spec_details["late_pub_comeback_speculative_threshold"] = float(
+                                    _spec_decision.get("threshold") or 0.0
+                                )
+                            if _spec_decision.get("base_threshold") is not None:
+                                _spec_details["late_pub_comeback_table_threshold"] = float(
+                                    _spec_decision.get("base_threshold") or 0.0
+                                )
+                            _spec_msg = _refresh_stake_multiplier_message(
+                                payload.get("message", ""),
+                                stake_multiplier_context=_normalize_late_dispatch_smc(
+                                    payload.get("stake_multiplier_context")
+                                ),
+                                game_time_seconds=current_game_time,
+                                radiant_lead=current_radiant_lead,
+                                force_multiplier=float(LATE_PUB_COMEBACK_SPECULATIVE_STAKE),
+                            )
+                            _spec_msg = _refresh_message_bookmaker_block_for_dispatch(
+                                match_key, _spec_msg
+                            )
+                            _spec_sent = _deliver_and_persist_signal(
+                                match_key,
+                                _spec_msg,
+                                add_url_reason="star_signal_sent_late_pub_comeback_speculative_half",
+                                add_url_details=_spec_details,
+                                defer_add_url=True,
+                            )
+                            if _spec_sent:
+                                _update_delayed_match(match_key, speculative_half_sent=True)
+                                payload = dict(payload)
+                                payload["speculative_half_sent"] = True
+                                print(
+                                    "⏱️ Спекулятивный x0.5 отправлен (27+ comeback "
+                                    f"×{LATE_PUB_COMEBACK_SPECULATIVE_THRESHOLD_MULT}): {match_key} "
+                                    f"(min={_spec_decision.get('source_minute')}, "
+                                    f"thr={int(_spec_decision.get('threshold') or 0)}, "
+                                    f"diff={int(monitor_target_diff)}, "
+                                    f"wr={late_pub_comeback_table_wr_level}, "
+                                    f"late_hits={_spec_late_hits})"
+                                )
                 _update_delayed_match(
                     match_key,
                     add_url_details=updated_add_url_details,
