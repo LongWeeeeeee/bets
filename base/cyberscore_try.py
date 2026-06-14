@@ -1286,6 +1286,13 @@ NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS = max(
 NETWORTH_GATE_EARLY_CORE_HIGH_CONFIDENCE_MIN_LEAD = 0.0
 NETWORTH_GATE_EARLY_CORE_LOW_WR_MIN_LEAD = 800.0
 NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_END_SECONDS = 13 * 60
+# Жёсткий верхний потолок отправки «ранних килов» (kills heads-up / dual
+# pre-pass). Раньше fallback-ветка >=10 мин не имела потолка и могла слать
+# «Ранние килы» дублем к late на 24+ минуте. После этого времени ранние
+# килы НЕ шлём — остаётся только late watcher.
+NETWORTH_GATE_TIER1_EARLY_KILLS_DISPATCH_MAX_SECONDS = _safe_int_env(
+    "NETWORTH_GATE_TIER1_EARLY_KILLS_DISPATCH_MAX_SECONDS", 13 * 60
+)
 NETWORTH_GATE_TIER1_EARLY_KILLS_4_TO_12_MIN_DIFF = 500.0
 # Kills dispatch — new prep6 window:
 #   * pre-3 min: wait, unless lane_adv_dict aligned with target AND |adv| >= immediate threshold
@@ -25235,6 +25242,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     "— продолжаем late watcher"
                                 )
 
+                    if (
+                        kills_release_status_label_pp is not None
+                        and current_game_time >= NETWORTH_GATE_TIER1_EARLY_KILLS_DISPATCH_MAX_SECONDS
+                    ):
+                        # Окно ранних килов закрыто — не шлём kills-хедс-ап
+                        # дублем к late; оставляем только late watcher.
+                        if verbose_match_log:
+                            print(
+                                "   ⚠️ kills pre-pass: окно ранних килов закрыто "
+                                f"(game_time={int(current_game_time)} >= "
+                                f"{int(NETWORTH_GATE_TIER1_EARLY_KILLS_DISPATCH_MAX_SECONDS)}) "
+                                "— только late watcher"
+                            )
+                        kills_release_status_label_pp = None
                     if kills_release_status_label_pp is not None:
                         if not _skip_dispatch_for_processed_url(
                             check_uniq_url, "kills pre-pass dispatch"
