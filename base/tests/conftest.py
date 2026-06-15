@@ -20,4 +20,7 @@ def _isolate_sent_signal_fingerprints(tmp_path, monkeypatch):
             registry = getattr(module, "_SIGNAL_DEDUP_FINGERPRINTS", None)
             if isinstance(registry, dict):
                 registry.clear()
+            sent_keys = getattr(module, "_SENT_SIGNAL_DEDUP_KEYS", None)
+            if isinstance(sent_keys, set):
+                sent_keys.clear()
     yield

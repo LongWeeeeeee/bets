@@ -17929,6 +17929,13 @@ def _sent_signal_fingerprint_path() -> str:
     override = str(os.getenv("SENT_SIGNAL_FINGERPRINT_PATH", "")).strip()
     return override or SENT_SIGNAL_FINGERPRINT_PATH
 _SIGNAL_DEDUP_FINGERPRINTS: Dict[str, str] = {}
+# Атомарный in-process дедуп: ключи ставок, уже зарезервированных/отправленных
+# в ЭТОМ процессе. Закрывает гонку между delayed-sender потоком и главным
+# циклом (один матч жил и в delayed-очереди, и в live-обработке под разными
+# uniq-URL → оба слали один сигнал в одну секунду). Lock делает
+# check-and-reserve атомарным; файл остаётся для межпроцессного дедупа.
+_SENT_SIGNAL_FP_LOCK = threading.Lock()
+_SENT_SIGNAL_DEDUP_KEYS: set = set()
 
 
 def _signal_fingerprint_registry_key(match_key: str) -> str:
@@ -17999,23 +18006,57 @@ def _signal_fingerprint_already_sent(match_key: str, message_text: Any) -> Optio
     dedup_key = _signal_dedup_key(match_key, message_text)
     if not dedup_key:
         return None
+    with _SENT_SIGNAL_FP_LOCK:
+        if dedup_key in _SENT_SIGNAL_DEDUP_KEYS:
+            return dedup_key
     return dedup_key if dedup_key in _load_sent_signal_fingerprints() else None
+
+
+def _signal_fingerprint_try_reserve(match_key: str, message_text: Any) -> Tuple[bool, Optional[str]]:
+    """Атомарно зарезервировать dedup-ключ под отправку.
+
+    Возвращает (reserved, dedup_key):
+      * (True, key)   — ключ свободен, зарезервирован за этим вызовом → можно слать;
+      * (False, key)  — уже отправлен/зарезервирован (дубль) → слать НЕ нужно;
+      * (True, None)  — отпечаток недоступен (нет в реестре) → дедуп невозможен,
+                        пропускаем (поведение fail-open как раньше).
+    Закрывает TOCTOU-гонку между потоками: проверка in-memory сета и файла +
+    резервирование происходят под одним локом.
+    """
+    dedup_key = _signal_dedup_key(match_key, message_text)
+    if not dedup_key:
+        return True, None
+    with _SENT_SIGNAL_FP_LOCK:
+        if dedup_key in _SENT_SIGNAL_DEDUP_KEYS or dedup_key in _load_sent_signal_fingerprints():
+            return False, dedup_key
+        _SENT_SIGNAL_DEDUP_KEYS.add(dedup_key)
+    return True, dedup_key
+
+
+def _signal_fingerprint_release(dedup_key: Optional[str]) -> None:
+    """Снять резерв dedup-ключа (при доказанной неудаче отправки)."""
+    if not dedup_key:
+        return
+    with _SENT_SIGNAL_FP_LOCK:
+        _SENT_SIGNAL_DEDUP_KEYS.discard(dedup_key)
 
 
 def _signal_fingerprint_mark_sent(match_key: str, message_text: Any) -> None:
     fingerprint = _signal_dedup_key(match_key, message_text)
     if not fingerprint:
         return
-    entries = _load_sent_signal_fingerprints()
-    entries[fingerprint] = time.time()
-    store_path = _sent_signal_fingerprint_path()
-    try:
-        tmp_path = store_path + ".tmp"
-        with open(tmp_path, "w") as f:
-            json.dump(entries, f)
-        os.replace(tmp_path, store_path)
-    except Exception:
-        logger.exception("Failed to persist sent signal fingerprint")
+    with _SENT_SIGNAL_FP_LOCK:
+        _SENT_SIGNAL_DEDUP_KEYS.add(fingerprint)
+        entries = _load_sent_signal_fingerprints()
+        entries[fingerprint] = time.time()
+        store_path = _sent_signal_fingerprint_path()
+        try:
+            tmp_path = store_path + ".tmp"
+            with open(tmp_path, "w") as f:
+                json.dump(entries, f)
+            os.replace(tmp_path, store_path)
+        except Exception:
+            logger.exception("Failed to persist sent signal fingerprint")
 
 
 def _deliver_and_persist_signal(
@@ -18044,17 +18085,19 @@ def _deliver_and_persist_signal(
     pos_warning = _SOURCETV_POS_WARNING_BY_KEY.get(_signal_fingerprint_registry_key(match_key))
     if pos_warning and pos_warning not in message_text:
         message_text = f"{message_text.rstrip()}\n\n{pos_warning}"
-    duplicate_fingerprint = _signal_fingerprint_already_sent(match_key, message_text)
-    if duplicate_fingerprint:
+    # Атомарно резервируем dedup-ключ ДО отправки — закрывает гонку между
+    # delayed-sender потоком и главным циклом (дубль одной ставки в одну секунду).
+    reserved, dedup_key = _signal_fingerprint_try_reserve(match_key, message_text)
+    if not reserved:
         print(
-            "   🔁 Дубль: сигнал по этой карте уже отправлен другим инстансом "
-            f"(fingerprint={duplicate_fingerprint}) — отправка пропущена для {match_key}"
+            "   🔁 Дубль: сигнал по этой карте уже отправлен/резервируется "
+            f"(fingerprint={dedup_key}) — отправка пропущена для {match_key}"
         )
         try:
             add_url(
                 match_key,
                 reason=f"{add_url_reason}_cross_instance_dedup",
-                details=dict(add_url_details or {}, dedup_fingerprint=duplicate_fingerprint),
+                details=dict(add_url_details or {}, dedup_fingerprint=dedup_key),
             )
         except Exception:
             logger.exception("add_url failed after cross-instance dedup for %s", match_key)
@@ -18068,6 +18111,8 @@ def _deliver_and_persist_signal(
         )
     except TelegramSendError as exc:
         if exc.delivery_uncertain:
+            # Доставка неизвестна — резерв НЕ снимаем (матч и так блокируется
+            # как uncertain), чтобы повтор не сдублировал.
             _record_uncertain_delivery(
                 match_key,
                 reason="telegram_delivery_uncertain",
@@ -18079,6 +18124,8 @@ def _deliver_and_persist_signal(
                 "URL не будет заблокирован вне map_id_check.txt"
             )
             return False
+        # Доказанная неудача отправки — снимаем резерв, чтобы повтор смог отправить.
+        _signal_fingerprint_release(dedup_key)
         raise
     print(
         f"   📨 send_message OK для {match_key} "
