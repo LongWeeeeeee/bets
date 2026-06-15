@@ -25021,6 +25021,34 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and not queue_late_all_no_early_monitor
                 and not queue_all_only_watcher_monitor
             ):
+                # 27+ comeback-гейт для immediate-сигналов с late-звездой
+                # (late+all / late+early одного знака). Раньше они уходили
+                # немедленно без проверки нетворта — и ставка могла улететь на
+                # команду, отстающую на десятки тысяч (напр. -26743 на 27:28).
+                # Теперь на 27:00+ такой сигнал обязан пройти comeback-таблицу:
+                # если target глубже порога — НЕ отправляем (soft, матч
+                # перепроверяется и может сработать при камбэке в пределах порога).
+                if (
+                    has_selected_late_star
+                    and target_networth_diff is not None
+                    and current_game_time >= float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
+                ):
+                    _imm_cb_wr = _late_pub_table_wr_level_from_values(late_wr_pct, all_wr_pct)
+                    _imm_cb = _late_star_pub_table_decision(
+                        wr_level=_imm_cb_wr,
+                        game_time_seconds=current_game_time,
+                        target_networth_diff=target_networth_diff,
+                    )
+                    if not _imm_cb.get("ready"):
+                        print(
+                            "   ⛔ ВЕРДИКТ: 27+ comeback-гейт не пройден для immediate "
+                            f"(target_side={dispatch_message_side}, "
+                            f"target_diff={int(target_networth_diff)}, "
+                            f"threshold={int(_imm_cb.get('threshold') or 0)}, "
+                            f"wr={_imm_cb_wr}, game_time={int(current_game_time)}) "
+                            "— ставка не отправлена"
+                        )
+                        return return_status
                 if not bool(early_only_no_late_all_gate.get("valid")):
                     dispatch_mode = "immediate_star_rule"
                 networth_send_status_label = "star_rule_immediate_send"
