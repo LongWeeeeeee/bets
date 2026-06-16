@@ -275,6 +275,7 @@ def _run_branch_scenario(
     existing_delayed_payload: Optional[Dict[str, Any]] = None,
     lane_output: tuple[str, str, str] = ("", "", ""),
     lane_adv_standalone_kills_enabled: bool = False,
+    match_has_tier1_team: bool = True,
 ) -> BranchResult:
     heads, bodies = _build_heads_and_bodies()
     sent_messages: List[str] = []
@@ -313,6 +314,16 @@ def _run_branch_scenario(
         runtime,
         "LANE_ADV_STANDALONE_KILLS_ENABLED",
         bool(lane_adv_standalone_kills_enabled),
+        raising=False,
+    )
+    # Kills bets are gated to matches with >=1 Tier-1 team. The harness teams
+    # (1001/2002) are not in the Tier-1 list, so by default we make the gate
+    # inert (True) to preserve existing kills tests; a test can pass
+    # match_has_tier1_team=False to exercise the suppression path.
+    monkeypatch.setattr(
+        runtime,
+        "_match_has_tier1_team",
+        lambda *_args, **_kwargs: bool(match_has_tier1_team),
         raising=False,
     )
     monkeypatch.setattr(

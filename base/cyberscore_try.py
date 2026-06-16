@@ -1309,6 +1309,11 @@ NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND = "lane_adv_dict_standalone_
 # at minute 00 on the lane-dominating side, in parallel with other watchers.
 # Default ON in production; tests disable it unless explicitly exercising it.
 LANE_ADV_STANDALONE_KILLS_ENABLED = _env_flag("LANE_ADV_STANDALONE_KILLS_ENABLED", "1")
+# Kills bets ("СТАВКА НА Ранние килы" / standalone lane_adv kills) are only
+# dispatched when at least one team in the match is in the Tier-1 list
+# (id_to_names.tier_one_teams). Default ON; set KILLS_REQUIRE_TIER1_TEAM=0 to
+# restore the previous "kills for all matches" behaviour without a code change.
+KILLS_REQUIRE_TIER1_TEAM = _env_flag("KILLS_REQUIRE_TIER1_TEAM", "1")
 # The standalone trigger fires in the early kills window (up to 10:00).
 # Ideally at 00, but if the match becomes visible later we still send as soon
 # as we see it, as long as the gates hold. After this cutoff the regular
@@ -11956,6 +11961,19 @@ def _get_team_tier(team_id: int) -> int:
     return 3  # Unknown/Rest
 
 
+def _match_has_tier1_team(radiant_team_id: Any = 0, dire_team_id: Any = 0) -> bool:
+    """True when at least ONE team in the match is Tier-1 (OR semantics).
+
+    Distinct from ``_determine_star_signal_match_tier`` (which requires BOTH
+    teams to be Tier-1). Used to gate kills ("ставка на килы") dispatch. When
+    ``KILLS_REQUIRE_TIER1_TEAM`` is disabled the gate is inert (always True).
+    ``_get_team_tier`` already coerces non-int / unknown ids to tier 3.
+    """
+    if not KILLS_REQUIRE_TIER1_TEAM:
+        return True
+    return _get_team_tier(radiant_team_id) == 1 or _get_team_tier(dire_team_id) == 1
+
+
 def _normalize_tier_team_name_only(team_name: str) -> str:
     raw = (team_name or "").strip()
     if not raw:
@@ -17603,6 +17621,8 @@ def _try_dispatch_lane_adv_standalone_kills(
     early_star_sign: Optional[int] = None,
     has_early_star: bool = False,
     early_output_block: Optional[Dict[str, Any]] = None,
+    radiant_team_id: Any = 0,
+    dire_team_id: Any = 0,
 ) -> bool:
     """Standalone kills trigger: when ``|lane_adv_dict| ≥ 6`` we dispatch a
     kills bet on the dominating side, regardless of star block availability.
@@ -17627,6 +17647,15 @@ def _try_dispatch_lane_adv_standalone_kills(
     if not match_key:
         return False
     if not LANE_ADV_STANDALONE_KILLS_ENABLED:
+        return False
+    # Tier-1 gate: only fire kills bets when >=1 team is Tier-1. Placed before
+    # the _kills_pre_pass_sent_urls dedup reservation so a non-Tier-1 match
+    # never consumes the once-per-match kills slot.
+    if not _match_has_tier1_team(radiant_team_id, dire_team_id):
+        print(
+            "   ⛔ lane_adv_dict standalone kills заблокирован: нет команды из "
+            "Tier-1 листа (kills только для tier1-матчей)"
+        )
         return False
     # Only fire in the early kills window (0-10 min). Ideally at 00, but if the
     # match becomes visible later we still send as soon as we see it — up to
@@ -23179,6 +23208,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early_star_sign=early_local_sign,
                 has_early_star=has_early_local_star,
                 early_output_block=local_metrics.get('early_output'),
+                radiant_team_id=radiant_team_id,
+                dire_team_id=dire_team_id,
             )
             if sent:
                 _early_local_kills_done["sent"] = True
@@ -24737,6 +24768,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and float(early_wr_pct) >= 65.0
                 and isinstance(selected_early_diag, dict)
                 and len(selected_early_diag.get("hit_metrics") or []) >= 2
+                and _match_has_tier1_team(radiant_team_id, dire_team_id)
             )
             stake_multiplier_context = _build_stake_multiplier_context(
                 stake_team_name=stake_team_name,
@@ -24868,6 +24900,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early_star_sign=selected_early_sign,
                 has_early_star=has_selected_early_star,
                 early_output_block=s.get('early_output'),
+                radiant_team_id=radiant_team_id,
+                dire_team_id=dire_team_id,
             )
             current_game_time = float(game_time or 0.0)
             early65_sign = (
@@ -25115,7 +25149,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         return return_status
                     delivery_message_text = _refresh_stake_multiplier_message(
                         message_text,
-                        stake_multiplier_context=stake_multiplier_context,
+                        stake_multiplier_context=_normalize_late_dispatch_smc(stake_multiplier_context),
                         game_time_seconds=current_game_time,
                         radiant_lead=lead,
                     )
@@ -26287,7 +26321,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 return return_status
                             delivery_message_text = _refresh_stake_multiplier_message(
                                 message_text,
-                                stake_multiplier_context=stake_multiplier_context,
+                                stake_multiplier_context=_normalize_late_dispatch_smc(stake_multiplier_context),
                                 game_time_seconds=current_game_time,
                                 radiant_lead=lead,
                             )
@@ -26333,7 +26367,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             return return_status
                         delivery_message_text = _refresh_stake_multiplier_message(
                             message_text,
-                            stake_multiplier_context=stake_multiplier_context,
+                            stake_multiplier_context=_normalize_late_dispatch_smc(stake_multiplier_context),
                             game_time_seconds=current_game_time,
                             radiant_lead=lead,
                         )
@@ -27381,7 +27415,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     return return_status
                 delivery_message_text = _refresh_stake_multiplier_message(
                     message_text,
-                    stake_multiplier_context=stake_multiplier_context,
+                    stake_multiplier_context=_normalize_late_dispatch_smc(stake_multiplier_context),
                     game_time_seconds=current_game_time,
                     radiant_lead=lead,
                 )
@@ -27712,6 +27746,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     and primary_star_early_diag.get("valid")
                 ),
                 early_output_block=s.get('early_output'),
+                radiant_team_id=radiant_team_id,
+                dire_team_id=dire_team_id,
             )
 
             add_url(

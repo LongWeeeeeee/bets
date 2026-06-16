@@ -162,6 +162,19 @@ def test_same_sign_lane_adv_guard_marks_dict_opposition() -> None:
     assert guard["opposing_sources"] == ["lane_adv_dict"]
 
 
+def test_match_has_tier1_team_or_semantics(monkeypatch) -> None:
+    # One Tier-1 team is enough (OR semantics); unknown vs unknown is False.
+    monkeypatch.setattr(runtime, "KILLS_REQUIRE_TIER1_TEAM", True, raising=False)
+    # 7119388 = Team Spirit (Tier-1). 1001/2002 are synthetic non-listed ids.
+    assert runtime._match_has_tier1_team(7119388, 2002) is True
+    assert runtime._match_has_tier1_team(2002, 7119388) is True
+    assert runtime._match_has_tier1_team(1001, 2002) is False
+    assert runtime._match_has_tier1_team(0, 0) is False
+    # Kill-switch: when disabled the gate is inert (always True).
+    monkeypatch.setattr(runtime, "KILLS_REQUIRE_TIER1_TEAM", False, raising=False)
+    assert runtime._match_has_tier1_team(1001, 2002) is True
+
+
 def _same_sign_case(*, game_time_seconds: int, target_networth_diff: int, metrics_extra: dict) -> BranchScenario:
     return BranchScenario(
         name="same_sign_lane_adv",
@@ -295,6 +308,37 @@ def test_lane_adv_standalone_kills_fires_in_late_only_branch_when_enabled(monkey
     # Standalone kills uses defer_add_url=True, so add_url is not recorded
     # immediately; assert on the sent message + that the late watcher queued.
     assert "lane_adv_dict: +31.00" in kills_msgs[0]
+    assert result.queued_payload is not None
+    assert result.queued_payload["reason"] == "late_only_no_early_star_pre27_watcher"
+
+
+def test_lane_adv_standalone_kills_suppressed_when_no_tier1_team(monkeypatch) -> None:
+    # Same dominated-lanes late-only case as the positive test above, but
+    # neither team is Tier-1 -> the standalone kills bet must NOT fire, while
+    # the late watcher still queues (the regular/late bet path is unaffected).
+    case = replace(
+        _same_sign_case(
+            game_time_seconds=30,
+            target_networth_diff=-1000,
+            metrics_extra=ALIGNED_LANE_ADV,
+        ),
+        has_early_star=False,
+        early_sign=1,
+        has_late_star=True,
+        late_sign=1,
+    )
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        case,
+        lane_output=ALIGNED_LANE_OUTPUT,
+        lane_adv_standalone_kills_enabled=True,
+        match_has_tier1_team=False,
+    )
+
+    kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
+    assert kills_msgs == [], "kills must be suppressed when no team is Tier-1"
+    # The late watcher still queues -> non-kills dispatch path is unaffected.
     assert result.queued_payload is not None
     assert result.queued_payload["reason"] == "late_only_no_early_star_pre27_watcher"
 

@@ -32,6 +32,7 @@
 7. GATES (последовательность отсечений перед отправкой):
         │  ├─ NETWORTH gate     NETWORTH_GATE_* константы + _networth_monitor_hold_check ~3612
         │  ├─ EARLY-KILLS gate  _evaluate_kills_gate ~2441
+        │  ├─ KILLS TIER-1 gate kills-ставки («Ранние килы»: tier1_early_kills_mode + standalone lane_adv) шлются только если ≥1 команда Tier-1 (_match_has_tier1_team; env KILLS_REQUIRE_TIER1_TEAM=1)
         │  ├─ TIER threshold    STAR_THRESHOLD_WR_TIER1/2 (min WR)
         │  ├─ STAR consistency  _star_block_sign_consistency / _star_signal_dispatch_flags
         │  └─ DELAY/HOLD        _should_delay_star_signal ~3564 (отложить → delayed queue)
