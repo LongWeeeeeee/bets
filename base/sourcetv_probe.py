@@ -624,6 +624,20 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
     @client.on("auth_code_required")
     def _on_auth(is_2fa, _):
         code = _prompt("Steam Guard: ", env_var="STEAM_GUARD_CODE")
+        if not code and is_2fa:
+            # Мобильный аутентификатор: TOTP-код генерируется из shared_secret
+            # (env STEAM_SHARED_SECRET или creds["shared_secret"]) — авто-вход/реконнект.
+            # shared_secret в .maFile хранится base64 — generate_* ждёт bytes, декодируем.
+            shared = os.environ.get("STEAM_SHARED_SECRET") or creds.get("shared_secret")
+            if shared:
+                try:
+                    import base64 as _b64
+                    from steam.guard import generate_twofactor_code_for_time
+                    secret = shared if isinstance(shared, (bytes, bytearray)) else _b64.b64decode(shared)
+                    code = generate_twofactor_code_for_time(secret, time.time())
+                    log.info("2FA код сгенерирован из shared_secret")
+                except Exception as e:
+                    log.warning("Не удалось сгенерировать 2FA код из shared_secret: %s", e)
         if not code and not is_2fa:
             imap_login = os.environ.get("YANDEX_LOGIN")
             imap_pass  = os.environ.get("YANDEX_APP_PASSWORD")
@@ -634,8 +648,8 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                     log.info("Guard код из почты: %s", code)
         if not code:
             log.error("Требуется Steam Guard код, но stdin недоступен (фон). "
-                      "Задай STEAM_GUARD_CODE / YANDEX_LOGIN+YANDEX_APP_PASSWORD "
-                      "или запусти интерактивно.")
+                      "Задай STEAM_GUARD_CODE / STEAM_SHARED_SECRET / "
+                      "YANDEX_LOGIN+YANDEX_APP_PASSWORD или запусти интерактивно.")
             return
         kw = {"two_factor_code": code} if is_2fa else {"auth_code": code}
         client.login(username, password, **kw)
