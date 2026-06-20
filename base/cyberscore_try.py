@@ -9396,35 +9396,15 @@ CYBERSCORE_EXTRA_NAME_TIERS: List[int] = _parse_csv_int_list(
     )
 )
 
-# Однословные ключевые слова известных tier-турниров. Правило: название
-# турнира/лиги lower() + split() по пробелам; если хотя бы один токен входит
-# в этот список — матч разрешаем. Используется и для cyberscore tier3/4
-# admission, и для sourcetv league filter.
-# ВНИМАНИЕ: одиночный 'esports' НАМЕРЕННО убран — он ловил организаторов
-# ('Being Esports', 'X Esports') и протаскивал мусорные лиги. Конкретные
-# esports-турниры разрешаем через многословные фразы ниже.
-TOURNAMENT_TITLE_ALLOW_KEYWORDS = frozenset({
-    'dreamleague', 'blast', 'dacha', 'betboom',
-    'fissure', 'pgl', 'international',
-    'european', 'epl', 'esl', 'cct',
-})
-
-# Многословные фразы — матч по ПОДСТРОКЕ в полном названии (не по токену),
-# чтобы пропускать только конкретные esports-турниры, а не любую лигу
-# с организатором '... Esports'.
-TOURNAMENT_TITLE_ALLOW_PHRASES = (
-    'esports nations',
-    'esports world',
-    'global esports',
-    'esports championship',
+# Keyword-allowlist турниров/лиг вынесен в общий модуль ``league_keywords`` —
+# единый источник для cyberscore (этот файл) и sourcetv_probe (отбор keyword-лиг
+# для прямого опроса GetLiveLeagueGames). Имена реэкспортируются для обратной
+# совместимости (используются в admission и sourcetv league filter ниже).
+from league_keywords import (  # noqa: E402
+    TOURNAMENT_TITLE_ALLOW_KEYWORDS,
+    TOURNAMENT_TITLE_ALLOW_PHRASES,
+    title_matches_allow_keywords as _title_matches_allow_keywords,
 )
-
-
-def _title_matches_allow_keywords(title: Any) -> bool:
-    title_lower = str(title or "").lower()
-    if TOURNAMENT_TITLE_ALLOW_KEYWORDS & set(title_lower.split()):
-        return True
-    return any(phrase in title_lower for phrase in TOURNAMENT_TITLE_ALLOW_PHRASES)
 
 
 def _build_cyberscore_extra_tournament_url(tournament_id: int) -> str:
@@ -23743,6 +23723,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             all_metric_list = [
                 ('counterpick_1vs1', 'Counterpick_1vs1'),
                 ('counterpick_1vs2', 'Counterpick_1vs2'),
+                # Option C: post_lane-solo (7.41d) эмитится — показываем Solo и в подробном All-блоке.
+                ('solo', 'Solo'),
                 ('synergy_duo', 'Synergy_duo'),
                 ('synergy_trio', 'Synergy_trio'),
                 ('dota2protracker_cp1vs1', 'Dota2ProTracker_cp1vs1'),

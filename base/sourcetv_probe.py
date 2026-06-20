@@ -8,6 +8,12 @@ from steam.client import SteamClient
 from dota2.client import Dota2Client
 from dota2.enums import EDOTAGCMsg
 
+# Единый keyword-фильтр лиг (общий с cyberscore_try) — отбор НАШИХ лиг для
+# прямого опроса GetLiveLeagueGames(league_id), чтобы ловить их с драфта в обход
+# count-кэпа GetLiveLeagueGames(0) на пике.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from league_keywords import title_matches_allow_keywords
+
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("stv")
 log.setLevel(logging.INFO)
@@ -25,6 +31,29 @@ _LEAGUE_NAMES = {}          # league_id -> name (OpenDota /api/leagues)
 _LEAGUE_NAMES_FETCHED_AT = 0.0
 _LEAGUE_NAMES_TTL = 6 * 3600
 _LEAGUE_NAMES_RETRY = 600   # при пустом кэше пробуем чаще
+
+# ── Авто-обнаружение keyword-лиг (адаптивный hot-set + cold-sweep) ────────────
+KW_LEAGUE_IDLE_TTL = 6 * 3600   # активная keyword-лига истекает, если не видна столько
+KW_RECENT_FLOOR    = 18000      # нижняя граница "текущей эры" league_id для кандидатов
+KW_LEGACY_CEIL     = 60000      # верхняя граница (исключаем legacy-id вроде 65xxx)
+KW_SWEEP_BATCH     = 25         # сколько кандидатов опрашивать cold-sweep'ом за рефетч
+KW_CANDIDATES_REFRESH = 1800.0  # как часто пересобирать пул кандидатов из справочника
+
+def _keyword_candidate_league_ids():
+    """Свежие keyword-лиги из справочника OpenDota — кандидаты для cold-sweep.
+
+    Опираемся на токен/фразовый фильтр названий (общий с cyberscore) и окно id
+    'текущей эры', чтобы не дёргать сотни мёртвых/легаси лиг.
+    """
+    out = []
+    for lid, nm in _LEAGUE_NAMES.items():
+        try:
+            lid = int(lid)
+        except (TypeError, ValueError):
+            continue
+        if KW_RECENT_FLOOR <= lid < KW_LEGACY_CEIL and title_matches_allow_keywords(nm):
+            out.append(lid)
+    return sorted(out)
 
 def league_name(league_id):
     """Название лиги по league_id; справочник кэшируется с OpenDota."""
@@ -517,9 +546,27 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
     if isinstance(league_ids, int):
         league_ids = [league_ids]
 
+    # auto-режим: нет явного --league (league_ids == [0]) → обнаруживаем НАШИ
+    # keyword-лиги сами (broad (0) + активный hot-set + cold-sweep), а не
+    # полагаемся на один count-кэпнутый GetLiveLeagueGames(0).
+    auto_kw_mode = (not league_ids) or (list(league_ids) == [0])
+    if auto_kw_mode:
+        league_name(0)  # прогреть справочник OpenDota (для keyword-фильтра/кандидатов)
+
     if login_only:
         log.info("Режим --login-only: пропускаем проверку матчей, только сохранение login_key")
         games_list = []
+    elif auto_kw_mode:
+        # стартовый снимок (0), но держим только наши keyword-лиги; пустой набор
+        # на старте — норма (loop добьёт через активный набор + cold-sweep)
+        games_list = []
+        try:
+            for g in get_live_matches(0):
+                if title_matches_allow_keywords(league_name(g.get("league_id"))):
+                    games_list.append(g)
+        except Exception as e:
+            log.warning("Стартовый (0)-снимок не удался: %s", e)
+        log.info("auto-keyword: стартовый набор keyword-матчей: %d", len(games_list))
     else:
         games_list = []
         for lid in league_ids:
@@ -734,6 +781,11 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
             log.error("GC не ответил"); client.logout(); return
 
         last_refetch_ts = time.time()  # инициализация — первый рефетч через 60с
+        # авто-обнаружение keyword-лиг: активный hot-set + пул кандидатов для cold-sweep
+        active_kw_leagues = {}     # league_id -> last_seen_ts (видна в (0)/прямом опросе)
+        sweep_cursor = 0           # курсор round-robin по пулу кандидатов
+        kw_candidates = _keyword_candidate_league_ids() if auto_kw_mode else []
+        last_kw_refresh = time.time()
 
         while True:
             try:
@@ -748,12 +800,52 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                 if _refetch_now - last_refetch_ts >= 60.0:
                     last_refetch_ts = _refetch_now
                     try:
+                        # ── какие лиги опрашиваем этот рефетч ──────────────────
+                        if auto_kw_mode:
+                            # периодически пересобираем пул кандидатов из справочника
+                            if _refetch_now - last_kw_refresh >= KW_CANDIDATES_REFRESH:
+                                last_kw_refresh = _refetch_now
+                                kw_candidates = _keyword_candidate_league_ids()
+                            discovery_lids = [0]                          # broad live-снимок
+                            discovery_lids += sorted(active_kw_leagues)   # hot keyword-лиги
+                            if kw_candidates:                            # cold-sweep round-robin
+                                n = len(kw_candidates)
+                                batch = [kw_candidates[(sweep_cursor + i) % n]
+                                         for i in range(min(KW_SWEEP_BATCH, n))]
+                                sweep_cursor = (sweep_cursor + len(batch)) % n
+                                discovery_lids += batch
+                        else:
+                            discovery_lids = list(league_ids)
+                        discovery_lids = list(dict.fromkeys(discovery_lids))  # дедуп, порядок
+
                         fresh_games = []
-                        for _lid in league_ids:
+                        seen_fmids = set()
+                        for _lid in discovery_lids:
                             try:
-                                fresh_games.extend(get_live_matches(_lid))
+                                for fg in get_live_matches(_lid):
+                                    fmid = int(fg.get("match_id") or 0)
+                                    if not fmid or fmid in seen_fmids:
+                                        continue
+                                    # auto-режим: держим только НАШИ keyword-лиги
+                                    if auto_kw_mode and not title_matches_allow_keywords(
+                                        league_name(fg.get("league_id"))
+                                    ):
+                                        continue
+                                    seen_fmids.add(fmid)
+                                    fresh_games.append(fg)
                             except Exception as _re:
-                                log.warning("Рефетч лиги %d: %s", _lid, _re)
+                                log.warning("Рефетч лиги %s: %s", _lid, _re)
+
+                        # активный hot-set: освежаем по встреченным keyword-лигам, чистим по TTL
+                        if auto_kw_mode:
+                            for fg in fresh_games:
+                                _lk = int(fg.get("league_id") or 0)
+                                if _lk:
+                                    active_kw_leagues[_lk] = _refetch_now
+                            for _lk in [l for l, ts in active_kw_leagues.items()
+                                        if _refetch_now - ts > KW_LEAGUE_IDLE_TTL]:
+                                del active_kw_leagues[_lk]
+
                         fresh_mids = {int(fg["match_id"]) for fg in fresh_games}
                         for fg in fresh_games:
                             fmid = int(fg["match_id"])
