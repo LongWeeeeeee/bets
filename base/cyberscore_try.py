@@ -5546,10 +5546,12 @@ def _build_early_local_kills_message(
         ('synergy_duo', 'Synergy_duo'),
         ('synergy_trio', 'Synergy_trio'),
     ]
-    # All block omits Solo and the Dota2ProTracker line (protracker not ready).
+    # All block: Solo теперь выводится (Option C: post_lane-solo собран на 7.41d и эмитится).
+    # Dota2ProTracker line по-прежнему опущена (protracker not ready).
     all_metric_list = [
         ('counterpick_1vs1', 'Counterpick_1vs1'),
         ('counterpick_1vs2', 'Counterpick_1vs2'),
+        ('solo', 'Solo'),
         ('synergy_duo', 'Synergy_duo'),
         ('synergy_trio', 'Synergy_trio'),
     ]
@@ -27593,11 +27595,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     ('synergy_duo', 'Synergy_duo'),
                     ('synergy_trio', 'Synergy_trio'),
                 ]
-                # All block omits Solo (post-lane solo is never computed, so
-                # it is always None there).
+                # All block: Solo теперь выводится (Option C: post_lane-solo на 7.41d, эмитится).
                 tempo_all_metric_list = [
                     ('counterpick_1vs1', 'Counterpick_1vs1'),
                     ('counterpick_1vs2', 'Counterpick_1vs2'),
+                    ('solo', 'Solo'),
                     ('synergy_duo', 'Synergy_duo'),
                     ('synergy_trio', 'Synergy_trio'),
                     ('dota2protracker_cp1vs1', 'Dota2ProTracker_cp1vs1'),

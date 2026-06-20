@@ -28,12 +28,18 @@ def _match(
     minute_10_lead: int = 0,
     radiant_win: bool = True,
     imp: int = 0,
+    start_date_time: int = None,
 ) -> dict:
+    # По умолчанию матч на последнем патче, чтобы post_lane-solo записывался
+    # (Option C: post_lane-solo собирается только на последнем version-патче).
+    if start_date_time is None:
+        start_date_time = stats.LATEST_PATCH_START_TS
     leads = [0 for _ in range(duration)]
     if duration >= stats.POST_LANE_GATE_MINUTE:
         leads[stats.POST_LANE_GATE_MINUTE - 1] = minute_10_lead
     return {
         "id": match_id,
+        "startDateTime": start_date_time,
         "didRadiantWin": radiant_win,
         "radiantNetworthLeads": leads,
         "winRates": [0.6 if radiant_win else 0.4],
@@ -74,6 +80,30 @@ def test_post_lane_dict_records_winner_for_full_metric_set() -> None:
     assert post_lane_dict["1pos1_vs_6pos1"]["wins"] == 1
     assert post_lane_dict["1pos1_with_2pos2"]["wins"] == 1
     assert post_lane_dict["1pos1,2pos2,3pos3"]["wins"] == 1
+
+
+def test_post_lane_solo_scoped_to_latest_patch() -> None:
+    # Option C: post_lane-solo пишется ТОЛЬКО для матчей последнего version-патча,
+    # а cp/synergy post_lane — для любого матча, прошедшего post-lane gate.
+    old = {}
+    stats.analise_database(
+        _match(duration=95, minute_10_lead=1500, radiant_win=True,
+               start_date_time=stats.LATEST_PATCH_START_TS - 1),
+        {}, {}, {}, post_lane_dict=old,
+    )
+    assert "1pos1" not in old          # solo НЕ записан на старом патче
+    assert "6pos1" not in old
+    assert old["1pos1_vs_6pos1"]["wins"] == 1     # cp/synergy записаны (широко)
+    assert old["1pos1_with_2pos2"]["wins"] == 1
+
+    latest = {}
+    stats.analise_database(
+        _match(duration=95, minute_10_lead=1500, radiant_win=True,
+               start_date_time=stats.LATEST_PATCH_START_TS),
+        {}, {}, {}, post_lane_dict=latest,
+    )
+    assert latest["1pos1"]["wins"] == 1           # solo записан на последнем патче
+    assert latest["6pos1"]["wins"] == 0
 
 
 def test_post_lane_dict_requires_min_duration_and_minute_10_gate() -> None:

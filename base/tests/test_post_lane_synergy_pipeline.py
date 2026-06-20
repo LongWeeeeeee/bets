@@ -144,7 +144,9 @@ def test_synergy_and_counterpick_emits_post_lane_output() -> None:
 
     post_lane_output = result.get("post_lane_output")
     assert isinstance(post_lane_output, dict)
-    assert "solo" not in post_lane_output
+    # Option C: post_lane-solo теперь эмитится (собран на последнем патче 7.41d),
+    # раньше был выключен (name != 'post_lane_output').
+    assert "solo" in post_lane_output
     assert post_lane_output["counterpick_1vs1"] > 0
     assert post_lane_output["counterpick_1vs2"] > 0
     assert post_lane_output["synergy_duo"] > 0

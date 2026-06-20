@@ -644,31 +644,44 @@ def is_post_lane_match(match, if_check: bool = False):
     return (True, winner) if if_check else True
 
 
-def _add_combinations_to_dict(r_by_pos, d_by_pos, target_dict, r_value, d_value=None):
+# Старт последнего version-патча (для пер-патч скоупа solo в post_lane).
+# Динамически = самый свежий version-патч из keys (сейчас 7.41d=1780531200), авто-обновится.
+try:
+    from keys import DOTA_VERSION_PATCH_EVENTS as _DOTA_VER_EVENTS
+    LATEST_PATCH_START_TS = max(int(e["start_ts"]) for e in _DOTA_VER_EVENTS)
+except Exception:
+    LATEST_PATCH_START_TS = 1780531200  # 7.41d fallback (2026-06-04 UTC)
+
+
+def _add_combinations_to_dict(r_by_pos, d_by_pos, target_dict, r_value, d_value=None, write_solo=True):
     """
     Добавляет все комбинации героев в словарь.
     Оптимизированная версия для уменьшения дублирования кода.
-    
+
     Args:
         r_by_pos: словарь позиций героев Radiant
         d_by_pos: словарь позиций героев Dire
         target_dict: целевой словарь (обычный dict, будет содержать счетчики {'wins': N, 'games': M})
         r_value: значение для Radiant героев и комбинаций начинающихся с Radiant
         d_value: значение для Dire героев и комбинаций Dire (если None, используется r_value)
+        write_solo: писать ли solo-записи ({hero}pos{n}). Для post_lane передаём False на
+                    старых матчах, чтобы post_lane-solo собирался ТОЛЬКО на последнем патче,
+                    а cp/synergy post_lane оставались на широком окне.
     """
     if d_value is None:
         d_value = r_value
-    
+
     r_items = list(r_by_pos.items())
     d_items = list(d_by_pos.items())
-    
-    # Одиночные герои
-    for pos_num, hero_id in r_items:
-        _append_to_dict(target_dict, f'{hero_id}pos{pos_num}', r_value)
-    
-    for pos_num, hero_id in d_items:
-        _append_to_dict(target_dict, f'{hero_id}pos{pos_num}', d_value)
-    
+
+    # Одиночные герои (solo) — опционально (пер-патч скоуп для post_lane)
+    if write_solo:
+        for pos_num, hero_id in r_items:
+            _append_to_dict(target_dict, f'{hero_id}pos{pos_num}', r_value)
+
+        for pos_num, hero_id in d_items:
+            _append_to_dict(target_dict, f'{hero_id}pos{pos_num}', d_value)
+
     # Контрипики 1x2
     for r_pos, r_hero in r_items:
         for d_pos1, d_hero1 in d_items:
@@ -799,6 +812,12 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
         win_rates = match.get('winRates', [])
         did_radiant_win = win_rates[-1] > 0.5 if win_rates else False
 
+    # Последний патч? (post_lane-solo собираем только на нём; см. write_solo ниже)
+    try:
+        is_latest_patch = int(match.get('startDateTime', 0)) >= LATEST_PATCH_START_TS
+    except (TypeError, ValueError):
+        is_latest_patch = False
+
     # 3. Обработка EARLY словаря
     # Используем новый фильтр is_early_match()
     early_result, dominator = is_early_match(match)
@@ -818,8 +837,10 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
 
     if post_lane_dict is not None and is_post_lane_match(match):
         # После post-lane gate записываем фактического победителя матча.
+        # cp/synergy post_lane — широкое окно; solo — ТОЛЬКО последний патч (Option C).
         r_val = 1 if did_radiant_win else 0
         d_val = 0 if did_radiant_win else 1
-        _add_combinations_to_dict(r_by_pos, d_by_pos, post_lane_dict, r_val, d_val)
+        _add_combinations_to_dict(r_by_pos, d_by_pos, post_lane_dict, r_val, d_val,
+                                  write_solo=is_latest_patch)
 
     return True  # Матч успешно обработан

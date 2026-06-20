@@ -4154,7 +4154,9 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
         # pos1_vs_pos1 is intentionally not emitted into phase outputs anymore:
         # the current star/gate tables were rebuilt without this metric.
 
-        if name != 'post_lane_output' and has_all_solo and all(f'{side}_counterpick_solo' in output for side in ['radiant', 'dire']):
+        if has_all_solo and all(f'{side}_counterpick_solo' in output for side in ['radiant', 'dire']):
+            # post_lane-solo теперь ЭМИТИТСЯ (Option C: post_lane-solo собран на последнем
+            # патче 7.41d) — раньше был выключен (name != 'post_lane_output').
             # Для solo НЕ проверяем значимость (слишком мало данных)
             # ВНИМАНИЕ: solo теперь хранится по позициям и использует веса позиций
             phase_bucket['solo'] = get_diff(
