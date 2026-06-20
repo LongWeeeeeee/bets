@@ -23,6 +23,23 @@ TEMPO_FAMILY_FACTORS = {
 }
 CORE_POSITIONS = ("pos1", "pos2", "pos3")
 ALL_POSITIONS = ("pos1", "pos2", "pos3", "pos4", "pos5")
+
+# ---------------------------------------------------------------------------
+# Bayesian shrinkage constants (issue #4).
+# TEMPO_MIN_GAMES: minimum observed games before a record is considered reliable
+#   (records below this still participate via shrinkage, not dropped).
+# TEMPO_PRIOR_STRENGTH: the "virtual game count" of the prior (family/global mean)
+#   used in the posterior = (sum + K*prior_mean) / (games + K).
+# ---------------------------------------------------------------------------
+try:
+    TEMPO_MIN_GAMES: int = int(os.getenv("TEMPO_MIN_GAMES", "5"))
+except ValueError:
+    TEMPO_MIN_GAMES = 5
+
+try:
+    TEMPO_PRIOR_STRENGTH: float = float(os.getenv("TEMPO_PRIOR_STRENGTH", "20"))
+except ValueError:
+    TEMPO_PRIOR_STRENGTH = 20.0
 HERO_FEATURES_CANDIDATES = (
     Path("/Users/alex/Documents/ingame/data/hero_features_processed.json"),
     Path("/Users/alex/Documents/ingame/base/hero_features_processed.json"),
@@ -87,6 +104,46 @@ def _record_mean(record: dict, metric_name: str) -> Optional[float]:
     if total is None:
         return None
     return float(total) / games
+
+
+def _record_mean_shrunk(
+    record: Optional[dict],
+    metric_name: str,
+    *,
+    family_mean: Optional[float],
+    min_games: int = TEMPO_MIN_GAMES,
+    prior_strength: float = TEMPO_PRIOR_STRENGTH,
+) -> Optional[float]:
+    """
+    Bayesian-shrunk posterior mean for a dict-record (issue #4).
+
+    posterior = (sum + prior_strength * family_mean) / (games + prior_strength)
+
+    - If record is missing/empty AND family_mean is None → return None.
+    - If record is missing/empty BUT family_mean is available → use family_mean
+      (equivalent to 0 observed games, all weight on prior).
+    - Shrinkage prevents one-game outliers from dominating (especially in sparse
+      pro Tier-1 dictionaries).
+
+    Backwards-compat: existing callers use _record_mean which is unchanged.
+    """
+    games = 0
+    raw_sum = 0.0
+    if isinstance(record, dict):
+        games = int(record.get("games", 0) or 0)
+        raw_sum_val = record.get(f"{metric_name}_sum")
+        if raw_sum_val is not None:
+            try:
+                raw_sum = float(raw_sum_val)
+            except (TypeError, ValueError):
+                pass
+
+    if games <= 0 and family_mean is None:
+        return None
+
+    prior_m = family_mean if family_mean is not None else 0.0
+    posterior = (raw_sum + prior_strength * prior_m) / (games + prior_strength)
+    return float(posterior)
 
 
 def _minutes_played(match: dict) -> Optional[float]:
@@ -182,30 +239,7 @@ def process_tempo_pub_match(
     for player in match.get("players", []):
         player["__tempo_metrics"] = _player_pm_metrics(player, minutes_played)
 
-    for side_by_pos in (radiant_by_pos, dire_by_pos):
-        side_items = list(_iter_side_keys(side_by_pos))
-        for pos, hero_id, _player, metric_values in side_items:
-            _append_metrics(solo_dict, _hero_pos_key(hero_id, pos), metric_values)
-        for left, right in combinations(side_items, 2):
-            left_pos, left_hero_id, _left_player, left_metrics = left
-            right_pos, right_hero_id, _right_player, right_metrics = right
-            duo_key = _pair_key(
-                _hero_pos_key(left_hero_id, left_pos),
-                _hero_pos_key(right_hero_id, right_pos),
-                "_with_",
-            )
-            _append_metrics(synergy_duo_dict, duo_key, _sum_metric_values(left_metrics, right_metrics))
-
-    radiant_items = list(_iter_side_keys(radiant_by_pos))
-    dire_items = list(_iter_side_keys(dire_by_pos))
-    for r_item in radiant_items:
-        r_pos, r_hero_id, _r_player, r_metrics = r_item
-        r_key = _hero_pos_key(r_hero_id, r_pos)
-        for d_item in dire_items:
-            d_pos, d_hero_id, _d_player, d_metrics = d_item
-            d_key = _hero_pos_key(d_hero_id, d_pos)
-            cp_key = _pair_key(r_key, d_key, "_vs_")
-            _append_metrics(counterpick_1vs1_dict, cp_key, _sum_metric_values(r_metrics, d_metrics))
+    _emit_tempo_records(radiant_by_pos, dire_by_pos, solo_dict, synergy_duo_dict, counterpick_1vs1_dict)
 
     for player in match.get("players", []):
         player.pop("__tempo_metrics", None)
@@ -285,7 +319,27 @@ def build_tempo_draft_metrics(
     solo_dict: dict,
     synergy_duo_dict: dict,
     counterpick_1vs1_dict: dict,
+    *,
+    min_found_fraction: float = 1.0,
 ) -> dict:
+    """
+    Build tempo draft metrics for a match.
+
+    All existing positional arguments are unchanged (backward-compatible).
+
+    New kwarg:
+      min_found_fraction (float, default 1.0):
+        Fraction of required keys that must be found for a family to be
+        considered ``usable``.  Default 1.0 preserves the original all-or-nothing
+        ``complete`` semantics.  The output always includes both ``complete``
+        (strict: found == required) and ``usable`` (relaxed: found/required >=
+        min_found_fraction) so callers can choose which gate to apply.
+
+    Returns a dict keyed by family name.  Each family payload now includes:
+      - found_fraction: float  (found / required, or 0.0 if required == 0)
+      - usable: bool           (found_fraction >= min_found_fraction)
+      - complete: bool         (found == required, unchanged)
+    """
     radiant_keys = [_hero_pos_key(int(radiant_heroes_and_pos[pos]["hero_id"]), pos) for pos in ALL_POSITIONS]
     dire_keys = [_hero_pos_key(int(dire_heroes_and_pos[pos]["hero_id"]), pos) for pos in ALL_POSITIONS]
     all_solo_keys = radiant_keys + dire_keys
@@ -307,6 +361,8 @@ def build_tempo_draft_metrics(
             "required": required_count,
             "found": 0,
             "complete": False,
+            "found_fraction": 0.0,
+            "usable": False,
         }
         for metric_name in TEMPO_RATE_FIELDS:
             values = _values_for_keys(source_dict, keys, metric_name)
@@ -320,6 +376,11 @@ def build_tempo_draft_metrics(
         found_set = max(family_payload[metric_name]["found"] for metric_name in TEMPO_RATE_FIELDS)
         family_payload["found"] = found_set
         family_payload["complete"] = found_set == required_count
+        family_payload["found_fraction"] = (found_set / required_count) if required_count > 0 else 0.0
+        family_payload["usable"] = (
+            family_payload["found_fraction"] >= min_found_fraction
+            if required_count > 0 else False
+        )
         output[family_name] = family_payload
     return output
 
@@ -344,3 +405,196 @@ def load_tempo_dicts(base_dir: Path) -> tuple[dict, dict, dict]:
     duo = json.loads((base_dir / "tempo_synergy_duo_dict_raw.json").read_text(encoding="utf-8"))
     cp1v1 = json.loads((base_dir / "tempo_counterpick_1vs1_dict_raw.json").read_text(encoding="utf-8"))
     return solo, duo, cp1v1
+
+
+# ---------------------------------------------------------------------------
+# Shared emission helper (used by both pub and pro builders, issue #2).
+# Internal — not a public contract.
+# ---------------------------------------------------------------------------
+
+def _emit_tempo_records(
+    radiant_by_pos: dict,
+    dire_by_pos: dict,
+    solo_dict: dict,
+    synergy_duo_dict: dict,
+    counterpick_1vs1_dict: dict,
+) -> None:
+    """
+    Accumulate per-match tempo stats into the three family dicts.
+
+    Players in radiant_by_pos / dire_by_pos must already have a
+    ``__tempo_metrics`` key set (see _player_pm_metrics).
+    This function is called by both process_tempo_pub_match and
+    process_tempo_pro_match — sharing one code path prevents drift.
+    """
+    radiant_items = list(_iter_side_keys(radiant_by_pos))
+    dire_items = list(_iter_side_keys(dire_by_pos))
+
+    # Solo
+    for side_items in (radiant_items, dire_items):
+        for pos, hero_id, _player, metric_values in side_items:
+            _append_metrics(solo_dict, _hero_pos_key(hero_id, pos), metric_values)
+
+    # Synergy duo (within-team pairs)
+    for side_items in (radiant_items, dire_items):
+        side_list = list(side_items)
+        for left, right in combinations(side_list, 2):
+            left_pos, left_hero_id, _lp, left_metrics = left
+            right_pos, right_hero_id, _rp, right_metrics = right
+            duo_key = _pair_key(
+                _hero_pos_key(left_hero_id, left_pos),
+                _hero_pos_key(right_hero_id, right_pos),
+                "_with_",
+            )
+            _append_metrics(synergy_duo_dict, duo_key, _sum_metric_values(left_metrics, right_metrics))
+
+    # Counterpick 1vs1 (cross-team)
+    for r_pos, r_hero_id, _rp, r_metrics in radiant_items:
+        r_key = _hero_pos_key(r_hero_id, r_pos)
+        for d_pos, d_hero_id, _dp, d_metrics in dire_items:
+            d_key = _hero_pos_key(d_hero_id, d_pos)
+            cp_key = _pair_key(r_key, d_key, "_vs_")
+            _append_metrics(counterpick_1vs1_dict, cp_key, _sum_metric_values(r_metrics, d_metrics))
+
+
+# ---------------------------------------------------------------------------
+# Pro Tier-1 match processor (fix #2 — train/serve mismatch).
+# ---------------------------------------------------------------------------
+
+def process_tempo_pro_match(
+    match: dict,
+    solo_dict: dict,
+    synergy_duo_dict: dict,
+    counterpick_1vs1_dict: dict,
+    *,
+    min_start_ts: int = PATCH_739_RELEASE_TS,
+    tier_one_ids: Optional[frozenset] = None,
+    strict_positions: bool = True,
+) -> bool:
+    """
+    Process a single PRO match and accumulate tempo stats.
+
+    Mirrors process_tempo_pub_match but targets pro matches:
+    - requires is_pro_match(match) == True (inverse of pub)
+    - optionally filters to Tier-1 teams only (tier_one_ids)
+
+    Returns True if the match was processed, False if skipped.
+    Public signature: match, solo_dict, synergy_duo_dict, counterpick_1vs1_dict.
+    Optional kwargs do not break existing callers.
+    """
+    try:
+        from analise_database import is_pro_match
+        from maps_research import check_match_quality
+    except ImportError:
+        from base.analise_database import is_pro_match
+        from base.maps_research import check_match_quality
+
+    if not isinstance(match, dict):
+        return False
+    if not is_pro_match(match):
+        return False
+
+    # Optional tier-1 team filter (mirrors serving _determine_star_signal_match_tier)
+    if tier_one_ids is not None:
+        rt = match.get("radiantTeam") or {}
+        dt = match.get("direTeam") or {}
+        try:
+            r_tid = int(rt.get("id"))
+            d_tid = int(dt.get("id"))
+        except (TypeError, ValueError):
+            return False
+        if r_tid not in tier_one_ids or d_tid not in tier_one_ids:
+            return False
+
+    start_ts = match.get("startDateTime")
+    try:
+        start_ts = int(start_ts)
+    except (TypeError, ValueError):
+        return False
+    if start_ts < int(min_start_ts):
+        return False
+
+    minutes_played = _minutes_played(match)
+    if minutes_played is None:
+        return False
+
+    quality_ok, _ = check_match_quality(match, strict_lane_positions=strict_positions)
+    if not quality_ok:
+        return False
+
+    radiant_by_pos, dire_by_pos = extract_players_by_position(match)
+    if radiant_by_pos is None or dire_by_pos is None:
+        return False
+
+    for player in match.get("players", []):
+        player["__tempo_metrics"] = _player_pm_metrics(player, minutes_played)
+
+    _emit_tempo_records(radiant_by_pos, dire_by_pos, solo_dict, synergy_duo_dict, counterpick_1vs1_dict)
+
+    for player in match.get("players", []):
+        player.pop("__tempo_metrics", None)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Blend reader (B4 — pub+pro posterior, no pre-baked file needed).
+# ---------------------------------------------------------------------------
+
+def load_tempo_dicts_blended(
+    pro_dir: Path,
+    pub_dir: Path,
+    *,
+    prior_strength: float = TEMPO_PRIOR_STRENGTH,
+) -> tuple[dict, dict, dict]:
+    """
+    Load pro and pub dicts and blend them with Bayesian shrinkage (B4).
+
+    For each key present in pro_dict:
+        posterior = (pro_sum + prior_strength * pub_mean) / (pro_games + prior_strength)
+    Keys only in pub fallback to pub raw record (no shrinkage applied to pub-only keys).
+    Keys missing from both remain absent (fallback-hierarchy in C3 handles downstream).
+
+    Returns blended (solo, duo, cp1v1) dicts with the SAME record shape
+    {games, *_sum} so _record_mean works unchanged on the result.
+    prior_strength == 0 → pure pro (no blend).
+    prior_strength → ∞ → pure pub.
+    """
+    pro_solo, pro_duo, pro_cp1v1 = load_tempo_dicts(Path(pro_dir))
+    pub_solo, pub_duo, pub_cp1v1 = load_tempo_dicts(Path(pub_dir))
+
+    def _blend_dict(pro: dict, pub: dict) -> dict:
+        blended: dict = {}
+        all_keys = set(pro.keys()) | set(pub.keys())
+        for key in all_keys:
+            pro_rec = pro.get(key)
+            pub_rec = pub.get(key)
+            if pro_rec is None:
+                # key only in pub — keep as-is
+                blended[key] = pub_rec
+                continue
+            if pub_rec is None and prior_strength <= 0:
+                # pure pro mode
+                blended[key] = pro_rec
+                continue
+
+            # Blend: posterior record
+            pro_games = int(pro_rec.get("games", 0) or 0)
+            blended_rec: dict = {"games": 0}
+            for metric_name in TEMPO_RATE_FIELDS:
+                pro_sum = float(pro_rec.get(f"{metric_name}_sum", 0.0) or 0.0)
+                pub_mean = _record_mean(pub_rec, metric_name) if pub_rec is not None else None
+                if pub_mean is None:
+                    pub_mean = 0.0
+                # Posterior sum reconstructed so that _record_mean returns the posterior mean
+                pseudo_games = pro_games + prior_strength
+                pseudo_sum = pro_sum + prior_strength * pub_mean
+                blended_rec[f"{metric_name}_sum"] = pseudo_sum
+                blended_rec["games"] = pseudo_games  # same for all fields
+            blended[key] = blended_rec
+        return blended
+
+    return (
+        _blend_dict(pro_solo, pub_solo),
+        _blend_dict(pro_duo, pub_duo),
+        _blend_dict(pro_cp1v1, pub_cp1v1),
+    )

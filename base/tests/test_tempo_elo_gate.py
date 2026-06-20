@@ -93,3 +93,44 @@ def test_tempo_over_fallback_diagnostics_active_mids_relax():
     )
     assert isinstance(diag, dict)
     assert diag["threshold"] == 0.7000
+
+
+def test_tempo_elo_missing_uses_standard_threshold():
+    # D1 fix: elo_summary present as dict but ratings missing → standard threshold.
+    # Old (buggy) code: radiant_payload.get("base_rating", ..., 1500.0) → delta=0 → 0.85 (wrong).
+    # New code: both ratings must be non-None to apply ELO gate; otherwise standard.
+    elo_summary_empty = {"radiant": {}, "dire": {}}
+    runtime.TEMPO_OVER_SCORE_THRESHOLD = 0.9965
+    diag = runtime._compute_tempo_over_fallback_diagnostics(
+        radiant_heroes_and_pos={},
+        dire_heroes_and_pos={},
+        match_tier=1,
+        elo_summary=elo_summary_empty,
+    )
+    assert isinstance(diag, dict)
+    assert diag["threshold"] == 0.9965, (
+        f"D1 regression: missing ELO should give standard threshold 0.9965, got {diag['threshold']}"
+    )
+    assert diag["elo_reason"] == "elo_unavailable_standard"
+    assert diag["elo_delta"] is None
+
+
+def test_tempo_stomp_floor_guard_blocks_bloody_relax():
+    # D2 fix: stomp ELO (delta=200) + bloody hero (Spectre 67) → stomp floor wins.
+    # Stomp sets threshold to TEMPO_STOMP_FLOOR (1.25).
+    # Bloody would set it to min(1.25, 0.70) = 0.70 WITHOUT the stomp guard.
+    # WITH stomp guard: final threshold = max(0.70, TEMPO_STOMP_FLOOR) = 1.25.
+    runtime.TEMPO_STOMP_FLOOR = 1.2500
+    elo_stomp = {"radiant": {"base_rating": 2000.0}, "dire": {"base_rating": 1700.0}}  # delta=300
+    r_draft = {"pos1": 67, "pos2": 2, "pos3": 3, "pos4": 4, "pos5": 5}  # Spectre pos1
+    diag = runtime._compute_tempo_over_fallback_diagnostics(
+        radiant_heroes_and_pos=r_draft,
+        dire_heroes_and_pos={},
+        match_tier=1,
+        elo_summary=elo_stomp,
+    )
+    assert isinstance(diag, dict)
+    assert diag["threshold"] == 1.2500, (
+        f"D2 regression: stomp floor guard should prevent bloody-hero from dropping below stomp floor, got {diag['threshold']}"
+    )
+    assert diag["elo_reason"] == "elo_stomp_strict"

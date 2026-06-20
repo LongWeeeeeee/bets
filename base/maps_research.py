@@ -30,7 +30,8 @@ except ImportError:
         ("7.41", 1774310400, 1774656000),
         ("7.41a", 1774656000, 1775606400),
         ("7.41b", 1775606400, 1778025600),
-        ("7.41c", 1778025600, None),
+        ("7.41c", 1778025600, 1780531200),
+        ("7.41d", 1780531200, None),
     )
 import asyncio
 try:
@@ -253,7 +254,7 @@ class RateLimitTracker:
         async with self.lock:
             self.is_rate_limited = True
             self.rate_limit_time = time.time()
-            proxy_short = self.proxy_url.split('@')[-1] if '@' in self.proxy_url else self.proxy_url[:30]
+            proxy_short = (self.proxy_url.split('@')[-1] if '@' in (self.proxy_url or '') else (self.proxy_url or 'direct')[:30])
             print(f"⛔ API вернул rate limit для прокси {proxy_short}, блокируем на 3 минуты")
     
     async def record_request(self):
@@ -292,7 +293,7 @@ class ProxyAPIPool:
                     if await tracker.can_make_request():
                         # Выводим информацию при смене пары
                         if idx != previous_index:
-                            proxy_short = tracker.proxy_url.split('@')[-1] if '@' in tracker.proxy_url else tracker.proxy_url[:30]
+                            proxy_short = tracker.proxy_url.split('@')[-1] if '@' in (tracker.proxy_url or '') else (tracker.proxy_url or 'direct')[:30]
                             api_short = tracker.api_token[:20] + '...' if len(tracker.api_token) > 20 else tracker.api_token
                             print(f"🔄 Переключение на пару #{idx + 1}: Прокси={proxy_short}, API={api_short}")
                         
@@ -317,9 +318,10 @@ class ProxyAPIPool:
         timeout = request_kwargs.pop('timeout', 120)
         with requests.Session() as session:
             session.trust_env = False
+            proxies = {'http': proxy_url, 'https': proxy_url} if proxy_url else None
             response = session.post(
                 url,
-                proxies={'http': proxy_url, 'https': proxy_url},
+                proxies=proxies,
                 timeout=timeout,
                 **request_kwargs,
             )
@@ -353,7 +355,7 @@ class ProxyAPIPool:
                             
                     # Проверяем на rate limit от API
                     if isinstance(data, dict) and data.get('message') == 'API rate limit exceeded':
-                        proxy_short = tracker.proxy_url.split('@')[-1] if '@' in tracker.proxy_url else tracker.proxy_url[:30]
+                        proxy_short = tracker.proxy_url.split('@')[-1] if '@' in (tracker.proxy_url or '') else (tracker.proxy_url or 'direct')[:30]
                         print(f"⛔ API rate limit exceeded для прокси {proxy_short}")
                         
                         # Помечаем tracker как заблокированный
@@ -382,14 +384,14 @@ class ProxyAPIPool:
                     return data
                             
                 except Exception as e:
-                    proxy_short = tracker.proxy_url.split('@')[-1] if '@' in tracker.proxy_url else tracker.proxy_url[:30]
+                    proxy_short = tracker.proxy_url.split('@')[-1] if '@' in (tracker.proxy_url or '') else (tracker.proxy_url or 'direct')[:30]
                     print(f"❌ Ошибка запроса через прокси {proxy_short}: {e}")
                     
                     # При ошибке переключаемся на следующий tracker
                     old_index = self.current_index
                     self.current_index = (self.current_index + 1) % len(self.trackers)
                     next_tracker = self.trackers[self.current_index]
-                    next_proxy_short = next_tracker.proxy_url.split('@')[-1] if '@' in next_tracker.proxy_url else next_tracker.proxy_url[:30]
+                    next_proxy_short = next_tracker.proxy_url.split('@')[-1] if '@' in (next_tracker.proxy_url or '') else (next_tracker.proxy_url or 'direct')[:30]
                     next_api_short = next_tracker.api_token[:20] + '...' if len(next_tracker.api_token) > 20 else next_tracker.api_token
                     print(f"🔄 Переключение на пару #{self.current_index + 1} (из-за ошибки): Прокси={next_proxy_short}, API={next_api_short}")
                     retry_count += 1
@@ -615,7 +617,7 @@ async def retry_request_with_proxy_rotation(request_func, *args, max_retries=Non
                 # Принудительно переключаемся на следующий прокси
                 pool.current_index = (pool.current_index + 1) % len(pool.trackers)
                 next_tracker = pool.trackers[pool.current_index]
-                proxy_short = next_tracker.proxy_url.split('@')[-1] if '@' in next_tracker.proxy_url else next_tracker.proxy_url[:30]
+                proxy_short = next_tracker.proxy_url.split('@')[-1] if '@' in (next_tracker.proxy_url or '') else (next_tracker.proxy_url or 'direct')[:30]
                 print(f"🔄 Переключение на прокси #{pool.current_index + 1}: {proxy_short}")
                 
                 # Если перепробовали все прокси в цикле
@@ -837,11 +839,6 @@ async def get_maps_new(ids, mkdir,
 
                     if pro:
                         league = match.get('league') or {}
-                        if allowed_team_ids is not None:
-                            r_team = (match.get('radiantTeam') or {}).get('id')
-                            d_team = (match.get('direTeam') or {}).get('id')
-                            if r_team not in allowed_team_ids or d_team not in allowed_team_ids:
-                                continue
                         league_id = match.get('leagueId') or league.get('id')
                         if league_id is None:
                             continue
@@ -1051,6 +1048,10 @@ async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=Non
     if start_date_time is None:
         from keys import start_date_time as start_date_time_default
         start_date_time = start_date_time_default
+    # Клиентский порог даты: серверный startDateTime у Stratz таймаутит на свежих
+    # датах (NPGSQL TIMEOUT), поэтому в pub-ветке матчи фильтруем по дате на стороне
+    # клиента (Stratz отдаёт матчи newest-first), а не через серверный startDateTime.
+    threshold = int(start_date_time)
     matches = []
     player_ids = set()
     check = True
@@ -1064,8 +1065,7 @@ async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=Non
                   isAnonymous
                 }}
             matches(request:
-             {{startDateTime: {start_date_time},
-             take: 100,
+             {{take: 100,
               skip: {skip},
                gameModeIds: [22],
                  bracketIds: [8],
@@ -1269,24 +1269,41 @@ async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=Non
                     check = False
             else:
                 players_data = data.get('data', {}).get('players', [])
-                if players_data and any(len(player.get('matches') or []) == 100 for player in players_data):
+                # Серверный startDateTime убран (таймаутит на свежих датах) → фильтр по
+                # дате на клиенте. Stratz отдаёт матчи newest-first (desc): собираем
+                # матчи >= threshold и пагинируем игрока, пока на странице есть свежие.
+                need_more = False
+                for player in players_data or []:
+                    page_matches = player.get('matches') or []
+                    kept_in_window = 0
+                    for match in page_matches:
+                        sdt = match.get('startDateTime')
+                        if sdt is None or int(sdt) < threshold:
+                            continue
+                        kept_in_window += 1
+                        matches.append(match)
+                        sa = player.get('steamAccount') or {}
+                        if not sa:
+                            continue
+                        if sa.get('smurfFlag') not in [0, 2] or sa.get('isAnonymous'):
+                            continue
+                        if player_ids_check:
+                            for extra_player in match.get('players', []):
+                                steam_account = extra_player.get('steamAccount')
+                                if (not extra_player.get('intentionalFeeding') and
+                                    steam_account and
+                                    steam_account.get('smurfFlag') in [0, 2] and
+                                    not steam_account.get('isAnonymous')):
+                                    player_ids.add(int(steam_account['id']))
+                    # Пагинируем дальше, если страница полная (==100) И на ней есть хотя бы
+                    # один матч в окне (>= threshold). НЕ опираемся на page-min: null или
+                    # неупорядоченная дата в середине страницы ложно оборвала бы пагинацию
+                    # и потеряла бы свежие матчи дальше. Лишняя страница за границей дёшева;
+                    # skip<100000 — backstop от рантэвея, если порядок Stratz окажется не desc.
+                    if len(page_matches) == 100 and kept_in_window > 0:
+                        need_more = True
+                if need_more and skip < 100000:
                     skip += 100
-                    for player in players_data:
-                        for match in player.get('matches') or []:
-                            matches.append(match)
-                            sa = player.get('steamAccount') or {}
-                            if not sa:
-                                continue
-                            if sa.get('smurfFlag') not in [0, 2] or sa.get('isAnonymous'):
-                                continue
-                            if player_ids_check:
-                                for extra_player in match.get('players', []):
-                                    steam_account = extra_player.get('steamAccount')
-                                    if (not extra_player.get('intentionalFeeding') and
-                                        steam_account and
-                                        steam_account.get('smurfFlag') in [0, 2] and
-                                        not steam_account.get('isAnonymous')):
-                                        player_ids.add(int(steam_account['id']))
                 else:
                     check = False
 
