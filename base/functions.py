@@ -4138,11 +4138,14 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     if name in ('mid_output', 'post_lane_output')
                     else phase_weights
                 ),
-                pair_weights=(
-                    LATE_COUNTERPICK_1VS1_PAIR_WEIGHTS
-                    if name in ('mid_output', 'post_lane_output')
-                    else None
-                ),
+                # flat cp1vs1: pair-weights removed for all phases. Validated A/B
+                # (runtime/cp1vs1_weight_experiment.py, PUB 7.41c 30k): flat beats the
+                # mid-heavy LATE_COUNTERPICK_1VS1_PAIR_WEIGHTS on late cp1vs1 by +0.6pp
+                # (McNemar z=+2.47), same direction on all; PRO neutral-to-positive at the
+                # star-gate cutoffs, so existing pro-calibrated thresholds stay valid. The
+                # late/post position envelope (COUNTERPICK_1VS1_POSITION_WEIGHTS) is already
+                # neutral (all 1.0), so this makes cp1vs1 a pure games-weighted average.
+                pair_weights=None,
             )
             if cp_1vs1 is not None:
                 phase_bucket['counterpick_1vs1'] = cp_1vs1
