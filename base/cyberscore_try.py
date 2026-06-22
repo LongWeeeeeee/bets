@@ -62,7 +62,17 @@ from functions import (
     STAR_THRESHOLDS_BY_WR,
     STAR_DISABLED_METRICS,
     TelegramSendError,
+    CP1VS2_TOPUP_FALLBACK,
+    CORE_POSITIONS,
+    SUPPORT_POSITIONS,
 )
+
+# Role map for the cp1vs2 same-role top-up scoped-key extension (mirrors
+# functions._cp1vs2_role_positions). Only consulted when CP1VS2_TOPUP_FALLBACK is on.
+_CP1VS2_ROLE = {
+    p: (CORE_POSITIONS if p in CORE_POSITIONS else SUPPORT_POSITIONS)
+    for p in ("pos1", "pos2", "pos3", "pos4", "pos5")
+}
 try:
     from keys import api_to_proxy, BOOKMAKER_PROXY_URL, BOOKMAKER_PROXY_POOL, DLTV_PROXY_POOL
 except ImportError:
@@ -814,6 +824,16 @@ def _draft_stats_lookup_keys(radiant_heroes_and_pos: Any, dire_heroes_and_pos: A
             for opp_duo in combinations(opp_keys, 2):
                 duo_key = ",".join(sorted(opp_duo))
                 _add_draft_vs_lookup_keys(keys, left, duo_key)
+            if CP1VS2_TOPUP_FALLBACK:
+                # cp1vs2 same-role top-up: also scope the cross-position duo keys
+                # (core pos1-3 / support pos4-5) consumed by _lookup_cp1vs2_topup_winrate.
+                for (e1_pos, e1_hero), (e2_pos, e2_hero) in combinations(opp_entries, 2):
+                    for q1 in _CP1VS2_ROLE.get(e1_pos, ()):
+                        for q2 in _CP1VS2_ROLE.get(e2_pos, ()):
+                            if (q1, q2) == (e1_pos, e2_pos):
+                                continue
+                            cross_duo = ",".join(sorted([f"{e1_hero}{q1}", f"{e2_hero}{q2}"]))
+                            _add_draft_vs_lookup_keys(keys, left, cross_duo)
 
     return keys
 

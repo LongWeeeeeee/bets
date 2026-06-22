@@ -2488,6 +2488,62 @@ def _lookup_counterpick_1vs1_winrate(data, left, right, min_matches):
     )
 
 
+# Same-role TOP-UP for counterpick_1vs2 (flag-gated; default OFF -> prod unchanged).
+# A duo matchup with FEWER than COUNTERPICK_1VS2_MIN_MATCHES exact games is topped up
+# with the same-role cross-position aggregate (core: pos1-3, support: pos4-5),
+# down-weighted by CP1VS2_TOPUP_LAMBDA, keeping the real exact games as the anchor:
+#     value = (exact_score + L*other_score) / (exact_games + L*other_games)
+# Matchups already at/over the threshold are returned untouched (no dilution of
+# well-sampled data). Validated A/B (runtime/cp1vs2_topup_experiment.py): PUB ~+2pp
+# accuracy + coverage (McNemar z up to +5.75); PRO neutral accuracy + ~5-6pp coverage.
+CP1VS2_TOPUP_FALLBACK = os.getenv('CP1VS2_TOPUP_FALLBACK', '0') == '1'
+try:
+    CP1VS2_TOPUP_LAMBDA = float(os.getenv('CP1VS2_TOPUP_LAMBDA', '0.35'))
+except (TypeError, ValueError):
+    CP1VS2_TOPUP_LAMBDA = 0.35
+
+
+def _cp1vs2_role_positions(pos):
+    return CORE_POSITIONS if pos in CORE_POSITIONS else SUPPORT_POSITIONS
+
+
+def _lookup_cp1vs2_topup_winrate(data, self_key, duo_key):
+    """Exact duo winrate, topped up with same-role cross-position data when the
+    exact sample is below COUNTERPICK_1VS2_MIN_MATCHES. Identical to
+    _lookup_vs_winrate when CP1VS2_TOPUP_FALLBACK is off or the exact sample already
+    meets the threshold (so prod behaviour is unchanged with the flag off).
+    """
+    exact_value, exact_games = _lookup_vs_winrate(data, self_key, duo_key)
+    if not CP1VS2_TOPUP_FALLBACK or CP1VS2_TOPUP_LAMBDA <= 0:
+        return exact_value, exact_games
+    eg = int(exact_games) if (exact_games and exact_games > 0) else 0
+    if eg >= COUNTERPICK_1VS2_MIN_MATCHES:
+        return exact_value, exact_games
+    parts = str(duo_key).split(',')
+    if len(parts) != 2:
+        return exact_value, exact_games
+    e1_id, e1_pos = _split_hero_position_key(parts[0])
+    e2_id, e2_pos = _split_hero_position_key(parts[1])
+    if not (e1_id and e1_pos and e2_id and e2_pos):
+        return exact_value, exact_games
+    other_score = 0.0
+    other_games = 0
+    for q1 in _cp1vs2_role_positions(e1_pos):
+        for q2 in _cp1vs2_role_positions(e2_pos):
+            if (q1, q2) == (e1_pos, e2_pos):
+                continue
+            cross_duo = ",".join(sorted([f"{e1_id}{q1}", f"{e2_id}{q2}"]))
+            v, g = _lookup_vs_winrate(data, self_key, cross_duo)
+            if g and g > 0 and v is not None:
+                other_score += float(v) * int(g)
+                other_games += int(g)
+    exact_score = float(exact_value) * eg if (exact_value is not None and eg > 0) else 0.0
+    total_games = eg + CP1VS2_TOPUP_LAMBDA * other_games
+    if total_games <= 0:
+        return exact_value, exact_games
+    return (exact_score + CP1VS2_TOPUP_LAMBDA * other_score) / total_games, total_games
+
+
 def counterpick_team(
     heroes_and_pos,
     heroes_and_pos_opposite,
@@ -2548,7 +2604,7 @@ def counterpick_team(
                 duo_parts = sorted([enemy_key, f"{second_enemy_id}{second_enemy_pos}"])
                 duo_key = ",".join(duo_parts)
 
-                value, games = _lookup_vs_winrate(data, hero_key, duo_key)
+                value, games = _lookup_cp1vs2_topup_winrate(data, hero_key, duo_key)
                 if games >= min_matches_1vs2:
                     # Учитываем позиции, чтобы не смешивать разные конфигурации
                     combo = (
@@ -3911,7 +3967,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     solo = f"{int(hero_i)}{pos_i}"
                     duo_parts = sorted([f"{int(hero_a)}{pos_a}", f"{int(hero_b)}{pos_b}"])
                     duo = ",".join(duo_parts)
-                    _, games = _lookup_vs_winrate(data, solo, duo)
+                    _, games = _lookup_cp1vs2_topup_winrate(data, solo, duo)
                     if games >= min_matches_1vs2:
                         found = True
                         break
