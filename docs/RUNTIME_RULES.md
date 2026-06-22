@@ -61,6 +61,27 @@ source venv/bin/activate
 python3 base/cyberscore_try.py --no-odds
 ```
 
+### Патч Playwright-драйвера (pageError.location guard)
+
+Playwright 1.60.0 роняет весь node-драйвер, когда страница (например
+dota2protracker.com через Camoufox/Firefox) кидает uncaught-ошибку без
+`location`: вендоренный `coreBundle.js` читает `pageError.location.url` без
+guard'а → `TypeError: Cannot read properties of undefined (reading 'url')` →
+shared Camoufox умирает с `TimeoutError` и уходит в медленный subprocess-фолбэк.
+
+Фикс — идемпотентный скрипт `base/tools/patch_playwright_pageerror.py`
+(`pageError.location.*` → `pageError.location?.*`, атомарная замена, бэкап
+`coreBundle.js.pageerror-guard.bak`). Файл живёт в venv (git-ignored) и
+**перетирается при `playwright install` / пересборке venv**, поэтому запускай
+скрипт после любой такой операции:
+
+```bash
+# на сервере (после переустановки playwright или нового venv)
+/root/main/venv/bin/python3 base/tools/patch_playwright_pageerror.py
+```
+
+Применяется на следующем пересоздании драйвера — рестарт рантайма НЕ нужен.
+
 ---
 
 ## Tips для агента
