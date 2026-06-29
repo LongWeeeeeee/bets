@@ -18306,7 +18306,9 @@ def _shared_camoufox_browser_options(proxy_kwargs: Dict[str, Any]) -> Dict[str, 
     locale = str(os.getenv("CYBERSCORE_CAMOUFOX_LOCALE", "")).strip()
     # CSV нескольких ОС => Camoufox сам выбирает случайную на каждый launch и
     # генерирует согласованный fingerprint (UA, navigator, fonts) под неё.
-    os_name = str(os.getenv("CYBERSCORE_CAMOUFOX_OS", "windows,macos,linux")).strip()
+    # "linux" исключён: browserforge 1.2.4 не генерит под него заголовки
+    # (ValueError: No headers...) — launch уходил в os=windows fallback вхолостую.
+    os_name = str(os.getenv("CYBERSCORE_CAMOUFOX_OS", "windows,macos")).strip()
     humanize = _camoufox_parse_humanize(os.getenv("CYBERSCORE_CAMOUFOX_HUMANIZE", "true"))
     # Do NOT set fixed window — let Camoufox generate a random realistic size
     window = _camoufox_parse_window(os.getenv("CYBERSCORE_CAMOUFOX_WINDOW", ""))

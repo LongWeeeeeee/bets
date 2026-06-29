@@ -270,9 +270,12 @@ def _camoufox_proxy_kwargs(proxy_url: Optional[str]) -> Dict[str, Any]:
     password = parsed.password
     if not host or not port:
         return {}
+    # Preserve the URL scheme (socks5:// vs http://). Camoufox/Firefox supports
+    # SOCKS5 only WITHOUT auth (IP-whitelisted proxies); auth is rejected at launch.
+    scheme = (parsed.scheme or "http").strip().lower()
     proxy_kwargs: Dict[str, Any] = {
         "proxy": {
-            "server": f"http://{host}:{port}",
+            "server": f"{scheme}://{host}:{port}",
         }
     }
     if username:
@@ -349,7 +352,8 @@ def proxy_kwargs(proxy_url):
     password = parsed.password
     if not host or not port:
         return {}
-    proxy_data = {"server": f"http://{host}:{port}"}
+    scheme = (parsed.scheme or "http").strip().lower()
+    proxy_data = {"server": f"{scheme}://{host}:{port}"}
     if username:
         proxy_data["username"] = username
     if password:
@@ -376,10 +380,11 @@ def build_launch_kwargs(os_choice):
     return kw
 
 def launch_browser():
-    # Случайная ОС = ротация UA/navigator. Но browserforge иногда не может
-    # сгенерировать fingerprint для конкретной комбинации (ValueError: No
-    # headers...). Поэтому ретраим по разным ОС, затем без os-ограничения.
-    candidates = list(random.sample(["windows", "macos", "linux"], 3)) + [None]
+    # Случайная ОС = ротация UA/navigator. browserforge 1.2.4 ДЕТЕРМИНИРОВАННО
+    # не может сгенерировать fingerprint под "linux" (ValueError: No headers...),
+    # поэтому linux исключён; ретраим только по windows/macos (оба валидны).
+    # None тоже убран — без os-ограничения Camoufox мог сам выбрать linux.
+    candidates = list(random.sample(["windows", "macos"], 2))
     last_err = None
     for os_choice in candidates:
         try:

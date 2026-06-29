@@ -20,7 +20,7 @@ Env overrides (все опциональны):
 | Variable | Default | Description |
 |---|---|---|
 | `CYBERSCORE_CAMOUFOX_HUMANIZE` | `true` | Cursor humanization (true/false/float) |
-| `CYBERSCORE_CAMOUFOX_OS` | `windows` | Target OS fingerprint |
+| `CYBERSCORE_CAMOUFOX_OS` | `windows,macos` | Target OS fingerprint (CSV → random per launch; `linux` excluded — browserforge can't generate headers for it) |
 | `CYBERSCORE_CAMOUFOX_LOCALE` | _(empty, auto geoip)_ | Force locale |
 | `CYBERSCORE_CAMOUFOX_WINDOW` | _(empty, auto random)_ | Force window size e.g. `1920x1080` |
 | `CYBERSCORE_CAMOUFOX_BLOCK_WEBRTC` | `1` | Block WebRTC |
