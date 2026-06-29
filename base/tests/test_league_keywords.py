@@ -17,6 +17,7 @@ def test_token_keywords_match():
     assert lk.title_matches_allow_keywords("European Pro League  2025-2026 Season")
     assert lk.title_matches_allow_keywords("The International 2026")
     assert lk.title_matches_allow_keywords("BLAST Slam VII China Qualifier")
+    assert lk.title_matches_allow_keywords("1win Streamers League Season 2")
 
 
 def test_case_insensitive():

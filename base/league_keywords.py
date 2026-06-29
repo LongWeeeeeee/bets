@@ -25,6 +25,7 @@ TOURNAMENT_TITLE_ALLOW_KEYWORDS = frozenset({
     'dreamleague', 'blast', 'dacha', 'betboom',
     'fissure', 'pgl', 'international',
     'european', 'epl', 'esl', 'cct',
+    '1win',
 })
 
 # Многословные фразы — матч по ПОДСТРОКЕ в полном названии (не по токену),
