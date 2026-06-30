@@ -1,12 +1,33 @@
-# gevent monkey-patch MUST be first
-import gevent.monkey
-gevent.monkey.patch_all()
+# protobuf: dota2 1.1.0 ships old generated _pb2 (protoc <3.19), incompatible with the
+# protobuf 5.x pulled by the steam fork → force the pure-python impl. MUST be set before
+# any protobuf import (steam.client / dota2.client import it transitively).
+import os
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
-import json, os, socket, struct, sys, logging, argparse, urllib.request, time
+# gevent monkey-patch MUST be first. The maintained steam fork (solsticegamestudios/steam
+# 2.0.0) removed default monkey-patching — patch via steam.monkey (socket+ssl+dns) before
+# importing steam.client / using gevent.
+import steam.monkey
+steam.monkey.patch_minimal()
+
+import json, socket, struct, sys, logging, argparse, urllib.request, time, base64
 import gevent, gevent.event
 from steam.client import SteamClient
+from steam.webauth import WebAuth
+from steam.guard import generate_twofactor_code_for_time
+from steam.enums import EResult
 from dota2.client import Dota2Client
 from dota2.enums import EDOTAGCMsg
+
+# Compat shim: dota2 1.1.0 reads header.proto.job_id_{target,source}; the fork's
+# CMsgProtoBufHeader names them jobid_{target,source}. Alias both (pure-python protobuf).
+from steam.protobufs.steammessages_base_pb2 import CMsgProtoBufHeader as _CMsgHdr
+for _o, _n in (("job_id_target", "jobid_target"), ("job_id_source", "jobid_source")):
+    if not hasattr(_CMsgHdr, _o):
+        setattr(_CMsgHdr, _o, property(
+            (lambda n: lambda self: getattr(self, n))(_n),
+            (lambda n: lambda self, v: setattr(self, n, v))(_n),
+        ))
 
 # Единый keyword-фильтр лиг (общий с cyberscore_try) — отбор НАШИХ лиг для
 # прямого опроса GetLiveLeagueGames(league_id), чтобы ловить их с драфта в обход
@@ -606,7 +627,33 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
     poll_ev  = gevent.event.Event()
 
     os.makedirs(CREDS_DIR, exist_ok=True)
-    client.set_credential_location(CREDS_DIR)
+    # Legacy ValvePython API; the fork stores no sentry/login_key files (we use refresh_token).
+    if hasattr(client, "set_credential_location"):
+        client.set_credential_location(CREDS_DIR)
+
+    def _do_login():
+        """New Steam auth (fork): reuse stored refresh_token, else mint one via WebAuth
+        (password + TOTP from shared_secret). Persists refresh_token. Returns login EResult."""
+        rt = creds.get("refresh_token")
+        if rt:
+            res = client.login(username=username, access_token=rt)
+            if res == EResult.OK:
+                return res
+            log.warning("refresh_token отклонён (%s) — обновляем через WebAuth", res)
+        code = ""
+        shared = os.environ.get("STEAM_SHARED_SECRET") or creds.get("shared_secret")
+        if shared:
+            secret = shared if isinstance(shared, (bytes, bytearray)) else base64.b64decode(shared)
+            code = generate_twofactor_code_for_time(secret, time.time())
+        wa = WebAuth()
+        wa.login(username, password, code=code)
+        creds["refresh_token"] = wa.refresh_token
+        try:
+            json.dump(creds, open(key_file, "w"))
+        except Exception:
+            pass
+        log.info("WebAuth: новый refresh_token получен (len=%d)", len(wa.refresh_token or ""))
+        return client.login(username=username, access_token=wa.refresh_token)
 
     @client.on("logged_on")
     def _on_login():
@@ -637,10 +684,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                     log.info("Steam: повторный вход после обрыва...")
                     login_state["started_at"] = time.time()
                     try:
-                        if creds.get("login_key"):
-                            client.login(username=username, login_key=creds["login_key"])
-                        else:
-                            client.login(username=username, password=password)
+                        _do_login()
                     except Exception as e:
                         log.warning("Повторный вход не удался: %s", e)
                     gevent.sleep(5)
@@ -655,16 +699,18 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
 
     @client.on("error")
     def _on_error(result):
-        from steam.enums import EResult as ER
-        if result in (ER.InvalidPassword, ER.AccessDenied, ER.Expired,
-                      ER.AccountLogonDenied, ER.InvalidLoginAuthCode) and creds.get("login_key"):
-            log.warning("login_key устарел/отклонён (%s), удаляем и входим с паролем...", result)
-            del creds["login_key"]
+        if result in (EResult.InvalidPassword, EResult.AccessDenied, EResult.Expired,
+                      EResult.AccountLogonDenied, EResult.InvalidLoginAuthCode):
+            log.warning("Steam auth error %s — сбрасываем refresh_token и логинимся заново", result)
+            creds.pop("refresh_token", None)
             try:
                 json.dump(creds, open(key_file, "w"))
             except Exception:
                 pass
-            client.login(username=username, password=password)
+            try:
+                _do_login()
+            except Exception as e:
+                log.warning("Повторный вход не удался: %s", e)
         else:
             log.error("Steam error: %s", result)
 
@@ -1053,13 +1099,13 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
         client.logout()
 
     gevent.spawn(_poll_loop)
-    login_key = creds.get("login_key")
     login_state["started_at"] = time.time()
-    if login_key:
-        log.info("Входим с сохранённым login_key (без Steam Guard)")
-        client.login(username=username, login_key=login_key)
-    else:
-        client.login(username=username, password=password)
+    try:
+        res = _do_login()
+        if res != EResult.OK:
+            log.error("Steam login не удался: %s", res)
+    except Exception as e:
+        log.error("Steam login исключение: %s", e)
     client.run_forever()
 
 
