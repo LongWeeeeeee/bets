@@ -18,6 +18,7 @@ def test_token_keywords_match():
     assert lk.title_matches_allow_keywords("The International 2026")
     assert lk.title_matches_allow_keywords("BLAST Slam VII China Qualifier")
     assert lk.title_matches_allow_keywords("1win Streamers League Season 2")
+    assert lk.title_matches_allow_keywords("Road to ENC 2026 Regional Qualifiers")  # Esports Nations Cup
 
 
 def test_case_insensitive():
