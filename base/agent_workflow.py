@@ -136,6 +136,15 @@ class WorkflowEngine:
     worker_result: Optional[Dict[str, Any]] = None
     review_history: List[Dict[str, Any]] = field(default_factory=list)
     exit_reason: Optional[str] = None  # set when a safeguard trips
+    # Parallel fan-out: when a plan decomposes into independent subtasks, the Commander
+    # launches one Worker (GLM) per subtask concurrently. Each worker owns a
+    # non-overlapping file scope; results are aggregated before review.
+    subtasks: List[str] = field(default_factory=list)
+    sub_results: List[Dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def parallel(self) -> bool:
+        return bool(self.subtasks)
 
     # ---- lifecycle ----------------------------------------------------------
     def start(self) -> None:
@@ -143,19 +152,28 @@ class WorkflowEngine:
             raise WorkflowError(f"start() only valid from START, not {self.state.name}")
         self.state = WorkflowState.PLANNING
 
-    def submit_plan(self, plan: str) -> WorkflowState:
-        """Planner produces a plan (initial or a replan). -> WORKING."""
+    def submit_plan(self, plan: str, subtasks: Optional[List[str]] = None) -> WorkflowState:
+        """Planner produces a plan (initial or a replan). -> WORKING.
+
+        If ``subtasks`` is given, the plan is decomposed into independent chunks and
+        the Commander will fan out one Worker per subtask concurrently (parallel mode).
+        Each subtask must own a non-overlapping file scope.
+        """
         if self.state not in (WorkflowState.PLANNING, WorkflowState.REPLANNING):
             raise WorkflowError(f"plan only valid in PLANNING/REPLANNING, not {self.state.name}")
         self.plan = plan
         self.plans.append(plan)
+        self.subtasks = list(subtasks) if subtasks else []
+        self.sub_results = []
         self.state = WorkflowState.WORKING
         return self.state
 
     def submit_worker_message(self, raw: str) -> WorkflowState:
-        """Worker implements the plan in full; emits SUCCESS or FAILED."""
+        """Single-worker run: implements the plan in full; emits SUCCESS or FAILED."""
         if self.state is not WorkflowState.WORKING:
             raise WorkflowError(f"worker message only valid while WORKING, not {self.state.name}")
+        if self.parallel:
+            raise WorkflowError("parallel plan: use submit_worker_results() with one result per subtask")
         msg = parse_worker_message(raw)
         if msg["status"] == "FAILED":
             self.worker_result = msg
@@ -163,6 +181,39 @@ class WorkflowEngine:
             return self.state
         # SUCCESS -> review the diff
         self.worker_result = msg
+        self.state = WorkflowState.REVIEWING
+        return self.state
+
+    def submit_worker_results(self, results: List[Dict[str, Any]]) -> WorkflowState:
+        """Parallel fan-out: one Worker result per subtask, aggregated before review.
+
+        All results must be SUCCESS to reach REVIEWING; any FAILED fails the run.
+        Results are accepted positionally aligned to ``subtasks``.
+        """
+        if self.state is not WorkflowState.WORKING:
+            raise WorkflowError(f"parallel results only valid while WORKING, not {self.state.name}")
+        if not self.parallel:
+            raise WorkflowError("no subtasks: use submit_worker_message() for a single worker")
+        if len(results) != len(self.subtasks):
+            raise WorkflowError(
+                f"expected {len(self.subtasks)} results, got {len(results)}"
+            )
+        parsed: List[Dict[str, Any]] = []
+        for r in results:
+            if isinstance(r, str):
+                parsed.append(parse_worker_message(r))
+            elif isinstance(r, dict) and r.get("status") in ("SUCCESS", "FAILED"):
+                parsed.append(r)
+            else:
+                raise ValueError("each result must be a worker message (status SUCCESS|FAILED)")
+        self.sub_results = parsed
+        statuses = [r["status"] for r in parsed]
+        if any(s == "FAILED" for s in statuses):
+            self.worker_result = {"parallel": True, "status": "FAILED", "results": parsed}
+            self.state = WorkflowState.FAILED
+            return self.state
+        # all SUCCESS -> review the combined diff
+        self.worker_result = {"parallel": True, "status": "SUCCESS", "results": parsed}
         self.state = WorkflowState.REVIEWING
         return self.state
 

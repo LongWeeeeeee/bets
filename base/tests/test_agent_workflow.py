@@ -225,3 +225,105 @@ def test_attempt_history_and_open_problems():
     assert len(hist) == 2
     assert hist[0][1] == ["a.py:x:x"]
     assert hist[1][1] == []  # APPROVE has no findings
+
+
+# ---------------------------------------------------------------------------
+# 7. parallel fan-out: several Workers (GLM) run concurrently on subtasks
+# ---------------------------------------------------------------------------
+def _wresult(status="SUCCESS", **kw):
+    kw["status"] = status
+    return kw
+
+
+def test_parallel_fanout_all_success():
+    wf = WorkflowEngine(task_id="P1")
+    wf.start()
+    wf.submit_plan("plan: split auth + elo", subtasks=["impl auth in src/auth.py", "impl elo in ELO/x.py"])
+    assert wf.parallel
+    assert wf.state is WorkflowState.WORKING
+    state = wf.submit_worker_results([
+        _wresult(summary="auth done", files=["src/auth.py"]),
+        _wresult(summary="elo done", files=["ELO/x.py"]),
+    ])
+    assert state is WorkflowState.REVIEWING
+    assert wf.worker_result["parallel"] is True
+    assert wf.worker_result["status"] == "SUCCESS"
+    assert len(wf.sub_results) == 2
+    wf.submit_reviewer_message(_review())  # APPROVE
+    assert wf.state is WorkflowState.APPROVED
+
+
+def test_parallel_fanout_one_fails_run_fails():
+    wf = WorkflowEngine(task_id="P2")
+    wf.start()
+    wf.submit_plan("plan: split", subtasks=["a", "b"])
+    state = wf.submit_worker_results([
+        _wresult(summary="ok", files=["a.py"]),
+        _wresult(status="FAILED", reason="boom"),
+    ])
+    assert state is WorkflowState.FAILED
+    assert wf.worker_result["status"] == "FAILED"
+    assert wf.state.is_terminal()
+
+
+def test_parallel_results_count_mismatch_rejected():
+    wf = WorkflowEngine(task_id="P3")
+    wf.start()
+    wf.submit_plan("plan", subtasks=["a", "b", "c"])
+    with pytest.raises(WorkflowError):
+        wf.submit_worker_results([_wresult(), _wresult()])  # expected 3
+
+
+def test_parallel_results_require_subtasks():
+    wf = WorkflowEngine(task_id="P4")
+    wf.start()
+    wf.submit_plan("single plan")  # no subtasks -> single mode
+    assert not wf.parallel
+    with pytest.raises(WorkflowError):
+        wf.submit_worker_results([_wresult()])
+
+
+def test_single_message_rejected_in_parallel_mode():
+    wf = WorkflowEngine(task_id="P5")
+    wf.start()
+    wf.submit_plan("plan", subtasks=["a"])
+    with pytest.raises(WorkflowError):
+        wf.submit_worker_message(_worker())
+
+
+def test_parallel_accepts_raw_json_strings():
+    wf = WorkflowEngine(task_id="P6")
+    wf.start()
+    wf.submit_plan("plan", subtasks=["a", "b"])
+    state = wf.submit_worker_results([
+        'work...\n{"status":"SUCCESS","summary":"a"}',
+        '{"status":"SUCCESS","summary":"b"}',
+    ])
+    assert state is WorkflowState.REVIEWING
+
+
+def test_parallel_then_replan_then_approve():
+    # Fan-out run -> ISSUES -> replan (single or parallel) -> APPROVE.
+    wf = WorkflowEngine(task_id="P7")
+    wf.start()
+    wf.submit_plan("plan v1: split", subtasks=["a", "b"])
+    wf.submit_worker_results([_wresult(), _wresult()])
+    wf.submit_reviewer_message(_review([("Critical", "src/auth.py:NameError:TOKEN", "declare TOKEN")]))
+    assert wf.state is WorkflowState.REPLANNING
+    # replan only for the open problem (single worker this time)
+    wf.submit_plan("plan v2: declare TOKEN")
+    assert not wf.parallel
+    wf.submit_worker_message(_worker())
+    wf.submit_reviewer_message(_review())  # APPROVE
+    assert wf.state is WorkflowState.APPROVED
+    assert wf.fix_runs == 2
+
+
+def test_parallel_bad_result_rejected():
+    wf = WorkflowEngine(task_id="P8")
+    wf.start()
+    wf.submit_plan("plan", subtasks=["a"])
+    with pytest.raises(ValueError):
+        wf.submit_worker_results([{"status": "WAT"}])
+    with pytest.raises(ValueError):
+        wf.submit_worker_results(["not json"])

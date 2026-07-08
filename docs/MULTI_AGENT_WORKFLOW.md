@@ -32,14 +32,33 @@ START -> PLANNING -> WORKING -> REVIEWING --+--> APPROVED   (reviewer APPROVE �
 ```
 
 1. **Planner** produces a plan for the task (concrete, no decisions left to the Worker).
+   If the task decomposes into independent pieces, it emits `subtasks` (see fan-out).
 2. **Worker** implements the plan **in full**, without step-by-step review stops; ends
-   with `SUCCESS` or `FAILED`.
-3. On `SUCCESS` the Commander runs the **Reviewer** over the full diff.
+   with `SUCCESS` or `FAILED`. In fan-out mode, one Worker runs per subtask concurrently.
+3. On `SUCCESS` the Commander aggregates (parallel) and runs the **Reviewer** over the
+   full combined diff.
 4. **APPROVE** (no Critical) → task done.
 5. **ISSUES** → Planner replans **only** for the open problems → new Worker run →
    Reviewer again. Finding type `needs-replan` (Critical) means an architectural decision
    escaped the plan; the Planner must fold it into the replan (not a Worker "finish it").
 6. `FAILED` from the Worker → STOP (blocker).
+
+## Parallel fan-out (several Workers at once)
+
+The Planner may decompose a plan into `subtasks`: independent, self-contained chunks
+with **non-overlapping file scopes**. The Commander then launches **one Worker (GLM)
+per subtask concurrently** — multiple `task` tool calls to the `worker` agent in a
+single message (opencode runs them in parallel). Each worker implements only its
+assigned subtask and writes only to its own files; results are aggregated, then the
+Reviewer reviews the combined diff in one pass.
+
+- Split only when subtasks are truly independent (different files). If pieces share
+  files or must be sequenced, keep a single plan / single Worker.
+- On replan you may split again or stay single; split only the open problems if they
+  are independent and touch different files.
+- Any one subtask `FAILED` fails the whole run (blocker).
+- State machine: `submit_plan(plan, subtasks=[...])` → `submit_worker_results([...])`
+  (one per subtask, all `SUCCESS` to reach review).
 
 ## Exit safeguards (any one → STOP + human report)
 
