@@ -4210,8 +4210,26 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
             if r_games and d_games:
                 phase_bucket['counterpick_1vs1_games'] = min(r_games, d_games)
 
-        # pos1_vs_pos1 is intentionally not emitted into phase outputs anymore:
-        # the current star/gate tables were rebuilt without this metric.
+        # pos1_vs_pos1: carry-vs-carry counterpick edge. NON-star (absent from
+        # STAR_SIGNAL_METRICS), emitted for measurement/experiments; the current
+        # star/gate tables were rebuilt without this metric.
+        _r_pos1vs1 = output.get('radiant_counterpick_pos1_vs_pos1')
+        _d_pos1vs1 = output.get('dire_counterpick_pos1_vs_pos1')
+        if all_heroes_known and _r_pos1vs1 and _d_pos1vs1:
+            _rp1 = _sum_games_list(_r_pos1vs1)
+            _dp1 = _sum_games_list(_d_pos1vs1)
+            if min(_rp1, _dp1) >= pos1_vs_pos1_threshold:
+                # ONE-SIDED index from the Radiant pos1 perspective: deviation of the
+                # Radiant carry's head-to-head winrate from 50% (in pp). radiant and
+                # dire pos1_vs_pos1 are mirror winrates of the SAME matchup, so the old
+                # radiant-minus-dire diff double-counted it (drow WR 40% -> -20 instead
+                # of -10). Comparing Radiant against a flat 0.50 baseline yields
+                # (WR_radiant_pos1 - 50): drow WR 40% -> -10. get_diff reuse keeps the
+                # same aggregation/rounding/scale as every other index.
+                _pos1_diff = get_diff(_r_pos1vs1, [(0.5, _rp1)])
+                if _pos1_diff is not None:
+                    phase_bucket['pos1_vs_pos1'] = _pos1_diff
+                    phase_bucket['pos1_vs_pos1_games'] = min(_rp1, _dp1)
 
         if has_all_solo and all(f'{side}_counterpick_solo' in output for side in ['radiant', 'dire']):
             # post_lane-solo теперь ЭМИТИТСЯ (Option C: post_lane-solo собран на последнем

@@ -253,7 +253,7 @@ def test_lane_with_lookup_accepts_either_pair_order() -> None:
     assert counts == (36, 0, 24, 60)
 
 
-def test_pos1_vs_pos1_is_not_emitted_even_with_enough_sample() -> None:
+def test_pos1_vs_pos1_emitted_only_with_enough_sample() -> None:
     radiant = _side(1)
     dire = _side(6)
     radiant_pos1 = f"{radiant['pos1']['hero_id']}pos1"
@@ -289,8 +289,13 @@ def test_pos1_vs_pos1_is_not_emitted_even_with_enough_sample() -> None:
         early_dict=enough_sample,
         mid_dict={},
     )
-    assert "pos1_vs_pos1" not in enough_result["early_output"]
-    assert "pos1_vs_pos1_games" not in enough_result["early_output"]
+    # ONE-SIDED index from the Radiant pos1 perspective: (WR_radiant_pos1 - 50).
+    # Radiant carry winrate 0.8 -> (0.8 - 0.5) * 100 = 30.
+    assert enough_result["early_output"]["pos1_vs_pos1"] == 30
+    assert (
+        enough_result["early_output"]["pos1_vs_pos1_games"]
+        == functions.POS1_VS_POS1_MIN_MATCHES
+    )
 
 
 def test_pos1_vs_pos1_aggregates_directional_samples() -> None:
@@ -321,8 +326,10 @@ def test_pos1_vs_pos1_aggregates_directional_samples() -> None:
     )
 
     late_output = result["mid_output"]
-    assert "pos1_vs_pos1" not in late_output
-    assert "pos1_vs_pos1_games" not in late_output
+    # Both directions aggregate to the Radiant carry winrate 9/68 ≈ 0.1324;
+    # one-sided index = round((0.1324 - 0.5) * 100) = -37, over 37 + 31 = 68 games.
+    assert late_output["pos1_vs_pos1"] == -37
+    assert late_output["pos1_vs_pos1_games"] == 68
 
 
 def test_pos1_vs_pos1_reads_reverse_only_direction() -> None:
@@ -344,8 +351,10 @@ def test_pos1_vs_pos1_reads_reverse_only_direction() -> None:
     )
 
     early_output = result["early_output"]
-    assert "pos1_vs_pos1" not in early_output
-    assert "pos1_vs_pos1_games" not in early_output
+    # Reverse-only sample -> Radiant carry winrate = (31 - 25) / 31 ≈ 0.1935;
+    # one-sided index = round((0.1935 - 0.5) * 100) = -31.
+    assert early_output["pos1_vs_pos1"] == -31
+    assert early_output["pos1_vs_pos1_games"] == functions.POS1_VS_POS1_MIN_MATCHES + 1
 
 
 def test_counterpick_1vs1_requires_two_of_three_core_matchups_per_core() -> None:
