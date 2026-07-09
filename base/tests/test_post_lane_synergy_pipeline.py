@@ -273,7 +273,8 @@ def test_pos1_vs_pos1_emitted_only_with_enough_sample() -> None:
         early_dict=low_sample,
         mid_dict={},
     )
-    assert "pos1_vs_pos1" not in low_result["early_output"]
+    # Key is always present (init loop), but below the sample floor it stays None.
+    assert low_result["early_output"].get("pos1_vs_pos1") is None
 
     enough_sample: dict = {}
     _put_vs(

@@ -4106,7 +4106,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
         cp1vs2_threshold,
     ) in outputs_to_process:
         phase_bucket = return_dict.setdefault(name, {})
-        for metric in ("counterpick_1vs1", "counterpick_1vs2", "synergy_trio"):
+        for metric in ("counterpick_1vs1", "pos1_vs_pos1", "counterpick_1vs2", "synergy_trio"):
             phase_bucket.setdefault(metric, None)
             phase_bucket.setdefault(f"{metric}_games", 0)
         if name == 'early_output':
