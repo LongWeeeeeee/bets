@@ -111,6 +111,29 @@ def _list_append_to_dict(target_dict, key, value, is_defaultdict=None):
         stats[1] += 1
 
 
+def _list_append_lane_entry(target_dict, key, value, kills10_diff=None):
+    """Compact lane accumulator including the optional kills@10 target."""
+    stats = target_dict.get(key)
+    if stats is None:
+        # wins, draws, games, leads, kill_draws, kill_games, diff_sum, diff_sq_sum
+        stats = [0, 0, 0, 0, 0, 0, 0.0, 0.0]
+        target_dict[key] = stats
+    stats[2] += 1
+    if value == 1:
+        stats[0] += 1
+    elif value == 0.5:
+        stats[1] += 1
+    if kills10_diff is None:
+        return
+    stats[5] += 1
+    stats[6] += kills10_diff
+    stats[7] += kills10_diff * kills10_diff
+    if kills10_diff > 0:
+        stats[3] += 1
+    elif kills10_diff == 0:
+        stats[4] += 1
+
+
 def _packed_append_to_dict(target_dict, key, value, is_defaultdict=None):
     """Lower-memory packed counter, slower than list mode."""
     stats = target_dict.get(key)
@@ -137,6 +160,9 @@ def _enable_compact_accumulators() -> None:
         analise_database_module._append_to_dict = _packed_append_to_dict
     else:
         analise_database_module._append_to_dict = _list_append_to_dict
+    # Lane entries carry extra kill counters and therefore cannot use the
+    # legacy three-counter packed integer representation.
+    analise_database_module._append_lane_entry = _list_append_lane_entry
 
 
 
@@ -168,6 +194,23 @@ def _stats_values(stats) -> tuple[int, int, int]:
             int(stats.get("games", 0) or 0),
         )
     return 0, 0, 0
+
+
+def _lane_stats_values(stats) -> tuple[int, int, int, int, int, int, float, float]:
+    wins, draws, games = _stats_values(stats)
+    if isinstance(stats, list):
+        extra = list(stats[3:8]) + [0] * max(0, 5 - len(stats[3:8]))
+        return wins, draws, games, int(extra[0]), int(extra[1]), int(extra[2]), float(extra[3]), float(extra[4])
+    if isinstance(stats, dict):
+        return (
+            wins, draws, games,
+            int(stats.get("kills10_leads", 0) or 0),
+            int(stats.get("kills10_draws", 0) or 0),
+            int(stats.get("kills10_games", 0) or 0),
+            float(stats.get("kills10_diff_sum", 0.0) or 0.0),
+            float(stats.get("kills10_diff_sq_sum", 0.0) or 0.0),
+        )
+    return wins, draws, games, 0, 0, 0, 0.0, 0.0
 
 
 def _dump_stats_dict(stats_dict: dict, path: Path) -> None:
@@ -220,6 +263,64 @@ def _merge_stats_into(target: dict, key, stats) -> None:
     current[0] += wins
     current[1] += draws
     current[2] += games
+
+
+def _open_lane_sqlite(temp_path: Path) -> sqlite3.Connection:
+    """Create the direct-build lane database at a fresh temporary path."""
+    conn = sqlite3.connect(str(temp_path))
+    conn.execute("PRAGMA journal_mode=OFF")
+    conn.execute("PRAGMA synchronous=OFF")
+    conn.execute("PRAGMA page_size=8192")
+    conn.execute(
+        """CREATE TABLE stats (
+            key TEXT PRIMARY KEY,
+            wins INTEGER NOT NULL,
+            draws INTEGER NOT NULL,
+            games INTEGER NOT NULL,
+            kills10_leads INTEGER NOT NULL,
+            kills10_draws INTEGER NOT NULL,
+            kills10_games INTEGER NOT NULL,
+            kills10_diff_sum REAL NOT NULL,
+            kills10_diff_sq_sum REAL NOT NULL
+        ) WITHOUT ROWID"""
+    )
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value BLOB) WITHOUT ROWID")
+    return conn
+
+
+def _upsert_lane_stats(conn: sqlite3.Connection, lane_dict: dict) -> None:
+    rows = (
+        (str(key), *_lane_stats_values(stats))
+        for key, stats in lane_dict.items()
+    )
+    conn.executemany(
+        """INSERT INTO stats VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+            wins=wins+excluded.wins,
+            draws=draws+excluded.draws,
+            games=games+excluded.games,
+            kills10_leads=kills10_leads+excluded.kills10_leads,
+            kills10_draws=kills10_draws+excluded.kills10_draws,
+            kills10_games=kills10_games+excluded.kills10_games,
+            kills10_diff_sum=kills10_diff_sum+excluded.kills10_diff_sum,
+            kills10_diff_sq_sum=kills10_diff_sq_sum+excluded.kills10_diff_sq_sum""",
+        rows,
+    )
+    conn.commit()
+
+
+def _finalize_lane_sqlite(conn: sqlite3.Connection, temp_path: Path, output_path: Path) -> tuple[int, int]:
+    try:
+        entries, games = conn.execute("SELECT COUNT(*), COALESCE(SUM(games), 0) FROM stats").fetchone()
+        encode = orjson.dumps if orjson is not None else lambda value: json.dumps(value).encode()
+        meta = {"format_version": 2, "backend": "sqlite_stats", "entries": int(entries)}
+        for key, value in meta.items():
+            conn.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, sqlite3.Binary(encode(value))))
+        conn.commit()
+    finally:
+        conn.close()
+    temp_path.replace(output_path)
+    return int(entries), int(games)
 
 
 def _dump_partitioned_stats_dict(stats_dict: dict, prefix: Path, partitions: int) -> list[Path]:
@@ -449,7 +550,47 @@ def _build_sqlite_dicts(stats_dir: Path, metric_names: tuple) -> None:
         print(f"✓ {entries:,} keys, {time.monotonic() - started:.1f}s")
 
 
-def main() -> int:
+class _OwnedLaneSqliteBuild:
+    """Own one unique temporary lane DB and roll it back unless finalized."""
+
+    def __init__(self):
+        self.conn: sqlite3.Connection | None = None
+        self.temp_path: Path | None = None
+
+    def open(self, temp_path: Path) -> sqlite3.Connection:
+        if self.conn is not None:
+            raise RuntimeError("lane sqlite build is already open")
+        if temp_path.exists():
+            raise FileExistsError(f"lane sqlite temp already exists: {temp_path}")
+        self.temp_path = temp_path
+        self.conn = _open_lane_sqlite(temp_path)
+        return self.conn
+
+    def finalize(self, output_path: Path) -> tuple[int, int]:
+        if self.conn is None or self.temp_path is None:
+            raise RuntimeError("lane sqlite build is not open")
+        conn, temp_path = self.conn, self.temp_path
+        self.conn = None
+        try:
+            result = _finalize_lane_sqlite(conn, temp_path, output_path)
+        except BaseException:
+            # _finalize_lane_sqlite closes the connection in its own finally.
+            raise
+        self.temp_path = None
+        return result
+
+    def rollback(self) -> None:
+        if self.conn is not None:
+            try:
+                self.conn.close()
+            finally:
+                self.conn = None
+        if self.temp_path is not None and self.temp_path.exists():
+            self.temp_path.unlink()
+        self.temp_path = None
+
+
+def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
     print("=" * 80)
     print("ПОСТРОЕНИЕ СТАТИСТИКИ (ИСКЛЮЧАЯ TEST SET)")
     print("=" * 80)
@@ -476,8 +617,17 @@ def main() -> int:
     shard_dir = Path(os.getenv("EXPLORE_SHARD_DIR", str(stats_dir / "explore_database_shards" / run_id)))
     metric_shards = {
         metric: [[] for _ in range(MERGE_PARTITIONS)]
-        for metric in metric_names
+        for metric in metric_names if metric != "lane"
     }
+    lane_conn = None
+    lane_temp_path = None
+    lane_output_path = stats_dir / "lane_dict_raw.sqlite3"
+    if "lane" in metric_names:
+        stats_dir.mkdir(parents=True, exist_ok=True)
+        lane_temp_path = stats_dir / (
+            f"lane_dict_raw.sqlite3.{run_id}.{os.getpid()}.{time.time_ns()}.tmp"
+        )
+        lane_conn = lane_build.open(lane_temp_path)
 
     print("\n[ШАГ 1/3] Загрузка test set для исключения...")
     test_match_ids = _load_test_match_ids(test_set_path)
@@ -566,11 +716,13 @@ def main() -> int:
                     break
 
             gc.collect()
+            if lane_conn is not None and lane_dict:
+                _upsert_lane_stats(lane_conn, lane_dict)
+                lane_dict.clear()
             if SHARD_PER_FILE and file_train > 0:
                 shard_started = time.monotonic()
                 prefix = shard_dir / f"{idx:04d}_{file.stem}"
                 per_file_data = {
-                    "lane": lane_dict,
                     "early": early_dict,
                     "late": late_dict,
                     "post_lane": post_lane_dict,
@@ -606,6 +758,10 @@ def main() -> int:
                 f"{shard_msg}"
             )
         except Exception as e:
+            # Do not merge a partially streamed file into the direct SQLite
+            # accumulator; completed earlier files remain committed.
+            if lane_dict is not None:
+                lane_dict.clear()
             print(f"✗ Ошибка: {e}")
 
         if max_matches > 0 and train_total >= max_matches:
@@ -628,8 +784,16 @@ def main() -> int:
     print("\n[ШАГ 3/3] Сохранение результатов...")
     stats_dir.mkdir(parents=True, exist_ok=True)
 
+    if lane_conn is not None and lane_temp_path is not None:
+        lane_entries, lane_games = lane_build.finalize(lane_output_path)
+        lane_conn = None
+        print(
+            f"  ✓ {lane_output_path.name} ({lane_entries:,} ключей, "
+            f"{lane_games:,} записей; direct SQLite)"
+        )
+
     if SHARD_PER_FILE:
-        outputs = [(OUTPUTS_BY_METRIC[metric], metric) for metric in metric_names]
+        outputs = [(OUTPUTS_BY_METRIC[metric], metric) for metric in metric_names if metric != "lane"]
         merged_summary = {}
         for filename, metric in outputs:
             output_path = stats_dir / filename
@@ -644,6 +808,8 @@ def main() -> int:
         print("\nСтатистика по словарям (train set):")
         for metric in metric_names:
             label = LABELS_BY_METRIC[metric]
+            if metric == "lane":
+                continue
             print(
                 f"  {label + ' dict:':15s}"
                 f"{merged_summary[metric][0]:>6,} ключей, {merged_summary[metric][1]:>7,} записей"
@@ -662,12 +828,17 @@ def main() -> int:
             "post_lane": post_lane_dict,
         }
         for metric in metric_names:
+            if metric == "lane":
+                continue
             data = data_by_metric[metric] or {}
             matches = sum(_stats_games(stats) for stats in data.values())
             label = LABELS_BY_METRIC[metric]
             print(f"  {label + ' dict:':15s}{len(data):>6,} ключей, {matches:>7,} записей")
 
-        outputs = [(OUTPUTS_BY_METRIC[metric], data_by_metric[metric] or {}) for metric in metric_names]
+        outputs = [
+            (OUTPUTS_BY_METRIC[metric], data_by_metric[metric] or {})
+            for metric in metric_names if metric != "lane"
+        ]
         for filename, data in outputs:
             output_path = stats_dir / filename
             started = time.monotonic()
@@ -685,9 +856,19 @@ def main() -> int:
 
     # Build SQLite3 versions of stats dicts for fast runtime lookup
     print("\n[ШАГ 4/4] Построение SQLite3 версий словарей...")
-    _build_sqlite_dicts(stats_dir, metric_names)
+    _build_sqlite_dicts(stats_dir, tuple(metric for metric in metric_names if metric != "lane"))
 
     return 0
+
+
+def main() -> int:
+    lane_build = _OwnedLaneSqliteBuild()
+    try:
+        return _main_impl(lane_build)
+    finally:
+        # Covers normal exceptions and BaseException subclasses such as
+        # KeyboardInterrupt. A successful atomic finalize disarms rollback.
+        lane_build.rollback()
 
 
 if __name__ == "__main__":

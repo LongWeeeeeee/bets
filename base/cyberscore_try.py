@@ -58,6 +58,7 @@ from functions import (
     drain_telegram_admin_commands,
     synergy_and_counterpick,
     calculate_lanes,
+    calculate_lane_kills_advantage,
     format_output_dict,
     STAR_THRESHOLDS_BY_WR,
     STAR_DISABLED_METRICS,
@@ -870,6 +871,24 @@ def _load_lane_dict_from_source(source_path: str):
         import sqlite3 as _sqlite3
         conn = _sqlite3.connect(str(sqlite_path))
         try:
+            tables = {
+                row[0]
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            if "stats" in tables:
+                return {
+                    row[0]: {
+                        "wins": row[1], "draws": row[2], "games": row[3],
+                        "kills10_leads": row[4], "kills10_draws": row[5],
+                        "kills10_games": row[6], "kills10_diff_sum": row[7],
+                        "kills10_diff_sq_sum": row[8],
+                    }
+                    for row in conn.execute(
+                        "SELECT key, wins, draws, games, kills10_leads, "
+                        "kills10_draws, kills10_games, kills10_diff_sum, "
+                        "kills10_diff_sq_sum FROM stats"
+                    )
+                }
             return {
                 row[0]: orjson.loads(row[1])
                 for row in conn.execute("SELECT key, value FROM kv")
@@ -2919,19 +2938,44 @@ def _build_lane_dict_adv_line(top: Any, mid: Any, bot: Any) -> str:
     return f"lane_adv_dict: {lane_adv:+.2f}\n"
 
 
+def _build_lane_kills_adv_line(payload: Any) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    try:
+        expected_diff = float(payload.get("expected_diff"))
+        lead_probability = float(payload.get("lead_probability"))
+        coverage = int(payload.get("coverage", 0) or 0)
+        total_lanes = int(payload.get("total_lanes", 3) or 3)
+    except (TypeError, ValueError):
+        return ""
+    if not math.isfinite(expected_diff) or not math.isfinite(lead_probability) or coverage <= 0:
+        return ""
+    side = "Radiant" if expected_diff >= 0 else "Dire"
+    side_lead_probability = lead_probability if expected_diff >= 0 else max(
+        0.0,
+        1.0 - lead_probability - float(payload.get("draw_probability", 0.0) or 0.0),
+    )
+    return (
+        f"lane_kills_adv_dict: {side} +{abs(expected_diff):.2f} kills @10 "
+        f"(lead {side_lead_probability:.0%}, {coverage}/{total_lanes})\n"
+    )
+
+
 def _build_lane_block(
     top: Any,
     mid: Any,
     bot: Any,
     lane_adv_line: str = "",
     lane_adv_dict_line: str = "",
+    lane_kills_adv: Any = None,
 ) -> str:
     top_line = str(top or "").strip()
     mid_line = str(mid or "").strip()
     bot_line = str(bot or "").strip()
     lane_adv_dict = str(lane_adv_dict_line or "").strip()
     lane_adv = str(lane_adv_line or "").strip()
-    lane_lines = [line for line in (top_line, mid_line, bot_line, lane_adv_dict, lane_adv) if line]
+    lane_kills = _build_lane_kills_adv_line(lane_kills_adv).strip()
+    lane_lines = [line for line in (top_line, mid_line, bot_line, lane_adv_dict, lane_kills, lane_adv) if line]
     if not lane_lines:
         return ""
     return "Lanes:\n" + "\n".join(lane_lines) + "\n\n"
@@ -5454,6 +5498,7 @@ def _build_lane_adv_standalone_kills_message(
     game_time_seconds: Any,
     radiant_lead: Any,
     lane_adv_dict_value: Optional[float],
+    lane_kills_adv: Any = None,
 ) -> str:
     """Build the dispatch message for the standalone "lane_adv_dict ≥ 6" kills
     trigger. Used when the regular STAR signal block is empty/rejected — we
@@ -5470,6 +5515,7 @@ def _build_lane_adv_standalone_kills_message(
         bot,
         lane_adv_line=_build_dota2protracker_lane_adv_line(protracker_payload),
         lane_adv_dict_line=_build_lane_dict_adv_line(top, mid, bot),
+        lane_kills_adv=lane_kills_adv,
     )
     live_state_block = _format_live_message_state_block(
         game_time_seconds=game_time_seconds,
@@ -5526,6 +5572,7 @@ def _build_early_local_kills_message(
         bot,
         lane_adv_line="",
         lane_adv_dict_line=_build_lane_dict_adv_line(top, mid, bot),
+        lane_kills_adv=s.get('lane_kills_adv_dict'),
     )
 
     early_output_log = _decorate_star_block_for_display(
@@ -5785,6 +5832,7 @@ def _build_pipeline_probe_message(
             metrics_payload.get('mid'),
             metrics_payload.get('bot'),
         ),
+        lane_kills_adv=metrics_payload.get('lane_kills_adv_dict'),
     )
     return (
         f"{_format_signal_header(stake_team_name='PIPELINE CHECK', stake_multiplier=1)}\n"
@@ -17669,6 +17717,7 @@ def _try_dispatch_lane_adv_standalone_kills(
     early_output_block: Optional[Dict[str, Any]] = None,
     radiant_team_id: Any = 0,
     dire_team_id: Any = 0,
+    lane_kills_adv: Any = None,
 ) -> bool:
     """Standalone kills trigger: when ``|lane_adv_dict| ≥ 6`` we dispatch a
     kills bet on the dominating side, regardless of star block availability.
@@ -17818,6 +17867,7 @@ def _try_dispatch_lane_adv_standalone_kills(
                 mid=mid,
                 bot=bot,
                 protracker_payload=protracker_payload,
+                lane_kills_adv=lane_kills_adv,
                 team_elo_block=team_elo_block or "",
                 game_time_seconds=game_time_seconds,
                 radiant_lead=radiant_lead,
@@ -23180,6 +23230,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         lane_data,
                         core_support_side_lanes=True,
                     )
+                    local_metrics['lane_kills_adv_dict'] = calculate_lane_kills_advantage(
+                        radiant_heroes_and_pos,
+                        dire_heroes_and_pos,
+                        lane_data,
+                    )
                 else:
                     local_metrics.setdefault('top', "")
                     local_metrics.setdefault('bot', "")
@@ -23245,6 +23300,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 mid=local_metrics.get('mid'),
                 bot=local_metrics.get('bot'),
                 protracker_payload=None,
+                lane_kills_adv=local_metrics.get('lane_kills_adv_dict'),
                 team_elo_block=early_local_elo_block,
                 game_time_seconds=game_time,
                 radiant_lead=lead,
@@ -23392,8 +23448,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 lane_data,
                 core_support_side_lanes=True,
             )
+            s['lane_kills_adv_dict'] = calculate_lane_kills_advantage(
+                radiant_heroes_and_pos,
+                dire_heroes_and_pos,
+                lane_data,
+            )
         else:
             s['top'], s['bot'], s['mid'] = "", "", ""
+            s['lane_kills_adv_dict'] = None
         lane_top_log = str(s.get('top') or '').strip()
         lane_mid_log = str(s.get('mid') or '').strip()
         lane_bot_log = str(s.get('bot') or '').strip()
@@ -24955,6 +25017,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 s.get('bot'),
                 lane_adv_line=dota2protracker_lane_adv_line,
                 lane_adv_dict_line=lane_adv_dict_line,
+                lane_kills_adv=s.get('lane_kills_adv_dict'),
             )
 
             # Формирование сообщения
@@ -24994,6 +25057,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 mid=s.get('mid'),
                 bot=s.get('bot'),
                 protracker_payload=s,
+                lane_kills_adv=s.get('lane_kills_adv_dict'),
                 team_elo_block=team_elo_block,
                 game_time_seconds=game_time,
                 radiant_lead=lead,
@@ -27833,6 +27897,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 mid=s.get('mid'),
                 bot=s.get('bot'),
                 protracker_payload=s,
+                lane_kills_adv=s.get('lane_kills_adv_dict'),
                 team_elo_block=noskip_team_elo_block,
                 game_time_seconds=game_time,
                 radiant_lead=lead,

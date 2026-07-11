@@ -8739,6 +8739,176 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
     return top_message, bot_message, mid_message
 
 
+def calculate_lane_kills_advantage(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data):
+    """Estimate the Radiant team kill difference at ten minutes from lane keys.
+
+    Every lane key was trained against the same team-level kills@10 target, so
+    lane estimates are reliability-weighted, never summed.  The metric is
+    diagnostic and intentionally independent from the existing lane outcome
+    calculation and dispatch gates.
+    """
+    if heroes_data is not None and isinstance(heroes_data, dict) and '2v2_lanes' not in heroes_data:
+        heroes_data = structure_lane_dict(heroes_data)
+    if not isinstance(heroes_data, dict):
+        return None
+
+    min_games = max(1, int(os.getenv("LANE_KILLS_MIN_GAMES", "10") or "10"))
+    reliability_prior = max(0.0, float(os.getenv("LANE_KILLS_RELIABILITY_PRIOR", "100") or "100"))
+
+    def _raw(entry, invert=False):
+        if not isinstance(entry, dict):
+            return None
+        games = int(entry.get('kills10_games', 0) or 0)
+        if games < min_games:
+            return None
+        leads = int(entry.get('kills10_leads', 0) or 0)
+        draws = int(entry.get('kills10_draws', 0) or 0)
+        diff_sum = float(entry.get('kills10_diff_sum', 0.0) or 0.0)
+        diff_sq_sum = float(entry.get('kills10_diff_sq_sum', 0.0) or 0.0)
+        losses = max(0, games - leads - draws)
+        if invert:
+            leads, losses = losses, leads
+            diff_sum = -diff_sum
+        return leads, draws, losses, games, diff_sum, diff_sq_sum
+
+    def _combine_counts(items):
+        valid = [item for item in items if item is not None]
+        if not valid:
+            return None
+        totals = tuple(sum(item[index] for item in valid) for index in range(6))
+        if totals[3] < min_games:
+            return None
+        return totals
+
+    def _vs(bucket, left, right):
+        direct = _raw(bucket.get(f"{','.join(left)}_vs_{','.join(right)}"))
+        reverse = _raw(bucket.get(f"{','.join(right)}_vs_{','.join(left)}"), invert=True)
+        return _combine_counts([direct, reverse])
+
+    def _with(bucket, tokens, invert=False):
+        if len(tokens) != 2:
+            return None
+        a, b = tokens
+        return _combine_counts([_raw(bucket.get(f"{a}_with_{b}"), invert=invert),
+                                _raw(bucket.get(f"{b}_with_{a}"), invert=invert)])
+
+    def _weighted_layer(items, *, require_full=False):
+        """Average correlated key estimates without adding their samples.
+
+        Keys inside one fallback layer are emitted by the same match, so their
+        game counts overlap.  The layer confidence is therefore the minimum
+        sample count when all expected keys are covered, or the maximum count
+        for partial coverage; it is never the sum.
+        """
+        valid = [item for item in items if item is not None]
+        if not valid or (require_full and len(valid) != len(items)):
+            return None
+        total_weight = sum(item[3] for item in valid)
+        if total_weight <= 0:
+            return None
+        full_coverage = len(valid) == len(items)
+        effective_games = (
+            min(item[3] for item in valid)
+            if full_coverage
+            else max(item[3] for item in valid)
+        )
+        expected_diff = sum((item[4] / item[3]) * item[3] for item in valid) / total_weight
+        lead_probability = sum(((item[0] + 1.0) / (item[3] + 3.0)) * item[3] for item in valid) / total_weight
+        draw_probability = sum(((item[1] + 1.0) / (item[3] + 3.0)) * item[3] for item in valid) / total_weight
+        return {
+            'expected_diff': expected_diff,
+            'lead_probability': lead_probability,
+            'draw_probability': draw_probability,
+            'games': effective_games,
+        }
+
+    buckets = {
+        '2v2': heroes_data.get('2v2_lanes', {}),
+        '2v1': heroes_data.get('2v1_lanes', {}),
+        '1v1': heroes_data.get('1v1_lanes', {}),
+        'with': heroes_data.get('1_with_1_lanes', {}),
+        'solo': heroes_data.get('solo_lanes', {}),
+    }
+
+    def _tokens(lane):
+        if lane == 'top':
+            return ([f"{radiant_heroes_and_pos['pos3']['hero_id']}pos3", f"{radiant_heroes_and_pos['pos4']['hero_id']}pos4"],
+                    [f"{dire_heroes_and_pos['pos1']['hero_id']}pos1", f"{dire_heroes_and_pos['pos5']['hero_id']}pos5"])
+        if lane == 'bot':
+            return ([f"{radiant_heroes_and_pos['pos1']['hero_id']}pos1", f"{radiant_heroes_and_pos['pos5']['hero_id']}pos5"],
+                    [f"{dire_heroes_and_pos['pos3']['hero_id']}pos3", f"{dire_heroes_and_pos['pos4']['hero_id']}pos4"])
+        return ([f"{radiant_heroes_and_pos['pos2']['hero_id']}pos2"],
+                [f"{dire_heroes_and_pos['pos2']['hero_id']}pos2"])
+
+    def _lane(lane):
+        radiant, dire = _tokens(lane)
+        exact_bucket = buckets['1v1'] if lane == 'mid' else buckets['2v2']
+        exact = _vs(exact_bucket, radiant, dire)
+        if exact is not None:
+            return _weighted_layer([exact], require_full=True)
+
+        if lane != 'mid':
+            two_v_one = (
+                [_vs(buckets['2v1'], radiant, [token]) for token in dire]
+                + [_vs(buckets['2v1'], [token], dire) for token in radiant]
+            )
+            full_2v1 = _weighted_layer(two_v_one, require_full=True)
+            if full_2v1 is not None:
+                return full_2v1
+            single_2v1 = _weighted_layer(two_v_one)
+            if single_2v1 is not None:
+                return single_2v1
+
+        one_v_one = [
+            _vs(buckets['1v1'], [radiant_token], [dire_token])
+            for radiant_token in radiant
+            for dire_token in dire
+        ]
+        one_v_one_result = _weighted_layer(one_v_one)
+        if one_v_one_result is not None:
+            return one_v_one_result
+
+        # A side's synergy/solo statistic predicts the same team-level target.
+        # Convert Dire-oriented entries to Radiant orientation before merging.
+        synergy = [
+            _with(buckets['with'], radiant, invert=False),
+            _with(buckets['with'], dire, invert=True),
+        ]
+        synergy_result = _weighted_layer(synergy)
+        if synergy_result is not None:
+            return synergy_result
+
+        solo = (
+            [_raw(buckets['solo'].get(token), invert=False) for token in radiant]
+            + [_raw(buckets['solo'].get(token), invert=True) for token in dire]
+        )
+        return _weighted_layer(solo)
+
+    lane_results = {lane: _lane(lane) for lane in ('top', 'mid', 'bot')}
+    available = {lane: stats for lane, stats in lane_results.items() if stats is not None}
+    if not available:
+        return None
+
+    weighted = []
+    for lane, stats in available.items():
+        games = stats['games']
+        reliability = games / (games + reliability_prior) if reliability_prior > 0 else 1.0
+        weighted.append((stats['expected_diff'], stats['lead_probability'],
+                         stats['draw_probability'], reliability, games))
+
+    weight_sum = sum(item[3] for item in weighted)
+    if weight_sum <= 0:
+        return None
+    return {
+        'expected_diff': sum(item[0] * item[3] for item in weighted) / weight_sum,
+        'lead_probability': sum(item[1] * item[3] for item in weighted) / weight_sum,
+        'draw_probability': sum(item[2] * item[3] for item in weighted) / weight_sum,
+        'coverage': len(available),
+        'total_lanes': 3,
+        'games': sum(item[4] for item in weighted),
+    }
+
+
 def is_moscow_night():
     moscow_tz = pytz.timezone("Europe/Moscow")
     now = datetime.datetime.now(moscow_tz)

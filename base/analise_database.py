@@ -10,6 +10,7 @@
 """
 
 import json
+import math
 import os
 from functools import lru_cache
 from itertools import combinations
@@ -64,6 +65,56 @@ def _append_to_dict(target_dict, key, value, is_defaultdict=None):
         target_dict[key]['wins'] += 1
     elif value == 0.5:
         target_dict[key]['draws'] += 1
+
+
+def _append_lane_entry(target_dict, key, value, kills10_diff=None):
+    """Append the lane outcome and, when available, the team kills@10 result.
+
+    ``kills10_diff`` is always expressed from the side at the start of ``key``.
+    Keeping the kill counters beside the existing lane counters avoids storing
+    millions of duplicate draft keys.
+    """
+    _append_to_dict(target_dict, key, value)
+    if kills10_diff is None:
+        return
+    stats = target_dict[key]
+    stats.setdefault('kills10_leads', 0)
+    stats.setdefault('kills10_draws', 0)
+    stats.setdefault('kills10_games', 0)
+    stats.setdefault('kills10_diff_sum', 0.0)
+    stats.setdefault('kills10_diff_sq_sum', 0.0)
+    stats['kills10_games'] += 1
+    stats['kills10_diff_sum'] += kills10_diff
+    stats['kills10_diff_sq_sum'] += kills10_diff * kills10_diff
+    if kills10_diff > 0:
+        stats['kills10_leads'] += 1
+    elif kills10_diff == 0:
+        stats['kills10_draws'] += 1
+
+
+def _kills10_diff(match):
+    """Return Radiant minus Dire kills in the first ten minute buckets.
+
+    Bucket index 10 is deliberately excluded: the live pipeline already uses
+    ``[:10]`` for its kills-at-10 marker, so the training dictionary must use
+    exactly the same boundary.
+    """
+    radiant = match.get('radiantKills')
+    dire = match.get('direKills')
+    if not isinstance(radiant, list) or not isinstance(dire, list):
+        return None
+    if len(radiant) < 10 or len(dire) < 10:
+        return None
+    values = radiant[:10] + dire[:10]
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or value < 0
+        for value in values
+    ):
+        return None
+    return float(sum(radiant[:10]) - sum(dire[:10]))
 
 
 def extract_heroes_by_position(match):
@@ -156,6 +207,7 @@ def lanes(match, lane_dict):
     top_outcome = match.get('topLaneOutcome', '')
     mid_outcome = match.get('midLaneOutcome', '')
     bot_outcome = match.get('bottomLaneOutcome', '')
+    radiant_kills10_diff = _kills10_diff(match)
     
     def get_lane_value(outcome, key_starts_with_radiant):
         """
@@ -209,11 +261,11 @@ def lanes(match, lane_dict):
         
         # Соло герои Radiant
         for hero_id, pos in r_heroes:
-            _append_to_dict(lane_dict, f'{hero_id}pos{pos}', value_r)
+            _append_lane_entry(lane_dict, f'{hero_id}pos{pos}', value_r, radiant_kills10_diff)
         
         # Соло герои Dire
         for hero_id, pos in d_heroes:
-            _append_to_dict(lane_dict, f'{hero_id}pos{pos}', value_d)
+            _append_lane_entry(lane_dict, f'{hero_id}pos{pos}', value_d, -radiant_kills10_diff if radiant_kills10_diff is not None else None)
         
         # Если это парный лайн (2v2)
         if len(r_heroes) == 2 and len(d_heroes) == 2:
@@ -224,26 +276,26 @@ def lanes(match, lane_dict):
             
             # Контрипики 2x2
             key = f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}'
-            _append_to_dict(lane_dict, key, value_r)
+            _append_lane_entry(lane_dict, key, value_r, radiant_kills10_diff)
             
             # Контрипики 2x1 (Radiant 2 vs Dire 1)
-            _append_to_dict(lane_dict, f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1}', value_r)
-            _append_to_dict(lane_dict, f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h2}pos{d_p2}', value_r)
+            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1}', value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h2}pos{d_p2}', value_r, radiant_kills10_diff)
             
             # Контрипики 1x2 (Radiant 1 vs Dire 2)
-            _append_to_dict(lane_dict, f'{r_h1}pos{r_p1}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}', value_r)
-            _append_to_dict(lane_dict, f'{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}', value_r)
+            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}', value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, f'{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}', value_r, radiant_kills10_diff)
             
             # Контрипики 1x1 (все комбинации)
             for r_hero, r_pos in r_heroes:
                 for d_hero, d_pos in d_heroes:
-                    _append_to_dict(lane_dict, f'{r_hero}pos{r_pos}_vs_{d_hero}pos{d_pos}', value_r)
+                    _append_lane_entry(lane_dict, f'{r_hero}pos{r_pos}_vs_{d_hero}pos{d_pos}', value_r, radiant_kills10_diff)
             
             # Синергия 1+1 для Radiant
-            _append_to_dict(lane_dict, f'{r_h1}pos{r_p1}_with_{r_h2}pos{r_p2}', value_r)
+            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1}_with_{r_h2}pos{r_p2}', value_r, radiant_kills10_diff)
             
             # Синергия 1+1 для Dire
-            _append_to_dict(lane_dict, f'{d_h1}pos{d_p1}_with_{d_h2}pos{d_p2}', value_d)
+            _append_lane_entry(lane_dict, f'{d_h1}pos{d_p1}_with_{d_h2}pos{d_p2}', value_d, -radiant_kills10_diff if radiant_kills10_diff is not None else None)
         
         # Если это 1v1
         elif len(r_heroes) == 1 and len(d_heroes) == 1:
@@ -251,7 +303,7 @@ def lanes(match, lane_dict):
             d_h, d_p = d_heroes[0]
             
             # Контрипик 1x1
-            _append_to_dict(lane_dict, f'{r_h}pos{r_p}_vs_{d_h}pos{d_p}', value_r)
+            _append_lane_entry(lane_dict, f'{r_h}pos{r_p}_vs_{d_h}pos{d_p}', value_r, radiant_kills10_diff)
     
     # TOP LANE: Radiant (pos3+pos4) vs Dire (pos1+pos5)
     if 3 in r_by_pos and 4 in r_by_pos and 1 in d_by_pos and 5 in d_by_pos:
