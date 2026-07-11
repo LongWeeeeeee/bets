@@ -6176,6 +6176,7 @@ def test_runtime_all_star_output_includes_solo_for_sign_consistency() -> None:
             "solo": 2,
             "synergy_duo": 5,
             "synergy_trio": 3,
+            "pos1_vs_pos1": 12,
         },
         {
             "pro_cp1vs1_valid": True,
@@ -6184,6 +6185,7 @@ def test_runtime_all_star_output_includes_solo_for_sign_consistency() -> None:
     )
 
     assert payload["solo"] == 2
+    assert payload["pos1_vs_pos1"] == 12
     assert payload["dota2protracker_cp1vs1"] == 3.5
 
 
