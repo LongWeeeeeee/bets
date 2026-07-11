@@ -285,22 +285,123 @@ def _stats_sqlite_db_path(source: Path) -> Path:
     return source.parent / f"{source.stem}.sqlite3"
 
 
-def _sqlite_stats_meta_matches(db_path: Path, source: Path) -> bool:
-    if not db_path.exists() or not source.exists():
-        return False
+def _read_sqlite_stats_meta(db_path: Path) -> dict | None:
+    if not db_path.exists():
+        return None
     try:
         uri = f"{db_path.resolve().as_uri()}?mode=ro&immutable=1"
         with sqlite3.connect(uri, uri=True) as conn:
             rows = conn.execute("SELECT key, value FROM meta").fetchall()
-        meta = {str(key): orjson.loads(value) if orjson is not None else json.loads(value) for key, value in rows}
+        return {
+            str(key): orjson.loads(value) if orjson is not None else json.loads(value)
+            for key, value in rows
+        }
+    except Exception:
+        return None
+
+
+def _sqlite_stats_meta_matches(db_path: Path, source: Path | None = None) -> bool:
+    """Accept a valid sqlite stats DB.
+
+    sqlite-first (no companion JSON, or source_name == db file): format_version==1,
+    backend in {None,sqlite_kv}, entries>0 and kv COUNT matches → True.
+
+    Legacy (JSON present, source_name == JSON name): accept only when source_size
+    and source_mtime_ns match the current JSON; mismatch falls back to JSON.
+    """
+    meta = _read_sqlite_stats_meta(db_path)
+    if meta is None:
+        return False
+    if meta.get("format_version") != 1:
+        return False
+    if meta.get("backend") not in {None, "sqlite_kv"}:
+        return False
+    entries_value = meta.get("entries")
+    if isinstance(entries_value, bool):
+        return False
+    if isinstance(entries_value, int):
+        entries = entries_value
+    elif isinstance(entries_value, str) and entries_value.strip().lstrip("+-").isdigit():
+        entries = int(entries_value)
+    else:
+        return False
+    if entries <= 0:
+        return False
+    try:
+        uri = f"{db_path.resolve().as_uri()}?mode=ro&immutable=1"
+        with sqlite3.connect(uri, uri=True) as conn:
+            table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = \"table\" AND name = \"kv\""
+            ).fetchone()
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(kv)")}
+            count = conn.execute("SELECT COUNT(*) FROM kv").fetchone()[0]
+        if table is None or not {"key", "value"}.issubset(columns) or count != entries:
+            return False
     except Exception:
         return False
-    return (
-        meta.get("format_version") == 1
-        and meta.get("source_name") == source.name
-        and meta.get("source_size") == source.stat().st_size
-        and meta.get("backend") in {None, "sqlite_kv"}
-    )
+
+    # sqlite-only / sqlite-first: valid meta is enough (no sibling JSON required)
+    if source is None or not Path(source).exists():
+        return True
+
+    source = Path(source)
+
+    # sqlite-first meta may set source_name to the .sqlite3 itself (size 0)
+    if meta.get("source_name") == db_path.name:
+        return True
+
+    # Legacy path: meta claims to mirror companion JSON — require fingerprint match.
+    # Stale size/mtime must fall back to the current JSON instead of preferring SQLite.
+    if meta.get("source_name") == source.name:
+        try:
+            st = source.stat()
+        except OSError:
+            return False
+        if meta.get("source_size") != st.st_size:
+            return False
+        meta_mtime = meta.get("source_mtime_ns")
+        if meta_mtime is not None and int(meta_mtime) != int(st.st_mtime_ns):
+            return False
+        return True
+
+    # Companion JSON exists, but meta does not claim sqlite-first nor matching JSON.
+    return False
+
+
+def _lane_sqlite_is_valid(db_path: Path) -> bool:
+    """Lane uses its own v2 stats schema; a kv DB is not a lane artifact."""
+    meta = _read_sqlite_stats_meta(db_path)
+    if meta is None or meta.get("format_version") != 2 or meta.get("backend") != "sqlite_stats":
+        return False
+    entries = meta.get("entries")
+    if isinstance(entries, bool) or not isinstance(entries, int) or entries <= 0:
+        return False
+    try:
+        uri = f"{db_path.resolve().as_uri()}?mode=ro&immutable=1"
+        with sqlite3.connect(uri, uri=True) as conn:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(stats)")}
+            count = conn.execute("SELECT COUNT(*) FROM stats").fetchone()[0]
+        expected = {"key", "wins", "draws", "games", "kills10_leads", "kills10_draws", "kills10_games", "kills10_diff_sum", "kills10_diff_sq_sum"}
+        return expected.issubset(columns) and count == entries
+    except Exception:
+        return False
+
+
+def _load_lane_dict_from_sqlite(db_path: Path) -> dict:
+    """Materialise v2 lane stats into the historical structured-dict input."""
+    uri = f"{db_path.resolve().as_uri()}?mode=ro&immutable=1"
+    with sqlite3.connect(uri, uri=True) as conn:
+        return {
+            str(row[0]): {
+                "wins": row[1], "draws": row[2], "games": row[3],
+                "kills10_leads": row[4], "kills10_draws": row[5], "kills10_games": row[6],
+                "kills10_diff_sum": row[7], "kills10_diff_sq_sum": row[8],
+            }
+            for row in conn.execute(
+                "SELECT key, wins, draws, games, kills10_leads, kills10_draws, "
+                "kills10_games, kills10_diff_sum, kills10_diff_sq_sum FROM stats"
+            )
+        }
 
 
 def _load_stats_lookup(stats_dir: Path, filename: str, label: str) -> Any:
@@ -309,9 +410,13 @@ def _load_stats_lookup(stats_dir: Path, filename: str, label: str) -> Any:
     if _sqlite_stats_meta_matches(db_path, source):
         print(f"  ✓ {label}: SQLite lookup {db_path}, key_cache=200000, RSS≈{_rss_mb():.0f}MB")
         return SqliteStatsLookup(db_path, label=label)
-    payload = _load_json(source)
-    print(f"  ✓ {label}: {len(payload):,} keys, RSS≈{_rss_mb():.0f}MB")
-    return payload
+    if source.exists():
+        payload = _load_json(source)
+        print(f"  ✓ {label}: {len(payload):,} keys, RSS≈{_rss_mb():.0f}MB")
+        return payload
+    raise FileNotFoundError(
+        f"{label} source not found: neither {db_path} nor {source}"
+    )
 
 
 def _draft_group_key_variants(group: Any) -> list[str]:
@@ -392,7 +497,18 @@ def _load_stats_dicts(
     early_dict = _load_stats_lookup(stats_dir, "early_dict_raw.json", "early_dict")
     late_dict = _load_stats_lookup(stats_dir, "late_dict_raw.json", "late_dict")
     if include_lanes:
-        lane_dict = _load_json(stats_dir / "lane_dict_raw.json")
+        lane_source = stats_dir / "lane_dict_raw.json"
+        lane_sqlite = _stats_sqlite_db_path(lane_source)
+        if _lane_sqlite_is_valid(lane_sqlite):
+            lane_dict = _load_lane_dict_from_sqlite(lane_sqlite)
+            print(f"  ✓ lane_dict: SQLite {lane_sqlite}, RSS≈{_rss_mb():.0f}MB")
+        elif lane_source.exists():
+            lane_dict = _load_json(lane_source)
+            print(f"  ✓ lane_dict: JSON {lane_source}, RSS≈{_rss_mb():.0f}MB")
+        else:
+            raise FileNotFoundError(
+                f"lane_dict source not found: neither {lane_sqlite} nor {lane_source}"
+            )
         lane_dict = structure_lane_dict(lane_dict)
         print(f"  ✓ lane_dict: structured, RSS≈{_rss_mb():.0f}MB")
     else:

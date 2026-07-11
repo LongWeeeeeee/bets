@@ -52,6 +52,8 @@ COUNTER_MODE = os.getenv("EXPLORE_COUNTER_MODE", "list").strip().lower()
 SHARD_PER_FILE = os.getenv("EXPLORE_SHARD_PER_FILE", "1").strip().lower() not in {"0", "false", "no"}
 MERGE_PARTITIONS = max(1, int(os.getenv("EXPLORE_MERGE_PARTITIONS", "64") or "64"))
 KEEP_SHARDS = os.getenv("EXPLORE_KEEP_SHARDS", "0").strip().lower() in {"1", "true", "yes"}
+WRITE_JSON = os.getenv("EXPLORE_WRITE_JSON", "0").strip().lower() in {"1", "true", "yes"}
+SQLITE_INSERT_BATCH = 5000
 COUNTER_BITS = 24
 COUNTER_MASK = (1 << COUNTER_BITS) - 1
 ALL_METRICS = ("lane", "early", "late", "post_lane")
@@ -230,6 +232,126 @@ def _dump_stats_dict(stats_dict: dict, path: Path) -> None:
     tmp_path.replace(path)
 
 
+def _sqlite_path_for_metric(stats_dir: Path, metric: str) -> Path:
+    """lane/early/late/post_lane → <metric>_dict_raw.sqlite3"""
+    json_name = OUTPUTS_BY_METRIC[metric]
+    return _sqlite_path_from_json_name(stats_dir, json_name)
+
+
+def _sqlite_path_from_json_name(stats_dir: Path, json_name: str) -> Path:
+    """lane_dict_raw.json → lane_dict_raw.sqlite3 (stem + .sqlite3)."""
+    return stats_dir / f"{Path(json_name).stem}.sqlite3"
+
+
+def _encode_stats_blob(stats) -> bytes:
+    wins, draws, games = _stats_values(stats)
+    payload = {"wins": wins, "draws": draws, "games": games}
+    if orjson is not None:
+        return orjson.dumps(payload)
+    return json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+
+def _encode_meta_blob(value) -> bytes:
+    if orjson is not None:
+        return orjson.dumps(value)
+    return json.dumps(value, separators=(",", ":")).encode("utf-8")
+
+
+def _open_sqlite_stats_writer(tmp_path: Path) -> sqlite3.Connection:
+    """Open tmp sqlite, apply PRAGMAs, create kv/meta tables."""
+    if tmp_path.exists():
+        raise FileExistsError(f"sqlite temp already exists: {tmp_path}")
+    conn = sqlite3.connect(str(tmp_path))
+    conn.execute("PRAGMA journal_mode=OFF")
+    conn.execute("PRAGMA synchronous=OFF")
+    conn.execute("PRAGMA page_size=8192")
+    conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value BLOB)")
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB)")
+    return conn
+
+
+def _write_sqlite_meta(
+    conn: sqlite3.Connection,
+    *,
+    source_name: str,
+    source_size: int = 0,
+    source_mtime_ns: int = 0,
+    entries: int,
+) -> None:
+    meta = {
+        "format_version": 1,
+        "backend": "sqlite_kv",
+        "source_name": source_name,
+        "source_size": int(source_size),
+        "source_mtime_ns": int(source_mtime_ns),
+        "entries": int(entries),
+    }
+    for mk, mv in meta.items():
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            (mk, sqlite3.Binary(_encode_meta_blob(mv))),
+        )
+
+
+def _finalize_sqlite_db(tmp_path: Path, final_path: Path) -> None:
+    """Atomically replace the final database without a delete window."""
+    tmp_path.replace(final_path)
+
+
+def _unique_sqlite_temp_path(sqlite_path: Path) -> Path:
+    """Return a fresh temp path or fail rather than overwriting another build."""
+    tmp_path = sqlite_path.with_name(
+        f"{sqlite_path.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    )
+    if tmp_path.exists():
+        raise FileExistsError(f"sqlite temp already exists: {tmp_path}")
+    return tmp_path
+
+
+def _flush_sqlite_batch(conn: sqlite3.Connection, batch: list) -> None:
+    if not batch:
+        return
+    conn.executemany("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", batch)
+    batch.clear()
+
+
+def _dump_stats_dict_to_sqlite(stats_dict: dict, sqlite_path: Path) -> tuple[int, int]:
+    """Non-shard path: write stats dict directly to sqlite (kv + meta)."""
+    sqlite_path = Path(sqlite_path)
+    sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = _unique_sqlite_temp_path(sqlite_path)
+    conn = _open_sqlite_stats_writer(tmp_path)
+    entries = 0
+    total_games = 0
+    batch: list = []
+    try:
+        for key, stats in stats_dict.items():
+            wins, draws, games = _stats_values(stats)
+            batch.append((str(key), sqlite3.Binary(_encode_stats_blob(stats))))
+            entries += 1
+            total_games += games
+            if len(batch) >= SQLITE_INSERT_BATCH:
+                _flush_sqlite_batch(conn, batch)
+        _flush_sqlite_batch(conn, batch)
+        _write_sqlite_meta(
+            conn,
+            source_name=sqlite_path.name,
+            source_size=0,
+            source_mtime_ns=0,
+            entries=entries,
+        )
+        conn.commit()
+    except Exception:
+        conn.close()
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+    else:
+        conn.close()
+        _finalize_sqlite_db(tmp_path, sqlite_path)
+    return entries, total_games
+
+
 def _write_stats_entry(f, key, stats) -> None:
     wins, draws, games = _stats_values(stats)
     f.write(json.dumps(str(key), ensure_ascii=False))
@@ -361,8 +483,10 @@ def _dump_partitioned_stats_dict(stats_dict: dict, prefix: Path, partitions: int
     return paths
 
 
-def _merge_partitioned_shards(partition_shards: list[list[Path]], output_path: Path) -> tuple[int, int]:
-    """Склеивает partition shards в итоговый raw json, держа в памяти только один partition."""
+def _merge_partitioned_shards_to_json(
+    partition_shards: list[list[Path]], output_path: Path
+) -> tuple[int, int]:
+    """Legacy: merge partition shards into a raw JSON file (one partition in RAM)."""
     tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
     total_keys = 0
     total_games = 0
@@ -392,6 +516,58 @@ def _merge_partitioned_shards(partition_shards: list[list[Path]], output_path: P
         f.write("}")
 
     tmp_path.replace(output_path)
+    return total_keys, total_games
+
+
+def _merge_partitioned_shards(
+    partition_shards: list[list[Path]], output_sqlite_path: Path
+) -> tuple[int, int]:
+    """Merge partition shards directly into sqlite (one partition bucket in RAM)."""
+    output_sqlite_path = Path(output_sqlite_path)
+    output_sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = output_sqlite_path.with_suffix(output_sqlite_path.suffix + ".tmp")
+    conn = _open_sqlite_stats_writer(tmp_path)
+    batch: list = []
+    total_keys = 0
+    total_games = 0
+    try:
+        for part, shard_paths in enumerate(partition_shards):
+            bucket: dict = {}
+            for shard_path in shard_paths:
+                if not shard_path.exists():
+                    continue
+                for key, stats in _iter_stats_object_items(shard_path):
+                    _merge_stats_into(bucket, key, stats)
+
+            for key, stats in bucket.items():
+                wins, draws, games = _stats_values(stats)
+                batch.append((str(key), sqlite3.Binary(_encode_stats_blob(stats))))
+                total_keys += 1
+                total_games += games
+                if len(batch) >= SQLITE_INSERT_BATCH:
+                    _flush_sqlite_batch(conn, batch)
+
+            del bucket
+            if part % 8 == 7:
+                gc.collect()
+
+        _flush_sqlite_batch(conn, batch)
+        _write_sqlite_meta(
+            conn,
+            source_name=output_sqlite_path.name,
+            source_size=0,
+            source_mtime_ns=0,
+            entries=total_keys,
+        )
+        conn.commit()
+    except Exception:
+        conn.close()
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+    else:
+        conn.close()
+        _finalize_sqlite_db(tmp_path, output_sqlite_path)
     return total_keys, total_games
 
 
@@ -486,67 +662,54 @@ def _match_is_train_candidate(match_id, match, min_start_ts: int, test_match_ids
 
 
 def _build_sqlite_dicts(stats_dir: Path, metric_names: tuple) -> None:
-    """Convert JSON stats dicts to SQLite3 for fast runtime key-value lookup."""
+    """Legacy: convert existing JSON stats dicts to SQLite3.
+
+    Default path writes sqlite directly (no JSON). This helper is kept for
+    optional JSON→sqlite conversion when JSON already exists and sqlite is missing.
+    """
     for metric in metric_names:
         filename = OUTPUTS_BY_METRIC.get(metric)
         if not filename:
             continue
         json_path = stats_dir / filename
-        sqlite_path = json_path.with_suffix(".sqlite3")
+        sqlite_path = _sqlite_path_from_json_name(stats_dir, filename)
         if not json_path.exists():
             print(f"  ⚠️ {filename} не найден, пропускаем sqlite build")
             continue
-        print(f"  🧱 Building {sqlite_path.name}...", end=" ", flush=True)
-        started = time.monotonic()
-        temp_path = sqlite_path.with_suffix(".sqlite3.tmp")
-        if temp_path.exists():
-            temp_path.unlink()
-
-        conn = sqlite3.connect(str(temp_path))
-        try:
-            conn.execute("PRAGMA journal_mode=OFF")
-            conn.execute("PRAGMA synchronous=OFF")
-            conn.execute("PRAGMA page_size=8192")
-            conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value BLOB)")
-            conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB)")
-
-            entries = 0
-            batch = []
-            batch_size = 5000
-            encode = orjson.dumps if orjson is not None else lambda v: json.dumps(v).encode()
-
-            for key, stats in _iter_stats_object_items(json_path):
-                batch.append((key, sqlite3.Binary(encode(stats))))
-                entries += 1
-                if len(batch) >= batch_size:
-                    conn.executemany("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", batch)
-                    batch.clear()
-            if batch:
-                conn.executemany("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", batch)
-                batch.clear()
-
-            # Write meta (must match runtime _stats_expected_meta keys)
-            source_stat = json_path.stat()
-            meta = {
-                "format_version": 1,
-                "backend": "sqlite_kv",
-                "source_name": json_path.name,
-                "source_size": source_stat.st_size,
-                "source_mtime_ns": source_stat.st_mtime_ns,
-                "entries": entries,
-            }
-            for mk, mv in meta.items():
-                conn.execute(
-                    "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
-                    (mk, sqlite3.Binary(encode(mv))),
-                )
-            conn.commit()
-        finally:
-            conn.close()
-
         if sqlite_path.exists():
-            sqlite_path.unlink()
-        temp_path.rename(sqlite_path)
+            print(f"  ✓ {sqlite_path.name} уже есть, skip legacy build")
+            continue
+        print(f"  🧱 Building {sqlite_path.name} from JSON...", end=" ", flush=True)
+        started = time.monotonic()
+        tmp_path = _unique_sqlite_temp_path(sqlite_path)
+        conn = _open_sqlite_stats_writer(tmp_path)
+        entries = 0
+        batch: list = []
+        try:
+            for key, stats in _iter_stats_object_items(json_path):
+                batch.append((str(key), sqlite3.Binary(_encode_stats_blob(stats))))
+                entries += 1
+                if len(batch) >= SQLITE_INSERT_BATCH:
+                    _flush_sqlite_batch(conn, batch)
+            _flush_sqlite_batch(conn, batch)
+
+            source_stat = json_path.stat()
+            _write_sqlite_meta(
+                conn,
+                source_name=json_path.name,
+                source_size=source_stat.st_size,
+                source_mtime_ns=source_stat.st_mtime_ns,
+                entries=entries,
+            )
+            conn.commit()
+        except Exception:
+            conn.close()
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
+        else:
+            conn.close()
+            _finalize_sqlite_db(tmp_path, sqlite_path)
         print(f"✓ {entries:,} keys, {time.monotonic() - started:.1f}s")
 
 
@@ -599,6 +762,7 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
     print("✓ Strict position quality: включен check_match_quality(strict_lane_positions=True)")
     print("✓ Streaming JSON: ijson" if ijson is not None else "⚠️ Streaming JSON недоступен, fallback json.load")
     print(f"✓ Compact counters: {COUNTER_MODE}")
+    print(f"✓ Output: sqlite-first" + (" + JSON (EXPLORE_WRITE_JSON=1)" if WRITE_JSON else " (JSON off)"))
     if SHARD_PER_FILE:
         print(f"✓ File shards: включены, merge partitions: {MERGE_PARTITIONS}")
     else:
@@ -609,6 +773,7 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
 
     metric_names = _enabled_metrics()
     json_dir = Path(os.getenv("EXPLORE_JSON_DIR", str(DEFAULT_JSON_DIR)))
+    non_lane_metrics = tuple(metric for metric in metric_names if metric != "lane")
     test_set_path = Path(os.getenv("EXPLORE_TEST_SET_PATH", str(DEFAULT_TEST_SET_PATH)))
     stats_dir = Path(os.getenv("EXPLORE_STATS_DIR", str(DEFAULT_STATS_DIR)))
     min_start_ts = int(start_date_time)
@@ -617,7 +782,7 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
     shard_dir = Path(os.getenv("EXPLORE_SHARD_DIR", str(stats_dir / "explore_database_shards" / run_id)))
     metric_shards = {
         metric: [[] for _ in range(MERGE_PARTITIONS)]
-        for metric in metric_names if metric != "lane"
+        for metric in non_lane_metrics
     }
     lane_conn = None
     lane_temp_path = None
@@ -781,7 +946,7 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
         for reason, count in skip_reasons.most_common(10):
             print(f"  - {reason}: {count:,}")
 
-    print("\n[ШАГ 3/3] Сохранение результатов...")
+    print("\n[ШАГ 3/3] Сохранение результатов (sqlite-first)...")
     stats_dir.mkdir(parents=True, exist_ok=True)
 
     if lane_conn is not None and lane_temp_path is not None:
@@ -793,17 +958,28 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
         )
 
     if SHARD_PER_FILE:
-        outputs = [(OUTPUTS_BY_METRIC[metric], metric) for metric in metric_names if metric != "lane"]
         merged_summary = {}
-        for filename, metric in outputs:
-            output_path = stats_dir / filename
+        for metric in non_lane_metrics:
+            sqlite_path = _sqlite_path_for_metric(stats_dir, metric)
             started = time.monotonic()
-            keys_count, games_count = _merge_partitioned_shards(metric_shards[metric], output_path)
+            keys_count, games_count = _merge_partitioned_shards(
+                metric_shards[metric], sqlite_path
+            )
             merged_summary[metric] = (keys_count, games_count)
             print(
-                f"  ✓ {filename} ({keys_count:,} ключей, {games_count:,} записей, "
+                f"  ✓ {sqlite_path.name} ({keys_count:,} ключей, {games_count:,} записей, "
                 f"{time.monotonic() - started:.1f}s)"
             )
+            if WRITE_JSON:
+                json_path = stats_dir / OUTPUTS_BY_METRIC[metric]
+                json_started = time.monotonic()
+                json_keys, json_games = _merge_partitioned_shards_to_json(
+                    metric_shards[metric], json_path
+                )
+                print(
+                    f"  ✓ {json_path.name} optional JSON ({json_keys:,} ключей, "
+                    f"{json_games:,} записей, {time.monotonic() - json_started:.1f}s)"
+                )
 
         print("\nСтатистика по словарям (train set):")
         for metric in metric_names:
@@ -835,15 +1011,23 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
             label = LABELS_BY_METRIC[metric]
             print(f"  {label + ' dict:':15s}{len(data):>6,} ключей, {matches:>7,} записей")
 
-        outputs = [
-            (OUTPUTS_BY_METRIC[metric], data_by_metric[metric] or {})
-            for metric in metric_names if metric != "lane"
-        ]
-        for filename, data in outputs:
-            output_path = stats_dir / filename
+        for metric in non_lane_metrics:
+            data = data_by_metric[metric] or {}
+            sqlite_path = _sqlite_path_for_metric(stats_dir, metric)
             started = time.monotonic()
-            _dump_stats_dict(data, output_path)
-            print(f"  ✓ {filename} ({len(data):,} ключей, {time.monotonic() - started:.1f}s)")
+            keys_count, games_count = _dump_stats_dict_to_sqlite(data, sqlite_path)
+            print(
+                f"  ✓ {sqlite_path.name} ({keys_count:,} ключей, {games_count:,} записей, "
+                f"{time.monotonic() - started:.1f}s)"
+            )
+            if WRITE_JSON:
+                json_path = stats_dir / OUTPUTS_BY_METRIC[metric]
+                json_started = time.monotonic()
+                _dump_stats_dict(data, json_path)
+                print(
+                    f"  ✓ {json_path.name} optional JSON ({len(data):,} ключей, "
+                    f"{time.monotonic() - json_started:.1f}s)"
+                )
 
     print(f"\n{'=' * 80}")
     print("ЗАВЕРШЕНО!")
@@ -851,12 +1035,9 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
     print(f"TRAIN SET: {train_processed:,} обработанных матчей")
     print(f"Test set исключен: {test_excluded:,} матчей")
     print(f"RSS peak≈{_rss_mb():.0f}MB")
+    print(f"Primary output: *.sqlite3" + (" (+ optional JSON)" if WRITE_JSON else ""))
     print("Для валидации запустите: python check_metrics.py")
     print(f"{'=' * 80}\n")
-
-    # Build SQLite3 versions of stats dicts for fast runtime lookup
-    print("\n[ШАГ 4/4] Построение SQLite3 версий словарей...")
-    _build_sqlite_dicts(stats_dir, tuple(metric for metric in metric_names if metric != "lane"))
 
     return 0
 

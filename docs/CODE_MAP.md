@@ -34,7 +34,7 @@ docs/        # эта база знаний
 |---|---|
 | `--odds` / `--no-odds` | вкл/выкл odds-пайплайн (`args.odds`; None=из env `BOOKMAKER_PREFETCH_ENABLED`) |
 | `--bookmaker-gate-mode {odds,presence}` | режим bookmaker-gate при включённых odds |
-| `--dltv-source {api,html,cyberscore}` | источник live (default `cyberscore`) |
+| `--dltv-source {api,html,cyberscore,sourcetv}` | источник live (default `sourcetv`) |
 | `--pure-dltv` | отключить весь bookmaker prefetch/presence, только DLTV draft |
 
 ### Ключевые функции (имя — строка — назначение)
@@ -81,7 +81,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 **Источник / Camoufox / прокси**
 | env | default | назначение |
 |---|---|---|
-| `DLTV_SOURCE_MODE` | `cyberscore` | источник live (`api`/`html`/`cyberscore`) |
+| `DLTV_SOURCE_MODE` | `sourcetv` | источник live (`sourcetv`/`api`/`html`/`cyberscore`; default Steam GC via sourcetv_probe) |
 | `USE_PROXY` | — | вкл/выкл прокси (иначе True) |
 | `DLTV_CAMOUFOX_ENABLED` | `1` если Camoufox доступен | Camoufox-first для DLTV html |
 | `CYBERSCORE_CAMOUFOX_HUMANIZE` | `true` | гуманизация курсора |
@@ -171,7 +171,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 **Kills dispatch («СТАВКА НА Ранние килы»)**
 | env | default | назначение |
 |---|---|---|
-| `LANE_ADV_STANDALONE_KILLS_ENABLED` | `1` | standalone lane_adv_dict≥6 kills-ставка (вне star-блока) |
+| `LANE_ADV_STANDALONE_KILLS_ENABLED` | `1` | standalone lane_adv_dict≥8 kills-ставка (вне star-блока) |
 | `KILLS_REQUIRE_TIER1_TEAM` | `1` | kills-ставки шлются ТОЛЬКО если ≥1 команда матча в Tier-1 (`id_to_names.tier_one_teams`). `0` → прежнее поведение (kills для всех). Гейт: `_match_has_tier1_team(r_id,d_id)` (OR-семантика, в отличие от `_determine_star_signal_match_tier` = обе Tier-1) применяется к `tier1_early_kills_mode` и к `_try_dispatch_lane_adv_standalone_kills`. |
 | `LANE_KILLS_MIN_GAMES` | `10` | минимум `kills10_games` для использования lane-ключа в диагностической kills@10-метрике |
 | `LANE_KILLS_RELIABILITY_PRIOR` | `100` | prior `K` в весе надёжности lane-оценки `games / (games + K)` |
@@ -184,7 +184,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | env | default |
 |---|---|
 | `STATS_DIR` | `ANALYSE_PUB_DIR` |
-| `STATS_EARLY_PATH`/`_LATE_PATH`/`_LANE_PATH`/`_POST_LANE_PATH` | `{stats_dir}/*_dict_raw.json`; для lane это логический source path, рядом приоритетно читается `lane_dict_raw.sqlite3` |
+| `STATS_EARLY_PATH`/`_LATE_PATH`/`_LANE_PATH`/`_POST_LANE_PATH` | logical JSON source paths `{stats_dir}/*_dict_raw.json`; primary artifacts are sibling `*_dict_raw.sqlite3` |
 | `STATS_LOOKUP_BACKEND` | `auto` |
 | `STATS_SHARDED_LOOKUP_MODE` | `auto` |
 | `STATS_SHARDED_LOOKUP_MAX_RAM_GB` | `8.0` |
@@ -196,6 +196,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | env | default |
 |---|---|
 | `MAP_ID_CHECK_PATH` | `~/.local/state/ingame/map_id_check.txt` (единый для всех режимов) |
+| `SOURCETV_MATCHES_PATH` | `{PROJECT_ROOT}/runtime/sourcetv_matches.json` — мост live-матчей между `sourcetv_probe.py` и `cyberscore_try.py` (абсолютный путь; не зависит от cwd) |
 | `RUNTIME_INSTANCE_LOCK_PATH` | `runtime/cyberscore_try.instance.lock` |
 | `DELAYED_QUEUE_PATH` | `runtime/delayed_signal_queue.json` (суффиксируется режимом) |
 | `SENT_SIGNAL_JOURNAL_PATH` | `runtime/sent_signal_recovery.jsonl` |
@@ -222,8 +223,9 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 
 - `base/analise_database.py:lanes(...)` сохраняет рядом с прежними `wins/draws/games` командную цель `Δkills@10 = sum(radiantKills[:10]) - sum(direKills[:10])`; для Dire-ориентированных ключей знак разворачивается. Невалидный/короткий kills timeline не портит lane outcome: обычные counters пишутся, `kills10_*` для такой карты — нет.
 - Поля одного lane-ключа: `kills10_leads`, `kills10_draws`, `kills10_games`, `kills10_diff_sum`, `kills10_diff_sq_sum`. Отдельного набора дублирующихся ключей и отдельного kills-словаря нет.
-- `base/explore_database.py` строит lane напрямую в `lane_dict_raw.sqlite3`: таблица `stats` (`key` PRIMARY KEY + три прежних и пять `kills10_*` полей) и `meta`, обе `WITHOUT ROWID`. Данные каждого успешно обработанного input-файла UPSERT-ятся в SQLite; итоговая временная БД атомарно переименовывается поверх target.
-- При rebuild lane **не создаётся и не обновляется `lane_dict_raw.json`** и lane не проходит через shard/JSON→SQLite стадию. Остальные `early/late/post_lane` сохраняют прежний JSON/shard pipeline. Runtime `_load_lane_dict_from_source(...)` сначала материализует новую `stats`-таблицу SQLite, поддерживает legacy SQLite `kv`, затем legacy JSON fallback.
+- `base/explore_database.py` is sqlite-first: early/late/post_lane primary artifacts are `early_dict_raw.sqlite3`, `late_dict_raw.sqlite3`, `post_lane_dict_raw.sqlite3` with `kv(key TEXT PRIMARY KEY, value BLOB)` + `meta`, format_version `1`/backend `sqlite_kv`; lane primary artifact is `lane_dict_raw.sqlite3` with `stats` + `meta` both `WITHOUT ROWID`, format_version `2`/backend `sqlite_stats`; `stats` has `key`, `wins/draws/games`, five `kills10_*` fields.
+- `EXPLORE_WRITE_JSON` default `0`: JSON is neither produced nor required for sqlite-first loading; only setting `1` additionally emits legacy JSON for early/late/post_lane; lane JSON is never emitted.
+- Runtime `_sqlite_stats_meta_matches`: sqlite-first (`source_name == *.sqlite3` or no companion JSON) stays valid; legacy meta that points at a sibling JSON is accepted only when `source_size`/`source_mtime_ns` match — mismatch falls back to JSON instead of preferring a stale SQLite.
 - Live `calculate_lane_kills_advantage(...)` берёт exact 2v2 для side lanes и exact 1v1 для mid; при нехватке использует 2v1/1v1/synergy/solo fallback с приведением Dire-ключей к Radiant-знаку. Каждый lane оценивает один и тот же team-level target, поэтому lane-оценки не суммируются, а усредняются с весом `games/(games+LANE_KILLS_RELIABILITY_PRIOR)`; lead/draw probabilities используют add-one smoothing `(count+1)/(games+3)`.
 - Telegram `Lanes:` получает строку `lane_kills_adv_dict: Radiant|Dire +N.NN kills @10 (lead PP%, C/3)`. Она добавлена в обычные, early-local, standalone lane-adv и pipeline-probe сообщения, но не влияет на сторону, порог или сам факт dispatch.
 

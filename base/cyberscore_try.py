@@ -40,6 +40,10 @@ from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 import requests
 try:
+    from sourcetv_bridge import resolve_sourcetv_matches_path
+except ImportError:  # Supports both direct-script and package imports.
+    from base.sourcetv_bridge import resolve_sourcetv_matches_path
+try:
     import camoufox
     CAMOUFOX_AVAILABLE = True
 except Exception:
@@ -1326,7 +1330,7 @@ NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS = max(
     0.0,
     _safe_float_env(
         "NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS",
-        6.0,
+        8.0,
     ),
 )
 # Legacy threshold: previously, when an EARLY star pointed to the OPPOSITE team
@@ -1344,7 +1348,7 @@ NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_OPPOSITE_EARLY_STAR_MIN_ABS = max(
 )
 NETWORTH_STATUS_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_SEND = "tier1_early_kills_lane_adv_immediate_send"
 NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND = "lane_adv_dict_standalone_kills_send"
-# Standalone "lane_adv_dict ≥ 6" kills trigger: fires in any dispatch branch
+# Standalone "lane_adv_dict ≥ 8" kills trigger: fires in any dispatch branch
 # at minute 00 on the lane-dominating side, in parallel with other watchers.
 # Default ON in production; tests disable it unless explicitly exercising it.
 LANE_ADV_STANDALONE_KILLS_ENABLED = _env_flag("LANE_ADV_STANDALONE_KILLS_ENABLED", "1")
@@ -1564,6 +1568,10 @@ UNCERTAIN_SIGNAL_DELIVERY_FALLBACK_PATH = str(
 RUNTIME_INSTANCE_LOCK_PATH = str(
     os.getenv("RUNTIME_INSTANCE_LOCK_PATH", "runtime/cyberscore_try.instance.lock")
 ).strip() or "runtime/cyberscore_try.instance.lock"
+# Absolute path so sourcetv_probe/cyberscore agree regardless of process cwd.
+# (probe historically ran with cwd=base/ and wrote base/runtime/… while
+# cyberscore cwd=/root/main expected repo-root runtime/… — live matches were missed.)
+SOURCETV_MATCHES_PATH = str(resolve_sourcetv_matches_path(PROJECT_ROOT))
 TEST_DISABLE_ADD_URL = _safe_bool_env("TEST_DISABLE_ADD_URL", False)
 FORCE_ODDS_SIGNAL_TEST = _safe_bool_env("FORCE_ODDS_SIGNAL_TEST", False)
 DELAYED_SIGNAL_RETRY_BACKOFF_BASE_SECONDS = _safe_int_env("DELAYED_SIGNAL_RETRY_BACKOFF_BASE_SECONDS", 60)
@@ -5000,6 +5008,7 @@ def _stake_multiplier_for_signal(
     has_selected_all_star: bool = False,
     all_star_hit_count: Optional[int] = None,
     early_star_hit_count: Optional[int] = None,
+    late_star_hit_metrics: Optional[List[str]] = None,
 ) -> float:
     if target_side not in {"radiant", "dire"}:
         return 1
@@ -5084,6 +5093,14 @@ def _stake_multiplier_for_signal(
     if late_star_hit_count_value is None or late_star_hit_count_value < 2:
         return 0.5
 
+    # x1/x2/x3 require star hits on ALL 3 core metrics (cp1vs1, cp1vs2, solo).
+    # If any of the 3 is missing from hit_metrics → cap at 0.5.
+    if late_star_hit_metrics is not None:
+        _core_metrics = set(_STAR_LATE_CORE_METRIC_ORDER)
+        _hit_set = set(late_star_hit_metrics)
+        if not _core_metrics.issubset(_hit_set):
+            return 0.5
+
     if not has_selected_late_star or late_wr_value is None:
         return 1
 
@@ -5123,6 +5140,7 @@ def _build_stake_multiplier_context(
     special_header_mode: str = "",
     all_star_hit_count: Optional[int] = None,
     early_star_hit_count: Optional[int] = None,
+    late_star_hit_metrics: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     opposite_side = "dire" if target_side == "radiant" else "radiant"
     return {
@@ -5142,6 +5160,7 @@ def _build_stake_multiplier_context(
         "late_star_hit_count": int(late_star_hit_count) if late_star_hit_count is not None else None,
         "all_star_hit_count": int(all_star_hit_count) if all_star_hit_count is not None else None,
         "early_star_hit_count": int(early_star_hit_count) if early_star_hit_count is not None else None,
+        "late_star_hit_metrics": list(late_star_hit_metrics) if late_star_hit_metrics is not None else None,
         "force_half_due_to_early_no_valid_late": bool(force_half_due_to_early_no_valid_late),
         "special_header_mode": str(special_header_mode or ""),
         "target_rating": _team_elo_base_rating_for_side(team_elo_meta, target_side),
@@ -5298,7 +5317,16 @@ def _build_all_star_output(
 ) -> Dict[str, Any]:
     all_output: Dict[str, Any] = {}
     if isinstance(post_lane_output, dict):
-        for key in ("counterpick_1vs1", "counterpick_1vs2", "solo", "synergy_duo", "synergy_trio"):
+        # pos1_vs_pos1 is display-only (non-star); still copy it so All-block
+        # messages show the metric instead of permanent ``None``.
+        for key in (
+            "counterpick_1vs1",
+            "counterpick_1vs2",
+            "solo",
+            "synergy_duo",
+            "synergy_trio",
+            "pos1_vs_pos1",
+        ):
             if key in post_lane_output:
                 all_output[key] = post_lane_output.get(key)
     all_output.update(_build_dota2protracker_star_output(protracker_payload))
@@ -5500,7 +5528,7 @@ def _build_lane_adv_standalone_kills_message(
     lane_adv_dict_value: Optional[float],
     lane_kills_adv: Any = None,
 ) -> str:
-    """Build the dispatch message for the standalone "lane_adv_dict ≥ 6" kills
+    """Build the dispatch message for the standalone "lane_adv_dict ≥ 8" kills
     trigger. Used when the regular STAR signal block is empty/rejected — we
     still want to send a kills bet on the team that is dominating the lanes.
     """
@@ -5652,6 +5680,7 @@ def _build_early_local_kills_message(
 
     metric_list = [
         ('counterpick_1vs1', 'Counterpick_1vs1'),
+        ('pos1_vs_pos1', 'Pos1vsPos1'),
         ('counterpick_1vs2', 'Counterpick_1vs2'),
         ('solo', 'Solo'),
         ('synergy_duo', 'Synergy_duo'),
@@ -5661,6 +5690,7 @@ def _build_early_local_kills_message(
     # Dota2ProTracker line по-прежнему опущена (protracker not ready).
     all_metric_list = [
         ('counterpick_1vs1', 'Counterpick_1vs1'),
+        ('pos1_vs_pos1', 'Pos1vsPos1'),
         ('counterpick_1vs2', 'Counterpick_1vs2'),
         ('solo', 'Solo'),
         ('synergy_duo', 'Synergy_duo'),
@@ -6002,6 +6032,7 @@ def _refresh_stake_multiplier_message(
         has_selected_all_star=bool(stake_multiplier_context.get("has_selected_all_star")),
         all_star_hit_count=stake_multiplier_context.get("all_star_hit_count"),
         early_star_hit_count=stake_multiplier_context.get("early_star_hit_count"),
+        late_star_hit_metrics=stake_multiplier_context.get("late_star_hit_metrics"),
     )
 
     new_header = _format_signal_header(
@@ -6516,12 +6547,12 @@ def _fetch_cyberscore_delayed_match_state(match_url: Optional[str]) -> Optional[
 
 
 def _fetch_sourcetv_delayed_match_state(json_url: str) -> Optional[Dict[str, Optional[float]]]:
-    """game_time/radiant_lead для delayed-watcher из runtime/sourcetv_matches.json (URL sourcetv://matches/<id>)."""
+    """game_time/radiant_lead для delayed-watcher из SOURCETV_MATCHES_PATH (URL sourcetv://matches/<id>)."""
     id_match = re.search(r"sourcetv://matches/(\d+)", str(json_url))
     if not id_match:
         return None
     try:
-        with open("runtime/sourcetv_matches.json") as f:
+        with open(SOURCETV_MATCHES_PATH) as f:
             matches = json.load(f)
     except Exception:
         return None
@@ -6549,7 +6580,7 @@ def _sourcetv_delayed_league_name(json_url: Optional[str]) -> Optional[str]:
     if not id_match:
         return None
     try:
-        with open("runtime/sourcetv_matches.json") as f:
+        with open(SOURCETV_MATCHES_PATH) as f:
             matches = json.load(f)
     except Exception:
         return None
@@ -9403,7 +9434,7 @@ CURRENT_PROXY = None
 PROXIES = {}
 USE_PROXY = None
 # Live source mode: "cyberscore" (Camoufox/proxy), "api" (curl/proxy), or "html" (Camoufox).
-DLTV_SOURCE_MODE = str(os.getenv("DLTV_SOURCE_MODE", "cyberscore")).strip().lower() or "cyberscore"
+DLTV_SOURCE_MODE = str(os.getenv("DLTV_SOURCE_MODE", "sourcetv")).strip().lower() or "sourcetv"
 PURE_DLTV_MODE = _env_flag("PURE_DLTV_MODE", "0")
 CYBERSCORE_MATCHES_URL = str(
     os.getenv(
@@ -17719,7 +17750,7 @@ def _try_dispatch_lane_adv_standalone_kills(
     dire_team_id: Any = 0,
     lane_kills_adv: Any = None,
 ) -> bool:
-    """Standalone kills trigger: when ``|lane_adv_dict| ≥ 6`` we dispatch a
+    """Standalone kills trigger: when ``|lane_adv_dict| ≥ 8`` we dispatch a
     kills bet on the dominating side, regardless of star block availability.
 
     Runs with ``defer_add_url=True`` so other watchers (late star, all-only,
@@ -17728,7 +17759,7 @@ def _try_dispatch_lane_adv_standalone_kills(
     deliver this kills bet at most once per match lifetime.
 
     Threshold / gating policy:
-      * default ``|lane_adv_dict| ≥ 6``;
+      * default ``|lane_adv_dict| ≥ 8``;
       * if an EARLY star exists whose sign points to the OPPOSITE team from
         the lane_adv_dict-dominating side, the bet is BLOCKED outright — the
         early star contradicts the lanes, so we do not fire the 00-minute bet
@@ -20654,7 +20685,7 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                 def get_text(self, *args, **kwargs):
                     return self.text
 
-            json_path = "runtime/sourcetv_matches.json"
+            json_path = SOURCETV_MATCHES_PATH
             if not os.path.exists(json_path):
                 print(f"⚠️ SourceTV mode: файл {json_path} не найден! Запустите sourcetv_probe.py")
                 return [], []
@@ -23843,6 +23874,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
             metric_list = [
                 ('counterpick_1vs1', 'Counterpick_1vs1'),
+                ('pos1_vs_pos1', 'Pos1vsPos1'),
                 ('counterpick_1vs2', 'Counterpick_1vs2'),
                 ('solo', 'Solo'),
                 ('synergy_duo', 'Synergy_duo'),
@@ -23850,6 +23882,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             ]
             all_metric_list = [
                 ('counterpick_1vs1', 'Counterpick_1vs1'),
+                ('pos1_vs_pos1', 'Pos1vsPos1'),
                 ('counterpick_1vs2', 'Counterpick_1vs2'),
                 # Option C: post_lane-solo (7.41d) эмитится — показываем Solo и в подробном All-блоке.
                 ('solo', 'Solo'),
@@ -23978,7 +24011,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"{radiant_team_name_original} vs {dire_team_name_original}"
                     )
 
-            # Standalone "lane_adv_dict ≥ 6" kills trigger is dispatched
+            # Standalone "lane_adv_dict ≥ 8" kills trigger is dispatched
             # later, after the full signal ``message_text`` is built, so the
             # kills bet carries the complete body (WR/star/metric blocks).
 
@@ -24973,6 +25006,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     if isinstance(selected_early_diag, dict) and has_selected_early_star
                     else None
                 ),
+                late_star_hit_metrics=(
+                    list(selected_late_diag.get("hit_metrics") or [])
+                    if isinstance(selected_late_diag, dict) and has_selected_late_star
+                    else None
+                ),
             )
             stake_multiplier = _stake_multiplier_for_signal(
                 team_elo_meta=team_elo_meta,
@@ -25002,6 +25040,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early_star_hit_count=(
                     len(selected_early_diag.get("hit_metrics") or [])
                     if isinstance(selected_early_diag, dict) and has_selected_early_star
+                    else None
+                ),
+                late_star_hit_metrics=(
+                    list(selected_late_diag.get("hit_metrics") or [])
+                    if isinstance(selected_late_diag, dict) and has_selected_late_star
                     else None
                 ),
             )
@@ -25040,8 +25083,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"{live_state_block}"
                 f"{odds_block}"
             )
-            # Standalone "lane_adv_dict ≥ 6" kills trigger: fires in ANY
-            # branch when lanes are dominated (|lane_adv_dict| ≥ 6),
+            # Standalone "lane_adv_dict ≥ 8" kills trigger: fires in ANY
+            # branch when lanes are dominated (|lane_adv_dict| ≥ 8),
             # regardless of early/late/all star presence. Uses the full
             # signal body (only the header is rewritten to the kills header),
             # and does NOT block the rest of the dispatch flow (other watchers
@@ -27757,6 +27800,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
                 tempo_metric_list = [
                     ('counterpick_1vs1', 'Counterpick_1vs1'),
+                    ('pos1_vs_pos1', 'Pos1vsPos1'),
                     ('counterpick_1vs2', 'Counterpick_1vs2'),
                     ('solo', 'Solo'),
                     ('synergy_duo', 'Synergy_duo'),
@@ -27765,6 +27809,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 # All block: Solo теперь выводится (Option C: post_lane-solo на 7.41d, эмитится).
                 tempo_all_metric_list = [
                     ('counterpick_1vs1', 'Counterpick_1vs1'),
+                    ('pos1_vs_pos1', 'Pos1vsPos1'),
                     ('counterpick_1vs2', 'Counterpick_1vs2'),
                     ('solo', 'Solo'),
                     ('synergy_duo', 'Synergy_duo'),
@@ -27861,7 +27906,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 if star_filter_rejections:
                     print(f"   📉 Star filter reject: {'; '.join(star_filter_rejections)}")
 
-            # Standalone "lane_adv_dict ≥ 6" kills trigger for the no-star
+            # Standalone "lane_adv_dict ≥ 8" kills trigger for the no-star
             # rejection path: even when no star block is valid, dominate-on-
             # lanes case still warrants a kills bet on the dominating side.
             try:
@@ -28796,8 +28841,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dltv-source",
         choices=["api", "html", "cyberscore", "sourcetv"],
-        default=DLTV_SOURCE_MODE if DLTV_SOURCE_MODE in {"api", "html", "cyberscore", "sourcetv"} else "cyberscore",
-        help="Live matches source: api/html for DLTV, or cyberscore for CyberScore, or sourcetv for SourceTV GC Bot",
+        default=DLTV_SOURCE_MODE if DLTV_SOURCE_MODE in {"api", "html", "cyberscore", "sourcetv"} else "sourcetv",
+        help="Live matches source (default sourcetv/Steam GC): api/html for DLTV, cyberscore for CyberScore, sourcetv for SourceTV GC Bot",
     )
     parser.add_argument(
         "--pure-dltv",

@@ -344,7 +344,7 @@ def test_lane_adv_standalone_kills_suppressed_when_no_tier1_team(monkeypatch) ->
 
 
 # lane_adv_dict ≈ +8 (radiant-dominated lanes, below the opposite-early-star
-# threshold of 12 but above the default 6).
+# threshold of 12 and at the default standalone-kills threshold of 8).
 LANE_ADV_DICT_8_OUTPUT = ("Top: win 47%", "Bot: win 47%", "Mid: win 47%")
 # lane_adv_dict ≈ +13 (radiant-dominated lanes, above the opposite-early-star
 # threshold of 12).
@@ -401,8 +401,8 @@ def test_lane_adv_standalone_kills_blocked_when_opposite_early_star_even_at_high
     assert kills_msgs == [], "kills must be blocked when an opposite early star exists, regardless of lane_adv magnitude"
 
 
-def test_lane_adv_standalone_kills_fires_at_6_when_no_opposite_early_star(monkeypatch) -> None:
-    # No early star at all: the default |lane_adv_dict| >= 6 threshold applies,
+def test_lane_adv_standalone_kills_fires_at_8_when_no_opposite_early_star(monkeypatch) -> None:
+    # No early star at all: the default |lane_adv_dict| >= 8 threshold applies,
     # so lane_adv_dict ≈ +8 still fires the standalone kills bet.
     case = replace(
         _opposite_early_kills_case(game_time_seconds=30),
@@ -419,7 +419,7 @@ def test_lane_adv_standalone_kills_fires_at_6_when_no_opposite_early_star(monkey
     )
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
-    assert kills_msgs, "kills must fire at |lane_adv_dict| >= 6 when there is no opposite early star"
+    assert kills_msgs, "kills must fire at |lane_adv_dict| >= 8 when there is no opposite early star"
     assert "lane_adv_dict: +8.00" in kills_msgs[0]
 
 
@@ -448,7 +448,7 @@ def test_lane_adv_standalone_kills_blocked_when_early_metric_opposes_lanes_witho
 def test_lane_adv_standalone_kills_fires_when_early_metrics_aligned_or_zero(monkeypatch) -> None:
     # No early star. The three raw early metrics are all same-sign-as-lanes or
     # zero (cp1vs1 +1, cp1vs2 0, solo +2) — the consistency gate passes and the
-    # kills bet fires at |lane_adv_dict| >= 6.
+    # kills bet fires at |lane_adv_dict| >= 8.
     case = replace(
         _opposite_early_kills_case(game_time_seconds=30),
         has_early_star=False,
@@ -488,7 +488,7 @@ def test_lane_adv_standalone_kills_fires_when_early_star_same_side_as_lanes(monk
     )
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
-    assert kills_msgs, "kills must fire when early star is same-side as lanes at |lane_adv_dict| >= 6"
+    assert kills_msgs, "kills must fire when early star is same-side as lanes at |lane_adv_dict| >= 8"
     assert "lane_adv_dict: +8.00" in kills_msgs[0]
 
 

@@ -35,9 +35,19 @@ for _o, _n in (("job_id_target", "jobid_target"), ("job_id_source", "jobid_sourc
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from league_keywords import title_matches_allow_keywords
 
+try:
+    from sourcetv_bridge import resolve_sourcetv_matches_path
+except ImportError:  # Supports both direct-script and package imports.
+    from base.sourcetv_bridge import resolve_sourcetv_matches_path
+
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("stv")
 log.setLevel(logging.INFO)
+
+# Repo-root runtime path (absolute) — must match cyberscore_try.SOURCETV_MATCHES_PATH.
+# Relative "runtime/…" breaks when probe is started with cwd=base/.
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+SOURCETV_MATCHES_PATH = str(resolve_sourcetv_matches_path(_PROJECT_ROOT))
 
 KEY       = "4C5768B425A5FBDCE3C04C67815BAAD4"
 CREDS_DIR = os.path.expanduser("~/.config/dota_probe")
@@ -973,8 +983,8 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                     # самоудаляется по TTL через 5 минут, не доживая до игровых окон диспетчеризации.
                     if st.get("pos_map"):
                         try:
-                            os.makedirs("runtime", exist_ok=True)
-                            dump_path = "runtime/sourcetv_matches.json"
+                            dump_path = SOURCETV_MATCHES_PATH
+                            os.makedirs(os.path.dirname(dump_path) or ".", exist_ok=True)
 
                             # Собираем radiant и dire пики с разрешенными позициями
                             rad_picks = {}

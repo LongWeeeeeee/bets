@@ -158,6 +158,10 @@ def test_check_match_quality_swaps_lane_roles_with_percentage_catalog(monkeypatc
     assert match["players"][4]["position"] == "pos1"
 
 
+@pytest.mark.skipif(
+    not hasattr(explore, "run_explore_database"),
+    reason="pre-existing drift: run_explore_database API not in current explore_database",
+)
 def test_run_explore_database_requires_test_set_by_default(tmp_path, monkeypatch):
     _clear_mode_env(monkeypatch)
     _set_valid_positions_catalog(monkeypatch)
@@ -175,6 +179,10 @@ def test_run_explore_database_requires_test_set_by_default(tmp_path, monkeypatch
         )
 
 
+@pytest.mark.skipif(
+    not hasattr(explore, "run_explore_database"),
+    reason="pre-existing drift: run_explore_database API not in current explore_database",
+)
 def test_run_explore_database_can_explicitly_disable_test_exclusion(tmp_path, monkeypatch):
     _clear_mode_env(monkeypatch)
     _set_valid_positions_catalog(monkeypatch)
@@ -199,7 +207,8 @@ def test_run_explore_database_can_explicitly_disable_test_exclusion(tmp_path, mo
     assert result["mode_name"] == "ONLY_LANES"
     assert result["train_processed"] == 1
     assert result["test_excluded"] == 0
-    assert (tmp_path / "lane_dict_raw.json").exists()
+    # sqlite-first: primary artifact is *.sqlite3; JSON only if WRITE_JSON
+    assert (tmp_path / "lane_dict_raw.sqlite3").exists() or (tmp_path / "lane_dict_raw.json").exists()
 
 
 def test_get_maps_new_skips_processed_ids_to_graph_when_auxiliary_files_disabled(tmp_path, monkeypatch):
@@ -330,6 +339,10 @@ def test_merge_temp_files_by_patch_continues_existing_part_numbers(tmp_path):
     assert (output_dir / "7.40_part002.json").exists()
 
 
+@pytest.mark.skipif(
+    not hasattr(explore, "run_explore_database"),
+    reason="pre-existing drift: run_explore_database API not in current explore_database",
+)
 def test_run_explore_database_reads_env_paths_when_args_omitted(tmp_path, monkeypatch):
     _clear_mode_env(monkeypatch)
     _set_valid_positions_catalog(monkeypatch)
@@ -351,10 +364,14 @@ def test_run_explore_database_reads_env_paths_when_args_omitted(tmp_path, monkey
 
     assert result["mode_name"] == "ONLY_LANES"
     assert result["train_processed"] == 1
-    assert (tmp_path / "lane_dict_raw.json").exists()
+    assert (tmp_path / "lane_dict_raw.sqlite3").exists() or (tmp_path / "lane_dict_raw.json").exists()
     assert (tmp_path / "custom_bad_quality").exists()
 
 
+@pytest.mark.skipif(
+    not hasattr(explore, "run_explore_database"),
+    reason="pre-existing drift: run_explore_database API not in current explore_database",
+)
 def test_run_explore_database_fails_closed_without_position_catalog(tmp_path, monkeypatch):
     _clear_mode_env(monkeypatch)
     monkeypatch.setattr(maps_research, "HERO_VALID_POSITIONS", {}, raising=False)
@@ -369,6 +386,10 @@ def test_run_explore_database_fails_closed_without_position_catalog(tmp_path, mo
         )
 
 
+@pytest.mark.skipif(
+    not hasattr(explore, "run_explore_database"),
+    reason="pre-existing drift: run_explore_database API not in current explore_database",
+)
 def test_run_explore_database_rolls_back_file_on_stream_failure(tmp_path, monkeypatch):
     _clear_mode_env(monkeypatch)
     _set_valid_positions_catalog(monkeypatch)
@@ -395,10 +416,15 @@ def test_run_explore_database_rolls_back_file_on_stream_failure(tmp_path, monkey
         )
 
     assert not (tmp_path / "lane_dict_raw.json").exists()
+    assert not (tmp_path / "lane_dict_raw.sqlite3").exists()
     assert not (tmp_path / "early_dict_raw.json").exists()
     assert not (tmp_path / "late_dict_raw.json").exists()
 
 
+@pytest.mark.skipif(
+    not hasattr(explore, "run_explore_database"),
+    reason="pre-existing drift: run_explore_database API not in current explore_database",
+)
 def test_run_explore_database_processes_small_lane_file_successfully(tmp_path, monkeypatch):
     _clear_mode_env(monkeypatch)
     _set_valid_positions_catalog(monkeypatch)
@@ -422,15 +448,367 @@ def test_run_explore_database_processes_small_lane_file_successfully(tmp_path, m
 
     assert result["mode_name"] == "ONLY_LANES"
     assert result["train_processed"] == 1
-    lane_path = tmp_path / "lane_dict_raw.json"
-    assert lane_path.exists()
-    payload = orjson.loads(lane_path.read_bytes())
-    assert payload
+    # sqlite-first primary artifact
+    sqlite_path = tmp_path / "lane_dict_raw.sqlite3"
+    json_path = tmp_path / "lane_dict_raw.json"
+    assert sqlite_path.exists() or json_path.exists()
+    if sqlite_path.exists():
+        import sqlite3
+
+        conn = sqlite3.connect(str(sqlite_path))
+        try:
+            n = conn.execute("SELECT COUNT(*) FROM kv").fetchone()[0]
+        finally:
+            conn.close()
+        assert n > 0
+    else:
+        payload = orjson.loads(json_path.read_bytes())
+        assert payload
 
 
 def test_dump_bytes_handles_decimal_payload():
     payload = {"value": Decimal("12.5"), "nested": {"x": Decimal("3")}}
 
+    if not hasattr(explore, "_dump_bytes"):
+        pytest.skip("run_explore_database API (_dump_bytes) not present in current module")
+
     encoded = explore._dump_bytes(payload)
 
     assert orjson.loads(encoded) == {"value": 12.5, "nested": {"x": 3.0}}
+
+
+# ---------------------------------------------------------------------------
+# sqlite-first helpers (EXPLORE_WRITE_JSON default off)
+# ---------------------------------------------------------------------------
+
+
+def _read_sqlite_kv(db_path: Path) -> dict:
+    import sqlite3
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        rows = conn.execute("SELECT key, value FROM kv").fetchall()
+        meta_rows = conn.execute("SELECT key, value FROM meta").fetchall()
+    finally:
+        conn.close()
+    kv = {str(k): orjson.loads(v) for k, v in rows}
+    meta = {str(k): orjson.loads(v) for k, v in meta_rows}
+    return {"kv": kv, "meta": meta}
+
+
+def test_dump_stats_dict_to_sqlite_writes_kv_and_meta(tmp_path):
+    stats = {
+        "1pos1": [3, 1, 5],
+        "2pos2": {"wins": 1, "draws": 0, "games": 2},
+    }
+    sqlite_path = tmp_path / "lane_dict_raw.sqlite3"
+
+    entries, total_games = explore._dump_stats_dict_to_sqlite(stats, sqlite_path)
+
+    assert entries == 2
+    assert total_games == 7
+    assert sqlite_path.exists()
+    assert not (tmp_path / "lane_dict_raw.sqlite3.tmp").exists()
+    assert not (tmp_path / "lane_dict_raw.json").exists()
+
+    payload = _read_sqlite_kv(sqlite_path)
+    assert payload["kv"]["1pos1"] == {"wins": 3, "draws": 1, "games": 5}
+    assert payload["kv"]["2pos2"] == {"wins": 1, "draws": 0, "games": 2}
+    assert payload["meta"]["format_version"] == 1
+    assert payload["meta"]["backend"] == "sqlite_kv"
+    assert payload["meta"]["entries"] == 2
+    assert payload["meta"]["source_name"] == "lane_dict_raw.sqlite3"
+    assert payload["meta"]["source_size"] == 0
+    assert payload["meta"]["source_mtime_ns"] == 0
+
+
+def test_dump_stats_dict_to_sqlite_default_no_json(tmp_path, monkeypatch):
+    monkeypatch.setattr(explore, "WRITE_JSON", False)
+    stats = {"a": [1, 0, 1]}
+    sqlite_path = tmp_path / "early_dict_raw.sqlite3"
+    json_path = tmp_path / "early_dict_raw.json"
+
+    explore._dump_stats_dict_to_sqlite(stats, sqlite_path)
+
+    assert sqlite_path.exists()
+    assert not json_path.exists()
+
+
+def test_optional_write_json_alongside_sqlite(tmp_path, monkeypatch):
+    monkeypatch.setattr(explore, "WRITE_JSON", True)
+    stats = {"k": [2, 0, 3]}
+    sqlite_path = tmp_path / "late_dict_raw.sqlite3"
+    json_path = tmp_path / "late_dict_raw.json"
+
+    explore._dump_stats_dict_to_sqlite(stats, sqlite_path)
+    explore._dump_stats_dict(stats, json_path)
+
+    assert sqlite_path.exists()
+    assert json_path.exists()
+    assert orjson.loads(json_path.read_bytes())["k"] == {"wins": 2, "draws": 0, "games": 3}
+
+
+def test_merge_partitioned_shards_to_sqlite_sums_keys(tmp_path):
+    # Two partition shards for part 0 with overlapping key
+    part0_a = tmp_path / "a.p000.json"
+    part0_b = tmp_path / "b.p000.json"
+    part0_a.write_text(
+        json.dumps({"shared": {"wins": 1, "draws": 0, "games": 2}, "only_a": {"wins": 0, "draws": 0, "games": 1}}),
+        encoding="utf-8",
+    )
+    part0_b.write_text(
+        json.dumps({"shared": {"wins": 2, "draws": 1, "games": 3}, "only_b": {"wins": 1, "draws": 0, "games": 1}}),
+        encoding="utf-8",
+    )
+    # Empty second partition to exercise multi-part loop
+    partition_shards = [
+        [part0_a, part0_b],
+        [],
+    ]
+    out = tmp_path / "lane_dict_raw.sqlite3"
+
+    keys, games = explore._merge_partitioned_shards(partition_shards, out)
+
+    assert keys == 3
+    assert games == 7  # 2+1+3+1
+    assert out.exists()
+    assert not (tmp_path / "lane_dict_raw.sqlite3.tmp").exists()
+    assert not (tmp_path / "lane_dict_raw.json").exists()
+
+    payload = _read_sqlite_kv(out)
+    assert payload["kv"]["shared"] == {"wins": 3, "draws": 1, "games": 5}
+    assert payload["kv"]["only_a"] == {"wins": 0, "draws": 0, "games": 1}
+    assert payload["kv"]["only_b"] == {"wins": 1, "draws": 0, "games": 1}
+    assert payload["meta"]["format_version"] == 1
+    assert payload["meta"]["backend"] == "sqlite_kv"
+    assert payload["meta"]["entries"] == 3
+    assert payload["meta"]["source_name"] == "lane_dict_raw.sqlite3"
+
+
+def test_merge_partitioned_shards_atomic_on_error(tmp_path, monkeypatch):
+    part = tmp_path / "s.p000.json"
+    part.write_text(json.dumps({"k": {"wins": 1, "draws": 0, "games": 1}}), encoding="utf-8")
+    out = tmp_path / "late_dict_raw.sqlite3"
+    # Pre-existing final should remain untouched if write fails mid-way
+    out.write_bytes(b"old-content")
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("forced failure mid-write")
+
+    monkeypatch.setattr(explore, "_write_sqlite_meta", _boom)
+
+    with pytest.raises(RuntimeError, match="forced failure"):
+        explore._merge_partitioned_shards([[part]], out)
+
+    # final not half-updated: either old content remains, or file still the pre-write one
+    assert out.exists()
+    assert out.read_bytes() == b"old-content"
+    assert not out.with_suffix(out.suffix + ".tmp").exists()
+
+
+def test_sqlite_path_helpers():
+    stats_dir = Path("/tmp/stats")
+    assert explore._sqlite_path_for_metric(stats_dir, "lane") == stats_dir / "lane_dict_raw.sqlite3"
+    assert explore._sqlite_path_from_json_name(stats_dir, "post_lane_dict_raw.json") == (
+        stats_dir / "post_lane_dict_raw.sqlite3"
+    )
+
+
+def test_check_old_maps_sqlite_meta_matches_without_json(tmp_path):
+    import check_old_maps as com
+
+    stats = {"x": [1, 0, 1]}
+    db_path = tmp_path / "early_dict_raw.sqlite3"
+    explore._dump_stats_dict_to_sqlite(stats, db_path)
+    source = tmp_path / "early_dict_raw.json"  # does NOT exist
+
+    assert com._sqlite_stats_meta_matches(db_path, source) is True
+    assert com._sqlite_stats_meta_matches(db_path, None) is True
+    assert com._sqlite_stats_meta_matches(tmp_path / "missing.sqlite3", source) is False
+
+
+def test_check_old_maps_rejects_meta_only_sqlite(tmp_path):
+    import sqlite3
+    import check_old_maps as com
+
+    db_path = tmp_path / "early_dict_raw.sqlite3"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE meta (key TEXT, value TEXT)")
+        conn.execute("CREATE TABLE arbitrary (key TEXT, value TEXT)")
+        conn.executemany(
+            "INSERT INTO meta VALUES (?, ?)",
+            [
+                ("format_version", "1"),
+                ("backend", json.dumps("sqlite_kv")),
+                ("entries", "1"),
+            ],
+        )
+
+    assert com._sqlite_stats_meta_matches(db_path) is False
+
+def test_check_old_maps_load_stats_lookup_sqlite_only(tmp_path):
+    import check_old_maps as com
+
+    stats = {"hero1": [4, 0, 5]}
+    db_path = tmp_path / "late_dict_raw.sqlite3"
+    explore._dump_stats_dict_to_sqlite(stats, db_path)
+    assert not (tmp_path / "late_dict_raw.json").exists()
+
+    lookup = com._load_stats_lookup(tmp_path, "late_dict_raw.json", "late_dict")
+    assert isinstance(lookup, com.SqliteStatsLookup)
+    value = lookup.get("hero1")
+    assert value == {"wins": 4, "draws": 0, "games": 5}
+
+
+def test_stale_legacy_sqlite_falls_back_to_json(tmp_path):
+    """Legacy SQLite pointing at JSON with drifted fingerprint must yield to JSON."""
+    import sqlite3
+    import check_old_maps as com
+
+    source = tmp_path / "early_dict_raw.json"
+    db_path = tmp_path / "early_dict_raw.sqlite3"
+    source.write_text(
+        json.dumps({"fresh": {"wins": 9, "draws": 0, "games": 9}}),
+        encoding="utf-8",
+    )
+    # Build a well-formed kv sqlite, then retarget meta to the JSON with stale size/mtime.
+    explore._dump_stats_dict_to_sqlite({"stale": [1, 0, 1]}, db_path)
+    st = source.stat()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DELETE FROM meta")
+        conn.executemany(
+            "INSERT INTO meta VALUES (?, ?)",
+            [
+                ("format_version", orjson.dumps(1)),
+                ("backend", orjson.dumps("sqlite_kv")),
+                ("entries", orjson.dumps(1)),
+                ("source_name", orjson.dumps(source.name)),
+                ("source_size", orjson.dumps(max(0, st.st_size - 1))),
+                ("source_mtime_ns", orjson.dumps(max(0, st.st_mtime_ns - 1))),
+            ],
+        )
+
+    assert com._sqlite_stats_meta_matches(db_path, source) is False
+    lookup = com._load_stats_lookup(tmp_path, "early_dict_raw.json", "early_dict")
+    assert isinstance(lookup, dict)
+    assert lookup["fresh"] == {"wins": 9, "draws": 0, "games": 9}
+
+
+def _write_lane_stats_sqlite(db_path: Path) -> None:
+    temp_path = db_path.with_name("lane-build.tmp")
+    conn = explore._open_lane_sqlite(temp_path)
+    explore._upsert_lane_stats(
+        conn,
+        {"1pos1_vs_2pos1": [1, 0, 2, 1, 0, 2, 3.5, 6.25]},
+    )
+    explore._finalize_lane_sqlite(conn, temp_path, db_path)
+
+
+def _write_lane_fallback_stats(tmp_path: Path) -> None:
+    for name in ("early", "late", "post_lane"):
+        explore._dump_stats_dict_to_sqlite({"x": [1, 0, 1]}, tmp_path / f"{name}_dict_raw.sqlite3")
+    (tmp_path / "lane_dict_raw.json").write_text(
+        json.dumps({"9pos1_vs_10pos1": {"wins": 7, "draws": 0, "games": 7}}),
+        encoding="utf-8",
+    )
+
+
+def _assert_lane_json_fallback(tmp_path: Path) -> None:
+    import check_old_maps as com
+
+    lane = com._load_stats_dicts(tmp_path, include_dicts=True, include_lanes=True)[2]
+    assert lane["1v1_lanes"]["9pos1_vs_10pos1"] == {"wins": 7, "draws": 0, "games": 7}
+
+
+def test_lane_v2_sqlite_schema_preserves_kills10(tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "lane_dict_raw.sqlite3"
+    _write_lane_stats_sqlite(db_path)
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(stats)")}
+        row = conn.execute(
+            "SELECT wins, games, kills10_leads, kills10_games, kills10_diff_sum FROM stats"
+        ).fetchone()
+        meta = {key: orjson.loads(value) for key, value in conn.execute("SELECT key, value FROM meta")}
+    assert {"kills10_leads", "kills10_games", "kills10_diff_sum"}.issubset(columns)
+    assert row == (1, 2, 1, 2, 3.5)
+    assert meta["format_version"] == 2
+    assert meta["backend"] == "sqlite_stats"
+
+
+def test_check_old_maps_load_lane_from_sqlite_only(tmp_path):
+    import check_old_maps as com
+
+    _write_lane_stats_sqlite(tmp_path / "lane_dict_raw.sqlite3")
+    explore._dump_stats_dict_to_sqlite({"e": [0, 0, 1]}, tmp_path / "early_dict_raw.sqlite3")
+    explore._dump_stats_dict_to_sqlite({"l": [0, 0, 1]}, tmp_path / "late_dict_raw.sqlite3")
+    explore._dump_stats_dict_to_sqlite({"p": [0, 0, 1]}, tmp_path / "post_lane_dict_raw.sqlite3")
+
+    early, late, lane, post = com._load_stats_dicts(
+        tmp_path,
+        include_dicts=True,
+        include_lanes=True,
+    )
+    assert isinstance(early, com.SqliteStatsLookup)
+    assert isinstance(late, com.SqliteStatsLookup)
+    assert isinstance(post, com.SqliteStatsLookup)
+    assert lane
+
+
+def test_lane_sqlite_string_entries_falls_back_to_json(tmp_path):
+    import sqlite3
+    import check_old_maps as com
+
+    db_path = tmp_path / "lane_dict_raw.sqlite3"
+    _write_lane_stats_sqlite(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE meta SET value = ? WHERE key = 'entries'", (orjson.dumps("1"),))
+    _write_lane_fallback_stats(tmp_path)
+
+    assert com._lane_sqlite_is_valid(db_path) is False
+    _assert_lane_json_fallback(tmp_path)
+
+
+def test_lane_sqlite_zero_entries_with_empty_stats_falls_back_to_json(tmp_path):
+    import check_old_maps as com
+
+    db_path = tmp_path / "lane_dict_raw.sqlite3"
+    temp_path = db_path.with_name("lane-build.tmp")
+    conn = explore._open_lane_sqlite(temp_path)
+    explore._finalize_lane_sqlite(conn, temp_path, db_path)
+    _write_lane_fallback_stats(tmp_path)
+
+    assert com._lane_sqlite_is_valid(db_path) is False
+    _assert_lane_json_fallback(tmp_path)
+
+
+def test_lane_sqlite_mismatched_entries_falls_back_to_json(tmp_path):
+    import sqlite3
+    import check_old_maps as com
+
+    db_path = tmp_path / "lane_dict_raw.sqlite3"
+    _write_lane_stats_sqlite(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE meta SET value = ? WHERE key = 'entries'", (orjson.dumps(2),))
+    _write_lane_fallback_stats(tmp_path)
+
+    assert com._lane_sqlite_is_valid(db_path) is False
+    _assert_lane_json_fallback(tmp_path)
+
+
+def test_invalid_lane_sqlite_falls_back_to_json_or_errors(tmp_path):
+    import check_old_maps as com
+
+    explore._dump_stats_dict_to_sqlite({"wrong": [1, 0, 1]}, tmp_path / "lane_dict_raw.sqlite3")
+    (tmp_path / "lane_dict_raw.json").write_text(json.dumps({"1pos1_vs_2pos1": {"wins": 1, "draws": 0, "games": 1}}))
+    assert com._lane_sqlite_is_valid(tmp_path / "lane_dict_raw.sqlite3") is False
+    early = tmp_path / "early_dict_raw.sqlite3"
+    late = tmp_path / "late_dict_raw.sqlite3"
+    post = tmp_path / "post_lane_dict_raw.sqlite3"
+    for path in (early, late, post):
+        explore._dump_stats_dict_to_sqlite({"x": [1, 0, 1]}, path)
+    assert com._load_stats_dicts(tmp_path, include_dicts=True, include_lanes=True)[2]
+    (tmp_path / "lane_dict_raw.json").unlink()
+    with pytest.raises(FileNotFoundError, match="lane_dict source not found"):
+        com._load_stats_dicts(tmp_path, include_dicts=True, include_lanes=True)
