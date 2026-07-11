@@ -283,7 +283,8 @@ def test_late_all_no_early_uses_pre27_watcher_even_when_lane_adv_matches(monkeyp
 def test_lane_adv_standalone_kills_fires_in_late_only_branch_when_enabled(monkeypatch) -> None:
     # Late-only case (no early star) with dominated lanes (lane_adv_dict ≈ 31).
     # With the standalone trigger enabled, a kills bet fires immediately on the
-    # lane-dominating side AND the late watcher still queues in parallel.
+    # lane-dominating side, but the WR60 Late-only signal itself is terminally
+    # rejected instead of being queued for the late watcher.
     case = replace(
         _same_sign_case(
             game_time_seconds=30,
@@ -305,17 +306,16 @@ def test_lane_adv_standalone_kills_fires_in_late_only_branch_when_enabled(monkey
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
     assert kills_msgs, "expected a standalone kills bet to fire"
-    # Standalone kills uses defer_add_url=True, so add_url is not recorded
-    # immediately; assert on the sent message + that the late watcher queued.
     assert "lane_adv_dict: +31.00" in kills_msgs[0]
-    assert result.queued_payload is not None
-    assert result.queued_payload["reason"] == "late_only_no_early_star_pre27_watcher"
+    assert result.queued_payload is None
+    assert result.add_url_calls
+    assert result.add_url_calls[-1]["reason"] == "star_signal_rejected_late_only_wr_below_65"
 
 
 def test_lane_adv_standalone_kills_suppressed_when_no_tier1_team(monkeypatch) -> None:
     # Same dominated-lanes late-only case as the positive test above, but
-    # neither team is Tier-1 -> the standalone kills bet must NOT fire, while
-    # the late watcher still queues (the regular/late bet path is unaffected).
+    # neither team is Tier-1 -> the standalone kills bet must NOT fire and the
+    # WR60 Late-only signal must be terminally rejected without a watcher.
     case = replace(
         _same_sign_case(
             game_time_seconds=30,
@@ -338,9 +338,9 @@ def test_lane_adv_standalone_kills_suppressed_when_no_tier1_team(monkeypatch) ->
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
     assert kills_msgs == [], "kills must be suppressed when no team is Tier-1"
-    # The late watcher still queues -> non-kills dispatch path is unaffected.
-    assert result.queued_payload is not None
-    assert result.queued_payload["reason"] == "late_only_no_early_star_pre27_watcher"
+    assert result.queued_payload is None
+    assert result.add_url_calls
+    assert result.add_url_calls[-1]["reason"] == "star_signal_rejected_late_only_wr_below_65"
 
 
 # lane_adv_dict ≈ +8 (radiant-dominated lanes, below the opposite-early-star
@@ -868,6 +868,114 @@ def test_early_only_signal_rejects_when_wr_below_65(monkeypatch) -> None:
     details = result.add_url_calls[-1]["details"]
     assert details["early_only_no_late_all_gate"]["min_wr_ok"] is False
     assert details["early_only_no_late_all_gate"]["early_wr_pct"] == 60.0
+
+
+def test_late_only_signal_rejects_when_wr_below_65(monkeypatch) -> None:
+    _patch_early_late_wr(monkeypatch, early_level=60, late_level=60, all_level=60)
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="late_only_wr60_reject",
+            game_time_seconds=12 * 60,
+            target_side="radiant",
+            target_networth_diff=999,
+            has_early_star=False,
+            early_sign=1,
+            has_late_star=True,
+            late_sign=1,
+            has_all_star=False,
+            expected_send_calls=0,
+            raw_early_output={"solo": 0},
+            raw_mid_output={"counterpick_1vs1": 9, "solo": 4},
+        ),
+    )
+
+    assert result.sent_messages == []
+    assert result.queued_payload is None
+    assert result.add_url_calls
+    assert result.add_url_calls[-1]["reason"] == "star_signal_rejected_late_only_wr_below_65"
+    gate = result.add_url_calls[-1]["details"]["single_block_min_wr_gate"]
+    assert gate["active"] is True
+    assert gate["block"] == "late"
+    assert gate["min_wr_ok"] is False
+    assert gate["wr_pct"] == 60.0
+
+
+def test_all_only_signal_rejects_when_wr_below_65(monkeypatch) -> None:
+    _patch_early_late_wr(monkeypatch, early_level=60, late_level=60, all_level=60)
+    monkeypatch.setattr(
+        runtime,
+        "all_only_watcher_thresholds_by_wr",
+        {60: {10: -800.0}, 70: {10: -1000.0}},
+        raising=False,
+    )
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="all_only_wr60_reject",
+            game_time_seconds=12 * 60,
+            target_side="radiant",
+            target_networth_diff=2000,
+            has_early_star=False,
+            early_sign=1,
+            has_late_star=False,
+            late_sign=1,
+            has_all_star=True,
+            all_sign=1,
+            expected_send_calls=0,
+            raw_early_output={"solo": 0},
+            raw_mid_output={"solo": 0},
+            raw_post_lane_output={"synergy_duo": 5},
+        ),
+    )
+
+    assert result.sent_messages == []
+    assert result.queued_payload is None
+    assert result.add_url_calls
+    assert result.add_url_calls[-1]["reason"] == "star_signal_rejected_all_only_wr_below_65"
+    gate = result.add_url_calls[-1]["details"]["single_block_min_wr_gate"]
+    assert gate["active"] is True
+    assert gate["block"] == "all"
+    assert gate["min_wr_ok"] is False
+    assert gate["wr_pct"] == 60.0
+
+
+def test_single_block_star_min_wr_gate_helper() -> None:
+    # Multi-block: gate inactive / always valid.
+    multi = runtime._single_block_star_min_wr_gate(
+        has_selected_early_star=True,
+        has_selected_late_star=True,
+        has_selected_all_star=False,
+        early_wr_pct=60.0,
+        late_wr_pct=60.0,
+        all_wr_pct=None,
+    )
+    assert multi["active"] is False
+    assert multi["valid"] is True
+
+    late_ok = runtime._single_block_star_min_wr_gate(
+        has_selected_early_star=False,
+        has_selected_late_star=True,
+        has_selected_all_star=False,
+        early_wr_pct=None,
+        late_wr_pct=65.0,
+        all_wr_pct=None,
+    )
+    assert late_ok["active"] is True
+    assert late_ok["block"] == "late"
+    assert late_ok["valid"] is True
+
+    late_bad = runtime._single_block_star_min_wr_gate(
+        has_selected_early_star=False,
+        has_selected_late_star=True,
+        has_selected_all_star=False,
+        early_wr_pct=None,
+        late_wr_pct=60.0,
+        all_wr_pct=None,
+    )
+    assert late_bad["valid"] is False
 
 
 def test_early_only_signal_sends_target_half_when_late_core_same_sign(monkeypatch) -> None:

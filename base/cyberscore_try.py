@@ -2692,7 +2692,9 @@ _STAR_LATE_CORE_METRIC_ORDER = (
     "solo",
 )
 _STAR_LATE_CORE_MIN_ABS_BY_METRIC: Dict[str, float] = {}
-EARLY_ONLY_NO_LATE_ALL_MIN_WR = 65.0
+# Single-block branches (E-only / L-only / A-only) require at least this WR.
+SINGLE_BLOCK_STAR_MIN_WR = 65.0
+EARLY_ONLY_NO_LATE_ALL_MIN_WR = SINGLE_BLOCK_STAR_MIN_WR
 _STAR_BLOCK_SIGN_CONSISTENCY_METRICS_BY_SECTION = {
     "early_output": (
         "counterpick_1vs1",
@@ -3166,6 +3168,48 @@ def _early_star_no_late_same_sign_gate(
         "late_min_wr_hit_count": len(late_diag.get("hit_metrics") or []),
         "both_teams_tier1": bool(both_teams_tier1),
         "tier1_only_ok": tier1_only_ok,
+    }
+
+
+def _single_block_star_min_wr_gate(
+    *,
+    has_selected_early_star: bool,
+    has_selected_late_star: bool,
+    has_selected_all_star: bool,
+    early_wr_pct: Optional[float],
+    late_wr_pct: Optional[float],
+    all_wr_pct: Optional[float],
+    min_wr: float = SINGLE_BLOCK_STAR_MIN_WR,
+) -> Dict[str, Any]:
+    """Gate for E-only / L-only / A-only: require block WR >= min_wr (default 65).
+
+    Multi-block combos are inactive here (valid=True, no restriction).
+    """
+    present: List[tuple[str, Optional[float]]] = []
+    if has_selected_early_star:
+        present.append(("early", early_wr_pct))
+    if has_selected_late_star:
+        present.append(("late", late_wr_pct))
+    if has_selected_all_star:
+        present.append(("all", all_wr_pct))
+
+    active = len(present) == 1
+    block_name: Optional[str] = present[0][0] if active else None
+    wr_raw = present[0][1] if active else None
+    try:
+        wr_value = float(wr_raw) if wr_raw is not None else None
+    except (TypeError, ValueError):
+        wr_value = None
+    min_wr_required = float(min_wr)
+    min_wr_ok = bool(wr_value is not None and wr_value >= min_wr_required)
+    return {
+        "active": active,
+        "block": block_name,
+        "wr_pct": float(wr_value) if wr_value is not None else None,
+        "min_wr_required": min_wr_required,
+        "min_wr_ok": min_wr_ok,
+        # When inactive (0 or 2+ blocks) the gate does not restrict dispatch.
+        "valid": bool((not active) or min_wr_ok),
     }
 
 
@@ -5008,7 +5052,7 @@ def _stake_multiplier_for_signal(
     # (late_star_hit_count_value >= 2 is guaranteed here.)
     if late_wr_value >= 85.0:
         return 3
-    if late_wr_value >= 70.0:
+    if late_wr_value >= 75.0:
         return 2
 
     return 1
@@ -24255,6 +24299,61 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     },
                 )
                 print("   ✅ map_id_check.txt обновлен: add_url после отказа early-only WR<65")
+                return return_status
+
+            single_block_min_wr_gate = _single_block_star_min_wr_gate(
+                has_selected_early_star=has_selected_early_star,
+                has_selected_late_star=has_selected_late_star,
+                has_selected_all_star=has_selected_all_star,
+                early_wr_pct=early_wr_pct,
+                late_wr_pct=late_wr_pct,
+                all_wr_pct=all_wr_pct,
+            )
+            _single_block_name = str(single_block_min_wr_gate.get("block") or "")
+            if (
+                not force_odds_signal_test_active
+                and bool(single_block_min_wr_gate.get("active"))
+                and _single_block_name in {"late", "all"}
+                and not bool(single_block_min_wr_gate.get("valid"))
+            ):
+                _single_block_label = {"late": "Late", "all": "All"}.get(
+                    _single_block_name, _single_block_name
+                )
+                print(
+                    "   ⚠️ ВЕРДИКТ: ОТКАЗ "
+                    f"(only {_single_block_label} требует WR>="
+                    f"{int(float(single_block_min_wr_gate.get('min_wr_required') or SINGLE_BLOCK_STAR_MIN_WR))}"
+                    ") - матч пропущен"
+                )
+                print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
+                add_url(
+                    check_uniq_url,
+                    reason=f"star_signal_rejected_{_single_block_name}_only_wr_below_65",
+                    details={
+                        "status": status,
+                        "dispatch_mode": f"rejected_{_single_block_name}_only_wr_below_65",
+                        "selected_star_wr": selected_star_wr,
+                        "selected_star_mode": selected_star_mode,
+                        "selected_early_star": bool(has_selected_early_star),
+                        "selected_late_star": bool(has_selected_late_star),
+                        "selected_all_star": bool(has_selected_all_star),
+                        "selected_early_sign": selected_early_sign,
+                        "selected_late_sign": selected_late_sign,
+                        "selected_all_sign": selected_all_sign,
+                        "selected_early_diag": selected_early_diag,
+                        "selected_late_diag": selected_late_diag,
+                        "selected_all_diag": selected_all_diag,
+                        "single_block_min_wr_gate": single_block_min_wr_gate,
+                        "early_wr_pct": early_wr_pct,
+                        "late_wr_pct": late_wr_pct,
+                        "all_wr_pct": all_wr_pct,
+                        "json_retry_errors": json_retry_errors,
+                    },
+                )
+                print(
+                    f"   ✅ map_id_check.txt обновлен: add_url после отказа "
+                    f"{_single_block_name}-only WR<65"
+                )
                 return return_status
 
             if (
