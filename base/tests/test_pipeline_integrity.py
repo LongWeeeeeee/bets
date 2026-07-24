@@ -6727,7 +6727,7 @@ def test_late_star_pub_table_decision_threshold_multiplier_deepens_threshold() -
 
 def test_refresh_stake_multiplier_message_force_multiplier_half() -> None:
     # force_multiplier навязывает фиксированный x0.5, минуя динамический расчёт
-    # (который для late WR70 + 2 хита дал бы x2).
+    # (который для late WR75 + 2 хита дал бы x2).
     message = "СТАВКА НА Team Alpha x2\nRadiant VS Dire\n"
     refreshed = runtime._refresh_stake_multiplier_message(
         message,
@@ -6736,7 +6736,7 @@ def test_refresh_stake_multiplier_message_force_multiplier_half() -> None:
             "target_side": "radiant",
             "selected_late_sign": 1,
             "has_selected_late_star": True,
-            "late_wr_pct": 70.0,
+            "late_wr_pct": 75.0,
             "late_star_hit_count": 2,
         },
         game_time_seconds=28 * 60,

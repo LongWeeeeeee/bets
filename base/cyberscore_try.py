@@ -3389,6 +3389,270 @@ def _star_diag_target_side(diag: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+LATE_WR_OPPOSITE_ALL_REJECT_THRESHOLD = 70.0
+LATE_WR_OPPOSITE_ALL_REJECT_HIT_COUNT_THRESHOLD = 2
+
+
+def _late_wr_below_70_opposite_all_reject_active(
+    *,
+    has_selected_late_star: bool,
+    selected_late_sign: Optional[int],
+    has_selected_all_star: bool,
+    selected_all_sign: Optional[int],
+    late_wr_pct: Optional[float],
+    late_star_hit_count: Optional[int],
+    force_odds_signal_test_active: bool = False,
+) -> bool:
+    """Reject a one-hit weak Late when valid All points to the other side."""
+    if force_odds_signal_test_active:
+        return False
+    if not has_selected_late_star or not has_selected_all_star:
+        return False
+    if selected_late_sign not in (-1, 1) or selected_all_sign not in (-1, 1):
+        return False
+    if int(selected_late_sign) == int(selected_all_sign):
+        return False
+    try:
+        late_wr_value = float(late_wr_pct) if late_wr_pct is not None else None
+    except (TypeError, ValueError):
+        return False
+    try:
+        late_hit_count_value = (
+            int(late_star_hit_count) if late_star_hit_count is not None else None
+        )
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        late_wr_value is not None
+        and math.isfinite(late_wr_value)
+        and late_wr_value < LATE_WR_OPPOSITE_ALL_REJECT_THRESHOLD
+        and late_hit_count_value is not None
+        and late_hit_count_value >= 0
+        and late_hit_count_value < LATE_WR_OPPOSITE_ALL_REJECT_HIT_COUNT_THRESHOLD
+    )
+
+
+# ── Late-driven dispatch на 27:00+ (pub comeback table) ─────────────────────
+# «Ориентируемся на late» = сторону ставки задаёт late-звезда, и её НЕ
+# подтверждает валидный early того же знака (late-only / late+all /
+# opposite-signs). Для таких отправок на 27:00+ требуется:
+#   * >= LATE27_DISPATCH_MIN_LATE_HITS star-хитов в Late;
+#   * late WR >= LATE27_DISPATCH_MIN_LATE_WR;
+#   * ни одного WR60+ star-хита в блоке All противоположного знака
+#     (даже если All при этом не является валидным STAR-блоком).
+# Immediate-ветка late+early одного знака под гейт не попадает.
+LATE27_DISPATCH_MIN_LATE_HITS = _safe_int_env("LATE27_DISPATCH_MIN_LATE_HITS", 2)
+LATE27_DISPATCH_MIN_LATE_WR = _safe_float_env("LATE27_DISPATCH_MIN_LATE_WR", 65.0)
+LATE27_DISPATCH_GUARD_REJECT_REASON = "star_signal_rejected_late27_dispatch_guard"
+LATE27_DISPATCH_GUARD_STATUS_LABEL = "late27_dispatch_guard_no_send"
+
+
+def _opposite_sign_star_hit_metrics(
+    star_hits: Optional[List[Dict[str, Any]]],
+    expected_sign: Optional[int],
+) -> List[str]:
+    """Метрики из ``_collect_star_hits_for_block`` со знаком против ``expected_sign``."""
+
+    if expected_sign not in (-1, 1):
+        return []
+    metrics: List[str] = []
+    for hit in star_hits or []:
+        if not isinstance(hit, dict):
+            continue
+        try:
+            value = float(hit.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if value == 0:
+            continue
+        sign = 1 if value > 0 else -1
+        if sign == int(expected_sign):
+            continue
+        metric = str(hit.get("metric") or "").strip()
+        if metric and metric not in metrics:
+            metrics.append(metric)
+    return metrics
+
+
+def _build_late27_dispatch_guard_snapshot(
+    *,
+    has_selected_late_star: bool,
+    selected_late_sign: Optional[int],
+    late_wr_pct: Optional[float],
+    late_star_hit_count: Optional[int],
+    has_selected_early_star: bool = False,
+    selected_early_sign: Optional[int] = None,
+    all_star_hits: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Сериализуемый снимок фактов для 27+ late-гейта.
+
+    ``all_star_hits`` — результат ``_collect_star_hits_for_block(all_output)``;
+    ``None`` означает «данные недоступны» (например, delayed-запись создана
+    предыдущей версией кода) — тогда All-часть гейта не проверяется.
+    """
+
+    late_sign = int(selected_late_sign) if selected_late_sign in (-1, 1) else None
+    try:
+        wr_value = float(late_wr_pct) if late_wr_pct is not None else None
+    except (TypeError, ValueError):
+        wr_value = None
+    if wr_value is not None and not math.isfinite(wr_value):
+        wr_value = None
+    try:
+        hit_count = int(late_star_hit_count) if late_star_hit_count is not None else None
+    except (TypeError, ValueError):
+        hit_count = None
+    early_supports_late = bool(
+        has_selected_early_star
+        and late_sign in (-1, 1)
+        and selected_early_sign in (-1, 1)
+        and int(selected_early_sign) == int(late_sign)
+    )
+    return {
+        "has_late_star": bool(has_selected_late_star),
+        "late_sign": late_sign,
+        "late_wr_pct": wr_value,
+        "late_hit_count": hit_count,
+        "early_supports_late": early_supports_late,
+        "all_star_hits_known": all_star_hits is not None,
+        "all_opposite_hit_metrics": _opposite_sign_star_hit_metrics(all_star_hits, late_sign),
+    }
+
+
+def _late27_dispatch_guard_snapshot_from_context(
+    stake_multiplier_context: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Восстановить снимок гейта из ``stake_multiplier_context`` delayed-записи."""
+
+    context = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
+    raw_all_hits = context.get("all_star_hits")
+    all_star_hits = raw_all_hits if isinstance(raw_all_hits, list) else None
+    return _build_late27_dispatch_guard_snapshot(
+        has_selected_late_star=bool(context.get("has_selected_late_star")),
+        selected_late_sign=context.get("selected_late_sign"),
+        late_wr_pct=context.get("late_wr_pct"),
+        late_star_hit_count=context.get("late_star_hit_count"),
+        has_selected_early_star=bool(context.get("has_selected_early_star")),
+        selected_early_sign=context.get("selected_early_sign"),
+        all_star_hits=all_star_hits,
+    )
+
+
+def _evaluate_late27_dispatch_guard(
+    snapshot: Optional[Dict[str, Any]],
+    *,
+    target_side: Optional[str] = None,
+    game_time_seconds: Optional[float] = None,
+    force_odds_signal_test_active: bool = False,
+) -> Dict[str, Any]:
+    """Гейт отправок на 27:00+, где сторону ставки задаёт late-звезда.
+
+    ``active`` — гейт применим (late-driven диспатч на 27+ по нужной стороне).
+    ``blocked`` — отправлять нельзя; ``reasons`` перечисляет нарушенные условия.
+    """
+
+    snap = snapshot if isinstance(snapshot, dict) else {}
+    late_sign = snap.get("late_sign") if snap.get("late_sign") in (-1, 1) else None
+    try:
+        game_time = float(game_time_seconds) if game_time_seconds is not None else None
+    except (TypeError, ValueError):
+        game_time = None
+    normalized_target_side = str(target_side or "").strip().lower()
+    side_matches = bool(
+        normalized_target_side not in {"radiant", "dire"}
+        or _target_side_from_sign(late_sign) == normalized_target_side
+    )
+    active = bool(
+        snap.get("has_late_star")
+        and late_sign in (-1, 1)
+        and not snap.get("early_supports_late")
+        and side_matches
+        and (
+            game_time is None
+            or game_time >= float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
+        )
+    )
+
+    hit_count = snap.get("late_hit_count")
+    try:
+        hit_count_value = int(hit_count) if hit_count is not None else None
+    except (TypeError, ValueError):
+        hit_count_value = None
+    wr_raw = snap.get("late_wr_pct")
+    try:
+        wr_value = float(wr_raw) if wr_raw is not None else None
+    except (TypeError, ValueError):
+        wr_value = None
+    opposite_all_hits = [
+        str(metric) for metric in (snap.get("all_opposite_hit_metrics") or []) if str(metric)
+    ]
+
+    # Полный снимок = создан текущей версией кода (в нём всегда есть список
+    # All-хитов, пусть и пустой). Для legacy delayed-записей, где part данных
+    # отсутствует, неизвестные значения не считаем нарушением — блокируем
+    # только по фактам, которые реально есть в снимке.
+    snapshot_complete = bool(snap.get("all_star_hits_known"))
+
+    reasons: List[str] = []
+    if active and not force_odds_signal_test_active:
+        if hit_count_value is not None:
+            if hit_count_value < int(LATE27_DISPATCH_MIN_LATE_HITS):
+                reasons.append("late_hits_below_min")
+        elif snapshot_complete:
+            reasons.append("late_hits_unknown")
+        if wr_value is not None:
+            if wr_value < float(LATE27_DISPATCH_MIN_LATE_WR):
+                reasons.append("late_wr_below_min")
+        elif snapshot_complete:
+            reasons.append("late_wr_unknown")
+        if opposite_all_hits:
+            reasons.append("all_opposite_star_hit")
+
+    return {
+        "active": active,
+        "blocked": bool(reasons),
+        "reasons": reasons,
+        "late_sign": late_sign,
+        "late_wr_pct": wr_value,
+        "late_hit_count": hit_count_value,
+        "min_late_hits_required": int(LATE27_DISPATCH_MIN_LATE_HITS),
+        "min_late_wr_required": float(LATE27_DISPATCH_MIN_LATE_WR),
+        "all_opposite_hit_metrics": opposite_all_hits,
+        "all_star_hits_known": bool(snap.get("all_star_hits_known")),
+        "early_supports_late": bool(snap.get("early_supports_late")),
+    }
+
+
+def _late27_dispatch_guard_reject_details(guard: Dict[str, Any]) -> Dict[str, Any]:
+    """Поля ``add_url``-details для отказа по 27+ late-гейту."""
+
+    return {
+        "dispatch_status_label": LATE27_DISPATCH_GUARD_STATUS_LABEL,
+        "late27_guard_reasons": list(guard.get("reasons") or []),
+        "late27_guard_late_sign": guard.get("late_sign"),
+        "late27_guard_late_wr_pct": guard.get("late_wr_pct"),
+        "late27_guard_late_hit_count": guard.get("late_hit_count"),
+        "late27_guard_min_late_hits": guard.get("min_late_hits_required"),
+        "late27_guard_min_late_wr": guard.get("min_late_wr_required"),
+        "late27_guard_all_opposite_hit_metrics": list(
+            guard.get("all_opposite_hit_metrics") or []
+        ),
+    }
+
+
+def _format_late27_dispatch_guard_log(guard: Dict[str, Any]) -> str:
+    reasons = ",".join(guard.get("reasons") or []) or "none"
+    hit_count = guard.get("late_hit_count")
+    wr_value = guard.get("late_wr_pct")
+    opposite = ",".join(guard.get("all_opposite_hit_metrics") or []) or "none"
+    return (
+        f"reasons={reasons}, late_hits={hit_count if hit_count is not None else 'n/a'}"
+        f"(need>={guard.get('min_late_hits_required')}), "
+        f"late_wr={f'{float(wr_value):.1f}' if wr_value is not None else 'n/a'}"
+        f"(need>={guard.get('min_late_wr_required')}), all_opposite={opposite}"
+    )
+
+
 def _format_star_block_status_with_side(diag: Dict[str, Any]) -> str:
     status = _format_star_block_status(diag)
     side = _star_diag_target_side(diag) or "none"
@@ -5141,6 +5405,7 @@ def _build_stake_multiplier_context(
     all_star_hit_count: Optional[int] = None,
     early_star_hit_count: Optional[int] = None,
     late_star_hit_metrics: Optional[List[str]] = None,
+    all_star_hits: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     opposite_side = "dire" if target_side == "radiant" else "radiant"
     return {
@@ -5161,6 +5426,13 @@ def _build_stake_multiplier_context(
         "all_star_hit_count": int(all_star_hit_count) if all_star_hit_count is not None else None,
         "early_star_hit_count": int(early_star_hit_count) if early_star_hit_count is not None else None,
         "late_star_hit_metrics": list(late_star_hit_metrics) if late_star_hit_metrics is not None else None,
+        # WR60+ star-хиты блока All (metric/value/wr_level) — нужны delayed
+        # watcher'у, чтобы перепроверить 27+ late-гейт по снимку сигнала.
+        "all_star_hits": (
+            [dict(hit) for hit in all_star_hits if isinstance(hit, dict)]
+            if all_star_hits is not None
+            else None
+        ),
         "force_half_due_to_early_no_valid_late": bool(force_half_due_to_early_no_valid_late),
         "special_header_mode": str(special_header_mode or ""),
         "target_rating": _team_elo_base_rating_for_side(team_elo_meta, target_side),
@@ -7100,6 +7372,44 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                     }
                 )
         if late_pub_comeback_table_active:
+            # Перепроверка 27+ late-гейта по снимку сигнала (delayed-запись
+            # могла быть создана до 27:00). Условия статичны — при блокировке
+            # watcher закрываем без отправки, вместо ожидания порога таблицы.
+            late27_watcher_guard = _evaluate_late27_dispatch_guard(
+                _late27_dispatch_guard_snapshot_from_context(
+                    payload.get("stake_multiplier_context")
+                ),
+                target_side=monitor_target_side,
+                game_time_seconds=current_game_time,
+                force_odds_signal_test_active=bool(FORCE_ODDS_SIGNAL_TEST),
+            )
+            if late27_watcher_guard.get("blocked"):
+                guard_add_url_details = payload.get("add_url_details")
+                guard_add_url_details = (
+                    dict(guard_add_url_details)
+                    if isinstance(guard_add_url_details, dict)
+                    else {}
+                )
+                guard_add_url_details.update(
+                    _late27_dispatch_guard_reject_details(late27_watcher_guard)
+                )
+                guard_add_url_details["dispatch_mode"] = "rejected_late27_dispatch_guard_watcher"
+                guard_add_url_details["sent_game_time"] = int(current_game_time)
+                guard_add_url_details["target_side"] = monitor_target_side
+                if monitor_target_diff is not None:
+                    guard_add_url_details["target_networth_diff"] = float(monitor_target_diff)
+                add_url(
+                    match_key,
+                    reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
+                    details=guard_add_url_details,
+                )
+                _drop_delayed_match(match_key, reason="late27_dispatch_guard")
+                print(
+                    f"⏱️ Отложенный late сигнал отменен без отправки (27+ late-гейт): {match_key} "
+                    f"({_format_late27_dispatch_guard_log(late27_watcher_guard)}, "
+                    f"game_time={int(current_game_time)})"
+                )
+                continue
             late_pub_comeback_table_decision = _late_star_pub_table_decision(
                 wr_level=late_pub_comeback_table_wr_level,
                 game_time_seconds=current_game_time,
@@ -24212,7 +24522,57 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     if metric not in existing_hits:
                         existing_hits.append(metric)
                 selected_late_diag["hit_metrics"] = existing_hits
+                selected_late_diag["hit_count"] = len(existing_hits)
                 selected_late_diag["late_promoted_by_all_same_sign"] = True
+            selected_late_hit_metrics = (
+                list(selected_late_diag.get("hit_metrics") or [])
+                if isinstance(selected_late_diag, dict)
+                else []
+            )
+            selected_late_hit_count = len(selected_late_hit_metrics)
+            if _late_wr_below_70_opposite_all_reject_active(
+                has_selected_late_star=has_selected_late_star,
+                selected_late_sign=selected_late_sign,
+                has_selected_all_star=has_selected_all_star,
+                selected_all_sign=selected_all_sign,
+                late_wr_pct=late_wr_pct,
+                late_star_hit_count=selected_late_hit_count,
+                force_odds_signal_test_active=force_odds_signal_test_active,
+            ):
+                reject_reason = "star_signal_rejected_late_wr_below_70_opposite_all"
+                add_url(
+                    check_uniq_url,
+                    reason=reject_reason,
+                    details={
+                        "status": status,
+                        "dispatch_mode": "rejected_late_wr_below_70_opposite_all",
+                        "dispatch_status_label": reject_reason,
+                        "has_selected_late_star": bool(has_selected_late_star),
+                        "has_selected_all_star": bool(has_selected_all_star),
+                        "selected_late_sign": selected_late_sign,
+                        "selected_all_sign": selected_all_sign,
+                        "late_wr_pct": float(late_wr_pct),
+                        "late_wr_reject_threshold": float(
+                            LATE_WR_OPPOSITE_ALL_REJECT_THRESHOLD
+                        ),
+                        "late_star_hit_count": int(selected_late_hit_count),
+                        "late_star_hit_metrics": list(selected_late_hit_metrics),
+                        "late_star_hit_count_reject_threshold": int(
+                            LATE_WR_OPPOSITE_ALL_REJECT_HIT_COUNT_THRESHOLD
+                        ),
+                        "json_retry_errors": json_retry_errors,
+                    },
+                )
+                print(
+                    "   ⛔ ВЕРДИКТ: ОТКАЗ (Late WR ниже 70 и All "
+                    "указывает на противоположную команду: "
+                    f"late_wr={float(late_wr_pct):.1f}, "
+                    f"late_sign={int(selected_late_sign)}, "
+                    f"all_sign={int(selected_all_sign)}, "
+                    f"late_hits={selected_late_hit_count}, "
+                    f"need_hits>={LATE_WR_OPPOSITE_ALL_REJECT_HIT_COUNT_THRESHOLD})"
+                )
+                return return_status
             star_dispatch_flags = _star_signal_dispatch_flags(
                 has_early_star=has_selected_early_star,
                 early_sign=selected_early_sign,
@@ -24970,6 +25330,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and len(selected_early_diag.get("hit_metrics") or []) >= 2
                 and _match_has_tier1_team(radiant_team_id, dire_team_id)
             )
+            # WR60+ star-хиты блока All (тот же источник, что и блок
+            # «⭐ Star hits» в сообщении) — используются 27+ late-гейтом.
+            all_star_hits_for_dispatch = _collect_star_hits_for_block(
+                s.get('all_output', {}),
+                "all_output",
+            )
             stake_multiplier_context = _build_stake_multiplier_context(
                 stake_team_name=stake_team_name,
                 target_side=dispatch_message_side,
@@ -24982,11 +25348,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 has_selected_late_star=has_selected_late_star,
                 early_wr_pct=early_wr_pct,
                 late_wr_pct=late_wr_pct,
-                late_star_hit_count=(
-                    len(selected_late_diag.get("hit_metrics") or [])
-                    if isinstance(selected_late_diag, dict) and has_selected_late_star
-                    else None
-                ),
+                late_star_hit_count=(selected_late_hit_count if has_selected_late_star else None),
                 selected_all_sign=selected_all_sign,
                 has_selected_all_star=has_selected_all_star,
                 all_wr_pct=all_wr_pct,
@@ -25006,11 +25368,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     if isinstance(selected_early_diag, dict) and has_selected_early_star
                     else None
                 ),
-                late_star_hit_metrics=(
-                    list(selected_late_diag.get("hit_metrics") or [])
-                    if isinstance(selected_late_diag, dict) and has_selected_late_star
-                    else None
-                ),
+                late_star_hit_metrics=(selected_late_hit_metrics if has_selected_late_star else None),
+                all_star_hits=all_star_hits_for_dispatch,
+            )
+            # Снимок фактов для 27+ late-гейта: считается один раз здесь и
+            # уезжает в delayed payload вместе со stake_multiplier_context,
+            # чтобы watcher перепроверил те же условия перед отправкой.
+            late27_dispatch_guard_snapshot = _late27_dispatch_guard_snapshot_from_context(
+                stake_multiplier_context
             )
             stake_multiplier = _stake_multiplier_for_signal(
                 team_elo_meta=team_elo_meta,
@@ -25023,11 +25388,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 late_wr_pct=late_wr_pct,
                 game_time_seconds=game_time,
                 radiant_lead=lead,
-                late_star_hit_count=(
-                    len(selected_late_diag.get("hit_metrics") or [])
-                    if isinstance(selected_late_diag, dict) and has_selected_late_star
-                    else None
-                ),
+                late_star_hit_count=(selected_late_hit_count if has_selected_late_star else None),
                 target_elo_wr=_team_elo_wr_for_side(team_elo_meta, dispatch_message_side),
                 force_half_due_to_early_no_valid_late=force_half_due_to_early_no_valid_late,
                 selected_all_sign=selected_all_sign,
@@ -25042,11 +25403,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     if isinstance(selected_early_diag, dict) and has_selected_early_star
                     else None
                 ),
-                late_star_hit_metrics=(
-                    list(selected_late_diag.get("hit_metrics") or [])
-                    if isinstance(selected_late_diag, dict) and has_selected_late_star
-                    else None
-                ),
+                late_star_hit_metrics=(selected_late_hit_metrics if has_selected_late_star else None),
             )
             live_state_block = _format_live_message_state_block(
                 game_time_seconds=game_time,
@@ -25321,6 +25678,33 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 # Теперь на 27:00+ такой сигнал обязан пройти comeback-таблицу:
                 # если target глубже порога — НЕ отправляем (soft, матч
                 # перепроверяется и может сработать при камбэке в пределах порога).
+                # 27+ late-гейт для immediate-веток, где сторону задаёт late
+                # без поддержки валидного early того же знака (late+all).
+                # late+early одного знака сюда не попадает (см. guard.active).
+                _imm_late27_guard = _evaluate_late27_dispatch_guard(
+                    late27_dispatch_guard_snapshot,
+                    target_side=dispatch_message_side,
+                    game_time_seconds=current_game_time,
+                    force_odds_signal_test_active=force_odds_signal_test_active,
+                )
+                if _imm_late27_guard.get("blocked"):
+                    print(
+                        "   ⛔ ВЕРДИКТ: ОТКАЗ (27+ late-гейт для immediate: "
+                        f"{_format_late27_dispatch_guard_log(_imm_late27_guard)})"
+                    )
+                    add_url(
+                        check_uniq_url,
+                        reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
+                        details={
+                            "status": status,
+                            "dispatch_mode": "rejected_late27_dispatch_guard_immediate",
+                            "game_time": int(current_game_time),
+                            "target_side": dispatch_message_side,
+                            "json_retry_errors": json_retry_errors,
+                            **_late27_dispatch_guard_reject_details(_imm_late27_guard),
+                        },
+                    )
+                    return return_status
                 if (
                     has_selected_late_star
                     and target_networth_diff is not None
@@ -26601,6 +26985,40 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         _release_signal_send_slot(check_uniq_url)
                     return return_status
                 if current_game_time >= target_game_time:
+                    # 27+ late-гейт для всех пост-target отправок (pub comeback
+                    # table, top25 elo-block, post-target comeback, target
+                    # reached): late-driven сигнал обязан иметь >=2 late
+                    # star-хитов, late WR >= порога и не иметь противоположных
+                    # star-хитов в All. Условия статичны → сразу отказ.
+                    _post_target_late27_guard = _evaluate_late27_dispatch_guard(
+                        late27_dispatch_guard_snapshot,
+                        target_side=target_side,
+                        game_time_seconds=current_game_time,
+                        force_odds_signal_test_active=force_odds_signal_test_active,
+                    )
+                    if _post_target_late27_guard.get("blocked"):
+                        print(
+                            "   ⛔ ВЕРДИКТ: ОТКАЗ (27+ late-гейт: "
+                            f"{_format_late27_dispatch_guard_log(_post_target_late27_guard)})"
+                        )
+                        add_url(
+                            check_uniq_url,
+                            reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
+                            details={
+                                "status": status,
+                                "dispatch_mode": "rejected_late27_dispatch_guard",
+                                "delay_reason": delay_reason,
+                                "game_time": int(current_game_time),
+                                "target_game_time": int(target_game_time),
+                                "target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                                "json_retry_errors": json_retry_errors,
+                                **_late27_dispatch_guard_reject_details(
+                                    _post_target_late27_guard
+                                ),
+                            },
+                        )
+                        return return_status
                     post_target_only_early90 = bool(
                         isinstance(dynamic_monitor_profile, dict)
                         and dynamic_monitor_profile.get("profile") == "late_only_opposite_signs_early90"
