@@ -14,7 +14,7 @@ except Exception:
 import orjson
 import os
 from pathlib import Path
-from keys import api_to_proxy, start_date_time, start_date_time_739, start_date_time_736
+from keys import STRATZ_PROXY_MAP, start_date_time, start_date_time_739, start_date_time_736
 try:
     from keys import DOTA_PATCH_SPECS
 except ImportError:
@@ -409,10 +409,10 @@ class ProxyAPIPool:
 proxy_pool = None
 
 def get_proxy_pool():
-    """Lazy initialization для proxy_pool"""
+    """Lazy initialization для proxy_pool (Stratz: proxy → token, 1:1)"""
     global proxy_pool
     if proxy_pool is None:
-        proxy_pool = ProxyAPIPool(api_to_proxy)
+        proxy_pool = ProxyAPIPool(STRATZ_PROXY_MAP)
     return proxy_pool
 
 
@@ -2752,7 +2752,7 @@ def get_pubs():
     batch_size = 5
     # Ограничиваем параллелизм числом доступных прокси, но не более 10
     try:
-        proxy_count = len(api_to_proxy) if api_to_proxy else 1
+        proxy_count = len(STRATZ_PROXY_MAP) if STRATZ_PROXY_MAP else 1
     except Exception:
         proxy_count = 1
     batch_concurrency = max(1, min(10, proxy_count))
