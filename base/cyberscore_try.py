@@ -3389,46 +3389,44 @@ def _star_diag_target_side(diag: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-LATE_WR_OPPOSITE_ALL_REJECT_THRESHOLD = 70.0
-LATE_WR_OPPOSITE_ALL_REJECT_HIT_COUNT_THRESHOLD = 2
+LATE_OPPOSITE_ALL_REJECT_REASON = "star_signal_rejected_late_opposite_all"
 
 
-def _late_wr_below_70_opposite_all_reject_active(
+def _late_opposite_all_reject_active(
     *,
     has_selected_late_star: bool,
     selected_late_sign: Optional[int],
     has_selected_all_star: bool,
     selected_all_sign: Optional[int],
-    late_wr_pct: Optional[float],
-    late_star_hit_count: Optional[int],
     force_odds_signal_test_active: bool = False,
 ) -> bool:
-    """Reject a one-hit weak Late when valid All points to the other side."""
+    """Reject any valid Late when valid All points to the other side."""
     if force_odds_signal_test_active:
         return False
     if not has_selected_late_star or not has_selected_all_star:
         return False
     if selected_late_sign not in (-1, 1) or selected_all_sign not in (-1, 1):
         return False
-    if int(selected_late_sign) == int(selected_all_sign):
-        return False
-    try:
-        late_wr_value = float(late_wr_pct) if late_wr_pct is not None else None
-    except (TypeError, ValueError):
-        return False
-    try:
-        late_hit_count_value = (
-            int(late_star_hit_count) if late_star_hit_count is not None else None
-        )
-    except (TypeError, ValueError):
-        return False
-    return bool(
-        late_wr_value is not None
-        and math.isfinite(late_wr_value)
-        and late_wr_value < LATE_WR_OPPOSITE_ALL_REJECT_THRESHOLD
-        and late_hit_count_value is not None
-        and late_hit_count_value >= 0
-        and late_hit_count_value < LATE_WR_OPPOSITE_ALL_REJECT_HIT_COUNT_THRESHOLD
+    return int(selected_late_sign) != int(selected_all_sign)
+
+
+def _late_opposite_all_reject_from_context(
+    stake_multiplier_context: Optional[Dict[str, Any]],
+    *,
+    force_odds_signal_test_active: bool = False,
+) -> bool:
+    """Apply the Late-vs-All conflict gate to a delayed payload snapshot."""
+    context = (
+        stake_multiplier_context
+        if isinstance(stake_multiplier_context, dict)
+        else {}
+    )
+    return _late_opposite_all_reject_active(
+        has_selected_late_star=bool(context.get("has_selected_late_star")),
+        selected_late_sign=context.get("selected_late_sign"),
+        has_selected_all_star=bool(context.get("has_selected_all_star")),
+        selected_all_sign=context.get("selected_all_sign"),
+        force_odds_signal_test_active=force_odds_signal_test_active,
     )
 
 
@@ -7086,6 +7084,47 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
     for match_key, payload in queued_items:
         if _is_url_processed(match_key):
             _drop_delayed_match(match_key, reason="already_processed")
+            continue
+        delayed_stake_context = payload.get("stake_multiplier_context")
+        if _late_opposite_all_reject_from_context(
+            delayed_stake_context,
+            force_odds_signal_test_active=bool(FORCE_ODDS_SIGNAL_TEST),
+        ):
+            delayed_context = (
+                delayed_stake_context
+                if isinstance(delayed_stake_context, dict)
+                else {}
+            )
+            reject_details = payload.get("add_url_details")
+            reject_details = (
+                dict(reject_details) if isinstance(reject_details, dict) else {}
+            )
+            reject_details.update(
+                {
+                    "dispatch_mode": "rejected_late_opposite_all_delayed",
+                    "dispatch_status_label": LATE_OPPOSITE_ALL_REJECT_REASON,
+                    "has_selected_late_star": True,
+                    "has_selected_all_star": True,
+                    "selected_late_sign": delayed_context.get("selected_late_sign"),
+                    "selected_all_sign": delayed_context.get("selected_all_sign"),
+                    "late_wr_pct": delayed_context.get("late_wr_pct"),
+                    "all_wr_pct": delayed_context.get("all_wr_pct"),
+                    "late_star_hit_count": delayed_context.get("late_star_hit_count"),
+                    "late_star_hit_metrics": list(
+                        delayed_context.get("late_star_hit_metrics") or []
+                    ),
+                }
+            )
+            add_url(
+                match_key,
+                reason=LATE_OPPOSITE_ALL_REJECT_REASON,
+                details=reject_details,
+            )
+            _drop_delayed_match(match_key, reason="late_opposite_all")
+            print(
+                "⏱️ Отложенный Late-сигнал отменён без отправки "
+                f"(валидный All противоположного знака): {match_key}"
+            )
             continue
         # League-guard: фильтр лиг применяется в get_heads только при первичном
         # приёме, но delayed-очередь живёт независимо (и переживает рестарт со
@@ -24550,47 +24589,44 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 else []
             )
             selected_late_hit_count = len(selected_late_hit_metrics)
-            if _late_wr_below_70_opposite_all_reject_active(
+            if _late_opposite_all_reject_active(
                 has_selected_late_star=has_selected_late_star,
                 selected_late_sign=selected_late_sign,
                 has_selected_all_star=has_selected_all_star,
                 selected_all_sign=selected_all_sign,
-                late_wr_pct=late_wr_pct,
-                late_star_hit_count=selected_late_hit_count,
                 force_odds_signal_test_active=force_odds_signal_test_active,
             ):
-                reject_reason = "star_signal_rejected_late_wr_below_70_opposite_all"
+                reject_reason = LATE_OPPOSITE_ALL_REJECT_REASON
                 add_url(
                     check_uniq_url,
                     reason=reject_reason,
                     details={
                         "status": status,
-                        "dispatch_mode": "rejected_late_wr_below_70_opposite_all",
+                        "dispatch_mode": "rejected_late_opposite_all",
                         "dispatch_status_label": reject_reason,
                         "has_selected_late_star": bool(has_selected_late_star),
                         "has_selected_all_star": bool(has_selected_all_star),
                         "selected_late_sign": selected_late_sign,
                         "selected_all_sign": selected_all_sign,
-                        "late_wr_pct": float(late_wr_pct),
-                        "late_wr_reject_threshold": float(
-                            LATE_WR_OPPOSITE_ALL_REJECT_THRESHOLD
+                        "late_wr_pct": (
+                            float(late_wr_pct) if late_wr_pct is not None else None
+                        ),
+                        "all_wr_pct": (
+                            float(all_wr_pct) if all_wr_pct is not None else None
                         ),
                         "late_star_hit_count": int(selected_late_hit_count),
                         "late_star_hit_metrics": list(selected_late_hit_metrics),
-                        "late_star_hit_count_reject_threshold": int(
-                            LATE_WR_OPPOSITE_ALL_REJECT_HIT_COUNT_THRESHOLD
-                        ),
                         "json_retry_errors": json_retry_errors,
                     },
                 )
                 print(
-                    "   ⛔ ВЕРДИКТ: ОТКАЗ (Late WR ниже 70 и All "
-                    "указывает на противоположную команду: "
-                    f"late_wr={float(late_wr_pct):.1f}, "
+                    "   ⛔ ВЕРДИКТ: ОТКАЗ (Late и All указывают "
+                    "на противоположные команды: "
+                    f"late_wr={late_wr_pct}, "
+                    f"all_wr={all_wr_pct}, "
                     f"late_sign={int(selected_late_sign)}, "
                     f"all_sign={int(selected_all_sign)}, "
-                    f"late_hits={selected_late_hit_count}, "
-                    f"need_hits>={LATE_WR_OPPOSITE_ALL_REJECT_HIT_COUNT_THRESHOLD})"
+                    f"late_hits={selected_late_hit_count})"
                 )
                 return return_status
             star_dispatch_flags = _star_signal_dispatch_flags(
