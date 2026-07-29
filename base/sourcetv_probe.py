@@ -70,13 +70,6 @@ KW_LEGACY_CEIL     = 60000      # верхняя граница (исключа�
 KW_SWEEP_BATCH     = 25         # сколько кандидатов опрашивать cold-sweep'ом за рефетч
 KW_CANDIDATES_REFRESH = 1800.0  # как часто пересобирать пул кандидатов из справочника
 
-# Дополнительный discovery напрямую через Dota GC. За один минутный refetch
-# просматриваем 5 страниц по 10 матчей; полный круг по top-400 занимает 8 минут.
-# Это не заменяет GetLiveLeagueGames: GC даёт league_id/команды/лобби, а WebAPI
-# после обнаружения league_id по-прежнему даёт надёжный team_map и series context.
-GC_DISCOVERY_MAX_PAGES = 40
-GC_DISCOVERY_PAGES_PER_REFRESH = 5
-
 def _keyword_candidate_league_ids():
     """Свежие keyword-лиги из справочника OpenDota — кандидаты для cold-sweep.
 
@@ -115,30 +108,6 @@ def league_name(league_id):
             log.warning("Не удалось загрузить справочник лиг OpenDota: %s", e)
     return _LEAGUE_NAMES.get(int(league_id or 0), "")
 
-
-def _classify_gc_discovery_game(game, name_lookup=None):
-    """Сводка global-GC матча и решение, можно ли опрашивать его league_id.
-
-    Неизвестные league_id намеренно не допускаются автоматически: они только
-    логируются с командами, чтобы не протащить все публичные/любительские лобби.
-    """
-    if name_lookup is None:
-        name_lookup = league_name
-    league_id = int(getattr(game, "league_id", 0) or 0)
-    resolved_name = str(name_lookup(league_id) or "") if league_id else ""
-    return {
-        "match_id": int(getattr(game, "match_id", 0) or 0),
-        "lobby_id": int(getattr(game, "lobby_id", 0) or 0),
-        "league_id": league_id,
-        "league_name": resolved_name,
-        "radiant_team": str(getattr(game, "team_name_radiant", "") or ""),
-        "dire_team": str(getattr(game, "team_name_dire", "") or ""),
-        "allowed": bool(
-            league_id
-            and resolved_name
-            and title_matches_allow_keywords(resolved_name)
-        ),
-    }
 
 def _build_fast_picks(rad_picks, dire_picks):
     """fast_picks в формате cyberscore_try.check_head: {first_team, second_team}.
@@ -667,9 +636,6 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
     dota     = Dota2Client(client)
     gc_ready = gevent.event.Event()
     poll_ev  = gevent.event.Event()
-    gc_discovered_league_ids = set()
-    gc_unknown_seen = set()
-    gc_scan_page = [0]
 
     os.makedirs(CREDS_DIR, exist_ok=True)
     # Legacy ValvePython API; the fork stores no sentry/login_key files (we use refresh_token).
@@ -816,38 +782,6 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
 
     @dota.on("top_source_tv_games")
     def _on_tv(msg):
-        # Ответ на global scan (без lobby_ids) используется только для discovery.
-        # Targeted polling имеет specific_games=True и обрабатывается ниже.
-        if not bool(getattr(msg, "specific_games", False)):
-            for g in msg.game_list:
-                info = _classify_gc_discovery_game(g)
-                if info["allowed"]:
-                    if info["league_id"] not in gc_discovered_league_ids:
-                        log.info(
-                            "GC discovery: разрешённая лига %d (%s), матч %d: %s vs %s",
-                            info["league_id"], info["league_name"], info["match_id"],
-                            info["radiant_team"], info["dire_team"],
-                        )
-                    gc_discovered_league_ids.add(info["league_id"])
-                    continue
-                if info["league_name"]:
-                    continue
-                if not info["radiant_team"] and not info["dire_team"]:
-                    continue
-                unknown_key = (
-                    info["league_id"], info["radiant_team"], info["dire_team"]
-                )
-                if unknown_key in gc_unknown_seen:
-                    continue
-                gc_unknown_seen.add(unknown_key)
-                log.info(
-                    "GC discovery: неизвестная лига id=%d, матч %d, lobby=%d: %s vs %s",
-                    info["league_id"], info["match_id"], info["lobby_id"],
-                    info["radiant_team"] or "Radiant",
-                    info["dire_team"] or "Dire",
-                )
-            return
-
         for g in msg.game_list:
             mid = int(g.match_id)
             if mid not in states:
@@ -936,7 +870,6 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                 kw_candidates = _keyword_candidate_league_ids()
                             discovery_lids = [0]                          # broad live-снимок
                             discovery_lids += sorted(active_kw_leagues)   # hot keyword-лиги
-                            discovery_lids += sorted(gc_discovered_league_ids)
                             if kw_candidates:                            # cold-sweep round-robin
                                 n = len(kw_candidates)
                                 batch = [kw_candidates[(sweep_cursor + i) % n]
@@ -999,16 +932,6 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                 del states[fmid]
                         # Перестраиваем all_lobby_ids по актуальному набору targets
                         all_lobby_ids[:] = [_t["lobby_id"] for _t in targets.values() if _t.get("lobby_id")]
-
-                        # Ротационный global scan самого Dota GC, не зависящий от
-                        # GetLiveLeagueGames(0) и свежести справочника OpenDota.
-                        for _ in range(GC_DISCOVERY_PAGES_PER_REFRESH):
-                            start_game = gc_scan_page[0] * 10
-                            dota.request_top_source_tv_games(start_game=start_game)
-                            gc_scan_page[0] = (
-                                gc_scan_page[0] + 1
-                            ) % GC_DISCOVERY_MAX_PAGES
-                            gevent.sleep(0.05)
                     except Exception as _rfe:
                         log.warning("Рефетч матчей: %s", _rfe)
 
