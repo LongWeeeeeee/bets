@@ -36,6 +36,11 @@ TOURNAMENT_TITLE_ALLOW_PHRASES = (
     'esports world',
     'global esports',
     'esports championship',
+    # OpenDota обычно пишет BetBoom, а Cyberscore — BB. Фраза сохраняет
+    # allowlist для любого номера Streamers Battle без широкого токена 'bb'.
+    'streamers battle',
+    # Узкий маркер серии Asgard Championship; допускаем любой номер сезона.
+    'asgard',
 )
 
 

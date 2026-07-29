@@ -1,6 +1,7 @@
 import importlib
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -51,6 +52,34 @@ def test_sourcetv_module_paths_anchor_relative_override_to_repo_root(
     monkeypatch.delenv("SOURCETV_MATCHES_PATH")
     importlib.reload(runtime)
     importlib.reload(probe)
+
+
+def test_gc_discovery_classifies_known_allowed_and_unknown_leagues() -> None:
+    game = SimpleNamespace(
+        match_id=8912345678,
+        lobby_id=29900000000000000,
+        league_id=20123,
+        team_name_radiant="Team A",
+        team_name_dire="Team B",
+    )
+    allowed = probe._classify_gc_discovery_game(
+        game, name_lookup=lambda league_id: "Asgard Championship S1"
+    )
+    assert allowed == {
+        "match_id": 8912345678,
+        "lobby_id": 29900000000000000,
+        "league_id": 20123,
+        "league_name": "Asgard Championship S1",
+        "radiant_team": "Team A",
+        "dire_team": "Team B",
+        "allowed": True,
+    }
+
+    unknown = probe._classify_gc_discovery_game(
+        game, name_lookup=lambda league_id: ""
+    )
+    assert unknown["league_id"] == 20123
+    assert unknown["allowed"] is False
 
 
 

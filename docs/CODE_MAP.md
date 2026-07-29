@@ -411,7 +411,7 @@ Telegram: `Token`, `Chat_id`, `Chat_ids`. VK: `VK_GROUP_ID`, `VK_PEER_ID`, `VK_P
 | Модуль | Контракт |
 |---|---|
 | `base/sourcetv_bridge.py` | `resolve_sourcetv_matches_path(project_root: Path) -> Path`: единая CWD-independent резолюция bridge JSON; относительный `SOURCETV_MATCHES_PATH` привязывается к project root, default `runtime/sourcetv_matches.json`. |
-| `base/sourcetv_probe.py` | Steam GC/SourceTV producer: находит live-матчи/составы/драфт и пишет bridge JSON, который читает `cyberscore_try.py` при `DLTV_SOURCE_MODE=sourcetv`; CLI `--username`, `--password`, `--league`, `--match`, `--interval`, `--login-only`. |
+| `base/sourcetv_probe.py` | Steam GC/SourceTV producer: находит live-матчи/составы/драфт и пишет bridge JSON, который читает `cyberscore_try.py` при `DLTV_SOURCE_MODE=sourcetv`. Discovery объединяет WebAPI `GetLiveLeagueGames` с ротационным global GC scan top-400: известные allowlist-лиги возвращаются в прямой WebAPI-опрос, неизвестные `league_id` только логируются с командами. CLI `--username`, `--password`, `--league`, `--match`, `--interval`, `--login-only`. |
 
 ---
 

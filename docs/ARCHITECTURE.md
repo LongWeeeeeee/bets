@@ -6,6 +6,12 @@
 
 ## Сквозной pipeline (один проход `general()` в `base/cyberscore_try.py`, ~28580)
 
+При `DLTV_SOURCE_MODE=sourcetv` producer `base/sourcetv_probe.py` сначала
+обнаруживает матчи через `GetLiveLeagueGames`, а затем дополняет discovery
+ротационным global Steam GC scan top-400. Известные allowlist-лиги из GC
+добавляются в прямой WebAPI-опрос для получения team/series context; неизвестные
+`league_id` не допускаются автоматически и только логируются с названиями команд.
+
 ```
 1. FETCH live           _get_cyberscore_html_via_camoufox(url)            ~19573
         │               (DLTV_SOURCE_MODE=cyberscore → Camoufox; api/html fallback)

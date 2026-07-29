@@ -47,3 +47,14 @@ def test_token_not_substring_for_keywords():
     # токен-матчинг: 'epl' как отдельный токен — да; внутри слова — нет.
     assert lk.title_matches_allow_keywords("EPL Season 26")
     assert not lk.title_matches_allow_keywords("Helpline Cup")  # 'epl' внутри 'helpline'
+
+
+def test_streamers_battle_allowed_in_both_spellings():
+    assert lk.title_matches_allow_keywords("BB Streamers Battle 14")
+    assert lk.title_matches_allow_keywords("BetBoom Streamers Battle 14")
+
+
+def test_asgard_championship_allowed():
+    assert lk.title_matches_allow_keywords("Asgard Championship")
+    assert lk.title_matches_allow_keywords("Asgard Championship S1")
+    assert lk.title_matches_allow_keywords("ASGARD CHAMPIONSHIP")
