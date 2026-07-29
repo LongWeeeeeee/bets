@@ -43,6 +43,13 @@ TOURNAMENT_TITLE_ALLOW_PHRASES = (
     'asgard',
 )
 
+# Valve ticket 19722 зарегистрирован как ``Lunar Paw``, но фактически
+# переиспользуется Asgard Championship Season 1. Разрешаем точный league_id,
+# не расширяя title-allowlist на все матчи с названием Lunar Paw.
+TOURNAMENT_LEAGUE_ID_ALLOWLIST = frozenset({
+    19722,
+})
+
 
 def title_matches_allow_keywords(title: Any) -> bool:
     """True, если название лиги/турнира проходит keyword-allowlist."""
@@ -50,3 +57,15 @@ def title_matches_allow_keywords(title: Any) -> bool:
     if TOURNAMENT_TITLE_ALLOW_KEYWORDS & set(title_lower.split()):
         return True
     return any(phrase in title_lower for phrase in TOURNAMENT_TITLE_ALLOW_PHRASES)
+
+
+def league_matches_allowlist(league_id: Any, title: Any) -> bool:
+    """True для явно разрешённого Valve league_id или разрешённого названия."""
+    try:
+        normalized_id = int(league_id or 0)
+    except (TypeError, ValueError):
+        normalized_id = 0
+    return (
+        normalized_id in TOURNAMENT_LEAGUE_ID_ALLOWLIST
+        or title_matches_allow_keywords(title)
+    )

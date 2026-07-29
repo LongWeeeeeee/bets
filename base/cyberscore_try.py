@@ -6846,8 +6846,10 @@ def _fetch_sourcetv_delayed_match_state(json_url: str) -> Optional[Dict[str, Opt
     return {"game_time": game_time_value, "radiant_lead": lead_value}
 
 
-def _sourcetv_delayed_league_name(json_url: Optional[str]) -> Optional[str]:
-    """league_name матча из моста по sourcetv://-URL (None если матча нет в мосте)."""
+def _sourcetv_delayed_league_meta(
+    json_url: Optional[str],
+) -> Optional[Tuple[int, str]]:
+    """``(league_id, league_name)`` матча из моста по sourcetv://-URL."""
     id_match = re.search(r"sourcetv://matches/(\d+)", str(json_url or ""))
     if not id_match:
         return None
@@ -6859,7 +6861,17 @@ def _sourcetv_delayed_league_name(json_url: Optional[str]) -> Optional[str]:
     payload = matches.get(id_match.group(1))
     if not isinstance(payload, dict):
         return None
-    return str(payload.get("league_name") or "")
+    try:
+        league_id = int(payload.get("league_id") or 0)
+    except (TypeError, ValueError):
+        league_id = 0
+    return league_id, str(payload.get("league_name") or "")
+
+
+def _sourcetv_delayed_league_name(json_url: Optional[str]) -> Optional[str]:
+    """Обратная совместимость для callers, которым нужно только название."""
+    meta = _sourcetv_delayed_league_meta(json_url)
+    return meta[1] if meta is not None else None
 
 
 def _fetch_delayed_match_state(json_url: Optional[str]) -> Optional[Dict[str, Optional[float]]]:
@@ -7080,8 +7092,12 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
         # старым кодом). Если sourcetv-матч жив в мосте и его лига вне allowlist —
         # дропаем, чтобы мусорный турнир не ушёл по таймеру watcher'а.
         if str(payload.get("json_url") or "").startswith("sourcetv://"):
-            _gd_league = _sourcetv_delayed_league_name(payload.get("json_url"))
-            if _gd_league and not _title_matches_allow_keywords(_gd_league):
+            _gd_league_meta = _sourcetv_delayed_league_meta(payload.get("json_url"))
+            if (
+                _gd_league_meta is not None
+                and not _league_matches_allowlist(*_gd_league_meta)
+            ):
+                _gd_league = _gd_league_meta[1]
                 _drop_delayed_match(match_key, reason="league_not_in_allowlist")
                 print(f"   🚫 Delayed дроп: лига вне allowlist ({_gd_league}) — {match_key}")
                 continue
@@ -9854,8 +9870,10 @@ CYBERSCORE_EXTRA_NAME_TIERS: List[int] = _parse_csv_int_list(
 # для прямого опроса GetLiveLeagueGames). Имена реэкспортируются для обратной
 # совместимости (используются в admission и sourcetv league filter ниже).
 from league_keywords import (  # noqa: E402
+    TOURNAMENT_LEAGUE_ID_ALLOWLIST,
     TOURNAMENT_TITLE_ALLOW_KEYWORDS,
     TOURNAMENT_TITLE_ALLOW_PHRASES,
+    league_matches_allowlist as _league_matches_allowlist,
     title_matches_allow_keywords as _title_matches_allow_keywords,
 )
 
@@ -21026,7 +21044,9 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             # league_name приходит из probe (справочник OpenDota); пустое имя → матч пропускается.
             _skipped_by_league = 0
             for mid, m in matches.items():
-                if not _title_matches_allow_keywords(m.get("league_name")):
+                if not _league_matches_allowlist(
+                    m.get("league_id"), m.get("league_name")
+                ):
                     _skipped_by_league += 1
                     continue
                 # Строим mock ноду в exact формате который кушает check_head и _extract_live_listing_context

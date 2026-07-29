@@ -58,3 +58,9 @@ def test_asgard_championship_allowed():
     assert lk.title_matches_allow_keywords("Asgard Championship")
     assert lk.title_matches_allow_keywords("Asgard Championship S1")
     assert lk.title_matches_allow_keywords("ASGARD CHAMPIONSHIP")
+
+
+def test_asgard_reused_valve_league_id_allowed_without_broad_lunar_paw_title():
+    assert lk.league_matches_allowlist(19722, "Lunar Paw")
+    assert not lk.title_matches_allow_keywords("Lunar Paw")
+    assert not lk.league_matches_allowlist(19723, "Lunar Paw")

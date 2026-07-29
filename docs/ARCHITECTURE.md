@@ -9,7 +9,12 @@
 При `DLTV_SOURCE_MODE=sourcetv` producer `base/sourcetv_probe.py` обнаруживает
 матчи через `GetLiveLeagueGames(0)` и прямой опрос известных
 keyword/allowlist `league_id`, после чего получает live-состояние конкретных
-лобби из Steam GC. Постоянный global GC top-400 scan отключён. Его разрешено
+лобби из Steam GC. Producer, первичный consumer-гейт и delayed-гейт используют
+общий admission по `(league_id, league_name)`: название проходит keyword-фильтр
+либо точный Valve ID входит в ID-allowlist. Это покрывает переиспользованные или
+неверно подписанные tickets (Asgard Championship — `19722`, реестровое имя
+`Lunar Paw`) без широкого разрешения чужих лиг с тем же названием. Постоянный
+global GC top-400 scan отключён. Его разрешено
 временно включать только как диагностику, если подтверждённый allowlist-матч
 не попал в bridge и Valve `league_id` нельзя получить обычным discovery; после
 нахождения ID нужно вернуться к прямому опросу.

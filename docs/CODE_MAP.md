@@ -411,7 +411,8 @@ Telegram: `Token`, `Chat_id`, `Chat_ids`. VK: `VK_GROUP_ID`, `VK_PEER_ID`, `VK_P
 | Модуль | Контракт |
 |---|---|
 | `base/sourcetv_bridge.py` | `resolve_sourcetv_matches_path(project_root: Path) -> Path`: единая CWD-independent резолюция bridge JSON; относительный `SOURCETV_MATCHES_PATH` привязывается к project root, default `runtime/sourcetv_matches.json`. |
-| `base/sourcetv_probe.py` | Steam GC/SourceTV producer: находит live-матчи/составы/драфт и пишет bridge JSON, который читает `cyberscore_try.py` при `DLTV_SOURCE_MODE=sourcetv`. Discovery по умолчанию использует WebAPI `GetLiveLeagueGames(0)` и прямой опрос известных keyword/allowlist `league_id`; постоянный global GC top-400 scan отключён. CLI `--username`, `--password`, `--league`, `--match`, `--interval`, `--login-only`. |
+| `base/league_keywords.py` | Общий admission-фильтр producer/consumer: `title_matches_allow_keywords(title)` проверяет название, `league_matches_allowlist(league_id, title)` дополнительно принимает точные ID из `TOURNAMENT_LEAGUE_ID_ALLOWLIST`. ID `19722` разрешён точечно для Asgard Championship, потому что Valve/OpenDota регистрируют переиспользованный ticket как `Lunar Paw`; само название `Lunar Paw` глобально не разрешено. |
+| `base/sourcetv_probe.py` | Steam GC/SourceTV producer: находит live-матчи/составы/драфт и пишет bridge JSON, который читает `cyberscore_try.py` при `DLTV_SOURCE_MODE=sourcetv`. Discovery по умолчанию использует WebAPI `GetLiveLeagueGames(0)` и прямой опрос известных keyword/allowlist `league_id`; producer и consumer применяют общий фильтр по паре `(league_id, league_name)`. Постоянный global GC top-400 scan отключён. CLI `--username`, `--password`, `--league`, `--match`, `--interval`, `--login-only`. |
 
 Резервная диагностика: если подтверждённый live-матч разрешённой лиги отсутствует
 в bridge и его Valve `league_id` нельзя получить из справочника/прямого WebAPI,

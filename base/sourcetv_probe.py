@@ -33,7 +33,7 @@ for _o, _n in (("job_id_target", "jobid_target"), ("job_id_source", "jobid_sourc
 # прямого опроса GetLiveLeagueGames(league_id), чтобы ловить их с драфта в обход
 # count-кэпа GetLiveLeagueGames(0) на пике.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from league_keywords import title_matches_allow_keywords
+from league_keywords import league_matches_allowlist
 
 try:
     from sourcetv_bridge import resolve_sourcetv_matches_path
@@ -82,7 +82,10 @@ def _keyword_candidate_league_ids():
             lid = int(lid)
         except (TypeError, ValueError):
             continue
-        if KW_RECENT_FLOOR <= lid < KW_LEGACY_CEIL and title_matches_allow_keywords(nm):
+        if (
+            KW_RECENT_FLOOR <= lid < KW_LEGACY_CEIL
+            and league_matches_allowlist(lid, nm)
+        ):
             out.append(lid)
     return sorted(out)
 
@@ -594,7 +597,9 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
         games_list = []
         try:
             for g in get_live_matches(0):
-                if title_matches_allow_keywords(league_name(g.get("league_id"))):
+                if league_matches_allowlist(
+                    g.get("league_id"), league_name(g.get("league_id"))
+                ):
                     games_list.append(g)
         except Exception as e:
             log.warning("Стартовый (0)-снимок не удался: %s", e)
@@ -889,8 +894,9 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                     if not fmid or fmid in seen_fmids:
                                         continue
                                     # auto-режим: держим только НАШИ keyword-лиги
-                                    if auto_kw_mode and not title_matches_allow_keywords(
-                                        league_name(fg.get("league_id"))
+                                    if auto_kw_mode and not league_matches_allowlist(
+                                        fg.get("league_id"),
+                                        league_name(fg.get("league_id")),
                                     ):
                                         continue
                                     seen_fmids.add(fmid)
