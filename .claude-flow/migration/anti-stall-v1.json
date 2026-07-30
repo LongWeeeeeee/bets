@@ -1,0 +1,100 @@
+{
+  "entries": [
+    {
+      "content_sha256": "9d0b98ed1450edce7c4bf142cadcca733b084fef368da1796d4a5f1760c00950",
+      "key": "anti-stall-policy-v1",
+      "metadata_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "namespace": "ingame-orchestration",
+      "status": "active",
+      "tags": [],
+      "type": "semantic"
+    },
+    {
+      "content_sha256": "f1a7b251b4abf2534aada8825965a8b1f6eee3c065e1fe7214892b1574194cb8",
+      "key": "anti-stall-snapshot-contract-v1",
+      "metadata_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "namespace": "ingame-orchestration",
+      "status": "active",
+      "tags": [],
+      "type": "semantic"
+    },
+    {
+      "content_sha256": "2b7d70f3edf57e42ffc2e5730759fdecdcd25aaaa763f4135087adbecb88194f",
+      "key": "anti-stall-decision-contract-v1",
+      "metadata_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "namespace": "ingame-orchestration",
+      "status": "active",
+      "tags": [],
+      "type": "semantic"
+    },
+    {
+      "content_sha256": "85b251603dc37e6cba7bf172bf88a676d5ea787d3f4a77166d99c42b9d3da9fa",
+      "key": "anti-stall-executor-contract-v1",
+      "metadata_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "namespace": "ingame-orchestration",
+      "status": "active",
+      "tags": [],
+      "type": "semantic"
+    },
+    {
+      "content_sha256": "976d94050effbc6ffa0d139cd452d94cc6db32510612fc6a4355e25cdc57c0da",
+      "key": "anti-stall-report-contract-v1",
+      "metadata_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "namespace": "ingame-orchestration",
+      "status": "active",
+      "tags": [],
+      "type": "semantic"
+    },
+    {
+      "content_sha256": "0482ed1bfcd6e07afc3b3758fb29f6aaed2b8984cccef088127f75bc541e10f0",
+      "key": "anti-stall-ruflo-handoff-v1",
+      "metadata_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "namespace": "ingame-orchestration",
+      "status": "active",
+      "tags": [],
+      "type": "semantic"
+    }
+  ],
+  "excluded_transient_state": [
+    "tick_count",
+    "cooldowns",
+    "action_keys",
+    "consecutive_stall_counters",
+    "pids",
+    "in_flight_tasks",
+    "audit_log"
+  ],
+  "generated_at": "2026-07-20T17:25:38.997840+00:00",
+  "namespace": "ingame-orchestration",
+  "schema": "anti_stall_to_ruflo_v1",
+  "source_evidence": {
+    "decision_contract": {
+      "path": "runtime/anti_stall_supervisor/DECISION_SCHEMA.json",
+      "sha256": "c8a708120bae6b3f7902a1524af0cbd8a27db8428b3326acf9b661a561f80691",
+      "size": 6907
+    },
+    "executor_contract": {
+      "path": "runtime/anti_stall_supervisor/EXECUTOR_CONTRACT.json",
+      "sha256": "653222bd25d77c1eb03a59fc88021770b04d5e2bba7b9328b51321af21fe1087",
+      "size": 4905
+    },
+    "policy": {
+      "path": "runtime/anti_stall_supervisor/policy.json",
+      "sha256": "69ae1284ac158d1654643d71415e5ab641f40b0be171c22fcaa995e258b1b3bf",
+      "size": 1887
+    },
+    "report_contract": {
+      "path": "runtime/anti_stall_supervisor/REPORT_SCHEMA.json",
+      "sha256": "62f3014ccd3a0a1f374585025086a31233376091169fbf4aef2369ab1344a659",
+      "size": 4665
+    },
+    "snapshot_contract": {
+      "path": "runtime/anti_stall_supervisor/CONTRACT.json",
+      "sha256": "3f58a0115b60cfa960edb82bff5aaca013097068991b53e40539f28cb900c954",
+      "size": 16141
+    }
+  },
+  "source_root": "runtime/anti_stall_supervisor",
+  "stored_count": 6,
+  "verified_count": 6
+}

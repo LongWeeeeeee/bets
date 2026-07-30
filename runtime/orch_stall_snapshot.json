@@ -1,0 +1,1150 @@
+{
+  "generated_at": "2026-07-19T16:06:31Z",
+  "boards": {
+    "default": {
+      "status_counts": {
+        "archived": 31,
+        "done": 269,
+        "blocked": 88,
+        "todo": 26
+      },
+      "todo_ready_why": {
+        "waiting_parent_blocked": 20,
+        "waiting_parent_todo": 6
+      },
+      "top_parent_blockers": [
+        {
+          "id": "t_9f636b89",
+          "children_waiting": 2,
+          "status": "blocked",
+          "assignee": "worker",
+          "title": "Inventory every poller on the old host",
+          "fails": 0,
+          "block_kind": "capability"
+        },
+        {
+          "id": "t_bf530a90",
+          "children_waiting": 2,
+          "status": "todo",
+          "assignee": "worker",
+          "title": "Probe ownership and fence only a confirmed competitor",
+          "fails": 0,
+          "block_kind": null
+        },
+        {
+          "id": "t_26da1d83",
+          "children_waiting": 2,
+          "status": "todo",
+          "assignee": "worker",
+          "title": "Start and prove the sole new Telegram worker",
+          "fails": 0,
+          "block_kind": null
+        },
+        {
+          "id": "t_c9f5dfcc",
+          "children_waiting": 2,
+          "status": "todo",
+          "assignee": "worker",
+          "title": "Request the human Telegram E2E message",
+          "fails": 0,
+          "block_kind": null
+        },
+        {
+          "id": "t_74082cc1",
+          "children_waiting": 2,
+          "status": "blocked",
+          "assignee": "worker",
+          "title": "Execute the gated Xray Reality migration",
+          "fails": 0,
+          "block_kind": "capability"
+        },
+        {
+          "id": "t_3338c5c6",
+          "children_waiting": 2,
+          "status": "blocked",
+          "assignee": "worker",
+          "title": "IMPLEMENT: thread selected side and render one exact Winline coefficie",
+          "fails": 0,
+          "block_kind": "needs_input"
+        },
+        {
+          "id": "t_24477a9d",
+          "children_waiting": 1,
+          "status": "blocked",
+          "assignee": "worker",
+          "title": "EXECUTE delta: explicit worker restart + real Telegram E2E for @lasofa",
+          "fails": 0,
+          "block_kind": "needs_input"
+        },
+        {
+          "id": "t_f8a46a82",
+          "children_waiting": 1,
+          "status": "blocked",
+          "assignee": "worker",
+          "title": "EXECUTE: restore main_dltv as Git worktree at f2ed798",
+          "fails": 0,
+          "block_kind": "needs_input"
+        },
+        {
+          "id": "t_9f444696",
+          "children_waiting": 1,
+          "status": "todo",
+          "assignee": "worker",
+          "title": "Verify the post-anchor Telegram transaction",
+          "fails": 0,
+          "block_kind": null
+        },
+        {
+          "id": "t_1c442bad",
+          "children_waiting": 1,
+          "status": "todo",
+          "assignee": "reviewer",
+          "title": "Review the migration and gate secure link delivery",
+          "fails": 0,
+          "block_kind": null
+        },
+        {
+          "id": "t_619c30e5",
+          "children_waiting": 1,
+          "status": "todo",
+          "assignee": "worker",
+          "title": "EXECUTE: restore single-owner inbound for @lasofas12bot",
+          "fails": 0,
+          "block_kind": "needs_input"
+        },
+        {
+          "id": "t_2aad439a",
+          "children_waiting": 1,
+          "status": "todo",
+          "assignee": "worker",
+          "title": "EXECUTE: migrate production Xray VLESS Reality to 23.26.193.167",
+          "fails": 0,
+          "block_kind": "needs_input"
+        }
+      ],
+      "samples": [
+        {
+          "id": "t_84946a65",
+          "status": "todo",
+          "assignee": "reviewer",
+          "why": "parents_open",
+          "title": "REVIEW delta: close final @lasofas12bot restart/E2E signatures",
+          "parents": [
+            {
+              "parent": "t_24477a9d",
+              "status": "blocked",
+              "title": "EXECUTE delta: explicit worker restart + real Telegram E2E for @lasofa",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_206f19fd",
+          "status": "todo",
+          "assignee": "reviewer",
+          "why": "parents_open",
+          "title": "REVIEW: verify old-host important-data transfer gates",
+          "parents": [
+            {
+              "parent": "t_f8a46a82",
+              "status": "blocked",
+              "title": "EXECUTE: restore main_dltv as Git worktree at f2ed798",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_619c30e5",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "EXECUTE: restore single-owner inbound for @lasofas12bot",
+          "parents": [
+            {
+              "parent": "t_9f636b89",
+              "status": "blocked",
+              "title": "Inventory every poller on the old host",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_bf530a90",
+              "status": "todo",
+              "title": "Probe ownership and fence only a confirmed competitor",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_26da1d83",
+              "status": "todo",
+              "title": "Start and prove the sole new Telegram worker",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_c9f5dfcc",
+              "status": "todo",
+              "title": "Request the human Telegram E2E message",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_9f444696",
+              "status": "todo",
+              "title": "Verify the post-anchor Telegram transaction",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_2aad439a",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "EXECUTE: migrate production Xray VLESS Reality to 23.26.193.167",
+          "parents": [
+            {
+              "parent": "t_74082cc1",
+              "status": "blocked",
+              "title": "Execute the gated Xray Reality migration",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_1c442bad",
+              "status": "todo",
+              "title": "Review the migration and gate secure link delivery",
+              "assignee": "reviewer"
+            }
+          ]
+        },
+        {
+          "id": "t_07b68e22",
+          "status": "todo",
+          "assignee": "reviewer",
+          "why": "parents_open",
+          "title": "REVIEW: verify @lasofas12bot single-owner inbound recovery",
+          "parents": [
+            {
+              "parent": "t_619c30e5",
+              "status": "todo",
+              "title": "EXECUTE: restore single-owner inbound for @lasofas12bot",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_c6879c40",
+          "status": "todo",
+          "assignee": "reviewer",
+          "why": "parents_open",
+          "title": "REVIEW+DELIVER: verify Xray VLESS migration and release links artifact",
+          "parents": [
+            {
+              "parent": "t_2aad439a",
+              "status": "todo",
+              "title": "EXECUTE: migrate production Xray VLESS Reality to 23.26.193.167",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_1c442bad",
+          "status": "todo",
+          "assignee": "reviewer",
+          "why": "parents_open",
+          "title": "Review the migration and gate secure link delivery",
+          "parents": [
+            {
+              "parent": "t_74082cc1",
+              "status": "blocked",
+              "title": "Execute the gated Xray Reality migration",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_bf530a90",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "Probe ownership and fence only a confirmed competitor",
+          "parents": [
+            {
+              "parent": "t_9f636b89",
+              "status": "blocked",
+              "title": "Inventory every poller on the old host",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_26da1d83",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "Start and prove the sole new Telegram worker",
+          "parents": [
+            {
+              "parent": "t_bf530a90",
+              "status": "todo",
+              "title": "Probe ownership and fence only a confirmed competitor",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_c9f5dfcc",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "Request the human Telegram E2E message",
+          "parents": [
+            {
+              "parent": "t_26da1d83",
+              "status": "todo",
+              "title": "Start and prove the sole new Telegram worker",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_9f444696",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "Verify the post-anchor Telegram transaction",
+          "parents": [
+            {
+              "parent": "t_c9f5dfcc",
+              "status": "todo",
+              "title": "Request the human Telegram E2E message",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_13cea1bc",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "SA-I INTEGRATE immutable duo and trio ablation evidence",
+          "parents": [
+            {
+              "parent": "t_1b7adb9e",
+              "status": "blocked",
+              "title": "SA-D RESEARCH bounded synergy_duo STAR ablation",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_0ab6ad33",
+              "status": "blocked",
+              "title": "SA-T RESEARCH bounded synergy_trio STAR ablation",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_23cfed3c",
+          "status": "todo",
+          "assignee": "planner",
+          "why": "parents_open",
+          "title": "GM-R2-S2 SYNTHESIZE pointed evidence wave; integrate only if complete",
+          "parents": [
+            {
+              "parent": "t_9c6715e1",
+              "status": "blocked",
+              "title": "GM-R2-E7 RESEARCH normalize exhaustive STAR/code input evidence",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_5dc2ed9a",
+              "status": "blocked",
+              "title": "GM-R2-E8 RESEARCH typed manifest gate contract artifact",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_661ea1c1",
+              "status": "blocked",
+              "title": "GM-R2-E9 RESEARCH deterministic shared SA-D/SA-T execution contract ar",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_4780e30e",
+              "status": "blocked",
+              "title": "GM-R2-E10 RESEARCH leakage-safe stats freeze or exact unresolved produ",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_7c0db818",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "INT R2: validate corrected Winline contract and publish final evidence",
+          "parents": [
+            {
+              "parent": "t_c5a73e0f",
+              "status": "blocked",
+              "title": "A2 IMMEDIATE HANDOFF: local fresh observation at every odds caller",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_f52a6319",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "VERIFY: read-only selected-side Winline contract and regression gate",
+          "parents": [
+            {
+              "parent": "t_3338c5c6",
+              "status": "blocked",
+              "title": "IMPLEMENT: thread selected side and render one exact Winline coefficie",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_cad52a8b",
+          "status": "todo",
+          "assignee": "planner",
+          "why": "parents_open",
+          "title": "REPLAN: finish partial selected-side Winline Telegram coefficient",
+          "parents": [
+            {
+              "parent": "t_3338c5c6",
+              "status": "blocked",
+              "title": "IMPLEMENT: thread selected side and render one exact Winline coefficie",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_122bc170",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "IMPLEMENT-DELTA: close evidenced selected-side Winline failures",
+          "parents": [
+            {
+              "parent": "t_c1afcf2f",
+              "status": "blocked",
+              "title": "EVIDENCE: exact remaining selected-side Winline failures",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_5a08fd15",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "VERIFY-FRESH: selected-side Winline product and regression gate",
+          "parents": [
+            {
+              "parent": "t_122bc170",
+              "status": "todo",
+              "title": "IMPLEMENT-DELTA: close evidenced selected-side Winline failures",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_8cc23dc2",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "INT: integrate and reproduce global metric audit findings",
+          "parents": [
+            {
+              "parent": "t_0d02e1f9",
+              "status": "blocked",
+              "title": "RESEARCH L1: audit metric dictionary builder labels and keys",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_5c12ca15",
+              "status": "blocked",
+              "title": "RESEARCH L2: audit loader and live score semantics",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_6a424f73",
+              "status": "blocked",
+              "title": "RESEARCH L3: audit current metric JSON artifacts quantitatively",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_72b55bce",
+              "status": "blocked",
+              "title": "RESEARCH L4: audit evaluation calibration and leakage semantics",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_fa314b06",
+              "status": "blocked",
+              "title": "RESEARCH L5: audit tests and adversarial metric semantics matrix",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_dda2b7b9",
+          "status": "todo",
+          "assignee": "planner",
+          "why": "parents_open",
+          "title": "PLAN6: emit executable metric-audit graph from atomic slices",
+          "parents": [
+            {
+              "parent": "t_56efa8ab",
+              "status": "blocked",
+              "title": "SLICE-C1: exact static artifact resolver contract",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_354b0264",
+          "status": "todo",
+          "assignee": "planner",
+          "why": "parents_open",
+          "title": "PLAN3: executable TDD graph from replacement Winline evidence capsule",
+          "parents": [
+            {
+              "parent": "t_46150085",
+              "status": "blocked",
+              "title": "RESEARCH A3: exact SourceTV stable-map bookmaker lifecycle contract",
+              "assignee": "researcher"
+            },
+            {
+              "parent": "t_45896233",
+              "status": "blocked",
+              "title": "RESEARCH B3: exact pageError patch transform and test contract",
+              "assignee": "researcher"
+            },
+            {
+              "parent": "t_3490c96a",
+              "status": "blocked",
+              "title": "RESEARCH C3: exact single-Camoufox recovery-state contract",
+              "assignee": "researcher"
+            },
+            {
+              "parent": "t_7a13339e",
+              "status": "blocked",
+              "title": "RESEARCH D3: exact isolated no-send Winline SHADOW contract",
+              "assignee": "researcher"
+            },
+            {
+              "parent": "t_d1fc8d8d",
+              "status": "blocked",
+              "title": "RESEARCH V3: exact verification and final evidence-pack contract",
+              "assignee": "researcher"
+            }
+          ]
+        },
+        {
+          "id": "t_2a82c74e",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "INT-LIVE: restart no-odds singleton and capture real Winline evidence",
+          "parents": [
+            {
+              "parent": "t_7ff8a50e",
+              "status": "blocked",
+              "title": "W-ACTIVATE: TDD no-odds in-process Winline shadow hook",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_39b36298",
+          "status": "todo",
+          "assignee": "planner",
+          "why": "parents_open",
+          "title": "REPLAN: supersede fat W-PROVIDER t_196390df dual-lane graph",
+          "parents": [
+            {
+              "parent": "t_196390df",
+              "status": "blocked",
+              "title": "W-PROVIDER: staged terminal provider classification bridge",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_64f70604",
+          "status": "todo",
+          "assignee": "planner",
+          "why": "parents_open",
+          "title": "REVIEW-LAUNCH: hash-bind Reviewer after Winline INT success",
+          "parents": [
+            {
+              "parent": "t_5ed981e0",
+              "status": "blocked",
+              "title": "INT: activate once and capture current-PID Winline live evidence",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_55248ed2",
+          "status": "todo",
+          "assignee": "planner",
+          "why": "parents_open",
+          "title": "PLAN-CONSUME-R3: build executable no-blind-wait graph from completed f",
+          "parents": [
+            {
+              "parent": "t_c6fe1ca1",
+              "status": "blocked",
+              "title": "R3-TRIGGER: resolve one exact external one-shot watchdog contract",
+              "assignee": "worker"
+            }
+          ]
+        }
+      ]
+    },
+    "planner-evidence-gated-t_f881526f": {
+      "status_counts": {
+        "done": 3,
+        "blocked": 5
+      },
+      "todo_ready_why": {},
+      "top_parent_blockers": [],
+      "samples": []
+    },
+    "planner-hardening": {
+      "status_counts": {
+        "done": 14,
+        "blocked": 1,
+        "todo": 1
+      },
+      "todo_ready_why": {
+        "waiting_parent_blocked": 1
+      },
+      "top_parent_blockers": [
+        {
+          "id": "t_f6d3487a",
+          "children_waiting": 1,
+          "status": "blocked",
+          "assignee": "planner",
+          "title": "PLAN: Alpha beta change from repository evidence",
+          "fails": 0,
+          "block_kind": "needs_input"
+        }
+      ],
+      "samples": [
+        {
+          "id": "t_884b3f51",
+          "status": "todo",
+          "assignee": "researcher",
+          "why": "parents_open",
+          "title": "RESEARCH: Disambiguate Alpha repository and implementation wiring",
+          "parents": [
+            {
+              "parent": "t_f6d3487a",
+              "status": "blocked",
+              "title": "PLAN: Alpha beta change from repository evidence",
+              "assignee": "planner"
+            }
+          ]
+        }
+      ]
+    },
+    "speech-awareness": {
+      "status_counts": {
+        "archived": 11,
+        "done": 59,
+        "blocked": 5
+      },
+      "todo_ready_why": {},
+      "top_parent_blockers": [],
+      "samples": []
+    },
+    "telemt-proxy": {
+      "status_counts": {
+        "done": 137,
+        "blocked": 32,
+        "todo": 19,
+        "archived": 36
+      },
+      "todo_ready_why": {
+        "waiting_parent_blocked": 8,
+        "waiting_parent_todo": 11
+      },
+      "top_parent_blockers": [
+        {
+          "id": "t_e4c445af",
+          "children_waiting": 5,
+          "status": "todo",
+          "assignee": "worker",
+          "title": "W5: Prove authoritative-B loader smoke and fail-closed behavior",
+          "fails": 0,
+          "block_kind": null
+        },
+        {
+          "id": "t_e9572804",
+          "children_waiting": 2,
+          "status": "todo",
+          "assignee": "worker",
+          "title": "W3 INT: Validate and publish immutable three-family option-B stats man",
+          "fails": 0,
+          "block_kind": null
+        },
+        {
+          "id": "t_1e56e515",
+          "children_waiting": 1,
+          "status": "blocked",
+          "assignee": "worker",
+          "title": "REPLAN1-B: Preserve TCP failure status and enforce 60s verification wi",
+          "fails": 0,
+          "block_kind": "capability"
+        },
+        {
+          "id": "t_ec2284c0",
+          "children_waiting": 1,
+          "status": "todo",
+          "assignee": "reviewer",
+          "title": "REPLAN1-GATE: Independently approve parser and verifier repairs",
+          "fails": 0,
+          "block_kind": null
+        },
+        {
+          "id": "t_0d5078a8",
+          "children_waiting": 1,
+          "status": "blocked",
+          "assignee": "reviewer",
+          "title": "REPLAN2-B4: Independently approve installed verifier and unchanged saf",
+          "fails": 0,
+          "block_kind": "capability"
+        },
+        {
+          "id": "t_6e3ef2d5",
+          "children_waiting": 1,
+          "status": "blocked",
+          "assignee": "reviewer",
+          "title": "REPLAN6-R: Fresh read-only installed-state verdict for approved REPLAN",
+          "fails": 0,
+          "block_kind": "capability"
+        },
+        {
+          "id": "t_83cb4f42",
+          "children_waiting": 1,
+          "status": "todo",
+          "assignee": "reviewer",
+          "title": "REPLAN7-R: Independently review installed-state evidence and determini",
+          "fails": 0,
+          "block_kind": null
+        },
+        {
+          "id": "t_cf2f0c83",
+          "children_waiting": 1,
+          "status": "blocked",
+          "assignee": "worker",
+          "title": "REPLAN7-E1: Build read-only installed-state evidence contract",
+          "fails": 5,
+          "block_kind": null
+        },
+        {
+          "id": "t_b5b72106",
+          "children_waiting": 1,
+          "status": "blocked",
+          "assignee": "worker",
+          "title": "RESEARCH-RUNTIME: Recover exact Telemt service control contract",
+          "fails": 5,
+          "block_kind": null
+        },
+        {
+          "id": "t_1a033873",
+          "children_waiting": 1,
+          "status": "blocked",
+          "assignee": "worker",
+          "title": "RESEARCH-API: Recover exact Telemt loopback health/stats contract",
+          "fails": 5,
+          "block_kind": null
+        },
+        {
+          "id": "t_9db6bec7",
+          "children_waiting": 1,
+          "status": "blocked",
+          "assignee": "worker",
+          "title": "RESEARCH-MEKO: Recover authoritative read-only 8443 checker",
+          "fails": 5,
+          "block_kind": null
+        },
+        {
+          "id": "t_6eef9d39",
+          "children_waiting": 1,
+          "status": "blocked",
+          "assignee": "worker",
+          "title": "RESEARCH-XRAY: Recover exact PID and :443 preservation contract",
+          "fails": 5,
+          "block_kind": null
+        }
+      ],
+      "samples": [
+        {
+          "id": "t_ec2284c0",
+          "status": "todo",
+          "assignee": "reviewer",
+          "why": "parents_open",
+          "title": "REPLAN1-GATE: Independently approve parser and verifier repairs",
+          "parents": [
+            {
+              "parent": "t_1e56e515",
+              "status": "blocked",
+              "title": "REPLAN1-B: Preserve TCP failure status and enforce 60s verification wi",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_d8e48b43",
+          "status": "todo",
+          "assignee": "planner",
+          "why": "parents_open",
+          "title": "REPLAN1-PLAN2: Authorize exact fresh cutover from approved repairs and",
+          "parents": [
+            {
+              "parent": "t_ec2284c0",
+              "status": "todo",
+              "title": "REPLAN1-GATE: Independently approve parser and verifier repairs",
+              "assignee": "reviewer"
+            }
+          ]
+        },
+        {
+          "id": "t_0be91be2",
+          "status": "todo",
+          "assignee": "planner",
+          "why": "parents_open",
+          "title": "PLAN4: Build fresh evidence-bound Telemt production cutover/rollback g",
+          "parents": [
+            {
+              "parent": "t_0d5078a8",
+              "status": "blocked",
+              "title": "REPLAN2-B4: Independently approve installed verifier and unchanged saf",
+              "assignee": "reviewer"
+            },
+            {
+              "parent": "t_6e3ef2d5",
+              "status": "blocked",
+              "title": "REPLAN6-R: Fresh read-only installed-state verdict for approved REPLAN",
+              "assignee": "reviewer"
+            },
+            {
+              "parent": "t_83cb4f42",
+              "status": "todo",
+              "title": "REPLAN7-R: Independently review installed-state evidence and determini",
+              "assignee": "reviewer"
+            }
+          ]
+        },
+        {
+          "id": "t_83cb4f42",
+          "status": "todo",
+          "assignee": "reviewer",
+          "why": "parents_open",
+          "title": "REPLAN7-R: Independently review installed-state evidence and determini",
+          "parents": [
+            {
+              "parent": "t_cf2f0c83",
+              "status": "blocked",
+              "title": "REPLAN7-E1: Build read-only installed-state evidence contract",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_41588f48",
+          "status": "todo",
+          "assignee": "planner",
+          "why": "parents_open",
+          "title": "IMPLEMENTATION_PLAN: Restore cached classic Telemt compatibility after",
+          "parents": [
+            {
+              "parent": "t_b5b72106",
+              "status": "blocked",
+              "title": "RESEARCH-RUNTIME: Recover exact Telemt service control contract",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_1a033873",
+              "status": "blocked",
+              "title": "RESEARCH-API: Recover exact Telemt loopback health/stats contract",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_9db6bec7",
+              "status": "blocked",
+              "title": "RESEARCH-MEKO: Recover authoritative read-only 8443 checker",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_6eef9d39",
+              "status": "blocked",
+              "title": "RESEARCH-XRAY: Recover exact PID and :443 preservation contract",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_5ec7aa9e",
+              "status": "blocked",
+              "title": "RESEARCH-AUTH: Recover exact 120-second redacted classifier",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_bd535d86",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "INT: Assemble validated STAR/public/pro/early final evidence pack",
+          "parents": [
+            {
+              "parent": "t_66d19e9c",
+              "status": "blocked",
+              "title": "W-EARLY2: Correct minute-10 STAR gate to index 9",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_a0cd8e93",
+          "status": "todo",
+          "assignee": "reviewer",
+          "why": "parents_open",
+          "title": "REVIEW: Validate final STAR/public/pro/early evidence pack and repo di",
+          "parents": [
+            {
+              "parent": "t_bd535d86",
+              "status": "todo",
+              "title": "INT: Assemble validated STAR/public/pro/early final evidence pack",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_e0467fc4",
+          "status": "todo",
+          "assignee": "planner",
+          "why": "parents_open",
+          "title": "REVIEW GATE: create focused Reviewer after latest10k matrix SUCCESS",
+          "parents": [
+            {
+              "parent": "t_5c9031d8",
+              "status": "blocked",
+              "title": "INT: Execute latest-10k CP1VS2 15-cell exploratory matrix",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_6c4b607c",
+          "status": "todo",
+          "assignee": "planner",
+          "why": "parents_open",
+          "title": "IMPLEMENTATION_PLAN: Consume Telemt updater safety and provenance cont",
+          "parents": [
+            {
+              "parent": "t_654a19b9",
+              "status": "blocked",
+              "title": "RESEARCH: Establish exact Telemt 3.4.24 official asset provenance",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_e9572804",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "W3 INT: Validate and publish immutable three-family option-B stats man",
+          "parents": [
+            {
+              "parent": "t_3b9048ee",
+              "status": "blocked",
+              "title": "W2A: Build leakage-safe early stats family",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_f5921b4f",
+              "status": "blocked",
+              "title": "W2B: Build leakage-safe late stats family",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_ab58e666",
+              "status": "blocked",
+              "title": "W2C: Build leakage-safe post-lane stats family",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_91d3b7ac",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "W4: Implement isolated v5 SQLite loader against terminal stats manifes",
+          "parents": [
+            {
+              "parent": "t_e9572804",
+              "status": "todo",
+              "title": "W3 INT: Validate and publish immutable three-family option-B stats man",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_e4c445af",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "W5: Prove authoritative-B loader smoke and fail-closed behavior",
+          "parents": [
+            {
+              "parent": "t_91d3b7ac",
+              "status": "todo",
+              "title": "W4: Implement isolated v5 SQLite loader against terminal stats manifes",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_e9572804",
+              "status": "todo",
+              "title": "W3 INT: Validate and publish immutable three-family option-B stats man",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_2f820966",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "W6 OFF: Run authoritative-B exact-STAR replay lane",
+          "parents": [
+            {
+              "parent": "t_e4c445af",
+              "status": "todo",
+              "title": "W5: Prove authoritative-B loader smoke and fail-closed behavior",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_c96d2669",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "W6 LAMBDA_0: Run authoritative-B exact-STAR replay lane",
+          "parents": [
+            {
+              "parent": "t_e4c445af",
+              "status": "todo",
+              "title": "W5: Prove authoritative-B loader smoke and fail-closed behavior",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_d91202ff",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "W6 LAMBDA_0P20: Run authoritative-B exact-STAR replay lane",
+          "parents": [
+            {
+              "parent": "t_e4c445af",
+              "status": "todo",
+              "title": "W5: Prove authoritative-B loader smoke and fail-closed behavior",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_a5b01660",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "W6 LAMBDA_0P35: Run authoritative-B exact-STAR replay lane",
+          "parents": [
+            {
+              "parent": "t_e4c445af",
+              "status": "todo",
+              "title": "W5: Prove authoritative-B loader smoke and fail-closed behavior",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_0d2dffd8",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "W6 LAMBDA_0P50: Run authoritative-B exact-STAR replay lane",
+          "parents": [
+            {
+              "parent": "t_e4c445af",
+              "status": "todo",
+              "title": "W5: Prove authoritative-B loader smoke and fail-closed behavior",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_f1d36df4",
+          "status": "todo",
+          "assignee": "worker",
+          "why": "parents_open",
+          "title": "W7 INT: Assemble exact-STAR v5 authoritative-B statistical evidence",
+          "parents": [
+            {
+              "parent": "t_2f820966",
+              "status": "todo",
+              "title": "W6 OFF: Run authoritative-B exact-STAR replay lane",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_c96d2669",
+              "status": "todo",
+              "title": "W6 LAMBDA_0: Run authoritative-B exact-STAR replay lane",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_d91202ff",
+              "status": "todo",
+              "title": "W6 LAMBDA_0P20: Run authoritative-B exact-STAR replay lane",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_a5b01660",
+              "status": "todo",
+              "title": "W6 LAMBDA_0P35: Run authoritative-B exact-STAR replay lane",
+              "assignee": "worker"
+            },
+            {
+              "parent": "t_0d2dffd8",
+              "status": "todo",
+              "title": "W6 LAMBDA_0P50: Run authoritative-B exact-STAR replay lane",
+              "assignee": "worker"
+            }
+          ]
+        },
+        {
+          "id": "t_48b6f90a",
+          "status": "todo",
+          "assignee": "reviewer",
+          "why": "parents_open",
+          "title": "REVIEW: Verify leakage-safe exact-STAR v5 authoritative-B evidence",
+          "parents": [
+            {
+              "parent": "t_f1d36df4",
+              "status": "todo",
+              "title": "W7 INT: Assemble exact-STAR v5 authoritative-B statistical evidence",
+              "assignee": "worker"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

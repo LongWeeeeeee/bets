@@ -304,22 +304,125 @@ BUCKET_MODE = os.getenv('METRICS_BUCKET_MODE', '1').strip().lower() not in ('0',
 BUCKET_MAX_INDEX = int(os.getenv('METRICS_BUCKET_MAX_INDEX', '100'))
 
 
+try:
+    import ijson
+except Exception:  # pragma: no cover - optional streaming dependency
+    ijson = None
+
+
+STREAM_LOAD_THRESHOLD_BYTES = 50 * 1024 * 1024
+
+
+def _coerce_map_id(raw_key):
+    """Preserve external map key as int when numeric, otherwise stable string."""
+    if raw_key is None or isinstance(raw_key, bool):
+        return raw_key
+    if isinstance(raw_key, int):
+        return raw_key
+    if isinstance(raw_key, float) and raw_key.is_integer():
+        return int(raw_key)
+    text = str(raw_key).strip()
+    if not text:
+        return text
+    if text.isdigit() or (text.startswith('-') and text[1:].isdigit()):
+        try:
+            return int(text)
+        except Exception:
+            return text
+    return text
+
+
+def _attach_map_id(match, raw_key):
+    if not isinstance(match, dict):
+        return match
+    match = dict(match)
+    match['_map_id'] = _coerce_map_id(raw_key)
+    return match
+
+
+def _normalize_exclude_ids(exclude_ids):
+    if not exclude_ids:
+        return None
+    from analise_database import _normalize_comparable_id
+    normalized = set()
+    for raw in exclude_ids:
+        norm = _normalize_comparable_id(raw)
+        if norm is not None:
+            normalized.add(norm)
+    return normalized or None
+
+
 def load_matches(filename: str) -> list[dict]:
-    """Загружает матчи из JSON файла. Поддерживает и список, и словарь."""
+    """Загружает матчи из JSON файла. Поддерживает и список, и словарь.
+
+    Dict-shaped JSON keeps the external key as ``_map_id`` (numeric string -> int).
+    List-shaped JSON is returned as-is without inventing IDs.
+    Large files stream via optional ijson when available.
+    """
+    path = Path(filename)
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = 0
+
+    use_stream = ijson is not None and size >= STREAM_LOAD_THRESHOLD_BYTES
+    if use_stream:
+        with open(filename, 'rb') as f:
+            # Peek first non-whitespace byte to choose object vs array stream.
+            head = b''
+            while True:
+                chunk = f.read(1)
+                if not chunk:
+                    break
+                if chunk not in b' \t\r\n':
+                    head = chunk
+                    break
+            f.seek(0)
+            if head == b'{':
+                matches = []
+                for key, value in ijson.kvitems(f, '', use_float=True):
+                    if isinstance(value, dict):
+                        matches.append(_attach_map_id(value, key))
+                    else:
+                        matches.append(value)
+                return matches
+            if head == b'[':
+                return list(ijson.items(f, 'item', use_float=True))
+            # Fall through to json.load for unexpected shapes.
+
     with open(filename, 'r', encoding='utf-8') as f:
         data = json.load(f)
-    # Если словарь (match_id -> match), конвертируем в список
     if isinstance(data, dict):
-        return list(data.values())
+        matches = []
+        for key, value in data.items():
+            if isinstance(value, dict):
+                matches.append(_attach_map_id(value, key))
+            else:
+                matches.append(value)
+        return matches
     return data
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and value is not None
+    """True for finite real numbers (int/float); rejects bool, None, NaN, +/-inf."""
+    if isinstance(value, bool) or value is None:
+        return False
+    if isinstance(value, int):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    return False
+
+
+def _is_valid_metric_observation(value) -> bool:
+    """Finite non-zero metric score eligible for summary / threshold tables."""
+    return _is_number(value) and float(value) != 0.0
 
 
 def _is_internal_metric_key(metric_name: object) -> bool:
     metric = str(metric_name)
+    if metric.endswith('_games'):
+        return True
     return metric != 'synergy_duo' and metric.startswith('synergy_duo_')
 
 
@@ -480,11 +583,9 @@ def process_metrics_winrate_buckets(matches: list[dict]) -> dict:
                 continue
             counters[phase] += 1
             for metric_name, metric_value in (match.get(bucket_name) or {}).items():
-                if str(metric_name).endswith('_games'):
-                    continue
                 if _is_internal_metric_key(metric_name):
                     continue
-                if _is_number(metric_value):
+                if _is_valid_metric_observation(metric_value):
                     _record_signed_metric(results, f'{phase}_{metric_name}', metric_value, winner)
 
         post_ok, post_winner = _winner_from_generated_fields(match, 'post_lane')
@@ -599,13 +700,15 @@ def build_train_dicts(train_files: list[Path], limit_per_file=None, exclude_ids=
     for idx, file in enumerate(train_files, 1):
         with open(file, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        matches = list(data.values()) if isinstance(data, dict) else data
+        if isinstance(data, dict):
+            matches = [_attach_map_id(v, k) if isinstance(v, dict) else v for k, v in data.items()]
+        else:
+            matches = data
         if limit_per_file:
             matches = matches[:limit_per_file]
+        normalized_exclude = _normalize_exclude_ids(exclude_ids)
         for match in matches:
             if not isinstance(match, dict):
-                continue
-            if exclude_ids and match.get('id') in exclude_ids:
                 continue
             if 'players' not in match or len(match.get('players', [])) != 10:
                 continue
@@ -614,7 +717,9 @@ def build_train_dicts(train_files: list[Path], limit_per_file=None, exclude_ids=
                 lane_dict,
                 early_dict,
                 late_dict,
+                exclude_match_ids=normalized_exclude,
                 post_lane_dict=post_lane_dict,
+                match_id_hint=match.get('_map_id'),
             )
             total += 1
         print(f"  train[{idx}/{len(train_files)}]: обработано {total:,} матчей", end='\r')
@@ -622,6 +727,67 @@ def build_train_dicts(train_files: list[Path], limit_per_file=None, exclude_ids=
     if include_post_lane:
         return early_dict, late_dict, post_lane_dict
     return early_dict, late_dict
+
+
+def _stable_match_id(match, fallback_idx):
+    """Prefer normalized id / match_id / _map_id for unique map tracking."""
+    from analise_database import _normalize_comparable_id
+    if not isinstance(match, dict):
+        return fallback_idx
+    for key in ('id', 'match_id', '_map_id'):
+        norm = _normalize_comparable_id(match.get(key))
+        if norm is not None:
+            return norm
+    return fallback_idx
+
+
+def _exclude_ids_from_test_matches(test_matches):
+    """Build exclude-id set from loaded test maps for EXCLUDE_TEST_FROM_TRAIN.
+
+    Collects every valid normalized candidate among id / match_id / _map_id
+    per test map so training counterparts identified under any of those keys
+    are excluded. Dict-shaped loads often only carry the external key as
+    ``_map_id``. Missing/invalid candidates are ignored.
+    """
+    from analise_database import _normalize_comparable_id
+
+    exclude_ids = set()
+    if not test_matches:
+        return exclude_ids
+    for match in test_matches:
+        if not isinstance(match, dict):
+            continue
+        for key in ('id', 'match_id', '_map_id'):
+            norm = _normalize_comparable_id(match.get(key))
+            if norm is not None:
+                exclude_ids.add(norm)
+    return exclude_ids
+
+
+def _record_metric_summary_outcome(summary_outcomes, unique_matches, full_metric_name, match_id, metric_value, actual_winner):
+    """Record one non-cumulative per-map outcome for summary average WR.
+
+    Validation happens BEFORE dedup registration so an invalid first observation
+    never locks the map out of a later valid one. Only finite non-zero numbers
+    with a known actual_winner enter the summary.
+    """
+    if full_metric_name not in unique_matches:
+        unique_matches[full_metric_name] = set()
+    # Validate first — invalid observations do not consume the map slot.
+    if actual_winner not in ('radiant', 'dire') or not _is_valid_metric_observation(metric_value):
+        return
+    # Only the first *valid* observation for this map+metric counts toward summary.
+    if match_id in unique_matches[full_metric_name]:
+        return
+    unique_matches[full_metric_name].add(match_id)
+    predicted_radiant = float(metric_value) > 0
+    correct = (predicted_radiant and actual_winner == 'radiant') or (
+        (not predicted_radiant) and actual_winner == 'dire'
+    )
+    bucket = summary_outcomes.setdefault(full_metric_name, {'wins': 0, 'n': 0})
+    bucket['n'] += 1
+    if correct:
+        bucket['wins'] += 1
 
 
 def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_dict=None, use_train_dicts: bool = False):
@@ -644,6 +810,9 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_
 
     results = {}  # {phase_metric_name: {index: {'positive': {...}, 'negative': {...}}}}
     unique_matches_per_metric = {}  # {metric_name: set of match_ids}
+    # Per-metric non-cumulative outcome counts (one observation per map/metric).
+    # Used by print_results for summary average WR; threshold tables stay cumulative.
+    summary_outcomes_per_metric = {}  # {metric_name: {'wins': int, 'n': int}}
     
     # Счетчики для дебага
     early_count = 0
@@ -724,9 +893,9 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_
             post_lane_output = match.get('post_lane_output', {})
         
         # Диагностика: считаем метрики с/без фильтров
-        has_early_metrics = any(v is not None and isinstance(v, (int, float)) for v in early_output.values())
-        has_late_metrics = any(v is not None and isinstance(v, (int, float)) for v in late_output.values())
-        has_post_lane_metrics = any(v is not None and isinstance(v, (int, float)) for v in post_lane_output.values())
+        has_early_metrics = any(_is_valid_metric_observation(v) for v in early_output.values())
+        has_late_metrics = any(_is_valid_metric_observation(v) for v in late_output.values())
+        has_post_lane_metrics = any(_is_valid_metric_observation(v) for v in post_lane_output.values())
         
         if has_early_metrics:
             if match_is_early:
@@ -759,27 +928,32 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_
         # Победитель матча для early-фильтра намеренно не важен.
         if match_is_early and early_dominator is not None:
             actual_winner = early_dominator
-            match_id = match.get('id', idx)
+            match_id = _stable_match_id(match, idx)
             
             for metric_name, metric_value in early_output.items():
-                # Пропускаем None значения
-                if not isinstance(metric_value, (int, float)) or metric_value is None:
+                # Пропускаем None / bool / non-finite / zero
+                if not _is_valid_metric_observation(metric_value):
                     continue
                 if _is_internal_metric_key(metric_name):
                     continue
                 
                 full_metric_name = f'early_{metric_name}'
-                
-                # Отслеживаем уникальные матчи для этой метрики
-                if full_metric_name not in unique_matches_per_metric:
-                    unique_matches_per_metric[full_metric_name] = set()
-                unique_matches_per_metric[full_metric_name].add(match_id)
-                
+
+                _record_metric_summary_outcome(
+                    summary_outcomes_per_metric,
+                    unique_matches_per_metric,
+                    full_metric_name,
+                    match_id,
+                    metric_value,
+                    actual_winner,
+                )
+
                 # Инициализируем структуру для метрики если нужно
                 if full_metric_name not in results:
                     results[full_metric_name] = {}
-                    for idx in range(1, 51):
-                        results[full_metric_name][idx] = {
+                    # Use thr_idx — never shadow outer map ordinal `idx`.
+                    for thr_idx in range(1, 51):
+                        results[full_metric_name][thr_idx] = {
                             'positive': {'wins': 0, 'looses': 0},
                             'negative': {'wins': 0, 'looses': 0}
                         }
@@ -841,27 +1015,32 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_
         if match_is_late and late_dominator is not None:
             # late_dominator = winner матча (кто реально выиграл)
             actual_winner = late_dominator
-            match_id = match.get('id', idx)
+            match_id = _stable_match_id(match, idx)
             
             for metric_name, metric_value in late_output.items():
-                # Пропускаем None значения
-                if not isinstance(metric_value, (int, float)) or metric_value is None:
+                # Пропускаем None / bool / non-finite / zero
+                if not _is_valid_metric_observation(metric_value):
                     continue
                 if _is_internal_metric_key(metric_name):
                     continue
 
                 full_metric_name = f'late_{metric_name}'
-                
-                # Отслеживаем уникальные матчи для этой метрики
-                if full_metric_name not in unique_matches_per_metric:
-                    unique_matches_per_metric[full_metric_name] = set()
-                unique_matches_per_metric[full_metric_name].add(match_id)
+
+                _record_metric_summary_outcome(
+                    summary_outcomes_per_metric,
+                    unique_matches_per_metric,
+                    full_metric_name,
+                    match_id,
+                    metric_value,
+                    actual_winner,
+                )
 
                 # Инициализируем структуру для метрики если нужно
                 if full_metric_name not in results:
                     results[full_metric_name] = {}
-                    for idx in range(1, 51):
-                        results[full_metric_name][idx] = {
+                    # Use thr_idx — never shadow outer map ordinal `idx`.
+                    for thr_idx in range(1, 51):
+                        results[full_metric_name][thr_idx] = {
                             'positive': {'wins': 0, 'looses': 0},
                             'negative': {'wins': 0, 'looses': 0}
                         }
@@ -893,23 +1072,29 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_
         # Post-lane словарь обучается на матчах после 10m gate + min duration и дальше берёт winner.
         if match_is_post_lane and post_lane_dominator is not None:
             actual_winner = post_lane_dominator
-            match_id = match.get('id', idx)
+            match_id = _stable_match_id(match, idx)
 
             for metric_name, metric_value in post_lane_output.items():
-                if not isinstance(metric_value, (int, float)) or metric_value is None:
+                if not _is_valid_metric_observation(metric_value):
                     continue
                 if _is_internal_metric_key(metric_name):
                     continue
 
                 full_metric_name = f'post_lane_{metric_name}'
-                if full_metric_name not in unique_matches_per_metric:
-                    unique_matches_per_metric[full_metric_name] = set()
-                unique_matches_per_metric[full_metric_name].add(match_id)
+                _record_metric_summary_outcome(
+                    summary_outcomes_per_metric,
+                    unique_matches_per_metric,
+                    full_metric_name,
+                    match_id,
+                    metric_value,
+                    actual_winner,
+                )
 
                 if full_metric_name not in results:
                     results[full_metric_name] = {}
-                    for idx in range(1, 51):
-                        results[full_metric_name][idx] = {
+                    # Use thr_idx — never shadow outer map ordinal `idx`.
+                    for thr_idx in range(1, 51):
+                        results[full_metric_name][thr_idx] = {
                             'positive': {'wins': 0, 'looses': 0},
                             'negative': {'wins': 0, 'looses': 0}
                         }
@@ -984,8 +1169,9 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_
                 # Инициализируем структуру если нужно
                 if full_lane_name not in results:
                     results[full_lane_name] = {}
-                    for idx in range(1, 101):  # Лейны идут в процентах 1-100
-                        results[full_lane_name][idx] = {
+                    # Use thr_idx — never shadow outer map ordinal `idx`.
+                    for thr_idx in range(1, 101):  # Лейны идут в процентах 1-100
+                        results[full_lane_name][thr_idx] = {
                             'positive': {'wins': 0, 'looses': 0},
                             'negative': {'wins': 0, 'looses': 0}
                         }
@@ -1050,7 +1236,7 @@ def process_metrics_winrate(matches, early_dict=None, late_dict=None, post_lane_
             both_wr = early_and_stats['both_strong_same_sign']['wins'] / both_matches
             print(f"  A∧B: одновременное наличие сильного counterpick_1vs1 и сильного synergy_duo с совпадающим знаком      | матчей: {both_matches:5d}, винрейт: {both_wr:.2%}")
     
-    return results, unique_matches_per_metric
+    return results, unique_matches_per_metric, summary_outcomes_per_metric
 
 
 def _min_index_for(metric_name: str) -> int:
@@ -1069,13 +1255,15 @@ def _max_index_for(metric_name: str) -> int:
     return LANE_MAX_CONFIDENCE if metric_name.startswith('lane_') else METRIC_MAX_INDEX
 
 
-def print_results(results, unique_matches_per_metric: Optional[dict] = None):
+def print_results(results, unique_matches_per_metric: Optional[dict] = None, summary_outcomes_per_metric: Optional[dict] = None):
     """Выводит результаты - только процент винрейта для каждой метрики."""
     print("РЕЗУЛЬТАТЫ АНАЛИЗА МЕТРИК ВИНРЕЙТА")
     print("=" * 120)
     
     if unique_matches_per_metric is None:
         unique_matches_per_metric = {}
+    if summary_outcomes_per_metric is None:
+        summary_outcomes_per_metric = {}
     
     avg_winrates = {}
     avg_match_counts = {}
@@ -1116,7 +1304,7 @@ def print_results(results, unique_matches_per_metric: Optional[dict] = None):
                 overall_wr = total_wins / total_matches if total_matches > 0 else 0
                 lines.append(f"{index}: {overall_wr:.1%}")
             
-            # Для расчета среднего винрейта учитываем все индексы с данными
+            # Legacy cumulative accumulation kept only as fallback when summary is absent.
             if total_matches > 0:
                 total_weighted_wins += total_wins
                 total_matches_all += total_matches
@@ -1125,8 +1313,17 @@ def print_results(results, unique_matches_per_metric: Optional[dict] = None):
         if lines:
             print(f"{metric_name:30s} {' '.join(lines)}")
         
-        # Сохраняем средний винрейт только если достаточно матчей
-        if total_matches_all >= MIN_MATCHES_FOR_AVG:
+        # Prefer non-cumulative per-map summary (one observation per map).
+        summary = summary_outcomes_per_metric.get(metric_name)
+        if isinstance(summary, dict) and summary.get('n', 0) > 0:
+            summary_n = int(summary['n'])
+            summary_wins = int(summary.get('wins', 0))
+            avg_match_counts[metric_name] = summary_n
+            if summary_n >= MIN_MATCHES_FOR_AVG:
+                avg_winrates[metric_name] = summary_wins / summary_n
+            else:
+                avg_winrates[metric_name] = 0
+        elif total_matches_all >= MIN_MATCHES_FOR_AVG:
             avg_winrates[metric_name] = total_weighted_wins / total_matches_all
             avg_match_counts[metric_name] = total_matches_all
         else:
@@ -1185,7 +1382,7 @@ if __name__ == '__main__':
 
         exclude_ids = None
         if EXCLUDE_TEST_FROM_TRAIN:
-            exclude_ids = {m.get('id') for m in test_matches if isinstance(m, dict) and m.get('id')}
+            exclude_ids = _exclude_ids_from_test_matches(test_matches) or None
 
         print(f"TRAIN файлов: {len(train_files)}")
         print("Построение словарей train...")
@@ -1198,14 +1395,14 @@ if __name__ == '__main__':
 
         print(f"\nЗагружено test матчей: {len(test_matches)}")
         print("\nОбработка метрик...")
-        results, unique_matches = process_metrics_winrate(
+        results, unique_matches, summary_outcomes = process_metrics_winrate(
             test_matches,
             early_dict,
             late_dict,
             post_lane_dict,
             use_train_dicts=True,
         )
-        print_results(results, unique_matches)
+        print_results(results, unique_matches, summary_outcomes)
     else:
         matches = load_matches(str(args.input))
         print(f"Загружено матчей: {len(matches)}")
@@ -1215,5 +1412,5 @@ if __name__ == '__main__':
             print_bucket_results(bucket_results, min_matches=args.min_matches)
         else:
             print("\nОбработка метрик...")
-            results, unique_matches = process_metrics_winrate(matches)
-            print_results(results, unique_matches)
+            results, unique_matches, summary_outcomes = process_metrics_winrate(matches)
+            print_results(results, unique_matches, summary_outcomes)

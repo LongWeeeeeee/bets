@@ -1,0 +1,171 @@
+{
+  "schema": "executor_contract_v1",
+  "lane": "t_a1e6e05d",
+  "staging_dir": "/root/main/runtime/anti_stall_staging/t_3c0b64e6/executor",
+  "public_symbols": [
+    "validate_action",
+    "apply_board_actions",
+    "action_already_applied"
+  ],
+  "input_plan_schema": "decision_plan_v1",
+  "supported_action_types": [
+    "comment_once",
+    "unblock_same_card",
+    "route_needs_replan"
+  ],
+  "forbidden_mutations": [
+    "create_task",
+    "clone_task",
+    "delete_task",
+    "archive_task",
+    "complete_task",
+    "retry_run",
+    "restart_run",
+    "reclaim_run",
+    "alter_assignee",
+    "alter_roles_models_toolsets_profile",
+    "touch_sibling_tasks",
+    "write_supervisor_state_or_report"
+  ],
+  "authorization": {
+    "allowed_kinds": ["exact_directive", "registered_policy"],
+    "requires_digest": true
+  },
+  "permanent_deny_classes": [
+    "ambiguous",
+    "needs_input",
+    "human",
+    "secret",
+    "production",
+    "ownership",
+    "auth",
+    "reviewer",
+    "checksum"
+  ],
+  "pre_write_guards": [
+    "action_schema",
+    "board_snapshot_digest",
+    "board_identity",
+    "expected_status_cas",
+    "expected_current_run_id_cas",
+    "expected_evidence_digest_present",
+    "authorization_kind_and_digest",
+    "permanent_denylist_absence",
+    "cooldown_until_ns",
+    "event_watermark_cas",
+    "optional_row_watermark"
+  ],
+  "lifecycle_adapter_facts": {
+    "observed_from": "hermes_cli.kanban_db (installed /usr/local/lib/hermes-agent)",
+    "valid_statuses": [
+      "triage", "todo", "scheduled", "ready", "running",
+      "blocked", "review", "done", "archived"
+    ],
+    "valid_block_kinds": [
+      "dependency", "needs_input", "capability", "transient"
+    ],
+    "needs_replan_status_supported": false,
+    "needs_replan_block_kind_supported": false,
+    "route_needs_replan_behavior": "downgrade_to_comment_once_diagnostic_no_status_guess",
+    "unblock_semantics": {
+      "source_status": "blocked",
+      "target_status_if_all_parents_done_or_no_parents": "ready",
+      "target_status_if_undone_parents": "todo",
+      "preserves": [
+        "block_kind",
+        "block_recurrences",
+        "parent_child_edges",
+        "run_history_rows",
+        "sibling_rows",
+        "assignee",
+        "worker_pid_column_value_except_via_status_path",
+        "artifacts_attachments"
+      ],
+      "resets_on_unblock": [
+        "current_run_id->NULL",
+        "consecutive_failures->0",
+        "last_failure_error->NULL"
+      ],
+      "closes_dangling_open_run_as": "reclaimed",
+      "native_event_kind": "unblocked"
+    },
+    "audit": {
+      "event_kind": "anti_stall_action",
+      "comment_author": "anti_stall_executor",
+      "action_key_marker_prefix": "anti_stall_action_key:",
+      "idempotency_store": "append_only_task_events_and_task_comments"
+    },
+    "transaction": {
+      "mode": "BEGIN IMMEDIATE per action",
+      "busy_timeout_ms": 5000,
+      "batch_isolation": "per-action rollback on guard/deny/error; continue remaining actions"
+    },
+    "dry_run": {
+      "sqlite_open": "read-only uri mode=ro",
+      "db_bytes_unchanged": true,
+      "returns_buckets": ["planned", "skipped", "denied", "already_applied", "errors"]
+    },
+    "live_board_protection": {
+      "writable_open_of_paths_under_home_hermes_kanban_refused": true,
+      "override_env": "ANTI_STALL_EXECUTOR_ALLOW_LIVE_WRITE=1"
+    },
+    "required_tables": [
+      "tasks", "task_events", "task_comments", "task_links", "task_runs"
+    ],
+    "required_task_columns": [
+      "id", "status", "current_run_id", "block_kind",
+      "block_recurrences", "consecutive_failures", "worker_pid"
+    ]
+  },
+  "action_record_fields": {
+    "required": [
+      "schema",
+      "action_key",
+      "action_type",
+      "board_id",
+      "task_id",
+      "expected_status",
+      "expected_evidence_digest",
+      "event_watermark",
+      "authorization",
+      "reason"
+    ],
+    "optional": [
+      "board_snapshot_digest",
+      "expected_current_run_id",
+      "expected_block_kind",
+      "comment_body",
+      "cooldown_until_ns",
+      "denylist_tags",
+      "deny_classes",
+      "deny_class",
+      "policy_class",
+      "resolution_directive_digest",
+      "row_watermark"
+    ]
+  },
+  "apply_board_actions_result_buckets": [
+    "planned",
+    "applied",
+    "skipped",
+    "denied",
+    "already_applied",
+    "errors"
+  ],
+  "error_codes": [
+    "schema_mismatch",
+    "hash_mismatch",
+    "guard_race",
+    "deny_class",
+    "auth_denied",
+    "locked_db",
+    "corrupt_db",
+    "internal"
+  ],
+  "duplicate_action_key_result": "already_applied",
+  "notes": [
+    "Executor does not classify stalls or invent authorization; policy lane owns that.",
+    "Executor never creates cards or writes supervisor state/report files.",
+    "needs_input auto-unblock requires exact_directive + resolution_directive_digest; still denied if denylist stamps needs_input."
+  ]
+}

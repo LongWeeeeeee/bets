@@ -1,0 +1,1666 @@
+{
+  "live": {
+    "8891371442": 427333,
+    "8891325877": 427319,
+    "8891349244": 427328,
+    "8891341234": 427375
+  },
+  "upcoming": [
+    {
+      "id": 427319,
+      "event_id": 6447,
+      "status": 1,
+      "slug": "lvlup-vs-l1ga-team-esports-world-cup-2026",
+      "type": 2,
+      "first_team_id": 6014,
+      "second_team_id": 7109,
+      "started_at": "2026-07-11T11:54:56.000Z",
+      "ended_at": null,
+      "draft_vote_ended_at": "2026-07-11T12:11:12.000Z",
+      "is_active": true,
+      "is_draft_voting": true,
+      "created_at": "2026-07-02T03:45:12.000Z",
+      "updated_at": "2026-07-11T12:47:27.000Z",
+      "deleted_at": null,
+      "series_scores": {
+        "first_team": 0,
+        "second_team": 0
+      }
+    },
+    {
+      "id": 427328,
+      "event_id": 6447,
+      "status": 1,
+      "slug": "nigma-vs-playtime-esports-world-cup-2026",
+      "type": 2,
+      "first_team_id": 5124,
+      "second_team_id": 8083,
+      "started_at": "2026-07-11T12:11:11.000Z",
+      "ended_at": null,
+      "draft_vote_ended_at": "2026-07-11T12:29:37.000Z",
+      "is_active": true,
+      "is_draft_voting": true,
+      "created_at": "2026-07-02T03:45:12.000Z",
+      "updated_at": "2026-07-11T12:47:39.000Z",
+      "deleted_at": null,
+      "series_scores": {
+        "first_team": 0,
+        "second_team": 0
+      }
+    },
+    {
+      "id": 427375,
+      "event_id": 6616,
+      "status": 1,
+      "slug": "ilbirs-esports-vs-spirit-academy-european-pro-league-season-39",
+      "type": 3,
+      "first_team_id": 8017,
+      "second_team_id": 8006,
+      "started_at": "2026-07-11T12:13:11.000Z",
+      "ended_at": null,
+      "draft_vote_ended_at": "2026-07-11T12:28:58.000Z",
+      "is_active": true,
+      "is_draft_voting": false,
+      "created_at": "2026-07-08T03:12:28.000Z",
+      "updated_at": "2026-07-11T12:47:41.000Z",
+      "deleted_at": null,
+      "series_scores": {
+        "first_team": 0,
+        "second_team": 0
+      }
+    },
+    {
+      "id": 427333,
+      "event_id": 6447,
+      "status": 1,
+      "slug": "team-liquid-vs-aurora-esports-world-cup-2026",
+      "type": 2,
+      "first_team_id": 7,
+      "second_team_id": 7051,
+      "started_at": "2026-07-11T12:25:12.000Z",
+      "ended_at": null,
+      "draft_vote_ended_at": "2026-07-11T12:44:12.000Z",
+      "is_active": true,
+      "is_draft_voting": true,
+      "created_at": "2026-07-02T03:45:12.000Z",
+      "updated_at": "2026-07-11T12:47:29.000Z",
+      "deleted_at": null,
+      "series_scores": {
+        "first_team": 0,
+        "second_team": 0
+      }
+    }
+  ],
+  "results": [
+    {
+      "id": 427304,
+      "event_id": 6447,
+      "status": 2,
+      "slug": "rune-eaters-vs-poor-rangers-esports-world-cup-2026",
+      "type": 2,
+      "first_team_id": 6454,
+      "second_team_id": 8201,
+      "started_at": "2026-07-11T09:00:26.000Z",
+      "ended_at": "2026-07-11T11:01:44.000Z",
+      "draft_vote_ended_at": null,
+      "is_active": true,
+      "is_draft_voting": true,
+      "created_at": "2026-07-02T03:39:29.000Z",
+      "updated_at": "2026-07-11T12:46:36.000Z",
+      "deleted_at": null,
+      "first_team": {
+        "id": 6454,
+        "steam_ids": "[\"8620831\",\"9207879\",\"9895247\"]",
+        "title": "Rune Eaters",
+        "slug": "rune-eaters",
+        "tag": "RE",
+        "image": "/uploads/teams/89z6KdMCr7Lb502p5vTLcmo0G8Gqi3h2.png.webp",
+        "image_dark": "/uploads/teams/xoKm3D3TqOZiGdGsHgkD8Q1mFO4BntKc.png.webp",
+        "is_active": true,
+        "created_at": "2022-04-04T05:47:03.000Z",
+        "updated_at": "2026-07-11T12:22:01.000Z",
+        "rank": 26
+      },
+      "second_team": {
+        "id": 8201,
+        "steam_ids": "[\"10158550\"]",
+        "title": "Poor Rangers",
+        "slug": "poor-rangers",
+        "tag": "PR",
+        "image": null,
+        "image_dark": null,
+        "is_active": true,
+        "created_at": "2026-06-01T07:58:18.000Z",
+        "updated_at": "2026-07-11T12:22:20.000Z",
+        "rank": null
+      },
+      "series_scores": {
+        "first_team": 2,
+        "second_team": 0
+      }
+    },
+    {
+      "id": 427313,
+      "event_id": 6447,
+      "status": 2,
+      "slug": "gamerlegion-vs-betboom-team-esports-world-cup-2026",
+      "type": 2,
+      "first_team_id": 8012,
+      "second_team_id": 6459,
+      "started_at": "2026-07-11T09:01:11.000Z",
+      "ended_at": "2026-07-11T11:14:00.000Z",
+      "draft_vote_ended_at": null,
+      "is_active": true,
+      "is_draft_voting": true,
+      "created_at": "2026-07-02T03:39:29.000Z",
+      "updated_at": "2026-07-11T12:47:44.000Z",
+      "deleted_at": null,
+      "first_team": {
+        "id": 8012,
+        "steam_ids": "[\"9964962\"]",
+        "title": "GamerLegion",
+        "slug": "gamerlegion",
+        "tag": "GL",
+        "image": "/uploads/teams/SL5XvIyOVg02fCankoCetSnjT3x7FdVY.png",
+        "image_dark": "/uploads/teams/7zAN8tkJ3Kmy071KN8tnIYviZqgGckTX.png",
+        "is_active": true,
+        "created_at": "2025-11-11T17:00:56.000Z",
+        "updated_at": "2026-07-11T12:22:18.000Z",
+        "rank": 12
+      },
+      "second_team": {
+        "id": 6459,
+        "steam_ids": "[\"8721219\",\"8255888\",\"9131584\"]",
+        "title": "BetBoom Team",
+        "slug": "betboom-team",
+        "tag": "BetBoom",
+        "image": "/uploads/teams/QoOnPgu1RpLhomwHIxKUabSiCx9d6AGK.png.webp",
+        "image_dark": "/uploads/teams/uy6DxOllnIUmOVS9XwXLTe7DL1XOGt24.png.webp",
+        "is_active": true,
+        "created_at": "2022-04-18T08:32:54.000Z",
+        "updated_at": "2026-07-11T12:22:01.000Z",
+        "rank": 5
+      },
+      "series_scores": {
+        "first_team": 0,
+        "second_team": 2
+      }
+    },
+    {
+      "id": 427318,
+      "event_id": 6447,
+      "status": 2,
+      "slug": "team-falcons-vs-xtreme-gaming-esports-world-cup-2026",
+      "type": 2,
+      "first_team_id": 7017,
+      "second_team_id": 5992,
+      "started_at": "2026-07-11T09:07:56.000Z",
+      "ended_at": "2026-07-11T11:27:21.000Z",
+      "draft_vote_ended_at": null,
+      "is_active": true,
+      "is_draft_voting": true,
+      "created_at": "2026-07-02T03:39:29.000Z",
+      "updated_at": "2026-07-11T12:46:51.000Z",
+      "deleted_at": null,
+      "first_team": {
+        "id": 7017,
+        "steam_ids": "[\"9247354\"]",
+        "title": "Team Falcons",
+        "slug": "team-falcons",
+        "tag": "Falcons",
+        "image": "/uploads/teams/m6OBnmWJxH2ifWVW9Kgx4298lO5nOdER.png.webp",
+        "image_dark": "/uploads/teams/wgw40Ih0bmTPCoQIcFcCOjJUkNHrJjOJ.png.webp",
+        "is_active": true,
+        "created_at": "2023-11-09T08:52:20.000Z",
+        "updated_at": "2026-07-11T12:22:08.000Z",
+        "rank": 8
+      },
+      "second_team": {
+        "id": 5992,
+        "steam_ids": "[\"8261500\"]",
+        "title": "Xtreme Gaming",
+        "slug": "xtreme-gaming",
+        "tag": "Xtreme",
+        "image": "/uploads/teams/pkxvH8kJYZKdmgO9AS91nECnHE5cwqAw.png.webp",
+        "image_dark": "/uploads/teams/GchHJf4tIIk1qWBGeob5QKr1D88q4rH8.png.webp",
+        "is_active": true,
+        "created_at": "2021-01-05T05:02:58.000Z",
+        "updated_at": "2026-07-11T12:21:56.000Z",
+        "rank": 10
+      },
+      "series_scores": {
+        "first_team": 2,
+        "second_team": 0
+      }
+    },
+    {
+      "id": 427319,
+      "event_id": 6447,
+      "status": 1,
+      "slug": "lvlup-vs-l1ga-team-esports-world-cup-2026",
+      "type": 2,
+      "first_team_id": 6014,
+      "second_team_id": 7109,
+      "started_at": "2026-07-11T11:54:56.000Z",
+      "ended_at": null,
+      "draft_vote_ended_at": "2026-07-11T12:11:12.000Z",
+      "is_active": true,
+      "is_draft_voting": true,
+      "created_at": "2026-07-02T03:45:12.000Z",
+      "updated_at": "2026-07-11T12:47:27.000Z",
+      "deleted_at": null,
+      "first_team": {
+        "id": 6014,
+        "steam_ids": "[\"8098974\",\"8359797\",\"3322951\",\"9256405\",\"9814016\",\"10075008\"]",
+        "title": "Level UP",
+        "slug": "lvlup",
+        "tag": "lvlUP",
+        "image": "/uploads/teams/BbsOb15gZTQIR1L4ExxjEY2d9XQrftwT.png.webp",
+        "image_dark": "/uploads/teams/fvDU2EflXLngRkev8MSrtP8spVvWb9Dw.png.webp",
+        "is_active": true,
+        "created_at": "2021-01-06T09:37:48.000Z",
+        "updated_at": "2026-07-11T12:21:56.000Z",
+        "rank": 36,
+        "is_radiant": true,
+        "picks": [
+          {
+            "hero_id": 105,
+            "hero": {
+              "id": 104,
+              "steam_id": 105,
+              "title": "Techies",
+              "slug": "techies",
+              "image": "/uploads/heroes/vHM8EmilJhpNK6pXgrvdYpC5UbrjOI6J.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "team_stats": "5 | 80%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 2,
+            "hero": {
+              "id": 2,
+              "steam_id": 2,
+              "title": "Axe",
+              "slug": "axe",
+              "image": "/uploads/heroes/3ZKs4zAqokTBPRxpaUOIkTbYnTYe6Dx7.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:27.000Z"
+            },
+            "team_stats": "15 | 33%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 119,
+            "hero": {
+              "id": 114,
+              "steam_id": 119,
+              "title": "Dark Willow",
+              "slug": "dark-willow",
+              "image": "/uploads/heroes/n9Iaxtlt4OSB0CDaaN7enKDEragv40WX.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:34.000Z"
+            },
+            "team_stats": "11 | 36%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 106,
+            "hero": {
+              "id": 105,
+              "steam_id": 106,
+              "title": "Ember Spirit",
+              "slug": "ember-spirit",
+              "image": "/uploads/heroes/aAgm1pglrEhYMcB3PYlEOqjn5gfnLGXj.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "team_stats": "8 | 38%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 73,
+            "hero": {
+              "id": 72,
+              "steam_id": 73,
+              "title": "Alchemist",
+              "slug": "alchemist",
+              "image": "/uploads/heroes/tSJA1xaTJ1Txj7CQZebt0NAwnacI8ivr.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:31.000Z"
+            },
+            "team_stats": "2 | -",
+            "player_stats": "0 | -"
+          }
+        ],
+        "bans": [
+          {
+            "hero": {
+              "id": 79,
+              "steam_id": 80,
+              "title": "Lone Druid",
+              "slug": "lone-druid",
+              "image": "/uploads/heroes/AnUQeD23JsSMCLQpzZyTilfxQT0wqlZZ.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:32.000Z"
+            },
+            "hero_id": 80
+          },
+          {
+            "hero": {
+              "id": 82,
+              "steam_id": 83,
+              "title": "Treant Protector",
+              "slug": "treant-protector",
+              "image": "/uploads/heroes/QRXI089Oxu6wdOB2j4TthXmLse3w3Y0Y.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:32.000Z"
+            },
+            "hero_id": 83
+          },
+          {
+            "hero": {
+              "id": 11,
+              "steam_id": 11,
+              "title": "Shadow Fiend",
+              "slug": "shadow-fiend",
+              "image": "/uploads/heroes/pF1UJr9pbInmJgpMBYFCIyiHEwU3bp22.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "hero_id": 11
+          },
+          {
+            "hero": {
+              "id": 13,
+              "steam_id": 13,
+              "title": "Puck",
+              "slug": "puck",
+              "image": "/uploads/heroes/AFXZWYuaE282pIyxa4kScNtCKtA4EhHC.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "hero_id": 13
+          },
+          {
+            "hero": {
+              "id": 73,
+              "steam_id": 74,
+              "title": "Invoker",
+              "slug": "invoker",
+              "image": "/uploads/heroes/13vyinyVj8bmqTm0aVSVCpKe0x5bGjfG.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:31.000Z"
+            },
+            "hero_id": 74
+          },
+          {
+            "hero": {
+              "id": 107,
+              "steam_id": 108,
+              "title": "Underlord",
+              "slug": "underlord",
+              "image": "/uploads/heroes/J95M7rBittdRz52HPkqbj7O8gGFNtIvj.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:34.000Z"
+            },
+            "hero_id": 108
+          },
+          {
+            "hero": {
+              "id": 28,
+              "steam_id": 29,
+              "title": "Tidehunter",
+              "slug": "tidehunter",
+              "image": "/uploads/heroes/lgz1ywqvPrglJkdI1i58EzTiJKPliBM9.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:29.000Z"
+            },
+            "hero_id": 29
+          }
+        ]
+      },
+      "second_team": {
+        "id": 7109,
+        "steam_ids": "[\"9303383\",\"10149530\",\"10182299\"]",
+        "title": "L1ga Team",
+        "slug": "l1ga-team",
+        "tag": "L1ga",
+        "image": "/uploads/teams/uQJaIiSimwmryYQvilcNjjqXo6CYTEiN.png.webp",
+        "image_dark": "/uploads/teams/ZtneB4oOpkSmXwf5FxAilvPsWem8igty.png.webp",
+        "is_active": true,
+        "created_at": "2024-01-05T01:09:05.000Z",
+        "updated_at": "2026-07-11T12:22:09.000Z",
+        "rank": 24,
+        "is_radiant": false,
+        "picks": [
+          {
+            "hero_id": 85,
+            "hero": {
+              "id": 84,
+              "steam_id": 85,
+              "title": "Undying",
+              "slug": "undying",
+              "image": "/uploads/heroes/pXaZdnWB19UiVXlSJOsWPUKJarDH2RvM.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:32.000Z"
+            },
+            "team_stats": "6 | 50%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 6,
+            "hero": {
+              "id": 6,
+              "steam_id": 6,
+              "title": "Drow Ranger",
+              "slug": "drow-ranger",
+              "image": "/uploads/heroes/nD7O5snUbxyNd6hqrVLdiRdpdU8MBgPY.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "team_stats": "10 | 60%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 3,
+            "hero": {
+              "id": 3,
+              "steam_id": 3,
+              "title": "Bane",
+              "slug": "bane",
+              "image": "/uploads/heroes/3JUsikPjzrK8zSfXgF80wVU1yKlBlz0F.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:27.000Z"
+            },
+            "team_stats": "21 | 81%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 47,
+            "hero": {
+              "id": 46,
+              "steam_id": 47,
+              "title": "Viper",
+              "slug": "viper",
+              "image": "/uploads/heroes/9TbPeXRqnreK0OUy4GFe33Qu4uhLZ9Ea.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:30.000Z"
+            },
+            "team_stats": "20 | 60%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 38,
+            "hero": {
+              "id": 37,
+              "steam_id": 38,
+              "title": "Beastmaster",
+              "slug": "beastmaster",
+              "image": "/uploads/heroes/gPC8MKafUTaN9v31W5EqEJRqLaicfgYF.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:29.000Z"
+            },
+            "team_stats": "26 | 46%",
+            "player_stats": "0 | -"
+          }
+        ],
+        "bans": [
+          {
+            "hero": {
+              "id": 66,
+              "steam_id": 67,
+              "title": "Spectre",
+              "slug": "spectre",
+              "image": "/uploads/heroes/9KTHt4bjevgQTttlcfPQyIDop2X2MvSZ.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:31.000Z"
+            },
+            "hero_id": 67
+          },
+          {
+            "hero": {
+              "id": 120,
+              "steam_id": 123,
+              "title": "Hoodwink",
+              "slug": "hoodwink",
+              "image": "/uploads/heroes/PkZYTU6NzNS4cgfnTYAjVfUznSSCyxI3.jpg",
+              "is_active": true,
+              "created_at": null,
+              "updated_at": "2026-07-11T12:21:35.000Z"
+            },
+            "hero_id": 123
+          },
+          {
+            "hero": {
+              "id": 127,
+              "steam_id": 155,
+              "title": "Largo",
+              "slug": "largo",
+              "image": "/uploads/heroes/acLOP5HPJHr0bXLwbaSO6ccQnOC0HPNm.png",
+              "is_active": true,
+              "created_at": "2025-12-16T14:53:39.000Z",
+              "updated_at": "2026-07-11T12:21:35.000Z"
+            },
+            "hero_id": 155
+          },
+          {
+            "hero": {
+              "id": 115,
+              "steam_id": 120,
+              "title": "Pangolier",
+              "slug": "pangolier",
+              "image": "/uploads/heroes/4YBvYjfUVoOqEQtjBXCB5zuwkU4bbiDg.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:34.000Z"
+            },
+            "hero_id": 120
+          },
+          {
+            "hero": {
+              "id": 121,
+              "steam_id": 135,
+              "title": "Dawnbreaker",
+              "slug": "dawnbreaker",
+              "image": "/uploads/heroes/jBfOtIMCqZOt1qa4QEn2O8fxg3wilyf3.png",
+              "is_active": true,
+              "created_at": "2021-04-17T01:25:00.000Z",
+              "updated_at": "2026-07-11T12:21:35.000Z"
+            },
+            "hero_id": 135
+          },
+          {
+            "hero": {
+              "id": 12,
+              "steam_id": 12,
+              "title": "Phantom Lancer",
+              "slug": "phantom-lancer",
+              "image": "/uploads/heroes/7xzPltMi8xPn3wu0t7vGxl04v6lsSD3G.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "hero_id": 12
+          },
+          {
+            "hero": {
+              "id": 55,
+              "steam_id": 56,
+              "title": "Clinkz",
+              "slug": "clinkz",
+              "image": "/uploads/heroes/hngmsZIYJWm8Xy0JXgyTrOt2Zj30IXXX.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:30.000Z"
+            },
+            "hero_id": 56
+          }
+        ]
+      },
+      "series_scores": {
+        "first_team": 0,
+        "second_team": 0
+      }
+    },
+    {
+      "id": 427328,
+      "event_id": 6447,
+      "status": 1,
+      "slug": "nigma-vs-playtime-esports-world-cup-2026",
+      "type": 2,
+      "first_team_id": 5124,
+      "second_team_id": 8083,
+      "started_at": "2026-07-11T12:11:11.000Z",
+      "ended_at": null,
+      "draft_vote_ended_at": "2026-07-11T12:29:37.000Z",
+      "is_active": true,
+      "is_draft_voting": true,
+      "created_at": "2026-07-02T03:45:12.000Z",
+      "updated_at": "2026-07-11T12:47:39.000Z",
+      "deleted_at": null,
+      "first_team": {
+        "id": 5124,
+        "steam_ids": "[\"7554697\",\"10136357\"]",
+        "title": "Nigma Galaxy",
+        "slug": "nigma",
+        "tag": "Nigma",
+        "image": "/uploads/teams/rawK7xDgxwI7Ff8GumO9sC7Z9fHvyCQ2.png.webp",
+        "image_dark": "/uploads/teams/ASAY4yOTXJuRzChrhyTvwmKCGjjSOo8I.png.webp",
+        "is_active": true,
+        "created_at": "2019-11-28T15:58:43.000Z",
+        "updated_at": "2026-07-11T12:21:47.000Z",
+        "rank": 18,
+        "is_radiant": false,
+        "picks": [
+          {
+            "hero_id": 123,
+            "hero": {
+              "id": 120,
+              "steam_id": 123,
+              "title": "Hoodwink",
+              "slug": "hoodwink",
+              "image": "/uploads/heroes/PkZYTU6NzNS4cgfnTYAjVfUznSSCyxI3.jpg",
+              "is_active": true,
+              "created_at": null,
+              "updated_at": "2026-07-11T12:21:35.000Z"
+            },
+            "team_stats": "56 | 54%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 68,
+            "hero": {
+              "id": 67,
+              "steam_id": 68,
+              "title": "Ancient Apparition",
+              "slug": "ancient-apparition",
+              "image": "/uploads/heroes/9I2aelDnN96S1bAu4V2b6HixMnAdUx6i.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:31.000Z"
+            },
+            "team_stats": "2 | -",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 21,
+            "hero": {
+              "id": 21,
+              "steam_id": 21,
+              "title": "Windranger",
+              "slug": "windranger",
+              "image": "/uploads/heroes/tp6ELzhhi6vTa2hsKHGcYGWedZbEPLk2.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:29.000Z"
+            },
+            "team_stats": "12 | 50%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 17,
+            "hero": {
+              "id": 17,
+              "steam_id": 17,
+              "title": "Storm Spirit",
+              "slug": "storm-spirit",
+              "image": "/uploads/heroes/TsV2Qhw6UKkDuQWyDCynKCAui4Fnr2ak.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "team_stats": "19 | 47%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 55,
+            "hero": {
+              "id": 54,
+              "steam_id": 55,
+              "title": "Dark Seer",
+              "slug": "dark-seer",
+              "image": "/uploads/heroes/U3JzuoXlIHssE2pPm91hbDsk78449aj0.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:30.000Z"
+            },
+            "team_stats": "4 | 25%",
+            "player_stats": "0 | -"
+          }
+        ],
+        "bans": [
+          {
+            "hero": {
+              "id": 82,
+              "steam_id": 83,
+              "title": "Treant Protector",
+              "slug": "treant-protector",
+              "image": "/uploads/heroes/QRXI089Oxu6wdOB2j4TthXmLse3w3Y0Y.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:32.000Z"
+            },
+            "hero_id": 83
+          },
+          {
+            "hero": {
+              "id": 106,
+              "steam_id": 107,
+              "title": "Earth Spirit",
+              "slug": "earth-spirit",
+              "image": "/uploads/heroes/UZi7YMKljaLM9GZqzQFpQlkYBWyDm4Qj.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "hero_id": 107
+          },
+          {
+            "hero": {
+              "id": 55,
+              "steam_id": 56,
+              "title": "Clinkz",
+              "slug": "clinkz",
+              "image": "/uploads/heroes/hngmsZIYJWm8Xy0JXgyTrOt2Zj30IXXX.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:30.000Z"
+            },
+            "hero_id": 56
+          },
+          {
+            "hero": {
+              "id": 110,
+              "steam_id": 111,
+              "title": "Oracle",
+              "slug": "oracle",
+              "image": "/uploads/heroes/oih9aDAhfOmGexhkB6qa9gBYqESIc6oC.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:34.000Z"
+            },
+            "hero_id": 111
+          },
+          {
+            "hero": {
+              "id": 76,
+              "steam_id": 77,
+              "title": "Lycan",
+              "slug": "lycan",
+              "image": "/uploads/heroes/FuwK9z9fBa3cRt6NxhMvSGMdF9e3hQCO.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:32.000Z"
+            },
+            "hero_id": 77
+          },
+          {
+            "hero": {
+              "id": 105,
+              "steam_id": 106,
+              "title": "Ember Spirit",
+              "slug": "ember-spirit",
+              "image": "/uploads/heroes/aAgm1pglrEhYMcB3PYlEOqjn5gfnLGXj.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "hero_id": 106
+          },
+          {
+            "hero": {
+              "id": 95,
+              "steam_id": 96,
+              "title": "Centaur Warrunner",
+              "slug": "centaur-warrunner",
+              "image": "/uploads/heroes/UkWrK3A4rg9YubgqK3P7syz2sj5GwnjH.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "hero_id": 96
+          }
+        ]
+      },
+      "second_team": {
+        "id": 8083,
+        "steam_ids": "[\"10020555\",\"10182309\"]",
+        "title": "PlayTime",
+        "slug": "playtime",
+        "tag": "PTime",
+        "image": "/uploads/teams/OnCvDLstbanRfPNlqFfiQaQkQuu53gUR.png",
+        "image_dark": "/uploads/teams/6lniOY3OIB5EYx7kgEB4aEVjU0ml4jyx.png",
+        "is_active": true,
+        "created_at": "2026-01-12T05:36:48.000Z",
+        "updated_at": "2026-07-11T12:22:18.000Z",
+        "rank": 13,
+        "is_radiant": true,
+        "picks": [
+          {
+            "hero_id": 36,
+            "hero": {
+              "id": 35,
+              "steam_id": 36,
+              "title": "Necrophos",
+              "slug": "necrophos",
+              "image": "/uploads/heroes/byfpGnTecLh5Z90F16lqIloblrrYQ1Yl.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:29.000Z"
+            },
+            "team_stats": "8 | 75%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 69,
+            "hero": {
+              "id": 68,
+              "steam_id": 69,
+              "title": "Doom",
+              "slug": "doom",
+              "image": "/uploads/heroes/Ya7OanjnmaY3FCEenGtPKEacvvXJyJ3D.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:31.000Z"
+            },
+            "team_stats": "10 | 80%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 131,
+            "hero": {
+              "id": 125,
+              "steam_id": 131,
+              "title": "Ringmaster",
+              "slug": "ringmaster",
+              "image": "/uploads/heroes/3b9OvrLrs9MDWshXOaq7jXGV6P40Zsbv.png",
+              "is_active": true,
+              "created_at": "2024-08-23T03:32:40.000Z",
+              "updated_at": "2026-07-11T12:21:35.000Z"
+            },
+            "team_stats": "4 | 50%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 100,
+            "hero": {
+              "id": 99,
+              "steam_id": 100,
+              "title": "Tusk",
+              "slug": "tusk",
+              "image": "/uploads/heroes/yis41yXhXz2gVyrOMWb5juzAxoufwxgX.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "team_stats": "25 | 56%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 19,
+            "hero": {
+              "id": 19,
+              "steam_id": 19,
+              "title": "Tiny",
+              "slug": "tiny",
+              "image": "/uploads/heroes/W1XNCjiVgmeicn57l9zJvhFfpjHjHRKZ.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "team_stats": "10 | 50%",
+            "player_stats": "0 | -"
+          }
+        ],
+        "bans": [
+          {
+            "hero": {
+              "id": 90,
+              "steam_id": 91,
+              "title": "Io",
+              "slug": "io",
+              "image": "/uploads/heroes/i4u1Wb7uYGNqIAHKEI5ThkukESoQoDQ8.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "hero_id": 91
+          },
+          {
+            "hero": {
+              "id": 11,
+              "steam_id": 11,
+              "title": "Shadow Fiend",
+              "slug": "shadow-fiend",
+              "image": "/uploads/heroes/pF1UJr9pbInmJgpMBYFCIyiHEwU3bp22.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "hero_id": 11
+          },
+          {
+            "hero": {
+              "id": 46,
+              "steam_id": 47,
+              "title": "Viper",
+              "slug": "viper",
+              "image": "/uploads/heroes/9TbPeXRqnreK0OUy4GFe33Qu4uhLZ9Ea.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:30.000Z"
+            },
+            "hero_id": 47
+          },
+          {
+            "hero": {
+              "id": 89,
+              "steam_id": 90,
+              "title": "Keeper of the Light",
+              "slug": "keeper-of-the-light",
+              "image": "/uploads/heroes/1riTHUVom7hmCar2kPjG6A5mvwcmyBU2.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "hero_id": 90
+          },
+          {
+            "hero": {
+              "id": 79,
+              "steam_id": 80,
+              "title": "Lone Druid",
+              "slug": "lone-druid",
+              "image": "/uploads/heroes/AnUQeD23JsSMCLQpzZyTilfxQT0wqlZZ.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:32.000Z"
+            },
+            "hero_id": 80
+          },
+          {
+            "hero": {
+              "id": 107,
+              "steam_id": 108,
+              "title": "Underlord",
+              "slug": "underlord",
+              "image": "/uploads/heroes/J95M7rBittdRz52HPkqbj7O8gGFNtIvj.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:34.000Z"
+            },
+            "hero_id": 108
+          },
+          {
+            "hero": {
+              "id": 127,
+              "steam_id": 155,
+              "title": "Largo",
+              "slug": "largo",
+              "image": "/uploads/heroes/acLOP5HPJHr0bXLwbaSO6ccQnOC0HPNm.png",
+              "is_active": true,
+              "created_at": "2025-12-16T14:53:39.000Z",
+              "updated_at": "2026-07-11T12:21:35.000Z"
+            },
+            "hero_id": 155
+          }
+        ]
+      },
+      "series_scores": {
+        "first_team": 0,
+        "second_team": 0
+      }
+    },
+    {
+      "id": 427375,
+      "event_id": 6616,
+      "status": 1,
+      "slug": "ilbirs-esports-vs-spirit-academy-european-pro-league-season-39",
+      "type": 3,
+      "first_team_id": 8017,
+      "second_team_id": 8006,
+      "started_at": "2026-07-11T12:13:11.000Z",
+      "ended_at": null,
+      "draft_vote_ended_at": "2026-07-11T12:28:58.000Z",
+      "is_active": true,
+      "is_draft_voting": false,
+      "created_at": "2026-07-08T03:12:28.000Z",
+      "updated_at": "2026-07-11T12:47:41.000Z",
+      "deleted_at": null,
+      "first_team": {
+        "id": 8017,
+        "steam_ids": "[\"9956660\",\"10047709\"]",
+        "title": "Ilbirs eSports",
+        "slug": "ilbirs-esports",
+        "tag": "Ilbirs",
+        "image": "/uploads/teams/t0ULMUQM1fFz2Iv8bbMc77AnUlyE8Dsq.webp",
+        "image_dark": "/uploads/teams/ZOdhsUS0FlyMxlw4fvTerWCy1WfcqFaK.webp",
+        "is_active": true,
+        "created_at": "2025-12-02T13:35:13.000Z",
+        "updated_at": "2026-07-11T12:22:18.000Z",
+        "rank": 0,
+        "is_radiant": false,
+        "picks": [
+          {
+            "hero_id": 3,
+            "hero": {
+              "id": 3,
+              "steam_id": 3,
+              "title": "Bane",
+              "slug": "bane",
+              "image": "/uploads/heroes/3JUsikPjzrK8zSfXgF80wVU1yKlBlz0F.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:27.000Z"
+            },
+            "team_stats": "7 | 57%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 123,
+            "hero": {
+              "id": 120,
+              "steam_id": 123,
+              "title": "Hoodwink",
+              "slug": "hoodwink",
+              "image": "/uploads/heroes/PkZYTU6NzNS4cgfnTYAjVfUznSSCyxI3.jpg",
+              "is_active": true,
+              "created_at": null,
+              "updated_at": "2026-07-11T12:21:35.000Z"
+            },
+            "team_stats": "21 | 43%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 2,
+            "hero": {
+              "id": 2,
+              "steam_id": 2,
+              "title": "Axe",
+              "slug": "axe",
+              "image": "/uploads/heroes/3ZKs4zAqokTBPRxpaUOIkTbYnTYe6Dx7.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:27.000Z"
+            },
+            "team_stats": "7 | 43%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 13,
+            "hero": {
+              "id": 13,
+              "steam_id": 13,
+              "title": "Puck",
+              "slug": "puck",
+              "image": "/uploads/heroes/AFXZWYuaE282pIyxa4kScNtCKtA4EhHC.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "team_stats": "16 | 56%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 11,
+            "hero": {
+              "id": 11,
+              "steam_id": 11,
+              "title": "Shadow Fiend",
+              "slug": "shadow-fiend",
+              "image": "/uploads/heroes/pF1UJr9pbInmJgpMBYFCIyiHEwU3bp22.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "team_stats": "11 | 36%",
+            "player_stats": "0 | -"
+          }
+        ],
+        "bans": [
+          {
+            "hero": {
+              "id": 127,
+              "steam_id": 155,
+              "title": "Largo",
+              "slug": "largo",
+              "image": "/uploads/heroes/acLOP5HPJHr0bXLwbaSO6ccQnOC0HPNm.png",
+              "is_active": true,
+              "created_at": "2025-12-16T14:53:39.000Z",
+              "updated_at": "2026-07-11T12:21:35.000Z"
+            },
+            "hero_id": 155
+          },
+          {
+            "hero": {
+              "id": 77,
+              "steam_id": 78,
+              "title": "Brewmaster",
+              "slug": "brewmaster",
+              "image": "/uploads/heroes/pTojEoxTP9YGeJJIKmUCRNfV5fwlm8m7.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:32.000Z"
+            },
+            "hero_id": 78
+          },
+          {
+            "hero": {
+              "id": 106,
+              "steam_id": 107,
+              "title": "Earth Spirit",
+              "slug": "earth-spirit",
+              "image": "/uploads/heroes/UZi7YMKljaLM9GZqzQFpQlkYBWyDm4Qj.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "hero_id": 107
+          },
+          {
+            "hero": {
+              "id": 35,
+              "steam_id": 36,
+              "title": "Necrophos",
+              "slug": "necrophos",
+              "image": "/uploads/heroes/byfpGnTecLh5Z90F16lqIloblrrYQ1Yl.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:29.000Z"
+            },
+            "hero_id": 36
+          },
+          {
+            "hero": {
+              "id": 114,
+              "steam_id": 119,
+              "title": "Dark Willow",
+              "slug": "dark-willow",
+              "image": "/uploads/heroes/n9Iaxtlt4OSB0CDaaN7enKDEragv40WX.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:34.000Z"
+            },
+            "hero_id": 119
+          },
+          {
+            "hero": {
+              "id": 23,
+              "steam_id": 23,
+              "title": "Kunkka",
+              "slug": "kunkka",
+              "image": "/uploads/heroes/yVtE7dxBQYR7stExWLu9b7xLyUYIusMG.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:29.000Z"
+            },
+            "hero_id": 23
+          },
+          {
+            "hero": {
+              "id": 107,
+              "steam_id": 108,
+              "title": "Underlord",
+              "slug": "underlord",
+              "image": "/uploads/heroes/J95M7rBittdRz52HPkqbj7O8gGFNtIvj.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:34.000Z"
+            },
+            "hero_id": 108
+          }
+        ]
+      },
+      "second_team": {
+        "id": 8006,
+        "steam_ids": "[\"9948367\"]",
+        "title": "Spirit Academy",
+        "slug": "spirit-academy",
+        "tag": "Spirit.ac",
+        "image": "/uploads/teams/uUYTBMDWwloD72p09NQqns02O0d54bEr.png",
+        "image_dark": "/uploads/teams/XaoM3XpCNU4PJDRWyll1CDTBUnMMc7Kp.png",
+        "is_active": true,
+        "created_at": "2025-11-01T02:02:14.000Z",
+        "updated_at": "2026-07-11T12:22:18.000Z",
+        "rank": 71,
+        "is_radiant": true,
+        "picks": [
+          {
+            "hero_id": 111,
+            "hero": {
+              "id": 110,
+              "steam_id": 111,
+              "title": "Oracle",
+              "slug": "oracle",
+              "image": "/uploads/heroes/oih9aDAhfOmGexhkB6qa9gBYqESIc6oC.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:34.000Z"
+            },
+            "team_stats": "6 | 50%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 6,
+            "hero": {
+              "id": 6,
+              "steam_id": 6,
+              "title": "Drow Ranger",
+              "slug": "drow-ranger",
+              "image": "/uploads/heroes/nD7O5snUbxyNd6hqrVLdiRdpdU8MBgPY.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "team_stats": "9 | 56%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 121,
+            "hero": {
+              "id": 116,
+              "steam_id": 121,
+              "title": "Grimstroke",
+              "slug": "grimstroke",
+              "image": "/uploads/heroes/hEOz70EufKM1SvIpY1LazNvKArtuZY2s.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:34.000Z"
+            },
+            "team_stats": "28 | 46%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 65,
+            "hero": {
+              "id": 64,
+              "steam_id": 65,
+              "title": "Batrider",
+              "slug": "batrider",
+              "image": "/uploads/heroes/Rwo2oEa3jbTZnD26CE8OkzKTz638bC8A.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:31.000Z"
+            },
+            "team_stats": "19 | 58%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 7,
+            "hero": {
+              "id": 7,
+              "steam_id": 7,
+              "title": "Earthshaker",
+              "slug": "earthshaker",
+              "image": "/uploads/heroes/UFGSV3KuAOYIzFvoZR7gmUutApV1VtWP.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "team_stats": "9 | 56%",
+            "player_stats": "0 | -"
+          }
+        ],
+        "bans": [
+          {
+            "hero": {
+              "id": 76,
+              "steam_id": 77,
+              "title": "Lycan",
+              "slug": "lycan",
+              "image": "/uploads/heroes/FuwK9z9fBa3cRt6NxhMvSGMdF9e3hQCO.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:32.000Z"
+            },
+            "hero_id": 77
+          },
+          {
+            "hero": {
+              "id": 79,
+              "steam_id": 80,
+              "title": "Lone Druid",
+              "slug": "lone-druid",
+              "image": "/uploads/heroes/AnUQeD23JsSMCLQpzZyTilfxQT0wqlZZ.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:32.000Z"
+            },
+            "hero_id": 80
+          },
+          {
+            "hero": {
+              "id": 82,
+              "steam_id": 83,
+              "title": "Treant Protector",
+              "slug": "treant-protector",
+              "image": "/uploads/heroes/QRXI089Oxu6wdOB2j4TthXmLse3w3Y0Y.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:32.000Z"
+            },
+            "hero_id": 83
+          },
+          {
+            "hero": {
+              "id": 89,
+              "steam_id": 90,
+              "title": "Keeper of the Light",
+              "slug": "keeper-of-the-light",
+              "image": "/uploads/heroes/1riTHUVom7hmCar2kPjG6A5mvwcmyBU2.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "hero_id": 90
+          },
+          {
+            "hero": {
+              "id": 97,
+              "steam_id": 98,
+              "title": "Timbersaw",
+              "slug": "timbersaw",
+              "image": "/uploads/heroes/9AYAZPhCmCyXCzkKQI72YepjApBMCfPr.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "hero_id": 98
+          },
+          {
+            "hero": {
+              "id": 66,
+              "steam_id": 67,
+              "title": "Spectre",
+              "slug": "spectre",
+              "image": "/uploads/heroes/9KTHt4bjevgQTttlcfPQyIDop2X2MvSZ.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:31.000Z"
+            },
+            "hero_id": 67
+          },
+          {
+            "hero": {
+              "id": 40,
+              "steam_id": 41,
+              "title": "Faceless Void",
+              "slug": "faceless-void",
+              "image": "/uploads/heroes/CRYJ6UGKdEuO5qkgDk9TlSYWTMAjt7xl.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:30.000Z"
+            },
+            "hero_id": 41
+          }
+        ]
+      },
+      "series_scores": {
+        "first_team": 0,
+        "second_team": 0
+      }
+    },
+    {
+      "id": 427333,
+      "event_id": 6447,
+      "status": 1,
+      "slug": "team-liquid-vs-aurora-esports-world-cup-2026",
+      "type": 2,
+      "first_team_id": 7,
+      "second_team_id": 7051,
+      "started_at": "2026-07-11T12:25:12.000Z",
+      "ended_at": null,
+      "draft_vote_ended_at": "2026-07-11T12:44:12.000Z",
+      "is_active": true,
+      "is_draft_voting": true,
+      "created_at": "2026-07-02T03:45:12.000Z",
+      "updated_at": "2026-07-11T12:47:29.000Z",
+      "deleted_at": null,
+      "first_team": {
+        "id": 7,
+        "steam_ids": "[\"2163\"]",
+        "title": "Team Liquid",
+        "slug": "team-liquid",
+        "tag": "Liquid",
+        "image": "/uploads/teams/jzS2BJn2w338twINzzRUUElFEDvdcQgp.png.webp",
+        "image_dark": "/uploads/teams/ow0lHBBYMZsSHrUsVC4yYuI8YFZ8woga.png.webp",
+        "is_active": true,
+        "created_at": "2019-04-22T01:00:14.000Z",
+        "updated_at": "2026-07-11T12:21:36.000Z",
+        "rank": 9,
+        "is_radiant": false,
+        "picks": [
+          {
+            "hero_id": 107,
+            "hero": {
+              "id": 106,
+              "steam_id": 107,
+              "title": "Earth Spirit",
+              "slug": "earth-spirit",
+              "image": "/uploads/heroes/UZi7YMKljaLM9GZqzQFpQlkYBWyDm4Qj.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "team_stats": "13 | 77%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 21,
+            "hero": {
+              "id": 21,
+              "steam_id": 21,
+              "title": "Windranger",
+              "slug": "windranger",
+              "image": "/uploads/heroes/tp6ELzhhi6vTa2hsKHGcYGWedZbEPLk2.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:29.000Z"
+            },
+            "team_stats": "43 | 63%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 30,
+            "hero": {
+              "id": 29,
+              "steam_id": 30,
+              "title": "Witch Doctor",
+              "slug": "witch-doctor",
+              "image": "/uploads/heroes/DVsr3oylYRmZXBi8wFHiIbywtBES7jm0.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:29.000Z"
+            },
+            "team_stats": "6 | 67%",
+            "player_stats": "0 | -"
+          }
+        ],
+        "bans": [
+          {
+            "hero": {
+              "id": 13,
+              "steam_id": 13,
+              "title": "Puck",
+              "slug": "puck",
+              "image": "/uploads/heroes/AFXZWYuaE282pIyxa4kScNtCKtA4EhHC.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "hero_id": 13
+          },
+          {
+            "hero": {
+              "id": 127,
+              "steam_id": 155,
+              "title": "Largo",
+              "slug": "largo",
+              "image": "/uploads/heroes/acLOP5HPJHr0bXLwbaSO6ccQnOC0HPNm.png",
+              "is_active": true,
+              "created_at": "2025-12-16T14:53:39.000Z",
+              "updated_at": "2026-07-11T12:21:35.000Z"
+            },
+            "hero_id": 155
+          },
+          {
+            "hero": {
+              "id": 105,
+              "steam_id": 106,
+              "title": "Ember Spirit",
+              "slug": "ember-spirit",
+              "image": "/uploads/heroes/aAgm1pglrEhYMcB3PYlEOqjn5gfnLGXj.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:17.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "hero_id": 106
+          },
+          {
+            "hero": {
+              "id": 25,
+              "steam_id": 26,
+              "title": "Lion",
+              "slug": "lion",
+              "image": "/uploads/heroes/1qhQreFjvTjqMMk6YjIpvkXXv2krjZA7.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:29.000Z"
+            },
+            "hero_id": 26
+          },
+          {
+            "hero": {
+              "id": 89,
+              "steam_id": 90,
+              "title": "Keeper of the Light",
+              "slug": "keeper-of-the-light",
+              "image": "/uploads/heroes/1riTHUVom7hmCar2kPjG6A5mvwcmyBU2.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "hero_id": 90
+          }
+        ]
+      },
+      "second_team": {
+        "id": 7051,
+        "steam_ids": "[\"9255706\",\"9467224\"]",
+        "title": "Aurora",
+        "slug": "aurora",
+        "tag": "Aurora",
+        "image": "/uploads/teams/CiPyyFif5pBUjKO3bEjzAh3Edd1b0JGu.png",
+        "image_dark": "/uploads/teams/2fxCLHnhSIGZE2EGlg1y9HI9X1dgxkZk.png",
+        "is_active": true,
+        "created_at": "2023-11-14T00:26:06.000Z",
+        "updated_at": "2026-07-11T12:22:08.000Z",
+        "rank": 4,
+        "is_radiant": true,
+        "picks": [
+          {
+            "hero_id": 85,
+            "hero": {
+              "id": 84,
+              "steam_id": 85,
+              "title": "Undying",
+              "slug": "undying",
+              "image": "/uploads/heroes/pXaZdnWB19UiVXlSJOsWPUKJarDH2RvM.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:32.000Z"
+            },
+            "team_stats": "11 | 45%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 123,
+            "hero": {
+              "id": 120,
+              "steam_id": 123,
+              "title": "Hoodwink",
+              "slug": "hoodwink",
+              "image": "/uploads/heroes/PkZYTU6NzNS4cgfnTYAjVfUznSSCyxI3.jpg",
+              "is_active": true,
+              "created_at": null,
+              "updated_at": "2026-07-11T12:21:35.000Z"
+            },
+            "team_stats": "84 | 62%",
+            "player_stats": "0 | -"
+          }
+        ],
+        "bans": [
+          {
+            "hero": {
+              "id": 79,
+              "steam_id": 80,
+              "title": "Lone Druid",
+              "slug": "lone-druid",
+              "image": "/uploads/heroes/AnUQeD23JsSMCLQpzZyTilfxQT0wqlZZ.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:32.000Z"
+            },
+            "hero_id": 80
+          },
+          {
+            "hero": {
+              "id": 82,
+              "steam_id": 83,
+              "title": "Treant Protector",
+              "slug": "treant-protector",
+              "image": "/uploads/heroes/QRXI089Oxu6wdOB2j4TthXmLse3w3Y0Y.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:32.000Z"
+            },
+            "hero_id": 83
+          },
+          {
+            "hero": {
+              "id": 11,
+              "steam_id": 11,
+              "title": "Shadow Fiend",
+              "slug": "shadow-fiend",
+              "image": "/uploads/heroes/pF1UJr9pbInmJgpMBYFCIyiHEwU3bp22.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "hero_id": 11
+          },
+          {
+            "hero": {
+              "id": 73,
+              "steam_id": 74,
+              "title": "Invoker",
+              "slug": "invoker",
+              "image": "/uploads/heroes/13vyinyVj8bmqTm0aVSVCpKe0x5bGjfG.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:31.000Z"
+            },
+            "hero_id": 74
+          },
+          {
+            "hero": {
+              "id": 95,
+              "steam_id": 96,
+              "title": "Centaur Warrunner",
+              "slug": "centaur-warrunner",
+              "image": "/uploads/heroes/UkWrK3A4rg9YubgqK3P7syz2sj5GwnjH.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "hero_id": 96
+          }
+        ]
+      },
+      "series_scores": {
+        "first_team": 0,
+        "second_team": 0
+      }
+    }
+  ]
+}

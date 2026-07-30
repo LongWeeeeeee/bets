@@ -33,7 +33,7 @@ for _o, _n in (("job_id_target", "jobid_target"), ("job_id_source", "jobid_sourc
 # прямого опроса GetLiveLeagueGames(league_id), чтобы ловить их с драфта в обход
 # count-кэпа GetLiveLeagueGames(0) на пике.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from league_keywords import league_matches_allowlist
+from league_keywords import title_matches_allow_keywords
 
 try:
     from sourcetv_bridge import resolve_sourcetv_matches_path
@@ -82,10 +82,7 @@ def _keyword_candidate_league_ids():
             lid = int(lid)
         except (TypeError, ValueError):
             continue
-        if (
-            KW_RECENT_FLOOR <= lid < KW_LEGACY_CEIL
-            and league_matches_allowlist(lid, nm)
-        ):
+        if KW_RECENT_FLOOR <= lid < KW_LEGACY_CEIL and title_matches_allow_keywords(nm):
             out.append(lid)
     return sorted(out)
 
@@ -110,7 +107,6 @@ def league_name(league_id):
         except Exception as e:
             log.warning("Не удалось загрузить справочник лиг OpenDota: %s", e)
     return _LEAGUE_NAMES.get(int(league_id or 0), "")
-
 
 def _build_fast_picks(rad_picks, dire_picks):
     """fast_picks в формате cyberscore_try.check_head: {first_team, second_team}.
@@ -597,9 +593,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
         games_list = []
         try:
             for g in get_live_matches(0):
-                if league_matches_allowlist(
-                    g.get("league_id"), league_name(g.get("league_id"))
-                ):
+                if title_matches_allow_keywords(league_name(g.get("league_id"))):
                     games_list.append(g)
         except Exception as e:
             log.warning("Стартовый (0)-снимок не удался: %s", e)
@@ -842,8 +836,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
         if not gc_ready.is_set():
             log.error("GC не ответил"); client.logout(); return
 
-        # Первый refetch делаем сразу: после рестарта targets могут быть пустыми.
-        last_refetch_ts = 0.0
+        last_refetch_ts = time.time()  # инициализация — первый рефетч через 60с
         # авто-обнаружение keyword-лиг: активный hot-set + пул кандидатов для cold-sweep
         active_kw_leagues = {}     # league_id -> last_seen_ts (видна в (0)/прямом опросе)
         sweep_cursor = 0           # курсор round-robin по пулу кандидатов
@@ -852,13 +845,9 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
 
         while True:
             try:
-                if all_lobby_ids:
-                    poll_ev.clear()
-                    dota.request_top_source_tv_games(lobby_ids=all_lobby_ids)
-                    poll_ev.wait(timeout=10)
-                else:
-                    # Discovery/refetch ниже должен работать и без targets.
-                    gevent.sleep(2)
+                poll_ev.clear()
+                dota.request_top_source_tv_games(lobby_ids=all_lobby_ids)
+                poll_ev.wait(timeout=10)
 
                 # ── Периодический рефетч активных матчей (каждые 60с) ────────────────
                 # GetLiveLeagueGames подхватывает карты 2/3 серии (новые match_id/lobby_id)
@@ -894,9 +883,8 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                     if not fmid or fmid in seen_fmids:
                                         continue
                                     # auto-режим: держим только НАШИ keyword-лиги
-                                    if auto_kw_mode and not league_matches_allowlist(
-                                        fg.get("league_id"),
-                                        league_name(fg.get("league_id")),
+                                    if auto_kw_mode and not title_matches_allow_keywords(
+                                        league_name(fg.get("league_id"))
                                     ):
                                         continue
                                     seen_fmids.add(fmid)
@@ -1027,7 +1015,10 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                             _gc_st        = _gc.get("series_type")
                             _fin_rad_wins   = int(_w_rad_wins)  if _w_rad_wins  is not None else _gc_rad_wins
                             _fin_dire_wins  = int(_w_dire_wins) if _w_dire_wins is not None else _gc_dire_wins
-                            _fin_game_num   = (int(_w_game_num) + 1) if _w_game_num is not None else (_gc_game_num + 1)
+                            _raw_game_num   = (int(_w_game_num) + 1) if _w_game_num is not None else (_gc_game_num + 1)
+                            # game_number из WebAPI/GC бывает не обновлён между картами серии
+                            # (приходит номер прошлой карты). Сумма побед — надёжная нижняя граница.
+                            _fin_game_num   = max(_raw_game_num, _fin_rad_wins + _fin_dire_wins + 1)
                             _fin_series_type = _w_st if _w_st is not None else _gc_st
 
                             m_payload = {

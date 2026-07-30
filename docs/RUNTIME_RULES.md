@@ -19,7 +19,8 @@
 - **Rebuild-then-replace, никогда delete-then-create.** При регенерации словаря, sqlite DB, снапшота или артефакта пиши новую версию во временный путь (`<target>.tmp`) и атомарно переименовывай поверх только после успешной сборки.
 - **Никогда не удаляй файлы, директории, бэкапы или артефакты** (локально или на сервере) без явного подтверждения пользователя.
 - **Долгие локальные задачи** запускай в фоне через `nohup` с логами/pid под `runtime/`. НИКОГДА не используй встроенный background-process инструмент для долгих задач — всегда `nohup ... > runtime/<name>.log 2>&1 &` с `echo $!` для PID. Всегда сообщай кликабельную ссылку на лог и команду проверки состояния процесса.
-- **Production server:** `root@147.45.216.225`, путь проекта `/root/main`.
+- **Сразу сообщить о старте долгого прогона.** При запуске backtest / rebuild / sweep / парсинга / любого процесса дольше ~1–2 минут — в том же ответе пользователю: процесс пошёл, ориентировочное время ожидания, PID и ссылка на лог. Не ждать окончания молча.
+- **Production server:** `root@23.26.193.167`, путь проекта `/root/main`.
 - Runtime/output артефакты под `runtime/` намеренно игнорируются.
 
 ---
@@ -50,7 +51,7 @@ rm -f ~/.local/state/ingame/map_id_check.txt
 3. Если сервер без git — rsync:
    ```bash
    rsync -avz --exclude='venv*' --exclude='__pycache__' --exclude='*.log' \
-     ELO/ base/ root@147.45.216.225:/root/main/
+     ELO/ base/ root@23.26.193.167:/root/main/
    ```
 4. Очистить map_id_check: `rm -f ~/.local/state/ingame/map_id_check.txt`
 
@@ -67,7 +68,9 @@ Playwright 1.60.0 роняет весь node-драйвер, когда стра
 dota2protracker.com через Camoufox/Firefox) кидает uncaught-ошибку без
 `location`: вендоренный `coreBundle.js` читает `pageError.location.url` без
 guard'а → `TypeError: Cannot read properties of undefined (reading 'url')` →
-shared Camoufox умирает с `TimeoutError` и уходит в медленный subprocess-фолбэк.
+shared Camoufox умирает с `TimeoutError`. Odds/ProTracker paths **не**
+фолбэчатся в отдельный Camoufox subprocess: fail-closed + `request_reset`
+перезапускают единственный shared browser (max active = 1).
 
 Фикс — идемпотентный скрипт `base/tools/patch_playwright_pageerror.py`
 (`pageError.location.*` → `pageError.location?.*`, атомарная замена, бэкап
@@ -87,7 +90,7 @@ shared Camoufox умирает с `TimeoutError` и уходит в медлен
 ## Tips для агента
 
 1. **Не читай весь `cyberscore_try.py`** — он 750KB+. Используй `grep`/`rg` для поиска функций.
-2. **Букмекерский краулинг** — через Selenium (headless Chrome) и Camoufox.
-3. **Proxy пулы** — настраиваются в `base/keys.py`.
+2. **Букмекерский odds path** — process-wide shared Camoufox + reusable Winline page; Selenium fallback и bookmaker Camoufox subprocess в odds-mode запрещены. Presence-mode may still use Selenium/subprocess helpers.
+3. **Proxy пулы** — настраиваются в `base/keys.py` (Winline odds: DE/US only).
 4. **Lock-файлы** — против multiple instances.
 5. **Sharded stats** — оптимизация больших lookup-таблиц.

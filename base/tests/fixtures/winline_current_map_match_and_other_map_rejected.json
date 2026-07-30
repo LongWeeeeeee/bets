@@ -1,0 +1,11 @@
+{
+  "site": "winline",
+  "url": "https://winline.ru/stavki/event/15356534",
+  "team1": "Winter Bear",
+  "team2": "DOGSENT",
+  "forced_map_num": 2,
+  "body_text": "Winter Bear DOGSENT Матч 1.30 3.15 1К 1.52 2.45 3 карта 1.80 2.00",
+  "expected_odds": [],
+  "reject_reason_contains": "map",
+  "provenance": "synthetic_regression_fixture"
+}

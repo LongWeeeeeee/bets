@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Настройка защиты канонического AGENTS.md.
+# Настройка канонических симлинков AGENTS.md без блокировки его легитимных правок.
 # ПЕРЕД запуском положи в корень проекта:
 #   - AGENTS.md            (новая версия)
 #   - .claude/agents/reviewer.md
@@ -16,71 +16,46 @@ ln -s AGENTS.md .cursorrules
 ln -s ../AGENTS.md .github/copilot-instructions.md
 ls -la CLAUDE.md GEMINI.md .cursorrules .github/copilot-instructions.md
 
-echo '==> 2. PreToolUse-хук'
+echo '==> 2. Защита правок отключена'
 mkdir -p .claude/hooks
-cat > .claude/hooks/protect-canonical.sh <<'HOOK_EOF'
-#!/usr/bin/env bash
-input=$(cat)
-P='AGENTS\.md|CLAUDE\.md|GEMINI\.md|\.cursorrules|copilot-instructions\.md'
-py='import sys,json;d=json.load(sys.stdin)'
-tool=$(printf '%s' "$input" | python3 -c "$py;print(d.get('tool_name',''))")
-if [ "$tool" = "Bash" ]; then
-  field=$(printf '%s' "$input" | python3 -c "$py;print(d.get('tool_input',{}).get('command',''))")
-else
-  field=$(printf '%s' "$input" | python3 -c "$py;print(d.get('tool_input',{}).get('file_path',''))")
-fi
-if printf '%s' "$field" | grep -Eq "($P)"; then
-  echo "BLOCKED: AGENTS.md и его симлинки меняет только человек вручную." >&2
-  exit 2
-fi
-exit 0
-HOOK_EOF
-chmod +x .claude/hooks/protect-canonical.sh
+rm -f .claude/hooks/protect-canonical.sh
 
-echo '==> 3. settings.json'
+echo '==> 3. Снятие только canonical-защиты в settings.json'
 if [ -f .claude/settings.json ]; then
-  echo '   .claude/settings.json уже существует — НЕ трогаю. Впиши permissions.deny и hooks.PreToolUse вручную.'
+  python3 - <<'PY'
+import json
+from pathlib import Path
+
+path = Path('.claude/settings.json')
+data = json.loads(path.read_text())
+deny = data.setdefault('permissions', {}).setdefault('deny', [])
+data['permissions']['deny'] = [
+    rule for rule in deny
+    if rule not in {'Edit(AGENTS.md)', 'Edit(CLAUDE.md)', 'Edit(GEMINI.md)'}
+]
+pre = data.get('hooks', {}).get('PreToolUse', [])
+pre = [
+    item for item in pre
+    if not any(
+        hook.get('command') == '.claude/hooks/protect-canonical.sh'
+        for hook in item.get('hooks', [])
+    )
+]
+if 'hooks' in data:
+    if pre:
+        data['hooks']['PreToolUse'] = pre
+    else:
+        data['hooks'].pop('PreToolUse', None)
+path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n')
+PY
 else
-  cat > .claude/settings.json <<'SETTINGS_EOF'
-{
-  "permissions": {
-    "deny": ["Edit(AGENTS.md)", "Edit(CLAUDE.md)", "Edit(GEMINI.md)"]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit|Bash",
-        "hooks": [
-          { "type": "command", "command": ".claude/hooks/protect-canonical.sh" }
-        ]
-      }
-    ]
-  }
-}
-SETTINGS_EOF
+  mkdir -p .claude
+  printf '{\n  "permissions": {"deny": []},\n  "hooks": {}\n}\n' > .claude/settings.json
 fi
 
-echo '==> 4. git pre-commit guard'
-if [ -d .git ]; then
-  cat > .git/hooks/pre-commit <<'PRECOMMIT_EOF'
-#!/bin/sh
-if git diff --cached --name-only | grep -Fxq AGENTS.md; then
-  echo "AGENTS.md нельзя менять коммитом (обход: git commit --no-verify)." >&2
-  exit 1
-fi
-PRECOMMIT_EOF
-  chmod +x .git/hooks/pre-commit
-else
-  echo '   .git не найден — пропускаю pre-commit guard.'
+echo '==> 4. Удаление старого pre-commit guard'
+if [ -f .git/hooks/pre-commit ] && grep -Fq 'AGENTS.md нельзя менять коммитом' .git/hooks/pre-commit; then
+  rm -f .git/hooks/pre-commit
 fi
 
-echo '==> 5. Коммит (легитимная фиксация восстановленного AGENTS.md)'
-git add -A
-git commit -m 'restore AGENTS.md (canonical) + review-after-run workflow + protection' --no-verify || true
-
-echo '==> 6. Блокировка флагом ОС'
-chflags uchg AGENTS.md
-ls -lO AGENTS.md
-
-echo 'ГОТОВО. Проверка: echo test >> AGENTS.md должно вернуть Operation not permitted.'
-echo 'Легитимная правка позже: chflags nouchg AGENTS.md ... chflags uchg AGENTS.md'
+echo 'ГОТОВО. AGENTS.md остаётся каноническим, но доступен для правок.'

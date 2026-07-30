@@ -606,6 +606,147 @@ def test_merge_partitioned_shards_atomic_on_error(tmp_path, monkeypatch):
     assert not out.with_suffix(out.suffix + ".tmp").exists()
 
 
+def test_owned_kv_build_flushes_batches_without_publishing(tmp_path):
+    output = tmp_path / "early_dict_raw.sqlite3"
+    output.write_bytes(b"production")
+    build = explore._OwnedKvSqliteBuild("early")
+    build.open(tmp_path / "early.staging.sqlite3")
+
+    batch = {
+        "shared": [1, 0, 2],
+        "first": [0, 0, 1],
+    }
+    build.upsert(batch)
+    batch.clear()
+    build.upsert({"shared": [2, 1, 3], "second": [1, 0, 1]})
+
+    assert output.read_bytes() == b"production"
+    prepared = build.prepare(output)
+    assert output.read_bytes() == b"production"
+    assert prepared.entries == 3
+    assert prepared.games == 7
+
+    build.publish()
+    payload = _read_sqlite_kv(output)
+    assert payload["kv"]["shared"] == {"wins": 3, "draws": 1, "games": 5}
+    assert payload["kv"]["first"] == {"wins": 0, "draws": 0, "games": 1}
+    assert payload["kv"]["second"] == {"wins": 1, "draws": 0, "games": 1}
+
+
+def test_publish_prepared_builds_waits_until_all_prepare_success(tmp_path, monkeypatch):
+    outputs = {}
+    builds = []
+    for metric in ("early", "early_end"):
+        output = tmp_path / f"{metric}_dict_raw.sqlite3"
+        output.write_bytes(f"old-{metric}".encode())
+        build = explore._OwnedKvSqliteBuild(metric)
+        build.open(tmp_path / f"{metric}.staging.sqlite3")
+        build.upsert({metric: [1, 0, 1]})
+        builds.append(build)
+        outputs[metric] = output
+
+    original_prepare = builds[1].prepare
+
+    def broken_prepare(output_path):
+        original_prepare(output_path)
+        raise RuntimeError("validation failed")
+
+    monkeypatch.setattr(builds[1], "prepare", broken_prepare)
+
+    with pytest.raises(RuntimeError, match="validation failed"):
+        explore._prepare_and_publish_kv_builds(builds, outputs)
+
+    assert outputs["early"].read_bytes() == b"old-early"
+    assert outputs["early_end"].read_bytes() == b"old-early_end"
+    for build in builds:
+        build.rollback()
+
+
+def test_prepare_all_enabled_builds_before_first_publish(tmp_path):
+    events = []
+
+    class FakeBuild:
+        def __init__(self, metric, fail=False):
+            self.metric = metric
+            self.fail = fail
+
+        def prepare(self, output):
+            events.append(("prepare", self.metric))
+            if self.fail:
+                raise RuntimeError("prepare failed")
+            return (1, 1)
+
+        def publish(self):
+            events.append(("publish", self.metric))
+            return (1, 1)
+
+    lane = FakeBuild("lane")
+    early = FakeBuild("early")
+    late = FakeBuild("late", fail=True)
+
+    with pytest.raises(RuntimeError, match="prepare failed"):
+        explore._prepare_and_publish_enabled_builds(
+            metric_names=("lane", "early", "late"),
+            outputs={m: tmp_path / f"{m}.sqlite3" for m in ("lane", "early", "late")},
+            lane_build=lane,
+            kills_window_build=None,
+            kv_builds={"early": early, "late": late},
+        )
+
+    assert events == [("prepare", "lane"), ("prepare", "early"), ("prepare", "late")]
+
+
+def test_train_candidate_does_not_filter_by_start_datetime():
+    match = {"startDateTime": 1, "players": [{} for _ in range(10)]}
+
+    assert explore._match_is_train_candidate("m1", match, set()) == (True, None)
+
+
+def test_train_candidate_does_not_require_start_datetime():
+    match = {"players": [{} for _ in range(10)]}
+
+    assert explore._match_is_train_candidate("m1", match, set()) == (True, None)
+
+
+def test_batch_flush_threshold_bounds_matches_and_keys():
+    metric_dicts = {
+        "early": {"a": [1, 0, 1], "b": [0, 0, 1]},
+        "late": {"c": [1, 0, 1]},
+    }
+
+    assert explore._should_flush_metric_batches(
+        metric_dicts, matches_since_flush=9, match_limit=10, key_limit=4
+    ) is False
+    assert explore._should_flush_metric_batches(
+        metric_dicts, matches_since_flush=10, match_limit=10, key_limit=4
+    ) is True
+    assert explore._should_flush_metric_batches(
+        metric_dicts, matches_since_flush=1, match_limit=10, key_limit=3
+    ) is True
+
+
+def test_flush_metric_batches_clears_memory_after_sqlite_upserts(tmp_path):
+    early_build = explore._OwnedKvSqliteBuild("early")
+    early_build.open(tmp_path / "early.staging.sqlite3")
+    lane_conn = explore._open_lane_sqlite(tmp_path / "lane.staging.sqlite3")
+    early = {"e": [1, 0, 1]}
+    lane = {"l": [1, 0, 1, 1, 0, 1, 2.0, 4.0]}
+
+    explore._flush_metric_batches(
+        metric_dicts={"lane": lane, "early": early},
+        kv_builds={"early": early_build},
+        lane_conn=lane_conn,
+        kills_window_conn=None,
+    )
+
+    assert early == {}
+    assert lane == {}
+    assert lane_conn.execute("SELECT games FROM stats WHERE key='l'").fetchone() == (1,)
+    assert early_build.conn.execute("SELECT games FROM kv WHERE key='e'").fetchone() == (1,)
+    lane_conn.close()
+    early_build.rollback()
+
+
 def test_sqlite_path_helpers():
     stats_dir = Path("/tmp/stats")
     assert explore._sqlite_path_for_metric(stats_dir, "lane") == stats_dir / "lane_dict_raw.sqlite3"

@@ -174,7 +174,7 @@ def test_direct_lane_sqlite_schema_and_accumulation(tmp_path):
     assert loaded["key"]["kills10_diff_sum"] == 4.0
 
 
-def test_lane_kills_telegram_line_is_diagnostic_and_directional():
+def test_lane_kills_telegram_line_is_signed_radiant_diff_with_lead():
     line = runtime._build_lane_kills_adv_line({
         "expected_diff": -1.24,
         "lead_probability": 0.30,
@@ -183,7 +183,7 @@ def test_lane_kills_telegram_line_is_diagnostic_and_directional():
         "total_lanes": 3,
     })
 
-    assert line == "lane_kills_adv_dict: Dire +1.24 kills @10 (lead 60%, 3/3)\n"
+    assert line == "lane_kills_adv_dict: -1.24 kills @10 (lead 60%)\n"
     block = runtime._build_lane_block("Top: win 60%", "", "", lane_kills_adv={
         "expected_diff": 1.0,
         "lead_probability": 0.58,
@@ -191,7 +191,7 @@ def test_lane_kills_telegram_line_is_diagnostic_and_directional():
         "coverage": 1,
         "total_lanes": 3,
     })
-    assert "lane_kills_adv_dict: Radiant +1.00 kills @10 (lead 58%, 1/3)" in block
+    assert "lane_kills_adv_dict: +1.00 kills @10 (lead 58%)" in block
 
 
 def test_lane_loader_keeps_legacy_kv_sqlite_compatibility(tmp_path):
@@ -219,7 +219,9 @@ def test_owned_lane_sqlite_success_replaces_only_at_finalize(tmp_path):
     explore_database._upsert_lane_stats(conn, {"key": [1, 0, 1, 1, 0, 1, 2.0, 4.0]})
 
     assert output.read_bytes() == b"production"
-    build.finalize(output)
+    build.prepare(output)
+    assert output.read_bytes() == b"production"
+    build.publish()
     build.rollback()
 
     with sqlite3.connect(output) as conn:
@@ -233,7 +235,7 @@ def test_main_rolls_back_owned_lane_sqlite_on_error_and_interrupt(tmp_path, monk
     output.write_bytes(b"production")
     temp = tmp_path / "owned.tmp"
 
-    def broken(build):
+    def broken(build, kills_window_build=None, kv_builds=None):
         build.open(temp)
         raise error
 

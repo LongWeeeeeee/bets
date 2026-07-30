@@ -68,7 +68,7 @@ def _two_hit_diagnostics(case_obj: BranchScenario, section: str) -> Dict[str, An
 
 def test_late_networth_dispatch_strips_early_kills_header(monkeypatch) -> None:
     # A LATE (24:58) immediate STAR / networth dispatch that ALSO has
-    # tier1_early_kills_mode=True (early star, early WR>=65, >=2 early hits) must
+    # tier1_early_kills_mode=True (early star, early WR>=70, >=2 early hits) must
     # render the regular "СТАВКА НА <team> x<mult>" header — NOT the
     # "Ранние килы <team>" placeholder baked into the base message_text. The bug:
     # the immediate-send paths fed the raw stake_multiplier_context (still
@@ -89,7 +89,7 @@ def test_late_networth_dispatch_strips_early_kills_header(monkeypatch) -> None:
         raw_early_output={"counterpick_1vs1": 6, "solo": 3},  # 2 early hits
         raw_mid_output={"counterpick_1vs1": 6, "solo": 3},  # 2 late hits
     )
-    _patch_all_phase_wr(monkeypatch, 70.0)  # early & late WR 70 (>=65 -> kills mode)
+    _patch_all_phase_wr(monkeypatch, 70.0)  # early & late WR 70 (>=70 -> kills mode)
     _patch_team_elo_summary(monkeypatch, radiant_wr=56.0, dire_wr=44.0)
     monkeypatch.setattr(
         test_networth_dispatch_gates, "_star_diagnostics_for_case", _two_hit_diagnostics

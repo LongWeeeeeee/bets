@@ -92,20 +92,98 @@ def _append_lane_entry(target_dict, key, value, kills10_diff=None):
         stats['kills10_draws'] += 1
 
 
-def _kills10_diff(match):
-    """Return Radiant minus Dire kills in the first ten minute buckets.
+def _normalize_comparable_id(value):
+    """Normalize match/map IDs so str/int forms compare equal.
 
-    Bucket index 10 is deliberately excluded: the live pipeline already uses
-    ``[:10]`` for its kills-at-10 marker, so the training dictionary must use
-    exactly the same boundary.
+    Returns None for empty/invalid values so they never match a real ID.
+    Numeric strings become int; other non-empty values become stable strings.
     """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):  # NaN / +/-inf
+            return None
+        if value.is_integer():
+            return int(value)
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        if stripped.isdigit() or (stripped.startswith('-') and stripped[1:].isdigit()):
+            try:
+                return int(stripped)
+            except Exception:
+                return stripped
+        return stripped
+    try:
+        as_int = int(value)
+        return as_int
+    except Exception:
+        text = str(value).strip()
+        return text or None
+
+
+def _match_in_exclude_set(match, exclude_match_ids, match_id_hint=None):
+    """Return True if the match is covered by exclude_match_ids.
+
+    Candidates: match['id'], match['match_id'], match['_map_id'], then match_id_hint.
+    Exclude values are normalized on every call (no stale cache over mutable sets).
+    """
+    if not exclude_match_ids:
+        return False
+    if not isinstance(match, dict):
+        match = {}
+
+    normalized_exclude = set()
+    for raw in exclude_match_ids:
+        norm = _normalize_comparable_id(raw)
+        if norm is not None:
+            normalized_exclude.add(norm)
+    if not normalized_exclude:
+        return False
+
+    candidates = (
+        match.get('id'),
+        match.get('match_id'),
+        match.get('_map_id'),
+        match_id_hint,
+    )
+    for raw in candidates:
+        norm = _normalize_comparable_id(raw)
+        if norm is not None and norm in normalized_exclude:
+            return True
+    return False
+
+
+# Half-open minute-bucket windows for team kill-advantage dictionaries.
+# Matches live pipeline convention: [:10] = minutes 0..9 (bucket 10 excluded).
+KILLS_WINDOWS = ((5, 15), (10, 20), (15, 25), (20, 30))
+KILLS_WINDOW_LABELS = tuple(f"{start}_{end}" for start, end in KILLS_WINDOWS)
+
+
+def _kills_window_diff(match, start, end):
+    """Return Radiant minus Dire kills in half-open minute buckets [start:end].
+
+    ``radiantKills`` / ``direKills`` are per-minute kill counts (not cumulative).
+    Invalid / too-short series return None so the caller can skip that window
+    without dropping other valid windows for the same match.
+    """
+    start = int(start)
+    end = int(end)
+    if end <= start or start < 0:
+        return None
     radiant = match.get('radiantKills')
     dire = match.get('direKills')
     if not isinstance(radiant, list) or not isinstance(dire, list):
         return None
-    if len(radiant) < 10 or len(dire) < 10:
+    if len(radiant) < end or len(dire) < end:
         return None
-    values = radiant[:10] + dire[:10]
+    radiant_slice = radiant[start:end]
+    dire_slice = dire[start:end]
+    values = radiant_slice + dire_slice
     if any(
         isinstance(value, bool)
         or not isinstance(value, (int, float))
@@ -114,7 +192,123 @@ def _kills10_diff(match):
         for value in values
     ):
         return None
-    return float(sum(radiant[:10]) - sum(dire[:10]))
+    return float(sum(radiant_slice) - sum(dire_slice))
+
+
+def _kills10_diff(match):
+    """Return Radiant minus Dire kills in the first ten minute buckets.
+
+    Bucket index 10 is deliberately excluded: the live pipeline already uses
+    ``[:10]`` for its kills-at-10 marker, so the training dictionary must use
+    exactly the same boundary.
+    """
+    return _kills_window_diff(match, 0, 10)
+
+
+def _empty_kills_window_stats():
+    """Compact multi-window kill counters for one draft key.
+
+    Layout per window (len(KILLS_WINDOWS) blocks of 5):
+      leads, draws, games, diff_sum, diff_sq_sum
+    """
+    return [0, 0, 0, 0.0, 0.0] * len(KILLS_WINDOWS)
+
+
+def _append_kills_window_entry(target_dict, key, window_diffs, invert=False):
+    """Accumulate multi-window kill diffs for a draft key.
+
+    ``window_diffs`` is a sequence aligned with ``KILLS_WINDOWS``; each item is
+    Radiant-minus-Dire (or None when that window is unavailable). When
+    ``invert`` is True the key is Dire-oriented and the sign is flipped.
+    """
+    if not window_diffs:
+        return
+    stats = target_dict.get(key)
+    if stats is None:
+        stats = _empty_kills_window_stats()
+        target_dict[key] = stats
+    for index, diff in enumerate(window_diffs):
+        if diff is None:
+            continue
+        # Diffs are already numeric from the kills timeline; avoid per-cell float().
+        value = -diff if invert else diff
+        base = index * 5
+        stats[base + 2] += 1
+        stats[base + 3] += value
+        stats[base + 4] += value * value
+        if value > 0:
+            stats[base] += 1
+        elif value == 0:
+            stats[base + 1] += 1
+
+
+def _add_kills_window_combinations(r_by_pos, d_by_pos, target_dict, window_diffs):
+    """Write full-draft solo/cp/synergy keys for kill-window targets.
+
+    Same key grammar as early/late/post_lane, but WITHOUT trios: team-level
+    kill targets do not need sparse trio keys and they dominate dict size.
+    Radiant-leading keys store Radiant-minus-Dire; Dire-leading keys invert.
+    """
+    r_items = list(r_by_pos.items())
+    d_items = list(d_by_pos.items())
+
+    for pos_num, hero_id in r_items:
+        _append_kills_window_entry(target_dict, f'{hero_id}pos{pos_num}', window_diffs, invert=False)
+    for pos_num, hero_id in d_items:
+        _append_kills_window_entry(target_dict, f'{hero_id}pos{pos_num}', window_diffs, invert=True)
+
+    for r_pos, r_hero in r_items:
+        for d_pos1, d_hero1 in d_items:
+            for d_pos2, d_hero2 in d_items:
+                if d_hero1 == d_hero2:
+                    continue
+                key = f'{r_hero}pos{r_pos}_vs_{d_hero1}pos{d_pos1},{d_hero2}pos{d_pos2}'
+                _append_kills_window_entry(target_dict, key, window_diffs, invert=False)
+
+    for r_pos1, r_hero1 in r_items:
+        for r_pos2, r_hero2 in r_items:
+            if r_hero1 == r_hero2:
+                continue
+            for d_pos, d_hero in d_items:
+                key = f'{r_hero1}pos{r_pos1},{r_hero2}pos{r_pos2}_vs_{d_hero}pos{d_pos}'
+                _append_kills_window_entry(target_dict, key, window_diffs, invert=False)
+
+    for r_pos, r_hero in r_items:
+        for d_pos, d_hero in d_items:
+            key = f'{r_hero}pos{r_pos}_vs_{d_hero}pos{d_pos}'
+            _append_kills_window_entry(target_dict, key, window_diffs, invert=False)
+
+    for r_pos1, r_hero1 in r_items:
+        for r_pos2, r_hero2 in r_items:
+            if r_hero1 == r_hero2:
+                continue
+            key = f'{r_hero1}pos{r_pos1}_with_{r_hero2}pos{r_pos2}'
+            _append_kills_window_entry(target_dict, key, window_diffs, invert=False)
+
+    for d_pos1, d_hero1 in d_items:
+        for d_pos2, d_hero2 in d_items:
+            if d_hero1 == d_hero2:
+                continue
+            key = f'{d_hero1}pos{d_pos1}_with_{d_hero2}pos{d_pos2}'
+            _append_kills_window_entry(target_dict, key, window_diffs, invert=True)
+
+
+def kills_windows(match, kills_window_dict):
+    """Record multi-window team kill advantage for one match into the dict.
+
+    No early/late/lane-outcome gates: any match with full positions and at
+    least one valid kill window contributes. Returns True if anything written.
+    """
+    if kills_window_dict is None:
+        return False
+    r_by_pos, d_by_pos = extract_heroes_by_position(match)
+    if r_by_pos is None:
+        return False
+    window_diffs = [_kills_window_diff(match, start, end) for start, end in KILLS_WINDOWS]
+    if all(diff is None for diff in window_diffs):
+        return False
+    _add_kills_window_combinations(r_by_pos, d_by_pos, kills_window_dict, window_diffs)
+    return True
 
 
 def extract_heroes_by_position(match):
@@ -197,12 +391,17 @@ def lanes(match, lane_dict):
     Args:
         match: словарь с данными матча
         lane_dict: словарь для записи статистики по лайнам
+
+    Returns:
+        True if at least one lane key was written, otherwise False.
     """
     # Извлекаем героев и позиции
     r_by_pos, d_by_pos = extract_heroes_by_position(match)
     if r_by_pos is None:
-        return
-    
+        return False
+
+    updated = False
+
     # Определяем исходы лайнов
     top_outcome = match.get('topLaneOutcome', '')
     mid_outcome = match.get('midLaneOutcome', '')
@@ -249,23 +448,31 @@ def lanes(match, lane_dict):
             r_heroes: список кортежей (hero_id, position) для Radiant
             d_heroes: список кортежей (hero_id, position) для Dire
             outcome: исход лайна
+
+        Returns:
+            True if at least one lane key was written for this lane.
         """
+        nonlocal updated
         if not outcome:
-            return
+            return False
         
         value_r = get_lane_value(outcome, True)
         value_d = get_lane_value(outcome, False)
         
         if value_r is None:
-            return
-        
+            return False
+
+        wrote = False
+
         # Соло герои Radiant
         for hero_id, pos in r_heroes:
             _append_lane_entry(lane_dict, f'{hero_id}pos{pos}', value_r, radiant_kills10_diff)
+            wrote = True
         
         # Соло герои Dire
         for hero_id, pos in d_heroes:
             _append_lane_entry(lane_dict, f'{hero_id}pos{pos}', value_d, -radiant_kills10_diff if radiant_kills10_diff is not None else None)
+            wrote = True
         
         # Если это парный лайн (2v2)
         if len(r_heroes) == 2 and len(d_heroes) == 2:
@@ -296,6 +503,7 @@ def lanes(match, lane_dict):
             
             # Синергия 1+1 для Dire
             _append_lane_entry(lane_dict, f'{d_h1}pos{d_p1}_with_{d_h2}pos{d_p2}', value_d, -radiant_kills10_diff if radiant_kills10_diff is not None else None)
+            wrote = True
         
         # Если это 1v1
         elif len(r_heroes) == 1 and len(d_heroes) == 1:
@@ -304,6 +512,11 @@ def lanes(match, lane_dict):
             
             # Контрипик 1x1
             _append_lane_entry(lane_dict, f'{r_h}pos{r_p}_vs_{d_h}pos{d_p}', value_r, radiant_kills10_diff)
+            wrote = True
+
+        if wrote:
+            updated = True
+        return wrote
     
     # TOP LANE: Radiant (pos3+pos4) vs Dire (pos1+pos5)
     if 3 in r_by_pos and 4 in r_by_pos and 1 in d_by_pos and 5 in d_by_pos:
@@ -329,13 +542,15 @@ def lanes(match, lane_dict):
             bot_outcome
         )
 
+    return updated
+
 
 
 # ============================================================================
 # НАСТРОЙКИ ФИЛЬТРОВ EARLY/LATE (подбираются экспериментально)
 # ============================================================================
 # Early: требуем близкий networth на gate-точке и ищем ранний перевес.
-EARLY_GATE_INDEX = 10                # фильтр на leads[10]
+EARLY_GATE_INDEX = 9                 # фильтр на leads[9] (minute 10)
 EARLY_GATE_MAX_ABS_LEAD = 2000       # игра не должна разъехаться до early-gate
 EARLY_LEAD_WINDOW = (20, 28)         # реальные минуты достижения 20% comeback threshold
 EARLY_FAST_FINISH_MAX_MINUTES = 34   # быстрые карты считаем early по победителю
@@ -537,7 +752,7 @@ def is_early_match(match, n: int = 3000):
     
     ЛОГИКА EARLY:
     - Быстрые карты duration <= 34 минут считаются early; dominator = winner
-    - Для длинных карт на gate-точке leads[10] игра не должна быть уже слишком разъехавшейся
+    - Для длинных карт на gate-точке leads[9] (minute 10) игра не должна быть уже слишком разъехавшейся
     - Early dominator = кто первым достиг 20% comeback networth threshold
       в окне 20-28 минут
     - Победитель матча для early не важен
@@ -822,40 +1037,55 @@ def is_pro_match(match):
 
 def analise_database(match, lane_dict, early_dict, late_dict, *,
                      exclude_match_ids=None, exclude_pro_matches=True, dominator=None,
-                     post_lane_dict=None):
+                     post_lane_dict=None, kills_window_dict=None, match_id_hint=None,
+                     early_end_dict=None):
     """
     Основная функция анализа матча.
     
     Args:
         match: словарь с данными матча
         lane_dict: словарь для записи статистики по лайнам
-        early_dict: словарь для записи статистики по early фазе
+        early_dict: early stats with NW-dominator label (current default)
         late_dict: словарь для записи статистики по late фазе
         post_lane_dict: словарь после лейнинга с gate на 10-й минуте и min duration
+        kills_window_dict: multi-window team kill advantage (5-15/10-20/15-25/20-30)
+        early_end_dict: early stats with map-winner label (same early gates as early_dict)
         exclude_match_ids: set или list ID матчей которые нужно исключить (для избежания data leakage)
         exclude_pro_matches: если True, пропускает про-матчи (default: True)
+        match_id_hint: optional external map key when match payload has no id
     
     ⚠️ ВАЖНО: Для избежания data leakage при обучении ML моделей:
     - Всегда передавайте exclude_match_ids содержащий текущий матч
     - Используйте temporal split: обрабатывайте матчи в хронологическом порядке
     - Для каждого матча используйте только статистику из предыдущих матчей
+
+    Returns:
+        True if at least one target dict was actually updated; False otherwise.
     """
     # Фильтр про-матчей
     if exclude_pro_matches and is_pro_match(match):
         return False  # Матч пропущен
     
-    # Фильтр исключаемых матчей
-    match_id = match.get('id')
-    if exclude_match_ids and match_id and match_id in exclude_match_ids:
+    # Фильтр исключаемых матчей (str/int-normalized; supports id/match_id/_map_id/hint)
+    if _match_in_exclude_set(match, exclude_match_ids, match_id_hint=match_id_hint):
         return False  # Матч пропущен
+
+    updated = False
+
     # 1. Обработка лайнов
     if lane_dict is not None:
-        lanes(match, lane_dict)
+        if lanes(match, lane_dict):
+            updated = True
+
+    # 1b. Multi-window kill advantage (independent of lane/early/late gates)
+    if kills_window_dict is not None:
+        if kills_windows(match, kills_window_dict):
+            updated = True
     
     # 2. Извлекаем героев и позиции для early/late/post-lane
     r_by_pos, d_by_pos = extract_heroes_by_position(match)
     if r_by_pos is None:
-        return
+        return updated
     
     # Определяем победителя один раз (используется в late и post-lane)
     did_radiant_win = match.get('didRadiantWin')
@@ -870,14 +1100,22 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
     except (TypeError, ValueError):
         is_latest_patch = False
 
-    # 3. Обработка EARLY словаря
+    # 3. Обработка EARLY словарей
     # Используем новый фильтр is_early_match()
+    # early_dict: true = NW dominator (current production semantics)
+    # early_end_dict: true = map winner (same early sample gates)
     early_result, dominator = is_early_match(match)
-    if early_dict is not None and early_result:
-        # Для early_dict значение зависит от того, кто доминировал
-        r_val = 1 if dominator == 'radiant' else 0
-        d_val = 1 if dominator == 'dire' else 0
-        _add_combinations_to_dict(r_by_pos, d_by_pos, early_dict, r_val, d_val)
+    if early_result:
+        if early_dict is not None:
+            r_val = 1 if dominator == 'radiant' else 0
+            d_val = 1 if dominator == 'dire' else 0
+            _add_combinations_to_dict(r_by_pos, d_by_pos, early_dict, r_val, d_val)
+            updated = True
+        if early_end_dict is not None:
+            r_val = 1 if did_radiant_win else 0
+            d_val = 0 if did_radiant_win else 1
+            _add_combinations_to_dict(r_by_pos, d_by_pos, early_end_dict, r_val, d_val)
+            updated = True
     
     # Проверяем условия для late_dict
     # Используем улучшенный фильтр is_late_match()
@@ -886,6 +1124,7 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
         r_val = 1 if did_radiant_win else 0
         d_val = 0 if did_radiant_win else 1
         _add_combinations_to_dict(r_by_pos, d_by_pos, late_dict, r_val, d_val)
+        updated = True
 
     if post_lane_dict is not None and is_post_lane_match(match):
         # После post-lane gate записываем фактического победителя матча.
@@ -894,5 +1133,6 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
         d_val = 0 if did_radiant_win else 1
         _add_combinations_to_dict(r_by_pos, d_by_pos, post_lane_dict, r_val, d_val,
                                   write_solo=is_latest_patch)
+        updated = True
 
-    return True  # Матч успешно обработан
+    return updated

@@ -1,0 +1,160 @@
+{
+  "definition": "WIN = predicted side has STRICTLY more kills in window; equal or fewer = LOSE. Map WR not used.",
+  "universe": "pro 7.41* with >=1 tier_one_teams id",
+  "n_scanned": 4659,
+  "n_tier1": 1377,
+  "n_bad_draft": 68,
+  "elapsed_sec": 11.73,
+  "windows": {
+    "5_15": {
+      "n": 1309,
+      "win_more_kills": 691,
+      "lose_equal_or_less": 618,
+      "kill_lead_wr": 0.5278838808250573,
+      "skip_no_actual": 0,
+      "skip_no_pred": 0,
+      "zero_pred_excluded": 0,
+      "kill_lead_wr_if_zero_pred_counts_lose": 0.5278838808250573,
+      "buckets": {
+        "0-0.5": {
+          "n": 724,
+          "kill_lead_wr": 0.4654696132596685,
+          "win_more_kills": 337,
+          "lose_equal_or_less": 387
+        },
+        "0.5-1": {
+          "n": 401,
+          "kill_lead_wr": 0.5860349127182045,
+          "win_more_kills": 235,
+          "lose_equal_or_less": 166
+        },
+        "1-2": {
+          "n": 181,
+          "kill_lead_wr": 0.6574585635359116,
+          "win_more_kills": 119,
+          "lose_equal_or_less": 62
+        },
+        "2-3": {
+          "n": 3,
+          "kill_lead_wr": 0.0,
+          "win_more_kills": 0,
+          "lose_equal_or_less": 3
+        }
+      }
+    },
+    "10_20": {
+      "n": 1293,
+      "win_more_kills": 715,
+      "lose_equal_or_less": 578,
+      "kill_lead_wr": 0.5529775715390565,
+      "skip_no_actual": 16,
+      "skip_no_pred": 0,
+      "zero_pred_excluded": 0,
+      "kill_lead_wr_if_zero_pred_counts_lose": 0.5529775715390565,
+      "buckets": {
+        "0-0.5": {
+          "n": 700,
+          "kill_lead_wr": 0.5257142857142857,
+          "win_more_kills": 368,
+          "lose_equal_or_less": 332
+        },
+        "0.5-1": {
+          "n": 397,
+          "kill_lead_wr": 0.5516372795969773,
+          "win_more_kills": 219,
+          "lose_equal_or_less": 178
+        },
+        "1-2": {
+          "n": 189,
+          "kill_lead_wr": 0.6666666666666666,
+          "win_more_kills": 126,
+          "lose_equal_or_less": 63
+        },
+        "2-3": {
+          "n": 7,
+          "kill_lead_wr": 0.2857142857142857,
+          "win_more_kills": 2,
+          "lose_equal_or_less": 5
+        }
+      }
+    },
+    "15_25": {
+      "n": 1253,
+      "win_more_kills": 689,
+      "lose_equal_or_less": 564,
+      "kill_lead_wr": 0.5498802873104549,
+      "skip_no_actual": 56,
+      "skip_no_pred": 0,
+      "zero_pred_excluded": 0,
+      "kill_lead_wr_if_zero_pred_counts_lose": 0.5498802873104549,
+      "buckets": {
+        "0-0.5": {
+          "n": 677,
+          "kill_lead_wr": 0.49039881831610044,
+          "win_more_kills": 332,
+          "lose_equal_or_less": 345
+        },
+        "0.5-1": {
+          "n": 389,
+          "kill_lead_wr": 0.6195372750642674,
+          "win_more_kills": 241,
+          "lose_equal_or_less": 148
+        },
+        "1-2": {
+          "n": 181,
+          "kill_lead_wr": 0.6353591160220995,
+          "win_more_kills": 115,
+          "lose_equal_or_less": 66
+        },
+        "2-3": {
+          "n": 6,
+          "kill_lead_wr": 0.16666666666666666,
+          "win_more_kills": 1,
+          "lose_equal_or_less": 5
+        }
+      }
+    },
+    "20_30": {
+      "n": 1169,
+      "win_more_kills": 645,
+      "lose_equal_or_less": 524,
+      "kill_lead_wr": 0.5517536355859709,
+      "skip_no_actual": 140,
+      "skip_no_pred": 0,
+      "zero_pred_excluded": 0,
+      "kill_lead_wr_if_zero_pred_counts_lose": 0.5517536355859709,
+      "buckets": {
+        "0-0.5": {
+          "n": 734,
+          "kill_lead_wr": 0.5258855585831063,
+          "win_more_kills": 386,
+          "lose_equal_or_less": 348
+        },
+        "0.5-1": {
+          "n": 340,
+          "kill_lead_wr": 0.5911764705882353,
+          "win_more_kills": 201,
+          "lose_equal_or_less": 139
+        },
+        "1-2": {
+          "n": 92,
+          "kill_lead_wr": 0.6086956521739131,
+          "win_more_kills": 56,
+          "lose_equal_or_less": 36
+        },
+        "2-3": {
+          "n": 2,
+          "kill_lead_wr": 1.0,
+          "win_more_kills": 2,
+          "lose_equal_or_less": 0
+        },
+        "3+": {
+          "n": 1,
+          "kill_lead_wr": 0.0,
+          "win_more_kills": 0,
+          "lose_equal_or_less": 1
+        }
+      }
+    }
+  }
+}

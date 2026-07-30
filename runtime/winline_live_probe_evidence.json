@@ -1,0 +1,45 @@
+{
+  "started_at": "2026-07-11T19:53:18.936407+00:00",
+  "probe": "standalone_winline_run_sites_in_camoufox",
+  "runtime_restarted": false,
+  "success": false,
+  "error": null,
+  "result": {
+    "status": "partial_load",
+    "match_found": false,
+    "odds": [],
+    "match_odds": [],
+    "source": "winline_map_market_missing",
+    "details": "match not found in rendered DOM/network payload | load_error=Page.goto: NS_ERROR_PROXY_CONNECTION_REFUSED\nCall log:\n  - navigating to \"https://winline.ru/stavki/sport/kibersport\", waiting until \"domcontentloaded\"\n",
+    "market_closed": false,
+    "market_kind": null,
+    "map_num": null,
+    "p1_team": null,
+    "p2_team": null
+  },
+  "notes": [
+    "CAMOUFOX_AVAILABLE=True",
+    "No strict live current-map winner for chosen teams; honest non-success (no suitable live map / anti-bot / empty market). Not fabricated."
+  ],
+  "request": {
+    "url": "https://winline.ru/stavki/sport/kibersport",
+    "team1": "Team Spirit",
+    "team2": "Tundra Esports",
+    "map_num": 1,
+    "site": "winline",
+    "mode": "live"
+  },
+  "elapsed_seconds": 2.74,
+  "fixture_contract_check": {
+    "odds": [
+      1.52,
+      2.45
+    ],
+    "market_kind": "current_map_winner",
+    "map_num": 1,
+    "p1_team": "team1",
+    "p2_team": "team2",
+    "provenance": "synthetic_regression_fixture"
+  },
+  "finished_at": "2026-07-11T19:53:21.680467+00:00"
+}

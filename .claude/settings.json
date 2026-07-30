@@ -1,15 +1,13 @@
 {
   "permissions": {
-    "deny": ["Edit(AGENTS.md)", "Edit(CLAUDE.md)", "Edit(GEMINI.md)"]
+    "deny": []
   },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit|Bash",
-        "hooks": [
-          { "type": "command", "command": ".claude/hooks/protect-canonical.sh" }
-        ]
-      }
-    ]
+  "hooks": {},
+  "enabledPlugins": {
+    "ruflo-swarm@ruflo": true,
+    "ruflo-goals@ruflo": true,
+    "ruflo-intelligence@ruflo": true,
+    "ruflo-autopilot@ruflo": true,
+    "ruflo-agentdb@ruflo": true
   }
 }

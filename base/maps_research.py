@@ -39,6 +39,7 @@ try:
 except Exception:
     aiohttp = None
 import requests
+from curl_cffi import requests as cf_requests
 from collections import deque, Counter
 from datetime import datetime, timedelta
 import time
@@ -201,20 +202,43 @@ def _build_tier_team_ids():
 
 
 class RateLimitTracker:
-    """Отслеживает использование API для одной пары прокси-API"""
+    """Отслеживает использование API для одной пары прокси-API.
+    Трекеры с одинаковым api_token делят общий rate-limit state."""
     
-    def __init__(self, proxy_url, api_token):
+    def __init__(self, proxy_url, api_token, shared_state=None):
         self.proxy_url = proxy_url
         self.api_token = api_token
-        self.requests_log = {
-            'second': deque(),
-            'minute': deque(),
-            'hour': deque(),
-            'day': deque()
-        }
-        self.lock = asyncio.Lock()
-        self.is_rate_limited = False  # Флаг, что API вернул ошибку лимита
-        self.rate_limit_time = 0  # Время когда был достигнут лимит
+        if shared_state is None:
+            shared_state = {
+                'requests_log': {
+                    'second': deque(),
+                    'minute': deque(),
+                    'hour': deque(),
+                    'day': deque()
+                },
+                'lock': asyncio.Lock(),
+                'is_rate_limited': False,
+                'rate_limit_time': 0,
+            }
+        self._shared = shared_state
+        self.requests_log = shared_state['requests_log']
+        self.lock = shared_state['lock']
+
+    @property
+    def is_rate_limited(self):
+        return self._shared['is_rate_limited']
+
+    @is_rate_limited.setter
+    def is_rate_limited(self, value):
+        self._shared['is_rate_limited'] = value
+
+    @property
+    def rate_limit_time(self):
+        return self._shared['rate_limit_time']
+
+    @rate_limit_time.setter
+    def rate_limit_time(self, value):
+        self._shared['rate_limit_time'] = value
     
     async def can_make_request(self):
         """Проверяет, можно ли сделать запрос с учетом всех лимитов"""
@@ -269,42 +293,41 @@ class ProxyAPIPool:
     """Управляет пулом прокси-API пар с автоматическим переключением"""
     
     def __init__(self, api_to_proxy_dict):
-        self.trackers = [
-            RateLimitTracker(proxy_url, api_token)
-            for proxy_url, api_token in api_to_proxy_dict.items()
-        ]
+        token_states = {}
+        self.trackers = []
+        for proxy_url, api_token in api_to_proxy_dict.items():
+            state = token_states.get(api_token)
+            tracker = RateLimitTracker(proxy_url, api_token, shared_state=state)
+            if api_token not in token_states:
+                token_states[api_token] = tracker._shared
+            self.trackers.append(tracker)
         self.current_index = 0
         self.selection_lock = asyncio.Lock()
         self.semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
     
     async def get_available_tracker(self):
-        """Получает доступный tracker или ждет, пока он освободится"""
+        """Получает доступный tracker (равномерный round-robin по всем парам)"""
         max_attempts = len(self.trackers) * 10
         attempt = 0
-        
+
         while attempt < max_attempts:
             async with self.selection_lock:
-                previous_index = self.current_index
-                # Проверяем все trackers начиная с текущего
+                # Round-robin: всегда начинаем со следующего индекса
+                start_idx = self.current_index
                 for i in range(len(self.trackers)):
-                    idx = (self.current_index + i) % len(self.trackers)
+                    idx = (start_idx + i) % len(self.trackers)
                     tracker = self.trackers[idx]
-                    
+
                     if await tracker.can_make_request():
-                        # Выводим информацию при смене пары
-                        if idx != previous_index:
-                            proxy_short = tracker.proxy_url.split('@')[-1] if '@' in (tracker.proxy_url or '') else (tracker.proxy_url or 'direct')[:30]
-                            api_short = tracker.api_token[:20] + '...' if len(tracker.api_token) > 20 else tracker.api_token
-                            print(f"🔄 Переключение на пару #{idx + 1}: Прокси={proxy_short}, API={api_short}")
-                        
+                        # Продвигаем индекс для следующего вызова
                         self.current_index = (idx + 1) % len(self.trackers)
                         return tracker
-            
+
             # Если ни один не доступен, ждем немного
             print(f"⏳ Все API достигли лимитов, ожидание 0.5 сек...")
             await asyncio.sleep(0.5)
             attempt += 1
-        
+
         # Если после всех попыток все еще нет доступных, берем первый
         print("⚠️ Превышено время ожидания, использую первый доступный tracker")
         return self.trackers[0]
@@ -316,20 +339,19 @@ class ProxyAPIPool:
         request_kwargs['headers'] = headers
         request_kwargs.pop('ssl', None)
         timeout = request_kwargs.pop('timeout', 120)
-        with requests.Session() as session:
-            session.trust_env = False
-            proxies = {'http': proxy_url, 'https': proxy_url} if proxy_url else None
-            response = session.post(
-                url,
-                proxies=proxies,
-                timeout=timeout,
-                **request_kwargs,
-            )
-            try:
-                return response.json()
-            except ValueError as exc:
-                body = response.text[:300].replace('\n', ' ')
-                raise RuntimeError(f"HTTP {response.status_code}: {body}") from exc
+        proxies = {'http': proxy_url, 'https': proxy_url} if proxy_url else None
+        response = cf_requests.post(
+            url,
+            proxies=proxies,
+            timeout=timeout,
+            impersonate='chrome',
+            **request_kwargs,
+        )
+        try:
+            return response.json()
+        except ValueError as exc:
+            body = response.text[:300].replace('\n', ' ')
+            raise RuntimeError(f"HTTP {response.status_code}: {body}") from exc
     
     async def make_request(self, url, **kwargs):
         """Выполняет запрос с автоматическим выбором tracker и rate limiting"""
@@ -753,16 +775,15 @@ async def get_maps_new(ids, mkdir,
             continue
     allowed_team_ids = _build_tier_team_ids() if pro else None
     existing_match_ids = set()
-    if pro:
-        processed_ids_file = f"{mkdir}/json_parts_split_from_object/processed_ids.txt"
-        if os.path.exists(processed_ids_file):
-            try:
-                with open(processed_ids_file, 'r', encoding='utf-8') as f:
-                    loaded_ids = json.load(f)
-                existing_match_ids = set(int(mid) for mid in loaded_ids)
-                print(f"📋 Загружено {len(existing_match_ids)} processed match IDs")
-            except Exception as e:
-                print(f"⚠️ Ошибка при загрузке processed match IDs: {e}")
+    processed_ids_file = f"{mkdir}/json_parts_split_from_object/processed_ids.txt"
+    if os.path.exists(processed_ids_file):
+        try:
+            with open(processed_ids_file, 'r', encoding='utf-8') as f:
+                loaded_ids = json.load(f)
+            existing_match_ids = set(int(mid) for mid in loaded_ids)
+            print(f"📋 Загружено {len(existing_match_ids)} processed match IDs")
+        except Exception as e:
+            print(f"⚠️ Ошибка при загрузке processed match IDs: {e}")
     # Создаём папку temp_files если её нет
     temp_folder = f"{mkdir}/temp_files"
     if not os.path.exists(temp_folder):
@@ -1280,6 +1301,13 @@ async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=Non
                         sdt = match.get('startDateTime')
                         if sdt is None or int(sdt) < threshold:
                             continue
+                        match_id = match.get('id')
+                        if match_id is not None:
+                            match_id_int = int(match_id)
+                            if existing_match_ids is not None and match_id_int in existing_match_ids:
+                                continue
+                            if existing_match_ids is not None:
+                                existing_match_ids.add(match_id_int)
                         kept_in_window += 1
                         matches.append(match)
                         sa = player.get('steamAccount') or {}
@@ -2708,8 +2736,14 @@ def get_pros():
                 ids_clean.append(foo)
         else:
             ids_clean.append(i)
+    try:
+        proxy_count = len(STRATZ_PROXY_MAP) if STRATZ_PROXY_MAP else 1
+    except Exception:
+        proxy_count = 1
+    batch_concurrency = max(1, min(10, proxy_count))
     asyncio.run(get_maps_new(ids=ids_clean, pro=True,
-                             mkdir=str(PRO_HEROES_DIR), skip_auxiliary_files=True))
+                             mkdir=str(PRO_HEROES_DIR), skip_auxiliary_files=True,
+                             batch_concurrency=batch_concurrency))
 
 
 def get_pubs():
@@ -2750,13 +2784,12 @@ def get_pubs():
         ids.update(result)
 
     batch_size = 5
-    # Ограничиваем параллелизм числом доступных прокси, но не более 10
+    # Ограничиваем параллелизм числом доступных Stratz-прокси, но не более 10
     try:
         proxy_count = len(STRATZ_PROXY_MAP) if STRATZ_PROXY_MAP else 1
     except Exception:
         proxy_count = 1
-    batch_concurrency = max(1, min(10, proxy_count))
-
+    batch_concurrency = max(1, min(7, proxy_count * 7))
     print(f"⚡ PUB сбор: batch_size={batch_size}, batch_concurrency={batch_concurrency}")
     asyncio.run(get_maps_new(ids=ids,
                              mkdir=str(ANALYSE_PUB_DIR),

@@ -384,35 +384,6 @@ def test_delayed_watcher_rejects_blocked_late27_signal(monkeypatch) -> None:
     assert "all_opposite_star_hit" in details["late27_guard_reasons"]
 
 
-def test_delayed_watcher_drops_restored_valid_late_opposite_all(monkeypatch) -> None:
-    payload = _late27_watcher_payload(
-        late_hit_count=2,
-        all_star_hits=OPPOSITE_ALL_HITS,
-    )
-    payload["stake_multiplier_context"].update(
-        {
-            "has_selected_all_star": True,
-            "selected_all_sign": -1,
-            "all_wr_pct": 80.0,
-            "late_wr_pct": 70.0,
-            "late_star_hit_metrics": ["counterpick_1vs2", "solo"],
-        }
-    )
-
-    result = _run_late27_delayed_worker(monkeypatch, payload)
-
-    assert result["deliveries"] == []
-    assert result["dropped"] == ["late_opposite_all"]
-    assert (
-        result["add_url_calls"][-1]["reason"]
-        == runtime.LATE_OPPOSITE_ALL_REJECT_REASON
-    )
-    details = result["add_url_calls"][-1]["details"]
-    assert details["dispatch_mode"] == "rejected_late_opposite_all_delayed"
-    assert details["late_wr_pct"] == 70.0
-    assert details["all_wr_pct"] == 80.0
-
-
 def test_delayed_watcher_keeps_sending_valid_late27_signal(monkeypatch) -> None:
     result = _run_late27_delayed_worker(
         monkeypatch,

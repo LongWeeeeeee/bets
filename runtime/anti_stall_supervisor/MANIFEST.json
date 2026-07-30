@@ -1,0 +1,191 @@
+{
+  "built_from_staging": "/root/main/runtime/anti_stall_staging/t_3c0b64e6",
+  "candidate": "/root/main/runtime/anti_stall_supervisor",
+  "file_count": 33,
+  "files": [
+    {
+      "bytes": 16141,
+      "path": "CONTRACT.json",
+      "sha256": "3f58a0115b60cfa960edb82bff5aaca013097068991b53e40539f28cb900c954"
+    },
+    {
+      "bytes": 16141,
+      "path": "CONTRACT_SNAPSHOT.json",
+      "sha256": "3f58a0115b60cfa960edb82bff5aaca013097068991b53e40539f28cb900c954"
+    },
+    {
+      "bytes": 6907,
+      "path": "DECISION_SCHEMA.json",
+      "sha256": "c8a708120bae6b3f7902a1524af0cbd8a27db8428b3326acf9b661a561f80691"
+    },
+    {
+      "bytes": 4905,
+      "path": "EXECUTOR_CONTRACT.json",
+      "sha256": "653222bd25d77c1eb03a59fc88021770b04d5e2bba7b9328b51321af21fe1087"
+    },
+    {
+      "bytes": 2582,
+      "path": "README.md",
+      "sha256": "45d873dc0f45dcf525f0daa7b4e3711f3d2bee2d5ccd9c14386c64edbda949f7"
+    },
+    {
+      "bytes": 4665,
+      "path": "REPORT_SCHEMA.json",
+      "sha256": "62f3014ccd3a0a1f374585025086a31233376091169fbf4aef2369ab1344a659"
+    },
+    {
+      "bytes": 298,
+      "path": "__init__.py",
+      "sha256": "81cde4d262727b848422b36f31c6b8c933e62545b500832f7386b74e644b48ba"
+    },
+    {
+      "bytes": 6997,
+      "path": "__main__.py",
+      "sha256": "c627a9595090345b6c8d848e47c4bf5a5797265cf7a77648bbe4f7307764f7b9"
+    },
+    {
+      "bytes": 18409,
+      "path": "adapters.py",
+      "sha256": "04182a5d6ab280bf6a0caea654cea80225c099a3da8d662ea122930760db34af"
+    },
+    {
+      "bytes": 654,
+      "path": "config.json",
+      "sha256": "05767745f9226de8ad09050a8741f3b0b89f7d1617f66e20b5b4de00cb24ba5c"
+    },
+    {
+      "bytes": 83381,
+      "path": "decision.py",
+      "sha256": "5368ed6220a9101e88f2ee09bcd38e4875b19bedc460dc69f4912a4c044923f6"
+    },
+    {
+      "bytes": 6491,
+      "path": "deploy/ROLLBACK.md",
+      "sha256": "45b95c4347701c58a59afb699e74390c50ba6e8d407d42c7069eb95cfa84ebbf"
+    },
+    {
+      "bytes": 1759,
+      "path": "deploy/hermes-anti-stall-supervisor.service",
+      "sha256": "098f0e699f6bb53887d1f700520a46f956a6621659f9ded007e6256b92c7d9e0"
+    },
+    {
+      "bytes": 454,
+      "path": "deploy/hermes-anti-stall-supervisor.timer",
+      "sha256": "83450752b6b5cc605df942cd3cf66edbc701d08128f6e9a1b1e21e90011c65c3"
+    },
+    {
+      "bytes": 45701,
+      "path": "deploy/validate_deploy.py",
+      "sha256": "e69bc892261a4ef5ba2ac9cc6d8e4991f4a5db06f8254198aef501dc05669be1"
+    },
+    {
+      "bytes": 3371,
+      "path": "docs/parent_evidence/W1_snapshot.md",
+      "sha256": "77541185b72fa564cc934c2f85743bc0eb78ad89704fbd0c8918f3d886b38e60"
+    },
+    {
+      "bytes": 6237,
+      "path": "docs/parent_evidence/W2_decision.md",
+      "sha256": "f0e82d5e84e77a915709d9eecdd72b2ebd0626b9882d24b119351d7a30f495ae"
+    },
+    {
+      "bytes": 6179,
+      "path": "docs/parent_evidence/W3_executor.md",
+      "sha256": "8fd85159e6fb0bbd7eefa85d8a428450333135d49b43185a8ccd5da12aca7663"
+    },
+    {
+      "bytes": 5237,
+      "path": "docs/parent_evidence/W4_runner.md",
+      "sha256": "69b81a52c924e622c40eb74896928f3d1754b966e5a3e1a8cf7e3f0399d6e94c"
+    },
+    {
+      "bytes": 8517,
+      "path": "docs/parent_evidence/W5_deploy.md",
+      "sha256": "4264f8cb27121af1b541a795df301ced5939e3a2b6801c1733e3e8edbbda47b6"
+    },
+    {
+      "bytes": 41968,
+      "path": "executor.py",
+      "sha256": "80131648cf3ad312cad19d0ab0ce3cf35af30661f14bd6c6e557257b1afd093d"
+    },
+    {
+      "bytes": 1887,
+      "path": "policy.json",
+      "sha256": "69ae1284ac158d1654643d71415e5ab641f40b0be171c22fcaa995e258b1b3bf"
+    },
+    {
+      "bytes": 61918,
+      "path": "runner.py",
+      "sha256": "2f990374f05d72dbc6bbc58752a0cdb1c03f0f5e0193e91bf844e604b1e0f40a"
+    },
+    {
+      "bytes": 0,
+      "path": "scripts/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 5256,
+      "path": "scripts/live_dry_run_validate.py",
+      "sha256": "049299b5eff112400101043cf82676731b9e58660ad44e51c3af45cce8955ac5"
+    },
+    {
+      "bytes": 71083,
+      "path": "snapshot.py",
+      "sha256": "2f57dd78fa6088254500010be49f6f4770c1a8cfd33fdecd756c83c3088a683f"
+    },
+    {
+      "bytes": 0,
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "bytes": 29183,
+      "path": "tests/test_decision.py",
+      "sha256": "33666f3f6e6183a72880a37b051f37d1673b7f8a0ab31bcf4a4062f4357e5a7a"
+    },
+    {
+      "bytes": 26029,
+      "path": "tests/test_executor.py",
+      "sha256": "cd778864ecaeace8379a51d4ae562b98bae1459ef3a4443b1a376bc24800565a"
+    },
+    {
+      "bytes": 32614,
+      "path": "tests/test_integration.py",
+      "sha256": "fa4503e2c13f61c91c5130d72b6e9742846e1e395d05725ebc5456b1f85724e7"
+    },
+    {
+      "bytes": 17952,
+      "path": "tests/test_runner.py",
+      "sha256": "abcf2dca91f3fbdb34e039ab6e9f60bd626f16eef2e09a00d4420f08ae28a3bf"
+    },
+    {
+      "bytes": 23206,
+      "path": "tests/test_snapshot.py",
+      "sha256": "67c3dbe7c0ad769065764b0074c10a705c7bf4e1d196305be375abbebaaaa2d7"
+    },
+    {
+      "bytes": 0,
+      "path": "var/.gitkeep",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "parent_sources": {
+    "__main__.py": "INT-authored",
+    "adapters.py": "INT-authored",
+    "decision.py": "staging/.../decision/decision.py",
+    "deploy/*": "staging/.../deploy/* (inert)",
+    "executor.py": "staging/.../executor/executor.py",
+    "policy.json": "staging/.../decision/policy.json",
+    "runner.py": "staging/.../runner/runner.py + INT state_v1 tasks/action_cooldowns preserve",
+    "scripts/live_dry_run_validate.py": "INT-authored",
+    "snapshot.py": "staging/.../snapshot/snapshot.py",
+    "tests/test_integration.py": "INT-authored"
+  },
+  "parents": {
+    "W1": "t_39059a80",
+    "W2": "t_0e0ff6f2",
+    "W3": "t_a1e6e05d",
+    "W4": "t_e048eaa5",
+    "W5": "t_23457e9d"
+  }
+}

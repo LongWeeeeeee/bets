@@ -1,0 +1,278 @@
+{
+  "generated_at": "2026-07-16T17:27:19.967243+00:00",
+  "db": "/root/main/bets_data/analise_pub_matches/kills_window_dict_raw.sqlite3",
+  "pro_dir": "/root/main/pro_heroes_data/json_parts_split_from_object",
+  "parts_glob": "7.41*.json",
+  "parts": [
+    "7.41a_part001.json",
+    "7.41a_part002.json",
+    "7.41b_part001.json",
+    "7.41b_part002.json",
+    "7.41c_part001.json",
+    "7.41c_part002.json",
+    "7.41d_part001.json"
+  ],
+  "tier1_team_ids": 72,
+  "n_matches_scanned": 4659,
+  "n_tier1_matches": 1377,
+  "n_bad_draft": 68,
+  "dict_cache_hits": 41153,
+  "dict_cache_misses": 10312,
+  "elapsed_sec": 2.65,
+  "windows": {
+    "5_15": {
+      "n": 1309,
+      "kill_wr": 0.5278838808250573,
+      "base_map_wr": 0.5194805194805194,
+      "correct_kills": 691,
+      "correct_map": 680,
+      "skip_no_actual": 0,
+      "skip_no_pred": 0,
+      "skip_zero_pred": 0,
+      "buckets": {
+        "0-0.5": {
+          "n": 724,
+          "kill_wr": 0.4654696132596685,
+          "base_map_wr": 0.4972375690607735,
+          "correct_kills": 337,
+          "correct_map": 360
+        },
+        "0.5-1": {
+          "n": 401,
+          "kill_wr": 0.5860349127182045,
+          "base_map_wr": 0.5486284289276808,
+          "correct_kills": 235,
+          "correct_map": 220
+        },
+        "1-2": {
+          "n": 181,
+          "kill_wr": 0.6574585635359116,
+          "base_map_wr": 0.5524861878453039,
+          "correct_kills": 119,
+          "correct_map": 100
+        },
+        "2-3": {
+          "n": 3,
+          "kill_wr": 0.0,
+          "base_map_wr": 0.0,
+          "correct_kills": 0,
+          "correct_map": 0
+        }
+      }
+    },
+    "10_20": {
+      "n": 1293,
+      "kill_wr": 0.5529775715390565,
+      "base_map_wr": 0.5243619489559165,
+      "correct_kills": 715,
+      "correct_map": 678,
+      "skip_no_actual": 16,
+      "skip_no_pred": 0,
+      "skip_zero_pred": 0,
+      "buckets": {
+        "0-0.5": {
+          "n": 700,
+          "kill_wr": 0.5257142857142857,
+          "base_map_wr": 0.51,
+          "correct_kills": 368,
+          "correct_map": 357
+        },
+        "0.5-1": {
+          "n": 397,
+          "kill_wr": 0.5516372795969773,
+          "base_map_wr": 0.5566750629722922,
+          "correct_kills": 219,
+          "correct_map": 221
+        },
+        "1-2": {
+          "n": 189,
+          "kill_wr": 0.6666666666666666,
+          "base_map_wr": 0.5132275132275133,
+          "correct_kills": 126,
+          "correct_map": 97
+        },
+        "2-3": {
+          "n": 7,
+          "kill_wr": 0.2857142857142857,
+          "base_map_wr": 0.42857142857142855,
+          "correct_kills": 2,
+          "correct_map": 3
+        }
+      }
+    },
+    "15_25": {
+      "n": 1253,
+      "kill_wr": 0.5498802873104549,
+      "base_map_wr": 0.524341580207502,
+      "correct_kills": 689,
+      "correct_map": 657,
+      "skip_no_actual": 56,
+      "skip_no_pred": 0,
+      "skip_zero_pred": 0,
+      "buckets": {
+        "0-0.5": {
+          "n": 677,
+          "kill_wr": 0.49039881831610044,
+          "base_map_wr": 0.49926144756277696,
+          "correct_kills": 332,
+          "correct_map": 338
+        },
+        "0.5-1": {
+          "n": 389,
+          "kill_wr": 0.6195372750642674,
+          "base_map_wr": 0.570694087403599,
+          "correct_kills": 241,
+          "correct_map": 222
+        },
+        "1-2": {
+          "n": 181,
+          "kill_wr": 0.6353591160220995,
+          "base_map_wr": 0.5193370165745856,
+          "correct_kills": 115,
+          "correct_map": 94
+        },
+        "2-3": {
+          "n": 6,
+          "kill_wr": 0.16666666666666666,
+          "base_map_wr": 0.5,
+          "correct_kills": 1,
+          "correct_map": 3
+        }
+      }
+    },
+    "20_30": {
+      "n": 1169,
+      "kill_wr": 0.5517536355859709,
+      "base_map_wr": 0.5337895637296834,
+      "correct_kills": 645,
+      "correct_map": 624,
+      "skip_no_actual": 140,
+      "skip_no_pred": 0,
+      "skip_zero_pred": 0,
+      "buckets": {
+        "0-0.5": {
+          "n": 734,
+          "kill_wr": 0.5258855585831063,
+          "base_map_wr": 0.5122615803814714,
+          "correct_kills": 386,
+          "correct_map": 376
+        },
+        "0.5-1": {
+          "n": 340,
+          "kill_wr": 0.5911764705882353,
+          "base_map_wr": 0.5676470588235294,
+          "correct_kills": 201,
+          "correct_map": 193
+        },
+        "1-2": {
+          "n": 92,
+          "kill_wr": 0.6086956521739131,
+          "base_map_wr": 0.5760869565217391,
+          "correct_kills": 56,
+          "correct_map": 53
+        },
+        "2-3": {
+          "n": 2,
+          "kill_wr": 1.0,
+          "base_map_wr": 1.0,
+          "correct_kills": 2,
+          "correct_map": 2
+        },
+        "3+": {
+          "n": 1,
+          "kill_wr": 0.0,
+          "base_map_wr": 0.0,
+          "correct_kills": 0,
+          "correct_map": 0
+        }
+      }
+    }
+  },
+  "top_tier1_teams": [
+    [
+      "GLYPH",
+      97
+    ],
+    [
+      "Roar",
+      94
+    ],
+    [
+      "Team Nemesis",
+      93
+    ],
+    [
+      "Aurora Gaming",
+      88
+    ],
+    [
+      "Zero Tenacity",
+      84
+    ],
+    [
+      "L1GA TEAM",
+      82
+    ],
+    [
+      "REKONIX",
+      78
+    ],
+    [
+      "1win",
+      77
+    ],
+    [
+      "Yellow Submarine",
+      75
+    ],
+    [
+      "PARIVISION",
+      74
+    ],
+    [
+      "4ikibamboni",
+      71
+    ],
+    [
+      "Team Falcons",
+      62
+    ],
+    [
+      "Vici Gaming",
+      60
+    ],
+    [
+      "Team Liquid",
+      60
+    ],
+    [
+      "Xtreme Gaming",
+      59
+    ],
+    [
+      "Team Spirit",
+      57
+    ],
+    [
+      "Natus Vincere",
+      57
+    ],
+    [
+      "BetBoom Team",
+      54
+    ],
+    [
+      "Virtus.pro",
+      45
+    ],
+    [
+      "Team Yandex",
+      39
+    ]
+  ],
+  "scoring": {
+    "kill_wr": "sign(expected_diff) matches strict kill-lead in window; actual==0 lose",
+    "base_map_wr": "predicted kill-lead side wins the map (didRadiantWin)",
+    "zero_pred": "skipped from scored n"
+  }
+}

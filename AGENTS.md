@@ -25,6 +25,7 @@
 | Camoufox / антидетект / парсинг страниц | `docs/CAMOUFOX.md` |
 | sleep-политики, расписания опроса, quiet hours | `docs/SCHEDULING.md` |
 | полного объяснения операционных правил, деплоя, примеров запуска | `docs/RUNTIME_RULES.md` |
+| RuFlo swarm/goals/intelligence/autopilot/AgentDB, миграции anti-stall | `docs/RUFLO_RUNTIME.md` |
 
 > **Правило свежести:** если содержимое дока противоречит реальному коду — **верь коду** и отметь расхождение (док устарел → обнови через subagent `scribe`).
 
@@ -68,6 +69,17 @@ REPLANNING = Planner строит план только под открытые 
 список нерешённых проблем + историю попыток (что менялось и что говорил Reviewer на каждой итерации) + причину выхода (stuck / cycle / limit).
 
 Контракт состояний/переходов и предохранителей закодирован и тестируется в `base/agent_workflow.py` (+ `base/tests/test_agent_workflow.py`); полное описание потока — `docs/MULTI_AGENT_WORKFLOW.md`.
+
+### RuFlo coordination substrate
+
+RuFlo дополняет этот workflow, но не меняет роли/модели/assignee и не обходит Reviewer:
+
+- `ruflo-swarm` — координация независимых lane; общие final-файлы по-прежнему пишет один INT.
+- `ruflo-goals` — GOAP/long-horizon декомпозиция; исполнимые карточки остаются в Hermes kanban.
+- `ruflo-intelligence` + `ruflo-agentdb` — durable patterns/contracts и semantic recall в `.swarm/memory.db`.
+- `ruflo-autopilot` — только явно включённые конечные цели, максимум 3 итерации / 30 минут; по умолчанию выключен. Нельзя использовать для рекурсивного создания cron/kanban или обхода terminal-протокола.
+- Канонические настройки: `claude-flow.config.json`, `.claude-flow/config.yaml`, `.mcp.json`; из-за split-reader Ruflo JSON/YAML держи value-equivalent (см. `docs/RUFLO_RUNTIME.md`).
+- Старый `hermes-anti-stall-supervisor` выведен из эксплуатации; не включай его systemd timer. Проверенные policy/contracts импортированы в AgentDB namespace `ingame-orchestration`, исходники сохранены как audit evidence.
 
 ---
 

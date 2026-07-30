@@ -1,0 +1,13 @@
+{
+  "site": "winline",
+  "url": "https://winline.ru/stavki/event/15356534",
+  "team1": "Winter Bear",
+  "team2": "DOGSENT",
+  "forced_map_num": 2,
+  "body_text": "Winter Bear DOGSENT Победитель 2 карты 1.72 2.10 Матч 1.30 3.15",
+  "expected_odds": [1.72, 2.10],
+  "expected_market_kind": "current_map_winner",
+  "expected_p1_team": "team1",
+  "expected_p2_team": "team2",
+  "provenance": "synthetic_regression_fixture"
+}

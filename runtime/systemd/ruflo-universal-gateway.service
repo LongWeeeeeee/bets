@@ -1,0 +1,32 @@
+[Unit]
+Description=Legacy Ruflo Telegram gateway (orchestration1 and orchestration2)
+After=network-online.target omniroute.service ruflo-orchestrator@orchestration1.service ruflo-orchestrator@orchestration2.service
+Wants=network-online.target ruflo-orchestrator@orchestration1.service ruflo-orchestrator@orchestration2.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/main
+Environment=HOME=/root
+Environment=PYTHONUNBUFFERED=1
+Environment=BOT_1_ENV_FILE=/root/.hermes/profiles/orchestration1/.env
+Environment=BOT_2_ENV_FILE=/root/.hermes/profiles/orchestration2/.env
+Environment=RUFLO_ORCHESTRATORS_ROOT=/root/main/runtime/ruflo-orchestrators
+Environment=RUFLO_BOT_SLOTS=orchestration1,orchestration2
+Environment=RUFLO_OPENROUTER_BASE_URL=http://127.0.0.1:20229
+Environment=RUFLO_PROXY_PORT=20229
+Environment=GATEWAY_STATE_ROOT=/root/.local/state/ruflo-universal-gateway
+Environment=QODER_BIN=/root/.local/bin/qodercli
+Environment=QODER_CONFIG_DIR=/root/.omniroute/qoder-cli
+Environment=QODER_WORKSPACE=/root/main
+LoadCredentialEncrypted=bot3-token:/etc/credstore.encrypted/ruflo-orchestration3-token
+ExecStart=/usr/bin/python3 /opt/ruflo-universal-gateway/gateway.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=45
+KillMode=mixed
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,384 @@
+{
+  "started_at": "2026-07-11T14:11:44.479094+00:00",
+  "finished_at": "2026-07-11T14:12:29.545933+00:00",
+  "elapsed_sec": 45.1,
+  "limit": 20000,
+  "bucket_step": 1.0,
+  "lane_db": "/root/main/bets_data/analise_pub_matches/lane_dict_raw.sqlite3",
+  "matched": 20000,
+  "scored": 20000,
+  "skipped_no_pred": 0,
+  "hits": 11308,
+  "ties_actual": 1785,
+  "overall_wr": 56.5,
+  "method": {
+    "metric": "calculate_lane_kills_advantage → expected_diff",
+    "window": "kills minutes 0-10 (sum radiantKills[:10]-direKills[:10])",
+    "pick": "sign(expected_diff); expected_diff==0 → miss",
+    "tie_rule": "actual_diff==0 counts as LOSE",
+    "sample": "newest N pub matches by startDateTime from 7.41* parts",
+    "note": "in-sample vs lane_dict train (optimistic bias possible)"
+  },
+  "buckets": [
+    {
+      "abs_bucket": 1.0,
+      "range": "(0-1]",
+      "n": 18977,
+      "hits": 10540,
+      "ties_actual": 1718,
+      "wr": 55.5
+    },
+    {
+      "abs_bucket": 2.0,
+      "range": "(1-2]",
+      "n": 1014,
+      "hits": 760,
+      "ties_actual": 66,
+      "wr": 75.0
+    },
+    {
+      "abs_bucket": 3.0,
+      "range": "(2-3]",
+      "n": 9,
+      "hits": 8,
+      "ties_actual": 1,
+      "wr": 88.9
+    }
+  ],
+  "samples": [
+    {
+      "steam_id": 8884306610,
+      "start_time": 1783354064,
+      "expected_diff": -0.327,
+      "actual_diff": -4.0,
+      "abs_expected": 0.327,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.437
+    },
+    {
+      "steam_id": 8884307350,
+      "start_time": 1783354079,
+      "expected_diff": 0.093,
+      "actual_diff": -5.0,
+      "abs_expected": 0.093,
+      "bucket": 1.0,
+      "hit": false,
+      "coverage": 3,
+      "lead_probability": 0.448
+    },
+    {
+      "steam_id": 8884307749,
+      "start_time": 1783354109,
+      "expected_diff": -1.159,
+      "actual_diff": -2.0,
+      "abs_expected": 1.159,
+      "bucket": 2.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.345
+    },
+    {
+      "steam_id": 8884307864,
+      "start_time": 1783354113,
+      "expected_diff": 0.061,
+      "actual_diff": -3.0,
+      "abs_expected": 0.061,
+      "bucket": 1.0,
+      "hit": false,
+      "coverage": 3,
+      "lead_probability": 0.472
+    },
+    {
+      "steam_id": 8884308149,
+      "start_time": 1783354119,
+      "expected_diff": 0.374,
+      "actual_diff": 5.0,
+      "abs_expected": 0.374,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.484
+    },
+    {
+      "steam_id": 8884308425,
+      "start_time": 1783354128,
+      "expected_diff": 0.406,
+      "actual_diff": -3.0,
+      "abs_expected": 0.406,
+      "bucket": 1.0,
+      "hit": false,
+      "coverage": 3,
+      "lead_probability": 0.495
+    },
+    {
+      "steam_id": 8884308324,
+      "start_time": 1783354133,
+      "expected_diff": 0.025,
+      "actual_diff": -7.0,
+      "abs_expected": 0.025,
+      "bucket": 1.0,
+      "hit": false,
+      "coverage": 3,
+      "lead_probability": 0.469
+    },
+    {
+      "steam_id": 8884308455,
+      "start_time": 1783354138,
+      "expected_diff": 0.42,
+      "actual_diff": 1.0,
+      "abs_expected": 0.42,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.498
+    },
+    {
+      "steam_id": 8884309372,
+      "start_time": 1783354148,
+      "expected_diff": 0.36,
+      "actual_diff": -2.0,
+      "abs_expected": 0.36,
+      "bucket": 1.0,
+      "hit": false,
+      "coverage": 3,
+      "lead_probability": 0.495
+    },
+    {
+      "steam_id": 8884308755,
+      "start_time": 1783354149,
+      "expected_diff": -0.711,
+      "actual_diff": -1.0,
+      "abs_expected": 0.711,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.398
+    },
+    {
+      "steam_id": 8884308897,
+      "start_time": 1783354154,
+      "expected_diff": -0.083,
+      "actual_diff": 5.0,
+      "abs_expected": 0.083,
+      "bucket": 1.0,
+      "hit": false,
+      "coverage": 3,
+      "lead_probability": 0.429
+    },
+    {
+      "steam_id": 8884309177,
+      "start_time": 1783354158,
+      "expected_diff": -0.079,
+      "actual_diff": -4.0,
+      "abs_expected": 0.079,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.449
+    },
+    {
+      "steam_id": 8884309067,
+      "start_time": 1783354163,
+      "expected_diff": -0.491,
+      "actual_diff": -6.0,
+      "abs_expected": 0.491,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.426
+    },
+    {
+      "steam_id": 8884309246,
+      "start_time": 1783354169,
+      "expected_diff": 0.068,
+      "actual_diff": -3.0,
+      "abs_expected": 0.068,
+      "bucket": 1.0,
+      "hit": false,
+      "coverage": 3,
+      "lead_probability": 0.465
+    },
+    {
+      "steam_id": 8884309252,
+      "start_time": 1783354169,
+      "expected_diff": -0.063,
+      "actual_diff": -2.0,
+      "abs_expected": 0.063,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.448
+    },
+    {
+      "steam_id": 8884309503,
+      "start_time": 1783354179,
+      "expected_diff": -0.357,
+      "actual_diff": -3.0,
+      "abs_expected": 0.357,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.407
+    },
+    {
+      "steam_id": 8884310162,
+      "start_time": 1783354183,
+      "expected_diff": -0.043,
+      "actual_diff": -5.0,
+      "abs_expected": 0.043,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.45
+    },
+    {
+      "steam_id": 8884310741,
+      "start_time": 1783354203,
+      "expected_diff": 0.41,
+      "actual_diff": 5.0,
+      "abs_expected": 0.41,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.492
+    },
+    {
+      "steam_id": 8884310380,
+      "start_time": 1783354204,
+      "expected_diff": -0.152,
+      "actual_diff": -5.0,
+      "abs_expected": 0.152,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.443
+    },
+    {
+      "steam_id": 8884310516,
+      "start_time": 1783354213,
+      "expected_diff": 0.09,
+      "actual_diff": 3.0,
+      "abs_expected": 0.09,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.459
+    },
+    {
+      "steam_id": 8884310637,
+      "start_time": 1783354214,
+      "expected_diff": -1.147,
+      "actual_diff": 2.0,
+      "abs_expected": 1.147,
+      "bucket": 2.0,
+      "hit": false,
+      "coverage": 3,
+      "lead_probability": 0.36
+    },
+    {
+      "steam_id": 8884310595,
+      "start_time": 1783354224,
+      "expected_diff": 0.51,
+      "actual_diff": -1.0,
+      "abs_expected": 0.51,
+      "bucket": 1.0,
+      "hit": false,
+      "coverage": 3,
+      "lead_probability": 0.513
+    },
+    {
+      "steam_id": 8884310765,
+      "start_time": 1783354224,
+      "expected_diff": 0.057,
+      "actual_diff": 3.0,
+      "abs_expected": 0.057,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.455
+    },
+    {
+      "steam_id": 8884310804,
+      "start_time": 1783354228,
+      "expected_diff": 0.17,
+      "actual_diff": 13.0,
+      "abs_expected": 0.17,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.477
+    },
+    {
+      "steam_id": 8884311083,
+      "start_time": 1783354238,
+      "expected_diff": -0.533,
+      "actual_diff": -2.0,
+      "abs_expected": 0.533,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.4
+    },
+    {
+      "steam_id": 8884311065,
+      "start_time": 1783354239,
+      "expected_diff": 0.01,
+      "actual_diff": 1.0,
+      "abs_expected": 0.01,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.453
+    },
+    {
+      "steam_id": 8884311795,
+      "start_time": 1783354272,
+      "expected_diff": 0.79,
+      "actual_diff": 3.0,
+      "abs_expected": 0.79,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.518
+    },
+    {
+      "steam_id": 8884312071,
+      "start_time": 1783354284,
+      "expected_diff": 0.024,
+      "actual_diff": -3.0,
+      "abs_expected": 0.024,
+      "bucket": 1.0,
+      "hit": false,
+      "coverage": 3,
+      "lead_probability": 0.466
+    },
+    {
+      "steam_id": 8884312347,
+      "start_time": 1783354284,
+      "expected_diff": -0.112,
+      "actual_diff": -4.0,
+      "abs_expected": 0.112,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.448
+    },
+    {
+      "steam_id": 8884312615,
+      "start_time": 1783354293,
+      "expected_diff": 0.206,
+      "actual_diff": 3.0,
+      "abs_expected": 0.206,
+      "bucket": 1.0,
+      "hit": true,
+      "coverage": 3,
+      "lead_probability": 0.456
+    }
+  ],
+  "time_range": {
+    "min_start": 1783354064,
+    "max_start": 1783543804
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "site": "winline",
+  "url": "https://winline.ru/stavki/event/15356534",
+  "team1": "Winter Bear",
+  "team2": "DOGSENT",
+  "forced_map_num": 2,
+  "body_text": "Live esports 2К 1.52 2.45 Матч 1.30 3.15",
+  "expected_odds": [],
+  "reject_reason_contains": "ambiguous",
+  "provenance": "synthetic_regression_fixture"
+}

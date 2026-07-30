@@ -19,16 +19,28 @@ def _add_precise_matchup(
     dire_pos: str,
     wr: float = 60.0,
     games: int = 20,
+    *,
+    lane_adv: float | None = None,
 ) -> None:
     radiant_key = protracker._hero_norm_key(radiant_hero)
     dire_key = protracker._hero_norm_key(dire_hero)
     radiant_pos_num = protracker.POSITION_MAP[radiant_pos]
     dire_pos_num = protracker.POSITION_MAP[dire_pos]
     entry = hero_data.setdefault(radiant_key, {"_matchups_by_hero_pos": {}})
-    entry["_matchups_by_hero_pos"].setdefault(dire_key, {}).setdefault(dire_pos_num, {})[radiant_pos_num] = {
+    entry.setdefault("_matchups_by_hero_pos", {}).setdefault(dire_key, {}).setdefault(dire_pos_num, {})[radiant_pos_num] = {
         "wr": wr,
         "games": games,
+        "diff": wr - 50.0,
+        "metric": "match_wr",
     }
+    if lane_adv is not None:
+        entry.setdefault("_matchups_lane_by_hero_pos", {}).setdefault(dire_key, {}).setdefault(dire_pos_num, {})[radiant_pos_num] = {
+            "lane_adv": lane_adv,
+            "games": games,
+            "wr": 50.0 + lane_adv,
+            "diff": lane_adv,
+            "metric": "lane_adv",
+        }
 
 
 def _add_precise_synergy(
@@ -39,6 +51,8 @@ def _add_precise_synergy(
     pos2: str,
     wr: float = 60.0,
     games: int = 20,
+    *,
+    lane_adv: float | None = None,
 ) -> None:
     hero1_key = protracker._hero_norm_key(hero1)
     hero2_key = protracker._hero_norm_key(hero2)
@@ -48,7 +62,16 @@ def _add_precise_synergy(
     entry.setdefault("_synergies_by_hero_pos", {}).setdefault(hero2_key, {}).setdefault(pos2_num, {})[pos1_num] = {
         "wr": wr,
         "games": games,
+        "metric": "match_wr",
     }
+    if lane_adv is not None:
+        entry.setdefault("_synergies_lane_by_hero_pos", {}).setdefault(hero2_key, {}).setdefault(pos2_num, {})[pos1_num] = {
+            "lane_adv": lane_adv,
+            "games": games,
+            "wr": 50.0 + lane_adv,
+            "diff": lane_adv,
+            "metric": "lane_adv",
+        }
 
 
 def _pro_core_sides() -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
@@ -71,7 +94,16 @@ def test_global_pro_cp1vs1_accepts_two_of_three_core_matchups() -> None:
     ):
         radiant_hero = dict(radiant)[radiant_pos]
         dire_hero = dict(dire)[dire_pos]
-        _add_precise_matchup(hero_data, radiant_hero, dire_hero, radiant_pos, dire_pos)
+        _add_precise_matchup(
+            hero_data,
+            radiant_hero,
+            dire_hero,
+            radiant_pos,
+            dire_pos,
+            wr=60.0,
+            games=20,
+            lane_adv=6.0,
+        )
 
     valid, data = protracker._calculate_cp1vs1_all_positions(
         radiant_positions=radiant,
@@ -99,7 +131,7 @@ def test_global_pro_cp1vs1_rejects_one_of_three_core_matchups() -> None:
     ):
         radiant_hero = dict(radiant)[radiant_pos]
         dire_hero = dict(dire)[dire_pos]
-        _add_precise_matchup(hero_data, radiant_hero, dire_hero, radiant_pos, dire_pos)
+        _add_precise_matchup(hero_data, radiant_hero, dire_hero, radiant_pos, dire_pos, wr=60.0, games=20, lane_adv=6.0)
 
     valid, data = protracker._calculate_cp1vs1_all_positions(
         radiant_positions=radiant,
@@ -135,6 +167,7 @@ def test_global_pro_cp1vs1_core_support_mode_uses_role_position_variants() -> No
             stored_dire_pos,
             wr=61.0,
             games=20,
+            lane_adv=11.0,
         )
 
     exact_valid, exact_data = protracker._calculate_cp1vs1_all_positions(
@@ -322,7 +355,7 @@ def test_calculate_lane_advantage_uses_team_specific_lane_pairs(monkeypatch) -> 
         ("RadiantCarry", "RadiantHard", "pos1", "pos5", "DireOfflane", "DireSoft", "pos3", "pos4"): (15.34, 240),
     }
 
-    def fake_get_matchup_1v1(_hero_data, r_hero, d_hero, r_pos, d_pos, _min_games):
+    def fake_get_matchup_1v1(_hero_data, r_hero, d_hero, r_pos, d_pos, _min_games, **_kwargs):
         return cp_values.get((r_hero, d_hero, r_pos, d_pos), (None, 0))
 
     def fake_get_duo_synergy_pair(
@@ -336,11 +369,18 @@ def test_calculate_lane_advantage_uses_team_specific_lane_pairs(monkeypatch) -> 
         d_pos1,
         d_pos2,
         _min_games,
+        **kwargs,
     ):
-        return duo_values.get(
+        metric = kwargs.get("metric", "match_wr")
+        # Existing fixture values represent match-WR duo; for lane metric return a
+        # distinct lane sample so aggregate no longer mixes targets silently.
+        base = duo_values.get(
             (r_hero1, r_hero2, r_pos1, r_pos2, d_hero1, d_hero2, d_pos1, d_pos2),
             (None, 0),
         )
+        if metric == "lane_adv" and base[0] is not None:
+            return (base[0] * 0.1, base[1])  # lane sample distinct from match WR
+        return base
 
     monkeypatch.setattr(protracker, "_get_matchup_1v1", fake_get_matchup_1v1)
     monkeypatch.setattr(protracker, "_get_duo_synergy_pair", fake_get_duo_synergy_pair)
@@ -359,14 +399,24 @@ def test_calculate_lane_advantage_uses_team_specific_lane_pairs(monkeypatch) -> 
     assert result["top"]["cp1vs1_valid"] is True
     assert result["top"]["duo"] == 34.15
     assert result["top"]["duo_valid"] is True
+    assert result["top"]["duo_lane"] == 3.415
+    assert result["top"]["duo_lane_valid"] is True
 
     assert result["bot"]["cp1vs1"] == 33.5
     assert result["bot"]["cp1vs1_valid"] is True
     assert result["bot"]["duo"] == 15.34
     assert result["bot"]["duo_valid"] is True
+    assert result["bot"]["duo_lane"] == 1.534
+    assert result["bot"]["duo_lane_valid"] is True
 
     assert result["top"]["cp1vs1"] != -result["bot"]["cp1vs1"]
     assert result["top"]["duo"] != -result["bot"]["duo"]
+    assert result["duo_metric"] == "match_wr"
+    assert result["lane_metric"] == "lane_adv"
+    # lane_advantage must average only lane components (cp + duo_lane), not match-WR duo
+    expected_lane = (22.0 + 38.0 + 33.5 + 3.415 + 1.534) / 5.0
+    assert abs(result["lane_advantage"] - expected_lane) < 1e-9
+    assert abs(result["lane_advantage"] - ((22.0 + 38.0 + 33.5 + 34.15 + 15.34) / 5.0)) > 1.0
 
 
 def test_calculate_lane_advantage_core_support_mode_uses_side_role_variants() -> None:
@@ -392,6 +442,7 @@ def test_calculate_lane_advantage_core_support_mode_uses_side_role_variants() ->
         ("RadiantSoft", "DireCarry", "pos5", "pos3", 63.0),
         ("RadiantSoft", "DireHard", "pos5", "pos4", 64.0),
     ):
+        # lane_adv = wr-50 so role-variant lane math stays 12.5 as before
         _add_precise_matchup(
             hero_data,
             radiant_hero,
@@ -400,6 +451,7 @@ def test_calculate_lane_advantage_core_support_mode_uses_side_role_variants() ->
             stored_dire_pos,
             wr=wr,
             games=20,
+            lane_adv=wr - 50.0,
         )
 
     _add_precise_synergy(
@@ -410,6 +462,7 @@ def test_calculate_lane_advantage_core_support_mode_uses_side_role_variants() ->
         "pos5",
         wr=60.0,
         games=20,
+        lane_adv=10.0,
     )
     _add_precise_synergy(
         hero_data,
@@ -419,6 +472,7 @@ def test_calculate_lane_advantage_core_support_mode_uses_side_role_variants() ->
         "pos4",
         wr=52.0,
         games=20,
+        lane_adv=2.0,
     )
 
     exact_result = protracker.calculate_lane_advantage(
@@ -441,3 +495,91 @@ def test_calculate_lane_advantage_core_support_mode_uses_side_role_variants() ->
     assert role_result["top"]["duo_valid"] is True
     assert role_result["top"]["cp1vs1"] == 12.5
     assert role_result["top"]["duo"] == 8.0
+
+def test_lane_adv_not_equal_match_wr_proxy() -> None:
+    """lane_adv path must use lane field, not wr-50 match proxy."""
+    hero_data: dict = {}
+    # Match WR says +20 (wr=70), true lane_adv is -7.0 like Necrophos screenshot.
+    _add_precise_matchup(
+        hero_data,
+        "BountyHunter",
+        "Necrophos",
+        "pos4",
+        "pos1",
+        wr=70.0,
+        games=298,
+        lane_adv=-7.0,
+    )
+    match_diff, _ = protracker._get_matchup_1v1(
+        hero_data, "BountyHunter", "Necrophos", "pos4", "pos1", min_games=10, metric="match_wr"
+    )
+    lane_diff, games = protracker._get_matchup_1v1(
+        hero_data, "BountyHunter", "Necrophos", "pos4", "pos1", min_games=10, metric="lane_adv"
+    )
+    assert match_diff == 20.0
+    assert lane_diff == -7.0
+    assert games == 298
+    assert lane_diff != match_diff
+
+
+def test_lane_adv_reverse_sign() -> None:
+    hero_data: dict = {}
+    # Only reverse page has data: Dire hero page vs Radiant.
+    _add_precise_matchup(
+        hero_data,
+        "Necrophos",
+        "BountyHunter",
+        "pos1",
+        "pos4",
+        wr=55.0,
+        games=100,
+        lane_adv=7.0,  # from Necrophos page: Necrophos has +7 lane vs BH
+    )
+    lane_diff, games = protracker._get_matchup_1v1(
+        hero_data, "BountyHunter", "Necrophos", "pos4", "pos1", min_games=10, metric="lane_adv"
+    )
+    # Reverse: BH vs Necrophos should negate Necrophos-page lane_adv
+    assert lane_diff == -7.0
+    assert games == 100
+
+
+def test_synergy_duo_match_wr_separate_from_lane_duo() -> None:
+    hero_data: dict = {}
+    _add_precise_synergy(
+        hero_data, "RadOff", "RadSoft", "pos3", "pos4", wr=58.0, games=100, lane_adv=0.6
+    )
+    _add_precise_synergy(
+        hero_data, "DireCarry", "DireHard", "pos1", "pos5", wr=50.0, games=100, lane_adv=-1.2
+    )
+    match_pair, g1 = protracker._get_duo_synergy_pair(
+        hero_data,
+        "RadOff", "RadSoft", "pos3", "pos4",
+        "DireCarry", "DireHard", "pos1", "pos5",
+        min_games=10,
+        metric="match_wr",
+    )
+    lane_pair, g2 = protracker._get_duo_synergy_pair(
+        hero_data,
+        "RadOff", "RadSoft", "pos3", "pos4",
+        "DireCarry", "DireHard", "pos1", "pos5",
+        min_games=10,
+        metric="lane_adv",
+    )
+    # Radiant duo match wr diff 8, Dire 0 => pair +8
+    assert match_pair == 8.0
+    # Radiant lane 0.6, Dire -1.2 => pair 1.8
+    assert abs(lane_pair - 1.8) < 1e-9
+    assert match_pair != lane_pair
+    assert g1 == 200 and g2 == 200
+
+
+def test_missing_lane_field_returns_none_not_zero() -> None:
+    hero_data: dict = {}
+    # Only match-WR stored, no lane map
+    _add_precise_matchup(hero_data, "A", "B", "pos2", "pos2", wr=66.0, games=30)
+    lane_diff, games = protracker._get_matchup_1v1(
+        hero_data, "A", "B", "pos2", "pos2", min_games=10, metric="lane_adv"
+    )
+    assert lane_diff is None
+    assert games == 0
+

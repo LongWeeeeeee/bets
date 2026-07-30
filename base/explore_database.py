@@ -3,9 +3,9 @@
 
 Оптимизировано для больших json part-файлов:
 - входные файлы читаются потоково через ijson, без json.load на 500MB файл;
-- внутренние счетчики хранятся компактно как mutable list [wins, draws, games]
-  или packed-int при EXPLORE_COUNTER_MODE=packed;
-- на диск сохраняется прежний формат {"wins": N, "draws": N, "games": N}.
+- счетчики ограничены batch-лимитами и UPSERT-ятся в staging SQLite;
+- production-файлы не меняются до commit/quick_check всех выбранных метрик;
+- публикация каждого готового файла выполняется одним os.replace().
 """
 
 from __future__ import annotations
@@ -20,14 +20,18 @@ import sys
 import time
 import zlib
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent
 ROOT_DIR = BASE_DIR.parent
-for path in (str(BASE_DIR), str(ROOT_DIR)):
-    if path not in sys.path:
-        sys.path.insert(0, path)
+# Prefer base/ over project root so legacy root-level maps_research.py does not
+# shadow base/maps_research.py (broken hero_valid paths → 0 train matches).
+for path in (str(ROOT_DIR), str(BASE_DIR)):
+    if path in sys.path:
+        sys.path.remove(path)
+    sys.path.insert(0, path)
 
 try:
     import ijson
@@ -49,26 +53,35 @@ DEFAULT_TEST_SET_PATH = Path("/Users/alex/Documents/ingame/bets_data/analise_pub
 DEFAULT_STATS_DIR = Path("/Users/alex/Documents/ingame/bets_data/analise_pub_matches")
 PROGRESS_EVERY = int(os.getenv("EXPLORE_PROGRESS_EVERY", "50000"))
 COUNTER_MODE = os.getenv("EXPLORE_COUNTER_MODE", "list").strip().lower()
-SHARD_PER_FILE = os.getenv("EXPLORE_SHARD_PER_FILE", "1").strip().lower() not in {"0", "false", "no"}
-MERGE_PARTITIONS = max(1, int(os.getenv("EXPLORE_MERGE_PARTITIONS", "64") or "64"))
 KEEP_SHARDS = os.getenv("EXPLORE_KEEP_SHARDS", "0").strip().lower() in {"1", "true", "yes"}
 WRITE_JSON = os.getenv("EXPLORE_WRITE_JSON", "0").strip().lower() in {"1", "true", "yes"}
 SQLITE_INSERT_BATCH = 5000
+# Staging rebuild writers are disposable; prefer RAM page cache + exclusive lock.
+SQLITE_CACHE_SIZE_KIB = -max(64 * 1024, int(os.getenv("EXPLORE_SQLITE_CACHE_KIB", str(512 * 1024)) or str(512 * 1024)))
+SQLITE_MMAP_SIZE = max(0, int(os.getenv("EXPLORE_SQLITE_MMAP_BYTES", str(512 * 1024 * 1024)) or str(512 * 1024 * 1024)))
+FLUSH_MATCH_LIMIT = max(1, int(os.getenv("EXPLORE_FLUSH_MATCHES", "5000") or "5000"))
+FLUSH_KEY_LIMIT = max(1, int(os.getenv("EXPLORE_FLUSH_KEYS", "1000000") or "1000000"))
 COUNTER_BITS = 24
 COUNTER_MASK = (1 << COUNTER_BITS) - 1
-ALL_METRICS = ("lane", "early", "late", "post_lane")
+ALL_METRICS = ("lane", "early", "early_end", "late", "post_lane", "kills_window")
 OUTPUTS_BY_METRIC = {
     "lane": "lane_dict_raw.json",
     "early": "early_dict_raw.json",
+    "early_end": "early_end_dict_raw.json",
     "late": "late_dict_raw.json",
     "post_lane": "post_lane_dict_raw.json",
+    "kills_window": "kills_window_dict_raw.json",
 }
 LABELS_BY_METRIC = {
     "lane": "Lane",
-    "early": "Early",
+    "early": "Early(NW)",
+    "early_end": "Early(end)",
     "late": "Late",
     "post_lane": "Post-lane",
+    "kills_window": "Kills-window",
 }
+# Direct-sqlite metrics use columnar stats tables (not kv blob).
+DIRECT_SQLITE_METRICS = ("lane", "kills_window")
 
 
 def _rss_mb() -> float:
@@ -215,6 +228,63 @@ def _lane_stats_values(stats) -> tuple[int, int, int, int, int, int, float, floa
     return wins, draws, games, 0, 0, 0, 0.0, 0.0
 
 
+def _kills_window_column_names() -> list[str]:
+    labels = list(analise_database_module.KILLS_WINDOW_LABELS)
+    cols: list[str] = []
+    for label in labels:
+        cols.extend(
+            [
+                f"kills_{label}_leads",
+                f"kills_{label}_draws",
+                f"kills_{label}_games",
+                f"kills_{label}_diff_sum",
+                f"kills_{label}_diff_sq_sum",
+            ]
+        )
+    return cols
+
+
+def _kills_window_stats_values(stats) -> tuple:
+    """Normalize list/dict kill-window counters to the fixed column order."""
+    labels = list(analise_database_module.KILLS_WINDOW_LABELS)
+    expected = len(labels) * 5
+    if isinstance(stats, list):
+        values = list(stats[:expected]) + [0] * max(0, expected - len(stats))
+        out = []
+        for index in range(len(labels)):
+            base = index * 5
+            out.extend(
+                [
+                    int(values[base] or 0),
+                    int(values[base + 1] or 0),
+                    int(values[base + 2] or 0),
+                    float(values[base + 3] or 0.0),
+                    float(values[base + 4] or 0.0),
+                ]
+            )
+        return tuple(out)
+    if isinstance(stats, dict):
+        out = []
+        for label in labels:
+            out.extend(
+                [
+                    int(stats.get(f"kills_{label}_leads", 0) or 0),
+                    int(stats.get(f"kills_{label}_draws", 0) or 0),
+                    int(stats.get(f"kills_{label}_games", 0) or 0),
+                    float(stats.get(f"kills_{label}_diff_sum", 0.0) or 0.0),
+                    float(stats.get(f"kills_{label}_diff_sq_sum", 0.0) or 0.0),
+                ]
+            )
+        return tuple(out)
+    return tuple([0, 0, 0, 0.0, 0.0] * len(labels))
+
+
+def _kills_window_stats_games(stats) -> int:
+    values = _kills_window_stats_values(stats)
+    # max games across windows (one match can fill several windows)
+    return max((int(values[i]) for i in range(2, len(values), 5)), default=0)
+
+
 def _dump_stats_dict(stats_dict: dict, path: Path) -> None:
     """Пишет прежний JSON-формат без промежуточной полной конвертации в dict."""
     tmp_path = path.with_suffix(path.suffix + ".tmp")
@@ -257,14 +327,24 @@ def _encode_meta_blob(value) -> bytes:
     return json.dumps(value, separators=(",", ":")).encode("utf-8")
 
 
+def _apply_staging_sqlite_pragmas(conn: sqlite3.Connection) -> None:
+    """Speed-oriented PRAGMAs for disposable staging rebuild DBs."""
+    conn.execute("PRAGMA journal_mode=OFF")
+    conn.execute("PRAGMA synchronous=OFF")
+    conn.execute("PRAGMA temp_store=MEMORY")
+    conn.execute("PRAGMA locking_mode=EXCLUSIVE")
+    conn.execute(f"PRAGMA cache_size={SQLITE_CACHE_SIZE_KIB}")
+    if SQLITE_MMAP_SIZE > 0:
+        conn.execute(f"PRAGMA mmap_size={SQLITE_MMAP_SIZE}")
+
+
 def _open_sqlite_stats_writer(tmp_path: Path) -> sqlite3.Connection:
     """Open tmp sqlite, apply PRAGMAs, create kv/meta tables."""
     if tmp_path.exists():
         raise FileExistsError(f"sqlite temp already exists: {tmp_path}")
     conn = sqlite3.connect(str(tmp_path))
-    conn.execute("PRAGMA journal_mode=OFF")
-    conn.execute("PRAGMA synchronous=OFF")
     conn.execute("PRAGMA page_size=8192")
+    _apply_staging_sqlite_pragmas(conn)
     conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value BLOB)")
     conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB)")
     return conn
@@ -313,6 +393,248 @@ def _flush_sqlite_batch(conn: sqlite3.Connection, batch: list) -> None:
         return
     conn.executemany("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", batch)
     batch.clear()
+
+
+def _open_kv_accumulator(temp_path: Path) -> sqlite3.Connection:
+    """Open a publishable staging DB that sums bounded in-memory batches."""
+    if temp_path.exists():
+        raise FileExistsError(f"kv sqlite temp already exists: {temp_path}")
+    conn = sqlite3.connect(str(temp_path))
+    conn.execute("PRAGMA page_size=8192")
+    _apply_staging_sqlite_pragmas(conn)
+    conn.execute(
+        """CREATE TABLE kv (
+            key TEXT PRIMARY KEY,
+            value BLOB,
+            wins INTEGER NOT NULL,
+            draws INTEGER NOT NULL,
+            games INTEGER NOT NULL
+        ) WITHOUT ROWID"""
+    )
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value BLOB) WITHOUT ROWID")
+    return conn
+
+
+def _upsert_kv_stats(conn: sqlite3.Connection, stats_dict: dict) -> None:
+    # Fast path: rebuild accumulators are almost always compact list counters.
+    rows = []
+    append = rows.append
+    for key, stats in stats_dict.items():
+        if isinstance(stats, list) and len(stats) >= 3:
+            append((str(key), None, int(stats[0]), int(stats[1]), int(stats[2])))
+        else:
+            wins, draws, games = _stats_values(stats)
+            append((str(key), None, wins, draws, games))
+    conn.executemany(
+        """INSERT INTO kv VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+            value=NULL,
+            wins=wins+excluded.wins,
+            draws=draws+excluded.draws,
+            games=games+excluded.games""",
+        rows,
+    )
+
+
+@dataclass(frozen=True)
+class _PreparedKvBuild:
+    metric: str
+    entries: int
+    games: int
+    staging_path: Path
+    publish_path: Path
+
+
+class _OwnedKvSqliteBuild:
+    """Accumulate one metric on disk and publish it only after validation."""
+
+    def __init__(self, metric: str):
+        self.metric = metric
+        self.conn: sqlite3.Connection | None = None
+        self.temp_path: Path | None = None
+        self.publish_path: Path | None = None
+        self.output_path: Path | None = None
+        self.prepared: _PreparedKvBuild | None = None
+
+    def open(self, temp_path: Path) -> sqlite3.Connection:
+        if self.conn is not None or self.temp_path is not None:
+            raise RuntimeError(f"{self.metric} sqlite build is already open")
+        temp_path.parent.mkdir(parents=True, exist_ok=True)
+        self.temp_path = temp_path
+        self.conn = _open_kv_accumulator(temp_path)
+        return self.conn
+
+    def upsert(self, stats_dict: dict) -> None:
+        if self.conn is None:
+            raise RuntimeError(f"{self.metric} sqlite build is not open")
+        if stats_dict:
+            _upsert_kv_stats(self.conn, stats_dict)
+
+    def prepare(self, output_path: Path) -> _PreparedKvBuild:
+        if self.conn is None or self.temp_path is None:
+            raise RuntimeError(f"{self.metric} sqlite build is not open")
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        entries, games = self.conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(games), 0) FROM kv"
+        ).fetchone()
+        if int(entries) <= 0:
+            raise RuntimeError(f"refusing to publish empty {self.metric} sqlite")
+
+        # Single-pass rewrite into the runtime-compatible kv(key,value) shape.
+        # Avoids the previous UPDATE-all-rows + CREATE/INSERT/DROP copy.
+        self.conn.execute(
+            "CREATE TABLE kv_final (key TEXT PRIMARY KEY, value BLOB NOT NULL) WITHOUT ROWID"
+        )
+        cursor = self.conn.execute("SELECT key, wins, draws, games FROM kv")
+        insert_sql = "INSERT INTO kv_final (key, value) VALUES (?, ?)"
+        while True:
+            rows = cursor.fetchmany(SQLITE_INSERT_BATCH)
+            if not rows:
+                break
+            self.conn.executemany(
+                insert_sql,
+                (
+                    (
+                        str(key),
+                        sqlite3.Binary(_encode_stats_blob([wins, draws, row_games])),
+                    )
+                    for key, wins, draws, row_games in rows
+                ),
+            )
+        self.conn.execute("DROP TABLE kv")
+        self.conn.execute("ALTER TABLE kv_final RENAME TO kv")
+        _write_sqlite_meta(
+            self.conn,
+            source_name=output_path.name,
+            source_size=0,
+            source_mtime_ns=0,
+            entries=int(entries),
+        )
+        self.conn.commit()
+        integrity = self.conn.execute("PRAGMA quick_check").fetchone()
+        if not integrity or integrity[0] != "ok":
+            raise RuntimeError(f"{self.metric} staging sqlite failed quick_check: {integrity}")
+        self.conn.close()
+        self.conn = None
+
+        self.publish_path = self.temp_path
+        self.output_path = output_path
+        self.prepared = _PreparedKvBuild(
+            metric=self.metric,
+            entries=int(entries),
+            games=int(games),
+            staging_path=self.temp_path,
+            publish_path=self.temp_path,
+        )
+        return self.prepared
+
+    def publish(self) -> _PreparedKvBuild:
+        if self.prepared is None or self.publish_path is None or self.output_path is None:
+            raise RuntimeError(f"{self.metric} sqlite build is not prepared")
+        prepared = self.prepared
+        os.replace(self.publish_path, self.output_path)
+        self.publish_path = None
+        prepared.staging_path.unlink(missing_ok=True)
+        self.temp_path = None
+        self.output_path = None
+        self.prepared = None
+        return prepared
+
+    def rollback(self) -> None:
+        if self.conn is not None:
+            try:
+                self.conn.close()
+            finally:
+                self.conn = None
+        if self.publish_path is not None:
+            self.publish_path.unlink(missing_ok=True)
+        if self.temp_path is not None:
+            self.temp_path.unlink(missing_ok=True)
+        self.publish_path = None
+        self.temp_path = None
+        self.output_path = None
+        self.prepared = None
+
+
+def _prepare_and_publish_kv_builds(
+    builds: list[_OwnedKvSqliteBuild], outputs: dict[str, Path]
+) -> dict[str, _PreparedKvBuild]:
+    prepared = {}
+    for build in builds:
+        prepared[build.metric] = build.prepare(outputs[build.metric])
+    for build in builds:
+        build.publish()
+    return prepared
+
+
+def _prepare_and_publish_enabled_builds(
+    *,
+    metric_names: tuple[str, ...],
+    outputs: dict[str, Path],
+    lane_build: _OwnedLaneSqliteBuild,
+    kills_window_build: _OwnedKillsWindowSqliteBuild | None,
+    kv_builds: dict[str, _OwnedKvSqliteBuild],
+) -> dict[str, tuple[int, int]]:
+    """Prepare every enabled artifact, then and only then publish any of them."""
+    prepared_summary: dict[str, tuple[int, int]] = {}
+    ordered_builds = []
+    for metric in metric_names:
+        if metric == "lane":
+            build = lane_build
+        elif metric == "kills_window":
+            if kills_window_build is None:
+                raise RuntimeError("kills_window metric enabled but no owned build provided")
+            build = kills_window_build
+        else:
+            build = kv_builds[metric]
+        result = build.prepare(outputs[metric])
+        if isinstance(result, _PreparedKvBuild):
+            prepared_summary[metric] = (result.entries, result.games)
+        else:
+            prepared_summary[metric] = (int(result[0]), int(result[1]))
+        ordered_builds.append(build)
+
+    for build in ordered_builds:
+        build.publish()
+    return prepared_summary
+
+
+def _should_flush_metric_batches(
+    metric_dicts: dict[str, dict | None],
+    *,
+    matches_since_flush: int,
+    match_limit: int = FLUSH_MATCH_LIMIT,
+    key_limit: int = FLUSH_KEY_LIMIT,
+) -> bool:
+    if matches_since_flush >= match_limit:
+        return True
+    total_keys = sum(len(data) for data in metric_dicts.values() if data is not None)
+    return total_keys >= key_limit
+
+
+def _flush_metric_batches(
+    *,
+    metric_dicts: dict[str, dict | None],
+    kv_builds: dict[str, _OwnedKvSqliteBuild],
+    lane_conn: sqlite3.Connection | None,
+    kills_window_conn: sqlite3.Connection | None,
+) -> None:
+    """Persist the current bounded batch, then release all accumulator dicts."""
+    lane_dict = metric_dicts.get("lane")
+    if lane_conn is not None and lane_dict:
+        _upsert_lane_stats(lane_conn, lane_dict)
+    kills_dict = metric_dicts.get("kills_window")
+    if kills_window_conn is not None and kills_dict:
+        _upsert_kills_window_stats(kills_window_conn, kills_dict)
+    for metric, build in kv_builds.items():
+        data = metric_dicts.get(metric)
+        if data:
+            build.upsert(data)
+    for data in metric_dicts.values():
+        if data is not None:
+            data.clear()
+    gc.collect()
 
 
 def _dump_stats_dict_to_sqlite(stats_dict: dict, sqlite_path: Path) -> tuple[int, int]:
@@ -390,9 +712,8 @@ def _merge_stats_into(target: dict, key, stats) -> None:
 def _open_lane_sqlite(temp_path: Path) -> sqlite3.Connection:
     """Create the direct-build lane database at a fresh temporary path."""
     conn = sqlite3.connect(str(temp_path))
-    conn.execute("PRAGMA journal_mode=OFF")
-    conn.execute("PRAGMA synchronous=OFF")
     conn.execute("PRAGMA page_size=8192")
+    _apply_staging_sqlite_pragmas(conn)
     conn.execute(
         """CREATE TABLE stats (
             key TEXT PRIMARY KEY,
@@ -411,10 +732,25 @@ def _open_lane_sqlite(temp_path: Path) -> sqlite3.Connection:
 
 
 def _upsert_lane_stats(conn: sqlite3.Connection, lane_dict: dict) -> None:
-    rows = (
-        (str(key), *_lane_stats_values(stats))
-        for key, stats in lane_dict.items()
-    )
+    rows = []
+    append = rows.append
+    for key, stats in lane_dict.items():
+        if isinstance(stats, list) and len(stats) >= 8:
+            append(
+                (
+                    str(key),
+                    int(stats[0]),
+                    int(stats[1]),
+                    int(stats[2]),
+                    int(stats[3]),
+                    int(stats[4]),
+                    int(stats[5]),
+                    float(stats[6]),
+                    float(stats[7]),
+                )
+            )
+        else:
+            append((str(key), *_lane_stats_values(stats)))
     conn.executemany(
         """INSERT INTO stats VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(key) DO UPDATE SET
@@ -428,7 +764,6 @@ def _upsert_lane_stats(conn: sqlite3.Connection, lane_dict: dict) -> None:
             kills10_diff_sq_sum=kills10_diff_sq_sum+excluded.kills10_diff_sq_sum""",
         rows,
     )
-    conn.commit()
 
 
 def _finalize_lane_sqlite(conn: sqlite3.Connection, temp_path: Path, output_path: Path) -> tuple[int, int]:
@@ -443,6 +778,128 @@ def _finalize_lane_sqlite(conn: sqlite3.Connection, temp_path: Path, output_path
         conn.close()
     temp_path.replace(output_path)
     return int(entries), int(games)
+
+
+def _prepare_lane_sqlite(
+    conn: sqlite3.Connection, temp_path: Path, output_path: Path
+) -> tuple[int, int, Path]:
+    """Validate and close lane staging without touching the production path."""
+    entries, games = conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(games), 0) FROM stats"
+    ).fetchone()
+    if int(entries) <= 0:
+        raise RuntimeError("refusing to publish empty lane sqlite")
+    encode = orjson.dumps if orjson is not None else lambda value: json.dumps(value).encode()
+    meta = {"format_version": 2, "backend": "sqlite_stats", "entries": int(entries)}
+    for key, value in meta.items():
+        conn.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, sqlite3.Binary(encode(value))))
+    conn.commit()
+    check = conn.execute("PRAGMA quick_check").fetchone()
+    if not check or check[0] != "ok":
+        raise RuntimeError(f"lane staging sqlite failed quick_check: {check}")
+    conn.close()
+    return int(entries), int(games), Path(output_path)
+
+
+def _open_kills_window_sqlite(temp_path: Path) -> sqlite3.Connection:
+    """Create the direct-build multi-window kills database at a temp path."""
+    cols = _kills_window_column_names()
+    col_sql = ",\n            ".join(
+        f"{name} {'REAL' if name.endswith(('_diff_sum', '_diff_sq_sum')) else 'INTEGER'} NOT NULL"
+        for name in cols
+    )
+    conn = sqlite3.connect(str(temp_path))
+    conn.execute("PRAGMA page_size=8192")
+    _apply_staging_sqlite_pragmas(conn)
+    conn.execute(
+        f"""CREATE TABLE stats (
+            key TEXT PRIMARY KEY,
+            {col_sql}
+        ) WITHOUT ROWID"""
+    )
+    conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value BLOB) WITHOUT ROWID")
+    return conn
+
+
+def _upsert_kills_window_stats(conn: sqlite3.Connection, kills_window_dict: dict) -> None:
+    cols = _kills_window_column_names()
+    expected = len(cols)
+    placeholders = ", ".join("?" for _ in range(1 + expected))
+    updates = ",\n            ".join(f"{name}={name}+excluded.{name}" for name in cols)
+    rows = []
+    append = rows.append
+    for key, stats in kills_window_dict.items():
+        if isinstance(stats, list):
+            # Hot path: compact multi-window list counters written by analise_database.
+            if len(stats) == expected:
+                append((str(key), *stats))
+            elif len(stats) > expected:
+                append((str(key), *stats[:expected]))
+            else:
+                padded = list(stats) + [0] * (expected - len(stats))
+                append((str(key), *padded))
+        else:
+            append((str(key), *_kills_window_stats_values(stats)))
+    conn.executemany(
+        f"""INSERT INTO stats VALUES ({placeholders})
+        ON CONFLICT(key) DO UPDATE SET
+            {updates}""",
+        rows,
+    )
+
+
+def _finalize_kills_window_sqlite(conn: sqlite3.Connection, temp_path: Path, output_path: Path) -> tuple[int, int]:
+    try:
+        cols = _kills_window_column_names()
+        game_cols = [name for name in cols if name.endswith("_games")]
+        # Approximate match-records as max of window game counters.
+        max_expr = "MAX(" + ", ".join(game_cols) + ")" if game_cols else "0"
+        entries, games = conn.execute(
+            f"SELECT COUNT(*), COALESCE(SUM({max_expr}), 0) FROM stats"
+        ).fetchone()
+        encode = orjson.dumps if orjson is not None else lambda value: json.dumps(value).encode()
+        meta = {
+            "format_version": 1,
+            "backend": "sqlite_kills_window",
+            "windows": list(analise_database_module.KILLS_WINDOW_LABELS),
+            "entries": int(entries),
+        }
+        for key, value in meta.items():
+            conn.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, sqlite3.Binary(encode(value))))
+        conn.commit()
+    finally:
+        conn.close()
+    temp_path.replace(output_path)
+    return int(entries), int(games)
+
+
+def _prepare_kills_window_sqlite(
+    conn: sqlite3.Connection, temp_path: Path, output_path: Path
+) -> tuple[int, int, Path]:
+    """Validate and close kills-window staging without publishing it."""
+    cols = _kills_window_column_names()
+    game_cols = [name for name in cols if name.endswith("_games")]
+    max_expr = "MAX(" + ", ".join(game_cols) + ")" if game_cols else "0"
+    entries, games = conn.execute(
+        f"SELECT COUNT(*), COALESCE(SUM({max_expr}), 0) FROM stats"
+    ).fetchone()
+    if int(entries) <= 0:
+        raise RuntimeError("refusing to publish empty kills_window sqlite")
+    encode = orjson.dumps if orjson is not None else lambda value: json.dumps(value).encode()
+    meta = {
+        "format_version": 1,
+        "backend": "sqlite_kills_window",
+        "windows": list(analise_database_module.KILLS_WINDOW_LABELS),
+        "entries": int(entries),
+    }
+    for key, value in meta.items():
+        conn.execute("INSERT INTO meta (key, value) VALUES (?, ?)", (key, sqlite3.Binary(encode(value))))
+    conn.commit()
+    check = conn.execute("PRAGMA quick_check").fetchone()
+    if not check or check[0] != "ok":
+        raise RuntimeError(f"kills_window staging sqlite failed quick_check: {check}")
+    conn.close()
+    return int(entries), int(games), Path(output_path)
 
 
 def _dump_partitioned_stats_dict(stats_dict: dict, prefix: Path, partitions: int) -> list[Path]:
@@ -616,6 +1073,15 @@ def _enabled_metrics() -> tuple[str, ...]:
         "postlane": "post_lane",
         "post-lane": "post_lane",
         "post_lane": "post_lane",
+        "early-end": "early_end",
+        "early_winner": "early_end",
+        "early-winner": "early_end",
+        "early_match_winner": "early_end",
+        "kills": "kills_window",
+        "kills-window": "kills_window",
+        "kills_windows": "kills_window",
+        "kill_window": "kills_window",
+        "kills_window": "kills_window",
     }
     metrics: list[str] = []
     for item in raw.replace(";", ",").split(","):
@@ -631,12 +1097,14 @@ def _enabled_metrics() -> tuple[str, ...]:
     return tuple(metrics)
 
 
-def _new_metric_dicts(metric_names: tuple[str, ...]) -> tuple[dict | None, dict | None, dict | None, dict | None]:
+def _new_metric_dicts(metric_names: tuple[str, ...]) -> tuple[dict | None, dict | None, dict | None, dict | None, dict | None, dict | None]:
     return (
         {} if "lane" in metric_names else None,
         {} if "early" in metric_names else None,
+        {} if "early_end" in metric_names else None,
         {} if "late" in metric_names else None,
         {} if "post_lane" in metric_names else None,
+        {} if "kills_window" in metric_names else None,
     )
 
 
@@ -644,16 +1112,12 @@ def _dict_len(data) -> int:
     return len(data) if data is not None else 0
 
 
-def _match_is_train_candidate(match_id, match, min_start_ts: int, test_match_ids: set[str]) -> tuple[bool, str | None]:
+def _match_is_train_candidate(
+    match_id, match, test_match_ids: set[str]
+) -> tuple[bool, str | None]:
+    """Apply only structural/test-set gates; never filter source data by time."""
     if not isinstance(match, dict):
         return False, "not_dict"
-    if "startDateTime" not in match:
-        return False, "no_startDateTime"
-    try:
-        if int(match["startDateTime"]) < min_start_ts:
-            return False, "old_patch"
-    except Exception:
-        return False, "bad_startDateTime"
     if "players" not in match or len(match.get("players", [])) != 10:
         return False, "bad_players"
     if str(match_id) in test_match_ids:
@@ -668,6 +1132,9 @@ def _build_sqlite_dicts(stats_dir: Path, metric_names: tuple) -> None:
     optional JSON→sqlite conversion when JSON already exists and sqlite is missing.
     """
     for metric in metric_names:
+        if metric in DIRECT_SQLITE_METRICS:
+            # lane / kills_window are written as columnar stats tables directly.
+            continue
         filename = OUTPUTS_BY_METRIC.get(metric)
         if not filename:
             continue
@@ -714,14 +1181,16 @@ def _build_sqlite_dicts(stats_dir: Path, metric_names: tuple) -> None:
 
 
 class _OwnedLaneSqliteBuild:
-    """Own one unique temporary lane DB and roll it back unless finalized."""
+    """Own one unique lane staging DB and publish only after validation."""
 
     def __init__(self):
         self.conn: sqlite3.Connection | None = None
         self.temp_path: Path | None = None
+        self.output_path: Path | None = None
+        self.prepared: tuple[int, int] | None = None
 
     def open(self, temp_path: Path) -> sqlite3.Connection:
-        if self.conn is not None:
+        if self.conn is not None or self.temp_path is not None:
             raise RuntimeError("lane sqlite build is already open")
         if temp_path.exists():
             raise FileExistsError(f"lane sqlite temp already exists: {temp_path}")
@@ -729,18 +1198,30 @@ class _OwnedLaneSqliteBuild:
         self.conn = _open_lane_sqlite(temp_path)
         return self.conn
 
-    def finalize(self, output_path: Path) -> tuple[int, int]:
+    def prepare(self, output_path: Path) -> tuple[int, int]:
         if self.conn is None or self.temp_path is None:
             raise RuntimeError("lane sqlite build is not open")
-        conn, temp_path = self.conn, self.temp_path
+        entries, games, self.output_path = _prepare_lane_sqlite(
+            self.conn, self.temp_path, output_path
+        )
         self.conn = None
-        try:
-            result = _finalize_lane_sqlite(conn, temp_path, output_path)
-        except BaseException:
-            # _finalize_lane_sqlite closes the connection in its own finally.
-            raise
+        self.prepared = (entries, games)
+        return self.prepared
+
+    def publish(self) -> tuple[int, int]:
+        if self.prepared is None or self.temp_path is None or self.output_path is None:
+            raise RuntimeError("lane sqlite build is not prepared")
+        os.replace(self.temp_path, self.output_path)
+        result = self.prepared
         self.temp_path = None
+        self.output_path = None
+        self.prepared = None
         return result
+
+    def finalize(self, output_path: Path) -> tuple[int, int]:
+        """Backward-compatible prepare+publish for focused callers."""
+        self.prepare(output_path)
+        return self.publish()
 
     def rollback(self) -> None:
         if self.conn is not None:
@@ -751,9 +1232,71 @@ class _OwnedLaneSqliteBuild:
         if self.temp_path is not None and self.temp_path.exists():
             self.temp_path.unlink()
         self.temp_path = None
+        self.output_path = None
+        self.prepared = None
 
 
-def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
+class _OwnedKillsWindowSqliteBuild:
+    """Own one kills-window staging DB and publish only after validation."""
+
+    def __init__(self):
+        self.conn: sqlite3.Connection | None = None
+        self.temp_path: Path | None = None
+        self.output_path: Path | None = None
+        self.prepared: tuple[int, int] | None = None
+
+    def open(self, temp_path: Path) -> sqlite3.Connection:
+        if self.conn is not None or self.temp_path is not None:
+            raise RuntimeError("kills_window sqlite build is already open")
+        if temp_path.exists():
+            raise FileExistsError(f"kills_window sqlite temp already exists: {temp_path}")
+        self.temp_path = temp_path
+        self.conn = _open_kills_window_sqlite(temp_path)
+        return self.conn
+
+    def prepare(self, output_path: Path) -> tuple[int, int]:
+        if self.conn is None or self.temp_path is None:
+            raise RuntimeError("kills_window sqlite build is not open")
+        entries, games, self.output_path = _prepare_kills_window_sqlite(
+            self.conn, self.temp_path, output_path
+        )
+        self.conn = None
+        self.prepared = (entries, games)
+        return self.prepared
+
+    def publish(self) -> tuple[int, int]:
+        if self.prepared is None or self.temp_path is None or self.output_path is None:
+            raise RuntimeError("kills_window sqlite build is not prepared")
+        os.replace(self.temp_path, self.output_path)
+        result = self.prepared
+        self.temp_path = None
+        self.output_path = None
+        self.prepared = None
+        return result
+
+    def finalize(self, output_path: Path) -> tuple[int, int]:
+        """Backward-compatible prepare+publish for focused callers."""
+        self.prepare(output_path)
+        return self.publish()
+
+    def rollback(self) -> None:
+        if self.conn is not None:
+            try:
+                self.conn.close()
+            finally:
+                self.conn = None
+        if self.temp_path is not None and self.temp_path.exists():
+            self.temp_path.unlink()
+        self.temp_path = None
+        self.output_path = None
+        self.prepared = None
+
+
+def _main_impl(
+    lane_build: _OwnedLaneSqliteBuild,
+    kills_window_build: _OwnedKillsWindowSqliteBuild | None = None,
+    kv_builds: dict[str, _OwnedKvSqliteBuild] | None = None,
+) -> int:
     print("=" * 80)
     print("ПОСТРОЕНИЕ СТАТИСТИКИ (ИСКЛЮЧАЯ TEST SET)")
     print("=" * 80)
@@ -763,36 +1306,46 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
     print("✓ Streaming JSON: ijson" if ijson is not None else "⚠️ Streaming JSON недоступен, fallback json.load")
     print(f"✓ Compact counters: {COUNTER_MODE}")
     print(f"✓ Output: sqlite-first" + (" + JSON (EXPLORE_WRITE_JSON=1)" if WRITE_JSON else " (JSON off)"))
-    if SHARD_PER_FILE:
-        print(f"✓ File shards: включены, merge partitions: {MERGE_PARTITIONS}")
-    else:
-        print("⚠️ File shards: выключены, словари будут держаться в памяти до конца")
+    print("✓ Bounded memory: per-file batches → staging SQLite UPSERT")
+    print("✓ Publication: all enabled SQLite validated before any production replace")
     print("=" * 80)
 
     _enable_compact_accumulators()
 
     metric_names = _enabled_metrics()
     json_dir = Path(os.getenv("EXPLORE_JSON_DIR", str(DEFAULT_JSON_DIR)))
-    non_lane_metrics = tuple(metric for metric in metric_names if metric != "lane")
+    direct_metrics = set(DIRECT_SQLITE_METRICS)
+    kv_metrics = tuple(metric for metric in metric_names if metric not in direct_metrics)
     test_set_path = Path(os.getenv("EXPLORE_TEST_SET_PATH", str(DEFAULT_TEST_SET_PATH)))
     stats_dir = Path(os.getenv("EXPLORE_STATS_DIR", str(DEFAULT_STATS_DIR)))
-    min_start_ts = int(start_date_time)
     max_matches = int(os.getenv("EXPLORE_MAX_MATCHES", "0") or "0")
     run_id = os.getenv("EXPLORE_RUN_ID", time.strftime("%Y%m%d_%H%M%S"))
-    shard_dir = Path(os.getenv("EXPLORE_SHARD_DIR", str(stats_dir / "explore_database_shards" / run_id)))
-    metric_shards = {
-        metric: [[] for _ in range(MERGE_PARTITIONS)]
-        for metric in non_lane_metrics
-    }
+    staging_dir = Path(
+        os.getenv("EXPLORE_SHARD_DIR", str(stats_dir / "explore_database_staging" / run_id))
+    )
+    stats_dir.mkdir(parents=True, exist_ok=True)
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    if kv_builds is None:
+        kv_builds = {metric: _OwnedKvSqliteBuild(metric) for metric in kv_metrics}
+    missing_kv = set(kv_metrics) - set(kv_builds)
+    if missing_kv:
+        raise RuntimeError(f"missing owned kv builds: {sorted(missing_kv)}")
+    for metric in kv_metrics:
+        kv_builds[metric].open(staging_dir / f"{metric}.staging.sqlite3")
+
     lane_conn = None
-    lane_temp_path = None
     lane_output_path = stats_dir / "lane_dict_raw.sqlite3"
     if "lane" in metric_names:
-        stats_dir.mkdir(parents=True, exist_ok=True)
-        lane_temp_path = stats_dir / (
-            f"lane_dict_raw.sqlite3.{run_id}.{os.getpid()}.{time.time_ns()}.tmp"
+        lane_conn = lane_build.open(staging_dir / "lane.staging.sqlite3")
+    kills_window_conn = None
+    kills_window_output_path = stats_dir / "kills_window_dict_raw.sqlite3"
+    if "kills_window" in metric_names:
+        if kills_window_build is None:
+            raise RuntimeError("kills_window metric enabled but no owned build provided")
+        kills_window_conn = kills_window_build.open(
+            staging_dir / "kills_window.staging.sqlite3"
         )
-        lane_conn = lane_build.open(lane_temp_path)
 
     print("\n[ШАГ 1/3] Загрузка test set для исключения...")
     test_match_ids = _load_test_match_ids(test_set_path)
@@ -805,19 +1358,12 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
 
     print(f"\nНайдено файлов для обработки: {len(pub_files)}")
     print(f"Источник: {json_dir}")
-    print(f"start_date_time: {min_start_ts}")
+    print("time_filter: disabled (all source matches are candidates)")
     print(f"enabled_metrics: {', '.join(metric_names)}")
 
     print("\n[ШАГ 2/3] Построение статистики на train set...")
-
-    if SHARD_PER_FILE:
-        if shard_dir.exists():
-            shutil.rmtree(shard_dir)
-        shard_dir.mkdir(parents=True, exist_ok=True)
-        print(f"  Shards dir: {shard_dir}")
-        lane_dict, early_dict, late_dict, post_lane_dict = _new_metric_dicts(metric_names)
-    else:
-        lane_dict, early_dict, late_dict, post_lane_dict = _new_metric_dicts(metric_names)
+    print(f"  Staging SQLite dir: {staging_dir}")
+    lane_dict, early_dict, early_end_dict, late_dict, post_lane_dict, kills_window_dict = _new_metric_dicts(metric_names)
 
     train_processed = 0
     train_total = 0
@@ -832,12 +1378,21 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
         print(f"  [{idx}/{len(pub_files)}] Обработка {file.name}...", end=" ", flush=True)
         file_train = 0
         file_excluded = 0
-        if SHARD_PER_FILE:
-            lane_dict, early_dict, late_dict, post_lane_dict = _new_metric_dicts(metric_names)
+        matches_since_flush = 0
+        flush_count = 0
+        lane_dict, early_dict, early_end_dict, late_dict, post_lane_dict, kills_window_dict = _new_metric_dicts(metric_names)
+        metric_dicts = {
+            "lane": lane_dict,
+            "early": early_dict,
+            "early_end": early_end_dict,
+            "late": late_dict,
+            "post_lane": post_lane_dict,
+            "kills_window": kills_window_dict,
+        }
 
         try:
             for match_id, match in _iter_json_object_items(file):
-                ok, reason = _match_is_train_candidate(match_id, match, min_start_ts, test_match_ids)
+                ok, reason = _match_is_train_candidate(match_id, match, test_match_ids)
                 if not ok:
                     skip_reasons[reason or "unknown"] += 1
                     if reason == "test_set":
@@ -857,6 +1412,8 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
                         early_dict,
                         late_dict,
                         post_lane_dict=post_lane_dict,
+                        kills_window_dict=kills_window_dict,
+                        early_end_dict=early_end_dict,
                     )
                     train_processed += 1
                     file_train += 1
@@ -865,13 +1422,28 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
                     continue
 
                 train_total += 1
+                matches_since_flush += 1
+                if _should_flush_metric_batches(
+                    metric_dicts,
+                    matches_since_flush=matches_since_flush,
+                ):
+                    _flush_metric_batches(
+                        metric_dicts=metric_dicts,
+                        kv_builds={metric: kv_builds[metric] for metric in kv_metrics},
+                        lane_conn=lane_conn,
+                        kills_window_conn=kills_window_conn,
+                    )
+                    matches_since_flush = 0
+                    flush_count += 1
                 if PROGRESS_EVERY > 0 and train_total % PROGRESS_EVERY == 0:
                     elapsed = max(time.monotonic() - started_at, 1)
                     rate = train_total / elapsed
                     print(
                         f"\n    [{train_total:,}] "
-                        f"Lane: {_dict_len(lane_dict):,}, Early: {_dict_len(early_dict):,}, "
+                        f"Lane: {_dict_len(lane_dict):,}, EarlyNW: {_dict_len(early_dict):,}, "
+                        f"EarlyEnd: {_dict_len(early_end_dict):,}, "
                         f"Late: {_dict_len(late_dict):,}, PostLane: {_dict_len(post_lane_dict):,}, "
+                        f"KillsWin: {_dict_len(kills_window_dict):,}, "
                         f"RSS≈{_rss_mb():.0f}MB, {rate:.0f} maps/s",
                         end="",
                         flush=True,
@@ -880,54 +1452,54 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
                 if max_matches > 0 and train_total >= max_matches:
                     break
 
-            gc.collect()
-            if lane_conn is not None and lane_dict:
-                _upsert_lane_stats(lane_conn, lane_dict)
-                lane_dict.clear()
-            if SHARD_PER_FILE and file_train > 0:
-                shard_started = time.monotonic()
-                prefix = shard_dir / f"{idx:04d}_{file.stem}"
-                per_file_data = {
-                    "early": early_dict,
-                    "late": late_dict,
-                    "post_lane": post_lane_dict,
-                }
-                per_file_data = {
-                    metric: data
-                    for metric, data in per_file_data.items()
-                    if metric in metric_names and data is not None
-                }
-                key_counts = {metric: len(data) for metric, data in per_file_data.items()}
-                for metric, data in per_file_data.items():
-                    paths = _dump_partitioned_stats_dict(
-                        data,
-                        prefix.with_name(f"{prefix.name}.{metric}"),
-                        MERGE_PARTITIONS,
-                    )
-                    for part, path in enumerate(paths):
-                        metric_shards[metric][part].append(path)
-
-                for data in per_file_data.values():
-                    data.clear()
-                gc.collect()
-                shard_msg = (
-                    f" shards:{time.monotonic() - shard_started:.1f}s "
-                    f"keys "
-                    + "/".join(f"{metric}:{key_counts.get(metric, 0):,}" for metric in metric_names)
+            key_counts = {
+                metric: _dict_len(metric_dicts.get(metric)) for metric in metric_names
+            }
+            flush_started = time.monotonic()
+            _flush_metric_batches(
+                metric_dicts=metric_dicts,
+                kv_builds={metric: kv_builds[metric] for metric in kv_metrics},
+                lane_conn=lane_conn,
+                kills_window_conn=kills_window_conn,
+            )
+            # One source file is the transaction boundary. A parse failure
+            # rolls back all metrics for that file; completed files stay staged.
+            for conn in (
+                lane_conn,
+                kills_window_conn,
+                *(kv_builds[metric].conn for metric in kv_metrics),
+            ):
+                if conn is not None:
+                    conn.commit()
+            flush_msg = (
+                f" sqlite_flush:{time.monotonic() - flush_started:.1f}s "
+                f"batches:{flush_count + 1} keys "
+                + "/".join(
+                    f"{metric}:{key_counts.get(metric, 0):,}" for metric in metric_names
                 )
-            else:
-                shard_msg = ""
+            )
             print(
                 f" ✓ train:{file_train} excluded:{file_excluded} "
                 f"time:{time.monotonic() - file_started_at:.1f}s RSS≈{_rss_mb():.0f}MB"
-                f"{shard_msg}"
+                f"{flush_msg}"
             )
-        except Exception as e:
-            # Do not merge a partially streamed file into the direct SQLite
-            # accumulator; completed earlier files remain committed.
-            if lane_dict is not None:
-                lane_dict.clear()
-            print(f"✗ Ошибка: {e}")
+        except Exception:
+            # Roll back every mid-file SQLite flush as one unit. Completed
+            # earlier files remain staged; production outputs stay untouched.
+            for conn in (
+                lane_conn,
+                kills_window_conn,
+                *(kv_builds[metric].conn for metric in kv_metrics),
+            ):
+                if conn is not None:
+                    conn.rollback()
+            for data in (
+                lane_dict, early_dict, early_end_dict, late_dict,
+                post_lane_dict, kills_window_dict,
+            ):
+                if data is not None:
+                    data.clear()
+            raise
 
         if max_matches > 0 and train_total >= max_matches:
             print(f"  ⚠️ Остановлено по EXPLORE_MAX_MATCHES={max_matches:,}")
@@ -946,88 +1518,33 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
         for reason, count in skip_reasons.most_common(10):
             print(f"  - {reason}: {count:,}")
 
-    print("\n[ШАГ 3/3] Сохранение результатов (sqlite-first)...")
-    stats_dir.mkdir(parents=True, exist_ok=True)
+    print("\n[ШАГ 3/3] Проверка staging и атомарная публикация...")
+    outputs = {metric: _sqlite_path_for_metric(stats_dir, metric) for metric in metric_names}
+    prepared_summary = _prepare_and_publish_enabled_builds(
+        metric_names=metric_names,
+        outputs=outputs,
+        lane_build=lane_build,
+        kills_window_build=kills_window_build,
+        kv_builds=kv_builds,
+    )
+    lane_conn = None
+    kills_window_conn = None
 
-    if lane_conn is not None and lane_temp_path is not None:
-        lane_entries, lane_games = lane_build.finalize(lane_output_path)
-        lane_conn = None
+    print("\nСтатистика по словарям (train set):")
+    for metric in metric_names:
+        keys_count, games_count = prepared_summary[metric]
+        label = LABELS_BY_METRIC[metric]
         print(
-            f"  ✓ {lane_output_path.name} ({lane_entries:,} ключей, "
-            f"{lane_games:,} записей; direct SQLite)"
+            f"  {label + ' dict:':15s}{keys_count:>6,} ключей, "
+            f"{games_count:>7,} записей → {outputs[metric].name}"
         )
-
-    if SHARD_PER_FILE:
-        merged_summary = {}
-        for metric in non_lane_metrics:
-            sqlite_path = _sqlite_path_for_metric(stats_dir, metric)
-            started = time.monotonic()
-            keys_count, games_count = _merge_partitioned_shards(
-                metric_shards[metric], sqlite_path
-            )
-            merged_summary[metric] = (keys_count, games_count)
-            print(
-                f"  ✓ {sqlite_path.name} ({keys_count:,} ключей, {games_count:,} записей, "
-                f"{time.monotonic() - started:.1f}s)"
-            )
-            if WRITE_JSON:
-                json_path = stats_dir / OUTPUTS_BY_METRIC[metric]
-                json_started = time.monotonic()
-                json_keys, json_games = _merge_partitioned_shards_to_json(
-                    metric_shards[metric], json_path
-                )
-                print(
-                    f"  ✓ {json_path.name} optional JSON ({json_keys:,} ключей, "
-                    f"{json_games:,} записей, {time.monotonic() - json_started:.1f}s)"
-                )
-
-        print("\nСтатистика по словарям (train set):")
-        for metric in metric_names:
-            label = LABELS_BY_METRIC[metric]
-            if metric == "lane":
-                continue
-            print(
-                f"  {label + ' dict:':15s}"
-                f"{merged_summary[metric][0]:>6,} ключей, {merged_summary[metric][1]:>7,} записей"
-            )
-        if KEEP_SHARDS:
-            print(f"  Shards сохранены: {shard_dir}")
-        else:
-            shutil.rmtree(shard_dir, ignore_errors=True)
-            print(f"  Shards удалены: {shard_dir}")
+    if WRITE_JSON:
+        print("  ⚠️ EXPLORE_WRITE_JSON=1 ignored by bounded SQLite rebuild")
+    if KEEP_SHARDS:
+        print(f"  Staging dir оставлен: {staging_dir}")
     else:
-        print("\nСтатистика по словарям (train set):")
-        data_by_metric = {
-            "lane": lane_dict,
-            "early": early_dict,
-            "late": late_dict,
-            "post_lane": post_lane_dict,
-        }
-        for metric in metric_names:
-            if metric == "lane":
-                continue
-            data = data_by_metric[metric] or {}
-            matches = sum(_stats_games(stats) for stats in data.values())
-            label = LABELS_BY_METRIC[metric]
-            print(f"  {label + ' dict:':15s}{len(data):>6,} ключей, {matches:>7,} записей")
-
-        for metric in non_lane_metrics:
-            data = data_by_metric[metric] or {}
-            sqlite_path = _sqlite_path_for_metric(stats_dir, metric)
-            started = time.monotonic()
-            keys_count, games_count = _dump_stats_dict_to_sqlite(data, sqlite_path)
-            print(
-                f"  ✓ {sqlite_path.name} ({keys_count:,} ключей, {games_count:,} записей, "
-                f"{time.monotonic() - started:.1f}s)"
-            )
-            if WRITE_JSON:
-                json_path = stats_dir / OUTPUTS_BY_METRIC[metric]
-                json_started = time.monotonic()
-                _dump_stats_dict(data, json_path)
-                print(
-                    f"  ✓ {json_path.name} optional JSON ({len(data):,} ключей, "
-                    f"{time.monotonic() - json_started:.1f}s)"
-                )
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        print(f"  Staging dir очищен: {staging_dir}")
 
     print(f"\n{'=' * 80}")
     print("ЗАВЕРШЕНО!")
@@ -1044,12 +1561,26 @@ def _main_impl(lane_build: _OwnedLaneSqliteBuild) -> int:
 
 def main() -> int:
     lane_build = _OwnedLaneSqliteBuild()
+    kills_window_build = _OwnedKillsWindowSqliteBuild()
+    kv_builds = {
+        metric: _OwnedKvSqliteBuild(metric)
+        for metric in ALL_METRICS
+        if metric not in DIRECT_SQLITE_METRICS
+    }
     try:
-        return _main_impl(lane_build)
+        return _main_impl(
+            lane_build,
+            kills_window_build=kills_window_build,
+            kv_builds=kv_builds,
+        )
     finally:
         # Covers normal exceptions and BaseException subclasses such as
-        # KeyboardInterrupt. A successful atomic finalize disarms rollback.
+        # KeyboardInterrupt. Production files are untouched until prepare
+        # succeeds for every enabled metric.
         lane_build.rollback()
+        kills_window_build.rollback()
+        for build in kv_builds.values():
+            build.rollback()
 
 
 if __name__ == "__main__":

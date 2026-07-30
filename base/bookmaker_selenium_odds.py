@@ -15,9 +15,12 @@ Usage:
 
 from __future__ import annotations
 
+import inspect
+import asyncio
 import argparse
 import concurrent.futures
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -34,6 +37,53 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from seleniumwire import webdriver
+
+
+async def _maybe_await(value):
+    """Разворачивает результат page.*: корутину ждём, готовое значение отдаём.
+
+    Благодаря этому один и тот же код работает и с настоящей async-страницей
+    Playwright, и с синхронными тестовыми дублёрами, которые возвращают
+    готовые значения.
+    """
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+def _run_coroutine_blocking(coro):
+    """Выполнить корутину из синхронного контекста.
+
+    Используется обёртками точек входа: standalone-монитор и тесты зовут их
+    по-старому, синхронно. Внутри async-сессии вызываются *_async напрямую,
+    поэтому вложенного цикла событий здесь не бывает.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    # Мы внутри уже работающего цикла: его держит sync-API Playwright в рабочем
+    # потоке общей Camoufox-сессии. asyncio.run() здесь невозможен, а прежний
+    # raise ломал единственный путь снятия кэфов Winline: ошибка принималась за
+    # проблему прокси, браузер пересоздавался, и так по кругу.
+    #
+    # В этом модуле нет ни одной настоящей точки приостановки (ни asyncio.sleep,
+    # ни gather) — все await'ы это _maybe_await поверх синхронных объектов
+    # Playwright, отдающих готовые значения. Поэтому корутина проходит до конца
+    # с первого же send(None), и цикл событий ей не нужен.
+    try:
+        coro.send(None)
+    except StopIteration as stop:
+        return stop.value
+    # Корутина всё-таки приостановилась — значит в модуле появился настоящий
+    # await, и эту обёртку больше нельзя крутить вручную.
+    coro.close()
+    raise RuntimeError(
+        "sync entrypoint hit a real suspension point inside a running event loop; "
+        "call the *_async variant from async code instead"
+    )
+
 try:
     import camoufox
     CAMOUFOX_AVAILABLE = True
@@ -63,7 +113,7 @@ BOOKMAKER_URLS: Dict[str, Dict[str, str]] = {
     "live": {
         "betboom": "https://betboom.ru/esport/live/dota-2",
         "pari": "https://pari.ru/esports-live/category/dota2",
-        "winline": "https://winline.ru/stavki/sport/kibersport",
+        "winline": "https://winline.ru/stavki/sport/kibersport/live",
     },
     "all": {
         "betboom": "https://betboom.ru/esport/dota-2?period=all",
@@ -146,12 +196,25 @@ def _fallback_search_tokens(team: str) -> List[str]:
     return out
 
 
+def _literal_team_positions(text: str, value: str) -> List[int]:
+    """Find a team name/token without accepting it inside a longer word."""
+    needle = (value or "").lower()
+    if not needle:
+        return []
+    left = r"(?<![a-z0-9а-яё])" if needle[0].isalnum() else ""
+    right = r"(?![a-z0-9а-яё])" if needle[-1].isalnum() else ""
+    return [
+        match.start()
+        for match in re.finditer(left + re.escape(needle) + right, text, re.I)
+    ]
+
+
 def _find_positions_with_fallback(low: str, team: str) -> List[int]:
-    direct = [m.start() for m in re.finditer(re.escape((team or "").lower()), low)] if team else []
+    direct = _literal_team_positions(low, team)
     if direct:
         return direct
     for token in _fallback_search_tokens(team):
-        positions = [m.start() for m in re.finditer(re.escape(token), low)]
+        positions = _literal_team_positions(low, token)
         if positions:
             return positions
     return []
@@ -378,7 +441,7 @@ def _presence_collect_probe_snapshot(drv, *, url: str) -> Tuple[str, str, str, i
     return current_url, ready_state, page_title, len(body_text.strip()), sources
 
 
-def _camoufox_collect_probe_snapshot(page, *, url: str) -> Tuple[str, str, str, int, List[Tuple[str, str]]]:
+async def _camoufox_collect_probe_snapshot(page, *, url: str) -> Tuple[str, str, str, int, List[Tuple[str, str]]]:
     current_url = ""
     ready_state = ""
     page_title = ""
@@ -389,19 +452,19 @@ def _camoufox_collect_probe_snapshot(page, *, url: str) -> Tuple[str, str, str, 
     except Exception:
         current_url = ""
     try:
-        ready_state = str(page.evaluate("() => document.readyState") or "")
+        ready_state = str(await _maybe_await(page.evaluate("() => document.readyState")) or "")
     except Exception:
         ready_state = ""
     try:
-        page_title = str(page.title() or "")
+        page_title = str(await _maybe_await(page.title()) or "")
     except Exception:
         page_title = ""
     try:
-        html = page.content() or ""
+        html = await _maybe_await(page.content()) or ""
     except Exception:
         html = ""
     try:
-        body_text = str(page.locator("body").inner_text(timeout=5000) or "")
+        body_text = str(await _maybe_await(page.locator("body").inner_text(timeout=5000)) or "")
     except Exception:
         body_text = ""
     visible = ""
@@ -421,45 +484,159 @@ def _camoufox_collect_probe_snapshot(page, *, url: str) -> Tuple[str, str, str, 
     return current_url, ready_state, page_title, len(body_text.strip()), sources
 
 
-def _camoufox_body_text(page) -> str:
+async def _camoufox_body_text(page) -> str:
     try:
-        return str(page.locator("body").inner_text(timeout=5000) or "")
+        return str(await _maybe_await(page.locator("body").inner_text(timeout=5000)) or "")
     except Exception:
         return ""
 
 
-def _load_site_render_payload_camoufox(
+# Explicit Camoufox acquisition modes (Winline poller). Default/None = legacy always-goto.
+ACQUISITION_MODES = frozenset({"initial_goto", "dynamic_dom", "controlled_reload"})
+_ACQUISITION_ERROR_MAX = 300
+_DOM_SIGNATURE_MAX = 64
+_PAGE_URL_DIAG_MAX = 500
+
+
+def _bounded_dom_signature(text: str, *, max_len: int = _DOM_SIGNATURE_MAX) -> str:
+    """Stable bounded SHA-256 of whitespace-normalized DOM text (no raw dumps)."""
+    limit = max(8, min(int(max_len or _DOM_SIGNATURE_MAX), 128))
+    normalized = " ".join(str(text or "").split())
+    digest = hashlib.sha256(normalized.encode("utf-8", errors="replace")).hexdigest()
+    return digest[:limit]
+
+
+def _sanitize_acquisition_error(exc: BaseException | str, *, max_len: int = _ACQUISITION_ERROR_MAX) -> str:
+    raw = str(exc or "").strip()
+    if not raw:
+        return ""
+    # Drop accidental HTML blobs and bound length for poller diagnostics.
+    if "<" in raw and ">" in raw:
+        raw = re.sub(r"<[^>]+>", " ", raw)
+    raw = " ".join(raw.split())
+    return raw[: max(1, int(max_len or _ACQUISITION_ERROR_MAX))]
+
+
+def _normalize_page_url(url: str) -> str:
+    return str(url or "").strip().rstrip("/")
+
+
+def _urls_equivalent(left: str, right: str) -> bool:
+    a = _normalize_page_url(left)
+    b = _normalize_page_url(right)
+    return bool(a and b and a == b)
+
+
+def _page_current_url(page) -> str:
+    try:
+        return str(getattr(page, "url", "") or "")
+    except Exception:
+        return ""
+
+
+def _page_needs_navigation(page, target_url: str) -> bool:
+    """True when page is blank/error/missing or not already on the target URL."""
+    current = _page_current_url(page)
+    cur_low = current.strip().lower()
+    if not cur_low:
+        return True
+    if cur_low in {"about:blank", "about:error", "about:srcdoc"}:
+        return True
+    if cur_low.startswith("chrome-error:") or cur_low.startswith("data:"):
+        return True
+    return not _urls_equivalent(current, target_url)
+
+async def _load_site_render_payload_camoufox_async(
     page,
     url: str,
     *,
     initial_wait_seconds: float = 7.0,
     scroll_wait_seconds: float = 2.0,
-) -> Tuple[str, str, str, str, str]:
+    acquisition_mode: Optional[str] = None,
+) -> Tuple[str, str, str, str, str, Dict[str, Any]]:
+    """Load or re-read page content for Camoufox parsers.
+
+    acquisition_mode:
+      - None: legacy always page.goto (default, preserves non-Winline behavior)
+      - initial_goto: navigate only when blank/wrong/new URL
+      - dynamic_dom: read live DOM only when already on expected URL; if blank/root/
+        wrong-host/wrong URL, perform exactly one goto repair (no reload, no sleep)
+      - controlled_reload: exactly one page.reload(wait_until='domcontentloaded')
+        then acquire DOM immediately (no second nav, no hidden sleep)
+
+    Returns (load_status, load_error, html, visible, body_text, acquisition_diag).
+    """
+    started = time.monotonic()
+    mode = str(acquisition_mode or "").strip().lower() or None
+    if mode and mode not in ACQUISITION_MODES:
+        mode = None
+
     load_status = "ok"
     load_error = ""
+    acq_error = ""
+
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        time.sleep(max(0.0, float(initial_wait_seconds)))
-        try:
-            page.evaluate(
-                "() => {"
-                " window.scrollTo(0, 0);"
-                " window.scrollTo(0, document.body.scrollHeight * 0.5);"
-                " window.scrollTo(0, document.body.scrollHeight);"
-                "}"
-            )
-            time.sleep(max(0.0, float(scroll_wait_seconds)))
-        except Exception:
-            pass
+        if mode == "dynamic_dom":
+            # Live DOM on the expected URL only. Blank/root/wrong URL is not a
+            # stable miss: repair with exactly one goto, then read DOM. No reload,
+            # no synthetic sleep (call budget is the caller's).
+            if _page_needs_navigation(page, url):
+                try:
+                    await _maybe_await(page.goto(url, wait_until="domcontentloaded", timeout=60000))
+                except Exception as exc:
+                    load_status = "partial_load"
+                    acq_error = _sanitize_acquisition_error(exc)
+                    load_error = acq_error
+        elif mode == "controlled_reload":
+            # Exactly one reload when requested by the scheduler; then DOM.
+            # Do not navigate twice and do not inject settle sleeps here.
+            try:
+                await _maybe_await(page.reload(wait_until="domcontentloaded", timeout=60000))
+            except Exception as exc:
+                load_status = "partial_load"
+                acq_error = _sanitize_acquisition_error(exc)
+                load_error = acq_error
+        elif mode == "initial_goto":
+            if _page_needs_navigation(page, url):
+                await _maybe_await(page.goto(url, wait_until="domcontentloaded", timeout=60000))
+                time.sleep(max(0.0, float(initial_wait_seconds)))
+                try:
+                    await _maybe_await(page.evaluate(
+                        "() => {"
+                        " window.scrollTo(0, 0);"
+                        " window.scrollTo(0, document.body.scrollHeight * 0.5);"
+                        " window.scrollTo(0, document.body.scrollHeight);"
+                        "}"
+                    ))
+                    time.sleep(max(0.0, float(scroll_wait_seconds)))
+                except Exception:
+                    pass
+            # already on target: skip goto/reload
+        else:
+            # Legacy default: always navigate.
+            await _maybe_await(page.goto(url, wait_until="domcontentloaded", timeout=60000))
+            time.sleep(max(0.0, float(initial_wait_seconds)))
+            try:
+                await _maybe_await(page.evaluate(
+                    "() => {"
+                    " window.scrollTo(0, 0);"
+                    " window.scrollTo(0, document.body.scrollHeight * 0.5);"
+                    " window.scrollTo(0, document.body.scrollHeight);"
+                    "}"
+                ))
+                time.sleep(max(0.0, float(scroll_wait_seconds)))
+            except Exception:
+                pass
     except Exception as exc:
         load_status = "partial_load"
-        load_error = str(exc)
+        acq_error = _sanitize_acquisition_error(exc)
+        load_error = acq_error
 
     html = ""
     visible = ""
     body_text = ""
     try:
-        html = page.content() or ""
+        html = await _maybe_await(page.content()) or ""
     except Exception:
         html = ""
     if html:
@@ -468,11 +645,50 @@ def _load_site_render_payload_camoufox(
             visible = " ".join(soup.stripped_strings)
         except Exception:
             visible = ""
-    body_text = _camoufox_body_text(page)
-    return load_status, load_error, html, visible or body_text, body_text
+    body_text = await _camoufox_body_text(page)
+
+    page_url = _page_current_url(page) or str(url or "")
+    if len(page_url) > _PAGE_URL_DIAG_MAX:
+        page_url = page_url[:_PAGE_URL_DIAG_MAX]
+    sig_source = body_text or visible or html or ""
+    latency_ms = max(0.0, (time.monotonic() - started) * 1000.0)
+    acquisition_diag: Dict[str, Any] = {
+        "acquisition_mode": mode,  # None for legacy callers
+        "page_url": page_url,
+        "dom_signature": _bounded_dom_signature(sig_source),
+        "acquisition_latency_ms": round(latency_ms, 3),
+        "acquisition_error": acq_error or None,
+    }
+
+    return load_status, load_error, html, visible or body_text, body_text, acquisition_diag
 
 
-def _camoufox_try_click_text(page, text_candidates: List[str]) -> bool:
+def _apply_acquisition_diag(result: SiteResult, diag: Optional[Dict[str, Any]]) -> SiteResult:
+    """Attach bounded acquisition diagnostics onto a SiteResult (in-place)."""
+    if not diag:
+        return result
+    mode = diag.get("acquisition_mode")
+    if mode is not None:
+        result.acquisition_mode = str(mode)
+    page_url = diag.get("page_url")
+    if page_url is not None:
+        result.page_url = str(page_url)[:_PAGE_URL_DIAG_MAX]
+    dom_sig = diag.get("dom_signature")
+    if dom_sig is not None:
+        result.dom_signature = str(dom_sig)[:128]
+    latency = diag.get("acquisition_latency_ms")
+    if latency is not None:
+        try:
+            result.acquisition_latency_ms = float(latency)
+        except (TypeError, ValueError):
+            pass
+    acq_err = diag.get("acquisition_error")
+    if acq_err:
+        result.acquisition_error = _sanitize_acquisition_error(str(acq_err))
+    return result
+
+
+async def _camoufox_try_click_text(page, text_candidates: List[str]) -> bool:
     script = """
     ([labels]) => {
       const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
@@ -501,7 +717,7 @@ def _camoufox_try_click_text(page, text_candidates: List[str]) -> bool:
         if not str(label or "").strip():
             continue
         try:
-            clicked = bool(page.evaluate(script, [[str(label)]]))
+            clicked = bool(await _maybe_await(page.evaluate(script, [[str(label)]])))
         except Exception:
             clicked = False
         if clicked:
@@ -510,7 +726,7 @@ def _camoufox_try_click_text(page, text_candidates: List[str]) -> bool:
     return False
 
 
-def _camoufox_click_map_tab_on_current_page(page, site: str, map_num: Optional[int]) -> bool:
+async def _camoufox_click_map_tab_on_current_page(page, site: str, map_num: Optional[int]) -> bool:
     if map_num is None:
         return False
     labels: List[str] = []
@@ -527,29 +743,29 @@ def _camoufox_click_map_tab_on_current_page(page, site: str, map_num: Optional[i
             f"Победитель {map_num} карты",
             f"Победитель {map_num} карт",
         ]
-    return _camoufox_try_click_text(page, labels)
+    return await _camoufox_try_click_text(page, labels)
 
 
-def _parse_map_market_on_current_camoufox_page(
+async def _parse_map_market_on_current_camoufox_page_async(
     page,
     site: str,
     team1: str,
     team2: str,
     forced_map_num: Optional[int] = None,
 ) -> Tuple[List[float], str]:
-    body_text = _camoufox_body_text(page)
+    body_text = await _camoufox_body_text(page)
     map_num = _resolve_map_num_for_site(site, body_text, forced_map_num)
-    clicked_tab = _camoufox_click_map_tab_on_current_page(page, site, map_num)
+    clicked_tab = await _camoufox_click_map_tab_on_current_page(page, site, map_num)
     if not clicked_tab and site == "betboom" and map_num is not None:
-        _camoufox_try_click_text(page, [f"Карта {map_num}", f"Карта{map_num}", f"{map_num} карта"])
+        await _camoufox_try_click_text(page, [f"Карта {map_num}", f"Карта{map_num}", f"{map_num} карта"])
     elif not clicked_tab and site == "pari" and map_num is not None:
-        _camoufox_try_click_text(page, [f"{map_num}-Я КАРТА", f"{map_num}-я карта", f"{map_num} карта", f"Карта {map_num}"])
+        await _camoufox_try_click_text(page, [f"{map_num}-Я КАРТА", f"{map_num}-я карта", f"{map_num} карта", f"Карта {map_num}"])
     elif not clicked_tab and site == "winline" and map_num is not None:
-        _camoufox_try_click_text(
+        await _camoufox_try_click_text(
             page,
             [f"{map_num}К", f"{map_num} К", f"{map_num}-я карта", f"{map_num} карта", f"Победитель {map_num} карты", f"Победитель {map_num} карт"],
         )
-    body_text = _camoufox_body_text(page)
+    body_text = await _camoufox_body_text(page)
     odds = _extract_map_odds_deeplink(
         site,
         " ".join((body_text or "").split()),
@@ -561,9 +777,9 @@ def _parse_map_market_on_current_camoufox_page(
     if site == "pari" and not odds and map_num is not None:
         for attempt in range(3):
             time.sleep(1.5)
-            _camoufox_try_click_text(page, [f"{map_num}-Я КАРТА", f"Карта {map_num}"])
+            await _camoufox_try_click_text(page, [f"{map_num}-Я КАРТА", f"Карта {map_num}"])
             time.sleep(1.5)
-            body_text = _camoufox_body_text(page)
+            body_text = await _camoufox_body_text(page)
             odds = _extract_map_odds_deeplink(
                 site,
                 " ".join((body_text or "").split()),
@@ -576,9 +792,9 @@ def _parse_map_market_on_current_camoufox_page(
             # Reload and retry on last attempt
             if attempt == 2:
                 with contextlib.suppress(Exception):
-                    page.reload(wait_until="domcontentloaded", timeout=30000)
+                    await _maybe_await(page.reload(wait_until="domcontentloaded", timeout=30000))
                     time.sleep(2.5)
-                    body_text = _camoufox_body_text(page)
+                    body_text = await _camoufox_body_text(page)
                     odds = _extract_map_odds_deeplink(
                         site,
                         " ".join((body_text or "").split()),
@@ -589,7 +805,7 @@ def _parse_map_market_on_current_camoufox_page(
     return odds, body_text
 
 
-def _camoufox_find_match_by_urls(page, site: str, urls: List[str], team1: str, team2: str) -> Optional[str]:
+async def _camoufox_find_match_by_urls_async(page, site: str, urls: List[str], team1: str, team2: str) -> Optional[str]:
     if not urls:
         return None
     t1 = (team1 or "").strip().lower()
@@ -598,9 +814,9 @@ def _camoufox_find_match_by_urls(page, site: str, urls: List[str], team1: str, t
     t2s = t2.split()[0] if t2 else ""
     for target in urls[:12]:
         try:
-            page.goto(target, wait_until="domcontentloaded", timeout=25000)
+            await _maybe_await(page.goto(target, wait_until="domcontentloaded", timeout=25000))
             time.sleep(1.5)
-            body = " ".join((page.locator("body").inner_text(timeout=4000) or "").lower().split())
+            body = " ".join((await _maybe_await(page.locator("body").inner_text(timeout=4000)) or "").lower().split())
         except Exception:
             continue
         if (
@@ -612,7 +828,7 @@ def _camoufox_find_match_by_urls(page, site: str, urls: List[str], team1: str, t
     return None
 
 
-def _probe_presence_site_in_camoufox_page(
+async def _probe_presence_site_in_camoufox_page(
     page,
     *,
     site: str,
@@ -624,12 +840,12 @@ def _probe_presence_site_in_camoufox_page(
     team2_aliases: Optional[List[str]] = None,
 ) -> SiteResult:
     try:
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await _maybe_await(page.goto(url, wait_until="domcontentloaded", timeout=30000))
         time.sleep(2.0)
         try:
-            page.evaluate(
+            await _maybe_await(page.evaluate(
                 "() => { window.scrollTo(0, 0); window.scrollTo(0, document.body.scrollHeight * 0.5); window.scrollTo(0, document.body.scrollHeight); }"
-            )
+            ))
         except Exception:
             pass
         time.sleep(1.0)
@@ -646,7 +862,7 @@ def _probe_presence_site_in_camoufox_page(
             match_odds=[],
         )
 
-    current_url, ready_state, page_title, body_len, sources = _camoufox_collect_probe_snapshot(
+    current_url, ready_state, page_title, body_len, sources = await _camoufox_collect_probe_snapshot(
         page,
         url=url,
     )
@@ -681,9 +897,9 @@ def _probe_presence_site_in_camoufox_page(
                 html_text = text
                 break
         candidate_urls = _candidate_match_urls_from_html(site, current_url or url, html_text)
-        opened_match_url = _camoufox_find_match_by_urls(page, site, candidate_urls, team1, team2) or ""
+        opened_match_url = await _camoufox_find_match_by_urls_async(page, site, candidate_urls, team1, team2) or ""
         if opened_match_url:
-            current_url, ready_state, page_title, body_len, sources = _camoufox_collect_probe_snapshot(
+            current_url, ready_state, page_title, body_len, sources = await _camoufox_collect_probe_snapshot(
                 page,
                 url=url,
             )
@@ -741,7 +957,7 @@ def _probe_presence_site_in_camoufox_page(
     )
 
 
-def _run_presence_sites_in_camoufox(
+async def _run_presence_sites_in_camoufox(
     *,
     selected_sites: List[str],
     urls: Dict[str, str],
@@ -766,10 +982,10 @@ def _run_presence_sites_in_camoufox(
     results: List[SiteResult] = []
     with camoufox.Camoufox(headless=True, **proxy_kwargs) as browser:
         for site in selected_sites:
-            page = browser.new_page()
+            page = await _maybe_await(browser.new_page())
             try:
                 results.append(
-                    _probe_presence_site_in_camoufox_page(
+                    await _probe_presence_site_in_camoufox_page(
                         page,
                         site=site,
                         url=urls[site],
@@ -782,7 +998,7 @@ def _run_presence_sites_in_camoufox(
                 )
             finally:
                 with contextlib.suppress(Exception):
-                    page.close()
+                    await _maybe_await(page.close())
     return results
 
 
@@ -874,6 +1090,8 @@ def _snippet_by_teams(
     return sn
 
 
+
+
 @dataclass
 class SiteResult:
     site: str
@@ -885,6 +1103,17 @@ class SiteResult:
     details: str
     market_closed: bool = False
     match_odds: List[float] = field(default_factory=list)
+    # Optional strict current-map provenance (backward-compatible defaults).
+    market_kind: Optional[str] = None
+    map_num: Optional[int] = None
+    p1_team: Optional[str] = None
+    p2_team: Optional[str] = None
+    # Optional acquisition diagnostics for Winline dynamic poller (bounded).
+    acquisition_mode: Optional[str] = None
+    page_url: Optional[str] = None
+    dom_signature: Optional[str] = None
+    acquisition_latency_ms: Optional[float] = None
+    acquisition_error: Optional[str] = None
 
 
 def _extract_current_map_num(text: str) -> Optional[int]:
@@ -1037,6 +1266,505 @@ def _try_click_xpath(drv, xpath_candidates: List[str]) -> bool:
     return False
 
 
+
+@dataclass
+class _WinlineMapExtract:
+    odds: List[float] = field(default_factory=list)
+    market_closed: bool = False
+    reason: str = ""
+    map_num: Optional[int] = None
+    market_kind: Optional[str] = None
+    p1_team: Optional[str] = None
+    p2_team: Optional[str] = None
+    details: str = ""
+
+
+_WINLINE_EVENT_BOUNDARY_RE = re.compile(
+    r"(?:^|\s)(?:dota\s*2|counter[-\s]*strike(?:\s*2)?|cs(?:\s*2)?|lol|"
+    r"valorant|mobile\s+legends|king\s+of\s+glory)\s*\|",
+    re.I,
+)
+
+
+_WINLINE_LIVE_CARD_LABEL_RE = re.compile(r"\b[1-5]\s*карта\s*\d+\s*['\u2032]", re.I)
+
+
+# Строка матч-рынка: в карточке живого события она ровно одна, поэтому её счёт —
+# надёжная граница карточки там, где заголовок дисциплины общий для нескольких
+# матчей подряд. Регистр значим: со строчной 'матч' входит в витринные
+# формулировки ('Тотал матч', 'Популярные на матч'), которые границами не являются.
+_WINLINE_MATCH_ROW_LABEL_RE = re.compile(r"\bМатч\b")
+
+
+_WINLINE_PRICE_PAIR_RE = re.compile(r"[0-9]+[.,][0-9]+\s+[0-9]+[.,][0-9]+")
+
+
+def _winline_price_bearing_children(node) -> int:
+    """How many direct child subtrees carry a price pair (i.e. look like markets)."""
+    count = 0
+    for child in getattr(node, "children", []):
+        if getattr(child, "name", None) is None:
+            continue
+        if _WINLINE_PRICE_PAIR_RE.search(" ".join(child.stripped_strings)):
+            count += 1
+    return count
+
+
+def _winline_single_card_scope(text: str) -> bool:
+    """True while the container still spans a single Winline event card."""
+    if not text:
+        return False
+    if len(_WINLINE_EVENT_BOUNDARY_RE.findall(text)) > 1:
+        return False
+    if len(_WINLINE_LIVE_CARD_LABEL_RE.findall(text)) > 1:
+        return False
+    if len(_WINLINE_MATCH_ROW_LABEL_RE.findall(text)) > 1:
+        # Несколько строк матч-рынка = несколько матчей подряд под общим
+        # заголовком турнира. Именно так узел с тремя матчами отдавал кэфы соседа.
+        return False
+    return True
+
+
+def _winline_market_row_re(map_num: int) -> "re.Pattern[str]":
+    """Row of the exact current-map winner market: marker followed by two prices."""
+    n = int(map_num)
+    return re.compile(
+        rf"(?:победитель\s*{n}\s*карт[аы]|\b{n}\s*карта\b|\b{n}\s*к\b)"
+        rf"\s*([0-9]+[.,][0-9]+|—|-|–)\s*([0-9]+[.,][0-9]+|—|-|–)",
+        re.I,
+    )
+
+
+def _winline_matched_card_context(
+    text: str,
+    team1: str,
+    team2: str,
+    *,
+    html: str = "",
+    map_num: Optional[int] = None,
+) -> Optional[str]:
+    """Return only the Winline event segment containing both requested teams."""
+    if html:
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            market_re = _winline_market_row_re(map_num) if map_num else None
+            candidates: List[Tuple[int, Any, str]] = []
+            for element in soup.find_all(True):
+                card_text = " ".join(element.stripped_strings)
+                if not card_text or not _text_matches_teams(card_text, team1, team2):
+                    continue
+                candidates.append((len(card_text), element, card_text))
+            if candidates:
+                # Сортировка стабильная: при равной длине сохраняется порядок
+                # документа, поэтому fail-closed возврат ниже — тот же текст, что
+                # отдавался до правки.
+                candidates.sort(key=lambda item: item[0])
+                base_text = candidates[0][2]
+                # Пара команд встречается на странице во многих элементах: карточка
+                # в списке, строка в закреплённом баре, витрина. Подъём удаётся не
+                # от каждого — от бара он приходит в контейнер с навигацией, где
+                # предохранители обязаны отказать. Поэтому пробуем всех кандидатов
+                # от самых узких к широким и берём первую карточку, прошедшую те же
+                # предохранители. Ограничивать список нельзя: иначе непроверенный
+                # хвост превращается в ложное доказательство отсутствия рынка.
+                for _cand_len, element, _cand_text in candidates:
+                    # Climb from the proven container until the requested-map market
+                    # row appears. The first container that carries the row wins, but
+                    # only while it still describes a single Winline card: more than
+                    # one price-bearing child subtree means we swallowed a neighbour.
+                    node = element
+                    while node is not None:
+                        node_text = " ".join(node.stripped_strings)
+                        if market_re is not None:
+                            hit = bool(market_re.search(node_text))
+                        else:
+                            hit = bool(
+                                re.search(r"(?:\b[1-5]\s*к\b|\b[1-5]\s*карта\b)", node_text, re.I)
+                            )
+                        if hit:
+                            if (
+                                _winline_single_card_scope(node_text)
+                                and _winline_price_bearing_children(node) <= 1
+                            ):
+                                return node_text
+                            break
+                        node = node.parent
+                # Ни у одного кандидата строка рынка нужной карты не лежит внутри
+                # границ его собственной карточки. Это и есть доказанное отсутствие
+                # рынка на странице: кэфы оставляем пустыми (fail closed), а не
+                # заимствуем у соседней карточки.
+                return base_text
+        except Exception:
+            pass
+
+    flat = " ".join((text or "").split())
+    if not flat or not team1 or not team2:
+        return None
+    low = flat.lower()
+    positions1 = _find_positions_with_fallback(low, team1)
+    positions2 = _find_positions_with_fallback(low, team2)
+    if not positions1 or not positions2:
+        return None
+    pair = min(
+        ((abs(i1 - i2), min(i1, i2), max(i1, i2)) for i1 in positions1 for i2 in positions2),
+        default=None,
+    )
+    if pair is None:
+        return None
+    _, pair_start, pair_end = pair
+    boundaries = [match.start() for match in _WINLINE_EVENT_BOUNDARY_RE.finditer(flat)]
+    if not boundaries:
+        return flat
+    card_start = max((pos for pos in boundaries if pos <= pair_start), default=0)
+    card_end = min((pos for pos in boundaries if pos > pair_end), default=len(flat))
+    card = flat[card_start:card_end].strip()
+    if not card or not _text_matches_teams(card, team1, team2):
+        return None
+    return card
+
+
+def _winline_team_order(text: str, team1: str, team2: str) -> Optional[str]:
+    """Return 'direct', 'reverse', or None when order is ambiguous."""
+    if not text or not team1 or not team2:
+        return None
+    low = text.lower()
+    i1 = _first_index_with_fallback(low, team1)
+    i2 = _first_index_with_fallback(low, team2)
+    if i1 == -1 or i2 == -1:
+        return None
+    if i1 == i2:
+        return None
+    return "direct" if i1 < i2 else "reverse"
+
+
+def _winline_map_marker_patterns(map_num: int) -> List[str]:
+    n = int(map_num)
+    return [
+        rf"победитель\s*{n}\s*карт[аы]",
+        rf"\b{n}\s*карта\b",
+        rf"\b{n}\s*к\b",
+    ]
+
+
+# Winline размечает недоступность исхода ТОЛЬКО классом кнопки: в CSS все три
+# состояния получают `pointer-events: none`, а `_locked` вдобавок сохраняет
+# видимое число — поэтому в тексте страницы заморозка неотличима от рабочего
+# рынка, и текстовый детектор (LOCK_MARKERS) её принципиально не видит.
+_WINLINE_UNBETTABLE_BUTTON_CLASSES = frozenset(
+    {
+        "coefficient-button_locked",
+        "coefficient-button--is-blank",
+        "coefficient-button_empty",
+    }
+)
+
+_WINLINE_PERIOD_NAME_CLASS = "period-name"
+_WINLINE_COEFF_BUTTON_CLASS = "coefficient-button"
+
+# Класс рынка «победитель» (исход из двух). Тот же контейнер `card__coeffs`
+# несёт фору (`_handicap2`), тотал (`_total2`) и ячейки-заполнители под
+# непредложенные рынки — `coefficient-button_empty` БЕЗ класса рынка. На живой
+# странице заполнителей большинство (54 из 90 кнопок в дампе), поэтому общий
+# `any(...)` по всему контейнеру объявлял замороженным почти каждый рабочий
+# рынок: карточка с живым 1.14/4.80 читалась как locked из-за пустых ячеек
+# соседних колонок. Судить о доступности ставки можно ТОЛЬКО по кнопкам того
+# рынка, из которого разобраны кэфы.
+_WINLINE_WINNER_MARKET_BUTTON_CLASS = "coefficient-button_generic2"
+
+
+def _winline_node_classes(node: Any) -> set:
+    raw = node.get("class") if hasattr(node, "get") else None
+    if not raw:
+        return set()
+    if isinstance(raw, str):
+        return {raw}
+    return {str(item) for item in raw}
+
+
+def _winline_button_is_unbettable(button: Any) -> bool:
+    return bool(_winline_node_classes(button) & _WINLINE_UNBETTABLE_BUTTON_CLASSES)
+
+
+def _winline_winner_market_buttons(container: Any) -> List[Any]:
+    """Кнопки рынка «победитель карты» внутри контейнера коэффициентов.
+
+    Фора, тотал и пустые ячейки-заполнители сюда не попадают: их состояние
+    ничего не говорит о том, принимает ли БК ставку на победителя.
+    """
+    return [
+        node
+        for node in container.find_all(
+            lambda tag: _WINLINE_COEFF_BUTTON_CLASS in _winline_node_classes(tag)
+        )
+        if _WINLINE_WINNER_MARKET_BUTTON_CLASS in _winline_node_classes(node)
+    ]
+
+
+def _winline_map_odds_bettable(
+    html: str,
+    team1: str,
+    team2: str,
+    map_num: Optional[int],
+) -> Optional[bool]:
+    """Можно ли реально поставить на исход рынка карты `map_num`.
+
+    True/False возвращается только по найденным кнопкам исходов; во всех
+    остальных случаях — None («не смогли определить»). Fail-open намеренный:
+    отсутствие доказательства блокировки не должно превращаться в отказ от
+    ставки, иначе дефект разметки молча выключит поток сигналов.
+    """
+    map_num = _normalize_map_num(map_num)
+    if not html or map_num is None:
+        return None
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception:
+        return None
+
+    marker_res = [re.compile(p, re.I) for p in _winline_map_marker_patterns(map_num)]
+
+    def _labels_this_map(text: str) -> bool:
+        flat = " ".join((text or "").split())
+        return bool(flat) and any(rx.search(flat) for rx in marker_res)
+
+    # Сужаемся до карточки нужного матча, иначе поймаем метку '1 карта' соседа.
+    if team1 and team2:
+        scopes = []
+        for element in soup.find_all(True):
+            card_text = " ".join(element.stripped_strings)
+            if card_text and _text_matches_teams(card_text, team1, team2):
+                scopes.append((len(card_text), element))
+            if not scopes:
+                # Карточки этих команд на странице нет — судить о доступности
+                # исхода не по чему. Чужой рынок читать нельзя.
+                return None
+            scopes.sort(key=lambda item: item[0])
+            # Проверяем все совпавшие узлы: обрезка здесь способна скрыть
+            # настоящие кнопки рынка за закреплёнными/витринными DOM-тенями.
+            search_roots = [element for _, element in scopes]
+        else:
+            search_roots = [soup]
+
+    for root in search_roots:
+        for label in root.find_all(
+            lambda tag: _WINLINE_PERIOD_NAME_CLASS in _winline_node_classes(tag)
+        ):
+            if not _labels_this_map(" ".join(label.stripped_strings)):
+                continue
+            # Кнопки лежат в соседнем `card__coeffs`; при смене вёрстки
+            # поднимаемся к общему родителю, но не выше карточки.
+            containers = [
+                node
+                for node in (label.find_next_sibling(), label.parent)
+                if node is not None
+            ]
+            for container in containers:
+                buttons = _winline_winner_market_buttons(container)
+                if not buttons:
+                    # Кнопок победителя тут нет (закреплённый бар, витрина,
+                    # чужая разметка) — ответа не получено, ищем дальше, а не
+                    # выдаём вердикт по чужим рынкам.
+                    continue
+                return not any(_winline_button_is_unbettable(b) for b in buttons)
+    return None
+
+
+async def _winline_page_odds_bettable(
+    page: Any,
+    team1: str,
+    team2: str,
+    map_num: Optional[int],
+) -> Optional[bool]:
+    """Доступность исхода по живой странице. None — определить не удалось."""
+    try:
+        html = await _maybe_await(page.content()) or ""
+    except Exception:
+        return None
+    try:
+        return _winline_map_odds_bettable(html, team1, team2, map_num)
+    except Exception:
+        return None
+
+
+def _winline_driver_odds_bettable(
+    drv: Any,
+    team1: str,
+    team2: str,
+    map_num: Optional[int],
+) -> Optional[bool]:
+    """Версия для legacy Selenium-пути. None — определить не удалось."""
+    try:
+        html = drv.page_source or ""
+    except Exception:
+        return None
+    try:
+        return _winline_map_odds_bettable(html, team1, team2, map_num)
+    except Exception:
+        return None
+
+
+def _winline_mark_locked_as_closed(wl: "_WinlineMapExtract") -> "_WinlineMapExtract":
+    """Замороженный исход = закрытый рынок для всех потребителей ставки.
+
+    Числа снимаем намеренно: ниже по конвейеру наличие odds означает
+    «можно ставить», и оставить их — значит предложить цену, которую БК
+    не примет.
+    """
+    wl.odds = []
+    wl.market_closed = True
+    wl.reason = "closed"
+    wl.details = f"{wl.details or ''} | winline outcome locked (not bettable)".strip(" |")
+    return wl
+
+
+def _extract_winline_current_map_winner(
+    text: str,
+    team1: str,
+    team2: str,
+    forced_map_num: Optional[int] = None,
+) -> _WinlineMapExtract:
+    """Strict Winline current-map winner only; never promote match odds."""
+    map_num = _normalize_map_num(forced_map_num)
+    flat = " ".join((text or "").split())
+    low = flat.lower()
+    if not flat or map_num is None:
+        return _WinlineMapExtract(reason="map", details="winline missing/invalid map_num")
+
+    card_context = _winline_matched_card_context(flat, team1, team2, map_num=map_num)
+    working = card_context if card_context else flat
+    order = _winline_team_order(working, team1, team2)
+    has_teams = order is not None
+    working_low = working.lower()
+
+    # Locate exact current-map market row.
+    row_re = _winline_market_row_re(map_num)
+    row_m = row_re.search(working_low if working is working_low else working)
+    # search on original working with case preserved for numbers; use working for both
+    row_m = row_re.search(working)
+
+    def _is_dash(tok: str) -> bool:
+        return str(tok or "").strip() in {"—", "-", "–", "−"}
+
+    def _to_odd(tok: str) -> Optional[float]:
+        try:
+            return float(str(tok).replace(",", "."))
+        except Exception:
+            return None
+
+    # Closed market: map marker present with dash placeholders or lock markers nearby.
+    if row_m and (_is_dash(row_m.group(1)) or _is_dash(row_m.group(2))):
+        return _WinlineMapExtract(
+            market_closed=True,
+            reason="closed",
+            map_num=map_num,
+            market_kind="current_map_winner",
+            details="winline current map market closed",
+        )
+    window_for_lock = working
+    if any(marker in working_low for marker in LOCK_MARKERS) and any(
+        re.search(pat, working_low, re.I) for pat in _winline_map_marker_patterns(map_num)
+    ):
+        # only if no numeric pair for this map
+        if not row_m or _is_dash(row_m.group(1)) or _is_dash(row_m.group(2)):
+            return _WinlineMapExtract(
+                market_closed=True,
+                reason="closed",
+                map_num=map_num,
+                market_kind="current_map_winner",
+                details="winline current map market closed/suspended",
+            )
+
+    if row_m and not _is_dash(row_m.group(1)) and not _is_dash(row_m.group(2)):
+        o1 = _to_odd(row_m.group(1))
+        o2 = _to_odd(row_m.group(2))
+        if o1 is not None and o2 is not None and o1 > 1.01 and o2 > 1.01:
+            if not has_teams:
+                return _WinlineMapExtract(
+                    reason="ambiguous",
+                    map_num=map_num,
+                    details="winline ambiguous team order for current map market",
+                )
+            # DOM odds follow local team order; canonicalize to team1/team2.
+            if order == "reverse":
+                odds = [o2, o1]
+            else:
+                odds = [o1, o2]
+            return _WinlineMapExtract(
+                odds=odds,
+                map_num=map_num,
+                market_kind="current_map_winner",
+                p1_team="team1",
+                p2_team="team2",
+                details=working[:700],
+            )
+
+    # No exact current-map row: classify rejection reason without promoting match odds.
+    other_map = False
+    for other in range(1, 6):
+        if other == map_num:
+            continue
+        if any(re.search(pat, working_low, re.I) for pat in _winline_map_marker_patterns(other)):
+            other_map = True
+            break
+    has_match = bool(re.search(r"\bматч\b", working_low, re.I))
+    if other_map:
+        return _WinlineMapExtract(
+            reason="map",
+            map_num=map_num,
+            details="winline wrong/other map market only; exact current map missing",
+        )
+    if has_match:
+        return _WinlineMapExtract(
+            reason="match",
+            map_num=map_num,
+            details="winline match market only; current map winner missing",
+        )
+    if not has_teams and re.search(rf"\b{map_num}\s*к\b|\b{map_num}\s*карта\b", low, re.I):
+        return _WinlineMapExtract(
+            reason="ambiguous",
+            map_num=map_num,
+            details="winline ambiguous team order for current map market",
+        )
+    return _WinlineMapExtract(
+        reason="map",
+        map_num=map_num,
+        details="winline current map winner market missing",
+    )
+
+
+def _site_result_with_provenance(
+    *,
+    site: str,
+    url: str,
+    status: str,
+    match_found: bool,
+    odds: List[float],
+    source: str,
+    details: str,
+    market_closed: bool = False,
+    match_odds: Optional[List[float]] = None,
+    market_kind: Optional[str] = None,
+    map_num: Optional[int] = None,
+    p1_team: Optional[str] = None,
+    p2_team: Optional[str] = None,
+) -> SiteResult:
+    return SiteResult(
+        site=site,
+        url=url,
+        status=status,
+        match_found=match_found,
+        odds=list(odds or []),
+        source=source,
+        details=details,
+        market_closed=bool(market_closed),
+        match_odds=list(match_odds or []),
+        market_kind=market_kind,
+        map_num=map_num,
+        p1_team=p1_team,
+        p2_team=p2_team,
+    )
+
+
 def _extract_map_odds_deeplink(
     site: str,
     text: str,
@@ -1100,28 +1828,14 @@ def _extract_map_odds_deeplink(
                 if m_block:
                     return [float(m_block.group(1).replace(",", ".")), float(m_block.group(2).replace(",", "."))]
     if site == "winline":
-        # Prefer explicit map winner market.
-        pat = re.compile(
-            rf"Победитель\s*{map_num}\s*карт[аы]\s*([0-9]+[.,][0-9]+)\s+([0-9]+[.,][0-9]+)",
-            re.I,
+        # Strict current-map winner only; canonical team1/team2 order.
+        extracted = _extract_winline_current_map_winner(
+            text,
+            team1,
+            team2,
+            forced_map_num=map_num,
         )
-        m = pat.search(flat)
-        if m:
-            return [float(m.group(1).replace(",", ".")), float(m.group(2).replace(",", "."))]
-        m_short = re.search(
-            rf"\b{map_num}\s*к\b\s*([0-9]+[.,][0-9]+)\s+([0-9]+[.,][0-9]+)",
-            flat.lower(),
-            re.I,
-        )
-        if m_short:
-            return [float(m_short.group(1).replace(",", ".")), float(m_short.group(2).replace(",", "."))]
-        m_row = re.search(
-            rf"\b{map_num}\s*карта\b\s*([0-9]+[.,][0-9]+)\s+([0-9]+[.,][0-9]+)",
-            flat.lower(),
-            re.I,
-        )
-        if m_row:
-            return [float(m_row.group(1).replace(",", ".")), float(m_row.group(2).replace(",", "."))]
+        return list(extracted.odds or [])
     return []
 
 
@@ -1187,29 +1901,13 @@ def _extract_map_odds_from_feed_context(
             return [float(m.group(1).replace(",", ".")), float(m.group(2).replace(",", "."))]
 
     if site == "winline":
-        # Feed row often has "<N>К 1.52 2.55" for current map winner.
-        m = re.search(
-            rf"\b{map_num}\s*к\b\s*([0-9]+[.,][0-9]+)\s+([0-9]+[.,][0-9]+)",
-            low,
-            re.I,
+        extracted = _extract_winline_current_map_winner(
+            working,
+            team1,
+            team2,
+            forced_map_num=map_num,
         )
-        if m:
-            return [float(m.group(1).replace(",", ".")), float(m.group(2).replace(",", "."))]
-        # Alternative format: "<N>К <N> карта 2.45 1.47"
-        m_mid = re.search(
-            rf"\b{map_num}\s*к\b\s*{map_num}\s*карта\s*([0-9]+[.,][0-9]+)\s+([0-9]+[.,][0-9]+)",
-            low,
-            re.I,
-        )
-        if m_mid:
-            return [float(m_mid.group(1).replace(",", ".")), float(m_mid.group(2).replace(",", "."))]
-        m_row = re.search(
-            rf"\b{map_num}\s*карта\b\s*([0-9]+[.,][0-9]+)\s+([0-9]+[.,][0-9]+)",
-            low,
-            re.I,
-        )
-        if m_row:
-            return [float(m_row.group(1).replace(",", ".")), float(m_row.group(2).replace(",", "."))]
+        return list(extracted.odds or [])
 
     return []
 
@@ -1323,7 +2021,23 @@ def _is_map_market_closed(site: str, text: str, forced_map_num: Optional[int] = 
         return False
 
     if site == "winline":
-        # Conservative detection: if map marker exists near teams, but no odds and lock-like markers exist.
+        extracted = _extract_winline_current_map_winner(
+            text,
+            "",
+            "",
+            forced_map_num=forced_map_num if forced_map_num is not None else map_num,
+        )
+        # When teams unknown here, still detect dash-closed rows for forced map.
+        dash_closed = bool(
+            re.search(
+                rf"(?:победитель\s*{map_num}\s*карт[аы]|\b{map_num}\s*карта\b|\b{map_num}\s*к\b)"
+                rf"\s*(?:—|-|–)\s*(?:—|-|–)",
+                low,
+                re.I,
+            )
+        )
+        if dash_closed:
+            return True
         if not _looks_map_context(low):
             return False
         if any(marker in low for marker in LOCK_MARKERS):
@@ -1818,7 +2532,7 @@ def _map_context_details(site: str, reason_kind: str) -> str:
     return f"{base} map market not found in map-only context"
 
 
-def parse_site_in_camoufox_page(
+async def parse_site_in_camoufox_page_async(
     page,
     site: str,
     url: str,
@@ -1826,21 +2540,34 @@ def parse_site_in_camoufox_page(
     team2: str,
     mode: str,
     forced_map_num: Optional[int] = None,
+    acquisition_mode: Optional[str] = None,
 ) -> SiteResult:
-    load_status, load_error, html, visible, body_text = _load_site_render_payload_camoufox(
+    # Acquisition mode is honored only for Winline; other bookmakers keep legacy goto.
+    effective_acq = acquisition_mode if site == "winline" else None
+    _payload = await _load_site_render_payload_camoufox_async(
         page,
         url,
         initial_wait_seconds=7.0,
         scroll_wait_seconds=2.0,
+        acquisition_mode=effective_acq,
     )
+    # Backward compatible with tests/mocks that still return the legacy 5-tuple.
+    if len(_payload) >= 6:
+        load_status, load_error, html, visible, body_text, acq_diag = _payload[:6]
+    else:
+        load_status, load_error, html, visible, body_text = _payload[:5]
+        acq_diag = {}
     initial_body_text = body_text
     match_fallback_odds: List[float] = []
+
+    def _with_acq(result: SiteResult) -> SiteResult:
+        return _apply_acquisition_diag(result, acq_diag)
 
     if _is_deeplink(site, url):
         if not body_text:
             for _ in range(8):
                 time.sleep(1.0)
-                body_text = " ".join(_camoufox_body_text(page).split())
+                body_text = " ".join(await _camoufox_body_text(page).split())
                 if body_text:
                     break
         if site == "pari":
@@ -1849,18 +2576,77 @@ def parse_site_in_camoufox_page(
                     break
                 if i == 3:
                     with contextlib.suppress(Exception):
-                        page.reload(wait_until="domcontentloaded", timeout=30000)
+                        await _maybe_await(page.reload(wait_until="domcontentloaded", timeout=30000))
                 time.sleep(1.0)
-                body_text = " ".join(_camoufox_body_text(page).split())
-        map_odds, body_text = _parse_map_market_on_current_camoufox_page(
+                body_text = " ".join(await _camoufox_body_text(page).split())
+        map_odds, body_text = await _parse_map_market_on_current_camoufox_page_async(
             page,
             site,
             team1,
             team2,
             forced_map_num=forced_map_num,
         )
+        if site == "winline":
+            wl = _extract_winline_current_map_winner(
+                body_text or visible or "",
+                team1,
+                team2,
+                forced_map_num=forced_map_num,
+            )
+            match_diag = _extract_first_match_odds(site, team1, team2, body_text, visible)
+            if wl.odds and await _winline_page_odds_bettable(
+                page, team1, team2, wl.map_num or forced_map_num
+            ) is False:
+                wl = _winline_mark_locked_as_closed(wl)
+            if wl.odds:
+                return _with_acq(_site_result_with_provenance(
+                    site=site,
+                    url=url,
+                    status=load_status,
+                    match_found=True,
+                    odds=wl.odds[:2],
+                    source="deeplink_map_market",
+                    details=str(wl.details or body_text or "")[:700],
+                    market_kind=wl.market_kind,
+                    map_num=wl.map_num,
+                    p1_team=wl.p1_team,
+                    p2_team=wl.p2_team,
+                    match_odds=match_diag,
+                ))
+            if wl.market_closed or wl.reason == "closed":
+                return _with_acq(_site_result_with_provenance(
+                    site=site,
+                    url=url,
+                    status=load_status,
+                    match_found=True,
+                    odds=[],
+                    source=_map_closed_source(site),
+                    details=str(wl.details or body_text or "")[:700],
+                    market_closed=True,
+                    market_kind="current_map_winner",
+                    map_num=wl.map_num or _normalize_map_num(forced_map_num),
+                    match_odds=match_diag,
+                ))
+            reason = wl.reason or "map"
+            if reason == "ambiguous":
+                source_name = "winline_ambiguous_order_rejected"
+            elif reason == "match":
+                source_name = _match_level_rejected_source(site)
+            else:
+                source_name = "winline_map_rejected"
+            return _with_acq(_site_result_with_provenance(
+                site=site,
+                url=url,
+                status=load_status,
+                match_found=bool(team1 and team2 and _text_matches_teams(body_text or visible or "", team1, team2)),
+                odds=[],
+                source=source_name,
+                details=str(wl.details or body_text or "")[:700],
+                map_num=wl.map_num or _normalize_map_num(forced_map_num),
+                match_odds=match_diag,
+            ))
         if map_odds:
-            return SiteResult(
+            return _with_acq(SiteResult(
                 site=site,
                 url=url,
                 status=load_status,
@@ -1868,13 +2654,13 @@ def parse_site_in_camoufox_page(
                 odds=map_odds[:2],
                 source="deeplink_map_market",
                 details=str(body_text or "")[:700],
-            )
+            ))
         if _is_map_market_closed(site, body_text, forced_map_num=forced_map_num):
             map_context_active = _is_map_context_active(body_text or visible, forced_map_num)
             source_name = "deeplink_map_market_closed"
             if map_context_active:
                 source_name = _map_closed_source(site)
-            return SiteResult(
+            return _with_acq(SiteResult(
                 site=site,
                 url=url,
                 status=load_status,
@@ -1883,7 +2669,7 @@ def parse_site_in_camoufox_page(
                 source=source_name,
                 details=str(body_text or "")[:700],
                 market_closed=True,
-            )
+            ))
 
         deep_sources: List[Tuple[str, str]] = []
         if body_text:
@@ -1906,7 +2692,7 @@ def parse_site_in_camoufox_page(
             )
         if map_context_active:
             if found_deep and odds_deep:
-                return SiteResult(
+                return _with_acq(SiteResult(
                     site=site,
                     url=url,
                     status=load_status,
@@ -1915,9 +2701,9 @@ def parse_site_in_camoufox_page(
                     source=_match_level_rejected_source(site),
                     details=(details_deep or body_text or _map_context_details(site, "match_level_rejected"))[:700],
                     match_odds=match_fallback_odds,
-                )
+                ))
             if _is_map_market_closed(site, deep_context_text, forced_map_num=forced_map_num):
-                return SiteResult(
+                return _with_acq(SiteResult(
                     site=site,
                     url=url,
                     status=load_status,
@@ -1927,8 +2713,8 @@ def parse_site_in_camoufox_page(
                     details=(details_deep or body_text or _map_context_details(site, "map_market_closed"))[:700],
                     market_closed=True,
                     match_odds=match_fallback_odds,
-                )
-            return SiteResult(
+                ))
+            return _with_acq(SiteResult(
                 site=site,
                 url=url,
                 status=load_status,
@@ -1937,9 +2723,9 @@ def parse_site_in_camoufox_page(
                 source=_map_missing_source(site),
                 details=(details_deep or body_text or _map_context_details(site, "map_market_missing"))[:700],
                 match_odds=match_fallback_odds,
-            )
+            ))
         if found_deep and odds_deep and _looks_map_context(details_deep):
-            return SiteResult(
+            return _with_acq(SiteResult(
                 site=site,
                 url=url,
                 status=load_status,
@@ -1947,9 +2733,9 @@ def parse_site_in_camoufox_page(
                 odds=odds_deep[:2],
                 source=f"deeplink_{source_deep}",
                 details=details_deep,
-            )
+            ))
         if found_deep and _is_map_market_closed(site, details_deep or body_text, forced_map_num=forced_map_num):
-            return SiteResult(
+            return _with_acq(SiteResult(
                 site=site,
                 url=url,
                 status=load_status,
@@ -1958,9 +2744,9 @@ def parse_site_in_camoufox_page(
                 source=f"deeplink_{source_deep or 'map_market'}_closed",
                 details=(details_deep or body_text)[:700],
                 market_closed=True,
-            )
+            ))
         if map_odds:
-            return SiteResult(
+            return _with_acq(SiteResult(
                 site=site,
                 url=url,
                 status=load_status,
@@ -1968,8 +2754,8 @@ def parse_site_in_camoufox_page(
                 odds=map_odds[:2],
                 source=f"deeplink_{source_deep}",
                 details=details_deep,
-            )
-        return SiteResult(
+            ))
+        return _with_acq(SiteResult(
             site=site,
             url=url,
             status=load_status,
@@ -1977,20 +2763,86 @@ def parse_site_in_camoufox_page(
             odds=[],
             source="",
             details="deeplink loaded but map market odds not found",
-        )
+        ))
 
     candidate_urls = _candidate_match_urls_from_html(site, str(getattr(page, "url", "") or url), html)
-    href_opened = _camoufox_find_match_by_urls(page, site, candidate_urls, team1, team2)
+    href_opened = await _camoufox_find_match_by_urls_async(page, site, candidate_urls, team1, team2)
     if href_opened:
-        map_odds, body_text = _parse_map_market_on_current_camoufox_page(
+        map_odds, body_text = await _parse_map_market_on_current_camoufox_page_async(
             page,
             site,
             team1,
             team2,
             forced_map_num=forced_map_num,
         )
-        if map_odds:
-            return SiteResult(
+        if site == "winline":
+            wl = _extract_winline_current_map_winner(
+                body_text or "",
+                team1,
+                team2,
+                forced_map_num=forced_map_num,
+            )
+            match_diag = _extract_first_match_odds(site, team1, team2, body_text, visible)
+            if wl.odds and await _winline_page_odds_bettable(
+                page, team1, team2, wl.map_num or forced_map_num
+            ) is False:
+                wl = _winline_mark_locked_as_closed(wl)
+            if wl.odds:
+                return _with_acq(_site_result_with_provenance(
+                    site=site,
+                    url=url,
+                    status=load_status,
+                    match_found=True,
+                    odds=wl.odds[:2],
+                    source="feed_href_map_market",
+                    details=str(wl.details or body_text or "")[:700],
+                    market_kind=wl.market_kind,
+                    map_num=wl.map_num,
+                    p1_team=wl.p1_team,
+                    p2_team=wl.p2_team,
+                    match_odds=match_diag,
+                ))
+            if wl.market_closed or wl.reason == "closed":
+                return _with_acq(_site_result_with_provenance(
+                    site=site,
+                    url=url,
+                    status=load_status,
+                    match_found=True,
+                    odds=[],
+                    source="feed_href_map_market_closed",
+                    details=str(wl.details or body_text or "")[:700],
+                    market_closed=True,
+                    market_kind="current_map_winner",
+                    map_num=wl.map_num or _normalize_map_num(forced_map_num),
+                    match_odds=match_diag,
+                ))
+            if map_odds:
+                # Non-strict generic map_odds must not pass the Winline gate without provenance.
+                return _with_acq(_site_result_with_provenance(
+                    site=site,
+                    url=url,
+                    status=load_status,
+                    match_found=True,
+                    odds=[],
+                    source="winline_map_rejected",
+                    details=str(wl.details or body_text or "")[:700],
+                    map_num=wl.map_num or _normalize_map_num(forced_map_num),
+                    match_odds=match_diag,
+                ))
+            if _is_map_context_active(body_text, forced_map_num):
+                return _with_acq(_site_result_with_provenance(
+                    site=site,
+                    url=url,
+                    status=load_status,
+                    match_found=True,
+                    odds=[],
+                    source=_map_missing_source(site),
+                    details=str(body_text or "")[:700],
+                    map_num=_normalize_map_num(forced_map_num),
+                    match_odds=match_diag,
+                ))
+        elif map_odds:
+            return _with_acq(SiteResult(
                 site=site,
                 url=url,
                 status=load_status,
@@ -1998,9 +2850,9 @@ def parse_site_in_camoufox_page(
                 odds=map_odds[:2],
                 source="feed_href_map_market",
                 details=str(body_text or "")[:700],
-            )
-        if _is_map_market_closed(site, body_text, forced_map_num=forced_map_num):
-            return SiteResult(
+            ))
+        if site != "winline" and _is_map_market_closed(site, body_text, forced_map_num=forced_map_num):
+            return _with_acq(SiteResult(
                 site=site,
                 url=url,
                 status=load_status,
@@ -2009,9 +2861,9 @@ def parse_site_in_camoufox_page(
                 source="feed_href_map_market_closed",
                 details=str(body_text or "")[:700],
                 market_closed=True,
-            )
-        if _is_map_context_active(body_text, forced_map_num):
-            return SiteResult(
+            ))
+        if site != "winline" and _is_map_context_active(body_text, forced_map_num):
+            return _with_acq(SiteResult(
                 site=site,
                 url=url,
                 status=load_status,
@@ -2019,7 +2871,7 @@ def parse_site_in_camoufox_page(
                 odds=[],
                 source=_map_missing_source(site),
                 details=str(body_text or "")[:700],
-            )
+            ))
 
     feed_sources: List[Tuple[str, str]] = []
     if body_text:
@@ -2042,15 +2894,48 @@ def parse_site_in_camoufox_page(
         if feed_map_odds:
             break
     if feed_found and feed_map_odds:
-        return SiteResult(
-            site=site,
-            url=url,
-            status=load_status,
-            match_found=True,
-            odds=feed_map_odds[:2],
-            source=f"{feed_source_name or 'feed'}_map_row",
-            details=(feed_details or body_text or visible)[:700],
-        )
+        if site == "winline":
+            winline_card = _winline_matched_card_context(
+                body_text or visible or feed_details or "",
+                team1,
+                team2,
+                html=html,
+                map_num=_normalize_map_num(forced_map_num),
+            )
+            wl = _extract_winline_current_map_winner(
+                winline_card or "",
+                team1,
+                team2,
+                forced_map_num=forced_map_num,
+            )
+            if wl.odds and _winline_map_odds_bettable(
+                html, team1, team2, wl.map_num or forced_map_num
+            ) is False:
+                wl = _winline_mark_locked_as_closed(wl)
+            if wl.odds:
+                return _with_acq(_site_result_with_provenance(
+                    site=site,
+                    url=url,
+                    status=load_status,
+                    match_found=True,
+                    odds=wl.odds[:2],
+                    source=f"{feed_source_name or 'feed'}_map_row",
+                    details=(wl.details or feed_details or body_text or visible)[:700],
+                    market_kind=wl.market_kind,
+                    map_num=wl.map_num,
+                    p1_team=wl.p1_team,
+                    p2_team=wl.p2_team,
+                ))
+        else:
+            return _with_acq(SiteResult(
+                site=site,
+                url=url,
+                status=load_status,
+                match_found=True,
+                odds=feed_map_odds[:2],
+                source=f"{feed_source_name or 'feed'}_map_row",
+                details=(feed_details or body_text or visible)[:700],
+            ))
 
     sources: List[Tuple[str, str]] = []
     if body_text:
@@ -2061,6 +2946,67 @@ def parse_site_in_camoufox_page(
         sources.append(("dom_html", html))
 
     found, _odds_ignored, source_name, details = _find_from_sources(team1, team2, sources)
+    winline_context = body_text or visible or details or ""
+    winline_card = _winline_matched_card_context(
+        winline_context,
+        team1,
+        team2,
+        html=html,
+        map_num=_normalize_map_num(forced_map_num),
+    )
+    if (
+        site == "winline"
+        and found
+        and winline_card
+        and not (mode == "live" and _looks_future_context(winline_card))
+    ):
+        if load_error:
+            winline_card = f"{winline_card} | load_error={load_error[:300]}"
+        wl = _extract_winline_current_map_winner(
+            winline_card,
+            team1,
+            team2,
+            forced_map_num=forced_map_num,
+        )
+        if wl.odds and _winline_map_odds_bettable(
+            html, team1, team2, wl.map_num or forced_map_num
+        ) is False:
+            wl = _winline_mark_locked_as_closed(wl)
+        if wl.odds:
+            return _with_acq(_site_result_with_provenance(
+                site=site,
+                url=url,
+                status=load_status,
+                match_found=True,
+                odds=wl.odds[:2],
+                source=f"{source_name or 'dom'}_map_row",
+                details=str(wl.details or details or winline_context)[:700],
+                market_kind=wl.market_kind,
+                map_num=wl.map_num,
+                p1_team=wl.p1_team,
+                p2_team=wl.p2_team,
+            ))
+        if wl.reason == "closed" or wl.market_closed:
+            winline_source = _map_closed_source(site)
+        elif wl.reason == "match":
+            winline_source = _match_level_rejected_source(site)
+        elif wl.reason == "ambiguous":
+            winline_source = "winline_ambiguous_order_rejected"
+        else:
+            winline_source = _map_missing_source(site)
+        return _with_acq(_site_result_with_provenance(
+            site=site,
+            url=url,
+            status=load_status,
+            match_found=True,
+            odds=[],
+            source=winline_source,
+            details=str(wl.details or details or winline_context)[:700],
+            market_closed=bool(wl.market_closed),
+            market_kind="current_map_winner" if wl.market_closed else None,
+            map_num=wl.map_num or _normalize_map_num(forced_map_num),
+        ))
+
     strict_map_odds: List[float] = []
     for context in (body_text, visible, details):
         strict_map_odds = _extract_map_odds_from_feed_context(
@@ -2110,7 +3056,7 @@ def parse_site_in_camoufox_page(
         details = "match found but filtered as non-live (future context)"
     if load_error:
         details = f"{details} | load_error={load_error[:300]}"
-    return SiteResult(
+    return _with_acq(SiteResult(
         site=site,
         url=url,
         status=load_status,
@@ -2120,7 +3066,7 @@ def parse_site_in_camoufox_page(
         details=details,
         market_closed=market_closed,
         match_odds=match_fallback_odds,
-    )
+    ))
 
 
 def parse_site(
@@ -2321,7 +3267,72 @@ def parse_site(
             team2,
             forced_map_num=forced_map_num,
         )
-        if map_odds:
+        if site == "winline":
+            wl = _extract_winline_current_map_winner(
+                body_text or "",
+                team1,
+                team2,
+                forced_map_num=forced_map_num,
+            )
+            match_diag = _extract_first_match_odds(site, team1, team2, body_text, visible)
+            if wl.odds and _winline_driver_odds_bettable(
+                drv, team1, team2, wl.map_num or forced_map_num
+            ) is False:
+                wl = _winline_mark_locked_as_closed(wl)
+            if wl.odds:
+                return _site_result_with_provenance(
+                    site=site,
+                    url=url,
+                    status=load_status,
+                    match_found=True,
+                    odds=wl.odds[:2],
+                    source="feed_href_map_market",
+                    details=str(wl.details or body_text or "")[:700],
+                    market_kind=wl.market_kind,
+                    map_num=wl.map_num,
+                    p1_team=wl.p1_team,
+                    p2_team=wl.p2_team,
+                    match_odds=match_diag,
+                )
+            if wl.market_closed or wl.reason == "closed":
+                return _site_result_with_provenance(
+                    site=site,
+                    url=url,
+                    status=load_status,
+                    match_found=True,
+                    odds=[],
+                    source="feed_href_map_market_closed",
+                    details=str(wl.details or body_text or "")[:700],
+                    market_closed=True,
+                    market_kind="current_map_winner",
+                    map_num=wl.map_num or _normalize_map_num(forced_map_num),
+                    match_odds=match_diag,
+                )
+            if map_odds:
+                return _site_result_with_provenance(
+                    site=site,
+                    url=url,
+                    status=load_status,
+                    match_found=True,
+                    odds=[],
+                    source="winline_map_rejected",
+                    details=str(wl.details or body_text or "")[:700],
+                    map_num=wl.map_num or _normalize_map_num(forced_map_num),
+                    match_odds=match_diag,
+                )
+            if _is_map_context_active(body_text, forced_map_num):
+                return _site_result_with_provenance(
+                    site=site,
+                    url=url,
+                    status=load_status,
+                    match_found=True,
+                    odds=[],
+                    source=_map_missing_source(site),
+                    details=str(body_text or "")[:700],
+                    map_num=_normalize_map_num(forced_map_num),
+                    match_odds=match_diag,
+                )
+        elif map_odds:
             return SiteResult(
                 site=site,
                 url=url,
@@ -2331,7 +3342,7 @@ def parse_site(
                 source="feed_href_map_market",
                 details=body_text[:700],
             )
-        if _is_map_market_closed(site, body_text, forced_map_num=forced_map_num):
+        if site != "winline" and _is_map_market_closed(site, body_text, forced_map_num=forced_map_num):
             return SiteResult(
                 site=site,
                 url=url,
@@ -2342,7 +3353,7 @@ def parse_site(
                 details=body_text[:700],
                 market_closed=True,
             )
-        if _is_map_context_active(body_text, forced_map_num):
+        if site != "winline" and _is_map_context_active(body_text, forced_map_num):
             return SiteResult(
                 site=site,
                 url=url,
@@ -3038,7 +4049,7 @@ def _run_presence_sites_in_browser(
     return [results_by_site[site] for site in selected_sites]
 
 
-def run_presence_sites_parallel(
+async def run_presence_sites_parallel_async(
     *,
     selected_sites: List[str],
     urls: Dict[str, str],
@@ -3049,7 +4060,7 @@ def run_presence_sites_parallel(
     team2_aliases: Optional[List[str]] = None,
 ) -> List[SiteResult]:
     if BOOKMAKER_CAMOUFOX_PRESENCE_ENABLED:
-        return _run_presence_sites_in_camoufox(
+        return await _run_presence_sites_in_camoufox(
             selected_sites=selected_sites,
             urls=urls,
             team1=team1,
@@ -3069,7 +4080,7 @@ def run_presence_sites_parallel(
     )
 
 
-def run_sites_in_camoufox(
+async def run_sites_in_camoufox_async(
     *,
     selected_sites: List[str],
     urls: Dict[str, str],
@@ -3085,10 +4096,10 @@ def run_sites_in_camoufox(
     results: List[SiteResult] = []
     with camoufox.Camoufox(headless=True, **proxy_kwargs) as browser:
         for site in selected_sites:
-            page = browser.new_page()
+            page = await _maybe_await(browser.new_page())
             try:
                 results.append(
-                    parse_site_in_camoufox_page(
+                    await parse_site_in_camoufox_page_async(
                         page,
                         site=site,
                         url=urls[site],
@@ -3100,7 +4111,7 @@ def run_sites_in_camoufox(
                 )
             finally:
                 with contextlib.suppress(Exception):
-                    page.close()
+                    await _maybe_await(page.close())
     return results
 
 
@@ -3121,7 +4132,7 @@ def _parse_bool_arg(raw_value: Optional[str], default: bool = True) -> bool:
     return str(raw_value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def main() -> None:
+async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--team1", required=True)
     parser.add_argument("--team2", required=True)
@@ -3176,7 +4187,7 @@ def main() -> None:
     if odds_enabled or args.presence_only:
         if args.presence_only:
             proxy_origin = "camoufox_presence_proxy_only" if BOOKMAKER_CAMOUFOX_PRESENCE_ENABLED else "parallel_presence_proxy_only"
-            results = run_presence_sites_parallel(
+            results = await run_presence_sites_parallel_async(
                 selected_sites=selected_sites,
                 urls=urls,
                 team1=args.team1,
@@ -3188,7 +4199,7 @@ def main() -> None:
         else:
             if BOOKMAKER_CAMOUFOX_ENABLED:
                 proxy_origin = "camoufox_proxy_only"
-                results = run_sites_in_camoufox(
+                results = await run_sites_in_camoufox_async(
                     selected_sites=selected_sites,
                     urls=urls,
                     team1=args.team1,
@@ -3251,3 +4262,33 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def parse_site_in_camoufox_page(*args, **kwargs):
+    """Синхронная обёртка над parse_site_in_camoufox_page_async для standalone-вызовов и тестов."""
+    return _run_coroutine_blocking(parse_site_in_camoufox_page_async(*args, **kwargs))
+
+
+def run_sites_in_camoufox(*args, **kwargs):
+    """Синхронная обёртка над run_sites_in_camoufox_async для standalone-вызовов и тестов."""
+    return _run_coroutine_blocking(run_sites_in_camoufox_async(*args, **kwargs))
+
+
+def _camoufox_find_match_by_urls(*args, **kwargs):
+    """Синхронная обёртка над _camoufox_find_match_by_urls_async (standalone-вызовы и тесты)."""
+    return _run_coroutine_blocking(_camoufox_find_match_by_urls_async(*args, **kwargs))
+
+
+def _load_site_render_payload_camoufox(*args, **kwargs):
+    """Синхронная обёртка над _load_site_render_payload_camoufox_async (standalone-вызовы и тесты)."""
+    return _run_coroutine_blocking(_load_site_render_payload_camoufox_async(*args, **kwargs))
+
+
+def _parse_map_market_on_current_camoufox_page(*args, **kwargs):
+    """Синхронная обёртка над _parse_map_market_on_current_camoufox_page_async (standalone-вызовы и тесты)."""
+    return _run_coroutine_blocking(_parse_map_market_on_current_camoufox_page_async(*args, **kwargs))
+
+
+def run_presence_sites_parallel(*args, **kwargs):
+    """Синхронная обёртка над run_presence_sites_parallel_async (standalone-вызовы и тесты)."""
+    return _run_coroutine_blocking(run_presence_sites_parallel_async(*args, **kwargs))

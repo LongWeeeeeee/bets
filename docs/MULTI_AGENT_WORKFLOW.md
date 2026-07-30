@@ -14,7 +14,7 @@ provider/model IDs:
 | **Commander** | `opencode/claude-opus-4-8` (OpenCode Zen, primary/`build`) | Drives the loop: hands the plan to the Worker, on ISSUES calls the Planner to replan, enforces exit safeguards. Does not write code. | primary session |
 | **Planner** | `opencode/claude-opus-4-8` (OpenCode Zen) | Plans tasks; on replan, plans **only** the open problems. Does not implement, does not review. | `.opencode/agent/planner.md` |
 | **Worker** | `opencode-go/glm-5.2` (OpenCode Go) | Implements the approved plan in full; tools, edits, tests. Emits `SUCCESS`/`FAILED`. Does not plan or review. | `.opencode/agent/worker.md` |
-| **Reviewer** | `opencode/claude-opus-4-8` (OpenCode Zen) | Reviews the finished diff; emits `APPROVE` or `ISSUES` with stable signatures. Read-only. | `.opencode/agent/reviewer.md` |
+| **Reviewer** | `opencode/claude-opus-4-8` (OpenCode Zen) | Outcome review: APPROVE only when the stated goal/step is proven with re-checked live/primary evidence (not code+tests alone); emits `APPROVE` or `ISSUES`. Read-only. | `.opencode/agent/reviewer.md` |
 
 - **Claude Opus 4.8** (Commander, Planner, Reviewer) is served by the **`opencode`** provider ("OpenCode Zen").
 - **GLM 5.2** (Worker) is served by the **`opencode-go`** provider ("OpenCode Go").
@@ -38,6 +38,11 @@ START -> PLANNING -> WORKING -> REVIEWING --+--> APPROVED   (reviewer APPROVE �
 3. On `SUCCESS` the Commander aggregates (parallel) and runs the **Reviewer** over the
    full combined diff.
 4. **APPROVE** (no Critical) → task done.
+   Reviewer APPROVE requires **goal/outcome evidence** re-checked by the Reviewer
+   (live odds parse, metric coverage/WR/profit before-after, real gate behavior).
+   Code written + unit tests green is **not** enough for live goals. If proof is
+   practically impossible from this host (e.g. TG proxy needs another vantage),
+   Reviewer issues `unverifiable-from-here` and notifies the human — no fake APPROVE.
 5. **ISSUES** → Planner replans **only** for the open problems → new Worker run →
    Reviewer again. Finding type `needs-replan` (Critical) means an architectural decision
    escaped the plan; the Planner must fold it into the replan (not a Worker "finish it").

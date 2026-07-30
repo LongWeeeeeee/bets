@@ -1,0 +1,68 @@
+{
+  "ts": 1784557177,
+  "groups": [
+    {
+      "session_id": "20260720_141905_051e72",
+      "c": 8,
+      "ids": "t_f3439375,t_437aea99,t_e4e0ce8a,t_497a4526,t_48ccfc51,t_3934d0fb,t_468ddaa9,t_1371f028"
+    }
+  ],
+  "cleared": [
+    {
+      "session_id": "20260720_141905_051e72",
+      "id": "t_f3439375",
+      "status": "blocked",
+      "assignee": "worker",
+      "t": "Winline pooling: deterministic dispatcher-ready RED contract"
+    },
+    {
+      "session_id": "20260720_141905_051e72",
+      "id": "t_437aea99",
+      "status": "todo",
+      "assignee": "worker",
+      "t": "Winline pooling: implement dispatcher-ready odds-only retries"
+    },
+    {
+      "session_id": "20260720_141905_051e72",
+      "id": "t_e4e0ce8a",
+      "status": "todo",
+      "assignee": "worker",
+      "t": "Winline pooling: execute focused regression verification"
+    },
+    {
+      "session_id": "20260720_141905_051e72",
+      "id": "t_497a4526",
+      "status": "todo",
+      "assignee": "worker",
+      "t": "Winline pooling: verify source and commit invariants"
+    },
+    {
+      "session_id": "20260720_141905_051e72",
+      "id": "t_48ccfc51",
+      "status": "todo",
+      "assignee": "worker",
+      "t": "Winline pooling: validate immutable verification pack"
+    },
+    {
+      "session_id": "20260720_141905_051e72",
+      "id": "t_3934d0fb",
+      "status": "todo",
+      "assignee": "worker",
+      "t": "Winline pooling: controlled no-odds service activation"
+    },
+    {
+      "session_id": "20260720_141905_051e72",
+      "id": "t_468ddaa9",
+      "status": "todo",
+      "assignee": "worker",
+      "t": "Winline pooling: observe natural live watcher behavior"
+    },
+    {
+      "session_id": "20260720_141905_051e72",
+      "id": "t_1371f028",
+      "status": "todo",
+      "assignee": "planner",
+      "t": "Winline pooling: gate terminal Reviewer launch"
+    }
+  ]
+}

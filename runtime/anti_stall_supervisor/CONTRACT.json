@@ -1,0 +1,439 @@
+{
+  "schema": "snapshot_v1",
+  "version": 1,
+  "module": "snapshot.py",
+  "public_api": {
+    "discover_boards": {
+      "signature": "discover_boards(hermes_root: Path) -> list[Path]",
+      "description": "Return sorted, deduplicated board DB paths under hermes_root whose non-archived state is machine-verifiable. Unknown/malformed archive metadata excludes the board."
+    },
+    "read_board_snapshot": {
+      "signature": "read_board_snapshot(db_path: Path, *, now_ns: int, proc_reader) -> dict",
+      "description": "Open one SQLite board read-only and emit a board object with tasks[] + diagnostics[]. Never writes."
+    },
+    "collect_snapshot": {
+      "signature": "collect_snapshot(hermes_root: Path, *, now_ns: int, proc_reader) -> dict",
+      "description": "Discover boards and return a snapshot_v1 document. Side-effect free."
+    },
+    "default_proc_reader": {
+      "signature": "default_proc_reader(pid: int) -> Optional[dict]",
+      "description": "Read /proc/<pid>/stat start ticks. None if absent; PermissionError if unreadable."
+    }
+  },
+  "document": {
+    "type": "object",
+    "required": [
+      "schema",
+      "version",
+      "now_ns",
+      "hermes_root",
+      "boards",
+      "diagnostics",
+      "snapshot_digest",
+      "board_count",
+      "task_count"
+    ],
+    "properties": {
+      "schema": { "const": "snapshot_v1" },
+      "version": { "const": 1 },
+      "now_ns": { "type": "integer", "description": "Caller-supplied clock in nanoseconds" },
+      "hermes_root": { "type": "string" },
+      "boards": {
+        "type": "array",
+        "items": { "$ref": "#/$defs/board" }
+      },
+      "diagnostics": {
+        "type": "array",
+        "items": { "$ref": "#/$defs/diagnostic" }
+      },
+      "snapshot_digest": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$",
+        "description": "SHA-256 of canonical JSON over boards content (schema+version+boards)"
+      },
+      "digest": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$",
+        "description": "Alias of snapshot_digest for downstream consumers"
+      },
+      "board_count": { "type": "integer", "minimum": 0 },
+      "task_count": { "type": "integer", "minimum": 0 }
+    }
+  },
+  "$defs": {
+    "diagnostic": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Machine code",
+          "examples": [
+            "archive_state_unknown",
+            "board_archived_excluded",
+            "unknown_schema",
+            "db_missing",
+            "db_open_error",
+            "db_corrupt",
+            "db_locked",
+            "db_operational_error",
+            "artifact_marker_malformed",
+            "artifact_marker_invalid",
+            "artifact_path_rejected",
+            "artifact_path_missing",
+            "task_snapshot_error"
+          ]
+        },
+        "message": { "type": "string" },
+        "board_id": { "type": ["string", "null"] },
+        "task_id": { "type": ["string", "null"] },
+        "evidence": { "type": "object" }
+      }
+    },
+    "board": {
+      "type": "object",
+      "required": [
+        "board_id",
+        "db_path",
+        "db_identity",
+        "ok",
+        "tasks",
+        "diagnostics"
+      ],
+      "properties": {
+        "board_id": { "type": "string" },
+        "db_path": { "type": "string" },
+        "db_identity": {
+          "type": "string",
+          "description": "Resolved absolute path identity of the board DB"
+        },
+        "ok": { "type": "boolean" },
+        "task_count": { "type": "integer" },
+        "tasks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/task" }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/diagnostic" }
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "required": [
+        "board_id",
+        "db_identity",
+        "task_id",
+        "status",
+        "assignee",
+        "parents",
+        "children",
+        "artifacts_declared",
+        "artifacts",
+        "artifact_digest",
+        "events",
+        "events_digest",
+        "tools_digest",
+        "progress_digest",
+        "evidence_digest",
+        "immutable_sources",
+        "resolution_markers",
+        "pid_state",
+        "pid_evidence",
+        "protocol_violation",
+        "attempt_count",
+        "diagnostics"
+      ],
+      "properties": {
+        "board_id": { "type": "string" },
+        "db_identity": { "type": "string" },
+        "task_id": { "type": "string" },
+        "status": { "type": ["string", "null"] },
+        "assignee": { "type": ["string", "null"] },
+        "title_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "block_kind": { "type": ["string", "null"] },
+        "block_reason": {
+          "type": ["string", "null"],
+          "description": "Redacted free-text block reason if available"
+        },
+        "block_signature": {
+          "type": ["string", "null"],
+          "description": "Normalized signature derived from redacted block reason/kind"
+        },
+        "block_recurrences": { "type": ["integer", "null"] },
+        "current_run_id": { "type": ["integer", "null"] },
+        "attempt_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of task_runs rows"
+        },
+        "consecutive_failures": { "type": ["integer", "null"] },
+        "failure_signature": {
+          "type": ["string", "null"],
+          "description": "Normalized redacted failure signature from last_failure_error / run error / failed events"
+        },
+        "result": { "type": ["string", "null"] },
+        "last_heartbeat_at": { "type": ["integer", "null"] },
+        "last_heartbeat_at_ns": { "type": ["integer", "null"] },
+        "heartbeat_stale": {
+          "type": ["boolean", "null"],
+          "description": "Always null here — staleness thresholds belong to decision policy"
+        },
+        "pid_state": {
+          "type": "string",
+          "enum": [
+            "absent",
+            "alive",
+            "dead",
+            "reused",
+            "foreign",
+            "permission_unknown",
+            "unknown"
+          ]
+        },
+        "pid_evidence": { "$ref": "#/$defs/pid_evidence" },
+        "parents": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Sorted unique parent task ids"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["task_id"],
+            "properties": {
+              "task_id": { "type": "string" },
+              "status": { "type": ["string", "null"] },
+              "assignee": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "planner_child_state": {
+          "type": "object",
+          "properties": {
+            "count": { "type": "integer" },
+            "children": { "type": "array" },
+            "has_executable_children": { "type": "boolean" }
+          }
+        },
+        "artifacts_declared": {
+          "type": "boolean",
+          "description": "True only when a valid ANTI_STALL_ARTIFACTS_V1 marker is present for this task_id. Missing marker => false (diagnostic-only for progress gate)."
+        },
+        "owner_prefix": { "type": ["string", "null"] },
+        "required_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "max_no_progress_seconds": { "type": ["integer", "null"] },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact" },
+          "description": "Accepted regular files only; sorted by path"
+        },
+        "artifact_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of canonical JSON of artifacts[] (path/size/mtime_ns/sha256)"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "digest"],
+            "properties": {
+              "id": { "type": ["integer", "null"] },
+              "kind": { "type": ["string", "null"] },
+              "run_id": { "type": ["integer", "null"] },
+              "created_at": { "type": ["integer", "null"] },
+              "created_at_ns": { "type": ["integer", "null"] },
+              "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        },
+        "events_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "tools_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Digest of non-heartbeat event id/kind/digest tuples"
+        },
+        "progress_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of {artifact_digest,events_digest,tools_digest,result,status,current_run_id}"
+        },
+        "evidence_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "immutable_sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["source_kind", "source_id", "source_sha256"],
+            "properties": {
+              "source_kind": {
+                "type": "string",
+                "enum": ["body", "comment", "run_metadata"]
+              },
+              "source_id": { "type": "string" },
+              "source_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "author": { "type": ["string", "null"] },
+              "created_at_ns": { "type": ["integer", "null"] }
+            }
+          }
+        },
+        "resolution_markers": {
+          "type": "array",
+          "description": "Parsed ANTI_STALL_RESOLUTION_V1 lines only — no validity/authorization decision",
+          "items": {
+            "type": "object",
+            "required": ["source_kind", "source_id", "line_no", "line_sha256", "parse_ok"],
+            "properties": {
+              "source_kind": { "type": "string" },
+              "source_id": { "type": "string" },
+              "line_no": { "type": "integer" },
+              "line_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "parse_ok": { "type": "boolean" },
+              "payload": { "type": "object" },
+              "parse_error": { "type": "string" }
+            }
+          }
+        },
+        "machine_tags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Exact ANTI_STALL_TAG_V1=<tag> lines only"
+        },
+        "protocol_violation": { "type": "boolean" },
+        "protocol_signature": { "type": ["string", "null"] },
+        "run_outcome": { "type": ["string", "null"] },
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": ["integer", "null"] },
+              "status": { "type": ["string", "null"] },
+              "outcome": { "type": ["string", "null"] },
+              "worker_pid": { "type": ["integer", "null"] },
+              "started_at_ns": { "type": ["integer", "null"] },
+              "ended_at_ns": { "type": ["integer", "null"] },
+              "last_heartbeat_at_ns": { "type": ["integer", "null"] },
+              "error_digest": { "type": ["string", "null"] },
+              "summary_digest": { "type": ["string", "null"] },
+              "metadata_digest": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "created_at_ns": { "type": ["integer", "null"] },
+        "started_at_ns": { "type": ["integer", "null"] },
+        "completed_at_ns": { "type": ["integer", "null"] },
+        "diagnostics": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/diagnostic" }
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["path", "size", "mtime_ns", "sha256"],
+      "properties": {
+        "path": { "type": "string" },
+        "size": { "type": "integer", "minimum": 0 },
+        "mtime_ns": { "type": "integer" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "pid_evidence": {
+      "type": "object",
+      "required": [
+        "pid",
+        "run_id",
+        "pid_state",
+        "bound_to_run",
+        "declared_start_ticks",
+        "observed_start_ticks"
+      ],
+      "properties": {
+        "pid": { "type": ["integer", "null"] },
+        "run_id": { "type": ["integer", "null"] },
+        "host": { "type": ["string", "null"] },
+        "declared_start_ticks": { "type": ["integer", "null"] },
+        "observed_start_ticks": { "type": ["integer", "null"] },
+        "bound_to_run": { "type": "boolean" },
+        "pid_state": {
+          "type": "string",
+          "enum": [
+            "absent",
+            "alive",
+            "dead",
+            "reused",
+            "foreign",
+            "permission_unknown",
+            "unknown"
+          ]
+        },
+        "proc_error": { "type": ["string", "null"] }
+      }
+    }
+  },
+  "invariants": [
+    "SQLite is opened with mode=ro + PRAGMA query_only=ON; never mutates any board DB.",
+    "Only non-archived boards with machine-verifiable archive state are discovered.",
+    "Tasks with status=archived are excluded from tasks[].",
+    "Missing ANTI_STALL_ARTIFACTS_V1 marker => artifacts_declared=false (no path inference).",
+    "Artifact paths must be absolute, lexically and physically inside owner_prefix, regular files, non-secret; symlink escapes rejected.",
+    "progress_digest changes when artifact_digest / events_digest / tools_digest / result / status / current_run_id change.",
+    "PID capture binds to current run_id; states: absent|alive|dead|reused|foreign|permission_unknown|unknown.",
+    "Secrets in free text are redacted before emission; signatures are derived from redacted text.",
+    "Resolution markers are parsed only; no stall classification or action decisions.",
+    "Deterministic: same inputs + now_ns + proc_reader observations => same snapshot_digest.",
+    "--self-test builds temporary fixtures and prints fixture/board/task counts only."
+  ],
+  "artifact_marker": {
+    "exact_line_prefix": "ANTI_STALL_ARTIFACTS_V1=",
+    "payload_schema": {
+      "type": "object",
+      "required": ["task_id", "owner_prefix", "required_paths"],
+      "properties": {
+        "task_id": { "type": "string" },
+        "owner_prefix": { "type": "string", "description": "Absolute directory prefix" },
+        "required_paths": {
+          "type": "array",
+          "items": { "type": "string", "description": "Absolute file path under owner_prefix" }
+        },
+        "max_no_progress_seconds": { "type": ["integer", "null"] }
+      }
+    }
+  },
+  "resolution_marker": {
+    "exact_line_prefix": "ANTI_STALL_RESOLUTION_V1=",
+    "note": "Parsed into resolution_markers[]; validity/authorization is decision-layer only"
+  },
+  "board_discovery": {
+    "default_db": "<hermes_root>/kanban.db",
+    "default_meta": "<hermes_root>/kanban/boards/default/board.json (missing meta => non-archived if DB exists)",
+    "named_db": "<hermes_root>/kanban/boards/<slug>/kanban.db",
+    "named_meta": "<hermes_root>/kanban/boards/<slug>/board.json required and parseable; archived:true excludes",
+    "sort_order": "default first, then named slugs case-insensitive ascending",
+    "dedupe": "by resolved absolute DB path"
+  },
+  "verify": {
+    "unit_tests": "cd /root/main && /root/main/venv/bin/python -m pytest runtime/anti_stall_staging/t_3c0b64e6/snapshot/test_snapshot.py -v",
+    "self_test": "/root/main/venv/bin/python runtime/anti_stall_staging/t_3c0b64e6/snapshot/snapshot.py --self-test",
+    "expected_unit": "all tests PASSED",
+    "expected_self_test": "{\"self_test\":\"ok\", ... fixture/board/task counts}"
+  },
+  "ownership": {
+    "lane": "/root/main/runtime/anti_stall_staging/t_3c0b64e6/snapshot/",
+    "files": [
+      "snapshot.py",
+      "test_snapshot.py",
+      "CONTRACT.json",
+      "EVIDENCE.md"
+    ]
+  }
+}

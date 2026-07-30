@@ -49,18 +49,67 @@ def test_token_not_substring_for_keywords():
     assert not lk.title_matches_allow_keywords("Helpline Cup")  # 'epl' внутри 'helpline'
 
 
-def test_streamers_battle_allowed_in_both_spellings():
-    assert lk.title_matches_allow_keywords("BB Streamers Battle 14")
-    assert lk.title_matches_allow_keywords("BetBoom Streamers Battle 14")
+def test_lunar_snake_and_horse_trophy_allowed():
+    """Явно разрешённые турниры (league_id 19273 и 19937)."""
+    assert lk.title_matches_allow_keywords("Lunar Snake Trophy")
+    assert lk.title_matches_allow_keywords("Horse Trophy ")  # имя приходит с хвостовым пробелом
+    assert lk.title_matches_allow_keywords("LUNAR SNAKE TROPHY")
 
 
-def test_asgard_championship_allowed():
-    assert lk.title_matches_allow_keywords("Asgard Championship")
-    assert lk.title_matches_allow_keywords("Asgard Championship S1")
-    assert lk.title_matches_allow_keywords("ASGARD CHAMPIONSHIP")
-
-
-def test_asgard_reused_valve_league_id_allowed_without_broad_lunar_paw_title():
-    assert lk.league_matches_allowlist(19722, "Lunar Paw")
+def test_neighbouring_lunar_and_trophy_leagues_stay_excluded():
+    """Добавлены фразы, а не токены: соседние лиги не протаскиваются."""
+    assert not lk.title_matches_allow_keywords("Lunar Trophy ")
     assert not lk.title_matches_allow_keywords("Lunar Paw")
-    assert not lk.league_matches_allowlist(19723, "Lunar Paw")
+    assert not lk.title_matches_allow_keywords("Lunar New Year 2023")
+    assert not lk.title_matches_allow_keywords("ECLIPSE LUNAR")
+
+
+def test_paragon_turbina_allowed_by_distinctive_word():
+    """Ловим по 'turbina', а не по 'paragon'.
+
+    В справочнике OpenDota 'turbina' не встречается ни в одной из ~11k лиг,
+    поэтому фраза узкая и при этом устойчива к обрамлению названия.
+    """
+    assert lk.title_matches_allow_keywords("Paragon Turbina")
+    assert lk.title_matches_allow_keywords("PARAGON TURBINA SEASON 2")
+    assert lk.title_matches_allow_keywords("Paragon League: Turbina")
+    assert lk.title_matches_allow_keywords("turbina cup")
+
+
+def test_paragon_events_dpc_leagues_stay_excluded():
+    """Токен 'paragon' протащил бы десяток старых DPC 2023 — их не берём."""
+    assert not lk.title_matches_allow_keywords(
+        "DPC 2023 EEU Spring Tour Division I - presented by Paragon Events"
+    )
+    assert not lk.title_matches_allow_keywords(
+        "DPC 2023 EEU Summer Tour Closed Qualifiers - presented by Paragon Events"
+    )
+
+
+def test_streamers_battle_allowed_in_both_spellings():
+    """OpenDota пишет 'BetBoom ...', cyberscore — 'BB ...'.
+
+    Второе написание не содержит ни одного токена allowlist'а, поэтому без
+    фразы сезон держался бы только на захардкоженном tournament_id.
+    """
+    assert lk.title_matches_allow_keywords("BB Streamers Battle")
+    assert lk.title_matches_allow_keywords("BB Streamers Battle 13")
+    assert lk.title_matches_allow_keywords("BB Streamers Battle 14")
+    assert lk.title_matches_allow_keywords("BetBoom Streamers Battle x Динамо 12")
+    assert lk.title_matches_allow_keywords("bb streamers battle 13")
+
+
+def test_streamers_alone_is_not_a_keyword():
+    """Фраза, а не токен 'streamers': соседние лиги не протаскиваются.
+
+    Все четыре реально существуют в справочнике OpenDota.
+    """
+    assert not lk.title_matches_allow_keywords("Aorus League: Streamers Showdown")
+    assert not lk.title_matches_allow_keywords("PC Factory Streamers Cup")
+    assert not lk.title_matches_allow_keywords("CONECTOURFEST STREAMERS AREQUIPA")
+
+
+def test_bb_alone_is_not_a_keyword():
+    """Токен 'bb' опасен: фильтр применяется и к полному тексту карточки."""
+    assert not lk.title_matches_allow_keywords("Тех.по BB")
+    assert not lk.title_matches_allow_keywords("BB Team vs Some Team")

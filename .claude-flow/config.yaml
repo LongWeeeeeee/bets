@@ -1,0 +1,83 @@
+version: "3.5"
+
+agents:
+  defaultType: coder
+  autoSpawn: false
+  maxConcurrent: 15
+  timeout: 300000
+  providers: []
+
+swarm:
+  topology: hierarchical-mesh
+  maxAgents: 15
+  autoScale: true
+  coordinationStrategy: consensus
+  healthCheckInterval: 30000
+  strategy: specialized
+  communicationProtocol: message-bus
+
+memory:
+  backend: agentdb
+  persistPath: .swarm
+  cacheSize: 1000
+  enableHNSW: true
+  vectorDimension: 384
+  learningBridge:
+    enabled: true
+    sonaMode: balanced
+    confidenceDecayRate: 0.005
+    accessBoostAmount: 0.03
+    consolidationThreshold: 10
+  memoryGraph:
+    enabled: true
+    pageRankDamping: 0.85
+    maxNodes: 5000
+    similarityThreshold: 0.8
+  agentScopes:
+    enabled: true
+    defaultScope: project
+
+mcp:
+  serverHost: localhost
+  serverPort: 3000
+  autoStart: false
+  transportType: stdio
+  tools: []
+
+cli:
+  colorOutput: true
+  interactive: true
+  verbosity: normal
+  outputFormat: text
+  progressStyle: spinner
+
+hooks:
+  enabled: true
+  autoExecute: true
+  hooks: []
+
+neural:
+  enabled: true
+  modelPath: .claude-flow/neural
+
+# Persistent completion is opt-in and bounded. It must not recursively dispatch
+# Hermes cron/kanban work or bypass the kanban terminal protocol.
+autopilot:
+  maxIterations: 3
+  timeoutMinutes: 30
+  taskSources:
+    - team-tasks
+    - swarm-tasks
+  requireTerminalOutcome: true
+
+# Match the project retry ceiling. Signature-aware no-progress rules in AGENTS.md
+# remain authoritative; this is a ceiling, not a retry quota.
+resilience:
+  maxAttempts: 3
+  sameSignatureNoDeltaRetries: 0
+  protocolViolationMaxAttempts: 2
+  preservePartialArtifacts: true
+  replanOpenOutcomesOnly: true
+  consolidateOnTerminal: true
+  circuitBreaker:
+    enabled: true

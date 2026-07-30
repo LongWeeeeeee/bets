@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "decision_plan_v1",
+  "title": "decision_plan_v1",
+  "description": "Frozen pure decision output of plan_tick. No filesystem/SQLite/process mutation. Fail-closed.",
+  "version": 1,
+  "type": "object",
+  "required": [
+    "schema",
+    "version",
+    "now_ns",
+    "policy_version",
+    "policy_digest",
+    "ok",
+    "fail_closed",
+    "diagnostics",
+    "classifications",
+    "actions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "decision_plan_v1" },
+    "version": { "const": 1 },
+    "now_ns": { "type": "integer", "minimum": 0 },
+    "policy_version": { "type": "integer", "minimum": 1 },
+    "policy_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "snapshot_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "ok": { "type": "boolean" },
+    "fail_closed": { "type": "boolean" },
+    "diagnostics": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/diagnostic" }
+    },
+    "classifications": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/classification" }
+    },
+    "actions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/action" }
+    },
+    "state_observations": {
+      "type": "object",
+      "description": "Per-task observation records the runner should merge into state_v1. Pure data; plan_tick never writes state.",
+      "additionalProperties": { "$ref": "#/$defs/task_observation_record" }
+    }
+  },
+  "$defs": {
+    "diagnostic": {
+      "type": "object",
+      "required": ["code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" },
+        "board_id": { "type": ["string", "null"] },
+        "task_id": { "type": ["string", "null"] },
+        "evidence": { "type": "object" }
+      }
+    },
+    "classification": {
+      "type": "object",
+      "required": [
+        "board_id",
+        "db_identity",
+        "task_id",
+        "classification",
+        "reason",
+        "evidence",
+        "severity"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "board_id": { "type": "string" },
+        "db_identity": { "type": "string" },
+        "task_id": { "type": "string" },
+        "classification": {
+          "type": "string",
+          "enum": [
+            "noop_healthy",
+            "blocked_needs_input",
+            "blocked_deny_class",
+            "blocked_ambiguous",
+            "blocked_exact_directive",
+            "blocked_dependency_rule",
+            "descendant_stalled_by_parents",
+            "running_dead_pid",
+            "running_stale_heartbeat",
+            "running_no_progress",
+            "planner_ceiling",
+            "repeated_failure_signature",
+            "protocol_violation",
+            "missing_artifacts_declaration",
+            "diagnostic_only",
+            "fail_closed"
+          ]
+        },
+        "reason": { "type": "string" },
+        "evidence": { "type": "object" },
+        "severity": { "type": "string", "enum": ["info", "warn", "error"] }
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": [
+        "action",
+        "board_id",
+        "db_identity",
+        "task_id",
+        "expected_status",
+        "expected_run_id",
+        "expected_evidence_digest",
+        "reason",
+        "authorization_source",
+        "authorization_digest",
+        "action_key",
+        "cooldown_seconds"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["comment_once", "unblock_same_card", "route_needs_replan", "noop"]
+        },
+        "board_id": { "type": "string" },
+        "db_identity": { "type": "string" },
+        "task_id": { "type": "string" },
+        "expected_status": { "type": "string" },
+        "expected_run_id": { "type": ["integer", "null"] },
+        "expected_evidence_digest": { "type": "string" },
+        "reason": { "type": "string" },
+        "authorization_source": { "type": "string" },
+        "authorization_digest": { "type": "string" },
+        "action_key": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "cooldown_seconds": { "type": "integer", "minimum": 0 },
+        "payload": { "type": "object" }
+      }
+    },
+    "task_observation_record": {
+      "type": "object",
+      "required": [
+        "tick_ns",
+        "status",
+        "progress_digest",
+        "artifact_digest",
+        "events_digest",
+        "classification",
+        "signature",
+        "heartbeat_ns",
+        "pid_state"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "tick_ns": { "type": "integer" },
+        "status": { "type": "string" },
+        "progress_digest": { "type": "string" },
+        "artifact_digest": { "type": "string" },
+        "events_digest": { "type": "string" },
+        "classification": { "type": "string" },
+        "signature": { "type": "string" },
+        "heartbeat_ns": { "type": ["integer", "null"] },
+        "pid_state": { "type": "string" }
+      }
+    },
+    "snapshot_v1_adapter_notes": {
+      "description": "Input snapshot_v1 fields consumed by plan_tick (produced by W1). Listed for INT reconciliation; not validated as JSON Schema draft here beyond presence checks in code.",
+      "task_fields": [
+        "task_id",
+        "status",
+        "assignee",
+        "block_kind",
+        "block_reason",
+        "block_signature",
+        "current_run_id",
+        "attempt_count",
+        "failure_signature",
+        "result",
+        "last_heartbeat_at_ns",
+        "heartbeat_stale",
+        "pid_state",
+        "parents",
+        "children",
+        "artifacts_declared",
+        "artifacts",
+        "artifact_digest",
+        "events_digest",
+        "tools_digest",
+        "progress_digest",
+        "evidence_digest",
+        "immutable_sources",
+        "resolution_markers",
+        "machine_tags",
+        "protocol_violation",
+        "protocol_signature",
+        "max_no_progress_seconds",
+        "owner_prefix",
+        "run_outcome"
+      ],
+      "directive_line": "ANTI_STALL_RESOLUTION_V1=<canonical JSON>",
+      "directive_fields": [
+        "version",
+        "task_id",
+        "block_signature",
+        "action",
+        "chosen_value",
+        "evidence_path",
+        "evidence_sha256",
+        "source_kind",
+        "source_id",
+        "source_sha256",
+        "directive_sha256"
+      ]
+    },
+    "prior_state_v1_adapter_notes": {
+      "schema": "state_v1",
+      "fields": [
+        "schema",
+        "last_tick_ns",
+        "policy_digest",
+        "tasks",
+        "action_cooldowns"
+      ],
+      "per_task": [
+        "observations",
+        "protocol_violation_count",
+        "last_protocol_signature",
+        "last_failure_signature"
+      ]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+[Unit]
+Description=Timer for Hermes anti-stall supervisor (exact 5-minute cadence)
+Requires=hermes-anti-stall-supervisor.service
+# Overlap is prevented by the runner process lock (authoritative), not by systemd.
+
+[Timer]
+# Exact 5-minute wall cadence: :00, :05, :10, ...
+OnCalendar=*:0/5
+AccuracySec=1s
+# No RandomizedDelaySec — cadence must be deterministic.
+Persistent=true
+Unit=hermes-anti-stall-supervisor.service
+
+[Install]
+WantedBy=timers.target

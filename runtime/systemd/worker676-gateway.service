@@ -1,0 +1,33 @@
+[Unit]
+Description=OmniRoute Codex Telegram worker (@worker676_bot)
+After=network-online.target omniroute.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/main
+Environment=HOME=/root
+Environment=PYTHONUNBUFFERED=1
+Environment=BOT_TOKEN_FILE=/run/credentials/worker676-gateway.service/worker676-token
+Environment=OMNIROUTE_ENV_FILE=/root/.hermes/profiles/orchestration1/.env
+Environment=OMNIROUTE_BASE_URL=http://127.0.0.1:20128
+Environment=OMNIROUTE_STORAGE=/root/.omniroute/storage.sqlite
+Environment=CODEX_BIN=/usr/local/bin/codex
+Environment=CODEX_HOME=/root/.local/share/worker676-codex
+Environment=WORKSPACE=/root/main
+Environment=STATE_ROOT=/root/.local/state/worker676-gateway
+Environment=DEFAULT_MODEL=claude-fable-5
+Environment=MODEL_REASONING_EFFORTS=claude-fable-5=high,fable-claude-fable-5=high,fable/claude-fable-5=high
+Environment=MAX_CONCURRENT_RUNS=3
+LoadCredentialEncrypted=worker676-token:/etc/credstore.encrypted/worker676-token
+ExecStart=/usr/bin/python3 /opt/worker676-gateway/gateway.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillMode=mixed
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

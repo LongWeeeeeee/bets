@@ -1,0 +1,2298 @@
+{
+  "match_id": 8891349244,
+  "radiant_match_nw": 2,
+  "radiant_score": 13,
+  "dire_score": 9,
+  "first_blood": "radiant",
+  "first_ten": "radiant",
+  "radiant_lead": 4562,
+  "game_time": 1181,
+  "is_picks_ended": true,
+  "fast_picks": {
+    "first_team": [
+      {
+        "stats": "56 | 54%",
+        "player_stats": "57 | 54%",
+        "hero_id": 123,
+        "player": {
+          "title": "OmaR",
+          "slug": "omar"
+        },
+        "country": {
+          "image": "/assets/plugins/flag-icon/flags/4x3/lb.svg"
+        }
+      },
+      {
+        "stats": "4 | 25%",
+        "player_stats": "12 | 42%",
+        "hero_id": 55,
+        "player": {
+          "title": "Davai",
+          "slug": "davai-lama"
+        },
+        "country": {
+          "image": "/assets/plugins/flag-icon/flags/4x3/be.svg"
+        }
+      },
+      {
+        "stats": "2 | -",
+        "player_stats": "2 | 50%",
+        "hero_id": 68,
+        "player": {
+          "title": "Gh",
+          "slug": "gh"
+        },
+        "country": {
+          "image": "/assets/plugins/flag-icon/flags/4x3/lb.svg"
+        }
+      },
+      {
+        "stats": "12 | 50%",
+        "player_stats": "3 | 67%",
+        "hero_id": 21,
+        "player": {
+          "title": "SumaiL",
+          "slug": "sumail"
+        },
+        "country": {
+          "image": "/assets/plugins/flag-icon/flags/4x3/pk.svg"
+        }
+      },
+      {
+        "stats": "19 | 47%",
+        "player_stats": "38 | 63%",
+        "hero_id": 17,
+        "player": {
+          "title": "lorenof",
+          "slug": "lorenof"
+        },
+        "country": {
+          "image": "/assets/plugins/flag-icon/flags/4x3/ua.svg"
+        }
+      }
+    ],
+    "second_team": [
+      {
+        "stats": "10 | 80%",
+        "player_stats": "16 | 56%",
+        "hero_id": 69,
+        "player": {
+          "title": "Frank",
+          "slug": "frank"
+        },
+        "country": {
+          "image": "/assets/plugins/flag-icon/flags/4x3/pe.svg"
+        }
+      },
+      {
+        "stats": "25 | 56%",
+        "player_stats": "49 | 49%",
+        "hero_id": 100,
+        "player": {
+          "title": "Scofield",
+          "slug": "scofield"
+        },
+        "country": {
+          "image": "/assets/plugins/flag-icon/flags/4x3/pe.svg"
+        }
+      },
+      {
+        "stats": "8 | 75%",
+        "player_stats": "4 | 100%",
+        "hero_id": 36,
+        "player": {
+          "title": "DarkMago\u2661",
+          "slug": "darkmago"
+        },
+        "country": {
+          "image": "/assets/plugins/flag-icon/flags/4x3/pe.svg"
+        }
+      },
+      {
+        "stats": "4 | 50%",
+        "player_stats": "18 | 50%",
+        "hero_id": 131,
+        "player": {
+          "title": "elmisho",
+          "slug": "elmisho"
+        },
+        "country": {
+          "image": "/assets/plugins/flag-icon/flags/4x3/pe.svg"
+        }
+      },
+      {
+        "stats": "10 | 50%",
+        "player_stats": "14 | 57%",
+        "hero_id": 19,
+        "player": {
+          "title": "Wits",
+          "slug": "wits"
+        },
+        "country": {
+          "image": "/assets/plugins/flag-icon/flags/4x3/pe.svg"
+        }
+      }
+    ]
+  },
+  "charts": {
+    "game_times": [
+      0,
+      9,
+      60,
+      69,
+      121,
+      129,
+      181,
+      189,
+      249,
+      309,
+      361,
+      369,
+      421,
+      429,
+      481,
+      489,
+      549,
+      562,
+      609,
+      669,
+      705,
+      729,
+      765,
+      789,
+      870,
+      909,
+      931,
+      969,
+      998,
+      1029,
+      1058,
+      1089,
+      1118,
+      1149,
+      1181
+    ],
+    "net_worth": [
+      0,
+      586,
+      616,
+      616,
+      384,
+      384,
+      252,
+      252,
+      880,
+      880,
+      1375,
+      1375,
+      2857,
+      2857,
+      2910,
+      2910,
+      2910,
+      2650,
+      2650,
+      2650,
+      2479,
+      2479,
+      2812,
+      2812,
+      2303,
+      2303,
+      3070,
+      3070,
+      3345,
+      3345,
+      3736,
+      3736,
+      4562,
+      4562,
+      4562
+    ],
+    "radiant_scores": [
+      0,
+      1,
+      1,
+      1,
+      2,
+      2,
+      3,
+      3,
+      4,
+      4,
+      5,
+      5,
+      7,
+      7,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      9,
+      9,
+      11,
+      11,
+      11,
+      11,
+      12,
+      12,
+      13,
+      13,
+      13
+    ],
+    "dire_scores": [
+      0,
+      0,
+      1,
+      1,
+      2,
+      2,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      3,
+      4,
+      4,
+      4,
+      5,
+      5,
+      5,
+      5,
+      5,
+      5,
+      7,
+      7,
+      8,
+      8,
+      9,
+      9,
+      9,
+      9,
+      9
+    ],
+    "radiant_kills": [
+      0,
+      1,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      2,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      2,
+      0,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0
+    ],
+    "dire_kills": [
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      2,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "canvas": {
+    "radiant": [
+      "b1"
+    ],
+    "dire": [
+      "m1",
+      "t1"
+    ]
+  },
+  "full_stats": {
+    "radiant": {
+      "title": "Radiant Team",
+      "players": [
+        {
+          "player": {
+            "id": 41453,
+            "team_id": 8083,
+            "steam_id": 363758022,
+            "migrated_id": null,
+            "rank": 105,
+            "title": "Wits",
+            "slug": "wits",
+            "country_id": 217,
+            "is_active": true,
+            "created_at": "2022-12-18T13:23:53.000Z",
+            "updated_at": "2026-07-11T12:24:13.000Z",
+            "rank_updated_at": "2026-07-11T11:56:05.000Z"
+          },
+          "hero": {
+            "id": 19,
+            "steam_id": 19,
+            "title": "Tiny",
+            "slug": "tiny",
+            "image": "/uploads/heroes/W1XNCjiVgmeicn57l9zJvhFfpjHjHRKZ.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:28.000Z"
+          },
+          "country": {
+            "id": 217,
+            "title": "Peru",
+            "image": "/assets/plugins/flag-icon/flags/4x3/pe.svg",
+            "is_active": true,
+            "created_at": null,
+            "updated_at": "2024-07-01T07:45:50.000Z"
+          },
+          "level": 4,
+          "kda": "2 / 0 / 0",
+          "items": [
+            29,
+            13,
+            34,
+            16,
+            25,
+            13
+          ],
+          "gold": 462,
+          "lh": "25 / 3",
+          "gpm": "421 / 297",
+          "net_worth": 2452
+        },
+        {
+          "player": {
+            "id": 662,
+            "team_id": 8083,
+            "steam_id": 157989498,
+            "migrated_id": null,
+            "rank": 0,
+            "title": "Scofield",
+            "slug": "scofield",
+            "country_id": 217,
+            "is_active": true,
+            "created_at": "2019-03-29T02:55:00.000Z",
+            "updated_at": "2026-07-11T12:22:45.000Z",
+            "rank_updated_at": "2026-07-11T11:56:05.000Z"
+          },
+          "hero": {
+            "id": 99,
+            "steam_id": 100,
+            "title": "Tusk",
+            "slug": "tusk",
+            "image": "/uploads/heroes/yis41yXhXz2gVyrOMWb5juzAxoufwxgX.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:33.000Z"
+          },
+          "country": {
+            "id": 217,
+            "title": "Peru",
+            "image": "/assets/plugins/flag-icon/flags/4x3/pe.svg",
+            "is_active": true,
+            "created_at": null,
+            "updated_at": "2024-07-01T07:45:50.000Z"
+          },
+          "level": 2,
+          "kda": "0 / 1 / 1",
+          "items": [
+            29,
+            1123,
+            34,
+            44,
+            42,
+            -1
+          ],
+          "gold": 21,
+          "lh": "2 / 0",
+          "gpm": "153 / 89",
+          "net_worth": 1086
+        },
+        {
+          "player": {
+            "id": 20144,
+            "team_id": 8083,
+            "steam_id": 352545711,
+            "migrated_id": null,
+            "rank": 29,
+            "title": "DarkMago\u2661",
+            "slug": "darkmago",
+            "country_id": 217,
+            "is_active": true,
+            "created_at": "2019-07-07T05:12:02.000Z",
+            "updated_at": "2026-07-11T12:23:15.000Z",
+            "rank_updated_at": "2026-07-11T11:56:05.000Z"
+          },
+          "hero": {
+            "id": 35,
+            "steam_id": 36,
+            "title": "Necrophos",
+            "slug": "necrophos",
+            "image": "/uploads/heroes/byfpGnTecLh5Z90F16lqIloblrrYQ1Yl.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:29.000Z"
+          },
+          "country": {
+            "id": 217,
+            "title": "Peru",
+            "image": "/assets/plugins/flag-icon/flags/4x3/pe.svg",
+            "is_active": true,
+            "created_at": null,
+            "updated_at": "2024-07-01T07:45:50.000Z"
+          },
+          "level": 5,
+          "kda": "0 / 0 / 0",
+          "items": [
+            73,
+            20,
+            29,
+            244,
+            36,
+            237
+          ],
+          "gold": 464,
+          "lh": "29 / 7",
+          "gpm": "379 / 397",
+          "net_worth": 2374
+        },
+        {
+          "player": {
+            "id": 912,
+            "team_id": 8083,
+            "steam_id": 407321629,
+            "migrated_id": null,
+            "rank": 63,
+            "title": "Frank",
+            "slug": "frank",
+            "country_id": 217,
+            "is_active": true,
+            "created_at": "2019-03-29T06:57:51.000Z",
+            "updated_at": "2026-07-11T12:22:52.000Z",
+            "rank_updated_at": "2026-07-11T11:56:05.000Z"
+          },
+          "hero": {
+            "id": 68,
+            "steam_id": 69,
+            "title": "Doom",
+            "slug": "doom",
+            "image": "/uploads/heroes/Ya7OanjnmaY3FCEenGtPKEacvvXJyJ3D.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:31.000Z"
+          },
+          "country": {
+            "id": 217,
+            "title": "Peru",
+            "image": "/assets/plugins/flag-icon/flags/4x3/pe.svg",
+            "is_active": true,
+            "created_at": null,
+            "updated_at": "2024-07-01T07:45:50.000Z"
+          },
+          "level": 4,
+          "kda": "2 / 1 / 0",
+          "items": [
+            73,
+            73,
+            -1,
+            36,
+            16,
+            237
+          ],
+          "gold": 380,
+          "lh": "8 / 4",
+          "gpm": "306 / 237",
+          "net_worth": 1970
+        },
+        {
+          "player": {
+            "id": 22287,
+            "team_id": 8083,
+            "steam_id": 1031547092,
+            "migrated_id": null,
+            "rank": 110,
+            "title": "elmisho",
+            "slug": "elmisho",
+            "country_id": 217,
+            "is_active": true,
+            "created_at": "2020-07-29T20:11:37.000Z",
+            "updated_at": "2026-07-11T12:23:40.000Z",
+            "rank_updated_at": "2026-07-11T11:56:05.000Z"
+          },
+          "hero": {
+            "id": 125,
+            "steam_id": 131,
+            "title": "Ringmaster",
+            "slug": "ringmaster",
+            "image": "/uploads/heroes/3b9OvrLrs9MDWshXOaq7jXGV6P40Zsbv.png",
+            "is_active": true,
+            "created_at": "2024-08-23T03:32:40.000Z",
+            "updated_at": "2026-07-11T12:21:35.000Z"
+          },
+          "country": {
+            "id": 217,
+            "title": "Peru",
+            "image": "/assets/plugins/flag-icon/flags/4x3/pe.svg",
+            "is_active": true,
+            "created_at": null,
+            "updated_at": "2024-07-01T07:45:50.000Z"
+          },
+          "level": 3,
+          "kda": "0 / 1 / 3",
+          "items": [
+            34,
+            218,
+            20,
+            237,
+            16,
+            16
+          ],
+          "gold": 476,
+          "lh": "4 / 0",
+          "gpm": "179 / 202",
+          "net_worth": 1056
+        }
+      ]
+    },
+    "dire": {
+      "title": "Dire Team",
+      "players": [
+        {
+          "player": {
+            "id": 409,
+            "team_id": 5124,
+            "steam_id": 111620041,
+            "migrated_id": null,
+            "rank": 0,
+            "title": "SumaiL",
+            "slug": "sumail",
+            "country_id": 79,
+            "is_active": true,
+            "created_at": "2019-03-29T02:52:09.000Z",
+            "updated_at": "2026-07-11T12:22:37.000Z",
+            "rank_updated_at": "2026-07-11T11:56:05.000Z"
+          },
+          "hero": {
+            "id": 21,
+            "steam_id": 21,
+            "title": "Windranger",
+            "slug": "windranger",
+            "image": "/uploads/heroes/tp6ELzhhi6vTa2hsKHGcYGWedZbEPLk2.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:29.000Z"
+          },
+          "country": {
+            "id": 79,
+            "title": "Pakistan",
+            "image": "/assets/plugins/flag-icon/flags/4x3/pk.svg",
+            "is_active": true,
+            "created_at": null,
+            "updated_at": "2024-07-01T08:03:13.000Z"
+          },
+          "level": 3,
+          "kda": "2 / 1 / 0",
+          "items": [
+            73,
+            44,
+            16,
+            25,
+            237,
+            77
+          ],
+          "gold": 946,
+          "lh": "28 / 16",
+          "gpm": "415 / 208",
+          "net_worth": 2556
+        },
+        {
+          "player": {
+            "id": 22708,
+            "team_id": 5124,
+            "steam_id": 152168157,
+            "migrated_id": null,
+            "rank": 42,
+            "title": "OmaR",
+            "slug": "omar",
+            "country_id": 24,
+            "is_active": true,
+            "created_at": "2020-10-04T11:15:49.000Z",
+            "updated_at": "2026-07-11T12:23:44.000Z",
+            "rank_updated_at": "2026-07-11T11:56:05.000Z"
+          },
+          "hero": {
+            "id": 120,
+            "steam_id": 123,
+            "title": "Hoodwink",
+            "slug": "hoodwink",
+            "image": "/uploads/heroes/PkZYTU6NzNS4cgfnTYAjVfUznSSCyxI3.jpg",
+            "is_active": true,
+            "created_at": null,
+            "updated_at": "2026-07-11T12:21:35.000Z"
+          },
+          "country": {
+            "id": 24,
+            "title": "Lebanon",
+            "image": "/assets/plugins/flag-icon/flags/4x3/lb.svg",
+            "is_active": true,
+            "created_at": null,
+            "updated_at": "2024-07-01T08:11:44.000Z"
+          },
+          "level": 3,
+          "kda": "0 / 3 / 2",
+          "items": [
+            20,
+            -1,
+            -1,
+            218,
+            216,
+            36
+          ],
+          "gold": 70,
+          "lh": "6 / 1",
+          "gpm": "155 / 200",
+          "net_worth": 850
+        },
+        {
+          "player": {
+            "id": 20165,
+            "team_id": 5124,
+            "steam_id": 138880576,
+            "migrated_id": null,
+            "rank": 88,
+            "title": "Davai",
+            "slug": "davai-lama",
+            "country_id": 153,
+            "is_active": true,
+            "created_at": "2019-07-11T11:04:16.000Z",
+            "updated_at": "2026-07-11T12:23:15.000Z",
+            "rank_updated_at": "2026-07-11T11:56:05.000Z"
+          },
+          "hero": {
+            "id": 54,
+            "steam_id": 55,
+            "title": "Dark Seer",
+            "slug": "dark-seer",
+            "image": "/uploads/heroes/U3JzuoXlIHssE2pPm91hbDsk78449aj0.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:30.000Z"
+          },
+          "country": {
+            "id": 153,
+            "title": "Belgium",
+            "image": "/assets/plugins/flag-icon/flags/4x3/be.svg",
+            "is_active": true,
+            "created_at": null,
+            "updated_at": "2024-07-01T07:53:18.000Z"
+          },
+          "level": 4,
+          "kda": "1 / 0 / 0",
+          "items": [
+            16,
+            16,
+            28,
+            36,
+            6,
+            4204
+          ],
+          "gold": 447,
+          "lh": "25 / 3",
+          "gpm": "350 / 319",
+          "net_worth": 2227
+        },
+        {
+          "player": {
+            "id": 315,
+            "team_id": 5124,
+            "steam_id": 101356886,
+            "migrated_id": null,
+            "rank": 21,
+            "title": "Gh",
+            "slug": "gh",
+            "country_id": 24,
+            "is_active": true,
+            "created_at": "2019-03-29T06:51:05.000Z",
+            "updated_at": "2026-07-11T12:22:35.000Z",
+            "rank_updated_at": "2026-07-11T11:56:05.000Z"
+          },
+          "hero": {
+            "id": 67,
+            "steam_id": 68,
+            "title": "Ancient Apparition",
+            "slug": "ancient-apparition",
+            "image": "/uploads/heroes/9I2aelDnN96S1bAu4V2b6HixMnAdUx6i.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:31.000Z"
+          },
+          "country": {
+            "id": 24,
+            "title": "Lebanon",
+            "image": "/assets/plugins/flag-icon/flags/4x3/lb.svg",
+            "is_active": true,
+            "created_at": null,
+            "updated_at": "2024-07-01T08:11:44.000Z"
+          },
+          "level": 3,
+          "kda": "0 / 0 / 2",
+          "items": [
+            237,
+            20,
+            16,
+            244,
+            16,
+            4204
+          ],
+          "gold": 326,
+          "lh": "2 / 3",
+          "gpm": "154 / 227",
+          "net_worth": 881
+        },
+        {
+          "player": {
+            "id": 5150,
+            "team_id": 5124,
+            "steam_id": 210053851,
+            "migrated_id": null,
+            "rank": 0,
+            "title": "lorenof",
+            "slug": "lorenof",
+            "country_id": 54,
+            "is_active": true,
+            "created_at": "2019-04-29T02:07:27.000Z",
+            "updated_at": "2026-07-11T12:23:05.000Z",
+            "rank_updated_at": "2026-07-11T11:56:05.000Z"
+          },
+          "hero": {
+            "id": 17,
+            "steam_id": 17,
+            "title": "Storm Spirit",
+            "slug": "storm-spirit",
+            "image": "/uploads/heroes/TsV2Qhw6UKkDuQWyDCynKCAui4Fnr2ak.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:28.000Z"
+          },
+          "country": {
+            "id": 54,
+            "title": "Ukraine",
+            "image": "/assets/plugins/flag-icon/flags/4x3/ua.svg",
+            "is_active": true,
+            "created_at": null,
+            "updated_at": "2024-07-01T08:05:46.000Z"
+          },
+          "level": 4,
+          "kda": "0 / 0 / 1",
+          "items": [
+            16,
+            38,
+            34,
+            16,
+            16,
+            237
+          ],
+          "gold": 167,
+          "lh": "15 / 3",
+          "gpm": "228 / 322",
+          "net_worth": 1332
+        }
+      ]
+    }
+  },
+  "draft_supreme_complete": true,
+  "players": [
+    {
+      "account_id": 152168157,
+      "hero_id": 123,
+      "team_slot": 2,
+      "team": 1
+    },
+    {
+      "account_id": 138880576,
+      "hero_id": 55,
+      "team_slot": 3,
+      "team": 1
+    },
+    {
+      "account_id": 101356886,
+      "hero_id": 68,
+      "team_slot": 4,
+      "team": 1
+    },
+    {
+      "account_id": 111620041,
+      "hero_id": 21,
+      "team_slot": 1,
+      "team": 1
+    },
+    {
+      "account_id": 210053851,
+      "hero_id": 17,
+      "team_slot": 5,
+      "team": 1
+    },
+    {
+      "account_id": 252737052,
+      "hero_id": 69,
+      "team_slot": 4,
+      "team": 0
+    },
+    {
+      "account_id": 157989498,
+      "hero_id": 100,
+      "team_slot": 2,
+      "team": 0
+    },
+    {
+      "account_id": 352545711,
+      "hero_id": 36,
+      "team_slot": 3,
+      "team": 0
+    },
+    {
+      "account_id": 1031547092,
+      "hero_id": 131,
+      "team_slot": 5,
+      "team": 0
+    },
+    {
+      "account_id": 363758022,
+      "hero_id": 19,
+      "team_slot": 1,
+      "team": 0
+    }
+  ],
+  "live_league_data": {
+    "players": [
+      {
+        "account_id": 106804705,
+        "name": "Wishy",
+        "hero_id": 0,
+        "team": 4
+      },
+      {
+        "account_id": 107554413,
+        "name": "IKEA",
+        "hero_id": 0,
+        "team": 2
+      },
+      {
+        "account_id": 1521785414,
+        "name": "Knugen",
+        "hero_id": 0,
+        "team": 2
+      },
+      {
+        "account_id": 1138354476,
+        "name": "devvy",
+        "hero_id": 0,
+        "team": 2
+      },
+      {
+        "account_id": 152168157,
+        "name": "OmaR",
+        "hero_id": 123,
+        "team": 1
+      },
+      {
+        "account_id": 138880576,
+        "name": "Davai",
+        "hero_id": 55,
+        "team": 1
+      },
+      {
+        "account_id": 101356886,
+        "name": "GH",
+        "hero_id": 68,
+        "team": 1
+      },
+      {
+        "account_id": 111620041,
+        "name": "SumaiL-",
+        "hero_id": 21,
+        "team": 1
+      },
+      {
+        "account_id": 210053851,
+        "name": "lorenof",
+        "hero_id": 17,
+        "team": 1
+      },
+      {
+        "account_id": 252737052,
+        "name": "Fr\u25b3nk",
+        "hero_id": 69,
+        "team": 0
+      },
+      {
+        "account_id": 157989498,
+        "name": "Scofield",
+        "hero_id": 100,
+        "team": 0
+      },
+      {
+        "account_id": 352545711,
+        "name": "DarkMago\u2665",
+        "hero_id": 36,
+        "team": 0
+      },
+      {
+        "account_id": 1031547092,
+        "name": "Elmisho",
+        "hero_id": 131,
+        "team": 0
+      },
+      {
+        "account_id": 363758022,
+        "name": "Wits",
+        "hero_id": 19,
+        "team": 0
+      }
+    ],
+    "radiant_team": {
+      "team_name": "PTime",
+      "team_id": 10182309,
+      "team_logo": 11500438161201190000,
+      "complete": true
+    },
+    "dire_team": {
+      "team_name": "Nigma Galaxy ",
+      "team_id": 10136357,
+      "team_logo": 16959999218725724000,
+      "complete": true
+    },
+    "lobby_id": 29924540266740656,
+    "match_id": 8891349244,
+    "spectators": 251,
+    "league_id": 19785,
+    "league_node_id": 29,
+    "stream_delay_s": 900,
+    "radiant_series_wins": 0,
+    "dire_series_wins": 0,
+    "series_type": 3,
+    "scoreboard": {
+      "duration": 303.73333740234375,
+      "roshan_respawn_timer": 0,
+      "radiant": {
+        "score": 4,
+        "tower_state": 2047,
+        "barracks_state": 63,
+        "picks": [
+          {
+            "hero_id": 36,
+            "hero": {
+              "id": 35,
+              "steam_id": 36,
+              "title": "Necrophos",
+              "slug": "necrophos",
+              "image": "/uploads/heroes/byfpGnTecLh5Z90F16lqIloblrrYQ1Yl.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:29.000Z"
+            },
+            "team_stats": "8 | 75%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 69,
+            "hero": {
+              "id": 68,
+              "steam_id": 69,
+              "title": "Doom",
+              "slug": "doom",
+              "image": "/uploads/heroes/Ya7OanjnmaY3FCEenGtPKEacvvXJyJ3D.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:31.000Z"
+            },
+            "team_stats": "10 | 80%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 131,
+            "hero": {
+              "id": 125,
+              "steam_id": 131,
+              "title": "Ringmaster",
+              "slug": "ringmaster",
+              "image": "/uploads/heroes/3b9OvrLrs9MDWshXOaq7jXGV6P40Zsbv.png",
+              "is_active": true,
+              "created_at": "2024-08-23T03:32:40.000Z",
+              "updated_at": "2026-07-11T12:21:35.000Z"
+            },
+            "team_stats": "4 | 50%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 100,
+            "hero": {
+              "id": 99,
+              "steam_id": 100,
+              "title": "Tusk",
+              "slug": "tusk",
+              "image": "/uploads/heroes/yis41yXhXz2gVyrOMWb5juzAxoufwxgX.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:33.000Z"
+            },
+            "team_stats": "25 | 56%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 19,
+            "hero": {
+              "id": 19,
+              "steam_id": 19,
+              "title": "Tiny",
+              "slug": "tiny",
+              "image": "/uploads/heroes/W1XNCjiVgmeicn57l9zJvhFfpjHjHRKZ.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "team_stats": "10 | 50%",
+            "player_stats": "0 | -"
+          }
+        ],
+        "bans": [
+          {
+            "hero_id": 91
+          },
+          {
+            "hero_id": 11
+          },
+          {
+            "hero_id": 47
+          },
+          {
+            "hero_id": 90
+          },
+          {
+            "hero_id": 80
+          },
+          {
+            "hero_id": 108
+          },
+          {
+            "hero_id": 155
+          }
+        ],
+        "players": [
+          {
+            "player_slot": 0,
+            "account_id": 363758022,
+            "hero_id": 19,
+            "kills": 2,
+            "death": 0,
+            "assists": 0,
+            "last_hits": 25,
+            "denies": 3,
+            "gold": 462,
+            "level": 4,
+            "gold_per_min": 421,
+            "xp_per_min": 297,
+            "ultimate_state": 0,
+            "ultimate_cooldown": 0,
+            "item0": 29,
+            "item1": 13,
+            "item2": 34,
+            "item3": 16,
+            "item4": 25,
+            "item5": 13,
+            "respawn_timer": 0,
+            "position_x": 5615.55322265625,
+            "position_y": -5783.7939453125,
+            "net_worth": 2452,
+            "scoreboard_xp": 1503
+          },
+          {
+            "player_slot": 1,
+            "account_id": 157989498,
+            "hero_id": 100,
+            "kills": 0,
+            "death": 1,
+            "assists": 1,
+            "last_hits": 2,
+            "denies": 0,
+            "gold": 21,
+            "level": 2,
+            "gold_per_min": 153,
+            "xp_per_min": 89,
+            "ultimate_state": 0,
+            "ultimate_cooldown": 0,
+            "item0": 29,
+            "item1": 1123,
+            "item2": 34,
+            "item3": 44,
+            "item4": 42,
+            "item5": -1,
+            "respawn_timer": 0,
+            "position_x": -3791.58251953125,
+            "position_y": 3073.068115234375,
+            "net_worth": 1086,
+            "scoreboard_xp": 451
+          },
+          {
+            "player_slot": 2,
+            "account_id": 352545711,
+            "hero_id": 36,
+            "kills": 0,
+            "death": 0,
+            "assists": 0,
+            "last_hits": 29,
+            "denies": 7,
+            "gold": 464,
+            "level": 5,
+            "gold_per_min": 379,
+            "xp_per_min": 397,
+            "ultimate_state": 0,
+            "ultimate_cooldown": 0,
+            "item0": 73,
+            "item1": 20,
+            "item2": 29,
+            "item3": 244,
+            "item4": 36,
+            "item5": 237,
+            "respawn_timer": 0,
+            "position_x": -152.26060485839844,
+            "position_y": -90.50323486328125,
+            "net_worth": 2374,
+            "scoreboard_xp": 2010
+          },
+          {
+            "player_slot": 3,
+            "account_id": 252737052,
+            "hero_id": 69,
+            "kills": 2,
+            "death": 1,
+            "assists": 0,
+            "last_hits": 8,
+            "denies": 4,
+            "gold": 380,
+            "level": 4,
+            "gold_per_min": 306,
+            "xp_per_min": 237,
+            "ultimate_state": 0,
+            "ultimate_cooldown": 0,
+            "item0": 73,
+            "item1": 73,
+            "item2": -1,
+            "item3": 36,
+            "item4": 16,
+            "item5": 237,
+            "respawn_timer": 0,
+            "position_x": -4465.75048828125,
+            "position_y": 2761.824951171875,
+            "net_worth": 1970,
+            "scoreboard_xp": 1200
+          },
+          {
+            "player_slot": 4,
+            "account_id": 1031547092,
+            "hero_id": 131,
+            "kills": 0,
+            "death": 1,
+            "assists": 3,
+            "last_hits": 4,
+            "denies": 0,
+            "gold": 476,
+            "level": 3,
+            "gold_per_min": 179,
+            "xp_per_min": 202,
+            "ultimate_state": 0,
+            "ultimate_cooldown": 0,
+            "item0": 34,
+            "item1": 218,
+            "item2": 20,
+            "item3": 237,
+            "item4": 16,
+            "item5": 16,
+            "respawn_timer": 0,
+            "position_x": -243.13870239257812,
+            "position_y": -6084.69482421875,
+            "net_worth": 1056,
+            "scoreboard_xp": 1023
+          }
+        ],
+        "abilities": [
+          {
+            "ability_id": 352,
+            "ability_level": 2
+          },
+          {
+            "ability_id": 386,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 390,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 380,
+            "ability_level": 2
+          },
+          {
+            "ability_id": 388,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 389,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 392,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 387,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 196,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 5669,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 842,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 8873,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 2610,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 8034,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 8035,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 1877,
+            "ability_level": 6
+          },
+          {
+            "ability_id": 1878,
+            "ability_level": 5
+          },
+          {
+            "ability_id": 1879,
+            "ability_level": 6
+          }
+        ]
+      },
+      "dire": {
+        "score": 3,
+        "tower_state": 2047,
+        "barracks_state": 63,
+        "picks": [
+          {
+            "hero_id": 123,
+            "hero": {
+              "id": 120,
+              "steam_id": 123,
+              "title": "Hoodwink",
+              "slug": "hoodwink",
+              "image": "/uploads/heroes/PkZYTU6NzNS4cgfnTYAjVfUznSSCyxI3.jpg",
+              "is_active": true,
+              "created_at": null,
+              "updated_at": "2026-07-11T12:21:35.000Z"
+            },
+            "team_stats": "56 | 54%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 68,
+            "hero": {
+              "id": 67,
+              "steam_id": 68,
+              "title": "Ancient Apparition",
+              "slug": "ancient-apparition",
+              "image": "/uploads/heroes/9I2aelDnN96S1bAu4V2b6HixMnAdUx6i.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:31.000Z"
+            },
+            "team_stats": "2 | -",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 21,
+            "hero": {
+              "id": 21,
+              "steam_id": 21,
+              "title": "Windranger",
+              "slug": "windranger",
+              "image": "/uploads/heroes/tp6ELzhhi6vTa2hsKHGcYGWedZbEPLk2.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:29.000Z"
+            },
+            "team_stats": "12 | 50%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 17,
+            "hero": {
+              "id": 17,
+              "steam_id": 17,
+              "title": "Storm Spirit",
+              "slug": "storm-spirit",
+              "image": "/uploads/heroes/TsV2Qhw6UKkDuQWyDCynKCAui4Fnr2ak.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:28.000Z"
+            },
+            "team_stats": "19 | 47%",
+            "player_stats": "0 | -"
+          },
+          {
+            "hero_id": 55,
+            "hero": {
+              "id": 54,
+              "steam_id": 55,
+              "title": "Dark Seer",
+              "slug": "dark-seer",
+              "image": "/uploads/heroes/U3JzuoXlIHssE2pPm91hbDsk78449aj0.png",
+              "is_active": true,
+              "created_at": "2019-04-15T06:18:16.000Z",
+              "updated_at": "2026-07-11T12:21:30.000Z"
+            },
+            "team_stats": "4 | 25%",
+            "player_stats": "0 | -"
+          }
+        ],
+        "bans": [
+          {
+            "hero_id": 83
+          },
+          {
+            "hero_id": 107
+          },
+          {
+            "hero_id": 56
+          },
+          {
+            "hero_id": 111
+          },
+          {
+            "hero_id": 77
+          },
+          {
+            "hero_id": 106
+          },
+          {
+            "hero_id": 96
+          }
+        ],
+        "players": [
+          {
+            "player_slot": 128,
+            "account_id": 111620041,
+            "hero_id": 21,
+            "kills": 2,
+            "death": 1,
+            "assists": 0,
+            "last_hits": 28,
+            "denies": 16,
+            "gold": 946,
+            "level": 3,
+            "gold_per_min": 415,
+            "xp_per_min": 208,
+            "ultimate_state": 0,
+            "ultimate_cooldown": 0,
+            "item0": 73,
+            "item1": 44,
+            "item2": 16,
+            "item3": 25,
+            "item4": 237,
+            "item5": 77,
+            "respawn_timer": 0,
+            "position_x": -4922.5576171875,
+            "position_y": 5705.62939453125,
+            "net_worth": 2556,
+            "scoreboard_xp": 1053
+          },
+          {
+            "player_slot": 129,
+            "account_id": 152168157,
+            "hero_id": 123,
+            "kills": 0,
+            "death": 3,
+            "assists": 2,
+            "last_hits": 6,
+            "denies": 1,
+            "gold": 70,
+            "level": 3,
+            "gold_per_min": 155,
+            "xp_per_min": 200,
+            "ultimate_state": 0,
+            "ultimate_cooldown": 0,
+            "item0": 20,
+            "item1": -1,
+            "item2": -1,
+            "item3": 218,
+            "item4": 216,
+            "item5": 36,
+            "respawn_timer": 0,
+            "position_x": 1544.648681640625,
+            "position_y": 591.8868408203125,
+            "net_worth": 850,
+            "scoreboard_xp": 1012
+          },
+          {
+            "player_slot": 130,
+            "account_id": 138880576,
+            "hero_id": 55,
+            "kills": 1,
+            "death": 0,
+            "assists": 0,
+            "last_hits": 25,
+            "denies": 3,
+            "gold": 447,
+            "level": 4,
+            "gold_per_min": 350,
+            "xp_per_min": 319,
+            "ultimate_state": 0,
+            "ultimate_cooldown": 0,
+            "item0": 16,
+            "item1": 16,
+            "item2": 28,
+            "item3": 36,
+            "item4": 6,
+            "item5": 4204,
+            "respawn_timer": 0,
+            "position_x": 6151.9482421875,
+            "position_y": -4551.12939453125,
+            "net_worth": 2227,
+            "scoreboard_xp": 1615
+          },
+          {
+            "player_slot": 131,
+            "account_id": 101356886,
+            "hero_id": 68,
+            "kills": 0,
+            "death": 0,
+            "assists": 2,
+            "last_hits": 2,
+            "denies": 3,
+            "gold": 326,
+            "level": 3,
+            "gold_per_min": 154,
+            "xp_per_min": 227,
+            "ultimate_state": 0,
+            "ultimate_cooldown": 0,
+            "item0": 237,
+            "item1": 20,
+            "item2": 16,
+            "item3": 244,
+            "item4": 16,
+            "item5": 4204,
+            "respawn_timer": 0,
+            "position_x": -4049.201904296875,
+            "position_y": 4004.691650390625,
+            "net_worth": 881,
+            "scoreboard_xp": 1149
+          },
+          {
+            "player_slot": 132,
+            "account_id": 210053851,
+            "hero_id": 17,
+            "kills": 0,
+            "death": 0,
+            "assists": 1,
+            "last_hits": 15,
+            "denies": 3,
+            "gold": 167,
+            "level": 4,
+            "gold_per_min": 228,
+            "xp_per_min": 322,
+            "ultimate_state": 0,
+            "ultimate_cooldown": 0,
+            "item0": 16,
+            "item1": 38,
+            "item2": 34,
+            "item3": 16,
+            "item4": 16,
+            "item5": 237,
+            "respawn_timer": 0,
+            "position_x": 818.9334716796875,
+            "position_y": 398.2619323730469,
+            "net_worth": 1332,
+            "scoreboard_xp": 1630
+          }
+        ],
+        "abilities": [
+          {
+            "ability_id": 5098,
+            "ability_level": 2
+          },
+          {
+            "ability_id": 5100,
+            "ability_level": 2
+          },
+          {
+            "ability_id": 1231,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 5669,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 842,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 8873,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 2610,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 8034,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 8035,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 1877,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 1878,
+            "ability_level": 1
+          },
+          {
+            "ability_id": 1879,
+            "ability_level": 1
+          }
+        ]
+      }
+    }
+  },
+  "is_picks_ended_time": 1783772797,
+  "now": 1783774093,
+  "db": {
+    "first_team": {
+      "id": 5124,
+      "steam_ids": "[\"7554697\",\"10136357\"]",
+      "title": "Nigma Galaxy",
+      "slug": "nigma",
+      "tag": "Nigma",
+      "image": "/uploads/teams/rawK7xDgxwI7Ff8GumO9sC7Z9fHvyCQ2.png.webp",
+      "image_dark": "/uploads/teams/ASAY4yOTXJuRzChrhyTvwmKCGjjSOo8I.png.webp",
+      "is_active": true,
+      "created_at": "2019-11-28T15:58:43.000Z",
+      "updated_at": "2026-07-11T12:21:47.000Z",
+      "rank": 18,
+      "is_radiant": false,
+      "picks": [
+        {
+          "hero_id": 123,
+          "hero": {
+            "id": 120,
+            "steam_id": 123,
+            "title": "Hoodwink",
+            "slug": "hoodwink",
+            "image": "/uploads/heroes/PkZYTU6NzNS4cgfnTYAjVfUznSSCyxI3.jpg",
+            "is_active": true,
+            "created_at": null,
+            "updated_at": "2026-07-11T12:21:35.000Z"
+          },
+          "team_stats": "56 | 54%",
+          "player_stats": "0 | -"
+        },
+        {
+          "hero_id": 68,
+          "hero": {
+            "id": 67,
+            "steam_id": 68,
+            "title": "Ancient Apparition",
+            "slug": "ancient-apparition",
+            "image": "/uploads/heroes/9I2aelDnN96S1bAu4V2b6HixMnAdUx6i.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:31.000Z"
+          },
+          "team_stats": "2 | -",
+          "player_stats": "0 | -"
+        },
+        {
+          "hero_id": 21,
+          "hero": {
+            "id": 21,
+            "steam_id": 21,
+            "title": "Windranger",
+            "slug": "windranger",
+            "image": "/uploads/heroes/tp6ELzhhi6vTa2hsKHGcYGWedZbEPLk2.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:29.000Z"
+          },
+          "team_stats": "12 | 50%",
+          "player_stats": "0 | -"
+        },
+        {
+          "hero_id": 17,
+          "hero": {
+            "id": 17,
+            "steam_id": 17,
+            "title": "Storm Spirit",
+            "slug": "storm-spirit",
+            "image": "/uploads/heroes/TsV2Qhw6UKkDuQWyDCynKCAui4Fnr2ak.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:28.000Z"
+          },
+          "team_stats": "19 | 47%",
+          "player_stats": "0 | -"
+        },
+        {
+          "hero_id": 55,
+          "hero": {
+            "id": 54,
+            "steam_id": 55,
+            "title": "Dark Seer",
+            "slug": "dark-seer",
+            "image": "/uploads/heroes/U3JzuoXlIHssE2pPm91hbDsk78449aj0.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:30.000Z"
+          },
+          "team_stats": "4 | 25%",
+          "player_stats": "0 | -"
+        }
+      ],
+      "bans": [
+        {
+          "hero": {
+            "id": 82,
+            "steam_id": 83,
+            "title": "Treant Protector",
+            "slug": "treant-protector",
+            "image": "/uploads/heroes/QRXI089Oxu6wdOB2j4TthXmLse3w3Y0Y.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:32.000Z"
+          },
+          "hero_id": 83
+        },
+        {
+          "hero": {
+            "id": 106,
+            "steam_id": 107,
+            "title": "Earth Spirit",
+            "slug": "earth-spirit",
+            "image": "/uploads/heroes/UZi7YMKljaLM9GZqzQFpQlkYBWyDm4Qj.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:17.000Z",
+            "updated_at": "2026-07-11T12:21:33.000Z"
+          },
+          "hero_id": 107
+        },
+        {
+          "hero": {
+            "id": 55,
+            "steam_id": 56,
+            "title": "Clinkz",
+            "slug": "clinkz",
+            "image": "/uploads/heroes/hngmsZIYJWm8Xy0JXgyTrOt2Zj30IXXX.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:30.000Z"
+          },
+          "hero_id": 56
+        },
+        {
+          "hero": {
+            "id": 110,
+            "steam_id": 111,
+            "title": "Oracle",
+            "slug": "oracle",
+            "image": "/uploads/heroes/oih9aDAhfOmGexhkB6qa9gBYqESIc6oC.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:17.000Z",
+            "updated_at": "2026-07-11T12:21:34.000Z"
+          },
+          "hero_id": 111
+        },
+        {
+          "hero": {
+            "id": 76,
+            "steam_id": 77,
+            "title": "Lycan",
+            "slug": "lycan",
+            "image": "/uploads/heroes/FuwK9z9fBa3cRt6NxhMvSGMdF9e3hQCO.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:32.000Z"
+          },
+          "hero_id": 77
+        },
+        {
+          "hero": {
+            "id": 105,
+            "steam_id": 106,
+            "title": "Ember Spirit",
+            "slug": "ember-spirit",
+            "image": "/uploads/heroes/aAgm1pglrEhYMcB3PYlEOqjn5gfnLGXj.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:17.000Z",
+            "updated_at": "2026-07-11T12:21:33.000Z"
+          },
+          "hero_id": 106
+        },
+        {
+          "hero": {
+            "id": 95,
+            "steam_id": 96,
+            "title": "Centaur Warrunner",
+            "slug": "centaur-warrunner",
+            "image": "/uploads/heroes/UkWrK3A4rg9YubgqK3P7syz2sj5GwnjH.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:33.000Z"
+          },
+          "hero_id": 96
+        }
+      ]
+    },
+    "second_team": {
+      "id": 8083,
+      "steam_ids": "[\"10020555\",\"10182309\"]",
+      "title": "PlayTime",
+      "slug": "playtime",
+      "tag": "PTime",
+      "image": "/uploads/teams/OnCvDLstbanRfPNlqFfiQaQkQuu53gUR.png",
+      "image_dark": "/uploads/teams/6lniOY3OIB5EYx7kgEB4aEVjU0ml4jyx.png",
+      "is_active": true,
+      "created_at": "2026-01-12T05:36:48.000Z",
+      "updated_at": "2026-07-11T12:22:18.000Z",
+      "rank": 13,
+      "is_radiant": true,
+      "picks": [
+        {
+          "hero_id": 36,
+          "hero": {
+            "id": 35,
+            "steam_id": 36,
+            "title": "Necrophos",
+            "slug": "necrophos",
+            "image": "/uploads/heroes/byfpGnTecLh5Z90F16lqIloblrrYQ1Yl.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:29.000Z"
+          },
+          "team_stats": "8 | 75%",
+          "player_stats": "0 | -"
+        },
+        {
+          "hero_id": 69,
+          "hero": {
+            "id": 68,
+            "steam_id": 69,
+            "title": "Doom",
+            "slug": "doom",
+            "image": "/uploads/heroes/Ya7OanjnmaY3FCEenGtPKEacvvXJyJ3D.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:31.000Z"
+          },
+          "team_stats": "10 | 80%",
+          "player_stats": "0 | -"
+        },
+        {
+          "hero_id": 131,
+          "hero": {
+            "id": 125,
+            "steam_id": 131,
+            "title": "Ringmaster",
+            "slug": "ringmaster",
+            "image": "/uploads/heroes/3b9OvrLrs9MDWshXOaq7jXGV6P40Zsbv.png",
+            "is_active": true,
+            "created_at": "2024-08-23T03:32:40.000Z",
+            "updated_at": "2026-07-11T12:21:35.000Z"
+          },
+          "team_stats": "4 | 50%",
+          "player_stats": "0 | -"
+        },
+        {
+          "hero_id": 100,
+          "hero": {
+            "id": 99,
+            "steam_id": 100,
+            "title": "Tusk",
+            "slug": "tusk",
+            "image": "/uploads/heroes/yis41yXhXz2gVyrOMWb5juzAxoufwxgX.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:33.000Z"
+          },
+          "team_stats": "25 | 56%",
+          "player_stats": "0 | -"
+        },
+        {
+          "hero_id": 19,
+          "hero": {
+            "id": 19,
+            "steam_id": 19,
+            "title": "Tiny",
+            "slug": "tiny",
+            "image": "/uploads/heroes/W1XNCjiVgmeicn57l9zJvhFfpjHjHRKZ.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:28.000Z"
+          },
+          "team_stats": "10 | 50%",
+          "player_stats": "0 | -"
+        }
+      ],
+      "bans": [
+        {
+          "hero": {
+            "id": 90,
+            "steam_id": 91,
+            "title": "Io",
+            "slug": "io",
+            "image": "/uploads/heroes/i4u1Wb7uYGNqIAHKEI5ThkukESoQoDQ8.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:33.000Z"
+          },
+          "hero_id": 91
+        },
+        {
+          "hero": {
+            "id": 11,
+            "steam_id": 11,
+            "title": "Shadow Fiend",
+            "slug": "shadow-fiend",
+            "image": "/uploads/heroes/pF1UJr9pbInmJgpMBYFCIyiHEwU3bp22.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:28.000Z"
+          },
+          "hero_id": 11
+        },
+        {
+          "hero": {
+            "id": 46,
+            "steam_id": 47,
+            "title": "Viper",
+            "slug": "viper",
+            "image": "/uploads/heroes/9TbPeXRqnreK0OUy4GFe33Qu4uhLZ9Ea.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:30.000Z"
+          },
+          "hero_id": 47
+        },
+        {
+          "hero": {
+            "id": 89,
+            "steam_id": 90,
+            "title": "Keeper of the Light",
+            "slug": "keeper-of-the-light",
+            "image": "/uploads/heroes/1riTHUVom7hmCar2kPjG6A5mvwcmyBU2.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:33.000Z"
+          },
+          "hero_id": 90
+        },
+        {
+          "hero": {
+            "id": 79,
+            "steam_id": 80,
+            "title": "Lone Druid",
+            "slug": "lone-druid",
+            "image": "/uploads/heroes/AnUQeD23JsSMCLQpzZyTilfxQT0wqlZZ.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:16.000Z",
+            "updated_at": "2026-07-11T12:21:32.000Z"
+          },
+          "hero_id": 80
+        },
+        {
+          "hero": {
+            "id": 107,
+            "steam_id": 108,
+            "title": "Underlord",
+            "slug": "underlord",
+            "image": "/uploads/heroes/J95M7rBittdRz52HPkqbj7O8gGFNtIvj.png",
+            "is_active": true,
+            "created_at": "2019-04-15T06:18:17.000Z",
+            "updated_at": "2026-07-11T12:21:34.000Z"
+          },
+          "hero_id": 108
+        },
+        {
+          "hero": {
+            "id": 127,
+            "steam_id": 155,
+            "title": "Largo",
+            "slug": "largo",
+            "image": "/uploads/heroes/acLOP5HPJHr0bXLwbaSO6ccQnOC0HPNm.png",
+            "is_active": true,
+            "created_at": "2025-12-16T14:53:39.000Z",
+            "updated_at": "2026-07-11T12:21:35.000Z"
+          },
+          "hero_id": 155
+        }
+      ]
+    },
+    "streams": [
+      {
+        "id": 1866836,
+        "series_id": 427328,
+        "platform": "youtube",
+        "title": "Dota 2 at EWC 26 - Day 5 - Group Stage - Stream B - LIVE",
+        "channel_title": null,
+        "views": 28651,
+        "is_active": true,
+        "created_at": "2026-07-11T11:07:24.000Z",
+        "updated_at": "2026-07-11T11:07:24.000Z"
+      },
+      {
+        "id": 1867144,
+        "series_id": 427328,
+        "platform": "twitch",
+        "title": "\ud83d\udd34 [\u0411\u0415\u0417 \u0417\u0410\u0414\u0415\u0420\u0416\u041a\u0418] Play Time [0:0] Nigma, Bo2 | EWC 2026: Group Stage w/ @ramzes !tg !betboom !\u0440\u043e\u0437\u044b\u0433\u0440\u044b\u0448",
+        "channel_title": "solo",
+        "views": 17693,
+        "is_active": true,
+        "created_at": "2026-07-11T11:48:06.000Z",
+        "updated_at": "2026-07-11T12:46:11.000Z"
+      },
+      {
+        "id": 1867145,
+        "series_id": 427328,
+        "platform": "twitch",
+        "title": "(EN) Nigma vs Ptime - 0:0  - Group Stage Hub - EWC 26 - Official costream",
+        "channel_title": "gorgc",
+        "views": 7986,
+        "is_active": true,
+        "created_at": "2026-07-11T11:48:06.000Z",
+        "updated_at": "2026-07-11T12:46:11.000Z"
+      },
+      {
+        "id": 1867147,
+        "series_id": 427328,
+        "platform": "twitch",
+        "title": "[no delay] PTime [0:0] Nigma Galaxy | EWC 2026 | Bo2 | Group Stage | /w @reinseele @avice | !tg !betboom",
+        "channel_title": "koma",
+        "views": 5542,
+        "is_active": true,
+        "created_at": "2026-07-11T11:48:07.000Z",
+        "updated_at": "2026-07-11T12:46:11.000Z"
+      },
+      {
+        "id": 1864896,
+        "series_id": 427328,
+        "platform": "twitch",
+        "title": "PTime vs. Nigma Galaxy | Dota 2 at EWC 26 - Day 5 - Group Stage - Stream B - LIVE",
+        "channel_title": "ewc_legiongauntlet_en2",
+        "views": 5009,
+        "is_active": true,
+        "created_at": "2026-07-11T05:32:04.000Z",
+        "updated_at": "2026-07-11T12:46:06.000Z"
+      },
+      {
+        "id": 1864897,
+        "series_id": 427328,
+        "platform": "twitch",
+        "title": "PTime [0] vs. [0] Nigma Galaxy | Bo2 | EWC Group Stage | Day 5 | cast:  @gexsuntv  &  @inmateoo",
+        "channel_title": "betboom_dota_ru2",
+        "views": 3277,
+        "is_active": true,
+        "created_at": "2026-07-11T05:32:04.000Z",
+        "updated_at": "2026-07-11T12:46:06.000Z"
+      },
+      {
+        "id": 1867192,
+        "series_id": 427328,
+        "platform": "kick",
+        "title": "EWC 2026 - DOTA 2 - Group Stage Day 4 - PTime vs. Nigma Galaxy",
+        "channel_title": "kukudota2",
+        "views": 2610,
+        "is_active": true,
+        "created_at": "2026-07-11T11:48:18.000Z",
+        "updated_at": "2026-07-11T12:46:15.000Z"
+      },
+      {
+        "id": 1867193,
+        "series_id": 427328,
+        "platform": "kick",
+        "title": "Playtime vs Nigma / Aurora vs Liquid / Liga team vs Levelup / GOOOO! EWC / Esports World Cup 2026 / dota 2 / 1XBET \u2b50 C\u00d3DIGO : 1XBENJAZ \ud83d\udccc\ud83d\udcb9",
+        "channel_title": "benjaz",
+        "views": 1903,
+        "is_active": true,
+        "created_at": "2026-07-11T11:48:18.000Z",
+        "updated_at": "2026-07-11T12:46:15.000Z"
+      },
+      {
+        "id": 1867369,
+        "series_id": 427328,
+        "platform": "kick",
+        "title": "EWC 2026 - DOTA 2 - Group Stage Day 4 - PTime vs. Nigma Galaxy",
+        "channel_title": "armeldoto",
+        "views": 1329,
+        "is_active": true,
+        "created_at": "2026-07-11T12:18:19.000Z",
+        "updated_at": "2026-07-11T12:46:15.000Z"
+      },
+      {
+        "id": 1865938,
+        "series_id": 427328,
+        "platform": "kick",
+        "title": "EWC PAR\u00cdS! PLAYTIME vs NGX y LGD PELEANDO POR SU ELIMINACI\u00d3N! DOTA 2  - ARGENTINA VS EGIPTO REGALO 500 DOLARES! !ggdrop !1x  !tienda",
+        "channel_title": "papita",
+        "views": 953,
+        "is_active": true,
+        "created_at": "2026-07-11T08:42:14.000Z",
+        "updated_at": "2026-07-11T12:46:15.000Z"
+      },
+      {
+        "id": 1867263,
+        "series_id": 427328,
+        "platform": "kick",
+        "title": "EWC 2026 - Dota 2 - PlayTime vs Nigma LFG | 1xBet - C\u00f3digo: GOTTO1X | Skin.Club - C\u00f3digo: DOTA",
+        "channel_title": "matthewdota",
+        "views": 916,
+        "is_active": true,
+        "created_at": "2026-07-11T12:00:14.000Z",
+        "updated_at": "2026-07-11T12:46:15.000Z"
+      },
+      {
+        "id": 1867155,
+        "series_id": 427328,
+        "platform": "twitch",
+        "title": "PTime x Nigma Galaxy | EWC - Fase de grupos [Co-Stream] \ud83c\udfc6 [PT-BR] - Sub \u00f1 v\u00ea ad !PIX",
+        "channel_title": "ns_art",
+        "views": 802,
+        "is_active": true,
+        "created_at": "2026-07-11T11:48:09.000Z",
+        "updated_at": "2026-07-11T12:46:11.000Z"
+      },
+      {
+        "id": 1866837,
+        "series_id": 427328,
+        "platform": "youtube",
+        "title": "[RU] EWC Dota 2 Stream B | Day 5",
+        "channel_title": null,
+        "views": 719,
+        "is_active": true,
+        "created_at": "2026-07-11T11:07:30.000Z",
+        "updated_at": "2026-07-11T11:07:30.000Z"
+      },
+      {
+        "id": 1867060,
+        "series_id": 427328,
+        "platform": "kick",
+        "title": "PTime vs. Nigma Galaxy | Dota 2 at EWC 26 - Day 5 - Group Stage - Stream B - LIVE",
+        "channel_title": "esl_dota2ember",
+        "views": 584,
+        "is_active": true,
+        "created_at": "2026-07-11T11:32:17.000Z",
+        "updated_at": "2026-07-11T12:46:15.000Z"
+      },
+      {
+        "id": 1867370,
+        "series_id": 427328,
+        "platform": "kick",
+        "title": "EWC 2026 - DOTA 2 - Group Stage Day 4 - PTime vs. Nigma Galaxy",
+        "channel_title": "nikkodota2",
+        "views": 369,
+        "is_active": true,
+        "created_at": "2026-07-11T12:18:19.000Z",
+        "updated_at": "2026-07-11T12:46:15.000Z"
+      },
+      {
+        "id": 1867198,
+        "series_id": 427328,
+        "platform": "kick",
+        "title": "EWC 2026 - Dota 2 - PTIME vs NIGMA: Group Stage",
+        "channel_title": "americaesportsdota2",
+        "views": 234,
+        "is_active": true,
+        "created_at": "2026-07-11T11:48:18.000Z",
+        "updated_at": "2026-07-11T12:46:15.000Z"
+      },
+      {
+        "id": 1867033,
+        "series_id": 427328,
+        "platform": "twitch",
+        "title": "PlayTime vs Nigma Galaxy Esports [\u0411\u0415\u0417 \u0417\u0410\u0414\u0415\u0420\u0416\u041a\u0418] | Esports World Cup 2026 | !\u0444\u0440\u0438 | !tg | !gg |",
+        "channel_title": "sysman_",
+        "views": 200,
+        "is_active": true,
+        "created_at": "2026-07-11T11:32:08.000Z",
+        "updated_at": "2026-07-11T12:46:11.000Z"
+      },
+      {
+        "id": 1867036,
+        "series_id": 427328,
+        "platform": "twitch",
+        "title": "PlayTime vs Nigma Galaxy | Bo2 | EWC Group Stage  | !tg",
+        "channel_title": "krat0ntv",
+        "views": 165,
+        "is_active": true,
+        "created_at": "2026-07-11T11:32:09.000Z",
+        "updated_at": "2026-07-11T12:46:11.000Z"
+      },
+      {
+        "id": 1867163,
+        "series_id": 427328,
+        "platform": "twitch",
+        "title": "[LIVE] \u2694\ufe0fXG vs Falcons \u2694\ufe0fNigma vs Playtime \ud83c\udfc6Esports World Cup 2026: GS - Day 5",
+        "channel_title": "cyberclasher",
+        "views": 132,
+        "is_active": true,
+        "created_at": "2026-07-11T11:48:11.000Z",
+        "updated_at": "2026-07-11T12:46:11.000Z"
+      },
+      {
+        "id": 1867264,
+        "series_id": 427328,
+        "platform": "kick",
+        "title": "Aurora vs Liquid / PlayTime vs Nigma | EWC DOTA 2 2026 | Volvi\u00f3 tu inversionista de confianza",
+        "channel_title": "redmonsterdota",
+        "views": 64,
+        "is_active": true,
+        "created_at": "2026-07-11T12:00:14.000Z",
+        "updated_at": "2026-07-11T12:46:15.000Z"
+      },
+      {
+        "id": 1867200,
+        "series_id": 427328,
+        "platform": "kick",
+        "title": "(EN) Nigma vs Ptime - 0:0 - Group Stage Hub - EWC 26 - Official costream",
+        "channel_title": "gorgc",
+        "views": 35,
+        "is_active": true,
+        "created_at": "2026-07-11T11:48:18.000Z",
+        "updated_at": "2026-07-11T12:46:15.000Z"
+      },
+      {
+        "id": 1867201,
+        "series_id": 427328,
+        "platform": "kick",
+        "title": "EWC 2026 - Dota 2 -playtime vs nigma galaxy    : Group Stage",
+        "channel_title": "maggodota",
+        "views": 22,
+        "is_active": true,
+        "created_at": "2026-07-11T11:48:18.000Z",
+        "updated_at": "2026-07-11T12:46:15.000Z"
+      },
+      {
+        "id": 1867404,
+        "series_id": 427328,
+        "platform": "kick",
+        "title": "EWC 2026 | DOTA 2 | Nigma vs PTime",
+        "channel_title": "polarisdotatv",
+        "views": 17,
+        "is_active": true,
+        "created_at": "2026-07-11T12:22:14.000Z",
+        "updated_at": "2026-07-11T12:46:15.000Z"
+      }
+    ],
+    "scores": {
+      "first_team": 0,
+      "second_team": 0
+    },
+    "series": {
+      "id": 427328,
+      "event_id": 6447,
+      "status": 1,
+      "slug": "nigma-vs-playtime-esports-world-cup-2026",
+      "type": 2,
+      "first_team_id": 5124,
+      "second_team_id": 8083,
+      "started_at": "2026-07-11T12:11:11.000Z",
+      "ended_at": null,
+      "draft_vote_ended_at": "2026-07-11T12:29:37.000Z",
+      "is_active": true,
+      "is_draft_voting": true,
+      "created_at": "2026-07-02T03:45:12.000Z",
+      "updated_at": "2026-07-11T12:48:07.000Z",
+      "deleted_at": null,
+      "likes": {
+        "side_0": 71,
+        "side_1": 48
+      }
+    }
+  }
+}

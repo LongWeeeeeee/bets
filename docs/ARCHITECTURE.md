@@ -6,19 +6,6 @@
 
 ## Сквозной pipeline (один проход `general()` в `base/cyberscore_try.py`, ~28580)
 
-При `DLTV_SOURCE_MODE=sourcetv` producer `base/sourcetv_probe.py` обнаруживает
-матчи через `GetLiveLeagueGames(0)` и прямой опрос известных
-keyword/allowlist `league_id`, после чего получает live-состояние конкретных
-лобби из Steam GC. Producer, первичный consumer-гейт и delayed-гейт используют
-общий admission по `(league_id, league_name)`: название проходит keyword-фильтр
-либо точный Valve ID входит в ID-allowlist. Это покрывает переиспользованные или
-неверно подписанные tickets (Asgard Championship — `19722`, реестровое имя
-`Lunar Paw`) без широкого разрешения чужих лиг с тем же названием. Постоянный
-global GC top-400 scan отключён. Его разрешено
-временно включать только как диагностику, если подтверждённый allowlist-матч
-не попал в bridge и Valve `league_id` нельзя получить обычным discovery; после
-нахождения ID нужно вернуться к прямому опросу.
-
 ```
 1. FETCH live           _get_cyberscore_html_via_camoufox(url)            ~19573
         │               (DLTV_SOURCE_MODE=cyberscore → Camoufox; api/html fallback)
@@ -86,7 +73,7 @@ global GC top-400 scan отключён. Его разрешено
 - Пороги: `STAR_THRESHOLDS_BY_WR` ← `data/star_thresholds_by_wr.json` (WR-уровни 60..90, `STAR_LEVEL_MIN/MAX`).
 - `synergy_duo`/`synergy_trio` могут выводиться в Telegram-блоках, но **не** участвуют в STAR-решении.
 - STAR-hit фиксируется в `format_output_dict(...)`; знаки/консистентность блоков проверяют `_star_block_sign_consistency`, `_star_signal_dispatch_flags`, `_star_match_status_from_diags`.
-- До immediate-dispatch и постановки в watcher действует терминальный конфликтный gate: если валидные Late STAR и All STAR указывают на противоположные стороны, Late-сигнал отклоняется (`star_signal_rejected_late_opposite_all`) и не попадает в delayed-очередь. Delayed-worker повторяет проверку по сохранённому `stake_multiplier_context`, поэтому восстановленная очередь с сохранёнными Late/All-флагами и знаками тоже не может отправить конфликтный сигнал; legacy payload без этих полей не блокируется этой проверкой. Late WR и количество late-хитов не дают исключений; одинаковый знак Late/All разрешён. Тестовый режим `FORCE_ODDS_SIGNAL_TEST=1` обходит этот gate.
+- До immediate-dispatch и постановки в watcher действует терминальный конфликтный gate: если валидный Late STAR имеет `late_wr_pct < 70` и финальный `late_star_hit_count < 2`, а валидный All STAR указывает на противоположную сторону, сигнал отклоняется (`star_signal_rejected_late_wr_below_70_opposite_all`) и не попадает в delayed-очередь. Границы строгие: `late_wr_pct = 70` и `late_star_hit_count >= 2` разрешены. Тестовый режим `FORCE_ODDS_SIGNAL_TEST=1` обходит этот gate.
 - **27+ late-гейт (late-driven dispatch).** Когда сторону ставки задаёт Late STAR и её НЕ подтверждает валидный Early того же знака (late-only, late+all, opposite-signs), любая отправка на `game_time >= 27:00` требует: `late_star_hit_count >= LATE27_DISPATCH_MIN_LATE_HITS` (2), `late_wr_pct >= LATE27_DISPATCH_MIN_LATE_WR` (65) и отсутствия WR60+ star-хита противоположного знака в блоке All — даже если All при этом не валидный STAR-блок. Нарушение → терминальный отказ `star_signal_rejected_late27_dispatch_guard` (label `late27_dispatch_guard_no_send`), delayed-watcher закрывается без отправки. Проверка стоит в двух точках: на входе в пост-target отправку основного пути (pub comeback table / top25 elo-block / post-target comeback / target reached) и в delayed watcher'е перед решением comeback-таблицы; снимок фактов едет в payload через `stake_multiplier_context["all_star_hits"]`. Immediate late+early одного знака под гейт не попадает; `FORCE_ODDS_SIGNAL_TEST=1` обходит его. Legacy delayed-записи без снимка All-хитов проверяются только по известным полям.
 - Калибровка уверенности: `data/star_confidence_calibration.json` (`_load_star_confidence_calibration` ~1574).
 

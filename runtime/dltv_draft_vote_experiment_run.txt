@@ -1,0 +1,13 @@
+candidate_proxies=6 hosts=['154.195.138.196:63387', '154.195.144.208:62503', '154.195.145.169:64583', '154.195.160.218:64343', '154.195.170.239:63627', '109.120.147.141:27100']
+  probe[FAIL] 154.195.138.196:63387: {'proxy': '154.195.138.196:63387', 'ok': False, 'error': 'Timeout: Failed to perform, curl: (28) Connection timed out after 6002 milliseconds. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.'}
+  probe[FAIL] 154.195.144.208:62503: {'proxy': '154.195.144.208:62503', 'ok': False, 'error': 'Timeout: Failed to perform, curl: (28) Connection timed out after 6001 milliseconds. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.'}
+  probe[FAIL] 154.195.145.169:64583: {'proxy': '154.195.145.169:64583', 'ok': False, 'error': 'Timeout: Failed to perform, curl: (28) Connection timed out after 6001 milliseconds. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.'}
+  probe[FAIL] 154.195.160.218:64343: {'proxy': '154.195.160.218:64343', 'ok': False, 'error': 'Timeout: Failed to perform, curl: (28) Connection timed out after 6002 milliseconds. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.'}
+  probe[FAIL] 154.195.170.239:63627: {'proxy': '154.195.170.239:63627', 'ok': False, 'error': 'Timeout: Failed to perform, curl: (28) Connection timed out after 6001 milliseconds. See https://curl.se/libcurl/c/libcurl-errors.html first for more details.'}
+  probe[FAIL] 109.120.147.141:27100: {'proxy': '109.120.147.141:27100', 'ok': False, 'error': 'ConnectionError: Failed to perform, curl: (7) Failed to connect to 109.120.147.141 port 27100 after 42 ms: Could not connect to server. See https://curl.se/libcurl/c/libcurl-errors'}
+series.json via direct in 1.08s
+Level UP vs L1ga Team: R 26.8% / D 73.2% likes={side_0:22.0, side_1:60.0} t=2441 via direct
+Nigma Galaxy vs PlayTime: R 59.7% / D 40.3% likes={side_0:71.0, side_1:48.0} t=1301 via direct
+Ilbirs eSports vs Spirit Academy: R None% / D None% likes={side_0:0.0, side_1:0.0} t=1391 via direct
+Team Liquid vs Aurora: R 70.3% / D 29.7% likes={side_0:78.0, side_1:33.0} t=502 via direct
+saved /root/main/runtime/dltv_draft_vote_experiment_latest.json

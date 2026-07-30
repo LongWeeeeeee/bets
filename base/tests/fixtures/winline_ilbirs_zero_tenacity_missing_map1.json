@@ -1,0 +1,14 @@
+{
+  "site": "winline",
+  "url": "https://winline.ru/stavki/sport/kibersport/live",
+  "team1": "Ilbirs Esports",
+  "team2": "Zero Tenacity",
+  "forced_map_num": 1,
+  "body_text": "DOTA 2 | EPL Masters ZERO TENACITY ILBIRS 1карта +14 0 0 0 0 1К Матч 1.38 2.80 2К 1.62 2.15 DOTA 2 | Other League NEXT RADIANT NEXT DIRE 1К 1.91 1.83 Матч 1.70 2.05",
+  "expected_match_found": true,
+  "expected_odds": [],
+  "expected_map_num": 1,
+  "expected_other_map_odds": [1.62, 2.15],
+  "reject_reason_contains": "map",
+  "provenance": "sanitized_user_screenshot_and_fresh_sourcetv_2026-07-24"
+}

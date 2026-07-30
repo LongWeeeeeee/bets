@@ -1,0 +1,69 @@
+{
+  "ts": "2026-07-19T14:00:11.260Z",
+  "all": [
+    {
+      "id": "a27bc569-2bd7-439f-aaf2-47cfed8ae9d1",
+      "name": "groveamodio81830@outlook.com",
+      "email": "groveamodio81830@outlook.com",
+      "is_active": 1,
+      "test_status": "active",
+      "priority": 10,
+      "global_priority": 0
+    },
+    {
+      "id": "b2eab758-6f60-4484-8af4-57bf965ffb91",
+      "name": "m.acvy8171805@gmail.com",
+      "email": "m.acvy8171805@gmail.com",
+      "is_active": 1,
+      "test_status": "active",
+      "priority": 10,
+      "global_priority": 0
+    },
+    {
+      "id": "30d5a606-232b-4859-806c-d78cfb090f13",
+      "name": "qhau2484.4@gmail.com",
+      "email": "qhau2484.4@gmail.com",
+      "is_active": 1,
+      "test_status": "active",
+      "priority": 10,
+      "global_priority": 0
+    },
+    {
+      "id": "518ef629-4957-4fc0-af5f-07b6d780558d",
+      "name": "61_cryptic_ultra+hxo6dnol@icloud.com",
+      "email": "61_cryptic_ultra+hxo6dnol@icloud.com",
+      "is_active": 1,
+      "test_status": "expired",
+      "priority": 100,
+      "global_priority": null
+    },
+    {
+      "id": "10c8c26d-a98a-4bd7-b917-37390aa4fc23",
+      "name": "harartayaenmarin@hotmail.com",
+      "email": "harartayaenmarin@hotmail.com",
+      "is_active": 1,
+      "test_status": "expired",
+      "priority": 100,
+      "global_priority": null
+    },
+    {
+      "id": "269dc9cf-6bbe-430a-ad3c-da322e7f3dbe",
+      "name": "wiry.winery-9m+e49xva@icloud.com",
+      "email": "wiry.winery-9m+e49xva@icloud.com",
+      "is_active": 1,
+      "test_status": "expired",
+      "priority": 100,
+      "global_priority": null
+    }
+  ],
+  "active_ids": [
+    "a27bc569-2bd7-439f-aaf2-47cfed8ae9d1",
+    "b2eab758-6f60-4484-8af4-57bf965ffb91",
+    "30d5a606-232b-4859-806c-d78cfb090f13"
+  ],
+  "expired_ids": [
+    "518ef629-4957-4fc0-af5f-07b6d780558d",
+    "10c8c26d-a98a-4bd7-b917-37390aa4fc23",
+    "269dc9cf-6bbe-430a-ad3c-da322e7f3dbe"
+  ]
+}

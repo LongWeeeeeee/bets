@@ -61,6 +61,7 @@ class BranchScenario:
     expected_queue: bool = False
     expected_monitor_threshold: Optional[float] = None
     raw_early_output: Optional[Dict[str, Any]] = None
+    raw_early_end_output: Optional[Dict[str, Any]] = None
     raw_mid_output: Optional[Dict[str, Any]] = None
     has_all_star: bool = False
     all_sign: int = 1
@@ -215,7 +216,8 @@ def _star_diagnostics_for_case(
                 "valid": True,
                 "status": "ok",
                 "sign": case.early_sign,
-                "hit_metrics": ["solo"],
+                "hit_metrics": ["counterpick_1vs1", "solo"],
+                "hit_count": 2,
                 "conflict_metric": None,
             }
         return {
@@ -276,6 +278,7 @@ def _run_branch_scenario(
     lane_output: tuple[str, str, str] = ("", "", ""),
     lane_adv_standalone_kills_enabled: bool = False,
     match_has_tier1_team: bool = True,
+    star_combination_gate_enabled: bool = False,
 ) -> BranchResult:
     heads, bodies = _build_heads_and_bodies()
     sent_messages: List[str] = []
@@ -307,6 +310,17 @@ def _run_branch_scenario(
     monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", False, raising=False)
     monkeypatch.setattr(runtime, "DOTA2PROTRACKER_ENABLED", False, raising=False)
     monkeypatch.setattr(runtime, "FORCE_ODDS_SIGNAL_TEST", False, raising=False)
+    # Гейт комбинаций STAR-блоков (WR>=65 и >=2 хита в Early Winner / Late /
+    # All) по умолчанию выключен в этом харнессе: сценарии здесь проверяют
+    # ветки диспатча на минимальных фикстурах (1 хит, WR60), а сам гейт
+    # покрыт base/tests/test_star_block_combination_gate.py. Тест может
+    # включить его через star_combination_gate_enabled=True.
+    monkeypatch.setattr(
+        runtime,
+        "STAR_COMBINATION_GATE_ENABLED",
+        bool(star_combination_gate_enabled),
+        raising=False,
+    )
     # Standalone lane_adv kills trigger defaults OFF in the harness so the
     # other dispatch-branch tests are not perturbed by an extra kills bet.
     # Dedicated tests re-enable it explicitly via the parameter.
@@ -422,6 +436,9 @@ def _run_branch_scenario(
     def _metrics_payload(*_args, **_kwargs):
         payload = {
             "early_output": dict(case.raw_early_output or {"solo": 0}),
+            "early_end_output": dict(
+                case.raw_early_end_output or case.raw_early_output or {"solo": 0}
+            ),
             "mid_output": dict(case.raw_mid_output or {"solo": 0}),
             "post_lane_output": dict(case.raw_post_lane_output or {"synergy_duo": 0}),
         }
@@ -431,6 +448,26 @@ def _run_branch_scenario(
     monkeypatch.setattr(runtime, "synergy_and_counterpick", _metrics_payload)
     monkeypatch.setattr(runtime, "lane_data", {}, raising=False)
     monkeypatch.setattr(runtime, "calculate_lanes", lambda *_args, **_kwargs: lane_output)
+    # Standalone 0–1 min kills bet requires lane_kills_adv_dict same-sign as
+    # lane_adv_dict. Prefer metrics_extra override; default to +1.0 (aligned
+    # with positive lane_adv from "win 70%" fixtures) when not provided.
+    _metrics_extra = dict(case.metrics_extra or {})
+    if "lane_kills_adv_dict" in _metrics_extra:
+        _lane_kills_payload = _metrics_extra.get("lane_kills_adv_dict")
+    else:
+        _lane_kills_payload = {
+            "expected_diff": 1.0,
+            "lead_probability": 0.6,
+            "draw_probability": 0.1,
+            "coverage": 100,
+        }
+
+    def _fake_lane_kills_adv(*_args, **_kwargs):
+        return _lane_kills_payload
+
+    monkeypatch.setattr(
+        runtime, "calculate_lane_kills_advantage", _fake_lane_kills_adv, raising=False
+    )
     monkeypatch.setattr(runtime, "format_output_dict", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         runtime,

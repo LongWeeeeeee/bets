@@ -19,6 +19,9 @@ import os
 import logging
 import warnings
 import threading
+import asyncio
+import inspect
+import itertools
 import queue
 import copy
 import mmap
@@ -26,6 +29,8 @@ import gc
 import resource
 import subprocess
 import re
+import secrets
+from urllib.parse import urlparse
 import shlex
 import shutil
 import sqlite3
@@ -59,10 +64,12 @@ except Exception as _curl_cffi_import_error:
     CURL_CFFI_AVAILABLE = False
 from functions import (
     send_message,
+    send_winline_odds_message,
     drain_telegram_admin_commands,
     synergy_and_counterpick,
     calculate_lanes,
     calculate_lane_kills_advantage,
+    calculate_kills_window_advantage,
     format_output_dict,
     STAR_THRESHOLDS_BY_WR,
     STAR_DISABLED_METRICS,
@@ -174,6 +181,1602 @@ REPORTS_DIR = PROJECT_ROOT / "reports"
 ANALYSE_PUB_DIR = PROJECT_ROOT / "bets_data" / "analise_pub_matches"
 TEMPO_EXPERIMENT_DIR = PROJECT_ROOT / "bets_data" / "tempo_pub_experiment"
 PRO_HEROES_DIR = PROJECT_ROOT / "pro_heroes_data"
+
+# Winline shadow activation controller (deterministic no-sleep; inject seam).
+from runtime import winline_shadow_activation as _winline_shadow_activation_mod  # noqa: E402
+
+# Re-export evidence path + mutable state so activation tests can monkeypatch cs attrs.
+WINLINE_SHADOW_ACTIVATION_EVIDENCE_PATH = (
+    _winline_shadow_activation_mod.WINLINE_SHADOW_ACTIVATION_EVIDENCE_PATH
+)
+_winline_shadow_activation_state = _winline_shadow_activation_mod._winline_shadow_activation_state
+_winline_shadow_activation_key = _winline_shadow_activation_mod._winline_shadow_activation_key
+_winline_shadow_activation_backoff_seconds = (
+    _winline_shadow_activation_mod._winline_shadow_activation_backoff_seconds
+)
+_winline_shadow_activation_selected_side = (
+    _winline_shadow_activation_mod._winline_shadow_activation_selected_side
+)
+
+
+def reset_winline_shadow_activation_state() -> None:
+    """Clear controller state (and keep cs re-export in sync for tests)."""
+    global _winline_shadow_activation_state
+    _winline_shadow_activation_mod.reset_winline_shadow_activation_state()
+    _winline_shadow_activation_state = (
+        _winline_shadow_activation_mod._winline_shadow_activation_state
+    )
+
+
+def _sync_winline_shadow_activation_bindings() -> None:
+    """Push cs-level monkeypatched state/path into the controller module."""
+    global _winline_shadow_activation_state
+    # Prefer the current cs attribute (tests monkeypatch it to a fresh dict).
+    state = globals().get("_winline_shadow_activation_state")
+    if state is None:
+        state = {}
+        globals()["_winline_shadow_activation_state"] = state
+    _winline_shadow_activation_mod._winline_shadow_activation_state = state
+    path = globals().get("WINLINE_SHADOW_ACTIVATION_EVIDENCE_PATH")
+    if path is not None:
+        _winline_shadow_activation_mod.WINLINE_SHADOW_ACTIVATION_EVIDENCE_PATH = path
+
+
+def maybe_run_winline_shadow_activation(
+    *,
+    match_key,
+    map_num,
+    team1,
+    team2,
+    selected_side=None,
+    ordinary_path_completed=True,
+    now_monotonic=None,
+    run_winline_shadow_request=None,
+    output_path=None,
+    freshness_limit_seconds=15.0,
+    now=None,
+    no_odds_active=None,
+):
+    """Production/test facade: inject same-module seam + no-odds gate."""
+    _sync_winline_shadow_activation_bindings()
+    if no_odds_active is None:
+        no_odds_active = not bool(BOOKMAKER_PREFETCH_ENABLED)
+    if run_winline_shadow_request is None:
+        # Late-bound: tests monkeypatch cs.run_winline_shadow_request.
+        run_winline_shadow_request = globals().get("run_winline_shadow_request")
+    if output_path is None:
+        output_path = globals().get("WINLINE_SHADOW_ACTIVATION_EVIDENCE_PATH")
+    return _winline_shadow_activation_mod.maybe_run_winline_shadow_activation(
+        match_key=match_key,
+        map_num=map_num,
+        team1=team1,
+        team2=team2,
+        selected_side=selected_side,
+        ordinary_path_completed=ordinary_path_completed,
+        now_monotonic=now_monotonic,
+        run_winline_shadow_request=run_winline_shadow_request,
+        output_path=output_path,
+        freshness_limit_seconds=freshness_limit_seconds,
+        now=now,
+        no_odds_active=bool(no_odds_active),
+    )
+
+
+def queue_winline_shadow_activation(
+    *,
+    match_key,
+    map_num,
+    team1,
+    team2,
+    selected_side=None,
+    run_winline_shadow_request=None,
+    output_path=None,
+    freshness_limit_seconds=15.0,
+    now=None,
+):
+    _sync_winline_shadow_activation_bindings()
+    if run_winline_shadow_request is None:
+        run_winline_shadow_request = globals().get("run_winline_shadow_request")
+    if output_path is None:
+        output_path = globals().get("WINLINE_SHADOW_ACTIVATION_EVIDENCE_PATH")
+    return _winline_shadow_activation_mod.queue_winline_shadow_activation(
+        match_key=match_key,
+        map_num=map_num,
+        team1=team1,
+        team2=team2,
+        selected_side=selected_side,
+        run_winline_shadow_request=run_winline_shadow_request,
+        output_path=output_path,
+        freshness_limit_seconds=freshness_limit_seconds,
+        now=now,
+    )
+
+
+def flush_winline_shadow_activation(
+    *,
+    now_monotonic=None,
+    run_winline_shadow_request=None,
+):
+    _sync_winline_shadow_activation_bindings()
+    if run_winline_shadow_request is None:
+        run_winline_shadow_request = globals().get("run_winline_shadow_request")
+    return _winline_shadow_activation_mod.flush_winline_shadow_activation(
+        now_monotonic=now_monotonic,
+        run_winline_shadow_request=run_winline_shadow_request,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Whole-current-map Winline polling wiring (W-PROD-WIRING / t_306b3cc2)
+# Serial 5s poller per exact canonical map identity; shared Camoufox only;
+# does NOT enable ordinary odds send / Telegram. Independent of STAR/selected_side.
+# ---------------------------------------------------------------------------
+
+WINLINE_CURRENT_MAP_POLLING_EVIDENCE_PATH = (
+    PROJECT_ROOT / ".hermes" / "runtime" / "winline-current-map" / "latest.json"
+)
+
+_winline_current_map_pollers: Dict[str, Any] = {}
+_winline_current_map_registry: Dict[str, Dict[str, Any]] = {}
+_winline_current_map_service_gen: Dict[str, Any] = {"pid": 0, "gen": ""}
+_winline_current_map_poller_mod = None
+_winline_current_map_poller_collect_impl = None  # tests may inject
+_winline_current_map_state_lock = threading.RLock()
+_winline_current_map_evidence_lock = threading.RLock()
+_winline_current_map_scheduler_stop = threading.Event()
+_winline_current_map_scheduler_thread: Optional[threading.Thread] = None
+_winline_current_map_scheduler_meta: Dict[str, Any] = {
+    "interval_s": 1.0,
+    "nominal_poll_s": 5.0,
+    "started": False,
+    "last_error": None,
+    "tick_count": 0,
+    "main_loop_tick_invocations": 0,
+    "producer_pid": None,
+    "producer_start_generation": None,
+    "monotonic_fn": None,
+    "wall_fn": None,
+}
+WINLINE_CURRENT_MAP_SCHEDULER_INTERVAL_S = 1.0
+WINLINE_CURRENT_MAP_SCHEDULER_NOMINAL_S = 5.0
+
+
+def reset_winline_current_map_polling_state() -> None:
+    """Test/helper seam: drop all poller instances and current-map registry."""
+    global _winline_current_map_pollers, _winline_current_map_registry
+    global _winline_current_map_service_gen, _winline_current_map_poller_collect_impl
+    stop_winline_current_map_polling_scheduler(join_timeout_s=0.2)
+    with _winline_current_map_state_lock:
+        _winline_current_map_pollers = {}
+        _winline_current_map_registry = {}
+        _winline_current_map_service_gen = {"pid": 0, "gen": ""}
+        _winline_current_map_scheduler_meta["tick_count"] = 0
+        _winline_current_map_scheduler_meta["main_loop_tick_invocations"] = 0
+        _winline_current_map_scheduler_meta["last_error"] = None
+        _winline_current_map_scheduler_meta["started"] = False
+        _winline_current_map_scheduler_meta["producer_pid"] = None
+        _winline_current_map_scheduler_meta["producer_start_generation"] = None
+        _winline_current_map_scheduler_meta["monotonic_fn"] = None
+        _winline_current_map_scheduler_meta["wall_fn"] = None
+    # leave collect_impl alone (tests re-bind per case)
+
+
+def list_winline_current_map_polling_keys() -> List[str]:
+    return list(_winline_current_map_pollers.keys())
+
+
+def _load_winline_current_map_poller_module():
+    global _winline_current_map_poller_mod
+    if _winline_current_map_poller_mod is not None:
+        return _winline_current_map_poller_mod
+    poller_path = PROJECT_ROOT / "runtime" / "winline_current_map_odds_poller.py"
+    if not poller_path.is_file():
+        raise FileNotFoundError(f"missing winline current-map poller: {poller_path}")
+    spec = importlib.util.spec_from_file_location(
+        "runtime_winline_current_map_odds_poller",
+        str(poller_path),
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load winline current-map poller from {poller_path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["runtime_winline_current_map_odds_poller"] = mod
+    spec.loader.exec_module(mod)
+    _winline_current_map_poller_mod = mod
+    return mod
+
+
+def note_winline_current_map_service_generation(
+    *,
+    producer_pid: Any = None,
+    producer_start_generation: Any = None,
+) -> None:
+    """Propagate service PID/start generation to all active pollers."""
+    if producer_pid is not None:
+        _winline_current_map_service_gen["pid"] = int(producer_pid)
+    if producer_start_generation is not None:
+        _winline_current_map_service_gen["gen"] = str(producer_start_generation or "")
+    for poller in list(_winline_current_map_pollers.values()):
+        note = getattr(poller, "note_service_generation", None)
+        if callable(note):
+            try:
+                note(
+                    producer_pid=_winline_current_map_service_gen.get("pid"),
+                    producer_start_generation=_winline_current_map_service_gen.get("gen"),
+                )
+            except Exception:
+                pass
+
+
+def _winline_current_map_is_current(**kwargs: Any) -> Any:
+    """Exact-map-current predicate for the parent poller controller.
+
+    Registry holds the latest successfully-parsed current map per series.
+    Older map_num for the same series is treated as proven map_rollover.
+    """
+    identity = kwargs.get("identity") if isinstance(kwargs.get("identity"), dict) else None
+    series = str(
+        (identity or {}).get("series")
+        if identity is not None
+        else kwargs.get("series")
+        or ""
+    ).strip()
+    try:
+        map_num = int(
+            (identity or {}).get("map_num")
+            if identity is not None and (identity or {}).get("map_num") is not None
+            else kwargs.get("map_num")
+        )
+    except (TypeError, ValueError):
+        return {"current": False, "reason": "invalid_map_num"}
+    team1 = str(
+        (identity or {}).get("team1") if identity is not None else kwargs.get("team1") or ""
+    ).strip()
+    team2 = str(
+        (identity or {}).get("team2") if identity is not None else kwargs.get("team2") or ""
+    ).strip()
+    if not series:
+        return {"current": False, "reason": "missing_series"}
+    reg = _winline_current_map_registry.get(series)
+    if reg is None:
+        return True
+    if int(reg.get("map_num") or 0) != int(map_num):
+        return {"current": False, "reason": "map_rollover"}
+    if str(reg.get("team1") or "") != team1 or str(reg.get("team2") or "") != team2:
+        return {"current": False, "reason": "map_rollover"}
+    return True
+
+
+def _winline_write_current_map_evidence(payload: Dict[str, Any], path: Any = None) -> None:
+    """Race-safe atomic evidence write (unique temp + lock + replace).
+
+    Never raises into caller. Surfaces write failures via logger and optional
+    payload/side-channel flags when possible; never leaves truncated/mixed JSON
+    at the destination path.
+    """
+    tmp_path: Optional[Path] = None
+    try:
+        out = Path(path) if path is not None else Path(
+            globals().get(
+                "WINLINE_CURRENT_MAP_POLLING_EVIDENCE_PATH",
+                WINLINE_CURRENT_MAP_POLLING_EVIDENCE_PATH,
+            )
+        )
+        out.parent.mkdir(parents=True, exist_ok=True)
+        data = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+        # Unique same-directory temp avoids fixed latest.json.tmp collisions
+        # when scheduler + main-loop both publish.
+        token = secrets.token_hex(8)
+        tmp_path = out.with_name(f".{out.name}.{os.getpid()}.{token}.tmp")
+        with _winline_current_map_evidence_lock:
+            # Exclusive writer critical section for this destination.
+            with open(tmp_path, "x", encoding="utf-8") as fh:
+                fh.write(data)
+                fh.flush()
+                try:
+                    os.fsync(fh.fileno())
+                except Exception:
+                    pass
+            os.replace(str(tmp_path), str(out))
+            tmp_path = None  # successfully moved
+    except Exception as exc:
+        # Best-effort cleanup of orphan temp; never publish partial dest.
+        if tmp_path is not None:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except Exception:
+                pass
+        try:
+            logger.warning("winline current-map evidence write failed: %s", exc)
+        except Exception:
+            pass
+        # Surface failure onto payload for callers that keep a reference
+        # (tests / diagnostics). Destination file is left untouched.
+        try:
+            if isinstance(payload, dict):
+                payload["_evidence_write_error"] = f"{type(exc).__name__}:{exc}"
+        except Exception:
+            pass
+
+
+def _winline_normalize_url_for_page_check(url: Any) -> str:
+    """Loose URL normalize for expected-vs-actual page checks (no network)."""
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+        host = (parsed.hostname or "").lower().rstrip(".")
+        path = (parsed.path or "").rstrip("/")
+        return f"{host}{path}"
+    except Exception:
+        return raw.strip().rstrip("/").lower()
+
+
+def _winline_urls_look_equivalent(left: Any, right: Any) -> bool:
+    a = _winline_normalize_url_for_page_check(left)
+    b = _winline_normalize_url_for_page_check(right)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    # Tolerate www / trailing slash / query-less host match for same bookmaker path.
+    if a.startswith("www."):
+        a = a[4:]
+    if b.startswith("www."):
+        b = b[4:]
+    return a == b or a.endswith(b) or b.endswith(a)
+
+
+# Парсер Winline отдаёт p1_team/p2_team как МАРКЕРЫ РОЛИ ("team1"/"team2") —
+# они говорят, какой стороне принадлежат кэфы, а не как называется команда.
+# Подставлять их в поля имён нельзя: приёмка сверяет имена с идентичностью
+# поллера, поэтому отбраковывался КАЖДЫЙ матч при полностью валидном рынке.
+_WINLINE_ROLE_MARKERS = frozenset({"team1", "team2", "p1", "p2"})
+
+
+def _winline_reported_team_name(value: Any) -> Optional[str]:
+    """Настоящее имя команды из результата парсера, либо None для маркера роли."""
+    text = str(value or "").strip()
+    if not text or text.lower() in _WINLINE_ROLE_MARKERS:
+        return None
+    return text
+
+
+# Быстрый съём карточки Winline.
+#
+# Полный разбор тянет из браузера page.content() плюс несколько
+# page.locator("body").inner_text(timeout=...) — именно эти round-trip'ы и стоят
+# 6-25 c, а не парсинг. Быстрый путь делает ОДИН evaluate и дальше работает в
+# Python.
+#
+# Страницу берём целиком. Так вход быстрого пути совпадает с входом полного
+# разбора, и границы карточки считает та же функция с теми же предохранителями
+# (_winline_matched_card_context / _extract_winline_current_map_winner), покрытая
+# тестами. Своей логики решения здесь нет — раньше была, в виде эвристики на блок
+# рынков внутри суженного поддерева, и она давала ложные «рынка нет».
+#
+# Замер на живой странице: outerHTML 0.035 c, сужение по 563 КБ — 0.07-0.25 c.
+#
+# Любая неудача быстрого пути — просто None и откат на полный разбор.
+_WINLINE_FAST_CARD_JS = """
+(args) => {
+  const html = document.documentElement.outerHTML || '';
+  return { html: html.length > args.maxHtml ? '' : html, url: location.href };
+}
+"""
+
+# Потолок на случай неожиданно огромного документа: живая страница ~563 КБ.
+WINLINE_FAST_CARD_MAX_HTML = 4000000
+
+# Порог, ниже которого страницу нельзя считать загруженной целиком, а значит и
+# УТВЕРЖДАТЬ отсутствие рынка по ней нельзя (живая ~563 КБ). Положительный ответ
+# порогом не ограничен: найденная карточка со строкой рынка доказывает себя сама.
+WINLINE_FAST_MIN_PAGE_HTML = 50000
+
+# Узнаваемая разметка Winline: страница-заглушка или чужая страница не должна
+# превращаться в «рынка нет».
+_WINLINE_PAGE_CHROME_MARKERS = ("киберспорт", "winline")
+
+_WINLINE_TEAM_GENERIC = frozenset(
+    {"esports", "esport", "sports", "team", "gaming", "club", "org"}
+)
+
+
+def _winline_team_probe_tokens(value: Any) -> List[str]:
+    """Значимые токены названия для поиска в DOM (родовые слова отбрасываем)."""
+    text = re.sub(r"[^0-9a-zA-Zа-яёА-ЯЁ]+", " ", str(value or "")).strip().lower()
+    if not text:
+        return []
+    tokens = [t for t in text.split() if t and t not in _WINLINE_TEAM_GENERIC]
+    return tokens or text.split()
+
+
+class _WinlineFastResult:
+    """Утиный дублёр SiteResult для существующего конвертера в словарь."""
+
+    status = "ok"
+    market_closed = False
+    market_kind = "current_map_winner"
+    source = "winline_current_map_winner"
+    acquisition_mode = "dynamic_dom_fast"
+    parser_failure_reasons: List[str] = []
+    acquisition_error = None
+    error = None
+    load_error = None
+    p1_team = None
+    p2_team = None
+    # None = доступность исхода не доказана ни в одну сторону (fail-open).
+    odds_bettable = None
+
+    def __init__(self, *, odds, map_num, page_url, details, dom_signature):
+        self.odds = list(odds)
+        self.map_num = map_num
+        self.page_url = page_url
+        self.details = details
+        self.body_text = details
+        self.dom_signature = dom_signature
+        self.dom_hash = dom_signature
+        self.match_found = True
+
+
+def _winline_fast_collect(
+    page: Any,
+    *,
+    series: Any,
+    map_num: int,
+    team1: str,
+    team2: str,
+    expected_url: str,
+) -> Optional[Dict[str, Any]]:
+    """Быстрый съём карточки. None — значит откатываемся на полный разбор."""
+    card_ctx = globals().get("_bookmaker_winline_card_context")
+    extract_fn = globals().get("_bookmaker_winline_extract")
+    if not callable(card_ctx) or not callable(extract_fn):
+        return None
+    # Имена должны нести значимые токены: по одним родовым словам ('Team',
+    # 'Esports') ни находка, ни отсутствие не доказуемы.
+    if not _winline_team_probe_tokens(team1) or not _winline_team_probe_tokens(team2):
+        return None
+    try:
+        payload = page.evaluate(
+            _WINLINE_FAST_CARD_JS,
+            {"maxHtml": WINLINE_FAST_CARD_MAX_HTML},
+        )
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    html = str(payload.get("html") or "")
+    current_url = str(payload.get("url") or "")
+    if not html:
+        return None
+    if (
+        expected_url
+        and current_url
+        and not _winline_urls_look_equivalent(current_url, expected_url)
+    ):
+        return None
+    try:
+        card = card_ctx("", team1, team2, html=html, map_num=map_num)
+        extract = extract_fn(card or "", team1, team2, map_num)
+    except Exception:
+        return None
+    odds = list(getattr(extract, "odds", None) or [])
+    if len(odds) < 2:
+        # Отрицательный исход самый частый, и раньше он стоил полного разбора
+        # (6-25 c). Короткозамыкаем его, но утверждать отсутствие позволяем только
+        # по полной загруженной странице: сужение уже отработало по всему
+        # документу теми же предохранителями, что и в полном разборе, поэтому
+        # «рынка нет» здесь означает «ни у одного кандидата на странице строки
+        # рынка нужной карты в границах его карточки нет», а не «мне дали узкий
+        # кусок DOM».
+        card_text = str(card or "")
+        market_closed = bool(getattr(extract, "market_closed", False))
+        page_low = html.lower()
+        page_is_whole = len(html) >= WINLINE_FAST_MIN_PAGE_HTML and any(
+            marker in page_low for marker in _WINLINE_PAGE_CHROME_MARKERS
+        )
+        if not page_is_whole:
+            return None
+        negative = _WinlineFastResult(
+            odds=[],
+            map_num=map_num,
+            page_url=current_url or expected_url,
+            # Карточки может не быть вовсе (матч не выставлен) — тогда evidence
+            # всё равно обязан быть непустым, иначе преобразователь спишет это на
+            # сбой браузера вместо честного отсутствия.
+            details=card_text[:700] or f"winline_page_without_card:{len(html)}b",
+            dom_signature=str(abs(hash(html)))[:32],
+        )
+        negative.market_closed = market_closed
+        # Карточка найдена -> отсутствует РЫНОК; карточки нет -> матч не выставлен.
+        negative.match_found = bool(card_text)
+        negative.acquisition_mode = "dynamic_dom_fast"
+        return _winline_map_site_result_to_collector_dict(
+            negative,
+            acquisition_mode="dynamic_dom_fast",
+            series=series,
+            map_num=map_num,
+            team1=team1,
+            team2=team2,
+            expected_url=expected_url,
+        )
+    result = _WinlineFastResult(
+        odds=odds[:2],
+        map_num=map_num,
+        page_url=current_url or expected_url,
+        details=str(card or "")[:700],
+        dom_signature=str(abs(hash(card or "")))[:32],
+    )
+    # Числа распарсены, но принимает ли БК ставку — видно только по классам
+    # кнопок исхода. Ошибку детектора глушим: он уточняет разбор, а не правит его.
+    bettable_fn = globals().get("_bookmaker_winline_bettable")
+    if callable(bettable_fn):
+        try:
+            result.odds_bettable = bettable_fn(html, team1, team2, map_num)
+        except Exception:
+            result.odds_bettable = None
+    return _winline_map_site_result_to_collector_dict(
+        result,
+        acquisition_mode="dynamic_dom_fast",
+        series=series,
+        map_num=map_num,
+        team1=team1,
+        team2=team2,
+        expected_url=expected_url,
+    )
+
+
+def _winline_map_site_result_to_collector_dict(
+    result: Any,
+    *,
+    acquisition_mode: str,
+    series: str,
+    map_num: int,
+    team1: str,
+    team2: str,
+    expected_url: Any = None,
+) -> Dict[str, Any]:
+    """Normalize bookmaker SiteResult into poller collector payload.
+
+    Truth table (acquisition/classification seam):
+    - expected loaded Winline page + correct URL + no load/acquisition error
+      + nonblank body/DOM signature + match_found=False
+      => page_valid=true, market_missing=true (eligible miss)
+    - wrong URL OR blank body/signature OR acquisition/load error
+      => page_valid=false (browser/acquisition failure), not eligible miss
+    """
+    odds = list(getattr(result, "odds", None) or [])
+    p1 = None
+    p2 = None
+    try:
+        if len(odds) >= 1 and odds[0] is not None:
+            p1 = float(odds[0])
+    except (TypeError, ValueError):
+        p1 = None
+    try:
+        if len(odds) >= 2 and odds[1] is not None:
+            p2 = float(odds[1])
+    except (TypeError, ValueError):
+        p2 = None
+    market_closed = bool(getattr(result, "market_closed", False))
+    # Заморозка: числа распарсились, но БК ставку не принимает. Для всех
+    # потребителей это неторгуемый рынок, поэтому сводим к уже известному
+    # 'closed' — вводить новый статус нельзя, поллер о нём не знает и
+    # перестанет считать это допустимым промахом. Различие несёт odds_bettable.
+    odds_bettable = getattr(result, "odds_bettable", None)
+    if odds_bettable is False:
+        market_closed = True
+    status = str(getattr(result, "status", "") or "").strip().lower()
+    match_found = getattr(result, "match_found", None)
+    market_kind = str(getattr(result, "market_kind", "") or "")
+    source = str(getattr(result, "source", None) or "Winline")
+    if market_kind == "current_map_winner" or "current_map" in market_kind:
+        source = "winline_current_map_winner"
+
+    current_url = str(
+        getattr(result, "page_url", None) or getattr(result, "url", None) or ""
+    )
+    dom_signature = str(getattr(result, "dom_signature", None) or "")[:128]
+    body_text = str(
+        getattr(result, "body_text", None)
+        or getattr(result, "details", None)
+        or ""
+    )
+    body_nonblank = bool(body_text.strip()) or bool(dom_signature.strip())
+    acq_error = getattr(result, "acquisition_error", None)
+    load_error = getattr(result, "load_error", None)
+    err = getattr(result, "error", None) or load_error
+    status_is_error = status in {"error", "request_error", "browser_error", "acquisition_error"}
+
+    expected = expected_url
+    if expected is None:
+        expected = getattr(result, "expected_url", None)
+    url_ok = True
+    if expected:
+        url_ok = _winline_urls_look_equivalent(current_url, expected)
+    elif current_url:
+        # Without explicit expected_url, reject blank/error page URLs only.
+        low = current_url.strip().lower()
+        if (not low) or low in {"about:blank", "about:error"} or low.startswith("chrome-error:"):
+            url_ok = False
+
+    browser_failure = bool(
+        status_is_error
+        or acq_error
+        or (err and status_is_error)
+        or (load_error and not body_nonblank)
+        or (not url_ok)
+        or (not body_nonblank and match_found is not True)
+    )
+    # Explicit acquisition_error always fails closed as browser failure.
+    if acq_error:
+        browser_failure = True
+    if status_is_error:
+        browser_failure = True
+    if not url_ok:
+        browser_failure = True
+    if match_found is False and not body_nonblank:
+        browser_failure = True
+
+    if status_is_error or browser_failure and (acq_error or status_is_error or not url_ok or not body_nonblank):
+        # Distinguish market_status for browser failures vs eligible misses.
+        if acq_error or status_is_error or not url_ok or not body_nonblank:
+            market_status = "error"
+        elif market_closed:
+            market_status = "closed"
+        elif p1 is not None and p2 is not None and not market_closed:
+            market_status = "open"
+        else:
+            market_status = "missing"
+    elif market_closed:
+        market_status = "closed"
+    elif p1 is not None and p2 is not None and not market_closed:
+        market_status = "open"
+    elif match_found is False:
+        market_status = "missing"
+    else:
+        market_status = "missing"
+
+    market_missing = (
+        (not browser_failure)
+        and market_status in {"missing", "market_missing", "closed", "market_closed"}
+        and not (p1 is not None and p2 is not None and not market_closed)
+    )
+    # Eligible loaded miss: valid page, no acquisition failure, market absent.
+    page_valid = (not browser_failure) and body_nonblank and url_ok
+    if match_found is False and page_valid:
+        market_missing = True
+        if market_status not in {"closed", "market_closed"}:
+            market_status = "missing"
+
+    acq_echo = getattr(result, "acquisition_mode", None) or acquisition_mode
+    out = {
+        "market_status": market_status,
+        "market_missing": bool(market_missing),
+        "source": source,
+        "p1_odds": p1,
+        "p2_odds": p2,
+        # True/False — доказано по кнопкам исхода; None — определить не удалось.
+        "odds_bettable": odds_bettable,
+        "map_num": int(getattr(result, "map_num", None) or map_num),
+        "team1": str(_winline_reported_team_name(getattr(result, "p1_team", None)) or team1),
+        "team2": str(_winline_reported_team_name(getattr(result, "p2_team", None)) or team2),
+        "series": series,
+        "current_url": current_url,
+        "dom_signature": dom_signature,
+        "dom_hash": str(
+            getattr(result, "dom_hash", None) or getattr(result, "dom_signature", None) or ""
+        )[:128],
+        "parser_failure_reasons": list(getattr(result, "parser_failure_reasons", None) or []),
+        "error": err,
+        "acquisition_error": acq_error,
+        "page_valid": bool(page_valid),
+        "acquisition_mode_echo": str(acq_echo or acquisition_mode),
+        "match_found": match_found,
+    }
+    return out
+
+
+def _winline_current_map_poller_collect(
+    *,
+    acquisition_mode: str = "initial_goto",
+    series: Any = None,
+    map_num: Any = None,
+    team1: Any = None,
+    team2: Any = None,
+    **_kwargs: Any,
+) -> Dict[str, Any]:
+    """Serial collector for the poller: shared Camoufox job + bookmaker:winline page.
+
+    Never enables ordinary odds send. Failures map to poller browser/market statuses.
+    """
+    impl = globals().get("_winline_current_map_poller_collect_impl")
+    if callable(impl):
+        return impl(
+            acquisition_mode=acquisition_mode,
+            series=series,
+            map_num=map_num,
+            team1=team1,
+            team2=team2,
+            **_kwargs,
+        )
+
+    mode = str(acquisition_mode or "initial_goto").strip().lower() or "initial_goto"
+    try:
+        resolved_map = int(map_num)
+    except (TypeError, ValueError):
+        return {
+            "market_status": "error",
+            "page_valid": False,
+            "error": "invalid_map_num",
+            "acquisition_error": "invalid_map_num",
+            "parser_failure_reasons": ["invalid_map_num"],
+            "p1_odds": None,
+            "p2_odds": None,
+            "acquisition_mode_echo": mode,
+        }
+    t1 = str(team1 or "")
+    t2 = str(team2 or "")
+    series_s = str(series or "")
+
+    if not BOOKMAKER_CAMOUFOX_IMPORTED or _bookmaker_parse_site_in_camoufox_page is None:
+        return {
+            "market_status": "error",
+            "page_valid": False,
+            "error": "camoufox_unavailable",
+            "acquisition_error": "camoufox_unavailable",
+            "parser_failure_reasons": ["camoufox_unavailable"],
+            "p1_odds": None,
+            "p2_odds": None,
+            "acquisition_mode_echo": mode,
+        }
+
+    urls = _bookmaker_urls_for_mode("odds") or {}
+    if "winline" not in urls:
+        for mode_key in ("presence", "live", "odds"):
+            urls = _bookmaker_urls_for_mode(mode_key) or {}
+            if "winline" in urls:
+                break
+    if "winline" not in urls:
+        return {
+            "market_status": "error",
+            "page_valid": False,
+            "error": "winline_url_missing",
+            "acquisition_error": "winline_url_missing",
+            "parser_failure_reasons": ["winline_url_missing"],
+            "p1_odds": None,
+            "p2_odds": None,
+            "acquisition_mode_echo": mode,
+        }
+
+    def _job(browser):
+        session = _shared_camoufox_session
+        page = session.get_or_create_page("bookmaker:winline", browser)
+        if mode == "dynamic_dom":
+            # Страница уже на нужном URL — пробуем снять только карточку.
+            fast = _winline_fast_collect(
+                page,
+                series=series_s,
+                map_num=resolved_map,
+                team1=t1,
+                team2=t2,
+                expected_url=urls["winline"],
+            )
+            if fast is not None:
+                return fast
+        result = _bookmaker_parse_site_in_camoufox_page(
+            page,
+            site="winline",
+            url=urls["winline"],
+            team1=t1,
+            team2=t2,
+            mode="odds",
+            forced_map_num=resolved_map,
+            acquisition_mode=mode,
+        )
+        return _winline_map_site_result_to_collector_dict(
+            result,
+            acquisition_mode=mode,
+            series=series_s,
+            map_num=resolved_map,
+            team1=t1,
+            team2=t2,
+            expected_url=urls.get("winline"),
+        )
+
+    try:
+        return _run_shared_camoufox_job(
+            f"winline_current_map_poll:{series_s}|map{resolved_map}",
+            _job,
+            timeout=120.0,
+            retry=True,
+            reset_on_error=True,
+        )
+    except Exception as exc:
+        return {
+            "market_status": "error",
+            "page_valid": False,
+            "error": f"shared_camoufox_job:{type(exc).__name__}",
+            "acquisition_error": f"shared_camoufox_job:{type(exc).__name__}",
+            "parser_failure_reasons": ["browser_acquisition_failure"],
+            "p1_odds": None,
+            "p2_odds": None,
+            "acquisition_mode_echo": mode,
+            "dom_signature": "",
+            "dom_hash": "",
+            "source": "winline",
+        }
+
+
+def _winline_scheduler_sleep(seconds: float, *, stop_event: Optional[threading.Event] = None) -> None:
+    """Interruptible short sleep used only by the dedicated scheduler thread."""
+    ev = stop_event if stop_event is not None else _winline_current_map_scheduler_stop
+    try:
+        delay = max(0.0, float(seconds))
+    except (TypeError, ValueError):
+        delay = 0.0
+    if delay <= 0:
+        return
+    # Event.wait is the only wait path; tests never call this (fake-clock drive seam).
+    ev.wait(timeout=delay)
+
+
+def _winline_current_map_scheduler_loop() -> None:
+    """Process-local due checker independent of blocking general()."""
+    meta = _winline_current_map_scheduler_meta
+    while not _winline_current_map_scheduler_stop.is_set():
+        try:
+            mono = meta.get("monotonic_fn")
+            wall = meta.get("wall_fn")
+            tick_kwargs: Dict[str, Any] = {}
+            if callable(mono):
+                tick_kwargs["monotonic_fn"] = mono
+            if callable(wall):
+                tick_kwargs["wall_fn"] = wall
+            pid = meta.get("producer_pid")
+            gen = meta.get("producer_start_generation")
+            if pid is not None:
+                tick_kwargs["producer_pid"] = pid
+            if gen is not None:
+                tick_kwargs["producer_start_generation"] = gen
+            tick_winline_current_map_polling(**tick_kwargs)
+            with _winline_current_map_state_lock:
+                meta["tick_count"] = int(meta.get("tick_count") or 0) + 1
+                meta["last_error"] = None
+        except Exception as exc:
+            with _winline_current_map_state_lock:
+                meta["last_error"] = f"{type(exc).__name__}:{exc}"
+            try:
+                logger.warning("winline current-map scheduler tick failed: %s", exc)
+            except Exception:
+                pass
+        interval = float(meta.get("interval_s") or WINLINE_CURRENT_MAP_SCHEDULER_INTERVAL_S)
+        _winline_scheduler_sleep(interval)
+
+
+def start_winline_current_map_polling_scheduler(
+    *,
+    interval_s: Any = None,
+    producer_pid: Any = None,
+    producer_start_generation: Any = None,
+    monotonic_fn: Any = None,
+    wall_fn: Any = None,
+    force_restart: bool = False,
+) -> bool:
+    """Start process-local dedicated scheduler thread for 5s current-map polls.
+
+    Due checks are independent of main-loop general() completion. Camoufox work
+    still goes only through tick -> collector -> _run_shared_camoufox_job.
+    Fail-closed: exceptions are logged; never opens a second browser / send path.
+    """
+    global _winline_current_map_scheduler_thread
+    try:
+        with _winline_current_map_state_lock:
+            thr = _winline_current_map_scheduler_thread
+            if thr is not None and thr.is_alive() and not force_restart:
+                # Update live metadata only.
+                if producer_pid is not None:
+                    _winline_current_map_scheduler_meta["producer_pid"] = int(producer_pid)
+                if producer_start_generation is not None:
+                    _winline_current_map_scheduler_meta["producer_start_generation"] = str(
+                        producer_start_generation
+                    )
+                if callable(monotonic_fn):
+                    _winline_current_map_scheduler_meta["monotonic_fn"] = monotonic_fn
+                if callable(wall_fn):
+                    _winline_current_map_scheduler_meta["wall_fn"] = wall_fn
+                if interval_s is not None:
+                    _winline_current_map_scheduler_meta["interval_s"] = max(0.05, float(interval_s))
+                _winline_current_map_scheduler_meta["started"] = True
+                return True
+        if thr is not None and thr.is_alive() and force_restart:
+            stop_winline_current_map_polling_scheduler(join_timeout_s=1.0)
+        _winline_current_map_scheduler_stop.clear()
+        with _winline_current_map_state_lock:
+            _winline_current_map_scheduler_meta["interval_s"] = max(
+                0.05,
+                float(
+                    interval_s
+                    if interval_s is not None
+                    else _winline_current_map_scheduler_meta.get("interval_s")
+                    or WINLINE_CURRENT_MAP_SCHEDULER_INTERVAL_S
+                ),
+            )
+            _winline_current_map_scheduler_meta["nominal_poll_s"] = float(
+                WINLINE_CURRENT_MAP_SCHEDULER_NOMINAL_S
+            )
+            if producer_pid is not None:
+                _winline_current_map_scheduler_meta["producer_pid"] = int(producer_pid)
+            elif _winline_current_map_scheduler_meta.get("producer_pid") is None:
+                _winline_current_map_scheduler_meta["producer_pid"] = int(os.getpid())
+            if producer_start_generation is not None:
+                _winline_current_map_scheduler_meta["producer_start_generation"] = str(
+                    producer_start_generation
+                )
+            if callable(monotonic_fn):
+                _winline_current_map_scheduler_meta["monotonic_fn"] = monotonic_fn
+            if callable(wall_fn):
+                _winline_current_map_scheduler_meta["wall_fn"] = wall_fn
+            _winline_current_map_scheduler_meta["started"] = True
+            _winline_current_map_scheduler_meta["last_error"] = None
+        thread = threading.Thread(
+            target=_winline_current_map_scheduler_loop,
+            name="winline-current-map-scheduler",
+            daemon=True,
+        )
+        with _winline_current_map_state_lock:
+            _winline_current_map_scheduler_thread = thread
+        thread.start()
+        return True
+    except Exception as exc:
+        with _winline_current_map_state_lock:
+            _winline_current_map_scheduler_meta["last_error"] = f"{type(exc).__name__}:{exc}"
+            _winline_current_map_scheduler_meta["started"] = False
+        try:
+            logger.warning("start_winline_current_map_polling_scheduler failed: %s", exc)
+        except Exception:
+            pass
+        return False
+
+
+def stop_winline_current_map_polling_scheduler(*, join_timeout_s: float = 1.0) -> None:
+    """Stop dedicated scheduler thread (idempotent, thread-safe)."""
+    global _winline_current_map_scheduler_thread
+    _winline_current_map_scheduler_stop.set()
+    thr = None
+    with _winline_current_map_state_lock:
+        thr = _winline_current_map_scheduler_thread
+        _winline_current_map_scheduler_meta["started"] = False
+    if thr is not None and thr is not threading.current_thread():
+        try:
+            thr.join(timeout=max(0.0, float(join_timeout_s)))
+        except Exception:
+            pass
+    with _winline_current_map_state_lock:
+        if _winline_current_map_scheduler_thread is thr:
+            _winline_current_map_scheduler_thread = None
+
+
+def drive_winline_current_map_polling_scheduler_for_tests(
+    *,
+    duration_s: float = 30.0,
+    step_s: float = 1.0,
+    monotonic_fn: Any = None,
+    wall_fn: Any = None,
+    advance_fn: Any = None,
+    producer_pid: Any = None,
+    producer_start_generation: Any = None,
+) -> Dict[str, Any]:
+    """Deterministic fake-clock driver for the scheduler due path (no real sleep).
+
+    Advances the injected clock by step_s and invokes tick_winline_current_map_polling
+    each step, simulating the dedicated scheduler loop while general() is blocked.
+    Never starts a real thread and never touches send/bet paths.
+    """
+    try:
+        duration = float(duration_s)
+        step = float(step_s)
+    except (TypeError, ValueError):
+        return {
+            "ok": False,
+            "error": "invalid_duration_or_step",
+            "scheduler_driven": True,
+            "main_loop_tick_invocations": 0,
+            "starts_observed": 0,
+        }
+    if step <= 0:
+        step = 1.0
+    mono = monotonic_fn if callable(monotonic_fn) else time.monotonic
+    wall = wall_fn if callable(wall_fn) else time.time
+    with _winline_current_map_state_lock:
+        _winline_current_map_scheduler_meta["monotonic_fn"] = mono
+        _winline_current_map_scheduler_meta["wall_fn"] = wall
+        if producer_pid is not None:
+            _winline_current_map_scheduler_meta["producer_pid"] = int(producer_pid)
+        if producer_start_generation is not None:
+            _winline_current_map_scheduler_meta["producer_start_generation"] = str(
+                producer_start_generation
+            )
+        _winline_current_map_scheduler_meta["main_loop_tick_invocations"] = 0
+        tick_before = int(_winline_current_map_scheduler_meta.get("tick_count") or 0)
+
+    elapsed = 0.0
+    steps = 0
+    tick_results: List[Any] = []
+    # Inclusive cover of duration window: 0..duration inclusive if aligned.
+    target_steps = int(max(1, round(duration / step))) + 1
+    while steps < target_steps and elapsed <= duration + 1e-9:
+        try:
+            out = tick_winline_current_map_polling(
+                monotonic_fn=mono,
+                wall_fn=wall,
+                producer_pid=producer_pid,
+                producer_start_generation=producer_start_generation,
+            )
+            tick_results.append(out)
+            with _winline_current_map_state_lock:
+                _winline_current_map_scheduler_meta["tick_count"] = (
+                    int(_winline_current_map_scheduler_meta.get("tick_count") or 0) + 1
+                )
+                _winline_current_map_scheduler_meta["last_error"] = None
+        except Exception as exc:
+            with _winline_current_map_state_lock:
+                _winline_current_map_scheduler_meta["last_error"] = f"{type(exc).__name__}:{exc}"
+            tick_results.append({"status": "error", "error": f"{type(exc).__name__}:{exc}"})
+        steps += 1
+        if steps >= target_steps or elapsed + step > duration + 1e-9:
+            break
+        if callable(advance_fn):
+            advance_fn(step)
+        elapsed += step
+
+    with _winline_current_map_state_lock:
+        tick_after = int(_winline_current_map_scheduler_meta.get("tick_count") or 0)
+        main_inv = int(_winline_current_map_scheduler_meta.get("main_loop_tick_invocations") or 0)
+        last_err = _winline_current_map_scheduler_meta.get("last_error")
+    return {
+        "ok": last_err is None,
+        "scheduler_driven": True,
+        "main_loop_tick_invocations": main_inv,
+        "steps": steps,
+        "duration_s": duration,
+        "step_s": step,
+        "tick_count_delta": tick_after - tick_before,
+        "last_error": last_err,
+        "results_tail": tick_results[-3:],
+    }
+
+
+
+def ensure_winline_current_map_polling(
+    *,
+    series: Any,
+    map_num: Any,
+    team1: Any,
+    team2: Any,
+    selected_side: Any = None,
+    producer_pid: Any = None,
+    producer_start_generation: Any = None,
+    monotonic_fn: Any = None,
+    wall_fn: Any = None,
+    collector: Any = None,
+    is_map_current: Any = None,
+    evidence_path: Any = None,
+    **poller_kwargs: Any,
+) -> Any:
+    """Create/update exactly one poller for the exact canonical current map.
+
+    Independent of STAR and of absent/empty selected_side. Never enables odds send.
+    Fail-open: never raises into the parse seam.
+    """
+    try:
+        series_s = str(series or "").strip()
+        # Prefer stable series identity when match_key-like URL arrives.
+        try:
+            stable = _bookmaker_series_identity(series_s)
+            if stable:
+                series_s = stable
+        except Exception:
+            pass
+        try:
+            map_i = int(map_num)
+        except (TypeError, ValueError):
+            return False
+        t1 = str(team1 or "").strip()
+        t2 = str(team2 or "").strip()
+        if not series_s or not (1 <= map_i <= 5):
+            return False
+
+        # Register as the latest current map for this series (rollover stop for older).
+        with _winline_current_map_state_lock:
+            _winline_current_map_registry[series_s] = {
+                "map_num": map_i,
+                "team1": t1,
+                "team2": t2,
+            }
+
+        pid = int(producer_pid) if producer_pid is not None else int(os.getpid())
+        gen = (
+            str(producer_start_generation)
+            if producer_start_generation is not None
+            else str(_winline_current_map_service_gen.get("gen") or "")
+        )
+        if not gen:
+            # Stable process-lifetime generation (not wall clock — restart-stable within run).
+            gen = str(_winline_current_map_service_gen.get("gen") or f"pid-{pid}")
+            _winline_current_map_service_gen["gen"] = gen
+        _winline_current_map_service_gen["pid"] = pid
+
+        mod = _load_winline_current_map_poller_module()
+        make_key = getattr(mod, "make_canonical_map_key", None) or getattr(
+            mod, "canonical_map_key", None
+        )
+        factory = getattr(mod, "WinlineCurrentMapOddsPoller", None) or getattr(
+            mod, "CurrentMapOddsPoller", None
+        )
+        if factory is None or make_key is None:
+            return False
+        canonical = make_key(series_s, map_i, t1, t2)
+
+        # Propagate generation to existing pollers first (stale gen terminals).
+        note_winline_current_map_service_generation(
+            producer_pid=pid,
+            producer_start_generation=gen,
+        )
+
+        with _winline_current_map_state_lock:
+            existing = _winline_current_map_pollers.get(canonical)
+        if existing is not None and getattr(existing, "is_active", lambda: False)():
+            # Same exact identity still active — keep; selected_side non-gating.
+            if evidence_path is not None:
+                try:
+                    existing._evidence_path = Path(evidence_path)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            # Keep scheduler alive for active map.
+            try:
+                start_winline_current_map_polling_scheduler(
+                    producer_pid=pid,
+                    producer_start_generation=gen,
+                    monotonic_fn=monotonic_fn if callable(monotonic_fn) else None,
+                    wall_fn=wall_fn if callable(wall_fn) else None,
+                )
+            except Exception:
+                pass
+            return existing
+
+        collect_fn = collector if callable(collector) else _winline_current_map_poller_collect
+        pred = is_map_current if callable(is_map_current) else _winline_current_map_is_current
+        mono = monotonic_fn if callable(monotonic_fn) else time.monotonic
+        wall = wall_fn if callable(wall_fn) else time.time
+
+        # Drop terminal/stale slot for this key before recreate.
+        if existing is not None:
+            _winline_current_map_pollers.pop(canonical, None)
+
+        kwargs = dict(poller_kwargs or {})
+        if _winline_continuous_enabled():
+            kwargs.setdefault("continuous", True)
+        poller = factory(
+            collector=collect_fn,
+            is_map_current=pred,
+            monotonic_fn=mono,
+            wall_fn=wall,
+            producer_pid=pid,
+            producer_start_generation=gen,
+            selected_side=selected_side,
+            **kwargs,
+        )
+        started = poller.begin(series=series_s, map_num=map_i, team1=t1, team2=t2)
+        if not started and not getattr(poller, "is_active", lambda: False)():
+            return False
+        try:
+            poller._evidence_path = Path(  # type: ignore[attr-defined]
+                evidence_path
+                if evidence_path is not None
+                else globals().get(
+                    "WINLINE_CURRENT_MAP_POLLING_EVIDENCE_PATH",
+                    WINLINE_CURRENT_MAP_POLLING_EVIDENCE_PATH,
+                )
+            )
+        except Exception:
+            pass
+        with _winline_current_map_state_lock:
+            _winline_current_map_pollers[canonical] = poller
+
+        # Ensure independent 5s scheduler is running (idempotent).
+        try:
+            start_winline_current_map_polling_scheduler(
+                producer_pid=pid,
+                producer_start_generation=gen,
+                monotonic_fn=mono,
+                wall_fn=wall,
+            )
+        except Exception:
+            pass
+
+        # Opportunistically terminalize stale keys for this series (other maps).
+        for key, other in list(_winline_current_map_pollers.items()):
+            if key == canonical:
+                continue
+            if not getattr(other, "is_active", lambda: False)():
+                if not getattr(other, "is_active", lambda: False)():
+                    # prune dead
+                    if getattr(other, "terminal", lambda: None)() is not None:
+                        # keep terminal briefly for evidence; drop inactive without terminal later
+                        pass
+                continue
+            try:
+                other.tick(
+                    producer_pid=pid,
+                    producer_start_generation=gen,
+                )
+            except Exception:
+                pass
+        return poller
+    except Exception as exc:
+        try:
+            logger.warning("ensure_winline_current_map_polling failed: %s", exc)
+        except Exception:
+            pass
+        return False
+
+
+# --- Winline current-map odds -> Telegram ------------------------------------
+# Отдельным сообщением в АДМИН-чат и только при ИЗМЕНЕНИИ пары кэфов: при опросе
+# раз в 5 с отправка каждого парса дала бы ~720 сообщений в час на матч, что
+# упирается в лимит Telegram (~20/мин) и грозит flood-баном боевых сигналов.
+WINLINE_ODDS_TELEGRAM_ENABLED_ENV = "WINLINE_ODDS_TELEGRAM_ENABLED"
+WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV = "WINLINE_ODDS_TELEGRAM_MIN_SPACING_S"
+WINLINE_ODDS_TELEGRAM_MAX_PER_MIN_ENV = "WINLINE_ODDS_TELEGRAM_MAX_PER_MIN"
+WINLINE_CURRENT_MAP_CONTINUOUS_ENV = "WINLINE_CURRENT_MAP_CONTINUOUS"
+
+_winline_odds_notify_state: Dict[str, Dict[str, Any]] = {}
+
+_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+
+
+def _winline_env_flag(name: str) -> bool:
+    return str(os.getenv(name, "") or "").strip().lower() in _TRUE_ENV_VALUES
+
+
+def _winline_env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return float(default)
+    try:
+        return float(str(raw).strip())
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _winline_odds_notify_enabled() -> bool:
+    return _winline_env_flag(WINLINE_ODDS_TELEGRAM_ENABLED_ENV)
+
+
+def _winline_continuous_enabled() -> bool:
+    return _winline_env_flag(WINLINE_CURRENT_MAP_CONTINUOUS_ENV)
+
+
+def _winline_parse_canonical_key(key: Any) -> Tuple[Optional[int], str, str]:
+    """'<series>|map<N>|<team1>|<team2>' -> (map_num, team1, team2)."""
+    # SourceTV series identities contain their own ``|``-separated team IDs.
+    # Split from the right so those opaque series segments cannot displace the
+    # map token and the two display names.
+    parts = str(key or "").rsplit("|", 3)
+    if len(parts) < 4:
+        return None, "", ""
+    token = parts[1].strip().lower()
+    map_num: Optional[int] = None
+    if token.startswith("map"):
+        try:
+            map_num = int(token[3:])
+        except (TypeError, ValueError):
+            map_num = None
+    return map_num, parts[2].strip(), parts[3].strip()
+
+
+def _winline_fmt_odd(value: Any) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _winline_odd_arrow(prev: Any, cur: Any) -> str:
+    try:
+        prev_f, cur_f = float(prev), float(cur)
+    except (TypeError, ValueError):
+        return ""
+    if cur_f > prev_f:
+        return " ↑"
+    if cur_f < prev_f:
+        return " ↓"
+    return ""
+
+
+def _winline_odds_side(prev: Any, cur: Any) -> str:
+    """'1.18 → 1.21 ↑' или просто '1.21', если предыдущего значения нет."""
+    if prev is None:
+        return _winline_fmt_odd(cur)
+    return f"{_winline_fmt_odd(prev)} → {_winline_fmt_odd(cur)}{_winline_odd_arrow(prev, cur)}"
+
+
+def _winline_build_odds_message(
+    *,
+    kind: str,
+    map_num: Optional[int],
+    team1: str,
+    team2: str,
+    p1: Any,
+    p2: Any,
+    prev_p1: Any,
+    prev_p2: Any,
+    stamp: str,
+) -> str:
+    head = {
+        "first": "🆕 Winline",
+        "change": "📊 Winline",
+        "closed": "🔒 Winline",
+        "terminal": "🏁 Winline",
+    }.get(kind, "📊 Winline")
+    map_label = f" · карта {map_num}" if map_num else ""
+    lines = [f"{head}{map_label}", f"{team1} — {team2}"]
+    if kind == "closed":
+        lines.append("рынок закрыт")
+    elif kind == "terminal":
+        lines.append("карта завершена")
+    else:
+        lines.append(
+            f"{_winline_odds_side(prev_p1, p1)}   |   {_winline_odds_side(prev_p2, p2)}"
+        )
+    lines.append(f"🕐 {stamp}")
+    return "\n".join(lines)
+
+
+def _winline_odds_telegram_notify(
+    payload: Any,
+    canonical_key: Any,
+    *,
+    is_terminal: bool = False,
+    send_fn: Any = None,
+    monotonic_fn: Any = None,
+    stamp_fn: Any = None,
+) -> Optional[str]:
+    """Сообщить в админ-чат об изменении кэфов текущей карты. Fail-open.
+
+    Возвращает отправленный текст или None. Состояние обновляется ТОЛЬКО при
+    фактической отправке — поэтому подавленное троттлингом изменение не теряется:
+    следующее разрешённое сообщение покажет свежие кэфы относительно последнего
+    отправленного, а не относительно пропущенного промежуточного.
+    """
+    if not _winline_odds_notify_enabled():
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    key = str(canonical_key or "")
+    if not key:
+        return None
+
+    # Замороженный рынок: число на странице есть, но принять ставку по нему
+    # нельзя. Молчим — состояние не трогаем, поэтому после разморозки первое же
+    # сообщение покажет изменение относительно последнего ОТПРАВЛЕННОГО кэфа.
+    if payload.get("odds_bettable") is False:
+        return None
+
+    mono = (monotonic_fn or time.monotonic)()
+    p1 = payload.get("p1_odds")
+    p2 = payload.get("p2_odds")
+    status = str(payload.get("market_status") or "").strip().lower()
+    has_odds = p1 is not None and p2 is not None
+
+    with _winline_current_map_state_lock:
+        prev = dict(_winline_odds_notify_state.get(key) or {})
+
+    if is_terminal:
+        kind = "terminal"
+    elif status in {"closed", "suspended"}:
+        kind = "closed"
+    elif not has_odds:
+        return None
+    elif not prev:
+        kind = "first"
+    elif prev.get("p1") == p1 and prev.get("p2") == p2 and prev.get("status") == status:
+        return None
+    else:
+        kind = "change"
+
+    # Не повторяем один и тот же служебный статус подряд.
+    if kind in {"closed", "terminal"} and prev.get("kind") == kind:
+        return None
+
+    min_spacing = _winline_env_float(WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, 3.0)
+    max_per_min = _winline_env_float(WINLINE_ODDS_TELEGRAM_MAX_PER_MIN_ENV, 12.0)
+    last_sent = prev.get("last_sent_mono")
+    if kind != "terminal" and last_sent is not None and (mono - float(last_sent)) < min_spacing:
+        return None
+    recent = [t for t in (prev.get("sent_mono") or []) if mono - float(t) < 60.0]
+    if kind != "terminal" and max_per_min > 0 and len(recent) >= max_per_min:
+        return None
+
+    map_num, team1, team2 = _winline_parse_canonical_key(key)
+    stamp = (stamp_fn or (lambda: datetime.now().strftime("%H:%M:%S")))()
+    message = _winline_build_odds_message(
+        kind=kind,
+        map_num=map_num,
+        team1=team1,
+        team2=team2,
+        p1=p1,
+        p2=p2,
+        prev_p1=prev.get("p1"),
+        prev_p2=prev.get("p2"),
+        stamp=stamp,
+    )
+
+    # Кэфы Winline уходят в ОТДЕЛЬНЫЙ бот (keys.WinlineToken), ставки остаются
+    # в основном. Токен разный, чат тот же (админ).
+    sender = send_fn or send_winline_odds_message
+    try:
+        # Кэфы — служебный поток: шлём без звука, чтобы не глушить пуши ставок.
+        sender(message, admin_only=True, mirror_to_vk=False, silent=True)
+    except Exception as exc:
+        try:
+            logger.warning("winline odds telegram notify failed: %s", exc)
+        except Exception:
+            pass
+        return None
+
+    with _winline_current_map_state_lock:
+        _winline_odds_notify_state[key] = {
+            "p1": p1,
+            "p2": p2,
+            "status": status,
+            "kind": kind,
+            "last_sent_mono": mono,
+            "sent_mono": recent + [mono],
+        }
+    return message
+
+
+def tick_winline_current_map_polling(
+    *,
+    monotonic_fn: Any = None,
+    wall_fn: Any = None,
+    producer_pid: Any = None,
+    producer_start_generation: Any = None,
+    **_extra: Any,
+) -> List[Dict[str, Any]]:
+    """Drive all active pollers once (no sleep). Safe to call every main-loop cycle."""
+    results: List[Dict[str, Any]] = []
+    # Telegram-отправка блокирующая (до TELEGRAM_SEND_TIMEOUT_SECONDS). На backup-тике
+    # из главного цикла её не делаем: пусть уведомляет выделенный поток-шедулер,
+    # чтобы никакая сетевая задержка не удлиняла цикл отправки ставок.
+    from_main_loop = bool(_extra.get("from_main_loop"))
+    try:
+        if from_main_loop:
+            with _winline_current_map_state_lock:
+                _winline_current_map_scheduler_meta["main_loop_tick_invocations"] = (
+                    int(_winline_current_map_scheduler_meta.get("main_loop_tick_invocations") or 0)
+                    + 1
+                )
+        if producer_pid is not None or producer_start_generation is not None:
+            note_winline_current_map_service_generation(
+                producer_pid=producer_pid,
+                producer_start_generation=producer_start_generation,
+            )
+        pid = (
+            int(producer_pid)
+            if producer_pid is not None
+            else int(_winline_current_map_service_gen.get("pid") or 0)
+        )
+        gen = (
+            str(producer_start_generation)
+            if producer_start_generation is not None
+            else str(_winline_current_map_service_gen.get("gen") or "")
+        )
+        dead_keys: List[str] = []
+        for key, poller in list(_winline_current_map_pollers.items()):
+            try:
+                out = poller.tick(
+                    producer_pid=pid or None,
+                    producer_start_generation=gen or None,
+                )
+            except Exception as exc:
+                out = {"status": "error", "error": f"{type(exc).__name__}:{exc}", "canonical_key": key}
+            if out is not None:
+                if isinstance(out, dict):
+                    out.setdefault("canonical_key", key)
+                results.append(out if isinstance(out, dict) else {"status": "ok", "raw": out, "canonical_key": key})
+                # Evidence: attempt or terminal payload.
+                try:
+                    attempt = out.get("attempt") if isinstance(out, dict) else None
+                    terminal = out.get("terminal") if isinstance(out, dict) else None
+                    payload = terminal or attempt or (out if isinstance(out, dict) else None)
+                    if isinstance(payload, dict):
+                        epath = getattr(poller, "_evidence_path", None)
+                        _winline_write_current_map_evidence(payload, path=epath)
+                except Exception:
+                    pass
+                try:
+                    notify_payload = attempt if isinstance(attempt, dict) else None
+                    if notify_payload is None and isinstance(terminal, dict):
+                        notify_payload = terminal
+                    if isinstance(notify_payload, dict) and not from_main_loop:
+                        _winline_odds_telegram_notify(
+                            notify_payload,
+                            key,
+                            is_terminal=isinstance(terminal, dict) and not isinstance(attempt, dict),
+                        )
+                except Exception:
+                    pass
+            try:
+                if not getattr(poller, "is_active", lambda: True)():
+                    # Keep terminal briefly; prune fully inactive after terminal recorded.
+                    term = getattr(poller, "terminal", lambda: None)()
+                    if term is not None or out is None:
+                        # leave terminal entries; prune only if tick returned None and inactive
+                        if not getattr(poller, "is_active", lambda: False)() and term is not None:
+                            dead_keys.append(key)
+            except Exception:
+                pass
+        # Do not aggressively delete terminal keys so multi-map tests can inspect state;
+        # optional prune of long-dead later.
+        _ = dead_keys
+        return results
+    except Exception as exc:
+        try:
+            logger.warning("tick_winline_current_map_polling failed: %s", exc)
+        except Exception:
+            pass
+        return results
+
+
+def accelerate_winline_current_map_polling(match_key: str) -> bool:
+    """Set accelerated mode on active poller(s) matching match_key. Idempotent, fail-open."""
+    try:
+        series_s = str(match_key or "").strip()
+        try:
+            stable = _bookmaker_series_identity(series_s)
+            if stable:
+                series_s = stable
+        except Exception:
+            pass
+        with _winline_current_map_state_lock:
+            for _key, poller in _winline_current_map_pollers.items():
+                if not getattr(poller, "is_active", lambda: False)():
+                    continue
+                identity = getattr(poller, "_identity", None)
+                if identity and str(identity.get("series") or "") == series_s:
+                    poller.set_accelerated(True)
+                    return True
+        return False
+    except Exception:
+        return False
+
+
+def decelerate_winline_current_map_polling(match_key: str) -> bool:
+    """Clear accelerated mode on active poller(s) matching match_key. Idempotent, fail-open."""
+    try:
+        series_s = str(match_key or "").strip()
+        try:
+            stable = _bookmaker_series_identity(series_s)
+            if stable:
+                series_s = stable
+        except Exception:
+            pass
+        with _winline_current_map_state_lock:
+            for _key, poller in _winline_current_map_pollers.items():
+                identity = getattr(poller, "_identity", None)
+                if identity and str(identity.get("series") or "") == series_s:
+                    poller.set_accelerated(False)
+                    return True
+        return False
+    except Exception:
+        return False
+
 
 SKIPPED_LIVE_LEAGUE_TITLES = {
     "blast slam vii: china open qualifier 2",
@@ -348,6 +1951,8 @@ try:
             _probe_presence_site_in_current_tab as _bookmaker_probe_presence_site_in_current_tab,
             parse_site as _bookmaker_parse_site,
             parse_site_in_camoufox_page as _bookmaker_parse_site_in_camoufox_page,
+            _winline_matched_card_context as _bookmaker_winline_card_context,
+            _extract_winline_current_map_winner as _bookmaker_winline_extract,
             run_sites_in_camoufox as _bookmaker_run_sites_in_camoufox,
             camoufox as _bookmaker_camoufox,
             _camoufox_proxy_kwargs as _bookmaker_camoufox_proxy_kwargs,
@@ -363,16 +1968,29 @@ try:
             _probe_presence_site_in_current_tab as _bookmaker_probe_presence_site_in_current_tab,
             parse_site as _bookmaker_parse_site,
             parse_site_in_camoufox_page as _bookmaker_parse_site_in_camoufox_page,
+            _winline_matched_card_context as _bookmaker_winline_card_context,
+            _extract_winline_current_map_winner as _bookmaker_winline_extract,
             run_sites_in_camoufox as _bookmaker_run_sites_in_camoufox,
             camoufox as _bookmaker_camoufox,
             _camoufox_proxy_kwargs as _bookmaker_camoufox_proxy_kwargs,
             BOOKMAKER_URLS as _BOOKMAKER_URLS_MAP,
         )
+    # Отдельно и мягко: на устаревшем bookmaker-модуле отсутствие детектора
+    # заморозки не должно ронять весь импорт и выключать prefetch целиком.
+    try:
+        _bookmaker_winline_bettable = getattr(
+            sys.modules[_bookmaker_winline_extract.__module__],
+            "_winline_map_odds_bettable",
+            None,
+        )
+    except Exception:
+        _bookmaker_winline_bettable = None
     BOOKMAKER_PREFETCH_AVAILABLE = True
     BOOKMAKER_CAMOUFOX_IMPORTED = True
 except Exception as _bookmaker_import_error:
     BOOKMAKER_PREFETCH_AVAILABLE = False
     BOOKMAKER_CAMOUFOX_IMPORTED = False
+    _bookmaker_winline_bettable = None
     _bookmaker_build_driver = None
     _bookmaker_is_map_market_closed = None
     _bookmaker_open_match_details_by_teams = None
@@ -456,7 +2074,7 @@ def _detect_total_memory_bytes() -> Optional[int]:
 
 
 def _stats_sharded_mode_enabled(label: str) -> bool:
-    if label not in {"early", "late", "post_lane"}:
+    if label not in {"early", "early_end", "late", "post_lane"}:
         return False
     per_label_env = f"STATS_{label.upper()}_SHARDED_LOOKUP_MODE"
     per_label_mode = str(os.getenv(per_label_env, "")).strip().lower()
@@ -652,6 +2270,19 @@ class _ShardedStatsLookup(dict):
 
 
 class _SqliteStatsLookup(dict):
+    """Read-only SQLite stats backend.
+
+    Supports two on-disk layouts written by explore/build paths:
+      * ``kv``  — ``CREATE TABLE kv (key TEXT, value BLOB)`` with orjson payloads
+                  (early/late/post_lane/early_end and legacy dumps)
+      * ``stats`` — columnar ``CREATE TABLE stats (key TEXT PRIMARY KEY, ...)``
+                  used by kills_window (and lane) direct-build dumps
+
+    ``calculate_kills_window_advantage`` expects each row as a dict with
+    ``kills_{label}_leads/draws/games/diff_sum`` keys (or a compact list).
+    Columnar rows are therefore materialised into that dict shape.
+    """
+
     def __init__(self, db_path: Path, *, label: str, max_cached_keys: int = 0):
         super().__init__()
         self.db_path = Path(db_path)
@@ -660,6 +2291,9 @@ class _SqliteStatsLookup(dict):
         self._key_cache: "OrderedDict[str, Any]" = OrderedDict()
         self._conn: Optional[sqlite3.Connection] = None
         self._lock = threading.RLock()
+        # Detected lazily on first connect: "kv" | "stats"
+        self._table_mode: Optional[str] = None
+        self._stats_columns: List[str] = []  # column names after "key" for stats mode
 
     def __bool__(self) -> bool:
         return True
@@ -668,6 +2302,37 @@ class _SqliteStatsLookup(dict):
     def key_cache_enabled(self) -> bool:
         return self.max_cached_keys > 0
 
+    def _detect_schema(self, conn: sqlite3.Connection) -> None:
+        if self._table_mode is not None:
+            return
+        tables = {
+            str(r[0])
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "kv" in tables:
+            self._table_mode = "kv"
+            self._stats_columns = []
+            return
+        if "stats" in tables:
+            cols = [
+                str(r[1])
+                for r in conn.execute("PRAGMA table_info(stats)").fetchall()
+            ]
+            # drop PK column "key"
+            self._stats_columns = [c for c in cols if c != "key"]
+            if not self._stats_columns:
+                raise RuntimeError(
+                    f"SQLite stats backend for {self.label} has empty stats schema: {self.db_path}"
+                )
+            self._table_mode = "stats"
+            return
+        raise RuntimeError(
+            f"SQLite stats backend for {self.label} has neither kv nor stats table: "
+            f"{self.db_path} tables={sorted(tables)}"
+        )
+
     def _connect(self) -> sqlite3.Connection:
         if self._conn is not None:
             return self._conn
@@ -675,6 +2340,7 @@ class _SqliteStatsLookup(dict):
         conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
         conn.execute("PRAGMA query_only=ON")
         conn.execute("PRAGMA temp_store=MEMORY")
+        self._detect_schema(conn)
         self._conn = conn
         return conn
 
@@ -704,6 +2370,31 @@ class _SqliteStatsLookup(dict):
         while len(self._key_cache) > self.max_cached_keys:
             self._key_cache.popitem(last=False)
 
+    def _row_to_value(self, row: Any) -> Any:
+        """Decode one DB row into the in-memory payload shape calculators expect."""
+        if self._table_mode == "kv":
+            # row = (key, value_blob) or (value_blob,) depending on SELECT
+            blob = row[-1] if not isinstance(row, (bytes, bytearray, memoryview)) else row
+            return orjson.loads(blob)
+        # stats columnar: row values align with self._stats_columns
+        values = list(row)
+        if len(values) != len(self._stats_columns):
+            # tolerate SELECT key, * style where key is first
+            if len(values) == len(self._stats_columns) + 1:
+                values = values[1:]
+            else:
+                raise RuntimeError(
+                    f"stats row arity mismatch for {self.label}: "
+                    f"got {len(values)} cols, schema has {len(self._stats_columns)}"
+                )
+        out: Dict[str, Any] = {}
+        for name, raw in zip(self._stats_columns, values):
+            if raw is None:
+                continue
+            # numeric affinity already applied by sqlite3
+            out[name] = raw
+        return out
+
     def get_many(self, keys: Any) -> Dict[str, Any]:
         result: Dict[str, Any] = {}
         missing: List[str] = []
@@ -725,16 +2416,19 @@ class _SqliteStatsLookup(dict):
         chunk_size = max(1, min(int(STATS_SQLITE_QUERY_CHUNK_SIZE), 900))
         with self._lock:
             conn = self._connect()
+            mode = self._table_mode
+            if mode == "kv":
+                sql_tmpl = "SELECT key, value FROM kv WHERE key IN ({ph})"
+            else:
+                cols_sql = ", ".join(["key"] + self._stats_columns)
+                sql_tmpl = f"SELECT {cols_sql} FROM stats WHERE key IN ({{ph}})"
             for start in range(0, len(missing), chunk_size):
                 chunk = missing[start:start + chunk_size]
                 placeholders = ",".join("?" for _ in chunk)
-                rows = conn.execute(
-                    f"SELECT key, value FROM kv WHERE key IN ({placeholders})",
-                    chunk,
-                )
-                for key, value_blob in rows:
-                    value = orjson.loads(value_blob)
-                    key = str(key)
+                rows = conn.execute(sql_tmpl.format(ph=placeholders), chunk)
+                for row in rows:
+                    key = str(row[0])
+                    value = self._row_to_value(row)
                     result[key] = value
                     self._remember_key(key, value)
         return result
@@ -746,10 +2440,21 @@ class _SqliteStatsLookup(dict):
             return cached
         with self._lock:
             conn = self._connect()
-            row = conn.execute("SELECT value FROM kv WHERE key = ?", (key_str,)).fetchone()
-        if row is None:
-            return default
-        value = orjson.loads(row[0])
+            if self._table_mode == "kv":
+                row = conn.execute(
+                    "SELECT value FROM kv WHERE key = ?", (key_str,)
+                ).fetchone()
+                if row is None:
+                    return default
+                value = self._row_to_value(row)
+            else:
+                cols_sql = ", ".join(["key"] + self._stats_columns)
+                row = conn.execute(
+                    f"SELECT {cols_sql} FROM stats WHERE key = ?", (key_str,)
+                ).fetchone()
+                if row is None:
+                    return default
+                value = self._row_to_value(row)
         self._remember_key(key_str, value)
         return value
 
@@ -1161,6 +2866,24 @@ def _stats_source_available_for_lookup(source_path: str, label: str) -> bool:
     return _stats_sqlite_db_path(source).exists()
 
 
+def _stats_should_use_indexed_lookup(source_path: str, label: str) -> bool:
+    """Prefer sqlite/shards when present even if auto RAM gate still wants JSON.
+
+    Production keeps only ``*.sqlite3`` after the JSON monoliths were dropped.
+    Without this, auto mode on hosts with > STATS_SHARDED_LOOKUP_MAX_RAM_GB
+    falls through to ``_load_json_object`` and crashes on missing ``*.json``.
+    """
+    if _stats_indexed_lookup_enabled(label):
+        return True
+    source = Path(source_path)
+    if _stats_sqlite_db_path(source).exists():
+        return True
+    shard_dir = source.parent / f"{source.stem}.shards"
+    if (shard_dir / "_complete").exists():
+        return True
+    return False
+
+
 def _prepare_indexed_stats_lookup(source_path: str, label: str):
     source = Path(source_path)
     db_path = _stats_sqlite_db_path(source)
@@ -1365,6 +3088,18 @@ LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS = _safe_float_env(
     "LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS",
     10 * 60.0,
 )
+# Early Winner STAR + kills_window expected_diff ≥1 → kills bet on nearest
+# open window, must fire at least LEAD seconds before window start (default 3m).
+EARLY_WINNER_KILLS_WINDOW_ENABLED = _env_flag("EARLY_WINNER_KILLS_WINDOW_ENABLED", "1")
+EARLY_WINNER_KILLS_WINDOW_MIN_ABS_ED = max(
+    0.0,
+    _safe_float_env("EARLY_WINNER_KILLS_WINDOW_MIN_ABS_ED", 1.0),
+)
+EARLY_WINNER_KILLS_WINDOW_LEAD_SECONDS = max(
+    0.0,
+    _safe_float_env("EARLY_WINNER_KILLS_WINDOW_LEAD_SECONDS", 3 * 60.0),
+)
+NETWORTH_STATUS_EARLY_WINNER_KILLS_WINDOW_SEND = "early_winner_kills_window_send"
 NETWORTH_STATUS_TIER1_EARLY_KILLS_PRE6_WAIT = "tier1_early_kills_pre6_wait"
 NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND = "tier1_early_kills_3_6_lead_send_800"
 NETWORTH_STATUS_TIER1_EARLY_KILLS_6_10_TARGET_NONNEG_SEND = "tier1_early_kills_6_10_target_nonneg_send"
@@ -1453,6 +3188,12 @@ BOOKMAKER_PREFETCH_GATE_MODE = _normalize_bookmaker_gate_mode(
     os.getenv("BOOKMAKER_PREFETCH_GATE_MODE", "odds"),
     default="odds",
 )
+# When True (default): missing/not-ready odds blocks signal delivery (fail-closed).
+# When False: odds pipeline may still run and attach odds when available, but a
+# signal is NOT blocked solely because odds are missing / not ready.
+BOOKMAKER_BLOCK_WITHOUT_ODDS = _safe_bool_env("BOOKMAKER_BLOCK_WITHOUT_ODDS", True)
+BOOKMAKER_ODDS_MAX_AGE_SECONDS = _safe_float_env("BOOKMAKER_ODDS_MAX_AGE_SECONDS", 15.0)
+BOOKMAKER_ODDS_WAIT_DEADLINE_SECONDS = _safe_float_env("BOOKMAKER_ODDS_WAIT_DEADLINE_SECONDS", 90.0)
 BOOKMAKER_PREFETCH_MODE = str(os.getenv("BOOKMAKER_PREFETCH_MODE", "live")).strip().lower()
 if BOOKMAKER_PREFETCH_MODE not in {"live", "all"}:
     BOOKMAKER_PREFETCH_MODE = "live"
@@ -1468,6 +3209,14 @@ BOOKMAKER_PREFETCH_USE_SUBPROCESS = _safe_bool_env(
 BOOKMAKER_PREFETCH_SUBPROCESS_TIMEOUT_SECONDS = _safe_int_env("BOOKMAKER_PREFETCH_SUBPROCESS_TIMEOUT_SECONDS", 160)
 BOOKMAKER_MATCH_TAB_CACHE_MAX_MATCHES = _safe_int_env("BOOKMAKER_MATCH_TAB_CACHE_MAX_MATCHES", 8)
 SIGNAL_SEND_ADMIN_ONLY = _safe_bool_env("SIGNAL_SEND_ADMIN_ONLY", False)
+# Append DLTV draft-vote % ("whose pick is better") at the bottom of every
+# dispatched bet. Fresh parse from live/{steam_id}.json happens right before
+# send_message; never gates dispatch (display-only).
+DLTV_RATING_IN_SIGNAL = _safe_bool_env("DLTV_RATING_IN_SIGNAL", True)
+DLTV_RATING_FETCH_TIMEOUT_SECONDS = max(
+    1.0,
+    _safe_float_env("DLTV_RATING_FETCH_TIMEOUT_SECONDS", 6.0),
+)
 BOOKMAKER_PREFETCH_SITES_RAW = str(
     os.getenv("BOOKMAKER_PREFETCH_SITES", "betboom,pari,winline")
 ).strip()
@@ -2092,10 +3841,14 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
     phase_name = str(phase or "").strip().lower()
     section = {
         "early": "early_output",
+        "early_end": "early_end_output",
+        "early_winner": "early_end_output",
         "mid": "mid_output",
         "late": "mid_output",
         "all": "all_output",
     }.get(phase_name, "mid_output")
+    # STAR threshold tables only key early_output; early_end shares the same gate table.
+    threshold_section = "early_output" if section == "early_end_output" else section
 
     # Рекомендации считаем только по фактическим STAR-метрикам (с '*'),
     # чтобы не получать "высокие уровни" на незвездных числах.
@@ -2118,7 +3871,7 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
 
     calibration_phase_key = (
         "early"
-        if section == "early_output"
+        if section in {"early_output", "early_end_output"}
         else "all"
         if section == "all_output"
         else "late"
@@ -2126,14 +3879,14 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
     available_levels = [
         int(level)
         for level, payload in STAR_THRESHOLDS_BY_WR.items()
-        if isinstance(payload, dict) and payload.get(section)
+        if isinstance(payload, dict) and payload.get(threshold_section)
     ]
     # If runtime has only one WR-level table (typically fallback WR60),
     # recover dynamic WR display by comparing metric indexes to base thresholds.
     if len(set(available_levels)) <= 1:
         base_level = available_levels[0] if available_levels else 60
         base_payload = STAR_THRESHOLDS_BY_WR.get(base_level) or STAR_THRESHOLDS_BY_WR.get(60, {})
-        base_rows = base_payload.get(section, []) if isinstance(base_payload, dict) else []
+        base_rows = base_payload.get(threshold_section, []) if isinstance(base_payload, dict) else []
         thresholds_by_metric: Dict[str, int] = {}
         for metric, raw_threshold in base_rows:
             try:
@@ -2163,7 +3916,7 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
 
     thresholds_by_level: Dict[int, Dict[str, int]] = {}
     for level in sorted(set(available_levels)):
-        thresholds = STAR_THRESHOLDS_BY_WR.get(level, {}).get(section, [])
+        thresholds = STAR_THRESHOLDS_BY_WR.get(level, {}).get(threshold_section, [])
         if not thresholds:
             continue
         threshold_map: Dict[str, int] = {}
@@ -2250,7 +4003,10 @@ _STAR_HITS_SUMMARY_METRIC_LABELS: Dict[str, str] = {
     "solo": "Solo",
     "synergy_duo": "Synergy_duo",
     "synergy_trio": "Synergy_trio",
-    "dota2protracker_cp1vs1": "Dota2ProTracker_cp1vs1",
+    "dota2protracker_cp1vs1": "Protracker_1vs1",
+    "dota2protracker_duo": "Protracker_duo",
+    "dota2protracker_solo": "Protracker_solo",
+    "dota2protracker_solo_overall": "Protracker_solo_overall",
 }
 
 
@@ -2517,6 +4273,11 @@ def _late_block_has_any_star_hit(raw_mid_output: Optional[dict]) -> bool:
     return bool(late_summary.get("same_sign_pos") or late_summary.get("same_sign_neg"))
 
 
+# Early STAR WR bar for kills bets: WR>=70 AND hits>=2.
+KILLS_GATE_EARLY_STAR_MIN_WR = 70.0
+KILLS_GATE_EARLY_STAR_MIN_HITS = 2
+
+
 def _early_star_meets_kills_wr_gate(
     *,
     early_wr_pct: Optional[float],
@@ -2524,9 +4285,9 @@ def _early_star_meets_kills_wr_gate(
 ) -> Dict[str, Any]:
     """Decide whether the Early STAR block passes the kills-gate WR bar.
 
-    Criteria (pt3 from the kills-gate spec):
-      * ``early_wr_pct >= 70``, OR
-      * ``early_wr_pct >= 65`` AND ``early_hit_count >= 2``
+    Criteria (kills-gate WR bar):
+      * ``early_wr_pct >= KILLS_GATE_EARLY_STAR_MIN_WR`` (70)
+      * ``AND early_hit_count >= KILLS_GATE_EARLY_STAR_MIN_HITS`` (2)
     """
 
     try:
@@ -2537,18 +4298,23 @@ def _early_star_meets_kills_wr_gate(
         hit_count_value = int(early_hit_count) if early_hit_count is not None else 0
     except (TypeError, ValueError):
         hit_count_value = 0
-    passes_wr70 = bool(wr_value is not None and wr_value >= 70.0)
-    passes_wr65_two_hits = bool(
-        wr_value is not None
-        and wr_value >= 65.0
-        and hit_count_value >= 2
+    passes_wr70 = bool(
+        wr_value is not None and wr_value >= float(KILLS_GATE_EARLY_STAR_MIN_WR)
     )
+    passes_min_hits = bool(hit_count_value >= int(KILLS_GATE_EARLY_STAR_MIN_HITS))
+    valid = bool(passes_wr70 and passes_min_hits)
+    # Legacy key: True when the new combined bar passes (WR70+2hits).
+    # Old consumers treated this as the multi-hit path; keep name for logs.
+    passes_wr65_two_hits = valid
     return {
-        "valid": passes_wr70 or passes_wr65_two_hits,
+        "valid": valid,
         "early_wr_pct": wr_value,
         "early_hit_count": hit_count_value,
         "passes_wr70": passes_wr70,
+        "passes_min_hits": passes_min_hits,
         "passes_wr65_two_hits": passes_wr65_two_hits,
+        "min_wr": float(KILLS_GATE_EARLY_STAR_MIN_WR),
+        "min_hits": int(KILLS_GATE_EARLY_STAR_MIN_HITS),
     }
 
 
@@ -2722,8 +4488,23 @@ _STAR_LATE_CORE_MIN_ABS_BY_METRIC: Dict[str, float] = {}
 # Single-block branches (E-only / L-only / A-only) require at least this WR.
 SINGLE_BLOCK_STAR_MIN_WR = 65.0
 EARLY_ONLY_NO_LATE_ALL_MIN_WR = SINGLE_BLOCK_STAR_MIN_WR
+# Early-only (Early STAR без Late/All) дополнительно требует подтверждения от
+# блока Early Winner (early_end): WR >= 70 и минимум 2 star-хита того же знака.
+EARLY_ONLY_NO_LATE_ALL_EARLY_END_MIN_WR = _safe_float_env(
+    "EARLY_ONLY_NO_LATE_ALL_EARLY_END_MIN_WR", 70.0
+)
+EARLY_ONLY_NO_LATE_ALL_EARLY_END_MIN_HITS = max(
+    1,
+    _safe_int_env("EARLY_ONLY_NO_LATE_ALL_EARLY_END_MIN_HITS", 2),
+)
 _STAR_BLOCK_SIGN_CONSISTENCY_METRICS_BY_SECTION = {
     "early_output": (
+        "counterpick_1vs1",
+        "counterpick_1vs2",
+        "solo",
+    ),
+    # Map-winner early uses the same core metrics as NW early for sign checks.
+    "early_end_output": (
         "counterpick_1vs1",
         "counterpick_1vs2",
         "solo",
@@ -2748,6 +4529,9 @@ _STAR_METRIC_SHORT = {
     "synergy_duo": "duo",
     "synergy_trio": "trio",
     "dota2protracker_cp1vs1": "d2pt_cp1v1",
+    "dota2protracker_duo": "d2pt_duo",
+    "dota2protracker_solo": "d2pt_solo",
+    "dota2protracker_solo_overall": "d2pt_solo_all",
 }
 
 
@@ -2761,15 +4545,17 @@ def _star_thresholds_for_wr(target_wr: int, section: str) -> Dict[str, int]:
         wr_level = int(target_wr)
     except (TypeError, ValueError):
         wr_level = 60
+    # early_end_output reuses the same STAR thresholds as NW early_output
+    section_key = "early_output" if str(section) == "early_end_output" else str(section)
     payload = STAR_THRESHOLDS_BY_WR.get(wr_level)
     if not isinstance(payload, dict):
         payload = STAR_THRESHOLDS_BY_WR.get(60, {}) if wr_level == 60 else {}
-    raw = payload.get(section, []) if isinstance(payload, dict) else []
+    raw = payload.get(section_key, []) if isinstance(payload, dict) else []
     out: Dict[str, int] = {}
     for metric, threshold in raw:
         try:
             metric_name = str(metric)
-            if not _star_metric_enabled_for_section(metric_name, section):
+            if not _star_metric_enabled_for_section(metric_name, section_key):
                 continue
             out[metric_name] = int(threshold)
         except (TypeError, ValueError):
@@ -2947,26 +4733,75 @@ def _build_lane_dict_adv_line(top: Any, mid: Any, bot: Any) -> str:
 
 
 def _build_lane_kills_adv_line(payload: Any) -> str:
+    """Diagnostic Telegram line: signed Radiant kills@10 edge (+ Radiant / − Dire).
+
+    ``lead`` is P(favored side leads kills@10): Radiant ``lead_probability`` when
+    ``expected_diff >= 0``, else ``1 - lead_probability - draw_probability``.
+    """
     if not isinstance(payload, dict):
         return ""
     try:
         expected_diff = float(payload.get("expected_diff"))
         lead_probability = float(payload.get("lead_probability"))
         coverage = int(payload.get("coverage", 0) or 0)
-        total_lanes = int(payload.get("total_lanes", 3) or 3)
     except (TypeError, ValueError):
         return ""
     if not math.isfinite(expected_diff) or not math.isfinite(lead_probability) or coverage <= 0:
         return ""
-    side = "Radiant" if expected_diff >= 0 else "Dire"
     side_lead_probability = lead_probability if expected_diff >= 0 else max(
         0.0,
         1.0 - lead_probability - float(payload.get("draw_probability", 0.0) or 0.0),
     )
     return (
-        f"lane_kills_adv_dict: {side} +{abs(expected_diff):.2f} kills @10 "
-        f"(lead {side_lead_probability:.0%}, {coverage}/{total_lanes})\n"
+        f"lane_kills_adv_dict: {expected_diff:+.2f} kills @10 "
+        f"(lead {side_lead_probability:.0%})\n"
     )
+
+
+def _lane_kills_adv_expected_diff(payload: Any) -> Optional[float]:
+    """Signed Radiant kills@10 edge from ``lane_kills_adv_dict`` payload, or None."""
+    if not isinstance(payload, dict):
+        return None
+    try:
+        expected_diff = float(payload.get("expected_diff"))
+        coverage = int(payload.get("coverage", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    if coverage <= 0 or not math.isfinite(expected_diff):
+        return None
+    return expected_diff
+
+
+def _lane_adv_and_lane_kills_same_sign(
+    *,
+    lane_adv_dict_value: Optional[float],
+    lane_kills_adv: Any,
+    min_abs: float = 1e-9,
+) -> Dict[str, Any]:
+    """Require ``lane_adv_dict`` and ``lane_kills_adv_dict`` to share a non-zero sign.
+
+    Used for the 0–1 min standalone early-kills bet: if either source is
+    missing/zero or they disagree, the bet is blocked.
+    """
+    try:
+        lane_adv = float(lane_adv_dict_value) if lane_adv_dict_value is not None else None
+    except (TypeError, ValueError):
+        lane_adv = None
+    kills_diff = _lane_kills_adv_expected_diff(lane_kills_adv)
+    lane_sign = _numeric_sign(lane_adv, min_abs=min_abs)
+    kills_sign = _numeric_sign(kills_diff, min_abs=min_abs)
+    same_sign = bool(
+        lane_sign in (-1, 1)
+        and kills_sign in (-1, 1)
+        and int(lane_sign) == int(kills_sign)
+    )
+    return {
+        "valid": same_sign,
+        "lane_adv_dict": lane_adv,
+        "lane_adv_sign": lane_sign,
+        "lane_kills_adv_expected_diff": kills_diff,
+        "lane_kills_adv_sign": kills_sign,
+    }
 
 
 def _build_lane_block(
@@ -3265,6 +5100,44 @@ def _single_block_star_min_wr_gate(
     }
 
 
+def _late_wr_below_min_with_opposite_block_gate(
+    *,
+    has_selected_late_star: bool,
+    late_wr_pct: Optional[float],
+    opposite_signs_selected: bool,
+    min_wr: float = SINGLE_BLOCK_STAR_MIN_WR,
+) -> Dict[str, Any]:
+    """Reject weak Late stars (WR < min) that only survive via an opposite block.
+
+    Single Late WR60 is already blocked by ``_single_block_star_min_wr_gate``.
+    The hole: Late WR60 + Early/All of the opposite sign makes the single-block
+    gate inactive (multi-block), so the signal is delayed and later released.
+    That must also be terminal reject — opposite companion must not upgrade a
+    weak Late WR60 into a sendable signal.
+    """
+    try:
+        late_wr_value = float(late_wr_pct) if late_wr_pct is not None else None
+    except (TypeError, ValueError):
+        late_wr_value = None
+    min_wr_required = float(min_wr)
+    min_wr_ok = bool(late_wr_value is not None and late_wr_value >= min_wr_required)
+    active = bool(
+        has_selected_late_star
+        and bool(opposite_signs_selected)
+        and not min_wr_ok
+    )
+    return {
+        "active": active,
+        "block": "late" if active else None,
+        "wr_pct": float(late_wr_value) if late_wr_value is not None else None,
+        "min_wr_required": min_wr_required,
+        "min_wr_ok": min_wr_ok,
+        "opposite_signs_selected": bool(opposite_signs_selected),
+        # Inactive => no restriction; active means weak late + opposite companion.
+        "valid": bool(not active),
+    }
+
+
 def _early_only_no_late_all_gate(
     *,
     has_selected_early_star: bool,
@@ -3273,11 +5146,20 @@ def _early_only_no_late_all_gate(
     selected_early_sign: Optional[int],
     early_wr_pct: Optional[float],
     raw_late_block: Optional[dict],
+    early_end_wr_pct: Optional[float] = None,
+    early_end_same_sign_hits: Optional[List[str]] = None,
+    early_end_opposite_hits: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     try:
         early_wr_value = float(early_wr_pct) if early_wr_pct is not None else None
     except (TypeError, ValueError):
         early_wr_value = None
+    try:
+        early_end_wr_value = (
+            float(early_end_wr_pct) if early_end_wr_pct is not None else None
+        )
+    except (TypeError, ValueError):
+        early_end_wr_value = None
 
     active = bool(
         has_selected_early_star
@@ -3288,6 +5170,19 @@ def _early_only_no_late_all_gate(
     min_wr_ok = bool(
         early_wr_value is not None
         and early_wr_value >= float(EARLY_ONLY_NO_LATE_ALL_MIN_WR)
+    )
+    same_sign_hits = [str(m) for m in (early_end_same_sign_hits or [])]
+    opposite_hits = [str(m) for m in (early_end_opposite_hits or [])]
+    early_end_sign_ok = bool(same_sign_hits) and not opposite_hits
+    early_end_hit_count = len(same_sign_hits)
+    early_end_min_wr_ok = bool(
+        early_end_sign_ok
+        and early_end_wr_value is not None
+        and early_end_wr_value >= float(EARLY_ONLY_NO_LATE_ALL_EARLY_END_MIN_WR)
+    )
+    early_end_min_hits_ok = bool(
+        early_end_sign_ok
+        and early_end_hit_count >= int(EARLY_ONLY_NO_LATE_ALL_EARLY_END_MIN_HITS)
     )
     late_core_diag = _block_signs_same_or_zero(
         raw_block=raw_late_block,
@@ -3310,10 +5205,26 @@ def _early_only_no_late_all_gate(
     signal_mode = "target_half" if late_core_same_sign else "kills_from"
     return {
         "active": active,
-        "valid": bool(active and min_wr_ok),
+        "valid": bool(
+            active
+            and min_wr_ok
+            and early_end_min_wr_ok
+            and early_end_min_hits_ok
+        ),
         "early_wr_pct": float(early_wr_value) if early_wr_value is not None else None,
         "min_wr_required": float(EARLY_ONLY_NO_LATE_ALL_MIN_WR),
         "min_wr_ok": min_wr_ok,
+        "early_end_wr_pct": (
+            float(early_end_wr_value) if early_end_wr_value is not None else None
+        ),
+        "early_end_min_wr_required": float(EARLY_ONLY_NO_LATE_ALL_EARLY_END_MIN_WR),
+        "early_end_min_wr_ok": early_end_min_wr_ok,
+        "early_end_same_sign_hits": same_sign_hits,
+        "early_end_opposite_hits": opposite_hits,
+        "early_end_sign_ok": early_end_sign_ok,
+        "early_end_hit_count": early_end_hit_count,
+        "early_end_min_hits_required": int(EARLY_ONLY_NO_LATE_ALL_EARLY_END_MIN_HITS),
+        "early_end_min_hits_ok": early_end_min_hits_ok,
         "selected_early_sign": selected_early_sign,
         "signal_mode": signal_mode,
         "late_core_same_sign": late_core_same_sign,
@@ -3389,44 +5300,234 @@ def _star_diag_target_side(diag: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-LATE_OPPOSITE_ALL_REJECT_REASON = "star_signal_rejected_late_opposite_all"
+# ── Гейт допустимых комбинаций STAR-блоков ──────────────────────────────────
+# Блок (Early Winner / Late / All) считается валидным для стороны ставки,
+# когда его WR >= STAR_COMBINATION_MIN_WR и в нём >= STAR_COMBINATION_MIN_HITS
+# WR60+ star-хитов нужного знака без встречных хитов внутри блока.
+# Допустимые конфигурации (все члены — одного знака со ставкой):
+#   * early_end + all
+#   * late + all
+#   * early_end + late — при отсутствии встречных star-хитов в All
+#   * early_end — при отсутствии встречных star-хитов в Late и All
+#   * late — встречные в All допустимы только при late WR >=
+#            STAR_COMBINATION_LATE_OPPOSITE_ALL_MIN_WR
+#   * all — встречные хиты в Early Winner / Late допустимы
+# Early NW (early_output) членом комбинации не является. Если ни одна
+# конфигурация не выполняется, ставка не отправляется (терминальный отказ).
+STAR_COMBINATION_MIN_WR = _safe_float_env("STAR_COMBINATION_MIN_WR", 65.0)
+STAR_COMBINATION_MIN_HITS = max(1, _safe_int_env("STAR_COMBINATION_MIN_HITS", 2))
+STAR_COMBINATION_LATE_OPPOSITE_ALL_MIN_WR = _safe_float_env(
+    "STAR_COMBINATION_LATE_OPPOSITE_ALL_MIN_WR", 70.0
+)
+STAR_COMBINATION_GATE_ENABLED = _env_flag("STAR_COMBINATION_GATE_ENABLED", "1")
+STAR_COMBINATION_GATE_REJECT_REASON = "star_signal_rejected_block_combination"
+STAR_COMBINATION_GATE_STATUS_LABEL = "block_combination_gate_no_send"
 
 
-def _late_opposite_all_reject_active(
-    *,
-    has_selected_late_star: bool,
-    selected_late_sign: Optional[int],
-    has_selected_all_star: bool,
-    selected_all_sign: Optional[int],
-    force_odds_signal_test_active: bool = False,
-) -> bool:
-    """Reject any valid Late when valid All points to the other side."""
-    if force_odds_signal_test_active:
+def _star_block_hits_by_sign(
+    star_hits: Optional[List[Dict[str, Any]]],
+) -> Dict[int, List[str]]:
+    """Разложить ``_collect_star_hits_for_block`` по знаку значения метрики."""
+
+    by_sign: Dict[int, List[str]] = {1: [], -1: []}
+    for hit in star_hits or []:
+        if not isinstance(hit, dict):
+            continue
+        try:
+            value = float(hit.get("value"))
+        except (TypeError, ValueError):
+            continue
+        if value == 0:
+            continue
+        metric = str(hit.get("metric") or "").strip()
+        if not metric:
+            continue
+        sign = 1 if value > 0 else -1
+        if metric not in by_sign[sign]:
+            by_sign[sign].append(metric)
+    return by_sign
+
+
+def _build_star_combination_block_state(
+    label: str,
+    star_hits: Optional[List[Dict[str, Any]]],
+    wr_pct: Optional[float],
+) -> Dict[str, Any]:
+    by_sign = _star_block_hits_by_sign(star_hits)
+    try:
+        wr_value = float(wr_pct) if wr_pct is not None else None
+    except (TypeError, ValueError):
+        wr_value = None
+    if wr_value is not None and not math.isfinite(wr_value):
+        wr_value = None
+    return {
+        "block": str(label or ""),
+        "wr_pct": wr_value,
+        "hits_pos": list(by_sign[1]),
+        "hits_neg": list(by_sign[-1]),
+    }
+
+
+def _star_combination_block_hits(state: Dict[str, Any], sign: int) -> List[str]:
+    key = "hits_pos" if int(sign) > 0 else "hits_neg"
+    return list(state.get(key) or [])
+
+
+def _star_combination_block_valid(state: Dict[str, Any], sign: Optional[int]) -> bool:
+    """WR >= порога, >= MIN_HITS хитов нужного знака и ни одного встречного."""
+
+    if sign not in (-1, 1):
         return False
-    if not has_selected_late_star or not has_selected_all_star:
+    wr_value = state.get("wr_pct")
+    if wr_value is None or float(wr_value) < float(STAR_COMBINATION_MIN_WR):
         return False
-    if selected_late_sign not in (-1, 1) or selected_all_sign not in (-1, 1):
-        return False
-    return int(selected_late_sign) != int(selected_all_sign)
-
-
-def _late_opposite_all_reject_from_context(
-    stake_multiplier_context: Optional[Dict[str, Any]],
-    *,
-    force_odds_signal_test_active: bool = False,
-) -> bool:
-    """Apply the Late-vs-All conflict gate to a delayed payload snapshot."""
-    context = (
-        stake_multiplier_context
-        if isinstance(stake_multiplier_context, dict)
-        else {}
+    same_sign_hits = _star_combination_block_hits(state, int(sign))
+    opposite_hits = _star_combination_block_hits(state, -int(sign))
+    return bool(
+        len(same_sign_hits) >= int(STAR_COMBINATION_MIN_HITS) and not opposite_hits
     )
-    return _late_opposite_all_reject_active(
-        has_selected_late_star=bool(context.get("has_selected_late_star")),
-        selected_late_sign=context.get("selected_late_sign"),
-        has_selected_all_star=bool(context.get("has_selected_all_star")),
-        selected_all_sign=context.get("selected_all_sign"),
-        force_odds_signal_test_active=force_odds_signal_test_active,
+
+
+def _evaluate_star_block_combination_gate(
+    *,
+    target_sign: Optional[int],
+    early_end_hits: Optional[List[Dict[str, Any]]],
+    early_end_wr_pct: Optional[float],
+    late_hits: Optional[List[Dict[str, Any]]],
+    late_wr_pct: Optional[float],
+    all_hits: Optional[List[Dict[str, Any]]],
+    all_wr_pct: Optional[float],
+    force_odds_signal_test_active: bool = False,
+    enabled: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Пропускать ставку только при одной из допустимых конфигураций блоков."""
+
+    gate_enabled = (
+        bool(STAR_COMBINATION_GATE_ENABLED) if enabled is None else bool(enabled)
+    )
+    early_end_state = _build_star_combination_block_state(
+        "early_end", early_end_hits, early_end_wr_pct
+    )
+    late_state = _build_star_combination_block_state("late", late_hits, late_wr_pct)
+    all_state = _build_star_combination_block_state("all", all_hits, all_wr_pct)
+
+    try:
+        sign = int(target_sign) if target_sign in (-1, 1) else None
+    except (TypeError, ValueError):
+        sign = None
+
+    active = bool(gate_enabled and not force_odds_signal_test_active and sign in (-1, 1))
+
+    early_end_valid = _star_combination_block_valid(early_end_state, sign)
+    late_valid = _star_combination_block_valid(late_state, sign)
+    all_valid = _star_combination_block_valid(all_state, sign)
+
+    all_opposite_hits = (
+        _star_combination_block_hits(all_state, -sign) if sign in (-1, 1) else []
+    )
+    late_opposite_hits = (
+        _star_combination_block_hits(late_state, -sign) if sign in (-1, 1) else []
+    )
+
+    late_wr_value = late_state.get("wr_pct")
+    late_allows_opposite_all = bool(
+        late_wr_value is not None
+        and float(late_wr_value) >= float(STAR_COMBINATION_LATE_OPPOSITE_ALL_MIN_WR)
+    )
+
+    accepted: List[str] = []
+    if early_end_valid and all_valid:
+        accepted.append("early_end+all")
+    if late_valid and all_valid:
+        accepted.append("late+all")
+    if early_end_valid and late_valid and not all_opposite_hits:
+        accepted.append("early_end+late")
+    if early_end_valid and not late_opposite_hits and not all_opposite_hits:
+        accepted.append("early_end")
+    if late_valid and (late_allows_opposite_all or not all_opposite_hits):
+        accepted.append("late")
+    if all_valid:
+        accepted.append("all")
+
+    return {
+        "active": active,
+        "enabled": gate_enabled,
+        "target_sign": sign,
+        "valid": bool(not active or accepted),
+        "blocked": bool(active and not accepted),
+        "accepted_combinations": accepted,
+        "blocks": {
+            "early_end": early_end_state,
+            "late": late_state,
+            "all": all_state,
+        },
+        "early_end_valid": early_end_valid,
+        "late_valid": late_valid,
+        "all_valid": all_valid,
+        "all_opposite_hit_metrics": all_opposite_hits,
+        "late_opposite_hit_metrics": late_opposite_hits,
+        "late_allows_opposite_all": late_allows_opposite_all,
+        "min_wr_required": float(STAR_COMBINATION_MIN_WR),
+        "min_hits_required": int(STAR_COMBINATION_MIN_HITS),
+        "late_opposite_all_min_wr": float(STAR_COMBINATION_LATE_OPPOSITE_ALL_MIN_WR),
+    }
+
+
+def _star_combination_gate_reject_details(gate: Dict[str, Any]) -> Dict[str, Any]:
+    """Поля ``add_url``-details для отказа по гейту комбинаций."""
+
+    blocks = gate.get("blocks") if isinstance(gate.get("blocks"), dict) else {}
+
+    def _block_summary(name: str) -> Dict[str, Any]:
+        state = blocks.get(name) if isinstance(blocks.get(name), dict) else {}
+        return {
+            "wr_pct": state.get("wr_pct"),
+            "hits_pos": list(state.get("hits_pos") or []),
+            "hits_neg": list(state.get("hits_neg") or []),
+        }
+
+    return {
+        "dispatch_status_label": STAR_COMBINATION_GATE_STATUS_LABEL,
+        "star_combination_target_sign": gate.get("target_sign"),
+        "star_combination_min_wr": gate.get("min_wr_required"),
+        "star_combination_min_hits": gate.get("min_hits_required"),
+        "star_combination_late_opposite_all_min_wr": gate.get("late_opposite_all_min_wr"),
+        "star_combination_early_end_valid": bool(gate.get("early_end_valid")),
+        "star_combination_late_valid": bool(gate.get("late_valid")),
+        "star_combination_all_valid": bool(gate.get("all_valid")),
+        "star_combination_all_opposite_hits": list(
+            gate.get("all_opposite_hit_metrics") or []
+        ),
+        "star_combination_blocks": {
+            "early_end": _block_summary("early_end"),
+            "late": _block_summary("late"),
+            "all": _block_summary("all"),
+        },
+    }
+
+
+def _format_star_combination_gate_log(gate: Dict[str, Any]) -> str:
+    blocks = gate.get("blocks") if isinstance(gate.get("blocks"), dict) else {}
+    sign = gate.get("target_sign")
+
+    def _fmt(name: str) -> str:
+        state = blocks.get(name) if isinstance(blocks.get(name), dict) else {}
+        wr_value = state.get("wr_pct")
+        wr_label = f"{float(wr_value):.0f}" if wr_value is not None else "n/a"
+        same_hits = (
+            state.get("hits_pos") if sign == 1 else state.get("hits_neg")
+        ) or []
+        opposite_hits = (
+            state.get("hits_neg") if sign == 1 else state.get("hits_pos")
+        ) or []
+        return (
+            f"{name}(wr={wr_label},hits={len(same_hits)},opp={len(opposite_hits)})"
+        )
+
+    return (
+        f"sign={sign if sign in (-1, 1) else 'n/a'}, "
+        f"need wr>={gate.get('min_wr_required')}/hits>={gate.get('min_hits_required')}, "
+        f"{_fmt('early_end')}, {_fmt('late')}, {_fmt('all')}"
     )
 
 
@@ -3973,7 +6074,9 @@ def _print_compact_draft_metrics(
         f"{all_payload.get('solo', 'N/A')}, "
         f"{all_payload.get('synergy_duo', 'N/A')}, "
         f"{all_payload.get('synergy_trio', 'N/A')}, "
-        f"d2pt={all_payload.get('dota2protracker_cp1vs1', 'N/A')}"
+        f"d2pt={all_payload.get('dota2protracker_cp1vs1', 'N/A')}, "
+        f"d2pt_solo={all_payload.get('dota2protracker_solo', 'N/A')}, "
+        f"d2pt_solo_all={all_payload.get('dota2protracker_solo_overall', 'N/A')}"
     )
 
 
@@ -5479,6 +7582,39 @@ def _blank_dota2protracker_result() -> Dict[str, Any]:
         "pro_duo_synergy_reason": "not_computed",
         "pro_cp1vs1_diagnostics": {},
         "pro_duo_synergy_diagnostics": {},
+        # Попозиционный базовый WR героев (dota2protracker /api/heroes/list).
+        "pro_solo_wr_early": 0.0,
+        "pro_solo_wr_late": 0.0,
+        "pro_solo_wr_early_games": 0,
+        "pro_solo_wr_late_games": 0,
+        "pro_solo_wr_valid": False,
+        "pro_solo_wr_reason": "not_computed",
+        "pro_solo_wr_diagnostics": {},
+        "pro_solo_wr_metric": "position_baseline_wr",
+        # Общий WR героя по всем позициям (та же сводка, другой срез).
+        "pro_solo_wr_overall_early": 0.0,
+        "pro_solo_wr_overall_late": 0.0,
+        "pro_solo_wr_overall_early_games": 0,
+        "pro_solo_wr_overall_late_games": 0,
+        "pro_solo_wr_overall_valid": False,
+        "pro_solo_wr_overall_reason": "not_computed",
+        "pro_solo_wr_overall_diagnostics": {},
+        "pro_solo_wr_overall_metric": "overall_hero_wr",
+        # Solo lane-adv: базовый лейн-перевес героев, приор для парного
+        # lane_adv (подстановка — только под PRO_LANE_SOLO_FALLBACK).
+        "pro_lane_solo": 0.0,
+        "pro_lane_solo_valid": False,
+        "pro_lane_solo_covered_lanes": 0,
+        "pro_lane_solo_metric": "lane_adv_solo",
+        "pro_lane_solo_fallback_used": False,
+        # Lane synergy 1+1 (@10 NW). pro_lane_advantage is omitted until enrich runs
+        # so _dota2protracker_lane_adv_value can return None when not computed.
+        "pro_duo_lane": 0.0,
+        "pro_duo_lane_valid": False,
+        "pro_duo_lane_games": 0,
+        "pro_duo_lane_metric": "lane_adv",
+        "pro_duo_synergy_metric": "match_wr",
+        "pro_lane_metric": "lane_adv",
     }
 
 
@@ -5566,19 +7702,56 @@ def _format_dota2protracker_metric(
 def _build_dota2protracker_star_output(
     protracker_payload: Optional[Dict[str, Any]],
 ) -> Dict[str, float]:
+    """Values merged into All metrics.
+
+    - Protracker_1vs1: match-WR counterpick 1v1 (STAR-eligible)
+    - Protracker_duo: match-WR duo synergy (display under 1vs1 in All)
+    Lane synergy 1+1 stays only inside Lane_adv_protracker.
+    """
     payload = dict(_blank_dota2protracker_result())
     if isinstance(protracker_payload, dict):
         payload.update(protracker_payload)
-    if not bool(payload.get("pro_cp1vs1_valid")):
-        return {}
-    raw_value = payload.get("pro_cp1vs1_late", payload.get("pro_cp1vs1_early", 0.0))
-    try:
-        value = float(raw_value)
-    except (TypeError, ValueError):
-        return {}
-    if not math.isfinite(value) or value == 0.0:
-        return {}
-    return {"dota2protracker_cp1vs1": value}
+    out: Dict[str, float] = {}
+
+    if bool(payload.get("pro_cp1vs1_valid")):
+        raw_value = payload.get("pro_cp1vs1_late", payload.get("pro_cp1vs1_early", 0.0))
+        try:
+            value = float(raw_value)
+        except (TypeError, ValueError):
+            value = None
+        if value is not None and math.isfinite(value) and value != 0.0:
+            out["dota2protracker_cp1vs1"] = value
+
+    if bool(payload.get("pro_duo_synergy_valid")):
+        raw_duo = payload.get("pro_duo_synergy_late", payload.get("pro_duo_synergy_early", 0.0))
+        try:
+            duo_value = float(raw_duo)
+        except (TypeError, ValueError):
+            duo_value = None
+        if duo_value is not None and math.isfinite(duo_value) and duo_value != 0.0:
+            out["dota2protracker_duo"] = duo_value
+
+    if bool(payload.get("pro_solo_wr_valid")):
+        raw_solo = payload.get("pro_solo_wr_late", payload.get("pro_solo_wr_early", 0.0))
+        try:
+            solo_value = float(raw_solo)
+        except (TypeError, ValueError):
+            solo_value = None
+        if solo_value is not None and math.isfinite(solo_value) and solo_value != 0.0:
+            out["dota2protracker_solo"] = solo_value
+
+    if bool(payload.get("pro_solo_wr_overall_valid")):
+        raw_overall = payload.get(
+            "pro_solo_wr_overall_late", payload.get("pro_solo_wr_overall_early", 0.0)
+        )
+        try:
+            overall_value = float(raw_overall)
+        except (TypeError, ValueError):
+            overall_value = None
+        if overall_value is not None and math.isfinite(overall_value) and overall_value != 0.0:
+            out["dota2protracker_solo_overall"] = overall_value
+
+    return out
 
 
 def _build_all_star_output(
@@ -5617,13 +7790,29 @@ def _build_dota2protracker_debug_summary(
     duo_diag = payload.get("pro_duo_synergy_diagnostics") or {}
     cp_value = payload.get("pro_cp1vs1_late", payload.get("pro_cp1vs1_early", 0.0))
     duo_value = payload.get("pro_duo_synergy_late", payload.get("pro_duo_synergy_early", 0.0))
+    solo_valid = bool(payload.get("pro_solo_wr_valid"))
+    solo_reason = str(payload.get("pro_solo_wr_reason") or "unknown")
+    solo_diag = payload.get("pro_solo_wr_diagnostics") or {}
+    solo_value = payload.get("pro_solo_wr_late", payload.get("pro_solo_wr_early", 0.0))
+    overall_valid = bool(payload.get("pro_solo_wr_overall_valid"))
+    overall_reason = str(payload.get("pro_solo_wr_overall_reason") or "unknown")
+    overall_diag = payload.get("pro_solo_wr_overall_diagnostics") or {}
+    overall_value = payload.get(
+        "pro_solo_wr_overall_late", payload.get("pro_solo_wr_overall_early", 0.0)
+    )
     return (
-        "cp1vs1="
+        "Protracker_1vs1="
         f"{_format_dota2protracker_metric(value=cp_value, valid=cp_valid)} "
         f"(valid={cp_valid}, reason={cp_reason}, diag={cp_diag}), "
-        "duo_synergy="
+        "Protracker_duo="
         f"{_format_dota2protracker_metric(value=duo_value, valid=duo_valid)} "
-        f"(valid={duo_valid}, reason={duo_reason}, diag={duo_diag})"
+        f"(valid={duo_valid}, reason={duo_reason}, diag={duo_diag}), "
+        "Protracker_solo="
+        f"{_format_dota2protracker_metric(value=solo_value, valid=solo_valid)} "
+        f"(valid={solo_valid}, reason={solo_reason}, diag={solo_diag}), "
+        "Protracker_solo_overall="
+        f"{_format_dota2protracker_metric(value=overall_value, valid=overall_valid)} "
+        f"(valid={overall_valid}, reason={overall_reason}, diag={overall_diag})"
     )
 
 
@@ -5644,15 +7833,46 @@ def _build_dota2protracker_log_lines(
     duo_games = int(payload.get("pro_duo_synergy_late_games", payload.get("pro_duo_synergy_early_games", 0)) or 0)
     cp_diag = payload.get("pro_cp1vs1_diagnostics") or {}
     duo_diag = payload.get("pro_duo_synergy_diagnostics") or {}
+    solo_valid = bool(payload.get("pro_solo_wr_valid"))
+    solo_reason = str(payload.get("pro_solo_wr_reason") or "unknown")
+    solo_value = payload.get("pro_solo_wr_late", payload.get("pro_solo_wr_early", 0.0))
+    solo_games = int(payload.get("pro_solo_wr_late_games", payload.get("pro_solo_wr_early_games", 0)) or 0)
+    solo_diag = payload.get("pro_solo_wr_diagnostics") or {}
+    overall_valid = bool(payload.get("pro_solo_wr_overall_valid"))
+    overall_reason = str(payload.get("pro_solo_wr_overall_reason") or "unknown")
+    overall_value = payload.get(
+        "pro_solo_wr_overall_late", payload.get("pro_solo_wr_overall_early", 0.0)
+    )
+    overall_games = int(
+        payload.get(
+            "pro_solo_wr_overall_late_games", payload.get("pro_solo_wr_overall_early_games", 0)
+        )
+        or 0
+    )
+    overall_diag = payload.get("pro_solo_wr_overall_diagnostics") or {}
+    lane_adv_present = isinstance(protracker_payload, dict) and "pro_lane_advantage" in protracker_payload
+    lane_adv = payload.get("pro_lane_advantage", 0.0) if lane_adv_present else 0.0
 
     return [
         "   📊 Dota2ProTracker:",
-        "      cp1vs1: "
+        "      Lane_adv_protracker: "
+        f"{_format_dota2protracker_metric(value=lane_adv, valid=lane_adv_present)}",
+        "      Lane_adv_solo: "
+        f"{_format_dota2protracker_metric(value=payload.get('pro_lane_solo', 0.0), valid=bool(payload.get('pro_lane_solo_valid')))} "
+        f"(lanes={payload.get('pro_lane_solo_covered_lanes')}/3, "
+        f"fallback_used={bool(payload.get('pro_lane_solo_fallback_used'))})",
+        "      Protracker_1vs1: "
         f"{_format_dota2protracker_metric(value=cp_value, valid=cp_valid)} "
         f"(valid={cp_valid}, games={cp_games}, reason={cp_reason}, diag={cp_diag})",
-        "      synergy_duo: "
+        "      Protracker_duo: "
         f"{_format_dota2protracker_metric(value=duo_value, valid=duo_valid)} "
         f"(valid={duo_valid}, games={duo_games}, reason={duo_reason}, diag={duo_diag})",
+        "      Protracker_solo: "
+        f"{_format_dota2protracker_metric(value=solo_value, valid=solo_valid)} "
+        f"(valid={solo_valid}, games={solo_games}, reason={solo_reason}, diag={solo_diag})",
+        "      Protracker_solo_overall: "
+        f"{_format_dota2protracker_metric(value=overall_value, valid=overall_valid)} "
+        f"(valid={overall_valid}, games={overall_games}, reason={overall_reason}, diag={overall_diag})",
     ]
 
 
@@ -5688,13 +7908,25 @@ def _build_dota2protracker_block(
     protracker_payload: Optional[Dict[str, Any]],
     star_output: Optional[Dict[str, Any]] = None,
 ) -> str:
+    """Compact ProTracker block for probe/only-message paths.
+
+    Protracker_1vs1 = match-WR counterpick 1v1.
+    Protracker_duo = match-WR duo synergy.
+    Lane synergy 1+1 is not listed here: folded into Lane_adv_protracker.
+    """
     payload = dict(_blank_dota2protracker_result())
     if isinstance(protracker_payload, dict):
         payload.update(protracker_payload)
     cp_value = payload.get("pro_cp1vs1_late", payload.get("pro_cp1vs1_early", 0.0))
     duo_value = payload.get("pro_duo_synergy_late", payload.get("pro_duo_synergy_early", 0.0))
+    solo_value = payload.get("pro_solo_wr_late", payload.get("pro_solo_wr_early", 0.0))
+    overall_value = payload.get(
+        "pro_solo_wr_overall_late", payload.get("pro_solo_wr_overall_early", 0.0)
+    )
     cp_valid = bool(payload.get("pro_cp1vs1_valid"))
     duo_valid = bool(payload.get("pro_duo_synergy_valid"))
+    solo_valid = bool(payload.get("pro_solo_wr_valid"))
+    overall_valid = bool(payload.get("pro_solo_wr_overall_valid"))
     cp_label = _format_dota2protracker_metric(value=cp_value, valid=cp_valid)
     if cp_valid and isinstance(star_output, dict):
         starred_cp = star_output.get("dota2protracker_cp1vs1")
@@ -5703,8 +7935,11 @@ def _build_dota2protracker_block(
 
     return (
         "\ndota2protracker:\n"
-        f"cp1vs1: {cp_label}\n"
-        f"synergy_duo: {_format_dota2protracker_metric(value=duo_value, valid=duo_valid)}\n"
+        f"Protracker_1vs1: {cp_label}\n"
+        f"Protracker_duo: {_format_dota2protracker_metric(value=duo_value, valid=duo_valid)}\n"
+        f"Protracker_solo: {_format_dota2protracker_metric(value=solo_value, valid=solo_valid)}\n"
+        f"Protracker_solo_overall: "
+        f"{_format_dota2protracker_metric(value=overall_value, valid=overall_valid)}\n"
     )
 
 
@@ -5724,11 +7959,42 @@ def _dota2protracker_lane_adv_value(protracker_payload: Optional[Dict[str, Any]]
     return lane_adv
 
 
+def _dota2protracker_lane_solo_value(
+    protracker_payload: Optional[Dict[str, Any]],
+) -> Optional[float]:
+    """Solo lane-adv матча: None, если базовых значений не хватило на 3 лейна."""
+    if not isinstance(protracker_payload, dict):
+        return None
+    if not protracker_payload.get("pro_lane_solo_valid"):
+        return None
+    try:
+        value = float(protracker_payload.get("pro_lane_solo", 0.0))
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
 def _build_dota2protracker_lane_adv_line(protracker_payload: Optional[Dict[str, Any]]) -> str:
+    """Lane advantage from ProTracker (minute-10 lane NW components).
+
+    Второй строкой идёт Lane_adv_solo — тот же лейн-перевес, но собранный из
+    базовых значений героев вместо парных матчапов. Показываем оба, потому что
+    расходятся они заметно (на живом драфте +0.89 против +2.53), и пока solo
+    не проверен, подменять им основное число нельзя.
+    """
     lane_adv = _dota2protracker_lane_adv_value(protracker_payload)
-    if lane_adv is None:
-        return "lane_adv_protracker: None\n"
-    return f"lane_adv_protracker: {lane_adv:+.2f}\n"
+    head = (
+        "Lane_adv_protracker: None\n"
+        if lane_adv is None
+        else f"Lane_adv_protracker: {lane_adv:+.2f}\n"
+    )
+    solo = _dota2protracker_lane_solo_value(protracker_payload)
+    if solo is None:
+        return head
+    suffix = ""
+    if isinstance(protracker_payload, dict) and protracker_payload.get("pro_lane_solo_fallback_used"):
+        suffix = " (fallback)"
+    return f"{head}Lane_adv_solo: {solo:+.2f}{suffix}\n"
 
 
 def _same_sign_lane_adv_guard(
@@ -5820,6 +8086,8 @@ def _build_lane_adv_standalone_kills_message(
         radiant_lead=radiant_lead,
         radiant_team_name=radiant_team_name,
         dire_team_name=dire_team_name,
+        show_kills_time_blocks=True,
+        kills_release_status=NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND,
     )
     return (
         f"{header}\n"
@@ -5850,8 +8118,8 @@ def _build_early_local_kills_message(
     to the critical path, so for the early kills release we assemble the body
     from data that is already available before the fetch: the local
     synergy/counterpick star blocks (early/late/all), the lane_adv_dict line and
-    the team ELO block. The two ProTracker-derived lines (``lane_adv_protracker``
-    and ``Dota2ProTracker_cp1vs1``) are intentionally omitted here so the bet is
+    the team ELO block. The two ProTracker-derived lines (``Lane_adv_protracker``
+    and ``Protracker_1vs1``) are intentionally omitted here so the bet is
     not blocked waiting on the fetch.
     """
     s = metrics_payload if isinstance(metrics_payload, dict) else {}
@@ -5878,6 +8146,11 @@ def _build_early_local_kills_message(
         section="early_output",
         target_wr=star_target_wr,
     )
+    early_end_output_log = _decorate_star_block_for_display(
+        raw_block=s.get('early_end_output', {}) or {},
+        section="early_end_output",
+        target_wr=star_target_wr,
+    )
     mid_output_log = _decorate_star_block_for_display(
         raw_block=s.get('mid_output', {}),
         section="mid_output",
@@ -5901,6 +8174,7 @@ def _build_early_local_kills_message(
         return ""
 
     early_rec = _recommend_odds_for_block(early_output_log, 'early')
+    early_end_rec = _recommend_odds_for_block(early_end_output_log, 'early_end')
     late_rec = _recommend_odds_for_block(mid_output_log, 'late')
     all_rec = _recommend_odds_for_block(all_output_log, 'all')
 
@@ -5915,10 +8189,19 @@ def _build_early_local_kills_message(
     wr_lines: List[str] = []
     if early_rec:
         line = _format_wr_estimate_line(
-            "Early",
+            "Early NW",
             _signal_team_name(_star_block_sign(early_output_log)),
             _wr_pct_from_rec(early_rec),
             early_rec,
+        )
+        if line:
+            wr_lines.append(line)
+    if early_end_rec:
+        line = _format_wr_estimate_line(
+            "Early Winner",
+            _signal_team_name(_star_block_sign(early_end_output_log)),
+            _wr_pct_from_rec(early_end_rec),
+            early_end_rec,
         )
         if line:
             wr_lines.append(line)
@@ -5956,8 +8239,7 @@ def _build_early_local_kills_message(
         ('synergy_duo', 'Synergy_duo'),
         ('synergy_trio', 'Synergy_trio'),
     ]
-    # All block: Solo теперь выводится (Option C: post_lane-solo собран на 7.41d и эмитится).
-    # Dota2ProTracker line по-прежнему опущена (protracker not ready).
+    # All block: Solo + ProTracker display metrics (1vs1 match WR, duo lane 1+1).
     all_metric_list = [
         ('counterpick_1vs1', 'Counterpick_1vs1'),
         ('pos1_vs_pos1', 'Pos1vsPos1'),
@@ -5965,6 +8247,10 @@ def _build_early_local_kills_message(
         ('solo', 'Solo'),
         ('synergy_duo', 'Synergy_duo'),
         ('synergy_trio', 'Synergy_trio'),
+        ('dota2protracker_cp1vs1', 'Protracker_1vs1'),
+        ('dota2protracker_duo', 'Protracker_duo'),
+        ('dota2protracker_solo', 'Protracker_solo'),
+        ('dota2protracker_solo_overall', 'Protracker_solo_overall'),
     ]
 
     def _format_metrics(title: str, data: dict, metrics: list) -> str:
@@ -5973,7 +8259,10 @@ def _build_early_local_kills_message(
             lines.append(f"{label}: {(data or {}).get(key)}")
         return "\n".join(lines) + "\n"
 
-    early_block = _format_metrics("Early 20-28:", early_output_log, metric_list)
+    early_block = _format_metrics("Early NW (20-28):", early_output_log, metric_list)
+    early_end_block = _format_metrics(
+        "Early Winner (20-28):", early_end_output_log, metric_list
+    )
     mid_block = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
     all_block = _format_metrics("All:", all_output_log, all_metric_list)
 
@@ -5982,6 +8271,7 @@ def _build_early_local_kills_message(
         radiant_lead=radiant_lead,
         radiant_team_name=radiant_team_name,
         dire_team_name=dire_team_name,
+        show_kills_time_blocks=True,
     )
     return (
         f"{header}\n"
@@ -5991,7 +8281,7 @@ def _build_early_local_kills_message(
         f"{team_elo_block or ''}"
         f"{wr_block}"
         f"{star_hits_summary_block}"
-        f"{_compose_star_metric_blocks_for_message(early_block, mid_block, all_block)}"
+        f"{_compose_star_metric_blocks_for_message(early_block + early_end_block, mid_block, all_block)}"
         f"{live_state_block}"
     )
 
@@ -6175,7 +8465,16 @@ def _strip_dota2protracker_message_block_lines(lines: List[str]) -> List[str]:
             idx += 1
             while idx < len(lines):
                 next_compact = str(lines[idx]).strip().lower()
-                if not next_compact or next_compact.startswith("cp1vs1:") or next_compact.startswith("synergy_duo:"):
+                if (
+                    not next_compact
+                    or next_compact.startswith("cp1vs1:")
+                    or next_compact.startswith("protracker_1vs1:")
+                    or next_compact.startswith("protracker_duo:")
+                    or next_compact.startswith("protracker_solo:")
+                    or next_compact.startswith("protracker_solo_overall:")
+                    or next_compact.startswith("synergy_duo:")
+                    or next_compact.startswith("synergy_duo(match_wr):")
+                ):
                     idx += 1
                     continue
                 break
@@ -6326,24 +8625,69 @@ def _refresh_stake_multiplier_message(
         radiant_lead=radiant_lead,
         radiant_team_name=radiant_team_name,
         dire_team_name=dire_team_name,
+        show_kills_time_blocks=(str(special_header_mode or "").strip() == "early_kills"),
+        kills_release_status=(
+            stake_multiplier_context.get("kills_release_status")
+            or stake_multiplier_context.get("release_reason")
+            or stake_multiplier_context.get("dispatch_status_label")
+        ),
+        kills_window_label=stake_multiplier_context.get("kills_window_label"),
     ).strip().splitlines()
     filtered_lines = [
         line
         for line in lines
-        if not str(line).startswith("Time:") and not str(line).startswith("Networth:")
+        if not str(line).startswith("Time:")
+        and not str(line).startswith("Networth:")
+        and not str(line).startswith("Kills time blocks:")
+        and not str(line).startswith("Kills window blocks:")
+        and not str(line).startswith("Kills gate:")
     ]
+    # Prefer anchoring after the full ProTracker pair so duo stays under 1vs1
+    # and Time/Networth/Kills-gate blocks stay at the bottom of metrics.
     live_state_insert_prefixes = (
         "Counterpick_1vs1:",
         "Counterpick_1vs2:",
         "Solo:",
         "Synergy_duo:",
         "Synergy_trio:",
-        "Dota2ProTracker_cp1vs1:",
+        "Protracker_1vs1:",
+        "Protracker_duo:",
+        "Protracker_solo:",
+        "Protracker_solo_overall:",
+        "Pos1vsPos1:",
+        "DLTV rating:",
     )
     insert_after_idx = -1
+    protracker_duo_idx = -1
+    protracker_1vs1_idx = -1
+    protracker_solo_idx = -1
+    protracker_solo_overall_idx = -1
     for idx, line in enumerate(filtered_lines):
-        if any(str(line).startswith(prefix) for prefix in live_state_insert_prefixes):
+        text = str(line)
+        if text.startswith("Protracker_1vs1:"):
+            protracker_1vs1_idx = idx
+        if text.startswith("Protracker_duo:"):
+            protracker_duo_idx = idx
+        if text.startswith("Protracker_solo:"):
+            protracker_solo_idx = idx
+        if text.startswith("Protracker_solo_overall:"):
+            protracker_solo_overall_idx = idx
+        if any(text.startswith(prefix) for prefix in live_state_insert_prefixes):
             insert_after_idx = idx
+    # If any ProTracker line exists, always insert after the LAST of them
+    # (иначе live-блок разрезал бы пару 1vs1/duo или отрезал бы solo).
+    if (
+        protracker_1vs1_idx >= 0
+        or protracker_duo_idx >= 0
+        or protracker_solo_idx >= 0
+        or protracker_solo_overall_idx >= 0
+    ):
+        insert_after_idx = max(
+            protracker_1vs1_idx,
+            protracker_duo_idx,
+            protracker_solo_idx,
+            protracker_solo_overall_idx,
+        )
     if insert_after_idx >= 0:
         filtered_lines[insert_after_idx + 1 : insert_after_idx + 1] = live_state_lines
     else:
@@ -6622,12 +8966,216 @@ def _format_game_clock(game_time_seconds: Any) -> str:
     return f"{int(sec // 60):02d}:{int(sec % 60):02d}"
 
 
+# Ordered early-kills NW/time gate blocks shown in Telegram.
+# Index is stable for ops/debug ("Active: [3] ...").
+EARLY_KILLS_TIME_BLOCKS = (
+    {
+        "index": 0,
+        "key": "pre3",
+        "label": "<3:00 wait / immediate lane_adv≥8",
+        "start_seconds": 0,
+        "end_seconds": 3 * 60,
+        "rule": "wait unless |lane_adv_dict|≥8 same-sign",
+    },
+    {
+        "index": 1,
+        "key": "3_6_lead",
+        "label": "3-6m lead ≥+600",
+        "start_seconds": 3 * 60,
+        "end_seconds": 6 * 60,
+        "rule": "target_diff ≥ +600",
+    },
+    {
+        "index": 2,
+        "key": "6_10_nonneg",
+        "label": "6-10m target NW ≥0",
+        "start_seconds": 6 * 60,
+        "end_seconds": 10 * 60,
+        "rule": "target_diff ≥ 0",
+    },
+    {
+        "index": 3,
+        "key": "10_13_fallback",
+        "label": "10-13m fallback NW ≥0",
+        "start_seconds": 10 * 60,
+        "end_seconds": 13 * 60,
+        "rule": "target_diff ≥ 0 (fallback)",
+    },
+    {
+        "index": 4,
+        "key": "closed",
+        "label": "≥13:00 closed",
+        "start_seconds": 13 * 60,
+        "end_seconds": None,
+        "rule": "no early-kills send",
+    },
+)
+
+# kills_window dict blocks (Early Winner path) — stable indices.
+KILLS_WINDOW_BLOCKS = (
+    {"index": 0, "label": "5_15", "start_min": 5, "end_min": 15},
+    {"index": 1, "label": "10_20", "start_min": 10, "end_min": 20},
+    {"index": 2, "label": "15_25", "start_min": 15, "end_min": 25},
+    {"index": 3, "label": "20_30", "start_min": 20, "end_min": 30},
+)
+
+_EARLY_KILLS_STATUS_TO_BLOCK_INDEX = {
+    NETWORTH_STATUS_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_SEND: 0,
+    NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND: 0,
+    NETWORTH_STATUS_TIER1_EARLY_KILLS_PRE6_WAIT: 0,
+    NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND: 1,
+    NETWORTH_STATUS_TIER1_EARLY_KILLS_6_10_TARGET_NONNEG_SEND: 2,
+    # historical name 4_12; runtime window is 10–13 fallback.
+    NETWORTH_STATUS_TIER1_EARLY_KILLS_4_12_SEND_500: 3,
+    NETWORTH_STATUS_TIER1_EARLY_KILLS_WINDOW_CLOSED: 4,
+}
+
+
+def _coerce_game_time_seconds(game_time_seconds: Any) -> Optional[float]:
+    if game_time_seconds is None:
+        return None
+    try:
+        value = float(game_time_seconds)
+    except (TypeError, ValueError):
+        return None
+    if value != value:  # NaN
+        return None
+    return value
+
+
+def _early_kills_time_block_index_from_game_time(
+    game_time_seconds: Any,
+) -> Optional[int]:
+    gt = _coerce_game_time_seconds(game_time_seconds)
+    if gt is None:
+        return None
+    if gt < 3 * 60:
+        return 0
+    if gt < 6 * 60:
+        return 1
+    if gt < 10 * 60:
+        return 2
+    if gt < float(NETWORTH_GATE_TIER1_EARLY_KILLS_DISPATCH_MAX_SECONDS):
+        return 3
+    return 4
+
+
+def _early_kills_time_block_index_from_status(
+    status_label: Any,
+) -> Optional[int]:
+    key = str(status_label or "").strip()
+    if not key:
+        return None
+    if key in _EARLY_KILLS_STATUS_TO_BLOCK_INDEX:
+        return int(_EARLY_KILLS_STATUS_TO_BLOCK_INDEX[key])
+    # soft match for future renames
+    low = key.lower()
+    if "window_closed" in low or "closed" in low and "kills" in low:
+        return 4
+    if "3_6" in low or "3-6" in low:
+        return 1
+    if "6_10" in low or "6-10" in low:
+        return 2
+    if "4_12" in low or "fallback" in low or "10_" in low:
+        return 3
+    if "immediate" in low or "standalone" in low or "pre6" in low or "pre3" in low:
+        return 0
+    return None
+
+
+def _resolve_early_kills_time_block(
+    *,
+    game_time_seconds: Any = None,
+    status_label: Any = None,
+) -> Optional[Dict[str, Any]]:
+    idx = _early_kills_time_block_index_from_status(status_label)
+    if idx is None:
+        idx = _early_kills_time_block_index_from_game_time(game_time_seconds)
+    if idx is None:
+        return None
+    for block in EARLY_KILLS_TIME_BLOCKS:
+        if int(block["index"]) == int(idx):
+            return dict(block)
+    return None
+
+
+def _kills_window_block_index(label: Any) -> Optional[int]:
+    text = str(label or "").strip()
+    if not text:
+        return None
+    for block in KILLS_WINDOW_BLOCKS:
+        if str(block["label"]) == text:
+            return int(block["index"])
+    return None
+
+
+def _format_early_kills_time_blocks_block(
+    *,
+    game_time_seconds: Any = None,
+    status_label: Any = None,
+    kills_window_label: Any = None,
+) -> str:
+    """Telegram visibility: ordered kills time blocks + active index.
+
+    Two modes:
+      * NW/time gate (tier1 Early STAR kills / standalone) — default.
+      * kills_window nearest block (Early Winner path) when label given.
+    """
+    lines: list[str] = []
+    window_label = str(kills_window_label or "").strip()
+    if window_label:
+        active_idx = _kills_window_block_index(window_label)
+        catalog = " | ".join(
+            f"[{b['index']}]{b['label']}" for b in KILLS_WINDOW_BLOCKS
+        )
+        if active_idx is None:
+            lines.append(f"Kills window blocks: {catalog}")
+            lines.append(f"Kills gate: window {window_label} (nearest)")
+        else:
+            block = KILLS_WINDOW_BLOCKS[active_idx]
+            lines.append(f"Kills window blocks: {catalog}")
+            lines.append(
+                f"Kills gate: [{active_idx}] {block['label']} "
+                f"({block['start_min']}-{block['end_min']}m nearest)"
+            )
+        return "\n".join(lines) + "\n"
+
+    catalog = " | ".join(
+        f"[{b['index']}]{b['label']}" for b in EARLY_KILLS_TIME_BLOCKS
+    )
+    lines.append(f"Kills time blocks: {catalog}")
+    active = _resolve_early_kills_time_block(
+        game_time_seconds=game_time_seconds,
+        status_label=status_label,
+    )
+    max_m = int(float(NETWORTH_GATE_TIER1_EARLY_KILLS_DISPATCH_MAX_SECONDS) // 60)
+    header_m = int(float(EARLY_KILLS_HEADER_MAX_GAME_TIME_SECONDS) // 60)
+    if active is None:
+        lines.append(
+            f"Kills gate: n/a | hard max {max_m}:00 | header strip {header_m}:00"
+        )
+    else:
+        status_bit = ""
+        status_text = str(status_label or "").strip()
+        if status_text:
+            status_bit = f" | status={status_text}"
+        lines.append(
+            f"Kills gate: [{active['index']}] {active['label']} "
+            f"({active['rule']}) | hard max {max_m}:00 | "
+            f"header strip {header_m}:00{status_bit}"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def _format_live_message_state_block(
     *,
     game_time_seconds: Any,
     radiant_lead: Any,
     radiant_team_name: Any,
     dire_team_name: Any,
+    show_kills_time_blocks: bool = False,
+    kills_release_status: Any = None,
+    kills_window_label: Any = None,
 ) -> str:
     time_line = f"Time: {_format_game_clock(game_time_seconds)}"
     try:
@@ -6641,7 +9189,286 @@ def _format_live_message_state_block(
         networth_line = f"Networth: {str(radiant_team_name or 'Radiant')} +{abs_lead}"
     else:
         networth_line = f"Networth: {str(dire_team_name or 'Dire')} +{abs_lead}"
-    return f"{time_line}\n{networth_line}\n"
+    body = f"{time_line}\n{networth_line}\n"
+    if show_kills_time_blocks or kills_window_label:
+        body += _format_early_kills_time_blocks_block(
+            game_time_seconds=game_time_seconds,
+            status_label=kills_release_status,
+            kills_window_label=kills_window_label,
+        )
+    return body
+
+
+# Match-key → steam_id / json_url remembered while processing a live card so
+# delayed / multi-branch dispatch can still fetch DLTV draft votes.
+_DLTV_DISPATCH_CONTEXT_BY_MATCH_KEY: Dict[str, Dict[str, Any]] = {}
+_DLTV_DISPATCH_CONTEXT_LOCK = threading.Lock()
+
+
+def _steam_id_from_dltv_json_url(json_url: Any) -> Optional[int]:
+    text = str(json_url or "").strip()
+    if not text:
+        return None
+    match = re.search(
+        r"(?:dltv\.org/live/|sourcetv://matches/)(\d+)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None
+    try:
+        value = int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _remember_dltv_dispatch_context(
+    match_key: str,
+    *,
+    steam_id: Any = None,
+    json_url: Any = None,
+    live_data: Any = None,
+) -> None:
+    key = str(match_key or "").strip()
+    if not key:
+        return
+    resolved_steam = _coerce_int(steam_id)
+    if resolved_steam <= 0:
+        resolved_steam = _steam_id_from_dltv_json_url(json_url) or 0
+    if resolved_steam <= 0 and isinstance(live_data, dict):
+        resolved_steam = int(_extract_live_match_id(live_data) or 0)
+    payload: Dict[str, Any] = {}
+    if resolved_steam > 0:
+        payload["steam_id"] = int(resolved_steam)
+    url_text = str(json_url or "").strip()
+    if url_text:
+        payload["json_url"] = url_text
+    elif resolved_steam > 0:
+        payload["json_url"] = f"https://dltv.org/live/{resolved_steam}.json"
+    if isinstance(live_data, dict):
+        vote = _parse_dltv_draft_vote_from_live_payload(live_data)
+        if vote is not None:
+            payload["last_vote"] = vote
+    if not payload:
+        return
+    with _DLTV_DISPATCH_CONTEXT_LOCK:
+        prev = dict(_DLTV_DISPATCH_CONTEXT_BY_MATCH_KEY.get(key) or {})
+        prev.update(payload)
+        _DLTV_DISPATCH_CONTEXT_BY_MATCH_KEY[key] = prev
+
+
+def _lookup_dltv_dispatch_context(match_key: str) -> Dict[str, Any]:
+    key = str(match_key or "").strip()
+    if not key:
+        return {}
+    with _DLTV_DISPATCH_CONTEXT_LOCK:
+        cached = dict(_DLTV_DISPATCH_CONTEXT_BY_MATCH_KEY.get(key) or {})
+    if cached:
+        return cached
+    with monitored_matches_lock:
+        delayed = monitored_matches.get(key)
+    if isinstance(delayed, dict):
+        steam = _steam_id_from_dltv_json_url(delayed.get("json_url"))
+        out: Dict[str, Any] = {}
+        if steam:
+            out["steam_id"] = int(steam)
+        if delayed.get("json_url"):
+            out["json_url"] = str(delayed.get("json_url"))
+        return out
+    return {}
+
+
+def _parse_dltv_draft_vote_from_live_payload(data: Any) -> Optional[Dict[str, Any]]:
+    """Extract draft-vote bar from DLTV live/{steam_id}.json.
+
+    UI ``picks__new-vote``: side_0 = Radiant, side_1 = Dire.
+
+    ``db.first_team`` / ``db.second_team`` are series-order slots, NOT always
+    Radiant/Dire. Resolve actual sides via each team's ``is_radiant`` flag
+    (same rule as the main DLTV card path).
+    """
+    if not isinstance(data, dict):
+        return None
+    series = ((data.get("db") or {}).get("series") or {}) if isinstance(data.get("db"), dict) else {}
+    if not isinstance(series, dict):
+        series = {}
+    likes = series.get("likes") if isinstance(series.get("likes"), dict) else {}
+    try:
+        radiant_likes = float(likes.get("side_0") or 0)
+        dire_likes = float(likes.get("side_1") or 0)
+    except (TypeError, ValueError):
+        return None
+    if radiant_likes < 0 or dire_likes < 0:
+        return None
+    total = radiant_likes + dire_likes
+    first_team = (data.get("db") or {}).get("first_team") if isinstance(data.get("db"), dict) else {}
+    second_team = (data.get("db") or {}).get("second_team") if isinstance(data.get("db"), dict) else {}
+    if not isinstance(first_team, dict):
+        first_team = {}
+    if not isinstance(second_team, dict):
+        second_team = {}
+
+    first_name = str(first_team.get("title") or first_team.get("name") or "").strip()
+    second_name = str(second_team.get("title") or second_team.get("name") or "").strip()
+    first_is_radiant = first_team.get("is_radiant")
+    second_is_radiant = second_team.get("is_radiant")
+
+    # Prefer explicit is_radiant flags; fall back to series order only when both
+    # sides omit the flag (legacy payloads / unit fixtures).
+    if first_is_radiant is True or second_is_radiant is False:
+        radiant_name = first_name or "Radiant"
+        dire_name = second_name or "Dire"
+    elif first_is_radiant is False or second_is_radiant is True:
+        radiant_name = second_name or "Radiant"
+        dire_name = first_name or "Dire"
+    else:
+        radiant_name = first_name or "Radiant"
+        dire_name = second_name or "Dire"
+
+    return {
+        "radiant_likes": radiant_likes,
+        "dire_likes": dire_likes,
+        "radiant_pct": round(100.0 * radiant_likes / total, 1) if total > 0 else None,
+        "dire_pct": round(100.0 * dire_likes / total, 1) if total > 0 else None,
+        "radiant_team": radiant_name,
+        "dire_team": dire_name,
+        "is_draft_voting": series.get("is_draft_voting"),
+        "steam_id": _extract_live_match_id(data),
+    }
+
+
+def _format_dltv_rating_line(vote: Optional[Dict[str, Any]], *, unavailable: bool = False) -> str:
+    if unavailable:
+        return "DLTV rating: unavailable"
+    if not isinstance(vote, dict):
+        return "DLTV rating: unavailable"
+    try:
+        r_likes = float(vote.get("radiant_likes") or 0)
+        d_likes = float(vote.get("dire_likes") or 0)
+    except (TypeError, ValueError):
+        return "DLTV rating: unavailable"
+    total = r_likes + d_likes
+    if total <= 0:
+        return "DLTV rating: no votes"
+    r_pct = vote.get("radiant_pct")
+    d_pct = vote.get("dire_pct")
+    try:
+        r_pct_f = float(r_pct) if r_pct is not None else 100.0 * r_likes / total
+        d_pct_f = float(d_pct) if d_pct is not None else 100.0 * d_likes / total
+    except (TypeError, ValueError):
+        r_pct_f = 100.0 * r_likes / total
+        d_pct_f = 100.0 * d_likes / total
+    radiant = normalize_team_name_display(str(vote.get("radiant_team") or "Radiant")) or "Radiant"
+    dire = normalize_team_name_display(str(vote.get("dire_team") or "Dire")) or "Dire"
+    return (
+        f"DLTV rating: {radiant} {r_pct_f:.1f}% / {dire} {d_pct_f:.1f}% "
+        f"({int(round(r_likes))}-{int(round(d_likes))})"
+    )
+
+
+def _fetch_dltv_live_json_for_rating(steam_id: int) -> Optional[Dict[str, Any]]:
+    url = f"https://dltv.org/live/{int(steam_id)}.json"
+    timeout = float(DLTV_RATING_FETCH_TIMEOUT_SECONDS)
+    try:
+        resp = requests.get(url, proxies=PROXIES, timeout=timeout, verify=False)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data if isinstance(data, dict) else None
+        if resp.status_code == 429:
+            rotate_proxy()
+    except Exception as exc:
+        logger.warning("DLTV rating fetch failed via proxy for %s: %s", steam_id, exc)
+    try:
+        resp = requests.get(url, proxies=None, timeout=timeout, verify=False)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data if isinstance(data, dict) else None
+    except Exception as exc:
+        logger.warning("DLTV rating fetch failed direct for %s: %s", steam_id, exc)
+    return None
+
+
+def _resolve_dltv_draft_vote_for_dispatch(
+    match_key: str,
+    *,
+    json_url: Any = None,
+    live_data: Any = None,
+    steam_id: Any = None,
+) -> tuple[Optional[Dict[str, Any]], str]:
+    """Fresh-parse DLTV draft vote before dispatch.
+
+    Returns (vote_or_none, source) where source is live_data|fetch|cache|none.
+    """
+    if isinstance(live_data, dict):
+        vote = _parse_dltv_draft_vote_from_live_payload(live_data)
+        if vote is not None:
+            return vote, "live_data"
+
+    ctx = _lookup_dltv_dispatch_context(match_key)
+    resolved_steam = _coerce_int(steam_id)
+    if resolved_steam <= 0:
+        resolved_steam = _steam_id_from_dltv_json_url(json_url) or 0
+    if resolved_steam <= 0:
+        resolved_steam = _coerce_int(ctx.get("steam_id"))
+    if resolved_steam <= 0:
+        resolved_steam = _steam_id_from_dltv_json_url(ctx.get("json_url")) or 0
+
+    if resolved_steam > 0:
+        fetched = _fetch_dltv_live_json_for_rating(int(resolved_steam))
+        if isinstance(fetched, dict):
+            vote = _parse_dltv_draft_vote_from_live_payload(fetched)
+            if vote is not None:
+                _remember_dltv_dispatch_context(
+                    match_key,
+                    steam_id=resolved_steam,
+                    json_url=f"https://dltv.org/live/{resolved_steam}.json",
+                    live_data=fetched,
+                )
+                return vote, "fetch"
+
+    cached_vote = ctx.get("last_vote")
+    if isinstance(cached_vote, dict):
+        return cached_vote, "cache"
+    return None, "none"
+
+
+def _append_dltv_rating_line(message_text: str, line: str) -> str:
+    text = str(message_text or "")
+    rating_line = str(line or "").strip()
+    if not rating_line:
+        return text
+    # Replace a previously appended rating line (re-dispatch / refresh paths).
+    stripped = re.sub(
+        r"(?:\n|^)DLTV rating:[^\n]*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).rstrip()
+    if not stripped:
+        return rating_line
+    return f"{stripped}\n{rating_line}"
+
+
+def _enrich_message_with_dltv_rating(
+    match_key: str,
+    message_text: str,
+    *,
+    json_url: Any = None,
+    live_data: Any = None,
+    steam_id: Any = None,
+) -> str:
+    if not DLTV_RATING_IN_SIGNAL:
+        return message_text
+    vote, source = _resolve_dltv_draft_vote_for_dispatch(
+        match_key,
+        json_url=json_url,
+        live_data=live_data,
+        steam_id=steam_id,
+    )
+    line = _format_dltv_rating_line(vote, unavailable=(vote is None))
+    print(f"   📊 {line} (source={source})")
+    return _append_dltv_rating_line(message_text, line)
 
 
 def _late_comeback_monitor_entry_for_game_time(
@@ -6786,7 +9613,10 @@ def _fetch_cyberscore_delayed_match_state(match_url: Optional[str]) -> Optional[
         try:
             game_time_value = float(game_time)
             lead_value = float(radiant_lead) if radiant_lead is not None else None
-            return {"game_time": game_time_value, "radiant_lead": lead_value}
+            return _bookmaker_enrich_delayed_match_state(
+                {"game_time": game_time_value, "radiant_lead": lead_value},
+                payload,
+            )
         except (TypeError, ValueError):
             pass
 
@@ -6813,7 +9643,7 @@ def _fetch_cyberscore_delayed_match_state(match_url: Optional[str]) -> Optional[
         lead_value = float(radiant_lead) if radiant_lead is not None else None
     except (TypeError, ValueError):
         lead_value = None
-    return {"game_time": game_time_value, "radiant_lead": lead_value}
+    return _bookmaker_enrich_delayed_match_state({"game_time": game_time_value, "radiant_lead": lead_value}, payload)
 
 
 def _fetch_sourcetv_delayed_match_state(json_url: str) -> Optional[Dict[str, Optional[float]]]:
@@ -6841,13 +9671,11 @@ def _fetch_sourcetv_delayed_match_state(json_url: str) -> Optional[Dict[str, Opt
         lead_value = float(radiant_lead) if radiant_lead is not None else None
     except (TypeError, ValueError):
         lead_value = None
-    return {"game_time": game_time_value, "radiant_lead": lead_value}
+    return _bookmaker_enrich_delayed_match_state({"game_time": game_time_value, "radiant_lead": lead_value}, payload)
 
 
-def _sourcetv_delayed_league_meta(
-    json_url: Optional[str],
-) -> Optional[Tuple[int, str]]:
-    """``(league_id, league_name)`` матча из моста по sourcetv://-URL."""
+def _sourcetv_delayed_league_name(json_url: Optional[str]) -> Optional[str]:
+    """league_name матча из моста по sourcetv://-URL (None если матча нет в мосте)."""
     id_match = re.search(r"sourcetv://matches/(\d+)", str(json_url or ""))
     if not id_match:
         return None
@@ -6859,17 +9687,7 @@ def _sourcetv_delayed_league_meta(
     payload = matches.get(id_match.group(1))
     if not isinstance(payload, dict):
         return None
-    try:
-        league_id = int(payload.get("league_id") or 0)
-    except (TypeError, ValueError):
-        league_id = 0
-    return league_id, str(payload.get("league_name") or "")
-
-
-def _sourcetv_delayed_league_name(json_url: Optional[str]) -> Optional[str]:
-    """Обратная совместимость для callers, которым нужно только название."""
-    meta = _sourcetv_delayed_league_meta(json_url)
-    return meta[1] if meta is not None else None
+    return str(payload.get("league_name") or "")
 
 
 def _fetch_delayed_match_state(json_url: Optional[str]) -> Optional[Dict[str, Optional[float]]]:
@@ -6923,7 +9741,7 @@ def _fetch_delayed_match_state(json_url: Optional[str]) -> Optional[Dict[str, Op
         lead_value = float(radiant_lead) if radiant_lead is not None else None
     except (TypeError, ValueError):
         lead_value = None
-    return {"game_time": game_time_value, "radiant_lead": lead_value}
+    return _bookmaker_enrich_delayed_match_state({"game_time": game_time_value, "radiant_lead": lead_value}, payload)
 
 
 def _fetch_delayed_match_game_time(json_url: Optional[str]) -> Optional[float]:
@@ -7085,58 +9903,13 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
         if _is_url_processed(match_key):
             _drop_delayed_match(match_key, reason="already_processed")
             continue
-        delayed_stake_context = payload.get("stake_multiplier_context")
-        if _late_opposite_all_reject_from_context(
-            delayed_stake_context,
-            force_odds_signal_test_active=bool(FORCE_ODDS_SIGNAL_TEST),
-        ):
-            delayed_context = (
-                delayed_stake_context
-                if isinstance(delayed_stake_context, dict)
-                else {}
-            )
-            reject_details = payload.get("add_url_details")
-            reject_details = (
-                dict(reject_details) if isinstance(reject_details, dict) else {}
-            )
-            reject_details.update(
-                {
-                    "dispatch_mode": "rejected_late_opposite_all_delayed",
-                    "dispatch_status_label": LATE_OPPOSITE_ALL_REJECT_REASON,
-                    "has_selected_late_star": True,
-                    "has_selected_all_star": True,
-                    "selected_late_sign": delayed_context.get("selected_late_sign"),
-                    "selected_all_sign": delayed_context.get("selected_all_sign"),
-                    "late_wr_pct": delayed_context.get("late_wr_pct"),
-                    "all_wr_pct": delayed_context.get("all_wr_pct"),
-                    "late_star_hit_count": delayed_context.get("late_star_hit_count"),
-                    "late_star_hit_metrics": list(
-                        delayed_context.get("late_star_hit_metrics") or []
-                    ),
-                }
-            )
-            add_url(
-                match_key,
-                reason=LATE_OPPOSITE_ALL_REJECT_REASON,
-                details=reject_details,
-            )
-            _drop_delayed_match(match_key, reason="late_opposite_all")
-            print(
-                "⏱️ Отложенный Late-сигнал отменён без отправки "
-                f"(валидный All противоположного знака): {match_key}"
-            )
-            continue
         # League-guard: фильтр лиг применяется в get_heads только при первичном
         # приёме, но delayed-очередь живёт независимо (и переживает рестарт со
         # старым кодом). Если sourcetv-матч жив в мосте и его лига вне allowlist —
         # дропаем, чтобы мусорный турнир не ушёл по таймеру watcher'а.
         if str(payload.get("json_url") or "").startswith("sourcetv://"):
-            _gd_league_meta = _sourcetv_delayed_league_meta(payload.get("json_url"))
-            if (
-                _gd_league_meta is not None
-                and not _league_matches_allowlist(*_gd_league_meta)
-            ):
-                _gd_league = _gd_league_meta[1]
+            _gd_league = _sourcetv_delayed_league_name(payload.get("json_url"))
+            if _gd_league and not _title_matches_allow_keywords(_gd_league):
                 _drop_delayed_match(match_key, reason="league_not_in_allowlist")
                 print(f"   🚫 Delayed дроп: лига вне allowlist ({_gd_league}) — {match_key}")
                 continue
@@ -7499,8 +10272,29 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 # Если глубокий порог (×MULT) достигнут, late WR >= MIN_WR и
                 # >= MIN_LATE_HITS late star-хитов, и спекулятив ещё не слался —
                 # шлём ставку x0.5 с defer_add_url=True (watcher остаётся жить,
-                # основной сигнал может прийти позже независимо). Если основной
-                # уже отправлен — delayed-запись закрыта и сюда мы не попадём.
+                # основной сигнал может прийти позже независимо).
+                # Если основная ставка (x1+) по этой карте/команде уже ушла —
+                # comeback-watcher отменяем целиком (не шлём x0.5 после x1).
+                _spec_smc_pre = payload.get("stake_multiplier_context") or {}
+                _main_fp = _main_late_stake_already_sent_for_map(
+                    match_key,
+                    stake_team_name=(
+                        _spec_smc_pre.get("stake_team_name")
+                        if isinstance(_spec_smc_pre, dict)
+                        else None
+                    ),
+                    payload=payload if isinstance(payload, dict) else None,
+                )
+                if _main_fp:
+                    print(
+                        "⏱️ Comeback watcher отменен: основная ставка уже отправлена "
+                        f"для {match_key} (fingerprint={_main_fp})"
+                    )
+                    _drop_delayed_matches_for_registry(
+                        match_key,
+                        reason="main_late_stake_cancels_comeback_watcher",
+                    )
+                    continue
                 if (
                     not payload.get("speculative_half_sent")
                     and monitor_target_diff is not None
@@ -7554,15 +10348,34 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                                 radiant_lead=current_radiant_lead,
                                 force_multiplier=float(LATE_PUB_COMEBACK_SPECULATIVE_STAKE),
                             )
-                            _spec_msg = _refresh_message_bookmaker_block_for_dispatch(
-                                match_key, _spec_msg
-                            )
+                            _imm_obs, _imm_map = None, None
+                            _s: Dict[str, Any] = {}
+                            _mc = delayed_state.get("map_num") if isinstance(delayed_state, dict) else None
+                            try: _mi = int(_mc) if _mc is not None else None
+                            except (TypeError, ValueError): _mi = None
+                            if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                            _sc = (delayed_state.get("status") if isinstance(delayed_state, dict) else None) or "live"
+                            if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                            _src = delayed_state if isinstance(delayed_state, dict) else {}
+                            _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                            if isinstance(_imm_enriched, dict):
+                                try: _rm = int(_imm_enriched.get("map_num"))
+                                except (TypeError, ValueError): _rm = None
+                                if isinstance(_rm, int) and 1 <= _rm <= 5:
+                                    _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(match_key or "").strip()
+                                    if _dk: _imm_obs["match_key"]=_dk
+                                    if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                                    _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                             _spec_sent = _deliver_and_persist_signal(
                                 match_key,
                                 _spec_msg,
+                                current_map_observation=_imm_obs,
+                                map_num=_imm_map,
+                                selected_side=monitor_target_side,
                                 add_url_reason="star_signal_sent_late_pub_comeback_speculative_half",
                                 add_url_details=_spec_details,
                                 defer_add_url=True,
+                                json_url=payload.get("json_url")
                             )
                             if _spec_sent:
                                 _update_delayed_match(match_key, speculative_half_sent=True)
@@ -7763,6 +10576,8 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 last_progress_at=last_progress_at,
             )
             continue
+        # Dispatcher ready — accelerate odds polling for tighter freshness.
+        accelerate_winline_current_map_polling(match_key)
         if (
             delayed_reason == "same_sign_lane_adv_wait_4_10"
             and not monitor_ready
@@ -8108,15 +10923,90 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 game_time_seconds=current_game_time,
                 radiant_lead=current_radiant_lead,
             )
-            delivery_message_text = _refresh_message_bookmaker_block_for_dispatch(
-                match_key,
-                delivery_message_text,
+            delayed_observation = None
+            stored_obs = payload.get("current_map_observation") if isinstance(payload.get("current_map_observation"), dict) else {}
+            if isinstance(delayed_state, dict):
+                obs_map = delayed_state.get("map_num")
+                obs_status = delayed_state.get("status")
+                obs_at = delayed_state.get("observed_at")
+                if obs_map is None:
+                    obs_map = stored_obs.get("map_num", payload.get("map_num"))
+                if not obs_status:
+                    obs_status = stored_obs.get("status") or payload.get("status") or "live"
+                if obs_at is None:
+                    obs_at = stored_obs.get("observed_at")
+                try:
+                    obs_at_f = float(obs_at) if obs_at is not None else float(time.time())
+                except (TypeError, ValueError):
+                    obs_at_f = float(time.time())
+                try:
+                    obs_map_i = int(obs_map) if obs_map is not None else None
+                except (TypeError, ValueError):
+                    obs_map_i = None
+                # Only attach observation when map is known; legacy delayed states without
+                # map/status keep observation=None so odds delivery stays backward-compatible.
+                if obs_map_i is not None and 1 <= obs_map_i <= 5:
+                    delayed_observation = {
+                        "map_num": obs_map_i,
+                        "status": obs_status or "live",
+                        "observed_at": obs_at_f,
+                    }
+            elif isinstance(stored_obs, dict) and stored_obs:
+                try:
+                    obs_map_i = int(stored_obs.get("map_num")) if stored_obs.get("map_num") is not None else None
+                except (TypeError, ValueError):
+                    obs_map_i = None
+                if obs_map_i is not None and 1 <= obs_map_i <= 5:
+                    delayed_observation = dict(stored_obs)
+            if isinstance(delayed_observation, dict):
+                # Bind drain-loop/delivery match_key into the rebuilt observation so
+                # strict identity validation accepts the fresh map/status/observed_at.
+                # Never invent a foreign key: use canonical delivery key when present;
+                # keep stored identity only when it already equals that key (same value).
+                delivery_key = str(match_key or "").strip()
+                if delivery_key:
+                    delayed_observation["match_key"] = delivery_key
+                obs_status = str(delayed_observation.get("status") or "").strip().lower()
+                if obs_status in {"finished", "ended", "complete", "completed"}:
+                    try:
+                        finished_map = delayed_observation.get("map_num")
+                        _bookmaker_clear_odds_delivery_pending(
+                            match_key,
+                            map_num=finished_map,
+                        )
+                    except Exception:
+                        pass
+                    print(f"   ⏭️ Delayed bookmaker skip: match finished for {match_key}")
+                    continue
+            # Concrete delayed bets: forward only structured side fields already on
+            # the delayed payload. Precedence matches established observation/side
+            # plumbing (add_url_details.target_side → networth/kills → stake SMC).
+            # Missing/empty structured side must be explicit None (fail-closed
+            # selected_side_missing), never _BOOKMAKER_SELECTED_SIDE_UNSET dual footer.
+            delayed_selected_side = (
+                (
+                    (add_url_details or {}).get("target_side")
+                    if isinstance(add_url_details, dict)
+                    else None
+                )
+                or payload.get("networth_target_side")
+                or payload.get("kills_target_side")
+                or (
+                    (payload.get("stake_multiplier_context") or {}).get("target_side")
+                    if isinstance(payload.get("stake_multiplier_context"), dict)
+                    else None
+                )
             )
+            if delayed_selected_side is not None:
+                delayed_selected_side = str(delayed_selected_side).strip() or None
             delivery_confirmed = _deliver_and_persist_signal(
                 match_key,
                 delivery_message_text,
                 add_url_reason=add_url_reason,
                 add_url_details=add_url_details,
+                json_url=payload.get("json_url"),
+                current_map_observation=delayed_observation,
+                selected_side=delayed_selected_side,
             )
             if delivery_confirmed:
                 if (
@@ -8132,6 +11022,10 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                         f"wr={late_pub_comeback_table_wr_level}, "
                         f"minute={late_pub_comeback_table_decision.get('source_minute') if late_pub_comeback_table_decision else 'n/a'}, "
                         f"threshold={int(late_pub_comeback_table_decision.get('threshold')) if late_pub_comeback_table_decision and late_pub_comeback_table_decision.get('threshold') is not None else 'n/a'})"
+                    )
+                    _drop_delayed_matches_for_registry(
+                        match_key,
+                        reason="main_late_pub_table_sent_cancels_watcher",
                     )
                 elif late_comeback_monitor_active and monitor_ready and monitor_target_diff is not None:
                     print(
@@ -8220,6 +11114,14 @@ def _bookmaker_infer_map_num(live_league_data: Optional[dict], score_text: str =
         except (TypeError, ValueError):
             return None
 
+    # Explicit current map context wins over series-score inference.
+    for key in ("game_map_number", "map_num", "current_map", "map_number"):
+        explicit = _to_int(payload.get(key))
+        if explicit is None:
+            explicit = _to_int(match_payload.get(key))
+        if explicit is not None:
+            return explicit if 1 <= explicit <= 5 else None
+
     r_wins = _to_int(payload.get("radiant_series_wins"))
     d_wins = _to_int(payload.get("dire_series_wins"))
     if r_wins is None:
@@ -8243,6 +11145,1023 @@ def _bookmaker_infer_map_num(live_league_data: Optional[dict], score_text: str =
     return None
 
 
+def _bookmaker_effective_sites_for_mode(gate_mode: Optional[str] = None) -> Tuple[str, ...]:
+    """Odds-mode is Winline-only; presence keeps the configured multi-bookmaker set."""
+    mode = _normalize_bookmaker_gate_mode(
+        gate_mode if gate_mode is not None else BOOKMAKER_PREFETCH_GATE_MODE,
+        default="odds",
+    )
+    if mode == "odds":
+        return ("winline",)
+    sites = tuple(BOOKMAKER_PREFETCH_SITES) if BOOKMAKER_PREFETCH_SITES else ("betboom", "pari", "winline")
+    return sites
+
+
+def _bookmaker_is_strict_winline_current_map(
+    site_payload: Any,
+    *,
+    expected_map_num: Optional[int] = None,
+) -> bool:
+    if not isinstance(site_payload, dict):
+        return False
+    if bool(site_payload.get("market_closed")):
+        return False
+    if str(site_payload.get("market_kind") or "").strip() != "current_map_winner":
+        return False
+    try:
+        map_num = int(site_payload.get("map_num")) if site_payload.get("map_num") is not None else None
+    except (TypeError, ValueError):
+        map_num = None
+    if map_num is None or not (1 <= map_num <= 5):
+        return False
+    if expected_map_num is not None:
+        try:
+            expected = int(expected_map_num)
+        except (TypeError, ValueError):
+            expected = None
+        if expected is not None and map_num != expected:
+            return False
+    if str(site_payload.get("p1_team") or "").strip() != "team1":
+        return False
+    if str(site_payload.get("p2_team") or "").strip() != "team2":
+        return False
+    odds = site_payload.get("odds")
+    if not isinstance(odds, list) or len(odds) < 2:
+        return False
+    try:
+        p1 = float(odds[0])
+        p2 = float(odds[1])
+    except (TypeError, ValueError):
+        return False
+    if not (math.isfinite(p1) and math.isfinite(p2) and p1 > 1.01 and p2 > 1.01):
+        return False
+    return True
+
+
+
+def _bookmaker_validate_current_map_observation(
+    observation: Any,
+    *,
+    expected_map_num: Optional[int] = None,
+    expected_match_key: Optional[str] = None,
+    now: Optional[float] = None,
+    max_age_seconds: Optional[float] = None,
+) -> str:
+    """Normalize live current-map observation before odds reservation/send.
+
+    Accepts only fresh exact-map observations bound to the expected delivery
+    match_key and an explicit live/in-progress status from the existing contract
+    vocabulary (online/live/running/inprogress/in_progress).
+
+    Stable reasons: current_map_unavailable | current_map_mismatch | match_finished |
+    current_map_observation_stale | ok.
+    """
+    if not isinstance(observation, dict):
+        return "current_map_unavailable"
+
+    # Bind observation identity to the resolver's canonical expected delivery key.
+    # Fail closed unless match_key exists, is non-None/non-empty, and equals the
+    # expected delivery key. Absent/None/empty/foreign identities never reserve.
+    expected_key = str(expected_match_key or "").strip()
+    if expected_key:
+        obs_key = str(observation.get("match_key") or "").strip()
+        if not obs_key or obs_key != expected_key:
+            return "current_map_unavailable"
+
+    status = str(observation.get("status") or "").strip().lower()
+    # Terminal lifecycle: finished/ended and canceled variants — no reserve/send.
+    if status in {"finished", "ended", "complete", "completed", "canceled", "cancelled"}:
+        return "match_finished"
+    # Existing-contract live/in-progress vocabulary only (see status_looks_live).
+    if status not in {"online", "live", "running", "inprogress", "in_progress"}:
+        # scheduled/pre-match/empty/unknown/missing → fail closed as unavailable.
+        return "current_map_unavailable"
+
+    try:
+        obs_map = int(observation["map_num"]) if observation.get("map_num") is not None else None
+    except (TypeError, ValueError, KeyError):
+        obs_map = None
+    if obs_map is None or not (1 <= obs_map <= 5):
+        return "current_map_unavailable"
+    if expected_map_num is not None:
+        try:
+            expected = int(expected_map_num)
+        except (TypeError, ValueError):
+            expected = None
+        if expected is not None and obs_map != expected:
+            return "current_map_mismatch"
+    try:
+        observed_at = float(observation.get("observed_at"))
+    except (TypeError, ValueError):
+        return "current_map_observation_stale"
+    now_ts = float(now if now is not None else time.time())
+    age_limit = float(
+        max_age_seconds
+        if max_age_seconds is not None
+        else BOOKMAKER_ODDS_MAX_AGE_SECONDS
+    )
+    age = now_ts - observed_at
+    if age < 0:
+        return "current_map_observation_stale"
+    if age > age_limit:
+        return "current_map_observation_stale"
+    return "ok"
+
+
+def _bookmaker_validate_odds_freshness(
+    snapshot: Any,
+    *,
+    now: Optional[float] = None,
+    max_age_seconds: Optional[float] = None,
+) -> str:
+    """Gate open odds by successful-refresh timestamp.
+
+    Stable reasons: odds_timestamp_missing | odds_timestamp_future | odds_stale | ok.
+    Prefers odds_refreshed_at; falls back to finished_at for legacy snapshots.
+    """
+    if not isinstance(snapshot, dict):
+        return "odds_timestamp_missing"
+    raw_ts = snapshot.get("odds_refreshed_at")
+    if raw_ts is None:
+        raw_ts = snapshot.get("finished_at")
+    if raw_ts is None:
+        return "odds_timestamp_missing"
+    try:
+        refreshed_at = float(raw_ts)
+    except (TypeError, ValueError):
+        return "odds_timestamp_missing"
+    now_ts = float(now if now is not None else time.time())
+    age = now_ts - refreshed_at
+    if age < 0:
+        return "odds_timestamp_future"
+    age_limit = float(
+        max_age_seconds
+        if max_age_seconds is not None
+        else BOOKMAKER_ODDS_MAX_AGE_SECONDS
+    )
+    if age > age_limit:
+        return "odds_stale"
+    return "ok"
+
+
+def _bookmaker_resolve_retained_deadline(
+    *,
+    prev: Optional[Dict[str, Any]],
+    deadline_ts: Optional[float],
+    now: float,
+    create_if_missing: bool,
+) -> Tuple[Optional[float], bool]:
+    """Return (deadline_at, past_deadline). Never extends an existing deadline_at."""
+    retained: Optional[float] = None
+    if isinstance(prev, dict) and prev.get("deadline_at") is not None:
+        try:
+            retained = float(prev.get("deadline_at"))
+        except (TypeError, ValueError):
+            retained = None
+    explicit: Optional[float] = None
+    if deadline_ts is not None:
+        try:
+            explicit = float(deadline_ts)
+        except (TypeError, ValueError):
+            explicit = None
+    if retained is not None:
+        deadline_at = retained
+    elif explicit is not None:
+        deadline_at = explicit
+    elif create_if_missing:
+        deadline_at = float(now) + float(BOOKMAKER_ODDS_WAIT_DEADLINE_SECONDS)
+    else:
+        deadline_at = None
+    # Inclusive terminal boundary: now == deadline_at is already past/terminal.
+    past_deadline = bool(deadline_at is not None and float(now) >= float(deadline_at))
+    return deadline_at, past_deadline
+
+
+def _bookmaker_clear_odds_delivery_pending(
+    match_key: str,
+    *,
+    map_num: Optional[int] = None,
+    token: Optional[str] = None,
+) -> None:
+    """Drop pending for exact-map finished wait or matching owner-token completion.
+
+    Match-key-only cleanup is forbidden: callers must pass the finishing operation's
+    established current-map identity. Tokenless finished cleanup may delete only
+    state == temporarily_closed_wait. Owner-token entries require an exact lease
+    match (prepare/commit/rollback/map-change lifecycle); mismatched/missing tokens
+    and tokenless non-wait states fail closed.
+    """
+    key = str(match_key or "").strip()
+    if not key:
+        return
+    # No established map identity → no-op (do not wipe by match_key alone).
+    if map_num is None:
+        return
+    try:
+        expected_map = int(map_num)
+    except (TypeError, ValueError):
+        return
+    expected_token = str(token or "").strip()
+    with bookmaker_odds_delivery_pending_lock:
+        entry = bookmaker_odds_delivery_pending.get(key)
+        if not isinstance(entry, dict):
+            return
+        try:
+            pending_map = int(entry.get("map_num")) if entry.get("map_num") is not None else None
+        except (TypeError, ValueError):
+            pending_map = None
+        # Fail closed: missing/unknown pending map is never eligible for cleanup.
+        # Exact match_key + map_num identity is mandatory for finished/owner clears.
+        if pending_map is None or pending_map != expected_map:
+            return
+        pending_token = str(entry.get("token") or "").strip()
+        if pending_token:
+            # Owner reservation requires exact lease/token match.
+            if not expected_token or expected_token != pending_token:
+                return
+        else:
+            # Tokenless finished cleanup: only waiting state is eligible.
+            if str(entry.get("state") or "") != "temporarily_closed_wait":
+                return
+        bookmaker_odds_delivery_pending.pop(key, None)
+
+
+
+def _bookmaker_enrich_delayed_match_state(
+    state: Optional[Dict[str, Any]],
+    source: Any = None,
+) -> Optional[Dict[str, Any]]:
+    """Attach optional map/status/observed_at fields for bookmaker lifecycle gates."""
+    if not isinstance(state, dict):
+        return state
+    out = dict(state)
+    src = source if isinstance(source, dict) else {}
+    # map_num
+    if out.get("map_num") is None:
+        for key in ("map_num", "bookmaker_map_num", "current_map", "map"):
+            raw = src.get(key) if key in src else out.get(key)
+            if raw is None:
+                continue
+            try:
+                val = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= val <= 5:
+                out["map_num"] = val
+                break
+        if out.get("map_num") is None:
+            # infer from series wins if present
+            try:
+                r = src.get("radiant_series_wins")
+                d = src.get("dire_series_wins")
+                if r is not None and d is not None:
+                    inferred = int(r) + int(d) + 1
+                    if 1 <= inferred <= 5:
+                        out["map_num"] = inferred
+            except (TypeError, ValueError):
+                pass
+    # status
+    if out.get("status") is None:
+        for key in ("status", "match_status", "state"):
+            raw = src.get(key) if key in src else out.get(key)
+            if raw is None:
+                continue
+            s = str(raw).strip().lower()
+            if s:
+                out["status"] = s
+                break
+        if out.get("status") is None:
+            out["status"] = "live"
+    # observed_at
+    if out.get("observed_at") is None:
+        for key in ("observed_at", "timestamp", "updated_at", "ts"):
+            raw = src.get(key) if key in src else out.get(key)
+            if raw is None:
+                continue
+            try:
+                out["observed_at"] = float(raw)
+                break
+            except (TypeError, ValueError):
+                continue
+        if out.get("observed_at") is None:
+            out["observed_at"] = float(time.time())
+    return out
+
+
+def _bookmaker_odds_market_state(match_key: str) -> str:
+    """Return market state for odds-mode gate."""
+    snapshot = _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
+    if not isinstance(snapshot, dict):
+        return "prefetch_not_found"
+    if str(snapshot.get("status") or "") != "done":
+        if BOOKMAKER_PREFETCH_GATE_MODE == "odds" and snapshot.get("odds_refresh_ready") is False:
+            return str(snapshot.get("error") or "shared_camoufox_refresh_failed")
+        return f"prefetch_{snapshot.get('status') or 'unknown'}"
+    sites_payload = snapshot.get("sites")
+    if not isinstance(sites_payload, dict):
+        return "invalid_sites_payload"
+    expected_map = snapshot.get("map_num")
+    try:
+        expected_map_num = int(expected_map) if expected_map is not None else None
+    except (TypeError, ValueError):
+        expected_map_num = None
+    winline = sites_payload.get("winline")
+    if _bookmaker_is_strict_winline_current_map(winline, expected_map_num=expected_map_num):
+        return "open_valid_odds"
+    if isinstance(winline, dict) and bool(winline.get("market_closed")):
+        return "temporarily_closed_wait"
+    return "no_strict_winline_current_map"
+
+
+def _bookmaker_new_reservation_token() -> str:
+    return secrets.token_hex(16)
+
+
+def _bookmaker_reservation_context_from_pending(
+    match_key: str,
+    pending_entry: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not isinstance(pending_entry, dict):
+        return None
+    token = str(pending_entry.get("token") or "").strip()
+    if not token:
+        return None
+    try:
+        map_num = int(pending_entry.get("map_num")) if pending_entry.get("map_num") is not None else None
+    except (TypeError, ValueError):
+        map_num = None
+    return {
+        "match_key": str(match_key or ""),
+        "map_num": map_num,
+        "token": token,
+        "state": str(pending_entry.get("state") or "prepared"),
+        "created_at": pending_entry.get("created_at"),
+        "updated_at": pending_entry.get("updated_at"),
+    }
+
+
+def _bookmaker_commit_odds_delivery(
+    match_key: str,
+    *,
+    reservation_context: Optional[Dict[str, Any]] = None,
+    pending_state: Optional[Dict[str, Any]] = None,
+    map_num: Optional[int] = None,
+    token: Optional[str] = None,
+) -> bool:
+    """Mark map-scoped odds reservation as confirmed sent. Token-scoped + idempotent."""
+    pending = pending_state if isinstance(pending_state, dict) else bookmaker_odds_delivery_pending
+    ctx = reservation_context if isinstance(reservation_context, dict) else {}
+    key = str(match_key or ctx.get("match_key") or "").strip()
+    if not key:
+        return False
+    try:
+        expected_map = int(map_num) if map_num is not None else (
+            int(ctx["map_num"]) if ctx.get("map_num") is not None else None
+        )
+    except (TypeError, ValueError, KeyError):
+        expected_map = None
+    expected_token = str(token or ctx.get("token") or "").strip()
+    if not expected_token:
+        return False
+    now = time.time()
+    with bookmaker_odds_delivery_pending_lock:
+        prev = pending.get(key) if isinstance(pending.get(key), dict) else None
+        if not isinstance(prev, dict):
+            return False
+        try:
+            prev_map = int(prev.get("map_num")) if prev.get("map_num") is not None else None
+        except (TypeError, ValueError):
+            prev_map = None
+        prev_token = str(prev.get("token") or "").strip()
+        prev_state = str(prev.get("state") or "")
+        if expected_map is not None and prev_map is not None and prev_map != expected_map:
+            return False
+        if prev_token and prev_token != expected_token:
+            return False
+        if prev_state == "sent":
+            # Idempotent re-commit of the same ownership.
+            if not prev_token or prev_token == expected_token:
+                return True
+            return False
+        if prev_state not in {"prepared", "reserved", "open_valid_odds"}:
+            return False
+        pending[key] = {
+            "map_num": prev_map if prev_map is not None else expected_map,
+            "state": "sent",
+            "token": expected_token,
+            "created_at": float(prev.get("created_at") or now),
+            "sent_at": now,
+            "updated_at": now,
+        }
+        return True
+
+
+def _bookmaker_rollback_odds_delivery(
+    match_key: str,
+    *,
+    reservation_context: Optional[Dict[str, Any]] = None,
+    pending_state: Optional[Dict[str, Any]] = None,
+    map_num: Optional[int] = None,
+    token: Optional[str] = None,
+) -> bool:
+    """Release a matching reservation so the same map can retry. Stale tokens are no-ops."""
+    pending = pending_state if isinstance(pending_state, dict) else bookmaker_odds_delivery_pending
+    ctx = reservation_context if isinstance(reservation_context, dict) else {}
+    key = str(match_key or ctx.get("match_key") or "").strip()
+    if not key:
+        return False
+    try:
+        expected_map = int(map_num) if map_num is not None else (
+            int(ctx["map_num"]) if ctx.get("map_num") is not None else None
+        )
+    except (TypeError, ValueError, KeyError):
+        expected_map = None
+    expected_token = str(token or ctx.get("token") or "").strip()
+    if not expected_token:
+        return False
+    with bookmaker_odds_delivery_pending_lock:
+        prev = pending.get(key) if isinstance(pending.get(key), dict) else None
+        if not isinstance(prev, dict):
+            return False
+        prev_state = str(prev.get("state") or "")
+        if prev_state == "sent":
+            return False
+        try:
+            prev_map = int(prev.get("map_num")) if prev.get("map_num") is not None else None
+        except (TypeError, ValueError):
+            prev_map = None
+        prev_token = str(prev.get("token") or "").strip()
+        if expected_map is not None and prev_map is not None and prev_map != expected_map:
+            return False
+        if prev_token and prev_token != expected_token:
+            return False
+        if prev_state in {"prepared", "reserved", "open_valid_odds"}:
+            pending.pop(key, None)
+            return True
+        return False
+
+
+def _bookmaker_validate_odds_reservation_context(
+    match_key: str,
+    reservation_context: Optional[Dict[str, Any]],
+) -> bool:
+    """Validate an explicit minimal-preflight handoff without mutating the lease."""
+    if not isinstance(reservation_context, dict):
+        return False
+    key = str(match_key or "").strip()
+    context_key = str(reservation_context.get("match_key") or "").strip()
+    token = str(reservation_context.get("token") or "").strip()
+    if not key or context_key != key or not token:
+        return False
+    try:
+        context_map = (
+            int(reservation_context["map_num"])
+            if reservation_context.get("map_num") is not None
+            else None
+        )
+    except (TypeError, ValueError):
+        return False
+    with bookmaker_odds_delivery_pending_lock:
+        pending = bookmaker_odds_delivery_pending.get(key)
+        if not isinstance(pending, dict):
+            return False
+        try:
+            pending_map = int(pending["map_num"]) if pending.get("map_num") is not None else None
+        except (TypeError, ValueError):
+            return False
+        return (
+            str(pending.get("state") or "") in {"prepared", "reserved"}
+            and str(pending.get("token") or "").strip() == token
+            and pending_map == context_map
+        )
+
+
+# Sentinel: omit selected_side → legacy dual P1/P2 footer (non-concrete / gate paths).
+# Explicit None/empty on a concrete-bet path is fail-closed (no dual, no fabricated coeff).
+_BOOKMAKER_SELECTED_SIDE_UNSET: Any = object()
+
+
+def _bookmaker_map_selected_side_to_odds_index(selected_side: Any) -> Tuple[Optional[int], str]:
+    """Map radiant|dire|team1|team2|p1|p2 to odds index. Fail-closed on unknown/missing."""
+    if selected_side is None:
+        return None, "selected_side_missing"
+    side = str(selected_side).strip().lower()
+    if not side:
+        return None, "selected_side_missing"
+    if side in {"radiant", "team1", "p1", "1"}:
+        return 0, "ok"
+    if side in {"dire", "team2", "p2", "2"}:
+        return 1, "ok"
+    return None, "selected_side_unmappable"
+
+
+def _bookmaker_resolve_odds_delivery_state(
+    match_key: str,
+    *,
+    pending_state: Optional[Dict[str, Any]] = None,
+    deadline_ts: Optional[float] = None,
+    map_num: Optional[int] = None,
+    current_map_observation: Any = None,
+    selected_side: Any = _BOOKMAKER_SELECTED_SIDE_UNSET,
+) -> Dict[str, Any]:
+    """Pending-poll state machine: closed wait -> prepare/reserve open odds; never marks sent."""
+    pending = pending_state if isinstance(pending_state, dict) else {}
+    now = time.time()
+    try:
+        expected_map = int(map_num) if map_num is not None else None
+    except (TypeError, ValueError):
+        expected_map = None
+
+    prev = pending.get(match_key) if isinstance(pending.get(match_key), dict) else None
+    if prev is not None and expected_map is not None:
+        try:
+            prev_map = int(prev.get("map_num")) if prev.get("map_num") is not None else None
+        except (TypeError, ValueError):
+            prev_map = None
+        if prev_map is not None and prev_map != expected_map:
+            pending.pop(match_key, None)
+            prev = None
+
+    market_state = _bookmaker_odds_market_state(match_key)
+    snapshot = _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
+    sites_payload = (snapshot or {}).get("sites") if isinstance(snapshot, dict) else None
+    winline = sites_payload.get("winline") if isinstance(sites_payload, dict) else None
+    refresh_gate_ready = not (
+        isinstance(snapshot, dict)
+        and BOOKMAKER_PREFETCH_GATE_MODE == "odds"
+        and snapshot.get("odds_refresh_ready") is False
+    )
+    if refresh_gate_ready and expected_map is not None and isinstance(winline, dict):
+        if _bookmaker_is_strict_winline_current_map(winline, expected_map_num=expected_map):
+            market_state = "open_valid_odds"
+        elif bool(winline.get("market_closed")):
+            market_state = "temporarily_closed_wait"
+        else:
+            market_state = "no_strict_winline_current_map"
+
+    # W2: fresh exact-current-map observation is mandatory. None is never legacy-ok.
+    # Bind observation match_key to this resolver's canonical expected delivery key.
+    observation_reason = _bookmaker_validate_current_map_observation(
+        current_map_observation,
+        expected_map_num=expected_map,
+        expected_match_key=match_key,
+        now=now,
+    )
+    if observation_reason == "ok" and expected_map is None and isinstance(current_map_observation, dict):
+        try:
+            obs_map = int(current_map_observation.get("map_num"))
+            if 1 <= obs_map <= 5:
+                expected_map = obs_map
+        except (TypeError, ValueError):
+            pass
+
+    if observation_reason in {"current_map_mismatch", "match_finished"}:
+        pending.pop(match_key, None)
+        return {
+            "state": "terminal_skip",
+            "should_send": False,
+            "reason": observation_reason,
+        }
+
+    odds_fresh_reason = "ok"
+    if market_state == "open_valid_odds":
+        odds_fresh_reason = _bookmaker_validate_odds_freshness(snapshot, now=now)
+
+    temporary_wait_reasons = {
+        "current_map_unavailable",
+        "current_map_observation_stale",
+        "odds_stale",
+        "odds_timestamp_missing",
+        "odds_timestamp_future",
+    }
+
+    needs_wait = (
+        market_state == "temporarily_closed_wait"
+        or observation_reason in temporary_wait_reasons
+        or (market_state == "open_valid_odds" and odds_fresh_reason != "ok")
+    )
+
+    deadline_at, past_deadline = _bookmaker_resolve_retained_deadline(
+        prev=prev,
+        deadline_ts=deadline_ts,
+        now=now,
+        create_if_missing=bool(
+            needs_wait
+            or market_state not in {"open_valid_odds"}
+            or (prev and str(prev.get("state") or "") == "temporarily_closed_wait")
+            or (prev and str(prev.get("state") or "") == "terminal_skip")
+        ),
+    )
+
+    def _retain_terminal_deadline(reason: str) -> Dict[str, Any]:
+        """Immutable retained-deadline terminal: tokenless, no prepare/reserve/send.
+
+        past_deadline decisions must not create, replace, clear, or rewrite any
+        pending/reservation entry (including updated_at/state transitions).
+        """
+        return {"state": "terminal_skip", "should_send": False, "reason": reason}
+
+    # Retained deadline is an immutable terminal gate before any owner token path.
+    if past_deadline:
+        if market_state == "temporarily_closed_wait":
+            terminal_reason = "deadline_while_closed"
+        elif observation_reason in temporary_wait_reasons:
+            terminal_reason = observation_reason
+        elif odds_fresh_reason != "ok":
+            terminal_reason = odds_fresh_reason
+        else:
+            terminal_reason = "deadline_expired"
+        return _retain_terminal_deadline(terminal_reason)
+
+    if market_state == "open_valid_odds" and not needs_wait:
+        if prev and str(prev.get("state") or "") == "sent":
+            return {
+                "state": "open_valid_odds",
+                "should_send": False,
+                "reason": "already_sent",
+                "reservation_context": _bookmaker_reservation_context_from_pending(match_key, prev),
+            }
+        # A second prepare is an observer, not the owner: never disclose or reuse the lease token.
+        if prev and str(prev.get("state") or "") in {"prepared", "reserved"}:
+            try:
+                prev_map = int(prev.get("map_num")) if prev.get("map_num") is not None else None
+            except (TypeError, ValueError):
+                prev_map = None
+            if expected_map is None or prev_map is None or prev_map == expected_map:
+                return {
+                    "state": "reservation_inflight",
+                    "should_send": False,
+                    "reason": "reservation_inflight",
+                    "map_num": prev_map if prev_map is not None else expected_map,
+                }
+        token = _bookmaker_new_reservation_token()
+        entry = {
+            "map_num": expected_map,
+            "state": "prepared",
+            "token": token,
+            "created_at": float((prev or {}).get("created_at") or now),
+            "updated_at": now,
+        }
+        if isinstance(prev, dict) and prev.get("deadline_at") is not None:
+            try:
+                entry["deadline_at"] = float(prev.get("deadline_at"))
+            except (TypeError, ValueError):
+                pass
+        pending[match_key] = entry
+        block, ready, reason = _bookmaker_format_odds_block(
+            match_key, selected_side=selected_side
+        )
+        reservation = _bookmaker_reservation_context_from_pending(match_key, pending[match_key])
+        return {
+            "state": "prepared",
+            "should_send": bool(ready),
+            "reason": reason if ready else (reason or "not_ready"),
+            "block": block,
+            "reservation_context": reservation,
+            "token": token,
+            "map_num": expected_map,
+        }
+
+    if needs_wait:
+        if market_state == "temporarily_closed_wait":
+            wait_reason = "temporarily_closed_wait"
+        elif observation_reason in temporary_wait_reasons:
+            wait_reason = observation_reason
+        elif odds_fresh_reason != "ok":
+            wait_reason = odds_fresh_reason
+        else:
+            wait_reason = "temporarily_closed_wait"
+        entry = {
+            "map_num": expected_map,
+            "state": "temporarily_closed_wait",
+            "created_at": float((prev or {}).get("created_at") or now),
+            "updated_at": now,
+        }
+        if deadline_at is not None:
+            entry["deadline_at"] = float(deadline_at)
+        pending[match_key] = entry
+        return {
+            "state": "temporarily_closed_wait",
+            "should_send": False,
+            "reason": wait_reason,
+            "deadline_at": deadline_at,
+        }
+
+    if prev and str(prev.get("state") or "") == "temporarily_closed_wait":
+        return {
+            "state": "temporarily_closed_wait",
+            "should_send": False,
+            "reason": market_state,
+            "deadline_at": deadline_at,
+        }
+
+    return {"state": market_state, "should_send": False, "reason": market_state}
+
+def _bookmaker_live_proxy_pool() -> List[Dict[str, Any]]:
+    """Return proxy candidate dicts for bookmaker/Winline rotation. Does not mutate api_to_proxy."""
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    _allowed_countries = frozenset({"DE", "US", "RU"})
+
+    def _country_for(url: str) -> str:
+        """Classify proxy host. Fail-closed: unknown/empty/malformed => empty (not DE)."""
+        host = ""
+        try:
+            host = (urlparse(str(url or "")).hostname or "").strip().lower()
+        except Exception:
+            host = ""
+        if not host:
+            return ""
+        if host.startswith("77.221.150.") or host.startswith("109.120.147."):
+            return "RU"
+        if host.startswith("154.195."):
+            return "DE"
+        # Current US residential inventory
+        if host.startswith("172.121.") or ".us." in host or host.endswith(".us"):
+            return "US"
+        # Unknown host: do not default to DE (fail closed for Winline).
+        return ""
+
+    def _normalize_country(raw: Any, url: str) -> str:
+        label = str(raw or "").strip().upper()
+        if label in _allowed_countries:
+            return label
+        if label:
+            # Explicit non-allowlisted label (UNKNOWN, ??, etc.): keep non-DE/US identity
+            # but never relabel as DE; empty means unclassified for Winline filter.
+            return ""
+        return _country_for(url)
+
+    pools: List[Any] = []
+    try:
+        pools.append(BOOKMAKER_PROXY_POOL)
+    except Exception:
+        pass
+    try:
+        pools.append(DLTV_PROXY_POOL)
+    except Exception:
+        pass
+    try:
+        if BOOKMAKER_PROXY_URL:
+            pools.append([BOOKMAKER_PROXY_URL])
+    except Exception:
+        pass
+
+    for pool in pools:
+        if not isinstance(pool, (list, tuple, set)):
+            continue
+        for item in pool:
+            try:
+                if isinstance(item, dict):
+                    url = str(item.get("url") or item.get("proxy") or "").strip()
+                    country = _normalize_country(item.get("country"), url)
+                else:
+                    url = str(item or "").strip()
+                    country = _country_for(url)
+            except Exception:
+                continue
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            out.append({"url": url, "country": country})
+    return out
+
+
+def _bookmaker_winline_proxy_candidates() -> List[Dict[str, Any]]:
+    """Winline: explicit DE(+optional US) only; RU/unknown/empty excluded.
+
+    Policy accepts currently available DE/US inventory:
+    - up to 5 DE candidates
+    - up to 1 US candidate when present
+    - 5 DE + 0 US is valid (no fabricated US entry)
+    Independent allowlist at filter: only DE/US pass; never promote RU/unknown.
+    Credentials never logged via safe label helper.
+    """
+    pool = _bookmaker_live_proxy_pool()
+    de: List[Dict[str, Any]] = []
+    us: List[Dict[str, Any]] = []
+    for p in pool:
+        if not isinstance(p, dict):
+            continue
+        country = str(p.get("country") or "").strip().upper()
+        if country == "DE":
+            de.append(p)
+        elif country == "US":
+            us.append(p)
+        # RU / unknown / empty / malformed: skip without error
+    # Prefer DE, then optional US. Empty pool is allowed (caller decides direct/fallback).
+    return de[:5] + us[:1]
+
+
+def _bookmaker_proxy_safe_label(proxy_item: Any) -> str:
+    """Sanitize proxy for logs: never include credentials."""
+    url = ""
+    country = ""
+    if isinstance(proxy_item, dict):
+        url = str(proxy_item.get("url") or proxy_item.get("proxy") or "")
+        country = str(proxy_item.get("country") or "")
+    else:
+        url = str(proxy_item or "")
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        port = parsed.port or ""
+        scheme = parsed.scheme or "http"
+        label = f"{scheme}://{host}:{port}" if host else "proxy"
+    except Exception:
+        label = "proxy"
+    if country:
+        return f"{label} ({country})"
+    return label
+
+
+# Process-wide Winline proxy rotation for the shared Camoufox session.
+_bookmaker_shared_proxy_candidates: List[Dict[str, Any]] = []
+_bookmaker_shared_proxy_index: int = 0
+_bookmaker_shared_proxy_lock = threading.Lock()
+
+
+def _bookmaker_select_shared_camoufox_proxy_kwargs() -> Dict[str, Any]:
+    """Pick current DE/US Winline candidate for shared Camoufox; never log credentials."""
+    global _bookmaker_shared_proxy_candidates, _bookmaker_shared_proxy_index
+    with _bookmaker_shared_proxy_lock:
+        if not _bookmaker_shared_proxy_candidates:
+            _bookmaker_shared_proxy_candidates = list(_bookmaker_winline_proxy_candidates() or [])
+            _bookmaker_shared_proxy_index = 0
+        candidates = list(_bookmaker_shared_proxy_candidates)
+        if not candidates:
+            return {}
+        idx_local = _bookmaker_shared_proxy_index % len(candidates)
+        item = candidates[idx_local]
+    url = ""
+    if isinstance(item, dict):
+        url = str(item.get("url") or item.get("proxy") or "").strip()
+    else:
+        url = str(item or "").strip()
+    if not url:
+        return {}
+    kwargs = _camoufox_proxy_kwargs_from_url(url)
+    if kwargs:
+        with contextlib.suppress(Exception):
+            print(f"   🌐 Shared Camoufox Winline proxy: {_bookmaker_proxy_safe_label(item)}")
+    return kwargs
+
+
+# Типы, которые ВСЕГДА означают дефект кода, а не сеть. Для них ротация прокси
+# бессмысленна и вредна: она прячет баг за «нестабильным прокси» и вдобавок сносит
+# тёплую страницу (холодная загрузка winline стоит секунды даже на живом пуле).
+_CAMOUFOX_CODE_DEFECT_EXCEPTIONS = (
+    TypeError, AttributeError, NameError, KeyError, IndexError,
+    AssertionError, ImportError, NotImplementedError, ZeroDivisionError,
+)
+
+# Признаки сети/прокси в тексте ошибки. Playwright и Firefox пишут по-разному,
+# поэтому смотрим на подстроки, а не на классы.
+_CAMOUFOX_NETWORK_ERROR_MARKERS = (
+    "proxy", "invalidproxy", "socks", "tunnel",
+    "net::", "ns_error", "err_", "dns",
+    "timeout", "timed out", "econnreset", "reset by peer",
+    "connection", "unreachable", "handshake", "ssl", "tls",
+    "navigating to", "page.goto",
+)
+
+
+def _camoufox_error_is_code_defect(exc: BaseException) -> bool:
+    """True, если ошибку нельзя объяснить прокси или сетью.
+
+    Неизвестные типы считаем сетевыми: так сохраняется прежняя страховка, и
+    правка не отбирает ротацию у случаев, которых мы ещё не видели.
+    """
+    if isinstance(exc, _CAMOUFOX_CODE_DEFECT_EXCEPTIONS):
+        return True
+    text = f"{type(exc).__name__}: {exc}".lower()
+    if any(marker in text for marker in _CAMOUFOX_NETWORK_ERROR_MARKERS):
+        return False
+    # RuntimeError/ValueError двусмысленны: без сетевых признаков это наш код
+    # (именно так выглядела сегодняшняя поломка sync-обёрток парсера).
+    return isinstance(exc, (RuntimeError, ValueError))
+
+
+def _bookmaker_rotate_shared_camoufox_proxy(*, reason: str = "") -> None:
+    """Advance DE/US candidate and force sequential close/cleanup before relaunch."""
+    global _bookmaker_shared_proxy_candidates, _bookmaker_shared_proxy_index
+    with _bookmaker_shared_proxy_lock:
+        if not _bookmaker_shared_proxy_candidates:
+            _bookmaker_shared_proxy_candidates = list(_bookmaker_winline_proxy_candidates() or [])
+            _bookmaker_shared_proxy_index = 0
+        if _bookmaker_shared_proxy_candidates:
+            _bookmaker_shared_proxy_index = (_bookmaker_shared_proxy_index + 1) % max(
+                1, len(_bookmaker_shared_proxy_candidates)
+            )
+            nxt = _bookmaker_shared_proxy_candidates[_bookmaker_shared_proxy_index % len(_bookmaker_shared_proxy_candidates)]
+            label = _bookmaker_proxy_safe_label(nxt)
+        else:
+            label = "none"
+    reason_s = str(reason or "rotate").strip() or "rotate"
+    print(f"   🔄 Shared Camoufox proxy rotate ({reason_s}) -> {label}")
+    with contextlib.suppress(Exception):
+        _shared_camoufox_session.request_reset()
+
+
+def _bookmaker_refresh_snapshot_via_shared_camoufox(match_key: str) -> Optional[dict]:
+    """Refresh odds snapshot in-process via process-wide shared Camoufox (no subprocess)."""
+    if not BOOKMAKER_PREFETCH_ENABLED:
+        return None
+    snapshot = _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
+    if not isinstance(snapshot, dict):
+        return None
+    radiant_team = str(snapshot.get("radiant_team") or "")
+    dire_team = str(snapshot.get("dire_team") or "")
+    mode = str(snapshot.get("mode") or BOOKMAKER_PREFETCH_MODE or "live")
+    map_num_raw = snapshot.get("map_num")
+    try:
+        map_num = int(map_num_raw) if map_num_raw is not None else None
+    except (TypeError, ValueError):
+        map_num = None
+    if map_num is not None and not (1 <= map_num <= 5):
+        map_num = None
+    radiant_team_candidates = list(snapshot.get("radiant_team_candidates") or [radiant_team])
+    dire_team_candidates = list(snapshot.get("dire_team_candidates") or [dire_team])
+    try:
+        if BOOKMAKER_CAMOUFOX_ENABLED and BOOKMAKER_CAMOUFOX_IMPORTED:
+            sites_payload = _bookmaker_prefetch_fetch_camoufox_direct(
+                radiant_team=radiant_team,
+                dire_team=dire_team,
+                mode=mode,
+                map_num=map_num,
+                radiant_team_candidates=radiant_team_candidates,
+                dire_team_candidates=dire_team_candidates,
+            )
+        else:
+            # Odds mode: never fall back to Camoufox subprocess. Cached sites remain
+            # diagnostic-only and are explicitly made gate-ineligible.
+            if BOOKMAKER_PREFETCH_GATE_MODE == "odds":
+                unavailable_reason = (
+                    "shared_camoufox_disabled"
+                    if not BOOKMAKER_CAMOUFOX_ENABLED
+                    else "shared_camoufox_import_unavailable"
+                )
+                logger.warning(
+                    "BOOKMAKER_SHARED_CAMOUFOX_UNAVAILABLE %s: reason=%s imported=%s enabled=%s",
+                    match_key,
+                    unavailable_reason,
+                    BOOKMAKER_CAMOUFOX_IMPORTED,
+                    BOOKMAKER_CAMOUFOX_ENABLED,
+                )
+                failed_at = time.time()
+                with bookmaker_prefetch_condition:
+                    payload = bookmaker_prefetch_results.get(match_key)
+                    if isinstance(payload, dict):
+                        payload["status"] = "error"
+                        payload.setdefault("sites", payload.get("sites") or {})
+                        payload["error"] = unavailable_reason
+                        payload["odds_refresh_ready"] = False
+                        payload["odds_refresh_failed_at"] = failed_at
+                        payload["finished_at"] = failed_at
+                        bookmaker_prefetch_condition.notify_all()
+                return _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
+            # Presence-safe fallback only when Camoufox is unavailable.
+            sites_payload = _bookmaker_prefetch_fetch_subprocess(
+                radiant_team=radiant_team,
+                dire_team=dire_team,
+                mode=mode,
+                map_num=map_num,
+                radiant_team_candidates=radiant_team_candidates,
+                dire_team_candidates=dire_team_candidates,
+            )
+    except Exception as exc:
+        logger.warning("BOOKMAKER_SHARED_CAMOUFOX_REFRESH_FAILED %s: %s", match_key, exc)
+        with contextlib.suppress(Exception):
+            _bookmaker_rotate_shared_camoufox_proxy(reason="refresh_error")
+        if BOOKMAKER_PREFETCH_GATE_MODE == "odds":
+            failed_at = time.time()
+            with bookmaker_prefetch_condition:
+                payload = bookmaker_prefetch_results.get(match_key)
+                if isinstance(payload, dict):
+                    payload["status"] = "error"
+                    payload.setdefault("sites", payload.get("sites") or {})
+                    payload["error"] = "shared_camoufox_refresh_failed"
+                    payload["odds_refresh_ready"] = False
+                    payload["odds_refresh_failed_at"] = failed_at
+                    payload["finished_at"] = failed_at
+                    bookmaker_prefetch_condition.notify_all()
+            return _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
+        return snapshot
+    refreshed_at = time.time()
+    with bookmaker_prefetch_condition:
+        payload = bookmaker_prefetch_results.get(match_key)
+        if isinstance(payload, dict):
+            payload["status"] = "done"
+            payload["finished_at"] = refreshed_at
+            payload["odds_refreshed_at"] = refreshed_at
+            payload["odds_refresh_ready"] = True
+            payload.pop("odds_refresh_failed_at", None)
+            payload.pop("error", None)
+            payload["sites"] = sites_payload
+            bookmaker_prefetch_condition.notify_all()
+    return _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
+
+
 def _bookmaker_prefetch_prune_locked(now_ts: float) -> List[str]:
     if not bookmaker_prefetch_results:
         return []
@@ -8258,6 +12177,175 @@ def _bookmaker_prefetch_prune_locked(now_ts: float) -> List[str]:
     return list(to_drop)
 
 
+def _bookmaker_series_identity(match_key: str) -> Optional[str]:
+    """Stable series base for bookmaker lifecycle: URL without numeric kills/score suffix.
+
+    Uses the same normalization family as `_signal_fingerprint_registry_key` /
+    `_draft_metrics_cache_key`. Requires an extractable series match id; never
+    invents identity from a bare host or unknown path.
+    """
+    raw = str(match_key or "").strip()
+    if not raw:
+        return None
+    # Already a lifecycle key: series|mapN → series portion only.
+    m_life = re.match(r"^(?P<series>.+)\|map([1-5])$", raw)
+    if m_life:
+        raw = str(m_life.group("series") or "").strip()
+    series = _signal_fingerprint_registry_key(raw)
+    if not series:
+        return None
+    if _bookmaker_extract_match_id(series) is None:
+        return None
+    return series
+
+
+def _bookmaker_lifecycle_identity(
+    match_key: str,
+    map_num: Any = None,
+) -> Optional[str]:
+    """Canonical internal identity: stable series + current map_num.
+
+    Fail closed: missing/invalid series or map_num → None.
+    Kills/score suffixes never participate. Different map_num values never collide.
+    """
+    series = _bookmaker_series_identity(match_key)
+    if not series:
+        return None
+    try:
+        resolved_map = int(map_num) if map_num is not None else None
+    except (TypeError, ValueError):
+        return None
+    if resolved_map is None or not (1 <= resolved_map <= 5):
+        return None
+    return f"{series}|map{resolved_map}"
+
+
+def _bookmaker_resolve_lifecycle_key(
+    match_key: str,
+    map_num: Any = None,
+    *,
+    results: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Resolve a raw/diagnostic URL or partial key to the canonical lifecycle key.
+
+    When map_num is known, build the identity directly (fail closed on invalid).
+    When map_num is absent, accept an already-canonical key, or uniquely match
+    an existing results entry for the same series. Never fall back to series-only
+    or raw score-suffixed URL as identity.
+    """
+    raw = str(match_key or "").strip()
+    if not raw:
+        return None
+    if map_num is not None:
+        return _bookmaker_lifecycle_identity(raw, map_num=map_num)
+    # Already canonical?
+    if re.search(r"\|map[1-5]$", raw):
+        return raw if _bookmaker_lifecycle_identity(raw, map_num=int(raw.rsplit("|map", 1)[-1])) else None
+    series = _bookmaker_series_identity(raw)
+    if not series:
+        return None
+    table = results if isinstance(results, dict) else bookmaker_prefetch_results
+    candidates: List[str] = []
+    for key in list(table.keys()):
+        key_s = str(key or "")
+        if key_s.startswith(series + "|map") and re.search(r"\|map[1-5]$", key_s):
+            candidates.append(key_s)
+            continue
+        payload = table.get(key)
+        if not isinstance(payload, dict):
+            continue
+        # Diagnostic aliases stored on payload.
+        diag = str(payload.get("diagnostic_url") or payload.get("url") or "").strip()
+        if diag and _signal_fingerprint_registry_key(diag) == series:
+            life = _bookmaker_lifecycle_identity(series, map_num=payload.get("map_num"))
+            if life:
+                candidates.append(life if life in table else key_s)
+    # Dedup preserve order
+    seen: set[str] = set()
+    uniq: List[str] = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            uniq.append(c)
+    if len(uniq) == 1:
+        return uniq[0]
+    # Prefer payload whose diagnostic_url equals the raw request when multiple maps.
+    if len(uniq) > 1:
+        for c in uniq:
+            payload = table.get(c)
+            if not isinstance(payload, dict):
+                continue
+            diag = str(payload.get("diagnostic_url") or payload.get("url") or "").strip()
+            if diag == raw or _signal_fingerprint_registry_key(diag) == series and str(
+                payload.get("status") or ""
+            ) in {"queued", "running", "done"}:
+                # Still ambiguous across maps — only accept exact diagnostic match.
+                if diag == raw:
+                    return c
+        return None
+    return None
+
+
+def _bookmaker_terminalize_failed_lifecycle(
+    match_key: str,
+    map_num: Any = None,
+) -> None:
+    """Clear a failed canonical entry so the same series+map can re-queue.
+
+    One shared driver/protocol failure must not leave the entry permanently
+    queued/running/error under a score-suffixed raw key. Identity stays
+    series+map only; diagnostic URL is not used as identity.
+    """
+    with bookmaker_prefetch_condition:
+        life = _bookmaker_resolve_lifecycle_key(
+            match_key,
+            map_num=map_num,
+            results=bookmaker_prefetch_results,
+        )
+        if not life:
+            life = _bookmaker_lifecycle_identity(match_key, map_num=map_num)
+        series = _bookmaker_series_identity(match_key)
+        # Drop any raw score-suffixed aliases that leaked into the table for this series+map.
+        if series is not None:
+            try:
+                expected_map = int(map_num) if map_num is not None else None
+            except (TypeError, ValueError):
+                expected_map = None
+            for key in list(bookmaker_prefetch_results.keys()):
+                key_s = str(key or "")
+                if life and key_s == life:
+                    continue
+                if _bookmaker_series_identity(key_s) != series:
+                    continue
+                payload = bookmaker_prefetch_results.get(key)
+                pmap = None
+                if isinstance(payload, dict):
+                    try:
+                        pmap = int(payload.get("map_num")) if payload.get("map_num") is not None else None
+                    except (TypeError, ValueError):
+                        pmap = None
+                if expected_map is None or pmap is None or pmap == expected_map:
+                    bookmaker_prefetch_results.pop(key, None)
+        if life:
+            bookmaker_prefetch_results.pop(life, None)
+            drop_q = [
+                item
+                for item in list(bookmaker_prefetch_queue)
+                if str((item or {}).get("match_key") or "") == life
+                or (
+                    _bookmaker_lifecycle_identity(
+                        str((item or {}).get("match_key") or ""),
+                        map_num=(item or {}).get("map_num"),
+                    )
+                    == life
+                )
+            ]
+            for item in drop_q:
+                with contextlib.suppress(ValueError):
+                    bookmaker_prefetch_queue.remove(item)
+        bookmaker_prefetch_condition.notify_all()
+
+
 def _bookmaker_prefetch_lookup(match_key: str, wait_seconds: float = 0.0) -> Optional[dict]:
     if not BOOKMAKER_PREFETCH_ENABLED:
         return None
@@ -8265,7 +12353,15 @@ def _bookmaker_prefetch_lookup(match_key: str, wait_seconds: float = 0.0) -> Opt
     deadline = time.time() + wait_seconds
     with bookmaker_prefetch_condition:
         while True:
-            payload = bookmaker_prefetch_results.get(match_key)
+            life = _bookmaker_resolve_lifecycle_key(
+                match_key,
+                results=bookmaker_prefetch_results,
+            )
+            lookup_key = life or str(match_key or "").strip()
+            payload = bookmaker_prefetch_results.get(lookup_key) if lookup_key else None
+            if payload is None and life is None:
+                # Fail closed: no series-only / raw-score fallback when identity unresolved.
+                return None
             if payload is None:
                 return None
             status = str(payload.get("status") or "")
@@ -8410,7 +12506,13 @@ def _log_bookmaker_source_snapshot(match_key: str, decision: str) -> None:
         print(snapshot_line)
 
 
-def _bookmaker_format_odds_block(match_key: str) -> Tuple[str, bool, str]:
+# Sentinel lives next to resolve (above). Keep map helper once only — remove duplicate definition below.
+
+
+def _bookmaker_format_odds_block(
+    match_key: str,
+    selected_side: Any = _BOOKMAKER_SELECTED_SIDE_UNSET,
+) -> Tuple[str, bool, str]:
     snapshot = _bookmaker_prefetch_lookup(
         match_key,
         wait_seconds=BOOKMAKER_PREFETCH_MESSAGE_WAIT_SECONDS,
@@ -8423,54 +12525,37 @@ def _bookmaker_format_odds_block(match_key: str) -> Tuple[str, bool, str]:
     sites_payload = snapshot.get("sites")
     if not isinstance(sites_payload, dict):
         return "", False, "invalid_sites_payload"
-    label_map = {
-        "betboom": "BetBoom",
-        "pari": "Pari",
-        "winline": "Winline",
-    }
-    display_order = [
-        ("winline", "Winline"),
-        ("betboom", "BetBoom"),
-        ("pari", "Pari"),
-    ]
-    cells: List[str] = []
-    for site, site_label in display_order:
-        site_payload = sites_payload.get(site)
-        if not isinstance(site_payload, dict):
-            cells.append(f"{site_label} —")
-            continue
-        odds = site_payload.get("odds")
-        match_odds = site_payload.get("match_odds")
-        market_closed = bool(site_payload.get("market_closed"))
-        if not market_closed and isinstance(odds, list) and len(odds) >= 2:
-            try:
-                p1 = float(odds[0])
-                p2 = float(odds[1])
-                cells.append(f"{site_label} {p1:.2f}/{p2:.2f}")
-                continue
-            except (TypeError, ValueError):
-                pass
-        if isinstance(match_odds, list) and len(match_odds) >= 2:
-            try:
-                p1 = float(match_odds[0])
-                p2 = float(match_odds[1])
-                cells.append(f"{site_label} (п1/п2) {p1:.2f}/{p2:.2f}")
-                continue
-            except (TypeError, ValueError):
-                pass
-        cells.append(f"{site_label} —")
-    if not cells:
-        return "", False, "no_cells"
-    has_real_odds = any(
-        "—" not in cell for cell in cells
-    )
-    if not has_real_odds:
+
+    map_num_raw = snapshot.get("map_num")
+    try:
+        map_num = int(map_num_raw) if map_num_raw is not None else None
+    except (TypeError, ValueError):
+        map_num = None
+    if map_num is not None and not (1 <= map_num <= 5):
+        map_num = None
+
+    winline = sites_payload.get("winline")
+    if not _bookmaker_is_strict_winline_current_map(winline, expected_map_num=map_num):
+        if isinstance(winline, dict) and bool(winline.get("market_closed")):
+            return "", False, "temporarily_closed_wait"
+        return "", False, "no_strict_winline_current_map"
+
+    odds = winline.get("odds")  # type: ignore[union-attr]
+    try:
+        p1 = float(odds[0])
+        p2 = float(odds[1])
+    except (TypeError, ValueError, IndexError):
         return "", False, "no_numeric_odds"
     mode = str(snapshot.get("mode") or BOOKMAKER_PREFETCH_MODE)
-    map_num_raw = snapshot.get("map_num")
-    map_num = int(map_num_raw) if isinstance(map_num_raw, int) and 1 <= map_num_raw <= 5 else None
     map_suffix = f", карта {map_num}" if map_num is not None else ""
-    return f"БК ({mode}{map_suffix}): " + " | ".join(cells) + "\n", True, "ok"
+    # Strict Winline-only display: P1=team1/radiant, P2=team2/dire.
+    if selected_side is _BOOKMAKER_SELECTED_SIDE_UNSET:
+        return f"БК ({mode}{map_suffix}): Winline П1 {p1:.2f} / П2 {p2:.2f}\n", True, "ok"
+    odds_index, side_reason = _bookmaker_map_selected_side_to_odds_index(selected_side)
+    if odds_index is None:
+        return "", False, side_reason
+    selected_decimal = p1 if odds_index == 0 else p2
+    return f"Кэф Winline: {selected_decimal:.2f}\n", True, "ok"
 
 
 def _bookmaker_format_presence_block(match_key: str) -> Tuple[str, bool, str]:
@@ -8722,7 +12807,8 @@ def _bookmaker_browser_bootstrap_unlocked(mode: str) -> bool:
     if bookmaker_browser_base_handles:
         return True
     urls = _bookmaker_urls_for_mode(mode)
-    selected_sites = [site for site in BOOKMAKER_PREFETCH_SITES if site in urls]
+    effective_sites = _bookmaker_effective_sites_for_mode(BOOKMAKER_PREFETCH_GATE_MODE)
+    selected_sites = [site for site in effective_sites if site in urls]
     if not selected_sites:
         return False
     bookmaker_browser_base_handles = _bookmaker_open_presence_site_tabs(
@@ -8819,20 +12905,34 @@ def _bookmaker_prune_match_tab_cache_unlocked(max_matches: Optional[int] = None)
 
 def _bookmaker_release_match_tabs(match_key: str) -> None:
     global bookmaker_browser_match_tabs
-    normalized_match_key = str(match_key or "").strip()
-    if not normalized_match_key:
+    raw = str(match_key or "").strip()
+    if not raw:
         return
+    # Resolve to canonical series+map identity when possible; also try series-base
+    # aliases that may have been stored under raw score URLs historically.
+    candidates: List[str] = [raw]
+    life = _bookmaker_resolve_lifecycle_key(raw, results=bookmaker_prefetch_results)
+    if life and life not in candidates:
+        candidates.append(life)
+    series = _bookmaker_series_identity(raw)
     with bookmaker_browser_lock:
-        stale_payload = bookmaker_browser_match_tabs.pop(normalized_match_key, None)
-        if not isinstance(stale_payload, dict):
-            return
-        handles = [
-            str((site_payload or {}).get("handle") or "")
-            for site_payload in ((stale_payload or {}).get("sites") or {}).values()
-            if isinstance(site_payload, dict)
-        ]
-        _bookmaker_close_window_handles_unlocked(bookmaker_browser_driver, handles)
-        logger.info("BOOKMAKER_MATCH_TAB_CACHE_RELEASE url=%s handles=%s", normalized_match_key, len(handles))
+        if series:
+            for cached_key in list(bookmaker_browser_match_tabs.keys()):
+                if cached_key in candidates:
+                    continue
+                if _bookmaker_series_identity(str(cached_key)) == series:
+                    candidates.append(str(cached_key))
+        for normalized_match_key in candidates:
+            stale_payload = bookmaker_browser_match_tabs.pop(normalized_match_key, None)
+            if not isinstance(stale_payload, dict):
+                continue
+            handles = [
+                str((site_payload or {}).get("handle") or "")
+                for site_payload in ((stale_payload or {}).get("sites") or {}).values()
+                if isinstance(site_payload, dict)
+            ]
+            _bookmaker_close_window_handles_unlocked(bookmaker_browser_driver, handles)
+            logger.info("BOOKMAKER_MATCH_TAB_CACHE_RELEASE url=%s handles=%s", normalized_match_key, len(handles))
 
 
 def _bookmaker_open_cached_match_tabs_unlocked(
@@ -9024,57 +13124,27 @@ def _bookmaker_refresh_cached_match_tabs_for_dispatch(match_key: str) -> Optiona
             return payload if isinstance(payload, dict) else None
 
 
-def _bookmaker_best_effort_odds_block(match_key: str) -> Tuple[str, bool, str]:
-    snapshot = _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
-    if not isinstance(snapshot, dict):
-        return "", False, "prefetch_not_found"
-    snapshot_status = str(snapshot.get("status") or "")
-    if snapshot_status != "done":
-        return "", False, f"prefetch_{snapshot_status or 'unknown'}"
-    sites_payload = snapshot.get("sites")
-    if not isinstance(sites_payload, dict):
-        return "", False, "invalid_sites_payload"
-    display_order = [
-        ("winline", "Winline"),
-        ("betboom", "BetBoom"),
-        ("pari", "Pari"),
-    ]
-    cells: List[str] = []
-    for site, site_label in display_order:
-        site_payload = sites_payload.get(site)
-        if not isinstance(site_payload, dict):
-            cells.append(f"{site_label} —")
-            continue
-        odds = site_payload.get("odds")
-        match_odds = site_payload.get("match_odds")
-        if not bool(site_payload.get("market_closed")) and isinstance(odds, list) and len(odds) >= 2:
-            try:
-                p1 = float(odds[0])
-                p2 = float(odds[1])
-                cells.append(f"{site_label} {p1:.2f}/{p2:.2f}")
-                continue
-            except (TypeError, ValueError):
-                pass
-        if isinstance(match_odds, list) and len(match_odds) >= 2:
-            try:
-                p1 = float(match_odds[0])
-                p2 = float(match_odds[1])
-                cells.append(f"{site_label} (матч) {p1:.2f}/{p2:.2f}")
-                continue
-            except (TypeError, ValueError):
-                pass
-        cells.append(f"{site_label} —")
-    if not cells:
-        return "", False, "no_sites"
-    mode = str(snapshot.get("mode") or BOOKMAKER_PREFETCH_MODE)
-    map_num_raw = snapshot.get("map_num")
-    map_num = int(map_num_raw) if isinstance(map_num_raw, int) and 1 <= map_num_raw <= 5 else None
-    map_suffix = f", карта {map_num}" if map_num is not None else ""
-    return f"БК ({mode}{map_suffix}): " + " | ".join(cells) + "\n", True, "ok"
+def _bookmaker_best_effort_odds_block(
+    match_key: str,
+    selected_side: Any = _BOOKMAKER_SELECTED_SIDE_UNSET,
+) -> Tuple[str, bool, str]:
+    # Odds-mode delivery uses the same strict Winline current-map contract.
+    return _bookmaker_format_odds_block(match_key, selected_side=selected_side)
 
 
 def _bookmaker_refresh_snapshot_via_subprocess(match_key: str) -> Optional[dict]:
-    if not BOOKMAKER_PREFETCH_ENABLED or not BOOKMAKER_PREFETCH_USE_SUBPROCESS:
+    """Legacy name kept for call-sites; odds mode uses shared Camoufox, not a subprocess browser.
+
+    Presence mode may still use the subprocess path when Camoufox is unavailable.
+    """
+    if not BOOKMAKER_PREFETCH_ENABLED:
+        return None
+    # Odds delivery must never spawn a Camoufox subprocess: use process singleton / fail closed.
+    if BOOKMAKER_PREFETCH_GATE_MODE == "odds" or (
+        BOOKMAKER_CAMOUFOX_ENABLED and BOOKMAKER_CAMOUFOX_IMPORTED
+    ):
+        return _bookmaker_refresh_snapshot_via_shared_camoufox(match_key)
+    if not BOOKMAKER_PREFETCH_USE_SUBPROCESS:
         return None
     snapshot = _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
     if not isinstance(snapshot, dict):
@@ -9123,13 +13193,18 @@ def _replace_bookmaker_block_in_message(message_text: str, bookmaker_block: str)
     skipping_old_block = False
     for line in lines:
         stripped = str(line).strip()
-        if stripped.startswith("БК (") or stripped.startswith("Букмекеры ("):
+        if (
+            stripped.startswith("БК (")
+            or stripped.startswith("Букмекеры (")
+            or stripped.startswith("Кэф Winline:")
+        ):
             skipping_old_block = True
             continue
         if skipping_old_block and (
             stripped.startswith("Winline")
             or stripped.startswith("BetBoom")
             or stripped.startswith("Pari")
+            or stripped.startswith("Кэф Winline:")
         ):
             continue
         if skipping_old_block:
@@ -9146,9 +13221,16 @@ def _refresh_message_bookmaker_block_for_dispatch(
     match_key: str,
     message_text: str,
 ) -> str:
-    refreshed_message, bookmaker_ready, _bookmaker_reason = _bookmaker_prepare_message_for_delivery(
-        match_key,
-        message_text,
+    """Legacy helper kept for tests/callers that only need message text refresh.
+
+    Production dispatch callers must not pre-prepare: `_deliver_and_persist_signal`
+    owns the single prepare/reserve + post-delivery commit path.
+    """
+    refreshed_message, bookmaker_ready, _bookmaker_reason, _reservation = (
+        _bookmaker_prepare_message_for_delivery(
+            match_key,
+            message_text,
+        )
     )
     if not bookmaker_ready:
         return message_text
@@ -9158,17 +13240,98 @@ def _refresh_message_bookmaker_block_for_dispatch(
 def _bookmaker_prepare_message_for_delivery(
     match_key: str,
     message_text: str,
-) -> Tuple[str, bool, str]:
+    *,
+    deadline_ts: Optional[float] = None,
+    map_num: Optional[int] = None,
+    current_map_observation: Any = None,
+    selected_side: Any = _BOOKMAKER_SELECTED_SIDE_UNSET,
+) -> Tuple[str, bool, str, Optional[Dict[str, Any]]]:
+    """Prepare/reserve open Winline odds for delivery. Does not mark sent.
+
+    Returns (message, ready, reason, reservation_context).
+    reservation_context is present only when open odds were reserved for this map.
+    """
     if not BOOKMAKER_PREFETCH_ENABLED or BOOKMAKER_PREFETCH_GATE_MODE != "odds":
-        return message_text, True, "disabled"
-    if BOOKMAKER_PREFETCH_USE_SUBPROCESS:
-        _bookmaker_refresh_snapshot_via_subprocess(match_key)
-    else:
-        _bookmaker_refresh_cached_match_tabs_for_dispatch(match_key)
-    bookmaker_block, bookmaker_ready, bookmaker_reason = _bookmaker_best_effort_odds_block(match_key)
-    if not bookmaker_ready:
-        return message_text, False, str(bookmaker_reason or "no_numeric_odds")
-    return _replace_bookmaker_block_in_message(message_text, bookmaker_block), True, "ok"
+        return message_text, True, "disabled", None
+    # Odds mode always uses the shared/in-process contract; disabled/import/error is fail-closed.
+    try:
+        _bookmaker_refresh_snapshot_via_shared_camoufox(match_key)
+    except Exception as exc:
+        logger.warning("BOOKMAKER_SHARED_CAMOUFOX_REFRESH_FAILED %s: %s", match_key, exc)
+        failed_at = time.time()
+        with bookmaker_prefetch_condition:
+            payload = bookmaker_prefetch_results.get(match_key)
+            if isinstance(payload, dict):
+                payload["status"] = "error"
+                payload.setdefault("sites", payload.get("sites") or {})
+                payload["error"] = "shared_camoufox_refresh_failed"
+                payload["odds_refresh_ready"] = False
+                payload["odds_refresh_failed_at"] = failed_at
+                payload["finished_at"] = failed_at
+                bookmaker_prefetch_condition.notify_all()
+
+    snapshot = _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
+    # Fail-closed when shared Camoufox marked the snapshot gate-ineligible.
+    if isinstance(snapshot, dict) and snapshot.get("odds_refresh_ready") is False:
+        err = str(snapshot.get("error") or "shared_camoufox_refresh_failed")
+        return message_text, False, err, None
+    resolved_map = map_num
+    if resolved_map is None and isinstance(snapshot, dict):
+        try:
+            raw_map = snapshot.get("map_num")
+            resolved_map = int(raw_map) if raw_map is not None else None
+        except (TypeError, ValueError):
+            resolved_map = None
+    if resolved_map is not None and not (1 <= int(resolved_map) <= 5):
+        resolved_map = None
+    if resolved_map is None and isinstance(current_map_observation, dict):
+        try:
+            raw_obs_map = current_map_observation.get("map_num")
+            resolved_map = int(raw_obs_map) if raw_obs_map is not None else None
+        except (TypeError, ValueError):
+            resolved_map = None
+        if resolved_map is not None and not (1 <= int(resolved_map) <= 5):
+            resolved_map = None
+
+    with bookmaker_odds_delivery_pending_lock:
+        decision = _bookmaker_resolve_odds_delivery_state(
+            match_key,
+            pending_state=bookmaker_odds_delivery_pending,
+            deadline_ts=deadline_ts,
+            map_num=resolved_map,
+            current_map_observation=current_map_observation,
+            selected_side=selected_side,
+        )
+    state = str(decision.get("state") or "")
+    reason = str(decision.get("reason") or state or "unknown")
+    reservation = decision.get("reservation_context")
+    if not isinstance(reservation, dict):
+        reservation = None
+    if state == "temporarily_closed_wait":
+        return message_text, False, reason or "temporarily_closed_wait", reservation
+    if state == "terminal_skip":
+        return message_text, False, f"terminal_skip:{reason}", reservation
+    if not decision.get("should_send"):
+        # already_sent or not ready
+        if reason == "already_sent":
+            return message_text, False, "already_sent", reservation
+        return message_text, False, reason or "no_strict_winline_current_map", reservation
+    bookmaker_block = str(decision.get("block") or "")
+    if not bookmaker_block:
+        bookmaker_block, bookmaker_ready, bookmaker_reason = _bookmaker_best_effort_odds_block(
+            match_key, selected_side=selected_side
+        )
+        if not bookmaker_ready:
+            # Open market without numeric odds: release any reservation so later open can retry.
+            if reservation is not None:
+                _bookmaker_rollback_odds_delivery(match_key, reservation_context=reservation)
+            return message_text, False, str(bookmaker_reason or "no_numeric_odds"), None
+    return (
+        _replace_bookmaker_block_in_message(message_text, bookmaker_block),
+        True,
+        "ok",
+        reservation,
+    )
 
 
 def _build_bookmaker_empty_odds_block(match_key: str) -> str:
@@ -9177,25 +13340,27 @@ def _build_bookmaker_empty_odds_block(match_key: str) -> str:
     map_num_raw = (snapshot or {}).get("map_num")
     map_num = int(map_num_raw) if isinstance(map_num_raw, int) and 1 <= map_num_raw <= 5 else None
     map_suffix = f", карта {map_num}" if map_num is not None else ""
-    return f"БК ({mode}{map_suffix}): Winline — | BetBoom — | Pari —\n"
+    return f"БК ({mode}{map_suffix}): Winline —\n"
 
 
 def _prepare_minimal_odds_only_message_for_delivery(
     match_key: str,
     message_text: str,
-) -> Tuple[str, bool, str]:
-    if BOOKMAKER_PREFETCH_ENABLED:
-        if BOOKMAKER_PREFETCH_USE_SUBPROCESS:
-            _bookmaker_refresh_snapshot_via_subprocess(match_key)
-        else:
-            _bookmaker_refresh_cached_match_tabs_for_dispatch(match_key)
-    bookmaker_block, bookmaker_ready, bookmaker_reason = _bookmaker_format_odds_block(match_key)
-    if not bookmaker_ready:
-        reason_str = str(bookmaker_reason or "")
-        if reason_str == "no_numeric_odds":
-            return message_text, False, "no_numeric_odds"
-        return message_text, False, str(bookmaker_reason or "unknown")
-    return _replace_bookmaker_block_in_message(message_text, bookmaker_block), True, "ok"
+    *,
+    deadline_ts: Optional[float] = None,
+    map_num: Optional[int] = None,
+    current_map_observation: Any = None,
+    selected_side: Any = _BOOKMAKER_SELECTED_SIDE_UNSET,
+) -> Tuple[str, bool, str, Optional[Dict[str, Any]]]:
+    # Same production path as full prepare: shared Camoufox + state machine.
+    return _bookmaker_prepare_message_for_delivery(
+        match_key,
+        message_text,
+        deadline_ts=deadline_ts,
+        map_num=map_num,
+        current_map_observation=current_map_observation,
+        selected_side=selected_side,
+    )
 
 
 def _bookmaker_prefetch_submit(
@@ -9210,6 +13375,21 @@ def _bookmaker_prefetch_submit(
         return
     if not match_key:
         return
+    # Fail closed: every internal lifecycle identity requires series + valid map_num.
+    # Diagnostic/raw score URL may be retained on the payload only.
+    try:
+        resolved_map = int(map_num) if map_num is not None else None
+    except (TypeError, ValueError):
+        resolved_map = None
+    if resolved_map is None or not (1 <= resolved_map <= 5):
+        return
+    lifecycle_key = _bookmaker_lifecycle_identity(match_key, map_num=resolved_map)
+    if not lifecycle_key:
+        # Also try series_url when match_key cannot yield a series id.
+        lifecycle_key = _bookmaker_lifecycle_identity(series_url or "", map_num=resolved_map)
+    if not lifecycle_key:
+        return
+    diagnostic_url = str(match_key or "").strip()
     _ensure_bookmaker_prefetch_started()
     now_ts = time.time()
     slug_radiant_team, slug_dire_team = _bookmaker_extract_team_aliases_from_series_url(
@@ -9221,17 +13401,22 @@ def _bookmaker_prefetch_submit(
     stale_match_keys: List[str] = []
     with bookmaker_prefetch_condition:
         stale_match_keys = _bookmaker_prefetch_prune_locked(now_ts)
-        existing = bookmaker_prefetch_results.get(match_key)
+        existing = bookmaker_prefetch_results.get(lifecycle_key)
         if isinstance(existing, dict):
             status = str(existing.get("status") or "")
             if status in {"queued", "running", "done"} or (
                 BOOKMAKER_PREFETCH_GATE_MODE == "presence" and status == "error"
             ):
+                # Keep latest diagnostic URL on the shared lifecycle entry.
+                if diagnostic_url:
+                    existing["diagnostic_url"] = diagnostic_url
+                    existing["url"] = diagnostic_url
                 return
+            # Odds mode: allow re-queue after terminal error (one-reset recovery).
         if len(bookmaker_prefetch_queue) >= max(10, int(BOOKMAKER_PREFETCH_MAX_PENDING)):
-            print(f"   ⚠️ Bookmaker prefetch queue overflow ({len(bookmaker_prefetch_queue)}), skip {match_key}")
+            print(f"   ⚠️ Bookmaker prefetch queue overflow ({len(bookmaker_prefetch_queue)}), skip {lifecycle_key}")
             return
-        bookmaker_prefetch_results[match_key] = {
+        bookmaker_prefetch_results[lifecycle_key] = {
             "status": "queued",
             "mode": BOOKMAKER_PREFETCH_MODE,
             "gate_mode": BOOKMAKER_PREFETCH_GATE_MODE,
@@ -9240,22 +13425,26 @@ def _bookmaker_prefetch_submit(
             "dire_team": str(dire_team or ""),
             "radiant_team_candidates": list(radiant_team_candidates),
             "dire_team_candidates": list(dire_team_candidates),
-            "map_num": int(map_num) if isinstance(map_num, int) and 1 <= map_num <= 5 else None,
+            "map_num": resolved_map,
             "sites": {},
+            "diagnostic_url": diagnostic_url,
+            "url": diagnostic_url,
+            "lifecycle_key": lifecycle_key,
         }
         bookmaker_prefetch_queue.append(
             {
-                "match_key": match_key,
+                "match_key": lifecycle_key,
                 "radiant_team": str(radiant_team or ""),
                 "dire_team": str(dire_team or ""),
                 "radiant_team_candidates": list(radiant_team_candidates),
                 "dire_team_candidates": list(dire_team_candidates),
-                "map_num": int(map_num) if isinstance(map_num, int) and 1 <= map_num <= 5 else None,
+                "map_num": resolved_map,
                 "mode": BOOKMAKER_PREFETCH_MODE,
                 "gate_mode": BOOKMAKER_PREFETCH_GATE_MODE,
                 "submitted_at": now_ts,
                 "series_url": str(series_url or ""),
                 "league_title": str(league_title or ""),
+                "diagnostic_url": diagnostic_url,
             }
         )
         bookmaker_prefetch_condition.notify()
@@ -9263,9 +13452,10 @@ def _bookmaker_prefetch_submit(
         _bookmaker_release_match_tabs(stale_match_key)
     print(
         "   📥 Bookmaker prefetch queued: "
-        f"{match_key} "
+        f"{lifecycle_key} "
         f"(radiant={radiant_team_candidates}, dire={dire_team_candidates}, "
-        f"mode={BOOKMAKER_PREFETCH_MODE}, gate={BOOKMAKER_PREFETCH_GATE_MODE})"
+        f"mode={BOOKMAKER_PREFETCH_MODE}, gate={BOOKMAKER_PREFETCH_GATE_MODE}, "
+        f"diag={diagnostic_url})"
     )
 
 
@@ -9277,6 +13467,13 @@ def _bookmaker_prefetch_fetch_subprocess(
     radiant_team_candidates: Optional[List[str]] = None,
     dire_team_candidates: Optional[List[str]] = None,
 ) -> Dict[str, dict]:
+    # Odds mode: Camoufox/bookmaker subprocess is unreachable regardless of import flags.
+    # Callers must use shared/in-process refresh; fail closed with no fabricated odds.
+    if BOOKMAKER_PREFETCH_GATE_MODE == "odds":
+        raise RuntimeError(
+            "bookmaker Camoufox subprocess is forbidden in odds mode "
+            "(shared session only; fail closed when unavailable)"
+        )
     if BOOKMAKER_PREFETCH_GATE_MODE == "presence":
         script_path = Path(__file__).resolve().parent / "bookmaker_selenium_odds.py"
         cmd = [
@@ -9308,8 +13505,11 @@ def _bookmaker_prefetch_fetch_subprocess(
             "--odds",
             "true" if BOOKMAKER_PREFETCH_ENABLED else "false",
         ]
-    if BOOKMAKER_PREFETCH_SITES:
-        cmd.extend(["--sites", *BOOKMAKER_PREFETCH_SITES])
+    effective_sites = _bookmaker_effective_sites_for_mode(
+        "presence" if BOOKMAKER_PREFETCH_GATE_MODE == "presence" else "odds"
+    )
+    if effective_sites:
+        cmd.extend(["--sites", *effective_sites])
     if isinstance(map_num, int) and 1 <= map_num <= 5:
         cmd.extend(["--map-num", str(map_num)])
 
@@ -9370,6 +13570,10 @@ def _bookmaker_prefetch_fetch_subprocess(
             "source": str(item.get("source") or ""),
             "details": str(item.get("details") or "")[:500],
             "market_closed": bool(item.get("market_closed", False)),
+            "market_kind": item.get("market_kind"),
+            "map_num": item.get("map_num"),
+            "p1_team": item.get("p1_team"),
+            "p2_team": item.get("p2_team"),
         }
     return sites_payload
 
@@ -9382,20 +13586,23 @@ def _bookmaker_prefetch_fetch_camoufox_direct(
     radiant_team_candidates: Optional[List[str]] = None,
     dire_team_candidates: Optional[List[str]] = None,
 ) -> Dict[str, dict]:
-    """Fetch bookmaker odds in tabs of the shared Camoufox browser."""
+    """Fetch bookmaker odds in reusable named tabs of the shared Camoufox browser."""
     if not BOOKMAKER_CAMOUFOX_IMPORTED or _bookmaker_parse_site_in_camoufox_page is None:
         raise RuntimeError("Camoufox not available")
 
     urls = _bookmaker_urls_for_mode(mode)
-    selected_sites = [site for site in BOOKMAKER_PREFETCH_SITES if site in urls]
+    effective_sites = _bookmaker_effective_sites_for_mode(BOOKMAKER_PREFETCH_GATE_MODE)
+    selected_sites = [site for site in effective_sites if site in urls]
 
     team1 = str(radiant_team or "")
     team2 = str(dire_team or "")
 
     def _job(browser) -> Dict[str, dict]:
         results: Dict[str, dict] = {}
+        session = _shared_camoufox_session
         for site in selected_sites:
-            page = browser.new_page()
+            page_name = f"bookmaker:{site}"
+            page = session.get_or_create_page(page_name, browser)
             try:
                 result = _bookmaker_parse_site_in_camoufox_page(
                     page,
@@ -9414,8 +13621,15 @@ def _bookmaker_prefetch_fetch_camoufox_direct(
                     "source": result.source,
                     "details": result.details[:500] if result.details else "",
                     "market_closed": result.market_closed,
+                    "market_kind": getattr(result, "market_kind", None),
+                    "map_num": getattr(result, "map_num", None),
+                    "p1_team": getattr(result, "p1_team", None),
+                    "p2_team": getattr(result, "p2_team", None),
                 }
             except Exception as e:
+                # Parser left page unrecoverable: drop only this named tab, keep browser.
+                with contextlib.suppress(Exception):
+                    session.invalidate_named_page(page_name)
                 results[site] = {
                     "status": "error",
                     "match_found": False,
@@ -9425,9 +13639,7 @@ def _bookmaker_prefetch_fetch_camoufox_direct(
                     "details": str(e)[:500],
                     "market_closed": False,
                 }
-            finally:
-                with contextlib.suppress(Exception):
-                    page.close()
+            # Reusable named page: do not close after each job.
         return results
 
     return _run_shared_camoufox_job("bookmaker-prefetch", _job, timeout=180)
@@ -9485,7 +13697,13 @@ def _bookmaker_prefetch_loop() -> None:
                     radiant_team_candidates=radiant_team_candidates,
                     dire_team_candidates=dire_team_candidates,
                 )
+            elif BOOKMAKER_PREFETCH_USE_SUBPROCESS and BOOKMAKER_PREFETCH_GATE_MODE == "odds":
+                # Odds mode: never spawn Camoufox subprocess when import/shared is unavailable.
+                raise RuntimeError(
+                    "shared_camoufox_unavailable: odds mode forbids bookmaker subprocess fallback"
+                )
             elif BOOKMAKER_PREFETCH_USE_SUBPROCESS:
+                # Presence-mode (or non-odds) may still use subprocess fallback.
                 sites_payload = _bookmaker_prefetch_fetch_subprocess(
                     radiant_team=radiant_team,
                     dire_team=dire_team,
@@ -9682,6 +13900,8 @@ bookmaker_prefetch_queue = deque()
 bookmaker_prefetch_lock = threading.Lock()
 bookmaker_prefetch_condition = threading.Condition(bookmaker_prefetch_lock)
 bookmaker_prefetch_results = {}
+bookmaker_odds_delivery_pending: Dict[str, Any] = {}
+bookmaker_odds_delivery_pending_lock = threading.Lock()
 bookmaker_browser_lock = threading.RLock()
 bookmaker_browser_driver = None
 bookmaker_camoufox_browser = None  # Persistent Camoufox browser for reuse
@@ -9746,6 +13966,8 @@ KILLS_PRIORS_CACHE_PATH = ML_MODELS_DIR / "pro_kills_priors.json"
 # Ленивая загрузка словарей
 lane_data = None
 early_dict = None
+early_end_dict = None  # map-winner early label (parallel to NW early_dict)
+kills_window_dict = None  # mid-game kill-window expected_diff dict (sqlite)
 late_dict = None
 post_lane_dict = None
 tempo_solo_dict = None
@@ -9909,10 +14131,8 @@ CYBERSCORE_EXTRA_NAME_TIERS: List[int] = _parse_csv_int_list(
 # для прямого опроса GetLiveLeagueGames). Имена реэкспортируются для обратной
 # совместимости (используются в admission и sourcetv league filter ниже).
 from league_keywords import (  # noqa: E402
-    TOURNAMENT_LEAGUE_ID_ALLOWLIST,
     TOURNAMENT_TITLE_ALLOW_KEYWORDS,
     TOURNAMENT_TITLE_ALLOW_PHRASES,
-    league_matches_allowlist as _league_matches_allowlist,
     title_matches_allow_keywords as _title_matches_allow_keywords,
 )
 
@@ -17624,6 +21844,7 @@ def _build_runtime_object_snapshot() -> Dict[str, str]:
     extras = {
         "lane_data": _runtime_object_summary(lane_data),
         "early_dict": _runtime_object_summary(early_dict),
+        "early_end_dict": _runtime_object_summary(early_end_dict),
         "late_dict": _runtime_object_summary(late_dict),
         "post_lane_dict": _runtime_object_summary(post_lane_dict),
         "late_pub_comeback_table_thresholds": _runtime_object_summary(late_pub_comeback_table_thresholds_by_wr),
@@ -17812,6 +22033,36 @@ def _set_delayed_match(match_key: str, payload: dict[str, Any]) -> None:
     if not match_key:
         return
     payload_copy = copy.deepcopy(payload)
+    reason_lc = str(payload_copy.get("reason") or "").strip().lower()
+    late_comeback_queue_reasons = {
+        "late_star_pub_comeback_table_monitor",
+        "late_only_opposite_signs",
+        "late_only_no_early_star_pre27_watcher",
+        "late_all_no_early_star_pre27_watcher",
+        "late_all_same_weak_early_pre27_watcher",
+        "post_27_00_wr_grid_monitor",
+        "post_target_comeback_ceiling_monitor",
+        "late_star_comeback_ceiling_monitor",
+        "strong_same_sign_comeback_ceiling_monitor",
+    }
+    if reason_lc in late_comeback_queue_reasons:
+        smc = payload_copy.get("stake_multiplier_context")
+        stake_team = smc.get("stake_team_name") if isinstance(smc, dict) else None
+        main_fp = _main_late_stake_already_sent_for_map(
+            match_key,
+            stake_team_name=stake_team,
+            payload=payload_copy,
+        )
+        if main_fp:
+            print(
+                "   ⏭️ Delayed queue skip: основная ставка уже отправлена "
+                f"для {match_key} (fingerprint={main_fp}, reason={reason_lc})"
+            )
+            _drop_delayed_matches_for_registry(
+                match_key,
+                reason="main_late_stake_cancels_comeback_watcher",
+            )
+            return
     with monitored_matches_lock:
         previous = monitored_matches.get(match_key)
         previous_copy = copy.deepcopy(previous) if isinstance(previous, dict) else None
@@ -18091,6 +22342,411 @@ def _release_signal_send_slot(match_key: str) -> None:
         signal_send_guard.discard(match_key)
 
 
+def _kills_window_label(start: int, end: int) -> str:
+    return f"{int(start)}_{int(end)}"
+
+
+def _kills_window_specs() -> list[tuple[int, int]]:
+    """Canonical mid-game kill windows (minutes): 5-15, 10-20, 15-25, 20-30."""
+    try:
+        from analise_database import KILLS_WINDOWS as _KW
+        specs = [(int(a), int(b)) for a, b in _KW]
+        if specs:
+            return specs
+    except Exception:
+        pass
+    return [(5, 15), (10, 20), (15, 25), (20, 30)]
+
+
+def _ensure_kills_window_dict_loaded() -> bool:
+    """Lazy-load kills_window_dict_raw.sqlite3 (or json) for live scoring."""
+    global kills_window_dict
+    if kills_window_dict is not None:
+        return True
+    stats_dir = os.getenv("STATS_DIR", str(ANALYSE_PUB_DIR))
+    path = os.getenv(
+        "STATS_KILLS_WINDOW_PATH",
+        f"{stats_dir}/kills_window_dict_raw.json",
+    )
+    try:
+        if not _stats_source_available_for_lookup(path, "kills_window"):
+            logger.warning("kills_window stats source missing: %s", path)
+            print(f"⚠️ kills_window stats source missing: {path}")
+            return False
+        kills_window_dict = _prepare_indexed_stats_lookup(path, "kills_window")
+    except Exception as exc:
+        logger.warning("kills_window_dict load failed from %s: %s", path, exc)
+        print(f"⚠️ kills_window_dict load failed: {path}: {exc}")
+        kills_window_dict = None
+        return False
+    if kills_window_dict is None:
+        return False
+    print(f"📦 kills_window_dict ready: {path}")
+    return True
+
+
+def _select_nearest_kills_window(
+    *,
+    game_time_seconds: Any,
+    ed_by_label: Dict[str, Any],
+    star_sign: int,
+    min_abs_ed: float = EARLY_WINNER_KILLS_WINDOW_MIN_ABS_ED,
+    lead_seconds: float = EARLY_WINNER_KILLS_WINDOW_LEAD_SECONDS,
+) -> Optional[Dict[str, Any]]:
+    """Pick the nearest future kill window that still has ≥lead_seconds margin.
+
+    Requirements per window:
+      * game_time + lead_seconds ≤ window_start_seconds  (send early enough)
+      * |expected_diff| ≥ min_abs_ed
+      * sign(expected_diff) == star_sign
+    Among candidates, prefer the soonest window_start (nearest open block).
+    """
+    try:
+        gt = float(game_time_seconds) if game_time_seconds is not None else 0.0
+    except (TypeError, ValueError):
+        gt = 0.0
+    if not math.isfinite(gt):
+        gt = 0.0
+    if star_sign not in (-1, 1):
+        return None
+    try:
+        min_abs = float(min_abs_ed)
+    except (TypeError, ValueError):
+        min_abs = 1.0
+    try:
+        lead = max(0.0, float(lead_seconds))
+    except (TypeError, ValueError):
+        lead = 180.0
+
+    candidates: list[Dict[str, Any]] = []
+    for start_m, end_m in _kills_window_specs():
+        label = _kills_window_label(start_m, end_m)
+        payload = ed_by_label.get(label) if isinstance(ed_by_label, dict) else None
+        if payload is None:
+            continue
+        if isinstance(payload, dict):
+            ed_raw = payload.get("expected_diff")
+        else:
+            ed_raw = payload
+        try:
+            ed = float(ed_raw)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(ed) or ed == 0.0:
+            continue
+        if abs(ed) < min_abs:
+            continue
+        ed_sign = 1 if ed > 0 else -1
+        if ed_sign != int(star_sign):
+            continue
+        window_start_s = float(start_m) * 60.0
+        window_end_s = float(end_m) * 60.0
+        # must still have lead_seconds before block start
+        if gt + lead > window_start_s:
+            continue
+        seconds_until_start = window_start_s - gt
+        candidates.append(
+            {
+                "label": label,
+                "window_start_min": int(start_m),
+                "window_end_min": int(end_m),
+                "window_start_seconds": window_start_s,
+                "window_end_seconds": window_end_s,
+                "expected_diff": ed,
+                "abs_expected_diff": abs(ed),
+                "seconds_until_start": seconds_until_start,
+                "lead_seconds": lead,
+                "payload": payload if isinstance(payload, dict) else {"expected_diff": ed},
+            }
+        )
+    if not candidates:
+        return None
+    # nearest open block = soonest start; earlier is better when equal start
+    candidates.sort(key=lambda c: (c["window_start_seconds"], -c["seconds_until_start"]))
+    return candidates[0]
+
+
+def _build_early_winner_kills_window_message(
+    *,
+    radiant_team_name: str,
+    dire_team_name: str,
+    target_team_name: str,
+    live_league: Optional[Dict[str, Any]],
+    metrics_payload: Dict[str, Any],
+    team_elo_block: str,
+    game_time_seconds: Any,
+    radiant_lead: Any,
+    selected_window: Dict[str, Any],
+    early_end_star_sign: int,
+) -> str:
+    """Telegram body for Early Winner STAR + kills_window nearest-block bet."""
+    header = _format_signal_header(
+        stake_team_name=str(target_team_name or "НЕИЗВЕСТНАЯ КОМАНДА"),
+        stake_multiplier=1.0,
+        special_header_mode="early_kills",
+    )
+    s = metrics_payload if isinstance(metrics_payload, dict) else {}
+    early_end_log = _decorate_star_block_for_display(
+        raw_block=s.get("early_end_output", {}) or {},
+        section="early_end_output",
+    )
+    metric_list = [
+        "counterpick_1vs1",
+        "counterpick_1vs2",
+        "solo",
+        "synergy_duo",
+        "synergy_trio",
+        "pos1_vs_pos1",
+    ]
+    early_end_block = _format_metrics(
+        "Early Winner (20-28):", early_end_log, metric_list
+    )
+    lane_block = _build_lane_block(
+        s.get("top"),
+        s.get("mid"),
+        s.get("bot"),
+        lane_adv_dict_line=_build_lane_dict_adv_line(
+            s.get("top"), s.get("mid"), s.get("bot")
+        ),
+        lane_kills_adv=s.get("lane_kills_adv_dict"),
+    )
+    label = selected_window.get("label")
+    live_state_block = _format_live_message_state_block(
+        game_time_seconds=game_time_seconds,
+        radiant_lead=radiant_lead,
+        radiant_team_name=radiant_team_name,
+        dire_team_name=dire_team_name,
+        show_kills_time_blocks=True,
+        kills_release_status=NETWORTH_STATUS_EARLY_WINNER_KILLS_WINDOW_SEND,
+        kills_window_label=label,
+    )
+    ed = selected_window.get("expected_diff")
+    secs = selected_window.get("seconds_until_start")
+    start_m = selected_window.get("window_start_min")
+    end_m = selected_window.get("window_end_min")
+    try:
+        ed_s = f"{float(ed):+.2f}"
+    except Exception:
+        ed_s = str(ed)
+    try:
+        mins_left = max(0.0, float(secs) / 60.0)
+        left_s = f"{mins_left:.1f}m"
+    except Exception:
+        left_s = "?"
+    _kw_idx = _kills_window_block_index(label)
+    _kw_idx_s = f"[{_kw_idx}] " if _kw_idx is not None else ""
+    window_line = (
+        f"kills_window {_kw_idx_s}{label} (nearest): expected_diff={ed_s} "
+        f"| block {start_m}-{end_m}m | send lead {left_s} "
+        f"(>={int(float(EARLY_WINNER_KILLS_WINDOW_LEAD_SECONDS)//60)}m)\n"
+    )
+    radiant_disp = normalize_team_name_display(str(radiant_team_name or ""))
+    dire_disp = normalize_team_name_display(str(dire_team_name or ""))
+    series_line = _build_series_score_line(live_league)
+    return (
+        f"{header}\n"
+        f"{radiant_disp} VS {dire_disp}\n"
+        f"{series_line}"
+        f"{lane_block}"
+        f"{early_end_block}"
+        f"{window_line}"
+        f"{team_elo_block or ''}"
+        f"{live_state_block}"
+    )
+
+
+
+def _try_dispatch_early_winner_kills_window(
+    *,
+    match_key: str,
+    status: str,
+    radiant_team_name: str,
+    dire_team_name: str,
+    live_league: Optional[Dict[str, Any]],
+    metrics_payload: Dict[str, Any],
+    team_elo_block: str,
+    game_time_seconds: Any,
+    radiant_lead: Any,
+    radiant_heroes_and_pos: Any,
+    dire_heroes_and_pos: Any,
+    radiant_team_id: Any = 0,
+    dire_team_id: Any = 0,
+    selected_star_wr: Optional[int] = None,
+    json_retry_errors: Any = None,
+) -> bool:
+    """Dispatch kills bet: Early Winner STAR + |expected_diff|≥1 on nearest window.
+
+    Fires only when the current game clock still has ≥LEAD seconds before the
+    nearest eligible window start (default 3 minutes). Uses the same once-per-
+    match kills slot as other early kills paths.
+    """
+    if not match_key:
+        return False
+    if not EARLY_WINNER_KILLS_WINDOW_ENABLED:
+        return False
+    if not _match_has_tier1_team(radiant_team_id, dire_team_id):
+        print(
+            "   ⛔ early_winner kills_window blocked: no Tier-1 team "
+            "(kills only for tier1 matches)"
+        )
+        return False
+    if not isinstance(metrics_payload, dict):
+        return False
+
+    # Early Winner STAR (early_end_output / map-winner label)
+    early_end_diag = _star_block_diagnostics(
+        raw_block=metrics_payload.get("early_end_output") or {},
+        target_wr=int(selected_star_wr or 60),
+        section="early_end_output",
+    )
+    if not early_end_diag.get("valid"):
+        return False
+    star_sign = early_end_diag.get("sign")
+    if star_sign not in (-1, 1):
+        return False
+
+    if not _ensure_kills_window_dict_loaded() or kills_window_dict is None:
+        print("   ⛔ early_winner kills_window: dict not loaded")
+        return False
+
+    try:
+        kw = calculate_kills_window_advantage(
+            radiant_heroes_and_pos,
+            dire_heroes_and_pos,
+            kills_window_dict,
+            window=None,
+        )
+    except Exception as exc:
+        print(f"   ⛔ early_winner kills_window calc failed: {exc}")
+        return False
+    if not isinstance(kw, dict) or not kw:
+        return False
+
+    selected = _select_nearest_kills_window(
+        game_time_seconds=game_time_seconds,
+        ed_by_label=kw,
+        star_sign=int(star_sign),
+        min_abs_ed=EARLY_WINNER_KILLS_WINDOW_MIN_ABS_ED,
+        lead_seconds=EARLY_WINNER_KILLS_WINDOW_LEAD_SECONDS,
+    )
+    if not selected:
+        return False
+
+    target_side = "radiant" if int(star_sign) > 0 else "dire"
+    target_team_name = (
+        str(radiant_team_name or "").strip()
+        if target_side == "radiant"
+        else str(dire_team_name or "").strip()
+    ) or "НЕИЗВЕСТНАЯ КОМАНДА"
+
+    try:
+        with _kills_pre_pass_sent_lock:
+            if match_key in _kills_pre_pass_sent_urls:
+                return False
+    except Exception:
+        pass
+    if _skip_dispatch_for_processed_url(
+        match_key, "early_winner kills_window dispatch"
+    ):
+        return False
+    if not _acquire_signal_send_slot(match_key):
+        return False
+    try:
+        if _skip_dispatch_for_processed_url(
+            match_key, "early_winner kills_window (after lock)"
+        ):
+            return False
+        message_text = _build_early_winner_kills_window_message(
+            radiant_team_name=radiant_team_name,
+            dire_team_name=dire_team_name,
+            target_team_name=target_team_name,
+            live_league=live_league,
+            metrics_payload=metrics_payload,
+            team_elo_block=team_elo_block,
+            game_time_seconds=game_time_seconds,
+            radiant_lead=radiant_lead,
+            selected_window=selected,
+            early_end_star_sign=int(star_sign),
+        )
+        details = {
+            "status": status,
+            "dispatch_mode": NETWORTH_STATUS_EARLY_WINNER_KILLS_WINDOW_SEND,
+            "dispatch_status_label": NETWORTH_STATUS_EARLY_WINNER_KILLS_WINDOW_SEND,
+            "kills_window_label": selected.get("label"),
+            "kills_window_start_min": selected.get("window_start_min"),
+            "kills_window_end_min": selected.get("window_end_min"),
+            "expected_diff": selected.get("expected_diff"),
+            "abs_expected_diff": selected.get("abs_expected_diff"),
+            "seconds_until_window_start": selected.get("seconds_until_start"),
+            "lead_seconds_required": EARLY_WINNER_KILLS_WINDOW_LEAD_SECONDS,
+            "early_end_star_sign": int(star_sign),
+            "early_end_hit_metrics": list(early_end_diag.get("hit_metrics") or []),
+            "selected_star_wr": selected_star_wr,
+            "json_retry_errors": json_retry_errors,
+            "target_side": target_side,
+        }
+        _imm_obs, _imm_map = None, None
+        _s: Dict[str, Any] = {}
+        _mc = _bookmaker_infer_map_num(
+            live_league if isinstance(live_league, dict) else {},
+            score_text="",
+        )
+        try:
+            _mi = int(_mc) if _mc is not None else None
+        except (TypeError, ValueError):
+            _mi = None
+        if _mi is not None and 1 <= _mi <= 5:
+            _s["map_num"] = _mi
+        _sc = status
+        if _sc is not None and str(_sc).strip():
+            _s["status"] = str(_sc).strip().lower()
+        _src = live_league if isinstance(live_league, dict) else {}
+        _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+        if isinstance(_imm_enriched, dict):
+            try:
+                _rm = int(_imm_enriched.get("map_num"))
+            except (TypeError, ValueError):
+                _rm = None
+            if isinstance(_rm, int) and 1 <= _rm <= 5:
+                _imm_obs = dict(_imm_enriched)
+                _imm_obs["map_num"] = _rm
+                _dk = str(match_key or "").strip()
+                if _dk:
+                    _imm_obs["match_key"] = _dk
+                if not _imm_obs.get("status"):
+                    _imm_obs["status"] = str(_sc or "live").lower()
+                _imm_obs.setdefault("observed_at", float(time.time()))
+                _imm_map = _rm
+        delivery_confirmed = _deliver_and_persist_signal(
+            match_key,
+            message_text,
+            current_map_observation=_imm_obs,
+            map_num=_imm_map,
+            selected_side=target_side,
+            add_url_reason="early_winner_kills_window_sent",
+            add_url_details=details,
+            bookmaker_decision="sent",
+            defer_add_url=True,
+        )
+        if delivery_confirmed:
+            try:
+                with _kills_pre_pass_sent_lock:
+                    _kills_pre_pass_sent_urls.add(match_key)
+            except Exception:
+                pass
+            print(
+                "   ✅ ВЕРДИКТ: Early Winner STAR + kills_window "
+                f"{selected.get('label')} expected_diff="
+                f"{selected.get('expected_diff'):+.2f} → kills "
+                f"({target_team_name}), lead "
+                f"{float(selected.get('seconds_until_start') or 0)/60.0:.1f}m"
+            )
+            return True
+        return False
+    finally:
+        _release_signal_send_slot(match_key)
+
+
 def _try_dispatch_lane_adv_standalone_kills(
     *,
     match_key: str,
@@ -18136,6 +22792,9 @@ def _try_dispatch_lane_adv_standalone_kills(
         ``early_output_block`` must either share the lane_adv_dict sign or be
         zero / missing. A single opposite-sign early metric blocks the bet.
         All-zero / all-missing early metrics pass the gate.
+      * ``lane_kills_adv_dict`` must share the same non-zero sign as
+        ``lane_adv_dict`` (0–1 min map-start kills bet). Missing / zero /
+        opposite kills-adv blocks the bet.
     """
     if not match_key:
         return False
@@ -18170,6 +22829,22 @@ def _try_dispatch_lane_adv_standalone_kills(
 
     target_side = "radiant" if lane_adv_value > 0 else "dire"
     lane_adv_sign = 1 if lane_adv_value > 0 else -1
+
+    # Map-start kills bet: lane_kills_adv_dict must agree in sign with lane_adv_dict.
+    lane_pair_gate = _lane_adv_and_lane_kills_same_sign(
+        lane_adv_dict_value=lane_adv_value,
+        lane_kills_adv=lane_kills_adv,
+    )
+    if not bool(lane_pair_gate.get("valid")):
+        print(
+            "   ⛔ lane_adv_dict standalone kills заблокирован: "
+            "lane_kills_adv_dict и lane_adv_dict не одного знака "
+            f"(lane_adv={lane_pair_gate.get('lane_adv_dict')}, "
+            f"lane_adv_sign={lane_pair_gate.get('lane_adv_sign')}, "
+            f"lane_kills_diff={lane_pair_gate.get('lane_kills_adv_expected_diff')}, "
+            f"lane_kills_sign={lane_pair_gate.get('lane_kills_adv_sign')})"
+        )
+        return False
 
     # Opposite early star → hard block: if an EARLY star exists whose sign
     # points to the OPPOSITE team from the lane_adv_dict-dominating side, do
@@ -18302,13 +22977,35 @@ def _try_dispatch_lane_adv_standalone_kills(
                 details["target_networth_diff"] = float(target_networth_diff)
             except (TypeError, ValueError):
                 pass
+        _imm_obs, _imm_map = None, None
+        _s: Dict[str, Any] = {}
+        _mc = _bookmaker_infer_map_num( live_league if isinstance(live_league, dict) else {}, score_text="", )
+        try: _mi = int(_mc) if _mc is not None else None
+        except (TypeError, ValueError): _mi = None
+        if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+        _sc = status
+        if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+        _src = live_league if isinstance(live_league, dict) else {}
+        _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+        if isinstance(_imm_enriched, dict):
+            try: _rm = int(_imm_enriched.get("map_num"))
+            except (TypeError, ValueError): _rm = None
+            if isinstance(_rm, int) and 1 <= _rm <= 5:
+                _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(match_key or "").strip()
+                if _dk: _imm_obs["match_key"]=_dk
+                if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
         delivered = _deliver_and_persist_signal(
             match_key,
             message_text,
+            current_map_observation=_imm_obs,
+            map_num=_imm_map,
+            selected_side=target_side,
             add_url_reason="star_signal_sent_now_lane_adv_standalone_kills",
             add_url_details=details,
             bookmaker_decision="sent",
             defer_add_url=True,
+            json_url=details.get("json_url") if isinstance(details, dict) else None
         )
         if delivered:
             try:
@@ -18388,6 +23085,40 @@ def _write_map_id_check_atomic(path: Path, data: list[Any]) -> None:
     _write_json_atomic(path, data)
 
 
+# Номер карты серии для события ADD_URL: add_url вызывается из множества мест и
+# номера карты не получает, поэтому запоминаем его один раз на разбор матча.
+_match_map_num_by_key: Dict[str, int] = {}
+_MATCH_MAP_NUM_LIMIT = 512
+
+
+def _remember_match_map_num(match_key: Any, map_num: Any) -> None:
+    try:
+        key = str(match_key or "").strip()
+        if not key or map_num is None:
+            return
+        value = int(map_num)
+    except (TypeError, ValueError):
+        return
+    if len(_match_map_num_by_key) >= _MATCH_MAP_NUM_LIMIT:
+        for stale in list(_match_map_num_by_key)[: _MATCH_MAP_NUM_LIMIT // 2]:
+            _match_map_num_by_key.pop(stale, None)
+    _match_map_num_by_key[key] = value
+
+
+def _lookup_match_map_num(url: Any) -> Optional[int]:
+    """Точное совпадение ключа, иначе по общему префиксу матча (url несёт минуту)."""
+    key = str(url or "").strip()
+    if not key:
+        return None
+    found = _match_map_num_by_key.get(key)
+    if found is not None:
+        return found
+    base = key.rsplit(".", 1)[0]
+    if base and base != key:
+        return _match_map_num_by_key.get(base)
+    return None
+
+
 def add_url(url, reason: str = "unspecified", details: Any = None):
     if TEST_DISABLE_ADD_URL:
         print(f"   🧪 add_url(): TEST_DISABLE_ADD_URL=1, пропускаем запись URL: {url}")
@@ -18398,10 +23129,17 @@ def add_url(url, reason: str = "unspecified", details: Any = None):
         _release_signal_send_slot(url)
         return
     print(f"   📝 add_url(): Добавляем URL: {url}")
-    print(f"   📌 add_url(): reason={reason}")
+    _map_num_for_log = _lookup_match_map_num(url)
+    print(f"   📌 add_url(): reason={reason} map={_map_num_for_log if _map_num_for_log is not None else '?'}")
     if details is not None:
         print(f"   📎 add_url(): details={details}")
-    logger.info("ADD_URL reason=%s url=%s details=%s", reason, url, details)
+    logger.info(
+        "ADD_URL reason=%s map=%s url=%s details=%s",
+        reason,
+        _map_num_for_log if _map_num_for_log is not None else "?",
+        url,
+        details,
+    )
     try:
         map_id_check_path = _current_map_id_check_path()
         with map_id_check_lock:
@@ -18471,6 +23209,110 @@ def _signal_fingerprint_registry_key(match_key: str) -> str:
     не срезаются.
     """
     return re.sub(r"\.\d+$", "", str(match_key or ""))
+
+
+def _normalize_signal_header_token(value: Any) -> str:
+    return re.sub(r"[^a-z0-9а-яё]+", "", str(value or "").lower())
+
+
+def _is_speculative_stake_dedup_header(header_norm: str) -> bool:
+    """Normalized stake header for x0.5 ends with ``x05`` (dot stripped)."""
+    return str(header_norm or "").endswith("x05")
+
+
+def _iter_sent_signal_dedup_keys() -> set:
+    with _SENT_SIGNAL_FP_LOCK:
+        in_process = set(_SENT_SIGNAL_DEDUP_KEYS)
+    return in_process | set(_load_sent_signal_fingerprints().keys())
+
+
+def _infer_map_num_from_message(message_text: Any) -> Optional[int]:
+    for raw_line in str(message_text or "").splitlines()[:8]:
+        line = raw_line.strip()
+        match = re.match(r"^(\d+)\s*[-:]\s*(\d+)$", line)
+        if not match:
+            continue
+        try:
+            return max(int(match.group(1)), 0) + max(int(match.group(2)), 0) + 1
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _map_pair_fingerprint(
+    match_key: str,
+    *,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Stable ``teamA|teamB|mapN`` fingerprint for a live map URL."""
+    registry_key = _signal_fingerprint_registry_key(match_key)
+    cached = _SIGNAL_DEDUP_FINGERPRINTS.get(registry_key)
+    if cached:
+        return str(cached)
+    if not isinstance(payload, dict):
+        return None
+    smc = payload.get("stake_multiplier_context")
+    if not isinstance(smc, dict):
+        smc = {}
+    rad = _normalize_signal_header_token(smc.get("radiant_team_name"))
+    dire = _normalize_signal_header_token(smc.get("dire_team_name"))
+    if not rad or not dire:
+        return None
+    map_num = _infer_map_num_from_message(payload.get("message"))
+    if map_num is None:
+        return None
+    return f"{'|'.join(sorted((rad, dire)))}|map{int(map_num)}"
+
+
+def _main_late_stake_already_sent_for_map(
+    match_key: str,
+    *,
+    stake_team_name: Any = None,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Return existing non-speculative ``СТАВКА НА …`` fingerprint for this map.
+
+    Main late (x1/x2/x3) and speculative comeback half (x0.5) share the team but
+    differ in the stake suffix of the dedup header. Exact-header dedup therefore
+    does not cancel the comeback watcher after the main stake already fired.
+    """
+    fingerprint = _map_pair_fingerprint(match_key, payload=payload)
+    if not fingerprint:
+        return None
+    prefix = f"{fingerprint}|"
+    team_norm = _normalize_signal_header_token(stake_team_name)
+    for key in _iter_sent_signal_dedup_keys():
+        text = str(key)
+        if not text.startswith(prefix):
+            continue
+        header = text[len(prefix) :]
+        if _is_speculative_stake_dedup_header(header):
+            continue
+        if not header.startswith("ставкана"):
+            continue
+        if team_norm and team_norm not in header:
+            continue
+        return text
+    return None
+
+
+def _drop_delayed_matches_for_registry(match_key: str, reason: str = "") -> int:
+    """Drop every delayed entry that shares the same sourcetv map base URL."""
+    registry = _signal_fingerprint_registry_key(match_key)
+    if not registry:
+        return 0
+    drop_reason = reason or "main_late_stake_cancels_comeback_watcher"
+    with monitored_matches_lock:
+        sibling_keys = [
+            key
+            for key in list(monitored_matches.keys())
+            if _signal_fingerprint_registry_key(key) == registry
+        ]
+    dropped = 0
+    for sibling_key in sibling_keys:
+        if _drop_delayed_match(sibling_key, reason=drop_reason):
+            dropped += 1
+    return dropped
 
 
 def _signal_fingerprint_register(
@@ -18590,28 +23432,79 @@ def _deliver_and_persist_signal(
     add_url_details: Optional[dict] = None,
     bookmaker_decision: Optional[str] = None,
     skip_bookmaker_prepare: bool = False,
+    bookmaker_reservation_context: Optional[Dict[str, Any]] = None,
     defer_add_url: bool = False,
+    json_url: Any = None,
+    dltv_live_data: Any = None,
+    dltv_steam_id: Any = None,
+    current_map_observation: Any = None,
+    map_num: Optional[int] = None,
+    selected_side: Any = _BOOKMAKER_SELECTED_SIDE_UNSET,
 ) -> bool:
+    """Canonical delivery owner: prepare/reserve once, send, then commit/rollback odds state.
+
+    Ordinary production callers must pass the stake-refreshed message without a prior
+    bookmaker prepare. Minimal odds-only may preflight and hand an explicit reservation
+    context so delivery reuses ownership without a second prepare.
+    """
+    reservation_context: Optional[Dict[str, Any]] = None
+    if isinstance(bookmaker_reservation_context, dict) and bookmaker_reservation_context.get("token"):
+        if not _bookmaker_validate_odds_reservation_context(
+            match_key, bookmaker_reservation_context
+        ):
+            logger.warning("BOOKMAKER_RESERVATION_HANDOFF_INVALID %s", match_key)
+            return False
+        reservation_context = dict(bookmaker_reservation_context)
+        # Explicit ownership token supplied by caller (minimal odds-only preflight).
+        skip_bookmaker_prepare = True
     if not skip_bookmaker_prepare:
-        message_text, bookmaker_ready, bookmaker_reason = _bookmaker_prepare_message_for_delivery(
-            match_key,
-            message_text,
+        message_text, bookmaker_ready, bookmaker_reason, reservation_context = (
+            _bookmaker_prepare_message_for_delivery(
+                match_key,
+                message_text,
+                map_num=map_num,
+                current_map_observation=current_map_observation,
+                selected_side=selected_side,
+            )
         )
         if not bookmaker_ready:
+            if BOOKMAKER_BLOCK_WITHOUT_ODDS:
+                print(
+                    "   ⏳ Отправка отложена: bookmaker odds ещё не готовы "
+                    f"(reason={bookmaker_reason}) для {match_key}"
+                )
+                return False
             print(
-                "   ⏳ Отправка отложена: bookmaker odds ещё не готовы "
-                f"(reason={bookmaker_reason}) для {match_key}"
+                "   ⚠️ Bookmaker odds не готовы, но блок выключен "
+                f"(BOOKMAKER_BLOCK_WITHOUT_ODDS=0, reason={bookmaker_reason}) "
+                f"— отправляю без кэфов: {match_key}"
             )
-            return False
+            reservation_context = None
     # Варнинг о неуверенных позициях sourcetv добавляется в текст основного
     # сигнала (не отдельным сообщением).
     pos_warning = _SOURCETV_POS_WARNING_BY_KEY.get(_signal_fingerprint_registry_key(match_key))
     if pos_warning and pos_warning not in message_text:
         message_text = f"{message_text.rstrip()}\n\n{pos_warning}"
+    # Fresh DLTV draft-vote parse right before dispatch (display-only footer).
+    details = add_url_details if isinstance(add_url_details, dict) else {}
+    resolved_json_url = json_url or details.get("json_url")
+    message_text = _enrich_message_with_dltv_rating(
+        match_key,
+        message_text,
+        json_url=resolved_json_url,
+        live_data=dltv_live_data,
+        steam_id=dltv_steam_id,
+    )
     # Атомарно резервируем dedup-ключ ДО отправки — закрывает гонку между
     # delayed-sender потоком и главным циклом (дубль одной ставки в одну секунду).
     reserved, dedup_key = _signal_fingerprint_try_reserve(match_key, message_text)
     if not reserved:
+        # Another path owns delivery; release our bookmaker reservation so map can retry
+        # only if this ownership never progressed to confirmed send.
+        if reservation_context is not None:
+            _bookmaker_rollback_odds_delivery(
+                match_key, reservation_context=reservation_context
+            )
         print(
             "   🔁 Дубль: сигнал по этой карте уже отправлен/резервируется "
             f"(fingerprint={dedup_key}) — отправка пропущена для {match_key}"
@@ -18626,29 +23519,45 @@ def _deliver_and_persist_signal(
             logger.exception("add_url failed after cross-instance dedup for %s", match_key)
         return True
     try:
-        send_message(
-            message_text,
-            require_delivery=True,
-            admin_only=SIGNAL_SEND_ADMIN_ONLY,
-            mirror_to_vk=not SIGNAL_SEND_ADMIN_ONLY,
-        )
-    except TelegramSendError as exc:
-        if exc.delivery_uncertain:
-            # Доставка неизвестна — резерв НЕ снимаем (матч и так блокируется
-            # как uncertain), чтобы повтор не сдублировал.
-            _record_uncertain_delivery(
-                match_key,
-                reason="telegram_delivery_uncertain",
-                details=dict(add_url_details or {}),
-                error_message=str(exc),
+        try:
+            send_message(
+                message_text,
+                require_delivery=True,
+                admin_only=SIGNAL_SEND_ADMIN_ONLY,
+                mirror_to_vk=not SIGNAL_SEND_ADMIN_ONLY,
             )
-            print(
-                f"   ⚠️ Uncertain Telegram delivery for {match_key}; "
-                "URL не будет заблокирован вне map_id_check.txt"
-            )
-            return False
-        # Доказанная неудача отправки — снимаем резерв, чтобы повтор смог отправить.
-        _signal_fingerprint_release(dedup_key)
+        except TelegramSendError as exc:
+            if exc.delivery_uncertain:
+                # Доставка неизвестна — резерв НЕ снимаем (матч и так блокируется
+                # как uncertain), чтобы повтор не сдублировал. Bookmaker ownership
+                # stays prepared until confirmed success/failure path can decide.
+                _record_uncertain_delivery(
+                    match_key,
+                    reason="telegram_delivery_uncertain",
+                    details=dict(add_url_details or {}),
+                    error_message=str(exc),
+                )
+                print(
+                    f"   ⚠️ Uncertain Telegram delivery for {match_key}; "
+                    "URL не будет заблокирован вне map_id_check.txt"
+                )
+                return False
+            # Доказанная неудача отправки — снимаем резерв, чтобы повтор смог отправить.
+            _signal_fingerprint_release(dedup_key)
+            if reservation_context is not None:
+                _bookmaker_rollback_odds_delivery(
+                    match_key, reservation_context=reservation_context
+                )
+            raise
+        except Exception:
+            # Unexpected send-boundary failure: same rollback as confirmed False path.
+            _signal_fingerprint_release(dedup_key)
+            if reservation_context is not None:
+                _bookmaker_rollback_odds_delivery(
+                    match_key, reservation_context=reservation_context
+                )
+            raise
+    except Exception:
         raise
     print(
         f"   📨 send_message OK для {match_key} "
@@ -18657,6 +23566,7 @@ def _deliver_and_persist_signal(
         f"reason={add_url_reason})"
     )
     _signal_fingerprint_mark_sent(match_key, message_text)
+    decelerate_winline_current_map_polling(match_key)
     if bookmaker_decision:
         _log_bookmaker_source_snapshot(match_key, decision=bookmaker_decision)
     if defer_add_url:
@@ -18664,6 +23574,12 @@ def _deliver_and_persist_signal(
         # signal (typically the opposite-side late dispatch) can still fire
         # later. add_url() will be invoked when the second signal completes
         # (or the late watcher times out / is cancelled).
+        # Bookmaker sent-state still commits after confirmed delivery even when
+        # map_id_check persistence is deferred for a second signal.
+        if reservation_context is not None:
+            _bookmaker_commit_odds_delivery(
+                match_key, reservation_context=reservation_context
+            )
         print(
             f"   ⏸️ add_url отложен для {match_key} (defer_add_url=True): "
             "ожидаем second-signal dispatch (например, late watcher)"
@@ -18682,12 +23598,21 @@ def _deliver_and_persist_signal(
         _mark_url_processed(match_key)
         _drop_delayed_match(match_key, reason="sent_signal_journaled_after_persist_error")
         _release_signal_send_slot(match_key)
+        # Confirmed Telegram delivery + recovery journal still commits bookmaker sent.
+        if reservation_context is not None:
+            _bookmaker_commit_odds_delivery(
+                match_key, reservation_context=reservation_context
+            )
         logger.exception("Signal was sent but add_url() failed for %s", match_key)
         print(
             f"   ⚠️ add_url() failed after successful send for {match_key}; "
             "единственный storage=map_id_check.txt, URL не помечен обработанным"
         )
         return False
+    if reservation_context is not None:
+        _bookmaker_commit_odds_delivery(
+            match_key, reservation_context=reservation_context
+        )
     return True
 
 
@@ -18876,18 +23801,205 @@ def _cyberscore_handle_transient_fetch_error(target_url: str, exc: BaseException
     return short_error
 
 
+# Приоритеты задач общего Camoufox. Меньше число — раньше исполнение.
+# Параллельности это НЕ даёт: синхронный Playwright обязан жить в одном потоке,
+# поэтому речь только о порядке. Короткий опрос кэфов не должен ждать, пока
+# догрузится тяжёлый pro-tracker.
+CAMOUFOX_JOB_PRIORITY_STOP = 0
+CAMOUFOX_JOB_PRIORITY_WINLINE_POLL = 10
+CAMOUFOX_JOB_PRIORITY_DEFAULT = 100
+# Порог, выше которого задача печатается как медленная: без имени задачи
+# невозможно понять, кто держит единственный браузер, пока опрос кэфов ждёт.
+CAMOUFOX_SLOW_JOB_LOG_SECONDS = 1.0
+
+
+# ---------------------------------------------------------------------------
+# Async-переезд Camoufox (шаг 1: адаптер + сессия рядом с синхронной)
+# ---------------------------------------------------------------------------
+#
+# Настоящая параллельность требует async Playwright: синхронный API обязан
+# жить в одном потоке, поэтому одна вкладка блокирует все остальные.
+#
+# Ключевая проблема переезда — не сами 57 вызовов page.*, а 139 тестов с
+# СИНХРОННЫМИ дублёрами страниц. Адаптер ниже снимает её: `await
+# _maybe_await(page.content())` одинаково работает и с настоящей async-страницей
+# (вернёт корутину), и с дублёром, вернувшим готовую строку. Поэтому
+# существующие тесты продолжают работать без правок.
+
+
+async def _maybe_await(value: Any) -> Any:
+    """Разворачивает результат page.*: корутину ждём, готовое значение отдаём."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+class _AsyncCamoufoxSession:
+    """Один браузер AsyncCamoufox на event loop в выделенном потоке.
+
+    Отличие от синхронной сессии: задачи — корутины, поэтому несколько страниц
+    работают ОДНОВРЕМЕННО (ожидания сети перекрываются). Вызывающая сторона
+    по-прежнему синхронна: submit() блокируется до результата, как и раньше,
+    поэтому весь остальной код менять не нужно.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._loop: Optional[Any] = None
+        self._thread: Optional[threading.Thread] = None
+        self._browser: Any = None
+        self._browser_cm: Any = None
+        self._named_pages: Dict[str, Any] = {}
+        self._page_locks: Dict[str, Any] = {}
+        self._reset_requested = False
+
+    # -- жизненный цикл потока с циклом событий ----------------------------
+
+    def _ensure_loop(self) -> Any:
+        with self._lock:
+            if self._loop is not None and self._thread is not None and self._thread.is_alive():
+                return self._loop
+            loop = asyncio.new_event_loop()
+
+            def _run() -> None:
+                asyncio.set_event_loop(loop)
+                loop.run_forever()
+
+            thread = threading.Thread(target=_run, name="async-camoufox", daemon=True)
+            thread.start()
+            self._loop, self._thread = loop, thread
+            return loop
+
+    def submit(
+        self,
+        label: str,
+        callback,
+        timeout: float = 120.0,
+        reset_on_error: bool = True,
+        priority: Optional[int] = None,
+    ) -> Any:
+        """Выполнить корутину-задачу на общем браузере. Блокирует вызывающий поток.
+
+        priority здесь не нужен: задачи исполняются конкурентно, очереди нет.
+        Параметр принимается ради совместимости сигнатуры с синхронной сессией.
+        """
+        del priority
+        loop = self._ensure_loop()
+        future = asyncio.run_coroutine_threadsafe(
+            self._run_job(str(label or "camoufox-job"), callback, bool(reset_on_error)),
+            loop,
+        )
+        return future.result(timeout=timeout)
+
+    async def _run_job(self, label: str, callback, reset_on_error: bool) -> Any:
+        try:
+            browser = await self._ensure_browser()
+            result = callback(browser)
+            return await _maybe_await(result)
+        except Exception:
+            if reset_on_error:
+                self.request_reset()
+            raise
+
+    # -- браузер и страницы -------------------------------------------------
+
+    async def _ensure_browser(self) -> Any:
+        if self._reset_requested:
+            await self._close_browser_async()
+            self._reset_requested = False
+        if self._browser is not None:
+            return self._browser
+        bindings = camoufox
+        options = _camoufox_browser_options() if "_camoufox_browser_options" in globals() else {}
+        self._browser_cm = bindings.AsyncCamoufox(**options)
+        self._browser = await self._browser_cm.__aenter__()
+        self._named_pages.clear()
+        self._page_locks.clear()
+        return self._browser
+
+    async def get_or_create_page(self, name: str) -> Any:
+        """Именованная страница. В отличие от синхронной сессии — корутина."""
+        key = str(name or "").strip()
+        if not key:
+            raise ValueError("named page requires a non-empty name")
+        page = self._named_pages.get(key)
+        if page is not None:
+            closed = False
+            with contextlib.suppress(Exception):
+                closed = bool(await _maybe_await(page.is_closed()))
+            if not closed:
+                return page
+            self._named_pages.pop(key, None)
+        browser = await self._ensure_browser()
+        page = await _maybe_await(browser.new_page())
+        self._named_pages[key] = page
+        return page
+
+    def page_lock(self, name: str) -> Any:
+        """Отдельный лок на страницу: разные страницы работают параллельно,
+        одна и та же — строго по очереди (Playwright это требует)."""
+        key = str(name or "")
+        lock = self._page_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._page_locks[key] = lock
+        return lock
+
+    def request_reset(self) -> None:
+        self._reset_requested = True
+
+    async def _close_browser_async(self) -> None:
+        for page in list(self._named_pages.values()):
+            with contextlib.suppress(Exception):
+                await _maybe_await(page.close())
+        self._named_pages.clear()
+        self._page_locks.clear()
+        if self._browser_cm is not None:
+            with contextlib.suppress(Exception):
+                await self._browser_cm.__aexit__(None, None, None)
+        self._browser_cm = None
+        self._browser = None
+
+    def close(self) -> None:
+        loop = self._loop
+        if loop is None:
+            return
+        with contextlib.suppress(Exception):
+            asyncio.run_coroutine_threadsafe(self._close_browser_async(), loop).result(timeout=30)
+        with contextlib.suppress(Exception):
+            loop.call_soon_threadsafe(loop.stop)
+        with self._lock:
+            self._loop = None
+            self._thread = None
+
+
 class _SharedCamoufoxSession:
-    """Owns the only Camoufox browser and runs all page work on one thread."""
+    """Owns the only Camoufox browser and runs all page work on one thread.
+
+    Named pages are owned exclusively by the worker thread: callers must only
+    obtain them via get_or_create_page() from a queued job callback.
+    """
 
     _STOP = object()
 
     def __init__(self) -> None:
-        self._jobs: "queue.Queue[Any]" = queue.Queue()
+        self._jobs: "queue.PriorityQueue[Any]" = queue.PriorityQueue()
+        self._job_seq = itertools.count()
         self._lock = threading.RLock()
         self._thread: Optional[threading.Thread] = None
         self._reset_requested = False
+        # Worker-thread-only registry: name -> page. Cleared on browser close.
+        self._named_pages: Dict[str, Any] = {}
+        self._worker_thread_id: Optional[int] = None
 
-    def submit(self, label: str, callback, timeout: float = 120.0, reset_on_error: bool = True) -> Any:
+    def submit(
+        self,
+        label: str,
+        callback,
+        timeout: float = 120.0,
+        reset_on_error: bool = True,
+        priority: int = CAMOUFOX_JOB_PRIORITY_DEFAULT,
+    ) -> Any:
         if not CAMOUFOX_AVAILABLE or camoufox is None:
             raise RuntimeError("Camoufox unavailable")
         future: Future = Future()
@@ -18899,19 +24011,68 @@ class _SharedCamoufoxSession:
                     daemon=True,
                 )
                 self._thread.start()
-        self._jobs.put((future, str(label or "camoufox-job"), callback, bool(reset_on_error)))
+        self._jobs.put(
+            (
+                int(priority),
+                next(self._job_seq),
+                future,
+                str(label or "camoufox-job"),
+                callback,
+                bool(reset_on_error),
+            )
+        )
         return future.result(timeout=timeout)
 
     def request_reset(self) -> None:
         with self._lock:
             self._reset_requested = True
 
+    def get_or_create_page(self, name: str, browser: Any) -> Any:
+        """Return a reusable named page. Callable only from the shared worker thread."""
+        if self._worker_thread_id is None or threading.get_ident() != self._worker_thread_id:
+            raise RuntimeError("get_or_create_page must be called from the shared Camoufox worker thread")
+        key = str(name or "").strip()
+        if not key:
+            raise ValueError("named page requires a non-empty name")
+        page = self._named_pages.get(key)
+        if page is not None:
+            closed = bool(getattr(page, "is_closed", lambda: False)()) if callable(getattr(page, "is_closed", None)) else bool(getattr(page, "closed", False))
+            if not closed:
+                return page
+            with contextlib.suppress(Exception):
+                page.close()
+            self._named_pages.pop(key, None)
+        page = browser.new_page()
+        with contextlib.suppress(Exception):
+            setattr(page, "_shared_camoufox_page_name", key)
+        self._named_pages[key] = page
+        return page
+
+    def invalidate_named_page(self, name: str) -> None:
+        """Close and drop one named page (parser left it unrecoverable). Worker-thread only."""
+        if self._worker_thread_id is None or threading.get_ident() != self._worker_thread_id:
+            raise RuntimeError("invalidate_named_page must be called from the shared Camoufox worker thread")
+        key = str(name or "").strip()
+        page = self._named_pages.pop(key, None)
+        if page is not None:
+            with contextlib.suppress(Exception):
+                page.close()
+
     def close(self) -> None:
         with self._lock:
             thread = self._thread
             if thread is None:
                 return
-            self._jobs.put(self._STOP)
+            self._jobs.put(
+                (
+                    CAMOUFOX_JOB_PRIORITY_STOP,
+                    next(self._job_seq),
+                    self._STOP,
+                    "stop",
+                    None,
+                    False,
+                )
+            )
         if thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=10)
         with self._lock:
@@ -18924,6 +24085,7 @@ class _SharedCamoufoxSession:
             return value
 
     def _worker(self) -> None:
+        self._worker_thread_id = threading.get_ident()
         browser_cm = None
         browser = None
         launched_at = 0.0
@@ -18932,6 +24094,14 @@ class _SharedCamoufoxSession:
         # ротируем чаще, чтобы не светить один отпечаток часами.
         reset_after_jobs = max(1, _camoufox_env_int("CAMOUFOX_RESET_AFTER_JOBS", 60))
         reset_after_seconds = max(60, _camoufox_env_int("CAMOUFOX_RESET_AFTER_SECONDS", 1200))
+
+        def _close_named_pages() -> None:
+            # Strict order: close every named page before browser/context.
+            for page_name, page in list(self._named_pages.items()):
+                with contextlib.suppress(Exception):
+                    page.close()
+                self._named_pages.pop(page_name, None)
+            self._named_pages.clear()
 
         def _close_browser(reason: str) -> None:
             nonlocal browser_cm, browser, launched_at, jobs_since_launch
@@ -18943,6 +24113,7 @@ class _SharedCamoufoxSession:
             if live_watchers is not None:
                 with contextlib.suppress(Exception):
                     live_watchers.clear()
+            _close_named_pages()
             if browser is not None:
                 with contextlib.suppress(Exception):
                     browser.close()
@@ -18960,7 +24131,13 @@ class _SharedCamoufoxSession:
             nonlocal browser_cm, browser, launched_at
             if browser is not None:
                 return browser
-            proxy_kwargs = _cyberscore_camoufox_proxy_kwargs()
+            # Prefer Winline DE/US candidates for bookmaker/shared session; fall back
+            # to cyberscore proxy policy only when DE/US inventory is empty.
+            proxy_kwargs = {}
+            with contextlib.suppress(Exception):
+                proxy_kwargs = _bookmaker_select_shared_camoufox_proxy_kwargs()
+            if not proxy_kwargs:
+                proxy_kwargs = _cyberscore_camoufox_proxy_kwargs()
             proxy_label = "with proxy" if proxy_kwargs else "without proxy"
             browser_options = _shared_camoufox_browser_options(proxy_kwargs)
             try:
@@ -18995,23 +24172,55 @@ class _SharedCamoufoxSession:
                 job = self._jobs.get()
                 if job is self._STOP:
                     break
-                try:
-                    future, label, callback, reset_on_error = job
-                except ValueError:
-                    future, label, callback = job
-                    reset_on_error = True
+                if isinstance(job, tuple) and len(job) == 6:
+                    _prio, _seq, future, label, callback, reset_on_error = job
+                    if future is self._STOP:
+                        break
+                else:
+                    try:
+                        future, label, callback, reset_on_error = job
+                    except ValueError:
+                        future, label, callback = job
+                        reset_on_error = True
                 if not future.set_running_or_notify_cancel():
                     continue
                 try:
+                    _job_t0 = time.monotonic()
                     if self._pop_reset_requested():
                         _close_browser("requested reset")
                     active_browser = _ensure_browser()
+                    _job_t_browser = time.monotonic()
                     result = callback(active_browser)
+                    _job_t1 = time.monotonic()
+                    _spent = _job_t1 - _job_t0
+                    if _spent >= CAMOUFOX_SLOW_JOB_LOG_SECONDS:
+                        # Разделяем подготовку браузера и сам колбэк: это разные
+                        # причины задержки и лечатся по-разному.
+                        print(
+                            f"   ⏱️ Shared Camoufox задача '{label}': {_spent:.2f}c "
+                            f"(браузер {_job_t_browser - _job_t0:.2f}c, "
+                            f"колбэк {_job_t1 - _job_t_browser:.2f}c)"
+                        )
                     jobs_since_launch += 1
                     future.set_result(result)
                     _note_proxy_success(CURRENT_PROXY)
                 except Exception as exc:
                     future.set_exception(exc)
+                    code_defect = False
+                    with contextlib.suppress(Exception):
+                        code_defect = _camoufox_error_is_code_defect(exc)
+                    if code_defect:
+                        # Дефект кода: прокси и браузер тут не при чём. Ротация
+                        # только спрятала бы причину за «нестабильной сетью», а
+                        # сброс уничтожил бы тёплую страницу впустую.
+                        print(
+                            f"   🐞 Shared Camoufox: ошибка КОДА в задаче '{label}' "
+                            f"({type(exc).__name__}: {str(exc)[:160]}) — "
+                            f"прокси НЕ ротируем — это не сеть"
+                        )
+                    else:
+                        with contextlib.suppress(Exception):
+                            _bookmaker_rotate_shared_camoufox_proxy(reason=type(exc).__name__)
                     if "inside the asyncio loop" in str(exc):
                         # Поток «отравлен» незакрытым event loop'ом playwright
                         # (после краха браузера) — любой следующий запуск в этом
@@ -19021,6 +24230,11 @@ class _SharedCamoufoxSession:
                         _close_browser("asyncio-poisoned thread")
                         break
                     if reset_on_error:
+                        # Восстановление браузера оставляем при ЛЮБОЙ ошибке:
+                        # после дефекта кода страница тоже может остаться в
+                        # непригодном состоянии, а тест на recovery это
+                        # свойство прямо фиксирует. Не делаем мы другого —
+                        # не ротируем прокси и не пишем в лог, будто виновата сеть.
                         self.request_reset()
                 finally:
                     browser_age = time.time() - launched_at if launched_at else 0.0
@@ -19033,32 +24247,543 @@ class _SharedCamoufoxSession:
                         _close_browser("periodic reset" if browser_age >= reset_after_seconds else "requested reset")
         finally:
             _close_browser("shutdown")
+            self._worker_thread_id = None
 
 
 _shared_camoufox_session = _SharedCamoufoxSession()
 atexit.register(_shared_camoufox_session.close)
 
 
-def _run_shared_camoufox_job(label: str, callback, timeout: float = 120.0, retry: bool = True, reset_on_error: bool = True) -> Any:
+def _camoufox_job_priority_for_label(label: Any) -> int:
+    """Приоритет по метке задачи: короткий опрос кэфов идёт раньше тяжёлых.
+
+    Вывод по метке, а не параметром на месте вызова: сигнатура
+    _run_shared_camoufox_job остаётся прежней, поэтому любые подмены функции
+    (в том числе тестовые дублёры) продолжают работать.
+    """
+    text = str(label or "")
+    if text.startswith("winline_current_map_poll"):
+        return CAMOUFOX_JOB_PRIORITY_WINLINE_POLL
+    return CAMOUFOX_JOB_PRIORITY_DEFAULT
+
+
+# --- Ночной прогрев кэша Dota2ProTracker ------------------------------------
+#
+# Кэш героев протухает РАЗОМ в полночь (cached_date < today в
+# base/dota2protracker.py), поэтому первые же живые матчи после полуночи платят
+# за последовательную загрузку всего драфта. Замер по боевому логу:
+#
+#     фетчей в цикле 0    -> 12 791 цикл, в среднем  12.6 c
+#     фетчей в цикле 1-3  ->     56 циклов, в среднем 245.7 c
+#     фетчей в цикле 4-9  ->     39 циклов, в среднем 292.4 c
+#     фетчей в цикле 10+  ->     36 циклов, в среднем 403.1 c
+#
+# Полный драфт растягивает цикл анализа до ~7 минут — для live-ставок это
+# опоздание сигнала. Прогрев заливает кэш в тихий час, чтобы боевой путь за
+# фетчи не платил вовсе.
+#
+# Делается ВНУТРИ процесса намеренно: загрузчик payload-ов инжектится сюда
+# (set_payload_fetcher), здесь же общий браузер, прокси и ретраи. Отдельный
+# скрипт означал бы вторую реализацию похода в сеть в денежном пути.
+PROTRACKER_WARMUP_ENABLED = _safe_bool_env("PROTRACKER_WARMUP_ENABLED", True)
+PROTRACKER_WARMUP_START_HOUR = _safe_float_env("PROTRACKER_WARMUP_START_HOUR", 3.0)
+PROTRACKER_WARMUP_START_MINUTE = _safe_float_env("PROTRACKER_WARMUP_START_MINUTE", 12.0)
+PROTRACKER_WARMUP_WINDOW_MINUTES = _safe_float_env("PROTRACKER_WARMUP_WINDOW_MINUTES", 90.0)
+PROTRACKER_WARMUP_STATE_PATH = PROJECT_ROOT / "runtime" / "protracker_cache_warmup_last.json"
+
+
+def _protracker_warmup_state() -> Dict[str, Any]:
     try:
-        return _shared_camoufox_session.submit(label, callback, timeout=timeout, reset_on_error=reset_on_error)
+        return json.loads(PROTRACKER_WARMUP_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _protracker_warmup_write_state(payload: Dict[str, Any]) -> None:
+    try:
+        PROTRACKER_WARMUP_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PROTRACKER_WARMUP_STATE_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(PROTRACKER_WARMUP_STATE_PATH)
+    except Exception as exc:
+        logger.warning("protracker warmup state write failed: %s", exc)
+
+
+def _protracker_warmup_due(now: Optional[Any] = None) -> bool:
+    """Окно тихого часа и «сегодня ещё не прогревали»."""
+    if not PROTRACKER_WARMUP_ENABLED:
+        return False
+    moment = now or datetime.now()
+    start = moment.replace(
+        hour=int(PROTRACKER_WARMUP_START_HOUR),
+        minute=int(PROTRACKER_WARMUP_START_MINUTE),
+        second=0,
+        microsecond=0,
+    )
+    if moment < start:
+        return False
+    if (moment - start).total_seconds() > PROTRACKER_WARMUP_WINDOW_MINUTES * 60.0:
+        return False
+    return str(_protracker_warmup_state().get("date") or "") != moment.strftime("%Y-%m-%d")
+
+
+def _protracker_cache_dir() -> Path:
+    """Каталог кэша героев — тот же, что у парсера.
+
+    Единственный источник правды здесь `dota2protracker.CACHE_DIR`: он якорён к
+    каталогу модуля. Своя копия пути уже разъезжалась — в корне репозитория
+    остался осиротевший набор кэшей, и проверка свежести читала его.
+    """
+    module = globals().get("_dota2protracker_module")
+    cache_dir = getattr(module, "CACHE_DIR", None)
+    if cache_dir:
+        return Path(cache_dir)
+    return PROJECT_ROOT / "base" / "hero_dota2protracker_data"
+
+
+def _protracker_cache_is_fresh(hero_name: str) -> bool:
+    """Та же логика, что в dota2protracker: кэш живёт календарный день."""
+    path = _protracker_cache_dir() / f"{str(hero_name).replace(' ', '_').lower()}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    cached = time.strftime("%Y-%m-%d", time.localtime(data.get("timestamp", 0)))
+    return cached >= time.strftime("%Y-%m-%d")
+
+
+def run_protracker_cache_warmup(*, limit: int = 0, force: bool = False) -> Dict[str, Any]:
+    """Пройти героев и залить кэш. Идемпотентно: свежие пропускаются."""
+    report: Dict[str, Any] = {
+        "schema": "protracker_cache_warmup.v1",
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "refreshed": 0,
+        "skipped_fresh": 0,
+        "failed": 0,
+        "failures": [],
+    }
+    module = globals().get("_dota2protracker_module")
+    if module is None:
+        logger.warning("protracker warmup: модуль недоступен")
+        report["error"] = "module_unavailable"
+        return report
+    try:
+        _install_dota2protracker_shared_camoufox_fetcher()
+    except Exception as exc:
+        logger.warning("protracker warmup: фетчер не подключён: %s", exc)
+
+    # Сводка по всем героям — один запрос, поэтому тянем её до цикла.
+    report["hero_list"] = 0
+    try:
+        fetch_overall = getattr(module, "fetch_hero_overall_stats", None)
+        if callable(fetch_overall):
+            report["hero_list"] = len(fetch_overall(use_cache=not force) or {})
+    except Exception as exc:
+        logger.warning("protracker warmup: сводка по героям не обновлена: %s", exc)
+
+    registry = {}
+    with contextlib.suppress(Exception):
+        registry = module.get_hero_registry() or {}
+    heroes = sorted({str(v.get("name") or "").strip() for v in registry.values() if v.get("name")})
+    if limit:
+        heroes = heroes[:limit]
+    report["heroes_total"] = len(heroes)
+    print(f"♨️ ProTracker warmup: героев {len(heroes)}")
+
+    started = time.monotonic()
+    t0_wall = time.time()
+    report["served_from_cache"] = 0
+    for index, hero in enumerate(heroes, start=1):
+        if not force and _protracker_cache_is_fresh(hero):
+            report["skipped_fresh"] += 1
+            continue
+        t0 = time.monotonic()
+        try:
+            data = module.parse_hero_matchups(hero, use_cache=not force) or {}
+            ok = bool(data.get("matchups"))
+            # Отличаем реальную загрузку от чтения кэша: при use_cache=True
+            # parse_hero_matchups может вернуть готовый файл, и тогда «обновлено»
+            # в отчёте означало бы совсем не то, что кажется.
+            if ok and data.get("timestamp", 0) < t0_wall:
+                report["served_from_cache"] += 1
+        except Exception as exc:
+            data, ok = {"error": f"{type(exc).__name__}: {exc}"}, False
+        spent = round(time.monotonic() - t0, 1)
+        if ok:
+            report["refreshed"] += 1
+            print(f"   ♨️ [{index}/{len(heroes)}] {hero}: ok за {spent}c")
+        else:
+            report["failed"] += 1
+            report["failures"].append({"hero": hero, "error": str(data.get("error"))[:200]})
+            print(f"   ⚠️ [{index}/{len(heroes)}] {hero}: не удалось за {spent}c")
+
+    report["elapsed_seconds"] = round(time.monotonic() - started, 1)
+    report["finished_at"] = datetime.now(timezone.utc).isoformat()
+    _protracker_warmup_write_state(report)
+    print(
+        f"♨️ ProTracker warmup завершён за {report['elapsed_seconds']}c: "
+        f"обновлено {report['refreshed'] - report['served_from_cache']}, "
+        f"из кэша {report['served_from_cache']}, свежих {report['skipped_fresh']}, "
+        f"ошибок {report['failed']}, сводка по героям {report['hero_list']}"
+    )
+    return report
+
+
+def maybe_run_protracker_cache_warmup() -> Optional[Dict[str, Any]]:
+    """Вызывается каждый цикл; работает только в своё окно и один раз в сутки."""
+    try:
+        if not _protracker_warmup_due():
+            return None
+        return run_protracker_cache_warmup()
+    except Exception as exc:
+        logger.warning("protracker warmup failed: %s", exc)
+        return None
+
+
+def _run_shared_camoufox_job(
+    label: str,
+    callback,
+    timeout: float = 120.0,
+    retry: bool = True,
+    reset_on_error: bool = True,
+    priority: Optional[int] = None,
+) -> Any:
+    effective_priority = (
+        _camoufox_job_priority_for_label(label) if priority is None else int(priority)
+    )
+    try:
+        return _shared_camoufox_session.submit(
+            label,
+            callback,
+            timeout=timeout,
+            reset_on_error=reset_on_error,
+            priority=effective_priority,
+        )
     except Exception:
         if not retry:
             raise
         _shared_camoufox_session.request_reset()
-        return _shared_camoufox_session.submit(label, callback, timeout=timeout, reset_on_error=reset_on_error)
+        return _shared_camoufox_session.submit(
+            label,
+            callback,
+            timeout=timeout,
+            reset_on_error=reset_on_error,
+            priority=effective_priority,
+        )
 
 
-# Дизайн: ВСЯ работа Camoufox идёт в одном shared-браузере. Subprocess-фолбэк
-# для pro-tracker — крайняя мера: помечаем shared-сессию сломанной только после
-# 2 НЕУДАЧ ПОДРЯД (между попытками — reset браузера; отравленный asyncio-loop
-# поток самолечится перезапуском потока и не считается фатальным).
+# ---------------------------------------------------------------------------
+# Shadow-проба ОТКЛЮЧЕНА 2026-07-25: её работу полностью делает непрерывный
+# поллер текущей карты, а мешала она заметно. Проба ходила по той же именованной
+# странице 'bookmaker:winline', что поллер: goto плюс клики по вкладкам карт
+# сбивали состояние, на которое рассчитывает быстрый съём, и попытка вместо
+# 0.05 c стоила 18 c. Плюс 72 c общего браузера за проход.
+# Проба наблюдательная: вызывалась после решения об отправке, ничего не гейтила,
+# её evidence читает только runtime/winline_shadow_event_watchdog.py.
+# Вернуть можно этим флагом (env WINLINE_SHADOW_PROBE_ENABLED=1) — код и модули
+# на месте.
+WINLINE_SHADOW_PROBE_ENABLED = os.getenv(
+    "WINLINE_SHADOW_PROBE_ENABLED", "0"
+).strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+# Winline non-sending shadow seam (INT t_790fa101)
+# Injects production process-wide `_run_shared_camoufox_job` into the W-SHADOW
+# probe. Never enables odds delivery / Telegram send. Fail-closed under --no-odds.
+# ---------------------------------------------------------------------------
+
+
+def _load_winline_shadow_probe_module():
+    """Load runtime/winline_shadow_probe.py once (no package install required)."""
+    cached = globals().get("_winline_shadow_probe_mod")
+    if cached is not None:
+        return cached
+    probe_path = PROJECT_ROOT / "runtime" / "winline_shadow_probe.py"
+    if not probe_path.is_file():
+        raise FileNotFoundError(f"missing winline shadow probe: {probe_path}")
+    spec = importlib.util.spec_from_file_location(
+        "runtime_winline_shadow_probe",
+        str(probe_path),
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load winline shadow probe from {probe_path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["runtime_winline_shadow_probe"] = mod
+    spec.loader.exec_module(mod)
+    globals()["_winline_shadow_probe_mod"] = mod
+    return mod
+
+
+def _winline_shadow_collect_observation(browser: Any, job: Any) -> Dict[str, Any]:
+    """Worker-thread collector: one Winline parse via the shared named page.
+
+    Returns a dict matching the W-SHADOW observation schema. Raises on
+    missing Camoufox/parse capability or non-usable result.
+    """
+    if not BOOKMAKER_CAMOUFOX_IMPORTED or _bookmaker_parse_site_in_camoufox_page is None:
+        raise RuntimeError("Camoufox not available for winline shadow")
+    job_d = job if isinstance(job, dict) else {}
+    try:
+        map_num = int(job_d.get("map_num")) if job_d.get("map_num") is not None else None
+    except (TypeError, ValueError):
+        map_num = None
+    if map_num is None or not (1 <= map_num <= 5):
+        raise ValueError("winline shadow job requires valid map_num 1..5")
+    team1 = str(job_d.get("team1") or "")
+    team2 = str(job_d.get("team2") or "")
+    urls = _bookmaker_urls_for_mode("odds")
+    if "winline" not in urls:
+        # Fall back to any registered mode map that includes winline.
+        for mode_key in ("odds", "presence", "live"):
+            urls = _bookmaker_urls_for_mode(mode_key)
+            if "winline" in urls:
+                break
+    if "winline" not in urls:
+        raise RuntimeError("winline URL not configured for shadow collection")
+    session = _shared_camoufox_session
+    page = session.get_or_create_page("bookmaker:winline", browser)
+    result = _bookmaker_parse_site_in_camoufox_page(
+        page,
+        site="winline",
+        url=urls["winline"],
+        team1=team1,
+        team2=team2,
+        mode="odds",
+        forced_map_num=map_num,
+    )
+    odds = list(getattr(result, "odds", None) or [])
+    p1_odds = float(odds[0]) if len(odds) >= 1 else None
+    p2_odds = float(odds[1]) if len(odds) >= 2 else None
+    # Probe freezes `now` before acquisition; wall-clock at end of parse is always
+    # slightly later and would trip observed_at_in_future. Prefer any job-provided
+    # collect clock, else ~0.5s in the past (still well inside freshness windows).
+    try:
+        hint = job_d.get("collect_started_at")
+        if hint is not None:
+            observed_at = float(hint)
+        else:
+            observed_at = float(time.time()) - 0.5
+    except (TypeError, ValueError):
+        observed_at = float(time.time()) - 0.5
+    match_id = job_d.get("match_id")
+    return {
+        "source": str(getattr(result, "source", None) or "Winline"),
+        "match_id": match_id,
+        "map_num": int(getattr(result, "map_num", None) or map_num),
+        "team1": str(_winline_reported_team_name(getattr(result, "p1_team", None)) or team1),
+        "team2": str(_winline_reported_team_name(getattr(result, "p2_team", None)) or team2),
+        "p1_odds": p1_odds,
+        "p2_odds": p2_odds,
+        "observed_at": observed_at,
+        "market_closed": bool(getattr(result, "market_closed", False)),
+        "market_kind": getattr(result, "market_kind", None),
+        "status": str(getattr(result, "status", "") or ""),
+        "match_found": bool(getattr(result, "match_found", False)),
+    }
+
+
+def run_winline_shadow_request(
+    *,
+    match_key: str,
+    map_num: Any,
+    team1: str,
+    team2: str,
+    selected_side: str,
+    output_path: Any,
+    freshness_limit_seconds: float = 15.0,
+    no_odds_active: bool = True,
+    now: Optional[float] = None,
+) -> int:
+    """Non-sending Winline shadow via the process-wide shared Camoufox runner.
+
+    Fail-closed contract:
+    - Requires no_odds_active=True (production --no-odds); never enables odds gate.
+    - Identity is stable series|mapN (kills/score suffix stripped).
+    - Exactly one submit path: _run_shared_camoufox_job (one sequential reset on fail).
+    - Acquisition failure terminalizes the lifecycle entry and returns nonzero.
+    - Never calls Telegram send / never mutates BOOKMAKER_PREFETCH_*.
+    """
+    if not no_odds_active:
+        return 4  # refuse: this seam must not run under odds-enabled production
+    try:
+        resolved_map = int(map_num) if map_num is not None else None
+    except (TypeError, ValueError):
+        resolved_map = None
+    if resolved_map is None or not (1 <= resolved_map <= 5):
+        return 5
+    lifecycle_key = _bookmaker_lifecycle_identity(match_key, map_num=resolved_map)
+    if not lifecycle_key:
+        return 5
+    series = _bookmaker_series_identity(match_key)
+    match_id = _bookmaker_extract_match_id(match_key) or _bookmaker_extract_match_id(series or "")
+    if not match_id:
+        return 5
+
+    try:
+        probe = _load_winline_shadow_probe_module()
+    except Exception as exc:
+        logger.warning("winline shadow probe load failed: %s", exc)
+        return 6
+    run_probe = getattr(probe, "run_winline_shadow_probe", None)
+    if not callable(run_probe):
+        return 6
+
+    clock = float(now if now is not None else time.time())
+    job = {
+        "label": "winline-shadow",
+        "site": "winline",
+        "match_id": str(match_id),
+        "map_num": int(resolved_map),
+        "team1": str(team1 or ""),
+        "team2": str(team2 or ""),
+        "lifecycle_key": lifecycle_key,
+        "collect_started_at": clock,
+    }
+    context = {
+        "match_id": str(match_id),
+        "map_num": int(resolved_map),
+        "team1": str(team1 or ""),
+        "team2": str(team2 or ""),
+        "selected_side": str(selected_side or "").strip().upper(),
+        "freshness_limit_seconds": float(freshness_limit_seconds),
+        "job": job,
+    }
+
+    def _submit_shared_job(job_payload: Any) -> Any:
+        """Injected runner: exactly one shared-session submission (with one-reset)."""
+
+        def _callback(browser: Any) -> Any:
+            return _winline_shadow_collect_observation(browser, job_payload)
+
+        return _run_shared_camoufox_job(
+            "winline-shadow",
+            _callback,
+            timeout=120.0,
+            retry=True,
+            reset_on_error=True,
+        )
+
+    import asyncio as _asyncio
+
+    try:
+        rc = _asyncio.run(
+            run_probe(
+                submit_shared_job=_submit_shared_job,
+                context=context,
+                output_path=output_path,
+                now=clock,
+            )
+        )
+    except RuntimeError as loop_err:
+        # Fallback when a loop is already running in this thread (rare in prod).
+        if "asyncio.run()" in str(loop_err) or "running event loop" in str(loop_err).lower():
+            new_loop = _asyncio.new_event_loop()
+            try:
+                rc = new_loop.run_until_complete(
+                    run_probe(
+                        submit_shared_job=_submit_shared_job,
+                        context=context,
+                        output_path=output_path,
+                        now=clock,
+                    )
+                )
+            finally:
+                new_loop.close()
+        else:
+            try:
+                _bookmaker_terminalize_failed_lifecycle(match_key, map_num=resolved_map)
+            except Exception:
+                pass
+            logger.warning(
+                "winline shadow request failed lifecycle=%s err=%s",
+                lifecycle_key,
+                loop_err,
+            )
+            return 2
+    except Exception as exc:
+        # Acquisition / probe hard failure: terminalize lifecycle, fail closed.
+        try:
+            _bookmaker_terminalize_failed_lifecycle(match_key, map_num=resolved_map)
+        except Exception:
+            pass
+        logger.warning(
+            "winline shadow request failed lifecycle=%s err=%s",
+            lifecycle_key,
+            exc,
+        )
+        return 2
+
+    if int(rc or 0) != 0:
+        try:
+            _bookmaker_terminalize_failed_lifecycle(match_key, map_num=resolved_map)
+        except Exception:
+            pass
+    return int(rc or 0)
+
+
+def _fail_open_winline_shadow_after_send(
+    *,
+    match_key,
+    map_num,
+    team1,
+    team2,
+    selected_side=None,
+    delivery_confirmed=None,
+    ordinary_path_completed=True,
+):
+    """Fail-open post-send hook: invoke shadow controller under --no-odds only.
+
+    Never gates ordinary delivery/return. Any controller/seam/evidence error is
+    swallowed after bounded diagnostic logging.
+    """
+    if not WINLINE_SHADOW_PROBE_ENABLED:
+        # Отключена: см. WINLINE_SHADOW_PROBE_ENABLED. Возврат None — ровно то,
+        # что хук отдавал и раньше на любом отказе, поэтому вызывающие стороны
+        # ничего не замечают.
+        return None
+    try:
+        # Capsule parsed no-odds predicate: not BOOKMAKER_PREFETCH_ENABLED.
+        if BOOKMAKER_PREFETCH_ENABLED:
+            return None
+        return maybe_run_winline_shadow_activation(
+            match_key=match_key,
+            map_num=map_num,
+            team1=team1,
+            team2=team2,
+            selected_side=selected_side,
+            ordinary_path_completed=True if ordinary_path_completed is None else bool(ordinary_path_completed),
+            run_winline_shadow_request=run_winline_shadow_request,
+            output_path=WINLINE_SHADOW_ACTIVATION_EVIDENCE_PATH,
+            no_odds_active=True,
+        )
+    except Exception as exc:
+        try:
+            logger.warning(
+                "winline shadow post-send fail-open: %s",
+                exc,
+                exc_info=False,
+            )
+        except Exception:
+            pass
+        return None
+
+
+# Дизайн: ВСЯ работа Camoufox идёт в одном shared-браузере.
+# Subprocess Camoufox для pro-tracker запрещён (W1-BROWSER): shared failure
+# возвращает честную ошибку enrichment-слою, просит reset, не запускает второй browser.
 _PROTRACKER_SHARED_CAMOUFOX_BROKEN = False
+# Timestamp (time.time()) когда breaker перешёл в OPEN. Используется для
+# half-open recovery: после cooldown один probe пропускается, при успехе
+# breaker закрывается (метрики ProTracker снова активны).
+_PROTRACKER_SHARED_BROKEN_AT = 0.0
 _PROTRACKER_SHARED_CONSECUTIVE_FAILS = 0
 _PROTRACKER_SHARED_FAILS_TO_BREAK = 2
+_PROTRACKER_BREAKER_LOCK = threading.Lock()
 
 
 def _protracker_subprocess_fetcher() -> Optional[Any]:
+    """Legacy resolver retained for diagnostics; subprocess fallback is disabled."""
     module = globals().get("_dota2protracker_module")
     if module is None and enrich_with_pro_tracker is not None:
         module = sys.modules.get(getattr(enrich_with_pro_tracker, "__module__", ""))
@@ -19072,14 +24797,31 @@ def _fetch_protracker_payload_via_shared_camoufox(
     hero_id: int,
     proxy_candidate: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """Fetch pro-tracker payload only via the process-wide shared Camoufox session.
+
+    No Camoufox subprocess fallback. On shared failure: request reset and raise
+    so the enrichment layer can fail closed without spawning a second browser.
+
+    Self-healing circuit breaker: after ``_PROTRACKER_SHARED_FAILS_TO_BREAK``
+    consecutive failures the fetcher goes OPEN (fails closed immediately). After
+    ``PROTRACKER_BREAKER_COOLDOWN_SECONDS`` (default 600s, min 30s) one probe
+    fetch is allowed through (HALF-OPEN); on success the breaker resets to
+    CLOSED (ProTracker metrics active again), on failure it re-arms with a
+    fresh cooldown. Prevents a single transient proxy/timeout burst from
+    permanently disabling ProTracker metrics for the whole process run.
+    """
     global _PROTRACKER_SHARED_CAMOUFOX_BROKEN
+    global _PROTRACKER_SHARED_BROKEN_AT
+    global _PROTRACKER_SHARED_CONSECUTIVE_FAILS
     base_url = "https://dota2protracker.com"
+    page_name = "protracker:matchups"
 
     def _job(browser) -> Dict[str, Any]:
-        page = browser.new_page()
+        session = _shared_camoufox_session
+        page = session.get_or_create_page(page_name, browser)
         try:
             page.goto(f"{base_url}/hero/{slug}", wait_until="domcontentloaded", timeout=45000)
-            payload = {"matchups": {}, "synergies": {}}
+            payload = {"matchups": {}, "synergies": {}, "matchupsLanes": {}, "synergiesLanes": {}}
             for pos in ["1", "2", "3", "4", "5"]:
                 api_url = f"{base_url}/hero/{slug}/api/matchup-payload?heroId={int(hero_id)}&position=pos+{pos}"
                 response = page.evaluate(
@@ -19091,62 +24833,114 @@ def _fetch_protracker_payload_via_shared_camoufox(
                 )
                 payload["matchups"][pos] = response.get("matchups", []) if isinstance(response, dict) else []
                 payload["synergies"][pos] = response.get("synergies", []) if isinstance(response, dict) else []
+                payload["matchupsLanes"][pos] = response.get("matchupsLanes", []) if isinstance(response, dict) else []
+                payload["synergiesLanes"][pos] = response.get("synergiesLanes", []) if isinstance(response, dict) else []
             return payload
-        finally:
+        except Exception:
+            # Page may be unrecoverable after a parse/navigation failure.
             with contextlib.suppress(Exception):
-                page.close()
-
-    global _PROTRACKER_SHARED_CONSECUTIVE_FAILS
-    if not _PROTRACKER_SHARED_CAMOUFOX_BROKEN:
-        try:
-            result = _run_shared_camoufox_job(
-                f"dota2protracker:{slug}", _job, timeout=180, retry=False, reset_on_error=False
-            )
-            _PROTRACKER_SHARED_CONSECUTIVE_FAILS = 0
-            return result
-        except Exception as exc:
-            _PROTRACKER_SHARED_CONSECUTIVE_FAILS += 1
-            if "inside the asyncio loop" in str(exc):
-                # Поток shared-сессии перезапустится сам (см. _worker) —
-                # не считаем это фатальным для shared-режима.
-                print(
-                    "   ⚠️ Shared Camoufox pro-tracker: asyncio-poisoned поток "
-                    f"(fail {_PROTRACKER_SHARED_CONSECUTIVE_FAILS}/{_PROTRACKER_SHARED_FAILS_TO_BREAK}) "
-                    "— этот герой через subprocess, поток перезапущен"
-                )
-            else:
-                # Зависший браузер/страница: просим reset, чтобы следующий
-                # герой получил свежий браузер.
-                _shared_camoufox_session.request_reset()
-                print(
-                    f"   ⚠️ Shared Camoufox pro-tracker fetch failed ({type(exc).__name__}: {exc}) "
-                    f"(fail {_PROTRACKER_SHARED_CONSECUTIVE_FAILS}/{_PROTRACKER_SHARED_FAILS_TO_BREAK}) "
-                    "— этот герой через subprocess, браузер будет пересоздан"
-                )
-            if _PROTRACKER_SHARED_CONSECUTIVE_FAILS >= _PROTRACKER_SHARED_FAILS_TO_BREAK:
-                _PROTRACKER_SHARED_CAMOUFOX_BROKEN = True
-                print(
-                    "   ⚠️ Shared Camoufox для pro-tracker помечен сломанным "
-                    f"({_PROTRACKER_SHARED_CONSECUTIVE_FAILS} неудачи подряд) — "
-                    "все следующие фетчи через Camoufox subprocess"
-                )
-    fallback_fetcher = _protracker_subprocess_fetcher()
-    if fallback_fetcher is None:
-        raise RuntimeError("Camoufox subprocess fetcher недоступен (dota2protracker module not found)")
-    print(f"   📊 Fetching pro-tracker: {slug} (Camoufox subprocess fallback)")
-    # Сначала напрямую: прокси из пула на сервере зависает на dota2protracker
-    # (goto networkidle не завершается -> 180с таймаут на каждого героя),
-    # а прямой Camoufox проходит за ~30с. Прокси оставляем запасным путём.
-    try:
-        return fallback_fetcher(slug, hero_id, None)
-    except Exception as exc:
-        if not proxy_candidate:
+                session.invalidate_named_page(page_name)
             raise
+
+    if _PROTRACKER_SHARED_CAMOUFOX_BROKEN:
+        cooldown = max(30, _camoufox_env_int("PROTRACKER_BREAKER_COOLDOWN_SECONDS", 600))
+        with _PROTRACKER_BREAKER_LOCK:
+            # HALF-OPEN: после cooldown пропускаем ровно один probe-фетч за окно.
+            # Обновляем timestamp здесь, чтобы параллельные вызовы сразу видели
+            # свежее окно и не пробовали одновременно.
+            if time.time() - _PROTRACKER_SHARED_BROKEN_AT < cooldown:
+                raise RuntimeError(
+                    "Shared Camoufox pro-tracker is marked broken; "
+                    "Camoufox subprocess fallback is disabled"
+                )
+            _PROTRACKER_SHARED_BROKEN_AT = time.time()
         print(
-            f"   ⚠️ Subprocess direct failed ({type(exc).__name__}) — "
-            f"повтор через прокси {proxy_candidate}"
+            f"   ♻️ Shared Camoufox pro-tracker: cooldown {cooldown}s истёк — "
+            "пробный фетч (half-open), метрики восстановятся при успехе"
         )
-        return fallback_fetcher(slug, hero_id, proxy_candidate)
+
+    try:
+        result = _run_shared_camoufox_job(
+            f"dota2protracker:{slug}", _job, timeout=180, retry=False, reset_on_error=False
+        )
+        was_broken = _PROTRACKER_SHARED_CAMOUFOX_BROKEN
+        _PROTRACKER_SHARED_CONSECUTIVE_FAILS = 0
+        _PROTRACKER_SHARED_CAMOUFOX_BROKEN = False
+        _PROTRACKER_SHARED_BROKEN_AT = 0.0
+        if was_broken:
+            print(
+                "   ✅ Shared Camoufox pro-tracker восстановлен (probe успешен) "
+                "— метрики ProTracker снова активны"
+            )
+        return result
+    except Exception as exc:
+        _PROTRACKER_SHARED_CONSECUTIVE_FAILS += 1
+        if "inside the asyncio loop" in str(exc):
+            # Поток shared-сессии перезапустится сам (см. _worker) —
+            # не считаем это фатальным для shared-режима.
+            print(
+                "   ⚠️ Shared Camoufox pro-tracker: asyncio-poisoned поток "
+                f"(fail {_PROTRACKER_SHARED_CONSECUTIVE_FAILS}/{_PROTRACKER_SHARED_FAILS_TO_BREAK}) "
+                "— subprocess fallback disabled, re-raise"
+            )
+        else:
+            # Зависший браузер/страница: просим reset, чтобы следующий
+            # герой получил свежий браузер.
+            _shared_camoufox_session.request_reset()
+            print(
+                f"   ⚠️ Shared Camoufox pro-tracker fetch failed ({type(exc).__name__}: {exc}) "
+                f"(fail {_PROTRACKER_SHARED_CONSECUTIVE_FAILS}/{_PROTRACKER_SHARED_FAILS_TO_BREAK}) "
+                "— subprocess fallback disabled, browser will be recreated"
+            )
+        if _PROTRACKER_SHARED_CONSECUTIVE_FAILS >= _PROTRACKER_SHARED_FAILS_TO_BREAK:
+            _PROTRACKER_SHARED_CAMOUFOX_BROKEN = True
+            _PROTRACKER_SHARED_BROKEN_AT = time.time()
+            print(
+                "   ⚠️ Shared Camoufox для pro-tracker помечен сломанным "
+                f"({_PROTRACKER_SHARED_CONSECUTIVE_FAILS} неудачи подряд, cooldown "
+                f"{max(30, _camoufox_env_int('PROTRACKER_BREAKER_COOLDOWN_SECONDS', 600))}s) — "
+                "subprocess fallback disabled; further fetches fail closed until probe"
+            )
+        # Honest failure to enrichment layer — never spawn Camoufox subprocess.
+        raise
+
+
+def _fetch_protracker_hero_list_via_shared_camoufox(
+    api_url: str,
+    proxy_candidate: Optional[str] = None,
+) -> Any:
+    """Сводка по всем героям (общий WR + разбивка по позициям) одним запросом.
+
+    Эндпоинт /api/heroes/list — единственный, который страница героя дёргает
+    сама, и в нём лежит то, чего нет в matchup-payload: "all matches" /
+    "all winrate" / "all elo" плюс те же поля по каждой позиции. 127 героев за
+    один заход, поэтому отдельного прогрева на героя не нужно.
+    """
+
+    def _job(browser) -> Any:
+        session = _shared_camoufox_session
+        page_name = "protracker:heroes_list"
+        page = session.get_or_create_page(page_name, browser)
+        try:
+            current = ""
+            with contextlib.suppress(Exception):
+                current = str(page.url or "")
+            if "dota2protracker.com" not in current:
+                page.goto("https://dota2protracker.com/",
+                          wait_until="domcontentloaded", timeout=45000)
+            return page.evaluate(
+                """async (apiUrl) => {
+                    const r = await fetch(apiUrl);
+                    return await r.json();
+                }""",
+                api_url,
+            )
+        except Exception:
+            with contextlib.suppress(Exception):
+                session.invalidate_named_page(page_name)
+            raise
+
+    return _run_shared_camoufox_job("protracker:heroes_list", _job, timeout=120.0)
 
 
 def _install_dota2protracker_shared_camoufox_fetcher() -> bool:
@@ -19156,6 +24950,11 @@ def _install_dota2protracker_shared_camoufox_fetcher() -> bool:
     setter = getattr(module, "set_payload_fetcher", None) if module is not None else None
     if callable(setter):
         setter(_fetch_protracker_payload_via_shared_camoufox)
+    # Сводка по героям — отдельный эндпоинт, отдельный фетчер. Старые версии
+    # модуля его не знают, поэтому ставим только если setter есть.
+    list_setter = getattr(module, "set_hero_list_fetcher", None) if module is not None else None
+    if callable(list_setter):
+        list_setter(_fetch_protracker_hero_list_via_shared_camoufox)
     return getattr(module, "PROTRACKER_PAYLOAD_FETCHER", None) is _fetch_protracker_payload_via_shared_camoufox
 
 
@@ -21083,9 +26882,7 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             # league_name приходит из probe (справочник OpenDota); пустое имя → матч пропускается.
             _skipped_by_league = 0
             for mid, m in matches.items():
-                if not _league_matches_allowlist(
-                    m.get("league_id"), m.get("league_name")
-                ):
+                if not _title_matches_allow_keywords(m.get("league_name")):
                     _skipped_by_league += 1
                     continue
                 # Строим mock ноду в exact формате который кушает check_head и _extract_live_listing_context
@@ -22376,6 +28173,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 print(f"\n🔁 RECHECK матча #{i}: {check_uniq_url} | status={status}")
 
             if status == 'finished':
+                # Exact-match bookmaker pending cleanup boundary (W2 lifecycle).
+                try:
+                    finished_map = None
+                    try:
+                        # Prefer map identity from series score / current map when known.
+                        finished_map = int(map_num) if map_num is not None else None
+                    except (TypeError, ValueError, NameError):
+                        finished_map = None
+                    if finished_map is None:
+                        # Infer finishing map from series score total if available.
+                        try:
+                            score_parts = [part.strip() for part in str(score or "").split(":")]
+                            if len(score_parts) >= 2:
+                                finished_map = int(score_parts[0]) + int(score_parts[1])
+                                if not (1 <= finished_map <= 5):
+                                    finished_map = None
+                        except (TypeError, ValueError):
+                            finished_map = None
+                    _bookmaker_clear_odds_delivery_pending(
+                        str(check_uniq_url or ""),
+                        map_num=finished_map,
+                    )
+                except Exception:
+                    pass
                 score_values = [part.strip() for part in score.split(":")]
                 while len(score_values) < 2:
                     score_values.append("0")
@@ -22392,6 +28213,16 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         applied_map_key = str(applied_update.get("map_key") or "")
                         if applied_map_key:
                             _drop_delayed_match(applied_map_key, reason="series_finished_live_elo_applied")
+                            try:
+                                applied_map_num = applied_update.get("map_num")
+                                if applied_map_num is None:
+                                    applied_map_num = finished_map
+                                _bookmaker_clear_odds_delivery_pending(
+                                    applied_map_key,
+                                    map_num=applied_map_num,
+                                )
+                            except Exception:
+                                pass
                 print(f"   ❌ Матч завершен - пропускаем")
                 print(f"   ℹ️ Матч завершен")
                 return return_status
@@ -23138,10 +28969,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         dota2protracker_pipeline_bypass_active = bool(
             DOTA2PROTRACKER_ENABLED and DOTA2PROTRACKER_BYPASS_GATES
         )
+        bookmaker_map_num = _bookmaker_infer_map_num(live_league_data, score_text=score)
+        _remember_match_map_num(check_uniq_url, bookmaker_map_num)
+        # Раньше строка печаталась только при включённом префетче, а под --no-odds он
+        # выключен — из-за этого номер карты в логе почти не появлялся и связать
+        # сигнал с картой было нечем.
+        if bookmaker_map_num is not None:
+            match_log(f"   🗺️ Bookmaker map context: карта {bookmaker_map_num}")
         if BOOKMAKER_PREFETCH_ENABLED:
-            bookmaker_map_num = _bookmaker_infer_map_num(live_league_data, score_text=score)
-            if bookmaker_map_num is not None:
-                match_log(f"   🗺️ Bookmaker map context: карта {bookmaker_map_num}")
             _bookmaker_prefetch_submit(
                 match_key=check_uniq_url,
                 radiant_team=radiant_team_name_original,
@@ -23251,9 +29086,34 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 live_league=live_league_data,
                 fallback_score_text=score,
             )
-            minimal_odds_message, minimal_odds_ready, minimal_odds_reason = _prepare_minimal_odds_only_message_for_delivery(
+            _imm_obs, _imm_map = None, None
+            _s: Dict[str, Any] = {}
+            _mc = bookmaker_map_num
+            try: _mi = int(_mc) if _mc is not None else None
+            except (TypeError, ValueError): _mi = None
+            if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+            _sc = status
+            if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+            _src = live_league_data if isinstance(live_league_data, dict) else {}
+            _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+            if isinstance(_imm_enriched, dict):
+                try: _rm = int(_imm_enriched.get("map_num"))
+                except (TypeError, ValueError): _rm = None
+                if isinstance(_rm, int) and 1 <= _rm <= 5:
+                    _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                    if _dk: _imm_obs["match_key"]=_dk
+                    if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                    _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
+            (
+                minimal_odds_message,
+                minimal_odds_ready,
+                minimal_odds_reason,
+                minimal_odds_reservation,
+            ) = _prepare_minimal_odds_only_message_for_delivery(
                 check_uniq_url,
                 minimal_odds_message,
+                current_map_observation=_imm_obs,
+                map_num=_imm_map,
             )
             if not minimal_odds_ready:
                 print(
@@ -23269,9 +29129,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             try:
                 if _skip_dispatch_for_processed_url(check_uniq_url, "minimal odds-only dispatch after lock"):
                     return return_status
+                # Hand explicit prepare ownership into delivery (no naked skip flag).
+                _imm_obs, _imm_map = None, None
+                _s: Dict[str, Any] = {}
+                _mc = bookmaker_map_num
+                try: _mi = int(_mc) if _mc is not None else None
+                except (TypeError, ValueError): _mi = None
+                if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                _sc = status
+                if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                _src = live_league_data if isinstance(live_league_data, dict) else {}
+                _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                if isinstance(_imm_enriched, dict):
+                    try: _rm = int(_imm_enriched.get("map_num"))
+                    except (TypeError, ValueError): _rm = None
+                    if isinstance(_rm, int) and 1 <= _rm <= 5:
+                        _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                        if _dk: _imm_obs["match_key"]=_dk
+                        if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                        _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                 delivery_confirmed = _deliver_and_persist_signal(
                     check_uniq_url,
                     minimal_odds_message,
+                    current_map_observation=_imm_obs,
+                    map_num=_imm_map,
                     add_url_reason="minimal_odds_only_signal_sent_now",
                     add_url_details={
                         "status": status,
@@ -23280,7 +29161,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         "json_retry_errors": json_retry_errors,
                         "bookmaker_ready_reason": minimal_odds_reason,
                     },
-                    skip_bookmaker_prepare=True,
+                    bookmaker_reservation_context=minimal_odds_reservation
                 )
                 if delivery_confirmed:
                     print("   ✅ ВЕРДИКТ: minimal odds-only сигнал отправлен")
@@ -23335,9 +29216,29 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
                 print(f"   {skip_msg}")
                 print(f"   ❌ Матч пропущен (не удалось определить tier)")
+                _imm_obs, _imm_map = None, None
+                _s: Dict[str, Any] = {}
+                _mc = bookmaker_map_num
+                try: _mi = int(_mc) if _mc is not None else None
+                except (TypeError, ValueError): _mi = None
+                if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                _sc = status
+                if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                _src = live_league_data if isinstance(live_league_data, dict) else {}
+                _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                if isinstance(_imm_enriched, dict):
+                    try: _rm = int(_imm_enriched.get("map_num"))
+                    except (TypeError, ValueError): _rm = None
+                    if isinstance(_rm, int) and 1 <= _rm <= 5:
+                        _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                        if _dk: _imm_obs["match_key"]=_dk
+                        if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                        _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                 _deliver_and_persist_signal(
                     check_uniq_url,
                     skip_msg,
+                    current_map_observation=_imm_obs,
+                    map_num=_imm_map,
                     add_url_reason="skip_tier_undetermined",
                     add_url_details={
                         "status": status,
@@ -23346,7 +29247,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         "dire_team": dire_team_name_original,
                         "dire_team_id": dire_team_id,
                         "json_retry_errors": json_retry_errors,
-                    },
+                    }
                 )
                 return return_status
 
@@ -23370,6 +29271,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         lead = data['radiant_lead']
         game_time = data['game_time']
         match_log(f"   Lead: {lead}, Game time: {game_time}")
+        _remember_dltv_dispatch_context(
+            check_uniq_url,
+            steam_id=_extract_live_match_id(data) or _steam_id_from_dltv_json_url(json_url),
+            json_url=json_url,
+            live_data=data,
+        )
 
         stale_live_map = _find_stale_live_map_payload(
             series_key=series_id,
@@ -23488,6 +29395,36 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             return return_status
         
         match_log(f"   ✅ Драфт успешно распарсен")
+        # Fail-open Winline shadow: every successfully-parsed current map under --no-odds.
+        # Independent of STAR / candidate / selected_side / delivery. Existing controller
+        # dedup/backoff keeps a later post-send call from double-acquiring the same map.
+        _fail_open_winline_shadow_after_send(
+            match_key=check_uniq_url,
+            map_num=bookmaker_map_num,
+            team1=radiant_team_name_original,
+            team2=dire_team_name_original,
+            selected_side=None,
+            delivery_confirmed=False,
+        )
+        # Whole-current-map Winline polling: independent of STAR / selected_side / send.
+        # Serial 5s attempts via shared Camoufox; never enables ordinary odds delivery.
+        try:
+            ensure_winline_current_map_polling(
+                series=check_uniq_url,
+                map_num=bookmaker_map_num,
+                team1=radiant_team_name_original,
+                team2=dire_team_name_original,
+                selected_side=None,
+                producer_pid=os.getpid(),
+            )
+        except Exception as _winline_poll_exc:
+            try:
+                logger.warning(
+                    "ensure_winline_current_map_polling seam failed: %s",
+                    _winline_poll_exc,
+                )
+            except Exception:
+                pass
         if verbose_match_log:
             _mark_verbose_match_log_done(check_uniq_url)
         radiant_account_ids = [
@@ -23569,6 +29506,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     dire_heroes_and_pos,
                     draft_lookup_keys,
                 )
+                scoped_early_end_dict = None
+                if early_end_dict is not None:
+                    scoped_early_end_dict = _prepare_draft_scoped_stats_lookup(
+                        early_end_dict,
+                        radiant_heroes_and_pos,
+                        dire_heroes_and_pos,
+                        draft_lookup_keys,
+                    )
                 scoped_late_dict = _prepare_draft_scoped_stats_lookup(
                     late_dict,
                     radiant_heroes_and_pos,
@@ -23587,6 +29532,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     early_dict=scoped_early_dict,
                     mid_dict=scoped_late_dict,
                     post_lane_dict=scoped_post_lane_dict,
+                    early_end_dict=scoped_early_end_dict,
                 )
             finally:
                 if prev_wrapper_enabled is None:
@@ -23718,6 +29664,79 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if sent:
                 _early_local_kills_done["sent"] = True
 
+        def _try_dispatch_early_local_winner_kills_window(local_metrics: Dict[str, Any]) -> None:
+            """Early Winner STAR + kills_window |ed|≥1 nearest open block.
+
+            Independent of lane_adv standalone: runs as long as the shared
+            once-per-match kills slot is free. Requires ≥3m lead before the
+            nearest eligible window start.
+            """
+            if _early_local_kills_done["sent"]:
+                return
+            if not EARLY_WINNER_KILLS_WINDOW_ENABLED:
+                return
+            if not isinstance(local_metrics, dict):
+                return
+            # Ensure lanes/kills_adv are present for message body (best-effort).
+            try:
+                if LIVE_LANE_ANALYSIS_ENABLED and lane_data is not None:
+                    if not local_metrics.get("top") and not local_metrics.get("mid"):
+                        local_metrics["top"], local_metrics["bot"], local_metrics["mid"] = calculate_lanes(
+                            radiant_heroes_and_pos,
+                            dire_heroes_and_pos,
+                            lane_data,
+                            core_support_side_lanes=True,
+                        )
+                    if "lane_kills_adv_dict" not in local_metrics:
+                        local_metrics["lane_kills_adv_dict"] = calculate_lane_kills_advantage(
+                            radiant_heroes_and_pos,
+                            dire_heroes_and_pos,
+                            lane_data,
+                        )
+            except Exception:
+                pass
+            early_local_elo_block = ""
+            try:
+                _early_elo_summary = _build_team_elo_matchup_summary(
+                    radiant_team_id=radiant_team_id,
+                    dire_team_id=dire_team_id,
+                    radiant_team_name=radiant_team_name_original,
+                    dire_team_name=dire_team_name_original,
+                    radiant_account_ids=radiant_account_ids,
+                    dire_account_ids=dire_account_ids,
+                    match_tier=star_match_tier,
+                )
+                early_local_elo_block, _ = _format_team_elo_block(
+                    _early_elo_summary,
+                    radiant_team_name=radiant_team_name_original,
+                    dire_team_name=dire_team_name_original,
+                )
+            except Exception:
+                early_local_elo_block = ""
+            try:
+                winner_sent = _try_dispatch_early_winner_kills_window(
+                    match_key=check_uniq_url,
+                    status=status,
+                    radiant_team_name=radiant_team_name_original or radiant_team_name,
+                    dire_team_name=dire_team_name_original or dire_team_name,
+                    live_league=data.get("live_league_data") or {},
+                    metrics_payload=local_metrics,
+                    team_elo_block=early_local_elo_block,
+                    game_time_seconds=game_time,
+                    radiant_lead=lead,
+                    radiant_heroes_and_pos=radiant_heroes_and_pos,
+                    dire_heroes_and_pos=dire_heroes_and_pos,
+                    radiant_team_id=radiant_team_id,
+                    dire_team_id=dire_team_id,
+                    selected_star_wr=star_target_wr,
+                    json_retry_errors=json_retry_errors,
+                )
+            except Exception as _ew_exc:
+                print(f"   ⚠️ early_winner kills_window dispatch error: {_ew_exc}")
+                winner_sent = False
+            if winner_sent:
+                _early_local_kills_done["sent"] = True
+
         # Draft metrics (synergy/counterpick dicts + Dota2ProTracker) are a
         # pure function of the fixed draft, so compute them once per map and
         # reuse on every later recheck cycle. This avoids re-running the sqlite
@@ -23733,6 +29752,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         if metrics_from_cache:
             s = copy.deepcopy(_cached_metrics.get("s") or {})
             protracker_payload = copy.deepcopy(_cached_metrics.get("protracker_payload"))
+            # Recheck path: draft metrics are cached, but game_time moves —
+            # re-evaluate early kills gates (lane_adv standalone + Early Winner
+            # nearest kills_window) on every cycle while the once-per-match
+            # slot is free.
+            _try_dispatch_early_local_lane_adv_kills(s)
+            _try_dispatch_early_local_winner_kills_window(s)
         else:
             # Log the full roster (hero + position) once at first parse so the
             # draft is recoverable from the log later.
@@ -23768,11 +29793,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     # the dispatch flow still waits for ProTracker below.
                     s = local_future.result()
                     _try_dispatch_early_local_lane_adv_kills(s)
+                    _try_dispatch_early_local_winner_kills_window(s)
                     protracker_payload = protracker_future.result()
             else:
                 protracker_payload = _run_dota2protracker_enrichment()
                 s = _run_local_dictionary_metrics()
                 _try_dispatch_early_local_lane_adv_kills(s)
+                _try_dispatch_early_local_winner_kills_window(s)
 
             if DOTA2PROTRACKER_ENABLED:
                 for _line in _build_dota2protracker_log_lines(protracker_payload):
@@ -23814,9 +29841,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             try:
                 if _skip_dispatch_for_processed_url(check_uniq_url, "dota2protracker only dispatch after lock"):
                     return return_status
+                _imm_obs, _imm_map = None, None
+                if not (bool(DOTA2PROTRACKER_SKIP_BOOKMAKER_GATE)):
+                    _s: Dict[str, Any] = {}
+                    _mc = bookmaker_map_num
+                    try: _mi = int(_mc) if _mc is not None else None
+                    except (TypeError, ValueError): _mi = None
+                    if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                    _sc = status
+                    if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                    _src = live_league_data if isinstance(live_league_data, dict) else {}
+                    _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                    if isinstance(_imm_enriched, dict):
+                        try: _rm = int(_imm_enriched.get("map_num"))
+                        except (TypeError, ValueError): _rm = None
+                        if isinstance(_rm, int) and 1 <= _rm <= 5:
+                            _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                            if _dk: _imm_obs["match_key"]=_dk
+                            if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                            _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                 delivery_confirmed = _deliver_and_persist_signal(
                     check_uniq_url,
                     protracker_message_text,
+                    current_map_observation=_imm_obs,
+                    map_num=_imm_map,
                     add_url_reason="dota2protracker_signal_sent_now",
                     add_url_details={
                         "status": status,
@@ -23827,8 +29875,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         "pro_cp1vs1_valid": bool(protracker_payload.get("pro_cp1vs1_valid")),
                         "pro_duo_synergy": float(protracker_payload.get("pro_duo_synergy_late") or 0.0),
                         "pro_duo_synergy_valid": bool(protracker_payload.get("pro_duo_synergy_valid")),
+                        "pro_solo_wr": float(protracker_payload.get("pro_solo_wr_late") or 0.0),
+                        "pro_solo_wr_valid": bool(protracker_payload.get("pro_solo_wr_valid")),
+                        "pro_solo_wr_overall": float(protracker_payload.get("pro_solo_wr_overall_late") or 0.0),
+                        "pro_solo_wr_overall_valid": bool(protracker_payload.get("pro_solo_wr_overall_valid")),
                     },
-                    skip_bookmaker_prepare=bool(DOTA2PROTRACKER_SKIP_BOOKMAKER_GATE),
+                    skip_bookmaker_prepare=bool(DOTA2PROTRACKER_SKIP_BOOKMAKER_GATE)
                 )
                 if delivery_confirmed:
                     print("   ✅ ВЕРДИКТ: Dota2ProTracker-only сигнал отправлен")
@@ -23891,9 +29943,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     and _skip_dispatch_for_processed_url(check_uniq_url, "pipeline send-every parsed match after lock")
                 ):
                     return return_status
+                _imm_obs, _imm_map = None, None
+                if not (bool(PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND)):
+                    _s: Dict[str, Any] = {}
+                    _mc = bookmaker_map_num
+                    try: _mi = int(_mc) if _mc is not None else None
+                    except (TypeError, ValueError): _mi = None
+                    if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                    _sc = status
+                    if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                    _src = live_league_data if isinstance(live_league_data, dict) else {}
+                    _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                    if isinstance(_imm_enriched, dict):
+                        try: _rm = int(_imm_enriched.get("map_num"))
+                        except (TypeError, ValueError): _rm = None
+                        if isinstance(_rm, int) and 1 <= _rm <= 5:
+                            _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                            if _dk: _imm_obs["match_key"]=_dk
+                            if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                            _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                 delivery_confirmed = _deliver_and_persist_signal(
                     check_uniq_url,
                     pipeline_message_text,
+                    current_map_observation=_imm_obs,
+                    map_num=_imm_map,
                     add_url_reason="pipeline_send_every_parsed_match",
                     add_url_details={
                         "status": status,
@@ -23907,7 +29980,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         "live_lane_analysis_enabled": bool(LIVE_LANE_ANALYSIS_ENABLED),
                         "has_post_lane_output": bool((s.get("post_lane_output") or {})),
                     },
-                    skip_bookmaker_prepare=bool(PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND),
+                    skip_bookmaker_prepare=bool(PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND)
                 )
                 if delivery_confirmed:
                     print("   ✅ ВЕРДИКТ: pipeline smoke-test матч отправлен в Telegram/VK")
@@ -24206,6 +30279,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 section="early_output",
                 target_wr=selected_star_wr,
             )
+            early_end_output_log = _decorate_star_block_for_display(
+                raw_block=s.get('early_end_output', {}) or {},
+                section="early_end_output",
+                target_wr=selected_star_wr,
+            )
             mid_output_log = _decorate_star_block_for_display(
                 raw_block=s.get('mid_output', {}),
                 section="mid_output",
@@ -24217,6 +30295,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 target_wr=selected_star_wr,
             )
             early_output = early_output_log
+            early_end_output = early_end_output_log
             mid_output = mid_output_log
             all_output = all_output_log
 
@@ -24236,7 +30315,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 lines = [title]
                 for key, label in metrics:
                     value = data.get(key)
-                    if key == "dota2protracker_cp1vs1":
+                    if key in (
+                        "dota2protracker_cp1vs1",
+                        "dota2protracker_duo",
+                        "dota2protracker_solo",
+                        "dota2protracker_solo_overall",
+                    ):
                         value = _format_dota2protracker_output_value(value)
                     lines.append(f"{label}: {value}")
                 return "\n".join(lines) + "\n"
@@ -24257,18 +30341,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 ('solo', 'Solo'),
                 ('synergy_duo', 'Synergy_duo'),
                 ('synergy_trio', 'Synergy_trio'),
-                ('dota2protracker_cp1vs1', 'Dota2ProTracker_cp1vs1'),
+                ('dota2protracker_cp1vs1', 'Protracker_1vs1'),
+                ('dota2protracker_duo', 'Protracker_duo'),
+                ('dota2protracker_solo', 'Protracker_solo'),
+                ('dota2protracker_solo_overall', 'Protracker_solo_overall'),
             ]
-            early_block = _format_metrics("Early 20-28:", early_output, metric_list)
+            early_block = _format_metrics("Early NW (20-28):", early_output, metric_list)
+            early_end_block = _format_metrics(
+                "Early Winner (20-28):", early_end_output, metric_list
+            )
             all_block = _format_metrics("All:", all_output, all_metric_list)
             mid_block = _format_metrics("Late: (28-60 min):", mid_output, metric_list)
-            early_block_log = _format_metrics("Early 20-28:", early_output_log, metric_list)
+            early_block_log = _format_metrics("Early NW (20-28):", early_output_log, metric_list)
+            early_end_block_log = _format_metrics(
+                "Early Winner (20-28):", early_end_output_log, metric_list
+            )
             all_block_log = _format_metrics("All:", all_output_log, all_metric_list)
             mid_block_log = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
             lane_adv_dict_value = _lane_dict_adv_value(s.get('top'), s.get('mid'), s.get('bot'))
             lane_adv_dict_line = _build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot'))
             dota2protracker_lane_adv_value = _dota2protracker_lane_adv_value(s)
             dota2protracker_lane_adv_line = _build_dota2protracker_lane_adv_line(s)
+            dota2protracker_block = _build_dota2protracker_block(
+                s, star_output=s.get("all_output") if isinstance(s, dict) else None
+            )
             # Surface lane advantage signals into the log unconditionally so
             # rejected/no-star matches still record them for postmortem.
             _lane_adv_log_dict = (
@@ -24286,7 +30382,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
             dota2protracker_block = ""
             star_metrics_snapshot = _build_star_metrics_snapshot(
-                early_block_log=early_block_log,
+                early_block_log=early_block_log + early_end_block_log,
                 mid_block_log=mid_block_log,
                 all_block_log=all_block_log,
                 raw_star_early_summary=raw_star_early_summary,
@@ -24303,6 +30399,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             series_score_line = _build_series_score_line(data.get('live_league_data') or {})
 
             early_rec = _recommend_odds_for_block(early_output, 'early')
+            early_end_rec = _recommend_odds_for_block(early_end_output, 'early_end')
             late_rec = _recommend_odds_for_block(mid_output, 'late')
             all_rec = (
                 _recommend_odds_for_block(all_output, 'all')
@@ -24310,13 +30407,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 else None
             )
             telegram_early_rec = early_rec
-            telegram_early_block = early_block
+            telegram_early_end_rec = early_end_rec
+            telegram_early_block = early_block + early_end_block
             early_wr_pct: Optional[float] = None
             if isinstance(early_rec, dict):
                 try:
                     early_wr_pct = float(early_rec.get("wr_pct"))
                 except (TypeError, ValueError):
                     early_wr_pct = None
+            early_end_wr_pct: Optional[float] = None
+            if isinstance(early_end_rec, dict):
+                try:
+                    early_end_wr_pct = float(early_end_rec.get("wr_pct"))
+                except (TypeError, ValueError):
+                    early_end_wr_pct = None
             late_wr_pct: Optional[float] = None
             if isinstance(late_rec, dict):
                 try:
@@ -24581,54 +30685,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     if metric not in existing_hits:
                         existing_hits.append(metric)
                 selected_late_diag["hit_metrics"] = existing_hits
-                selected_late_diag["hit_count"] = len(existing_hits)
                 selected_late_diag["late_promoted_by_all_same_sign"] = True
-            selected_late_hit_metrics = (
-                list(selected_late_diag.get("hit_metrics") or [])
-                if isinstance(selected_late_diag, dict)
-                else []
-            )
-            selected_late_hit_count = len(selected_late_hit_metrics)
-            if _late_opposite_all_reject_active(
-                has_selected_late_star=has_selected_late_star,
-                selected_late_sign=selected_late_sign,
-                has_selected_all_star=has_selected_all_star,
-                selected_all_sign=selected_all_sign,
-                force_odds_signal_test_active=force_odds_signal_test_active,
-            ):
-                reject_reason = LATE_OPPOSITE_ALL_REJECT_REASON
-                add_url(
-                    check_uniq_url,
-                    reason=reject_reason,
-                    details={
-                        "status": status,
-                        "dispatch_mode": "rejected_late_opposite_all",
-                        "dispatch_status_label": reject_reason,
-                        "has_selected_late_star": bool(has_selected_late_star),
-                        "has_selected_all_star": bool(has_selected_all_star),
-                        "selected_late_sign": selected_late_sign,
-                        "selected_all_sign": selected_all_sign,
-                        "late_wr_pct": (
-                            float(late_wr_pct) if late_wr_pct is not None else None
-                        ),
-                        "all_wr_pct": (
-                            float(all_wr_pct) if all_wr_pct is not None else None
-                        ),
-                        "late_star_hit_count": int(selected_late_hit_count),
-                        "late_star_hit_metrics": list(selected_late_hit_metrics),
-                        "json_retry_errors": json_retry_errors,
-                    },
-                )
-                print(
-                    "   ⛔ ВЕРДИКТ: ОТКАЗ (Late и All указывают "
-                    "на противоположные команды: "
-                    f"late_wr={late_wr_pct}, "
-                    f"all_wr={all_wr_pct}, "
-                    f"late_sign={int(selected_late_sign)}, "
-                    f"all_sign={int(selected_all_sign)}, "
-                    f"late_hits={selected_late_hit_count})"
-                )
-                return return_status
             star_dispatch_flags = _star_signal_dispatch_flags(
                 has_early_star=has_selected_early_star,
                 early_sign=selected_early_sign,
@@ -24641,6 +30698,24 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             send_now_full_star = bool(star_dispatch_flags["send_now_late_early_or_all_same_sign"])
             send_now_early_star_late_core_same_sign = bool(star_dispatch_flags["send_now_no_late_early_or_all"])
             send_now_late_star_early_core_same_sign = False
+            early_end_star_hits = _collect_star_hits_for_block(
+                s.get('early_end_output', {}), "early_end_output"
+            )
+            early_end_same_sign_hits: List[str] = []
+            early_end_opposite_hits: List[str] = []
+            for early_end_hit in early_end_star_hits:
+                try:
+                    early_end_hit_value = float(early_end_hit.get("value"))
+                except (TypeError, ValueError):
+                    continue
+                if early_end_hit_value == 0:
+                    continue
+                early_end_hit_sign = 1 if early_end_hit_value > 0 else -1
+                early_end_hit_metric = str(early_end_hit.get("metric") or "")
+                if selected_early_sign in (-1, 1) and early_end_hit_sign == selected_early_sign:
+                    early_end_same_sign_hits.append(early_end_hit_metric)
+                else:
+                    early_end_opposite_hits.append(early_end_hit_metric)
             early_only_no_late_all_gate = _early_only_no_late_all_gate(
                 has_selected_early_star=has_selected_early_star,
                 has_selected_late_star=has_selected_late_star,
@@ -24648,6 +30723,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 selected_early_sign=selected_early_sign,
                 early_wr_pct=early_wr_pct,
                 raw_late_block=s.get('mid_output', {}),
+                early_end_wr_pct=early_end_wr_pct,
+                early_end_same_sign_hits=early_end_same_sign_hits,
+                early_end_opposite_hits=early_end_opposite_hits,
             )
             early_only_no_late_all_active = bool(early_only_no_late_all_gate.get("active"))
             early_only_kills_mode = False  # Kills dispatch disabled
@@ -24785,15 +30863,18 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             ):
                 print(
                     "   ⚠️ ВЕРДИКТ: ОТКАЗ "
-                    "(only Early без All/Late требует WR>=65) - матч пропущен"
+                    "(only Early без All/Late: требуется Early NW WR>="
+                    f"{int(float(EARLY_ONLY_NO_LATE_ALL_MIN_WR))} + Early Winner WR>="
+                    f"{int(float(EARLY_ONLY_NO_LATE_ALL_EARLY_END_MIN_WR))} с >= "
+                    f"{int(EARLY_ONLY_NO_LATE_ALL_EARLY_END_MIN_HITS)} star hits) - матч пропущен"
                 )
                 print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
                 add_url(
                     check_uniq_url,
-                    reason="star_signal_rejected_early_only_wr_below_65",
+                    reason="star_signal_rejected_early_only_below_threshold",
                     details={
                         "status": status,
-                        "dispatch_mode": "rejected_early_only_wr_below_65",
+                        "dispatch_mode": "rejected_early_only_below_threshold",
                         "selected_star_wr": selected_star_wr,
                         "selected_star_mode": selected_star_mode,
                         "selected_early_star": bool(has_selected_early_star),
@@ -24867,6 +30948,51 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
                 return return_status
 
+            late_opposite_weak_wr_gate = _late_wr_below_min_with_opposite_block_gate(
+                has_selected_late_star=has_selected_late_star,
+                late_wr_pct=late_wr_pct,
+                opposite_signs_selected=opposite_signs_selected,
+            )
+            if (
+                not force_odds_signal_test_active
+                and bool(late_opposite_weak_wr_gate.get("active"))
+                and not bool(late_opposite_weak_wr_gate.get("valid"))
+            ):
+                print(
+                    "   ⚠️ ВЕРДИКТ: ОТКАЗ "
+                    f"(Late WR{int(float(late_opposite_weak_wr_gate.get('wr_pct') or 0))} "
+                    f"< {int(float(late_opposite_weak_wr_gate.get('min_wr_required') or SINGLE_BLOCK_STAR_MIN_WR))} "
+                    "с противоположным блоком) - матч пропущен"
+                )
+                print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
+                add_url(
+                    check_uniq_url,
+                    reason="star_signal_rejected_late_wr_below_65_with_opposite_block",
+                    details={
+                        "status": status,
+                        "dispatch_mode": "rejected_late_wr_below_65_with_opposite_block",
+                        "selected_star_wr": selected_star_wr,
+                        "selected_star_mode": selected_star_mode,
+                        "selected_early_star": bool(has_selected_early_star),
+                        "selected_late_star": bool(has_selected_late_star),
+                        "selected_all_star": bool(has_selected_all_star),
+                        "selected_early_sign": selected_early_sign,
+                        "selected_late_sign": selected_late_sign,
+                        "selected_all_sign": selected_all_sign,
+                        "early_wr_pct": early_wr_pct,
+                        "late_wr_pct": late_wr_pct,
+                        "all_wr_pct": all_wr_pct,
+                        "opposite_signs_selected": bool(opposite_signs_selected),
+                        "late_opposite_weak_wr_gate": late_opposite_weak_wr_gate,
+                        "json_retry_errors": json_retry_errors,
+                    },
+                )
+                print(
+                    "   ✅ map_id_check.txt обновлен: add_url после отказа "
+                    "late WR<65 with opposite block"
+                )
+                return return_status
+
             if (
                 not force_odds_signal_test_active
                 and bool(kills_gate_decision.get("active_but_blocked"))
@@ -24874,7 +31000,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 wr_gate_info = kills_gate_decision.get("wr_gate") or {}
                 print(
                     "   ⚠️ ВЕРДИКТ: ОТКАЗ "
-                    "(Late содержит STAR-метрику, но Early WR<70 и не было ≥2 hits при WR>=65) "
+                    f"(Late содержит STAR-метрику, но Early не проходит "
+                    f"WR>={KILLS_GATE_EARLY_STAR_MIN_WR:g} + hits>={KILLS_GATE_EARLY_STAR_MIN_HITS}) "
                     "- матч пропущен"
                 )
                 print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
@@ -25216,13 +31343,24 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if telegram_early_rec:
                 early_team_name = _signal_team_name(early_display_sign)
                 early_line = _format_wr_estimate_line(
-                    "Early",
+                    "Early NW",
                     early_team_name,
                     early_wr_pct,
                     telegram_early_rec,
                 )
                 if early_line:
                     wr_lines.append(early_line)
+            if telegram_early_end_rec:
+                early_end_display_sign = _star_block_sign(early_end_output_log)
+                early_end_team_name = _signal_team_name(early_end_display_sign)
+                early_end_line = _format_wr_estimate_line(
+                    "Early Winner",
+                    early_end_team_name,
+                    early_end_wr_pct,
+                    telegram_early_end_rec,
+                )
+                if early_end_line:
+                    wr_lines.append(early_end_line)
             if late_rec:
                 late_team_name = _signal_team_name(late_display_sign)
                 late_line = _format_wr_estimate_line(
@@ -25268,24 +31406,39 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 else:
                     bookmaker_presence_state, bookmaker_presence_snapshot = _bookmaker_presence_gate_resolution(check_uniq_url)
                     if bookmaker_presence_state == "pending":
+                        if BOOKMAKER_BLOCK_WITHOUT_ODDS:
+                            print(
+                                "   ⏳ Пропуск STAR-сигнала: bookmaker odds ждут initial presence "
+                                f"для {check_uniq_url}"
+                            )
+                            return return_status
                         print(
-                            "   ⏳ Пропуск STAR-сигнала: bookmaker odds ждут initial presence "
-                            f"для {check_uniq_url}"
+                            "   ⚠️ Bookmaker presence pending, блок выключен "
+                            f"(BOOKMAKER_BLOCK_WITHOUT_ODDS=0) — продолжаю без кэфов: {check_uniq_url}"
                         )
-                        return return_status
-                    if bookmaker_presence_state == "reject":
+                    elif bookmaker_presence_state == "reject":
                         _log_bookmaker_source_snapshot(check_uniq_url, decision="no_match_presence")
+                        if BOOKMAKER_BLOCK_WITHOUT_ODDS:
+                            print(
+                                "   ⏳ Пропуск STAR-сигнала: bookmaker odds не активируются "
+                                f"без матча хотя бы на одной БК для {check_uniq_url}"
+                            )
+                            return return_status
                         print(
-                            "   ⏳ Пропуск STAR-сигнала: bookmaker odds не активируются "
-                            f"без матча хотя бы на одной БК для {check_uniq_url}"
+                            "   ⚠️ Bookmaker presence reject, блок выключен "
+                            f"(BOOKMAKER_BLOCK_WITHOUT_ODDS=0) — продолжаю без кэфов: {check_uniq_url}"
                         )
-                        return return_status
-                    if bookmaker_presence_state == "error":
+                    elif bookmaker_presence_state == "error":
+                        if BOOKMAKER_BLOCK_WITHOUT_ODDS:
+                            print(
+                                "   ⏳ Пропуск STAR-сигнала: bookmaker initial presence error "
+                                f"для {check_uniq_url}"
+                            )
+                            return return_status
                         print(
-                            "   ⏳ Пропуск STAR-сигнала: bookmaker initial presence error "
-                            f"для {check_uniq_url}"
+                            "   ⚠️ Bookmaker presence error, блок выключен "
+                            f"(BOOKMAKER_BLOCK_WITHOUT_ODDS=0) — продолжаю без кэфов: {check_uniq_url}"
                         )
-                        return return_status
                     bookmaker_gate_block, bookmaker_gate_ready, _bookmaker_gate_reason = _bookmaker_format_odds_block(check_uniq_url)
                     if bookmaker_gate_ready and bookmaker_gate_block:
                         odds_block = bookmaker_gate_block
@@ -25381,7 +31534,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             tier1_early_kills_mode = bool(
                 has_selected_early_star
                 and early_wr_pct is not None
-                and float(early_wr_pct) >= 65.0
+                and float(early_wr_pct) >= float(KILLS_GATE_EARLY_STAR_MIN_WR)
                 and isinstance(selected_early_diag, dict)
                 and len(selected_early_diag.get("hit_metrics") or []) >= 2
                 and _match_has_tier1_team(radiant_team_id, dire_team_id)
@@ -25404,7 +31557,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 has_selected_late_star=has_selected_late_star,
                 early_wr_pct=early_wr_pct,
                 late_wr_pct=late_wr_pct,
-                late_star_hit_count=(selected_late_hit_count if has_selected_late_star else None),
+                late_star_hit_count=(
+                    len(selected_late_diag.get("hit_metrics") or [])
+                    if isinstance(selected_late_diag, dict) and has_selected_late_star
+                    else None
+                ),
                 selected_all_sign=selected_all_sign,
                 has_selected_all_star=has_selected_all_star,
                 all_wr_pct=all_wr_pct,
@@ -25424,7 +31581,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     if isinstance(selected_early_diag, dict) and has_selected_early_star
                     else None
                 ),
-                late_star_hit_metrics=(selected_late_hit_metrics if has_selected_late_star else None),
+                late_star_hit_metrics=(
+                    list(selected_late_diag.get("hit_metrics") or [])
+                    if isinstance(selected_late_diag, dict) and has_selected_late_star
+                    else None
+                ),
                 all_star_hits=all_star_hits_for_dispatch,
             )
             # Снимок фактов для 27+ late-гейта: считается один раз здесь и
@@ -25444,7 +31605,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 late_wr_pct=late_wr_pct,
                 game_time_seconds=game_time,
                 radiant_lead=lead,
-                late_star_hit_count=(selected_late_hit_count if has_selected_late_star else None),
+                late_star_hit_count=(
+                    len(selected_late_diag.get("hit_metrics") or [])
+                    if isinstance(selected_late_diag, dict) and has_selected_late_star
+                    else None
+                ),
                 target_elo_wr=_team_elo_wr_for_side(team_elo_meta, dispatch_message_side),
                 force_half_due_to_early_no_valid_late=force_half_due_to_early_no_valid_late,
                 selected_all_sign=selected_all_sign,
@@ -25459,13 +31624,27 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     if isinstance(selected_early_diag, dict) and has_selected_early_star
                     else None
                 ),
-                late_star_hit_metrics=(selected_late_hit_metrics if has_selected_late_star else None),
+                late_star_hit_metrics=(
+                    list(selected_late_diag.get("hit_metrics") or [])
+                    if isinstance(selected_late_diag, dict) and has_selected_late_star
+                    else None
+                ),
             )
             live_state_block = _format_live_message_state_block(
                 game_time_seconds=game_time,
                 radiant_lead=lead,
                 radiant_team_name=radiant_team_name_original or radiant_team_name,
                 dire_team_name=dire_team_name_original or dire_team_name,
+                show_kills_time_blocks=bool(
+                    tier1_early_kills_mode
+                    or early_only_kills_mode
+                    or str(stake_multiplier_context.get("special_header_mode") or "").strip()
+                    == "early_kills"
+                ),
+                kills_release_status=(
+                    locals().get("kills_release_status_label")
+                    or locals().get("kills_release_status_label_pp")
+                ),
             )
             lane_block = _build_lane_block(
                 s.get('top'),
@@ -25492,7 +31671,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"{wr_block}"
                 f"{star_hits_summary_block}"
                 f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block)}"
-                f"{dota2protracker_block}"
                 f"{live_state_block}"
                 f"{odds_block}"
             )
@@ -25529,6 +31707,40 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 dire_team_id=dire_team_id,
             )
             current_game_time = float(game_time or 0.0)
+            # Гейт допустимых комбинаций STAR-блоков: ставка на команду шлётся
+            # только при валидной конфигурации Early Winner / Late / All
+            # (WR >= 65 и >= 2 star-хита одного знака). Kills-ставки выше по
+            # коду не затрагиваются — они живут по своим правилам.
+            star_combination_gate = _evaluate_star_block_combination_gate(
+                target_sign=dispatch_message_sign,
+                early_end_hits=early_end_star_hits,
+                early_end_wr_pct=early_end_wr_pct,
+                late_hits=_collect_star_hits_for_block(
+                    s.get('mid_output', {}), "mid_output"
+                ),
+                late_wr_pct=late_wr_pct,
+                all_hits=all_star_hits_for_dispatch,
+                all_wr_pct=all_wr_pct,
+                force_odds_signal_test_active=force_odds_signal_test_active,
+            )
+            if star_combination_gate.get("blocked"):
+                print(
+                    "   ⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: "
+                    f"{_format_star_combination_gate_log(star_combination_gate)})"
+                )
+                add_url(
+                    check_uniq_url,
+                    reason=STAR_COMBINATION_GATE_REJECT_REASON,
+                    details={
+                        "status": status,
+                        "dispatch_mode": "rejected_star_block_combination",
+                        "game_time": int(current_game_time),
+                        "target_side": dispatch_message_side,
+                        "json_retry_errors": json_retry_errors,
+                        **_star_combination_gate_reject_details(star_combination_gate),
+                    },
+                )
+                return return_status
             early65_sign = (
                 early65_gate_diag.get("sign")
                 if isinstance(early65_gate_diag, dict) and early65_gate_diag.get("valid")
@@ -25814,10 +32026,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         game_time_seconds=current_game_time,
                         radiant_lead=lead,
                     )
-                    delivery_message_text = _refresh_message_bookmaker_block_for_dispatch(
-                        check_uniq_url,
-                        delivery_message_text,
-                    )
                     add_url_details = {
                         "status": status,
                         "dispatch_mode": dispatch_mode,
@@ -25838,12 +32046,42 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         add_url_details["early_only_no_late_all_gate"] = early_only_no_late_all_gate
                     if target_networth_diff is not None:
                         add_url_details["target_networth_diff"] = float(target_networth_diff)
+                    _imm_obs, _imm_map = None, None
+                    _s: Dict[str, Any] = {}
+                    _mc = bookmaker_map_num
+                    try: _mi = int(_mc) if _mc is not None else None
+                    except (TypeError, ValueError): _mi = None
+                    if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                    _sc = status
+                    if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                    _src = live_league_data if isinstance(live_league_data, dict) else {}
+                    _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                    if isinstance(_imm_enriched, dict):
+                        try: _rm = int(_imm_enriched.get("map_num"))
+                        except (TypeError, ValueError): _rm = None
+                        if isinstance(_rm, int) and 1 <= _rm <= 5:
+                            _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                            if _dk: _imm_obs["match_key"]=_dk
+                            if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                            _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                     delivery_confirmed = _deliver_and_persist_signal(
                         check_uniq_url,
                         delivery_message_text,
+                        current_map_observation=_imm_obs,
+                        map_num=_imm_map,
+                        selected_side=dispatch_message_side,
                         add_url_reason="star_signal_sent_now",
                         add_url_details=add_url_details,
-                        bookmaker_decision="sent",
+                        bookmaker_decision="sent"
+                    )
+                    # Fail-open Winline shadow: after ordinary send decision only.
+                    _fail_open_winline_shadow_after_send(
+                        match_key=check_uniq_url,
+                        map_num=bookmaker_map_num,
+                        team1=radiant_team_name_original,
+                        team2=dire_team_name_original,
+                        selected_side=dispatch_message_side,
+                        delivery_confirmed=delivery_confirmed,
                     )
                     if delivery_confirmed:
                         print("   ✅ ВЕРДИКТ: STAR-сигнал отправлен немедленно")
@@ -26022,10 +32260,89 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 kills_pp_body_lines = message_text.splitlines()
                                 if kills_pp_body_lines:
                                     kills_pp_body_lines[0] = kills_pp_header
+                                # Refresh Time/Networth + visible kills time-block catalog/index
+                                # so the released early-kills bet shows active gate [n].
+                                _pp_live = _format_live_message_state_block(
+                                    game_time_seconds=current_game_time,
+                                    radiant_lead=lead,
+                                    radiant_team_name=radiant_team_name_original or radiant_team_name,
+                                    dire_team_name=dire_team_name_original or dire_team_name,
+                                    show_kills_time_blocks=True,
+                                    kills_release_status=kills_release_status_label_pp,
+                                ).strip().splitlines()
+                                kills_pp_body_lines = [
+                                    ln
+                                    for ln in kills_pp_body_lines
+                                    if not str(ln).startswith("Time:")
+                                    and not str(ln).startswith("Networth:")
+                                    and not str(ln).startswith("Kills time blocks:")
+                                    and not str(ln).startswith("Kills window blocks:")
+                                    and not str(ln).startswith("Kills gate:")
+                                ]
+                                # Insert after last metric-ish line if present, else append.
+                                _pp_prefixes = (
+                                    "Counterpick_1vs1:",
+                                    "Counterpick_1vs2:",
+                                    "Solo:",
+                                    "Synergy_duo:",
+                                    "Synergy_trio:",
+                                    "Protracker_1vs1:",
+                                    "Protracker_duo:",
+                                    "Protracker_solo:",
+                                    "Protracker_solo_overall:",
+                                    "Pos1vsPos1:",
+                                    "DLTV rating:",
+                                )
+                                _pp_ins = -1
+                                _pp_1vs1 = -1
+                                _pp_duo = -1
+                                _pp_solo = -1
+                                _pp_solo_all = -1
+                                for _i, _ln in enumerate(kills_pp_body_lines):
+                                    _txt = str(_ln)
+                                    if _txt.startswith("Protracker_1vs1:"):
+                                        _pp_1vs1 = _i
+                                    if _txt.startswith("Protracker_duo:"):
+                                        _pp_duo = _i
+                                    if _txt.startswith("Protracker_solo:"):
+                                        _pp_solo = _i
+                                    if _txt.startswith("Protracker_solo_overall:"):
+                                        _pp_solo_all = _i
+                                    if any(_txt.startswith(_pref) for _pref in _pp_prefixes):
+                                        _pp_ins = _i
+                                if _pp_1vs1 >= 0 or _pp_duo >= 0 or _pp_solo >= 0 or _pp_solo_all >= 0:
+                                    _pp_ins = max(_pp_1vs1, _pp_duo, _pp_solo, _pp_solo_all)
+                                if _pp_ins >= 0:
+                                    kills_pp_body_lines[_pp_ins + 1 : _pp_ins + 1] = _pp_live
+                                else:
+                                    if kills_pp_body_lines and str(kills_pp_body_lines[-1]).strip():
+                                        kills_pp_body_lines.append("")
+                                    kills_pp_body_lines.extend(_pp_live)
                                 kills_pp_message = "\n".join(kills_pp_body_lines)
+                                _imm_obs, _imm_map = None, None
+                                _s: Dict[str, Any] = {}
+                                _mc = bookmaker_map_num
+                                try: _mi = int(_mc) if _mc is not None else None
+                                except (TypeError, ValueError): _mi = None
+                                if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                                _sc = status
+                                if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                                _src = live_league_data if isinstance(live_league_data, dict) else {}
+                                _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                                if isinstance(_imm_enriched, dict):
+                                    try: _rm = int(_imm_enriched.get("map_num"))
+                                    except (TypeError, ValueError): _rm = None
+                                    if isinstance(_rm, int) and 1 <= _rm <= 5:
+                                        _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                                        if _dk: _imm_obs["match_key"]=_dk
+                                        if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                                        _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                                 kills_pp_delivered = _deliver_and_persist_signal(
                                     check_uniq_url,
                                     kills_pp_message,
+                                    current_map_observation=_imm_obs,
+                                    map_num=_imm_map,
+                                    selected_side=kills_pp_target_side,
                                     add_url_reason="star_signal_sent_now_kills_dual",
                                     add_url_details={
                                         "status": status,
@@ -26033,6 +32350,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                         "delay_reason": "tier1_early_kills_dual_signal",
                                         "release_reason": kills_release_status_label_pp,
                                         "dispatch_status_label": kills_release_status_label_pp,
+                                        "kills_release_status": kills_release_status_label_pp,
                                         "game_time": int(current_game_time),
                                         "target_side": kills_pp_target_side,
                                         "target_networth_diff": float(kills_pp_target_diff),
@@ -26042,7 +32360,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                         "json_retry_errors": json_retry_errors,
                                     },
                                     bookmaker_decision="sent",
-                                    defer_add_url=True,
+                                    defer_add_url=True
                                 )
                                 if kills_pp_delivered:
                                     kills_dual_pre_pass_sent = True
@@ -26360,9 +32678,34 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 game_time_seconds=current_game_time,
                                 radiant_lead=lead,
                             )
+                            _imm_obs, _imm_map = None, None
+                            _s: Dict[str, Any] = {}
+                            _mc = bookmaker_map_num
+                            try: _mi = int(_mc) if _mc is not None else None
+                            except (TypeError, ValueError): _mi = None
+                            if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                            _sc = status
+                            if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                            _src = live_league_data if isinstance(live_league_data, dict) else {}
+                            _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                            if isinstance(_imm_enriched, dict):
+                                try: _rm = int(_imm_enriched.get("map_num"))
+                                except (TypeError, ValueError): _rm = None
+                                if isinstance(_rm, int) and 1 <= _rm <= 5:
+                                    _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                                    if _dk: _imm_obs["match_key"]=_dk
+                                    if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                                    _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                             delivery_confirmed = _deliver_and_persist_signal(
                                 check_uniq_url,
                                 delivery_message_text,
+                                current_map_observation=_imm_obs,
+                                map_num=_imm_map,
+                                selected_side=(
+                                    kills_release_target_side_for_message
+                                    if tier1_early_kills_mode
+                                    else early65_target_side
+                                ),
                                 add_url_reason="star_signal_sent_now_networth_gate",
                                 add_url_details={
                                     "status": status,
@@ -26383,7 +32726,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     "json_retry_errors": json_retry_errors,
                                 },
                                 bookmaker_decision="sent",
-                                defer_add_url=kills_dual_signal_defer,
+                                defer_add_url=kills_dual_signal_defer
                             )
                             if delivery_confirmed:
                                 # Mark URL as kills-sent so subsequent cycles
@@ -26988,9 +33331,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 game_time_seconds=current_game_time,
                                 radiant_lead=lead,
                             )
+                            _imm_obs, _imm_map = None, None
+                            _s: Dict[str, Any] = {}
+                            _mc = bookmaker_map_num
+                            try: _mi = int(_mc) if _mc is not None else None
+                            except (TypeError, ValueError): _mi = None
+                            if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                            _sc = status
+                            if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                            _src = live_league_data if isinstance(live_league_data, dict) else {}
+                            _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                            if isinstance(_imm_enriched, dict):
+                                try: _rm = int(_imm_enriched.get("map_num"))
+                                except (TypeError, ValueError): _rm = None
+                                if isinstance(_rm, int) and 1 <= _rm <= 5:
+                                    _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                                    if _dk: _imm_obs["match_key"]=_dk
+                                    if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                                    _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                             delivery_confirmed = _deliver_and_persist_signal(
                                 check_uniq_url,
                                 delivery_message_text,
+                                current_map_observation=_imm_obs,
+                                map_num=_imm_map,
+                                selected_side=target_side,
                                 add_url_reason="star_signal_sent_now_networth_gate",
                                 add_url_details={
                                     "status": status,
@@ -27007,7 +33371,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     "networth_monitor_hold_elapsed_seconds": float(hold_check.get("held_seconds") or 0.0),
                                     "json_retry_errors": json_retry_errors,
                                 },
-                                bookmaker_decision="sent",
+                                bookmaker_decision="sent"
                             )
                             if delivery_confirmed:
                                 print(
@@ -27034,9 +33398,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             game_time_seconds=current_game_time,
                             radiant_lead=lead,
                         )
+                        _imm_obs, _imm_map = None, None
+                        _s: Dict[str, Any] = {}
+                        _mc = bookmaker_map_num
+                        try: _mi = int(_mc) if _mc is not None else None
+                        except (TypeError, ValueError): _mi = None
+                        if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                        _sc = status
+                        if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                        _src = live_league_data if isinstance(live_league_data, dict) else {}
+                        _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                        if isinstance(_imm_enriched, dict):
+                            try: _rm = int(_imm_enriched.get("map_num"))
+                            except (TypeError, ValueError): _rm = None
+                            if isinstance(_rm, int) and 1 <= _rm <= 5:
+                                _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                                if _dk: _imm_obs["match_key"]=_dk
+                                if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                                _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                         delivery_confirmed = _deliver_and_persist_signal(
                             check_uniq_url,
                             delivery_message_text,
+                            current_map_observation=_imm_obs,
+                            map_num=_imm_map,
+                            selected_side=target_side,
                             add_url_reason="star_signal_sent_now_no_json_url",
                             add_url_details={
                                 "status": status,
@@ -27044,7 +33429,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "delay_reason": delay_reason,
                                 "json_retry_errors": json_retry_errors,
                             },
-                            bookmaker_decision="sent",
+                            bookmaker_decision="sent"
                         )
                         if delivery_confirmed:
                             print(f"   ✅ ВЕРДИКТ: Сигнал отправлен немедленно (нет json_url для delayed)")
@@ -27120,9 +33505,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     game_time_seconds=current_game_time,
                                     radiant_lead=lead,
                                 )
+                                _imm_obs, _imm_map = None, None
+                                _s: Dict[str, Any] = {}
+                                _mc = bookmaker_map_num
+                                try: _mi = int(_mc) if _mc is not None else None
+                                except (TypeError, ValueError): _mi = None
+                                if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                                _sc = status
+                                if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                                _src = live_league_data if isinstance(live_league_data, dict) else {}
+                                _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                                if isinstance(_imm_enriched, dict):
+                                    try: _rm = int(_imm_enriched.get("map_num"))
+                                    except (TypeError, ValueError): _rm = None
+                                    if isinstance(_rm, int) and 1 <= _rm <= 5:
+                                        _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                                        if _dk: _imm_obs["match_key"]=_dk
+                                        if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                                        _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                                 delivery_confirmed = _deliver_and_persist_signal(
                                     check_uniq_url,
                                     delivery_message_text,
+                                    current_map_observation=_imm_obs,
+                                    map_num=_imm_map,
+                                    selected_side=target_side,
                                     add_url_reason="star_signal_sent_now_late_pub_comeback_table",
                                     add_url_details={
                                         "status": status,
@@ -27138,7 +33544,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                         "late_pub_comeback_table_threshold": float(threshold_label or 0.0),
                                         "json_retry_errors": json_retry_errors,
                                     },
-                                    bookmaker_decision="sent",
+                                    bookmaker_decision="sent"
                                 )
                                 if delivery_confirmed:
                                     print(
@@ -27146,6 +33552,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                         f"(wr={late_pub_comeback_table_wr_level}, "
                                         f"minute={source_minute}, "
                                         f"target_diff={int(target_networth_diff or 0)})"
+                                    )
+                                    _drop_delayed_matches_for_registry(
+                                        check_uniq_url,
+                                        reason="main_late_pub_table_sent_cancels_watcher",
                                     )
                             finally:
                                 _release_signal_send_slot(check_uniq_url)
@@ -27269,9 +33679,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     game_time_seconds=current_game_time,
                                     radiant_lead=lead,
                                 )
+                                _imm_obs, _imm_map = None, None
+                                _s: Dict[str, Any] = {}
+                                _mc = bookmaker_map_num
+                                try: _mi = int(_mc) if _mc is not None else None
+                                except (TypeError, ValueError): _mi = None
+                                if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                                _sc = status
+                                if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                                _src = live_league_data if isinstance(live_league_data, dict) else {}
+                                _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                                if isinstance(_imm_enriched, dict):
+                                    try: _rm = int(_imm_enriched.get("map_num"))
+                                    except (TypeError, ValueError): _rm = None
+                                    if isinstance(_rm, int) and 1 <= _rm <= 5:
+                                        _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                                        if _dk: _imm_obs["match_key"]=_dk
+                                        if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                                        _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                                 delivery_confirmed = _deliver_and_persist_signal(
                                     check_uniq_url,
                                     delivery_message_text,
+                                    current_map_observation=_imm_obs,
+                                    map_num=_imm_map,
+                                    selected_side=target_side,
                                     add_url_reason="star_signal_sent_now_top25_late_elo_block_target_lead",
                                     add_url_details={
                                         "status": status,
@@ -27285,7 +33716,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                         "top25_late_elo_block_rank": int(top25_late_elo_block_override.get("leaderboard_rank") or 0),
                                         "json_retry_errors": json_retry_errors,
                                     },
-                                    bookmaker_decision="sent",
+                                    bookmaker_decision="sent"
                                 )
                                 if delivery_confirmed:
                                     print(
@@ -27409,9 +33840,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     game_time_seconds=current_game_time,
                                     radiant_lead=lead,
                                 )
+                                _imm_obs, _imm_map = None, None
+                                _s: Dict[str, Any] = {}
+                                _mc = bookmaker_map_num
+                                try: _mi = int(_mc) if _mc is not None else None
+                                except (TypeError, ValueError): _mi = None
+                                if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                                _sc = status
+                                if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                                _src = live_league_data if isinstance(live_league_data, dict) else {}
+                                _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                                if isinstance(_imm_enriched, dict):
+                                    try: _rm = int(_imm_enriched.get("map_num"))
+                                    except (TypeError, ValueError): _rm = None
+                                    if isinstance(_rm, int) and 1 <= _rm <= 5:
+                                        _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                                        if _dk: _imm_obs["match_key"]=_dk
+                                        if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                                        _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                                 delivery_confirmed = _deliver_and_persist_signal(
                                     check_uniq_url,
                                     delivery_message_text,
+                                    current_map_observation=_imm_obs,
+                                    map_num=_imm_map,
+                                    selected_side=target_side,
                                     add_url_reason="star_signal_sent_now_late_comeback_ceiling",
                                     add_url_details={
                                         "status": status,
@@ -27427,7 +33879,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                         "late_comeback_monitor_threshold": late_comeback_check.get("threshold"),
                                         "json_retry_errors": json_retry_errors,
                                     },
-                                    bookmaker_decision="sent",
+                                    bookmaker_decision="sent"
                                 )
                                 if delivery_confirmed:
                                     print(
@@ -27538,9 +33990,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             try:
                                 if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки после lock (post-target comeback ceiling {target_human})"):
                                     return return_status
+                                _imm_obs, _imm_map = None, None
+                                _s: Dict[str, Any] = {}
+                                _mc = bookmaker_map_num
+                                try: _mi = int(_mc) if _mc is not None else None
+                                except (TypeError, ValueError): _mi = None
+                                if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                                _sc = status
+                                if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                                _src = live_league_data if isinstance(live_league_data, dict) else {}
+                                _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                                if isinstance(_imm_enriched, dict):
+                                    try: _rm = int(_imm_enriched.get("map_num"))
+                                    except (TypeError, ValueError): _rm = None
+                                    if isinstance(_rm, int) and 1 <= _rm <= 5:
+                                        _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                                        if _dk: _imm_obs["match_key"]=_dk
+                                        if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                                        _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                                 delivery_confirmed = _deliver_and_persist_signal(
                                     check_uniq_url,
                                     message_text,
+                                    current_map_observation=_imm_obs,
+                                    map_num=_imm_map,
+                                    selected_side=target_side,
                                     add_url_reason="star_signal_sent_now_late_comeback_ceiling",
                                     add_url_details={
                                         "status": status,
@@ -27556,7 +34029,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                         "late_comeback_monitor_threshold": post_target_comeback.get("threshold"),
                                         "json_retry_errors": json_retry_errors,
                                     },
-                                    bookmaker_decision="sent",
+                                    bookmaker_decision="sent"
                                 )
                                 if delivery_confirmed:
                                     print(
@@ -27673,9 +34146,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     try:
                         if _skip_dispatch_for_processed_url(check_uniq_url, f"немедленной отправки после lock (game_time >= {target_human})"):
                             return return_status
+                        _imm_obs, _imm_map = None, None
+                        _s: Dict[str, Any] = {}
+                        _mc = bookmaker_map_num
+                        try: _mi = int(_mc) if _mc is not None else None
+                        except (TypeError, ValueError): _mi = None
+                        if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                        _sc = status
+                        if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                        _src = live_league_data if isinstance(live_league_data, dict) else {}
+                        _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                        if isinstance(_imm_enriched, dict):
+                            try: _rm = int(_imm_enriched.get("map_num"))
+                            except (TypeError, ValueError): _rm = None
+                            if isinstance(_rm, int) and 1 <= _rm <= 5:
+                                _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                                if _dk: _imm_obs["match_key"]=_dk
+                                if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                                _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                         delivery_confirmed = _deliver_and_persist_signal(
                             check_uniq_url,
                             message_text,
+                            current_map_observation=_imm_obs,
+                            map_num=_imm_map,
+                            selected_side=target_side,
                             add_url_reason="star_signal_sent_now_target_reached",
                             add_url_details={
                                 "status": status,
@@ -27685,7 +34179,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "target_game_time": int(target_game_time),
                                 "json_retry_errors": json_retry_errors,
                             },
-                            bookmaker_decision="sent",
+                            bookmaker_decision="sent"
                         )
                         if delivery_confirmed:
                             print(f"   ✅ ВЕРДИКТ: Сигнал отправлен немедленно (game_time >= {target_human})")
@@ -28116,10 +34610,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     game_time_seconds=current_game_time,
                     radiant_lead=lead,
                 )
-                delivery_message_text = _refresh_message_bookmaker_block_for_dispatch(
-                    check_uniq_url,
-                    delivery_message_text,
-                )
                 immediate_add_url_reason = "star_signal_sent_now"
                 immediate_add_url_details = {
                     "status": status,
@@ -28151,12 +34641,33 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             ),
                         }
                     )
+                _imm_obs, _imm_map = None, None
+                _s: Dict[str, Any] = {}
+                _mc = bookmaker_map_num
+                try: _mi = int(_mc) if _mc is not None else None
+                except (TypeError, ValueError): _mi = None
+                if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                _sc = status
+                if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                _src = live_league_data if isinstance(live_league_data, dict) else {}
+                _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                if isinstance(_imm_enriched, dict):
+                    try: _rm = int(_imm_enriched.get("map_num"))
+                    except (TypeError, ValueError): _rm = None
+                    if isinstance(_rm, int) and 1 <= _rm <= 5:
+                        _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                        if _dk: _imm_obs["match_key"]=_dk
+                        if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                        _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                 delivery_confirmed = _deliver_and_persist_signal(
                     check_uniq_url,
                     delivery_message_text,
+                    current_map_observation=_imm_obs,
+                    map_num=_imm_map,
+                    selected_side=target_side,
                     add_url_reason=immediate_add_url_reason,
                     add_url_details=immediate_add_url_details,
-                    bookmaker_decision="sent",
+                    bookmaker_decision="sent"
                 )
                 if delivery_confirmed:
                     print("   ✅ ВЕРДИКТ: STAR-сигнал отправлен немедленно")
@@ -28299,21 +34810,29 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     ('solo', 'Solo'),
                     ('synergy_duo', 'Synergy_duo'),
                     ('synergy_trio', 'Synergy_trio'),
-                    ('dota2protracker_cp1vs1', 'Dota2ProTracker_cp1vs1'),
-                ]
+                    ('dota2protracker_cp1vs1', 'Protracker_1vs1'),
+                    ('dota2protracker_duo', 'Protracker_duo'),
+                    ('dota2protracker_solo', 'Protracker_solo'),
+                    ('dota2protracker_solo_overall', 'Protracker_solo_overall'),
+                    ]
 
                 def _tempo_format_metrics(title: str, data: dict, metrics: list) -> str:
                     lines = [title]
                     for key, label in metrics:
                         value = (data or {}).get(key)
-                        if key == "dota2protracker_cp1vs1":
+                        if key in (
+                        "dota2protracker_cp1vs1",
+                        "dota2protracker_duo",
+                        "dota2protracker_solo",
+                        "dota2protracker_solo_overall",
+                    ):
                             value = _format_dota2protracker_output_value(value)
                         lines.append(f"{label}: {value}")
                     return "\n".join(lines) + "\n"
 
                 tempo_star_metrics_snapshot = _build_star_metrics_snapshot(
                     early_block_log=_tempo_format_metrics(
-                        "Early 20-28:", tempo_early_output_log, tempo_metric_list
+                        "Early NW (20-28):", tempo_early_output_log, tempo_metric_list
                     ),
                     mid_block_log=_tempo_format_metrics(
                         "Late: (28-60 min):", tempo_mid_output_log, tempo_metric_list
@@ -28329,9 +34848,29 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 try:
                     if _skip_dispatch_for_processed_url(check_uniq_url, "немедленной отправки tempo fallback после lock"):
                         return return_status
+                    _imm_obs, _imm_map = None, None
+                    _s: Dict[str, Any] = {}
+                    _mc = bookmaker_map_num
+                    try: _mi = int(_mc) if _mc is not None else None
+                    except (TypeError, ValueError): _mi = None
+                    if _mi is not None and 1 <= _mi <= 5: _s["map_num"] = _mi
+                    _sc = status
+                    if _sc is not None and str(_sc).strip(): _s["status"] = str(_sc).strip().lower()
+                    _src = live_league_data if isinstance(live_league_data, dict) else {}
+                    _imm_enriched = _bookmaker_enrich_delayed_match_state(_s if _s else {}, _src)
+                    if isinstance(_imm_enriched, dict):
+                        try: _rm = int(_imm_enriched.get("map_num"))
+                        except (TypeError, ValueError): _rm = None
+                        if isinstance(_rm, int) and 1 <= _rm <= 5:
+                            _imm_obs=dict(_imm_enriched);_imm_obs["map_num"]=_rm;_dk=str(check_uniq_url or "").strip()
+                            if _dk: _imm_obs["match_key"]=_dk
+                            if not _imm_obs.get("status"): _imm_obs["status"]=str(_sc or "live").lower()
+                            _imm_obs.setdefault("observed_at", float(time.time())); _imm_map=_rm
                     delivery_confirmed = _deliver_and_persist_signal(
                         check_uniq_url,
                         tempo_message_text,
+                        current_map_observation=_imm_obs,
+                        map_num=_imm_map,
                         add_url_reason="tempo_over_fallback_sent",
                         add_url_details={
                             "status": status,
@@ -28346,7 +34885,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             "json_retry_errors": json_retry_errors,
                             "tempo_over_defer": True,
                         },
-                        defer_add_url=True,
+                        defer_add_url=True
                     )
                     if delivery_confirmed:
                         with _tempo_over_sent_lock:
@@ -28470,7 +35009,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
 def _load_stats_dicts():
     """Ленивая загрузка словарей, чтобы не грузить их при импорте."""
-    global lane_data, early_dict, late_dict, post_lane_dict
+    global lane_data, early_dict, early_end_dict, late_dict, post_lane_dict
     global late_comeback_ceiling_data, late_comeback_ceiling_thresholds, late_comeback_ceiling_max_minute
     global late_pub_comeback_table_data, late_pub_comeback_table_thresholds_by_wr
     global late_pub_comeback_table_max_minute_by_wr, late_pub_comeback_table_global_max_minute
@@ -28478,6 +35017,7 @@ def _load_stats_dicts():
     global stats_warmup_last_heavy_load_ts
     if (
         early_dict is not None
+        and early_end_dict is not None
         and late_dict is not None
         and post_lane_dict is not None
         and late_pub_comeback_table_data is not None
@@ -28660,6 +35200,9 @@ def _load_stats_dicts():
     stats_dir = os.getenv("STATS_DIR", default_stats_dir)
     lane_path = os.getenv("STATS_LANE_PATH", f"{stats_dir}/lane_dict_raw.json")
     early_path = os.getenv("STATS_EARLY_PATH", f"{stats_dir}/early_dict_raw.json")
+    early_end_path = os.getenv(
+        "STATS_EARLY_END_PATH", f"{stats_dir}/early_end_dict_raw.json"
+    )
     late_path = os.getenv("STATS_LATE_PATH", f"{stats_dir}/late_dict_raw.json")
     post_lane_path = os.getenv("STATS_POST_LANE_PATH", f"{stats_dir}/post_lane_dict_raw.json")
     late_pub_comeback_table_path = os.getenv(
@@ -28690,14 +35233,35 @@ def _load_stats_dicts():
 
     if not STATS_SEQUENTIAL_WARMUP_ENABLED:
         if early_dict is None:
-            if _stats_indexed_lookup_enabled("early"):
+            if _stats_should_use_indexed_lookup(early_path, "early"):
                 early_dict = _prepare_indexed_stats_lookup(early_path, "early")
             else:
                 print(f"📦 Loading early stats: {early_path}")
                 early_dict = _load_json_object(early_path, "early_dict_raw")
             gc.collect()
+        if early_end_dict is None:
+            if _stats_source_available_for_lookup(early_end_path, "early_end"):
+                if _stats_should_use_indexed_lookup(early_end_path, "early_end"):
+                    early_end_dict = _prepare_indexed_stats_lookup(
+                        early_end_path, "early_end"
+                    )
+                else:
+                    print(f"📦 Loading early_end (winner) stats: {early_end_path}")
+                    early_end_dict = _load_json_object(
+                        early_end_path, "early_end_dict_raw"
+                    )
+            else:
+                logger.warning(
+                    "Early-end (winner) stats file not found: %s", early_end_path
+                )
+                print(f"⚠️ Early-end stats file not found: {early_end_path}")
+                _report_missing_runtime_file(
+                    "early_end_dict_raw.json", Path(early_end_path)
+                )
+                early_end_dict = {}
+            gc.collect()
         if late_dict is None:
-            if _stats_indexed_lookup_enabled("late"):
+            if _stats_should_use_indexed_lookup(late_path, "late"):
                 late_dict = _prepare_indexed_stats_lookup(late_path, "late")
             else:
                 print(f"📦 Loading late stats: {late_path}")
@@ -28705,7 +35269,7 @@ def _load_stats_dicts():
             gc.collect()
         if post_lane_dict is None:
             if _stats_source_available_for_lookup(post_lane_path, "post_lane"):
-                if _stats_indexed_lookup_enabled("post_lane"):
+                if _stats_should_use_indexed_lookup(post_lane_path, "post_lane"):
                     post_lane_dict = _prepare_indexed_stats_lookup(post_lane_path, "post_lane")
                 else:
                     print(f"📦 Loading post-lane stats: {post_lane_path}")
@@ -28718,13 +35282,17 @@ def _load_stats_dicts():
             gc.collect()
         return (
             early_dict is not None
+            and early_end_dict is not None
             and late_dict is not None
             and post_lane_dict is not None
             and late_pub_comeback_table_data is not None
         )
 
     if stats_warmup_last_heavy_load_ts == 0.0 and (
-        early_dict is None or late_dict is None or post_lane_dict is None
+        early_dict is None
+        or early_end_dict is None
+        or late_dict is None
+        or post_lane_dict is None
     ):
         stats_warmup_last_heavy_load_ts = time.time()
         return False
@@ -28733,6 +35301,8 @@ def _load_stats_dicts():
     remaining_heavy = []
     if early_dict is None:
         remaining_heavy.append(("early", early_path))
+    if early_end_dict is None:
+        remaining_heavy.append(("early_end", early_end_path))
     if late_dict is None:
         remaining_heavy.append(("late", late_path))
     if post_lane_dict is None:
@@ -28745,18 +35315,27 @@ def _load_stats_dicts():
         return False
 
     next_label, next_path = remaining_heavy[0]
-    if next_label == "post_lane" and not _stats_source_available_for_lookup(next_path, next_label):
-        logger.warning("Post-lane stats file not found: %s", next_path)
-        print(f"⚠️ Post-lane stats file not found: {next_path}")
-        _report_missing_runtime_file("post_lane_dict_raw.json", Path(next_path))
+    if next_label in {"post_lane", "early_end"} and not _stats_source_available_for_lookup(
+        next_path, next_label
+    ):
+        missing_name = (
+            "post_lane_dict_raw.json"
+            if next_label == "post_lane"
+            else "early_end_dict_raw.json"
+        )
+        logger.warning("%s stats file not found: %s", next_label, next_path)
+        print(f"⚠️ {next_label} stats file not found: {next_path}")
+        _report_missing_runtime_file(missing_name, Path(next_path))
         next_payload = {}
-    elif _stats_indexed_lookup_enabled(next_label):
+    elif _stats_should_use_indexed_lookup(next_path, next_label):
         next_payload = _prepare_indexed_stats_lookup(next_path, next_label)
     else:
         print(f"📦 Warmup loading {next_label} stats: {next_path}")
         next_payload = _load_json_object(next_path, f"{next_label}_dict_raw")
     if next_label == "early":
         early_dict = next_payload
+    elif next_label == "early_end":
+        early_end_dict = next_payload
     elif next_label == "late":
         late_dict = next_payload
     else:
@@ -28765,6 +35344,7 @@ def _load_stats_dicts():
     gc.collect()
     return (
         early_dict is not None
+        and early_end_dict is not None
         and late_dict is not None
         and post_lane_dict is not None
         and late_pub_comeback_table_data is not None
@@ -29371,6 +35951,15 @@ if __name__ == "__main__":
         "CYBERSCORE_POLL_CYCLE_TARGET_SECONDS",
         float(SCHEDULE_NEAR_MATCH_POLL_SECONDS),
     )
+    # Independent whole-current-map Winline scheduler: nominal 5s due checks even
+    # while general() blocks. Camoufox remains serialized via _run_shared_camoufox_job.
+    try:
+        start_winline_current_map_polling_scheduler(producer_pid=os.getpid())
+    except Exception as _sched_exc:
+        try:
+            logger.warning("start_winline_current_map_polling_scheduler failed: %s", _sched_exc)
+        except Exception:
+            pass
     while True:
         try:
             cycle_start = time.time()
@@ -29382,6 +35971,18 @@ if __name__ == "__main__":
                 odds=args.odds,
                 bookmaker_gate_mode=args.bookmaker_gate_mode,
             )
+            # Backup/catch-up tick after general(); primary cadence is the scheduler thread.
+            maybe_run_protracker_cache_warmup()
+            try:
+                tick_winline_current_map_polling(
+                    producer_pid=os.getpid(),
+                    from_main_loop=True,
+                )
+            except Exception as _tick_exc:
+                try:
+                    logger.warning("tick_winline_current_map_polling failed: %s", _tick_exc)
+                except Exception:
+                    pass
             _maybe_log_runtime_memory_snapshot(
                 cycle_number=cycle_number,
                 context=f"status={status}",

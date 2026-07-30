@@ -1,0 +1,1068 @@
+{
+  "generated_at": "2026-07-16T17:49:15.908455+00:00",
+  "definition": "WIN=strictly more kills for predicted side; equal/fewer=LOSE; no map WR",
+  "universe": "pro 7.41* with >=1 tier_one_teams",
+  "n_scanned": 4659,
+  "n_tier1": 1377,
+  "n_bad_draft": 68,
+  "elapsed_sec": 21.52,
+  "min_games": 10,
+  "variants": {
+    "first_hit_p100": {
+      "5_15": {
+        "n": 1309,
+        "win_more_kills": 691,
+        "lose_equal_or_less": 618,
+        "kill_lead_wr": 0.5278838808250573,
+        "skip_no_actual": 0,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 724,
+            "kill_lead_wr": 0.4654696132596685,
+            "win_more_kills": 337,
+            "lose_equal_or_less": 387
+          },
+          "0.5-1": {
+            "n": 401,
+            "kill_lead_wr": 0.5860349127182045,
+            "win_more_kills": 235,
+            "lose_equal_or_less": 166
+          },
+          "1-2": {
+            "n": 181,
+            "kill_lead_wr": 0.6574585635359116,
+            "win_more_kills": 119,
+            "lose_equal_or_less": 62
+          },
+          "2-3": {
+            "n": 3,
+            "kill_lead_wr": 0.0,
+            "win_more_kills": 0,
+            "lose_equal_or_less": 3
+          }
+        },
+        "layer_used": {
+          "1v2": 1308,
+          "2v1": 1
+        }
+      },
+      "10_20": {
+        "n": 1293,
+        "win_more_kills": 715,
+        "lose_equal_or_less": 578,
+        "kill_lead_wr": 0.5529775715390565,
+        "skip_no_actual": 16,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 700,
+            "kill_lead_wr": 0.5257142857142857,
+            "win_more_kills": 368,
+            "lose_equal_or_less": 332
+          },
+          "0.5-1": {
+            "n": 397,
+            "kill_lead_wr": 0.5516372795969773,
+            "win_more_kills": 219,
+            "lose_equal_or_less": 178
+          },
+          "1-2": {
+            "n": 189,
+            "kill_lead_wr": 0.6666666666666666,
+            "win_more_kills": 126,
+            "lose_equal_or_less": 63
+          },
+          "2-3": {
+            "n": 7,
+            "kill_lead_wr": 0.2857142857142857,
+            "win_more_kills": 2,
+            "lose_equal_or_less": 5
+          }
+        },
+        "layer_used": {
+          "1v2": 1292,
+          "2v1": 1
+        }
+      },
+      "15_25": {
+        "n": 1253,
+        "win_more_kills": 689,
+        "lose_equal_or_less": 564,
+        "kill_lead_wr": 0.5498802873104549,
+        "skip_no_actual": 56,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 677,
+            "kill_lead_wr": 0.49039881831610044,
+            "win_more_kills": 332,
+            "lose_equal_or_less": 345
+          },
+          "0.5-1": {
+            "n": 389,
+            "kill_lead_wr": 0.6195372750642674,
+            "win_more_kills": 241,
+            "lose_equal_or_less": 148
+          },
+          "1-2": {
+            "n": 181,
+            "kill_lead_wr": 0.6353591160220995,
+            "win_more_kills": 115,
+            "lose_equal_or_less": 66
+          },
+          "2-3": {
+            "n": 6,
+            "kill_lead_wr": 0.16666666666666666,
+            "win_more_kills": 1,
+            "lose_equal_or_less": 5
+          }
+        },
+        "layer_used": {
+          "1v2": 1253
+        }
+      },
+      "20_30": {
+        "n": 1169,
+        "win_more_kills": 645,
+        "lose_equal_or_less": 524,
+        "kill_lead_wr": 0.5517536355859709,
+        "skip_no_actual": 140,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 734,
+            "kill_lead_wr": 0.5258855585831063,
+            "win_more_kills": 386,
+            "lose_equal_or_less": 348
+          },
+          "0.5-1": {
+            "n": 340,
+            "kill_lead_wr": 0.5911764705882353,
+            "win_more_kills": 201,
+            "lose_equal_or_less": 139
+          },
+          "1-2": {
+            "n": 92,
+            "kill_lead_wr": 0.6086956521739131,
+            "win_more_kills": 56,
+            "lose_equal_or_less": 36
+          },
+          "2-3": {
+            "n": 2,
+            "kill_lead_wr": 1.0,
+            "win_more_kills": 2,
+            "lose_equal_or_less": 0
+          },
+          "3+": {
+            "n": 1,
+            "kill_lead_wr": 0.0,
+            "win_more_kills": 0,
+            "lose_equal_or_less": 1
+          }
+        },
+        "layer_used": {
+          "1v2": 1169
+        }
+      }
+    },
+    "first_hit_p30": {
+      "5_15": {
+        "n": 1309,
+        "win_more_kills": 703,
+        "lose_equal_or_less": 606,
+        "kill_lead_wr": 0.5370511841100076,
+        "skip_no_actual": 0,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 733,
+            "kill_lead_wr": 0.4815825375170532,
+            "win_more_kills": 353,
+            "lose_equal_or_less": 380
+          },
+          "0.5-1": {
+            "n": 398,
+            "kill_lead_wr": 0.5979899497487438,
+            "win_more_kills": 238,
+            "lose_equal_or_less": 160
+          },
+          "1-2": {
+            "n": 173,
+            "kill_lead_wr": 0.6473988439306358,
+            "win_more_kills": 112,
+            "lose_equal_or_less": 61
+          },
+          "2-3": {
+            "n": 5,
+            "kill_lead_wr": 0.0,
+            "win_more_kills": 0,
+            "lose_equal_or_less": 5
+          }
+        },
+        "layer_used": {
+          "1v2": 1308,
+          "2v1": 1
+        }
+      },
+      "10_20": {
+        "n": 1293,
+        "win_more_kills": 707,
+        "lose_equal_or_less": 586,
+        "kill_lead_wr": 0.5467904098994586,
+        "skip_no_actual": 16,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 699,
+            "kill_lead_wr": 0.5178826895565093,
+            "win_more_kills": 362,
+            "lose_equal_or_less": 337
+          },
+          "0.5-1": {
+            "n": 407,
+            "kill_lead_wr": 0.5503685503685504,
+            "win_more_kills": 224,
+            "lose_equal_or_less": 183
+          },
+          "1-2": {
+            "n": 180,
+            "kill_lead_wr": 0.6611111111111111,
+            "win_more_kills": 119,
+            "lose_equal_or_less": 61
+          },
+          "2-3": {
+            "n": 7,
+            "kill_lead_wr": 0.2857142857142857,
+            "win_more_kills": 2,
+            "lose_equal_or_less": 5
+          }
+        },
+        "layer_used": {
+          "1v2": 1292,
+          "2v1": 1
+        }
+      },
+      "15_25": {
+        "n": 1253,
+        "win_more_kills": 691,
+        "lose_equal_or_less": 562,
+        "kill_lead_wr": 0.5514764565043895,
+        "skip_no_actual": 56,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 694,
+            "kill_lead_wr": 0.49135446685878964,
+            "win_more_kills": 341,
+            "lose_equal_or_less": 353
+          },
+          "0.5-1": {
+            "n": 371,
+            "kill_lead_wr": 0.6361185983827493,
+            "win_more_kills": 236,
+            "lose_equal_or_less": 135
+          },
+          "1-2": {
+            "n": 183,
+            "kill_lead_wr": 0.6174863387978142,
+            "win_more_kills": 113,
+            "lose_equal_or_less": 70
+          },
+          "2-3": {
+            "n": 5,
+            "kill_lead_wr": 0.2,
+            "win_more_kills": 1,
+            "lose_equal_or_less": 4
+          }
+        },
+        "layer_used": {
+          "1v2": 1253
+        }
+      },
+      "20_30": {
+        "n": 1169,
+        "win_more_kills": 650,
+        "lose_equal_or_less": 519,
+        "kill_lead_wr": 0.5560307955517536,
+        "skip_no_actual": 140,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 741,
+            "kill_lead_wr": 0.5222672064777328,
+            "win_more_kills": 387,
+            "lose_equal_or_less": 354
+          },
+          "0.5-1": {
+            "n": 327,
+            "kill_lead_wr": 0.6146788990825688,
+            "win_more_kills": 201,
+            "lose_equal_or_less": 126
+          },
+          "1-2": {
+            "n": 100,
+            "kill_lead_wr": 0.62,
+            "win_more_kills": 62,
+            "lose_equal_or_less": 38
+          },
+          "3+": {
+            "n": 1,
+            "kill_lead_wr": 0.0,
+            "win_more_kills": 0,
+            "lose_equal_or_less": 1
+          }
+        },
+        "layer_used": {
+          "1v2": 1169
+        }
+      }
+    },
+    "first_hit_p0": {
+      "5_15": {
+        "n": 1309,
+        "win_more_kills": 718,
+        "lose_equal_or_less": 591,
+        "kill_lead_wr": 0.5485103132161956,
+        "skip_no_actual": 0,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 733,
+            "kill_lead_wr": 0.5170532060027285,
+            "win_more_kills": 379,
+            "lose_equal_or_less": 354
+          },
+          "0.5-1": {
+            "n": 406,
+            "kill_lead_wr": 0.5615763546798029,
+            "win_more_kills": 228,
+            "lose_equal_or_less": 178
+          },
+          "1-2": {
+            "n": 166,
+            "kill_lead_wr": 0.6686746987951807,
+            "win_more_kills": 111,
+            "lose_equal_or_less": 55
+          },
+          "2-3": {
+            "n": 4,
+            "kill_lead_wr": 0.0,
+            "win_more_kills": 0,
+            "lose_equal_or_less": 4
+          }
+        },
+        "layer_used": {
+          "1v2": 1308,
+          "2v1": 1
+        }
+      },
+      "10_20": {
+        "n": 1293,
+        "win_more_kills": 703,
+        "lose_equal_or_less": 590,
+        "kill_lead_wr": 0.5436968290796597,
+        "skip_no_actual": 16,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 687,
+            "kill_lead_wr": 0.5211062590975255,
+            "win_more_kills": 358,
+            "lose_equal_or_less": 329
+          },
+          "0.5-1": {
+            "n": 417,
+            "kill_lead_wr": 0.5251798561151079,
+            "win_more_kills": 219,
+            "lose_equal_or_less": 198
+          },
+          "1-2": {
+            "n": 179,
+            "kill_lead_wr": 0.6703910614525139,
+            "win_more_kills": 120,
+            "lose_equal_or_less": 59
+          },
+          "2-3": {
+            "n": 10,
+            "kill_lead_wr": 0.6,
+            "win_more_kills": 6,
+            "lose_equal_or_less": 4
+          }
+        },
+        "layer_used": {
+          "1v2": 1292,
+          "2v1": 1
+        }
+      },
+      "15_25": {
+        "n": 1253,
+        "win_more_kills": 673,
+        "lose_equal_or_less": 580,
+        "kill_lead_wr": 0.5371109337589784,
+        "skip_no_actual": 56,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 693,
+            "kill_lead_wr": 0.4660894660894661,
+            "win_more_kills": 323,
+            "lose_equal_or_less": 370
+          },
+          "0.5-1": {
+            "n": 370,
+            "kill_lead_wr": 0.6351351351351351,
+            "win_more_kills": 235,
+            "lose_equal_or_less": 135
+          },
+          "1-2": {
+            "n": 183,
+            "kill_lead_wr": 0.6120218579234973,
+            "win_more_kills": 112,
+            "lose_equal_or_less": 71
+          },
+          "2-3": {
+            "n": 7,
+            "kill_lead_wr": 0.42857142857142855,
+            "win_more_kills": 3,
+            "lose_equal_or_less": 4
+          }
+        },
+        "layer_used": {
+          "1v2": 1253
+        }
+      },
+      "20_30": {
+        "n": 1169,
+        "win_more_kills": 626,
+        "lose_equal_or_less": 543,
+        "kill_lead_wr": 0.5355004277159966,
+        "skip_no_actual": 140,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 718,
+            "kill_lead_wr": 0.4972144846796657,
+            "win_more_kills": 357,
+            "lose_equal_or_less": 361
+          },
+          "0.5-1": {
+            "n": 334,
+            "kill_lead_wr": 0.5958083832335329,
+            "win_more_kills": 199,
+            "lose_equal_or_less": 135
+          },
+          "1-2": {
+            "n": 114,
+            "kill_lead_wr": 0.5964912280701754,
+            "win_more_kills": 68,
+            "lose_equal_or_less": 46
+          },
+          "2-3": {
+            "n": 3,
+            "kill_lead_wr": 0.6666666666666666,
+            "win_more_kills": 2,
+            "lose_equal_or_less": 1
+          }
+        },
+        "layer_used": {
+          "1v2": 1169
+        }
+      }
+    },
+    "blend_all_p100": {
+      "5_15": {
+        "n": 1309,
+        "win_more_kills": 716,
+        "lose_equal_or_less": 593,
+        "kill_lead_wr": 0.5469824293353706,
+        "skip_no_actual": 0,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 1076,
+            "kill_lead_wr": 0.5269516728624535,
+            "win_more_kills": 567,
+            "lose_equal_or_less": 509
+          },
+          "0.5-1": {
+            "n": 220,
+            "kill_lead_wr": 0.6409090909090909,
+            "win_more_kills": 141,
+            "lose_equal_or_less": 79
+          },
+          "1-2": {
+            "n": 13,
+            "kill_lead_wr": 0.6153846153846154,
+            "win_more_kills": 8,
+            "lose_equal_or_less": 5
+          }
+        },
+        "layer_used": {
+          "blend:1v2+2v1+1v1+with+solo": 1308,
+          "blend:2v1+1v1+with+solo": 1
+        }
+      },
+      "10_20": {
+        "n": 1293,
+        "win_more_kills": 738,
+        "lose_equal_or_less": 555,
+        "kill_lead_wr": 0.5707656612529002,
+        "skip_no_actual": 16,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 1033,
+            "kill_lead_wr": 0.5508228460793805,
+            "win_more_kills": 569,
+            "lose_equal_or_less": 464
+          },
+          "0.5-1": {
+            "n": 243,
+            "kill_lead_wr": 0.6378600823045267,
+            "win_more_kills": 155,
+            "lose_equal_or_less": 88
+          },
+          "1-2": {
+            "n": 17,
+            "kill_lead_wr": 0.8235294117647058,
+            "win_more_kills": 14,
+            "lose_equal_or_less": 3
+          }
+        },
+        "layer_used": {
+          "blend:1v2+2v1+1v1+with+solo": 1292,
+          "blend:2v1+1v1+with+solo": 1
+        }
+      },
+      "15_25": {
+        "n": 1253,
+        "win_more_kills": 683,
+        "lose_equal_or_less": 570,
+        "kill_lead_wr": 0.5450917797286512,
+        "skip_no_actual": 56,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 998,
+            "kill_lead_wr": 0.5090180360721442,
+            "win_more_kills": 508,
+            "lose_equal_or_less": 490
+          },
+          "0.5-1": {
+            "n": 236,
+            "kill_lead_wr": 0.6779661016949152,
+            "win_more_kills": 160,
+            "lose_equal_or_less": 76
+          },
+          "1-2": {
+            "n": 19,
+            "kill_lead_wr": 0.7894736842105263,
+            "win_more_kills": 15,
+            "lose_equal_or_less": 4
+          }
+        },
+        "layer_used": {
+          "blend:1v2+2v1+1v1+with+solo": 1253
+        }
+      },
+      "20_30": {
+        "n": 1169,
+        "win_more_kills": 651,
+        "lose_equal_or_less": 518,
+        "kill_lead_wr": 0.5568862275449101,
+        "skip_no_actual": 140,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 1049,
+            "kill_lead_wr": 0.544327931363203,
+            "win_more_kills": 571,
+            "lose_equal_or_less": 478
+          },
+          "0.5-1": {
+            "n": 120,
+            "kill_lead_wr": 0.6666666666666666,
+            "win_more_kills": 80,
+            "lose_equal_or_less": 40
+          }
+        },
+        "layer_used": {
+          "blend:1v2+2v1+1v1+with+solo": 1169
+        }
+      }
+    },
+    "blend_all_p30": {
+      "5_15": {
+        "n": 1309,
+        "win_more_kills": 716,
+        "lose_equal_or_less": 593,
+        "kill_lead_wr": 0.5469824293353706,
+        "skip_no_actual": 0,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 1028,
+            "kill_lead_wr": 0.5252918287937743,
+            "win_more_kills": 540,
+            "lose_equal_or_less": 488
+          },
+          "0.5-1": {
+            "n": 258,
+            "kill_lead_wr": 0.627906976744186,
+            "win_more_kills": 162,
+            "lose_equal_or_less": 96
+          },
+          "1-2": {
+            "n": 23,
+            "kill_lead_wr": 0.6086956521739131,
+            "win_more_kills": 14,
+            "lose_equal_or_less": 9
+          }
+        },
+        "layer_used": {
+          "blend:1v2+2v1+1v1+with+solo": 1308,
+          "blend:2v1+1v1+with+solo": 1
+        }
+      },
+      "10_20": {
+        "n": 1293,
+        "win_more_kills": 746,
+        "lose_equal_or_less": 547,
+        "kill_lead_wr": 0.576952822892498,
+        "skip_no_actual": 16,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 972,
+            "kill_lead_wr": 0.5565843621399177,
+            "win_more_kills": 541,
+            "lose_equal_or_less": 431
+          },
+          "0.5-1": {
+            "n": 289,
+            "kill_lead_wr": 0.6262975778546713,
+            "win_more_kills": 181,
+            "lose_equal_or_less": 108
+          },
+          "1-2": {
+            "n": 32,
+            "kill_lead_wr": 0.75,
+            "win_more_kills": 24,
+            "lose_equal_or_less": 8
+          }
+        },
+        "layer_used": {
+          "blend:1v2+2v1+1v1+with+solo": 1292,
+          "blend:2v1+1v1+with+solo": 1
+        }
+      },
+      "15_25": {
+        "n": 1253,
+        "win_more_kills": 677,
+        "lose_equal_or_less": 576,
+        "kill_lead_wr": 0.5403032721468476,
+        "skip_no_actual": 56,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 948,
+            "kill_lead_wr": 0.4978902953586498,
+            "win_more_kills": 472,
+            "lose_equal_or_less": 476
+          },
+          "0.5-1": {
+            "n": 272,
+            "kill_lead_wr": 0.6544117647058824,
+            "win_more_kills": 178,
+            "lose_equal_or_less": 94
+          },
+          "1-2": {
+            "n": 33,
+            "kill_lead_wr": 0.8181818181818182,
+            "win_more_kills": 27,
+            "lose_equal_or_less": 6
+          }
+        },
+        "layer_used": {
+          "blend:1v2+2v1+1v1+with+solo": 1253
+        }
+      },
+      "20_30": {
+        "n": 1169,
+        "win_more_kills": 650,
+        "lose_equal_or_less": 519,
+        "kill_lead_wr": 0.5560307955517536,
+        "skip_no_actual": 140,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 1018,
+            "kill_lead_wr": 0.5402750491159135,
+            "win_more_kills": 550,
+            "lose_equal_or_less": 468
+          },
+          "0.5-1": {
+            "n": 147,
+            "kill_lead_wr": 0.6666666666666666,
+            "win_more_kills": 98,
+            "lose_equal_or_less": 49
+          },
+          "1-2": {
+            "n": 4,
+            "kill_lead_wr": 0.5,
+            "win_more_kills": 2,
+            "lose_equal_or_less": 2
+          }
+        },
+        "layer_used": {
+          "blend:1v2+2v1+1v1+with+solo": 1169
+        }
+      }
+    },
+    "best_abs_p100": {
+      "5_15": {
+        "n": 1309,
+        "win_more_kills": 707,
+        "lose_equal_or_less": 602,
+        "kill_lead_wr": 0.5401069518716578,
+        "skip_no_actual": 0,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 476,
+            "kill_lead_wr": 0.5042016806722689,
+            "win_more_kills": 240,
+            "lose_equal_or_less": 236
+          },
+          "0.5-1": {
+            "n": 515,
+            "kill_lead_wr": 0.5398058252427185,
+            "win_more_kills": 278,
+            "lose_equal_or_less": 237
+          },
+          "1-2": {
+            "n": 306,
+            "kill_lead_wr": 0.5915032679738562,
+            "win_more_kills": 181,
+            "lose_equal_or_less": 125
+          },
+          "2-3": {
+            "n": 12,
+            "kill_lead_wr": 0.6666666666666666,
+            "win_more_kills": 8,
+            "lose_equal_or_less": 4
+          }
+        },
+        "layer_used": {
+          "2v1": 539,
+          "1v2": 362,
+          "1v1": 205,
+          "with": 201,
+          "solo": 2
+        }
+      },
+      "10_20": {
+        "n": 1293,
+        "win_more_kills": 724,
+        "lose_equal_or_less": 569,
+        "kill_lead_wr": 0.559938128383604,
+        "skip_no_actual": 16,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 374,
+            "kill_lead_wr": 0.5561497326203209,
+            "win_more_kills": 208,
+            "lose_equal_or_less": 166
+          },
+          "0.5-1": {
+            "n": 547,
+            "kill_lead_wr": 0.5356489945155393,
+            "win_more_kills": 293,
+            "lose_equal_or_less": 254
+          },
+          "1-2": {
+            "n": 341,
+            "kill_lead_wr": 0.5865102639296188,
+            "win_more_kills": 200,
+            "lose_equal_or_less": 141
+          },
+          "2-3": {
+            "n": 27,
+            "kill_lead_wr": 0.7037037037037037,
+            "win_more_kills": 19,
+            "lose_equal_or_less": 8
+          },
+          "3+": {
+            "n": 4,
+            "kill_lead_wr": 1.0,
+            "win_more_kills": 4,
+            "lose_equal_or_less": 0
+          }
+        },
+        "layer_used": {
+          "2v1": 492,
+          "1v1": 297,
+          "1v2": 272,
+          "with": 232
+        }
+      },
+      "15_25": {
+        "n": 1253,
+        "win_more_kills": 694,
+        "lose_equal_or_less": 559,
+        "kill_lead_wr": 0.5538707102952913,
+        "skip_no_actual": 56,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 356,
+            "kill_lead_wr": 0.5028089887640449,
+            "win_more_kills": 179,
+            "lose_equal_or_less": 177
+          },
+          "0.5-1": {
+            "n": 528,
+            "kill_lead_wr": 0.5454545454545454,
+            "win_more_kills": 288,
+            "lose_equal_or_less": 240
+          },
+          "1-2": {
+            "n": 338,
+            "kill_lead_wr": 0.6124260355029586,
+            "win_more_kills": 207,
+            "lose_equal_or_less": 131
+          },
+          "2-3": {
+            "n": 28,
+            "kill_lead_wr": 0.6428571428571429,
+            "win_more_kills": 18,
+            "lose_equal_or_less": 10
+          },
+          "3+": {
+            "n": 3,
+            "kill_lead_wr": 0.6666666666666666,
+            "win_more_kills": 2,
+            "lose_equal_or_less": 1
+          }
+        },
+        "layer_used": {
+          "2v1": 515,
+          "1v1": 291,
+          "1v2": 238,
+          "with": 207,
+          "solo": 2
+        }
+      },
+      "20_30": {
+        "n": 1169,
+        "win_more_kills": 656,
+        "lose_equal_or_less": 513,
+        "kill_lead_wr": 0.561163387510693,
+        "skip_no_actual": 140,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 447,
+            "kill_lead_wr": 0.5279642058165548,
+            "win_more_kills": 236,
+            "lose_equal_or_less": 211
+          },
+          "0.5-1": {
+            "n": 512,
+            "kill_lead_wr": 0.57421875,
+            "win_more_kills": 294,
+            "lose_equal_or_less": 218
+          },
+          "1-2": {
+            "n": 200,
+            "kill_lead_wr": 0.595,
+            "win_more_kills": 119,
+            "lose_equal_or_less": 81
+          },
+          "2-3": {
+            "n": 9,
+            "kill_lead_wr": 0.7777777777777778,
+            "win_more_kills": 7,
+            "lose_equal_or_less": 2
+          },
+          "3+": {
+            "n": 1,
+            "kill_lead_wr": 0.0,
+            "win_more_kills": 0,
+            "lose_equal_or_less": 1
+          }
+        },
+        "layer_used": {
+          "2v1": 516,
+          "1v2": 261,
+          "1v1": 208,
+          "with": 184
+        }
+      }
+    },
+    "core_1v1_with_p100": {
+      "5_15": {
+        "n": 1309,
+        "win_more_kills": 722,
+        "lose_equal_or_less": 587,
+        "kill_lead_wr": 0.5515660809778457,
+        "skip_no_actual": 0,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 1053,
+            "kill_lead_wr": 0.5251661918328585,
+            "win_more_kills": 553,
+            "lose_equal_or_less": 500
+          },
+          "0.5-1": {
+            "n": 237,
+            "kill_lead_wr": 0.6666666666666666,
+            "win_more_kills": 158,
+            "lose_equal_or_less": 79
+          },
+          "1-2": {
+            "n": 19,
+            "kill_lead_wr": 0.5789473684210527,
+            "win_more_kills": 11,
+            "lose_equal_or_less": 8
+          }
+        },
+        "layer_used": {
+          "1v1+with_same_sign": 1068,
+          "1v1": 129,
+          "with": 112
+        }
+      },
+      "10_20": {
+        "n": 1293,
+        "win_more_kills": 741,
+        "lose_equal_or_less": 552,
+        "kill_lead_wr": 0.5730858468677494,
+        "skip_no_actual": 16,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 996,
+            "kill_lead_wr": 0.5512048192771084,
+            "win_more_kills": 549,
+            "lose_equal_or_less": 447
+          },
+          "0.5-1": {
+            "n": 269,
+            "kill_lead_wr": 0.6356877323420075,
+            "win_more_kills": 171,
+            "lose_equal_or_less": 98
+          },
+          "1-2": {
+            "n": 28,
+            "kill_lead_wr": 0.75,
+            "win_more_kills": 21,
+            "lose_equal_or_less": 7
+          }
+        },
+        "layer_used": {
+          "1v1+with_same_sign": 908,
+          "1v1": 199,
+          "with": 186
+        }
+      },
+      "15_25": {
+        "n": 1253,
+        "win_more_kills": 690,
+        "lose_equal_or_less": 563,
+        "kill_lead_wr": 0.5506783719074222,
+        "skip_no_actual": 56,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 949,
+            "kill_lead_wr": 0.5173867228661749,
+            "win_more_kills": 491,
+            "lose_equal_or_less": 458
+          },
+          "0.5-1": {
+            "n": 277,
+            "kill_lead_wr": 0.6425992779783394,
+            "win_more_kills": 178,
+            "lose_equal_or_less": 99
+          },
+          "1-2": {
+            "n": 27,
+            "kill_lead_wr": 0.7777777777777778,
+            "win_more_kills": 21,
+            "lose_equal_or_less": 6
+          }
+        },
+        "layer_used": {
+          "1v1+with_same_sign": 852,
+          "1v1": 214,
+          "with": 187
+        }
+      },
+      "20_30": {
+        "n": 1169,
+        "win_more_kills": 665,
+        "lose_equal_or_less": 504,
+        "kill_lead_wr": 0.5688622754491018,
+        "skip_no_actual": 140,
+        "skip_no_pred": 0,
+        "skip_zero_pred": 0,
+        "buckets": {
+          "0-0.5": {
+            "n": 1023,
+            "kill_lead_wr": 0.555229716520039,
+            "win_more_kills": 568,
+            "lose_equal_or_less": 455
+          },
+          "0.5-1": {
+            "n": 144,
+            "kill_lead_wr": 0.6597222222222222,
+            "win_more_kills": 95,
+            "lose_equal_or_less": 49
+          },
+          "1-2": {
+            "n": 2,
+            "kill_lead_wr": 1.0,
+            "win_more_kills": 2,
+            "lose_equal_or_less": 0
+          }
+        },
+        "layer_used": {
+          "1v1+with_same_sign": 870,
+          "1v1": 158,
+          "with": 141
+        }
+      }
+    }
+  }
+}

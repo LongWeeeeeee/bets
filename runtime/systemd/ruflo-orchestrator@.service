@@ -1,0 +1,22 @@
+[Unit]
+Description=Isolated Ruflo orchestration daemon (%i)
+After=network-online.target omniroute.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/main/runtime/ruflo-orchestrators/%i
+Environment=HOME=/root
+Environment=CLAUDE_FLOW_MEMORY_PATH=/root/main/runtime/ruflo-orchestrators/%i/.swarm
+Environment=CLAUDE_FLOW_DB_PATH=/root/main/runtime/ruflo-orchestrators/%i/.swarm/memory.db
+ExecStart=/usr/local/bin/ruflo daemon start --foreground --no-distill --ttl 0 --workspace /root/main/runtime/ruflo-orchestrators/%i
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillMode=mixed
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

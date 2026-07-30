@@ -29,26 +29,35 @@ TOURNAMENT_TITLE_ALLOW_KEYWORDS = frozenset({
 })
 
 # Многословные фразы — матч по ПОДСТРОКЕ в полном названии (не по токену),
-# чтобы пропускать только конкретные esports-турниры, а не любую лигу
-# с организатором '... Esports'.
+# чтобы пропускать только конкретные турниры, а не любую лигу с похожим
+# словом: организатора '... Esports' или однословное 'Trophy'/'Lunar'.
 TOURNAMENT_TITLE_ALLOW_PHRASES = (
     'esports nations',
     'esports world',
     'global esports',
     'esports championship',
-    # OpenDota обычно пишет BetBoom, а Cyberscore — BB. Фраза сохраняет
-    # allowlist для любого номера Streamers Battle без широкого токена 'bb'.
+    # Фразой, а не токеном: 'lunar' протащил бы Lunar Trophy / Lunar Paw /
+    # Lunar New Year / ECLIPSE LUNAR, 'trophy' — любой ... Trophy.
+    'lunar snake',
+    'horse trophy',
+    # 'turbina', а не 'paragon': токен 'paragon' протащил бы десяток старых
+    # 'DPC 2023 ... presented by Paragon Events'. 'turbina' на весь справочник
+    # OpenDota не встречается ни разу, поэтому ложных срабатываний нет, а
+    # название турнира ловится при любом обрамлении.
+    'turbina',
+    # 'streamers battle', а не токен 'streamers'/'bb'. В справочнике OpenDota
+    # турнир называется 'BetBoom Streamers Battle N' (проходит по 'betboom'), а
+    # cyberscore рендерит то же самое как 'BB Streamers Battle N' — там токенов
+    # allowlist'а нет вообще, и сезон 13 держался только на захардкоженном
+    # tournament_id 46178, то есть следующий сезон отвалился бы. Фраза ловит оба
+    # написания при любом номере сезона. Замеры по 10k лиг OpenDota: фраза даёт
+    # 13 совпадений и НИ ОДНОГО нового мусора; токен 'streamers' протащил бы 4
+    # чужих (Aorus Streamers Showdown, PC Factory Streamers Cup,
+    # CONECTOURFEST STREAMERS AREQUIPA, Batalla de Streamers LATAM), а токен
+    # 'bb' — 'Тех.по BB' и вдобавок опасен: этот же фильтр применяется к
+    # ПОЛНОМУ тексту карточки cyberscore, включая названия команд.
     'streamers battle',
-    # Узкий маркер серии Asgard Championship; допускаем любой номер сезона.
-    'asgard',
 )
-
-# Valve ticket 19722 зарегистрирован как ``Lunar Paw``, но фактически
-# переиспользуется Asgard Championship Season 1. Разрешаем точный league_id,
-# не расширяя title-allowlist на все матчи с названием Lunar Paw.
-TOURNAMENT_LEAGUE_ID_ALLOWLIST = frozenset({
-    19722,
-})
 
 
 def title_matches_allow_keywords(title: Any) -> bool:
@@ -57,15 +66,3 @@ def title_matches_allow_keywords(title: Any) -> bool:
     if TOURNAMENT_TITLE_ALLOW_KEYWORDS & set(title_lower.split()):
         return True
     return any(phrase in title_lower for phrase in TOURNAMENT_TITLE_ALLOW_PHRASES)
-
-
-def league_matches_allowlist(league_id: Any, title: Any) -> bool:
-    """True для явно разрешённого Valve league_id или разрешённого названия."""
-    try:
-        normalized_id = int(league_id or 0)
-    except (TypeError, ValueError):
-        normalized_id = 0
-    return (
-        normalized_id in TOURNAMENT_LEAGUE_ID_ALLOWLIST
-        or title_matches_allow_keywords(title)
-    )

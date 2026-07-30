@@ -31,3 +31,108 @@ map_id_check_test.txt
 .claude/.review-nag-count
 .claude/.pending-review
 .claude/.review-nag-count
+
+# Codex local configuration
+.codex/
+
+# Claude Flow runtime data
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/daemon.pid
+.claude-flow/daemon-state.json
+.claude-flow/embeddings.json
+.claude-flow/metrics/
+.claude-flow/security/
+.claude-flow/swarm/
+.claude-flow/harness-active-policy.json
+.claude-flow/memory-package.json
+.claude/memory.db
+.claude/proven-config.json
+.claude/.proven-config-version
+.claude/.proven-config-backup/
+.claude/settings.local.json
+
+# RuFlo/AgentDB host state (durable, but not source-controlled)
+.swarm/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# --- macOS AppleDouble (приезжает rsync-ом с мака) ---
+._*
+
+# --- генерируемые ELO-снимки ---
+ELO/output/
+
+# --- runtime/: скрап оркестраторов и прогонов.
+#     Продовые модули (anti_stall_supervisor/, winline_*.py, research-harness)
+#     остаются под контролем версий намеренно.
+runtime/_quarantine_*/
+runtime/diagnostic_star_sqlite_replay_v2/
+runtime/global_metrics_integrity/
+runtime/replan9/
+runtime/star_dispatch_replay/
+runtime/winline_w8/
+runtime/ruflo*/
+runtime/openhands*/
+runtime/orch*/
+runtime/*.pid
+runtime/*.lock
+runtime/*.ok
+runtime/*.logpath
+runtime/*.env
+runtime/*.tmp
+runtime/*.patch
+runtime/*.jsonl
+runtime/*.html
+runtime/nc_test
+
+# --- бэкапы: на диске храним, в git не трекаем ---
+*.bak_*
+*.BAK
+*.orig
+*.combgate
+
+# --- крупные датасеты и приватные данные ставок ---
+base/ml_dataset/
+base/runtime/
+base/logged_bets_with_outcomes.json
+base/pub_late_star_comeback_table.json
+
+# --- runtime/: все подкаталоги = скрап прогонов, кроме явно нужных ---
+runtime/*/
+!runtime/anti_stall_supervisor/
+!runtime/systemd/
+!runtime/tests/
+!runtime/worker676-gateway/
+
+# --- runtime: живое состояние и крупные выгрузки ---
+runtime/*_state.json
+runtime/*_last.json
+runtime/pubs_ids.txt
+
+# --- venv и служебные каталоги в корне ---
+venv/
+venv_steamfork_poc/
+.hermes/
+.beads/
+.cursor/
+.pytest-cache/
+.baseline_*/
+.shadow_base/
+.runtime_setup_ok
+langgraph-repo/
+opencode-profiles/
+artifacts/
+output/
+ml_dataset/
+data/memory/
+hero_opendota_data/
+ruvector.db
+*.pid
+log_dltv*.txt
+
+# --- живое состояние sourcetv ---
+runtime/sourcetv_matches.json

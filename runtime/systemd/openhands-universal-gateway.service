@@ -1,0 +1,30 @@
+[Unit]
+Description=OpenHands Telegram gateway (isolated orchestration bots)
+After=network-online.target omniroute.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/root/main
+Environment=HOME=/root
+Environment=PYTHONUNBUFFERED=1
+Environment=OPENHANDS_SUPPRESS_BANNER=1
+Environment=OPENHANDS_OMNIROUTE_BASE_URL=http://127.0.0.1:20128/v1
+Environment=OPENHANDS_GATEWAY_STATE_ROOT=/root/.local/state/openhands-universal-gateway
+Environment=OPENHANDS_BOT_SLOTS=orchestration1,orchestration2,orchestration3
+Environment=OPENHANDS_ALLOWED_USERS=7543801207
+LoadCredentialEncrypted=bot1-token:/etc/credstore.encrypted/openhands-bot1-token
+LoadCredentialEncrypted=bot2-token:/etc/credstore.encrypted/openhands-bot2-token
+LoadCredentialEncrypted=bot3-token:/etc/credstore.encrypted/ruflo-orchestration3-token
+LoadCredential=omniroute-api-key:/root/.omniroute/local_api_key
+ExecStart=/opt/openhands-universal-gateway/venv/bin/python /opt/openhands-universal-gateway/gateway.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=45
+KillMode=mixed
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

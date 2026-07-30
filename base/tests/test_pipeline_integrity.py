@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
@@ -445,6 +446,119 @@ def test_explicit_stats_lookup_backend_enables_indexed_lookup_without_sharded_ga
 
     monkeypatch.setenv("STATS_EARLY_LOOKUP_BACKEND", "jsonl")
     assert runtime._stats_indexed_lookup_enabled("early") is True
+
+
+def test_auto_mode_prefers_existing_sqlite_when_json_monolith_missing(tmp_path, monkeypatch) -> None:
+    """Prod keeps only *.sqlite3; auto RAM gate must not fall through to missing JSON."""
+    monkeypatch.delenv("STATS_EARLY_LOOKUP_BACKEND", raising=False)
+    monkeypatch.delenv("STATS_EARLY_SHARDED_LOOKUP_MODE", raising=False)
+    monkeypatch.setattr(runtime, "STATS_LOOKUP_BACKEND", "auto", raising=False)
+    monkeypatch.setattr(runtime, "STATS_SHARDED_LOOKUP_MODE", "never", raising=False)
+    monkeypatch.setattr(runtime, "STATS_SQLITE_AUTOBUILD", False, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SHARD_KEY_CACHE_MAX", 5, raising=False)
+
+    source_path = tmp_path / "early_dict_raw.json"
+    stats = {"1pos1": {"wins": 12, "games": 20}, "1pos1_vs_6pos1": {"wins": 14, "games": 20}}
+    _write_complete_sharded_stats(source_path, stats)
+    runtime._prepare_sqlite_stats_lookup(str(source_path), "early").close()
+    # Drop JSON monolith + shards: production shape is sqlite-only.
+    source_path.unlink()
+    shard_dir = source_path.parent / f"{source_path.stem}.shards"
+    if shard_dir.exists():
+        shutil.rmtree(shard_dir)
+
+    assert runtime._stats_indexed_lookup_enabled("early") is False
+    assert runtime._stats_should_use_indexed_lookup(str(source_path), "early") is True
+    assert runtime._stats_source_available_for_lookup(str(source_path), "early") is True
+
+    lookup = runtime._prepare_indexed_stats_lookup(str(source_path), "early")
+    try:
+        assert isinstance(lookup, runtime._SqliteStatsLookup)
+        assert lookup.get("1pos1") == stats["1pos1"]
+    finally:
+        lookup.close()
+
+
+def test_load_stats_dicts_sequential_warmup_uses_sqlite_without_json(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv("STATS_EARLY_LOOKUP_BACKEND", raising=False)
+    monkeypatch.delenv("STATS_EARLY_SHARDED_LOOKUP_MODE", raising=False)
+    monkeypatch.setattr(runtime, "STATS_LOOKUP_BACKEND", "auto", raising=False)
+    monkeypatch.setattr(runtime, "STATS_SHARDED_LOOKUP_MODE", "never", raising=False)
+    monkeypatch.setattr(runtime, "STATS_SEQUENTIAL_WARMUP_ENABLED", True, raising=False)
+    monkeypatch.setattr(runtime, "STATS_WARMUP_STEP_DELAY_SECONDS", 0.0, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SQLITE_AUTOBUILD", False, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SHARD_KEY_CACHE_MAX", 5, raising=False)
+    monkeypatch.setattr(runtime, "LIVE_LANE_ANALYSIS_ENABLED", False, raising=False)
+    monkeypatch.setattr(runtime, "stats_warmup_last_heavy_load_ts", 0.0, raising=False)
+
+    early_json = tmp_path / "early_dict_raw.json"
+    early_end_json = tmp_path / "early_end_dict_raw.json"
+    late_json = tmp_path / "late_dict_raw.json"
+    post_lane_json = tmp_path / "post_lane_dict_raw.json"
+    stats = {"1pos1": {"wins": 3, "games": 5}}
+    for path in (early_json, early_end_json, late_json, post_lane_json):
+        _write_complete_sharded_stats(path, stats)
+        runtime._prepare_sqlite_stats_lookup(str(path), path.stem.replace("_dict_raw", "")).close()
+        path.unlink()
+        shard_dir = path.parent / f"{path.stem}.shards"
+        if shard_dir.exists():
+            shutil.rmtree(shard_dir)
+
+    table_path = tmp_path / "pub_late_star_comeback_table_piecewise.json"
+    table_path.write_text(
+        json.dumps(
+            {
+                "table_rows": [
+                    {
+                        "wr_level": 60,
+                        "minute": 30,
+                        "avg_target_networth_diff": -1000.0,
+                        "median_target_networth_diff": -1000.0,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    pre27_path = tmp_path / "pub_late_pre27_watcher_thresholds.json"
+    pre27_path.write_text(json.dumps({"table_rows": []}), encoding="utf-8")
+
+    monkeypatch.setenv("STATS_DIR", str(tmp_path))
+    monkeypatch.setenv("STATS_EARLY_PATH", str(early_json))
+    monkeypatch.setenv("STATS_EARLY_END_PATH", str(early_end_json))
+    monkeypatch.setenv("STATS_LATE_PATH", str(late_json))
+    monkeypatch.setenv("STATS_POST_LANE_PATH", str(post_lane_json))
+    monkeypatch.setenv("STATS_LATE_PUB_COMEBACK_TABLE_PATH", str(table_path))
+    monkeypatch.setenv("STATS_LATE_PRE27_WATCHER_PATH", str(pre27_path))
+
+    monkeypatch.setattr(runtime, "early_dict", None, raising=False)
+    monkeypatch.setattr(runtime, "early_end_dict", None, raising=False)
+    monkeypatch.setattr(runtime, "late_dict", None, raising=False)
+    monkeypatch.setattr(runtime, "post_lane_dict", None, raising=False)
+    monkeypatch.setattr(runtime, "late_pub_comeback_table_data", None, raising=False)
+    monkeypatch.setattr(runtime, "late_pre27_watcher_data", None, raising=False)
+    monkeypatch.setattr(runtime, "all_only_watcher_data", {}, raising=False)
+
+    # first heavy step arms the delay gate
+    assert runtime._load_stats_dicts() is False
+    # subsequent steps load early/early_end/late/post_lane from sqlite only
+    for _ in range(4):
+        ready = runtime._load_stats_dicts()
+    assert ready is True
+    assert isinstance(runtime.early_dict, runtime._SqliteStatsLookup)
+    assert isinstance(runtime.early_end_dict, runtime._SqliteStatsLookup)
+    assert isinstance(runtime.late_dict, runtime._SqliteStatsLookup)
+    assert isinstance(runtime.post_lane_dict, runtime._SqliteStatsLookup)
+    assert runtime.early_dict.get("1pos1") == stats["1pos1"]
+    for lookup in (
+        runtime.early_dict,
+        runtime.early_end_dict,
+        runtime.late_dict,
+        runtime.post_lane_dict,
+    ):
+        lookup.close()
 
 
 def test_draft_stats_lookup_keys_cover_synergy_accesses() -> None:
@@ -1122,14 +1236,17 @@ def test_build_minimal_odds_only_message_contains_only_teams_and_score() -> None
 
 
 def test_prepare_minimal_odds_only_message_requires_at_least_one_numeric_bookmaker(monkeypatch) -> None:
+    """Production prepare path uses odds state machine; missing prefetch is not sendable."""
     monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", True, raising=False)
+    monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_GATE_MODE", "odds", raising=False)
     monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_USE_SUBPROCESS", False, raising=False)
+    monkeypatch.setattr(runtime, "BOOKMAKER_CAMOUFOX_ENABLED", False, raising=False)
+    monkeypatch.setattr(runtime, "BOOKMAKER_CAMOUFOX_IMPORTED", False, raising=False)
     monkeypatch.setattr(runtime, "_bookmaker_refresh_cached_match_tabs_for_dispatch", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        runtime,
-        "_bookmaker_format_odds_block",
-        lambda *_args, **_kwargs: ("", False, "no_numeric_odds"),
-    )
+    monkeypatch.setattr(runtime, "_bookmaker_refresh_snapshot_via_shared_camoufox", lambda *_a, **_k: None)
+    # No prefetch snapshot seeded => state machine returns non-ready (not open_valid_odds).
+    with runtime.bookmaker_odds_delivery_pending_lock:
+        runtime.bookmaker_odds_delivery_pending.pop("dltv.org/matches/test.0", None)
 
     message, ready, reason = runtime._prepare_minimal_odds_only_message_for_delivery(
         "dltv.org/matches/test.0",
@@ -1137,7 +1254,8 @@ def test_prepare_minimal_odds_only_message_requires_at_least_one_numeric_bookmak
     )
 
     assert ready is False
-    assert reason == "no_numeric_odds"
+    # State machine reason when snapshot is absent (no fabricated odds).
+    assert reason in {"prefetch_not_found", "no_strict_winline_current_map", "no_numeric_odds"}
     assert message == "Team Lynx VS Nemiga Gaming\n0-0\n"
 
 
@@ -1288,10 +1406,13 @@ def test_build_dota2protracker_block_marks_invalid_metrics() -> None:
     block = runtime._build_dota2protracker_block(payload)
 
     assert block.startswith("\ndota2protracker:")
-    assert "cp1vs1: invalid" in block
-    assert "synergy_duo: +1.25" in block
+    assert "Protracker_1vs1: invalid" in block
+    assert "Protracker_duo: +1.25" in block
+    assert "synergy_duo(match_wr)" not in block
+    assert "(match winrate)" not in block
+    assert "dota2protracker_duo" not in block  # key name must not leak into TG text
     assert "mid_cp1vs1" not in block
-    assert runtime._build_dota2protracker_lane_adv_line(payload) == "lane_adv_protracker: +0.42\n"
+    assert runtime._build_dota2protracker_lane_adv_line(payload) == "Lane_adv_protracker: +0.42\n"
 
 
 def test_format_dota2protracker_output_value_uses_two_decimals() -> None:
@@ -1301,9 +1422,10 @@ def test_format_dota2protracker_output_value_uses_two_decimals() -> None:
 
 
 def test_build_dota2protracker_lane_adv_line_accepts_legacy_payload_without_flags() -> None:
+    # Legacy payload without pro_lane_metric falls back to lane_adv default label.
     assert (
         runtime._build_dota2protracker_lane_adv_line({"pro_lane_advantage": -2.36})
-        == "lane_adv_protracker: -2.36\n"
+        == "Lane_adv_protracker: -2.36\n"
     )
     assert (
         runtime._build_dota2protracker_lane_adv_line(
@@ -1316,16 +1438,16 @@ def test_build_dota2protracker_lane_adv_line_accepts_legacy_payload_without_flag
                 "pro_lane_bot_duo_valid": False,
             }
         )
-        == "lane_adv_protracker: -2.36\n"
+        == "Lane_adv_protracker: -2.36\n"
     )
 
 
 def test_build_dota2protracker_lane_adv_line_emits_none_when_unavailable() -> None:
-    assert runtime._build_dota2protracker_lane_adv_line(None) == "lane_adv_protracker: None\n"
-    assert runtime._build_dota2protracker_lane_adv_line({}) == "lane_adv_protracker: None\n"
+    assert runtime._build_dota2protracker_lane_adv_line(None) == "Lane_adv_protracker: None\n"
+    assert runtime._build_dota2protracker_lane_adv_line({}) == "Lane_adv_protracker: None\n"
     assert (
         runtime._build_dota2protracker_lane_adv_line({"pro_lane_advantage": "bad"})
-        == "lane_adv_protracker: None\n"
+        == "Lane_adv_protracker: None\n"
     )
 
 
@@ -1415,7 +1537,7 @@ def test_build_dota2protracker_debug_summary_includes_invalid_reasons() -> None:
         }
     )
 
-    assert "cp1vs1=invalid" in summary
+    assert "Protracker_1vs1=invalid" in summary
     assert "reason=insufficient_core_heroes" in summary
     assert "radiant_core_count" in summary
 
@@ -1436,9 +1558,9 @@ def test_build_dota2protracker_log_lines_include_games_and_reasons() -> None:
 
     joined = "\n".join(lines)
     assert "Dota2ProTracker" in joined
-    assert "cp1vs1: -3.25" in joined
+    assert "Protracker_1vs1: -3.25" in joined
     assert "games=84" in joined
-    assert "synergy_duo: invalid" in joined
+    assert "Protracker_duo: invalid" in joined
     assert "insufficient_duo_core_coverage" in joined
 
 
@@ -1450,10 +1572,10 @@ def test_build_lane_block_omits_section_when_lanes_missing() -> None:
             "Top: lose 75%",
             "Mid: lose 47%",
             "Bot: win 40%",
-            lane_adv_line="lane_adv_protracker: +0.42\n",
+            lane_adv_line="Lane_adv_protracker: +0.42\n",
             lane_adv_dict_line="lane_adv_dict: -16.00\n",
         )
-        == "Lanes:\nTop: lose 75%\nMid: lose 47%\nBot: win 40%\nlane_adv_dict: -16.00\nlane_adv_protracker: +0.42\n\n"
+        == "Lanes:\nTop: lose 75%\nMid: lose 47%\nBot: win 40%\nlane_adv_dict: -16.00\nLane_adv_protracker: +0.42\n\n"
     )
 
 
@@ -1504,8 +1626,9 @@ def test_pipeline_probe_message_places_protracker_lane_adv_under_dict() -> None:
         },
     )
 
-    assert "lane_adv_dict: +8.67\nlane_adv_protracker: +4.20" in message
+    assert "lane_adv_dict: +8.67\nLane_adv_protracker: +4.20" in message
     assert "\ndota2protracker:\n" not in message
+    assert "Protracker_1vs1:" not in message
     assert "cp1vs1: +1.09" not in message
     assert "synergy_duo: -0.68" not in message
 
@@ -1555,7 +1678,7 @@ def test_refresh_stake_multiplier_message_keeps_dota2protracker_cp1vs1_inside_al
         "Counterpick_1vs2: None\n"
         "Synergy_duo: None\n"
         "Synergy_trio: None\n"
-        "Dota2ProTracker_cp1vs1: -1.88\n"
+        "Protracker_1vs1: -1.88\n"
         "Time: 11:00\n"
         "Networth: PlayTime +1000\n"
     )
@@ -1577,7 +1700,7 @@ def test_refresh_stake_multiplier_message_keeps_dota2protracker_cp1vs1_inside_al
 
     assert (
         "Synergy_trio: None\n"
-        "Dota2ProTracker_cp1vs1: -1.88\n"
+        "Protracker_1vs1: -1.88\n"
         "Time: 11:58\n"
         "Networth: PlayTime +1752\n"
     ) in updated
@@ -5683,6 +5806,8 @@ def test_team_elo_block_shows_live_delta_vs_snapshot() -> None:
 
 
 def test_bookmaker_odds_block_shows_match_fallback_row(monkeypatch) -> None:
+    # Odds-mode contract is Winline current-map winner only.
+    # match_odds / other bookmakers must never open the gate.
     snapshot = {
         "status": "done",
         "mode": "live",
@@ -5690,18 +5815,26 @@ def test_bookmaker_odds_block_shows_match_fallback_row(monkeypatch) -> None:
         "sites": {
             "betboom": {"odds": [], "match_odds": [], "market_closed": False},
             "pari": {"odds": [1.58, 2.25], "match_odds": [], "market_closed": False},
-            "winline": {"odds": [], "match_odds": [1.30, 3.15], "market_closed": False},
+            "winline": {
+                "odds": [],
+                "match_odds": [1.30, 3.15],
+                "market_closed": False,
+                "market_kind": "match_winner",
+                "map_num": 2,
+                "p1_team": "team1",
+                "p2_team": "team2",
+            },
         },
     }
     monkeypatch.setattr(runtime, "_bookmaker_prefetch_lookup", lambda *_args, **_kwargs: snapshot)
 
     block, ready, reason = runtime._bookmaker_format_odds_block("https://example.com/match")
 
-    assert ready is True
-    assert reason == "ok"
-    assert "БК (live, карта 2):" in block
-    assert "Pari 1.58/2.25" in block
-    assert "Winline (матч) 1.30/3.15" in block
+    assert ready is False
+    assert block == ""
+    assert reason in {"no_strict_winline_current_map", "no_numeric_odds"}
+    assert "(матч)" not in block
+    assert "(п1/п2)" not in block
 
 
 @pytest.mark.parametrize("module_name", ["functions", "signal_wrappers"])

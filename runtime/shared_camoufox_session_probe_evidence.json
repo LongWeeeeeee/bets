@@ -1,0 +1,32 @@
+{
+  "started_at": "2026-07-11T20:28:44.241579+00:00",
+  "probe": "standalone_shared_camoufox_session",
+  "runtime_restarted": false,
+  "success": false,
+  "error": "InvalidIP: Failed to get IP address",
+  "notes": [
+    "policy accepts 5 DE / 0 US; current inventory DE=5 US=0",
+    "honest blocker: shared session launch/proxy failed (not fabricated)"
+  ],
+  "proxy_policy": {
+    "count": 5,
+    "countries": [
+      "DE",
+      "DE",
+      "DE",
+      "DE",
+      "DE"
+    ],
+    "labels": [
+      "socks5://154.195.138.196:63387 (DE)",
+      "socks5://154.195.144.208:62503 (DE)",
+      "socks5://154.195.145.169:64583 (DE)",
+      "socks5://154.195.160.218:64343 (DE)",
+      "socks5://154.195.170.239:63627 (DE)"
+    ],
+    "ru_present": false
+  },
+  "traceback": "                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/root/main/venv/lib/python3.12/site-packages/camoufox/utils.py\", line 551, in launch_options\n    geoip = public_ip(Proxy(**proxy).as_string())\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/root/main/venv/lib/python3.12/site-packages/camoufox/ip.py\", line 119, in public_ip\n    raise InvalidIP(\"Failed to get IP address\")\ncamoufox.exceptions.InvalidIP: Failed to get IP address\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"<stdin>\", line 47, in <module>\n  File \"/root/main/base/cyberscore_try.py\", line 19487, in _run_shared_camoufox_job\n    return _shared_camoufox_session.submit(label, callback, timeout=timeout, reset_on_error=reset_on_error)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/root/main/base/cyberscore_try.py\", line 19333, in submit\n    return future.result(timeout=timeout)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/concurrent/futures/_base.py\", line 456, in result\n    return self.__get_result()\n           ^^^^^^^^^^^^^^^^^^^\n  File \"/usr/lib/python3.12/concurrent/futures/_base.py\", line 401, in __get_result\n    raise self._exception\n  File \"/root/main/base/cyberscore_try.py\", line 19444, in _worker\n    active_browser = _ensure_browser()\n                     ^^^^^^^^^^^^^^^^^\n  File \"/root/main/base/cyberscore_try.py\", line 19404, in _ensure_browser\n    browser = browser_cm.__enter__()\n              ^^^^^^^^^^^^^^^^^^^^^^\n  File \"/root/main/venv/lib/python3.12/site-packages/camoufox/sync_api.py\", line 29, in __enter__\n    self.browser = NewBrowser(self._playwright, **self.launch_options)\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/root/main/venv/lib/python3.12/site-packages/camoufox/sync_api.py\", line 86, in NewBrowser\n    from_options = launch_options(headless=headless, debug=debug, **kwargs)\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/root/main/venv/lib/python3.12/site-packages/camoufox/utils.py\", line 551, in launch_options\n    geoip = public_ip(Proxy(**proxy).as_string())\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/root/main/venv/lib/python3.12/site-packages/camoufox/ip.py\", line 119, in public_ip\n    raise InvalidIP(\"Failed to get IP address\")\ncamoufox.exceptions.InvalidIP: Failed to get IP address\n",
+  "elapsed_seconds": null,
+  "finished_at": "2026-07-11T20:28:45.436930+00:00"
+}

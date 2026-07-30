@@ -1,0 +1,2103 @@
+{
+  "data_dir": "pro_heroes_data/json_parts_split_from_object",
+  "dataset_summary": {
+    "files": 18,
+    "raw_matches": 26311,
+    "seen_matches": 26311,
+    "loaded_matches": 26304,
+    "skipped_invalid": 1,
+    "skipped_non_dict": 6
+  },
+  "evaluation": {
+    "evaluation_fraction": 0.3,
+    "min_train_matches": 2000,
+    "min_train_series": 1000,
+    "calibration_buckets": 10
+  },
+  "model_config": {
+    "initial_rating": 1500.0,
+    "elo_scale": 400.0,
+    "bo3_sweep_bonus_weight": 0.05,
+    "bo3_sweep_bonus_error_basis": "series",
+    "player_global_weight": 0.68,
+    "player_tier_weight": 0.32,
+    "player_role_weight": 0.12,
+    "player_role_tier1_only": true,
+    "max_roster_weight": 0.0,
+    "roster_full_weight_matches": 16,
+    "lineup_uncertainty_boost_max": 1.0,
+    "lineup_uncertainty_boost_matches": 4,
+    "lineup_uncertainty_boost_global": true,
+    "lineup_uncertainty_boost_local": true,
+    "lineup_uncertainty_boost_roster": true,
+    "lineup_uncertainty_tier1_enabled": false,
+    "player_org_uncertainty_boost_max": 1.0,
+    "player_org_uncertainty_boost_matches": 15,
+    "player_org_uncertainty_boost_global": false,
+    "player_org_uncertainty_boost_local": true,
+    "player_org_uncertainty_tier1_enabled": true,
+    "patch_local_reset_mode": "exact",
+    "patch_local_reset_player_local_keep": 0.0,
+    "patch_local_reset_roster_keep": 1.0,
+    "patch_local_reset_tier1_only": true,
+    "inactivity_penalty_gap_days": 60,
+    "inactivity_penalty_keep": 1.0,
+    "inactivity_penalty_local": false,
+    "inactivity_penalty_roster": false,
+    "inactivity_penalty_global": false,
+    "inactivity_penalty_tier1_only": true,
+    "side_bias_k": 3.0,
+    "player_global_decay_half_life_days": 0.0,
+    "player_local_decay_half_life_days": 0.0,
+    "roster_decay_half_life_days": 0.0,
+    "org_prior_rating_by_tier": {
+      "TIER1": 1540.0,
+      "TIER2": 1515.0,
+      "TIER3": 1500.0
+    },
+    "cold_start_org_prior_weight": 0.0,
+    "org_prior_fade_matches": 6,
+    "k_global_by_tier": {
+      "TIER1": 28.8,
+      "TIER2": 12.0,
+      "TIER3": 7.2
+    },
+    "k_local_by_tier": {
+      "TIER1": 18.4,
+      "TIER2": 25.3,
+      "TIER3": 20.7
+    },
+    "k_roster_by_tier": {
+      "TIER1": 18.0,
+      "TIER2": 8.0,
+      "TIER3": 5.0
+    }
+  },
+  "static": {
+    "league_summary": {
+      "TIER1": 388,
+      "TIER2": 277,
+      "TIER3": 44
+    },
+    "series_summary": {
+      "skipped_unknown_series_type": 619,
+      "eligible_series": 10004,
+      "series_type_BEST_OF_THREE": 7950,
+      "series_type_BEST_OF_FIVE": 420,
+      "series_type_BEST_OF_ONE": 2701,
+      "skipped_no_decisive_winner": 1557,
+      "series_type_BEST_OF_TWO": 1015,
+      "skipped_best_of_two": 525,
+      "all_series_groups": 12086
+    },
+    "report": {
+      "matches": 3001,
+      "accuracy": 0.5851382872375874,
+      "log_loss": 0.6758234885386835,
+      "brier": 0.2399642083443755,
+      "avg_predicted_radiant_win": 0.531356233201565,
+      "avg_actual_radiant_win": 0.5211596134621793,
+      "calibration": [
+        {
+          "bucket": 0,
+          "range_start": 0.0,
+          "range_end": 0.1,
+          "matches": 17,
+          "avg_predicted": 0.06690755296473368,
+          "avg_actual": 0.11764705882352941
+        },
+        {
+          "bucket": 1,
+          "range_start": 0.1,
+          "range_end": 0.2,
+          "matches": 56,
+          "avg_predicted": 0.16472046160120307,
+          "avg_actual": 0.21428571428571427
+        },
+        {
+          "bucket": 2,
+          "range_start": 0.2,
+          "range_end": 0.3,
+          "matches": 124,
+          "avg_predicted": 0.2570069558102272,
+          "avg_actual": 0.3709677419354839
+        },
+        {
+          "bucket": 3,
+          "range_start": 0.3,
+          "range_end": 0.4,
+          "matches": 255,
+          "avg_predicted": 0.36022017980767695,
+          "avg_actual": 0.38823529411764707
+        },
+        {
+          "bucket": 4,
+          "range_start": 0.4,
+          "range_end": 0.5,
+          "matches": 752,
+          "avg_predicted": 0.4557400552432597,
+          "avg_actual": 0.46143617021276595
+        },
+        {
+          "bucket": 5,
+          "range_start": 0.5,
+          "range_end": 0.6,
+          "matches": 1001,
+          "avg_predicted": 0.5462760747892712,
+          "avg_actual": 0.5384615384615384
+        },
+        {
+          "bucket": 6,
+          "range_start": 0.6,
+          "range_end": 0.7,
+          "matches": 441,
+          "avg_predicted": 0.6411406787795427,
+          "avg_actual": 0.5941043083900227
+        },
+        {
+          "bucket": 7,
+          "range_start": 0.7,
+          "range_end": 0.8,
+          "matches": 177,
+          "avg_predicted": 0.7461990997324042,
+          "avg_actual": 0.6949152542372882
+        },
+        {
+          "bucket": 8,
+          "range_start": 0.8,
+          "range_end": 0.9,
+          "matches": 118,
+          "avg_predicted": 0.8447096010584263,
+          "avg_actual": 0.7372881355932204
+        },
+        {
+          "bucket": 9,
+          "range_start": 0.9,
+          "range_end": 1.0,
+          "matches": 60,
+          "avg_predicted": 0.94130646483505,
+          "avg_actual": 0.7833333333333333
+        }
+      ],
+      "evaluation_start_idx": 7003,
+      "warmup_series": 7003,
+      "sample_predictions": [
+        {
+          "series_id": 1069612,
+          "timestamp": 1772306232,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Avalanche eSports",
+          "team_b_name": "Agressiv Style",
+          "p_radiant": 0.7868068559829,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.7022324275506885,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1069663,
+          "timestamp": 1772316327,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Under Effect",
+          "team_b_name": "Zetta Games",
+          "p_radiant": 0.7686896975356102,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.6879837273236372,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1069815,
+          "timestamp": 1772366096,
+          "league_id": 19269,
+          "league_tier": "TIER1",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Aurora Gaming",
+          "team_b_name": "Team Liquid",
+          "p_radiant": 0.4297376019343954,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.4530201485794679,
+            "series_best_of": 3,
+            "team_a_map_wins": 2,
+            "team_b_map_wins": 0
+          }
+        },
+        {
+          "series_id": 1069852,
+          "timestamp": 1772370357,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "BIZ GAMING",
+          "team_b_name": "EARTH GAMING",
+          "p_radiant": 0.464316338613832,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.4761929012911196,
+            "series_best_of": 3,
+            "team_a_map_wins": 1,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1069888,
+          "timestamp": 1772376899,
+          "league_id": 19269,
+          "league_tier": "TIER1",
+          "series_type": "BEST_OF_FIVE",
+          "best_of": 5,
+          "team_a_name": "Aurora Gaming",
+          "team_b_name": "Tundra Esports",
+          "p_radiant": 0.5943244833890624,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.550651865587493,
+            "series_best_of": 5,
+            "team_a_map_wins": 1,
+            "team_b_map_wins": 3
+          }
+        },
+        {
+          "series_id": 1069917,
+          "timestamp": 1772380539,
+          "league_id": 19403,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "NAVI Junior",
+          "team_b_name": "Team Hryvnia",
+          "p_radiant": 0.20960351599621083,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.2948984279395347,
+            "series_best_of": 3,
+            "team_a_map_wins": 2,
+            "team_b_map_wins": 1
+          }
+        },
+        {
+          "series_id": 1069941,
+          "timestamp": 1772384148,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Avalanche eSports",
+          "team_b_name": "Under Effect",
+          "p_radiant": 0.6058911609991471,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.5710727912678644,
+            "series_best_of": 3,
+            "team_a_map_wins": 2,
+            "team_b_map_wins": 1
+          }
+        },
+        {
+          "series_id": 1070054,
+          "timestamp": 1772396090,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "LEGIONGAMING ",
+          "team_b_name": "Estar Backs",
+          "p_radiant": 0.1998287955645767,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.28700130443122995,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1070108,
+          "timestamp": 1772403525,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Zetta Games",
+          "team_b_name": "Agressiv Style",
+          "p_radiant": 0.6488347264371395,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.6005798114831922,
+            "series_best_of": 3,
+            "team_a_map_wins": 2,
+            "team_b_map_wins": 0
+          }
+        },
+        {
+          "series_id": 1070208,
+          "timestamp": 1772435441,
+          "league_id": 19054,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Roar",
+          "team_b_name": "Carstensz Esports",
+          "p_radiant": 0.6963277104902902,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.6341005029314809,
+            "series_best_of": 3,
+            "team_a_map_wins": 1,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1070255,
+          "timestamp": 1772456571,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "EARTH GAMING",
+          "team_b_name": "LEGIONGAMING ",
+          "p_radiant": 0.787766842195069,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.7029981609992674,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1070298,
+          "timestamp": 1772466028,
+          "league_id": 19371,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_ONE",
+          "best_of": 1,
+          "team_a_name": "HETCTPAXA",
+          "team_b_name": "Team Stels",
+          "p_radiant": 0.7168207474049958,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.7168207474049958,
+            "series_best_of": 1,
+            "team_a_map_wins": 1,
+            "team_b_map_wins": 0
+          }
+        },
+        {
+          "series_id": 1070301,
+          "timestamp": 1772467668,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Avalanche eSports",
+          "team_b_name": "Agressiv Style",
+          "p_radiant": 0.7038256078235984,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.6395036274182737,
+            "series_best_of": 3,
+            "team_a_map_wins": 2,
+            "team_b_map_wins": 0
+          }
+        },
+        {
+          "series_id": 1070326,
+          "timestamp": 1772470486,
+          "league_id": 19371,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_ONE",
+          "best_of": 1,
+          "team_a_name": "Knights",
+          "team_b_name": "4PERDANA",
+          "p_radiant": 0.6931856537658097,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.6931856537658097,
+            "series_best_of": 1,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 1
+          }
+        },
+        {
+          "series_id": 1070360,
+          "timestamp": 1772475223,
+          "league_id": 19371,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_ONE",
+          "best_of": 1,
+          "team_a_name": "Knights",
+          "team_b_name": "HETCTPAXA",
+          "p_radiant": 0.6079351930778507,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.6079351930778507,
+            "series_best_of": 1,
+            "team_a_map_wins": 1,
+            "team_b_map_wins": 0
+          }
+        },
+        {
+          "series_id": 1070514,
+          "timestamp": 1772522169,
+          "league_id": 19273,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "SHARK SQUAD",
+          "team_b_name": "Veroja",
+          "p_radiant": 0.4404076926016314,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.460187657114333,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1070554,
+          "timestamp": 1772542908,
+          "league_id": 19371,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "L1GA TEAM",
+          "team_b_name": "Knights",
+          "p_radiant": 0.5878741202991309,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.5588545654902206,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1070659,
+          "timestamp": 1772561980,
+          "league_id": 19371,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "L1GA TEAM",
+          "team_b_name": "4PERDANA",
+          "p_radiant": 0.5832412808481624,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.5557249080691653,
+            "series_best_of": 3,
+            "team_a_map_wins": 2,
+            "team_b_map_wins": 0
+          }
+        },
+        {
+          "series_id": 1070864,
+          "timestamp": 1772608325,
+          "league_id": 19273,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "SHARK SQUAD",
+          "team_b_name": "Carstensz Esports",
+          "p_radiant": 0.6441516409069564,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.5973304713116924,
+            "series_best_of": 3,
+            "team_a_map_wins": 1,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1070881,
+          "timestamp": 1772618704,
+          "league_id": 18866,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Team Lynx",
+          "team_b_name": "VP.Prodigy",
+          "p_radiant": 0.8373191713635005,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.7443263042811512,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        }
+      ],
+      "evaluated_best_of_counts": {
+        "3": 6971,
+        "5": 332,
+        "1": 2701
+      },
+      "applied_bo3_sweep_bonus_count": 4623,
+      "by_tier": {
+        "TIER1": {
+          "matches": 369,
+          "accuracy": 0.6151761517615176,
+          "log_loss": 0.6766735069436505,
+          "brier": 0.237434955515493,
+          "avg_predicted_radiant_win": 0.5539017242756886,
+          "avg_actual_radiant_win": 0.5392953929539296,
+          "calibration": [
+            {
+              "bucket": 0,
+              "range_start": 0.0,
+              "range_end": 0.1,
+              "matches": 7,
+              "avg_predicted": 0.07043512949890927,
+              "avg_actual": 0.14285714285714285
+            },
+            {
+              "bucket": 1,
+              "range_start": 0.1,
+              "range_end": 0.2,
+              "matches": 15,
+              "avg_predicted": 0.1577356805874706,
+              "avg_actual": 0.3333333333333333
+            },
+            {
+              "bucket": 2,
+              "range_start": 0.2,
+              "range_end": 0.3,
+              "matches": 35,
+              "avg_predicted": 0.25311577965707804,
+              "avg_actual": 0.3142857142857143
+            },
+            {
+              "bucket": 3,
+              "range_start": 0.3,
+              "range_end": 0.4,
+              "matches": 34,
+              "avg_predicted": 0.352289451199641,
+              "avg_actual": 0.5294117647058824
+            },
+            {
+              "bucket": 4,
+              "range_start": 0.4,
+              "range_end": 0.5,
+              "matches": 53,
+              "avg_predicted": 0.4495584844515484,
+              "avg_actual": 0.4339622641509434
+            },
+            {
+              "bucket": 5,
+              "range_start": 0.5,
+              "range_end": 0.6,
+              "matches": 60,
+              "avg_predicted": 0.5513613965831201,
+              "avg_actual": 0.5166666666666667
+            },
+            {
+              "bucket": 6,
+              "range_start": 0.6,
+              "range_end": 0.7,
+              "matches": 60,
+              "avg_predicted": 0.6487460122845317,
+              "avg_actual": 0.55
+            },
+            {
+              "bucket": 7,
+              "range_start": 0.7,
+              "range_end": 0.8,
+              "matches": 52,
+              "avg_predicted": 0.7485065332394266,
+              "avg_actual": 0.75
+            },
+            {
+              "bucket": 8,
+              "range_start": 0.8,
+              "range_end": 0.9,
+              "matches": 42,
+              "avg_predicted": 0.8480281193191853,
+              "avg_actual": 0.7142857142857143
+            },
+            {
+              "bucket": 9,
+              "range_start": 0.9,
+              "range_end": 1.0,
+              "matches": 11,
+              "avg_predicted": 0.9382905968901838,
+              "avg_actual": 0.7272727272727273
+            }
+          ]
+        },
+        "TIER2": {
+          "matches": 677,
+          "accuracy": 0.6129985228951256,
+          "log_loss": 0.6634478903376706,
+          "brier": 0.23232893524363302,
+          "avg_predicted_radiant_win": 0.5606770536568095,
+          "avg_actual_radiant_win": 0.5450516986706057,
+          "calibration": [
+            {
+              "bucket": 0,
+              "range_start": 0.0,
+              "range_end": 0.1,
+              "matches": 9,
+              "avg_predicted": 0.06056703464230211,
+              "avg_actual": 0.1111111111111111
+            },
+            {
+              "bucket": 1,
+              "range_start": 0.1,
+              "range_end": 0.2,
+              "matches": 28,
+              "avg_predicted": 0.16575253915553873,
+              "avg_actual": 0.17857142857142858
+            },
+            {
+              "bucket": 2,
+              "range_start": 0.2,
+              "range_end": 0.3,
+              "matches": 48,
+              "avg_predicted": 0.25355621695855807,
+              "avg_actual": 0.4166666666666667
+            },
+            {
+              "bucket": 3,
+              "range_start": 0.3,
+              "range_end": 0.4,
+              "matches": 73,
+              "avg_predicted": 0.3518248020795256,
+              "avg_actual": 0.4246575342465753
+            },
+            {
+              "bucket": 4,
+              "range_start": 0.4,
+              "range_end": 0.5,
+              "matches": 104,
+              "avg_predicted": 0.4532296259378202,
+              "avg_actual": 0.49038461538461536
+            },
+            {
+              "bucket": 5,
+              "range_start": 0.5,
+              "range_end": 0.6,
+              "matches": 126,
+              "avg_predicted": 0.5537218539968348,
+              "avg_actual": 0.5317460317460317
+            },
+            {
+              "bucket": 6,
+              "range_start": 0.6,
+              "range_end": 0.7,
+              "matches": 112,
+              "avg_predicted": 0.6462986290151795,
+              "avg_actual": 0.5714285714285714
+            },
+            {
+              "bucket": 7,
+              "range_start": 0.7,
+              "range_end": 0.8,
+              "matches": 71,
+              "avg_predicted": 0.7520906429847664,
+              "avg_actual": 0.676056338028169
+            },
+            {
+              "bucket": 8,
+              "range_start": 0.8,
+              "range_end": 0.9,
+              "matches": 61,
+              "avg_predicted": 0.8429425200480601,
+              "avg_actual": 0.7377049180327869
+            },
+            {
+              "bucket": 9,
+              "range_start": 0.9,
+              "range_end": 1.0,
+              "matches": 45,
+              "avg_predicted": 0.9428904761338542,
+              "avg_actual": 0.8222222222222222
+            }
+          ]
+        },
+        "TIER3": {
+          "matches": 1955,
+          "accuracy": 0.5698209718670076,
+          "log_loss": 0.6799486154904242,
+          "brier": 0.2430856273638437,
+          "avg_predicted_radiant_win": 0.5169472911787762,
+          "avg_actual_radiant_win": 0.509462915601023,
+          "calibration": [
+            {
+              "bucket": 0,
+              "range_start": 0.0,
+              "range_end": 0.1,
+              "matches": 1,
+              "avg_predicted": 0.0992791821273886,
+              "avg_actual": 0.0
+            },
+            {
+              "bucket": 1,
+              "range_start": 0.1,
+              "range_end": 0.2,
+              "matches": 13,
+              "avg_predicted": 0.17055688803847918,
+              "avg_actual": 0.15384615384615385
+            },
+            {
+              "bucket": 2,
+              "range_start": 0.2,
+              "range_end": 0.3,
+              "matches": 41,
+              "avg_predicted": 0.2643685809380403,
+              "avg_actual": 0.36585365853658536
+            },
+            {
+              "bucket": 3,
+              "range_start": 0.3,
+              "range_end": 0.4,
+              "matches": 148,
+              "avg_predicted": 0.3661830672862463,
+              "avg_actual": 0.33783783783783783
+            },
+            {
+              "bucket": 4,
+              "range_start": 0.4,
+              "range_end": 0.5,
+              "matches": 595,
+              "avg_predicted": 0.45672948028481675,
+              "avg_actual": 0.4588235294117647
+            },
+            {
+              "bucket": 5,
+              "range_start": 0.5,
+              "range_end": 0.6,
+              "matches": 815,
+              "avg_predicted": 0.544750568669291,
+              "avg_actual": 0.5411042944785276
+            },
+            {
+              "bucket": 6,
+              "range_start": 0.6,
+              "range_end": 0.7,
+              "matches": 269,
+              "avg_predicted": 0.6372967738104324,
+              "avg_actual": 0.6133828996282528
+            },
+            {
+              "bucket": 7,
+              "range_start": 0.7,
+              "range_end": 0.8,
+              "matches": 54,
+              "avg_predicted": 0.7362308383753139,
+              "avg_actual": 0.6666666666666666
+            },
+            {
+              "bucket": 8,
+              "range_start": 0.8,
+              "range_end": 0.9,
+              "matches": 15,
+              "avg_predicted": 0.8426038793704567,
+              "avg_actual": 0.8
+            },
+            {
+              "bucket": 9,
+              "range_start": 0.9,
+              "range_end": 1.0,
+              "matches": 4,
+              "avg_predicted": 0.9317799745718861,
+              "avg_actual": 0.5
+            }
+          ]
+        }
+      },
+      "by_best_of": {
+        "1": {
+          "matches": 1951,
+          "accuracy": 0.5622757560225525,
+          "log_loss": 0.6834202532660901,
+          "brier": 0.24486672535053747,
+          "avg_predicted_radiant_win": 0.5208649208704647,
+          "avg_actual_radiant_win": 0.5151204510507432,
+          "calibration": [
+            {
+              "bucket": 1,
+              "range_start": 0.1,
+              "range_end": 0.2,
+              "matches": 4,
+              "avg_predicted": 0.18413831770099823,
+              "avg_actual": 0.5
+            },
+            {
+              "bucket": 2,
+              "range_start": 0.2,
+              "range_end": 0.3,
+              "matches": 24,
+              "avg_predicted": 0.2710147415891194,
+              "avg_actual": 0.4583333333333333
+            },
+            {
+              "bucket": 3,
+              "range_start": 0.3,
+              "range_end": 0.4,
+              "matches": 146,
+              "avg_predicted": 0.36814852359895295,
+              "avg_actual": 0.3424657534246575
+            },
+            {
+              "bucket": 4,
+              "range_start": 0.4,
+              "range_end": 0.5,
+              "matches": 606,
+              "avg_predicted": 0.45692707761491613,
+              "avg_actual": 0.4636963696369637
+            },
+            {
+              "bucket": 5,
+              "range_start": 0.5,
+              "range_end": 0.6,
+              "matches": 835,
+              "avg_predicted": 0.5451662384723427,
+              "avg_actual": 0.5365269461077844
+            },
+            {
+              "bucket": 6,
+              "range_start": 0.6,
+              "range_end": 0.7,
+              "matches": 265,
+              "avg_predicted": 0.6364537797565522,
+              "avg_actual": 0.6188679245283019
+            },
+            {
+              "bucket": 7,
+              "range_start": 0.7,
+              "range_end": 0.8,
+              "matches": 55,
+              "avg_predicted": 0.7443786321636114,
+              "avg_actual": 0.6909090909090909
+            },
+            {
+              "bucket": 8,
+              "range_start": 0.8,
+              "range_end": 0.9,
+              "matches": 16,
+              "avg_predicted": 0.8440109087722689,
+              "avg_actual": 0.6875
+            }
+          ]
+        },
+        "3": {
+          "matches": 1021,
+          "accuracy": 0.6297747306562194,
+          "log_loss": 0.6620007969188707,
+          "brier": 0.23088723507403663,
+          "avg_predicted_radiant_win": 0.551896762946434,
+          "avg_actual_radiant_win": 0.5298726738491675,
+          "calibration": [
+            {
+              "bucket": 0,
+              "range_start": 0.0,
+              "range_end": 0.1,
+              "matches": 16,
+              "avg_predicted": 0.06488432614206774,
+              "avg_actual": 0.125
+            },
+            {
+              "bucket": 1,
+              "range_start": 0.1,
+              "range_end": 0.2,
+              "matches": 50,
+              "avg_predicted": 0.16214942775735786,
+              "avg_actual": 0.18
+            },
+            {
+              "bucket": 2,
+              "range_start": 0.2,
+              "range_end": 0.3,
+              "matches": 99,
+              "avg_predicted": 0.2536582586400814,
+              "avg_actual": 0.35353535353535354
+            },
+            {
+              "bucket": 3,
+              "range_start": 0.3,
+              "range_end": 0.4,
+              "matches": 107,
+              "avg_predicted": 0.34950666802925395,
+              "avg_actual": 0.4485981308411215
+            },
+            {
+              "bucket": 4,
+              "range_start": 0.4,
+              "range_end": 0.5,
+              "matches": 138,
+              "avg_predicted": 0.4512772739068215,
+              "avg_actual": 0.43478260869565216
+            },
+            {
+              "bucket": 5,
+              "range_start": 0.5,
+              "range_end": 0.6,
+              "matches": 160,
+              "avg_predicted": 0.5514019943920431,
+              "avg_actual": 0.55
+            },
+            {
+              "bucket": 6,
+              "range_start": 0.6,
+              "range_end": 0.7,
+              "matches": 172,
+              "avg_predicted": 0.6484097911510606,
+              "avg_actual": 0.5523255813953488
+            },
+            {
+              "bucket": 7,
+              "range_start": 0.7,
+              "range_end": 0.8,
+              "matches": 120,
+              "avg_predicted": 0.7474244341364628,
+              "avg_actual": 0.6916666666666667
+            },
+            {
+              "bucket": 8,
+              "range_start": 0.8,
+              "range_end": 0.9,
+              "matches": 99,
+              "avg_predicted": 0.844800063750916,
+              "avg_actual": 0.7474747474747475
+            },
+            {
+              "bucket": 9,
+              "range_start": 0.9,
+              "range_end": 1.0,
+              "matches": 60,
+              "avg_predicted": 0.94130646483505,
+              "avg_actual": 0.7833333333333333
+            }
+          ]
+        },
+        "5": {
+          "matches": 29,
+          "accuracy": 0.5517241379310345,
+          "log_loss": 0.651398666492431,
+          "brier": 0.22971520937865086,
+          "avg_predicted_radiant_win": 0.514000008665894,
+          "avg_actual_radiant_win": 0.6206896551724138,
+          "calibration": [
+            {
+              "bucket": 0,
+              "range_start": 0.0,
+              "range_end": 0.1,
+              "matches": 1,
+              "avg_predicted": 0.0992791821273886,
+              "avg_actual": 0.0
+            },
+            {
+              "bucket": 1,
+              "range_start": 0.1,
+              "range_end": 0.2,
+              "matches": 2,
+              "avg_predicted": 0.1901605954977436,
+              "avg_actual": 0.5
+            },
+            {
+              "bucket": 2,
+              "range_start": 0.2,
+              "range_end": 0.3,
+              "matches": 1,
+              "avg_predicted": 0.2523411169612443,
+              "avg_actual": 0.0
+            },
+            {
+              "bucket": 3,
+              "range_start": 0.3,
+              "range_end": 0.4,
+              "matches": 2,
+              "avg_predicted": 0.35462396319015366,
+              "avg_actual": 0.5
+            },
+            {
+              "bucket": 4,
+              "range_start": 0.4,
+              "range_end": 0.5,
+              "matches": 8,
+              "avg_predicted": 0.44280608864384835,
+              "avg_actual": 0.75
+            },
+            {
+              "bucket": 5,
+              "range_start": 0.5,
+              "range_end": 0.6,
+              "matches": 6,
+              "avg_predicted": 0.5640371061545687,
+              "avg_actual": 0.5
+            },
+            {
+              "bucket": 6,
+              "range_start": 0.6,
+              "range_end": 0.7,
+              "matches": 4,
+              "avg_predicted": 0.6390759070773989,
+              "avg_actual": 0.75
+            },
+            {
+              "bucket": 7,
+              "range_start": 0.7,
+              "range_end": 0.8,
+              "matches": 2,
+              "avg_predicted": 0.7227418936306909,
+              "avg_actual": 1.0
+            },
+            {
+              "bucket": 8,
+              "range_start": 0.8,
+              "range_end": 0.9,
+              "matches": 3,
+              "avg_predicted": 0.8454506910657741,
+              "avg_actual": 0.6666666666666666
+            }
+          ]
+        }
+      }
+    }
+  },
+  "time_aware": {
+    "match_tier_summary": {
+      "TIER1": 12810,
+      "TIER2": 10565,
+      "TIER3": 2929
+    },
+    "series_summary": {
+      "skipped_unknown_series_type": 619,
+      "eligible_series": 10004,
+      "series_type_BEST_OF_THREE": 7950,
+      "series_type_BEST_OF_FIVE": 420,
+      "series_type_BEST_OF_ONE": 2701,
+      "skipped_no_decisive_winner": 1557,
+      "series_type_BEST_OF_TWO": 1015,
+      "skipped_best_of_two": 525,
+      "all_series_groups": 12086
+    },
+    "report": {
+      "matches": 3001,
+      "accuracy": 0.5754748417194269,
+      "log_loss": 0.6760587378798236,
+      "brier": 0.24012243653727702,
+      "avg_predicted_radiant_win": 0.5308364060196326,
+      "avg_actual_radiant_win": 0.5211596134621793,
+      "calibration": [
+        {
+          "bucket": 0,
+          "range_start": 0.0,
+          "range_end": 0.1,
+          "matches": 18,
+          "avg_predicted": 0.06797698289293995,
+          "avg_actual": 0.1111111111111111
+        },
+        {
+          "bucket": 1,
+          "range_start": 0.1,
+          "range_end": 0.2,
+          "matches": 56,
+          "avg_predicted": 0.16168362687136745,
+          "avg_actual": 0.19642857142857142
+        },
+        {
+          "bucket": 2,
+          "range_start": 0.2,
+          "range_end": 0.3,
+          "matches": 111,
+          "avg_predicted": 0.2558411930464136,
+          "avg_actual": 0.35135135135135137
+        },
+        {
+          "bucket": 3,
+          "range_start": 0.3,
+          "range_end": 0.4,
+          "matches": 276,
+          "avg_predicted": 0.36104520917491745,
+          "avg_actual": 0.37681159420289856
+        },
+        {
+          "bucket": 4,
+          "range_start": 0.4,
+          "range_end": 0.5,
+          "matches": 758,
+          "avg_predicted": 0.4569321059656038,
+          "avg_actual": 0.49076517150395776
+        },
+        {
+          "bucket": 5,
+          "range_start": 0.5,
+          "range_end": 0.6,
+          "matches": 1012,
+          "avg_predicted": 0.5460569231839324,
+          "avg_actual": 0.5345849802371542
+        },
+        {
+          "bucket": 6,
+          "range_start": 0.6,
+          "range_end": 0.7,
+          "matches": 403,
+          "avg_predicted": 0.640410921327623,
+          "avg_actual": 0.5682382133995038
+        },
+        {
+          "bucket": 7,
+          "range_start": 0.7,
+          "range_end": 0.8,
+          "matches": 193,
+          "avg_predicted": 0.7460740431544678,
+          "avg_actual": 0.6994818652849741
+        },
+        {
+          "bucket": 8,
+          "range_start": 0.8,
+          "range_end": 0.9,
+          "matches": 108,
+          "avg_predicted": 0.8475255752429701,
+          "avg_actual": 0.7222222222222222
+        },
+        {
+          "bucket": 9,
+          "range_start": 0.9,
+          "range_end": 1.0,
+          "matches": 66,
+          "avg_predicted": 0.9415233208100933,
+          "avg_actual": 0.803030303030303
+        }
+      ],
+      "evaluation_start_idx": 7003,
+      "warmup_series": 7003,
+      "sample_predictions": [
+        {
+          "series_id": 1069612,
+          "timestamp": 1772306232,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Avalanche eSports",
+          "team_b_name": "Agressiv Style",
+          "p_radiant": 0.792665387871733,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.7069234705962636,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1069663,
+          "timestamp": 1772316327,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Under Effect",
+          "team_b_name": "Zetta Games",
+          "p_radiant": 0.7609071177934644,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.6819725300920354,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1069815,
+          "timestamp": 1772366096,
+          "league_id": 19269,
+          "league_tier": "TIER1",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Aurora Gaming",
+          "team_b_name": "Team Liquid",
+          "p_radiant": 0.4312846042157926,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.4540604659216566,
+            "series_best_of": 3,
+            "team_a_map_wins": 2,
+            "team_b_map_wins": 0
+          }
+        },
+        {
+          "series_id": 1069852,
+          "timestamp": 1772370357,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "BIZ GAMING",
+          "team_b_name": "EARTH GAMING",
+          "p_radiant": 0.45125645728471614,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.4674583578595757,
+            "series_best_of": 3,
+            "team_a_map_wins": 1,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1069888,
+          "timestamp": 1772376899,
+          "league_id": 19269,
+          "league_tier": "TIER1",
+          "series_type": "BEST_OF_FIVE",
+          "best_of": 5,
+          "team_a_name": "Aurora Gaming",
+          "team_b_name": "Tundra Esports",
+          "p_radiant": 0.5972496132109701,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.5522455052830701,
+            "series_best_of": 5,
+            "team_a_map_wins": 1,
+            "team_b_map_wins": 3
+          }
+        },
+        {
+          "series_id": 1069917,
+          "timestamp": 1772380539,
+          "league_id": 19403,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "NAVI Junior",
+          "team_b_name": "Team Hryvnia",
+          "p_radiant": 0.2630952521744924,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.33620418218125475,
+            "series_best_of": 3,
+            "team_a_map_wins": 2,
+            "team_b_map_wins": 1
+          }
+        },
+        {
+          "series_id": 1069941,
+          "timestamp": 1772384148,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Avalanche eSports",
+          "team_b_name": "Under Effect",
+          "p_radiant": 0.5949230916876778,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.5636254862620278,
+            "series_best_of": 3,
+            "team_a_map_wins": 2,
+            "team_b_map_wins": 1
+          }
+        },
+        {
+          "series_id": 1070054,
+          "timestamp": 1772396090,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "LEGIONGAMING ",
+          "team_b_name": "Estar Backs",
+          "p_radiant": 0.19804661467486984,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.285547563266905,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1070108,
+          "timestamp": 1772403525,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Zetta Games",
+          "team_b_name": "Agressiv Style",
+          "p_radiant": 0.6526816902758189,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.6032556380538078,
+            "series_best_of": 3,
+            "team_a_map_wins": 2,
+            "team_b_map_wins": 0
+          }
+        },
+        {
+          "series_id": 1070208,
+          "timestamp": 1772435441,
+          "league_id": 19054,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Roar",
+          "team_b_name": "Carstensz Esports",
+          "p_radiant": 0.675588251958681,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.6193241229797708,
+            "series_best_of": 3,
+            "team_a_map_wins": 1,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1070255,
+          "timestamp": 1772456571,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "EARTH GAMING",
+          "team_b_name": "LEGIONGAMING ",
+          "p_radiant": 0.7781007670875308,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.6953386022781237,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1070298,
+          "timestamp": 1772466028,
+          "league_id": 19371,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_ONE",
+          "best_of": 1,
+          "team_a_name": "HETCTPAXA",
+          "team_b_name": "Team Stels",
+          "p_radiant": 0.7484606547357446,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.7484606547357446,
+            "series_best_of": 1,
+            "team_a_map_wins": 1,
+            "team_b_map_wins": 0
+          }
+        },
+        {
+          "series_id": 1070301,
+          "timestamp": 1772467668,
+          "league_id": 19361,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Avalanche eSports",
+          "team_b_name": "Agressiv Style",
+          "p_radiant": 0.7091594399436753,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.6433688147389689,
+            "series_best_of": 3,
+            "team_a_map_wins": 2,
+            "team_b_map_wins": 0
+          }
+        },
+        {
+          "series_id": 1070326,
+          "timestamp": 1772470486,
+          "league_id": 19371,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_ONE",
+          "best_of": 1,
+          "team_a_name": "Knights",
+          "team_b_name": "4PERDANA",
+          "p_radiant": 0.6873360924962618,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.6873360924962618,
+            "series_best_of": 1,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 1
+          }
+        },
+        {
+          "series_id": 1070360,
+          "timestamp": 1772475223,
+          "league_id": 19371,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_ONE",
+          "best_of": 1,
+          "team_a_name": "Knights",
+          "team_b_name": "HETCTPAXA",
+          "p_radiant": 0.5560312343170895,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.5560312343170895,
+            "series_best_of": 1,
+            "team_a_map_wins": 1,
+            "team_b_map_wins": 0
+          }
+        },
+        {
+          "series_id": 1070514,
+          "timestamp": 1772522169,
+          "league_id": 19273,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "SHARK SQUAD",
+          "team_b_name": "Veroja",
+          "p_radiant": 0.42537014372821297,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.45008090354589697,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1070554,
+          "timestamp": 1772542908,
+          "league_id": 19371,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "L1GA TEAM",
+          "team_b_name": "Knights",
+          "p_radiant": 0.5625743676197111,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.5418137205127347,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1070659,
+          "timestamp": 1772561980,
+          "league_id": 19371,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "L1GA TEAM",
+          "team_b_name": "4PERDANA",
+          "p_radiant": 0.5689714674655245,
+          "actual": 1.0,
+          "metadata": {
+            "p_first_map_team_a": 0.5461117074333105,
+            "series_best_of": 3,
+            "team_a_map_wins": 2,
+            "team_b_map_wins": 0
+          }
+        },
+        {
+          "series_id": 1070864,
+          "timestamp": 1772608325,
+          "league_id": 19273,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "SHARK SQUAD",
+          "team_b_name": "Carstensz Esports",
+          "p_radiant": 0.6299658108196138,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.5875382757542186,
+            "series_best_of": 3,
+            "team_a_map_wins": 1,
+            "team_b_map_wins": 2
+          }
+        },
+        {
+          "series_id": 1070881,
+          "timestamp": 1772618704,
+          "league_id": 18866,
+          "league_tier": "TIER2",
+          "series_type": "BEST_OF_THREE",
+          "best_of": 3,
+          "team_a_name": "Team Lynx",
+          "team_b_name": "VP.Prodigy",
+          "p_radiant": 0.8305110686662133,
+          "actual": 0.0,
+          "metadata": {
+            "p_first_map_team_a": 0.7384084443816769,
+            "series_best_of": 3,
+            "team_a_map_wins": 0,
+            "team_b_map_wins": 2
+          }
+        }
+      ],
+      "evaluated_best_of_counts": {
+        "3": 6971,
+        "5": 332,
+        "1": 2701
+      },
+      "applied_bo3_sweep_bonus_count": 4623,
+      "by_tier": {
+        "TIER1": {
+          "matches": 316,
+          "accuracy": 0.6044303797468354,
+          "log_loss": 0.6786631888239192,
+          "brier": 0.2375813452484973,
+          "avg_predicted_radiant_win": 0.5475520391176898,
+          "avg_actual_radiant_win": 0.5379746835443038,
+          "calibration": [
+            {
+              "bucket": 0,
+              "range_start": 0.0,
+              "range_end": 0.1,
+              "matches": 6,
+              "avg_predicted": 0.06794158992807853,
+              "avg_actual": 0.16666666666666666
+            },
+            {
+              "bucket": 1,
+              "range_start": 0.1,
+              "range_end": 0.2,
+              "matches": 18,
+              "avg_predicted": 0.16100337023708458,
+              "avg_actual": 0.3333333333333333
+            },
+            {
+              "bucket": 2,
+              "range_start": 0.2,
+              "range_end": 0.3,
+              "matches": 27,
+              "avg_predicted": 0.2608427319100779,
+              "avg_actual": 0.2962962962962963
+            },
+            {
+              "bucket": 3,
+              "range_start": 0.3,
+              "range_end": 0.4,
+              "matches": 35,
+              "avg_predicted": 0.3554697230883582,
+              "avg_actual": 0.4857142857142857
+            },
+            {
+              "bucket": 4,
+              "range_start": 0.4,
+              "range_end": 0.5,
+              "matches": 41,
+              "avg_predicted": 0.4413397785802732,
+              "avg_actual": 0.5121951219512195
+            },
+            {
+              "bucket": 5,
+              "range_start": 0.5,
+              "range_end": 0.6,
+              "matches": 50,
+              "avg_predicted": 0.5484476212480095,
+              "avg_actual": 0.52
+            },
+            {
+              "bucket": 6,
+              "range_start": 0.6,
+              "range_end": 0.7,
+              "matches": 47,
+              "avg_predicted": 0.6436575125520311,
+              "avg_actual": 0.46808510638297873
+            },
+            {
+              "bucket": 7,
+              "range_start": 0.7,
+              "range_end": 0.8,
+              "matches": 46,
+              "avg_predicted": 0.748549925822378,
+              "avg_actual": 0.782608695652174
+            },
+            {
+              "bucket": 8,
+              "range_start": 0.8,
+              "range_end": 0.9,
+              "matches": 34,
+              "avg_predicted": 0.8481249644300063,
+              "avg_actual": 0.7058823529411765
+            },
+            {
+              "bucket": 9,
+              "range_start": 0.9,
+              "range_end": 1.0,
+              "matches": 12,
+              "avg_predicted": 0.9331483029252189,
+              "avg_actual": 0.75
+            }
+          ]
+        },
+        "TIER2": {
+          "matches": 769,
+          "accuracy": 0.599479843953186,
+          "log_loss": 0.6677806227941373,
+          "brier": 0.2348023277553803,
+          "avg_predicted_radiant_win": 0.5712483658686709,
+          "avg_actual_radiant_win": 0.5513654096228868,
+          "calibration": [
+            {
+              "bucket": 0,
+              "range_start": 0.0,
+              "range_end": 0.1,
+              "matches": 11,
+              "avg_predicted": 0.0682023116124205,
+              "avg_actual": 0.09090909090909091
+            },
+            {
+              "bucket": 1,
+              "range_start": 0.1,
+              "range_end": 0.2,
+              "matches": 24,
+              "avg_predicted": 0.15883399091475375,
+              "avg_actual": 0.16666666666666666
+            },
+            {
+              "bucket": 2,
+              "range_start": 0.2,
+              "range_end": 0.3,
+              "matches": 46,
+              "avg_predicted": 0.24647376407835905,
+              "avg_actual": 0.3695652173913043
+            },
+            {
+              "bucket": 3,
+              "range_start": 0.3,
+              "range_end": 0.4,
+              "matches": 73,
+              "avg_predicted": 0.3538910336345208,
+              "avg_actual": 0.4520547945205479
+            },
+            {
+              "bucket": 4,
+              "range_start": 0.4,
+              "range_end": 0.5,
+              "matches": 107,
+              "avg_predicted": 0.45177781557558844,
+              "avg_actual": 0.5327102803738317
+            },
+            {
+              "bucket": 5,
+              "range_start": 0.5,
+              "range_end": 0.6,
+              "matches": 181,
+              "avg_predicted": 0.5577992184570322,
+              "avg_actual": 0.5580110497237569
+            },
+            {
+              "bucket": 6,
+              "range_start": 0.6,
+              "range_end": 0.7,
+              "matches": 120,
+              "avg_predicted": 0.6433330116457074,
+              "avg_actual": 0.5
+            },
+            {
+              "bucket": 7,
+              "range_start": 0.7,
+              "range_end": 0.8,
+              "matches": 94,
+              "avg_predicted": 0.7496097877419842,
+              "avg_actual": 0.6808510638297872
+            },
+            {
+              "bucket": 8,
+              "range_start": 0.8,
+              "range_end": 0.9,
+              "matches": 62,
+              "avg_predicted": 0.8459479903340575,
+              "avg_actual": 0.7258064516129032
+            },
+            {
+              "bucket": 9,
+              "range_start": 0.9,
+              "range_end": 1.0,
+              "matches": 51,
+              "avg_predicted": 0.9439602330811546,
+              "avg_actual": 0.8235294117647058
+            }
+          ]
+        },
+        "TIER3": {
+          "matches": 1916,
+          "accuracy": 0.5610647181628392,
+          "log_loss": 0.6789516731629963,
+          "brier": 0.24267679379225246,
+          "avg_predicted_radiant_win": 0.5118599252352397,
+          "avg_actual_radiant_win": 0.5062630480167014,
+          "calibration": [
+            {
+              "bucket": 0,
+              "range_start": 0.0,
+              "range_end": 0.1,
+              "matches": 1,
+              "avg_predicted": 0.06571072476782239,
+              "avg_actual": 0.0
+            },
+            {
+              "bucket": 1,
+              "range_start": 0.1,
+              "range_end": 0.2,
+              "matches": 14,
+              "avg_predicted": 0.1674433327553546,
+              "avg_actual": 0.07142857142857142
+            },
+            {
+              "bucket": 2,
+              "range_start": 0.2,
+              "range_end": 0.3,
+              "matches": 38,
+              "avg_predicted": 0.263626987341455,
+              "avg_actual": 0.3684210526315789
+            },
+            {
+              "bucket": 3,
+              "range_start": 0.3,
+              "range_end": 0.4,
+              "matches": 168,
+              "avg_predicted": 0.3653154283860992,
+              "avg_actual": 0.32142857142857145
+            },
+            {
+              "bucket": 4,
+              "range_start": 0.4,
+              "range_end": 0.5,
+              "matches": 610,
+              "avg_predicted": 0.4588842280877845,
+              "avg_actual": 0.4819672131147541
+            },
+            {
+              "bucket": 5,
+              "range_start": 0.5,
+              "range_end": 0.6,
+              "matches": 781,
+              "avg_predicted": 0.5431825437375368,
+              "avg_actual": 0.5300896286811779
+            },
+            {
+              "bucket": 6,
+              "range_start": 0.6,
+              "range_end": 0.7,
+              "matches": 236,
+              "avg_predicted": 0.6382785457949225,
+              "avg_actual": 0.6228813559322034
+            },
+            {
+              "bucket": 7,
+              "range_start": 0.7,
+              "range_end": 0.8,
+              "matches": 53,
+              "avg_predicted": 0.7376542206271018,
+              "avg_actual": 0.660377358490566
+            },
+            {
+              "bucket": 8,
+              "range_start": 0.8,
+              "range_end": 0.9,
+              "matches": 12,
+              "avg_predicted": 0.853978161242415,
+              "avg_actual": 0.75
+            },
+            {
+              "bucket": 9,
+              "range_start": 0.9,
+              "range_end": 1.0,
+              "matches": 3,
+              "avg_predicted": 0.9335958837415462,
+              "avg_actual": 0.6666666666666666
+            }
+          ]
+        }
+      },
+      "by_best_of": {
+        "1": {
+          "matches": 1951,
+          "accuracy": 0.5504869297796002,
+          "log_loss": 0.6843234401486227,
+          "brier": 0.24540110591518266,
+          "avg_predicted_radiant_win": 0.5196524198422956,
+          "avg_actual_radiant_win": 0.5151204510507432,
+          "calibration": [
+            {
+              "bucket": 1,
+              "range_start": 0.1,
+              "range_end": 0.2,
+              "matches": 3,
+              "avg_predicted": 0.17892144848634925,
+              "avg_actual": 0.3333333333333333
+            },
+            {
+              "bucket": 2,
+              "range_start": 0.2,
+              "range_end": 0.3,
+              "matches": 19,
+              "avg_predicted": 0.27185100138452545,
+              "avg_actual": 0.42105263157894735
+            },
+            {
+              "bucket": 3,
+              "range_start": 0.3,
+              "range_end": 0.4,
+              "matches": 157,
+              "avg_predicted": 0.36727196785282773,
+              "avg_actual": 0.3503184713375796
+            },
+            {
+              "bucket": 4,
+              "range_start": 0.4,
+              "range_end": 0.5,
+              "matches": 614,
+              "avg_predicted": 0.45870063938453687,
+              "avg_actual": 0.48534201954397393
+            },
+            {
+              "bucket": 5,
+              "range_start": 0.5,
+              "range_end": 0.6,
+              "matches": 847,
+              "avg_predicted": 0.5453428719119173,
+              "avg_actual": 0.5312868949232585
+            },
+            {
+              "bucket": 6,
+              "range_start": 0.6,
+              "range_end": 0.7,
+              "matches": 235,
+              "avg_predicted": 0.6354160244382372,
+              "avg_actual": 0.5957446808510638
+            },
+            {
+              "bucket": 7,
+              "range_start": 0.7,
+              "range_end": 0.8,
+              "matches": 64,
+              "avg_predicted": 0.7401745553767795,
+              "avg_actual": 0.703125
+            },
+            {
+              "bucket": 8,
+              "range_start": 0.8,
+              "range_end": 0.9,
+              "matches": 11,
+              "avg_predicted": 0.8487415196901101,
+              "avg_actual": 0.6363636363636364
+            },
+            {
+              "bucket": 9,
+              "range_start": 0.9,
+              "range_end": 1.0,
+              "matches": 1,
+              "avg_predicted": 0.9005396924694156,
+              "avg_actual": 1.0
+            }
+          ]
+        },
+        "3": {
+          "matches": 1021,
+          "accuracy": 0.6229187071498531,
+          "log_loss": 0.6609572097570492,
+          "brier": 0.23033071272584227,
+          "avg_predicted_radiant_win": 0.5529272049717592,
+          "avg_actual_radiant_win": 0.5298726738491675,
+          "calibration": [
+            {
+              "bucket": 0,
+              "range_start": 0.0,
+              "range_end": 0.1,
+              "matches": 18,
+              "avg_predicted": 0.06797698289293995,
+              "avg_actual": 0.1111111111111111
+            },
+            {
+              "bucket": 1,
+              "range_start": 0.1,
+              "range_end": 0.2,
+              "matches": 50,
+              "avg_predicted": 0.16084436060702917,
+              "avg_actual": 0.2
+            },
+            {
+              "bucket": 2,
+              "range_start": 0.2,
+              "range_end": 0.3,
+              "matches": 91,
+              "avg_predicted": 0.25304498318715196,
+              "avg_actual": 0.32967032967032966
+            },
+            {
+              "bucket": 3,
+              "range_start": 0.3,
+              "range_end": 0.4,
+              "matches": 114,
+              "avg_predicted": 0.35282927435867695,
+              "avg_actual": 0.41228070175438597
+            },
+            {
+              "bucket": 4,
+              "range_start": 0.4,
+              "range_end": 0.5,
+              "matches": 138,
+              "avg_predicted": 0.4482966178536746,
+              "avg_actual": 0.5
+            },
+            {
+              "bucket": 5,
+              "range_start": 0.5,
+              "range_end": 0.6,
+              "matches": 160,
+              "avg_predicted": 0.5491791350344173,
+              "avg_actual": 0.55
+            },
+            {
+              "bucket": 6,
+              "range_start": 0.6,
+              "range_end": 0.7,
+              "matches": 164,
+              "avg_predicted": 0.647606892076842,
+              "avg_actual": 0.524390243902439
+            },
+            {
+              "bucket": 7,
+              "range_start": 0.7,
+              "range_end": 0.8,
+              "matches": 127,
+              "avg_predicted": 0.7492869707147433,
+              "avg_actual": 0.6929133858267716
+            },
+            {
+              "bucket": 8,
+              "range_start": 0.8,
+              "range_end": 0.9,
+              "matches": 94,
+              "avg_predicted": 0.8476879986716669,
+              "avg_actual": 0.7340425531914894
+            },
+            {
+              "bucket": 9,
+              "range_start": 0.9,
+              "range_end": 1.0,
+              "matches": 65,
+              "avg_predicted": 0.9421538381691805,
+              "avg_actual": 0.8
+            }
+          ]
+        },
+        "5": {
+          "matches": 29,
+          "accuracy": 0.5862068965517241,
+          "log_loss": 0.6517217063945092,
+          "brier": 0.22973161085386232,
+          "avg_predicted_radiant_win": 0.5055002440149031,
+          "avg_actual_radiant_win": 0.6206896551724138,
+          "calibration": [
+            {
+              "bucket": 1,
+              "range_start": 0.1,
+              "range_end": 0.2,
+              "matches": 3,
+              "avg_predicted": 0.15843357632869018,
+              "avg_actual": 0.0
+            },
+            {
+              "bucket": 2,
+              "range_start": 0.2,
+              "range_end": 0.3,
+              "matches": 1,
+              "avg_predicted": 0.2061099318150924,
+              "avg_actual": 1.0
+            },
+            {
+              "bucket": 3,
+              "range_start": 0.3,
+              "range_end": 0.4,
+              "matches": 5,
+              "avg_predicted": 0.3528483004988193,
+              "avg_actual": 0.4
+            },
+            {
+              "bucket": 4,
+              "range_start": 0.4,
+              "range_end": 0.5,
+              "matches": 6,
+              "avg_predicted": 0.4745684126691662,
+              "avg_actual": 0.8333333333333334
+            },
+            {
+              "bucket": 5,
+              "range_start": 0.5,
+              "range_end": 0.6,
+              "matches": 5,
+              "avg_predicted": 0.5671064294477617,
+              "avg_actual": 0.6
+            },
+            {
+              "bucket": 6,
+              "range_start": 0.6,
+              "range_end": 0.7,
+              "matches": 4,
+              "avg_predicted": 0.6388263128610614,
+              "avg_actual": 0.75
+            },
+            {
+              "bucket": 7,
+              "range_start": 0.7,
+              "range_end": 0.8,
+              "matches": 2,
+              "avg_predicted": 0.7308367519630072,
+              "avg_actual": 1.0
+            },
+            {
+              "bucket": 8,
+              "range_start": 0.8,
+              "range_end": 0.9,
+              "matches": 3,
+              "avg_predicted": 0.8379778448376213,
+              "avg_actual": 0.6666666666666666
+            }
+          ]
+        }
+      }
+    }
+  },
+  "tier_changes": {
+    "matches": {
+      "changed": 1321,
+      "change_pairs": {
+        "TIER1->TIER2": 925,
+        "TIER2->TIER1": 144,
+        "TIER2->TIER3": 89,
+        "TIER3->TIER2": 163
+      }
+    },
+    "series": {
+      "changed": 713,
+      "change_pairs": {
+        "TIER1->TIER2": 408,
+        "TIER2->TIER1": 69,
+        "TIER2->TIER3": 82,
+        "TIER3->TIER2": 154
+      }
+    }
+  },
+  "delta_time_aware_minus_static": {
+    "accuracy": -0.009663445518160563,
+    "log_loss": 0.0002352493411401646,
+    "brier": 0.00015822819290151058,
+    "tier1_accuracy": -0.010745772014682187,
+    "tier1_log_loss": 0.001989681880268712,
+    "tier1_brier": 0.00014638973300429292,
+    "tier2_accuracy": -0.013518678941939588,
+    "tier2_log_loss": 0.004332732456466704,
+    "tier2_brier": 0.0024733925117472744
+  }
+}

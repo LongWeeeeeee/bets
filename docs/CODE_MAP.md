@@ -56,7 +56,7 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 | `_match_has_tier1_team(radiant_team_id, dire_team_id)` | 12089 | True если ≥1 команда Tier-1 (OR; vs `_determine_star_signal_match_tier`=обе). Гейт kills-ставок (`KILLS_REQUIRE_TIER1_TEAM`) |
 | `_stake_multiplier_for_signal(...)` | 4990 | множитель ставки (x0.5/1/2/3) — см. ARCHITECTURE «Stake multiplier» |
 | `_build_stake_multiplier_context(...)` | 5122 | контекст для множителя |
-| `_late_opposite_all_reject_active(...)`, `_late_opposite_all_reject_from_context(...)` | 3395 | terminal STAR-gate: отклоняет любой valid Late при valid All противоположного знака до immediate/watchers независимо от Late WR и hit count; context-вариант защищает восстановленную delayed-очередь при наличии сохранённых Late/All-флагов и знаков (legacy payload без них не блокируется); `FORCE_ODDS_SIGNAL_TEST` обходит gate |
+| `_late_wr_below_70_opposite_all_reject_active(...)` | 3395 | terminal STAR-gate: отклоняет valid Late WR `<70` с финальным hit count `<2` при valid All противоположного знака до immediate/watchers; WR=70 или hits>=2 разрешены, `FORCE_ODDS_SIGNAL_TEST` обходит gate |
 | `_build_late27_dispatch_guard_snapshot(...)` | 3477 | сериализуемый снимок фактов 27+ late-гейта (late знак/WR/hit count, поддержка early того же знака, WR60+ star-хиты All); уезжает в delayed payload через `stake_multiplier_context["all_star_hits"]` |
 | `_late27_dispatch_guard_snapshot_from_context(smc)` | 3528 | восстановление снимка из `stake_multiplier_context` delayed-записи (legacy-записи без `all_star_hits` → неизвестные поля не блокируют) |
 | `_evaluate_late27_dispatch_guard(snapshot, *, target_side, game_time_seconds, force_odds_signal_test_active)` | 3547 | 27+ late-гейт: `{active, blocked, reasons}`; активен при late-driven диспатче (сторона = late-знак, нет валидного early того же знака) на `game_time >= 27:00` |
@@ -411,14 +411,7 @@ Telegram: `Token`, `Chat_id`, `Chat_ids`. VK: `VK_GROUP_ID`, `VK_PEER_ID`, `VK_P
 | Модуль | Контракт |
 |---|---|
 | `base/sourcetv_bridge.py` | `resolve_sourcetv_matches_path(project_root: Path) -> Path`: единая CWD-independent резолюция bridge JSON; относительный `SOURCETV_MATCHES_PATH` привязывается к project root, default `runtime/sourcetv_matches.json`. |
-| `base/league_keywords.py` | Общий admission-фильтр producer/consumer: `title_matches_allow_keywords(title)` проверяет название, `league_matches_allowlist(league_id, title)` дополнительно принимает точные ID из `TOURNAMENT_LEAGUE_ID_ALLOWLIST`. ID `19722` разрешён точечно для Asgard Championship, потому что Valve/OpenDota регистрируют переиспользованный ticket как `Lunar Paw`; само название `Lunar Paw` глобально не разрешено. |
-| `base/sourcetv_probe.py` | Steam GC/SourceTV producer: находит live-матчи/составы/драфт и пишет bridge JSON, который читает `cyberscore_try.py` при `DLTV_SOURCE_MODE=sourcetv`. Discovery по умолчанию использует WebAPI `GetLiveLeagueGames(0)` и прямой опрос известных keyword/allowlist `league_id`; producer и consumer применяют общий фильтр по паре `(league_id, league_name)`. Постоянный global GC top-400 scan отключён. CLI `--username`, `--password`, `--league`, `--match`, `--interval`, `--login-only`. |
-
-Резервная диагностика: если подтверждённый live-матч разрешённой лиги отсутствует
-в bridge и его Valve `league_id` нельзя получить из справочника/прямого WebAPI,
-допускается временный ротационный global GC scan top-400 для обнаружения
-`league_id`/`lobby_id`. После нахождения ID scan нужно отключить и вернуть прямой
-опрос лиги; неизвестные лиги нельзя автоматически добавлять в allowlist.
+| `base/sourcetv_probe.py` | Steam GC/SourceTV producer: находит live-матчи/составы/драфт и пишет bridge JSON, который читает `cyberscore_try.py` при `DLTV_SOURCE_MODE=sourcetv`; CLI `--username`, `--password`, `--league`, `--match`, `--interval`, `--login-only`. |
 
 ---
 

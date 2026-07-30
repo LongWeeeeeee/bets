@@ -1,0 +1,131 @@
+{
+  "started_at": "2026-07-11T12:51:14.956114+00:00",
+  "finished_at": "2026-07-11T12:51:50.358253+00:00",
+  "ok": true,
+  "artifact": {
+    "series_endpoint": "https://dltv.org/live/series.json",
+    "live_endpoint": "https://dltv.org/live/{steam_match_id}.json",
+    "vote_field": "db.series.likes",
+    "mapping": "side_0=radiant, side_1=dire; pct = count/sum*100",
+    "ui_selector": "picks__new-vote / picks__new-vote__team[data-type=radiant|dire]",
+    "note": "cyberscore_try already uses these endpoints; likes field was unused until this experiment"
+  },
+  "proxy_candidates": [
+    "154.195.138.196:63387",
+    "154.195.144.208:62503",
+    "154.195.145.169:64583",
+    "154.195.160.218:64343",
+    "154.195.170.239:63627",
+    "109.120.147.141:27100"
+  ],
+  "proxy_probes": [
+    {
+      "proxy": "154.195.138.196:63387",
+      "ok": false,
+      "error": "Timeout: Failed to perform, curl: (28) Connection timed out after 6002 milliseconds. See https://curl.se/libcurl/c/libcurl-errors.html first for more details."
+    },
+    {
+      "proxy": "154.195.144.208:62503",
+      "ok": false,
+      "error": "Timeout: Failed to perform, curl: (28) Connection timed out after 6001 milliseconds. See https://curl.se/libcurl/c/libcurl-errors.html first for more details."
+    },
+    {
+      "proxy": "154.195.145.169:64583",
+      "ok": false,
+      "error": "Timeout: Failed to perform, curl: (28) Connection timed out after 6001 milliseconds. See https://curl.se/libcurl/c/libcurl-errors.html first for more details."
+    },
+    {
+      "proxy": "154.195.160.218:64343",
+      "ok": false,
+      "error": "Timeout: Failed to perform, curl: (28) Connection timed out after 6002 milliseconds. See https://curl.se/libcurl/c/libcurl-errors.html first for more details."
+    },
+    {
+      "proxy": "154.195.170.239:63627",
+      "ok": false,
+      "error": "Timeout: Failed to perform, curl: (28) Connection timed out after 6001 milliseconds. See https://curl.se/libcurl/c/libcurl-errors.html first for more details."
+    },
+    {
+      "proxy": "109.120.147.141:27100",
+      "ok": false,
+      "error": "ConnectionError: Failed to perform, curl: (7) Failed to connect to 109.120.147.141 port 27100 after 42 ms: Could not connect to server. See https://curl.se/libcurl/c/libcurl-errors"
+    }
+  ],
+  "series_via": "direct",
+  "series_seconds": 1.08,
+  "live_count": 4,
+  "matches": [
+    {
+      "steam_match_id": 8891325877,
+      "series_id": 427319,
+      "url": "https://dltv.org/matches/427319/lvlup-vs-l1ga-team-esports-world-cup-2026",
+      "radiant_team": "Level UP",
+      "dire_team": "L1ga Team",
+      "likes_side_0_radiant": 22.0,
+      "likes_side_1_dire": 60.0,
+      "radiant_pct": 26.8,
+      "dire_pct": 73.2,
+      "is_draft_voting": true,
+      "draft_vote_ended_at": "2026-07-11T12:11:12.000Z",
+      "game_time": 2441,
+      "is_picks_ended": true,
+      "radiant_lead": 38867,
+      "fetched_via": "direct",
+      "fetch_seconds": 0.99
+    },
+    {
+      "steam_match_id": 8891349244,
+      "series_id": 427328,
+      "url": "https://dltv.org/matches/427328/nigma-vs-playtime-esports-world-cup-2026",
+      "radiant_team": "Nigma Galaxy",
+      "dire_team": "PlayTime",
+      "likes_side_0_radiant": 71.0,
+      "likes_side_1_dire": 48.0,
+      "radiant_pct": 59.7,
+      "dire_pct": 40.3,
+      "is_draft_voting": true,
+      "draft_vote_ended_at": "2026-07-11T12:29:37.000Z",
+      "game_time": 1301,
+      "is_picks_ended": true,
+      "radiant_lead": 3295,
+      "fetched_via": "direct",
+      "fetch_seconds": 1.07
+    },
+    {
+      "steam_match_id": 8891341234,
+      "series_id": 427375,
+      "url": "https://dltv.org/matches/427375/ilbirs-esports-vs-spirit-academy-european-pro-league-season-39",
+      "radiant_team": "Ilbirs eSports",
+      "dire_team": "Spirit Academy",
+      "likes_side_0_radiant": 0.0,
+      "likes_side_1_dire": 0.0,
+      "radiant_pct": null,
+      "dire_pct": null,
+      "is_draft_voting": false,
+      "draft_vote_ended_at": "2026-07-11T12:28:58.000Z",
+      "game_time": 1391,
+      "is_picks_ended": true,
+      "radiant_lead": -12496,
+      "fetched_via": "direct",
+      "fetch_seconds": 1.12
+    },
+    {
+      "steam_match_id": 8891371442,
+      "series_id": 427333,
+      "url": "https://dltv.org/matches/427333/team-liquid-vs-aurora-esports-world-cup-2026",
+      "radiant_team": "Team Liquid",
+      "dire_team": "Aurora",
+      "likes_side_0_radiant": 78.0,
+      "likes_side_1_dire": 33.0,
+      "radiant_pct": 70.3,
+      "dire_pct": 29.7,
+      "is_draft_voting": true,
+      "draft_vote_ended_at": "2026-07-11T12:44:12.000Z",
+      "game_time": 502,
+      "is_picks_ended": true,
+      "radiant_lead": 1335,
+      "fetched_via": "direct",
+      "fetch_seconds": 1.09
+    }
+  ],
+  "errors": []
+}

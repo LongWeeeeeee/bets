@@ -145,14 +145,14 @@ def test_kills_gate_activates_when_early_only_and_late_has_any_hit() -> None:
 
 def test_kills_gate_activates_on_carstensz_case_with_all_same_sign() -> None:
     # Carstensz: early=+, all=+, late has opposite-sign hit cp1vs2=-6, pt2
-    # promote failed. Kills gate must fire.
+    # promote failed. Kills gate must fire only with Early WR>=70.
     result = runtime._evaluate_kills_gate(
         has_early_star=True,
         has_late_star=False,
         has_all_star=True,
         early_sign=1,
         all_sign=1,
-        early_wr_pct=65.0,
+        early_wr_pct=70.0,
         early_hit_count=2,
         raw_mid_output={
             "counterpick_1vs1": -1,
@@ -165,14 +165,14 @@ def test_kills_gate_activates_on_carstensz_case_with_all_same_sign() -> None:
     assert result["valid"] is True
 
 
-def test_kills_gate_blocks_when_early_wr_below_65() -> None:
+def test_kills_gate_blocks_when_early_wr_below_70() -> None:
     result = runtime._evaluate_kills_gate(
         has_early_star=True,
         has_late_star=False,
         has_all_star=False,
         early_sign=1,
         all_sign=None,
-        early_wr_pct=60.0,
+        early_wr_pct=65.0,
         early_hit_count=3,
         raw_mid_output={"counterpick_1vs2": -6},
         late_all_same_sign_promote_valid=False,
@@ -182,7 +182,8 @@ def test_kills_gate_blocks_when_early_wr_below_65() -> None:
     assert result["active_but_blocked"] is True
 
 
-def test_kills_gate_blocks_when_early_wr_65_but_only_one_hit() -> None:
+def test_kills_gate_blocks_when_early_wr_65_even_with_two_hits() -> None:
+    # WR65 + >=2 hits is not enough; need WR>=70 AND hits>=2.
     result = runtime._evaluate_kills_gate(
         has_early_star=True,
         has_late_star=False,
@@ -190,6 +191,25 @@ def test_kills_gate_blocks_when_early_wr_65_but_only_one_hit() -> None:
         early_sign=1,
         all_sign=None,
         early_wr_pct=65.0,
+        early_hit_count=2,
+        raw_mid_output={"counterpick_1vs2": -6},
+        late_all_same_sign_promote_valid=False,
+    )
+    assert result["active"] is True
+    assert result["valid"] is False
+    assert result["active_but_blocked"] is True
+    assert result["wr_gate"]["passes_wr65_two_hits"] is False
+
+
+def test_kills_gate_blocks_when_early_wr_70_but_only_one_hit() -> None:
+    # WR>=70 alone is not enough; need >=2 early hits.
+    result = runtime._evaluate_kills_gate(
+        has_early_star=True,
+        has_late_star=False,
+        has_all_star=False,
+        early_sign=1,
+        all_sign=None,
+        early_wr_pct=70.0,
         early_hit_count=1,
         raw_mid_output={"counterpick_1vs2": -6},
         late_all_same_sign_promote_valid=False,
@@ -197,6 +217,8 @@ def test_kills_gate_blocks_when_early_wr_65_but_only_one_hit() -> None:
     assert result["active"] is True
     assert result["valid"] is False
     assert result["active_but_blocked"] is True
+    assert result["wr_gate"]["passes_wr70"] is True
+    assert result["wr_gate"]["passes_min_hits"] is False
 
 
 def test_kills_gate_inactive_when_late_has_no_star_hits() -> None:
@@ -246,22 +268,107 @@ def test_kills_gate_inactive_when_promote_succeeds() -> None:
 
 
 def test_early_star_meets_kills_wr_gate_edge_cases() -> None:
-    # 70.0 passes regardless of hit_count
+    # WR>=70 AND hits>=2 required
+    assert runtime._early_star_meets_kills_wr_gate(
+        early_wr_pct=70.0, early_hit_count=2
+    )["valid"] is True
     assert runtime._early_star_meets_kills_wr_gate(
         early_wr_pct=70.0, early_hit_count=1
-    )["valid"] is True
-    # 65 passes only with >=2 hits
+    )["valid"] is False
+    # WR65 + hits never enough
     assert runtime._early_star_meets_kills_wr_gate(
         early_wr_pct=65.0, early_hit_count=2
-    )["valid"] is True
+    )["valid"] is False
     assert runtime._early_star_meets_kills_wr_gate(
         early_wr_pct=65.0, early_hit_count=1
     )["valid"] is False
-    # 64.99 never passes
     assert runtime._early_star_meets_kills_wr_gate(
-        early_wr_pct=64.0, early_hit_count=5
+        early_wr_pct=69.9, early_hit_count=5
     )["valid"] is False
     # None WR → blocked
     assert runtime._early_star_meets_kills_wr_gate(
         early_wr_pct=None, early_hit_count=5
     )["valid"] is False
+    gate = runtime._early_star_meets_kills_wr_gate(
+        early_wr_pct=70.0, early_hit_count=2
+    )
+    assert gate["min_wr"] == 70.0
+    assert gate["min_hits"] == 2
+    assert gate["passes_wr70"] is True
+    assert gate["passes_min_hits"] is True
+    assert gate["passes_wr65_two_hits"] is True
+    gate_low_hits = runtime._early_star_meets_kills_wr_gate(
+        early_wr_pct=70.0, early_hit_count=0
+    )
+    assert gate_low_hits["passes_wr70"] is True
+    assert gate_low_hits["passes_min_hits"] is False
+    assert gate_low_hits["valid"] is False
+    assert gate_low_hits["passes_wr65_two_hits"] is False
+
+
+# -----------------------------
+# Late WR60 + opposite companion must not send
+# -----------------------------
+
+
+def test_single_block_gate_rejects_late_only_wr60() -> None:
+    result = runtime._single_block_star_min_wr_gate(
+        has_selected_early_star=False,
+        has_selected_late_star=True,
+        has_selected_all_star=False,
+        early_wr_pct=None,
+        late_wr_pct=60.0,
+        all_wr_pct=None,
+    )
+    assert result["active"] is True
+    assert result["block"] == "late"
+    assert result["valid"] is False
+    assert result["min_wr_ok"] is False
+
+
+def test_single_block_gate_inactive_when_late_and_opposite_early() -> None:
+    # Hole before the fix: multi-block makes single-block gate inactive.
+    result = runtime._single_block_star_min_wr_gate(
+        has_selected_early_star=True,
+        has_selected_late_star=True,
+        has_selected_all_star=False,
+        early_wr_pct=80.0,
+        late_wr_pct=60.0,
+        all_wr_pct=None,
+    )
+    assert result["active"] is False
+    assert result["valid"] is True
+
+
+def test_late_wr60_with_opposite_block_is_rejected() -> None:
+    result = runtime._late_wr_below_min_with_opposite_block_gate(
+        has_selected_late_star=True,
+        late_wr_pct=60.0,
+        opposite_signs_selected=True,
+    )
+    assert result["active"] is True
+    assert result["valid"] is False
+    assert result["min_wr_ok"] is False
+    assert result["block"] == "late"
+
+
+def test_late_wr65_with_opposite_block_is_allowed() -> None:
+    result = runtime._late_wr_below_min_with_opposite_block_gate(
+        has_selected_late_star=True,
+        late_wr_pct=65.0,
+        opposite_signs_selected=True,
+    )
+    assert result["active"] is False
+    assert result["valid"] is True
+    assert result["min_wr_ok"] is True
+
+
+def test_late_wr60_same_sign_multi_block_not_caught_by_opposite_gate() -> None:
+    # Same-sign multi-block is not opposite_signs_selected; other gates apply.
+    result = runtime._late_wr_below_min_with_opposite_block_gate(
+        has_selected_late_star=True,
+        late_wr_pct=60.0,
+        opposite_signs_selected=False,
+    )
+    assert result["active"] is False
+    assert result["valid"] is True

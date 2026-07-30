@@ -146,6 +146,50 @@ def test_early_filter_uses_networth_dominator_not_match_winner() -> None:
     assert dominator == "radiant"
 
 
+def test_early_gate_reads_index_9_not_10() -> None:
+    # Minute-10 STAR gate must use zero-based index 9, not 10 (minute 11).
+    match = _match(duration=35, radiant_win=True)
+    match["radiantNetworthLeads"][9] = 5000
+    match["radiantNetworthLeads"][10] = 100
+    match["radiantNetworthLeads"][19] = 7000
+
+    ok, dominator = stats.is_early_match(match)
+
+    assert ok is False
+    assert dominator is None
+
+
+def test_early_gate_allows_when_index_9_within_max() -> None:
+    # Adjacent mapping: idx9 decides gate; idx10 must not decide allow/reject.
+    match = _match(duration=35, radiant_win=True)
+    match["radiantNetworthLeads"][9] = 100
+    match["radiantNetworthLeads"][10] = 5000
+    match["radiantNetworthLeads"][19] = 7000
+
+    ok, dominator = stats.is_early_match(match)
+
+    assert ok is True
+    assert dominator == "radiant"
+
+
+def test_early_gate_index_is_minute_10_zero_based() -> None:
+    # Parent contract: human minute 10 -> zero-based index 9.
+    assert stats.EARLY_GATE_INDEX == 9
+
+
+def test_early_gate_missing_gate_value_rejects() -> None:
+    # Missing/None at the gate index rejects; threshold window must not override.
+    match = _match(duration=35, radiant_win=True)
+    match["radiantNetworthLeads"][9] = None
+    match["radiantNetworthLeads"][10] = 100
+    match["radiantNetworthLeads"][19] = 7000
+
+    ok, dominator = stats.is_early_match(match)
+
+    assert ok is False
+    assert dominator is None
+
+
 def test_early_filter_fast_finish_uses_winner_and_bypasses_gate() -> None:
     match = _match(duration=31, minute_10_lead=5000, radiant_win=False)
 

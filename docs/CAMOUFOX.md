@@ -2,10 +2,11 @@
 
 # Camoufox Browser Configuration
 
-> Verified: options строятся в `_build_camoufox_options` (cyberscore ~17596): `humanize` ← `CYBERSCORE_CAMOUFOX_HUMANIZE` (default `true`), `block_webrtc` ← `CYBERSCORE_CAMOUFOX_BLOCK_WEBRTC` (True), `enable_cache` ← `CYBERSCORE_CAMOUFOX_ENABLE_CACHE` (False), `geoip` включается при наличии proxy и `CYBERSCORE_CAMOUFOX_GEOIP` (True). Bookmaker Camoufox-fetch — отдельный subprocess (`_bookmaker_prefetch_fetch_subprocess`).
+> Verified: options строятся в `_build_camoufox_options` (cyberscore): `humanize` ← `CYBERSCORE_CAMOUFOX_HUMANIZE` (default `true`), `block_webrtc` ← `CYBERSCORE_CAMOUFOX_BLOCK_WEBRTC` (True), `enable_cache` ← `CYBERSCORE_CAMOUFOX_ENABLE_CACHE` (False), `geoip` включается при наличии proxy и `CYBERSCORE_CAMOUFOX_GEOIP` (True). Bookmaker odds + ProTracker payload fetch идут через process-wide shared Camoufox (`_SharedCamoufoxSession` / `_run_shared_camoufox_job`); отдельный bookmaker Camoufox subprocess **не** используется в odds-mode.
 
-Live runtime использует Camoufox (anti-detect Firefox) для всех CyberScore page fetches:
-- **Mode**: One-shot per cycle (без long-living pages, без live-watcher). Каждый цикл — свежая страница: открыть, fetch, parse, закрыть.
+Live runtime использует Camoufox (anti-detect Firefox) для CyberScore listing/HTML, bookmaker odds (Winline named page) и ProTracker matchups:
+- **Shared session**: один process-wide browser (`_SharedCamoufoxSession`); max active browser = 1; reusable named pages (`bookmaker:winline`, `protracker:matchups`, …). Jobs queue on the shared worker thread via `_run_shared_camoufox_job`.
+- **CyberScore HTML fetch**: still a short-lived page job on the shared browser (open/fetch/parse; page may be closed after use — not a separate bookmaker subprocess).
 - **Humanize**: `True` (макс реализм курсора, до 1.5с на движение).
 - **Window**: авто-генерируемый случайный реалистичный размер (без фиксации — избегаем fingerprinting).
 - **Locale**: авто из proxy IP через GeoIP.
@@ -13,7 +14,7 @@ Live runtime использует Camoufox (anti-detect Firefox) для всех
 - **GeoIP**: включён — timezone, geolocation, locale матчат proxy IP.
 - **WebRTC**: блокирован (`block_webrtc=True`).
 - **Cache**: отключён (`enable_cache=False`).
-- **Proxy**: обязателен; direct-запросы к CyberScore отключены.
+- **Proxy**: обязателен; direct-запросы к CyberScore отключены. Winline odds proxy candidates: DE/US only (RU/unknown excluded).
 
 Env overrides (все опциональны):
 
@@ -29,9 +30,10 @@ Env overrides (все опциональны):
 | `CYBERSCORE_LONG_PAGE_ENABLED` | `0` | Long-living page mode (disabled) |
 | `CYBERSCORE_LIVE_WATCHER_ENABLED` | `0` | Live watcher mode (disabled) |
 
-## Букмекеры и API
+## Не-Camoufox браузеры / fallbacks
 
-- DLTV Selenium (headless Chrome) — парсинг live-матчей.
-- Букмекерские сайты через Selenium (headless) и Camoufox.
+- DLTV Selenium (headless Chrome) — парсинг live-матчей (не bookmaker odds path).
+- **Odds-mode Winline**: только shared Camoufox named page; Selenium fallback и bookmaker Camoufox subprocess **запрещены**. Shared failure → fail-closed (gate non-ready / raise), без второго browser process.
+- **Presence-mode** (если включён): multi-bookmaker; presence may still use subprocess/Selenium helpers when Camoufox import unavailable — never for odds prepare/send.
 - Прокси-пулы для обхода лимитов (настраиваются в `base/keys.py`).
 - Lock-файлы — против multiple instances. Sharded stats — оптимизация больших lookup-таблиц.

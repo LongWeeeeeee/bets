@@ -1,0 +1,15 @@
+{
+  "hermes_root": "/root/.hermes",
+  "policy_path": "/root/main/runtime/anti_stall_supervisor/policy.json",
+  "var_dir": "/root/main/runtime/anti_stall_supervisor_var",
+  "lock_path": "/root/main/runtime/anti_stall_supervisor_var/hygiene.lock",
+  "state_path": "/root/main/runtime/anti_stall_supervisor_var/state.json",
+  "report_path": "/root/main/runtime/anti_stall_supervisor_var/report.json",
+  "audit_path": "/root/main/runtime/anti_stall_supervisor_var/audit.jsonl",
+  "linter_path": "/root/main/runtime/kanban_plan_lint.py",
+  "linter_timeout_s": 60,
+  "tick_deadline_s": 240,
+  "quiet": true,
+  "dry_run": false,
+  "include_linter_cmd": false
+}

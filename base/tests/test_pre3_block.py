@@ -196,21 +196,6 @@ def test_early_kills_gate_uses_early_side_networth(monkeypatch, capsys) -> None:
         },
     )
     _patch_early_wr(monkeypatch, 70.0)
-    default_diagnostics = test_networth_dispatch_gates._star_diagnostics_for_case
-
-    def _diagnostics_with_real_early_hits(case_obj, section):
-        diagnostics = default_diagnostics(case_obj, section)
-        if section == "early_output" and diagnostics.get("valid"):
-            diagnostics = dict(diagnostics)
-            diagnostics["hit_metrics"] = list(case_obj.raw_early_output or {})
-            diagnostics["hit_count"] = len(diagnostics["hit_metrics"])
-        return diagnostics
-
-    monkeypatch.setattr(
-        test_networth_dispatch_gates,
-        "_star_diagnostics_for_case",
-        _diagnostics_with_real_early_hits,
-    )
 
     result = _run_branch_scenario(monkeypatch, case)
     output = capsys.readouterr().out

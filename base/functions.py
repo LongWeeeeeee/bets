@@ -12,7 +12,7 @@ import time
 import uuid
 from collections import deque
 from pathlib import Path
-from itertools import chain, permutations
+from itertools import chain, combinations, permutations
 from typing import Any, ClassVar, Optional
 
 import pytz
@@ -980,7 +980,7 @@ def _should_try_telegram_curl_fallback(exc: Exception) -> bool:
     return _should_try_telegram_network_fallback(exc)
 
 
-def _send_message_via_curl_to_chat(chat_id, message) -> bool:
+def _send_message_via_curl_to_chat(chat_id, message, *, silent: bool = False) -> bool:
     curl_path = shutil.which("curl")
     if not curl_path:
         raise TelegramSendError(
@@ -1007,6 +1007,8 @@ def _send_message_via_curl_to_chat(chat_id, message) -> bool:
         "--data-urlencode",
         "text@-",
     ]
+    if silent:
+        command.extend(["--data-urlencode", "disable_notification=true"])
     try:
         result = subprocess.run(
             command,
@@ -1082,6 +1084,8 @@ def _recover_telegram_network_send(
     error_message: str,
     delivery_uncertain: bool,
 ):
+    # Тишина сообщения задана в payload — фолбэки не должны её терять.
+    silent = bool(payload.get("disable_notification")) if isinstance(payload, dict) else False
     if _should_try_telegram_network_fallback(exc):
         if _get_telegram_proxy_fallback():
             try:
@@ -1092,7 +1096,7 @@ def _recover_telegram_network_send(
                 if _should_try_telegram_curl_fallback(proxy_exc):
                     logger.warning("Telegram proxy fallback failed; trying curl fallback")
                     chat_id = payload.get("chat_id") if isinstance(payload, dict) else None
-                    return _send_message_via_curl_to_chat(chat_id, message)
+                    return _send_message_via_curl_to_chat(chat_id, message, silent=silent)
                 return _telegram_raise_delivery_error(
                     f"{error_message}: {proxy_exc}",
                     require_delivery=require_delivery,
@@ -1109,11 +1113,11 @@ def _recover_telegram_network_send(
                 if _should_try_telegram_curl_fallback(exc):
                     logger.warning("Telegram proxy unavailable; trying curl fallback")
                     chat_id = payload.get("chat_id") if isinstance(payload, dict) else None
-                    return _send_message_via_curl_to_chat(chat_id, message)
+                    return _send_message_via_curl_to_chat(chat_id, message, silent=silent)
         elif _should_try_telegram_curl_fallback(exc):
             logger.warning("Telegram direct send failed; trying curl fallback")
             chat_id = payload.get("chat_id") if isinstance(payload, dict) else None
-            return _send_message_via_curl_to_chat(chat_id, message)
+            return _send_message_via_curl_to_chat(chat_id, message, silent=silent)
     return _telegram_raise_delivery_error(
         f"{error_message}: {exc}",
         require_delivery=require_delivery,
@@ -1121,7 +1125,14 @@ def _recover_telegram_network_send(
     )
 
 
-def _send_message_to_chat_id(chat_id, message, *, require_delivery: bool = False, reply_markup: Optional[dict] = None):
+def _send_message_to_chat_id(
+    chat_id,
+    message,
+    *,
+    require_delivery: bool = False,
+    reply_markup: Optional[dict] = None,
+    silent: bool = False,
+):
     bot_token = f'{keys.Token}'
     chat_id = _telegram_normalize_chat_id(chat_id)
     if not chat_id:
@@ -1135,6 +1146,10 @@ def _send_message_to_chat_id(chat_id, message, *, require_delivery: bool = False
         'chat_id': chat_id,
         'text': message,
     }
+    if silent:
+        # Сообщение приходит без звука/вибрации (Telegram не умеет доставлять
+        # вообще без записи в чат — тише silent варианта нет).
+        payload['disable_notification'] = True
     if isinstance(reply_markup, dict) and reply_markup:
         payload['reply_markup'] = reply_markup
     try:
@@ -1505,7 +1520,10 @@ def send_message(
     require_delivery: bool = False,
     admin_only: bool = False,
     mirror_to_vk: bool = True,
+    silent: bool = False,
 ):
+    """silent=True — доставка без звука (disable_notification). Ставки шлём
+    обычным способом, шумные служебные потоки (кэфы Winline) — тихо."""
     if admin_only:
         target_chat_ids = _get_admin_telegram_chat_ids()
         reply_markup = _build_admin_telegram_reply_markup()
@@ -1528,6 +1546,7 @@ def send_message(
                 message,
                 require_delivery=require_delivery,
                 reply_markup=reply_markup,
+                silent=silent,
             )
             if result:
                 delivered.append(chat_id)
@@ -2542,6 +2561,101 @@ def _lookup_cp1vs2_topup_winrate(data, self_key, duo_key):
     if total_games <= 0:
         return exact_value, exact_games
     return (exact_score + CP1VS2_TOPUP_LAMBDA * other_score) / total_games, total_games
+
+
+
+def _is_valid_diagnostic_observation(value):
+    """True for finite nonzero int/float observations; rejects bool and non-numbers.
+
+    Canonical diagnostic observation validity (independent of metrics_winrate):
+    int/float, not bool, finite, nonzero. Strings/None/NaN/±inf/0/±0.0 are invalid.
+    """
+    if isinstance(value, bool) or value is None:
+        return False
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, float):
+        return math.isfinite(value) and value != 0.0
+    return False
+
+
+def _diagnostic_support_from_entry(entry):
+    """Diagnostic-only support for one used (value, games[, ...]) entry.
+
+    Returns a non-negative int games count, or 0 when the entry is malformed,
+    the observation is invalid, games is non-numeric/non-finite/boolean, or
+    support <= 0. Does not affect score computation / gates / thresholds.
+    """
+    if not isinstance(entry, (tuple, list)) or len(entry) < 2:
+        return 0
+    if not _is_valid_diagnostic_observation(entry[0]):
+        return 0
+    games = entry[1]
+    if isinstance(games, bool) or games is None:
+        return 0
+    if isinstance(games, int):
+        return games if games > 0 else 0
+    if isinstance(games, float):
+        if not math.isfinite(games) or games <= 0:
+            return 0
+        return int(games)
+    try:
+        # Reject bool-like and non-numeric strings implicitly via float path.
+        as_float = float(games)
+    except Exception:
+        return 0
+    if isinstance(games, bool) or not math.isfinite(as_float) or as_float <= 0:
+        return 0
+    return int(as_float)
+
+
+def _diagnostic_support_from_list(items):
+    """Conservative effective-N for a list of used entries: min valid games."""
+    if not items:
+        return 0
+    mins = []
+    for it in items:
+        g = _diagnostic_support_from_entry(it)
+        if g > 0:
+            mins.append(g)
+    return min(mins) if mins else 0
+
+
+def _diagnostic_support_from_pos_dict(pos_dict):
+    """Conservative effective-N for a position dict of used entries.
+
+    Minimum games among all valid used entries across covered positions.
+    Empty / non-dict -> 0. Diagnostic-only.
+    """
+    if not isinstance(pos_dict, dict):
+        return 0
+    mins = []
+    for lst in pos_dict.values():
+        g = _diagnostic_support_from_list(lst)
+        if g > 0:
+            mins.append(g)
+    return min(mins) if mins else 0
+
+
+def _diagnostic_support_two_sides(radiant_support, dire_support):
+    """Two-side diagnostic reducer: min(R, D); either side missing/0 -> 0."""
+    try:
+        r = int(radiant_support or 0)
+        d = int(dire_support or 0)
+    except Exception:
+        return 0
+    if r <= 0 or d <= 0:
+        return 0
+    return min(r, d)
+
+
+def _min_support_games_from_pos_dict(pos_dict):
+    """Backward-compatible alias for counterpick_1vs2 diagnostic support.
+
+    Historically restricted to core positions; the general helper already
+    reduces over whatever positions are present in the side dict.
+    """
+    return _diagnostic_support_from_pos_dict(pos_dict)
 
 
 def counterpick_team(
@@ -3817,14 +3931,14 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                               early_trio_threshold=SYNERGY_TRIO_MIN_MATCHES, mid_trio_threshold=SYNERGY_TRIO_MIN_MATCHES,
                               synergy_duo_use_max=False, early_position_weights=None, late_position_weights=None,
                               post_lane_dict=None, post_lane_trio_threshold=POST_LANE_SYNERGY_TRIO_MIN_MATCHES,
-                              post_lane_position_weights=None):
+                              post_lane_position_weights=None, early_end_dict=None):
     """
     Основная функция анализа синергии и контрпиков
 
     Args:
         radiant_heroes_and_pos: герои и позиции радианта
         dire_heroes_and_pos: герои и позиции дира
-        early_dict: данные для early фазы
+        early_dict: данные для early фазы (NW-dominator label)
         mid_dict: данные для mid фазы
         match: данные матча (опционально)
         custom_weights: кастомные веса позиций (опционально)
@@ -3833,9 +3947,13 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
         synergy_duo_use_max: если True, берёт лучший duo по winrate (без учёта количества матчей);
                              если False, использует взвешенное среднее по матчам (по умолчанию)
         post_lane_dict: данные post-lane фазы (10min gate + min duration), если доступны
+        early_end_dict: early stats with map-winner label (same early gates as early_dict);
+                        when provided, emits parallel ``early_end_output`` with the same
+                        metric keys as ``early_output``
     """
     return_dict = {}
     early_output, mid_output, post_lane_output = {}, {}, {}
+    early_end_output = {}
     early_weights = early_position_weights or custom_weights or _ENV_POS_WEIGHTS_EARLY or _ENV_POS_WEIGHTS or EARLY_POSITION_WEIGHTS
     late_weights = late_position_weights or custom_weights or _ENV_POS_WEIGHTS_LATE or _ENV_POS_WEIGHTS or LATE_POSITION_WEIGHTS
     post_lane_weights = post_lane_position_weights or late_weights
@@ -4034,6 +4152,40 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
     # Анализ контрпиков
     counterpick_team(radiant_heroes_and_pos, dire_heroes_and_pos, early_output, 'radiant_counterpick', early_dict, check_solo=True)
     counterpick_team(dire_heroes_and_pos, radiant_heroes_and_pos, early_output, 'dire_counterpick', early_dict, check_solo=True)
+    if early_end_dict is not None:
+        # Map-winner early label: same gates/metrics as NW early, separate dict.
+        synergy_team(
+            radiant_heroes_and_pos,
+            early_end_output,
+            'radiant_synergy',
+            early_end_dict,
+            min_matches_trio=early_trio_threshold,
+            min_matches_duo=SYNERGY_DUO_MIN_MATCHES,
+        )
+        synergy_team(
+            dire_heroes_and_pos,
+            early_end_output,
+            'dire_synergy',
+            early_end_dict,
+            min_matches_trio=early_trio_threshold,
+            min_matches_duo=SYNERGY_DUO_MIN_MATCHES,
+        )
+        counterpick_team(
+            radiant_heroes_and_pos,
+            dire_heroes_and_pos,
+            early_end_output,
+            'radiant_counterpick',
+            early_end_dict,
+            check_solo=True,
+        )
+        counterpick_team(
+            dire_heroes_and_pos,
+            radiant_heroes_and_pos,
+            early_end_output,
+            'dire_counterpick',
+            early_end_dict,
+            check_solo=True,
+        )
     counterpick_team(radiant_heroes_and_pos, dire_heroes_and_pos, mid_output, 'radiant_counterpick', mid_dict, check_solo=True)
     counterpick_team(dire_heroes_and_pos, radiant_heroes_and_pos, mid_output, 'dire_counterpick', mid_dict, check_solo=True)
     if post_lane_dict:
@@ -4081,6 +4233,19 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
             COUNTERPICK_1VS2_MIN_MATCHES,
         ),
     ]
+    if early_end_dict is not None:
+        outputs_to_process.append(
+            (
+                early_end_output,
+                'early_end_output',
+                early_end_dict,
+                early_trio_threshold,
+                SYNERGY_DUO_MIN_MATCHES,
+                COUNTERPICK_1VS1_MIN_MATCHES,
+                POS1_VS_POS1_MIN_MATCHES,
+                COUNTERPICK_1VS2_MIN_MATCHES,
+            )
+        )
     if post_lane_dict:
         outputs_to_process.append(
             (
@@ -4109,7 +4274,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
         for metric in ("counterpick_1vs1", "pos1_vs_pos1", "counterpick_1vs2", "synergy_trio"):
             phase_bucket.setdefault(metric, None)
             phase_bucket.setdefault(f"{metric}_games", 0)
-        if name == 'early_output':
+        if name in ('early_output', 'early_end_output'):
             phase_weights = early_weights
         elif name == 'post_lane_output':
             phase_weights = post_lane_weights
@@ -4150,25 +4315,13 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
             and _covers_1vs2(data_dict, radiant_team, dire_team, cp1vs2_threshold)
             and _covers_1vs2(data_dict, dire_team, radiant_team, cp1vs2_threshold)
         )
-        def _sum_games_list(items):
-            total = 0
-            if not items:
-                return 0
-            for it in items:
-                if isinstance(it, (tuple, list)) and len(it) >= 2:
-                    try:
-                        total += int(it[1])
-                    except Exception:
-                        continue
-            return total
+        # Diagnostic-only support reducers (effective-N / min of used entries).
+        # Never feed score, coverage gates, or thresholds — only *_games fields.
+        def _diag_list_support(items):
+            return _diagnostic_support_from_list(items)
 
-        def _sum_games_dict(pos_dict):
-            total = 0
-            if not isinstance(pos_dict, dict):
-                return 0
-            for lst in pos_dict.values():
-                total += _sum_games_list(lst)
-            return total
+        def _diag_pos_support(pos_dict):
+            return _diagnostic_support_from_pos_dict(pos_dict)
 
         if has_all_1vs2 and all(f'{side}_counterpick_1vs2' in output for side in ['radiant', 'dire']):
             if (all(len(output['radiant_counterpick_1vs2'].get(p, [])) >= 1 for p in ['pos1', 'pos2', 'pos3']) and
@@ -4179,11 +4332,12 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     _1vs2=True,  # КРИТИЧНО: counterpick требует взвешивания по позициям!
                     custom_position_weights=phase_weights,  # веса позиций по фазе
                 )
-                # games
-                r_games = _sum_games_dict(output.get('radiant_counterpick_1vs2'))
-                d_games = _sum_games_dict(output.get('dire_counterpick_1vs2'))
-                if r_games and d_games:
-                    phase_bucket['counterpick_1vs2_games'] = min(r_games, d_games)
+                # Diagnostic support only: conservative min across used matchups/sides.
+                # Does not affect score, coverage gate, or thresholds.
+                phase_bucket['counterpick_1vs2_games'] = _diagnostic_support_two_sides(
+                    _diag_pos_support(output.get('radiant_counterpick_1vs2')),
+                    _diag_pos_support(output.get('dire_counterpick_1vs2')),
+                )
         if has_all_1vs1 and all(f'{side}_counterpick_1vs1' in output for side in ['radiant', 'dire']):
             cp_1vs1 = get_diff(
                 output['radiant_counterpick_1vs1'],
@@ -4205,10 +4359,10 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
             )
             if cp_1vs1 is not None:
                 phase_bucket['counterpick_1vs1'] = cp_1vs1
-            r_games = _sum_games_dict(output.get('radiant_counterpick_1vs1'))
-            d_games = _sum_games_dict(output.get('dire_counterpick_1vs1'))
-            if r_games and d_games:
-                phase_bucket['counterpick_1vs1_games'] = min(r_games, d_games)
+                phase_bucket['counterpick_1vs1_games'] = _diagnostic_support_two_sides(
+                    _diag_pos_support(output.get('radiant_counterpick_1vs1')),
+                    _diag_pos_support(output.get('dire_counterpick_1vs1')),
+                )
 
         # pos1_vs_pos1: carry-vs-carry counterpick edge. NON-star (absent from
         # STAR_SIGNAL_METRICS), emitted for measurement/experiments; the current
@@ -4216,9 +4370,23 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
         _r_pos1vs1 = output.get('radiant_counterpick_pos1_vs_pos1')
         _d_pos1vs1 = output.get('dire_counterpick_pos1_vs_pos1')
         if all_heroes_known and _r_pos1vs1 and _d_pos1vs1:
-            _rp1 = _sum_games_list(_r_pos1vs1)
-            _dp1 = _sum_games_list(_d_pos1vs1)
-            if min(_rp1, _dp1) >= pos1_vs_pos1_threshold:
+            # Gate still uses per-side entry games (existing min-match threshold),
+            # but emitted diagnostic uses conservative effective-N (min of used).
+            _rp1_gate = 0
+            _dp1_gate = 0
+            for _side_list, _acc_name in ((_r_pos1vs1, 'r'), (_d_pos1vs1, 'd')):
+                _total = 0
+                for _it in (_side_list or []):
+                    if isinstance(_it, (tuple, list)) and len(_it) >= 2:
+                        try:
+                            _total += int(_it[1])
+                        except Exception:
+                            continue
+                if _acc_name == 'r':
+                    _rp1_gate = _total
+                else:
+                    _dp1_gate = _total
+            if min(_rp1_gate, _dp1_gate) >= pos1_vs_pos1_threshold:
                 # ONE-SIDED index from the Radiant pos1 perspective: deviation of the
                 # Radiant carry's head-to-head winrate from 50% (in pp). radiant and
                 # dire pos1_vs_pos1 are mirror winrates of the SAME matchup, so the old
@@ -4226,10 +4394,13 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                 # of -10). Comparing Radiant against a flat 0.50 baseline yields
                 # (WR_radiant_pos1 - 50): drow WR 40% -> -10. get_diff reuse keeps the
                 # same aggregation/rounding/scale as every other index.
-                _pos1_diff = get_diff(_r_pos1vs1, [(0.5, _rp1)])
+                _pos1_diff = get_diff(_r_pos1vs1, [(0.5, _rp1_gate)])
                 if _pos1_diff is not None:
                     phase_bucket['pos1_vs_pos1'] = _pos1_diff
-                    phase_bucket['pos1_vs_pos1_games'] = min(_rp1, _dp1)
+                    phase_bucket['pos1_vs_pos1_games'] = _diagnostic_support_two_sides(
+                        _diag_list_support(_r_pos1vs1),
+                        _diag_list_support(_d_pos1vs1),
+                    )
 
         if has_all_solo and all(f'{side}_counterpick_solo' in output for side in ['radiant', 'dire']):
             # post_lane-solo теперь ЭМИТИТСЯ (Option C: post_lane-solo собран на последнем
@@ -4242,19 +4413,21 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                 _1vs2=True,
                 custom_position_weights=phase_weights,
             )
-            r_games = _sum_games_dict(output.get('radiant_counterpick_solo'))
-            d_games = _sum_games_dict(output.get('dire_counterpick_solo'))
-            if r_games and d_games:
-                phase_bucket['solo_games'] = min(r_games, d_games)
+            if phase_bucket.get('solo') is not None:
+                phase_bucket['solo_games'] = _diagnostic_support_two_sides(
+                    _diag_pos_support(output.get('radiant_counterpick_solo')),
+                    _diag_pos_support(output.get('dire_counterpick_solo')),
+                )
         if has_all_trio and all(f'{side}_synergy_trio' in output for side in ['radiant', 'dire']):
             phase_bucket['synergy_trio'] = get_diff(
                 output['radiant_synergy_trio'],
                 output['dire_synergy_trio'],
             )
-            r_games = _sum_games_list(output.get('radiant_synergy_trio'))
-            d_games = _sum_games_list(output.get('dire_synergy_trio'))
-            if r_games and d_games:
-                phase_bucket['synergy_trio_games'] = min(r_games, d_games)
+            if phase_bucket.get('synergy_trio') is not None:
+                phase_bucket['synergy_trio_games'] = _diagnostic_support_two_sides(
+                    _diag_list_support(output.get('radiant_synergy_trio')),
+                    _diag_list_support(output.get('dire_synergy_trio')),
+                )
 
 
         synergy_duo_val = None
@@ -4264,38 +4437,43 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
             cores_diff = None
             support_diff = None
             all_diff = None
-            core_r_games = core_d_games = 0
-            support_r_games = support_d_games = 0
-            all_r_games = all_d_games = 0
+            # Track used list objects for the selected branch (diagnostic min over
+            # used entries; never sum correlated keys as independent matches).
+            core_r_list = output.get('radiant_synergy_cores_duo')
+            core_d_list = output.get('dire_synergy_cores_duo')
+            support_r_list = output.get('radiant_synergy_support_duo')
+            support_d_list = output.get('dire_synergy_support_duo')
+            all_r_list = output.get('radiant_synergy_duo')
+            all_d_list = output.get('dire_synergy_duo')
+            used_r_lists = []
+            used_d_lists = []
             if all(f'{side}_synergy_cores_duo' in output for side in ['radiant', 'dire']):
                 cores_diff = get_diff(
                     output['radiant_synergy_cores_duo'],
                     output['dire_synergy_cores_duo'],
                     use_max_for_synergy=synergy_duo_use_max,
                 )
-                core_r_games = _sum_games_list(output.get('radiant_synergy_cores_duo'))
-                core_d_games = _sum_games_list(output.get('dire_synergy_cores_duo'))
             if all(f'{side}_synergy_support_duo' in output for side in ['radiant', 'dire']):
                 support_diff = get_diff(
                     output['radiant_synergy_support_duo'],
                     output['dire_synergy_support_duo'],
                     use_max_for_synergy=synergy_duo_use_max,
                 )
-                support_r_games = _sum_games_list(output.get('radiant_synergy_support_duo'))
-                support_d_games = _sum_games_list(output.get('dire_synergy_support_duo'))
             if all(f'{side}_synergy_duo' in output for side in ['radiant', 'dire']):
                 all_diff = get_diff(
                     output['radiant_synergy_duo'],
                     output['dire_synergy_duo'],
                     use_max_for_synergy=synergy_duo_use_max,
                 )
-                all_r_games = _sum_games_list(output.get('radiant_synergy_duo'))
-                all_d_games = _sum_games_list(output.get('dire_synergy_duo'))
 
             if not has_duo_metric:
                 synergy_duo_val = all_diff if all_diff is not None else cores_diff if cores_diff is not None else support_diff
-                r_games = all_r_games if all_diff is not None else core_r_games if cores_diff is not None else support_r_games
-                d_games = all_d_games if all_diff is not None else core_d_games if cores_diff is not None else support_d_games
+                if all_diff is not None:
+                    used_r_lists, used_d_lists = [all_r_list], [all_d_list]
+                elif cores_diff is not None:
+                    used_r_lists, used_d_lists = [core_r_list], [core_d_list]
+                elif support_diff is not None:
+                    used_r_lists, used_d_lists = [support_r_list], [support_d_list]
                 duo_reason = 'partial_core_duo_coverage'
             elif cores_diff is not None and support_diff is not None:
                 core_support_conflict = (
@@ -4308,33 +4486,47 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                 if core_support_conflict:
                     synergy_duo_val = None
                     duo_reason = 'core_support_conflict'
-                    r_games = core_r_games + support_r_games
-                    d_games = core_d_games + support_d_games
+                    # Suppressed metric: leave diagnostic support at zero.
+                    used_r_lists, used_d_lists = [], []
                 else:
                     # Коры важнее для силы драфта, но саппорт-связка не должна полностью пропадать.
                     synergy_duo_val = round(cores_diff * 0.7 + support_diff * 0.3)
-                    r_games = core_r_games + support_r_games
-                    d_games = core_d_games + support_d_games
+                    # Combined core+support: min across the UNION of used lists,
+                    # never sum of the two branch supports.
+                    used_r_lists = [core_r_list, support_r_list]
+                    used_d_lists = [core_d_list, support_d_list]
             elif cores_diff is not None:
                 synergy_duo_val = cores_diff
-                r_games = core_r_games
-                d_games = core_d_games
+                used_r_lists, used_d_lists = [core_r_list], [core_d_list]
             elif all_diff is not None:
                 synergy_duo_val = all_diff
-                r_games = all_r_games
-                d_games = all_d_games
+                used_r_lists, used_d_lists = [all_r_list], [all_d_list]
             elif support_diff is not None:
                 synergy_duo_val = support_diff
-                r_games = support_r_games
-                d_games = support_d_games
+                used_r_lists, used_d_lists = [support_r_list], [support_d_list]
 
             if duo_reason:
                 synergy_duo_val = None
+                used_r_lists, used_d_lists = [], []
+
+            # Reduce used lists into per-side diagnostic support (min of used entries).
+            if used_r_lists and used_d_lists:
+                r_vals = []
+                d_vals = []
+                for lst in used_r_lists:
+                    g = _diag_list_support(lst)
+                    if g > 0:
+                        r_vals.append(g)
+                for lst in used_d_lists:
+                    g = _diag_list_support(lst)
+                    if g > 0:
+                        d_vals.append(g)
+                r_games = min(r_vals) if r_vals else 0
+                d_games = min(d_vals) if d_vals else 0
 
         if not SYNERGY_DUO_REQUIRE_CP_ALIGN and synergy_duo_val is not None:
             phase_bucket['synergy_duo'] = synergy_duo_val
-            if r_games and d_games:
-                phase_bucket['synergy_duo_games'] = min(r_games, d_games)
+            phase_bucket['synergy_duo_games'] = _diagnostic_support_two_sides(r_games, d_games)
 
         # Комбинированные сигналы:
         # 1) duo + 1vs1
@@ -4386,6 +4578,49 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     dire_heroes_and_pos=dire_heroes_and_pos,
                     phase_context=phase_context,
                 )
+
+    # Alchemist directional one-time 0.7 scale on final PUBLIC early_output scores.
+    # Discount a score iff its sign favors a side whose draft contains Alchemist
+    # (Radiant-positive / Dire-negative). Applied once after all phase-bucket /
+    # optional wrapper assignment, immediately before return.
+    def _side_has_alchemist(_side) -> bool:
+        if not isinstance(_side, dict):
+            return False
+        for _pos in ('pos1', 'pos2', 'pos3', 'pos4', 'pos5'):
+            try:
+                _payload = _side.get(_pos) or {}
+                if int(_payload.get('hero_id')) == 73:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
+
+    _radiant_has_alchemist = _side_has_alchemist(radiant_heroes_and_pos)
+    _dire_has_alchemist = _side_has_alchemist(dire_heroes_and_pos)
+    if _radiant_has_alchemist or _dire_has_alchemist:
+        _early_output = return_dict.get('early_output')
+        if isinstance(_early_output, dict):
+            for _score_key in (
+                'counterpick_1vs1',
+                'counterpick_1vs2',
+                'solo',
+                'synergy_duo',
+                'synergy_trio',
+                'pos1_vs_pos1',
+            ):
+                if _score_key not in _early_output:
+                    continue
+                _value = _early_output[_score_key]
+                if _value is None or isinstance(_value, bool):
+                    continue
+                if not isinstance(_value, (int, float)):
+                    continue
+                if _value == 0:
+                    continue
+                if (_value > 0 and _radiant_has_alchemist) or (
+                    _value < 0 and _dire_has_alchemist
+                ):
+                    _early_output[_score_key] = int(round(_value * 0.7))
     return return_dict
 
 
@@ -8907,6 +9142,337 @@ def calculate_lane_kills_advantage(radiant_heroes_and_pos, dire_heroes_and_pos, 
         'total_lanes': 3,
         'games': sum(item[4] for item in weighted),
     }
+
+
+def _normalize_kills_window_spec(window):
+    """Accept (start, end), '10_20' / '10-20', or None → list of windows."""
+    defaults = ((5, 15), (10, 20), (15, 25), (20, 30))
+    if window is None:
+        return list(defaults)
+    if isinstance(window, str):
+        text = window.strip().replace('-', '_')
+        parts = text.split('_')
+        if len(parts) != 2:
+            raise ValueError(f"invalid kills window label: {window!r}")
+        start, end = int(parts[0]), int(parts[1])
+        return [(start, end)]
+    if isinstance(window, (list, tuple)) and len(window) == 2 and not isinstance(window[0], (list, tuple)):
+        return [(int(window[0]), int(window[1]))]
+    if isinstance(window, (list, tuple)):
+        out = []
+        for item in window:
+            if isinstance(item, str):
+                out.extend(_normalize_kills_window_spec(item))
+            else:
+                out.append((int(item[0]), int(item[1])))
+        return out
+    raise ValueError(f"invalid kills window spec: {window!r}")
+
+
+def _kills_window_label(start, end) -> str:
+    return f"{int(start)}_{int(end)}"
+
+
+def _kills_window_entry_stats(entry, label, min_games, invert=False):
+    """Extract lead/draw/diff stats for one window label from a dict or list row."""
+    if entry is None:
+        return None
+    if isinstance(entry, dict):
+        leads = int(entry.get(f'kills_{label}_leads', 0) or 0)
+        draws = int(entry.get(f'kills_{label}_draws', 0) or 0)
+        games = int(entry.get(f'kills_{label}_games', 0) or 0)
+        diff_sum = float(entry.get(f'kills_{label}_diff_sum', 0.0) or 0.0)
+    elif isinstance(entry, (list, tuple)):
+        labels = [f"{s}_{e}" for s, e in ((5, 15), (10, 20), (15, 25), (20, 30))]
+        try:
+            index = labels.index(label)
+        except ValueError:
+            return None
+        base = index * 5
+        if len(entry) < base + 5:
+            return None
+        leads = int(entry[base] or 0)
+        draws = int(entry[base + 1] or 0)
+        games = int(entry[base + 2] or 0)
+        diff_sum = float(entry[base + 3] or 0.0)
+    else:
+        return None
+    if games < min_games:
+        return None
+    losses = max(0, games - leads - draws)
+    if invert:
+        leads, losses = losses, leads
+        diff_sum = -diff_sum
+    return leads, draws, losses, games, diff_sum
+
+
+def calculate_kills_window_advantage(
+    radiant_heroes_and_pos,
+    dire_heroes_and_pos,
+    heroes_data,
+    window=None,
+):
+    """Estimate Radiant team kill difference for mid-game minute windows.
+
+    Trained against team-level targets (same for every draft key), so layer
+    estimates are reliability-weighted averages, never summed. Independent of
+    lane@10 and early/late WR metrics.
+
+    Layer policy (env ``KILLS_WINDOW_LAYER_POLICY``, default ``core_1v1_with``):
+      - core_1v1_with: prefer same-sign reliability blend of 1v1+with (best
+        unit-stake EV @ odds 1.8 on pro Tier-1 7.41+ kill-lead backtest);
+        else 1v1; else with; else first-hit 1v2→2v1→solo.
+      - first_hit: legacy 1v2→2v1→1v1→with→solo.
+      - blend_all: reliability-weighted mean of all non-empty layers.
+      - best_abs: layer with largest |expected_diff|.
+
+    Args:
+        radiant_heroes_and_pos / dire_heroes_and_pos: lists of ``{hero}pos{n}``
+            tokens or ``(hero_id, pos)`` pairs (same shapes as other calculators).
+        heroes_data: flat key→stats dict (or already structured, ignored).
+        window: None (all four windows), one ``(start, end)`` / ``'10_20'``,
+            or a list of those.
+
+    Returns:
+        For a single window: dict with expected_diff / lead_probability / ...
+        For multiple windows: ``{label: payload_or_None, ...}``.
+    """
+    if not isinstance(heroes_data, dict):
+        return None
+
+    min_games = max(1, int(os.getenv("KILLS_WINDOW_MIN_GAMES", "10") or "10"))
+    reliability_prior = max(
+        0.0, float(os.getenv("KILLS_WINDOW_RELIABILITY_PRIOR", "100") or "100")
+    )
+    layer_policy = (
+        str(os.getenv("KILLS_WINDOW_LAYER_POLICY", "core_1v1_with") or "core_1v1_with")
+        .strip()
+        .lower()
+    )
+    if layer_policy in ("core", "core_1v1", "1v1_with", "core-1v1-with"):
+        layer_policy = "core_1v1_with"
+    if layer_policy not in ("core_1v1_with", "first_hit", "blend_all", "best_abs"):
+        layer_policy = "core_1v1_with"
+
+    def _token(item):
+        if isinstance(item, str):
+            return item
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            return f"{item[0]}pos{item[1]}"
+        if isinstance(item, dict):
+            hero = item.get('hero_id', item.get('heroId', item.get('id')))
+            pos = item.get('pos', item.get('position', item.get('pos_num')))
+            if hero is not None and pos is not None:
+                pos_s = str(pos)
+                if pos_s.startswith('POSITION_'):
+                    pos_s = pos_s.split('_')[-1]
+                return f"{hero}pos{pos_s}"
+        return None
+
+    radiant = [tok for tok in (_token(x) for x in (radiant_heroes_and_pos or [])) if tok]
+    dire = [tok for tok in (_token(x) for x in (dire_heroes_and_pos or [])) if tok]
+    if not radiant or not dire:
+        return None
+
+    windows = _normalize_kills_window_spec(window)
+    single = len(windows) == 1 and window is not None and not (
+        isinstance(window, (list, tuple)) and window and isinstance(window[0], (list, tuple))
+    )
+    # Treat explicit single pair/str as single; None → multi map.
+    if window is None:
+        single = False
+    elif isinstance(window, (list, tuple)) and window and isinstance(window[0], (list, tuple)):
+        single = False
+    else:
+        single = True
+
+    def _combine(items):
+        valid = [item for item in items if item is not None]
+        if not valid:
+            return None
+        leads = sum(item[0] for item in valid)
+        draws = sum(item[1] for item in valid)
+        losses = sum(item[2] for item in valid)
+        games = sum(item[3] for item in valid)
+        diff_sum = sum(item[4] for item in valid)
+        if games <= 0:
+            return None
+        reliability = games / (games + reliability_prior) if reliability_prior > 0 else 1.0
+        return {
+            'expected_diff': diff_sum / games,
+            'lead_probability': leads / games,
+            'draw_probability': draws / games,
+            'games': games,
+            'reliability': reliability,
+        }
+
+    def _weighted_layer(results):
+        valid = [item for item in results if item is not None]
+        if not valid:
+            return None
+        # Prefer denser keys: average by reliability of each sub-estimate.
+        weight_sum = sum(item['reliability'] for item in valid)
+        if weight_sum <= 0:
+            return None
+        return {
+            'expected_diff': sum(item['expected_diff'] * item['reliability'] for item in valid) / weight_sum,
+            'lead_probability': sum(item['lead_probability'] * item['reliability'] for item in valid) / weight_sum,
+            'draw_probability': sum(item['draw_probability'] * item['reliability'] for item in valid) / weight_sum,
+            'games': sum(item['games'] for item in valid),
+            'reliability': weight_sum / len(valid),
+            'sources': len(valid),
+        }
+
+    def _lookup(label):
+        def raw(key, invert=False):
+            return _kills_window_entry_stats(heroes_data.get(key), label, min_games, invert=invert)
+
+        # Build all layer candidates; policy decides which one is returned.
+        one_v_two = []
+        for r in radiant:
+            for d1, d2 in combinations(dire, 2):
+                one_v_two.append(_combine([raw(f"{r}_vs_{d1},{d2}")]))
+        layer_1v2 = _weighted_layer(one_v_two)
+        if layer_1v2 is not None:
+            layer_1v2["layer"] = "1v2"
+
+        two_v_one = []
+        for r1, r2 in combinations(radiant, 2):
+            for d in dire:
+                two_v_one.append(_combine([raw(f"{r1},{r2}_vs_{d}")]))
+        layer_2v1 = _weighted_layer(two_v_one)
+        if layer_2v1 is not None:
+            layer_2v1["layer"] = "2v1"
+
+        one_v_one = []
+        for r in radiant:
+            for d in dire:
+                one_v_one.append(_combine([raw(f"{r}_vs_{d}")]))
+        layer_1v1 = _weighted_layer(one_v_one)
+        if layer_1v1 is not None:
+            layer_1v1["layer"] = "1v1"
+
+        synergy = []
+        for r1, r2 in combinations(radiant, 2):
+            synergy.append(_combine([raw(f"{r1}_with_{r2}", invert=False)]))
+        for d1, d2 in combinations(dire, 2):
+            synergy.append(_combine([raw(f"{d1}_with_{d2}", invert=True)]))
+        layer_with = _weighted_layer(synergy)
+        if layer_with is not None:
+            layer_with["layer"] = "with"
+
+        solo = (
+            [_combine([raw(token, invert=False)]) for token in radiant]
+            + [_combine([raw(token, invert=True)]) for token in dire]
+        )
+        layer_solo = _weighted_layer(solo)
+        if layer_solo is not None:
+            layer_solo["layer"] = "solo"
+
+        layers = {
+            "1v2": layer_1v2,
+            "2v1": layer_2v1,
+            "1v1": layer_1v1,
+            "with": layer_with,
+            "solo": layer_solo,
+        }
+        order = ("1v2", "2v1", "1v1", "with", "solo")
+
+        def _first_hit():
+            for name in order:
+                if layers.get(name) is not None:
+                    return layers[name]
+            return None
+
+        def _blend_all():
+            items = [layers[name] for name in order if layers.get(name) is not None]
+            blended = _weighted_layer(items)
+            if blended is not None:
+                blended["layer"] = "blend:" + "+".join(
+                    item.get("layer", "?") for item in items
+                )
+            return blended
+
+        def _best_abs():
+            best = None
+            best_score = -1.0
+            for name in order:
+                lay = layers.get(name)
+                if lay is None:
+                    continue
+                score = abs(float(lay["expected_diff"])) * (
+                    0.5 + 0.5 * float(lay.get("reliability") or 0.0)
+                )
+                if score > best_score:
+                    best_score = score
+                    best = lay
+            return best
+
+        def _core_1v1_with():
+            a = layers.get("1v1")
+            b = layers.get("with")
+            if a is not None and b is not None:
+                ea = float(a["expected_diff"])
+                eb = float(b["expected_diff"])
+                if ea != 0.0 and eb != 0.0 and (ea > 0.0) == (eb > 0.0):
+                    wsum = float(a["reliability"]) + float(b["reliability"])
+                    if wsum > 0:
+                        return {
+                            "expected_diff": (
+                                ea * float(a["reliability"]) + eb * float(b["reliability"])
+                            )
+                            / wsum,
+                            "lead_probability": (
+                                float(a["lead_probability"]) * float(a["reliability"])
+                                + float(b["lead_probability"]) * float(b["reliability"])
+                            )
+                            / wsum,
+                            "draw_probability": (
+                                float(a["draw_probability"]) * float(a["reliability"])
+                                + float(b["draw_probability"]) * float(b["reliability"])
+                            )
+                            / wsum,
+                            "games": int(a["games"]) + int(b["games"]),
+                            "reliability": wsum / 2.0,
+                            "sources": int(a.get("sources") or 1)
+                            + int(b.get("sources") or 1),
+                            "layer": "1v1+with_same_sign",
+                        }
+                return a if abs(ea) >= abs(eb) else b
+            if a is not None:
+                return a
+            if b is not None:
+                return b
+            return _first_hit()
+
+        if layer_policy == "first_hit":
+            return _first_hit()
+        if layer_policy == "blend_all":
+            return _blend_all()
+        if layer_policy == "best_abs":
+            return _best_abs()
+        return _core_1v1_with()
+
+    results = {}
+    for start, end in windows:
+        label = _kills_window_label(start, end)
+        payload = _lookup(label)
+        if payload is not None:
+            payload = {
+                "expected_diff": payload["expected_diff"],
+                "lead_probability": payload["lead_probability"],
+                "draw_probability": payload["draw_probability"],
+                "games": payload["games"],
+                "layer": payload.get("layer"),
+                "window": label,
+                "window_start": start,
+                "window_end": end,
+            }
+        results[label] = payload
+
+    if single:
+        return results[next(iter(results))]
+    return results
 
 
 def is_moscow_night():

@@ -1,0 +1,269 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+from decimal import Decimal
+from pathlib import Path
+
+import orjson
+import pytest
+
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
+
+import explore_database as explore  # noqa: E402
+import maps_research  # noqa: E402
+
+
+def _set_valid_positions_catalog(monkeypatch) -> None:
+    monkeypatch.setattr(
+        maps_research,
+        "HERO_VALID_POSITIONS",
+        {
+            1: ["POSITION_1"],
+            2: ["POSITION_2"],
+            3: ["POSITION_3"],
+            4: ["POSITION_4"],
+            5: ["POSITION_5"],
+            6: ["POSITION_1"],
+            7: ["POSITION_2"],
+            8: ["POSITION_3"],
+            9: ["POSITION_4"],
+            10: ["POSITION_5"],
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(maps_research, "HERO_VALID_POSITIONS_COUNTS", {}, raising=False)
+    monkeypatch.setattr(maps_research, "HERO_VALID_POSITIONS_COUNTS_MIN_GAMES", 100, raising=False)
+
+
+def _clear_mode_env(monkeypatch) -> None:
+    for name in (
+        "EXPLORE_ONLY_LANES",
+        "EXPLORE_EXPERIMENTAL_LATE_ONLY",
+        "EXPLORE_EARLY_LATE_ONLY",
+        "EXPLORE_ALLOW_EMPTY_TEST_SET",
+        "EXPLORE_DISABLE_TEST_EXCLUSION",
+        "EXPLORE_MIN_START_TS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _valid_match(match_id: str = "101"):
+    return {
+        "id": match_id,
+        "startDateTime": 1,
+        "players": [
+            {"heroId": 1, "position": "POSITION_1", "isRadiant": True, "intentionalFeeding": False, "networth": 1000, "imp": 0},
+            {"heroId": 2, "position": "POSITION_2", "isRadiant": True, "intentionalFeeding": False, "networth": 2000, "imp": 0},
+            {"heroId": 3, "position": "POSITION_3", "isRadiant": True, "intentionalFeeding": False, "networth": 3000, "imp": 0},
+            {"heroId": 4, "position": "POSITION_4", "isRadiant": True, "intentionalFeeding": False, "networth": 1500, "imp": 0},
+            {"heroId": 5, "position": "POSITION_5", "isRadiant": True, "intentionalFeeding": False, "networth": 800, "imp": 0},
+            {"heroId": 6, "position": "POSITION_1", "isRadiant": False, "intentionalFeeding": False, "networth": 1000, "imp": 0},
+            {"heroId": 7, "position": "POSITION_2", "isRadiant": False, "intentionalFeeding": False, "networth": 2000, "imp": 0},
+            {"heroId": 8, "position": "POSITION_3", "isRadiant": False, "intentionalFeeding": False, "networth": 3000, "imp": 0},
+            {"heroId": 9, "position": "POSITION_4", "isRadiant": False, "intentionalFeeding": False, "networth": 1500, "imp": 0},
+            {"heroId": 10, "position": "POSITION_5", "isRadiant": False, "intentionalFeeding": False, "networth": 800, "imp": 0},
+        ],
+        "topLaneOutcome": "DIRE_WIN",
+        "midLaneOutcome": "RADIANT_WIN",
+        "bottomLaneOutcome": "RADIANT_WIN",
+        "radiantNetworthLeads": [],
+        "didRadiantWin": True,
+        "towerDeaths": [{"npcId": 1}],
+    }
+
+
+def test_run_explore_database_requires_test_set_by_default(tmp_path, monkeypatch):
+    _clear_mode_env(monkeypatch)
+    _set_valid_positions_catalog(monkeypatch)
+
+    json_dir = tmp_path / "json_parts_split_from_object"
+    json_dir.mkdir(parents=True)
+    (json_dir / "combined1.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="test exclusion"):
+        explore.run_explore_database(
+            base_dir=tmp_path,
+            json_dir=json_dir,
+            test_set_path=tmp_path / "missing_test_set.json",
+            bad_quality_dir=tmp_path / "bad_quality",
+        )
+
+
+def test_run_explore_database_can_explicitly_disable_test_exclusion(tmp_path, monkeypatch):
+    _clear_mode_env(monkeypatch)
+    _set_valid_positions_catalog(monkeypatch)
+    monkeypatch.setenv("EXPLORE_ONLY_LANES", "1")
+    monkeypatch.setenv("EXPLORE_MIN_START_TS", "0")
+    monkeypatch.setenv("EXPLORE_DISABLE_TEST_EXCLUSION", "1")
+
+    json_dir = tmp_path / "json_parts_split_from_object"
+    json_dir.mkdir(parents=True)
+    (json_dir / "combined1.json").write_text(
+        json.dumps({"101": _valid_match("101")}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    result = explore.run_explore_database(
+        base_dir=tmp_path,
+        json_dir=json_dir,
+        test_set_path=tmp_path / "missing_test_set.json",
+        bad_quality_dir=tmp_path / "bad_quality",
+    )
+
+    assert result["mode_name"] == "ONLY_LANES"
+    assert result["train_processed"] == 1
+    assert result["test_excluded"] == 0
+    assert (tmp_path / "lane_dict_raw.json").exists()
+
+
+def test_get_maps_new_skips_processed_ids_to_graph_when_auxiliary_files_disabled(tmp_path, monkeypatch):
+    _set_valid_positions_catalog(monkeypatch)
+
+    async def _fake_retry(_func, **_kwargs):
+        return (
+            [
+                {
+                    "id": "123",
+                    "radiantTeam": {"id": 1},
+                    "direTeam": {"id": 2},
+                    "leagueId": 55,
+                    "league": {"id": 55, "tier": "TIER2"},
+                }
+            ],
+            set(),
+        )
+
+    monkeypatch.setattr(maps_research, "retry_request_with_proxy_rotation", _fake_retry)
+    monkeypatch.setattr(maps_research, "_build_tier_team_ids", lambda: {1, 2})
+    monkeypatch.setattr(maps_research, "check_match_quality", lambda match: (True, "ok"))
+    monkeypatch.setattr(maps_research, "save_temp_file", lambda *args, **kwargs: None)
+    monkeypatch.setattr(maps_research, "merge_temp_files_by_size", lambda *args, **kwargs: [])
+    monkeypatch.setattr(maps_research, "load_get_maps_state", lambda: None)
+    monkeypatch.setattr(maps_research, "save_get_maps_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(maps_research, "clear_get_maps_state", lambda *args, **kwargs: None)
+
+    asyncio.run(
+        maps_research.get_maps_new(
+            ids=[123],
+            mkdir=str(tmp_path),
+            show_prints=False,
+            pro=True,
+            skip_auxiliary_files=True,
+        )
+    )
+
+    assert not (tmp_path / "processed_ids_to_graph.txt").exists()
+    assert not (tmp_path / "trash_maps.txt").exists()
+    assert not (tmp_path / "player_ids.txt").exists()
+    assert not (tmp_path / "all_teams.txt").exists()
+
+
+def test_run_explore_database_reads_env_paths_when_args_omitted(tmp_path, monkeypatch):
+    _clear_mode_env(monkeypatch)
+    _set_valid_positions_catalog(monkeypatch)
+    monkeypatch.setenv("EXPLORE_ONLY_LANES", "1")
+    monkeypatch.setenv("EXPLORE_MIN_START_TS", "0")
+    monkeypatch.setenv("EXPLORE_DISABLE_TEST_EXCLUSION", "1")
+    monkeypatch.setenv("EXPLORE_BASE_DIR", str(tmp_path))
+    monkeypatch.setenv("EXPLORE_JSON_DIR", str(tmp_path / "custom_json"))
+    monkeypatch.setenv("EXPLORE_BAD_QUALITY_DIR", str(tmp_path / "custom_bad_quality"))
+
+    json_dir = tmp_path / "custom_json"
+    json_dir.mkdir(parents=True)
+    (json_dir / "combined1.json").write_text(
+        json.dumps({"101": _valid_match("101")}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    result = explore.run_explore_database()
+
+    assert result["mode_name"] == "ONLY_LANES"
+    assert result["train_processed"] == 1
+    assert (tmp_path / "lane_dict_raw.json").exists()
+    assert (tmp_path / "custom_bad_quality").exists()
+
+
+def test_run_explore_database_fails_closed_without_position_catalog(tmp_path, monkeypatch):
+    _clear_mode_env(monkeypatch)
+    monkeypatch.setattr(maps_research, "HERO_VALID_POSITIONS", {}, raising=False)
+    monkeypatch.setattr(maps_research, "HERO_VALID_POSITIONS_COUNTS", {}, raising=False)
+
+    with pytest.raises(RuntimeError, match="hero_valid_positions_simple.json"):
+        explore.run_explore_database(
+            base_dir=tmp_path,
+            json_dir=tmp_path / "json_parts_split_from_object",
+            test_set_path=tmp_path / "extracted_100k_matches.json",
+            bad_quality_dir=tmp_path / "bad_quality",
+        )
+
+
+def test_run_explore_database_rolls_back_file_on_stream_failure(tmp_path, monkeypatch):
+    _clear_mode_env(monkeypatch)
+    _set_valid_positions_catalog(monkeypatch)
+    monkeypatch.setenv("EXPLORE_ONLY_LANES", "1")
+    monkeypatch.setenv("EXPLORE_MIN_START_TS", "0")
+
+    json_dir = tmp_path / "json_parts_split_from_object"
+    json_dir.mkdir(parents=True)
+    (json_dir / "combined1.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "extracted_100k_matches.json").write_text('{"999": {}}', encoding="utf-8")
+
+    def _broken_iter(_file_path: Path):
+        yield "101", _valid_match("101")
+        raise RuntimeError("stream broke")
+
+    monkeypatch.setattr(explore, "_iter_matches", _broken_iter)
+
+    with pytest.raises(RuntimeError, match="статистика не сохранена"):
+        explore.run_explore_database(
+            base_dir=tmp_path,
+            json_dir=json_dir,
+            test_set_path=tmp_path / "extracted_100k_matches.json",
+            bad_quality_dir=tmp_path / "bad_quality",
+        )
+
+    assert not (tmp_path / "lane_dict_raw.json").exists()
+    assert not (tmp_path / "early_dict_raw.json").exists()
+    assert not (tmp_path / "late_dict_raw.json").exists()
+
+
+def test_run_explore_database_processes_small_lane_file_successfully(tmp_path, monkeypatch):
+    _clear_mode_env(monkeypatch)
+    _set_valid_positions_catalog(monkeypatch)
+    monkeypatch.setenv("EXPLORE_ONLY_LANES", "1")
+    monkeypatch.setenv("EXPLORE_MIN_START_TS", "0")
+
+    json_dir = tmp_path / "json_parts_split_from_object"
+    json_dir.mkdir(parents=True)
+    (json_dir / "combined1.json").write_text(
+        json.dumps({"101": _valid_match("101")}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (tmp_path / "extracted_100k_matches.json").write_text('{"999": {}}', encoding="utf-8")
+
+    result = explore.run_explore_database(
+        base_dir=tmp_path,
+        json_dir=json_dir,
+        test_set_path=tmp_path / "extracted_100k_matches.json",
+        bad_quality_dir=tmp_path / "bad_quality",
+    )
+
+    assert result["mode_name"] == "ONLY_LANES"
+    assert result["train_processed"] == 1
+    lane_path = tmp_path / "lane_dict_raw.json"
+    assert lane_path.exists()
+    payload = orjson.loads(lane_path.read_bytes())
+    assert payload
+
+
+def test_dump_bytes_handles_decimal_payload():
+    payload = {"value": Decimal("12.5"), "nested": {"x": Decimal("3")}}
+
+    encoded = explore._dump_bytes(payload)
+
+    assert orjson.loads(encoded) == {"value": 12.5, "nested": {"x": 3.0}}

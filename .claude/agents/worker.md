@@ -16,7 +16,8 @@ review. The Reviewer reviews only after you (and any sibling workers) finish.
 Read `AGENTS.md` (canonical rules) and the relevant `docs/*` for the task area BEFORE
 you start. Obey all Runtime Rules (venv `/Users/alex/Documents/ingame/venv_catboost/bin/python3`,
 rebuild-then-replace, never delete data without confirmation, don't touch the live
-`cyberscore_try.py` runtime, don't edit `AGENTS.md`/docs/`.claude/`).
+`cyberscore_try.py` runtime). Edit `AGENTS.md`/docs/`.claude/` only when the approved
+task explicitly includes those files.
 
 ## What you do
 - Implement the task fully per the approved plan you are given.

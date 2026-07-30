@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report_v1",
+  "title": "anti_stall_hygiene_report_v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "generated_at",
+    "decision",
+    "decision_key",
+    "rc",
+    "dry_run",
+    "lock",
+    "linter",
+    "tick",
+    "fail_closed",
+    "errors"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "const": "report_v1"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "decision": {
+      "type": "object",
+      "required": ["key", "reason", "actions_planned", "actions_applied"],
+      "properties": {
+        "key": { "type": "string" },
+        "reason": { "type": "string" },
+        "actions_planned": { "type": "integer", "minimum": 0 },
+        "actions_applied": { "type": "integer", "minimum": 0 },
+        "fail_closed": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "decision_key": { "type": "string" },
+    "rc": { "type": "integer" },
+    "dry_run": { "type": "boolean" },
+    "lock": {
+      "type": "object",
+      "required": ["path", "acquired"],
+      "properties": {
+        "path": { "type": "string" },
+        "acquired": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "linter": {
+      "type": "object",
+      "required": ["invoked"],
+      "properties": {
+        "invoked": { "type": "boolean" },
+        "ok": { "type": ["boolean", "null"] },
+        "rc": { "type": ["integer", "null"] },
+        "timed_out": { "type": "boolean" },
+        "error": { "type": ["string", "null"] },
+        "duration_s": { "type": ["number", "null"] },
+        "cmd": { "type": ["array", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "tick": {
+      "type": "object",
+      "required": ["started_at", "finished_at", "duration_s", "deadline_s"],
+      "properties": {
+        "started_at": { "type": "string" },
+        "finished_at": { "type": "string" },
+        "duration_s": { "type": "number" },
+        "deadline_s": { "type": "number", "maximum": 240 }
+      },
+      "additionalProperties": true
+    },
+    "fail_closed": { "type": "boolean" },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "snapshot_digest": { "type": ["string", "null"] },
+    "executor": { "type": "object" },
+    "state_corrupt_recovered": { "type": "boolean" }
+  },
+  "definitions": {
+    "state_v1": {
+      "title": "anti_stall_hygiene_state_v1",
+      "type": "object",
+      "required": [
+        "schema",
+        "previous_evidence_digests",
+        "consecutive_stall_counters",
+        "action_keys",
+        "cooldowns",
+        "policy_digest",
+        "schema_digest",
+        "last_completed_tick"
+      ],
+      "properties": {
+        "schema": { "const": "state_v1" },
+        "version": { "type": "integer" },
+        "previous_evidence_digests": { "type": "object" },
+        "consecutive_stall_counters": { "type": "object" },
+        "action_keys": { "type": "object" },
+        "cooldowns": { "type": "object" },
+        "policy_digest": { "type": ["string", "null"] },
+        "schema_digest": { "type": ["string", "null"] },
+        "last_completed_tick": { "type": ["string", "null"] },
+        "last_tick_started_at": { "type": ["string", "null"] },
+        "last_decision_key": { "type": ["string", "null"] },
+        "linter_last": { "type": ["object", "null"] },
+        "tick_count": { "type": "integer" },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "audit_line_v1": {
+      "type": "object",
+      "required": ["ts", "decision_key", "reason"],
+      "properties": {
+        "ts": { "type": "string" },
+        "decision_key": { "type": "string" },
+        "action_key": { "type": ["string", "null"] },
+        "reason": { "type": "string" },
+        "dry_run": { "type": "boolean" },
+        "fail_closed": { "type": "boolean" },
+        "rc": { "type": "integer" },
+        "actions_planned": { "type": "integer" },
+        "actions_applied": { "type": "integer" },
+        "linter_ok": { "type": ["boolean", "null"] },
+        "errors": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    }
+  },
+  "x_frozen_paths": {
+    "outer_lock": "/root/main/runtime/anti_stall_supervisor_var/hygiene.lock",
+    "linter": "/root/main/runtime/kanban_plan_lint.py",
+    "linter_entrypoint": "python kanban_plan_lint.py [--dry-run] [--boards SLUGS] [--no-blocks]",
+    "linter_has_own_lock": false,
+    "linter_timeout_s_max": 60,
+    "tick_deadline_s_max": 240
+  }
+}
