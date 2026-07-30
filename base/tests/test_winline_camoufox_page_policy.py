@@ -4,6 +4,7 @@ Exclusive focused browser-policy tests. Covers:
 - correct live URL + dynamic_dom => 0 goto / 0 reload / 0 sleep
 - blank / root / wrong-host URL under dynamic_dom => exactly 1 goto repair
 - controlled_reload on live URL => exactly 1 reload, then DOM; no double nav; no sleep
+- controlled_reload on a wrong/redirected URL => bounded goto repair
 - navigation/reload failure is surfaced (never silent dynamic-DOM success)
 - named page bookmaker:winline reused; no duplicate page creation
 """
@@ -11,7 +12,10 @@ Exclusive focused browser-policy tests. Covers:
 from __future__ import annotations
 
 import sys
+import ast
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import pytest
@@ -29,6 +33,100 @@ WINLINE_ROOT_NO_SLASH = "https://winline.ru"
 WINLINE_WRONG_HOST = "https://example.com/odds"
 WINLINE_OTHER_MATCH = "https://winline.ru/stavki/sport/kibersport/match/99999"
 NAMED_PAGE = "bookmaker:winline"
+
+
+def test_async_cli_main_is_awaited_by_module_entrypoint() -> None:
+    source_path = BASE_DIR / "bookmaker_selenium_odds.py"
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    guards = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and any(
+            isinstance(comp, ast.Constant) and comp.value == "__main__"
+            for comp in node.test.comparators
+        )
+    ]
+    assert guards, "module must retain a __main__ entrypoint"
+    assert any(
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Call)
+        and isinstance(stmt.value.func, ast.Attribute)
+        and isinstance(stmt.value.func.value, ast.Name)
+        and stmt.value.func.value.id == "asyncio"
+        and stmt.value.func.attr == "run"
+        for guard in guards
+        for stmt in guard.body
+    ), "async main() must be executed via asyncio.run()"
+
+
+def test_camoufox_async_runner_moves_sync_browser_to_worker_thread(monkeypatch) -> None:
+    events: List[str] = []
+    parse_kwargs: List[Dict[str, Any]] = []
+
+    class _Browser:
+        def new_page(self):
+            events.append("new_page")
+            return _CountingPage(
+                html=_html_body("TeamA TeamB"),
+                body_text="TeamA TeamB",
+                url=WINLINE_LIVE,
+            )
+
+    class _CamoufoxContext:
+        def __enter__(self):
+            events.append("enter")
+            return _Browser()
+
+        def __exit__(self, *_args):
+            events.append("exit")
+
+    async def _fake_parse(*_args, **_kwargs):
+        parse_kwargs.append(dict(_kwargs))
+        return "parsed"
+
+    monkeypatch.setattr(odds_parser, "CAMOUFOX_AVAILABLE", True)
+    monkeypatch.setattr(
+        odds_parser,
+        "camoufox",
+        SimpleNamespace(Camoufox=lambda **_kwargs: _CamoufoxContext()),
+    )
+    monkeypatch.setattr(odds_parser, "parse_site_in_camoufox_page_async", _fake_parse)
+
+    result = asyncio.run(
+        odds_parser.run_sites_in_camoufox_async(
+            selected_sites=["winline"],
+            urls={"winline": WINLINE_LIVE},
+            team1="TeamA",
+            team2="TeamB",
+            mode="live",
+            forced_map_num=1,
+        )
+    )
+
+    assert result == ["parsed"]
+    assert events == ["enter", "new_page", "exit"]
+    assert parse_kwargs[0]["acquisition_mode"] == "initial_goto"
+
+
+def test_compact_sourcetv_team_name_matches_spaced_winline_name() -> None:
+    card = (
+        "DOTA 2 | European Pro League "
+        "AMARU GAMING POWER RANGERS 1карта 0 0 9 16 1К "
+        "Матч 1.75 2.05 1 карта 1.82 1.88"
+    )
+
+    assert odds_parser._text_matches_teams(
+        card,
+        "_PowerRangers",
+        "Amaru Gaming",
+    )
+    assert odds_parser._winline_team_order(
+        card,
+        "_PowerRangers",
+        "Amaru Gaming",
+    ) == "reverse"
 
 
 class _SleepCounter:
@@ -276,6 +374,8 @@ def test_controlled_reload_exactly_one_reload_then_dom_no_sleep(monkeypatch) -> 
     assert page.goto_calls == [], f"controlled_reload must not goto on live URL; got {page.goto_calls}"
     assert len(page.reload_calls) == 1
     assert page.reload_calls[0]["wait_until"] == "domcontentloaded"
+    assert page.reload_calls[0]["timeout"] == odds_parser.WINLINE_BOUNDED_NAVIGATION_TIMEOUT_MS
+    assert page.reload_calls[0]["timeout"] < 30_000
     assert sleep.calls == [], f"controlled_reload must not add hidden sleep; got {sleep.calls}"
     assert page.content_calls >= 1
     assert load_status == "ok"
@@ -301,11 +401,58 @@ def test_controlled_reload_failure_surfaced_single_attempt(monkeypatch) -> None:
 
     assert page.goto_calls == []
     assert len(page.reload_calls) == 1, "exactly one reload attempt even on failure"
+    assert page.reload_calls[0]["timeout"] == odds_parser.WINLINE_BOUNDED_NAVIGATION_TIMEOUT_MS
     assert sleep.calls == []
     assert load_status == "partial_load"
     assert load_error
     assert diag.get("acquisition_error")
     assert len(str(diag.get("acquisition_error"))) <= 300
+
+
+def test_controlled_reload_root_url_repairs_with_goto(monkeypatch) -> None:
+    sleep = _patch_sleep(monkeypatch)
+    body = "TeamA TeamB repaired live page"
+    page = _CountingPage(html=_html_body(body), body_text=body, url=WINLINE_ROOT)
+
+    load_status, load_error, html, visible, body_text, diag = _run_load(
+        page, WINLINE_LIVE, "controlled_reload"
+    )
+
+    assert len(page.goto_calls) == 1
+    assert page.goto_calls[0]["url"] == WINLINE_LIVE
+    assert page.reload_calls == []
+    assert sleep.calls == []
+    assert load_status == "ok"
+    assert load_error == ""
+    assert diag.get("acquisition_error") in (None, "")
+
+
+def test_controlled_reload_redirect_failure_repairs_with_goto(monkeypatch) -> None:
+    sleep = _patch_sleep(monkeypatch)
+    body = "TeamA TeamB repaired after redirect"
+    page = _CountingPage(html=_html_body(body), body_text=body, url=WINLINE_LIVE)
+
+    def _redirecting_reload(
+        wait_until: str = "domcontentloaded", timeout: int = 0
+    ) -> None:
+        page.reload_calls.append({"wait_until": wait_until, "timeout": timeout})
+        page.url = WINLINE_ROOT
+        raise RuntimeError("reload redirected to root")
+
+    page.reload = _redirecting_reload  # type: ignore[method-assign]
+
+    load_status, load_error, html, visible, body_text, diag = _run_load(
+        page, WINLINE_LIVE, "controlled_reload"
+    )
+
+    assert len(page.reload_calls) == 1
+    assert len(page.goto_calls) == 1
+    assert page.goto_calls[0]["url"] == WINLINE_LIVE
+    assert page.url == WINLINE_LIVE
+    assert sleep.calls == []
+    assert load_status == "ok"
+    assert load_error == ""
+    assert diag.get("acquisition_error") in (None, "")
 
 
 def test_controlled_reload_does_not_double_navigate_or_reload(monkeypatch) -> None:
@@ -389,6 +536,46 @@ def test_parse_site_controlled_reload_one_reload_no_sleep(monkeypatch) -> None:
     )
 
     assert page.goto_calls == []
+    assert len(page.reload_calls) == 1
+    assert sleep.calls == []
+    assert getattr(result, "acquisition_mode", None) == "controlled_reload"
+
+
+def test_winline_poller_never_follows_candidate_href_after_reload(monkeypatch) -> None:
+    """A shared listing page must stay on the listing after controlled reload."""
+    sleep = _patch_sleep(monkeypatch)
+    body = "TeamA TeamB after reload"
+    page = _CountingPage(
+        html=_html_body(body),
+        body_text=body,
+        url=WINLINE_LIVE,
+        name=NAMED_PAGE,
+    )
+    candidate_calls: List[List[str]] = []
+
+    async def _unexpected_candidate_open(_page, _site, urls, _team1, _team2):
+        candidate_calls.append(list(urls))
+        return "https://winline.ru/stavki/sport/kibersport/match/unexpected"
+
+    monkeypatch.setattr(
+        odds_parser,
+        "_camoufox_find_match_by_urls_async",
+        _unexpected_candidate_open,
+    )
+
+    result = odds_parser.parse_site_in_camoufox_page(
+        page,
+        "winline",
+        WINLINE_LIVE,
+        "TeamA",
+        "TeamB",
+        mode="live",
+        forced_map_num=1,
+        acquisition_mode="controlled_reload",
+    )
+
+    assert candidate_calls == []
+    assert page.url == WINLINE_LIVE
     assert len(page.reload_calls) == 1
     assert sleep.calls == []
     assert getattr(result, "acquisition_mode", None) == "controlled_reload"

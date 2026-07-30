@@ -63,11 +63,13 @@ class Clock:
 @pytest.fixture(autouse=True)
 def _clean_state(monkeypatch):
     cs._winline_odds_notify_state.clear()
+    cs._winline_odds_orientation_state.clear()
     monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_ENABLED_ENV, "1")
     monkeypatch.delenv(cs.WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, raising=False)
     monkeypatch.delenv(cs.WINLINE_ODDS_TELEGRAM_MAX_PER_MIN_ENV, raising=False)
     yield
     cs._winline_odds_notify_state.clear()
+    cs._winline_odds_orientation_state.clear()
 
 
 def _attempt(p1, p2, status="open"):
@@ -185,6 +187,37 @@ def test_changed_odds_show_direction():
     assert len(sender.calls) == 2
 
 
+def test_transposed_pair_keeps_canonical_team_sides_and_stays_silent():
+    """A DOM-order flip must not be announced as both teams swapping prices."""
+    sender, clock = Sender(), Clock()
+    first = _attempt(9.52, 1.04)
+    assert _notify(first, sender, clock) is not None
+
+    clock.advance(10.0)
+    transposed = _attempt(1.04, 9.52)
+    assert _notify(transposed, sender, clock) is None
+
+    assert transposed["p1_odds"] == pytest.approx(9.52)
+    assert transposed["p2_odds"] == pytest.approx(1.04)
+    assert (
+        transposed["odds_orientation_correction"]
+        == "temporal_pair_transposition"
+    )
+    assert len(sender.calls) == 1
+
+
+def test_large_real_movement_that_is_not_a_pair_transposition_is_reported():
+    sender, clock = Sender(), Clock()
+    _notify(_attempt(9.52, 1.04), sender, clock)
+
+    clock.advance(10.0)
+    message = _notify(_attempt(2.20, 1.65), sender, clock)
+
+    assert message is not None
+    assert "9.52 → 2.20" in message
+    assert "1.04 → 1.65" in message
+
+
 def test_min_spacing_suppresses_burst(monkeypatch):
     monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, "3")
     sender, clock = Sender(), Clock()
@@ -266,6 +299,21 @@ def test_send_failure_is_fail_open():
     ok_sender = Sender()
     clock.advance(10.0)
     assert _notify(_attempt(4.00, 1.18), ok_sender, clock) is not None
+
+
+def test_false_delivery_result_does_not_advance_notification_state():
+    """Явный False от отдельного бота означает недоставку, а не успех."""
+    sender, clock = Sender(), Clock()
+
+    def failed_sender(message, **kwargs):
+        sender.calls.append({"message": message, "kwargs": kwargs})
+        return False
+
+    assert _notify(_attempt(4.00, 1.18), failed_sender, clock) is None
+    assert KEY not in cs._winline_odds_notify_state
+
+    clock.advance(10.0)
+    assert _notify(_attempt(4.00, 1.18), Sender(), clock) is not None
 
 
 def test_canonical_key_parsing():

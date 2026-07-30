@@ -149,6 +149,25 @@ def test_wiring_public_api_exports_exist():
     assert callable(cs.reset_winline_current_map_polling_state)
 
 
+def test_runtime_file_alerts_never_send_telegram_under_pytest(monkeypatch):
+    sent: List[str] = []
+    key = "test:missing-staged-runtime-file"
+    cs._RUNTIME_ALERTED_ERRORS.discard(key)
+    monkeypatch.setattr(
+        cs,
+        "send_message",
+        lambda message, **_kwargs: sent.append(str(message)),
+    )
+
+    cs._notify_runtime_error_once(
+        "⚠️ Missing runtime file: staged-test.json",
+        dedupe_key=key,
+    )
+
+    assert sent == []
+    cs._RUNTIME_ALERTED_ERRORS.discard(key)
+
+
 def test_parse_seam_invokes_polling_ensure_after_draft_success():
     """Source seam: after successful draft parse, wiring ensure is called."""
     src = (BASE_DIR / "cyberscore_try.py").read_text(encoding="utf-8")
@@ -378,6 +397,8 @@ def test_accepted_odds_terminalizes_only_exact_map(tmp_path, monkeypatch):
         f"accepted map2 must not keep polling; second wave={map_nums_second_wave!r}"
     )
     assert 3 in map_nums_second_wave
+    assert key_a not in cs.list_winline_current_map_polling_keys()
+    assert key_b in cs.list_winline_current_map_polling_keys()
 
 
 def test_rollover_and_generation_change_stop_old_state(tmp_path, monkeypatch):
@@ -486,6 +507,7 @@ def test_collector_routes_through_shared_camoufox_job_and_named_page(tmp_path, m
     _clear_wiring_state()
     clock = FakeClock()
     shared_jobs: List[str] = []
+    shared_policies: List[Dict[str, Any]] = []
     page_names: List[str] = []
     acq_modes: List[Optional[str]] = []
 
@@ -513,6 +535,7 @@ def test_collector_routes_through_shared_camoufox_job_and_named_page(tmp_path, m
 
     def fake_run_shared(label, callback, timeout=120.0, retry=True, reset_on_error=True):
         shared_jobs.append(label)
+        shared_policies.append({"timeout": timeout, "retry": retry})
         return callback(object())  # browser token
 
     def fake_parse(page, site, url, team1, team2, mode, forced_map_num=None, acquisition_mode=None):
@@ -549,6 +572,16 @@ def test_collector_routes_through_shared_camoufox_job_and_named_page(tmp_path, m
     cs.tick_winline_current_map_polling(monotonic_fn=clock.monotonic, wall_fn=clock.time)
 
     assert shared_jobs, "collector must submit via _run_shared_camoufox_job"
+    assert shared_policies == [
+        {
+            "timeout": cs.WINLINE_CURRENT_MAP_SHARED_JOB_TIMEOUT_S,
+            "retry": False,
+        }
+    ]
+    # Production Winline acquisition can legitimately take 35-40s because the
+    # listing and candidate-match navigations are separately bounded.  The
+    # outer future must not discard that successful result.
+    assert shared_policies[0]["timeout"] == 60.0
     assert any("winline" in str(j).lower() for j in shared_jobs)
     assert page_names == ["bookmaker:winline"] or "bookmaker:winline" in page_names
     assert acq_modes and acq_modes[0] in {"initial_goto", "dynamic_dom", "controlled_reload"}
@@ -714,6 +747,184 @@ def test_concurrent_evidence_publication_race_safe_unique_temp_and_lock(tmp_path
     assert final.get("probe") == 1
 
 
+def test_identical_evidence_is_not_rewritten(tmp_path, monkeypatch):
+    _clear_wiring_state()
+    evidence = tmp_path / "latest.json"
+    replaces = []
+    real_replace = os.replace
+
+    def _replace(src, dst):
+        replaces.append((str(src), str(dst)))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(cs.os, "replace", _replace)
+    payload = {"canonical_key": CANONICAL, "attempt_index": 7, "status": "pending"}
+    cs._winline_write_current_map_evidence(payload, path=evidence)
+    cs._winline_write_current_map_evidence(dict(payload), path=evidence)
+
+    assert len(replaces) == 1
+
+
+def test_sourcetv_series_key_survives_new_map_id_and_side_swap(monkeypatch):
+    monkeypatch.setattr(cs, "DLTV_SOURCE_MODE", "sourcetv", raising=False)
+    map1 = {
+        "match_id": 8919836261,
+        "league_id": 17999,
+        "radiant_team_id": 101,
+        "dire_team_id": 202,
+        "radiant_team_name": "Team Spirit Academy",
+        "dire_team_name": "Aion",
+        "series_game_number": 1,
+    }
+    map2 = {
+        "match_id": 8919960678,
+        "league_id": 17999,
+        "radiant_team_id": 202,
+        "dire_team_id": 101,
+        "radiant_team_name": "Aion",
+        "dire_team_name": "Team Spirit Academy",
+        "series_game_number": 2,
+    }
+
+    key1 = cs._winline_polling_series_key("dltv.org/matches/8919836261", live_data=map1)
+    key2 = cs._winline_polling_series_key("dltv.org/matches/8919960678", live_data=map2)
+
+    assert key1 == key2
+    assert key1.startswith("sourcetv:league:17999|")
+    assert cs._winline_sourcetv_map_num(map1) == 1
+    assert cs._winline_sourcetv_map_num(map2) == 2
+
+
+def test_sourcetv_rollover_terminalizes_and_prunes_old_map(tmp_path, monkeypatch):
+    _clear_wiring_state()
+    clock = FakeClock()
+    monkeypatch.setattr(cs, "DLTV_SOURCE_MODE", "sourcetv", raising=False)
+    monkeypatch.setattr(cs, "start_winline_current_map_polling_scheduler", lambda **_k: True)
+    map1 = {
+        "match_id": 8919836261,
+        "league_id": 17999,
+        "radiant_team_id": 101,
+        "dire_team_id": 202,
+        "radiant_team_name": "Team Spirit Academy",
+        "dire_team_name": "Aion",
+        "series_game_number": 1,
+    }
+    map2 = {
+        "match_id": 8919960678,
+        "league_id": 17999,
+        "radiant_team_id": 202,
+        "dire_team_id": 101,
+        "radiant_team_name": "Aion",
+        "dire_team_name": "Team Spirit Academy",
+        "series_game_number": 2,
+    }
+    series = cs._winline_sourcetv_series_key(map1)
+    cs.ensure_winline_current_map_polling(
+        series=series,
+        map_num=1,
+        team1=map1["radiant_team_name"],
+        team2=map1["dire_team_name"],
+        producer_pid=1,
+        producer_start_generation="g1",
+        monotonic_fn=clock.monotonic,
+        wall_fn=clock.time,
+        collector=lambda **_k: _missing_collector_result(),
+        evidence_path=tmp_path / "map1.json",
+    )
+
+    cs._reconcile_winline_sourcetv_polling({"map2": map2}, authoritative=True)
+    result = cs.tick_winline_current_map_polling(
+        monotonic_fn=clock.monotonic,
+        wall_fn=clock.time,
+    )
+
+    terminal = (result[0].get("terminal") or result[0]) if result else {}
+    assert terminal.get("lifecycle_event") == "map_rollover"
+    assert cs.list_winline_current_map_polling_keys() == []
+
+
+def test_two_active_maps_share_one_browser_snapshot(tmp_path, monkeypatch):
+    _clear_wiring_state()
+    clock = FakeClock()
+    shared_calls: List[str] = []
+
+    class _FakePage:
+        def evaluate(self, *_args, **_kwargs):
+            return {"html": "<html>shared snapshot</html>", "url": "https://winline/live"}
+
+    class _FakeSession:
+        def get_or_create_page(self, name, browser):
+            assert name == "bookmaker:winline"
+            return _FakePage()
+
+    class _FakeResult:
+        source = "Winline"
+        odds = []
+        map_num = MAP_NUM
+        market_closed = False
+        market_kind = "current_map_winner"
+        status = "ok"
+        match_found = False
+        acquisition_mode = "initial_goto"
+        dom_signature = "dom-sig"
+        page_url = "https://winline/live"
+        body_text = "loaded page"
+        acquisition_error = None
+        error = None
+        load_error = None
+        parser_failure_reasons = []
+        details = "loaded page"
+
+    def fake_run_shared(label, callback, **_kwargs):
+        shared_calls.append(str(label))
+        return callback(object())
+
+    monkeypatch.setattr(cs, "start_winline_current_map_polling_scheduler", lambda **_k: True)
+    monkeypatch.setattr(cs, "_run_shared_camoufox_job", fake_run_shared)
+    monkeypatch.setattr(cs, "_shared_camoufox_session", _FakeSession(), raising=False)
+    monkeypatch.setattr(cs, "BOOKMAKER_CAMOUFOX_IMPORTED", True, raising=False)
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_parse_site_in_camoufox_page",
+        lambda *_a, **_k: _FakeResult(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_urls_for_mode",
+        lambda _mode: {"winline": "https://winline/live"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cs,
+        "_winline_fast_collect_from_payload",
+        lambda _payload, **kwargs: _missing_collector_result(
+            series=kwargs["series"], map_num=kwargs["map_num"]
+        ),
+    )
+
+    for suffix, map_num in (("a", 1), ("b", 2)):
+        cs.ensure_winline_current_map_polling(
+            series=f"series-{suffix}",
+            map_num=map_num,
+            team1=f"{TEAM1}-{suffix}",
+            team2=f"{TEAM2}-{suffix}",
+            producer_pid=1,
+            producer_start_generation="g1",
+            monotonic_fn=clock.monotonic,
+            wall_fn=clock.time,
+            evidence_path=tmp_path / f"{suffix}.json",
+        )
+
+    cs.tick_winline_current_map_polling(
+        monotonic_fn=clock.monotonic,
+        wall_fn=clock.time,
+    )
+
+    assert len(shared_calls) == 1
+    assert len(cs.list_winline_current_map_polling_keys()) == 2
+
+
 def test_collector_routes_only_through_shared_camoufox_no_duplicate_scheduler_path(tmp_path, monkeypatch):
     """Browser ops in named symbols go through _run_shared_camoufox_job; one named page."""
     _clear_wiring_state()
@@ -789,6 +1000,279 @@ def test_collector_routes_only_through_shared_camoufox_no_duplicate_scheduler_pa
     assert "bookmaker:winline" in collect_src
     assert "Camoufox(" not in collect_src
     assert "camoufox.Camoufox" not in collect_src
+
+
+def test_initial_goto_uses_fast_dom_when_named_page_is_already_healthy(monkeypatch):
+    _clear_wiring_state()
+    parse_calls: List[str] = []
+
+    class _FakeSession:
+        def get_or_create_page(self, name, browser):
+            assert name == "bookmaker:winline"
+            return object()
+
+    expected = _missing_collector_result(
+        page_valid=True,
+        market_status="missing",
+        market_missing=True,
+    )
+
+    monkeypatch.setattr(
+        cs, "_run_shared_camoufox_job", lambda _label, callback, **_kwargs: callback(object())
+    )
+    monkeypatch.setattr(cs, "_shared_camoufox_session", _FakeSession(), raising=False)
+    monkeypatch.setattr(cs, "BOOKMAKER_CAMOUFOX_IMPORTED", True, raising=False)
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_urls_for_mode",
+        lambda _mode: {"winline": "https://winline.example/live"},
+        raising=False,
+    )
+    monkeypatch.setattr(cs, "_winline_fast_collect", lambda *_a, **_k: dict(expected))
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_parse_site_in_camoufox_page",
+        lambda *_a, **_k: parse_calls.append("full"),
+        raising=False,
+    )
+
+    out = cs._winline_current_map_poller_collect(
+        acquisition_mode="initial_goto",
+        series=LISTING_SERIES,
+        map_num=MAP_NUM,
+        team1=TEAM1,
+        team2=TEAM2,
+    )
+
+    assert out["market_status"] == "missing"
+    assert out["acquisition_mode_echo"] == "initial_goto"
+    assert parse_calls == []
+
+
+def test_missing_pinned_event_is_selected_then_fast_dom_reparsed(monkeypatch):
+    _clear_wiring_state()
+    clicks: List[str] = []
+    fast_results = [
+        {
+            **_missing_collector_result(),
+            "match_found": True,
+        },
+        {
+            **_accepted_collector_result(),
+            "match_found": True,
+        },
+    ]
+
+    class _Card:
+        def inner_text(self, timeout=0):
+            return "1w Essence TEAM FALCONS VICI GAMING"
+
+        def locator(self, selector):
+            assert selector == ".new-card--selected"
+            return type("_Selected", (), {"count": lambda self: 0})()
+
+        def click(self, timeout=0):
+            clicks.append("clicked")
+
+    class _Cards:
+        def count(self):
+            return 1
+
+        def nth(self, index):
+            assert index == 0
+            return _Card()
+
+    class _Page:
+        def locator(self, selector):
+            assert selector == "ww-pinned-card"
+            return _Cards()
+
+        def wait_for_timeout(self, milliseconds):
+            assert milliseconds == 800
+
+    class _Session:
+        def get_or_create_page(self, name, browser):
+            assert name == "bookmaker:winline"
+            return _Page()
+
+    monkeypatch.setattr(
+        cs, "_run_shared_camoufox_job", lambda _label, callback, **_kwargs: callback(object())
+    )
+    monkeypatch.setattr(cs, "_shared_camoufox_session", _Session(), raising=False)
+    monkeypatch.setattr(cs, "BOOKMAKER_CAMOUFOX_IMPORTED", True, raising=False)
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_urls_for_mode",
+        lambda _mode: {"winline": "https://winline.example/live"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_text_matches_teams",
+        lambda text, team1, team2: "FALCONS" in text and "VICI" in text,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cs,
+        "_winline_fast_collect",
+        lambda *_a, **_k: fast_results.pop(0),
+    )
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_parse_site_in_camoufox_page",
+        lambda *_a, **_k: pytest.fail("full parser must not run"),
+        raising=False,
+    )
+
+    page = _Session().get_or_create_page("bookmaker:winline", object())
+    pinned_key = "series-falcons-vici|map1|Team Falcons|Vici Gaming"
+    cs._winline_shared_page_state["selected_pinned_page_id"] = id(page)
+    cs._winline_shared_page_state["selected_pinned_key"] = pinned_key
+    monkeypatch.setattr(
+        cs._shared_camoufox_session,
+        "get_or_create_page",
+        lambda name, browser: page,
+    )
+
+    out = cs._winline_current_map_poller_collect(
+        acquisition_mode="dynamic_dom",
+        series="series-falcons-vici",
+        map_num=1,
+        team1="Team Falcons",
+        team2="Vici Gaming",
+    )
+
+    assert clicks == ["clicked"]
+    assert out["market_status"] == "open"
+    assert out["p1_odds"] is not None
+    assert out["p2_odds"] is not None
+
+
+def test_shared_page_suppresses_duplicate_controlled_reload(monkeypatch):
+    _clear_wiring_state()
+    modes: List[str] = []
+
+    class _FakeSession:
+        def get_or_create_page(self, name, browser):
+            assert name == "bookmaker:winline"
+            return object()
+
+    class _FakeResult:
+        source = "Winline"
+        odds = []
+        map_num = MAP_NUM
+        market_closed = False
+        market_kind = "current_map_winner"
+        status = "ok"
+        match_found = False
+        acquisition_mode = None
+        dom_signature = "stable"
+        page_url = "https://winline.example/live"
+        body_text = "loaded page"
+        acquisition_error = None
+        error = None
+        load_error = None
+        parser_failure_reasons = []
+        details = "loaded page"
+
+    def _fake_parse(*_args, acquisition_mode=None, **_kwargs):
+        modes.append(str(acquisition_mode))
+        result = _FakeResult()
+        result.acquisition_mode = acquisition_mode
+        return result
+
+    monkeypatch.setattr(
+        cs, "_run_shared_camoufox_job", lambda _label, callback, **_kwargs: callback(object())
+    )
+    monkeypatch.setattr(cs, "_shared_camoufox_session", _FakeSession(), raising=False)
+    monkeypatch.setattr(cs, "BOOKMAKER_CAMOUFOX_IMPORTED", True, raising=False)
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_urls_for_mode",
+        lambda _mode: {"winline": "https://winline.example/live"},
+        raising=False,
+    )
+    monkeypatch.setattr(cs, "_winline_fast_collect", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        cs, "_bookmaker_parse_site_in_camoufox_page", _fake_parse, raising=False
+    )
+
+    kwargs = dict(
+        acquisition_mode="controlled_reload",
+        map_num=MAP_NUM,
+        team1=TEAM1,
+        team2=TEAM2,
+    )
+    cs._winline_current_map_poller_collect(series="series-a", **kwargs)
+    cs._winline_current_map_poller_collect(series="series-b", **kwargs)
+
+    assert modes == ["controlled_reload", "dynamic_dom"]
+
+
+def test_acquisition_error_rotates_proxy_and_resets_shared_browser(monkeypatch):
+    _clear_wiring_state()
+    rotations: List[str] = []
+
+    class _FakeSession:
+        def get_or_create_page(self, name, browser):
+            assert name == "bookmaker:winline"
+            return object()
+
+    class _FailedResult:
+        source = "Winline"
+        odds = []
+        map_num = MAP_NUM
+        market_closed = False
+        market_kind = "current_map_winner"
+        status = "partial_load"
+        match_found = False
+        acquisition_mode = "controlled_reload"
+        dom_signature = "stale-dom"
+        page_url = "https://winline.example/live"
+        body_text = "stale loaded page"
+        acquisition_error = "Page.reload: Timeout 12000ms exceeded"
+        error = None
+        load_error = acquisition_error
+        parser_failure_reasons = []
+        details = body_text
+
+    monkeypatch.setattr(
+        cs, "_run_shared_camoufox_job", lambda _label, callback, **_kwargs: callback(object())
+    )
+    monkeypatch.setattr(cs, "_shared_camoufox_session", _FakeSession(), raising=False)
+    monkeypatch.setattr(cs, "BOOKMAKER_CAMOUFOX_IMPORTED", True, raising=False)
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_urls_for_mode",
+        lambda _mode: {"winline": "https://winline.example/live"},
+        raising=False,
+    )
+    monkeypatch.setattr(cs, "_winline_fast_collect", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_parse_site_in_camoufox_page",
+        lambda *_a, **_k: _FailedResult(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_rotate_shared_camoufox_proxy",
+        lambda *, reason="": rotations.append(reason),
+    )
+
+    kwargs = dict(
+        acquisition_mode="controlled_reload",
+        map_num=MAP_NUM,
+        team1=TEAM1,
+        team2=TEAM2,
+    )
+    out = cs._winline_current_map_poller_collect(series="series-a", **kwargs)
+    second = cs._winline_current_map_poller_collect(series="series-b", **kwargs)
+
+    assert out["page_valid"] is False
+    assert "Timeout" in str(out["acquisition_error"])
+    assert second["page_valid"] is False
+    assert rotations == ["winline_acquisition_error"]
 
 
 # ---------------------------------------------------------------------------
@@ -989,6 +1473,34 @@ def test_check_head_successful_parse_triggers_polling_without_star(monkeypatch, 
         assert call["selected_side"] in (None, "", "P1", "P2", TEAM1, TEAM2)
 
 
+def test_sourcetv_intermission_advances_winline_to_next_map_only_when_draft_cleared():
+    completed = {
+        "status": "live",
+        "series_game_number": 1,
+        "radiant_series_wins": 0,
+        "dire_series_wins": 0,
+        "series_type": 3,
+        "game_time": 2318,
+        "radiant_score": 38,
+        "dire_score": 10,
+        "fast_picks": {},
+        "_cyberscore_heroes_and_pos": {"radiant": None, "dire": None},
+    }
+    assert cs._winline_sourcetv_map_num(completed) == 2
+
+    still_playing = dict(completed)
+    still_playing["fast_picks"] = {"first_team": [{"hero_id": 1}]}
+    still_playing["_cyberscore_heroes_and_pos"] = {
+        "radiant": {"pos1": {"hero_id": 1}},
+        "dire": {"pos1": {"hero_id": 2}},
+    }
+    assert cs._winline_sourcetv_map_num(still_playing) == 1
+
+    incomplete = dict(completed)
+    incomplete.pop("_cyberscore_heroes_and_pos")
+    assert cs._winline_sourcetv_map_num(incomplete) == 1
+
+
 def test_no_sleep_calls_in_wiring_module_surface():
     """Guard: wiring helpers must not call time.sleep (poller is no-sleep)."""
     src = (BASE_DIR / "cyberscore_try.py").read_text(encoding="utf-8")
@@ -1154,6 +1666,36 @@ def test_w8_classification_acquisition_error_is_browser_failure():
         expected_url="https://winline.example/live",
     )
     assert out.get("page_valid") is False, out
+
+
+def test_w8_reload_timeout_does_not_discard_confirmed_open_market():
+    """A lifecycle timeout is diagnostic when the requested market parsed."""
+    fn = cs._winline_map_site_result_to_collector_dict
+    result = _SiteResultLike(
+        match_found=True,
+        status="partial_load",
+        acquisition_error="Page.reload: Timeout 12000ms exceeded",
+        odds=[1.31, 3.49],
+        p1_team=TEAM1,
+        p2_team=TEAM2,
+        map_num=MAP_NUM,
+        dom_signature="confirmed-market-dom",
+    )
+    out = fn(
+        result,
+        acquisition_mode="controlled_reload",
+        series=LISTING_SERIES,
+        map_num=MAP_NUM,
+        team1=TEAM1,
+        team2=TEAM2,
+        expected_url="https://winline.example/live",
+    )
+
+    assert out["page_valid"] is True, out
+    assert out["market_status"] == "open", out
+    assert out["p1_odds"] == 1.31
+    assert out["p2_odds"] == 3.49
+    assert out["acquisition_error"]
 
 
 def test_w8_eligible_miss_advances_initial_goto_dynamic_dom_controlled_reload(tmp_path):

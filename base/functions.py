@@ -980,14 +980,20 @@ def _should_try_telegram_curl_fallback(exc: Exception) -> bool:
     return _should_try_telegram_network_fallback(exc)
 
 
-def _send_message_via_curl_to_chat(chat_id, message, *, silent: bool = False) -> bool:
+def _send_message_via_curl_to_chat(
+    chat_id,
+    message,
+    *,
+    silent: bool = False,
+    bot_token: Optional[str] = None,
+) -> bool:
     curl_path = shutil.which("curl")
     if not curl_path:
         raise TelegramSendError(
             "Telegram curl fallback unavailable: curl not found",
             delivery_uncertain=True,
         )
-    bot_token = f"{keys.Token}"
+    bot_token = bot_token or f"{keys.Token}"
     chat_id = _telegram_normalize_chat_id(chat_id)
     if not chat_id:
         raise TelegramSendError(
@@ -1083,6 +1089,7 @@ def _recover_telegram_network_send(
     require_delivery: bool,
     error_message: str,
     delivery_uncertain: bool,
+    bot_token: Optional[str] = None,
 ):
     # Тишина сообщения задана в payload — фолбэки не должны её терять.
     silent = bool(payload.get("disable_notification")) if isinstance(payload, dict) else False
@@ -1096,7 +1103,12 @@ def _recover_telegram_network_send(
                 if _should_try_telegram_curl_fallback(proxy_exc):
                     logger.warning("Telegram proxy fallback failed; trying curl fallback")
                     chat_id = payload.get("chat_id") if isinstance(payload, dict) else None
-                    return _send_message_via_curl_to_chat(chat_id, message, silent=silent)
+                    return _send_message_via_curl_to_chat(
+                        chat_id,
+                        message,
+                        silent=silent,
+                        bot_token=bot_token,
+                    )
                 return _telegram_raise_delivery_error(
                     f"{error_message}: {proxy_exc}",
                     require_delivery=require_delivery,
@@ -1113,11 +1125,21 @@ def _recover_telegram_network_send(
                 if _should_try_telegram_curl_fallback(exc):
                     logger.warning("Telegram proxy unavailable; trying curl fallback")
                     chat_id = payload.get("chat_id") if isinstance(payload, dict) else None
-                    return _send_message_via_curl_to_chat(chat_id, message, silent=silent)
+                    return _send_message_via_curl_to_chat(
+                        chat_id,
+                        message,
+                        silent=silent,
+                        bot_token=bot_token,
+                    )
         elif _should_try_telegram_curl_fallback(exc):
             logger.warning("Telegram direct send failed; trying curl fallback")
             chat_id = payload.get("chat_id") if isinstance(payload, dict) else None
-            return _send_message_via_curl_to_chat(chat_id, message, silent=silent)
+            return _send_message_via_curl_to_chat(
+                chat_id,
+                message,
+                silent=silent,
+                bot_token=bot_token,
+            )
     return _telegram_raise_delivery_error(
         f"{error_message}: {exc}",
         require_delivery=require_delivery,
@@ -1132,8 +1154,9 @@ def _send_message_to_chat_id(
     require_delivery: bool = False,
     reply_markup: Optional[dict] = None,
     silent: bool = False,
+    bot_token: Optional[str] = None,
 ):
-    bot_token = f'{keys.Token}'
+    bot_token = bot_token or f'{keys.Token}'
     chat_id = _telegram_normalize_chat_id(chat_id)
     if not chat_id:
         return _telegram_raise_delivery_error(
@@ -1168,6 +1191,7 @@ def _send_message_to_chat_id(
             require_delivery=require_delivery,
             error_message="Telegram send failed",
             delivery_uncertain=False,
+            bot_token=bot_token,
         )
         if isinstance(recovered, bool):
             return recovered
@@ -1189,6 +1213,7 @@ def _send_message_to_chat_id(
             require_delivery=require_delivery,
             error_message="Telegram send SSL error",
             delivery_uncertain=True,
+            bot_token=bot_token,
         )
         if isinstance(recovered, bool):
             return recovered
@@ -1203,6 +1228,7 @@ def _send_message_to_chat_id(
             require_delivery=require_delivery,
             error_message="Telegram send connection error",
             delivery_uncertain=True,
+            bot_token=bot_token,
         )
         if isinstance(recovered, bool):
             return recovered
@@ -1512,6 +1538,64 @@ def _send_message_to_vk(message: str, *, admin_only: bool = False) -> bool:
     if errors:
         raise errors[0][1]
     return False
+
+
+WINLINE_ODDS_TELEGRAM_BOT_TOKEN_ENV = "WINLINE_ODDS_TELEGRAM_BOT_TOKEN"
+
+
+def _get_winline_odds_bot_token() -> str:
+    """Токен ОТДЕЛЬНОГО бота для служебного потока кэфов Winline.
+
+    Приоритет: env `WINLINE_ODDS_TELEGRAM_BOT_TOKEN` → `keys.WinlineToken` →
+    fallback на основной `keys.Token` (чтобы отсутствие настройки не убивало
+    поток целиком).
+    """
+    env_token = str(os.getenv(WINLINE_ODDS_TELEGRAM_BOT_TOKEN_ENV, "") or "").strip()
+    if env_token:
+        return env_token
+    winline_token = str(getattr(keys, "WinlineToken", "") or "").strip()
+    return winline_token or f"{keys.Token}"
+
+
+def send_winline_odds_message(message, **_ignored_kwargs) -> bool:
+    """Отправить кэфы Winline через ВЫДЕЛЕННЫЙ бот-токен в админ-чат.
+
+    Ставки продолжают уходить через `send_message` (основной бот) — эта функция
+    физически разводит два потока по разным ботам, чтобы служебные кэфы не
+    смешивались со ставками в одном чате.
+
+    Особенности:
+    - только админ-чат, без VK-зеркала;
+    - всегда `silent=True` (кэфы не должны глушить пуши ставок);
+    - без `reply_markup`: админ-кнопки привязаны к основному боту, у которого
+      крутится getUpdates-поллер, у бота кэфов его нет;
+    - fail-open: любая ошибка логируется и не выбрасывается наружу.
+
+    `**_ignored_kwargs` — совместимость с сигнатурой `send_message`
+    (`admin_only` / `mirror_to_vk` / `silent`), значения игнорируются.
+    """
+    chat_ids = _get_admin_telegram_chat_ids()
+    if not chat_ids:
+        return False
+    bot_token = _get_winline_odds_bot_token()
+    delivered = False
+    for chat_id in chat_ids:
+        try:
+            if _send_message_to_chat_id(
+                chat_id,
+                message,
+                bot_token=bot_token,
+                silent=True,
+            ):
+                delivered = True
+        except Exception as exc:
+            try:
+                logger.warning(
+                    "send_winline_odds_message failed chat_id=%s: %s", chat_id, exc
+                )
+            except Exception:
+                pass
+    return delivered
 
 
 def send_message(

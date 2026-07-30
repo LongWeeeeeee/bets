@@ -259,13 +259,32 @@ def run_supervisor(*, once: bool) -> int:
                 }
             )
             _atomic_write_json(EVIDENCE_PATH, evidence)
+            result_summary = [
+                {
+                    "request": item.get("request"),
+                    "status": item.get("status"),
+                    "market_kind": item.get("market_kind"),
+                    "odds": item.get("odds"),
+                    "strict_current_map_odds": item.get("strict_current_map_odds"),
+                    "details": item.get("details"),
+                }
+                for item in (evidence.get("results") or [])
+                if isinstance(item, dict)
+            ]
             print(
                 json.dumps(
                     {
                         "sequence": sequence,
+                        "updated_at": evidence.get("updated_at"),
                         "state": evidence.get("state"),
                         "strict_success": evidence.get("strict_success", False),
+                        "technical_ok": evidence.get("technical_ok", False),
                         "technical_attempts": attempts,
+                        "matches_seen": evidence.get("matches_seen", 0),
+                        "elapsed_seconds": evidence.get("elapsed_seconds"),
+                        "error": evidence.get("error"),
+                        "stderr": evidence.get("stderr"),
+                        "results": result_summary,
                     },
                     ensure_ascii=False,
                 ),

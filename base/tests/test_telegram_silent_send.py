@@ -81,9 +81,10 @@ def test_silent_send_disables_notification(monkeypatch, tmp_path) -> None:
 def test_curl_fallback_preserves_silence(monkeypatch) -> None:
     captured = {}
 
-    def _fake_curl(chat_id, message, *, silent: bool = False):
+    def _fake_curl(chat_id, message, *, silent: bool = False, bot_token=None):
         captured["chat_id"] = chat_id
         captured["silent"] = silent
+        captured["bot_token"] = bot_token
         return True
 
     monkeypatch.setattr(functions, "_send_message_via_curl_to_chat", _fake_curl)
@@ -102,4 +103,5 @@ def test_curl_fallback_preserves_silence(monkeypatch) -> None:
     )
 
     assert result is True
-    assert captured == {"chat_id": "100", "silent": True}
+    assert captured["chat_id"] == "100"
+    assert captured["silent"] is True

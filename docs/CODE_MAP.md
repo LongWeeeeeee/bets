@@ -56,7 +56,7 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 | `_match_has_tier1_team(radiant_team_id, dire_team_id)` | 12089 | True если ≥1 команда Tier-1 (OR; vs `_determine_star_signal_match_tier`=обе). Гейт kills-ставок (`KILLS_REQUIRE_TIER1_TEAM`) |
 | `_stake_multiplier_for_signal(...)` | 4990 | множитель ставки (x0.5/1/2/3) — см. ARCHITECTURE «Stake multiplier» |
 | `_build_stake_multiplier_context(...)` | 5122 | контекст для множителя |
-| `_late_wr_below_70_opposite_all_reject_active(...)` | 3395 | terminal STAR-gate: отклоняет valid Late WR `<70` с финальным hit count `<2` при valid All противоположного знака до immediate/watchers; WR=70 или hits>=2 разрешены, `FORCE_ODDS_SIGNAL_TEST` обходит gate |
+| `_evaluate_star_block_combination_gate(...)` | 5384 | terminal STAR combination gate для Early Winner/Late/All; одиночный Late блокируется при любом WR60+ star-хите противоположного знака в All независимо от Late WR; одинаковый знак Late/All разрешён |
 | `_build_late27_dispatch_guard_snapshot(...)` | 3477 | сериализуемый снимок фактов 27+ late-гейта (late знак/WR/hit count, поддержка early того же знака, WR60+ star-хиты All); уезжает в delayed payload через `stake_multiplier_context["all_star_hits"]` |
 | `_late27_dispatch_guard_snapshot_from_context(smc)` | 3528 | восстановление снимка из `stake_multiplier_context` delayed-записи (legacy-записи без `all_star_hits` → неизвестные поля не блокируют) |
 | `_evaluate_late27_dispatch_guard(snapshot, *, target_side, game_time_seconds, force_odds_signal_test_active)` | 3547 | 27+ late-гейт: `{active, blocked, reasons}`; активен при late-driven диспатче (сторона = late-знак, нет валидного early того же знака) на `game_time >= 27:00` |
@@ -385,7 +385,7 @@ Camoufox + Selenium-парсер кэфов/наличия матча (betboom/p
 
 ## `base/keys.py` — структура (БЕЗ значений)
 
-Telegram: `Token`, `Chat_id`, `Chat_ids`. VK: `VK_GROUP_ID`, `VK_PEER_ID`, `VK_PEER_IDS`, `VK_API_VERSION`, `VK_GROUP_TOKEN`. Steam: `STEAM_API_KEY`. Patch-таймстемпы: `start_date_time*`, `DOTA_PATCH_EVENTS`, `DOTA_PATCH_START_TIMES`, `DOTA_VERSION_PATCH_EVENTS`, `DOTA_PATCH_SPECS`. Прокси: `BOOKMAKER_PROXY_RAW/URL/FALLBACK`, `DLTV_BANNED_PROXIES`, `SHARED_PROXY_POOL`, `RU_PROXY_POOL`, `BOOKMAKER_PROXY_POOL`, `DOTA2PROTRACKER_PROXY_POOL`, `DLTV_PROXY_POOL`, `BOOKMAKER_PROXIES`. API-маппинги: `api_to_proxy` (+ `api_to_keys`). НЕ коммитить; пример — `keys_local.example.py`.
+Telegram: `Token`, `Chat_id`, `Chat_ids`. VK: `VK_GROUP_ID`, `VK_PEER_ID`, `VK_PEER_IDS`, `VK_API_VERSION`, `VK_GROUP_TOKEN`. Steam: `STEAM_API_KEY`. Patch-таймстемпы: `start_date_time*`, `DOTA_PATCH_EVENTS`, `DOTA_PATCH_START_TIMES`, `DOTA_VERSION_PATCH_EVENTS`, `DOTA_PATCH_SPECS`. Прокси: `BOOKMAKER_PROXY_RAW/URL/FALLBACK`, `DLTV_BANNED_PROXIES`, `SHARED_PROXY_POOL`, `RU_PROXY_POOL`, `BOOKMAKER_PROXY_POOL`, `DOTA2PROTRACKER_PROXY_POOL`, `DLTV_PROXY_POOL`, `BOOKMAKER_PROXIES`, `STRATZ_HTTP_PROXIES`, `STRATZ_SOCKS_PROXIES` (5 хостов, http- и socks-порт одного хоста = ОДИН exit-IP). API-маппинги: `api_to_proxy` (+ `api_to_keys`), `STRATZ_KEYS` (6 токенов / 5 аккаунтов: stratz-126a и -126b — один SteamId 1261253938), `STRATZ_PROXY_MAP` (proxy→token 1:1, 6 пар; 6-й токен на socks-порту того же хоста, что -126b). НЕ коммитить; пример — `keys_local.example.py`.
 
 ---
 

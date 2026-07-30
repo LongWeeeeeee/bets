@@ -7,7 +7,7 @@ Proves a no-sleep controller:
 - overrun coalesces missed intervals into one immediate non-overlapping follow-up
 - canonical (series, map_num, ordered teams) identity
 - lifecycle terminals: rollover, series end/cancel, PID generation change, 90m safety
-- three-miss controlled_reload with >=60s spacing; DOM-change / accepted-odds reset
+- three-miss controlled_reload with >=60s spacing; accepted odds reset
 - per-attempt evidence + one primary whole-map failure reason
 - no browser import/start and no real sleep
 """
@@ -606,6 +606,9 @@ def test_stops_on_proven_map_rollover() -> None:
     # with only missing market + rollover → market_never_exposed
     assert reason == "market_never_exposed"
     assert len(collector.calls) == 1  # no extra collect after rollover
+    # Terminal evidence is a one-shot event. Replaying it forever made the
+    # manager rewrite a growing JSON history on every scheduler tick.
+    assert poller.tick() is None
 
 
 def test_stops_on_series_complete_or_cancel() -> None:
@@ -821,7 +824,7 @@ def test_reload_not_more_often_than_once_per_60s_per_canonical_map() -> None:
     assert (r.get("attempt") or r)["acquisition_mode"] == "controlled_reload"
 
 
-def test_changed_dom_signature_resets_consecutive_miss_counter() -> None:
+def test_changed_dom_signature_does_not_mask_consecutive_market_misses() -> None:
     mod = _load_mod()
     clock = FakeClock()
     collector = FakeCollector(
@@ -843,7 +846,7 @@ def test_changed_dom_signature_resets_consecutive_miss_counter() -> None:
                 "dom_signature": "b",
                 "dom_hash": "hb",
                 "page_valid": True,
-            },  # change resets
+            },  # unrelated live DOM churn must not reset recovery
             {
                 "market_status": "missing",
                 "dom_signature": "b",
@@ -861,7 +864,7 @@ def test_changed_dom_signature_resets_consecutive_miss_counter() -> None:
                 "dom_signature": "b",
                 "dom_hash": "hb",
                 "page_valid": True,
-            },  # 3rd same after reset -> reload
+            },
         ]
     )
     poller, _, _ = _make_poller(mod, collector=collector, clock=clock)
@@ -874,10 +877,10 @@ def test_changed_dom_signature_resets_consecutive_miss_counter() -> None:
         modes.append((r.get("attempt") or r)["acquisition_mode"])
     assert modes[0] == "initial_goto"
     assert modes[1] == "dynamic_dom"
-    assert modes[2] == "dynamic_dom"  # DOM changed; no reload yet
-    assert modes[3] == "dynamic_dom"
+    assert modes[2] == "dynamic_dom"
+    assert modes[3] == "controlled_reload"
     assert modes[4] == "dynamic_dom"
-    assert modes[5] == "controlled_reload"
+    assert modes[5] == "dynamic_dom"
 
 
 def test_accepted_fresh_odds_resets_and_terminals_success() -> None:
@@ -922,6 +925,37 @@ def test_accepted_fresh_odds_resets_and_terminals_success() -> None:
     assert att.get("p1_odds") == 1.72
     assert att.get("p2_odds") == 2.11
     assert att.get("accepted") is True
+
+
+@pytest.mark.parametrize(
+    "result_update",
+    [
+        {"market_status": "closed"},
+        {"market_status": "market_closed"},
+        {"market_status": "open", "odds_bettable": False},
+    ],
+)
+def test_numeric_odds_are_not_accepted_when_market_is_not_bettable(
+    result_update: Dict[str, Any],
+) -> None:
+    mod = _load_mod()
+    clock = FakeClock()
+    payload = {
+        "market_status": "open",
+        "source": "winline_current_map_winner",
+        "p1_odds": 1.72,
+        "p2_odds": 2.11,
+        "page_valid": True,
+    }
+    payload.update(result_update)
+    collector = FakeCollector([payload])
+    poller, _, _ = _make_poller(mod, collector=collector, clock=clock)
+    poller.begin(**_base_identity())
+
+    result = poller.tick()
+    attempt = result.get("attempt") or result
+    assert attempt.get("accepted") is not True
+    assert poller.is_active() is True
 
 
 def test_selected_side_absent_empty_non_gating_supplied_preserved() -> None:

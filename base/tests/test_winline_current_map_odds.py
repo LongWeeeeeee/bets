@@ -954,8 +954,8 @@ def test_prepare_message_uses_odds_state_machine_production_path(monkeypatch) ->
     assert "terminal_skip" in reason4
 
 
-def test_shared_camoufox_uses_de_us_proxy_candidates_policy(monkeypatch) -> None:
-    """Shared session must wire Winline DE/US candidates; 5 DE / 0 US is valid."""
+def test_shared_camoufox_uses_direct_then_de_us_fallback_policy(monkeypatch) -> None:
+    """Shared Winline starts direct and retains configured DE/US fallbacks."""
     launches: List[dict] = []
 
     class _FakeBrowser:
@@ -994,10 +994,17 @@ def test_shared_camoufox_uses_de_us_proxy_candidates_policy(monkeypatch) -> None
     assert all(c.get("country") == "DE" for c in cands)
     assert not any(c.get("country") == "RU" for c in cands)
 
-    session = cs._SharedCamoufoxSession()
-    assert session.submit("proxy-job", lambda _b: "ok", timeout=5) == "ok"
+    direct_session = cs._SharedCamoufoxSession()
+    assert direct_session.submit("direct-job", lambda _b: "ok", timeout=5) == "ok"
     assert launches, "browser must launch"
-    proxy = launches[0].get("proxy")
+    assert launches[0].get("proxy") is None
+    direct_session.close()
+
+    # A recovery rotation advances from direct to the first configured proxy.
+    cs._bookmaker_shared_proxy_index = 1
+    proxy_session = cs._SharedCamoufoxSession()
+    assert proxy_session.submit("proxy-job", lambda _b: "ok", timeout=5) == "ok"
+    proxy = launches[-1].get("proxy")
     assert isinstance(proxy, dict)
     server = str(proxy.get("server") or "")
     assert "de0.example" in server or "de" in server
@@ -1006,7 +1013,231 @@ def test_shared_camoufox_uses_de_us_proxy_candidates_policy(monkeypatch) -> None
     label = cs._bookmaker_proxy_safe_label(de_items[0])
     assert "pass" not in label
     assert "user" not in label or "user@" not in label
-    session.close()
+    proxy_session.close()
+
+
+def test_valid_fallback_page_restores_shared_winline_route_to_direct(monkeypatch) -> None:
+    """A geo-incomplete fallback must not become the permanent shared route."""
+    resets: List[bool] = []
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_shared_proxy_candidates",
+        [
+            {"url": "", "country": "DIRECT"},
+            {"url": "http://proxy.example:8000", "country": "US"},
+        ],
+        raising=False,
+    )
+    monkeypatch.setattr(cs, "_bookmaker_shared_proxy_index", 1, raising=False)
+    monkeypatch.setattr(
+        cs,
+        "_shared_camoufox_session",
+        SimpleNamespace(request_reset=lambda: resets.append(True)),
+        raising=False,
+    )
+
+    restored = cs._bookmaker_restore_shared_camoufox_direct_route(
+        reason="winline_valid_page"
+    )
+
+    assert restored is True
+    assert cs._bookmaker_shared_proxy_index == 0
+    assert resets == [True]
+
+
+def test_expanded_selected_event_panel_allows_multiple_markets_without_neighbor_leakage():
+    html = """
+    <html><body>
+      <ww-pinned-card>
+        <div>1w Essence</div>
+        <div>2 карта</div>
+        <div>TEAM FALCONS</div>
+        <div>VICI GAMING</div>
+      </ww-pinned-card>
+      <ww-feature-event-live-center-dsk>
+        <section class="event-live-center">
+          <header> DOTA 2, 1w Essence TEAM FALCONS 1 : 0 VICI GAMING </header>
+          <div>Популярные на матч Победитель 1.36 2.90</div>
+          <div>Популярные на карту Победитель 2 карта 1.37 2.93</div>
+          <div>Тотал убийств 2 карта 1.85 1.85 М 52.5 Б</div>
+        </section>
+      </ww-feature-event-live-center-dsk>
+      <div class="event-card">
+        DOTA 2 | Other League WRONG ONE WRONG TWO Матч 1.10 7.00
+        2 карта 1.10 7.00
+      </div>
+    </body></html>
+    """
+
+    context = odds_parser._winline_matched_card_context(
+        "",
+        "Team Falcons",
+        "Vici Gaming",
+        html=html,
+        map_num=2,
+    )
+    result = odds_parser._extract_winline_current_map_winner(
+        context or "",
+        "Team Falcons",
+        "Vici Gaming",
+        forced_map_num=2,
+    )
+
+    assert context is not None
+    assert "1.37 2.93" in context
+    assert "WRONG ONE" not in context
+    assert result.odds == [pytest.approx(1.37), pytest.approx(2.93)]
+
+
+def test_structured_winline_winner_rejects_neighbor_handicap_prices():
+    html = """
+    <html><body>
+      <article class="event-card">
+        <header>DOTA 2 | 1w Essence TEAM LIQUID MOUZ Матч 1.01 15.00</header>
+        <div class="card__body card__body--second">
+          <div class="period-name">1 карта</div>
+          <div class="card__coeffs">
+            <ww-feature-event-market-dsk class="card__market">
+              <div class="coefficient-button coefficient-button_generic2
+                          coefficient-button--is-blank">-</div>
+              <div class="coefficient-button coefficient-button_generic2
+                          coefficient-button--is-blank">-</div>
+            </ww-feature-event-market-dsk>
+            <ww-feature-event-market-dsk class="card__market">
+              <div class="coefficient-button coefficient-button_handicap2">1.90</div>
+              <div class="coefficient-button coefficient-button_handicap2">1.80</div>
+            </ww-feature-event-market-dsk>
+            <ww-feature-event-market-dsk class="card__market">
+              <div class="coefficient-button coefficient-button_total2">1.85</div>
+              <div class="coefficient-button coefficient-button_total2">1.85</div>
+            </ww-feature-event-market-dsk>
+          </div>
+        </div>
+      </article>
+    </body></html>
+    """
+
+    result = odds_parser._extract_winline_current_map_winner(
+        "TEAM LIQUID MOUZ 1 карта 1.90 1.80 1.85 1.85",
+        "Team Liquid",
+        "MOUZ",
+        forced_map_num=1,
+        html=html,
+    )
+
+    assert result.odds == []
+    assert result.market_closed is True
+    assert result.market_kind == "current_map_winner"
+
+
+def test_structured_winline_winner_uses_generic_buttons_only():
+    html = """
+    <html><body>
+      <article class="event-card">
+        <header>DOTA 2 | 1w Essence TEAM LIQUID MOUZ Матч 1.01 15.00</header>
+        <div class="card__body card__body--second">
+          <div class="period-name">1 карта</div>
+          <div class="card__coeffs">
+            <ww-feature-event-market-dsk class="card__market">
+              <div class="coefficient-button coefficient-button_generic2">1.16</div>
+              <div class="coefficient-button coefficient-button_generic2">4.79</div>
+            </ww-feature-event-market-dsk>
+            <ww-feature-event-market-dsk class="card__market">
+              <div class="coefficient-button coefficient-button_handicap2">1.90</div>
+              <div class="coefficient-button coefficient-button_handicap2">1.80</div>
+            </ww-feature-event-market-dsk>
+          </div>
+        </div>
+      </article>
+    </body></html>
+    """
+
+    result = odds_parser._extract_winline_current_map_winner(
+        "TEAM LIQUID MOUZ 1 карта 1.16 4.79 1.90 1.80",
+        "Team Liquid",
+        "MOUZ",
+        forced_map_num=1,
+        html=html,
+    )
+
+    assert result.odds == [pytest.approx(1.16), pytest.approx(4.79)]
+    assert result.market_closed is False
+    assert result.market_kind == "current_map_winner"
+
+
+def test_html_snapshot_never_falls_back_to_flat_neighbor_prices():
+    html = """
+    <html><body>
+      <article class="event-card">
+        <header>DOTA 2 | 1w Essence TEAM LIQUID MOUZ</header>
+        <div>1 карта 1.90 1.80</div>
+      </article>
+    </body></html>
+    """
+
+    result = odds_parser._extract_winline_current_map_winner(
+        "TEAM LIQUID MOUZ 1 карта 1.90 1.80",
+        "Team Liquid",
+        "MOUZ",
+        forced_map_num=1,
+        html=html,
+    )
+
+    assert result.odds == []
+    assert result.reason == "map"
+    assert result.market_kind == "current_map_winner"
+
+
+def test_structured_expanded_panel_uses_map_winner_not_total():
+    html = """
+    <html><body>
+      <ww-feature-event-live-center-dsk>
+        <section class="event-live-center">
+          <header>DOTA 2, 1w Essence TEAM LIQUID 1 : 0 MOUZ 2 карта</header>
+          <div class="fast-bets__wrapper">
+            <div class="fast-bets__title">Популярные на матч</div>
+            <div class="bet-line">
+              <span class="bet-line__market-name">Победитель</span>
+              <span class="bet-line__period"></span>
+              <div class="bet-line__coefs-wrapper">
+                <div class="odd-btn">1.20</div><div class="odd-btn">4.01</div>
+              </div>
+            </div>
+          </div>
+          <div class="fast-bets__wrapper">
+            <div class="fast-bets__title">Популярные на карту</div>
+            <div class="bet-line">
+              <span class="bet-line__market-name">Победитель</span>
+              <span class="bet-line__period">2 карта</span>
+              <div class="bet-line__coefs-wrapper">
+                <div class="odd-btn">1.21</div><div class="odd-btn">4.06</div>
+              </div>
+            </div>
+            <div class="bet-line">
+              <span class="bet-line__market-name">Тотал убийств</span>
+              <span class="bet-line__period">2 карта</span>
+              <div class="bet-line__coefs-wrapper">
+                <div class="odd-btn">1.85</div><div class="odd-btn">1.85</div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </ww-feature-event-live-center-dsk>
+    </body></html>
+    """
+
+    result = odds_parser._extract_winline_current_map_winner(
+        "TEAM LIQUID MOUZ Победитель 2 карта 1.21 4.06 "
+        "Тотал убийств 2 карта 1.85 1.85",
+        "Team Liquid",
+        "MOUZ",
+        forced_map_num=2,
+        html=html,
+    )
+
+    assert result.odds == [pytest.approx(1.21), pytest.approx(4.06)]
+    assert result.market_closed is False
+    assert result.market_kind == "current_map_winner"
 
 
 def test_odds_delivery_refresh_uses_shared_camoufox_not_subprocess(monkeypatch) -> None:

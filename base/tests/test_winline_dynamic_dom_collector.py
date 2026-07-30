@@ -132,6 +132,8 @@ def test_initial_goto_navigates_blank_page(monkeypatch) -> None:
     assert len(page.goto_calls) == 1
     assert page.goto_calls[0]["url"] == WINLINE_URL
     assert page.goto_calls[0]["wait_until"] == "domcontentloaded"
+    assert page.goto_calls[0]["timeout"] == odds_parser.WINLINE_BOUNDED_NAVIGATION_TIMEOUT_MS
+    assert page.goto_calls[0]["timeout"] < 30_000
     assert page.reload_calls == []
     diag = _assert_bounded_diag(result)
     assert diag["acquisition_mode"] == "initial_goto"
@@ -234,6 +236,7 @@ def test_controlled_reload_calls_reload_exactly_once(monkeypatch) -> None:
     assert page.goto_calls == []
     assert len(page.reload_calls) == 1
     assert page.reload_calls[0]["wait_until"] == "domcontentloaded"
+    assert page.reload_calls[0]["timeout"] == odds_parser.WINLINE_BOUNDED_NAVIGATION_TIMEOUT_MS
     assert page.browser_spawn_count == 0
     diag = _assert_bounded_diag(result)
     assert diag["acquisition_mode"] == "controlled_reload"

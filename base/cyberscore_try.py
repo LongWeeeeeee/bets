@@ -26,6 +26,7 @@ import queue
 import copy
 import mmap
 import gc
+import hashlib
 import resource
 import subprocess
 import re
@@ -323,6 +324,16 @@ _winline_current_map_poller_mod = None
 _winline_current_map_poller_collect_impl = None  # tests may inject
 _winline_current_map_state_lock = threading.RLock()
 _winline_current_map_evidence_lock = threading.RLock()
+_winline_current_map_tick_lock = threading.Lock()
+_winline_current_map_evidence_hashes: Dict[str, str] = {}
+_winline_current_map_batch_context: Optional[Dict[str, Any]] = None
+_winline_shared_page_state: Dict[str, Any] = {
+    "last_reload_monotonic": None,
+    "last_acquisition_recovery_monotonic": None,
+    "selected_pinned_page_id": None,
+    "selected_pinned_key": None,
+}
+_winline_odds_orientation_state: Dict[str, Dict[str, float]] = {}
 _winline_current_map_scheduler_stop = threading.Event()
 _winline_current_map_scheduler_thread: Optional[threading.Thread] = None
 _winline_current_map_scheduler_meta: Dict[str, Any] = {
@@ -339,17 +350,30 @@ _winline_current_map_scheduler_meta: Dict[str, Any] = {
 }
 WINLINE_CURRENT_MAP_SCHEDULER_INTERVAL_S = 1.0
 WINLINE_CURRENT_MAP_SCHEDULER_NOMINAL_S = 5.0
+# A cold browser plus one bounded listing navigation can still take about
+# 20-25 seconds through the production proxy. Keep the outer future above that
+# budget; retry=False below prevents duplicate queued work.
+WINLINE_CURRENT_MAP_SHARED_JOB_TIMEOUT_S = 60.0
+WINLINE_CURRENT_MAP_RECOVERY_COOLDOWN_S = 60.0
 
 
 def reset_winline_current_map_polling_state() -> None:
     """Test/helper seam: drop all poller instances and current-map registry."""
     global _winline_current_map_pollers, _winline_current_map_registry
     global _winline_current_map_service_gen, _winline_current_map_poller_collect_impl
+    global _winline_current_map_batch_context
     stop_winline_current_map_polling_scheduler(join_timeout_s=0.2)
     with _winline_current_map_state_lock:
         _winline_current_map_pollers = {}
         _winline_current_map_registry = {}
         _winline_current_map_service_gen = {"pid": 0, "gen": ""}
+        _winline_current_map_batch_context = None
+        _winline_shared_page_state["last_reload_monotonic"] = None
+        _winline_shared_page_state["last_acquisition_recovery_monotonic"] = None
+        _winline_shared_page_state["selected_pinned_page_id"] = None
+        _winline_shared_page_state["selected_pinned_key"] = None
+        _winline_current_map_evidence_hashes.clear()
+        _winline_odds_orientation_state.clear()
         _winline_current_map_scheduler_meta["tick_count"] = 0
         _winline_current_map_scheduler_meta["main_loop_tick_invocations"] = 0
         _winline_current_map_scheduler_meta["last_error"] = None
@@ -439,11 +463,176 @@ def _winline_current_map_is_current(**kwargs: Any) -> Any:
     reg = _winline_current_map_registry.get(series)
     if reg is None:
         return True
+    if reg.get("active") is False:
+        return {
+            "current": False,
+            "reason": str(reg.get("inactive_reason") or "source_absent"),
+            "proven": bool(reg.get("inactive_proven")),
+        }
     if int(reg.get("map_num") or 0) != int(map_num):
         return {"current": False, "reason": "map_rollover"}
     if str(reg.get("team1") or "") != team1 or str(reg.get("team2") or "") != team2:
         return {"current": False, "reason": "map_rollover"}
     return True
+
+
+def _winline_normalized_team_identity(value: Any) -> str:
+    text = re.sub(r"[^0-9a-zA-Zа-яёА-ЯЁ]+", " ", str(value or "")).strip().lower()
+    return " ".join(text.split())
+
+
+def _winline_sourcetv_series_key(match: Any) -> str:
+    """Stable SourceTV series identity across per-map Valve match IDs."""
+    payload = match if isinstance(match, dict) else {}
+    explicit = str(payload.get("series_id") or "").strip()
+    if explicit and explicit not in {"0", "none", "null"}:
+        return f"sourcetv:series:{explicit}"
+    league_id = str(payload.get("league_id") or "0").strip()
+    team_ids = sorted(
+        str(value)
+        for value in (
+            payload.get("radiant_team_id"),
+            payload.get("dire_team_id"),
+        )
+        if str(value or "").strip() not in {"", "0"}
+    )
+    if len(team_ids) == 2:
+        pair = "|".join(f"id:{value}" for value in team_ids)
+    else:
+        names = sorted(
+            filter(
+                None,
+                (
+                    _winline_normalized_team_identity(payload.get("radiant_team_name")),
+                    _winline_normalized_team_identity(payload.get("dire_team_name")),
+                ),
+            )
+        )
+        pair = "|".join(f"name:{value}" for value in names)
+    return f"sourcetv:league:{league_id}|{pair}" if pair else ""
+
+
+def _winline_sourcetv_map_num(match: Any) -> Optional[int]:
+    payload = match if isinstance(match, dict) else {}
+
+    def _payload_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(float(value))
+        except (TypeError, ValueError, OverflowError):
+            return int(default)
+
+    try:
+        game_number = int(payload.get("series_game_number") or 0)
+    except (TypeError, ValueError):
+        game_number = 0
+    try:
+        played = int(payload.get("radiant_series_wins") or 0) + int(
+            payload.get("dire_series_wins") or 0
+        )
+    except (TypeError, ValueError):
+        played = 0
+    resolved = max(game_number, played + 1)
+    # During the inter-map break the GC bridge can keep the completed Valve
+    # match as live, with its old series_game_number and frozen game_time, while
+    # explicitly clearing both draft payloads. Winline already exposes the next
+    # map then. Advance only on that strong completed-map signature; missing or
+    # transiently incomplete payloads must not roll the map forward.
+    fast_picks = payload.get("fast_picks")
+    heroes = payload.get("_cyberscore_heroes_and_pos")
+    draft_explicitly_cleared = bool(
+        isinstance(fast_picks, dict)
+        and not fast_picks
+        and isinstance(heroes, dict)
+        and "radiant" in heroes
+        and "dire" in heroes
+        and not heroes.get("radiant")
+        and not heroes.get("dire")
+    )
+    game_time = _payload_int(payload.get("game_time"), 0)
+    total_kills = _payload_int(payload.get("radiant_score"), 0) + _payload_int(
+        payload.get("dire_score"), 0
+    )
+    raw_series_type = _payload_int(payload.get("series_type"), -1)
+    is_postgame_intermission = bool(
+        str(payload.get("status") or "").strip().lower() == "live"
+        and draft_explicitly_cleared
+        and game_time >= 10 * 60
+        and total_kills > 0
+        and raw_series_type != 0
+    )
+    if is_postgame_intermission and resolved < 5:
+        resolved += 1
+    return resolved if 1 <= resolved <= 5 else None
+
+
+def _winline_polling_series_key(
+    fallback: Any,
+    *,
+    live_data: Any = None,
+    live_league: Any = None,
+) -> str:
+    if str(globals().get("DLTV_SOURCE_MODE") or "").strip().lower() != "sourcetv":
+        return str(fallback or "").strip()
+    payload: Dict[str, Any] = {}
+    explicit_series = None
+    if isinstance(live_data, dict):
+        explicit_series = live_data.get("series_id")
+    if isinstance(live_league, dict):
+        payload.update(live_league)
+    if isinstance(live_data, dict):
+        payload.update(live_data)
+    # live_league.series_id may be the runtime fallback match_id. Only the raw
+    # bridge series_id is stable across maps.
+    payload["series_id"] = explicit_series
+    stable = _winline_sourcetv_series_key(payload)
+    return stable or str(fallback or "").strip()
+
+
+def _reconcile_winline_sourcetv_polling(
+    matches: Any,
+    *,
+    authoritative: bool,
+) -> None:
+    """Update lifecycle from the successfully-read SourceTV bridge snapshot."""
+    if isinstance(matches, dict):
+        values = matches.values()
+    elif isinstance(matches, list):
+        values = matches
+    else:
+        values = []
+    active: Dict[str, Dict[str, Any]] = {}
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        series = _winline_sourcetv_series_key(item)
+        map_num = _winline_sourcetv_map_num(item)
+        if not series or map_num is None:
+            continue
+        active[series] = {
+            "map_num": map_num,
+            "team1": str(item.get("radiant_team_name") or "").strip(),
+            "team2": str(item.get("dire_team_name") or "").strip(),
+            "active": True,
+            "inactive_reason": None,
+            "inactive_proven": False,
+        }
+
+    with _winline_current_map_state_lock:
+        for series, payload in active.items():
+            _winline_current_map_registry[series] = payload
+        for series, current in list(_winline_current_map_registry.items()):
+            if not str(series).startswith("sourcetv:") or series in active:
+                continue
+            current["active"] = False
+            current["inactive_reason"] = (
+                "source_absent" if authoritative else "source_stale"
+            )
+            current["inactive_proven"] = bool(authoritative)
+
+
+def _winline_evidence_path_for_key(canonical_key: str) -> Path:
+    digest = hashlib.sha256(str(canonical_key).encode("utf-8")).hexdigest()[:20]
+    return WINLINE_CURRENT_MAP_POLLING_EVIDENCE_PATH.parent / "maps" / f"{digest}.json"
 
 
 def _winline_write_current_map_evidence(payload: Dict[str, Any], path: Any = None) -> None:
@@ -463,11 +652,15 @@ def _winline_write_current_map_evidence(payload: Dict[str, Any], path: Any = Non
         )
         out.parent.mkdir(parents=True, exist_ok=True)
         data = json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+        digest = hashlib.sha256(data.encode("utf-8")).hexdigest()
         # Unique same-directory temp avoids fixed latest.json.tmp collisions
         # when scheduler + main-loop both publish.
         token = secrets.token_hex(8)
         tmp_path = out.with_name(f".{out.name}.{os.getpid()}.{token}.tmp")
         with _winline_current_map_evidence_lock:
+            cache_key = str(out)
+            if _winline_current_map_evidence_hashes.get(cache_key) == digest:
+                return
             # Exclusive writer critical section for this destination.
             with open(tmp_path, "x", encoding="utf-8") as fh:
                 fh.write(data)
@@ -478,6 +671,7 @@ def _winline_write_current_map_evidence(payload: Dict[str, Any], path: Any = Non
                     pass
             os.replace(str(tmp_path), str(out))
             tmp_path = None  # successfully moved
+            _winline_current_map_evidence_hashes[cache_key] = digest
     except Exception as exc:
         # Best-effort cleanup of orphan temp; never publish partial dest.
         if tmp_path is not None:
@@ -630,20 +824,86 @@ def _winline_fast_collect(
     expected_url: str,
 ) -> Optional[Dict[str, Any]]:
     """Быстрый съём карточки. None — значит откатываемся на полный разбор."""
-    card_ctx = globals().get("_bookmaker_winline_card_context")
-    extract_fn = globals().get("_bookmaker_winline_extract")
-    if not callable(card_ctx) or not callable(extract_fn):
-        return None
-    # Имена должны нести значимые токены: по одним родовым словам ('Team',
-    # 'Esports') ни находка, ни отсутствие не доказуемы.
-    if not _winline_team_probe_tokens(team1) or not _winline_team_probe_tokens(team2):
-        return None
     try:
         payload = page.evaluate(
             _WINLINE_FAST_CARD_JS,
             {"maxHtml": WINLINE_FAST_CARD_MAX_HTML},
         )
     except Exception:
+        return None
+    context = globals().get("_winline_current_map_batch_context")
+    if isinstance(context, dict) and isinstance(payload, dict):
+        context["payload"] = dict(payload)
+    return _winline_fast_collect_from_payload(
+        payload,
+        series=series,
+        map_num=map_num,
+        team1=team1,
+        team2=team2,
+        expected_url=expected_url,
+    )
+
+
+def _winline_select_matching_pinned_card(
+    page: Any,
+    *,
+    team1: str,
+    team2: str,
+) -> bool:
+    """Select a generic Winline pinned event so its map markets enter the DOM.
+
+    The selected-card flag is read from the live DOM on every recovery attempt.
+    An in-memory "last selected" key is insufficient because Angular can replace
+    the selected panel while keeping the same Playwright page object.
+    """
+    matcher = globals().get("_bookmaker_text_matches_teams")
+    if not callable(matcher):
+        return False
+    try:
+        cards = page.locator("ww-pinned-card")
+        count = min(20, int(cards.count()))
+    except Exception:
+        return False
+    for index in range(count):
+        try:
+            card = cards.nth(index)
+            text = str(card.inner_text(timeout=1000) or "")
+            if not matcher(text, team1, team2):
+                continue
+            try:
+                if int(card.locator(".new-card--selected").count()) > 0:
+                    return False
+            except Exception:
+                # Older test doubles and transient Angular nodes may not expose
+                # descendant locators. Clicking the already-selected card is a
+                # harmless fallback and is preferable to a permanent odds gap.
+                pass
+            card.click(timeout=3000)
+            # Angular updates the selected event panel asynchronously. This is
+            # Playwright's bounded browser wait, not a scheduler/thread sleep.
+            with contextlib.suppress(Exception):
+                page.wait_for_timeout(800)
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def _winline_fast_collect_from_payload(
+    payload: Any,
+    *,
+    series: Any,
+    map_num: int,
+    team1: str,
+    team2: str,
+    expected_url: str,
+) -> Optional[Dict[str, Any]]:
+    """Parse one map from a shared full-page DOM snapshot."""
+    card_ctx = globals().get("_bookmaker_winline_card_context")
+    extract_fn = globals().get("_bookmaker_winline_extract")
+    if not callable(card_ctx) or not callable(extract_fn):
+        return None
+    if not _winline_team_probe_tokens(team1) or not _winline_team_probe_tokens(team2):
         return None
     if not isinstance(payload, dict):
         return None
@@ -659,7 +919,13 @@ def _winline_fast_collect(
         return None
     try:
         card = card_ctx("", team1, team2, html=html, map_num=map_num)
-        extract = extract_fn(card or "", team1, team2, map_num)
+        extract = extract_fn(
+            card or "",
+            team1,
+            team2,
+            map_num,
+            html=html,
+        )
     except Exception:
         return None
     odds = list(getattr(extract, "odds", None) or [])
@@ -802,16 +1068,33 @@ def _winline_map_site_result_to_collector_dict(
         if (not low) or low in {"about:blank", "about:error"} or low.startswith("chrome-error:"):
             url_ok = False
 
+    # Playwright may time out waiting for the navigation lifecycle event even
+    # though the requested match and its current-map market are already present
+    # in the DOM.  A fully identified market is stronger evidence than that
+    # lifecycle timeout: keep the error as diagnostics, but do not discard the
+    # extracted result.  Team/map identity is established by the Winline parser
+    # before it emits match_found=True and odds/closed.
+    confirmed_market_payload = bool(
+        body_nonblank
+        and url_ok
+        and match_found is True
+        and (
+            (p1 is not None and p2 is not None and not market_closed)
+            or market_closed
+        )
+    )
+
     browser_failure = bool(
         status_is_error
-        or acq_error
+        or (acq_error and not confirmed_market_payload)
         or (err and status_is_error)
         or (load_error and not body_nonblank)
         or (not url_ok)
         or (not body_nonblank and match_found is not True)
     )
-    # Explicit acquisition_error always fails closed as browser failure.
-    if acq_error:
+    # Acquisition errors fail closed unless the same DOM pass produced a fully
+    # identified current-map market.
+    if acq_error and not confirmed_market_payload:
         browser_failure = True
     if status_is_error:
         browser_failure = True
@@ -822,7 +1105,7 @@ def _winline_map_site_result_to_collector_dict(
 
     if status_is_error or browser_failure and (acq_error or status_is_error or not url_ok or not body_nonblank):
         # Distinguish market_status for browser failures vs eligible misses.
-        if acq_error or status_is_error or not url_ok or not body_nonblank:
+        if (acq_error and not confirmed_market_payload) or status_is_error or not url_ok or not body_nonblank:
             market_status = "error"
         elif market_closed:
             market_status = "closed"
@@ -951,11 +1234,40 @@ def _winline_current_map_poller_collect(
             "acquisition_mode_echo": mode,
         }
 
+    batch_context = globals().get("_winline_current_map_batch_context")
+    if isinstance(batch_context, dict) and isinstance(batch_context.get("payload"), dict):
+        batched = _winline_fast_collect_from_payload(
+            batch_context["payload"],
+            series=series_s,
+            map_num=resolved_map,
+            team1=t1,
+            team2=t2,
+            expected_url=urls["winline"],
+        )
+        if batched is not None:
+            batched["acquisition_mode_echo"] = "shared_dom_batch"
+            return batched
+
     def _job(browser):
         session = _shared_camoufox_session
         page = session.get_or_create_page("bookmaker:winline", browser)
-        if mode == "dynamic_dom":
+        effective_mode = mode
+        if mode == "controlled_reload":
+            now_mono = time.monotonic()
+            with _winline_current_map_state_lock:
+                last_reload = _winline_shared_page_state.get("last_reload_monotonic")
+            # All logical match pollers share this one physical page.  A reload
+            # performed for one match refreshes every match card, so repeating
+            # it for another poller within the same 60s window only blocks the
+            # shared worker.
+            if last_reload is not None and (now_mono - float(last_reload)) < 60.0:
+                effective_mode = "dynamic_dom"
+
+        if effective_mode in {"dynamic_dom", "initial_goto"}:
             # Страница уже на нужном URL — пробуем снять только карточку.
+            # initial_goto is also eligible: after a prior timeout the named page
+            # can still be healthy and already on the live URL.  Fast validation
+            # avoids a 20-45s full parser recovery in that common case.
             fast = _winline_fast_collect(
                 page,
                 series=series_s,
@@ -965,6 +1277,37 @@ def _winline_current_map_poller_collect(
                 expected_url=urls["winline"],
             )
             if fast is not None:
+                pinned_key = f"{series_s}|map{resolved_map}|{t1}|{t2}"
+                should_select_pinned = bool(
+                    fast.get("match_found") is True
+                    and str(fast.get("market_status") or "").lower() == "missing"
+                )
+                if (
+                    should_select_pinned
+                    and _winline_select_matching_pinned_card(
+                        page,
+                        team1=t1,
+                        team2=t2,
+                    )
+                ):
+                    with _winline_current_map_state_lock:
+                        _winline_shared_page_state["selected_pinned_page_id"] = id(page)
+                        _winline_shared_page_state["selected_pinned_key"] = pinned_key
+                    refreshed = _winline_fast_collect(
+                        page,
+                        series=series_s,
+                        map_num=resolved_map,
+                        team1=t1,
+                        team2=t2,
+                        expected_url=urls["winline"],
+                    )
+                    if refreshed is not None:
+                        fast = refreshed
+                if fast.get("page_valid") is True:
+                    _bookmaker_restore_shared_camoufox_direct_route(
+                        reason="winline_valid_page"
+                    )
+                fast["acquisition_mode_echo"] = effective_mode
                 return fast
         result = _bookmaker_parse_site_in_camoufox_page(
             page,
@@ -974,24 +1317,68 @@ def _winline_current_map_poller_collect(
             team2=t2,
             mode="odds",
             forced_map_num=resolved_map,
-            acquisition_mode=mode,
+            acquisition_mode=effective_mode,
         )
-        return _winline_map_site_result_to_collector_dict(
+        if effective_mode == "controlled_reload":
+            with _winline_current_map_state_lock:
+                _winline_shared_page_state["last_reload_monotonic"] = time.monotonic()
+        normalized = _winline_map_site_result_to_collector_dict(
             result,
-            acquisition_mode=mode,
+            acquisition_mode=effective_mode,
             series=series_s,
             map_num=resolved_map,
             team1=t1,
             team2=t2,
             expected_url=urls.get("winline"),
         )
+        if normalized.get("page_valid") is False and normalized.get("acquisition_error"):
+            # A navigation timeout is not a market miss.  Do not keep polling a
+            # stale named page forever.  Recovery is process-wide because all
+            # match pollers share this page, and it is rate-limited: when only
+            # one proxy is available, "rotation" selects the same address and
+            # an immediate reset loop would starve every other match.
+            now_mono = time.monotonic()
+            should_recover = False
+            with _winline_current_map_state_lock:
+                last_recovery = _winline_shared_page_state.get(
+                    "last_acquisition_recovery_monotonic"
+                )
+                if (
+                    last_recovery is None
+                    or (now_mono - float(last_recovery))
+                    >= WINLINE_CURRENT_MAP_RECOVERY_COOLDOWN_S
+                ):
+                    _winline_shared_page_state[
+                        "last_acquisition_recovery_monotonic"
+                    ] = now_mono
+                    should_recover = True
+            if should_recover:
+                _bookmaker_rotate_shared_camoufox_proxy(
+                    reason="winline_acquisition_error"
+                )
+        elif normalized.get("page_valid") is True:
+            _bookmaker_restore_shared_camoufox_direct_route(
+                reason="winline_valid_page"
+            )
+        if isinstance(batch_context, dict) and batch_context.get("payload") is None:
+            with contextlib.suppress(Exception):
+                snapshot = page.evaluate(
+                    _WINLINE_FAST_CARD_JS,
+                    {"maxHtml": WINLINE_FAST_CARD_MAX_HTML},
+                )
+                if isinstance(snapshot, dict):
+                    batch_context["payload"] = snapshot
+        return normalized
 
     try:
         return _run_shared_camoufox_job(
             f"winline_current_map_poll:{series_s}|map{resolved_map}",
             _job,
-            timeout=120.0,
-            retry=True,
+            timeout=WINLINE_CURRENT_MAP_SHARED_JOB_TIMEOUT_S,
+            # A timed-out callback keeps occupying the single shared worker.
+            # Retrying immediately queues a duplicate behind it and doubles the
+            # outage for every other active match.
+            retry=False,
             reset_on_error=True,
         )
     except Exception as exc:
@@ -1027,6 +1414,10 @@ def _winline_current_map_scheduler_loop() -> None:
     """Process-local due checker independent of blocking general()."""
     meta = _winline_current_map_scheduler_meta
     while not _winline_current_map_scheduler_stop.is_set():
+        interval = float(meta.get("interval_s") or WINLINE_CURRENT_MAP_SCHEDULER_INTERVAL_S)
+        _winline_scheduler_sleep(interval)
+        if _winline_current_map_scheduler_stop.is_set():
+            break
         try:
             mono = meta.get("monotonic_fn")
             wall = meta.get("wall_fn")
@@ -1041,7 +1432,7 @@ def _winline_current_map_scheduler_loop() -> None:
                 tick_kwargs["producer_pid"] = pid
             if gen is not None:
                 tick_kwargs["producer_start_generation"] = gen
-            tick_winline_current_map_polling(**tick_kwargs)
+            tick_winline_current_map_polling(_scheduler_tick=True, **tick_kwargs)
             with _winline_current_map_state_lock:
                 meta["tick_count"] = int(meta.get("tick_count") or 0) + 1
                 meta["last_error"] = None
@@ -1052,8 +1443,6 @@ def _winline_current_map_scheduler_loop() -> None:
                 logger.warning("winline current-map scheduler tick failed: %s", exc)
             except Exception:
                 pass
-        interval = float(meta.get("interval_s") or WINLINE_CURRENT_MAP_SCHEDULER_INTERVAL_S)
-        _winline_scheduler_sleep(interval)
 
 
 def start_winline_current_map_polling_scheduler(
@@ -1295,6 +1684,9 @@ def ensure_winline_current_map_polling(
                 "map_num": map_i,
                 "team1": t1,
                 "team2": t2,
+                "active": True,
+                "inactive_reason": None,
+                "inactive_proven": False,
             }
 
         pid = int(producer_pid) if producer_pid is not None else int(os.getpid())
@@ -1333,6 +1725,7 @@ def ensure_winline_current_map_polling(
             if evidence_path is not None:
                 try:
                     existing._evidence_path = Path(evidence_path)  # type: ignore[attr-defined]
+                    existing._evidence_is_custom = True  # type: ignore[attr-defined]
                 except Exception:
                     pass
             # Keep scheduler alive for active map.
@@ -1376,10 +1769,11 @@ def ensure_winline_current_map_polling(
             poller._evidence_path = Path(  # type: ignore[attr-defined]
                 evidence_path
                 if evidence_path is not None
-                else globals().get(
-                    "WINLINE_CURRENT_MAP_POLLING_EVIDENCE_PATH",
-                    WINLINE_CURRENT_MAP_POLLING_EVIDENCE_PATH,
-                )
+                else _winline_evidence_path_for_key(canonical)
+            )
+            poller._evidence_is_custom = evidence_path is not None  # type: ignore[attr-defined]
+            poller._winline_batch_eligible = (  # type: ignore[attr-defined]
+                collect_fn is _winline_current_map_poller_collect
             )
         except Exception:
             pass
@@ -1397,24 +1791,6 @@ def ensure_winline_current_map_polling(
         except Exception:
             pass
 
-        # Opportunistically terminalize stale keys for this series (other maps).
-        for key, other in list(_winline_current_map_pollers.items()):
-            if key == canonical:
-                continue
-            if not getattr(other, "is_active", lambda: False)():
-                if not getattr(other, "is_active", lambda: False)():
-                    # prune dead
-                    if getattr(other, "terminal", lambda: None)() is not None:
-                        # keep terminal briefly for evidence; drop inactive without terminal later
-                        pass
-                continue
-            try:
-                other.tick(
-                    producer_pid=pid,
-                    producer_start_generation=gen,
-                )
-            except Exception:
-                pass
         return poller
     except Exception as exc:
         try:
@@ -1504,6 +1880,83 @@ def _winline_odds_side(prev: Any, cur: Any) -> str:
     return f"{_winline_fmt_odd(prev)} → {_winline_fmt_odd(cur)}{_winline_odd_arrow(prev, cur)}"
 
 
+def _winline_relative_odds_delta(value: float, reference: float) -> float:
+    return abs(float(value) - float(reference)) / max(abs(float(reference)), 1e-9)
+
+
+def _winline_odds_pair_looks_transposed(
+    prev_p1: Any,
+    prev_p2: Any,
+    p1: Any,
+    p2: Any,
+) -> bool:
+    """Detect a parser-side P1/P2 permutation, not a normal price movement."""
+    try:
+        old1, old2 = float(prev_p1), float(prev_p2)
+        cur1, cur2 = float(p1), float(p2)
+    except (TypeError, ValueError):
+        return False
+    if not all(math.isfinite(value) and value > 1.0 for value in (old1, old2, cur1, cur2)):
+        return False
+    # Near-even markets are too ambiguous for temporal orientation recovery.
+    if max(old1, old2) / min(old1, old2) < 1.35:
+        return False
+    cross1 = _winline_relative_odds_delta(cur1, old2)
+    cross2 = _winline_relative_odds_delta(cur2, old1)
+    direct = (
+        _winline_relative_odds_delta(cur1, old1)
+        + _winline_relative_odds_delta(cur2, old2)
+    )
+    cross = cross1 + cross2
+    return (
+        cross1 <= 0.03
+        and cross2 <= 0.03
+        and direct >= 0.50
+        and direct >= (cross * 5.0) + 0.25
+    )
+
+
+def _winline_stabilize_odds_orientation(
+    payload: Any,
+    canonical_key: Any,
+) -> Any:
+    """Keep P1/P2 bound to canonical teams across transient DOM-order flips."""
+    if not isinstance(payload, dict):
+        return payload
+    key = str(canonical_key or "")
+    if not key:
+        return payload
+    status = str(payload.get("market_status") or "").strip().lower()
+    if (
+        payload.get("page_valid") is False
+        or status not in {"open", "ok", "available"}
+        or payload.get("p1_odds") is None
+        or payload.get("p2_odds") is None
+    ):
+        return payload
+    try:
+        p1 = float(payload["p1_odds"])
+        p2 = float(payload["p2_odds"])
+    except (TypeError, ValueError):
+        return payload
+    if not all(math.isfinite(value) and value > 1.0 for value in (p1, p2)):
+        return payload
+
+    with _winline_current_map_state_lock:
+        previous = dict(_winline_odds_orientation_state.get(key) or {})
+        if previous and _winline_odds_pair_looks_transposed(
+            previous.get("p1"),
+            previous.get("p2"),
+            p1,
+            p2,
+        ):
+            payload["p1_odds"], payload["p2_odds"] = p2, p1
+            payload["odds_orientation_correction"] = "temporal_pair_transposition"
+            p1, p2 = p2, p1
+        _winline_odds_orientation_state[key] = {"p1": p1, "p2": p2}
+    return payload
+
+
 def _winline_build_odds_message(
     *,
     kind: str,
@@ -1560,6 +2013,7 @@ def _winline_odds_telegram_notify(
     key = str(canonical_key or "")
     if not key:
         return None
+    payload = _winline_stabilize_odds_orientation(payload, key)
 
     # Замороженный рынок: число на странице есть, но принять ставку по нему
     # нельзя. Молчим — состояние не трогаем, поэтому после разморозки первое же
@@ -1621,7 +2075,15 @@ def _winline_odds_telegram_notify(
     sender = send_fn or send_winline_odds_message
     try:
         # Кэфы — служебный поток: шлём без звука, чтобы не глушить пуши ставок.
-        sender(message, admin_only=True, mirror_to_vk=False, silent=True)
+        delivered = sender(
+            message,
+            admin_only=True,
+            mirror_to_vk=False,
+            silent=True,
+        )
+        if delivered is False:
+            logger.warning("winline odds telegram notify returned delivered=false")
+            return None
     except Exception as exc:
         try:
             logger.warning("winline odds telegram notify failed: %s", exc)
@@ -1641,7 +2103,7 @@ def _winline_odds_telegram_notify(
     return message
 
 
-def tick_winline_current_map_polling(
+def _tick_winline_current_map_polling_impl(
     *,
     monotonic_fn: Any = None,
     wall_fn: Any = None,
@@ -1696,8 +2158,14 @@ def tick_winline_current_map_polling(
                     terminal = out.get("terminal") if isinstance(out, dict) else None
                     payload = terminal or attempt or (out if isinstance(out, dict) else None)
                     if isinstance(payload, dict):
+                        payload = _winline_stabilize_odds_orientation(payload, key)
                         epath = getattr(poller, "_evidence_path", None)
                         _winline_write_current_map_evidence(payload, path=epath)
+                        if not bool(getattr(poller, "_evidence_is_custom", False)):
+                            _winline_write_current_map_evidence(
+                                payload,
+                                path=WINLINE_CURRENT_MAP_POLLING_EVIDENCE_PATH,
+                            )
                 except Exception:
                     pass
                 try:
@@ -1722,9 +2190,10 @@ def tick_winline_current_map_polling(
                             dead_keys.append(key)
             except Exception:
                 pass
-        # Do not aggressively delete terminal keys so multi-map tests can inspect state;
-        # optional prune of long-dead later.
-        _ = dead_keys
+        if dead_keys:
+            with _winline_current_map_state_lock:
+                for key in dead_keys:
+                    _winline_current_map_pollers.pop(key, None)
         return results
     except Exception as exc:
         try:
@@ -1732,6 +2201,46 @@ def tick_winline_current_map_polling(
         except Exception:
             pass
         return results
+
+
+def tick_winline_current_map_polling(
+    *,
+    monotonic_fn: Any = None,
+    wall_fn: Any = None,
+    producer_pid: Any = None,
+    producer_start_generation: Any = None,
+    **extra: Any,
+) -> List[Dict[str, Any]]:
+    """Run one serialized scheduler tick with one reusable DOM snapshot."""
+    global _winline_current_map_batch_context
+    background_tick = bool(extra.get("from_main_loop") or extra.pop("_scheduler_tick", False))
+    # Keep the exact acquired instance. Some integration tests reload modules
+    # while a daemon scheduler is winding down; resolving the global again in
+    # finally could otherwise release a newly-created, unlocked lock.
+    tick_lock = _winline_current_map_tick_lock
+    if not tick_lock.acquire(blocking=not background_tick):
+        return []
+    try:
+        with _winline_current_map_state_lock:
+            production_active = sum(
+                1
+                for poller in _winline_current_map_pollers.values()
+                if getattr(poller, "is_active", lambda: False)()
+                and bool(getattr(poller, "_winline_batch_eligible", False))
+            )
+        _winline_current_map_batch_context = (
+            {"payload": None} if production_active >= 2 else None
+        )
+        return _tick_winline_current_map_polling_impl(
+            monotonic_fn=monotonic_fn,
+            wall_fn=wall_fn,
+            producer_pid=producer_pid,
+            producer_start_generation=producer_start_generation,
+            **extra,
+        )
+    finally:
+        _winline_current_map_batch_context = None
+        tick_lock.release()
 
 
 def accelerate_winline_current_map_polling(match_key: str) -> bool:
@@ -1812,6 +2321,11 @@ def _notify_runtime_error_once(message: str, *, dedupe_key: Optional[str] = None
         return
     _RUNTIME_ALERTED_ERRORS.add(key)
     logger.error(message)
+    # Import-time validation also runs while pytest collects this module.
+    # Tests must never produce external Telegram side effects, especially when
+    # a staged copy intentionally has no production data files.
+    if "pytest" in sys.modules:
+        return
     try:
         send_message(message, admin_only=True)
     except Exception as exc:
@@ -1953,6 +2467,7 @@ try:
             parse_site_in_camoufox_page as _bookmaker_parse_site_in_camoufox_page,
             _winline_matched_card_context as _bookmaker_winline_card_context,
             _extract_winline_current_map_winner as _bookmaker_winline_extract,
+            _text_matches_teams as _bookmaker_text_matches_teams,
             run_sites_in_camoufox as _bookmaker_run_sites_in_camoufox,
             camoufox as _bookmaker_camoufox,
             _camoufox_proxy_kwargs as _bookmaker_camoufox_proxy_kwargs,
@@ -1970,6 +2485,7 @@ try:
             parse_site_in_camoufox_page as _bookmaker_parse_site_in_camoufox_page,
             _winline_matched_card_context as _bookmaker_winline_card_context,
             _extract_winline_current_map_winner as _bookmaker_winline_extract,
+            _text_matches_teams as _bookmaker_text_matches_teams,
             run_sites_in_camoufox as _bookmaker_run_sites_in_camoufox,
             camoufox as _bookmaker_camoufox,
             _camoufox_proxy_kwargs as _bookmaker_camoufox_proxy_kwargs,
@@ -4647,6 +5163,16 @@ def _format_metric_value(value: float) -> str:
 LANE_ADV_DICT_CONFIDENCE_BASELINE = 39.0
 LANE_ADV_DICT_SIGN_MIN_ABS = 3.0
 LANE_ADV_PROTRACKER_SIGN_MIN_ABS = 3.0
+# Альтернативный якорь направления для immediate-отправки в 00: когда
+# |lane_adv_dict| не добрал своего порога, сторону задаёт согласованная пара
+# протрекерных лейн-перевесов — парный Lane_adv_protracker и базовый
+# Lane_adv_solo. Оба должны смотреть в сторону target; порог по модулю у пары
+# свой (по умолчанию — только знак, без требования к величине).
+LANE_ADV_PAIR_ALIGN_ENABLED = _env_flag("LANE_ADV_PAIR_ALIGN_ENABLED", "1")
+LANE_ADV_PAIR_SIGN_MIN_ABS = max(
+    0.0,
+    _safe_float_env("LANE_ADV_PAIR_SIGN_MIN_ABS", 0.0),
+)
 
 
 def _numeric_sign(value: Any, *, min_abs: float = 1e-9) -> Optional[int]:
@@ -5309,16 +5835,12 @@ def _star_diag_target_side(diag: Dict[str, Any]) -> Optional[str]:
 #   * late + all
 #   * early_end + late — при отсутствии встречных star-хитов в All
 #   * early_end — при отсутствии встречных star-хитов в Late и All
-#   * late — встречные в All допустимы только при late WR >=
-#            STAR_COMBINATION_LATE_OPPOSITE_ALL_MIN_WR
+#   * late — только при отсутствии встречных star-хитов в All
 #   * all — встречные хиты в Early Winner / Late допустимы
 # Early NW (early_output) членом комбинации не является. Если ни одна
 # конфигурация не выполняется, ставка не отправляется (терминальный отказ).
 STAR_COMBINATION_MIN_WR = _safe_float_env("STAR_COMBINATION_MIN_WR", 65.0)
 STAR_COMBINATION_MIN_HITS = max(1, _safe_int_env("STAR_COMBINATION_MIN_HITS", 2))
-STAR_COMBINATION_LATE_OPPOSITE_ALL_MIN_WR = _safe_float_env(
-    "STAR_COMBINATION_LATE_OPPOSITE_ALL_MIN_WR", 70.0
-)
 STAR_COMBINATION_GATE_ENABLED = _env_flag("STAR_COMBINATION_GATE_ENABLED", "1")
 STAR_COMBINATION_GATE_REJECT_REASON = "star_signal_rejected_block_combination"
 STAR_COMBINATION_GATE_STATUS_LABEL = "block_combination_gate_no_send"
@@ -5429,12 +5951,6 @@ def _evaluate_star_block_combination_gate(
         _star_combination_block_hits(late_state, -sign) if sign in (-1, 1) else []
     )
 
-    late_wr_value = late_state.get("wr_pct")
-    late_allows_opposite_all = bool(
-        late_wr_value is not None
-        and float(late_wr_value) >= float(STAR_COMBINATION_LATE_OPPOSITE_ALL_MIN_WR)
-    )
-
     accepted: List[str] = []
     if early_end_valid and all_valid:
         accepted.append("early_end+all")
@@ -5444,7 +5960,7 @@ def _evaluate_star_block_combination_gate(
         accepted.append("early_end+late")
     if early_end_valid and not late_opposite_hits and not all_opposite_hits:
         accepted.append("early_end")
-    if late_valid and (late_allows_opposite_all or not all_opposite_hits):
+    if late_valid and not all_opposite_hits:
         accepted.append("late")
     if all_valid:
         accepted.append("all")
@@ -5466,10 +5982,9 @@ def _evaluate_star_block_combination_gate(
         "all_valid": all_valid,
         "all_opposite_hit_metrics": all_opposite_hits,
         "late_opposite_hit_metrics": late_opposite_hits,
-        "late_allows_opposite_all": late_allows_opposite_all,
+        "late_allows_opposite_all": False,
         "min_wr_required": float(STAR_COMBINATION_MIN_WR),
         "min_hits_required": int(STAR_COMBINATION_MIN_HITS),
-        "late_opposite_all_min_wr": float(STAR_COMBINATION_LATE_OPPOSITE_ALL_MIN_WR),
     }
 
 
@@ -5491,7 +6006,6 @@ def _star_combination_gate_reject_details(gate: Dict[str, Any]) -> Dict[str, Any
         "star_combination_target_sign": gate.get("target_sign"),
         "star_combination_min_wr": gate.get("min_wr_required"),
         "star_combination_min_hits": gate.get("min_hits_required"),
-        "star_combination_late_opposite_all_min_wr": gate.get("late_opposite_all_min_wr"),
         "star_combination_early_end_valid": bool(gate.get("early_end_valid")),
         "star_combination_late_valid": bool(gate.get("late_valid")),
         "star_combination_all_valid": bool(gate.get("all_valid")),
@@ -8002,10 +8516,26 @@ def _same_sign_lane_adv_guard(
     star_sign: Optional[int],
     lane_adv_dict_value: Optional[float],
     lane_adv_protracker_value: Optional[float],
+    lane_adv_solo_value: Optional[float] = None,
 ) -> Dict[str, Any]:
+    """Направление лейнов для immediate-отправки в 00.
+
+    Два независимых якоря направления:
+      * ``lane_adv_dict`` того же знака, что target, с ``|adv| >= 3`` — как было;
+      * пара протрекерных лейн-перевесов (``Lane_adv_protracker`` +
+        ``Lane_adv_solo``): оба того же знака, что target. Порог по модулю у
+        пары свой (``LANE_ADV_PAIR_SIGN_MIN_ABS``, по умолчанию — только знак),
+        поэтому пара вытягивает случаи, где ``|lane_adv_dict|`` не добрал 3.
+        Пара НЕ применяется, если ``lane_adv_dict`` смотрит в противоположную
+        сторону выше своего порога — противоречие лейнов остаётся блокировкой.
+    """
     star_side = _target_side_from_sign(star_sign)
     dict_sign = _numeric_sign(lane_adv_dict_value, min_abs=LANE_ADV_DICT_SIGN_MIN_ABS)
     protracker_sign = _numeric_sign(lane_adv_protracker_value, min_abs=LANE_ADV_PROTRACKER_SIGN_MIN_ABS)
+    pair_protracker_sign = _numeric_sign(
+        lane_adv_protracker_value, min_abs=LANE_ADV_PAIR_SIGN_MIN_ABS
+    )
+    pair_solo_sign = _numeric_sign(lane_adv_solo_value, min_abs=LANE_ADV_PAIR_SIGN_MIN_ABS)
     opposing_sources: List[str] = []
     if star_sign in (-1, 1):
         if dict_sign == -int(star_sign):
@@ -8014,6 +8544,22 @@ def _same_sign_lane_adv_guard(
         star_side in {"radiant", "dire"}
         and dict_sign in (-1, 1)
         and dict_sign == star_sign
+    )
+    pair_sign = (
+        int(pair_protracker_sign)
+        if (
+            pair_protracker_sign in (-1, 1)
+            and pair_solo_sign in (-1, 1)
+            and int(pair_protracker_sign) == int(pair_solo_sign)
+        )
+        else None
+    )
+    pair_aligned = bool(
+        LANE_ADV_PAIR_ALIGN_ENABLED
+        and star_side in {"radiant", "dire"}
+        and pair_sign in (-1, 1)
+        and pair_sign == star_sign
+        and "lane_adv_dict" not in opposing_sources
     )
     return {
         "enabled": star_side in {"radiant", "dire"},
@@ -8025,10 +8571,20 @@ def _same_sign_lane_adv_guard(
         "lane_adv_protracker": lane_adv_protracker_value,
         "lane_adv_protracker_sign": protracker_sign,
         "lane_adv_protracker_sign_min_abs": LANE_ADV_PROTRACKER_SIGN_MIN_ABS,
-        "lane_adv_pair_sign": None,
+        "lane_adv_solo": lane_adv_solo_value,
+        "lane_adv_solo_sign": pair_solo_sign,
+        "lane_adv_pair_sign_min_abs": LANE_ADV_PAIR_SIGN_MIN_ABS,
+        "lane_adv_pair_sign": pair_sign,
+        "lane_adv_pair_aligned": bool(pair_aligned),
+        "lane_adv_dict_aligned": bool(dict_aligned),
+        "aligned_source": (
+            "lane_adv_dict"
+            if dict_aligned
+            else ("lane_adv_protracker_solo_pair" if pair_aligned else None)
+        ),
         "opposes_target": bool(opposing_sources),
         "opposing_sources": opposing_sources,
-        "aligned": bool(dict_aligned),
+        "aligned": bool(dict_aligned or pair_aligned),
     }
 
 
@@ -9674,8 +10230,10 @@ def _fetch_sourcetv_delayed_match_state(json_url: str) -> Optional[Dict[str, Opt
     return _bookmaker_enrich_delayed_match_state({"game_time": game_time_value, "radiant_lead": lead_value}, payload)
 
 
-def _sourcetv_delayed_league_name(json_url: Optional[str]) -> Optional[str]:
-    """league_name матча из моста по sourcetv://-URL (None если матча нет в мосте)."""
+def _sourcetv_delayed_league_meta(
+    json_url: Optional[str],
+) -> Optional[Tuple[int, str]]:
+    """``(league_id, league_name)`` матча из моста по sourcetv://-URL."""
     id_match = re.search(r"sourcetv://matches/(\d+)", str(json_url or ""))
     if not id_match:
         return None
@@ -9687,7 +10245,17 @@ def _sourcetv_delayed_league_name(json_url: Optional[str]) -> Optional[str]:
     payload = matches.get(id_match.group(1))
     if not isinstance(payload, dict):
         return None
-    return str(payload.get("league_name") or "")
+    try:
+        league_id = int(payload.get("league_id") or 0)
+    except (TypeError, ValueError):
+        league_id = 0
+    return league_id, str(payload.get("league_name") or "")
+
+
+def _sourcetv_delayed_league_name(json_url: Optional[str]) -> Optional[str]:
+    """Обратная совместимость для callers, которым нужно только название."""
+    meta = _sourcetv_delayed_league_meta(json_url)
+    return meta[1] if meta is not None else None
 
 
 def _fetch_delayed_match_state(json_url: Optional[str]) -> Optional[Dict[str, Optional[float]]]:
@@ -9908,8 +10476,12 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
         # старым кодом). Если sourcetv-матч жив в мосте и его лига вне allowlist —
         # дропаем, чтобы мусорный турнир не ушёл по таймеру watcher'а.
         if str(payload.get("json_url") or "").startswith("sourcetv://"):
-            _gd_league = _sourcetv_delayed_league_name(payload.get("json_url"))
-            if _gd_league and not _title_matches_allow_keywords(_gd_league):
+            _gd_league_meta = _sourcetv_delayed_league_meta(payload.get("json_url"))
+            if (
+                _gd_league_meta is not None
+                and not _league_matches_allowlist(*_gd_league_meta)
+            ):
+                _gd_league = _gd_league_meta[1]
                 _drop_delayed_match(match_key, reason="league_not_in_allowlist")
                 print(f"   🚫 Delayed дроп: лига вне allowlist ({_gd_league}) — {match_key}")
                 continue
@@ -11962,6 +12534,8 @@ def _bookmaker_proxy_safe_label(proxy_item: Any) -> str:
         country = str(proxy_item.get("country") or "")
     else:
         url = str(proxy_item or "")
+    if country.strip().upper() == "DIRECT":
+        return "direct"
     try:
         parsed = urlparse(url)
         host = parsed.hostname or ""
@@ -11981,12 +12555,20 @@ _bookmaker_shared_proxy_index: int = 0
 _bookmaker_shared_proxy_lock = threading.Lock()
 
 
+def _bookmaker_shared_winline_routes() -> List[Dict[str, Any]]:
+    """Direct first; configured DE/US proxies remain automatic fallbacks."""
+    return [
+        {"url": "", "country": "DIRECT"},
+        *list(_bookmaker_winline_proxy_candidates() or []),
+    ]
+
+
 def _bookmaker_select_shared_camoufox_proxy_kwargs() -> Dict[str, Any]:
-    """Pick current DE/US Winline candidate for shared Camoufox; never log credentials."""
+    """Pick current direct/proxy Winline route; never log credentials."""
     global _bookmaker_shared_proxy_candidates, _bookmaker_shared_proxy_index
     with _bookmaker_shared_proxy_lock:
         if not _bookmaker_shared_proxy_candidates:
-            _bookmaker_shared_proxy_candidates = list(_bookmaker_winline_proxy_candidates() or [])
+            _bookmaker_shared_proxy_candidates = _bookmaker_shared_winline_routes()
             _bookmaker_shared_proxy_index = 0
         candidates = list(_bookmaker_shared_proxy_candidates)
         if not candidates:
@@ -11999,6 +12581,7 @@ def _bookmaker_select_shared_camoufox_proxy_kwargs() -> Dict[str, Any]:
     else:
         url = str(item or "").strip()
     if not url:
+        print("   🌐 Shared Camoufox Winline route: direct")
         return {}
     kwargs = _camoufox_proxy_kwargs_from_url(url)
     if kwargs:
@@ -12047,7 +12630,7 @@ def _bookmaker_rotate_shared_camoufox_proxy(*, reason: str = "") -> None:
     global _bookmaker_shared_proxy_candidates, _bookmaker_shared_proxy_index
     with _bookmaker_shared_proxy_lock:
         if not _bookmaker_shared_proxy_candidates:
-            _bookmaker_shared_proxy_candidates = list(_bookmaker_winline_proxy_candidates() or [])
+            _bookmaker_shared_proxy_candidates = _bookmaker_shared_winline_routes()
             _bookmaker_shared_proxy_index = 0
         if _bookmaker_shared_proxy_candidates:
             _bookmaker_shared_proxy_index = (_bookmaker_shared_proxy_index + 1) % max(
@@ -12061,6 +12644,23 @@ def _bookmaker_rotate_shared_camoufox_proxy(*, reason: str = "") -> None:
     print(f"   🔄 Shared Camoufox proxy rotate ({reason_s}) -> {label}")
     with contextlib.suppress(Exception):
         _shared_camoufox_session.request_reset()
+
+
+def _bookmaker_restore_shared_camoufox_direct_route(*, reason: str = "") -> bool:
+    """Make a valid fallback-page probe one-shot and restore the primary route."""
+    global _bookmaker_shared_proxy_candidates, _bookmaker_shared_proxy_index
+    with _bookmaker_shared_proxy_lock:
+        if not _bookmaker_shared_proxy_candidates:
+            _bookmaker_shared_proxy_candidates = _bookmaker_shared_winline_routes()
+            _bookmaker_shared_proxy_index = 0
+        if not _bookmaker_shared_proxy_candidates or _bookmaker_shared_proxy_index == 0:
+            return False
+        _bookmaker_shared_proxy_index = 0
+    reason_s = str(reason or "valid_page").strip() or "valid_page"
+    print(f"   ↩️ Shared Camoufox route restore ({reason_s}) -> direct")
+    with contextlib.suppress(Exception):
+        _shared_camoufox_session.request_reset()
+    return True
 
 
 def _bookmaker_refresh_snapshot_via_shared_camoufox(match_key: str) -> Optional[dict]:
@@ -14131,8 +14731,10 @@ CYBERSCORE_EXTRA_NAME_TIERS: List[int] = _parse_csv_int_list(
 # для прямого опроса GetLiveLeagueGames). Имена реэкспортируются для обратной
 # совместимости (используются в admission и sourcetv league filter ниже).
 from league_keywords import (  # noqa: E402
+    TOURNAMENT_LEAGUE_ID_ALLOWLIST,
     TOURNAMENT_TITLE_ALLOW_KEYWORDS,
     TOURNAMENT_TITLE_ALLOW_PHRASES,
+    league_matches_allowlist as _league_matches_allowlist,
     title_matches_allow_keywords as _title_matches_allow_keywords,
 )
 
@@ -24131,12 +24733,14 @@ class _SharedCamoufoxSession:
             nonlocal browser_cm, browser, launched_at
             if browser is not None:
                 return browser
-            # Prefer Winline DE/US candidates for bookmaker/shared session; fall back
-            # to cyberscore proxy policy only when DE/US inventory is empty.
+            # Winline route selection owns the empty-dict meaning: it is an
+            # explicit direct route, not a request for the CyberScore proxy.
             proxy_kwargs = {}
+            winline_route_selected = False
             with contextlib.suppress(Exception):
                 proxy_kwargs = _bookmaker_select_shared_camoufox_proxy_kwargs()
-            if not proxy_kwargs:
+                winline_route_selected = True
+            if not proxy_kwargs and not winline_route_selected:
                 proxy_kwargs = _cyberscore_camoufox_proxy_kwargs()
             proxy_label = "with proxy" if proxy_kwargs else "without proxy"
             browser_options = _shared_camoufox_browser_options(proxy_kwargs)
@@ -26861,6 +27465,7 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             except Exception as e:
                 print(f"❌ SourceTV mode: не удалось прочитать {json_path}: {e}")
                 return [], []
+            raw_match_count = len(matches) if isinstance(matches, dict) else 0
 
             # Отбрасываем протухшие записи (probe не обновлял >300 с — значит умер или матч кончился)
             _now = time.time()
@@ -26869,6 +27474,10 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                 k: v for k, v in matches.items()
                 if _now - float(v.get("timestamp") or 0) < _SOURCETV_STALE_SECONDS
             }
+            _reconcile_winline_sourcetv_polling(
+                matches,
+                authoritative=(raw_match_count == 0 or bool(matches)),
+            )
             if not matches:
                 print(f"⚠️ SourceTV mode: нет свежих матчей в {json_path} (все старше {_SOURCETV_STALE_SECONDS}s). "
                       f"Проверьте, запущен ли sourcetv_probe.py")
@@ -26882,7 +27491,9 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             # league_name приходит из probe (справочник OpenDota); пустое имя → матч пропускается.
             _skipped_by_league = 0
             for mid, m in matches.items():
-                if not _title_matches_allow_keywords(m.get("league_name")):
+                if not _league_matches_allowlist(
+                    m.get("league_id"), m.get("league_name")
+                ):
                     _skipped_by_league += 1
                     continue
                 # Строим mock ноду в exact формате который кушает check_head и _extract_live_listing_context
@@ -28970,6 +29581,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             DOTA2PROTRACKER_ENABLED and DOTA2PROTRACKER_BYPASS_GATES
         )
         bookmaker_map_num = _bookmaker_infer_map_num(live_league_data, score_text=score)
+        if is_sourcetv_card:
+            # SourceTV can retain the completed map number throughout the
+            # inter-map break. Its explicit cleared-draft signature is more
+            # current than the stale series_game_number for Winline polling.
+            bookmaker_map_num = _winline_sourcetv_map_num(data) or bookmaker_map_num
         _remember_match_map_num(check_uniq_url, bookmaker_map_num)
         # Раньше строка печаталась только при включённом префетче, а под --no-odds он
         # выключен — из-за этого номер карты в логе почти не появлялся и связать
@@ -29172,6 +29788,29 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         has_fast_picks = _runtime_payload_has_fast_picks(data)
         if not has_fast_picks:
             print(f"   ❌ Нет 'fast_picks' в данных - драфт не начался")
+            if is_sourcetv_card and bookmaker_map_num is not None:
+                try:
+                    ensure_winline_current_map_polling(
+                        series=_winline_polling_series_key(
+                            check_uniq_url,
+                            live_data=data,
+                            live_league=live_league_data,
+                        ),
+                        map_num=bookmaker_map_num,
+                        team1=radiant_team_name_original,
+                        team2=dire_team_name_original,
+                        selected_side=None,
+                        producer_pid=os.getpid(),
+                    )
+                    match_log(
+                        "   📊 Winline polling active before draft: "
+                        f"карта {bookmaker_map_num}"
+                    )
+                except Exception as _winline_intermission_exc:
+                    logger.warning(
+                        "ensure intermission Winline polling failed: %s",
+                        _winline_intermission_exc,
+                    )
             print(f"   ℹ️ Драфт еще не начался")
             return return_status
         
@@ -29407,10 +30046,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             delivery_confirmed=False,
         )
         # Whole-current-map Winline polling: independent of STAR / selected_side / send.
-        # Serial 5s attempts via shared Camoufox; never enables ordinary odds delivery.
+        # Multiple SourceTV maps share one stable series lineage and one DOM
+        # snapshot per scheduler pass; never enables ordinary odds delivery.
         try:
             ensure_winline_current_map_polling(
-                series=check_uniq_url,
+                series=_winline_polling_series_key(
+                    check_uniq_url,
+                    live_data=data,
+                    live_league=live_league_data,
+                ),
                 map_num=bookmaker_map_num,
                 team1=radiant_team_name_original,
                 team2=dire_team_name_original,
@@ -30361,6 +31005,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             lane_adv_dict_value = _lane_dict_adv_value(s.get('top'), s.get('mid'), s.get('bot'))
             lane_adv_dict_line = _build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot'))
             dota2protracker_lane_adv_value = _dota2protracker_lane_adv_value(s)
+            dota2protracker_lane_solo_value = _dota2protracker_lane_solo_value(s)
             dota2protracker_lane_adv_line = _build_dota2protracker_lane_adv_line(s)
             dota2protracker_block = _build_dota2protracker_block(
                 s, star_output=s.get("all_output") if isinstance(s, dict) else None
@@ -30375,10 +31020,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 if dota2protracker_lane_adv_value is not None
                 else "n/a"
             )
+            _lane_adv_log_solo = (
+                f"{dota2protracker_lane_solo_value:+.2f}"
+                if dota2protracker_lane_solo_value is not None
+                else "n/a"
+            )
             if first_draft_metrics_compute:
                 print(
                     f"   📐 Lane advantage: dict={_lane_adv_log_dict}, "
-                    f"protracker={_lane_adv_log_pro}"
+                    f"protracker={_lane_adv_log_pro}, solo={_lane_adv_log_solo}"
                 )
             dota2protracker_block = ""
             star_metrics_snapshot = _build_star_metrics_snapshot(
@@ -31147,6 +31797,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 star_sign=target_sign if send_now_immediate else None,
                 lane_adv_dict_value=lane_adv_dict_value,
                 lane_adv_protracker_value=dota2protracker_lane_adv_value,
+                lane_adv_solo_value=dota2protracker_lane_solo_value,
             )
             same_sign_lane_adv_wait_required = bool(
                 send_now_immediate
@@ -31154,6 +31805,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and bool(same_sign_lane_adv_guard.get("enabled"))
                 and not bool(same_sign_lane_adv_guard.get("aligned"))
             )
+            if (
+                verbose_match_log
+                and bool(same_sign_lane_adv_guard.get("lane_adv_pair_aligned"))
+                and not bool(same_sign_lane_adv_guard.get("lane_adv_dict_aligned"))
+            ):
+                print(
+                    "   ✅ Lane-adv направление подтверждено парой protracker+solo "
+                    f"(target_side={same_sign_lane_adv_guard.get('star_side')}, "
+                    f"lane_adv_dict={_lane_adv_log_dict} "
+                    f"(<{LANE_ADV_DICT_SIGN_MIN_ABS:.2f} по модулю), "
+                    f"lane_adv_protracker={_lane_adv_log_pro}, "
+                    f"lane_adv_solo={_lane_adv_log_solo}) "
+                    "— immediate-отправка разрешена"
+                )
             opposite_signs_early90_monitor = _opposite_signs_early90_monitor_config(
                 team_elo_meta=team_elo_meta,
                 early_wr_pct=early_wr_pct,
@@ -32781,7 +33446,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             "   ⏳ Ожидание dispatch: same_sign_lane_adv_guard до 3:00 "
                             f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
                             f"lane_adv_dict={same_sign_lane_adv_guard.get('lane_adv_dict')}, "
-                            f"lane_adv_protracker={same_sign_lane_adv_guard.get('lane_adv_protracker')})"
+                            f"lane_adv_protracker={same_sign_lane_adv_guard.get('lane_adv_protracker')}, "
+                            f"lane_adv_solo={same_sign_lane_adv_guard.get('lane_adv_solo')}, "
+                            f"pair_sign={same_sign_lane_adv_guard.get('lane_adv_pair_sign')})"
                         )
                     elif current_game_time < NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS:
                         if target_networth_diff >= NETWORTH_GATE_4_TO_10_MIN_DIFF:
@@ -32925,7 +33592,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         "lane_adv_dict_sign": same_sign_lane_adv_guard.get("lane_adv_dict_sign"),
                         "lane_adv_protracker": same_sign_lane_adv_guard.get("lane_adv_protracker"),
                         "lane_adv_protracker_sign": same_sign_lane_adv_guard.get("lane_adv_protracker_sign"),
+                        "lane_adv_solo": same_sign_lane_adv_guard.get("lane_adv_solo"),
+                        "lane_adv_solo_sign": same_sign_lane_adv_guard.get("lane_adv_solo_sign"),
                         "lane_adv_pair_sign": same_sign_lane_adv_guard.get("lane_adv_pair_sign"),
+                        "lane_adv_pair_aligned": bool(same_sign_lane_adv_guard.get("lane_adv_pair_aligned")),
                         "lane_adv_opposing_sources": list(
                             same_sign_lane_adv_guard.get("opposing_sources") or []
                         ),
@@ -34220,7 +34890,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_add_url_details["lane_adv_dict_sign"] = same_sign_lane_adv_guard.get("lane_adv_dict_sign")
                     delayed_add_url_details["lane_adv_protracker"] = same_sign_lane_adv_guard.get("lane_adv_protracker")
                     delayed_add_url_details["lane_adv_protracker_sign"] = same_sign_lane_adv_guard.get("lane_adv_protracker_sign")
+                    delayed_add_url_details["lane_adv_solo"] = same_sign_lane_adv_guard.get("lane_adv_solo")
+                    delayed_add_url_details["lane_adv_solo_sign"] = same_sign_lane_adv_guard.get("lane_adv_solo_sign")
                     delayed_add_url_details["lane_adv_pair_sign"] = same_sign_lane_adv_guard.get("lane_adv_pair_sign")
+                    delayed_add_url_details["lane_adv_pair_aligned"] = bool(
+                        same_sign_lane_adv_guard.get("lane_adv_pair_aligned")
+                    )
                     delayed_add_url_details["lane_adv_opposing_sources"] = list(
                         same_sign_lane_adv_guard.get("opposing_sources") or []
                     )
@@ -34498,7 +35173,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_payload['lane_adv_dict_sign'] = same_sign_lane_adv_guard.get("lane_adv_dict_sign")
                     delayed_payload['lane_adv_protracker'] = same_sign_lane_adv_guard.get("lane_adv_protracker")
                     delayed_payload['lane_adv_protracker_sign'] = same_sign_lane_adv_guard.get("lane_adv_protracker_sign")
+                    delayed_payload['lane_adv_solo'] = same_sign_lane_adv_guard.get("lane_adv_solo")
+                    delayed_payload['lane_adv_solo_sign'] = same_sign_lane_adv_guard.get("lane_adv_solo_sign")
                     delayed_payload['lane_adv_pair_sign'] = same_sign_lane_adv_guard.get("lane_adv_pair_sign")
+                    delayed_payload['lane_adv_pair_aligned'] = bool(
+                        same_sign_lane_adv_guard.get("lane_adv_pair_aligned")
+                    )
                     delayed_payload['lane_adv_opposing_sources'] = list(
                         same_sign_lane_adv_guard.get("opposing_sources") or []
                     )
@@ -34635,7 +35315,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             "lane_adv_dict_sign": same_sign_lane_adv_guard.get("lane_adv_dict_sign"),
                             "lane_adv_protracker": same_sign_lane_adv_guard.get("lane_adv_protracker"),
                             "lane_adv_protracker_sign": same_sign_lane_adv_guard.get("lane_adv_protracker_sign"),
+                            "lane_adv_solo": same_sign_lane_adv_guard.get("lane_adv_solo"),
+                            "lane_adv_solo_sign": same_sign_lane_adv_guard.get("lane_adv_solo_sign"),
                             "lane_adv_pair_sign": same_sign_lane_adv_guard.get("lane_adv_pair_sign"),
+                            "lane_adv_pair_aligned": bool(
+                                same_sign_lane_adv_guard.get("lane_adv_pair_aligned")
+                            ),
+                            "lane_adv_aligned_source": same_sign_lane_adv_guard.get("aligned_source"),
                             "lane_adv_opposing_sources": list(
                                 same_sign_lane_adv_guard.get("opposing_sources") or []
                             ),

@@ -33,7 +33,7 @@ for _o, _n in (("job_id_target", "jobid_target"), ("job_id_source", "jobid_sourc
 # прямого опроса GetLiveLeagueGames(league_id), чтобы ловить их с драфта в обход
 # count-кэпа GetLiveLeagueGames(0) на пике.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from league_keywords import title_matches_allow_keywords
+from league_keywords import league_matches_allowlist
 
 try:
     from sourcetv_bridge import resolve_sourcetv_matches_path
@@ -70,6 +70,51 @@ KW_LEGACY_CEIL     = 60000      # верхняя граница (исключа�
 KW_SWEEP_BATCH     = 25         # сколько кандидатов опрашивать cold-sweep'ом за рефетч
 KW_CANDIDATES_REFRESH = 1800.0  # как часто пересобирать пул кандидатов из справочника
 
+
+def _sourcetv_progress_signature(game):
+    """Fields that must change while a SourceTV game is genuinely progressing."""
+    payload = game if isinstance(game, dict) else {}
+    return (
+        int(payload.get("game_time") or 0),
+        int(payload.get("radiant_score") or 0),
+        int(payload.get("dire_score") or 0),
+        int(payload.get("radiant_lead") or 0),
+    )
+
+
+def _note_sourcetv_snapshot(state, game, now=None):
+    """Record receipt separately from actual game progress.
+
+    Valve may keep returning a finished game forever. Repeated identical rows
+    must not refresh the bridge timestamp, otherwise cyberscore treats a ghost
+    match as live and keeps its bookmaker poller running.
+    """
+    moment = float(time.time() if now is None else now)
+    signature = _sourcetv_progress_signature(game)
+    if state.get("progress_signature") != signature:
+        state["progress_signature"] = signature
+        state["last_progress_at"] = moment
+    state["last_seen"] = moment
+    return float(state.get("last_progress_at") or moment)
+
+
+def _sourcetv_snapshot_timestamp(state, now=None):
+    """Timestamp exported to the bridge: last real progress, not last rewrite."""
+    moment = float(time.time() if now is None else now)
+    game = state.get("game") if isinstance(state, dict) else {}
+    try:
+        game_time = int((game or {}).get("game_time") or 0)
+    except (TypeError, ValueError):
+        game_time = 0
+    # Pregame countdown may legitimately stay unchanged while waiting for draft.
+    key = "last_seen" if game_time < 0 else "last_progress_at"
+    try:
+        value = float(state.get(key) or 0)
+    except (TypeError, ValueError, AttributeError):
+        value = 0.0
+    return value if value > 0 else moment
+
+
 def _keyword_candidate_league_ids():
     """Свежие keyword-лиги из справочника OpenDota — кандидаты для cold-sweep.
 
@@ -82,7 +127,10 @@ def _keyword_candidate_league_ids():
             lid = int(lid)
         except (TypeError, ValueError):
             continue
-        if KW_RECENT_FLOOR <= lid < KW_LEGACY_CEIL and title_matches_allow_keywords(nm):
+        if (
+            KW_RECENT_FLOOR <= lid < KW_LEGACY_CEIL
+            and league_matches_allowlist(lid, nm)
+        ):
             out.append(lid)
     return sorted(out)
 
@@ -107,6 +155,7 @@ def league_name(league_id):
         except Exception as e:
             log.warning("Не удалось загрузить справочник лиг OpenDota: %s", e)
     return _LEAGUE_NAMES.get(int(league_id or 0), "")
+
 
 def _build_fast_picks(rad_picks, dire_picks):
     """fast_picks в формате cyberscore_try.check_head: {first_team, second_team}.
@@ -593,7 +642,9 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
         games_list = []
         try:
             for g in get_live_matches(0):
-                if title_matches_allow_keywords(league_name(g.get("league_id"))):
+                if league_matches_allowlist(
+                    g.get("league_id"), league_name(g.get("league_id"))
+                ):
                     games_list.append(g)
         except Exception as e:
             log.warning("Стартовый (0)-снимок не удался: %s", e)
@@ -628,7 +679,17 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                  t["lobby_id"], t["league_id"], t.get("series_id"))
 
     # per-match mutable state (last_seen: time of last GC update — used for refetch pruning)
-    states = {mid: {"game": None, "pos_map": {}, "last_heroes_key": None, "last_seen": 0.0} for mid in targets}
+    states = {
+        mid: {
+            "game": None,
+            "pos_map": {},
+            "last_heroes_key": None,
+            "last_seen": 0.0,
+            "last_progress_at": 0.0,
+            "progress_signature": None,
+        }
+        for mid in targets
+    }
 
     # ── Steam / GC setup ─────────────────────────────────────────────────────
     client   = SteamClient()
@@ -802,7 +863,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                          g.team_name_radiant or t["rad"],
                          g.team_name_dire    or t["dire"],
                          t["team_map"])
-            states[mid]["game"] = {
+            next_game = {
                 "match_id":      mid,
                 "game_time":     g.game_time,
                 "radiant_score": g.radiant_score,
@@ -820,7 +881,8 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                     "dire_series_wins":    getattr(g, "dire_series_wins", 0),
                 },
             }
-            states[mid]["last_seen"] = time.time()
+            _note_sourcetv_snapshot(states[mid], next_game)
+            states[mid]["game"] = next_game
         poll_ev.set()
 
     # ── Poll loop ─────────────────────────────────────────────────────────────
@@ -836,7 +898,8 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
         if not gc_ready.is_set():
             log.error("GC не ответил"); client.logout(); return
 
-        last_refetch_ts = time.time()  # инициализация — первый рефетч через 60с
+        # Первый refetch делаем сразу: после рестарта targets могут быть пустыми.
+        last_refetch_ts = 0.0
         # авто-обнаружение keyword-лиг: активный hot-set + пул кандидатов для cold-sweep
         active_kw_leagues = {}     # league_id -> last_seen_ts (видна в (0)/прямом опросе)
         sweep_cursor = 0           # курсор round-robin по пулу кандидатов
@@ -845,9 +908,15 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
 
         while True:
             try:
-                poll_ev.clear()
-                dota.request_top_source_tv_games(lobby_ids=all_lobby_ids)
-                poll_ev.wait(timeout=10)
+                # Если целевых матчей нет — не отправляем пустой запрос GC (gevent deadlock)
+                if all_lobby_ids:
+                    poll_ev.clear()
+                    dota.request_top_source_tv_games(lobby_ids=all_lobby_ids)
+                    poll_ev.wait(timeout=10)
+                else:
+                    # Не делаем continue: discovery/refetch ниже должен работать
+                    # даже когда на старте нет ни одного целевого матча.
+                    gevent.sleep(2)
 
                 # ── Периодический рефетч активных матчей (каждые 60с) ────────────────
                 # GetLiveLeagueGames подхватывает карты 2/3 серии (новые match_id/lobby_id)
@@ -883,8 +952,9 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                     if not fmid or fmid in seen_fmids:
                                         continue
                                     # auto-режим: держим только НАШИ keyword-лиги
-                                    if auto_kw_mode and not title_matches_allow_keywords(
-                                        league_name(fg.get("league_id"))
+                                    if auto_kw_mode and not league_matches_allowlist(
+                                        fg.get("league_id"),
+                                        league_name(fg.get("league_id")),
                                     ):
                                         continue
                                     seen_fmids.add(fmid)
@@ -908,7 +978,14 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                             if fmid not in targets:
                                 ft = _build_target(fg, league_ids)
                                 targets[fmid] = ft
-                                states[fmid] = {"game": None, "pos_map": {}, "last_heroes_key": None, "last_seen": 0.0}
+                                states[fmid] = {
+                                    "game": None,
+                                    "pos_map": {},
+                                    "last_heroes_key": None,
+                                    "last_seen": 0.0,
+                                    "last_progress_at": 0.0,
+                                    "progress_signature": None,
+                                }
                                 if ft["lobby_id"]:
                                     all_lobby_ids.append(ft["lobby_id"])
                                 log.info("Рефетч: новый матч %d (%s vs %s  series=%s)",
@@ -1055,7 +1132,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                 # парсинга получит пустой драфт и метрики уйдут в мусор.
                                 "fast_picks": _build_fast_picks(rad_picks, dire_picks),
                                 "status": "live",
-                                "timestamp": time.time()
+                                "timestamp": _sourcetv_snapshot_timestamp(st)
                             }
 
                             # Загружаем существующие матчи

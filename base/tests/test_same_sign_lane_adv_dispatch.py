@@ -162,6 +162,109 @@ def test_same_sign_lane_adv_guard_marks_dict_opposition() -> None:
     assert guard["opposing_sources"] == ["lane_adv_dict"]
 
 
+def test_same_sign_lane_adv_guard_pair_aligns_when_dict_below_threshold() -> None:
+    """Живой кейс Spirit Academy: dict +2.67 не добрал 3, но пара
+    protracker +2.37 / solo +2.17 смотрит в сторону target → отправка в 00."""
+    guard = runtime._same_sign_lane_adv_guard(
+        star_sign=1,
+        lane_adv_dict_value=2.67,
+        lane_adv_protracker_value=2.37,
+        lane_adv_solo_value=2.17,
+    )
+
+    assert guard["lane_adv_dict_sign"] is None
+    assert guard["lane_adv_dict_aligned"] is False
+    assert guard["lane_adv_pair_sign"] == 1
+    assert guard["lane_adv_pair_aligned"] is True
+    assert guard["opposes_target"] is False
+    assert guard["aligned"] is True
+    assert guard["aligned_source"] == "lane_adv_protracker_solo_pair"
+
+
+def test_same_sign_lane_adv_guard_pair_aligns_on_dire_side() -> None:
+    guard = runtime._same_sign_lane_adv_guard(
+        star_sign=-1,
+        lane_adv_dict_value=-2.67,
+        lane_adv_protracker_value=-2.37,
+        lane_adv_solo_value=-2.17,
+    )
+
+    assert guard["lane_adv_pair_sign"] == -1
+    assert guard["aligned"] is True
+    assert guard["aligned_source"] == "lane_adv_protracker_solo_pair"
+
+
+def test_same_sign_lane_adv_guard_pair_requires_both_sources_same_sign() -> None:
+    """protracker и solo расходятся между собой → пара не якорь."""
+    guard = runtime._same_sign_lane_adv_guard(
+        star_sign=1,
+        lane_adv_dict_value=2.0,
+        lane_adv_protracker_value=2.37,
+        lane_adv_solo_value=-2.17,
+    )
+
+    assert guard["lane_adv_pair_sign"] is None
+    assert guard["lane_adv_pair_aligned"] is False
+    assert guard["aligned"] is False
+
+
+def test_same_sign_lane_adv_guard_pair_must_point_at_target() -> None:
+    guard = runtime._same_sign_lane_adv_guard(
+        star_sign=1,
+        lane_adv_dict_value=2.0,
+        lane_adv_protracker_value=-2.37,
+        lane_adv_solo_value=-2.17,
+    )
+
+    assert guard["lane_adv_pair_sign"] == -1
+    assert guard["lane_adv_pair_aligned"] is False
+    assert guard["aligned"] is False
+
+
+def test_same_sign_lane_adv_guard_pair_blocked_by_opposing_dict() -> None:
+    """dict против target выше своего порога — противоречие лейнов остаётся
+    блокировкой, даже если пара согласна с target."""
+    guard = runtime._same_sign_lane_adv_guard(
+        star_sign=1,
+        lane_adv_dict_value=-4.0,
+        lane_adv_protracker_value=2.37,
+        lane_adv_solo_value=2.17,
+    )
+
+    assert guard["lane_adv_pair_sign"] == 1
+    assert guard["lane_adv_pair_aligned"] is False
+    assert guard["opposes_target"] is True
+    assert guard["opposing_sources"] == ["lane_adv_dict"]
+    assert guard["aligned"] is False
+
+
+def test_same_sign_lane_adv_guard_pair_needs_solo_present() -> None:
+    """Без solo слабый dict по-прежнему уводит матч в ожидание."""
+    guard = runtime._same_sign_lane_adv_guard(
+        star_sign=1,
+        lane_adv_dict_value=2.67,
+        lane_adv_protracker_value=2.37,
+        lane_adv_solo_value=None,
+    )
+
+    assert guard["lane_adv_pair_sign"] is None
+    assert guard["aligned"] is False
+
+
+def test_same_sign_lane_adv_guard_dict_anchor_still_wins_alone() -> None:
+    """Регресс: dict >= 3 в сторону target остаётся самостоятельным якорем."""
+    guard = runtime._same_sign_lane_adv_guard(
+        star_sign=1,
+        lane_adv_dict_value=3.0,
+        lane_adv_protracker_value=-5.0,
+        lane_adv_solo_value=-5.0,
+    )
+
+    assert guard["lane_adv_dict_aligned"] is True
+    assert guard["aligned"] is True
+    assert guard["aligned_source"] == "lane_adv_dict"
+
+
 def test_late_wr_opposite_all_reject_predicate_boundaries() -> None:
     kwargs = {
         "has_selected_late_star": True,

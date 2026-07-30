@@ -3,8 +3,8 @@
 Правила: блок валиден при WR >= 65 и >= 2 star-хитах одного знака без
 встречных хитов внутри блока. Допустимые конфигурации — early_end+all,
 late+all, early_end+late (без встречных хитов в All), а также одиночные
-early_end (без встречных в Late/All), late (встречные в All только при
-WR >= 70) и all (встречные в Early Winner / Late допустимы).
+early_end (без встречных в Late/All), late (без встречных в All) и all
+(встречные в Early Winner / Late допустимы).
 
 Референс-кейс (прод, 00:00): Early Winner cp1vs2 -4 (WR60), Late solo -3
 (WR60), All protracker -4 (WR60) — все блоки по одному хиту на WR60, ставка
@@ -57,7 +57,6 @@ def _evaluate(
 def test_gate_thresholds_are_pinned() -> None:
     assert runtime.STAR_COMBINATION_MIN_WR == 65.0
     assert runtime.STAR_COMBINATION_MIN_HITS == 2
-    assert runtime.STAR_COMBINATION_LATE_OPPOSITE_ALL_MIN_WR == 70.0
     assert runtime.STAR_COMBINATION_GATE_REJECT_REASON == "star_signal_rejected_block_combination"
 
 
@@ -181,17 +180,23 @@ def test_late_below_70_is_blocked_by_opposite_all_hit() -> None:
     assert gate["late_allows_opposite_all"] is False
 
 
-def test_late_at_70_may_carry_opposite_all_hit() -> None:
+def test_jenz_late70_is_blocked_by_opposite_all80() -> None:
     gate = _evaluate(
         target_sign=-1,
         late_hits=_hits(("solo", -6), ("counterpick_1vs1", -9)),
         late_wr_pct=70.0,
-        all_hits=_hits(("counterpick_1vs1", 5)),
-        all_wr_pct=60.0,
+        all_hits=_hits(("counterpick_1vs1", 8), ("counterpick_1vs2", 10)),
+        all_wr_pct=80.0,
     )
 
-    assert gate["blocked"] is False
-    assert gate["accepted_combinations"] == ["late"]
+    assert gate["blocked"] is True
+    assert gate["accepted_combinations"] == []
+    assert gate["late_valid"] is True
+    assert gate["all_opposite_hit_metrics"] == [
+        "counterpick_1vs1",
+        "counterpick_1vs2",
+    ]
+    assert gate["late_allows_opposite_all"] is False
 
 
 def test_early_end_only_is_blocked_by_opposite_hits_elsewhere() -> None:
@@ -332,6 +337,60 @@ def test_all_blocks_wr60_single_hit_signal_is_rejected_end_to_end(monkeypatch) -
     assert details["dispatch_status_label"] == runtime.STAR_COMBINATION_GATE_STATUS_LABEL
     assert details["star_combination_late_valid"] is False
     assert details["star_combination_all_valid"] is False
+
+
+def test_jenz_late70_opposite_all80_is_rejected_end_to_end(monkeypatch) -> None:
+    """Jenz 24:27: Late за Jenz, но валидные Early/All за FTS → отказ."""
+
+    _patch_early_late_wr(monkeypatch, early_level=80, late_level=70, all_level=80)
+    case = BranchScenario(
+        name="jenz_late70_opposite_all80",
+        game_time_seconds=(24 * 60) + 27,
+        target_side="radiant",
+        target_networth_diff=2270,
+        has_early_star=True,
+        early_sign=-1,
+        has_late_star=True,
+        late_sign=1,
+        has_all_star=True,
+        all_sign=-1,
+        expected_send_calls=0,
+        raw_early_output={
+            "counterpick_1vs1": -18,
+            "counterpick_1vs2": -30,
+            "solo": -8,
+        },
+        raw_early_end_output={
+            "counterpick_1vs1": -15,
+            "counterpick_1vs2": -24,
+            "solo": -6,
+        },
+        raw_mid_output={"counterpick_1vs2": 9, "solo": 3},
+        raw_post_lane_output={
+            "counterpick_1vs1": -8,
+            "counterpick_1vs2": -10,
+        },
+    )
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        case,
+        star_combination_gate_enabled=True,
+    )
+
+    assert result.sent_messages == []
+    assert result.queued_payload is None
+    assert (
+        result.add_url_calls[-1]["reason"]
+        == runtime.STAR_COMBINATION_GATE_REJECT_REASON
+    )
+    details = result.add_url_calls[-1]["details"]
+    assert details["star_combination_late_valid"] is True
+    assert details["star_combination_all_valid"] is False
+    assert details["star_combination_all_opposite_hits"] == [
+        "counterpick_1vs1",
+        "counterpick_1vs2",
+    ]
 
 
 def test_late_plus_all_wr65_two_hits_passes_the_gate(monkeypatch) -> None:

@@ -78,8 +78,8 @@ def validate_db(path: Path) -> tuple[int, int]:
 
 def main() -> int:
     files = source_files()
-    if len(files) != 32:
-        raise RuntimeError(f"expected 32 source parts, found {len(files)}")
+    if not files:
+        raise RuntimeError("no source parts found")
     if RUN_ROOT.exists():
         raise FileExistsError(f"run root already exists: {RUN_ROOT}")
     RUN_ROOT.mkdir(parents=True)

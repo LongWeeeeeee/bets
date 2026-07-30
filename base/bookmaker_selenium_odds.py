@@ -162,6 +162,26 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9а-я]+", " ", s.lower())).strip()
 
 
+def _team_name_search_variants(team: str) -> List[str]:
+    """DOM lookup variants for harmless punctuation and CamelCase differences."""
+    raw = str(team or "").strip()
+    if not raw:
+        return []
+    # SourceTV may emit `_PowerRangers`, while Winline renders
+    # `POWER RANGERS`. This is one identity with different typography.
+    camel_spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", raw)
+    values = [raw, raw.lstrip("_"), camel_spaced, camel_spaced.lstrip("_")]
+    out: List[str] = []
+    seen = set()
+    for value in values:
+        normalized = _norm(value)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        out.append(normalized)
+    return out
+
+
 GENERIC_TEAM_TOKENS = {
     "team",
     "gaming",
@@ -178,9 +198,10 @@ GENERIC_TEAM_TOKENS = {
 
 
 def _fallback_search_tokens(team: str) -> List[str]:
-    norm = _norm(team or "")
-    if not norm:
+    variants = _team_name_search_variants(team)
+    if not variants:
         return []
+    norm = max(variants, key=lambda value: (len(value.split()), len(value)))
     raw_tokens = [token for token in norm.split() if token]
     preferred = [token for token in raw_tokens if len(token) >= 3 and token not in GENERIC_TEAM_TOKENS]
     if not preferred:
@@ -210,9 +231,10 @@ def _literal_team_positions(text: str, value: str) -> List[int]:
 
 
 def _find_positions_with_fallback(low: str, team: str) -> List[int]:
-    direct = _literal_team_positions(low, team)
-    if direct:
-        return direct
+    for variant in _team_name_search_variants(team):
+        direct = _literal_team_positions(low, variant)
+        if direct:
+            return direct
     for token in _fallback_search_tokens(team):
         positions = _literal_team_positions(low, token)
         if positions:
@@ -221,9 +243,10 @@ def _find_positions_with_fallback(low: str, team: str) -> List[int]:
 
 
 def _first_index_with_fallback(low: str, team: str) -> int:
-    direct = low.find((team or "").lower()) if team else -1
-    if direct != -1:
-        return direct
+    for variant in _team_name_search_variants(team):
+        direct = low.find(variant)
+        if direct != -1:
+            return direct
     for token in _fallback_search_tokens(team):
         pos = low.find(token)
         if pos != -1:
@@ -496,6 +519,11 @@ ACQUISITION_MODES = frozenset({"initial_goto", "dynamic_dom", "controlled_reload
 _ACQUISITION_ERROR_MAX = 300
 _DOM_SIGNATURE_MAX = 64
 _PAGE_URL_DIAG_MAX = 500
+# Current-map polling shares one browser worker across every live match. A
+# default Playwright navigation timeout (60s) therefore blocks every following
+# match. Keep bounded Winline acquisition below the monitor's 30s ceiling;
+# legacy/non-Winline callers retain the historical 60s timeout.
+WINLINE_BOUNDED_NAVIGATION_TIMEOUT_MS = 12_000
 
 
 def _bounded_dom_signature(text: str, *, max_len: int = _DOM_SIGNATURE_MAX) -> str:
@@ -561,8 +589,8 @@ async def _load_site_render_payload_camoufox_async(
       - initial_goto: navigate only when blank/wrong/new URL
       - dynamic_dom: read live DOM only when already on expected URL; if blank/root/
         wrong-host/wrong URL, perform exactly one goto repair (no reload, no sleep)
-      - controlled_reload: exactly one page.reload(wait_until='domcontentloaded')
-        then acquire DOM immediately (no second nav, no hidden sleep)
+      - controlled_reload: reload an already-correct page; repair via one goto
+        when the page is already wrong or a failed reload redirects it
 
     Returns (load_status, load_error, html, visible, body_text, acquisition_diag).
     """
@@ -570,6 +598,9 @@ async def _load_site_render_payload_camoufox_async(
     mode = str(acquisition_mode or "").strip().lower() or None
     if mode and mode not in ACQUISITION_MODES:
         mode = None
+    navigation_timeout_ms = (
+        WINLINE_BOUNDED_NAVIGATION_TIMEOUT_MS if mode else 60_000
+    )
 
     load_status = "ok"
     load_error = ""
@@ -582,23 +613,65 @@ async def _load_site_render_payload_camoufox_async(
             # no synthetic sleep (call budget is the caller's).
             if _page_needs_navigation(page, url):
                 try:
-                    await _maybe_await(page.goto(url, wait_until="domcontentloaded", timeout=60000))
+                    await _maybe_await(
+                        page.goto(
+                            url,
+                            wait_until="domcontentloaded",
+                            timeout=navigation_timeout_ms,
+                        )
+                    )
                 except Exception as exc:
                     load_status = "partial_load"
                     acq_error = _sanitize_acquisition_error(exc)
                     load_error = acq_error
         elif mode == "controlled_reload":
-            # Exactly one reload when requested by the scheduler; then DOM.
-            # Do not navigate twice and do not inject settle sleeps here.
-            try:
-                await _maybe_await(page.reload(wait_until="domcontentloaded", timeout=60000))
-            except Exception as exc:
-                load_status = "partial_load"
-                acq_error = _sanitize_acquisition_error(exc)
-                load_error = acq_error
+            # Reload only an already-correct page.  Reload failures sometimes
+            # redirect Winline to its root page; retrying reload there can never
+            # recover the live market, so repair the existing named page with a
+            # bounded goto instead.
+            if _page_needs_navigation(page, url):
+                await _maybe_await(
+                    page.goto(
+                        url,
+                        wait_until="domcontentloaded",
+                        timeout=navigation_timeout_ms,
+                    )
+                )
+            else:
+                try:
+                    await _maybe_await(
+                        page.reload(
+                            wait_until="domcontentloaded",
+                            timeout=navigation_timeout_ms,
+                        )
+                    )
+                except Exception as reload_exc:
+                    if _page_needs_navigation(page, url):
+                        try:
+                            await _maybe_await(
+                                page.goto(
+                                    url,
+                                    wait_until="domcontentloaded",
+                                    timeout=navigation_timeout_ms,
+                                )
+                            )
+                        except Exception as repair_exc:
+                            load_status = "partial_load"
+                            acq_error = _sanitize_acquisition_error(repair_exc)
+                            load_error = acq_error
+                    else:
+                        load_status = "partial_load"
+                        acq_error = _sanitize_acquisition_error(reload_exc)
+                        load_error = acq_error
         elif mode == "initial_goto":
             if _page_needs_navigation(page, url):
-                await _maybe_await(page.goto(url, wait_until="domcontentloaded", timeout=60000))
+                await _maybe_await(
+                    page.goto(
+                        url,
+                        wait_until="domcontentloaded",
+                        timeout=navigation_timeout_ms,
+                    )
+                )
                 time.sleep(max(0.0, float(initial_wait_seconds)))
                 try:
                     await _maybe_await(page.evaluate(
@@ -1002,6 +1075,54 @@ async def _run_presence_sites_in_camoufox(
     return results
 
 
+def _run_presence_sites_in_camoufox_sync(
+    *,
+    selected_sites: List[str],
+    urls: Dict[str, str],
+    team1: str,
+    team2: str,
+    mode: str,
+    team1_aliases: Optional[List[str]] = None,
+    team2_aliases: Optional[List[str]] = None,
+) -> List[SiteResult]:
+    """Run sync Camoufox outside the caller's asyncio loop."""
+    if not CAMOUFOX_AVAILABLE:
+        return _run_presence_sites_in_browser(
+            selected_sites=selected_sites,
+            urls=urls,
+            team1=team1,
+            team2=team2,
+            mode=mode,
+            team1_aliases=team1_aliases,
+            team2_aliases=team2_aliases,
+        )
+
+    proxy_kwargs = _camoufox_proxy_kwargs(BOOKMAKER_PROXY_URL)
+    results: List[SiteResult] = []
+    with camoufox.Camoufox(headless=True, **proxy_kwargs) as browser:
+        for site in selected_sites:
+            page = browser.new_page()
+            try:
+                results.append(
+                    _run_coroutine_blocking(
+                        _probe_presence_site_in_camoufox_page(
+                            page,
+                            site=site,
+                            url=urls[site],
+                            team1=team1,
+                            team2=team2,
+                            mode=mode,
+                            team1_aliases=team1_aliases,
+                            team2_aliases=team2_aliases,
+                        )
+                    )
+                )
+            finally:
+                with contextlib.suppress(Exception):
+                    page.close()
+    return results
+
+
 def _current_page_matches_teams(
     drv,
     team1: str,
@@ -1057,8 +1178,10 @@ def _snippet_by_teams(
     max_team_distance: int = 1200,
 ) -> Optional[str]:
     low = text.lower()
-    t1 = team1.lower()
-    t2 = team2.lower()
+    t1 = str(team1 or "")
+    t2 = str(team2 or "")
+    t1_low = t1.lower()
+    t2_low = t2.lower()
     pos1 = _find_positions_with_fallback(low, t1)
     pos2 = _find_positions_with_fallback(low, t2)
     if not pos1 or not pos2:
@@ -1083,8 +1206,12 @@ def _snippet_by_teams(
     hi = min(len(text), center + radius)
     sn = re.sub(r"\s+", " ", text[lo:hi]).strip()
     low_sn = sn.lower()
-    has_t1 = (t1 in low_sn) or any(token in low_sn for token in _fallback_search_tokens(t1))
-    has_t2 = (t2 in low_sn) or any(token in low_sn for token in _fallback_search_tokens(t2))
+    has_t1 = (t1_low in low_sn) or any(
+        variant in low_sn for variant in _team_name_search_variants(t1)
+    ) or any(token in low_sn for token in _fallback_search_tokens(t1))
+    has_t2 = (t2_low in low_sn) or any(
+        variant in low_sn for variant in _team_name_search_variants(t2)
+    ) or any(token in low_sn for token in _fallback_search_tokens(t2))
     if not has_t1 or not has_t2:
         return None
     return sn
@@ -1382,9 +1509,26 @@ def _winline_matched_card_context(
                                 re.search(r"(?:\b[1-5]\s*к\b|\b[1-5]\s*карта\b)", node_text, re.I)
                             )
                         if hit:
+                            node_name = str(getattr(node, "name", "") or "").lower()
+                            node_classes = {
+                                str(value or "").strip().lower()
+                                for value in (node.get("class") or [])
+                            }
+                            # The expanded selected-event panel is itself the
+                            # hard event boundary. It legitimately contains
+                            # several price-bearing child markets (match,
+                            # current-map winner, totals), unlike a list
+                            # container that swallowed neighbouring cards.
+                            selected_event_panel = bool(
+                                node_name.startswith("ww-feature-event-live-center")
+                                or "event-live-center" in node_classes
+                            )
                             if (
                                 _winline_single_card_scope(node_text)
-                                and _winline_price_bearing_children(node) <= 1
+                                and (
+                                    selected_event_panel
+                                    or _winline_price_bearing_children(node) <= 1
+                                )
                             ):
                                 return node_text
                             break
@@ -1455,6 +1599,7 @@ _WINLINE_UNBETTABLE_BUTTON_CLASSES = frozenset(
         "coefficient-button_locked",
         "coefficient-button--is-blank",
         "coefficient-button_empty",
+        "coef-btn--locked",
     }
 )
 
@@ -1500,6 +1645,206 @@ def _winline_winner_market_buttons(container: Any) -> List[Any]:
     ]
 
 
+def _winline_structured_current_map_winner(
+    html: str,
+    team1: str,
+    team2: str,
+    map_num: Optional[int],
+) -> Optional["_WinlineMapExtract"]:
+    """Extract only the two DOM buttons of the current-map winner market.
+
+    A live Winline map row contains winner, handicap and total markets next to
+    each other. When winner buttons disappear, flattened page text starts with
+    handicap/total prices, so a text regex can silently promote the wrong
+    market. A non-None result from this helper is therefore authoritative:
+    once the requested event/map row is found structurally, callers must not
+    fall back to adjacent numeric text.
+    """
+    map_num = _normalize_map_num(map_num)
+    if not html or not team1 or not team2 or map_num is None:
+        return None
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception:
+        return None
+
+    exact_label_re = re.compile(rf"^{int(map_num)}\s*карта$", re.I)
+    saw_requested_row = False
+    saw_unbettable_winner = False
+    evidence = ""
+    valid: List[Tuple[List[float], str]] = []
+
+    # The selected-event panel uses a different DOM from listing cards:
+    # `odd-btn` under an explicitly named "Популярные на карту / Победитель"
+    # line. Keep the market-name and period checks structural so the following
+    # totals line cannot be promoted either.
+    expanded_roots = soup.select(
+        "ww-feature-event-live-center-dsk, .event-live-center"
+    )
+    for root in expanded_roots:
+        scope_text = " ".join(root.stripped_strings)
+        if not _text_matches_teams(scope_text, team1, team2):
+            continue
+        order = _winline_team_order(scope_text, team1, team2)
+        if order is None:
+            continue
+        for wrapper in root.select(".fast-bets__wrapper"):
+            title = wrapper.select_one(".fast-bets__title")
+            if title is None or " ".join(title.stripped_strings).lower() != "популярные на карту":
+                continue
+            for line in wrapper.select(".bet-line"):
+                name = line.select_one(".bet-line__market-name")
+                period = line.select_one(".bet-line__period")
+                if name is None or period is None:
+                    continue
+                if " ".join(name.stripped_strings).lower() != "победитель":
+                    continue
+                if not exact_label_re.fullmatch(" ".join(period.stripped_strings)):
+                    continue
+                saw_requested_row = True
+                evidence = evidence or scope_text[:700]
+                buttons = line.select(".bet-line__coefs-wrapper .odd-btn")
+                if len(buttons) != 2 or any(
+                    _winline_button_is_unbettable(button) for button in buttons
+                ):
+                    saw_unbettable_winner = True
+                    continue
+                prices: List[float] = []
+                for button in buttons:
+                    button_text = " ".join(button.stripped_strings)
+                    match = re.search(
+                        r"(?<!\d)([0-9]+[.,][0-9]+)(?!\d)",
+                        button_text,
+                    )
+                    if not match:
+                        prices = []
+                        break
+                    price = float(match.group(1).replace(",", "."))
+                    if price <= 1.01:
+                        prices = []
+                        break
+                    prices.append(price)
+                if len(prices) != 2:
+                    saw_unbettable_winner = True
+                    continue
+                if order == "reverse":
+                    prices.reverse()
+                valid.append((prices, scope_text[:700]))
+
+    for label in soup.find_all(
+        lambda tag: _WINLINE_PERIOD_NAME_CLASS in _winline_node_classes(tag)
+    ):
+        label_text = " ".join(label.stripped_strings)
+        if not exact_label_re.fullmatch(label_text):
+            continue
+
+        # The period row itself does not contain team names. Climb only to the
+        # smallest ancestor proven to be this one event, never to a tournament
+        # container that may include neighbouring matches.
+        event_scope = None
+        node = label.parent
+        while node is not None:
+            scope_text = " ".join(node.stripped_strings)
+            if _text_matches_teams(scope_text, team1, team2):
+                if _winline_single_card_scope(scope_text):
+                    event_scope = node
+                break
+            node = node.parent
+        if event_scope is None:
+            continue
+
+        scope_text = " ".join(event_scope.stripped_strings)
+        order = _winline_team_order(scope_text, team1, team2)
+        if order is None:
+            continue
+        saw_requested_row = True
+        evidence = evidence or scope_text[:700]
+
+        containers = [
+            candidate
+            for candidate in (label.find_next_sibling(), label.parent)
+            if candidate is not None
+        ]
+        buttons: List[Any] = []
+        for container in containers:
+            buttons = _winline_winner_market_buttons(container)
+            if buttons:
+                break
+        if not buttons:
+            continue
+
+        if len(buttons) != 2 or any(_winline_button_is_unbettable(b) for b in buttons):
+            saw_unbettable_winner = True
+            continue
+
+        prices: List[float] = []
+        for button in buttons:
+            button_text = " ".join(button.stripped_strings)
+            match = re.search(r"(?<!\d)([0-9]+[.,][0-9]+)(?!\d)", button_text)
+            if not match:
+                prices = []
+                break
+            try:
+                price = float(match.group(1).replace(",", "."))
+            except Exception:
+                prices = []
+                break
+            if price <= 1.01:
+                prices = []
+                break
+            prices.append(price)
+        if len(prices) != 2:
+            saw_unbettable_winner = True
+            continue
+        if order == "reverse":
+            prices.reverse()
+        valid.append((prices, scope_text[:700]))
+
+    unique = {
+        (round(prices[0], 6), round(prices[1], 6))
+        for prices, _details in valid
+    }
+    if len(unique) == 1:
+        prices, details = valid[0]
+        return _WinlineMapExtract(
+            odds=prices,
+            map_num=map_num,
+            market_kind="current_map_winner",
+            p1_team="team1",
+            p2_team="team2",
+            details=details,
+        )
+    if len(unique) > 1:
+        return _WinlineMapExtract(
+            reason="ambiguous",
+            map_num=map_num,
+            market_kind="current_map_winner",
+            details="winline conflicting structured winner prices",
+        )
+    if saw_unbettable_winner:
+        return _WinlineMapExtract(
+            market_closed=True,
+            reason="closed",
+            map_num=map_num,
+            market_kind="current_map_winner",
+            details=evidence or "winline current map winner buttons unavailable",
+        )
+    if saw_requested_row:
+        return _WinlineMapExtract(
+            reason="map",
+            map_num=map_num,
+            market_kind="current_map_winner",
+            details=(
+                evidence
+                or (
+                    "winline current map row has no winner buttons; "
+                    "adjacent markets rejected"
+                )
+            ),
+        )
+    return None
+
+
 def _winline_map_odds_bettable(
     html: str,
     team1: str,
@@ -1534,16 +1879,16 @@ def _winline_map_odds_bettable(
             card_text = " ".join(element.stripped_strings)
             if card_text and _text_matches_teams(card_text, team1, team2):
                 scopes.append((len(card_text), element))
-            if not scopes:
-                # Карточки этих команд на странице нет — судить о доступности
-                # исхода не по чему. Чужой рынок читать нельзя.
-                return None
-            scopes.sort(key=lambda item: item[0])
-            # Проверяем все совпавшие узлы: обрезка здесь способна скрыть
-            # настоящие кнопки рынка за закреплёнными/витринными DOM-тенями.
-            search_roots = [element for _, element in scopes]
-        else:
-            search_roots = [soup]
+        if not scopes:
+            # Карточки этих команд на странице нет — судить о доступности
+            # исхода не по чему. Чужой рынок читать нельзя.
+            return None
+        scopes.sort(key=lambda item: item[0])
+        # Проверяем все совпавшие узлы: обрезка здесь способна скрыть
+        # настоящие кнопки рынка за закреплёнными/витринными DOM-тенями.
+        search_roots = [element for _, element in scopes]
+    else:
+        search_roots = [soup]
 
     for root in search_roots:
         for label in root.find_all(
@@ -1622,15 +1967,43 @@ def _extract_winline_current_map_winner(
     team1: str,
     team2: str,
     forced_map_num: Optional[int] = None,
+    *,
+    html: str = "",
 ) -> _WinlineMapExtract:
     """Strict Winline current-map winner only; never promote match odds."""
     map_num = _normalize_map_num(forced_map_num)
     flat = " ".join((text or "").split())
     low = flat.lower()
-    if not flat or map_num is None:
+    if (not flat and not html) or map_num is None:
         return _WinlineMapExtract(reason="map", details="winline missing/invalid map_num")
 
-    card_context = _winline_matched_card_context(flat, team1, team2, map_num=map_num)
+    structured = _winline_structured_current_map_winner(
+        html,
+        team1,
+        team2,
+        map_num,
+    )
+    if structured is not None:
+        return structured
+    if html:
+        # A full DOM snapshot is stronger evidence than flattened text. If its
+        # exact winner buttons cannot be proven structurally, fail closed:
+        # falling back here is precisely how handicap/total prices leaked into
+        # the current-map winner stream when the winner market disappeared.
+        return _WinlineMapExtract(
+            reason="map",
+            map_num=map_num,
+            market_kind="current_map_winner",
+            details="winline structured current map winner market unavailable",
+        )
+
+    card_context = _winline_matched_card_context(
+        flat,
+        team1,
+        team2,
+        html=html,
+        map_num=map_num,
+    )
     working = card_context if card_context else flat
     order = _winline_team_order(working, team1, team2)
     has_teams = order is not None
@@ -2765,8 +3138,25 @@ async def parse_site_in_camoufox_page_async(
             details="deeplink loaded but map market odds not found",
         ))
 
-    candidate_urls = _candidate_match_urls_from_html(site, str(getattr(page, "url", "") or url), html)
-    href_opened = await _camoufox_find_match_by_urls_async(page, site, candidate_urls, team1, team2)
+    candidate_urls = _candidate_match_urls_from_html(
+        site,
+        str(getattr(page, "url", "") or url),
+        html,
+    )
+    # The dedicated Winline pollers deliberately share one live-listing page.
+    # Following a candidate href here moves that physical page away from the
+    # listing and can add another 20+ seconds after a bounded reload timeout.
+    # The listing DOM below already contains the team-scoped current-map card,
+    # so acquisition-mode callers must classify that snapshot in place.
+    href_opened = ""
+    if not (site == "winline" and effective_acq in ACQUISITION_MODES):
+        href_opened = await _camoufox_find_match_by_urls_async(
+            page,
+            site,
+            candidate_urls,
+            team1,
+            team2,
+        )
     if href_opened:
         map_odds, body_text = await _parse_map_market_on_current_camoufox_page_async(
             page,
@@ -4060,7 +4450,8 @@ async def run_presence_sites_parallel_async(
     team2_aliases: Optional[List[str]] = None,
 ) -> List[SiteResult]:
     if BOOKMAKER_CAMOUFOX_PRESENCE_ENABLED:
-        return await _run_presence_sites_in_camoufox(
+        return await asyncio.to_thread(
+            _run_presence_sites_in_camoufox_sync,
             selected_sites=selected_sites,
             urls=urls,
             team1=team1,
@@ -4089,29 +4480,59 @@ async def run_sites_in_camoufox_async(
     mode: str,
     forced_map_num: Optional[int] = None,
 ) -> List[SiteResult]:
-    """Parse all selected bookmaker sites. Creates one browser instance per call."""
+    """Parse all selected sites without nesting sync Playwright in asyncio."""
+    return await asyncio.to_thread(
+        _run_sites_in_camoufox_sync,
+        selected_sites=selected_sites,
+        urls=urls,
+        team1=team1,
+        team2=team2,
+        mode=mode,
+        forced_map_num=forced_map_num,
+    )
+
+
+def _run_sites_in_camoufox_sync(
+    *,
+    selected_sites: List[str],
+    urls: Dict[str, str],
+    team1: str,
+    team2: str,
+    mode: str,
+    forced_map_num: Optional[int] = None,
+) -> List[SiteResult]:
+    """Synchronous Camoufox owner used by CLI/subprocess callers."""
     if not CAMOUFOX_AVAILABLE:
         raise RuntimeError("Camoufox is unavailable")
     proxy_kwargs = _camoufox_proxy_kwargs(BOOKMAKER_PROXY_URL)
     results: List[SiteResult] = []
     with camoufox.Camoufox(headless=True, **proxy_kwargs) as browser:
         for site in selected_sites:
-            page = await _maybe_await(browser.new_page())
+            page = browser.new_page()
             try:
                 results.append(
-                    await parse_site_in_camoufox_page_async(
-                        page,
-                        site=site,
-                        url=urls[site],
-                        team1=team1,
-                        team2=team2,
-                        mode=mode,
-                        forced_map_num=forced_map_num,
+                    _run_coroutine_blocking(
+                        parse_site_in_camoufox_page_async(
+                            page,
+                            site=site,
+                            url=urls[site],
+                            team1=team1,
+                            team2=team2,
+                            mode=mode,
+                            forced_map_num=forced_map_num,
+                            # The CLI/manual path must use the same bounded
+                            # Winline navigation policy as production.  Legacy
+                            # acquisition waits up to 60s before parsing and can
+                            # exceed the subprocess deadline without output.
+                            acquisition_mode=(
+                                "initial_goto" if site == "winline" else None
+                            ),
+                        )
                     )
                 )
             finally:
                 with contextlib.suppress(Exception):
-                    await _maybe_await(page.close())
+                    page.close()
     return results
 
 
@@ -4261,7 +4682,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
 
 
 def parse_site_in_camoufox_page(*args, **kwargs):

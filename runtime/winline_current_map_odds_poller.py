@@ -225,6 +225,9 @@ def _odds_accepted(
     *,
     identity: Dict[str, Any],
 ) -> bool:
+    status = _normalize_market_status(result.get("market_status"))
+    if status in {"closed", "market_closed"} or result.get("odds_bettable") is False:
+        return False
     if not _is_finite_odds(result.get("p1_odds")):
         return False
     if not _is_finite_odds(result.get("p2_odds")):
@@ -415,7 +418,10 @@ class WinlineCurrentMapOddsPoller:
         **_extra: Any,
     ) -> Optional[Dict[str, Any]]:
         if self._terminal is not None:
-            return {"terminal": dict(self._terminal), "status": "terminal"}
+            # Terminal is emitted exactly once by _finalize_terminal(). Replaying
+            # the full attempts history on every scheduler tick caused permanent
+            # multi-megabyte evidence rewrites after a map had already ended.
+            return None
         if not self._active or self._identity is None:
             return None
         if self._in_flight:
@@ -619,19 +625,12 @@ class WinlineCurrentMapOddsPoller:
             self._last_dom_signature = dom_sig or None
             self._last_dom_hash = dom_hash or None
         elif eligible_miss:
-            dom_changed = False
-            if self._last_dom_hash is not None and dom_hash and dom_hash != self._last_dom_hash:
-                dom_changed = True
-            if (
-                self._last_dom_signature is not None
-                and dom_sig
-                and dom_sig != self._last_dom_signature
-            ):
-                dom_changed = True
-            if dom_changed:
-                self._consecutive_misses = 1  # this miss starts a new streak
-            else:
-                self._consecutive_misses += 1
+            # Score, clock and live-card content legitimately change on almost
+            # every Winline render. Resetting the miss streak on every DOM hash
+            # change can therefore suppress recovery for the rest of a map.
+            # A valid-page market miss remains a consecutive miss regardless of
+            # unrelated DOM churn; accepted odds/browser failures still reset it.
+            self._consecutive_misses += 1
             self._last_dom_signature = dom_sig
             self._last_dom_hash = dom_hash
             self._page_valid_for_dynamic = True
