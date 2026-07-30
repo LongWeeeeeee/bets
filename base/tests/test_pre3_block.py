@@ -161,3 +161,68 @@ def test_early_kills_suppressed_when_no_tier1_team(monkeypatch) -> None:
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
     assert kills_msgs == [], "early-kills release must be suppressed when no team is Tier-1"
+
+
+def test_early_kills_gate_uses_early_side_networth(monkeypatch, capsys) -> None:
+    # Regression for Zero Tenacity vs PuckChamp: Late/All selected radiant,
+    # Early selected dire, and radiant led by 243. The kills gate must read
+    # the Early (dire) networth as -243 instead of releasing on radiant +243.
+    case = BranchScenario(
+        name="early_kills_uses_early_side_networth",
+        game_time_seconds=(6 * 60) + 23,
+        target_side="radiant",
+        target_networth_diff=243,
+        has_early_star=True,
+        early_sign=-1,
+        has_late_star=True,
+        late_sign=1,
+        has_all_star=True,
+        all_sign=1,
+        expected_send_calls=0,
+        raw_early_output={
+            "counterpick_1vs1": -9,
+            "counterpick_1vs2": -9,
+            "solo": -5,
+        },
+        raw_mid_output={
+            "counterpick_1vs1": 15,
+            "counterpick_1vs2": 13,
+            "solo": 8,
+        },
+        raw_post_lane_output={
+            "counterpick_1vs1": 5,
+            "counterpick_1vs2": 8,
+            "synergy_duo": 7,
+        },
+    )
+    _patch_early_wr(monkeypatch, 70.0)
+    default_diagnostics = test_networth_dispatch_gates._star_diagnostics_for_case
+
+    def _diagnostics_with_real_early_hits(case_obj, section):
+        diagnostics = default_diagnostics(case_obj, section)
+        if section == "early_output" and diagnostics.get("valid"):
+            diagnostics = dict(diagnostics)
+            diagnostics["hit_metrics"] = list(case_obj.raw_early_output or {})
+            diagnostics["hit_count"] = len(diagnostics["hit_metrics"])
+        return diagnostics
+
+    monkeypatch.setattr(
+        test_networth_dispatch_gates,
+        "_star_diagnostics_for_case",
+        _diagnostics_with_real_early_hits,
+    )
+
+    result = _run_branch_scenario(monkeypatch, case)
+    output = capsys.readouterr().out
+
+    assert result.sent_messages == []
+    assert result.add_url_calls == []
+    assert "early_kills_6_10_wait" in output
+    assert "target_side=dire" in output
+    assert "target_diff=-243" in output
+
+
+def test_zero_tenacity_is_tier2_only() -> None:
+    zero_tenacity_id = 9600141
+
+    assert runtime._get_team_tier(zero_tenacity_id) == 2

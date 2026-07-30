@@ -25540,6 +25540,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early65_target_side,
             )
             target_networth_diff = _target_networth_diff_from_radiant_lead(lead, target_side)
+            kills_target_side = (
+                _target_side_from_sign(selected_early_sign)
+                if tier1_early_kills_mode and selected_early_sign in (-1, 1)
+                else None
+            )
+            kills_target_networth_diff = _target_networth_diff_from_radiant_lead(
+                lead,
+                kills_target_side,
+            )
             # On rechecks (metrics reused from cache) we suppress the full
             # draft/metrics/STAR block above; emit one compact summary line so
             # the recheck still shows the target + early/late/all WR view.
@@ -26080,9 +26089,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             )
                         return return_status
                 if tier1_early_kills_mode:
-                    if target_networth_diff is None or target_side is None:
+                    if kills_target_networth_diff is None or kills_target_side is None:
                         print(
-                            "   ⏳ Ожидание dispatch: target-side networth gate не применен "
+                            "   ⏳ Ожидание dispatch: early-side networth gate не применен "
                             "(нет target_sign/lead)"
                         )
                         return return_status
@@ -26120,14 +26129,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 "   ✅ Early kills release: lane_adv_dict immediate "
                                 f"(value={lane_adv_dict_kills_value:+.2f}, "
                                 f"min_abs={NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS:.2f}, "
-                                f"target_side={target_side}, game_time={int(current_game_time)})"
+                                f"target_side={kills_target_side}, game_time={int(current_game_time)})"
                             )
                     elif (
                         current_game_time
                         >= NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS
                         and current_game_time
                         < NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_END_SECONDS
-                        and target_networth_diff
+                        and kills_target_networth_diff
                         >= NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_MIN_DIFF
                     ):
                         early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND
@@ -26136,16 +26145,16 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         if verbose_match_log:
                             print(
                                 "   ✅ Early kills release: 3-6 min lead bypass "
-                                f"(target_side={target_side}, "
-                                f"target_diff={int(target_networth_diff)}, "
+                                f"(target_side={kills_target_side}, "
+                                f"target_diff={int(kills_target_networth_diff)}, "
                                 f"need>={int(NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_MIN_DIFF)}, "
                                 f"game_time={int(current_game_time)})"
                             )
                     elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS:
                         print(
                             "   ⏳ Ожидание dispatch: pre3_block "
-                            f"(target_side={target_side}, "
-                            f"target_diff={int(target_networth_diff)}, "
+                            f"(target_side={kills_target_side}, "
+                            f"target_diff={int(kills_target_networth_diff)}, "
                             f"window opens at "
                             f"{_format_game_clock(NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS)})"
                         )
@@ -26153,29 +26162,29 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS:
                         print(
                             "   ⏳ Ожидание dispatch: early_kills_pre6_wait "
-                            f"(target_side={target_side}, "
-                            f"target_diff={int(target_networth_diff)}, "
+                            f"(target_side={kills_target_side}, "
+                            f"target_diff={int(kills_target_networth_diff)}, "
                             f"window opens at "
                             f"{_format_game_clock(NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS)})"
                         )
                         return return_status
                     elif current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
-                        if target_networth_diff >= 0:
+                        if kills_target_networth_diff >= 0:
                             early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY_KILLS_6_10_TARGET_NONNEG_SEND
                             early_release_dispatch_mode = "immediate_tier1_early_kills"
                             early_release_delay_reason = "tier1_early_kills"
                         else:
                             print(
                                 "   ⏳ Ожидание dispatch: early_kills_6_10_wait "
-                                f"(target_side={target_side}, "
-                                f"target_diff={int(target_networth_diff)}, "
+                                f"(target_side={kills_target_side}, "
+                                f"target_diff={int(kills_target_networth_diff)}, "
                                 f"need>=0, window closes at "
                                 f"{_format_game_clock(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS)})"
                             )
                             return return_status
                     else:
                         # Window closed (>=10 min): if target still negative → cancel
-                        if target_networth_diff < 0:
+                        if kills_target_networth_diff < 0:
                             add_url(
                                 check_uniq_url,
                                 reason="star_signal_rejected_early_kills_target_negative",
@@ -26184,8 +26193,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     "dispatch_mode": "tier1_early_kills_window_closed",
                                     "dispatch_status_label": NETWORTH_STATUS_TIER1_EARLY_KILLS_WINDOW_CLOSED,
                                     "game_time": int(current_game_time),
-                                    "target_side": target_side,
-                                    "target_networth_diff": float(target_networth_diff or 0.0),
+                                    "target_side": kills_target_side,
+                                    "target_networth_diff": float(kills_target_networth_diff or 0.0),
                                     "selected_early_star": has_selected_early_star,
                                     "selected_late_star": has_selected_late_star,
                                     "selected_early_diag": selected_early_diag,
@@ -26196,7 +26205,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             )
                             print(
                                 "   ⚠️ ВЕРДИКТ: ОТКАЗ (early kills: target в минусе на 10+ мин, "
-                                f"target_diff={int(target_networth_diff)})"
+                                f"target_diff={int(kills_target_networth_diff)})"
                             )
                             return return_status
                         else:
@@ -26324,12 +26333,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             # weak opposite Early). Kills bet must go on the
                             # EARLY-side team — override here.
                             kills_release_smc = stake_multiplier_context
-                            kills_release_target_side_for_message = target_side
+                            kills_release_target_side_for_message = kills_target_side
                             if (
                                 tier1_early_kills_mode
                                 and selected_early_sign in (-1, 1)
                             ):
-                                early_kills_side = _target_side_from_sign(selected_early_sign)
+                                early_kills_side = kills_target_side
                                 early_kills_team_name = (
                                     (radiant_team_name_original or radiant_team_name)
                                     if early_kills_side == "radiant"
@@ -26364,7 +26373,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     "game_time": int(current_game_time),
                                     "target_side": kills_release_target_side_for_message if tier1_early_kills_mode else early65_target_side,
                                     "target_networth_diff": float(
-                                        target_networth_diff if tier1_early_kills_mode else (early65_target_diff or 0.0)
+                                        kills_target_networth_diff
+                                        if tier1_early_kills_mode
+                                        else (early65_target_diff or 0.0)
                                     ),
                                     "selected_star_wr": selected_star_wr,
                                     "selected_star_mode": selected_star_mode,
@@ -26389,7 +26400,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     "   ✅ ВЕРДИКТ: Сигнал отправлен "
                                     f"(reason={early65_release_status_label}, "
                                     f"target_side={kills_release_target_side_for_message if tier1_early_kills_mode else early65_target_side}, "
-                                    f"target_diff={int(target_networth_diff if tier1_early_kills_mode else (early65_target_diff or 0))})"
+                                    f"target_diff={int(kills_target_networth_diff if tier1_early_kills_mode else (early65_target_diff or 0))})"
                                 )
                                 if kills_dual_signal_defer:
                                     kills_target_side_resolved = (
