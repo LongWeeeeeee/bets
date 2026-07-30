@@ -1674,6 +1674,33 @@ def _winline_structured_current_map_winner(
     evidence = ""
     valid: List[Tuple[List[float], str]] = []
 
+    def _append_legacy_prices(
+        container: Any,
+        *,
+        order: str,
+        scope_text: str,
+    ) -> None:
+        """Read one proven winner container from the pre-CSS-class Winline DOM."""
+        nonlocal saw_unbettable_winner
+        tokens = [
+            " ".join(node.stripped_strings)
+            for node in container.find_all(["div", "span"], recursive=False)
+        ]
+        prices: List[float] = []
+        for token in tokens:
+            match = re.fullmatch(r"\s*([0-9]+[.,][0-9]+)\s*", token)
+            if not match:
+                continue
+            price = float(match.group(1).replace(",", "."))
+            if price > 1.01:
+                prices.append(price)
+        if len(prices) != 2:
+            saw_unbettable_winner = True
+            return
+        if order == "reverse":
+            prices.reverse()
+        valid.append((prices, scope_text[:700]))
+
     # The selected-event panel uses a different DOM from listing cards:
     # `odd-btn` under an explicitly named "Популярные на карту / Победитель"
     # line. Keep the market-name and period checks structural so the following
@@ -1730,6 +1757,83 @@ def _winline_structured_current_map_winner(
                 if order == "reverse":
                     prices.reverse()
                 valid.append((prices, scope_text[:700]))
+
+        # Older Winline snapshots do not expose the newer fast-bet CSS
+        # classes. The semantic component names and the exact
+        # "Популярные на карту -> Победитель -> N карта" hierarchy still
+        # identify the market without consulting adjacent handicap/total rows.
+        for top_markets in root.select("ww-feature-event-top-markets-dsk"):
+            for title in top_markets.find_all(
+                lambda tag: (
+                    tag.name in {"div", "span"}
+                    and " ".join(tag.stripped_strings).lower()
+                    == "популярные на карту"
+                )
+            ):
+                header = title.parent
+                group = header.parent if header is not None else None
+                if group is None:
+                    continue
+                for name in group.find_all(
+                    lambda tag: (
+                        tag.name in {"div", "span"}
+                        and " ".join(tag.stripped_strings).lower() == "победитель"
+                    )
+                ):
+                    meta = name.parent
+                    row = meta.parent if meta is not None else None
+                    if meta is None or row is None:
+                        continue
+                    periods = [
+                        " ".join(node.stripped_strings)
+                        for node in meta.find_all(["div", "span"], recursive=False)
+                    ]
+                    if not any(exact_label_re.fullmatch(value) for value in periods):
+                        continue
+                    saw_requested_row = True
+                    evidence = evidence or scope_text[:700]
+                    odds_container = meta.find_next_sibling()
+                    if odds_container is None:
+                        saw_unbettable_winner = True
+                        continue
+                    _append_legacy_prices(
+                        odds_container,
+                        order=order,
+                        scope_text=scope_text,
+                    )
+
+    # The legacy live listing has an exact map row whose first
+    # ww-feature-event-market-dsk child is the winner market. Keeping the
+    # component boundary is essential: later siblings are handicap and total.
+    for event_scope in soup.select("ww-feature-block-event-dsk"):
+        scope_text = " ".join(event_scope.stripped_strings)
+        if not _text_matches_teams(scope_text, team1, team2):
+            continue
+        order = _winline_team_order(scope_text, team1, team2)
+        if order is None:
+            continue
+        for label in event_scope.find_all(
+            lambda tag: (
+                tag.name in {"div", "span"}
+                and exact_label_re.fullmatch(" ".join(tag.stripped_strings))
+            )
+        ):
+            row = label.parent
+            if row is None:
+                continue
+            markets = row.find_all(
+                "ww-feature-event-market-dsk",
+                recursive=True,
+            )
+            if not markets:
+                continue
+            saw_requested_row = True
+            evidence = evidence or scope_text[:700]
+            _append_legacy_prices(
+                markets[0],
+                order=order,
+                scope_text=scope_text,
+            )
 
     for label in soup.find_all(
         lambda tag: _WINLINE_PERIOD_NAME_CLASS in _winline_node_classes(tag)

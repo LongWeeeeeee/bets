@@ -28,14 +28,27 @@ URL = "https://winline.ru/stavki/sport/kibersport/live"
 TEAM1 = "Carstensz Esports"
 TEAM2 = "Six Cats"
 
-# Форма живой карточки: команды в шапке, кэфы в соседнем узле.
+# Старая, но всё ещё встречающаяся структурная форма живой карточки. Первый
+# ww-feature-event-market-dsk — победитель; следующие компоненты принадлежат
+# форе и тоталу и не должны подмешиваться.
 CARD_HTML = """
-<div class="event">
-  <div class="hdr"><a>CARSTENSZ SIX CATS</a><span>2карта 10'</span></div>
-  <div class="stats">0 1 1 4</div>
-  <div class="markets">2К Матч 7.50 1.05 3.80 + 1.5 - 1.20
-    2 карта 3.80 1.20 - - - -</div>
-</div>
+<ww-feature-block-event-dsk>
+  <div><a><div>CARSTENSZ</div><div>SIX CATS</div></a></div>
+  <div>
+    <div>
+      <div>2 карта</div>
+      <div>
+        <ww-feature-event-market-dsk>
+          <div><span>3.80</span></div><div><span>1.20</span></div>
+        </ww-feature-event-market-dsk>
+        <ww-feature-event-market-dsk>
+          <div><span>7.50</span></div><div><span>+ 1.5 -</span></div>
+          <div><span>1.05</span></div>
+        </ww-feature-event-market-dsk>
+      </div>
+    </div>
+  </div>
+</ww-feature-block-event-dsk>
 """
 
 # Соседняя карточка со своим рынком: её кэфы брать нельзя.
