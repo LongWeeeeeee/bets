@@ -7,6 +7,7 @@ import atexit
 import contextlib
 from collections import deque, OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 import io
 import orjson
 try:
@@ -3609,6 +3610,15 @@ KILLS_REQUIRE_TIER1_TEAM = _env_flag("KILLS_REQUIRE_TIER1_TEAM", "1")
 LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS = _safe_float_env(
     "LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS",
     10 * 60.0,
+)
+# How long the early kills body may wait for the ProTracker payload so it can
+# show the same Protracker_* values as the later outcome bet. On the warm daily
+# cache the enrichment finishes in ~0.1s; anything longer means the cache is
+# cold (fetch in flight) — then we log the failure and send without those lines
+# instead of putting the 20-60s network fetch on the kills critical path.
+EARLY_KILLS_PROTRACKER_WAIT_SECONDS = max(
+    0.0,
+    _safe_float_env("EARLY_KILLS_PROTRACKER_WAIT_SECONDS", 3.0),
 )
 # Early Winner STAR + kills_window expected_diff ≥1 → kills bet on nearest
 # open window, must fire at least LEAD seconds before window start (default 3m).
@@ -8247,6 +8257,14 @@ def _format_dota2protracker_value(value: Any) -> str:
         return "+0.00"
 
 
+_DOTA2PROTRACKER_STAR_OUTPUT_KEYS = (
+    "dota2protracker_cp1vs1",
+    "dota2protracker_duo",
+    "dota2protracker_solo",
+    "dota2protracker_solo_overall",
+)
+
+
 def _format_dota2protracker_output_value(value: Any) -> Any:
     numeric_value = _coerce_metric_value(value)
     if numeric_value is None:
@@ -8774,17 +8792,22 @@ def _build_early_local_kills_message(
     game_time_seconds: Any,
     radiant_lead: Any,
     star_target_wr: int,
+    protracker_payload: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Build a FULL kills-bet body from LOCAL metrics only (no Dota2ProTracker).
+    """Build a FULL kills-bet body for the early (pre-networth-gate) release.
 
     The standalone lane_adv_dict kills bet must go out within the first 0-3
-    minutes. The ProTracker network fetch (10 heroes, sequential) adds ~20-60s
-    to the critical path, so for the early kills release we assemble the body
-    from data that is already available before the fetch: the local
-    synergy/counterpick star blocks (early/late/all), the lane_adv_dict line and
-    the team ELO block. The two ProTracker-derived lines (``Lane_adv_protracker``
-    and ``Protracker_1vs1``) are intentionally omitted here so the bet is
-    not blocked waiting on the fetch.
+    minutes, so the body is assembled from data that does not need the network:
+    the local synergy/counterpick star blocks (early/late/all), the
+    lane_adv_dict line and the team ELO block.
+
+    ``protracker_payload`` is optional and comes from the daily-warmed hero
+    cache (``_resolve_early_kills_protracker_payload``): on a warm cache the
+    enrichment costs ~0.1s, so the kills bet shows the very same
+    ``Lane_adv_protracker`` / ``Protracker_*`` values that the later outcome bet
+    will show. Without a payload the ProTracker lines are omitted entirely
+    (never rendered as ``None``) and the caller logs the failure — waiting on
+    the fetch here would put 20-60s on the kills critical path.
     """
     s = metrics_payload if isinstance(metrics_payload, dict) else {}
     header = _format_signal_header(
@@ -8795,12 +8818,18 @@ def _build_early_local_kills_message(
     top = s.get('top')
     mid = s.get('mid')
     bot = s.get('bot')
-    # Lanes + lane_adv_dict only (skip the protracker lane-adv line).
+    has_protracker = isinstance(protracker_payload, dict) and bool(protracker_payload)
+    # Lane_adv_protracker joins only when the payload came from the warm cache;
+    # otherwise the lane block stays local-only (lane_adv_dict).
     lane_block = _build_lane_block(
         top,
         mid,
         bot,
-        lane_adv_line="",
+        lane_adv_line=(
+            _build_dota2protracker_lane_adv_line(protracker_payload)
+            if has_protracker
+            else ""
+        ),
         lane_adv_dict_line=_build_lane_dict_adv_line(top, mid, bot),
         lane_kills_adv=s.get('lane_kills_adv_dict'),
     )
@@ -8820,9 +8849,13 @@ def _build_early_local_kills_message(
         section="mid_output",
         target_wr=star_target_wr,
     )
-    # all_output is normally post_lane_output + ProTracker star output; here we
-    # build the LOCAL part only (post_lane), omitting the ProTracker cp1vs1.
-    local_all_output = _build_all_star_output(s.get('post_lane_output', {}), None)
+    # all_output = post_lane_output + ProTracker star output — exactly as in the
+    # outcome-bet body, so both messages agree. Without a payload only the local
+    # (post_lane) part is built.
+    local_all_output = _build_all_star_output(
+        s.get('post_lane_output', {}),
+        protracker_payload if has_protracker else None,
+    )
     all_output_log = _decorate_star_block_for_display(
         raw_block=local_all_output,
         section="all_output",
@@ -8904,6 +8937,8 @@ def _build_early_local_kills_message(
         ('synergy_trio', 'Synergy_trio'),
     ]
     # All block: Solo + ProTracker display metrics (1vs1 match WR, duo lane 1+1).
+    # The ProTracker rows are listed only when the payload is there — a missing
+    # payload used to print four bare ``None`` rows.
     all_metric_list = [
         ('counterpick_1vs1', 'Counterpick_1vs1'),
         ('pos1_vs_pos1', 'Pos1vsPos1'),
@@ -8911,16 +8946,24 @@ def _build_early_local_kills_message(
         ('solo', 'Solo'),
         ('synergy_duo', 'Synergy_duo'),
         ('synergy_trio', 'Synergy_trio'),
-        ('dota2protracker_cp1vs1', 'Protracker_1vs1'),
-        ('dota2protracker_duo', 'Protracker_duo'),
-        ('dota2protracker_solo', 'Protracker_solo'),
-        ('dota2protracker_solo_overall', 'Protracker_solo_overall'),
     ]
+    if has_protracker:
+        all_metric_list.extend(
+            [
+                ('dota2protracker_cp1vs1', 'Protracker_1vs1'),
+                ('dota2protracker_duo', 'Protracker_duo'),
+                ('dota2protracker_solo', 'Protracker_solo'),
+                ('dota2protracker_solo_overall', 'Protracker_solo_overall'),
+            ]
+        )
 
     def _format_metrics(title: str, data: dict, metrics: list) -> str:
         lines = [title]
         for key, label in metrics:
-            lines.append(f"{label}: {(data or {}).get(key)}")
+            value = (data or {}).get(key)
+            if key in _DOTA2PROTRACKER_STAR_OUTPUT_KEYS:
+                value = _format_dota2protracker_output_value(value)
+            lines.append(f"{label}: {value}")
         return "\n".join(lines) + "\n"
 
     early_block = _format_metrics("Early NW (20-28):", early_output_log, metric_list)
@@ -25064,6 +25107,128 @@ def _protracker_cache_is_fresh(hero_name: str) -> bool:
     return cached >= time.strftime("%Y-%m-%d")
 
 
+def _protracker_draft_hero_names(
+    radiant_heroes_and_pos: Optional[Dict[str, Any]],
+    dire_heroes_and_pos: Optional[Dict[str, Any]],
+) -> List[str]:
+    """Имена героев драфта в том же виде, в каком их берёт enrichment.
+
+    Файл кэша героя — это ``name.lower()`` с пробелами в подчёркиваниях, поэтому
+    имена обязаны приходить из того же экстрактора, что и у парсера: свой
+    вариант нормализации уже разъезжался (см. `_protracker_cache_dir`).
+    """
+    module = globals().get("_dota2protracker_module")
+    extractor = getattr(module, "_extract_team_positions_and_cores", None)
+    if not callable(extractor):
+        return []
+    names: List[str] = []
+    for side in (radiant_heroes_and_pos, dire_heroes_and_pos):
+        try:
+            positions, _cores, _raw = extractor(side or {})
+        except Exception:
+            continue
+        for _pos, hero_name in positions or []:
+            hero = str(hero_name or "").strip()
+            if hero and hero not in names:
+                names.append(hero)
+    return names
+
+
+def _log_early_kills_protracker_error(
+    *,
+    match_key: str,
+    reason: str,
+    radiant_heroes_and_pos: Optional[Dict[str, Any]] = None,
+    dire_heroes_and_pos: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Ранняя килл-ставка осталась без ProTracker — это баг прогрева кэша.
+
+    Дневной warmup обязан держать всех героев свежими, поэтому «нет payload» —
+    не режим работы, а сигнал смотреть warmup/фетчер. Список несвежих героев
+    считаем только здесь: на горячем пути он не нужен.
+    """
+    try:
+        stale = [
+            hero
+            for hero in _protracker_draft_hero_names(
+                radiant_heroes_and_pos, dire_heroes_and_pos
+            )
+            if not _protracker_cache_is_fresh(hero)
+        ]
+    except Exception:
+        stale = []
+    stale_part = ",".join(stale) or "-"
+    print(
+        f"   ❌ Early kills ProTracker недоступен: reason={reason}, "
+        f"wait={EARLY_KILLS_PROTRACKER_WAIT_SECONDS}c, stale_cache=[{stale_part}] "
+        f"— строки Protracker_* пропущены в сообщении"
+    )
+    print(
+        f"EARLY_KILLS_PROTRACKER_UNAVAILABLE reason={reason} url={match_key} "
+        f"stale_cache={stale_part}"
+    )
+
+
+def _resolve_early_kills_protracker_payload(
+    *,
+    protracker_payload: Optional[Dict[str, Any]],
+    protracker_future: Optional[Any],
+    radiant_heroes_and_pos: Optional[Dict[str, Any]],
+    dire_heroes_and_pos: Optional[Dict[str, Any]],
+    match_key: str,
+) -> Optional[Dict[str, Any]]:
+    """ProTracker payload для ранней килл-ставки — без сетевого ожидания.
+
+    Кэш героев прогревается раз в сутки (`run_protracker_cache_warmup`), и на
+    тёплом кэше enrichment стоит ~0.1c — так ранняя килл-ставка и поздняя ставка
+    на исход показывают одни и те же ``Protracker_*``. Payload берём готовым
+    (recheck-цикл: он уже лежит в per-map кэше драфта) либо ждём фьючерс
+    короткий таймаут. Ждать дольше нельзя: на холодном кэше фетч 10 героев по
+    сети — 20-60c, а ставка должна уйти в первые минуты.
+    """
+    if not DOTA2PROTRACKER_ENABLED:
+        return None
+    if isinstance(protracker_payload, dict) and protracker_payload:
+        return protracker_payload
+    if protracker_future is None:
+        _log_early_kills_protracker_error(
+            match_key=match_key,
+            reason="payload_missing",
+            radiant_heroes_and_pos=radiant_heroes_and_pos,
+            dire_heroes_and_pos=dire_heroes_and_pos,
+        )
+        return None
+    try:
+        payload = protracker_future.result(
+            timeout=max(0.0, float(EARLY_KILLS_PROTRACKER_WAIT_SECONDS))
+        )
+    except FuturesTimeoutError:
+        _log_early_kills_protracker_error(
+            match_key=match_key,
+            reason="timeout",
+            radiant_heroes_and_pos=radiant_heroes_and_pos,
+            dire_heroes_and_pos=dire_heroes_and_pos,
+        )
+        return None
+    except Exception as exc:
+        _log_early_kills_protracker_error(
+            match_key=match_key,
+            reason=f"error:{type(exc).__name__}: {exc}",
+            radiant_heroes_and_pos=radiant_heroes_and_pos,
+            dire_heroes_and_pos=dire_heroes_and_pos,
+        )
+        return None
+    if not isinstance(payload, dict) or not payload:
+        _log_early_kills_protracker_error(
+            match_key=match_key,
+            reason="empty_payload",
+            radiant_heroes_and_pos=radiant_heroes_and_pos,
+            dire_heroes_and_pos=dire_heroes_and_pos,
+        )
+        return None
+    return payload
+
+
 def run_protracker_cache_warmup(*, limit: int = 0, force: bool = False) -> Dict[str, Any]:
     """Пройти героев и залить кэш. Идемпотентно: свежие пропускаются."""
     report: Dict[str, Any] = {
@@ -30294,12 +30459,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
 
         _early_local_kills_done = {"sent": False}
 
-        def _try_dispatch_early_local_lane_adv_kills(local_metrics: Dict[str, Any]) -> None:
-            """Fire the standalone lane_adv_dict early-kills bet using only the
-            LOCAL metrics (lanes + dictionary star blocks), before the slow
-            Dota2ProTracker fetch completes. lane_adv_dict depends solely on the
-            lanes, so we can decide and dispatch the kills bet immediately and
-            shave the ~20-60s ProTracker fetch off its critical path.
+        def _try_dispatch_early_local_lane_adv_kills(
+            local_metrics: Dict[str, Any],
+            *,
+            protracker_payload: Optional[Dict[str, Any]] = None,
+            protracker_future: Optional[Any] = None,
+        ) -> None:
+            """Fire the standalone lane_adv_dict early-kills bet on the LOCAL
+            metrics (lanes + dictionary star blocks): the decision needs only the
+            lanes, so it never waits on the Dota2ProTracker fetch.
+
+            The ProTracker payload is still folded into the message body when it
+            is already available (ready payload on rechecks, or the future
+            resolving off the warm daily cache in ~0.1s) so this bet and the
+            later outcome bet show identical ``Protracker_*`` values.
 
             Idempotent within a cycle (guarded by ``_early_local_kills_done``)
             and across cycles (the dispatcher records the URL in
@@ -30377,6 +30550,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 if local_lane_adv_dict_value > 0
                 else str(dire_team_name_original or dire_team_name or "").strip()
             ) or "НЕИЗВЕСТНАЯ КОМАНДА"
+            # Same payload for the kills bet and the later outcome bet: ready one
+            # on rechecks, otherwise a short wait on the warm-cache future.
+            early_protracker_payload = _resolve_early_kills_protracker_payload(
+                protracker_payload=protracker_payload,
+                protracker_future=protracker_future,
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
+                match_key=check_uniq_url,
+            )
             early_local_body = _build_early_local_kills_message(
                 radiant_team_name=radiant_team_name_original or radiant_team_name,
                 dire_team_name=dire_team_name_original or dire_team_name,
@@ -30387,6 +30569,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 game_time_seconds=game_time,
                 radiant_lead=lead,
                 star_target_wr=star_target_wr,
+                protracker_payload=early_protracker_payload,
             )
             sent = _try_dispatch_lane_adv_standalone_kills(
                 match_key=check_uniq_url,
@@ -30397,7 +30580,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 top=local_metrics.get('top'),
                 mid=local_metrics.get('mid'),
                 bot=local_metrics.get('bot'),
-                protracker_payload=None,
+                protracker_payload=early_protracker_payload,
                 lane_kills_adv=local_metrics.get('lane_kills_adv_dict'),
                 team_elo_block=early_local_elo_block,
                 game_time_seconds=game_time,
@@ -30507,8 +30690,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # Recheck path: draft metrics are cached, but game_time moves —
             # re-evaluate early kills gates (lane_adv standalone + Early Winner
             # nearest kills_window) on every cycle while the once-per-match
-            # slot is free.
-            _try_dispatch_early_local_lane_adv_kills(s)
+            # slot is free. The ProTracker payload is already in the per-map
+            # cache here, so the kills body needs no wait at all.
+            _try_dispatch_early_local_lane_adv_kills(
+                s, protracker_payload=protracker_payload
+            )
             _try_dispatch_early_local_winner_kills_window(s)
         else:
             # Log the full roster (hero + position) once at first parse so the
@@ -30541,16 +30727,23 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     # network) and immediately try to release the standalone
                     # lane_adv_dict early-kills bet — it depends only on the
                     # lanes, not on Dota2ProTracker. This shaves the ~20-60s
-                    # ProTracker fetch off the kills critical path. The rest of
-                    # the dispatch flow still waits for ProTracker below.
+                    # cold-cache ProTracker fetch off the kills critical path;
+                    # the body still picks the payload up when the warm-cache
+                    # future resolves within EARLY_KILLS_PROTRACKER_WAIT_SECONDS.
+                    # The rest of the dispatch flow still waits for ProTracker.
                     s = local_future.result()
-                    _try_dispatch_early_local_lane_adv_kills(s)
+                    _try_dispatch_early_local_lane_adv_kills(
+                        s, protracker_future=protracker_future
+                    )
                     _try_dispatch_early_local_winner_kills_window(s)
                     protracker_payload = protracker_future.result()
             else:
                 protracker_payload = _run_dota2protracker_enrichment()
                 s = _run_local_dictionary_metrics()
-                _try_dispatch_early_local_lane_adv_kills(s)
+                # Sequential path: enrichment already finished, pass it straight in.
+                _try_dispatch_early_local_lane_adv_kills(
+                    s, protracker_payload=protracker_payload
+                )
                 _try_dispatch_early_local_winner_kills_window(s)
 
             if DOTA2PROTRACKER_ENABLED:

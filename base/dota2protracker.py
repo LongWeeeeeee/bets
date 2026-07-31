@@ -2333,8 +2333,23 @@ def enrich_with_pro_tracker(
     hero_data = {}
 
     for hero_name in all_heroes:
-        hero_data[hero_name] = parse_hero_matchups(hero_name)
-        time.sleep(2)
+        # Пауза между героями нужна только против троттлинга на реальных
+        # запросах. На дневном кэше (warmup прогревает всех героев) она
+        # превращала ~0.07c расчёта в 20c ожидания на каждом драфте, и ранняя
+        # килл-ставка не успевала получить те же Protracker_*, что и ставка на
+        # исход. Сетевой запрос отличаем по свежему timestamp — так же, как
+        # `run_protracker_cache_warmup` отличает загрузку от чтения кэша.
+        requested_at = time.time()
+        hero_payload = parse_hero_matchups(hero_name)
+        hero_data[hero_name] = hero_payload
+        try:
+            payload_timestamp = float((hero_payload or {}).get('timestamp') or 0.0)
+        except (TypeError, ValueError):
+            payload_timestamp = 0.0
+        # Свежий timestamp = страницу реально тянули по сети. Чтение кэша и
+        # ранние выходы (нет Camoufox) timestamp не обновляют — им пауза не нужна.
+        if payload_timestamp >= requested_at:
+            time.sleep(2)
 
     # ===== CP1VS1 =====
     r_cp_valid, r_cp_data = _calculate_cp1vs1_all_positions(
