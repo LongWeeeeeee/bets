@@ -18,6 +18,14 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 SCHEMA_VERSION = "winline_current_map_odds_poller.v1"
 
+try:  # общий справочник написаний команд; поллер обязан работать и без него
+    from base.team_name_aliases import canonical_team_key as _canonical_team_key
+except ImportError:  # pragma: no cover — зависит от sys.path процесса
+    try:
+        from team_name_aliases import canonical_team_key as _canonical_team_key
+    except ImportError:
+        _canonical_team_key = None  # type: ignore[assignment]
+
 
 def _env_float(name: str, default: float) -> float:
     """Env override with a safe fallback; never raises on garbage input."""
@@ -217,6 +225,13 @@ def _teams_equivalent(left: Any, right: Any) -> bool:
         return False
     if left_raw == right_raw:
         return True
+    if _canonical_team_key is not None:
+        # Справочник написаний: у нас `BoomBoys`, на странице `BB TEAM` —
+        # токены не совпадут никогда, а команда одна.
+        left_key = _canonical_team_key(left_raw)
+        right_key = _canonical_team_key(right_raw)
+        if left_key and right_key and left_key == right_key:
+            return True
     return _normalize_team_tokens(left_raw) == _normalize_team_tokens(right_raw)
 
 

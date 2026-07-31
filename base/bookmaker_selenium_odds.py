@@ -38,6 +38,21 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from seleniumwire import webdriver
 
+try:  # общий справочник написаний команд; модуль обязан работать и без него
+    from team_name_aliases import alias_spellings as _alias_spellings
+    from team_name_aliases import fold_confusables as _fold_confusables
+except ImportError:  # pragma: no cover — зависит от sys.path процесса
+    try:
+        from base.team_name_aliases import alias_spellings as _alias_spellings
+        from base.team_name_aliases import fold_confusables as _fold_confusables
+    except ImportError:
+
+        def _alias_spellings(_name: str) -> List[str]:
+            return []
+
+        def _fold_confusables(value: str) -> str:
+            return str(value or "").lower()
+
 
 async def _maybe_await(value):
     """Разворачивает результат page.*: корутину ждём, готовое значение отдаём.
@@ -159,29 +174,35 @@ for _logger_name in (
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9а-я]+", " ", s.lower())).strip()
+    # `ё` обязана пережить нормализацию: без неё имя рвётся на два куска
+    # (`Королёв` -> `корол в`) и не находится на странице ни в каком виде.
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9а-яё]+", " ", s.lower())).strip()
 
 
 def _team_name_search_variants(team: str) -> List[str]:
-    """DOM lookup variants for harmless punctuation and CamelCase differences."""
+    """DOM lookup variants for punctuation, CamelCase and known bookmaker spellings."""
     raw = str(team or "").strip()
     if not raw:
         return []
-    # SourceTV may emit `_PowerRangers`, while Winline renders
-    # `POWER RANGERS`. This is one identity with different typography.
-    camel_spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", raw)
-    values = [raw, raw.lstrip("_"), camel_spaced, camel_spaced.lstrip("_")]
     out: List[str] = []
     seen = set()
-    for value in values:
-        normalized = _norm(value)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        out.append(normalized)
+    # Букмекер пишет ту же команду по-своему (`BoomBoys` -> `BB TEAM`), поэтому
+    # известные написания ищем наравне с нашим названием.
+    for name in [raw] + list(_alias_spellings(raw)):
+        # SourceTV may emit `_PowerRangers`, while Winline renders
+        # `POWER RANGERS`. This is one identity with different typography.
+        camel_spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
+        for value in (name, name.lstrip("_"), camel_spaced, camel_spaced.lstrip("_")):
+            normalized = _norm(value)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            out.append(normalized)
     return out
 
 
+# Родовые слова: их наличие ничего не говорит о том, ЧТО это за команда.
+# Внутри полного названия они безобидны, отдельным поисковым словом — нет.
 GENERIC_TEAM_TOKENS = {
     "team",
     "gaming",
@@ -189,44 +210,78 @@ GENERIC_TEAM_TOKENS = {
     "esport",
     "club",
     "squad",
+    "the",
+}
+
+# Слова, которыми второй состав отличается от основного. Отбрасывать их нельзя:
+# `Team Spirit Academy` без `academy` превращается в `Team Spirit`, то есть в
+# другую команду, а по её карточке пришли бы чужие кэфы.
+ROSTER_QUALIFIER_TOKENS = {
     "academy",
     "junior",
     "juniors",
     "youth",
-    "the",
 }
 
 
 def _fallback_search_tokens(team: str) -> List[str]:
+    """Сокращённые написания названия — на случай, когда полного на странице нет.
+
+    Отдаём только однозначные формы. Родовое слово (`team`) и обрубки в один-два
+    символа искать нельзя: 31.07.2026 `L1GA TEAM` искалось словом `team`, ловило
+    `TEAM VOODOOSH` из соседней карточки, и кэфы возвращались от чужого матча.
+    """
     variants = _team_name_search_variants(team)
     if not variants:
         return []
-    norm = max(variants, key=lambda value: (len(value.split()), len(value)))
-    raw_tokens = [token for token in norm.split() if token]
-    preferred = [token for token in raw_tokens if len(token) >= 3 and token not in GENERIC_TEAM_TOKENS]
-    if not preferred:
-        preferred = [token for token in raw_tokens if len(token) >= 2]
-    preferred.sort(key=len, reverse=True)
-    seen = set()
+    seen = set(variants)  # полные написания ищутся до токенов, дублировать нечего
     out: List[str] = []
-    for token in preferred:
-        if token in seen:
+
+    def _add(value: str) -> None:
+        if value and value not in seen:
+            seen.add(value)
+            out.append(value)
+
+    for variant in variants:
+        tokens = [token for token in variant.split() if token]
+        if not tokens:
             continue
-        seen.add(token)
-        out.append(token)
+        core = [token for token in tokens if token not in GENERIC_TEAM_TOKENS]
+        if core and core != tokens and (len(core) > 1 or len(core[0]) >= 3):
+            # Название без родовых слов: `Team Liquid` -> `liquid`,
+            # `Level UP esports` -> `level up`, `L1GA TEAM` -> `l1ga`.
+            _add(" ".join(core))
+        if any(token in ROSTER_QUALIFIER_TOKENS for token in tokens):
+            # У второго состава отдельные слова искать нельзя: по `spirit`
+            # нашёлся бы основной ростер.
+            continue
+        for token in sorted(core, key=len, reverse=True):
+            # Порог в 3 символа проверен на корпусе: у `LGD.Pinghu` на странице
+            # написано `LGD GAMING`, и без токена `lgd` карточка не находится.
+            # Ломали поиск не короткие значащие слова, а родовые (`team`)
+            # и обрубки в 1-2 символа из разбитого по цифре названия.
+            if len(token) >= 3:
+                _add(token)
     return out
 
 
 def _literal_team_positions(text: str, value: str) -> List[int]:
-    """Find a team name/token without accepting it inside a longer word."""
-    needle = (value or "").lower()
+    """Find a team name/token without accepting it inside a longer word.
+
+    Обе стороны приводим к одному алфавиту: Winline пишет `TEAM TPABOMAH`
+    латинскими двойниками кириллических букв. Замена посимвольная, длина строки
+    не меняется, поэтому найденные позиции валидны для исходного текста.
+    """
+    needle = _fold_confusables(value or "")
     if not needle:
         return []
     left = r"(?<![a-z0-9а-яё])" if needle[0].isalnum() else ""
     right = r"(?![a-z0-9а-яё])" if needle[-1].isalnum() else ""
     return [
         match.start()
-        for match in re.finditer(left + re.escape(needle) + right, text, re.I)
+        for match in re.finditer(
+            left + re.escape(needle) + right, _fold_confusables(text), re.I
+        )
     ]
 
 
@@ -243,15 +298,14 @@ def _find_positions_with_fallback(low: str, team: str) -> List[int]:
 
 
 def _first_index_with_fallback(low: str, team: str) -> int:
-    for variant in _team_name_search_variants(team):
-        direct = low.find(variant)
-        if direct != -1:
-            return direct
-    for token in _fallback_search_tokens(team):
-        pos = low.find(token)
-        if pos != -1:
-            return pos
-    return -1
+    """Первая позиция команды в тексте — по тем же правилам, что и поиск карточки.
+
+    Раньше здесь был обычный `find` без границ слова, и порядок сторон рынка мог
+    определиться подстрокой: `Pari` внутри `PARIVISION`, `1w` внутри `1WIN`.
+    Порядок решает, какой команде достанется какой кэф, поэтому правило одно.
+    """
+    positions = _find_positions_with_fallback(low, team)
+    return min(positions) if positions else -1
 
 
 def _parse_proxy(proxy_url: str) -> Dict[str, str]:
@@ -1180,8 +1234,6 @@ def _snippet_by_teams(
     low = text.lower()
     t1 = str(team1 or "")
     t2 = str(team2 or "")
-    t1_low = t1.lower()
-    t2_low = t2.lower()
     pos1 = _find_positions_with_fallback(low, t1)
     pos2 = _find_positions_with_fallback(low, t2)
     if not pos1 or not pos2:
@@ -1206,12 +1258,10 @@ def _snippet_by_teams(
     hi = min(len(text), center + radius)
     sn = re.sub(r"\s+", " ", text[lo:hi]).strip()
     low_sn = sn.lower()
-    has_t1 = (t1_low in low_sn) or any(
-        variant in low_sn for variant in _team_name_search_variants(t1)
-    ) or any(token in low_sn for token in _fallback_search_tokens(t1))
-    has_t2 = (t2_low in low_sn) or any(
-        variant in low_sn for variant in _team_name_search_variants(t2)
-    ) or any(token in low_sn for token in _fallback_search_tokens(t2))
+    # Проверяем теми же правилами, что и поиск позиций: подстрока без границ
+    # слова принимала `DOWN` внутри `countdown` и склеивала чужие карточки.
+    has_t1 = bool(_find_positions_with_fallback(low_sn, t1))
+    has_t2 = bool(_find_positions_with_fallback(low_sn, t2))
     if not has_t1 or not has_t2:
         return None
     return sn
@@ -1426,6 +1476,54 @@ _WINLINE_MATCH_ROW_LABEL_RE = re.compile(r"\bМатч\b")
 _WINLINE_PRICE_PAIR_RE = re.compile(r"[0-9]+[.,][0-9]+\s+[0-9]+[.,][0-9]+")
 
 
+# Шапка живой карточки пишет номер карты СЛИТНО (`BB TEAM TEAM LIQUID 2карта +15`),
+# а строка рынка — раздельно (`2 карта 1.44 2.67`). Это и есть признак начала
+# нового события в плоском тексте страницы: заголовок турнира общий для нескольких
+# матчей подряд и границей события быть не может.
+_WINLINE_CARD_HEADER_MARKER_RE = re.compile(r"(?<![0-9])[1-5]карта(?![а-яё])", re.I)
+
+# Хвост предыдущей карточки: цены, прочерки-заполнители, разделитель дисциплины.
+# Названия команд следующей карточки начинаются после них.
+_WINLINE_CARD_TAIL_TOKEN_RE = re.compile(r"(?:[0-9]+[.,][0-9]+|[-—–]|\|)")
+
+
+def _winline_token_is_name_like(token: str) -> bool:
+    """Токен похож на часть названия команды: буквы только в верхнем регистре."""
+    letters = [char for char in token if char.isalpha()]
+    if not letters:
+        # Цифры и знаки (`+16`, `27'`, `0`) встречаются и внутри шапки карточки.
+        return True
+    return all(char.isupper() for char in letters)
+
+
+def _winline_card_start(flat: str, floor: int, marker_start: int) -> int:
+    """Начало карточки: блок названий команд перед слитным маркером карты."""
+    head = flat[floor:marker_start]
+    if not head.strip():
+        return floor
+    tail = None
+    for match in _WINLINE_CARD_TAIL_TOKEN_RE.finditer(head):
+        tail = match
+    lower_bound = floor + (tail.end() if tail else 0)
+    tokens = list(re.finditer(r"\S+", flat[lower_bound:marker_start]))
+    for index, token in enumerate(tokens):
+        if all(_winline_token_is_name_like(item.group()) for item in tokens[index:]):
+            # Название турнира набрано не капсом (`Games of the Future 2`),
+            # поэтому остаётся снаружи карточки и не путает порядок команд.
+            return lower_bound + token.start()
+    return lower_bound
+
+
+def _winline_event_boundaries(flat: str) -> List[int]:
+    """Позиции начала карточек: заголовок дисциплины плюс шапка каждого события."""
+    boundaries = {match.start() for match in _WINLINE_EVENT_BOUNDARY_RE.finditer(flat)}
+    floor = 0
+    for match in _WINLINE_CARD_HEADER_MARKER_RE.finditer(flat):
+        boundaries.add(_winline_card_start(flat, floor, match.start()))
+        floor = match.end()
+    return sorted(boundaries)
+
+
 def _winline_price_bearing_children(node) -> int:
     """How many direct child subtrees carry a price pair (i.e. look like markets)."""
     count = 0
@@ -1556,13 +1654,18 @@ def _winline_matched_card_context(
     if pair is None:
         return None
     _, pair_start, pair_end = pair
-    boundaries = [match.start() for match in _WINLINE_EVENT_BOUNDARY_RE.finditer(flat)]
+    boundaries = _winline_event_boundaries(flat)
     if not boundaries:
         return flat
     card_start = max((pos for pos in boundaries if pos <= pair_start), default=0)
     card_end = min((pos for pos in boundaries if pos > pair_end), default=len(flat))
     card = flat[card_start:card_end].strip()
     if not card or not _text_matches_teams(card, team1, team2):
+        return None
+    if not _winline_single_card_scope(card):
+        # Кусок всё ещё накрывает соседние матчи: отдать его — значит отдать
+        # чужую строку рынка. Именно так запрос `REKONIX vs L1GA TEAM`
+        # 31.07.2026 получал кэфы карточки `ENJOY GLYPH`.
         return None
     return card
 
@@ -2108,7 +2211,17 @@ def _extract_winline_current_map_winner(
         html=html,
         map_num=map_num,
     )
-    working = card_context if card_context else flat
+    if not card_context:
+        # Карточка запрошенной пары не доказана. Читать рынок по всей странице
+        # нельзя: строка `N карта a b` берётся ПЕРВАЯ, а принадлежит она чужому
+        # матчу — 31.07.2026 запрос `REKONIX vs L1GA TEAM` так получал кэфы
+        # карточки `ENJOY GLYPH` из той же лиги (11 записей из 419 с кэфами).
+        return _WinlineMapExtract(
+            reason="no_card",
+            map_num=map_num,
+            details="winline card for requested teams not proven in page text",
+        )
+    working = card_context
     order = _winline_team_order(working, team1, team2)
     has_teams = order is not None
     working_low = working.lower()
@@ -3502,16 +3615,21 @@ async def parse_site_in_camoufox_page_async(
         ))
 
     strict_map_odds: List[float] = []
-    for context in (body_text, visible, details):
-        strict_map_odds = _extract_map_odds_from_feed_context(
-            site,
-            context or "",
-            team1=team1,
-            team2=team2,
-            forced_map_num=forced_map_num,
-        )
-        if strict_map_odds:
-            break
+    # Для Winline сюда попадают только случаи, где карточка пары НЕ доказана
+    # (иначе строгая ветка выше уже вернула результат). Общий добор по окну
+    # вокруг названий брал первую строку рынка в этом окне — то есть кэфы
+    # соседнего матча, — поэтому для Winline его нет.
+    if site != "winline":
+        for context in (body_text, visible, details):
+            strict_map_odds = _extract_map_odds_from_feed_context(
+                site,
+                context or "",
+                team1=team1,
+                team2=team2,
+                forced_map_num=forced_map_num,
+            )
+            if strict_map_odds:
+                break
     odds: List[float] = []
     if strict_map_odds:
         odds = strict_map_odds[:2]
@@ -3950,16 +4068,21 @@ def parse_site(
     found, _odds_ignored, source_name, details = _find_from_sources(team1, team2, sources)
     # Fallback odds are disabled: only strict map-row/deeplink parsing is allowed.
     strict_map_odds: List[float] = []
-    for context in (body_text, visible, details):
-        strict_map_odds = _extract_map_odds_from_feed_context(
-            site,
-            context or "",
-            team1=team1,
-            team2=team2,
-            forced_map_num=forced_map_num,
-        )
-        if strict_map_odds:
-            break
+    # Для Winline сюда попадают только случаи, где карточка пары НЕ доказана
+    # (иначе строгая ветка выше уже вернула результат). Общий добор по окну
+    # вокруг названий брал первую строку рынка в этом окне — то есть кэфы
+    # соседнего матча, — поэтому для Winline его нет.
+    if site != "winline":
+        for context in (body_text, visible, details):
+            strict_map_odds = _extract_map_odds_from_feed_context(
+                site,
+                context or "",
+                team1=team1,
+                team2=team2,
+                forced_map_num=forced_map_num,
+            )
+            if strict_map_odds:
+                break
     odds: List[float] = []
     if strict_map_odds:
         odds = strict_map_odds[:2]
