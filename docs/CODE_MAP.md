@@ -279,7 +279,8 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 - Срабатывает только для draft-кандидата `early_output` WR60 с `hit_count >= 2`.
 - Отдельно пишет `nw_hit_count`/`nw_max_wr`, target-aligned raw/absolute признаки каждого блока `early_nw`, `early_win`, `late`, `all`, их agreement/cross-block признаки и pre-map ELO.
 - JSON logistic artifact: `ml-models/team_kills25/team_kills25_shadow.json`; отсутствие/ошибка модели не влияет на live-сигнал.
-- Audit log: `runtime/team_kills25_shadow.jsonl`; один record на `match_key` за жизнь процесса.
+- Audit log: `runtime/team_kills25_shadow.jsonl`; один record на технический `match_key` за жизнь процесса.
+- Telegram anti-duplicate использует стабильный Dota `match_id`, а не меняющийся DLTV `match_key` с score/poll suffix. Перед HTTP-вызовом создаётся durable at-most-once claim в `TEAM_KILLS25_TELEGRAM_SENT_PATH`; legacy-строки с URL автоматически нормализуются.
 - При `TEAM_KILLS25_TELEGRAM_ENABLED=1` отдельно отправляет только кандидатов `ml_probability >= artifact threshold`; основной бот, stake и bookmaker gates не меняет.
 - Успешные отправки дедуплицируются между рестартами через `TEAM_KILLS25_TELEGRAM_SENT_PATH`.
 - Env: `TEAM_KILLS25_SHADOW_ENABLED=0`, `TEAM_KILLS25_SHADOW_MODEL_PATH`, `TEAM_KILLS25_SHADOW_LOG_PATH`, `TEAM_KILLS25_TELEGRAM_ENABLED`, `TEAM_KILLS25_TELEGRAM_BOT_TOKEN`, `TEAM_KILLS25_TELEGRAM_CHAT_ID`, optional `TEAM_KILLS25_TELEGRAM_MIN_PROBABILITY`/`TEAM_KILLS25_TELEGRAM_MIN_WR`.

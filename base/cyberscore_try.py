@@ -31199,9 +31199,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"{radiant_team_name_original} vs {dire_team_name_original}"
                     )
 
-            # Non-sending audit only: score/log every NW60 hits>=2 candidate.
+            # Isolated kills25 audit/sender: score/log every NW60 hits>=2 candidate.
             # This call cannot alter STAR validity, stake, bookmaker gates, or
-            # Telegram dispatch; any failure is fail-open for the live signal.
+            # the main Telegram dispatch; any failure is fail-open for it.
             try:
                 kills25_shadow_record = _record_team_kills25_shadow_candidate(
                     match_key=check_uniq_url,

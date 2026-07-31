@@ -1,8 +1,9 @@
-"""Non-sending shadow predictor for a target team reaching 25 map kills.
+"""Shadow predictor and isolated sender for a target team reaching 25 map kills.
 
-The module deliberately has no dependency on the live dispatch policy.  It
-extracts pre-map draft/ELO features, optionally scores a frozen JSON logistic
-artifact, and appends one observation per map to a JSONL audit log.
+The module deliberately has no dependency on the main live dispatch policy.
+It extracts pre-map draft/ELO features, optionally scores a frozen JSON
+logistic artifact, appends observations to a JSONL audit log, and can send
+qualified recommendations through a dedicated Telegram bot.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import threading
 import time
 from functools import lru_cache
@@ -90,6 +92,7 @@ _WRITE_LOCK = threading.Lock()
 _RECORDED_KEYS: set[str] = set()
 _TELEGRAM_SENT_KEYS: set[str] = set()
 _TELEGRAM_SENT_PATHS_LOADED: set[str] = set()
+_DLTV_MATCH_ID_RE = re.compile(r"(?:^|/)matches/(\d+)(?:\.\d+)?(?:$|[/?#])")
 
 
 def _env_enabled(name: str, default: str = "0") -> bool:
@@ -268,9 +271,33 @@ def _telegram_sent_path() -> Path:
     )
 
 
-def _load_telegram_sent_keys(path: Path) -> None:
+def _stable_match_id(value: Any) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value) if value > 0 else None
+    if isinstance(value, float):
+        return str(int(value)) if value > 0 and value.is_integer() else None
+    text = str(value).strip()
+    if text.isdigit() and int(text) > 0:
+        return str(int(text))
+    return None
+
+
+def _telegram_dedupe_key(record: Mapping[str, Any]) -> str:
+    match_id = _stable_match_id(record.get("match_id"))
+    if match_id:
+        return f"match_id:{match_id}"
+    match_key = str(record.get("match_key") or "").strip()
+    match = _DLTV_MATCH_ID_RE.search(match_key)
+    if match:
+        return f"match_id:{int(match.group(1))}"
+    return f"match_key:{match_key}"
+
+
+def _load_telegram_sent_keys(path: Path, *, force: bool = False) -> None:
     resolved = str(path.resolve())
-    if resolved in _TELEGRAM_SENT_PATHS_LOADED:
+    if not force and resolved in _TELEGRAM_SENT_PATHS_LOADED:
         return
     try:
         with path.open("r", encoding="utf-8") as handle:
@@ -281,21 +308,46 @@ def _load_telegram_sent_keys(path: Path) -> None:
                     continue
                 if not isinstance(payload, Mapping):
                     continue
-                match_key = str(payload.get("match_key") or "").strip()
-                if match_key:
-                    _TELEGRAM_SENT_KEYS.add(match_key)
+                dedupe_key = str(payload.get("dedupe_key") or "").strip()
+                if not dedupe_key:
+                    dedupe_key = _telegram_dedupe_key(payload)
+                if dedupe_key not in {"", "match_key:"}:
+                    _TELEGRAM_SENT_KEYS.add(dedupe_key)
     except FileNotFoundError:
         pass
     _TELEGRAM_SENT_PATHS_LOADED.add(resolved)
 
 
-def _mark_telegram_sent(path: Path, match_key: str) -> None:
+def _claim_telegram_send(path: Path, record: Mapping[str, Any]) -> bool:
+    """Durably claim a map before calling Telegram (at-most-once delivery)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"match_key": match_key, "sent_at": int(time.time())}
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
-        handle.flush()
-    _TELEGRAM_SENT_KEYS.add(match_key)
+    dedupe_key = _telegram_dedupe_key(record)
+    _load_telegram_sent_keys(path)
+    if dedupe_key in _TELEGRAM_SENT_KEYS:
+        return False
+    lock_path = path.with_name(f"{path.name}.lock")
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        try:
+            import fcntl
+
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            pass
+        _load_telegram_sent_keys(path, force=True)
+        if dedupe_key in _TELEGRAM_SENT_KEYS:
+            return False
+        payload = {
+            "dedupe_key": dedupe_key,
+            "match_key": str(record.get("match_key") or ""),
+            "match_id": record.get("match_id"),
+            "claimed_at": int(time.time()),
+        }
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(_json_safe(payload), ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        _TELEGRAM_SENT_KEYS.add(dedupe_key)
+        return True
 
 
 def _format_telegram_bet(record: Mapping[str, Any]) -> str:
@@ -406,10 +458,8 @@ def _maybe_send_telegram_bet(
             "min_wr": min_wr,
         }
 
-    match_key = str(record.get("match_key") or "").strip()
     sent_path = _telegram_sent_path()
-    _load_telegram_sent_keys(sent_path)
-    if match_key in _TELEGRAM_SENT_KEYS:
+    if not _claim_telegram_send(sent_path, record):
         return {
             "enabled": True,
             "eligible": True,
@@ -424,8 +474,6 @@ def _maybe_send_telegram_bet(
         chat_id=chat_id,
         text=_format_telegram_bet(record),
     )
-    if sent:
-        _mark_telegram_sent(sent_path, match_key)
     return {
         "enabled": True,
         "eligible": True,

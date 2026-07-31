@@ -156,7 +156,7 @@ def test_qualified_telegram_bet_is_sent_once_across_process_restart(
 
     monkeypatch.setattr(shadow, "_post_telegram_message", fake_post)
     kwargs = {
-        "match_key": "map-telegram-1",
+        "match_key": "dltv.org/matches/12345.26",
         "match_id": 12345,
         "observed_at": 2,
         "target_side": "radiant",
@@ -188,11 +188,90 @@ def test_qualified_telegram_bet_is_sent_once_across_process_restart(
 
     # Simulate a new process: in-memory state is empty, persistent sent log remains.
     shadow.reset_shadow_state_for_tests()
-    second = shadow.record_shadow_observation(**kwargs)
+    second = shadow.record_shadow_observation(
+        **{**kwargs, "match_key": "dltv.org/matches/12345.30"}
+    )
     assert second is not None
     assert second["telegram"]["reason"] == "already_sent"
     assert len(calls) == 1
     assert len(sent_path.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_telegram_dedupe_reads_legacy_volatile_match_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEAM_KILLS25_SHADOW_ENABLED", "1")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_ENABLED", "1")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_BOT_TOKEN", "secret-test-token")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_CHAT_ID", "123")
+    sent_path = tmp_path / "telegram-sent.jsonl"
+    sent_path.write_text(
+        json.dumps(
+            {
+                "match_key": "dltv.org/matches/8922211678.26",
+                "sent_at": 1785496788,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_SENT_PATH", str(sent_path))
+    calls = []
+    monkeypatch.setattr(
+        shadow,
+        "_post_telegram_message",
+        lambda **kwargs: calls.append(kwargs) or (True, None),
+    )
+    shadow.reset_shadow_state_for_tests()
+    result = shadow.record_shadow_observation(
+        match_key="dltv.org/matches/8922211678.38",
+        match_id=8922211678,
+        observed_at=2,
+        target_side="radiant",
+        target_team_id=10,
+        target_team_name="A",
+        opponent_team_id=20,
+        opponent_team_name="B",
+        tier_segment="T1-T2",
+        nw_hit_count=2,
+        nw_max_wr=65,
+        nw_hit_metrics=["solo", "counterpick_1vs1"],
+        metrics_payload=_metrics(),
+        team_elo_meta={"raw_radiant_wr": 60, "raw_dire_wr": 40, "raw_diff": 80},
+        artifact=_artifact(),
+        log_path=tmp_path / "shadow.jsonl",
+    )
+    assert result is not None
+    assert result["telegram"]["reason"] == "already_sent"
+    assert calls == []
+
+
+def test_telegram_claim_prevents_retry_after_ambiguous_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_ENABLED", "1")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_BOT_TOKEN", "secret-test-token")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_CHAT_ID", "123")
+    sent_path = tmp_path / "telegram-sent.jsonl"
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_SENT_PATH", str(sent_path))
+    calls = []
+    monkeypatch.setattr(
+        shadow,
+        "_post_telegram_message",
+        lambda **kwargs: calls.append(kwargs) or (False, "request_Timeout"),
+    )
+    record = {
+        "match_key": "dltv.org/matches/7777777777.1",
+        "match_id": 7777777777,
+        "ml_probability": 0.8,
+        "ml_threshold": 0.6,
+        "nw_max_wr": 65,
+    }
+    shadow.reset_shadow_state_for_tests()
+    first = shadow._maybe_send_telegram_bet(record)
+    second = shadow._maybe_send_telegram_bet(
+        {**record, "match_key": "dltv.org/matches/7777777777.2"}
+    )
+    assert first["sent"] is False
+    assert first["reason"] == "request_Timeout"
+    assert second["reason"] == "already_sent"
+    assert len(calls) == 1
 
 
 def test_telegram_gate_does_not_send_below_artifact_threshold(monkeypatch, tmp_path):
