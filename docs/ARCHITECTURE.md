@@ -136,7 +136,7 @@ Live runtime передаёт account IDs обоих текущих состав
 
 Опциональный изолированный sender применяет artifact probability threshold и минимальный NW WR. Ручных порогов по sample size или mean kills нет: patch-roster статистика является частью модели. Roster-проверка fail-closed только когда сам источник признаков недоступен; валидный источник без подходящих roster/patch-карт не блокирует отправку, и отсутствующие признаки обрабатывает frozen median imputer.
 
-Training перебирает `C ∈ {0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0}` по log loss на old chronological validation; production artifact выбрал `C=0.003`. Ставочный threshold не подбирается по profit/ROI: он фиксирован на break-even коэффициента 1.8 (`1 / 1.8 = 55.56%`). Forward остаётся untouched и используется только для отчёта.
+Training перебирает `C ∈ {0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0}` по log loss на old chronological validation; production artifact выбрал `C=0.003`. Ставочный threshold не подбирается по profit/ROI: он фиксирован на break-even коэффициента 1.8 (`1 / 1.8 = 55.56%`). Forward outcomes не входят в fit/выбор `C`/threshold, но forward-диагностика просматривалась при feature research; это out-of-time diagnostic, а не строгий one-shot holdout.
 
 Artifact report: модель, не refit после train/validation selection (`forward_untouched`), дала 141 bet / 98 hit, `+35.4u`, ROI `25.1%`; frozen production model, refit на всех old rows (`forward_refit_old_only`), — 156 / 104, `+31.2u`, ROI `20.0%`.
 
