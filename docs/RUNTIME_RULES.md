@@ -23,6 +23,12 @@
 - **Production server:** `root@23.26.193.167`, путь проекта `/root/main`.
 - Runtime/output артефакты под `runtime/` намеренно игнорируются.
 
+### Team kills≥25 shadow
+
+- `TEAM_KILLS25_SHADOW_ENABLED=0` — включает только non-sending скоринг/JSONL-аудит кандидатов NW60 с `hits>=2`; dispatch и stake не меняются.
+- `TEAM_KILLS25_SHADOW_MODEL_PATH=ml-models/team_kills25/team_kills25_shadow.json` — frozen JSON logistic artifact.
+- `TEAM_KILLS25_SHADOW_LOG_PATH=runtime/team_kills25_shadow.jsonl` — append-only журнал признаков и прогнозов.
+
 ---
 
 ## Запуск и деплой на сервере

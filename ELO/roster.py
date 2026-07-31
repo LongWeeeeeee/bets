@@ -18,7 +18,7 @@ class _OrgLineageState:
 
 
 class RosterLineageTracker:
-    def __init__(self, min_shared_players: int = 3, recent_segment_lineups: int = 3) -> None:
+    def __init__(self, min_shared_players: int = 4, recent_segment_lineups: int = 3) -> None:
         self.min_shared_players = min_shared_players
         self.recent_segment_lineups = max(1, int(recent_segment_lineups))
         self._org_states: dict[str, _OrgLineageState] = {}
@@ -57,7 +57,7 @@ class RosterLineageTracker:
     def from_state(cls, raw_state: dict[str, object] | None) -> "RosterLineageTracker":
         state = raw_state if isinstance(raw_state, dict) else {}
         tracker = cls(
-            min_shared_players=int(state.get("min_shared_players", 3) or 3),
+            min_shared_players=int(state.get("min_shared_players", 4) or 4),
             recent_segment_lineups=int(state.get("recent_segment_lineups", 3) or 3),
         )
         raw_org_states = state.get("org_states")

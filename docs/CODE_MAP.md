@@ -25,7 +25,7 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 
 > Не читай целиком. `rg`/`grep` по имени функции + точечное чтение по диапазону.
 
-Главный модуль: live-парсинг драфтов (CyberScore через Camoufox; DLTV api/html fallback), bookmaker prefetch (Camoufox subprocess + Selenium fallback), draft-метрики, networth/STAR/tier gates, ML phase-wrapper, dispatch в Telegram (+ VK mirror), runtime-менеджмент (lock, sharded/sqlite stats, delayed-очереди, recovery journal).
+Главный модуль: live-парсинг драфтов (CyberScore через Camoufox; DLTV api/html fallback), bookmaker prefetch (Camoufox subprocess + Selenium fallback), draft-метрики, networth/STAR/tier gates, ML phase-wrapper, non-sending team-kills≥25 shadow, dispatch в Telegram (+ VK mirror), runtime-менеджмент (lock, sharded/sqlite stats, delayed-очереди, recovery journal).
 
 ### Entrypoint (строки ~28820–28997)
 - `__main__`: парс CLI → `_apply_live_entrypoint_pipeline_defaults()` → acquire instance lock → `while True: general(...)` + `_sleep_interruptible(...)` по возвращённому статусу.
@@ -66,9 +66,11 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 | `_evaluate_kills_gate(...)` | 2555 | early-kills gate |
 | `_try_acquire_runtime_instance_lock(mode_label=...)` | 1868 | single-instance lock на режим |
 | `_load_star_confidence_calibration()` | 1688 | загрузка `data/star_confidence_calibration.json` |
+| `_record_team_kills25_shadow_candidate(...)` | 5476 | fail-open JSONL shadow для NW60/hits≥2; не меняет gate/stake/dispatch |
 
 ### ELO live-интеграция (строки ~330–339)
 `from ELO.live_team_strength import finalize_live_series_from_scores, get_matchup_summary, register_live_map_context`; `ELO_LIVE_SNAPSHOT_AVAILABLE` зависит от успешного импорта. ELO даёт matchup-summary для отображения, но **в stake-множителе ELO-gate удалён** (см. ARCHITECTURE).
+`ELO/live_team_strength.py::DEFAULT_DATA_DIR` указывает на результат штатной pro-пересборки `pro_heroes_data/json_parts_split_from_object`; roster lineage в `ELO/roster.py` требует overlap минимум 4 игроков.
 
 ### Импорты из `functions`
 `send_message`, `drain_telegram_admin_commands`, `synergy_and_counterpick`, `calculate_lanes`, `calculate_lane_kills_advantage`, `format_output_dict`, `STAR_THRESHOLDS_BY_WR`, `STAR_DISABLED_METRICS`, `TelegramSendError`.
@@ -269,6 +271,17 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 **env:** `SIGNAL_WRAPPER_ENABLED` (False), `SIGNAL_WRAPPER_MODE` (`ml`), `SIGNAL_WRAPPER_DEBUG`, `SIGNAL_WRAPPER_CROSS_PHASE_STAR_FEATURES` (False), `SIGNAL_WRAPPER_EARLY_ENABLED`/`_LATE_ENABLED`, `SIGNAL_WRAPPER_CONFIG_PATH`, `SIGNAL_WRAPPER_ML_EARLY_PATH`/`_LATE_PATH`, `SIGNAL_WRAPPER_REQUIRED_SKLEARN_VERSION`, `HERO_FEATURES_PATH`, `STAR_THRESHOLD_WR` (60), `STAR_THRESHOLDS_PATH`.
 
 Внутренние gate-функции (early/late hard-carry, support-gap, control-stability, role-balance, edge-requirements и т.д.) — `_apply_*_gate(...)` строки 1127–1882.
+
+---
+
+## `base/team_kills25_shadow.py` — non-sending target-team kills≥25 shadow
+
+- Срабатывает только для draft-кандидата `early_output` WR60 с `hit_count >= 2`.
+- Отдельно пишет `nw_hit_count`/`nw_max_wr`, target-aligned raw/absolute признаки каждого блока `early_nw`, `early_win`, `late`, `all`, их agreement/cross-block признаки и pre-map ELO.
+- JSON logistic artifact: `ml-models/team_kills25/team_kills25_shadow.json`; отсутствие/ошибка модели не влияет на live-сигнал.
+- Audit log: `runtime/team_kills25_shadow.jsonl`; один record на `match_key` за жизнь процесса.
+- Env: `TEAM_KILLS25_SHADOW_ENABLED=0`, `TEAM_KILLS25_SHADOW_MODEL_PATH`, `TEAM_KILLS25_SHADOW_LOG_PATH`.
+- `base/train_team_kills25_shadow.py` обучает artifact на chronological old split; forward не участвует в выборе `C`/threshold.
 
 ---
 

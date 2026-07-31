@@ -37,7 +37,11 @@ LEADERBOARD_BASELINE = 1500.0
 DEFAULT_ACTIVE_CUTOFF_DAYS = 180.0
 DEFAULT_DISPLAY_DECAY_HALF_LIFE_DAYS = 120.0
 DEFAULT_PLAYER_ONLY_FALLBACK_ROSTER_MATCHES = 3
-DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "pro_heroes_data" / "json_parts_split_prod"
+DEFAULT_DATA_DIR = (
+    Path(__file__).resolve().parents[1]
+    / "pro_heroes_data"
+    / "json_parts_split_from_object"
+)
 DEFAULT_SNAPSHOT_PATH = Path(__file__).resolve().parent / "output" / "live_team_elo_snapshot.json"
 DEFAULT_RUNTIME_PROGRESS_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_progress.json"
 DEFAULT_RUNTIME_MODEL_STATE_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_model_state.json"

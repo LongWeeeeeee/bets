@@ -79,6 +79,12 @@ from functions import (
     CORE_POSITIONS,
     SUPPORT_POSITIONS,
 )
+try:
+    from team_kills25_shadow import record_shadow_observation as _record_kills25_shadow
+    TEAM_KILLS25_SHADOW_AVAILABLE = True
+except Exception:
+    _record_kills25_shadow = None
+    TEAM_KILLS25_SHADOW_AVAILABLE = False
 
 # Role map for the cp1vs2 same-role top-up scoped-key extension (mirrors
 # functions._cp1vs2_role_positions). Only consulted when CP1VS2_TOPUP_FALLBACK is on.
@@ -5465,6 +5471,65 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
         "support_missing_metrics": [],
         **consistency_fields,
     }
+
+
+def _record_team_kills25_shadow_candidate(
+    *,
+    match_key: str,
+    match_id: Any,
+    observed_at: Any,
+    metrics_payload: Dict[str, Any],
+    team_elo_meta: Optional[Dict[str, Any]],
+    radiant_team_id: Optional[int],
+    dire_team_id: Optional[int],
+    radiant_team_name: str,
+    dire_team_name: str,
+) -> Optional[Dict[str, Any]]:
+    """Record NW60/hits>=2 candidates without changing live decisions."""
+    if not TEAM_KILLS25_SHADOW_AVAILABLE or _record_kills25_shadow is None:
+        return None
+    nw60 = _star_block_diagnostics(
+        raw_block=metrics_payload.get("early_output", {}),
+        target_wr=60,
+        section="early_output",
+    )
+    if not bool(nw60.get("valid")) or int(nw60.get("hit_count") or 0) < 2:
+        return None
+    sign = nw60.get("sign")
+    if sign not in (-1, 1):
+        return None
+    nw_max_wr = 60
+    for wr_level in _STAR_HITS_SUMMARY_WR_LEVELS:
+        level_diag = _star_block_diagnostics(
+            raw_block=metrics_payload.get("early_output", {}),
+            target_wr=wr_level,
+            section="early_output",
+        )
+        if (
+            bool(level_diag.get("valid"))
+            and int(level_diag.get("hit_count") or 0) >= 2
+            and level_diag.get("sign") == sign
+        ):
+            nw_max_wr = max(nw_max_wr, int(wr_level))
+    target_side = "radiant" if sign == 1 else "dire"
+    radiant_tier = int(_get_team_tier(radiant_team_id))
+    dire_tier = int(_get_team_tier(dire_team_id))
+    return _record_kills25_shadow(
+        match_key=match_key,
+        match_id=match_id,
+        observed_at=observed_at,
+        target_side=target_side,
+        target_team_id=radiant_team_id if sign == 1 else dire_team_id,
+        target_team_name=radiant_team_name if sign == 1 else dire_team_name,
+        opponent_team_id=dire_team_id if sign == 1 else radiant_team_id,
+        opponent_team_name=dire_team_name if sign == 1 else radiant_team_name,
+        tier_segment=f"T{radiant_tier}-T{dire_tier}",
+        nw_hit_count=int(nw60.get("hit_count") or 0),
+        nw_max_wr=nw_max_wr,
+        nw_hit_metrics=list(nw60.get("hit_metrics") or []),
+        metrics_payload=metrics_payload,
+        team_elo_meta=team_elo_meta,
+    )
 
 
 def _star_hit_conflicts_with_expected_sign(
@@ -31133,6 +31198,35 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         "   ⚠️ Team ELO unavailable for signal: "
                         f"{radiant_team_name_original} vs {dire_team_name_original}"
                     )
+
+            # Non-sending audit only: score/log every NW60 hits>=2 candidate.
+            # This call cannot alter STAR validity, stake, bookmaker gates, or
+            # Telegram dispatch; any failure is fail-open for the live signal.
+            try:
+                kills25_shadow_record = _record_team_kills25_shadow_candidate(
+                    match_key=check_uniq_url,
+                    match_id=data.get("match_id"),
+                    observed_at=data.get("now") or data.get("startDateTime"),
+                    metrics_payload=s,
+                    team_elo_meta=team_elo_meta,
+                    radiant_team_id=radiant_team_id,
+                    dire_team_id=dire_team_id,
+                    radiant_team_name=radiant_team_name_original,
+                    dire_team_name=dire_team_name_original,
+                )
+                if isinstance(kills25_shadow_record, dict) and verbose_match_log:
+                    print(
+                        "   🧪 Team kills≥25 shadow: "
+                        f"target={kills25_shadow_record.get('target_team_name')} "
+                        f"elo_gate={kills25_shadow_record.get('elo_gate_eligible')} "
+                        f"ml_p={kills25_shadow_record.get('ml_probability')}"
+                    )
+            except Exception as kills25_shadow_exc:
+                logger.warning(
+                    "Team kills25 shadow failed open for %s: %s",
+                    check_uniq_url,
+                    kills25_shadow_exc,
+                )
 
             # Standalone "lane_adv_dict ≥ 8" kills trigger is dispatched
             # later, after the full signal ``message_text`` is built, so the

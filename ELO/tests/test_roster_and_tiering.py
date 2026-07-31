@@ -48,6 +48,20 @@ def test_roster_lineage_tracker_respects_three_player_lock() -> None:
     assert third.overlap_count == 2
 
 
+def test_default_roster_lineage_requires_four_shared_players() -> None:
+    tracker = RosterLineageTracker()
+
+    first = tracker.resolve("org:42", (1, 2, 3, 4, 5))
+    three_shared = tracker.resolve("org:42", (1, 2, 3, 6, 7))
+    four_shared = tracker.resolve("org:42", (1, 2, 3, 6, 8))
+
+    assert first.roster_key == "org:42::roster:1"
+    assert three_shared.continuity is False
+    assert three_shared.roster_key == "org:42::roster:2"
+    assert four_shared.continuity is True
+    assert four_shared.roster_key == "org:42::roster:2"
+
+
 def test_roster_lineage_tracker_keeps_segment_through_short_standin_break() -> None:
     tracker = RosterLineageTracker(min_shared_players=3)
 

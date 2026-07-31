@@ -111,7 +111,11 @@ Live-оценка использует строгую взаимоисключа
 - Активность: `SIGNAL_WRAPPER_ENABLED` (пайплайн вокруг вызова метрик управляет env), `SIGNAL_DECISION_MODE`=ml.
 
 ### ELO live (опционально, `ELO/live_team_strength.py`)
-`register_live_map_context` / `finalize_live_series_from_scores` / `get_matchup_summary` дают live-снапшот силы команд для отображения matchup-summary. `ELO_LIVE_SNAPSHOT_AVAILABLE` зависит от успешного импорта. На stake-решение напрямую не влияет (gate удалён).
+`register_live_map_context` / `finalize_live_series_from_scores` / `get_matchup_summary` дают live-снапшот силы команд для отображения matchup-summary. Базовый снапшот строится из `pro_heroes_data/json_parts_split_from_object`. Roster lineage продолжается только при overlap минимум 4 игроков; 3/5 уже создаёт новый локальный segment. `ELO_LIVE_SNAPSHOT_AVAILABLE` зависит от успешного импорта. На stake-решение напрямую не влияет (gate удалён).
+
+### Team kills≥25 shadow (`base/team_kills25_shadow.py`)
+
+После расчёта полного draft payload и pre-map ELO кандидат `early_output` WR60 с минимум двумя STAR-hit записывается в non-sending JSONL shadow. В record входят `nw_hit_count`, максимальный подтверждённый `nw_max_wr`, все шесть метрик каждого блока (`early_nw`, `early_win`, `late`, `all`) отдельно, их абсолютные величины/agreement и target-aligned ELO. Опциональный frozen JSON logistic artifact только добавляет `ml_probability`; этот путь fail-open и не меняет STAR-validity, stake, bookmaker gates или Telegram dispatch. Управление: `TEAM_KILLS25_SHADOW_ENABLED` (default `0`), пути модели/лога — `TEAM_KILLS25_SHADOW_MODEL_PATH`/`TEAM_KILLS25_SHADOW_LOG_PATH`.
 
 ### Bookmaker prefetch
 Фоновый воркер (`_bookmaker_prefetch_loop` ~9071) тянет presence/odds/deeplink (betboom/pari/winline) через Camoufox subprocess (default) или Selenium fallback. Перед dispatch — повторный refresh, чтобы кэфы были близки к моменту отправки. Gate-режим: `odds` или `presence`.

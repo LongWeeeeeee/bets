@@ -16,6 +16,10 @@ from ELO.live_team_strength import (
 from ELO.models import HybridPlayerRosterEloModel
 
 
+def test_default_data_dir_matches_pro_rebuild_output():
+    assert live_team_strength_module.DEFAULT_DATA_DIR.name == "json_parts_split_from_object"
+
+
 def _reset_live_team_strength_caches() -> None:
     live_team_strength_module._SNAPSHOT_CACHE = None
     live_team_strength_module._MODEL_FROM_SNAPSHOT_CACHE["snapshot_id"] = None

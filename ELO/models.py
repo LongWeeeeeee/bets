@@ -275,7 +275,7 @@ class HybridPlayerRosterEloModel:
         self.player_current_org: dict[int, str] = {}
         self.player_current_org_matches: defaultdict[tuple[int, str], int] = defaultdict(int)
         self.current_patch_key: str | None = None
-        self.roster_tracker = RosterLineageTracker(min_shared_players=3)
+        self.roster_tracker = RosterLineageTracker(min_shared_players=4)
         self.side_bias: dict[LeagueTier, float] = {tier: 0.0 for tier in LeagueTier}
 
     def export_state(self) -> dict[str, Any]:
