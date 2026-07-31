@@ -31204,7 +31204,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"{radiant_team_name_original} vs {dire_team_name_original}"
                     )
 
-            # Isolated kills25 audit/sender: score/log every NW60 hits>=2 candidate.
+            # Isolated kills27 audit/sender: score/log every NW60 hits>=2 candidate.
             # This call cannot alter STAR validity, stake, bookmaker gates, or
             # the main Telegram dispatch; any failure is fail-open for it.
             try:
@@ -31225,14 +31225,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
                 if isinstance(kills25_shadow_record, dict) and verbose_match_log:
                     print(
-                        "   🧪 Team kills≥25 shadow: "
+                        "   🧪 Team kills≥27 shadow: "
                         f"target={kills25_shadow_record.get('target_team_name')} "
                         f"elo_gate={kills25_shadow_record.get('elo_gate_eligible')} "
                         f"ml_p={kills25_shadow_record.get('ml_probability')}"
                     )
             except Exception as kills25_shadow_exc:
                 logger.warning(
-                    "Team kills25 shadow failed open for %s: %s",
+                    "Team kills27 shadow failed open for %s: %s",
                     check_uniq_url,
                     kills25_shadow_exc,
                 )

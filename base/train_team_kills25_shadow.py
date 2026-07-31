@@ -1,4 +1,4 @@
-"""Train the non-sending team-kills>=25 shadow logistic artifact."""
+"""Train the non-sending team-kills>=27 shadow logistic artifact."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from team_kills25_shadow import (
     FEATURE_SCHEMA_HASH,
     ODDS,
     SCHEMA_VERSION,
+    TARGET_KILLS,
 )
 
 
@@ -53,7 +54,7 @@ def _prepare_matrix(
     else:
         values = scaler.transform(imputer.transform(source))
     if not np.isfinite(values).all():
-        raise ValueError("Non-finite team-kills25 training matrix")
+        raise ValueError("Non-finite team-kills27 training matrix")
     return values
 
 
@@ -66,7 +67,7 @@ def _safe_auc(labels: np.ndarray, probabilities: np.ndarray) -> float | None:
 
 def _predict_proba(model: LogisticRegression, matrix: np.ndarray) -> np.ndarray:
     if not np.isfinite(matrix).all() or not np.isfinite(model.coef_).all():
-        raise ValueError("Non-finite team-kills25 prediction input")
+        raise ValueError("Non-finite team-kills27 prediction input")
     # NumPy/Accelerate on macOS can leave liblinear floating status flags set
     # and emit false matmul overflow warnings for small finite arrays.
     with warnings.catch_warnings():
@@ -77,7 +78,7 @@ def _predict_proba(model: LogisticRegression, matrix: np.ndarray) -> np.ndarray:
         )
         probabilities = model.predict_proba(matrix)[:, 1]
     if not np.isfinite(probabilities).all():
-        raise ValueError("Non-finite team-kills25 predicted probability")
+        raise ValueError("Non-finite team-kills27 predicted probability")
     return probabilities
 
 
@@ -105,7 +106,7 @@ def _evaluate(
     probabilities: np.ndarray,
     threshold: float,
 ) -> dict[str, Any]:
-    labels = frame.target_ge25.astype(int).to_numpy()
+    labels = frame.target.astype(int).to_numpy()
     clipped = np.clip(probabilities, 1e-6, 1.0 - 1e-6)
     return {
         "rows": int(len(frame)),
@@ -194,10 +195,10 @@ def _fit_candidate(
         solver="liblinear",
         random_state=SEED,
     )
-    model.fit(train_matrix, train.target_ge25.astype(int))
+    model.fit(train_matrix, train.target.astype(int))
     probabilities = _predict_proba(model, validation_matrix)
     return (
-        float(log_loss(validation.target_ge25.astype(int), probabilities)),
+        float(log_loss(validation.target.astype(int), probabilities)),
         model,
         imputer,
         scaler,
@@ -232,7 +233,7 @@ def _artifact_model(
         solver="liblinear",
         random_state=SEED,
     )
-    model.fit(matrix, frame.target_ge25.astype(int))
+    model.fit(matrix, frame.target.astype(int))
     medians = np.asarray(imputer.statistics_, dtype=float)
     medians = np.where(np.isfinite(medians), medians, 0.0)
     return (
@@ -259,6 +260,19 @@ def main() -> None:
 
     old = pd.read_csv(args.old).replace([np.inf, -np.inf], np.nan)
     forward = pd.read_csv(args.forward).replace([np.inf, -np.inf], np.nan)
+    roster_feature_sources = {
+        "roster_patch_games": "patch_roster4_games_30",
+        "roster_patch_mean_kills": "patch_roster4_kills_mean_30",
+        "roster_patch_ge27_rate": "patch_roster4_ge27_rate_30",
+    }
+    for frame in (old, forward):
+        if "target_kills" not in frame:
+            raise ValueError("target_kills is required to rebuild the >=27 label")
+        frame["target"] = (frame["target_kills"] >= TARGET_KILLS).astype(int)
+        for feature_name, source_name in roster_feature_sources.items():
+            if source_name not in frame:
+                raise ValueError(f"Missing roster feature source: {source_name}")
+            frame[feature_name] = frame[source_name]
     availability = ["block_metrics_available"]
     if "early_win_metrics_available" in old:
         availability.append("early_win_metrics_available")
@@ -283,7 +297,7 @@ def main() -> None:
         candidates,
         key=lambda item: item[1],
     )
-    threshold = _choose_threshold(validation.target_ge25, validation_probability)
+    threshold = _choose_threshold(validation.target, validation_probability)
     old_test_matrix = _prepare_matrix(
         old_test,
         imputer=imputer,
@@ -311,6 +325,7 @@ def main() -> None:
     )
     created_at = datetime.now(timezone.utc).isoformat()
     report = {
+        "target_kills_threshold": TARGET_KILLS,
         "selection": "C and bet threshold selected on old chronological validation only",
         "forward_used_for_selection": False,
         "old_rows": int(len(old)),
@@ -338,7 +353,8 @@ def main() -> None:
         "schema_version": SCHEMA_VERSION,
         "created_at_utc": created_at,
         "odds": ODDS,
-        "target": "target_team_final_kills_ge25",
+        "target": f"target_team_final_kills_ge{TARGET_KILLS}",
+        "target_kills_threshold": TARGET_KILLS,
         "model_type": "standardized_logistic_regression",
         "sklearn_version": sklearn.__version__,
         "feature_names": list(FEATURE_NAMES),

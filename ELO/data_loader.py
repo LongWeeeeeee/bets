@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
 from ELO.domain import MatchRecord
+
+
+_PATCH_FILE_RE = re.compile(r"^(\d+\.\d+[a-z]?)_part\d+$")
 
 
 def _total_team_kills(value: object) -> int | None:
@@ -40,7 +44,7 @@ def _extract_player_slots(players: list[dict], is_radiant: bool) -> tuple[tuple[
     )
 
 
-def _parse_match(raw_match: dict) -> MatchRecord | None:
+def _parse_match(raw_match: dict, *, source_patch: str | None = None) -> MatchRecord | None:
     match_id = raw_match.get("id")
     timestamp = raw_match.get("startDateTime")
     if not isinstance(match_id, int) or not isinstance(timestamp, int):
@@ -91,6 +95,7 @@ def _parse_match(raw_match: dict) -> MatchRecord | None:
         dire_player_positions=dire_player_positions,
         radiant_kills=_total_team_kills(raw_match.get("radiantKills")),
         dire_kills=_total_team_kills(raw_match.get("direKills")),
+        source_patch=source_patch,
     )
 
 
@@ -99,6 +104,8 @@ def load_matches(data_dir: Path) -> tuple[list[MatchRecord], dict[str, int]]:
     matches: list[MatchRecord] = []
     for json_path in sorted(data_dir.glob("*.json")):
         summary["files"] += 1
+        patch_match = _PATCH_FILE_RE.match(json_path.stem)
+        source_patch = patch_match.group(1) if patch_match else None
         with json_path.open("r", encoding="utf-8") as fh:
             payload = json.load(fh)
         if not isinstance(payload, dict):
@@ -109,7 +116,7 @@ def load_matches(data_dir: Path) -> tuple[list[MatchRecord], dict[str, int]]:
             if not isinstance(raw_match, dict):
                 summary["skipped_non_dict"] += 1
                 continue
-            match = _parse_match(raw_match)
+            match = _parse_match(raw_match, source_patch=source_patch)
             if match is None:
                 summary["skipped_invalid"] += 1
                 continue

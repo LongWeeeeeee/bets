@@ -1,4 +1,4 @@
-"""Shadow predictor and isolated sender for a target team reaching 25 map kills.
+"""Shadow predictor and isolated sender for a target team reaching 27 map kills.
 
 The module deliberately has no dependency on the main live dispatch policy.
 It extracts pre-map draft/ELO features, optionally scores a frozen JSON
@@ -24,22 +24,22 @@ from typing import Any, Mapping
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ARTIFACT_PATH = (
-    PROJECT_ROOT / "ml-models" / "team_kills25" / "team_kills25_shadow.json"
+    PROJECT_ROOT / "ml-models" / "team_kills27" / "team_kills27_shadow.json"
 )
-DEFAULT_LOG_PATH = PROJECT_ROOT / "runtime" / "team_kills25_shadow.jsonl"
+DEFAULT_LOG_PATH = PROJECT_ROOT / "runtime" / "team_kills27_shadow.jsonl"
 DEFAULT_TELEGRAM_SENT_PATH = (
-    PROJECT_ROOT / "runtime" / "team_kills25_telegram_sent.jsonl"
+    PROJECT_ROOT / "runtime" / "team_kills27_telegram_sent.jsonl"
 )
 DEFAULT_ROSTER_HISTORY_PATH = (
     PROJECT_ROOT / "ELO" / "output" / "live_team_elo_snapshot.json"
 )
-SCHEMA_VERSION = "team_kills25_shadow.v1"
+SCHEMA_VERSION = "team_kills27_shadow.v1"
+ROSTER_HISTORY_SCHEMA_VERSION = 2
 ODDS = 1.8
+TARGET_KILLS = 27
 ELO_GATE_THRESHOLD = 0.45
 DEFAULT_ROSTER_OVERLAP = 4
 DEFAULT_ROSTER_WINDOW = 30
-DEFAULT_MIN_ROSTER_MATCHES = 6
-DEFAULT_MIN_ROSTER_AVG_KILLS = 23.0
 METRICS = (
     "counterpick_1vs1",
     "counterpick_1vs2",
@@ -70,6 +70,9 @@ def _feature_names() -> tuple[str, ...]:
         "nw_max_wr",
         "elo_target_win_prob",
         "elo_target_diff",
+        "roster_patch_games",
+        "roster_patch_mean_kills",
+        "roster_patch_ge27_rate",
     ]
     names.extend(
         f"{block}_{metric}"
@@ -182,17 +185,22 @@ def build_features(
     target_side: str,
     nw_hit_count: int,
     nw_max_wr: int,
+    roster_kills: Mapping[str, Any] | None = None,
 ) -> dict[str, float | None]:
     if target_side not in {"radiant", "dire"}:
         raise ValueError(f"Unsupported target_side={target_side!r}")
     target_sign = 1.0 if target_side == "radiant" else -1.0
     elo_meta = team_elo_meta if isinstance(team_elo_meta, Mapping) else {}
     raw_diff = _number(elo_meta.get("raw_diff"))
+    roster = roster_kills if isinstance(roster_kills, Mapping) else {}
     features: dict[str, float | None] = {
         "nw_hit_count": float(nw_hit_count),
         "nw_max_wr": float(nw_max_wr),
         "elo_target_win_prob": _elo_probability(elo_meta, target_side),
         "elo_target_diff": raw_diff * target_sign if raw_diff is not None else None,
+        "roster_patch_games": _number(roster.get("patch_matches")),
+        "roster_patch_mean_kills": _number(roster.get("patch_mean_kills")),
+        "roster_patch_ge27_rate": _number(roster.get("patch_ge27_rate")),
     }
     aligned_by_metric: dict[str, list[float]] = {metric: [] for metric in METRICS}
     for block_name, aliases in BLOCK_SOURCES.items():
@@ -245,13 +253,15 @@ def _load_artifact_cached(path_text: str, mtime_ns: int) -> dict[str, Any]:
     del mtime_ns
     payload = json.loads(Path(path_text).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise ValueError("team-kills25 artifact root must be an object")
+        raise ValueError("team-kills27 artifact root must be an object")
     if payload.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError("team-kills25 artifact schema mismatch")
+        raise ValueError("team-kills27 artifact schema mismatch")
+    if payload.get("target_kills_threshold") != TARGET_KILLS:
+        raise ValueError("team-kills27 artifact target mismatch")
     if payload.get("feature_schema_hash") != FEATURE_SCHEMA_HASH:
-        raise ValueError("team-kills25 artifact feature schema mismatch")
+        raise ValueError("team-kills27 artifact feature schema mismatch")
     if list(payload.get("feature_names") or []) != list(FEATURE_NAMES):
-        raise ValueError("team-kills25 artifact feature order mismatch")
+        raise ValueError("team-kills27 artifact feature order mismatch")
     return payload
 
 
@@ -278,10 +288,17 @@ def _load_roster_history_cached(path_text: str, mtime_ns: int) -> dict[str, Any]
     del mtime_ns
     payload = json.loads(Path(path_text).read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
-        raise ValueError("team-kills25 roster history root must be an object")
+        raise ValueError("team-kills27 roster history root must be an object")
+    meta = payload.get("meta")
+    if not isinstance(meta, dict):
+        raise ValueError("team-kills27 roster history meta is missing")
+    if meta.get("team_kills_history_schema_version") != ROSTER_HISTORY_SCHEMA_VERSION:
+        raise ValueError("team-kills27 roster history schema mismatch")
+    if not str(meta.get("team_kills_history_latest_patch") or "").strip():
+        raise ValueError("team-kills27 roster history latest patch is missing")
     histories = payload.get("team_kills_history_by_team_id")
     if not isinstance(histories, dict):
-        raise ValueError("team-kills25 roster history is missing")
+        raise ValueError("team-kills27 roster history is missing")
     return payload
 
 
@@ -321,8 +338,14 @@ def build_roster_kills_context(
         "matches": 0,
         "mean_kills": None,
         "median_kills": None,
-        "ge25_hits": 0,
-        "ge25_rate": None,
+        "ge27_hits": 0,
+        "ge27_rate": None,
+        "patch": None,
+        "patch_matches": 0,
+        "patch_mean_kills": None,
+        "patch_median_kills": None,
+        "patch_ge27_hits": 0,
+        "patch_ge27_rate": None,
     }
     if normalized_team_id is None:
         return {**base, "reason": "team_id_unavailable"}
@@ -334,15 +357,19 @@ def build_roster_kills_context(
     histories = snapshot.get("team_kills_history_by_team_id")
     if not isinstance(histories, Mapping):
         return {**base, "reason": "history_unavailable"}
-    raw_rows = histories.get(str(normalized_team_id))
+    meta = snapshot.get("meta")
+    meta = meta if isinstance(meta, Mapping) else {}
+    latest_patch = str(meta.get("team_kills_history_latest_patch") or "").strip() or None
+    base["patch"] = latest_patch
+    raw_rows = histories.get(str(normalized_team_id), [])
     if not isinstance(raw_rows, list):
-        return {**base, "reason": "team_history_unavailable"}
+        return {**base, "reason": "team_history_invalid"}
 
     before_timestamp = _timestamp_seconds(observed_at)
     if before_timestamp is None:
         return {**base, "reason": "observed_at_unavailable"}
     excluded_match_id = _positive_int(current_match_id)
-    unique_rows: dict[int, tuple[int, int]] = {}
+    unique_rows: dict[int, tuple[int, int, str | None]] = {}
     for raw_row in raw_rows:
         if not isinstance(raw_row, Mapping):
             continue
@@ -366,13 +393,18 @@ def build_roster_kills_context(
             continue
         if match_id in unique_rows:
             continue
-        unique_rows[match_id] = (timestamp, kills)
+        row_patch = str(raw_row.get("patch") or "").strip() or None
+        unique_rows[match_id] = (timestamp, kills, row_patch)
 
     selected = sorted(unique_rows.values(), reverse=True)[: max(1, int(window))]
-    kills_values = [kills for _, kills in selected]
+    kills_values = [kills for _, kills, _ in selected]
     if not kills_values:
-        return {**base, "reason": "no_matching_roster_maps"}
-    ge25_hits = sum(kills >= 25 for kills in kills_values)
+        return {**base, "available": True, "reason": "no_matching_roster_maps"}
+    ge27_hits = sum(kills >= TARGET_KILLS for kills in kills_values)
+    patch_values = [
+        kills for _, kills, patch in selected if latest_patch is not None and patch == latest_patch
+    ]
+    patch_ge27_hits = sum(kills >= TARGET_KILLS for kills in patch_values)
     return {
         **base,
         "available": True,
@@ -380,8 +412,19 @@ def build_roster_kills_context(
         "matches": len(kills_values),
         "mean_kills": sum(kills_values) / len(kills_values),
         "median_kills": float(median(kills_values)),
-        "ge25_hits": ge25_hits,
-        "ge25_rate": ge25_hits / len(kills_values),
+        "ge27_hits": ge27_hits,
+        "ge27_rate": ge27_hits / len(kills_values),
+        "patch_matches": len(patch_values),
+        "patch_mean_kills": (
+            sum(patch_values) / len(patch_values) if patch_values else None
+        ),
+        "patch_median_kills": (
+            float(median(patch_values)) if patch_values else None
+        ),
+        "patch_ge27_hits": patch_ge27_hits,
+        "patch_ge27_rate": (
+            patch_ge27_hits / len(patch_values) if patch_values else None
+        ),
     }
 
 
@@ -395,7 +438,7 @@ def predict_probability(
     scales = model.get("scales") or []
     coefficients = model.get("coefficients") or []
     if not all(len(values) == len(FEATURE_NAMES) for values in (medians, means, scales, coefficients)):
-        raise ValueError("team-kills25 artifact vector length mismatch")
+        raise ValueError("team-kills27 artifact vector length mismatch")
     score = float(model.get("intercept") or 0.0)
     for index, name in enumerate(FEATURE_NAMES):
         value = _number(features.get(name))
@@ -518,15 +561,30 @@ def _format_telegram_bet(record: Mapping[str, Any]) -> str:
     elo_probability = _number(features.get("elo_target_win_prob"))
     roster = record.get("roster_kills")
     roster = roster if isinstance(roster, Mapping) else {}
-    roster_matches = int(roster.get("matches") or 0)
-    roster_mean = _number(roster.get("mean_kills"))
-    roster_median = _number(roster.get("median_kills"))
-    roster_ge25_hits = int(roster.get("ge25_hits") or 0)
-    roster_ge25_rate = _number(roster.get("ge25_rate"))
+    patch_name = str(roster.get("patch") or "текущий патч")
+    patch_matches = int(roster.get("patch_matches") or 0)
+    patch_mean = _number(roster.get("patch_mean_kills"))
+    patch_median = _number(roster.get("patch_median_kills"))
+    patch_ge27_hits = int(roster.get("patch_ge27_hits") or 0)
+    patch_ge27_rate = _number(roster.get("patch_ge27_rate"))
+    if (
+        patch_mean is not None
+        and patch_median is not None
+        and patch_ge27_rate is not None
+    ):
+        roster_line = (
+            f"Ростер 4+ · {patch_name}: {patch_matches} карт, ср. {patch_mean:.1f}, "
+            f"медиана {patch_median:.1f}, 27+ {patch_ge27_hits}/{patch_matches} "
+            f"({patch_ge27_rate:.0%})"
+        )
+    elif roster.get("available"):
+        roster_line = f"Ростер 4+ · {patch_name}: {patch_matches} карт, статистики пока нет"
+    else:
+        roster_line = "Ростер 4+: источник статистики недоступен"
     hit_metrics = ", ".join(str(item) for item in record.get("nw_hit_metrics") or [])
     lines = [
-        "🎯 СТАВКА · TEAM KILLS ≥25",
-        f"{record.get('target_team_name')}: 25+ убийств",
+        "🎯 СТАВКА · TEAM KILLS ≥27",
+        f"{record.get('target_team_name')}: 27+ убийств",
         (
             f"Матч: {record.get('target_team_name')} — "
             f"{record.get('opponent_team_name')}"
@@ -541,15 +599,7 @@ def _format_telegram_bet(record: Mapping[str, Any]) -> str:
             f"hits {int(record.get('nw_hit_count') or 0)}"
         ),
         f"Метрики: {hit_metrics or 'n/a'}",
-        (
-            f"Ростер 4+: {roster_matches} карт, ср. {roster_mean:.1f}, "
-            f"медиана {roster_median:.1f}, 25+ {roster_ge25_hits}/{roster_matches} "
-            f"({roster_ge25_rate:.0%})"
-            if roster_mean is not None
-            and roster_median is not None
-            and roster_ge25_rate is not None
-            else "Ростер 4+: статистика недоступна"
-        ),
+        roster_line,
         (
             f"ELO target: {elo_probability:.1%}"
             if elo_probability is not None
@@ -607,49 +657,23 @@ def _maybe_send_telegram_bet(
     if threshold is None:
         threshold = artifact_threshold
     min_wr = _number(os.getenv("TEAM_KILLS25_TELEGRAM_MIN_WR", "60")) or 60.0
-    min_roster_matches = int(
-        _number(
-            os.getenv(
-                "TEAM_KILLS25_TELEGRAM_MIN_ROSTER_MATCHES",
-                str(DEFAULT_MIN_ROSTER_MATCHES),
-            )
-        )
-        or DEFAULT_MIN_ROSTER_MATCHES
-    )
-    min_roster_avg_kills = _number(
-        os.getenv(
-            "TEAM_KILLS25_TELEGRAM_MIN_ROSTER_AVG_KILLS",
-            str(DEFAULT_MIN_ROSTER_AVG_KILLS),
-        )
-    )
-    if min_roster_avg_kills is None:
-        min_roster_avg_kills = DEFAULT_MIN_ROSTER_AVG_KILLS
     roster = record.get("roster_kills")
     roster = roster if isinstance(roster, Mapping) else {}
-    roster_matches = int(roster.get("matches") or 0)
-    roster_mean = _number(roster.get("mean_kills"))
     model_eligible = bool(
         probability is not None
         and threshold is not None
         and probability >= threshold
         and float(record.get("nw_max_wr") or 0) >= min_wr
     )
-    roster_eligible = bool(
-        roster.get("available")
-        and roster_matches >= min_roster_matches
-        and roster_mean is not None
-        and roster_mean >= min_roster_avg_kills
-    )
+    # Roster/patch statistics are model features, not hand-tuned cutoffs.
+    # Fail closed only when the feature source itself is unavailable.
+    roster_eligible = bool(roster.get("available"))
     eligible = model_eligible and roster_eligible
     if not eligible:
         if not model_eligible:
             reason = "model_gate"
-        elif not roster.get("available"):
-            reason = str(roster.get("reason") or "roster_history_unavailable")
-        elif roster_matches < min_roster_matches:
-            reason = "insufficient_roster_matches"
         else:
-            reason = "roster_avg_kills_below_threshold"
+            reason = str(roster.get("reason") or "roster_history_unavailable")
         return {
             "enabled": True,
             "eligible": False,
@@ -657,8 +681,6 @@ def _maybe_send_telegram_bet(
             "reason": reason,
             "threshold": threshold,
             "min_wr": min_wr,
-            "min_roster_matches": min_roster_matches,
-            "min_roster_avg_kills": min_roster_avg_kills,
         }
 
     token = str(os.getenv("TEAM_KILLS25_TELEGRAM_BOT_TOKEN", "") or "").strip()
@@ -671,8 +693,6 @@ def _maybe_send_telegram_bet(
             "reason": "config_missing",
             "threshold": threshold,
             "min_wr": min_wr,
-            "min_roster_matches": min_roster_matches,
-            "min_roster_avg_kills": min_roster_avg_kills,
         }
 
     sent_path = _telegram_sent_path()
@@ -684,8 +704,6 @@ def _maybe_send_telegram_bet(
             "reason": "already_sent",
             "threshold": threshold,
             "min_wr": min_wr,
-            "min_roster_matches": min_roster_matches,
-            "min_roster_avg_kills": min_roster_avg_kills,
         }
 
     sent, error = _post_telegram_message(
@@ -700,8 +718,6 @@ def _maybe_send_telegram_bet(
         "reason": error,
         "threshold": threshold,
         "min_wr": min_wr,
-        "min_roster_matches": min_roster_matches,
-        "min_roster_avg_kills": min_roster_avg_kills,
     }
 
 
@@ -734,12 +750,20 @@ def record_shadow_observation(
     with _WRITE_LOCK:
         if normalized_key in _RECORDED_KEYS:
             return None
+        roster_kills = build_roster_kills_context(
+            team_id=target_team_id,
+            current_account_ids=target_account_ids,
+            observed_at=observed_at,
+            current_match_id=match_id,
+            history_snapshot=roster_history_snapshot,
+        )
         features = build_features(
             metrics_payload=metrics_payload,
             team_elo_meta=team_elo_meta,
             target_side=target_side,
             nw_hit_count=nw_hit_count,
             nw_max_wr=nw_max_wr,
+            roster_kills=roster_kills,
         )
         selected_artifact = dict(artifact) if isinstance(artifact, Mapping) else load_artifact()
         ml_probability = None
@@ -749,13 +773,6 @@ def record_shadow_observation(
             except (TypeError, ValueError, OverflowError):
                 ml_probability = None
         elo_probability = _number(features.get("elo_target_win_prob"))
-        roster_kills = build_roster_kills_context(
-            team_id=target_team_id,
-            current_account_ids=target_account_ids,
-            observed_at=observed_at,
-            current_match_id=match_id,
-            history_snapshot=roster_history_snapshot,
-        )
         record = {
             "schema_version": SCHEMA_VERSION,
             "recorded_at": int(time.time()),
@@ -768,6 +785,7 @@ def record_shadow_observation(
             "opponent_team_id": opponent_team_id,
             "opponent_team_name": opponent_team_name,
             "tier_segment": tier_segment,
+            "target_kills_threshold": TARGET_KILLS,
             "odds": ODDS,
             "nw_hit_count": int(nw_hit_count),
             "nw_max_wr": int(nw_max_wr),

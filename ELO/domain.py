@@ -31,6 +31,7 @@ class MatchRecord:
     dire_player_positions: tuple[str | None, ...] = field(default_factory=tuple)
     radiant_kills: int | None = None
     dire_kills: int | None = None
+    source_patch: str | None = None
     derived_league_tier: LeagueTier = LeagueTier.TIER3
 
 

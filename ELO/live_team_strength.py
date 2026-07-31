@@ -37,7 +37,7 @@ LEADERBOARD_BASELINE = 1500.0
 DEFAULT_ACTIVE_CUTOFF_DAYS = 180.0
 DEFAULT_DISPLAY_DECAY_HALF_LIFE_DAYS = 120.0
 DEFAULT_PLAYER_ONLY_FALLBACK_ROSTER_MATCHES = 3
-TEAM_KILLS_HISTORY_SCHEMA_VERSION = 1
+TEAM_KILLS_HISTORY_SCHEMA_VERSION = 2
 TEAM_KILLS_HISTORY_MATCHES_PER_TEAM = 100
 DEFAULT_DATA_DIR = (
     Path(__file__).resolve().parents[1]
@@ -450,6 +450,7 @@ def _serialize_match_record(match: MatchRecord) -> dict[str, Any]:
         "source_league_tier": match.source_league_tier,
         "series_id": match.series_id,
         "series_type": match.series_type,
+        "source_patch": match.source_patch,
         "derived_league_tier": match.derived_league_tier.value,
     }
 
@@ -472,6 +473,7 @@ def _deserialize_match_record(raw: dict[str, Any], *, radiant_win: bool) -> Matc
             source_league_tier=(str(raw.get("source_league_tier")) if raw.get("source_league_tier") is not None else None),
             series_id=int(raw["series_id"]) if raw.get("series_id") is not None else None,
             series_type=(str(raw.get("series_type")) if raw.get("series_type") is not None else None),
+            source_patch=(str(raw.get("source_patch")) if raw.get("source_patch") is not None else None),
             derived_league_tier=tier,
         )
     except (TypeError, ValueError):
@@ -860,6 +862,7 @@ def _build_snapshot_dict(
                 "model_config_signature": _model_config_signature(empty_model_state),
                 "team_kills_history_schema_version": TEAM_KILLS_HISTORY_SCHEMA_VERSION,
                 "team_kills_history_matches_per_team": TEAM_KILLS_HISTORY_MATCHES_PER_TEAM,
+                "team_kills_history_latest_patch": None,
             },
             "teams_by_org_key": {},
             "team_kills_history_by_team_id": {},
@@ -873,6 +876,15 @@ def _build_snapshot_dict(
     model = HybridPlayerRosterEloModel(config)
     team_snapshots: dict[str, dict[str, Any]] = {}
     team_kills_history: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    latest_patch_match = max(
+        (
+            (match.timestamp, str(match.source_patch))
+            for match in matches
+            if match.source_patch
+        ),
+        default=None,
+    )
+    latest_patch = latest_patch_match[1] if latest_patch_match else None
     reference_timestamp = matches[-1].timestamp
     cross_tier_counts: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {"series": 0, "strong_wins": 0}
@@ -897,6 +909,7 @@ def _build_snapshot_dict(
                     "timestamp": int(match.timestamp),
                     "player_ids": [int(player_id) for player_id in player_ids],
                     "kills": int(kills),
+                    "patch": match.source_patch,
                 }
             )
 
@@ -1006,6 +1019,7 @@ def _build_snapshot_dict(
             "model_config_signature": _model_config_signature(model_state),
             "team_kills_history_schema_version": TEAM_KILLS_HISTORY_SCHEMA_VERSION,
             "team_kills_history_matches_per_team": TEAM_KILLS_HISTORY_MATCHES_PER_TEAM,
+            "team_kills_history_latest_patch": latest_patch,
         },
         "teams_by_org_key": teams_by_org_key,
         "team_kills_history_by_team_id": dict(team_kills_history),
@@ -1067,7 +1081,11 @@ def ensure_snapshot(
     snapshot_missing_model_state = bool(snapshot is not None and not isinstance(snapshot.get("model_state"), dict))
     snapshot_missing_kills_history = bool(
         snapshot is not None
-        and not isinstance(snapshot.get("team_kills_history_by_team_id"), dict)
+        and (
+            not isinstance(snapshot.get("team_kills_history_by_team_id"), dict)
+            or int((snapshot.get("meta") or {}).get("team_kills_history_schema_version") or 0)
+            != TEAM_KILLS_HISTORY_SCHEMA_VERSION
+        )
     )
     if (
         snapshot is not None

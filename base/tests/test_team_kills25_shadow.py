@@ -28,6 +28,7 @@ def _artifact() -> dict:
     coefficients[shadow.FEATURE_NAMES.index("elo_target_win_prob")] = 1.0
     return {
         "schema_version": shadow.SCHEMA_VERSION,
+        "target_kills_threshold": shadow.TARGET_KILLS,
         "feature_schema_hash": shadow.FEATURE_SCHEMA_HASH,
         "feature_names": list(shadow.FEATURE_NAMES),
         "bet_threshold": 0.6,
@@ -45,13 +46,15 @@ def _artifact() -> dict:
 def _qualifying_history(team_id: int = 10) -> tuple[list[int], dict]:
     player_ids = [1, 2, 3, 4, 5]
     return player_ids, {
+        "meta": {"team_kills_history_latest_patch": "7.41d"},
         "team_kills_history_by_team_id": {
             str(team_id): [
                 {
                     "match_id": 100 + index,
                     "timestamp": 1,
                     "player_ids": player_ids,
-                    "kills": 25,
+                    "kills": 27,
+                    "patch": "7.41d",
                 }
                 for index in range(6)
             ]
@@ -66,6 +69,11 @@ def test_build_features_aligns_every_block_to_target_side():
         target_side="radiant",
         nw_hit_count=2,
         nw_max_wr=65,
+        roster_kills={
+            "patch_matches": 6,
+            "patch_mean_kills": 28.5,
+            "patch_ge27_rate": 2 / 3,
+        },
     )
     dire = shadow.build_features(
         metrics_payload=_metrics(),
@@ -87,6 +95,9 @@ def test_build_features_aligns_every_block_to_target_side():
     assert dire["elo_target_win_prob"] == 0.4
     assert radiant["elo_target_diff"] == 80
     assert dire["elo_target_diff"] == -80
+    assert radiant["roster_patch_games"] == 6
+    assert radiant["roster_patch_mean_kills"] == 28.5
+    assert radiant["roster_patch_ge27_rate"] == 2 / 3
 
 
 def test_predict_probability_uses_frozen_numeric_artifact():
@@ -94,6 +105,45 @@ def test_predict_probability_uses_frozen_numeric_artifact():
     features["elo_target_win_prob"] = 1.0
     probability = shadow.predict_probability(features, _artifact())
     assert math.isclose(probability, 1.0 / (1.0 + math.exp(-1.0)))
+
+
+def test_deployed_artifact_targets_27_and_uses_patch_roster_features():
+    artifact = shadow.load_artifact()
+    assert artifact is not None
+    assert artifact["target_kills_threshold"] == 27
+    assert artifact["target"] == "target_team_final_kills_ge27"
+    assert {
+        "roster_patch_games",
+        "roster_patch_mean_kills",
+        "roster_patch_ge27_rate",
+    } <= set(artifact["feature_names"])
+
+
+def test_artifact_loader_rejects_wrong_target(monkeypatch, tmp_path):
+    artifact = _artifact()
+    artifact["target_kills_threshold"] = 25
+    path = tmp_path / "wrong-target.json"
+    path.write_text(json.dumps(artifact), encoding="utf-8")
+    shadow._load_artifact_cached.cache_clear()
+    assert shadow.load_artifact(path) is None
+
+
+def test_roster_history_loader_requires_patch_aware_schema(tmp_path):
+    path = tmp_path / "history.json"
+    payload = {
+        "meta": {
+            "team_kills_history_schema_version": 1,
+            "team_kills_history_latest_patch": "7.41d",
+        },
+        "team_kills_history_by_team_id": {},
+    }
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    shadow._load_roster_history_cached.cache_clear()
+    assert shadow.load_roster_history(path) is None
+
+    payload["meta"]["team_kills_history_schema_version"] = 2
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert shadow.load_roster_history(path) == payload
 
 
 def test_roster_history_requires_four_players_and_excludes_current_future_and_duplicates():
@@ -104,6 +154,7 @@ def test_roster_history_requires_four_players_and_excludes_current_future_and_du
             "timestamp": 10 + index,
             "player_ids": [1, 2, 3, 4, 100 + index],
             "kills": kills,
+            "patch": "7.41d",
         }
         for index, kills in enumerate([27, 9, 15, 27, 12, 6], start=1)
     ]
@@ -135,13 +186,44 @@ def test_roster_history_requires_four_players_and_excludes_current_future_and_du
         current_account_ids=current_players,
         observed_at=100,
         current_match_id=999,
-        history_snapshot={"team_kills_history_by_team_id": {"10": rows}},
+        history_snapshot={
+            "meta": {"team_kills_history_latest_patch": "7.41d"},
+            "team_kills_history_by_team_id": {"10": rows},
+        },
     )
     assert context["matches"] == 6
     assert context["mean_kills"] == 16.0
     assert context["median_kills"] == 13.5
-    assert context["ge25_hits"] == 2
-    assert context["ge25_rate"] == 2 / 6
+    assert context["ge27_hits"] == 2
+    assert context["ge27_rate"] == 2 / 6
+    assert context["patch_matches"] == 6
+    assert context["patch_mean_kills"] == 16.0
+    assert context["patch_ge27_rate"] == 2 / 6
+
+
+def test_roster_context_separates_latest_patch_without_requiring_a_minimum_sample():
+    players = [1, 2, 3, 4, 5]
+    rows = [
+        {"match_id": 1, "timestamp": 1, "player_ids": players, "kills": 40, "patch": "7.41c"},
+        {"match_id": 2, "timestamp": 2, "player_ids": players, "kills": 10, "patch": "7.41d"},
+        {"match_id": 3, "timestamp": 3, "player_ids": players, "kills": 30, "patch": "7.41d"},
+    ]
+    context = shadow.build_roster_kills_context(
+        team_id=10,
+        current_account_ids=players,
+        observed_at=10,
+        current_match_id=99,
+        history_snapshot={
+            "meta": {"team_kills_history_latest_patch": "7.41d"},
+            "team_kills_history_by_team_id": {"10": rows},
+        },
+    )
+    assert context["available"] is True
+    assert context["matches"] == 3
+    assert context["patch"] == "7.41d"
+    assert context["patch_matches"] == 2
+    assert context["patch_mean_kills"] == 20.0
+    assert context["patch_ge27_rate"] == 0.5
 
 
 def test_shadow_record_is_disabled_by_default(monkeypatch, tmp_path):
@@ -201,6 +283,7 @@ def test_shadow_record_writes_once_and_never_contains_outcome(monkeypatch, tmp_p
     assert rows[0]["elo_gate_eligible"] is True
     assert rows[0]["ml_probability"] is not None
     assert "target_ge25" not in rows[0]
+    assert "target_ge27" not in rows[0]
     assert "final_kills" not in rows[0]
 
 
@@ -251,7 +334,7 @@ def test_qualified_telegram_bet_is_sent_once_across_process_restart(
     assert first is not None
     assert first["telegram"]["sent"] is True
     assert len(calls) == 1
-    assert "Target Team: 25+ убийств" in calls[0]["text"]
+    assert "Target Team: 27+ убийств" in calls[0]["text"]
     assert "secret-test-token" not in json.dumps(first)
 
     # Simulate a new process: in-memory state is empty, persistent sent log remains.
@@ -338,8 +421,8 @@ def test_telegram_claim_prevents_retry_after_ambiguous_failure(monkeypatch, tmp_
             "matches": 6,
             "mean_kills": 25.0,
             "median_kills": 25.0,
-            "ge25_hits": 6,
-            "ge25_rate": 1.0,
+            "ge27_hits": 5,
+            "ge27_rate": 5 / 6,
         },
     }
     shadow.reset_shadow_state_for_tests()
@@ -353,10 +436,13 @@ def test_telegram_claim_prevents_retry_after_ambiguous_failure(monkeypatch, tmp_
     assert len(calls) == 1
 
 
-def test_glyph_recent_roster_average_blocks_the_bet(monkeypatch):
+def test_roster_average_is_a_model_feature_not_a_hard_gate(monkeypatch, tmp_path):
     monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_ENABLED", "1")
     monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_BOT_TOKEN", "secret-test-token")
     monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setenv(
+        "TEAM_KILLS25_TELEGRAM_SENT_PATH", str(tmp_path / "telegram-sent.jsonl")
+    )
     calls = []
     monkeypatch.setattr(
         shadow,
@@ -372,6 +458,7 @@ def test_glyph_recent_roster_average_blocks_the_bet(monkeypatch):
             "timestamp": 10 + index,
             "player_ids": stable_four + [392169957],
             "kills": kills,
+            "patch": "7.41d",
         }
         for index, kills in enumerate([27, 9, 15, 27, 12, 6])
     ]
@@ -380,23 +467,35 @@ def test_glyph_recent_roster_average_blocks_the_bet(monkeypatch):
         current_account_ids=current_players,
         observed_at=100,
         current_match_id=8922300474,
-        history_snapshot={"team_kills_history_by_team_id": {"10081680": rows}},
+        history_snapshot={
+            "meta": {"team_kills_history_latest_patch": "7.41d"},
+            "team_kills_history_by_team_id": {"10081680": rows},
+        },
     )
     result = shadow._maybe_send_telegram_bet(
         {
             "match_key": "dltv.org/matches/8922300474.1",
             "match_id": 8922300474,
             "ml_probability": 0.608,
-            "ml_threshold": 0.45,
+            "ml_threshold": 0.60,
             "nw_max_wr": 65,
             "roster_kills": roster,
         }
     )
     assert roster["matches"] == 6
     assert roster["mean_kills"] == 16.0
-    assert result["eligible"] is False
-    assert result["reason"] == "roster_avg_kills_below_threshold"
-    assert calls == []
+    features = shadow.build_features(
+        metrics_payload=_metrics(),
+        team_elo_meta=None,
+        target_side="radiant",
+        nw_hit_count=3,
+        nw_max_wr=65,
+        roster_kills=roster,
+    )
+    assert features["roster_patch_mean_kills"] == 16.0
+    assert result["eligible"] is True
+    assert result["sent"] is True
+    assert len(calls) == 1
 
 
 def test_telegram_gate_does_not_send_below_artifact_threshold(monkeypatch, tmp_path):

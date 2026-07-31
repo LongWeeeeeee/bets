@@ -47,20 +47,26 @@ def test_snapshot_builds_deduplicated_team_kills_history(tmp_path) -> None:
         "series": {"id": 50, "type": "3"},
     }
     # The production archive can repeat a map in multiple combined files.
-    (data_dir / "part1.json").write_text(json.dumps({"123": raw_match}), encoding="utf-8")
-    (data_dir / "part2.json").write_text(json.dumps({"123": raw_match}), encoding="utf-8")
+    (data_dir / "7.41d_part001.json").write_text(
+        json.dumps({"123": raw_match}), encoding="utf-8"
+    )
+    (data_dir / "combined1.json").write_text(
+        json.dumps({"123": raw_match}), encoding="utf-8"
+    )
     snapshot_path = tmp_path / "snapshot.json"
 
     snapshot = build_snapshot(data_dir=data_dir, snapshot_path=snapshot_path)
 
     assert snapshot_path.exists()
-    assert snapshot["meta"]["team_kills_history_schema_version"] == 1
+    assert snapshot["meta"]["team_kills_history_schema_version"] == 2
+    assert snapshot["meta"]["team_kills_history_latest_patch"] == "7.41d"
     assert snapshot["team_kills_history_by_team_id"]["10"] == [
         {
             "match_id": 123,
             "timestamp": 1771153200,
             "player_ids": [1, 2, 3, 4, 5],
             "kills": 9,
+            "patch": "7.41d",
         }
     ]
 
