@@ -148,6 +148,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | `CP1VS2_TOPUP_FALLBACK` | `0` (off) — вкл same-role top-up для `counterpick_1vs2`: дуо-матчап с `<COUNTERPICK_1VS2_MIN_MATCHES` точных игр добирается кросс-позиц (core pos1-3 / support pos4-5) агрегатом с весом λ, exact-игры как якорь (`functions._lookup_cp1vs2_topup_winrate`). Покрытые `>=15` не трогаются. Требует scoped-ключи: `cyberscore._draft_stats_lookup_keys` эмитит кросс-позиц дуо-ключи под тем же флагом. Валидировано (runtime/cp1vs2_topup_*): PUB ~+2пп точн.+покрытие, PRO нейтрально+~5-6пп покрытие. |
 | `CP1VS2_TOPUP_LAMBDA` | `0.35` — вес кросс-позиц инкремента в top-up бленде |
 | `SIGNAL_DECISION_MODE` | `ml` (`ml`/`star`) |
+| `EARLY_WINNER_OVERRIDES_EARLY_NW` | `1` (on) — при РАЗНЫХ знаках блоков Early NW (`early_output`) и Early Winner (`early_end_output`) авторитетным early-блоком для диспатча становится тот, у кого WR выше, т.е. Early Winner при `wr(early_end) > wr(early)`. Подменяются `selected_early_diag/sign`, `early_wr_pct` и raw-блок (`_block_signs_same_or_zero`, `_has_opposite_early_wr60_hit`); в карточке Telegram обе строки печатаются как есть. Предикат — `_early_winner_overrides_early_nw()`. `0` — старое поведение (early-сторона только из `early_output`). |
 | `SIGNAL_WRAPPER_MODE` | `ml` |
 | `SIGNAL_WRAPPER_ENABLED` | задаётся пайплайном вокруг вызова метрик |
 | `STAR_THRESHOLD_WR_TIER1` | `60` |

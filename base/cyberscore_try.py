@@ -6446,6 +6446,44 @@ def _star_signal_dispatch_flags(
     }
 
 
+# Early Winner (early_end_output) и Early NW (early_output) могут указывать на
+# разные стороны. В этом случае авторитетным early-блоком для диспатча считаем
+# тот, у которого WR выше — то есть Early Winner, когда его WR строго больше.
+# Отключается через EARLY_WINNER_OVERRIDES_EARLY_NW=0 без правки кода.
+EARLY_WINNER_OVERRIDES_EARLY_NW = _env_flag("EARLY_WINNER_OVERRIDES_EARLY_NW", "1")
+
+
+def _early_winner_overrides_early_nw(
+    *,
+    early_diag: Optional[Dict[str, Any]],
+    early_wr_pct: Optional[float],
+    early_end_diag: Optional[Dict[str, Any]],
+    early_end_wr_pct: Optional[float],
+) -> bool:
+    """Early Winner важнее Early NW: оба валидны, знаки разные, WR EW выше."""
+
+    if not EARLY_WINNER_OVERRIDES_EARLY_NW:
+        return False
+    early = early_diag if isinstance(early_diag, dict) else {}
+    early_end = early_end_diag if isinstance(early_end_diag, dict) else {}
+    if not (early.get("valid") and early_end.get("valid")):
+        return False
+    early_sign = early.get("sign")
+    early_end_sign = early_end.get("sign")
+    if early_sign not in (-1, 1) or early_end_sign not in (-1, 1):
+        return False
+    if int(early_sign) == int(early_end_sign):
+        return False
+    try:
+        nw_wr = float(early_wr_pct)
+        winner_wr = float(early_end_wr_pct)
+    except (TypeError, ValueError):
+        return False
+    if not (math.isfinite(nw_wr) and math.isfinite(winner_wr)):
+        return False
+    return winner_wr > nw_wr
+
+
 def _star_match_status_from_diags(
     early_diag: Dict[str, Any],
     late_diag: Dict[str, Any],
@@ -31141,6 +31179,40 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     early_end_wr_pct = float(early_end_rec.get("wr_pct"))
                 except (TypeError, ValueError):
                     early_end_wr_pct = None
+            # ── Early Winner приоритетнее Early NW при разных знаках ────
+            # Когда Early NW и Early Winner указывают на разные стороны, а WR
+            # блока Early Winner строго выше — для диспатча авторитетным
+            # early-блоком становится Early Winner: подменяем diag/знак/WR и
+            # raw-блок, на который смотрят гейты. В карточке Telegram оба блока
+            # печатаются как есть (early_nw_display_*).
+            early_nw_display_sign = selected_early_sign
+            early_nw_display_wr_pct = early_wr_pct
+            early_dispatch_output = s.get('early_output', {}) or {}
+            early_end_dispatch_diag = _star_block_diagnostics(
+                raw_block=s.get('early_end_output', {}) or {},
+                target_wr=selected_star_wr,
+                section="early_end_output",
+            )
+            early_winner_override_active = _early_winner_overrides_early_nw(
+                early_diag=selected_early_diag,
+                early_wr_pct=early_wr_pct,
+                early_end_diag=early_end_dispatch_diag,
+                early_end_wr_pct=early_end_wr_pct,
+            )
+            if early_winner_override_active:
+                selected_early_diag = dict(early_end_dispatch_diag)
+                has_selected_early_star = True
+                selected_early_sign = int(early_end_dispatch_diag.get("sign"))
+                early_wr_pct = float(early_end_wr_pct)
+                early_dispatch_output = s.get('early_end_output', {}) or {}
+                if verbose_match_log:
+                    print(
+                        "   \U0001F501 Early-блок для диспатча: Early Winner важнее Early NW "
+                        f"(early_nw={_target_side_from_sign(early_nw_display_sign)} "
+                        f"WR\u2248{float(early_nw_display_wr_pct or 0.0):.1f}% -> "
+                        f"early_winner={_target_side_from_sign(selected_early_sign)} "
+                        f"WR\u2248{float(early_wr_pct):.1f}%)"
+                    )
             late_wr_pct: Optional[float] = None
             if isinstance(late_rec, dict):
                 try:
@@ -31375,11 +31447,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 late_no_star_guard_against_early65.get("star_hit_diag") or {}
             )
             early_same_or_zero_diag = _block_signs_same_or_zero(
-                raw_block=s.get('early_output', {}),
+                raw_block=early_dispatch_output,
                 expected_sign=selected_late_sign,
             )
             early_core_same_or_zero_diag = _block_signs_same_or_zero(
-                raw_block=s.get('early_output', {}),
+                raw_block=early_dispatch_output,
                 expected_sign=selected_late_sign,
                 metrics=_STAR_LATE_CORE_METRIC_ORDER,
                 allow_zero=False,
@@ -32089,7 +32161,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     return str(dire_team_name_original or dire_team_name or "Dire")
                 return ""
 
-            early_display_sign = selected_early_sign
+            early_display_sign = early_nw_display_sign
             if early_display_sign not in (-1, 1):
                 early_display_sign = _star_block_sign(early_output_log)
             if early_display_sign not in (-1, 1) and send_now_late_star_early_core_same_sign:
@@ -32113,7 +32185,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early_line = _format_wr_estimate_line(
                     "Early NW",
                     early_team_name,
-                    early_wr_pct,
+                    early_nw_display_wr_pct,
                     telegram_early_rec,
                 )
                 if early_line:
@@ -33887,7 +33959,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     # releases at 4-5 min when the early lanes lean the other
                     # way.
                     _late_only_opposite_early = _has_opposite_early_wr60_hit(
-                        s.get('early_output', {}),
+                        early_dispatch_output,
                         selected_late_sign,
                     )
                     dynamic_monitor_profile = _late_pre27_watcher_monitor_config(

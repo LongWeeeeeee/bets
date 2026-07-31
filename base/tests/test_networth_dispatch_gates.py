@@ -65,6 +65,8 @@ class BranchScenario:
     raw_mid_output: Optional[Dict[str, Any]] = None
     has_all_star: bool = False
     all_sign: int = 1
+    has_early_end_star: bool = False
+    early_end_sign: int = 1
     raw_post_lane_output: Optional[Dict[str, Any]] = None
     metrics_extra: Optional[Dict[str, Any]] = None
 
@@ -216,6 +218,23 @@ def _star_diagnostics_for_case(
                 "valid": True,
                 "status": "ok",
                 "sign": case.early_sign,
+                "hit_metrics": ["counterpick_1vs1", "solo"],
+                "hit_count": 2,
+                "conflict_metric": None,
+            }
+        return {
+            "valid": False,
+            "status": "no_hits",
+            "sign": None,
+            "hit_metrics": [],
+            "conflict_metric": None,
+        }
+    if section == "early_end_output":
+        if case.has_early_end_star:
+            return {
+                "valid": True,
+                "status": "ok",
+                "sign": case.early_end_sign,
                 "hit_metrics": ["counterpick_1vs1", "solo"],
                 "hit_count": 2,
                 "conflict_metric": None,
