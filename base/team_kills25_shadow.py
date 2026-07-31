@@ -33,13 +33,14 @@ DEFAULT_TELEGRAM_SENT_PATH = (
 DEFAULT_ROSTER_HISTORY_PATH = (
     PROJECT_ROOT / "ELO" / "output" / "live_team_elo_snapshot.json"
 )
-SCHEMA_VERSION = "team_kills27_shadow.v1"
+SCHEMA_VERSION = "team_kills27_shadow.v2"
 ROSTER_HISTORY_SCHEMA_VERSION = 2
 ODDS = 1.8
 TARGET_KILLS = 27
 ELO_GATE_THRESHOLD = 0.45
 DEFAULT_ROSTER_OVERLAP = 4
 DEFAULT_ROSTER_WINDOW = 30
+ROSTER_PRIOR_MATCHES = 6.0
 METRICS = (
     "counterpick_1vs1",
     "counterpick_1vs2",
@@ -70,9 +71,11 @@ def _feature_names() -> tuple[str, ...]:
         "nw_max_wr",
         "elo_target_win_prob",
         "elo_target_diff",
-        "roster_patch_games",
-        "roster_patch_mean_kills",
-        "roster_patch_ge27_rate",
+        "roster_patch_mean_edge_confident",
+        "roster_patch_ge27_edge_confident",
+        "blocks_target_count",
+        "blocks_opponent_count",
+        "blocks_consensus_target",
     ]
     names.extend(
         f"{block}_{metric}"
@@ -193,16 +196,32 @@ def build_features(
     elo_meta = team_elo_meta if isinstance(team_elo_meta, Mapping) else {}
     raw_diff = _number(elo_meta.get("raw_diff"))
     roster = roster_kills if isinstance(roster_kills, Mapping) else {}
+    patch_games = _number(roster.get("patch_matches"))
+    patch_mean = _number(roster.get("patch_mean_kills"))
+    patch_ge27_rate = _number(roster.get("patch_ge27_rate"))
+    roster_reliability = (
+        patch_games / (patch_games + ROSTER_PRIOR_MATCHES)
+        if patch_games is not None and patch_games > 0
+        else None
+    )
     features: dict[str, float | None] = {
         "nw_hit_count": float(nw_hit_count),
         "nw_max_wr": float(nw_max_wr),
         "elo_target_win_prob": _elo_probability(elo_meta, target_side),
         "elo_target_diff": raw_diff * target_sign if raw_diff is not None else None,
-        "roster_patch_games": _number(roster.get("patch_matches")),
-        "roster_patch_mean_kills": _number(roster.get("patch_mean_kills")),
-        "roster_patch_ge27_rate": _number(roster.get("patch_ge27_rate")),
+        "roster_patch_mean_edge_confident": (
+            (patch_mean - TARGET_KILLS) * roster_reliability
+            if patch_mean is not None and roster_reliability is not None
+            else None
+        ),
+        "roster_patch_ge27_edge_confident": (
+            (patch_ge27_rate - (1.0 / ODDS)) * roster_reliability
+            if patch_ge27_rate is not None and roster_reliability is not None
+            else None
+        ),
     }
     aligned_by_metric: dict[str, list[float]] = {metric: [] for metric in METRICS}
+    block_directions: list[int] = []
     for block_name, aliases in BLOCK_SOURCES.items():
         source = _block(metrics_payload, aliases)
         aligned_values: list[float] = []
@@ -230,6 +249,19 @@ def build_features(
         features[f"{block_name}_abs_max"] = float(
             max((abs(value) for value in aligned_values), default=0.0)
         )
+        if aligned_values:
+            aligned_sum = sum(aligned_values)
+            block_directions.append(
+                1 if aligned_sum > 0 else -1 if aligned_sum < 0 else 0
+            )
+    target_blocks = sum(direction > 0 for direction in block_directions)
+    opponent_blocks = sum(direction < 0 for direction in block_directions)
+    enough_blocks = len(block_directions) >= 3
+    features["blocks_target_count"] = float(target_blocks)
+    features["blocks_opponent_count"] = float(opponent_blocks)
+    features["blocks_consensus_target"] = float(
+        enough_blocks and target_blocks == len(block_directions)
+    )
     for metric, values in aligned_by_metric.items():
         features[f"cross_{metric}_same_sign"] = float(
             bool(values)

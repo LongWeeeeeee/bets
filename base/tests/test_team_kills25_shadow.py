@@ -95,9 +95,17 @@ def test_build_features_aligns_every_block_to_target_side():
     assert dire["elo_target_win_prob"] == 0.4
     assert radiant["elo_target_diff"] == 80
     assert dire["elo_target_diff"] == -80
-    assert radiant["roster_patch_games"] == 6
-    assert radiant["roster_patch_mean_kills"] == 28.5
-    assert radiant["roster_patch_ge27_rate"] == 2 / 3
+    assert radiant["roster_patch_mean_edge_confident"] == 0.75
+    assert math.isclose(
+        radiant["roster_patch_ge27_edge_confident"],
+        ((2 / 3) - (1 / 1.8)) * 0.5,
+    )
+    assert radiant["blocks_target_count"] == 4
+    assert radiant["blocks_opponent_count"] == 0
+    assert radiant["blocks_consensus_target"] == 1
+    assert dire["blocks_target_count"] == 0
+    assert dire["blocks_opponent_count"] == 4
+    assert dire["blocks_consensus_target"] == 0
 
 
 def test_predict_probability_uses_frozen_numeric_artifact():
@@ -107,15 +115,35 @@ def test_predict_probability_uses_frozen_numeric_artifact():
     assert math.isclose(probability, 1.0 / (1.0 + math.exp(-1.0)))
 
 
+def test_low_kill_patch_roster_contributes_negative_confidence_weighted_edges():
+    features = shadow.build_features(
+        metrics_payload=_metrics(),
+        team_elo_meta=None,
+        target_side="radiant",
+        nw_hit_count=3,
+        nw_max_wr=65,
+        roster_kills={
+            "patch_matches": 7,
+            "patch_mean_kills": 19.142857142857142,
+            "patch_ge27_rate": 3 / 7,
+        },
+    )
+    assert features["roster_patch_mean_edge_confident"] < 0
+    assert features["roster_patch_ge27_edge_confident"] < 0
+
+
 def test_deployed_artifact_targets_27_and_uses_patch_roster_features():
     artifact = shadow.load_artifact()
     assert artifact is not None
     assert artifact["target_kills_threshold"] == 27
     assert artifact["target"] == "target_team_final_kills_ge27"
+    assert len(artifact["feature_names"]) == 95
     assert {
-        "roster_patch_games",
-        "roster_patch_mean_kills",
-        "roster_patch_ge27_rate",
+        "roster_patch_mean_edge_confident",
+        "roster_patch_ge27_edge_confident",
+        "blocks_target_count",
+        "blocks_opponent_count",
+        "blocks_consensus_target",
     } <= set(artifact["feature_names"])
 
 
@@ -492,7 +520,8 @@ def test_roster_average_is_a_model_feature_not_a_hard_gate(monkeypatch, tmp_path
         nw_max_wr=65,
         roster_kills=roster,
     )
-    assert features["roster_patch_mean_kills"] == 16.0
+    assert features["roster_patch_mean_edge_confident"] == -5.5
+    assert features["roster_patch_ge27_edge_confident"] < 0
     assert result["eligible"] is True
     assert result["sent"] is True
     assert len(calls) == 1

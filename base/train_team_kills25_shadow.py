@@ -22,6 +22,7 @@ from team_kills25_shadow import (
     FEATURE_NAMES,
     FEATURE_SCHEMA_HASH,
     ODDS,
+    ROSTER_PRIOR_MATCHES,
     SCHEMA_VERSION,
     TARGET_KILLS,
 )
@@ -206,20 +207,6 @@ def _fit_candidate(
     )
 
 
-def _choose_threshold(labels: pd.Series, probabilities: np.ndarray) -> float:
-    candidates = []
-    for threshold in (0.0, 0.45, 0.50, 1.0 / ODDS, 0.60, 0.65, 0.70):
-        metrics = _bet_metrics(labels.astype(int).to_numpy(), probabilities, threshold)
-        if metrics["bets"] < 40:
-            continue
-        candidates.append(
-            (metrics["profit_units"], metrics["roi"], -threshold, threshold)
-        )
-    if not candidates:
-        return 1.0 / ODDS
-    return float(max(candidates)[-1])
-
-
 def _artifact_model(
     frame: pd.DataFrame,
     c_value: float,
@@ -250,6 +237,25 @@ def _artifact_model(
     )
 
 
+def _add_block_consensus_features(frame: pd.DataFrame) -> None:
+    columns = [
+        f"{block}_aligned_sum"
+        for block in ("early_nw", "early_win", "late", "all")
+    ]
+    missing = [column for column in columns if column not in frame]
+    if missing:
+        raise ValueError(f"Missing block consensus sources: {missing}")
+    values = frame[columns]
+    available = values.notna().sum(axis=1)
+    target = (values > 0).sum(axis=1)
+    opponent = (values < 0).sum(axis=1)
+    frame["blocks_target_count"] = target
+    frame["blocks_opponent_count"] = opponent
+    frame["blocks_consensus_target"] = (
+        (available >= 3) & (target == available)
+    ).astype(int)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--old", type=Path, required=True)
@@ -260,19 +266,27 @@ def main() -> None:
 
     old = pd.read_csv(args.old).replace([np.inf, -np.inf], np.nan)
     forward = pd.read_csv(args.forward).replace([np.inf, -np.inf], np.nan)
-    roster_feature_sources = {
-        "roster_patch_games": "patch_roster4_games_30",
-        "roster_patch_mean_kills": "patch_roster4_kills_mean_30",
-        "roster_patch_ge27_rate": "patch_roster4_ge27_rate_30",
-    }
     for frame in (old, forward):
         if "target_kills" not in frame:
             raise ValueError("target_kills is required to rebuild the >=27 label")
         frame["target"] = (frame["target_kills"] >= TARGET_KILLS).astype(int)
-        for feature_name, source_name in roster_feature_sources.items():
-            if source_name not in frame:
-                raise ValueError(f"Missing roster feature source: {source_name}")
-            frame[feature_name] = frame[source_name]
+        _add_block_consensus_features(frame)
+        roster_sources = (
+            "patch_roster4_games_30",
+            "patch_roster4_kills_mean_30",
+            "patch_roster4_ge27_rate_30",
+        )
+        missing_roster = [column for column in roster_sources if column not in frame]
+        if missing_roster:
+            raise ValueError(f"Missing roster feature sources: {missing_roster}")
+        games = frame["patch_roster4_games_30"].clip(lower=0)
+        reliability = games / (games + ROSTER_PRIOR_MATCHES)
+        frame["roster_patch_mean_edge_confident"] = (
+            frame["patch_roster4_kills_mean_30"] - TARGET_KILLS
+        ) * reliability
+        frame["roster_patch_ge27_edge_confident"] = (
+            frame["patch_roster4_ge27_rate_30"] - (1.0 / ODDS)
+        ) * reliability
     availability = ["block_metrics_available"]
     if "early_win_metrics_available" in old:
         availability.append("early_win_metrics_available")
@@ -291,13 +305,13 @@ def main() -> None:
     old_test = old.iloc[validation_end:].copy()
 
     candidates = []
-    for c_value in (0.01, 0.03, 0.1, 0.3, 1.0):
+    for c_value in (0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0):
         candidates.append((c_value, *_fit_candidate(train, validation, c_value)))
     c_value, _, model, imputer, scaler, validation_probability = min(
         candidates,
         key=lambda item: item[1],
     )
-    threshold = _choose_threshold(validation.target, validation_probability)
+    threshold = 1.0 / ODDS
     old_test_matrix = _prepare_matrix(
         old_test,
         imputer=imputer,
@@ -326,7 +340,7 @@ def main() -> None:
     created_at = datetime.now(timezone.utc).isoformat()
     report = {
         "target_kills_threshold": TARGET_KILLS,
-        "selection": "C and bet threshold selected on old chronological validation only",
+        "selection": "C selected by log loss on old chronological validation; bet threshold fixed at 1/odds",
         "forward_used_for_selection": False,
         "old_rows": int(len(old)),
         "forward_rows": int(len(forward)),
