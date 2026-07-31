@@ -42,6 +42,23 @@ def _artifact() -> dict:
     }
 
 
+def _qualifying_history(team_id: int = 10) -> tuple[list[int], dict]:
+    player_ids = [1, 2, 3, 4, 5]
+    return player_ids, {
+        "team_kills_history_by_team_id": {
+            str(team_id): [
+                {
+                    "match_id": 100 + index,
+                    "timestamp": 1,
+                    "player_ids": player_ids,
+                    "kills": 25,
+                }
+                for index in range(6)
+            ]
+        }
+    }
+
+
 def test_build_features_aligns_every_block_to_target_side():
     radiant = shadow.build_features(
         metrics_payload=_metrics(),
@@ -77,6 +94,54 @@ def test_predict_probability_uses_frozen_numeric_artifact():
     features["elo_target_win_prob"] = 1.0
     probability = shadow.predict_probability(features, _artifact())
     assert math.isclose(probability, 1.0 / (1.0 + math.exp(-1.0)))
+
+
+def test_roster_history_requires_four_players_and_excludes_current_future_and_duplicates():
+    current_players = [1, 2, 3, 4, 5]
+    rows = [
+        {
+            "match_id": index,
+            "timestamp": 10 + index,
+            "player_ids": [1, 2, 3, 4, 100 + index],
+            "kills": kills,
+        }
+        for index, kills in enumerate([27, 9, 15, 27, 12, 6], start=1)
+    ]
+    rows.extend(
+        [
+            {**rows[0], "kills": 99},  # duplicate match_id must not add a map
+            {
+                "match_id": 50,
+                "timestamp": 50,
+                "player_ids": [1, 2, 3, 90, 91],
+                "kills": 40,
+            },  # only three current players
+            {
+                "match_id": 999,
+                "timestamp": 90,
+                "player_ids": current_players,
+                "kills": 50,
+            },  # current map
+            {
+                "match_id": 1000,
+                "timestamp": 101,
+                "player_ids": current_players,
+                "kills": 50,
+            },  # future map in replay/backtest
+        ]
+    )
+    context = shadow.build_roster_kills_context(
+        team_id=10,
+        current_account_ids=current_players,
+        observed_at=100,
+        current_match_id=999,
+        history_snapshot={"team_kills_history_by_team_id": {"10": rows}},
+    )
+    assert context["matches"] == 6
+    assert context["mean_kills"] == 16.0
+    assert context["median_kills"] == 13.5
+    assert context["ge25_hits"] == 2
+    assert context["ge25_rate"] == 2 / 6
 
 
 def test_shadow_record_is_disabled_by_default(monkeypatch, tmp_path):
@@ -155,6 +220,7 @@ def test_qualified_telegram_bet_is_sent_once_across_process_restart(
         return True, None
 
     monkeypatch.setattr(shadow, "_post_telegram_message", fake_post)
+    target_account_ids, roster_history_snapshot = _qualifying_history()
     kwargs = {
         "match_key": "dltv.org/matches/12345.26",
         "match_id": 12345,
@@ -174,6 +240,8 @@ def test_qualified_telegram_bet_is_sent_once_across_process_restart(
             "raw_dire_wr": 40,
             "raw_diff": 80,
         },
+        "target_account_ids": target_account_ids,
+        "roster_history_snapshot": roster_history_snapshot,
         "artifact": _artifact(),
         "log_path": tmp_path / "shadow.jsonl",
     }
@@ -221,6 +289,7 @@ def test_telegram_dedupe_reads_legacy_volatile_match_key(monkeypatch, tmp_path):
         lambda **kwargs: calls.append(kwargs) or (True, None),
     )
     shadow.reset_shadow_state_for_tests()
+    target_account_ids, roster_history_snapshot = _qualifying_history()
     result = shadow.record_shadow_observation(
         match_key="dltv.org/matches/8922211678.38",
         match_id=8922211678,
@@ -236,6 +305,8 @@ def test_telegram_dedupe_reads_legacy_volatile_match_key(monkeypatch, tmp_path):
         nw_hit_metrics=["solo", "counterpick_1vs1"],
         metrics_payload=_metrics(),
         team_elo_meta={"raw_radiant_wr": 60, "raw_dire_wr": 40, "raw_diff": 80},
+        target_account_ids=target_account_ids,
+        roster_history_snapshot=roster_history_snapshot,
         artifact=_artifact(),
         log_path=tmp_path / "shadow.jsonl",
     )
@@ -262,6 +333,14 @@ def test_telegram_claim_prevents_retry_after_ambiguous_failure(monkeypatch, tmp_
         "ml_probability": 0.8,
         "ml_threshold": 0.6,
         "nw_max_wr": 65,
+        "roster_kills": {
+            "available": True,
+            "matches": 6,
+            "mean_kills": 25.0,
+            "median_kills": 25.0,
+            "ge25_hits": 6,
+            "ge25_rate": 1.0,
+        },
     }
     shadow.reset_shadow_state_for_tests()
     first = shadow._maybe_send_telegram_bet(record)
@@ -272,6 +351,52 @@ def test_telegram_claim_prevents_retry_after_ambiguous_failure(monkeypatch, tmp_
     assert first["reason"] == "request_Timeout"
     assert second["reason"] == "already_sent"
     assert len(calls) == 1
+
+
+def test_glyph_recent_roster_average_blocks_the_bet(monkeypatch):
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_ENABLED", "1")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_BOT_TOKEN", "secret-test-token")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_CHAT_ID", "123")
+    calls = []
+    monkeypatch.setattr(
+        shadow,
+        "_post_telegram_message",
+        lambda **kwargs: calls.append(kwargs) or (True, None),
+    )
+    # Four stable GLYPH players are enough to keep the lineage when the mid changes.
+    current_players = [392565237, 202217968, 147767183, 152859296, 343084576]
+    stable_four = [392565237, 147767183, 152859296, 343084576]
+    rows = [
+        {
+            "match_id": 800 + index,
+            "timestamp": 10 + index,
+            "player_ids": stable_four + [392169957],
+            "kills": kills,
+        }
+        for index, kills in enumerate([27, 9, 15, 27, 12, 6])
+    ]
+    roster = shadow.build_roster_kills_context(
+        team_id=10081680,
+        current_account_ids=current_players,
+        observed_at=100,
+        current_match_id=8922300474,
+        history_snapshot={"team_kills_history_by_team_id": {"10081680": rows}},
+    )
+    result = shadow._maybe_send_telegram_bet(
+        {
+            "match_key": "dltv.org/matches/8922300474.1",
+            "match_id": 8922300474,
+            "ml_probability": 0.608,
+            "ml_threshold": 0.45,
+            "nw_max_wr": 65,
+            "roster_kills": roster,
+        }
+    )
+    assert roster["matches"] == 6
+    assert roster["mean_kills"] == 16.0
+    assert result["eligible"] is False
+    assert result["reason"] == "roster_avg_kills_below_threshold"
+    assert calls == []
 
 
 def test_telegram_gate_does_not_send_below_artifact_threshold(monkeypatch, tmp_path):

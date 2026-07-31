@@ -29,6 +29,8 @@ class MatchRecord:
     series_type: str | None
     radiant_player_positions: tuple[str | None, ...] = field(default_factory=tuple)
     dire_player_positions: tuple[str | None, ...] = field(default_factory=tuple)
+    radiant_kills: int | None = None
+    dire_kills: int | None = None
     derived_league_tier: LeagueTier = LeagueTier.TIER3
 
 

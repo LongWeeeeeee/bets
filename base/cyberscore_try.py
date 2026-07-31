@@ -5484,6 +5484,8 @@ def _record_team_kills25_shadow_candidate(
     dire_team_id: Optional[int],
     radiant_team_name: str,
     dire_team_name: str,
+    radiant_account_ids: Optional[List[int]] = None,
+    dire_account_ids: Optional[List[int]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Record NW60/hits>=2 candidates without changing live decisions."""
     if not TEAM_KILLS25_SHADOW_AVAILABLE or _record_kills25_shadow is None:
@@ -5529,6 +5531,9 @@ def _record_team_kills25_shadow_candidate(
         nw_hit_metrics=list(nw60.get("hit_metrics") or []),
         metrics_payload=metrics_payload,
         team_elo_meta=team_elo_meta,
+        target_account_ids=(
+            list(radiant_account_ids or []) if sign == 1 else list(dire_account_ids or [])
+        ),
     )
 
 
@@ -31206,13 +31211,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 kills25_shadow_record = _record_team_kills25_shadow_candidate(
                     match_key=check_uniq_url,
                     match_id=data.get("match_id"),
-                    observed_at=data.get("now") or data.get("startDateTime"),
+                    observed_at=(
+                        data.get("startDateTime") or data.get("now") or time.time()
+                    ),
                     metrics_payload=s,
                     team_elo_meta=team_elo_meta,
                     radiant_team_id=radiant_team_id,
                     dire_team_id=dire_team_id,
                     radiant_team_name=radiant_team_name_original,
                     dire_team_name=dire_team_name_original,
+                    radiant_account_ids=radiant_account_ids,
+                    dire_account_ids=dire_account_ids,
                 )
                 if isinstance(kills25_shadow_record, dict) and verbose_match_log:
                     print(

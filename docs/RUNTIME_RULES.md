@@ -30,6 +30,8 @@
 - `TEAM_KILLS25_SHADOW_LOG_PATH=runtime/team_kills25_shadow.jsonl` — append-only журнал признаков и прогнозов.
 - `TEAM_KILLS25_TELEGRAM_ENABLED=0` — отдельная отправка ML-qualified рекомендаций; требует `TEAM_KILLS25_TELEGRAM_BOT_TOKEN` и `TEAM_KILLS25_TELEGRAM_CHAT_ID` из закрытого service env-файла.
 - `TEAM_KILLS25_TELEGRAM_MIN_PROBABILITY` по умолчанию берётся из artifact; `TEAM_KILLS25_TELEGRAM_MIN_WR=60` задаёт дополнительный нижний WR-gate.
+- `TEAM_KILLS25_ROSTER_HISTORY_PATH=ELO/output/live_team_elo_snapshot.json` — источник истории убийств по team ID и фактическим account IDs текущей карты; снапшот автоматически пересобирается после обновления pro-данных.
+- `TEAM_KILLS25_TELEGRAM_MIN_ROSTER_MATCHES=6` и `TEAM_KILLS25_TELEGRAM_MIN_ROSTER_AVG_KILLS=23` — обязательный fail-closed gate по последним 30 картам команды с overlap состава `>=4`; текущая/будущие карты исключаются.
 - `TEAM_KILLS25_TELEGRAM_SENT_PATH=runtime/team_kills25_telegram_sent.jsonl` — persistent at-most-once claims по стабильному Dota `match_id`; claim пишется до Telegram HTTP-вызова и блокирует повтор при меняющемся DLTV suffix, timeout или рестарте.
 
 ---

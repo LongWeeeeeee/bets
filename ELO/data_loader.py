@@ -7,6 +7,22 @@ from pathlib import Path
 from ELO.domain import MatchRecord
 
 
+def _total_team_kills(value: object) -> int | None:
+    """Normalize Stratz per-minute kill arrays (or an aggregate integer)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if not isinstance(value, list):
+        return None
+    total = 0
+    for item in value:
+        if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+            return None
+        total += item
+    return total
+
+
 def _extract_player_slots(players: list[dict], is_radiant: bool) -> tuple[tuple[int, ...], tuple[str | None, ...]]:
     player_slots: dict[int, str | None] = {}
     for player in players:
@@ -73,6 +89,8 @@ def _parse_match(raw_match: dict) -> MatchRecord | None:
         series_type=str(series.get("type")) if series.get("type") is not None else None,
         radiant_player_positions=radiant_player_positions,
         dire_player_positions=dire_player_positions,
+        radiant_kills=_total_team_kills(raw_match.get("radiantKills")),
+        dire_kills=_total_team_kills(raw_match.get("direKills")),
     )
 
 

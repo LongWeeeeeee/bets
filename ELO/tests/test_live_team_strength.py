@@ -8,6 +8,7 @@ import ELO.live_team_strength as live_team_strength_module
 from ELO.config import HybridEloConfig
 from ELO.domain import LeagueTier, MatchRecord
 from ELO.live_team_strength import (
+    build_snapshot,
     build_matchup_summary_from_snapshot,
     finalize_live_series_from_scores,
     get_matchup_summary,
@@ -18,6 +19,50 @@ from ELO.models import HybridPlayerRosterEloModel
 
 def test_default_data_dir_matches_pro_rebuild_output():
     assert live_team_strength_module.DEFAULT_DATA_DIR.name == "json_parts_split_from_object"
+
+
+def test_snapshot_builds_deduplicated_team_kills_history(tmp_path) -> None:
+    _reset_live_team_strength_caches()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    players = [
+        {
+            "isRadiant": index < 5,
+            "steamAccount": {"id": index + 1},
+            "position": f"POSITION_{(index % 5) + 1}",
+        }
+        for index in range(10)
+    ]
+    raw_match = {
+        "id": 123,
+        "startDateTime": 1771153200,
+        "didRadiantWin": True,
+        "radiantTeam": {"id": 10, "name": "A"},
+        "direTeam": {"id": 20, "name": "B"},
+        "players": players,
+        "radiantKills": [2, 3, 4],
+        "direKills": [1, 1, 1],
+        "leagueId": 1,
+        "league": {"name": "Test League", "tier": "PROFESSIONAL"},
+        "series": {"id": 50, "type": "3"},
+    }
+    # The production archive can repeat a map in multiple combined files.
+    (data_dir / "part1.json").write_text(json.dumps({"123": raw_match}), encoding="utf-8")
+    (data_dir / "part2.json").write_text(json.dumps({"123": raw_match}), encoding="utf-8")
+    snapshot_path = tmp_path / "snapshot.json"
+
+    snapshot = build_snapshot(data_dir=data_dir, snapshot_path=snapshot_path)
+
+    assert snapshot_path.exists()
+    assert snapshot["meta"]["team_kills_history_schema_version"] == 1
+    assert snapshot["team_kills_history_by_team_id"]["10"] == [
+        {
+            "match_id": 123,
+            "timestamp": 1771153200,
+            "player_ids": [1, 2, 3, 4, 5],
+            "kills": 9,
+        }
+    ]
 
 
 def _reset_live_team_strength_caches() -> None:

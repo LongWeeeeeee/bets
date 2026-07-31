@@ -37,6 +37,8 @@ LEADERBOARD_BASELINE = 1500.0
 DEFAULT_ACTIVE_CUTOFF_DAYS = 180.0
 DEFAULT_DISPLAY_DECAY_HALF_LIFE_DAYS = 120.0
 DEFAULT_PLAYER_ONLY_FALLBACK_ROSTER_MATCHES = 3
+TEAM_KILLS_HISTORY_SCHEMA_VERSION = 1
+TEAM_KILLS_HISTORY_MATCHES_PER_TEAM = 100
 DEFAULT_DATA_DIR = (
     Path(__file__).resolve().parents[1]
     / "pro_heroes_data"
@@ -856,8 +858,11 @@ def _build_snapshot_dict(
                 "display_decay_half_life_days": display_decay_half_life_days,
                 "loaded_matches": int(load_summary.get("loaded_matches", 0)),
                 "model_config_signature": _model_config_signature(empty_model_state),
+                "team_kills_history_schema_version": TEAM_KILLS_HISTORY_SCHEMA_VERSION,
+                "team_kills_history_matches_per_team": TEAM_KILLS_HISTORY_MATCHES_PER_TEAM,
             },
             "teams_by_org_key": {},
+            "team_kills_history_by_team_id": {},
             "model_state": empty_model_state,
         }
 
@@ -867,10 +872,36 @@ def _build_snapshot_dict(
 
     model = HybridPlayerRosterEloModel(config)
     team_snapshots: dict[str, dict[str, Any]] = {}
+    team_kills_history: dict[str, list[dict[str, Any]]] = defaultdict(list)
     reference_timestamp = matches[-1].timestamp
     cross_tier_counts: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {"series": 0, "strong_wins": 0}
     )
+
+    # Raw archives can contain the same map in more than one combined file.
+    # Keep one side-row per match so roster averages are not biased by copies.
+    seen_history_match_ids: set[int] = set()
+    for match in matches:
+        if match.match_id in seen_history_match_ids:
+            continue
+        seen_history_match_ids.add(match.match_id)
+        for team_id, player_ids, kills in (
+            (match.radiant_team_id, match.radiant_player_ids, match.radiant_kills),
+            (match.dire_team_id, match.dire_player_ids, match.dire_kills),
+        ):
+            if team_id is None or kills is None or len(player_ids) != 5:
+                continue
+            team_kills_history[str(int(team_id))].append(
+                {
+                    "match_id": int(match.match_id),
+                    "timestamp": int(match.timestamp),
+                    "player_ids": [int(player_id) for player_id in player_ids],
+                    "kills": int(kills),
+                }
+            )
+
+    for team_id, rows in list(team_kills_history.items()):
+        team_kills_history[team_id] = rows[-TEAM_KILLS_HISTORY_MATCHES_PER_TEAM:]
 
     for bundle in series_bundles:
         series = bundle.series
@@ -973,8 +1004,11 @@ def _build_snapshot_dict(
             "team_count": len(teams_by_org_key),
             "tier_matchup_elo_bonus": tier_matchup_elo_bonus,
             "model_config_signature": _model_config_signature(model_state),
+            "team_kills_history_schema_version": TEAM_KILLS_HISTORY_SCHEMA_VERSION,
+            "team_kills_history_matches_per_team": TEAM_KILLS_HISTORY_MATCHES_PER_TEAM,
         },
         "teams_by_org_key": teams_by_org_key,
+        "team_kills_history_by_team_id": dict(team_kills_history),
         "model_state": model_state,
     }
 
@@ -993,9 +1027,7 @@ def build_snapshot(
         display_decay_half_life_days=display_decay_half_life_days,
         config=config or HybridEloConfig(),
     )
-    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-    with snapshot_path.open("w", encoding="utf-8") as fh:
-        json.dump(snapshot, fh, ensure_ascii=False, indent=2)
+    _write_json_atomic(snapshot_path, snapshot)
     global _SNAPSHOT_CACHE
     _SNAPSHOT_CACHE = snapshot
     return snapshot
@@ -1033,11 +1065,20 @@ def ensure_snapshot(
     data_mtime = _latest_data_mtime(data_dir)
     snapshot_is_stale = bool(snapshot is not None and data_mtime > snapshot_mtime)
     snapshot_missing_model_state = bool(snapshot is not None and not isinstance(snapshot.get("model_state"), dict))
-    if snapshot is not None and not snapshot_is_stale and not snapshot_missing_model_state:
+    snapshot_missing_kills_history = bool(
+        snapshot is not None
+        and not isinstance(snapshot.get("team_kills_history_by_team_id"), dict)
+    )
+    if (
+        snapshot is not None
+        and not snapshot_is_stale
+        and not snapshot_missing_model_state
+        and (not snapshot_missing_kills_history or not rebuild_if_missing)
+    ):
         return snapshot
     if not rebuild_if_missing:
         return None
-    if snapshot_is_stale or snapshot_missing_model_state:
+    if snapshot_is_stale or snapshot_missing_model_state or snapshot_missing_kills_history:
         global _SNAPSHOT_CACHE
         _SNAPSHOT_CACHE = None
     return build_snapshot(

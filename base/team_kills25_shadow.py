@@ -15,8 +15,10 @@ import os
 import re
 import threading
 import time
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
+from statistics import median
 from typing import Any, Mapping
 
 
@@ -28,9 +30,16 @@ DEFAULT_LOG_PATH = PROJECT_ROOT / "runtime" / "team_kills25_shadow.jsonl"
 DEFAULT_TELEGRAM_SENT_PATH = (
     PROJECT_ROOT / "runtime" / "team_kills25_telegram_sent.jsonl"
 )
+DEFAULT_ROSTER_HISTORY_PATH = (
+    PROJECT_ROOT / "ELO" / "output" / "live_team_elo_snapshot.json"
+)
 SCHEMA_VERSION = "team_kills25_shadow.v1"
 ODDS = 1.8
 ELO_GATE_THRESHOLD = 0.45
+DEFAULT_ROSTER_OVERLAP = 4
+DEFAULT_ROSTER_WINDOW = 30
+DEFAULT_MIN_ROSTER_MATCHES = 6
+DEFAULT_MIN_ROSTER_AVG_KILLS = 23.0
 METRICS = (
     "counterpick_1vs1",
     "counterpick_1vs2",
@@ -116,6 +125,36 @@ def _number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return result if math.isfinite(result) else None
+
+
+def _positive_int(value: Any) -> int | None:
+    number = _number(value)
+    if number is None or number <= 0 or not number.is_integer():
+        return None
+    return int(number)
+
+
+def _nonnegative_int(value: Any) -> int | None:
+    number = _number(value)
+    if number is None or number < 0 or not number.is_integer():
+        return None
+    return int(number)
+
+
+def _timestamp_seconds(value: Any) -> float | None:
+    number = _number(value)
+    if number is not None:
+        if number > 10_000_000_000:
+            number /= 1000.0
+        return number if number > 0 else None
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.timestamp()
 
 
 def _block(payload: Mapping[str, Any], aliases: tuple[str, ...]) -> Mapping[str, Any]:
@@ -223,6 +262,127 @@ def load_artifact(path: Path | None = None) -> dict[str, Any] | None:
         return _load_artifact_cached(str(resolved), int(stat.st_mtime_ns))
     except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
         return None
+
+
+def _roster_history_path() -> Path:
+    return Path(
+        os.getenv(
+            "TEAM_KILLS25_ROSTER_HISTORY_PATH",
+            str(DEFAULT_ROSTER_HISTORY_PATH),
+        )
+    )
+
+
+@lru_cache(maxsize=4)
+def _load_roster_history_cached(path_text: str, mtime_ns: int) -> dict[str, Any]:
+    del mtime_ns
+    payload = json.loads(Path(path_text).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("team-kills25 roster history root must be an object")
+    histories = payload.get("team_kills_history_by_team_id")
+    if not isinstance(histories, dict):
+        raise ValueError("team-kills25 roster history is missing")
+    return payload
+
+
+def load_roster_history(path: Path | None = None) -> dict[str, Any] | None:
+    resolved = path or _roster_history_path()
+    try:
+        stat = resolved.stat()
+        return _load_roster_history_cached(str(resolved), int(stat.st_mtime_ns))
+    except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def build_roster_kills_context(
+    *,
+    team_id: Any,
+    current_account_ids: list[int] | tuple[int, ...],
+    observed_at: Any,
+    current_match_id: Any,
+    history_snapshot: Mapping[str, Any] | None = None,
+    min_overlap: int = DEFAULT_ROSTER_OVERLAP,
+    window: int = DEFAULT_ROSTER_WINDOW,
+) -> dict[str, Any]:
+    """Return leak-free recent kills for the same team with 4+ lineup overlap."""
+    normalized_team_id = _positive_int(team_id)
+    current_players = {
+        player_id
+        for player_id in (_positive_int(value) for value in current_account_ids)
+        if player_id is not None
+    }
+    base = {
+        "available": False,
+        "reason": None,
+        "team_id": normalized_team_id,
+        "current_player_count": len(current_players),
+        "min_overlap": int(min_overlap),
+        "window": int(window),
+        "matches": 0,
+        "mean_kills": None,
+        "median_kills": None,
+        "ge25_hits": 0,
+        "ge25_rate": None,
+    }
+    if normalized_team_id is None:
+        return {**base, "reason": "team_id_unavailable"}
+    if len(current_players) < min_overlap:
+        return {**base, "reason": "current_roster_unavailable"}
+    snapshot = history_snapshot if isinstance(history_snapshot, Mapping) else load_roster_history()
+    if not isinstance(snapshot, Mapping):
+        return {**base, "reason": "history_unavailable"}
+    histories = snapshot.get("team_kills_history_by_team_id")
+    if not isinstance(histories, Mapping):
+        return {**base, "reason": "history_unavailable"}
+    raw_rows = histories.get(str(normalized_team_id))
+    if not isinstance(raw_rows, list):
+        return {**base, "reason": "team_history_unavailable"}
+
+    before_timestamp = _timestamp_seconds(observed_at)
+    if before_timestamp is None:
+        return {**base, "reason": "observed_at_unavailable"}
+    excluded_match_id = _positive_int(current_match_id)
+    unique_rows: dict[int, tuple[int, int]] = {}
+    for raw_row in raw_rows:
+        if not isinstance(raw_row, Mapping):
+            continue
+        match_id = _positive_int(raw_row.get("match_id"))
+        timestamp = _positive_int(raw_row.get("timestamp"))
+        kills = _nonnegative_int(raw_row.get("kills"))
+        player_ids = {
+            player_id
+            for player_id in (
+                _positive_int(value) for value in (raw_row.get("player_ids") or [])
+            )
+            if player_id is not None
+        }
+        if match_id is None or timestamp is None or kills is None:
+            continue
+        if match_id == excluded_match_id:
+            continue
+        if before_timestamp is not None and timestamp >= before_timestamp:
+            continue
+        if len(current_players.intersection(player_ids)) < min_overlap:
+            continue
+        if match_id in unique_rows:
+            continue
+        unique_rows[match_id] = (timestamp, kills)
+
+    selected = sorted(unique_rows.values(), reverse=True)[: max(1, int(window))]
+    kills_values = [kills for _, kills in selected]
+    if not kills_values:
+        return {**base, "reason": "no_matching_roster_maps"}
+    ge25_hits = sum(kills >= 25 for kills in kills_values)
+    return {
+        **base,
+        "available": True,
+        "reason": "ok",
+        "matches": len(kills_values),
+        "mean_kills": sum(kills_values) / len(kills_values),
+        "median_kills": float(median(kills_values)),
+        "ge25_hits": ge25_hits,
+        "ge25_rate": ge25_hits / len(kills_values),
+    }
 
 
 def predict_probability(
@@ -356,6 +516,13 @@ def _format_telegram_bet(record: Mapping[str, Any]) -> str:
     probability = _number(record.get("ml_probability"))
     threshold = _number(record.get("ml_threshold"))
     elo_probability = _number(features.get("elo_target_win_prob"))
+    roster = record.get("roster_kills")
+    roster = roster if isinstance(roster, Mapping) else {}
+    roster_matches = int(roster.get("matches") or 0)
+    roster_mean = _number(roster.get("mean_kills"))
+    roster_median = _number(roster.get("median_kills"))
+    roster_ge25_hits = int(roster.get("ge25_hits") or 0)
+    roster_ge25_rate = _number(roster.get("ge25_rate"))
     hit_metrics = ", ".join(str(item) for item in record.get("nw_hit_metrics") or [])
     lines = [
         "🎯 СТАВКА · TEAM KILLS ≥25",
@@ -374,6 +541,15 @@ def _format_telegram_bet(record: Mapping[str, Any]) -> str:
             f"hits {int(record.get('nw_hit_count') or 0)}"
         ),
         f"Метрики: {hit_metrics or 'n/a'}",
+        (
+            f"Ростер 4+: {roster_matches} карт, ср. {roster_mean:.1f}, "
+            f"медиана {roster_median:.1f}, 25+ {roster_ge25_hits}/{roster_matches} "
+            f"({roster_ge25_rate:.0%})"
+            if roster_mean is not None
+            and roster_median is not None
+            and roster_ge25_rate is not None
+            else "Ростер 4+: статистика недоступна"
+        ),
         (
             f"ELO target: {elo_probability:.1%}"
             if elo_probability is not None
@@ -431,19 +607,58 @@ def _maybe_send_telegram_bet(
     if threshold is None:
         threshold = artifact_threshold
     min_wr = _number(os.getenv("TEAM_KILLS25_TELEGRAM_MIN_WR", "60")) or 60.0
-    eligible = bool(
+    min_roster_matches = int(
+        _number(
+            os.getenv(
+                "TEAM_KILLS25_TELEGRAM_MIN_ROSTER_MATCHES",
+                str(DEFAULT_MIN_ROSTER_MATCHES),
+            )
+        )
+        or DEFAULT_MIN_ROSTER_MATCHES
+    )
+    min_roster_avg_kills = _number(
+        os.getenv(
+            "TEAM_KILLS25_TELEGRAM_MIN_ROSTER_AVG_KILLS",
+            str(DEFAULT_MIN_ROSTER_AVG_KILLS),
+        )
+    )
+    if min_roster_avg_kills is None:
+        min_roster_avg_kills = DEFAULT_MIN_ROSTER_AVG_KILLS
+    roster = record.get("roster_kills")
+    roster = roster if isinstance(roster, Mapping) else {}
+    roster_matches = int(roster.get("matches") or 0)
+    roster_mean = _number(roster.get("mean_kills"))
+    model_eligible = bool(
         probability is not None
         and threshold is not None
         and probability >= threshold
         and float(record.get("nw_max_wr") or 0) >= min_wr
     )
+    roster_eligible = bool(
+        roster.get("available")
+        and roster_matches >= min_roster_matches
+        and roster_mean is not None
+        and roster_mean >= min_roster_avg_kills
+    )
+    eligible = model_eligible and roster_eligible
     if not eligible:
+        if not model_eligible:
+            reason = "model_gate"
+        elif not roster.get("available"):
+            reason = str(roster.get("reason") or "roster_history_unavailable")
+        elif roster_matches < min_roster_matches:
+            reason = "insufficient_roster_matches"
+        else:
+            reason = "roster_avg_kills_below_threshold"
         return {
             "enabled": True,
             "eligible": False,
             "sent": False,
+            "reason": reason,
             "threshold": threshold,
             "min_wr": min_wr,
+            "min_roster_matches": min_roster_matches,
+            "min_roster_avg_kills": min_roster_avg_kills,
         }
 
     token = str(os.getenv("TEAM_KILLS25_TELEGRAM_BOT_TOKEN", "") or "").strip()
@@ -456,6 +671,8 @@ def _maybe_send_telegram_bet(
             "reason": "config_missing",
             "threshold": threshold,
             "min_wr": min_wr,
+            "min_roster_matches": min_roster_matches,
+            "min_roster_avg_kills": min_roster_avg_kills,
         }
 
     sent_path = _telegram_sent_path()
@@ -467,6 +684,8 @@ def _maybe_send_telegram_bet(
             "reason": "already_sent",
             "threshold": threshold,
             "min_wr": min_wr,
+            "min_roster_matches": min_roster_matches,
+            "min_roster_avg_kills": min_roster_avg_kills,
         }
 
     sent, error = _post_telegram_message(
@@ -481,6 +700,8 @@ def _maybe_send_telegram_bet(
         "reason": error,
         "threshold": threshold,
         "min_wr": min_wr,
+        "min_roster_matches": min_roster_matches,
+        "min_roster_avg_kills": min_roster_avg_kills,
     }
 
 
@@ -500,6 +721,8 @@ def record_shadow_observation(
     nw_hit_metrics: list[str] | tuple[str, ...],
     metrics_payload: Mapping[str, Any],
     team_elo_meta: Mapping[str, Any] | None,
+    target_account_ids: list[int] | tuple[int, ...] = (),
+    roster_history_snapshot: Mapping[str, Any] | None = None,
     artifact: Mapping[str, Any] | None = None,
     log_path: Path | None = None,
 ) -> dict[str, Any] | None:
@@ -526,10 +749,17 @@ def record_shadow_observation(
             except (TypeError, ValueError, OverflowError):
                 ml_probability = None
         elo_probability = _number(features.get("elo_target_win_prob"))
+        roster_kills = build_roster_kills_context(
+            team_id=target_team_id,
+            current_account_ids=target_account_ids,
+            observed_at=observed_at,
+            current_match_id=match_id,
+            history_snapshot=roster_history_snapshot,
+        )
         record = {
             "schema_version": SCHEMA_VERSION,
             "recorded_at": int(time.time()),
-            "observed_at": _number(observed_at),
+            "observed_at": _timestamp_seconds(observed_at),
             "match_key": normalized_key,
             "match_id": match_id,
             "target_side": target_side,
@@ -555,6 +785,7 @@ def record_shadow_observation(
             "artifact_created_at": (
                 selected_artifact.get("created_at_utc") if selected_artifact else None
             ),
+            "roster_kills": roster_kills,
             "features": features,
         }
         try:
@@ -583,3 +814,4 @@ def reset_shadow_state_for_tests() -> None:
         _TELEGRAM_SENT_KEYS.clear()
         _TELEGRAM_SENT_PATHS_LOADED.clear()
     _load_artifact_cached.cache_clear()
+    _load_roster_history_cached.cache_clear()

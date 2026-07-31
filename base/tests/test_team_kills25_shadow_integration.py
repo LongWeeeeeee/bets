@@ -32,12 +32,15 @@ def test_nw60_hits2_candidate_is_forwarded_to_non_sending_shadow(monkeypatch):
         dire_team_id=2,
         radiant_team_name="Radiant",
         dire_team_name="Dire",
+        radiant_account_ids=[1, 2, 3, 4, 5],
+        dire_account_ids=[6, 7, 8, 9, 10],
     )
     assert result == {"recorded": True}
     assert captured["target_side"] == "radiant"
     assert captured["nw_hit_count"] >= 2
     assert captured["nw_max_wr"] >= 60
     assert len(captured["nw_hit_metrics"]) >= 2
+    assert captured["target_account_ids"] == [1, 2, 3, 4, 5]
 
 
 def test_single_nw60_hit_is_not_recorded(monkeypatch):
@@ -56,6 +59,8 @@ def test_single_nw60_hit_is_not_recorded(monkeypatch):
         dire_team_id=2,
         radiant_team_name="Radiant",
         dire_team_name="Dire",
+        radiant_account_ids=[1, 2, 3, 4, 5],
+        dire_account_ids=[6, 7, 8, 9, 10],
     )
     assert result is None
     assert called == []
