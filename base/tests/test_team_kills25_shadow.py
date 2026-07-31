@@ -137,3 +137,99 @@ def test_shadow_record_writes_once_and_never_contains_outcome(monkeypatch, tmp_p
     assert rows[0]["ml_probability"] is not None
     assert "target_ge25" not in rows[0]
     assert "final_kills" not in rows[0]
+
+
+def test_qualified_telegram_bet_is_sent_once_across_process_restart(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("TEAM_KILLS25_SHADOW_ENABLED", "1")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_ENABLED", "1")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_BOT_TOKEN", "secret-test-token")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_CHAT_ID", "123")
+    sent_path = tmp_path / "telegram-sent.jsonl"
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_SENT_PATH", str(sent_path))
+    calls = []
+
+    def fake_post(**kwargs):
+        calls.append(kwargs)
+        return True, None
+
+    monkeypatch.setattr(shadow, "_post_telegram_message", fake_post)
+    kwargs = {
+        "match_key": "map-telegram-1",
+        "match_id": 12345,
+        "observed_at": 2,
+        "target_side": "radiant",
+        "target_team_id": 10,
+        "target_team_name": "Target Team",
+        "opponent_team_id": 20,
+        "opponent_team_name": "Opponent Team",
+        "tier_segment": "T1-T2",
+        "nw_hit_count": 2,
+        "nw_max_wr": 65,
+        "nw_hit_metrics": ["solo", "counterpick_1vs1"],
+        "metrics_payload": _metrics(),
+        "team_elo_meta": {
+            "raw_radiant_wr": 60,
+            "raw_dire_wr": 40,
+            "raw_diff": 80,
+        },
+        "artifact": _artifact(),
+        "log_path": tmp_path / "shadow.jsonl",
+    }
+
+    shadow.reset_shadow_state_for_tests()
+    first = shadow.record_shadow_observation(**kwargs)
+    assert first is not None
+    assert first["telegram"]["sent"] is True
+    assert len(calls) == 1
+    assert "Target Team: 25+ убийств" in calls[0]["text"]
+    assert "secret-test-token" not in json.dumps(first)
+
+    # Simulate a new process: in-memory state is empty, persistent sent log remains.
+    shadow.reset_shadow_state_for_tests()
+    second = shadow.record_shadow_observation(**kwargs)
+    assert second is not None
+    assert second["telegram"]["reason"] == "already_sent"
+    assert len(calls) == 1
+    assert len(sent_path.read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_telegram_gate_does_not_send_below_artifact_threshold(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEAM_KILLS25_SHADOW_ENABLED", "1")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_ENABLED", "1")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_BOT_TOKEN", "secret-test-token")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_CHAT_ID", "123")
+    monkeypatch.setenv(
+        "TEAM_KILLS25_TELEGRAM_SENT_PATH", str(tmp_path / "telegram-sent.jsonl")
+    )
+    calls = []
+    monkeypatch.setattr(
+        shadow,
+        "_post_telegram_message",
+        lambda **kwargs: calls.append(kwargs) or (True, None),
+    )
+    artifact = _artifact()
+    artifact["bet_threshold"] = 0.90
+    shadow.reset_shadow_state_for_tests()
+    result = shadow.record_shadow_observation(
+        match_key="map-telegram-low",
+        match_id=2,
+        observed_at=2,
+        target_side="radiant",
+        target_team_id=10,
+        target_team_name="A",
+        opponent_team_id=20,
+        opponent_team_name="B",
+        tier_segment="T1-T2",
+        nw_hit_count=2,
+        nw_max_wr=65,
+        nw_hit_metrics=["solo", "counterpick_1vs1"],
+        metrics_payload=_metrics(),
+        team_elo_meta={"raw_radiant_wr": 60, "raw_dire_wr": 40, "raw_diff": 80},
+        artifact=artifact,
+        log_path=tmp_path / "shadow.jsonl",
+    )
+    assert result is not None
+    assert result["telegram"]["eligible"] is False
+    assert calls == []

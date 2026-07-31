@@ -23,6 +23,9 @@ DEFAULT_ARTIFACT_PATH = (
     PROJECT_ROOT / "ml-models" / "team_kills25" / "team_kills25_shadow.json"
 )
 DEFAULT_LOG_PATH = PROJECT_ROOT / "runtime" / "team_kills25_shadow.jsonl"
+DEFAULT_TELEGRAM_SENT_PATH = (
+    PROJECT_ROOT / "runtime" / "team_kills25_telegram_sent.jsonl"
+)
 SCHEMA_VERSION = "team_kills25_shadow.v1"
 ODDS = 1.8
 ELO_GATE_THRESHOLD = 0.45
@@ -85,15 +88,21 @@ FEATURE_SCHEMA_HASH = hashlib.sha256("\n".join(FEATURE_NAMES).encode("utf-8")).h
 
 _WRITE_LOCK = threading.Lock()
 _RECORDED_KEYS: set[str] = set()
+_TELEGRAM_SENT_KEYS: set[str] = set()
+_TELEGRAM_SENT_PATHS_LOADED: set[str] = set()
 
 
-def _enabled() -> bool:
-    return str(os.getenv("TEAM_KILLS25_SHADOW_ENABLED", "0")).strip().lower() in {
+def _env_enabled(name: str, default: str = "0") -> bool:
+    return str(os.getenv(name, default)).strip().lower() in {
         "1",
         "true",
         "yes",
         "on",
     }
+
+
+def _enabled() -> bool:
+    return _env_enabled("TEAM_KILLS25_SHADOW_ENABLED")
 
 
 def _number(value: Any) -> float | None:
@@ -250,6 +259,183 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _telegram_sent_path() -> Path:
+    return Path(
+        os.getenv(
+            "TEAM_KILLS25_TELEGRAM_SENT_PATH",
+            str(DEFAULT_TELEGRAM_SENT_PATH),
+        )
+    )
+
+
+def _load_telegram_sent_keys(path: Path) -> None:
+    resolved = str(path.resolve())
+    if resolved in _TELEGRAM_SENT_PATHS_LOADED:
+        return
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    payload = json.loads(line)
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if not isinstance(payload, Mapping):
+                    continue
+                match_key = str(payload.get("match_key") or "").strip()
+                if match_key:
+                    _TELEGRAM_SENT_KEYS.add(match_key)
+    except FileNotFoundError:
+        pass
+    _TELEGRAM_SENT_PATHS_LOADED.add(resolved)
+
+
+def _mark_telegram_sent(path: Path, match_key: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"match_key": match_key, "sent_at": int(time.time())}
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        handle.flush()
+    _TELEGRAM_SENT_KEYS.add(match_key)
+
+
+def _format_telegram_bet(record: Mapping[str, Any]) -> str:
+    features = record.get("features")
+    features = features if isinstance(features, Mapping) else {}
+    probability = _number(record.get("ml_probability"))
+    threshold = _number(record.get("ml_threshold"))
+    elo_probability = _number(features.get("elo_target_win_prob"))
+    hit_metrics = ", ".join(str(item) for item in record.get("nw_hit_metrics") or [])
+    lines = [
+        "🎯 СТАВКА · TEAM KILLS ≥25",
+        f"{record.get('target_team_name')}: 25+ убийств",
+        (
+            f"Матч: {record.get('target_team_name')} — "
+            f"{record.get('opponent_team_name')}"
+        ),
+        (
+            f"ML: {probability:.1%} (порог {threshold:.1%})"
+            if probability is not None and threshold is not None
+            else "ML: n/a"
+        ),
+        (
+            f"Early NW: WR{int(record.get('nw_max_wr') or 0)}, "
+            f"hits {int(record.get('nw_hit_count') or 0)}"
+        ),
+        f"Метрики: {hit_metrics or 'n/a'}",
+        (
+            f"ELO target: {elo_probability:.1%}"
+            if elo_probability is not None
+            else "ELO target: n/a"
+        ),
+        f"Сегмент: {record.get('tier_segment') or 'n/a'}",
+        f"Расчётный кэф: {float(record.get('odds') or ODDS):.2f}",
+    ]
+    if record.get("match_id") not in (None, "", 0, "0"):
+        lines.append(f"match_id: {record.get('match_id')}")
+    return "\n".join(lines)
+
+
+def _post_telegram_message(
+    *,
+    bot_token: str,
+    chat_id: str,
+    text: str,
+) -> tuple[bool, str | None]:
+    try:
+        import requests
+
+        response = requests.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            data={
+                "chat_id": chat_id,
+                "text": text,
+                "disable_web_page_preview": True,
+            },
+            timeout=(3.0, 8.0),
+        )
+        try:
+            payload = response.json()
+        except (TypeError, ValueError):
+            payload = {}
+        if response.status_code == 200 and bool(payload.get("ok")):
+            return True, None
+        description = str(payload.get("description") or "").strip()
+        return False, f"http_{response.status_code}:{description[:160]}"
+    except Exception as exc:
+        # Never include the exception text: requests errors can contain the URL,
+        # and the Bot API URL embeds the token.
+        return False, f"request_{type(exc).__name__}"
+
+
+def _maybe_send_telegram_bet(
+    record: Mapping[str, Any],
+) -> dict[str, Any]:
+    if not _env_enabled("TEAM_KILLS25_TELEGRAM_ENABLED"):
+        return {"enabled": False, "eligible": False, "sent": False}
+
+    probability = _number(record.get("ml_probability"))
+    artifact_threshold = _number(record.get("ml_threshold"))
+    threshold = _number(os.getenv("TEAM_KILLS25_TELEGRAM_MIN_PROBABILITY"))
+    if threshold is None:
+        threshold = artifact_threshold
+    min_wr = _number(os.getenv("TEAM_KILLS25_TELEGRAM_MIN_WR", "60")) or 60.0
+    eligible = bool(
+        probability is not None
+        and threshold is not None
+        and probability >= threshold
+        and float(record.get("nw_max_wr") or 0) >= min_wr
+    )
+    if not eligible:
+        return {
+            "enabled": True,
+            "eligible": False,
+            "sent": False,
+            "threshold": threshold,
+            "min_wr": min_wr,
+        }
+
+    token = str(os.getenv("TEAM_KILLS25_TELEGRAM_BOT_TOKEN", "") or "").strip()
+    chat_id = str(os.getenv("TEAM_KILLS25_TELEGRAM_CHAT_ID", "") or "").strip()
+    if not token or not chat_id:
+        return {
+            "enabled": True,
+            "eligible": True,
+            "sent": False,
+            "reason": "config_missing",
+            "threshold": threshold,
+            "min_wr": min_wr,
+        }
+
+    match_key = str(record.get("match_key") or "").strip()
+    sent_path = _telegram_sent_path()
+    _load_telegram_sent_keys(sent_path)
+    if match_key in _TELEGRAM_SENT_KEYS:
+        return {
+            "enabled": True,
+            "eligible": True,
+            "sent": False,
+            "reason": "already_sent",
+            "threshold": threshold,
+            "min_wr": min_wr,
+        }
+
+    sent, error = _post_telegram_message(
+        bot_token=token,
+        chat_id=chat_id,
+        text=_format_telegram_bet(record),
+    )
+    if sent:
+        _mark_telegram_sent(sent_path, match_key)
+    return {
+        "enabled": True,
+        "eligible": True,
+        "sent": sent,
+        "reason": error,
+        "threshold": threshold,
+        "min_wr": min_wr,
+    }
+
+
 def record_shadow_observation(
     *,
     match_key: str,
@@ -323,6 +509,15 @@ def record_shadow_observation(
             ),
             "features": features,
         }
+        try:
+            record["telegram"] = _maybe_send_telegram_bet(record)
+        except Exception as exc:
+            record["telegram"] = {
+                "enabled": True,
+                "eligible": True,
+                "sent": False,
+                "reason": f"internal_{type(exc).__name__}",
+            }
         output = log_path or Path(
             os.getenv("TEAM_KILLS25_SHADOW_LOG_PATH", str(DEFAULT_LOG_PATH))
         )
@@ -337,4 +532,6 @@ def record_shadow_observation(
 def reset_shadow_state_for_tests() -> None:
     with _WRITE_LOCK:
         _RECORDED_KEYS.clear()
+        _TELEGRAM_SENT_KEYS.clear()
+        _TELEGRAM_SENT_PATHS_LOADED.clear()
     _load_artifact_cached.cache_clear()

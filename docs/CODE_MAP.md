@@ -25,7 +25,7 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 
 > Не читай целиком. `rg`/`grep` по имени функции + точечное чтение по диапазону.
 
-Главный модуль: live-парсинг драфтов (CyberScore через Camoufox; DLTV api/html fallback), bookmaker prefetch (Camoufox subprocess + Selenium fallback), draft-метрики, networth/STAR/tier gates, ML phase-wrapper, non-sending team-kills≥25 shadow, dispatch в Telegram (+ VK mirror), runtime-менеджмент (lock, sharded/sqlite stats, delayed-очереди, recovery journal).
+Главный модуль: live-парсинг драфтов (CyberScore через Camoufox; DLTV api/html fallback), bookmaker prefetch (Camoufox subprocess + Selenium fallback), draft-метрики, networth/STAR/tier gates, ML phase-wrapper, team-kills≥25 shadow/изолированный Telegram sender, dispatch в основной Telegram (+ VK mirror), runtime-менеджмент (lock, sharded/sqlite stats, delayed-очереди, recovery journal).
 
 ### Entrypoint (строки ~28820–28997)
 - `__main__`: парс CLI → `_apply_live_entrypoint_pipeline_defaults()` → acquire instance lock → `while True: general(...)` + `_sleep_interruptible(...)` по возвращённому статусу.
@@ -274,13 +274,15 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 
 ---
 
-## `base/team_kills25_shadow.py` — non-sending target-team kills≥25 shadow
+## `base/team_kills25_shadow.py` — target-team kills≥25 shadow + отдельный Telegram
 
 - Срабатывает только для draft-кандидата `early_output` WR60 с `hit_count >= 2`.
 - Отдельно пишет `nw_hit_count`/`nw_max_wr`, target-aligned raw/absolute признаки каждого блока `early_nw`, `early_win`, `late`, `all`, их agreement/cross-block признаки и pre-map ELO.
 - JSON logistic artifact: `ml-models/team_kills25/team_kills25_shadow.json`; отсутствие/ошибка модели не влияет на live-сигнал.
 - Audit log: `runtime/team_kills25_shadow.jsonl`; один record на `match_key` за жизнь процесса.
-- Env: `TEAM_KILLS25_SHADOW_ENABLED=0`, `TEAM_KILLS25_SHADOW_MODEL_PATH`, `TEAM_KILLS25_SHADOW_LOG_PATH`.
+- При `TEAM_KILLS25_TELEGRAM_ENABLED=1` отдельно отправляет только кандидатов `ml_probability >= artifact threshold`; основной бот, stake и bookmaker gates не меняет.
+- Успешные отправки дедуплицируются между рестартами через `TEAM_KILLS25_TELEGRAM_SENT_PATH`.
+- Env: `TEAM_KILLS25_SHADOW_ENABLED=0`, `TEAM_KILLS25_SHADOW_MODEL_PATH`, `TEAM_KILLS25_SHADOW_LOG_PATH`, `TEAM_KILLS25_TELEGRAM_ENABLED`, `TEAM_KILLS25_TELEGRAM_BOT_TOKEN`, `TEAM_KILLS25_TELEGRAM_CHAT_ID`, optional `TEAM_KILLS25_TELEGRAM_MIN_PROBABILITY`/`TEAM_KILLS25_TELEGRAM_MIN_WR`.
 - `base/train_team_kills25_shadow.py` обучает artifact на chronological old split; forward не участвует в выборе `C`/threshold.
 
 ---

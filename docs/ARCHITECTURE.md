@@ -115,7 +115,7 @@ Live-оценка использует строгую взаимоисключа
 
 ### Team kills≥25 shadow (`base/team_kills25_shadow.py`)
 
-После расчёта полного draft payload и pre-map ELO кандидат `early_output` WR60 с минимум двумя STAR-hit записывается в non-sending JSONL shadow. В record входят `nw_hit_count`, максимальный подтверждённый `nw_max_wr`, все шесть метрик каждого блока (`early_nw`, `early_win`, `late`, `all`) отдельно, их абсолютные величины/agreement и target-aligned ELO. Опциональный frozen JSON logistic artifact только добавляет `ml_probability`; этот путь fail-open и не меняет STAR-validity, stake, bookmaker gates или Telegram dispatch. Управление: `TEAM_KILLS25_SHADOW_ENABLED` (default `0`), пути модели/лога — `TEAM_KILLS25_SHADOW_MODEL_PATH`/`TEAM_KILLS25_SHADOW_LOG_PATH`.
+После расчёта полного draft payload и pre-map ELO кандидат `early_output` WR60 с минимум двумя STAR-hit записывается в JSONL shadow. В record входят `nw_hit_count`, максимальный подтверждённый `nw_max_wr`, все шесть метрик каждого блока (`early_nw`, `early_win`, `late`, `all`) отдельно, их абсолютные величины/agreement и target-aligned ELO. Frozen JSON logistic artifact добавляет `ml_probability`. Опциональный изолированный sender отправляет рекомендацию через отдельный Bot API token только при `ml_probability >= artifact threshold` и ведёт persistent sent-log против дублей после рестарта. Этот путь fail-open и не меняет STAR-validity, stake, bookmaker gates или dispatch основного бота.
 
 ### Bookmaker prefetch
 Фоновый воркер (`_bookmaker_prefetch_loop` ~9071) тянет presence/odds/deeplink (betboom/pari/winline) через Camoufox subprocess (default) или Selenium fallback. Перед dispatch — повторный refresh, чтобы кэфы были близки к моменту отправки. Gate-режим: `odds` или `presence`.
