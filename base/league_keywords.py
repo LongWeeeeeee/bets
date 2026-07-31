@@ -39,7 +39,6 @@ TOURNAMENT_TITLE_ALLOW_PHRASES = (
     # Фразой, а не токеном: 'lunar' протащил бы Lunar Trophy / Lunar Paw /
     # Lunar New Year / ECLIPSE LUNAR, 'trophy' — любой ... Trophy.
     'lunar snake',
-    'horse trophy',
     # 'turbina', а не 'paragon': токен 'paragon' протащил бы десяток старых
     # 'DPC 2023 ... presented by Paragon Events'. 'turbina' на весь справочник
     # OpenDota не встречается ни разу, поэтому ложных срабатываний нет, а

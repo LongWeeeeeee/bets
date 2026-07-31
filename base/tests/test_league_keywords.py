@@ -49,11 +49,12 @@ def test_token_not_substring_for_keywords():
     assert not lk.title_matches_allow_keywords("Helpline Cup")  # 'epl' внутри 'helpline'
 
 
-def test_lunar_snake_and_horse_trophy_allowed():
-    """Явно разрешённые турниры (league_id 19273 и 19937)."""
+def test_lunar_snake_allowed_but_horse_trophy_excluded():
+    """Lunar Snake остаётся разрешённым, Horse Trophy удалён из allowlist."""
     assert lk.title_matches_allow_keywords("Lunar Snake Trophy")
-    assert lk.title_matches_allow_keywords("Horse Trophy ")  # имя приходит с хвостовым пробелом
     assert lk.title_matches_allow_keywords("LUNAR SNAKE TROPHY")
+    assert not lk.title_matches_allow_keywords("Horse Trophy ")
+    assert not lk.title_matches_allow_keywords("Lunar Horse Trophy")
 
 
 def test_neighbouring_lunar_and_trophy_leagues_stay_excluded():
