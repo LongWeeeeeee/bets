@@ -23551,6 +23551,97 @@ def _select_nearest_kills_window(
     return candidates[0]
 
 
+def _draft_tokens_for_kills_window(side: Any) -> list[str]:
+    """Convert pos-keyed draft dict into tokens consumed by kills_window stats."""
+
+    if isinstance(side, dict):
+        out: list[str] = []
+        for pos, payload in side.items():
+            hero_id = payload.get("hero_id") if isinstance(payload, dict) else payload
+            if hero_id is None:
+                continue
+            pos_s = str(pos or "").strip()
+            if not pos_s:
+                continue
+            out.append(f"{hero_id}pos{pos_s[-1]}")
+        return out
+    if isinstance(side, (list, tuple)):
+        return [str(item) for item in side if item is not None]
+    return []
+
+
+def _kills_window_direction_gate_for_target(
+    *,
+    radiant_heroes_and_pos: Any,
+    dire_heroes_and_pos: Any,
+    target_sign: Any,
+    min_abs_ed: float = 0.0,
+) -> Dict[str, Any]:
+    """Require at least one kills_window expected_diff block to point at target."""
+
+    try:
+        sign = int(target_sign)
+    except (TypeError, ValueError):
+        sign = 0
+    if sign not in (-1, 1):
+        return {"valid": False, "status": "bad_target_sign", "matching_windows": []}
+    if not _ensure_kills_window_dict_loaded() or kills_window_dict is None:
+        return {"valid": False, "status": "dict_not_loaded", "matching_windows": []}
+    try:
+        kw = calculate_kills_window_advantage(
+            _draft_tokens_for_kills_window(radiant_heroes_and_pos),
+            _draft_tokens_for_kills_window(dire_heroes_and_pos),
+            kills_window_dict,
+            window=None,
+        )
+    except Exception as exc:
+        logger.warning("kills_window direction gate failed: %s", exc)
+        return {
+            "valid": False,
+            "status": "calc_error",
+            "error": str(exc),
+            "matching_windows": [],
+        }
+    if not isinstance(kw, dict) or not kw:
+        return {"valid": False, "status": "no_payload", "matching_windows": []}
+
+    matching: list[str] = []
+    ed_by_label: Dict[str, Optional[float]] = {}
+    try:
+        min_abs = max(0.0, float(min_abs_ed))
+    except (TypeError, ValueError):
+        min_abs = 0.0
+    for start_m, end_m in _kills_window_specs():
+        label = _kills_window_label(start_m, end_m)
+        payload = kw.get(label)
+        if isinstance(payload, dict):
+            raw_ed = payload.get("expected_diff")
+        else:
+            raw_ed = payload
+        try:
+            ed = float(raw_ed)
+        except (TypeError, ValueError):
+            ed_by_label[label] = None
+            continue
+        if not math.isfinite(ed) or ed == 0.0:
+            ed_by_label[label] = ed if math.isfinite(ed) else None
+            continue
+        ed_by_label[label] = ed
+        if abs(ed) < min_abs:
+            continue
+        if (1 if ed > 0 else -1) == sign:
+            matching.append(label)
+
+    return {
+        "valid": bool(matching),
+        "status": "ok" if matching else "no_window_same_sign",
+        "matching_windows": matching,
+        "ed_by_label": ed_by_label,
+        "min_abs_ed": min_abs,
+        "target_sign": sign,
+    }
+
+
 def _build_early_winner_kills_window_message(
     *,
     radiant_team_name: str,
@@ -23574,6 +23665,7 @@ def _build_early_winner_kills_window_message(
     early_end_log = _decorate_star_block_for_display(
         raw_block=s.get("early_end_output", {}) or {},
         section="early_end_output",
+        target_wr=60,
     )
     metric_list = [
         "counterpick_1vs1",
@@ -23696,8 +23788,8 @@ def _try_dispatch_early_winner_kills_window(
 
     try:
         kw = calculate_kills_window_advantage(
-            radiant_heroes_and_pos,
-            dire_heroes_and_pos,
+            _draft_tokens_for_kills_window(radiant_heroes_and_pos),
+            _draft_tokens_for_kills_window(dire_heroes_and_pos),
             kills_window_dict,
             window=None,
         )
@@ -32911,13 +33003,39 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
                 and not early_only_kills_mode
             )
-            tier1_early_kills_mode = bool(
+            tier1_early_kills_base_mode = bool(
                 has_selected_early_star
                 and early_wr_pct is not None
                 and float(early_wr_pct) >= float(KILLS_GATE_EARLY_STAR_MIN_WR)
                 and isinstance(selected_early_diag, dict)
                 and len(selected_early_diag.get("hit_metrics") or []) >= 2
                 and _match_has_tier1_team(radiant_team_id, dire_team_id)
+            )
+            tier1_early_kills_window_gate = {
+                "active": bool(tier1_early_kills_base_mode),
+                "valid": False,
+                "status": "inactive",
+                "matching_windows": [],
+            }
+            if tier1_early_kills_base_mode:
+                tier1_early_kills_window_gate = _kills_window_direction_gate_for_target(
+                    radiant_heroes_and_pos=radiant_heroes_and_pos,
+                    dire_heroes_and_pos=dire_heroes_and_pos,
+                    target_sign=selected_early_sign,
+                    min_abs_ed=0.0,
+                )
+                tier1_early_kills_window_gate["active"] = True
+                if not bool(tier1_early_kills_window_gate.get("valid")):
+                    print(
+                        "   ⛔ tier1 early kills blocked: kills_window has no "
+                        "same-side block for early target "
+                        f"(target_sign={selected_early_sign}, "
+                        f"status={tier1_early_kills_window_gate.get('status')}, "
+                        f"ed_by_label={tier1_early_kills_window_gate.get('ed_by_label')})"
+                    )
+            tier1_early_kills_mode = bool(
+                tier1_early_kills_base_mode
+                and tier1_early_kills_window_gate.get("valid")
             )
             # WR60+ star-хиты блока All (тот же источник, что и блок
             # «⭐ Star hits» в сообщении) — используются 27+ late-гейтом.
