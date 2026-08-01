@@ -3527,7 +3527,15 @@ LATE_PUB_COMEBACK_SPECULATIVE_MIN_LATE_HITS = _safe_int_env(
 LATE_PUB_COMEBACK_SPECULATIVE_STAKE = _safe_float_env(
     "LATE_PUB_COMEBACK_SPECULATIVE_STAKE", 0.5
 )
-DELAYED_SIGNAL_POLL_SECONDS = 30
+# Тик delayed-watcher. sourcetv-состояние читается из локального
+# sourcetv_matches.json, который probe переписывает раз в ~2 c, поэтому тикаем
+# раз в секунду: задержка между "нетворт пересёк порог" и отправкой сводится к
+# секундам вместо полуминуты. Сетевые источники (dltv/cyberscore) от частого
+# тика защищены троттлингом DELAYED_SIGNAL_REMOTE_MIN_INTERVAL_SECONDS.
+DELAYED_SIGNAL_POLL_SECONDS = _safe_float_env("DELAYED_SIGNAL_POLL_SECONDS", 1.0)
+DELAYED_SIGNAL_REMOTE_MIN_INTERVAL_SECONDS = _safe_float_env(
+    "DELAYED_SIGNAL_REMOTE_MIN_INTERVAL_SECONDS", 30.0
+)
 DELAYED_SIGNAL_NO_PROGRESS_TIMEOUT_SECONDS = 2 * 60 * 60
 DELAYED_SIGNAL_NO_DATA_TIMEOUT_SECONDS = 4 * 60 * 60
 # Networth-gated dispatch rules (target team is resolved by star direction sign).
@@ -10651,8 +10659,19 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 f"for {match_key} (game_time={int(float(delayed_state.get('game_time') or 0))})"
             )
         else:
-            # Fallback: fetch only if no override arrived (main cycle should push overrides)
-            delayed_state = _fetch_delayed_match_state(payload.get('json_url'))
+            # Fallback: fetch only if no override arrived (main cycle should push overrides).
+            # Локальный sourcetv-json читаем на каждом тике (дёшево и всегда свежий),
+            # сетевые источники — не чаще DELAYED_SIGNAL_REMOTE_MIN_INTERVAL_SECONDS.
+            delayed_json_url = payload.get('json_url')
+            if not str(delayed_json_url or "").startswith("sourcetv://"):
+                try:
+                    last_remote_fetch_at = float(payload.get('last_remote_fetch_at') or 0.0)
+                except (TypeError, ValueError):
+                    last_remote_fetch_at = 0.0
+                if now_ts - last_remote_fetch_at < DELAYED_SIGNAL_REMOTE_MIN_INTERVAL_SECONDS:
+                    continue
+                _update_delayed_match(match_key, last_remote_fetch_at=now_ts)
+            delayed_state = _fetch_delayed_match_state(delayed_json_url)
         if not isinstance(delayed_state, dict):
             queued_at = float(payload.get('queued_at', now_ts))
             # После 4 часов без game_time считаем сигнал устаревшим.
@@ -22839,6 +22858,10 @@ def _update_delayed_match(match_key: str, **updates: Any) -> bool:
         current = monitored_matches.get(match_key)
         if not isinstance(current, dict):
             return False
+        if all(key in current and current[key] == value for key, value in updates.items()):
+            # Ничего не изменилось — не трогаем диск (тик раз в секунду иначе
+            # переписывал бы снапшот очереди на каждом проходе).
+            return True
         updated = dict(current)
         updated.update(updates)
         monitored_matches[match_key] = updated
@@ -33847,13 +33870,25 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         )
                     else:
                         if target_networth_diff < NETWORTH_GATE_4_TO_10_MIN_DIFF:
+                            # Для pre-27 watcher-веток (late+all) не выходим наружу:
+                            # ниже сигнал встаёт в delayed-очередь, которая сверяет
+                            # live-нетворт каждую секунду. Иначе порог пересчитывался
+                            # бы только в основном цикле (~2 мин) и пересечение можно
+                            # проспать (BoomBoys vs LGD: 1000+ на 05:57, отправка 07:20).
+                            pre27_watcher_branch = bool(
+                                queue_late_all_no_early_monitor
+                                or queue_late_all_weak_early_monitor
+                            )
                             print(
                                 "   ⏳ Ожидание dispatch: networth_gate_04_10 "
                                 f"(target_side={target_side}, target_diff={int(target_networth_diff)}, "
-                                f"need>={int(NETWORTH_GATE_4_TO_10_MIN_DIFF)})"
+                                f"need>={int(NETWORTH_GATE_4_TO_10_MIN_DIFF)}"
+                                + (" -> pre-27 watcher" if pre27_watcher_branch else "")
+                                + ")"
                             )
-                            return return_status
-                        if send_now_immediate and not queue_early_core_monitor:
+                            if not pre27_watcher_branch:
+                                return return_status
+                        elif send_now_immediate and not queue_early_core_monitor:
                             networth_send_status_label = NETWORTH_STATUS_4_10_SEND_800
                         elif not early_core_same_sign_support:
                             early_core_metrics = ",".join(
