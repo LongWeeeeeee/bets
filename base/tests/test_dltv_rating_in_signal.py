@@ -1,4 +1,4 @@
-"""DLTV draft-vote rating footer on signal dispatch."""
+"""DLTV draft-vote rating as the ``dltv_rating`` STAR metric of the All block."""
 from __future__ import annotations
 
 import sys
@@ -99,7 +99,8 @@ def test_append_dltv_rating_replaces_previous() -> None:
     assert twice.endswith("DLTV rating: A 70.0% / B 30.0% (7-3)")
 
 
-def test_deliver_and_persist_appends_dltv_rating(monkeypatch) -> None:
+def test_deliver_no_longer_appends_dltv_rating_footer(monkeypatch) -> None:
+    """Футер убран: значение живёт star-метрикой в All-блоке, не подписью."""
     sent: List[str] = []
     monkeypatch.setattr(runtime, "DLTV_RATING_IN_SIGNAL", True, raising=False)
     monkeypatch.setattr(
@@ -140,9 +141,8 @@ def test_deliver_and_persist_appends_dltv_rating(monkeypatch) -> None:
     )
     assert ok is True
     assert len(sent) == 1
-    assert "DLTV rating:" in sent[0]
-    assert "66.7%" in sent[0]
-    assert sent[0].strip().endswith(")")
+    assert "DLTV rating:" not in sent[0]
+    assert "66.7%" not in sent[0]
 
 
 def test_deliver_skips_dltv_rating_when_disabled(monkeypatch) -> None:
@@ -172,3 +172,104 @@ def test_deliver_skips_dltv_rating_when_disabled(monkeypatch) -> None:
     )
     assert called["n"] == 0
     assert "DLTV rating:" not in sent[0]
+
+
+# --- dltv_rating как STAR-метрика All-блока ---------------------------------
+
+
+def _vote(radiant_pct: float) -> dict:
+    return {
+        "radiant_likes": radiant_pct,
+        "dire_likes": 100.0 - radiant_pct,
+        "radiant_pct": radiant_pct,
+        "dire_pct": round(100.0 - radiant_pct, 1),
+        "radiant_team": "Radiant",
+        "dire_team": "Dire",
+    }
+
+
+@pytest.mark.parametrize(
+    "radiant_pct, expected",
+    [(80.0, 30.0), (20.0, -30.0), (73.5, 23.5), (26.5, -23.5), (50.0, None)],
+)
+def test_dltv_rating_star_value_is_pct_minus_50(monkeypatch, radiant_pct, expected) -> None:
+    monkeypatch.setattr(runtime, "DLTV_RATING_IN_SIGNAL", True, raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "_resolve_dltv_draft_vote_for_dispatch",
+        lambda *_a, **_k: (_vote(radiant_pct), "live_data"),
+    )
+    assert runtime._dltv_rating_star_value("key") == expected
+
+
+def test_dltv_rating_star_metric_written_into_all_block(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "DLTV_RATING_IN_SIGNAL", True, raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "_resolve_dltv_draft_vote_for_dispatch",
+        lambda *_a, **_k: (_vote(84.0), "live_data"),
+    )
+    all_output: dict = {"counterpick_1vs1": 5}
+    assert runtime._apply_dltv_rating_star_metric(all_output, "key") == 34.0
+    assert all_output["dltv_rating"] == 34.0
+
+
+def test_dltv_rating_star_metric_absent_when_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "DLTV_RATING_IN_SIGNAL", False, raising=False)
+
+    def _boom(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("should not resolve the vote when disabled")
+
+    monkeypatch.setattr(runtime, "_resolve_dltv_draft_vote_for_dispatch", _boom)
+    all_output: dict = {}
+    assert runtime._apply_dltv_rating_star_metric(all_output, "key") is None
+    assert "dltv_rating" not in all_output
+
+
+@pytest.mark.parametrize("value", [30.0, -30.0, 44.9])
+def test_dltv_rating_hits_star_at_abs30_with_wr65(value) -> None:
+    hits = runtime._collect_star_hits_for_block({"dltv_rating": value}, "all_output")
+    assert [hit["metric"] for hit in hits] == ["dltv_rating"]
+    # Порог задан только на WR60/WR65 → максимальный пройденный уровень всегда 65.
+    assert hits[0]["wr_level"] == 65
+    assert hits[0]["value"] == value
+
+
+@pytest.mark.parametrize("value", [29.9, -29.9, 0.0, 12.0])
+def test_dltv_rating_below_abs30_is_not_a_star_hit(value) -> None:
+    assert runtime._collect_star_hits_for_block({"dltv_rating": value}, "all_output") == []
+
+
+def test_dltv_rating_not_star_in_early_and_late_blocks() -> None:
+    for section in ("early_output", "mid_output"):
+        assert runtime._collect_star_hits_for_block({"dltv_rating": 40.0}, section) == []
+
+
+def test_dltv_rating_marked_in_all_block_display() -> None:
+    decorated = runtime._decorate_star_block_for_display(
+        raw_block={"dltv_rating": 31.0, "counterpick_1vs1": 1},
+        section="all_output",
+        target_wr=60,
+    )
+    assert str(decorated["dltv_rating"]).endswith("*")
+    assert not str(decorated["counterpick_1vs1"]).endswith("*")
+
+
+def test_dltv_rating_summary_label_and_line() -> None:
+    block = runtime._build_star_hits_summary_block(
+        early_output={},
+        mid_output={},
+        all_output={"dltv_rating": -33.0},
+    )
+    assert "⭐ Star hits (WR60+):" in block
+    assert "All: DLTV_rating -33 (WR65)" in block
+
+
+def test_dltv_rating_alone_validates_all_block_at_wr60() -> None:
+    diag = runtime._star_block_diagnostics(
+        raw_block={"dltv_rating": 32.0},
+        target_wr=60,
+        section="all_output",
+    )
+    assert diag["hit_metrics"] == ["dltv_rating"]
+    assert diag["sign"] == 1

@@ -64,6 +64,10 @@
       [
         "dota2protracker_cp1vs1",
         3
+      ],
+      [
+        "dltv_rating",
+        30
       ]
     ]
   },
@@ -128,6 +132,10 @@
       [
         "dota2protracker_cp1vs1",
         5
+      ],
+      [
+        "dltv_rating",
+        30
       ]
     ]
   },

@@ -1985,6 +1985,9 @@ STAR_SIGNAL_METRICS = frozenset({
     'counterpick_1vs2',
     'dota2protracker_cp1vs1',
     'solo',
+    # DLTV draft-vote (radiant_pct - 50); порог 30 задан только для all_output
+    # на WR60/WR65, поэтому в Star hits метрика всегда печатается как WR65.
+    'dltv_rating',
 })
 STAR_DISABLED_METRICS = frozenset()
 STAR_THRESHOLD_SECTIONS = (

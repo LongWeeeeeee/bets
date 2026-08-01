@@ -4547,6 +4547,7 @@ _STAR_HITS_SUMMARY_METRIC_LABELS: Dict[str, str] = {
     "dota2protracker_duo": "Protracker_duo",
     "dota2protracker_solo": "Protracker_solo",
     "dota2protracker_solo_overall": "Protracker_solo_overall",
+    "dltv_rating": "DLTV_rating",
 }
 
 
@@ -5008,12 +5009,14 @@ _STAR_METRIC_ORDER = (
     "synergy_duo",
     "synergy_trio",
     "dota2protracker_cp1vs1",
+    "dltv_rating",
 )
 _STAR_SIGNAL_METRICS = frozenset({
     "counterpick_1vs1",
     "counterpick_1vs2",
     "dota2protracker_cp1vs1",
     "solo",
+    "dltv_rating",
 })
 _STAR_SUPPORT_METRIC_ORDER = (
     "counterpick_1vs1",
@@ -5072,6 +5075,7 @@ _STAR_METRIC_SHORT = {
     "dota2protracker_duo": "d2pt_duo",
     "dota2protracker_solo": "d2pt_solo",
     "dota2protracker_solo_overall": "d2pt_solo_all",
+    "dltv_rating": "dltv",
 }
 
 
@@ -8962,6 +8966,7 @@ def _build_early_local_kills_message(
                 ('dota2protracker_duo', 'Protracker_duo'),
                 ('dota2protracker_solo', 'Protracker_solo'),
                 ('dota2protracker_solo_overall', 'Protracker_solo_overall'),
+                ('dltv_rating', 'DLTV_rating'),
             ]
         )
 
@@ -9370,7 +9375,7 @@ def _refresh_stake_multiplier_message(
         "Protracker_solo:",
         "Protracker_solo_overall:",
         "Pos1vsPos1:",
-        "DLTV rating:",
+        "DLTV_rating:",
     )
     insert_after_idx = -1
     protracker_duo_idx = -1
@@ -10146,6 +10151,74 @@ def _resolve_dltv_draft_vote_for_dispatch(
     if isinstance(cached_vote, dict):
         return cached_vote, "cache"
     return None, "none"
+
+
+def _dltv_rating_star_value(
+    match_key: str,
+    *,
+    json_url: Any = None,
+    live_data: Any = None,
+    steam_id: Any = None,
+) -> Optional[float]:
+    """STAR-значение метрики ``dltv_rating`` = ``radiant_pct - 50``.
+
+    Знак как у остальных star-метрик: ``+`` = Radiant, ``-`` = Dire. Порог хита
+    (30) живёт в ``data/star_thresholds_by_wr.json`` для секции ``all_output``
+    на уровнях WR60/WR65, поэтому в ``⭐ Star hits`` метрика всегда печатается
+    как WR65. Возвращает ``None``, когда голосование выключено, недоступно или
+    ровно 50/50 (нулевые значения star-логикой всё равно игнорируются).
+    """
+    if not DLTV_RATING_IN_SIGNAL:
+        return None
+    vote, _source = _resolve_dltv_draft_vote_for_dispatch(
+        match_key,
+        json_url=json_url,
+        live_data=live_data,
+        steam_id=steam_id,
+    )
+    if not isinstance(vote, dict):
+        return None
+    raw_pct = vote.get("radiant_pct")
+    if raw_pct is None:
+        try:
+            radiant_likes = float(vote.get("radiant_likes") or 0)
+            dire_likes = float(vote.get("dire_likes") or 0)
+        except (TypeError, ValueError):
+            return None
+        total = radiant_likes + dire_likes
+        if total <= 0:
+            return None
+        raw_pct = 100.0 * radiant_likes / total
+    try:
+        value = round(float(raw_pct) - 50.0, 1)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value == 0.0:
+        return None
+    return value
+
+
+def _apply_dltv_rating_star_metric(
+    all_output: Optional[Dict[str, Any]],
+    match_key: str,
+    *,
+    json_url: Any = None,
+    live_data: Any = None,
+    steam_id: Any = None,
+) -> Optional[float]:
+    """Дописать ``dltv_rating`` в базовый All-блок (in-place). Вернуть значение."""
+    if not isinstance(all_output, dict):
+        return None
+    value = _dltv_rating_star_value(
+        match_key,
+        json_url=json_url,
+        live_data=live_data,
+        steam_id=steam_id,
+    )
+    if value is None:
+        return None
+    all_output["dltv_rating"] = value
+    return value
 
 
 def _append_dltv_rating_line(message_text: str, line: str) -> str:
@@ -24261,16 +24334,8 @@ def _deliver_and_persist_signal(
     pos_warning = _SOURCETV_POS_WARNING_BY_KEY.get(_signal_fingerprint_registry_key(match_key))
     if pos_warning and pos_warning not in message_text:
         message_text = f"{message_text.rstrip()}\n\n{pos_warning}"
-    # Fresh DLTV draft-vote parse right before dispatch (display-only footer).
-    details = add_url_details if isinstance(add_url_details, dict) else {}
-    resolved_json_url = json_url or details.get("json_url")
-    message_text = _enrich_message_with_dltv_rating(
-        match_key,
-        message_text,
-        json_url=resolved_json_url,
-        live_data=dltv_live_data,
-        steam_id=dltv_steam_id,
-    )
+    # DLTV draft-vote больше не дописывается отдельным футером: значение живёт
+    # star-метрикой ``dltv_rating`` внутри All-блока (см. _apply_dltv_rating_star_metric).
     # Атомарно резервируем dedup-ключ ДО отправки — закрывает гонку между
     # delayed-sender потоком и главным циклом (дубль одной ставки в одну секунду).
     reserved, dedup_key = _signal_fingerprint_try_reserve(match_key, message_text)
@@ -30958,6 +31023,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         star_base_early_output = dict(s.get('early_output', {}) or {})
         star_base_mid_output = dict(s.get('mid_output', {}) or {})
         star_base_all_output = _build_all_star_output(s.get('post_lane_output', {}), s)
+        # DLTV draft-vote как star-метрика All-блока: live_data уже на руках,
+        # поэтому резолв идёт без дополнительного HTTP-запроса.
+        _dltv_star_value = _apply_dltv_rating_star_metric(
+            star_base_all_output,
+            check_uniq_url,
+            json_url=json_url,
+            live_data=data,
+            steam_id=_extract_live_match_id(data),
+        )
+        if _dltv_star_value is not None:
+            print(f"   📊 DLTV_rating star metric: {_dltv_star_value:+.1f} (radiant_pct-50)")
 
         # Подбор star-кандидата (отправка только если сигнал star).
         selected_star_wr = star_target_wr
@@ -31313,6 +31389,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 ('dota2protracker_duo', 'Protracker_duo'),
                 ('dota2protracker_solo', 'Protracker_solo'),
                 ('dota2protracker_solo_overall', 'Protracker_solo_overall'),
+                ('dltv_rating', 'DLTV_rating'),
             ]
             early_block = _format_metrics("Early NW (20-28):", early_output, metric_list)
             early_end_block = _format_metrics(
@@ -33347,7 +33424,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     "Protracker_solo:",
                                     "Protracker_solo_overall:",
                                     "Pos1vsPos1:",
-                                    "DLTV rating:",
+                                    "DLTV_rating:",
                                 )
                                 _pp_ins = -1
                                 _pp_1vs1 = -1
@@ -35903,6 +35980,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     ('dota2protracker_duo', 'Protracker_duo'),
                     ('dota2protracker_solo', 'Protracker_solo'),
                     ('dota2protracker_solo_overall', 'Protracker_solo_overall'),
+                    ('dltv_rating', 'DLTV_rating'),
                     ]
 
                 def _tempo_format_metrics(title: str, data: dict, metrics: list) -> str:
