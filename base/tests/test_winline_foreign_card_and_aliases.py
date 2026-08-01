@@ -213,3 +213,68 @@ def test_poller_still_separates_academy_from_main_roster():
     assert not _teams_equivalent("Team Spirit", "Team Spirit Academy")
     assert not _teams_equivalent("Navi", "Navi Junior")
     assert not _teams_equivalent("BoomBoys", "Team Liquid")
+
+
+class _PageStub:
+    """Минимальная страница: разбор идёт по body_text/html, до её методов не доходит."""
+
+    def __init__(self, html: str, body_text: str, url: str) -> None:
+        self._html = html
+        self._body_text = body_text
+        self.url = url
+
+    def content(self) -> str:
+        return self._html
+
+
+def _parse_listing_page(monkeypatch, text: str, team1: str, team2: str, map_num: int):
+    """Сквозной разбор страницы-списка (не deeplink) — путь живого пайплайна."""
+    html = f"<html><body>{text}</body></html>"
+    page = _PageStub(html, text, "https://winline.ru/stavki/sport/kibersport/live")
+    monkeypatch.setattr(bk.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(bk, "_is_deeplink", lambda *_a, **_k: False)
+    monkeypatch.setattr(
+        bk,
+        "_load_site_render_payload_camoufox",
+        lambda *_a, **_k: ("ok", "", html, text, text),
+    )
+    return bk.parse_site_in_camoufox_page(
+        page,
+        "winline",
+        page.url,
+        team1,
+        team2,
+        mode="live",
+        forced_map_num=map_num,
+    )
+
+
+def test_listing_page_result_carries_map_and_role_markers(monkeypatch):
+    """Кэфы с листинга обязаны нести номер карты и роль-маркеры.
+
+    Раньше при недоказанной карточке результат собирался общим добором: кэфы были,
+    а `map_num` и `p1_team` приходили пустыми — приёмке нечем было проверить,
+    чьи это кэфы вообще.
+    """
+    result = _parse_listing_page(monkeypatch, THREE_CARDS_PAGE_TEXT, "BoomBoys", "MOUZ", 2)
+
+    assert list(result.odds or []) == [1.44, 2.67]
+    assert result.map_num == 2
+    assert (result.p1_team, result.p2_team) == ("team1", "team2")
+    assert result.market_kind == "current_map_winner"
+
+
+def test_listing_page_never_serves_neighbour_card(monkeypatch):
+    """Тот же сквозной путь на паре, которой доставались чужие кэфы."""
+    result = _parse_listing_page(monkeypatch, TWO_LEAGUES_PAGE_TEXT, "REKONIX", "L1GA TEAM", 1)
+
+    assert list(result.odds or []) == [2.25, 1.57]
+    assert result.map_num == 1
+
+
+def test_listing_page_without_our_card_returns_no_odds(monkeypatch):
+    """Нашей пары на странице нет — кэфы пустые, чужая строка рынка не годится."""
+    result = _parse_listing_page(monkeypatch, TWO_LEAGUES_PAGE_TEXT, "Team Falcons", "Nigma Galaxy", 1)
+
+    assert list(result.odds or []) == []
+    assert result.market_closed is False
