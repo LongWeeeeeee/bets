@@ -9805,3 +9805,88 @@ try:
             tier_two_teams[_key] = _team_id
 except Exception:
     pass
+
+# auto-added by cyberscore_try (dynamic tier2 onboarding)
+try:
+    _key = 'midasclub'
+    _team_id = 10207962
+    _existing = tier_two_teams.get(_key)
+    if isinstance(_existing, set):
+        _existing.add(_team_id)
+    elif _existing is None:
+        tier_two_teams[_key] = _team_id
+    elif _existing != _team_id:
+        try:
+            tier_two_teams[_key] = {int(_existing), _team_id}
+        except Exception:
+            tier_two_teams[_key] = _team_id
+except Exception:
+    pass
+
+# auto-added by cyberscore_try (dynamic tier2 onboarding)
+try:
+    _key = 'playtime'
+    _team_id = 10207983
+    _existing = tier_two_teams.get(_key)
+    if isinstance(_existing, set):
+        _existing.add(_team_id)
+    elif _existing is None:
+        tier_two_teams[_key] = _team_id
+    elif _existing != _team_id:
+        try:
+            tier_two_teams[_key] = {int(_existing), _team_id}
+        except Exception:
+            tier_two_teams[_key] = _team_id
+except Exception:
+    pass
+
+# auto-added by cyberscore_try (dynamic tier2 onboarding)
+try:
+    _key = 'enjoy'
+    _team_id = 10208002
+    _existing = tier_two_teams.get(_key)
+    if isinstance(_existing, set):
+        _existing.add(_team_id)
+    elif _existing is None:
+        tier_two_teams[_key] = _team_id
+    elif _existing != _team_id:
+        try:
+            tier_two_teams[_key] = {int(_existing), _team_id}
+        except Exception:
+            tier_two_teams[_key] = _team_id
+except Exception:
+    pass
+
+# auto-added by cyberscore_try (dynamic tier2 onboarding)
+try:
+    _key = 'yakultbrothers'
+    _team_id = 10208034
+    _existing = tier_two_teams.get(_key)
+    if isinstance(_existing, set):
+        _existing.add(_team_id)
+    elif _existing is None:
+        tier_two_teams[_key] = _team_id
+    elif _existing != _team_id:
+        try:
+            tier_two_teams[_key] = {int(_existing), _team_id}
+        except Exception:
+            tier_two_teams[_key] = _team_id
+except Exception:
+    pass
+
+# auto-added by cyberscore_try (dynamic tier2 onboarding)
+try:
+    _key = 'lgdpinghu'
+    _team_id = 10208068
+    _existing = tier_two_teams.get(_key)
+    if isinstance(_existing, set):
+        _existing.add(_team_id)
+    elif _existing is None:
+        tier_two_teams[_key] = _team_id
+    elif _existing != _team_id:
+        try:
+            tier_two_teams[_key] = {int(_existing), _team_id}
+        except Exception:
+            tier_two_teams[_key] = _team_id
+except Exception:
+    pass
