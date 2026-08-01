@@ -273,3 +273,55 @@ def test_dltv_rating_alone_validates_all_block_at_wr60() -> None:
     )
     assert diag["hit_metrics"] == ["dltv_rating"]
     assert diag["sign"] == 1
+
+
+def test_dltv_rating_alone_validates_realistic_all_block() -> None:
+    """Драфт-метрики есть, но ниже порога — единственный хит DLTV делает блок STAR."""
+    diag = runtime._star_block_diagnostics(
+        raw_block={
+            "counterpick_1vs1": 2,
+            "counterpick_1vs2": 1,
+            "solo": 2,
+            "dota2protracker_cp1vs1": 1,
+            "dltv_rating": 33.0,
+        },
+        target_wr=60,
+        section="all_output",
+    )
+    assert diag["valid"] is True
+    assert diag["hit_metrics"] == ["dltv_rating"]
+    assert diag["sign"] == 1
+
+
+@pytest.mark.parametrize("value", ["30.0*", "33.0*", "45.0*", "-40.0*"])
+def test_dltv_rating_block_wr_is_pinned_to_65(value) -> None:
+    """WR блока по DLTV всегда 65, а не 60 из-за плато порогов 30/30."""
+    rec = runtime._recommend_odds_for_block({"dltv_rating": value}, "all")
+    assert rec is not None
+    assert rec["level"] == 65
+    assert rec["wr_pct"] == 65.0
+    assert rec["min_odds"] == 1.54
+
+
+def test_dltv_rating_below_threshold_gives_no_block_recommendation() -> None:
+    assert runtime._recommend_odds_for_block({"dltv_rating": "29.9*"}, "all") is None
+
+
+def test_fixed_level_does_not_touch_other_metrics() -> None:
+    assert runtime._recommend_odds_for_block({"counterpick_1vs1": "6.0*"}, "all")["level"] == 65
+    assert runtime._recommend_odds_for_block({"counterpick_1vs1": "11.0*"}, "all")["level"] == 75
+
+
+def test_dltv_rating_alone_passes_single_block_min_wr_gate() -> None:
+    rec = runtime._recommend_odds_for_block({"dltv_rating": "33.0*"}, "all")
+    gate = runtime._single_block_star_min_wr_gate(
+        has_selected_early_star=False,
+        has_selected_late_star=False,
+        has_selected_all_star=True,
+        early_wr_pct=None,
+        late_wr_pct=None,
+        all_wr_pct=rec["wr_pct"],
+    )
+    assert gate["active"] is True
+    assert gate["min_wr_ok"] is True
+    assert gate["valid"] is True

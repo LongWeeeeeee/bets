@@ -4442,6 +4442,10 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
         # Ориентируемся на средний WR starred-индексов.
         metric_levels: List[int] = []
         for metric, value in star_only_data.items():
+            fixed_level = _fixed_star_wr_level_for_metric(metric, value, section)
+            if fixed_level is not None:
+                metric_levels.append(int(fixed_level))
+                continue
             threshold = thresholds_by_metric.get(metric)
             if threshold is None:
                 return None
@@ -4476,6 +4480,10 @@ def _recommend_odds_for_block(data: dict, phase: str) -> Optional[dict]:
 
     metric_levels: List[int] = []
     for metric, value in star_only_data.items():
+        fixed_level = _fixed_star_wr_level_for_metric(metric, value, section)
+        if fixed_level is not None:
+            metric_levels.append(int(fixed_level))
+            continue
         metric_best_level = None
         metric_max_threshold = 0
         abs_value = abs(value)
@@ -4550,6 +4558,49 @@ _STAR_HITS_SUMMARY_METRIC_LABELS: Dict[str, str] = {
     "dltv_rating": "DLTV_rating",
 }
 
+# Метрики с ФИКСИРОВАННЫМ WR-уровнем: у них один порог, и уровень не выводится
+# из таблицы порогов, а задаётся здесь. Нужно потому, что уровень по таблице
+# засчитывается только при РОСТЕ порога между WR-уровнями (защита от плато в
+# ``_recommend_odds_for_block``): одинаковый порог на WR60/WR65 иначе даёт
+# блоку wr_pct=60, и витрина (``⭐ Star hits``) расходится с диспатчем.
+_STAR_FIXED_WR_LEVEL_BY_METRIC: Dict[str, int] = {
+    # DLTV draft-vote: |radiant_pct-50| >= 30 — по бэктесту 625 карт WR≈85%,
+    # но уровень намеренно держим на 65 (консервативно и стабильно).
+    "dltv_rating": 65,
+}
+
+
+def _fixed_star_wr_level_for_metric(
+    metric: str,
+    value: Any,
+    section: str,
+) -> Optional[int]:
+    """WR-уровень метрики с фиксированным уровнем; ``None`` — если не про неё.
+
+    Возвращает уровень, только когда метрика включена в секции и её значение
+    дотягивает до порога (берётся минимальный порог метрики по таблице).
+    """
+    metric_name = str(metric or "").strip()
+    fixed_level = _STAR_FIXED_WR_LEVEL_BY_METRIC.get(metric_name)
+    if fixed_level is None:
+        return None
+    if not _star_metric_enabled_for_section(metric_name, section):
+        return None
+    try:
+        abs_value = abs(float(value))
+    except (TypeError, ValueError):
+        return None
+    thresholds = [
+        float(_star_thresholds_for_wr(wr_level, section)[metric_name])
+        for wr_level in _STAR_HITS_SUMMARY_WR_LEVELS
+        if metric_name in _star_thresholds_for_wr(wr_level, section)
+    ]
+    if not thresholds:
+        return None
+    if abs_value < min(thresholds):
+        return None
+    return int(fixed_level)
+
 
 def _max_star_wr_level_for_metric(
     *,
@@ -4576,6 +4627,9 @@ def _max_star_wr_level_for_metric(
         return None
     if abs_value <= 0:
         return None
+    fixed_level = _fixed_star_wr_level_for_metric(metric_name, abs_value, section)
+    if fixed_level is not None:
+        return fixed_level
     best_level: Optional[int] = None
     for wr_level in _STAR_HITS_SUMMARY_WR_LEVELS:
         thresholds = _star_thresholds_for_wr(wr_level, section)
