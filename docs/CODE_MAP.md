@@ -55,6 +55,8 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 | `_get_team_tier(team_id)` | 12055 | tier 1/2/3 по `id_to_names` (см. ARCHITECTURE) |
 | `_match_has_tier1_team(radiant_team_id, dire_team_id)` | 12089 | True если ≥1 команда Tier-1 (OR; vs `_determine_star_signal_match_tier`=обе). Гейт kills-ставок (`KILLS_REQUIRE_TIER1_TEAM`) |
 | `_stake_multiplier_for_signal(...)` | 4990 | множитель ставки (x0.5/1/2/3) — см. ARCHITECTURE «Stake multiplier» |
+| `_half_stake_elo_underdog_reject(...)` | 8415 | блокирует доставку x0.5, если target ELO-андердог на `HALF_STAKE_ELO_UNDERDOG_MIN_DIFF`+ |
+| `_deliver_and_persist_signal(...)` | 24723 | единая точка доставки/персиста сигнала; применяет half-stake ELO-underdog gate перед `send_message` |
 | `_build_stake_multiplier_context(...)` | 5122 | контекст для множителя |
 | `_evaluate_star_block_combination_gate(...)` | 5384 | terminal STAR combination gate для Early Winner/Late/All; одиночный Late блокируется при любом WR60+ star-хите противоположного знака в All независимо от Late WR; одинаковый знак Late/All разрешён |
 | `_build_late27_dispatch_guard_snapshot(...)` | 3477 | сериализуемый снимок фактов 27+ late-гейта (late знак/WR/hit count, поддержка early того же знака, WR60+ star-хиты All); уезжает в delayed payload через `stake_multiplier_context["all_star_hits"]` |
@@ -176,6 +178,8 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | `TEMPO_OVER_SENT_TTL_SECONDS` | `43200` | TTL дедуп-словаря `_tempo_over_sent_urls` (12 ч) |
 | `LATE27_DISPATCH_MIN_LATE_HITS` | `2` | минимум late star-хитов для late-driven отправки на 27:00+ (`_evaluate_late27_dispatch_guard`) |
 | `LATE27_DISPATCH_MIN_LATE_WR` | `65.0` | минимальный late WR для late-driven отправки на 27:00+ |
+| `HALF_STAKE_ELO_UNDERDOG_BLOCK_ENABLED` | `1` | `0` отключает запрет доставки x0.5 для ELO-андердога |
+| `HALF_STAKE_ELO_UNDERDOG_MIN_DIFF` | `50.0` | минимальная разница `opposite_rating - target_rating`, при которой x0.5 не отправляется |
 
 **Networth gate (числовые пороги — частичный список)**
 `NETWORTH_GATE_ALL_ONLY_EARLY_WINDOW_START_SECONDS` (240), `NETWORTH_GATE_ALL_ONLY_EARLY_MIN_DIFF` (800), `NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS` (120), `NETWORTH_MONITOR_HOLD_SECONDS` (0). Большинство networth-порогов — модульные константы (`NETWORTH_GATE_*`, строки ~1233+), не env.

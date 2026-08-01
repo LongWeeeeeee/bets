@@ -105,6 +105,9 @@ Live-оценка использует строгую взаимоисключа
 - WR60-уровень late → всегда `0.5`.
 - **ELO-gate удалён**: при ≥2 late-hits множитель зависит только от late WR: `>=85 → 3`, `>=70 → 2`, иначе `1`.
 
+#### Запрет x0.5 на ELO-андердога (`_half_stake_elo_underdog_reject`)
+Множитель считается как раньше, но доставка x0.5 запрещена, если target слабее оппонента по `base_rating` минимум на `HALF_STAKE_ELO_UNDERDOG_MIN_DIFF` (default 50): `opposite_rating - target_rating >= 50`. Gate стоит в `_deliver_and_persist_signal(...)`, поэтому покрывает immediate dispatch, delayed watcher и networth/comeback-релизы. Нет рейтингов/контекста или множитель не x0.5 → не блокируем. Выключатель — `HALF_STAKE_ELO_UNDERDOG_BLOCK_ENABLED` (default on).
+
 ### ML phase-wrapper (`base/signal_wrappers.py`)
 - Sklearn-модели `.pkl` в `ml-models/phase_models_early66_latebase/` (`phase_signal_wrapper_early.pkl`, `_late.pkl`).
 - `apply_early_signal_wrapper` / `apply_late_signal_wrapper` сдвигают STAR-индексы по предсказанной вероятности и набору gate-функций (`_apply_late_hard_carry_gate`, `_apply_early_big_ult_burden_gate`, `_apply_*_support_gap_gate`, `_apply_late_control_stability_gate`, `_apply_late_role_balance_gate`, `_apply_edge_requirements_gate` и др.).
