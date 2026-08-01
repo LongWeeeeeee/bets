@@ -3764,6 +3764,13 @@ DLTV_RATING_STAR_TTL_SECONDS = max(
     0.0,
     _safe_float_env("DLTV_RATING_STAR_TTL_SECONDS", 90.0),
 )
+# Минимум голосов, ниже которого процент не считается сигналом: 100/0 достигается
+# и одним голосом. На выборке 625 карт среди |pct-50|>=30 проценты, достижимые
+# <=6 голосами, дали WR 57%, а остальные — 90% (ровно 100.0% => 33%).
+DLTV_RATING_MIN_VOTES = max(
+    0,
+    _safe_int_env("DLTV_RATING_MIN_VOTES", 10),
+)
 BOOKMAKER_PREFETCH_SITES_RAW = str(
     os.getenv("BOOKMAKER_PREFETCH_SITES", "betboom,pari,winline")
 ).strip()
@@ -10286,18 +10293,21 @@ def _dltv_rating_star_value(
     if not isinstance(vote, dict):
         _dltv_rating_star_cache_put(match_key, None)
         return None
+    try:
+        radiant_likes = float(vote.get("radiant_likes") or 0)
+        dire_likes = float(vote.get("dire_likes") or 0)
+    except (TypeError, ValueError):
+        _dltv_rating_star_cache_put(match_key, None)
+        return None
+    total = radiant_likes + dire_likes
+    # Мало голосов -> процент не сигнал: 100/0 достигается одним голосом.
+    # Типичное финальное голосование — десятки голосов (медиана ~68 по логу),
+    # так что для нормальных матчей это не фильтр, а отсечка вырожденных.
+    if total <= 0 or total < float(DLTV_RATING_MIN_VOTES):
+        _dltv_rating_star_cache_put(match_key, None)
+        return None
     raw_pct = vote.get("radiant_pct")
     if raw_pct is None:
-        try:
-            radiant_likes = float(vote.get("radiant_likes") or 0)
-            dire_likes = float(vote.get("dire_likes") or 0)
-        except (TypeError, ValueError):
-            _dltv_rating_star_cache_put(match_key, None)
-            return None
-        total = radiant_likes + dire_likes
-        if total <= 0:
-            _dltv_rating_star_cache_put(match_key, None)
-            return None
         raw_pct = 100.0 * radiant_likes / total
     try:
         value = round(float(raw_pct) - 50.0, 1)

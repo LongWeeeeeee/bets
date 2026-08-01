@@ -185,10 +185,11 @@ def test_deliver_skips_dltv_rating_when_disabled(monkeypatch) -> None:
 # --- dltv_rating как STAR-метрика All-блока ---------------------------------
 
 
-def _vote(radiant_pct: float) -> dict:
+def _vote(radiant_pct: float, total: float = 100.0) -> dict:
+    r_likes = round(total * radiant_pct / 100.0, 3)
     return {
-        "radiant_likes": radiant_pct,
-        "dire_likes": 100.0 - radiant_pct,
+        "radiant_likes": r_likes,
+        "dire_likes": round(total - r_likes, 3),
         "radiant_pct": radiant_pct,
         "dire_pct": round(100.0 - radiant_pct, 1),
         "radiant_team": "Radiant",
@@ -318,6 +319,52 @@ def test_dltv_rating_below_threshold_gives_no_block_recommendation() -> None:
 def test_fixed_level_does_not_touch_other_metrics() -> None:
     assert runtime._recommend_odds_for_block({"counterpick_1vs1": "6.0*"}, "all")["level"] == 65
     assert runtime._recommend_odds_for_block({"counterpick_1vs1": "11.0*"}, "all")["level"] == 75
+
+
+@pytest.mark.parametrize(
+    "radiant_likes, dire_likes, expected",
+    [
+        (1, 0, None),      # 100/0 от одного голоса — не сигнал
+        (0, 3, None),      # 0/100 от трёх голосов — не сигнал
+        (8, 1, None),      # total=9 < 10
+        (9, 1, 40.0),      # total=10 — граница проходит
+        (84, 16, 34.0),    # нормальное голосование
+    ],
+)
+def test_dltv_rating_requires_min_votes(monkeypatch, radiant_likes, dire_likes, expected) -> None:
+    monkeypatch.setattr(runtime, "DLTV_RATING_IN_SIGNAL", True, raising=False)
+    monkeypatch.setattr(runtime, "DLTV_RATING_MIN_VOTES", 10, raising=False)
+    total = radiant_likes + dire_likes
+    monkeypatch.setattr(
+        runtime,
+        "_resolve_dltv_draft_vote_for_dispatch",
+        lambda *_a, **_k: (
+            {
+                "radiant_likes": radiant_likes,
+                "dire_likes": dire_likes,
+                "radiant_pct": round(100.0 * radiant_likes / total, 1) if total else None,
+                "radiant_team": "Radiant",
+                "dire_team": "Dire",
+            },
+            "fetch",
+        ),
+    )
+    assert runtime._dltv_rating_star_value("min-votes-key") == expected
+
+
+def test_min_votes_gate_is_env_tunable(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "DLTV_RATING_IN_SIGNAL", True, raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "_resolve_dltv_draft_vote_for_dispatch",
+        lambda *_a, **_k: (_vote(84.0, total=12.0), "fetch"),
+    )
+    monkeypatch.setattr(runtime, "DLTV_RATING_MIN_VOTES", 10, raising=False)
+    runtime._DLTV_RATING_STAR_CACHE.clear()
+    assert runtime._dltv_rating_star_value("tunable-key") == 34.0
+    monkeypatch.setattr(runtime, "DLTV_RATING_MIN_VOTES", 20, raising=False)
+    runtime._DLTV_RATING_STAR_CACHE.clear()
+    assert runtime._dltv_rating_star_value("tunable-key") is None
 
 
 def test_payload_without_likes_block_is_not_a_vote() -> None:
