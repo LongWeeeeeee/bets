@@ -3707,6 +3707,10 @@ TIER_SIGNAL_MIN_THRESHOLD_TIER1_BASE = 60
 TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE = 60
 ELO_UNDERDOG_GUARD_FAVORITE_EDGE_PP = 15.0
 ELO_UNDERDOG_GUARD_MIN_SIGNAL_WR = 70.0
+# x0.5-ставка на ELO-андердога запрещена: если оппонент сильнее таргета на
+# столько base_rating-пунктов и больше, сигнал x0.5 не отправляется вообще.
+HALF_STAKE_ELO_UNDERDOG_BLOCK_ENABLED = _safe_bool_env("HALF_STAKE_ELO_UNDERDOG_BLOCK_ENABLED", True)
+HALF_STAKE_ELO_UNDERDOG_MIN_DIFF = _safe_float_env("HALF_STAKE_ELO_UNDERDOG_MIN_DIFF", 50.0)
 ELO_BLOCK_WR_MIN_AFTER_PENALTY = 58.5
 ELO_GUARD_MIN_ABS_DIFF = 30.0
 EARLY_STAR_LATE_CORE_HIGH_CONFIDENCE_WR = 70.0
@@ -8278,6 +8282,113 @@ def _format_signal_header(
     return f"СТАВКА НА {team_name} x{_format_stake_multiplier_label(stake_multiplier)}"
 
 
+# Хедер обычной ставки: "СТАВКА НА <team> x<mult>". Kills-хедеры множителя не
+# несут, поэтому под x0.5-гейт не попадают.
+_STAKE_HEADER_MULTIPLIER_RE = re.compile(r"^СТАВКА НА .+\sx(?P<mult>\d+(?:[.,]\d+)?)\s*$")
+
+
+def _stake_multiplier_from_message(message_text: Optional[str]) -> Optional[float]:
+    """Множитель ставки из первой строки сообщения, или None если хедер иной."""
+    first_line = str(message_text or "").splitlines()[:1]
+    if not first_line:
+        return None
+    match = _STAKE_HEADER_MULTIPLIER_RE.match(first_line[0].strip())
+    if not match:
+        return None
+    try:
+        return float(match.group("mult").replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+
+
+def _half_stake_elo_underdog_reject(
+    *,
+    stake_multiplier: Optional[float],
+    target_rating: Optional[float],
+    opposite_rating: Optional[float],
+    min_diff: Optional[float] = None,
+    enabled: Optional[bool] = None,
+) -> Optional[Dict[str, Any]]:
+    """Блок x0.5, если таргет слабее оппонента по ELO на ``min_diff`` и больше.
+
+    Возвращает диагностику блокировки или None (отправка разрешена). Отсутствие
+    рейтингов = не блокируем (нет данных — нет запрета).
+    """
+    # Читаем модульные константы внутри (а не в дефолтах), чтобы env/тесты
+    # могли переопределить порог и выключатель без перезагрузки модуля.
+    if enabled is None:
+        enabled = HALF_STAKE_ELO_UNDERDOG_BLOCK_ENABLED
+    if min_diff is None:
+        min_diff = HALF_STAKE_ELO_UNDERDOG_MIN_DIFF
+    if not enabled:
+        return None
+    try:
+        multiplier_value = float(stake_multiplier)
+    except (TypeError, ValueError):
+        return None
+    if abs(multiplier_value - 0.5) > 1e-9:
+        return None
+    try:
+        target_value = float(target_rating)
+        opposite_value = float(opposite_rating)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(target_value) or not math.isfinite(opposite_value):
+        return None
+    elo_diff = opposite_value - target_value
+    if elo_diff < float(min_diff):
+        return None
+    return {
+        "reject": True,
+        "stake_multiplier": multiplier_value,
+        "target_rating": target_value,
+        "opposite_rating": opposite_value,
+        "elo_diff": float(elo_diff),
+        "min_diff": float(min_diff),
+    }
+
+
+def _half_stake_elo_underdog_reject_for_delivery(
+    message_text: Optional[str],
+    stake_multiplier_context: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Тот же гейт, но по фактическому тексту сигнала и снимку ставки."""
+    if not isinstance(stake_multiplier_context, dict):
+        return None
+    decision = _half_stake_elo_underdog_reject(
+        stake_multiplier=_stake_multiplier_from_message(message_text),
+        target_rating=stake_multiplier_context.get("target_rating"),
+        opposite_rating=stake_multiplier_context.get("opposite_rating"),
+    )
+    if decision is None:
+        return None
+    decision["target_side"] = stake_multiplier_context.get("target_side")
+    decision["stake_team_name"] = str(stake_multiplier_context.get("stake_team_name") or "")
+    return decision
+
+
+_half_stake_elo_block_logged_lock = threading.Lock()
+_half_stake_elo_block_logged_keys: set = set()
+
+
+def _log_half_stake_elo_block_once(match_key: str, decision: Dict[str, Any]) -> None:
+    """Печатает причину блока x0.5 один раз на матч (перепроверок много)."""
+    log_key = f"{match_key}|{decision.get('target_side')}"
+    with _half_stake_elo_block_logged_lock:
+        already_logged = log_key in _half_stake_elo_block_logged_keys
+        _half_stake_elo_block_logged_keys.add(log_key)
+    if already_logged:
+        return
+    print(
+        "   🚫 x0.5 заблокирован: таргет слабее по ELO "
+        f"({decision.get('stake_team_name') or decision.get('target_side')}: "
+        f"{float(decision.get('target_rating') or 0.0):.0f} vs "
+        f"{float(decision.get('opposite_rating') or 0.0):.0f}, "
+        f"diff={float(decision.get('elo_diff') or 0.0):.0f} >= "
+        f"{float(decision.get('min_diff') or 0.0):.0f}) — {match_key}"
+    )
+
+
 def _blank_dota2protracker_result() -> Dict[str, Any]:
     return {
         "pro_cp1vs1_early": 0.0,
@@ -11307,6 +11418,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                             _spec_sent = _deliver_and_persist_signal(
                                 match_key,
                                 _spec_msg,
+                                stake_multiplier_context=_spec_smc,
                                 current_map_observation=_imm_obs,
                                 map_num=_imm_map,
                                 selected_side=monitor_target_side,
@@ -11940,6 +12052,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
             delivery_confirmed = _deliver_and_persist_signal(
                 match_key,
                 delivery_message_text,
+                stake_multiplier_context=payload.get("stake_multiplier_context"),
                 add_url_reason=add_url_reason,
                 add_url_details=add_url_details,
                 json_url=payload.get("json_url"),
@@ -24412,6 +24525,7 @@ def _deliver_and_persist_signal(
     current_map_observation: Any = None,
     map_num: Optional[int] = None,
     selected_side: Any = _BOOKMAKER_SELECTED_SIDE_UNSET,
+    stake_multiplier_context: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Canonical delivery owner: prepare/reserve once, send, then commit/rollback odds state.
 
@@ -24419,6 +24533,16 @@ def _deliver_and_persist_signal(
     bookmaker prepare. Minimal odds-only may preflight and hand an explicit reservation
     context so delivery reuses ownership without a second prepare.
     """
+    # Единая точка запрета x0.5 на ELO-андердога: перекрывает немедленный
+    # dispatch, delayed watcher'ы и спекулятивный x0.5. Матч НЕ закрывается
+    # (add_url не зовём) — если сигнал позже дорастёт до x1+, он уйдёт.
+    half_stake_block = _half_stake_elo_underdog_reject_for_delivery(
+        message_text,
+        stake_multiplier_context,
+    )
+    if half_stake_block is not None:
+        _log_half_stake_elo_block_once(match_key, half_stake_block)
+        return False
     reservation_context: Optional[Dict[str, Any]] = None
     if isinstance(bookmaker_reservation_context, dict) and bookmaker_reservation_context.get("token"):
         if not _bookmaker_validate_odds_reservation_context(
@@ -33323,6 +33447,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delivery_confirmed = _deliver_and_persist_signal(
                         check_uniq_url,
                         delivery_message_text,
+                        stake_multiplier_context=stake_multiplier_context,
                         current_map_observation=_imm_obs,
                         map_num=_imm_map,
                         selected_side=dispatch_message_side,
@@ -33955,6 +34080,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             delivery_confirmed = _deliver_and_persist_signal(
                                 check_uniq_url,
                                 delivery_message_text,
+                                stake_multiplier_context=kills_release_smc,
                                 current_map_observation=_imm_obs,
                                 map_num=_imm_map,
                                 selected_side=(
@@ -34625,6 +34751,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             delivery_confirmed = _deliver_and_persist_signal(
                                 check_uniq_url,
                                 delivery_message_text,
+                                stake_multiplier_context=stake_multiplier_context,
                                 current_map_observation=_imm_obs,
                                 map_num=_imm_map,
                                 selected_side=target_side,
@@ -34692,6 +34819,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delivery_confirmed = _deliver_and_persist_signal(
                             check_uniq_url,
                             delivery_message_text,
+                            stake_multiplier_context=stake_multiplier_context,
                             current_map_observation=_imm_obs,
                             map_num=_imm_map,
                             selected_side=target_side,
@@ -34799,6 +34927,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 delivery_confirmed = _deliver_and_persist_signal(
                                     check_uniq_url,
                                     delivery_message_text,
+                                    stake_multiplier_context=stake_multiplier_context,
                                     current_map_observation=_imm_obs,
                                     map_num=_imm_map,
                                     selected_side=target_side,
@@ -34973,6 +35102,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 delivery_confirmed = _deliver_and_persist_signal(
                                     check_uniq_url,
                                     delivery_message_text,
+                                    stake_multiplier_context=stake_multiplier_context,
                                     current_map_observation=_imm_obs,
                                     map_num=_imm_map,
                                     selected_side=target_side,
@@ -35134,6 +35264,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 delivery_confirmed = _deliver_and_persist_signal(
                                     check_uniq_url,
                                     delivery_message_text,
+                                    stake_multiplier_context=stake_multiplier_context,
                                     current_map_observation=_imm_obs,
                                     map_num=_imm_map,
                                     selected_side=target_side,
@@ -35284,6 +35415,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 delivery_confirmed = _deliver_and_persist_signal(
                                     check_uniq_url,
                                     message_text,
+                                    stake_multiplier_context=stake_multiplier_context,
                                     current_map_observation=_imm_obs,
                                     map_num=_imm_map,
                                     selected_side=target_side,
@@ -35440,6 +35572,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delivery_confirmed = _deliver_and_persist_signal(
                             check_uniq_url,
                             message_text,
+                            stake_multiplier_context=stake_multiplier_context,
                             current_map_observation=_imm_obs,
                             map_num=_imm_map,
                             selected_side=target_side,
@@ -35951,6 +36084,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 delivery_confirmed = _deliver_and_persist_signal(
                     check_uniq_url,
                     delivery_message_text,
+                    stake_multiplier_context=stake_multiplier_context,
                     current_map_observation=_imm_obs,
                     map_num=_imm_map,
                     selected_side=target_side,
