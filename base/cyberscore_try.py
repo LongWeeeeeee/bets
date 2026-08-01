@@ -3757,6 +3757,13 @@ DLTV_RATING_FETCH_TIMEOUT_SECONDS = max(
     1.0,
     _safe_float_env("DLTV_RATING_FETCH_TIMEOUT_SECONDS", 6.0),
 )
+# Голоса приходят только HTTP-запросом к dltv.org/live/<id>.json (в sourcetv-payload
+# их нет), а star-метрика считается каждый цикл на каждый матч. TTL-кэш держит
+# частоту запросов в разумных рамках; для порога abs(30) такая свежесть достаточна.
+DLTV_RATING_STAR_TTL_SECONDS = max(
+    0.0,
+    _safe_float_env("DLTV_RATING_STAR_TTL_SECONDS", 90.0),
+)
 BOOKMAKER_PREFETCH_SITES_RAW = str(
     os.getenv("BOOKMAKER_PREFETCH_SITES", "betboom,pari,winline")
 ).strip()
@@ -10061,13 +10068,20 @@ def _parse_dltv_draft_vote_from_live_payload(data: Any) -> Optional[Dict[str, An
     ``db.first_team`` / ``db.second_team`` are series-order slots, NOT always
     Radiant/Dire. Resolve actual sides via each team's ``is_radiant`` flag
     (same rule as the main DLTV card path).
+
+    Payload БЕЗ блока ``db.series.likes`` — это не dltv live JSON (например
+    sourcetv-payload основного цикла), и голосованием он не является: возвращаем
+    ``None``, иначе мнимое «0-0» перебивало бы HTTP-резолв, в котором голоса и
+    лежат. Настоящее «голосов нет» — это присутствующий ``likes`` с нулями.
     """
     if not isinstance(data, dict):
         return None
     series = ((data.get("db") or {}).get("series") or {}) if isinstance(data.get("db"), dict) else {}
     if not isinstance(series, dict):
         series = {}
-    likes = series.get("likes") if isinstance(series.get("likes"), dict) else {}
+    if not isinstance(series.get("likes"), dict):
+        return None
+    likes = series.get("likes")
     try:
         radiant_likes = float(likes.get("side_0") or 0)
         dire_likes = float(likes.get("side_1") or 0)
@@ -10207,6 +10221,38 @@ def _resolve_dltv_draft_vote_for_dispatch(
     return None, "none"
 
 
+_DLTV_RATING_STAR_CACHE: Dict[str, Tuple[float, Optional[float]]] = {}
+_DLTV_RATING_STAR_CACHE_LOCK = threading.Lock()
+
+
+def _dltv_rating_star_cache_get(match_key: str) -> Tuple[bool, Optional[float]]:
+    """(hit, value) из TTL-кэша; кэшируется и отрицательный результат (нет голосов)."""
+    ttl = float(DLTV_RATING_STAR_TTL_SECONDS)
+    if ttl <= 0:
+        return False, None
+    key = str(match_key or "").strip()
+    if not key:
+        return False, None
+    with _DLTV_RATING_STAR_CACHE_LOCK:
+        entry = _DLTV_RATING_STAR_CACHE.get(key)
+    if not entry:
+        return False, None
+    stamp, value = entry
+    if (time.time() - float(stamp)) > ttl:
+        return False, None
+    return True, value
+
+
+def _dltv_rating_star_cache_put(match_key: str, value: Optional[float]) -> None:
+    if float(DLTV_RATING_STAR_TTL_SECONDS) <= 0:
+        return
+    key = str(match_key or "").strip()
+    if not key:
+        return
+    with _DLTV_RATING_STAR_CACHE_LOCK:
+        _DLTV_RATING_STAR_CACHE[key] = (time.time(), value)
+
+
 def _dltv_rating_star_value(
     match_key: str,
     *,
@@ -10221,9 +10267,16 @@ def _dltv_rating_star_value(
     на уровнях WR60/WR65, поэтому в ``⭐ Star hits`` метрика всегда печатается
     как WR65. Возвращает ``None``, когда голосование выключено, недоступно или
     ровно 50/50 (нулевые значения star-логикой всё равно игнорируются).
+
+    Результат (в том числе отрицательный) кэшируется на
+    ``DLTV_RATING_STAR_TTL_SECONDS``: голоса берутся HTTP-запросом, а метрика
+    считается каждый цикл на каждый матч.
     """
     if not DLTV_RATING_IN_SIGNAL:
         return None
+    cached, cached_value = _dltv_rating_star_cache_get(match_key)
+    if cached:
+        return cached_value
     vote, _source = _resolve_dltv_draft_vote_for_dispatch(
         match_key,
         json_url=json_url,
@@ -10231,6 +10284,7 @@ def _dltv_rating_star_value(
         steam_id=steam_id,
     )
     if not isinstance(vote, dict):
+        _dltv_rating_star_cache_put(match_key, None)
         return None
     raw_pct = vote.get("radiant_pct")
     if raw_pct is None:
@@ -10238,17 +10292,22 @@ def _dltv_rating_star_value(
             radiant_likes = float(vote.get("radiant_likes") or 0)
             dire_likes = float(vote.get("dire_likes") or 0)
         except (TypeError, ValueError):
+            _dltv_rating_star_cache_put(match_key, None)
             return None
         total = radiant_likes + dire_likes
         if total <= 0:
+            _dltv_rating_star_cache_put(match_key, None)
             return None
         raw_pct = 100.0 * radiant_likes / total
     try:
         value = round(float(raw_pct) - 50.0, 1)
     except (TypeError, ValueError):
+        _dltv_rating_star_cache_put(match_key, None)
         return None
     if not math.isfinite(value) or value == 0.0:
+        _dltv_rating_star_cache_put(match_key, None)
         return None
+    _dltv_rating_star_cache_put(match_key, value)
     return value
 
 

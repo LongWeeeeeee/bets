@@ -14,6 +14,14 @@ if str(BASE_DIR) not in sys.path:
 import cyberscore_try as runtime  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _clear_dltv_rating_cache():
+    """TTL-кэш dltv_rating общий на процесс — чистим между тестами."""
+    runtime._DLTV_RATING_STAR_CACHE.clear()
+    yield
+    runtime._DLTV_RATING_STAR_CACHE.clear()
+
+
 def test_parse_dltv_draft_vote_from_live_payload() -> None:
     payload = {
         "match_id": 123,
@@ -310,6 +318,90 @@ def test_dltv_rating_below_threshold_gives_no_block_recommendation() -> None:
 def test_fixed_level_does_not_touch_other_metrics() -> None:
     assert runtime._recommend_odds_for_block({"counterpick_1vs1": "6.0*"}, "all")["level"] == 65
     assert runtime._recommend_odds_for_block({"counterpick_1vs1": "11.0*"}, "all")["level"] == 75
+
+
+def test_payload_without_likes_block_is_not_a_vote() -> None:
+    """sourcetv-payload не должен выглядеть как голосование 0-0.
+
+    Иначе мнимое «нет голосов» перебивает HTTP-резолв, в котором голоса и лежат.
+    """
+    assert runtime._parse_dltv_draft_vote_from_live_payload({"db": {"series": {}}}) is None
+    assert runtime._parse_dltv_draft_vote_from_live_payload({"radiant_lead": 500}) is None
+    genuine = runtime._parse_dltv_draft_vote_from_live_payload(
+        {"db": {"series": {"likes": {"side_0": 0, "side_1": 0}}}}
+    )
+    assert genuine is not None
+    assert genuine["radiant_likes"] == 0
+    assert genuine["radiant_pct"] is None
+
+
+def test_dltv_rating_resolved_via_http_when_live_data_has_no_votes(monkeypatch) -> None:
+    """Полный путь: sourcetv live_data без голосов -> fetch -> метрика в All-блоке."""
+    monkeypatch.setattr(runtime, "DLTV_RATING_IN_SIGNAL", True, raising=False)
+    runtime._DLTV_RATING_STAR_CACHE.clear()
+    calls = {"n": 0}
+
+    def _fetch(_steam_id: int) -> dict:
+        calls["n"] += 1
+        return {
+            "match_id": 8924057168,
+            "db": {
+                "series": {"likes": {"side_0": 84, "side_1": 16}, "is_draft_voting": 1},
+                "first_team": {"title": "BetBoom Team", "is_radiant": True},
+                "second_team": {"title": "LGD Gaming", "is_radiant": False},
+            },
+        }
+
+    monkeypatch.setattr(runtime, "_fetch_dltv_live_json_for_rating", _fetch)
+    all_output = {"counterpick_1vs1": 2, "solo": 2}
+    value = runtime._apply_dltv_rating_star_metric(
+        all_output,
+        "dltv.org/matches/8924057168.15",
+        json_url="https://dltv.org/live/8924057168.json",
+        live_data={"radiant_lead": 500, "game_time": 1200},
+        steam_id=8924057168,
+    )
+    assert value == 34.0
+    assert all_output["dltv_rating"] == 34.0
+    assert calls["n"] == 1
+    runtime._DLTV_RATING_STAR_CACHE.clear()
+
+
+def test_dltv_rating_value_is_cached_within_ttl(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "DLTV_RATING_IN_SIGNAL", True, raising=False)
+    monkeypatch.setattr(runtime, "DLTV_RATING_STAR_TTL_SECONDS", 90.0, raising=False)
+    runtime._DLTV_RATING_STAR_CACHE.clear()
+    calls = {"n": 0}
+
+    def _resolve(*_a: Any, **_k: Any):
+        calls["n"] += 1
+        return _vote(84.0), "fetch"
+
+    monkeypatch.setattr(runtime, "_resolve_dltv_draft_vote_for_dispatch", _resolve)
+    key = "dltv.org/matches/cache-test.1"
+    assert runtime._dltv_rating_star_value(key) == 34.0
+    assert runtime._dltv_rating_star_value(key) == 34.0
+    assert calls["n"] == 1
+    runtime._DLTV_RATING_STAR_CACHE.clear()
+
+
+def test_dltv_rating_negative_result_is_cached_too(monkeypatch) -> None:
+    """Матчи без голосования не должны дёргать HTTP каждый цикл."""
+    monkeypatch.setattr(runtime, "DLTV_RATING_IN_SIGNAL", True, raising=False)
+    monkeypatch.setattr(runtime, "DLTV_RATING_STAR_TTL_SECONDS", 90.0, raising=False)
+    runtime._DLTV_RATING_STAR_CACHE.clear()
+    calls = {"n": 0}
+
+    def _resolve(*_a: Any, **_k: Any):
+        calls["n"] += 1
+        return {"radiant_likes": 0, "dire_likes": 0, "radiant_pct": None}, "fetch"
+
+    monkeypatch.setattr(runtime, "_resolve_dltv_draft_vote_for_dispatch", _resolve)
+    key = "dltv.org/matches/no-votes.1"
+    assert runtime._dltv_rating_star_value(key) is None
+    assert runtime._dltv_rating_star_value(key) is None
+    assert calls["n"] == 1
+    runtime._DLTV_RATING_STAR_CACHE.clear()
 
 
 def test_dltv_rating_alone_passes_single_block_min_wr_gate() -> None:
