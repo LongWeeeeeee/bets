@@ -180,6 +180,16 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 **Networth gate (числовые пороги — частичный список)**
 `NETWORTH_GATE_ALL_ONLY_EARLY_WINDOW_START_SECONDS` (240), `NETWORTH_GATE_ALL_ONLY_EARLY_MIN_DIFF` (800), `NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS` (120), `NETWORTH_MONITOR_HOLD_SECONDS` (0). Большинство networth-порогов — модульные константы (`NETWORTH_GATE_*`, строки ~1233+), не env.
 
+**Ранний релиз при early-звезде у оппонента** (`_opposite_early_release_window`, `_all_block_opposes_target`)
+| env | default | назначение |
+|---|---|---|
+| `OPPOSITE_EARLY_RELEASE_ENABLED` | `1` | `0` → прежнее поведение: жёсткий блок dispatch до 24:00, когда early-звезда у оппонента |
+| `OPPOSITE_EARLY_RELEASE_FROM_MINUTE` | `14` | начало окна раннего релиза (минута игры); до неё — блок |
+| `OPPOSITE_EARLY_RELEASE_THRESHOLD` | `1600` | лид таргета (NW), с которого допустим ранний релиз в окне `[FROM_MINUTE, 24:00)` |
+| `OPPOSITE_EARLY_RELEASE_HOLD_SECONDS` | `180` | сколько игровых секунд лид должен держаться подряд; просадка сбрасывает hold |
+
+Окно закрыто, если all-блок стоит на стороне early (против таргета) — там ранний релиз убыточен. Неизвестная сторона all трактуется как запрет. Затрагивает профили `late_pre27_watcher` и `late_pre27_dominance`; после 24:00 пороги не меняются. Тесты: `base/tests/test_opposite_early_release.py`.
+
 **Kills dispatch («СТАВКА НА Ранние килы»)**
 | env | default | назначение |
 |---|---|---|

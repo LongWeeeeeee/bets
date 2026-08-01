@@ -3656,6 +3656,19 @@ NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_WINDOW_START_SECONDS = 17 * 60
 NETWORTH_GATE_LATE_TOP25_ELO_BLOCK_DIFF = 3000.0
 NETWORTH_GATE_LATE_COMEBACK_LARGE_DEFICIT = 14000.0
 NETWORTH_MONITOR_HOLD_SECONDS = max(0, _safe_int_env("NETWORTH_MONITOR_HOLD_SECONDS", 0))
+# Ранний релиз при early-звезде у оппонента: окно [FROM_MINUTE, 24:00), в котором
+# dispatch разрешён по устойчивому большому лиду, вместо жёсткого блока до 24:00.
+# Подробности и замеры — в _opposite_early_release_window().
+OPPOSITE_EARLY_RELEASE_ENABLED = _safe_bool_env("OPPOSITE_EARLY_RELEASE_ENABLED", True)
+OPPOSITE_EARLY_RELEASE_FROM_SECONDS = float(
+    max(0, _safe_int_env("OPPOSITE_EARLY_RELEASE_FROM_MINUTE", 14)) * 60
+)
+OPPOSITE_EARLY_RELEASE_THRESHOLD = float(
+    _safe_int_env("OPPOSITE_EARLY_RELEASE_THRESHOLD", 1600)
+)
+OPPOSITE_EARLY_RELEASE_HOLD_SECONDS = float(
+    max(0, _safe_int_env("OPPOSITE_EARLY_RELEASE_HOLD_SECONDS", 180))
+)
 NETWORTH_STATUS_4_10_SEND_800 = "4_10_send_800"
 NETWORTH_STATUS_PRE3_BLOCK = "pre3_block"
 NETWORTH_STATUS_MIN10_LOSS_LE800_SEND = "minute10_loss_le800_send"
@@ -7244,6 +7257,7 @@ def _late_pre27_watcher_monitor_config(
     all_wr_pct: Optional[float],
     selected_star_wr: Optional[int] = None,
     has_opposite_early_star: bool = False,
+    all_opposes_target: Optional[bool] = None,
 ) -> Optional[Dict[str, Any]]:
     target_side = _target_side_from_sign(target_sign)
     if target_side not in {"radiant", "dire"}:
@@ -7273,6 +7287,11 @@ def _late_pre27_watcher_monitor_config(
         "thresholds_by_minute": {int(k): float(v) for k, v in thresholds.items()},
         "status_label": NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT,
         "has_opposite_early_star": bool(has_opposite_early_star),
+        # Ранний релиз до 24:00 разрешён только когда точно известно, что all-блок
+        # НЕ на стороне early (иначе — блок как раньше). None = неизвестно = блок.
+        "opposite_early_release_allowed": bool(
+            has_opposite_early_star and all_opposes_target is False
+        ),
         # Phase 1 — flat 1000 за target в окне [4:00, 20:00).
         "flat_threshold_until_minute": 20,
         "flat_threshold_value": 1000.0,
@@ -7283,6 +7302,65 @@ def _late_pre27_watcher_monitor_config(
         "flat_phase2_from_minute": 20,
         "flat_phase2_until_minute": 27,
         "flat_phase2_value": 800.0,
+    }
+
+
+def _all_block_opposes_target(
+    *,
+    has_selected_all_star: bool,
+    selected_all_sign: Optional[int],
+    target_sign: Optional[int],
+) -> bool:
+    """True, если all-блок стоит против таргета (то есть на стороне early).
+
+    Отсутствие all-звезды — это НЕ "против": по замерам ранний релиз в такой
+    ветке работает не хуже, чем при поддерживающем all.
+    """
+    return bool(
+        has_selected_all_star
+        and selected_all_sign in (-1, 1)
+        and target_sign in (-1, 1)
+        and int(selected_all_sign) != int(target_sign)
+    )
+
+
+def _opposite_early_release_window(
+    source: Optional[Dict[str, Any]],
+    current_game_time: Optional[float],
+) -> Optional[Dict[str, Any]]:
+    """Ранний релиз до 24:00, когда early-звезда у оппонента.
+
+    Раньше такие сигналы жёстко блокировались до 24:00. Замер 01.08.2026
+    (PRO n=1039, PUB n=18751; harness runtime/opp_early_release_*.py) показал:
+    ставка на тех же матчах, но на 17-18-й минуте вместо 24-й, идёт по кэфу
+    ~1.42 вместо ~1.35 при том же исходе (+25 п.п. ROI на перенесённых ставках).
+    Матчи с неустойчивым лидом (WR ~37%) отсекаются требованием держать большой
+    лид OPPOSITE_EARLY_RELEASE_HOLD_SECONDS игровых секунд подряд — без hold
+    добавка мусора съедает весь выигрыш от цены (Δ ROI/сигнал ≈ 0).
+
+    Окно закрыто, если all-блок стоит на стороне early (против таргета):
+    там ранний релиз строго вреден (PRO Δ=-4.8 п.п. CI[-8.7,-1.3]).
+    Неизвестный all (None на входе конфига) трактуется как запрет.
+
+    Возвращает {"threshold", "hold_seconds"} либо None (блок как раньше).
+    """
+    if not OPPOSITE_EARLY_RELEASE_ENABLED:
+        return None
+    if not isinstance(source, dict):
+        return None
+    if not bool(source.get("opposite_early_release_allowed")):
+        return None
+    try:
+        game_time_value = float(current_game_time) if current_game_time is not None else None
+    except (TypeError, ValueError):
+        game_time_value = None
+    if game_time_value is None or game_time_value < OPPOSITE_EARLY_RELEASE_FROM_SECONDS:
+        return None
+    if OPPOSITE_EARLY_RELEASE_THRESHOLD <= 0:
+        return None
+    return {
+        "threshold": float(OPPOSITE_EARLY_RELEASE_THRESHOLD),
+        "hold_seconds": float(OPPOSITE_EARLY_RELEASE_HOLD_SECONDS),
     }
 
 
@@ -7318,15 +7396,30 @@ def _late_pre27_watcher_snapshot(
     if current_game_time >= target_game_time:
         return {"threshold": None, "status_label": ""}
 
-    # Gate: if opposite team has an early star, block dispatch before 24:00
+    # Gate: if opposite team has an early star, block dispatch before 24:00 —
+    # кроме окна раннего релиза по устойчивому большому лиду
+    # (см. _opposite_early_release_window).
     if bool(source.get("has_opposite_early_star")) and current_game_time < 24 * 60:
+        early_release = _opposite_early_release_window(source, current_game_time)
+        if early_release is None:
+            return {
+                "threshold": None,
+                "status_label": str(
+                    source.get("dispatch_status_label")
+                    or source.get("status_label")
+                    or NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT
+                ),
+            }
         return {
-            "threshold": None,
+            "threshold": float(early_release["threshold"]),
+            "hold_seconds": float(early_release["hold_seconds"]),
             "status_label": str(
-                source.get("dispatch_status_label")
+                source.get("networth_monitor_status")
                 or source.get("status_label")
+                or source.get("dispatch_status_label")
                 or NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT
             ),
+            "source_minute": int(max(0.0, current_game_time) // 60),
         }
 
     raw_thresholds = source.get("networth_monitor_thresholds_by_minute")
@@ -7918,6 +8011,7 @@ def _late_pre27_dominance_monitor_config(
     late_rec: Optional[Dict[str, Any]],
     early_wr_pct: Optional[float],
     late_wr_pct: Optional[float],
+    all_opposes_target: Optional[bool] = None,
 ) -> Optional[Dict[str, Any]]:
     if not (
         has_selected_early_star
@@ -7964,6 +8058,11 @@ def _late_pre27_dominance_monitor_config(
         "status_20_to_26": NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT,
         "hold_zero_threshold": True,
         "has_opposite_early_star": has_opposite_early,
+        # Ранний релиз до 24:00 разрешён только когда точно известно, что all-блок
+        # НЕ на стороне early (иначе — блок как раньше). None = неизвестно = блок.
+        "opposite_early_release_allowed": bool(
+            has_opposite_early and all_opposes_target is False
+        ),
     }
 
 
@@ -8001,9 +8100,21 @@ def _late_pre27_dominance_snapshot(
     # Gate: if the opposite team has an early star, block dispatch before 24:00
     # (opposite early = early-star on a different side than target/late). This prevents
     # short-lived netw spikes at 10-23 min from triggering against still-active early window.
+    # Исключение — окно раннего релиза по устойчивому большому лиду
+    # (см. _opposite_early_release_window).
     if bool(source.get("has_opposite_early_star")) and current_game_time < 24 * 60:
+        early_release = _opposite_early_release_window(source, current_game_time)
+        if early_release is None:
+            return {
+                "threshold": None,
+                "status_label": str(
+                    source.get("dispatch_status_label")
+                    or NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT
+                ),
+            }
         return {
-            "threshold": None,
+            "threshold": float(early_release["threshold"]),
+            "hold_seconds": float(early_release["hold_seconds"]),
             "status_label": str(
                 source.get("dispatch_status_label")
                 or NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT
@@ -9770,6 +9881,8 @@ def _dynamic_monitor_snapshot_for_payload(
             or snapshot["status_label"]
             or ""
         )
+        if pre27_snapshot.get("hold_seconds") is not None:
+            snapshot["hold_seconds"] = pre27_snapshot.get("hold_seconds")
         return snapshot
 
     if snapshot["profile"] == LATE_PRE27_WATCHER_PROFILE:
@@ -9783,6 +9896,8 @@ def _dynamic_monitor_snapshot_for_payload(
         )
         if pre27_snapshot.get("source_minute") is not None:
             snapshot["source_minute"] = pre27_snapshot.get("source_minute")
+        if pre27_snapshot.get("hold_seconds") is not None:
+            snapshot["hold_seconds"] = pre27_snapshot.get("hold_seconds")
         return snapshot
 
     if snapshot["profile"] == ALL_ONLY_WATCHER_PROFILE:
@@ -11094,10 +11209,14 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 dispatch_status_label=dynamic_status_label,
                 networth_monitor_threshold=monitor_threshold,
             )
-        monitor_hold_seconds_raw = payload.get(
-            "networth_monitor_hold_seconds",
-            NETWORTH_MONITOR_HOLD_SECONDS,
-        )
+        # Профиль монитора может требовать свой hold (ранний релиз при early у
+        # оппонента: лид должен держаться N игровых секунд подряд).
+        monitor_hold_seconds_raw = monitor_snapshot.get("hold_seconds")
+        if monitor_hold_seconds_raw is None:
+            monitor_hold_seconds_raw = payload.get(
+                "networth_monitor_hold_seconds",
+                NETWORTH_MONITOR_HOLD_SECONDS,
+            )
         try:
             monitor_hold_seconds = max(0.0, float(monitor_hold_seconds_raw))
         except (TypeError, ValueError):
@@ -32649,6 +32768,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 late_rec=late_rec,
                 early_wr_pct=early_wr_pct,
                 late_wr_pct=late_wr_pct,
+                all_opposes_target=_all_block_opposes_target(
+                    has_selected_all_star=bool(has_selected_all_star),
+                    selected_all_sign=selected_all_sign,
+                    target_sign=selected_late_sign,
+                ),
             )
             if isinstance(opposite_signs_early90_monitor, dict) and opposite_signs_early90_monitor.get("enabled"):
                 elo_gap_log = opposite_signs_early90_monitor.get("elo_gap_pp")
@@ -34494,6 +34618,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 fallback_send_status_label = NETWORTH_STATUS_LATE_FALLBACK_20_20_SEND
                 allow_live_recheck = False
                 dynamic_monitor_profile: Optional[Dict[str, Any]] = None
+                # Профильный hold (ранний релиз при early у оппонента требует
+                # держать лид N игровых секунд подряд, а не мгновенного касания).
+                monitor_hold_seconds_override: Optional[float] = None
                 if queue_early_core_monitor:
                     monitor_threshold = early_core_monitor_threshold
                     monitor_wait_status_label = early_core_monitor_wait_status_label
@@ -34521,6 +34648,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         all_wr_pct=all_wr_pct,
                         selected_star_wr=selected_star_wr,
                         has_opposite_early_star=_has_opposite_early_for_watcher,
+                        all_opposes_target=_all_block_opposes_target(
+                            has_selected_all_star=bool(has_selected_all_star),
+                            selected_all_sign=selected_all_sign,
+                            target_sign=selected_late_sign,
+                        ),
                     )
                     if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"):
                         target_game_time = float(dynamic_monitor_profile.get("target_game_time") or target_game_time)
@@ -34535,6 +34667,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             if monitor_threshold_raw is not None
                             else None
                         )
+                        if watcher_snapshot.get("hold_seconds") is not None:
+                            monitor_hold_seconds_override = float(
+                                watcher_snapshot.get("hold_seconds") or 0.0
+                            )
                         monitor_wait_status_label = str(
                             watcher_snapshot.get("status_label")
                             or NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT
@@ -34565,6 +34701,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             if monitor_threshold_raw is not None
                             else None
                         )
+                        if watcher_snapshot.get("hold_seconds") is not None:
+                            monitor_hold_seconds_override = float(
+                                watcher_snapshot.get("hold_seconds") or 0.0
+                            )
                         monitor_wait_status_label = str(
                             watcher_snapshot.get("status_label")
                             or NETWORTH_STATUS_ALL_ONLY_WATCHER_WAIT
@@ -34641,6 +34781,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         all_wr_pct=all_wr_pct if late_pre27_signal_group == "late_all" else None,
                         selected_star_wr=selected_star_wr,
                         has_opposite_early_star=_late_only_opposite_early,
+                        all_opposes_target=_all_block_opposes_target(
+                            has_selected_all_star=bool(has_selected_all_star),
+                            selected_all_sign=selected_all_sign,
+                            target_sign=selected_late_sign,
+                        ),
                     )
                     if isinstance(dynamic_monitor_profile, dict) and dynamic_monitor_profile.get("enabled"):
                         target_game_time = float(dynamic_monitor_profile.get("target_game_time") or target_game_time)
@@ -34655,6 +34800,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             if monitor_threshold_raw is not None
                             else None
                         )
+                        if watcher_snapshot.get("hold_seconds") is not None:
+                            monitor_hold_seconds_override = float(
+                                watcher_snapshot.get("hold_seconds") or 0.0
+                            )
                         monitor_wait_status_label = str(
                             watcher_snapshot.get("status_label")
                             or NETWORTH_STATUS_LATE_PRE27_WATCHER_WAIT
@@ -34700,6 +34849,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         if monitor_threshold_raw is not None
                         else None
                     )
+                    if dominance_snapshot.get("hold_seconds") is not None:
+                        monitor_hold_seconds_override = float(
+                            dominance_snapshot.get("hold_seconds") or 0.0
+                        )
                     monitor_wait_status_label = str(
                         dominance_snapshot.get("status_label")
                         or NETWORTH_STATUS_LATE_PRE27_DOMINANCE_WAIT
@@ -34820,7 +34973,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         target_networth_diff=target_networth_diff,
                         monitor_threshold=release_threshold,
                         hold_started_game_time=existing_monitor_hold_started,
-                        hold_seconds=NETWORTH_MONITOR_HOLD_SECONDS,
+                        hold_seconds=(
+                            monitor_hold_seconds_override
+                            if monitor_hold_seconds_override is not None
+                            else NETWORTH_MONITOR_HOLD_SECONDS
+                        ),
                         allow_zero_threshold=late_pre27_dominance_active,
                     )
                     if hold_check.get("enabled") and not hold_check.get("ready"):
@@ -35758,7 +35915,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_add_url_details["networth_monitor_deadline_game_time"] = int(target_game_time)
                     delayed_add_url_details["networth_target_side"] = target_side
                     delayed_add_url_details["networth_monitor_hold_seconds"] = (
-                        0.0 if queue_same_sign_lane_adv_monitor else float(NETWORTH_MONITOR_HOLD_SECONDS)
+                        0.0
+                        if queue_same_sign_lane_adv_monitor
+                        else (
+                            monitor_hold_seconds_override
+                            if monitor_hold_seconds_override is not None
+                            else float(NETWORTH_MONITOR_HOLD_SECONDS)
+                        )
                     )
                     if target_networth_diff is not None:
                         delayed_add_url_details["target_networth_diff"] = float(target_networth_diff)
@@ -36003,14 +36166,28 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     delayed_payload['networth_monitor_deadline_game_time'] = float(target_game_time)
                     delayed_payload['networth_target_side'] = target_side
                     delayed_payload['networth_monitor_hold_seconds'] = (
-                        0.0 if queue_same_sign_lane_adv_monitor else float(NETWORTH_MONITOR_HOLD_SECONDS)
+                        0.0
+                        if queue_same_sign_lane_adv_monitor
+                        else (
+                            monitor_hold_seconds_override
+                            if monitor_hold_seconds_override is not None
+                            else float(NETWORTH_MONITOR_HOLD_SECONDS)
+                        )
                     )
                     hold_seed = _networth_monitor_hold_check(
                         current_game_time=current_game_time,
                         target_networth_diff=target_networth_diff,
                         monitor_threshold=monitor_threshold,
                         hold_started_game_time=existing_monitor_hold_started,
-                        hold_seconds=0.0 if queue_same_sign_lane_adv_monitor else NETWORTH_MONITOR_HOLD_SECONDS,
+                        hold_seconds=(
+                            0.0
+                            if queue_same_sign_lane_adv_monitor
+                            else (
+                                monitor_hold_seconds_override
+                                if monitor_hold_seconds_override is not None
+                                else NETWORTH_MONITOR_HOLD_SECONDS
+                            )
+                        ),
                         allow_zero_threshold=bool(
                             isinstance(dynamic_monitor_profile, dict)
                             and dynamic_monitor_profile.get("profile") == LATE_PRE27_DOMINANCE_PROFILE
