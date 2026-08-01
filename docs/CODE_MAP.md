@@ -403,6 +403,33 @@ CLI: `--input` (precomputed JSON), `--bucket-mode`/`--old-mode`, `--min-matches`
 
 Camoufox + Selenium-парсер кэфов/наличия матча (betboom/pari/winline). Умеет `presence`, `odds`, `deeplink`. При `BOOKMAKER_CAMOUFOX_ENABLED=1` subprocess-путь не строит Selenium для odds/deeplink. Класс результата `SiteResult` (878). Основные хелперы: `_run_presence_sites_in_camoufox` (744), `_extract_map_odds_deeplink` (1040), `_extract_market_map_num`/`_resolve_map_num_for_site` (нормализация номера карты).
 
+**Winline: кэфы только из доказанной карточки (с 01.08.2026).** `_extract_winline_current_map_winner`
+при недоказанной карточке пары возвращает `reason="no_card"` и пустые кэфы — раньше рынок читался по
+всей странице и бралась первая строка `N карта a b`, то есть кэфы соседнего матча. Для `winline` убран и
+общий добор `_extract_map_odds_from_feed_context` в `parse_site*` (он воспроизводил ту же ошибку по окну
+вокруг названий). Границы карточек считает `_winline_event_boundaries`: заголовок дисциплины (`DOTA 2 |`)
+общий для нескольких матчей подряд, поэтому событие определяется по слитному маркеру шапки (`2карта`),
+а получившийся кусок дополнительно проверяется `_winline_single_card_scope`.
+
+**Сверка названий команд.** Поиск идёт по `_team_name_search_variants` (наше имя + написания букмекера из
+`base/team_name_aliases.py`) и `_fallback_search_tokens` (сокращённые формы: родовые слова `team/gaming/
+esports/...` и обрубки в 1-2 символа поисковыми формами НЕ становятся; `academy/junior/youth` не
+отбрасываются, иначе второй состав совпадёт с основным). Позиции ищутся только по границам слова
+(`_literal_team_positions`), включая порядок сторон рынка (`_first_index_with_fallback` → `_winline_team_order`).
+Кириллические буквы-двойники сводятся к латинице для сопоставления (`TEAM TPABOMAH` = `ТРАВОМАН`), `_norm`
+сохраняет `ё`.
+
+---
+
+## `base/team_name_aliases.py` — справочник написаний названий команд
+
+Данные + три функции: `alias_spellings(name)` (другие написания той же команды), `canonical_team_key(name)`
+(ключ команды с учётом справочника — им сверяет приёмку `runtime/winline_current_map_odds_poller.py`),
+`fold_confusables(value)` (кириллические омоглифы → латиница, посимвольно, длина не меняется).
+Таблица `TEAM_NAME_ALIASES` пополняется руками и только подтверждёнными написаниями: `BetBoom Team` =
+`BoomBoys`/`BB Team`/`BetBoom` (SourceTV/GC против рендера Winline), `L1GA TEAM` = `L1GA`,
+`Level UP esports` = `Level UP`.
+
 ---
 
 ## `base/keys.py` — структура (БЕЗ значений)
