@@ -1983,11 +1983,9 @@ STAR_THRESHOLDS_PATH = Path(
 STAR_SIGNAL_METRICS = frozenset({
     'counterpick_1vs1',
     'counterpick_1vs2',
-    'dota2protracker_cp1vs1',
     'solo',
-    # DLTV draft-vote (radiant_pct - 50); порог 30 задан только для all_output
-    # на WR60/WR65, поэтому в Star hits метрика всегда печатается как WR65.
-    'dltv_rating',
+    'synergy_duo',
+    'synergy_trio',
 })
 STAR_DISABLED_METRICS = frozenset()
 STAR_THRESHOLD_SECTIONS = (
@@ -1995,6 +1993,13 @@ STAR_THRESHOLD_SECTIONS = (
     'mid_output',
     'all_output',
 )
+STAR_FAMILY_INDEX_LEVELS = (60, 65, 70, 75, 80, 85, 90)
+STAR_FAMILY_MIN_BLOCK_INDEX_BY_SECTION = {
+    'early_output': 75,
+    'early_end_output': 75,
+    'mid_output': 75,
+    'all_output': 60,
+}
 
 def _is_star_metric_enabled(metric: Any, section: str = '') -> bool:
     metric_name = str(metric).strip()
@@ -2062,6 +2067,120 @@ def _load_star_thresholds() -> dict:
 
 
 STAR_THRESHOLDS_BY_WR = _load_star_thresholds()
+
+
+def _star_family_threshold_section(section: str) -> str:
+    return 'early_output' if str(section) == 'early_end_output' else str(section)
+
+
+def _star_family_metric_level(metric: str, raw_value: Any, section: str) -> Optional[int]:
+    """Highest non-plateau STAR index reached by one normal-block metric."""
+    value = None
+    try:
+        value = float(str(raw_value).strip().rstrip('*'))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value == 0:
+        return None
+    section_key = _star_family_threshold_section(section)
+    best = None
+    max_threshold = 0.0
+    for level in STAR_FAMILY_INDEX_LEVELS:
+        payload = STAR_THRESHOLDS_BY_WR.get(level, {})
+        rows = payload.get(section_key, []) if isinstance(payload, dict) else []
+        threshold = None
+        for row_metric, raw_threshold in rows:
+            if str(row_metric) != str(metric):
+                continue
+            try:
+                threshold = float(raw_threshold)
+            except (TypeError, ValueError):
+                threshold = None
+            break
+        if threshold is None or threshold <= max_threshold:
+            continue
+        max_threshold = threshold
+        if abs(value) >= threshold:
+            best = int(level)
+    return best
+
+
+def select_star_family_block(
+    data: Any,
+    section: str,
+    target_wr: int = 60,
+) -> dict:
+    """Select exactly one hit from each independent normal STAR family.
+
+    Families are ``solo``, counterpick (1vs2 -> 1vs1 fallback), and synergy
+    (trio -> duo fallback).  A primary suppresses its fallback as soon as it
+    has any STAR index.  The block is valid only when all three selected hits
+    have one sign and their averaged index reaches both the runtime target and
+    the empirically safe phase floor.
+    """
+    block = data if isinstance(data, dict) else {}
+
+    def _candidate(metric: str):
+        level = _star_family_metric_level(metric, block.get(metric), section)
+        if level is None:
+            return None
+        try:
+            value = float(str(block.get(metric)).strip().rstrip('*'))
+        except (TypeError, ValueError):
+            return None
+        return {'metric': metric, 'value': value, 'wr_level': int(level)}
+
+    solo = _candidate('solo')
+    cp = _candidate('counterpick_1vs2') or _candidate('counterpick_1vs1')
+    synergy = _candidate('synergy_trio') or _candidate('synergy_duo')
+    selected = [hit for hit in (solo, cp, synergy) if hit is not None]
+    if len(selected) != 3:
+        return {
+            'valid': False,
+            'status': 'missing_family_hit',
+            'selected_hits': selected,
+            'hit_metrics': [hit['metric'] for hit in selected],
+            'hit_count': len(selected),
+            'sign': None,
+            'block_index': None,
+        }
+    signs = {1 if hit['value'] > 0 else -1 for hit in selected}
+    if len(signs) != 1:
+        return {
+            'valid': False,
+            'status': 'family_sign_conflict',
+            'selected_hits': selected,
+            'hit_metrics': [hit['metric'] for hit in selected],
+            'hit_count': 3,
+            'sign': 0,
+            'block_index': None,
+        }
+    average = sum(hit['wr_level'] for hit in selected) / 3.0
+    block_index = min(
+        STAR_FAMILY_INDEX_LEVELS,
+        key=lambda level: (abs(level - average), -level),
+    )
+    try:
+        requested_index = int(target_wr)
+    except (TypeError, ValueError):
+        requested_index = 60
+    min_index = max(
+        requested_index,
+        int(STAR_FAMILY_MIN_BLOCK_INDEX_BY_SECTION.get(str(section), 60)),
+    )
+    valid = int(block_index) >= min_index
+    return {
+        'valid': valid,
+        'status': 'ok' if valid else 'block_index_below_floor',
+        'selected_hits': selected,
+        'hit_metrics': [hit['metric'] for hit in selected],
+        'hit_count': 3,
+        'sign': next(iter(signs)),
+        'block_index': int(block_index),
+        'min_block_index': int(min_index),
+    }
+
+
 STAR_LATE_SIGNAL_GATE_ENABLED = os.getenv('STAR_LATE_SIGNAL_GATE_ENABLED', '1') == '1'
 STAR_LATE_SIGNAL_GATE_SOLO_MIN = int(os.getenv('STAR_LATE_SIGNAL_GATE_SOLO_MIN', '6'))
 STAR_LATE_SIGNAL_GATE_TRIO_MIN = int(os.getenv('STAR_LATE_SIGNAL_GATE_TRIO_MIN', '7'))
@@ -2089,31 +2208,6 @@ def format_output_dict(
             return float(raw)
         return None
 
-    def _metric_sign(raw):
-        value = _coerce_metric_value(raw)
-        if value is None or value == 0:
-            return None
-        return 1 if value > 0 else -1
-
-    def _matches_sign_and_abs(data, key, sign, min_abs):
-        value = _coerce_metric_value(data.get(key))
-        if value is None:
-            return False
-        if sign > 0 and value <= 0:
-            return False
-        if sign < 0 and value >= 0:
-            return False
-        return abs(value) >= float(min_abs)
-
-    def mark_if_exceeds(data, key, threshold):
-        val = _coerce_metric_value(data.get(key))
-        if val is None:
-            return False, None
-        if abs(val) >= threshold:
-            data[key] = f"{val}*"
-            sign = 1 if val > 0 else (-1 if val < 0 else None)
-            return True, sign
-        return False, None
     # Пороговые наборы (подбирались по pro_new_holdout_200kfiles.txt).
     # Можно передать target_wr явно (например 60/65), иначе берётся STAR_THRESHOLD_WR.
     if target_wr is None:
@@ -2135,52 +2229,24 @@ def format_output_dict(
         late_signal_gate_enabled = STAR_LATE_SIGNAL_GATE_ENABLED
 
     any_valid_block = False
-    for section, metrics in thresholds.items():
+    for section, _metrics in thresholds.items():
         data = output_dict.get(section, {})
-        block_star_count = 0
-        block_sign = None
-        block_conflict = False
-        starred_original_values = {}
-        for key, threshold in metrics:
-            if not _is_star_metric_enabled(key, section=section):
-                continue
-            original_value = data.get(key)
-            hit, sign = mark_if_exceeds(data, key, threshold)
-            if not hit:
-                continue
-            starred_original_values[key] = original_value
-            block_star_count += 1
-            if sign is None:
-                continue
-            if block_sign is None:
-                block_sign = sign
-            elif block_sign != sign:
-                block_conflict = True
-        if block_star_count > 0 and block_conflict:
-            for key, original_value in starred_original_values.items():
-                data[key] = original_value
-        if (
-            block_star_count > 0
-            and not block_conflict
-            and section == 'mid_output'
-            and late_signal_gate_enabled
-            and block_sign is not None
-        ):
-            has_late_anchor = (
-                _coerce_metric_value(data.get('solo')) is not None
-            )
-            if has_late_anchor:
-                late_gate_ok = (
-                    _matches_sign_and_abs(data, 'solo', block_sign, STAR_LATE_SIGNAL_GATE_SOLO_MIN)
-                )
-                if not late_gate_ok:
-                    for key, original_value in starred_original_values.items():
-                        data[key] = original_value
-                    continue
+        if not isinstance(data, dict):
+            continue
+        for key, raw_value in list(data.items()):
+            if isinstance(raw_value, str) and raw_value.strip().endswith('*'):
+                clean_value = _coerce_metric_value(raw_value)
+                if clean_value is not None:
+                    data[key] = clean_value
+        family = select_star_family_block(data, section, target_wr=target_wr)
         if section == 'mid_output':
             data.pop('trio_pos1_strong', None)
-        if block_star_count > 0 and not block_conflict:
-            any_valid_block = True
+        if not family.get('valid'):
+            continue
+        for hit in family.get('selected_hits') or []:
+            key = str(hit['metric'])
+            data[key] = f"{float(hit['value'])}*"
+        any_valid_block = True
     return any_valid_block
 
 

@@ -184,7 +184,7 @@ from test_same_sign_lane_adv_dispatch import _patch_early_late_wr  # noqa: E402
 
 
 def _all_only_half_stake_case() -> BranchScenario:
-    # All-only блок всегда даёт x0.5 (см. _stake_multiplier_for_signal).
+    # Calibrated All WR=60.2% даёт x0.5 (см. _stake_multiplier_for_signal).
     return BranchScenario(
         name="all_only_half_stake",
         game_time_seconds=5 * 60,

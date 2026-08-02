@@ -44,10 +44,10 @@ assert len(PHASE_METRIC_NAMES) == 18
 # Pre-integration protected SHA-256 (captured before this file was created).
 _PROTECTED_SHA256 = {
     "data/star_thresholds_by_wr.json": (
-        "7b8a76899e89a5743809f3adbe999b562350417a01da8c02c01d93f9e2cb4d94"
+        "4a9312e7fa90df57f179f1d54a823f18902d628fb719b6cb912db701ec0cfe28"
     ),
     "data/star_confidence_calibration.json": (
-        "778637e6081f9eb1be80a09a550a6d9e7114cbd2d15d8098e952a0c5dd344413"
+        "299c3b324c1083f7020ccbd1a50c070b7da07b6b211de6d89a713192ddd8273e"
     ),
 }
 
@@ -55,11 +55,12 @@ PRODUCTION_STAR_METRICS = frozenset(
     {
         "counterpick_1vs1",
         "counterpick_1vs2",
-        "dota2protracker_cp1vs1",
         "solo",
+        "synergy_duo",
+        "synergy_trio",
     }
 )
-DISPLAY_ONLY_METRICS = frozenset({"synergy_duo", "synergy_trio", "pos1_vs_pos1"})
+DISPLAY_ONLY_METRICS = frozenset({"pos1_vs_pos1"})
 
 
 def _six_metric_output(value: float = 5.0) -> dict:
@@ -480,7 +481,8 @@ def test_live_all_output_alias_from_post_lane_no_games() -> None:
         assert all_out.get(key) == post_lane[key]
     for key in METRICS:
         assert f"{key}_games" not in all_out
-    assert all_out.get("dota2protracker_cp1vs1") == 2.0
+    assert "dota2protracker_cp1vs1" not in all_out
+    assert cs._build_mix_star_output(protracker)["dota2protracker_cp1vs1"] == 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -493,12 +495,18 @@ def test_star_membership_no_drift_and_protected_hashes() -> None:
     assert functions.STAR_SIGNAL_METRICS == PRODUCTION_STAR_METRICS
     assert DISPLAY_ONLY_METRICS.isdisjoint(functions.STAR_SIGNAL_METRICS)
 
-    # signal_wrappers.py (STAR_SIGNAL_METRICS excludes d2pt; still no duo/trio/pos1)
+    # signal_wrappers.py mirrors the normal three-family STAR metrics.
     import signal_wrappers as sw
 
     for banned in DISPLAY_ONLY_METRICS:
         assert banned not in sw.STAR_SIGNAL_METRICS
-    for required in ("counterpick_1vs1", "counterpick_1vs2", "solo"):
+    for required in (
+        "counterpick_1vs1",
+        "counterpick_1vs2",
+        "solo",
+        "synergy_duo",
+        "synergy_trio",
+    ):
         assert required in sw.STAR_SIGNAL_METRICS
 
     # cyberscore_try.py

@@ -75,6 +75,8 @@ from functions import (
     format_output_dict,
     STAR_THRESHOLDS_BY_WR,
     STAR_DISABLED_METRICS,
+    select_star_family_block,
+    _star_family_metric_level,
     TelegramSendError,
     CP1VS2_TOPUP_FALLBACK,
     CORE_POSITIONS,
@@ -4017,7 +4019,7 @@ def _load_star_confidence_calibration() -> Dict[str, Dict[int, float]]:
     if not isinstance(phases, dict):
         return {}
     out: Dict[str, Dict[int, float]] = {}
-    for phase in ("early", "late"):
+    for phase in ("early", "late", "all"):
         phase_map = phases.get(phase)
         if not isinstance(phase_map, dict):
             continue
@@ -4039,7 +4041,7 @@ if not (DATA_DIR / "star_thresholds_by_wr.json").exists():
     _report_missing_runtime_file("star_thresholds_by_wr.json", DATA_DIR / "star_thresholds_by_wr.json")
 if not STAR_CONFIDENCE_CALIBRATION_PATH.exists():
     _report_missing_runtime_file("star_confidence_calibration.json", STAR_CONFIDENCE_CALIBRATION_PATH)
-STAR_ODDS_USE_CALIBRATION = _safe_bool_env("STAR_ODDS_USE_CALIBRATION", False)
+STAR_ODDS_USE_CALIBRATION = _safe_bool_env("STAR_ODDS_USE_CALIBRATION", True)
 LIVE_LANE_ANALYSIS_ENABLED = _safe_bool_env("LIVE_LANE_ANALYSIS_ENABLED", True)
 
 # Fallback ladder for dynamic WR display when only base WR=60 thresholds are available.
@@ -4571,8 +4573,12 @@ def _compose_star_metric_blocks_for_message(
     early_block: str,
     late_block: str,
     all_block: str,
+    mix_block: str = "",
 ) -> str:
-    return f"{str(early_block or '')}{str(late_block or '')}{str(all_block or '')}"
+    return (
+        f"{str(early_block or '')}{str(late_block or '')}"
+        f"{str(all_block or '')}{str(mix_block or '')}"
+    )
 
 
 _STAR_HITS_SUMMARY_WR_LEVELS: Tuple[int, ...] = (60, 65, 70, 75, 80, 85, 90)
@@ -4659,46 +4665,17 @@ def _max_star_wr_level_for_metric(
         return None
     if abs_value <= 0:
         return None
-    fixed_level = _fixed_star_wr_level_for_metric(metric_name, abs_value, section)
-    if fixed_level is not None:
-        return fixed_level
-    best_level: Optional[int] = None
-    for wr_level in _STAR_HITS_SUMMARY_WR_LEVELS:
-        thresholds = _star_thresholds_for_wr(wr_level, section)
-        threshold = thresholds.get(metric_name)
-        if threshold is None:
-            continue
-        if abs_value >= float(threshold):
-            if best_level is None or wr_level > best_level:
-                best_level = int(wr_level)
-    return best_level
+    return _star_family_metric_level(metric_name, abs_value, section)
 
 
 def _collect_star_hits_for_block(
     raw_block: Optional[dict],
     section: str,
 ) -> List[Dict[str, Any]]:
-    block = raw_block if isinstance(raw_block, dict) else {}
-    hits: List[Dict[str, Any]] = []
-    for metric in _STAR_METRIC_ORDER:
-        value = _coerce_metric_value(block.get(metric))
-        if value is None or value == 0:
-            continue
-        level = _max_star_wr_level_for_metric(
-            metric=metric,
-            value=float(value),
-            section=section,
-        )
-        if level is None:
-            continue
-        hits.append(
-            {
-                "metric": metric,
-                "value": float(value),
-                "wr_level": int(level),
-            }
-        )
-    return hits
+    family = select_star_family_block(raw_block, section, target_wr=60)
+    if not family.get("valid"):
+        return []
+    return [dict(hit) for hit in family.get("selected_hits") or []]
 
 
 def _has_opposite_early_wr60_hit(
@@ -5100,9 +5077,9 @@ _STAR_METRIC_ORDER = (
 _STAR_SIGNAL_METRICS = frozenset({
     "counterpick_1vs1",
     "counterpick_1vs2",
-    "dota2protracker_cp1vs1",
     "solo",
-    "dltv_rating",
+    "synergy_duo",
+    "synergy_trio",
 })
 _STAR_SUPPORT_METRIC_ORDER = (
     "counterpick_1vs1",
@@ -5465,119 +5442,37 @@ def _build_lane_block(
 
 
 def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: str) -> Dict[str, Any]:
-    block = raw_block if isinstance(raw_block, dict) else {}
-    thresholds = _star_thresholds_for_wr(target_wr, section)
-    sign_consistency = _star_block_sign_consistency(block, section)
-    consistency_fields = _star_block_consistency_fields(sign_consistency)
-    hit_metrics: List[str] = []
-    hit_signs: set[int] = set()
-
-    for metric, threshold in thresholds.items():
-        value = _coerce_metric_value(block.get(metric))
-        if value is None or abs(value) < threshold:
-            continue
-        hit_metrics.append(metric)
-        if value > 0:
-            hit_signs.add(1)
-        elif value < 0:
-            hit_signs.add(-1)
-
-    if not hit_metrics:
-        return {
-            "valid": False,
-            "status": "no_hits",
-            "sign": None,
-            "hit_metrics": [],
-            "hit_count": 0,
-            "conflict_metric": None,
-            **consistency_fields,
-        }
-    if len(hit_signs) > 1:
-        return {
-            "valid": False,
-            "status": "conflict_hits",
-            "sign": 0,
-            "hit_metrics": hit_metrics,
-            "hit_count": len(hit_metrics),
-            "conflict_metric": None,
-            **consistency_fields,
-        }
-
-    block_sign = next(iter(hit_signs)) if hit_signs else None
-    if not bool(sign_consistency.get("valid")):
-        consistency_status = str(sign_consistency.get("status") or "")
-        required_metric_names = set(sign_consistency.get("required_metrics") or [])
-        required_hit_count = len([m for m in hit_metrics if m in required_metric_names])
-        sign_consistency_override = bool(
-            block_sign in (-1, 1)
-            and (
-                (
-                    consistency_status == "conflict_required_signs"
-                    and len(hit_metrics) >= _STAR_BLOCK_SIGN_CONSISTENCY_OVERRIDE_MIN_HITS
-                )
-                # ≥2 хита среди required-метрик (cp1vs1/cp1vs2/solo) одного знака
-                # допускают 0 в оставшейся метрике; конфликт знаков среди
-                # ненулевых required при этом по-прежнему блокирует.
-                or (
-                    consistency_status == "zero_required_metrics"
-                    and required_hit_count >= _STAR_BLOCK_SIGN_CONSISTENCY_OVERRIDE_MIN_HITS
-                    and not (sign_consistency.get("conflicting_metrics") or [])
-                )
-            )
-        )
-        if sign_consistency_override:
-            return {
-                "valid": True,
-                "status": "ok",
-                "sign": block_sign,
-                "hit_metrics": hit_metrics,
-                "hit_count": len(hit_metrics),
-                "min_hit_count_required": 1,
-                "sign_consistency_override": True,
-                "sign_consistency_override_min_hit_count": _STAR_BLOCK_SIGN_CONSISTENCY_OVERRIDE_MIN_HITS,
-                "conflict_metric": None,
-                "support_status": sign_consistency.get("status"),
-                "support_nonzero_metrics": list(sign_consistency.get("nonzero_metrics") or []),
-                "support_conflicting_metrics": list(sign_consistency.get("conflicting_metrics") or []),
-                "support_zero_metrics": list(sign_consistency.get("zero_metrics") or []),
-                "support_missing_metrics": list(sign_consistency.get("missing_metrics") or []),
-                **consistency_fields,
-            }
-        consistency_sign = sign_consistency.get("sign")
-        return {
-            "valid": False,
-            "status": "required_sign_consistency_invalid",
-            "sign": consistency_sign if consistency_sign in (-1, 1) else block_sign,
-            "hit_metrics": hit_metrics,
-            "hit_count": len(hit_metrics),
-            "min_hit_count_required": 1,
-            "sign_consistency_override": False,
-            "sign_consistency_override_min_hit_count": _STAR_BLOCK_SIGN_CONSISTENCY_OVERRIDE_MIN_HITS,
-            "conflict_metric": None,
-            "support_status": sign_consistency.get("status"),
-            "support_nonzero_metrics": list(sign_consistency.get("nonzero_metrics") or []),
-            "support_conflicting_metrics": list(sign_consistency.get("conflicting_metrics") or []),
-            "support_zero_metrics": list(sign_consistency.get("zero_metrics") or []),
-            "support_missing_metrics": list(sign_consistency.get("missing_metrics") or []),
-            **consistency_fields,
-        }
-
+    family = select_star_family_block(raw_block, section, target_wr=target_wr)
+    selected_hits = [dict(hit) for hit in family.get("selected_hits") or []]
+    selected_metrics = [str(hit.get("metric")) for hit in selected_hits]
     return {
-        "valid": block_sign in (-1, 1),
-        "status": "ok" if block_sign in (-1, 1) else "no_sign",
-        "sign": block_sign,
-        "hit_metrics": hit_metrics,
-        "hit_count": len(hit_metrics),
-        "min_hit_count_required": 1,
-        "sign_consistency_override": False,
-        "sign_consistency_override_min_hit_count": _STAR_BLOCK_SIGN_CONSISTENCY_OVERRIDE_MIN_HITS,
+        **family,
+        "selected_hits": selected_hits,
+        "hit_metrics": selected_metrics,
+        "hit_count": len(selected_hits),
+        "min_hit_count_required": 3,
         "conflict_metric": None,
-        "support_status": None,
-        "support_nonzero_metrics": [],
-        "support_conflicting_metrics": [],
+        "sign_consistency_override": False,
+        "sign_consistency_override_min_hit_count": 3,
+        "support_status": family.get("status"),
+        "support_nonzero_metrics": selected_metrics,
+        "support_conflicting_metrics": (
+            selected_metrics if family.get("status") == "family_sign_conflict" else []
+        ),
         "support_zero_metrics": [],
         "support_missing_metrics": [],
-        **consistency_fields,
+        "sign_consistency_status": family.get("status"),
+        "sign_consistency_required_metrics": ["solo", "counterpick", "synergy"],
+        "sign_consistency_nonzero_metrics": selected_metrics,
+        "sign_consistency_missing_metrics": [],
+        "sign_consistency_zero_metrics": [],
+        "sign_consistency_conflicting_metrics": (
+            selected_metrics if family.get("status") == "family_sign_conflict" else []
+        ),
+        "sign_consistency_metric_signs": {
+            str(hit.get("metric")): (1 if float(hit.get("value")) > 0 else -1)
+            for hit in selected_hits
+        },
     }
 
 
@@ -6815,40 +6710,19 @@ def _decorate_star_block_for_display(
     section: str,
     target_wr: int,
 ) -> Dict[str, Any]:
-    """Render block with ``*`` markers on metric cells.
-
-    The marker is purely a *visual* hint — it tells the reader which metric
-    cells crossed the WR60 (or higher) absolute-value threshold for this
-    section. It is intentionally decoupled from the block-level STAR
-    diagnostics (``_star_block_diagnostics``), which can reject a block for
-    reasons like sign-consistency or required-zero-metric checks even when
-    one or more individual cells did pass the threshold. Without this
-    decoupling the ``⭐ Star hits (WR60+):`` summary line and the per-section
-    grid would disagree (e.g. summary shows ``All: Counterpick_1vs2 +6
-    (WR75)`` but the grid prints ``Counterpick_1vs2: 6`` without a star).
-    """
+    """Mark only the three selected, same-sign family hits of a valid block."""
     src = raw_block if isinstance(raw_block, dict) else {}
     out = dict(src)
-    for metric in _STAR_METRIC_ORDER:
-        value = _coerce_metric_value(src.get(metric))
-        if value is None or value == 0:
-            # Re-format any leftover ``*``-suffixed string to plain numeric form.
-            raw = out.get(metric)
-            if isinstance(raw, str) and raw.strip().endswith("*"):
-                if value is not None:
-                    out[metric] = _format_metric_value(value)
-            continue
-        wr_level = _max_star_wr_level_for_metric(
-            metric=metric,
-            value=float(value),
-            section=section,
-        )
-        if wr_level is None:
-            # No WR level passes for this metric → leave the cell as plain number.
-            raw = out.get(metric)
-            if isinstance(raw, str) and raw.strip().endswith("*"):
-                out[metric] = _format_metric_value(value)
-            continue
+    for metric, raw in list(out.items()):
+        value = _coerce_metric_value(raw)
+        if isinstance(raw, str) and raw.strip().endswith("*") and value is not None:
+            out[metric] = _format_metric_value(value)
+    family = select_star_family_block(src, section, target_wr=target_wr)
+    if not family.get("valid"):
+        return out
+    for hit in family.get("selected_hits") or []:
+        metric = str(hit.get("metric"))
+        value = float(hit.get("value"))
         out[metric] = f"{_format_metric_value(value)}*"
     return out
 
@@ -8199,6 +8073,7 @@ def _stake_multiplier_for_signal(
     force_half_due_to_early_no_valid_late: bool = False,
     selected_all_sign: Optional[int] = None,
     has_selected_all_star: bool = False,
+    all_wr_pct: Optional[float] = None,
     all_star_hit_count: Optional[int] = None,
     early_star_hit_count: Optional[int] = None,
     late_star_hit_metrics: Optional[List[str]] = None,
@@ -8225,35 +8100,6 @@ def _stake_multiplier_for_signal(
     if force_half_due_to_early_no_valid_late:
         return 0.5
 
-    # Count total valid blocks and total hit metrics across all valid blocks
-    valid_block_count = sum([
-        bool(has_selected_early_star),
-        bool(has_selected_late_star),
-        bool(has_selected_all_star),
-    ])
-
-    # Rule: if only 1 valid block total with only 1 star-hit metric → 0.5
-    if valid_block_count == 1:
-        try:
-            early_hits = int(early_star_hit_count or 0) if has_selected_early_star else 0
-        except (TypeError, ValueError):
-            early_hits = 0
-        try:
-            late_hits = int(late_star_hit_count or 0) if has_selected_late_star else 0
-        except (TypeError, ValueError):
-            late_hits = 0
-        try:
-            all_hits = int(all_star_hit_count or 0) if has_selected_all_star else 0
-        except (TypeError, ValueError):
-            all_hits = 0
-        total_hits = early_hits + late_hits + all_hits
-        if total_hits <= 1:
-            return 0.5
-
-    # All-only (no early, no late) → always 0.5 regardless of hit count
-    if not has_selected_early_star and not has_selected_late_star:
-        return 0.5
-
     # Rule: if late and all blocks point at opposite sides, the signal is
     # contradictory enough to cap the stake at 0.5.
     if (
@@ -8265,51 +8111,29 @@ def _stake_multiplier_for_signal(
     ):
         return 0.5
 
+    # Family blocks always have exactly three independent hits.  Stake is now
+    # driven by the empirical WR of the block that actually chose the side,
+    # not by the old raw STAR index or by the obsolete cp1v1+cp1v2+solo trio.
+    raw_wr = (
+        late_wr_pct
+        if has_selected_late_star and late_side == target_side
+        else early_wr_pct
+        if has_selected_early_star and early_side == target_side
+        else all_wr_pct
+        if has_selected_all_star and all_side == target_side
+        else None
+    )
     try:
-        early_wr_value = float(early_wr_pct) if early_wr_pct is not None else None
+        signal_wr = float(raw_wr) if raw_wr is not None else None
     except (TypeError, ValueError):
-        early_wr_value = None
-    try:
-        late_wr_value = float(late_wr_pct) if late_wr_pct is not None else None
-    except (TypeError, ValueError):
-        late_wr_value = None
-
-    try:
-        late_star_hit_count_value = int(late_star_hit_count) if late_star_hit_count is not None else None
-    except (TypeError, ValueError):
-        late_star_hit_count_value = None
-    if not has_selected_late_star:
-        late_star_hit_count_value = 0
-
-    # Any multiplier above 0.5 requires at least 2 late star-hits. Fewer than 2
-    # hits — including an unknown (None) hit count — caps the stake at 0.5.
-    if late_star_hit_count_value is None or late_star_hit_count_value < 2:
+        signal_wr = None
+    if signal_wr is None:
         return 0.5
-
-    # x1/x2/x3 require star hits on ALL 3 core metrics (cp1vs1, cp1vs2, solo).
-    # If any of the 3 is missing from hit_metrics → cap at 0.5.
-    if late_star_hit_metrics is not None:
-        _core_metrics = set(_STAR_LATE_CORE_METRIC_ORDER)
-        _hit_set = set(late_star_hit_metrics)
-        if not _core_metrics.issubset(_hit_set):
-            return 0.5
-
-    if not has_selected_late_star or late_wr_value is None:
-        return 1
-
-    # A WR60-level late signal is the lowest-confidence late tier: always cap at
-    # 0.5 regardless of how many late star-hits it has.
-    if _late_star_pub_table_wr_level(late_wr_value) == 60:
-        return 0.5
-
-    # ELO gate removed — multiplier depends only on late hit count and WR.
-    # (late_star_hit_count_value >= 2 is guaranteed here.)
-    if late_wr_value >= 85.0:
-        return 3
-    if late_wr_value >= 75.0:
+    if signal_wr >= 70.0:
         return 2
-
-    return 1
+    if signal_wr >= 62.5:
+        return 1
+    return 0.5
 
 
 def _build_stake_multiplier_context(
@@ -8715,8 +8539,114 @@ def _build_all_star_output(
         ):
             if key in post_lane_output:
                 all_output[key] = post_lane_output.get(key)
-    all_output.update(_build_dota2protracker_star_output(protracker_payload))
     return all_output
+
+
+def _build_mix_star_output(
+    protracker_payload: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Independent ProTracker/DLTV block; never merge these fields into All."""
+    return dict(_build_dota2protracker_star_output(protracker_payload))
+
+
+_MIX_METRIC_LEVELS = {
+    "dota2protracker_cp1vs1": ((3.0, 60), (5.0, 65), (8.0, 70)),
+    "dota2protracker_duo": (
+        (5.0, 65),
+        (10.0, 70),
+        (13.0, 75),
+        (16.0, 80),
+        (19.0, 85),
+        (23.0, 90),
+    ),
+    # Solo magnitude did not improve consensus WR on 527k; its sign is useful.
+    "dota2protracker_solo": ((1.0, 65),),
+    "dota2protracker_solo_overall": ((1.0, 65),),
+}
+_MIX_EMPIRICAL_WR_BY_INDEX = {65: 63.65, 70: 68.77, 75: 75.04}
+
+
+def _mix_metric_level(metric: str, value: Any) -> Optional[int]:
+    numeric = _coerce_metric_value(value)
+    if numeric is None or numeric == 0:
+        return None
+    best = None
+    for threshold, level in _MIX_METRIC_LEVELS.get(str(metric), ()):
+        if abs(numeric) >= threshold:
+            best = int(level)
+    return best
+
+
+def _mix_block_diagnostics(raw_block: Optional[dict]) -> Dict[str, Any]:
+    block = raw_block if isinstance(raw_block, dict) else {}
+
+    def _hit(metric: str) -> Optional[Dict[str, Any]]:
+        value = _coerce_metric_value(block.get(metric))
+        level = _mix_metric_level(metric, value)
+        if value is None or level is None:
+            return None
+        return {"metric": metric, "value": float(value), "wr_level": int(level)}
+
+    cp = _hit("dota2protracker_cp1vs1")
+    duo = _hit("dota2protracker_duo")
+    solo = _hit("dota2protracker_solo") or _hit("dota2protracker_solo_overall")
+    selected = [hit for hit in (cp, duo, solo) if hit is not None]
+    if len(selected) != 3:
+        return {"valid": False, "status": "missing_family_hit", "selected_hits": selected}
+    signs = {1 if hit["value"] > 0 else -1 for hit in selected}
+    if len(signs) != 1:
+        return {"valid": False, "status": "family_sign_conflict", "selected_hits": selected}
+    sign = next(iter(signs))
+    dltv_value = _coerce_metric_value(block.get("dltv_rating"))
+    dltv_hit = bool(dltv_value is not None and abs(dltv_value) >= 30.0)
+    if dltv_hit and (1 if float(dltv_value) > 0 else -1) != sign:
+        return {
+            "valid": False,
+            "status": "dltv_star_conflict",
+            "selected_hits": selected,
+            "sign": sign,
+        }
+    average = sum(hit["wr_level"] for hit in selected) / 3.0
+    index = min(
+        (60, 65, 70, 75, 80, 85, 90),
+        key=lambda level: (abs(level - average), -level),
+    )
+    empirical_index = min(max(int(index), 65), 75)
+    return {
+        "valid": True,
+        "status": "ok",
+        "selected_hits": selected,
+        "sign": sign,
+        "block_index": int(index),
+        "empirical_wr_pct": _MIX_EMPIRICAL_WR_BY_INDEX[empirical_index],
+        "dltv_support": bool(dltv_hit),
+    }
+
+
+def _decorate_mix_block_for_display(raw_block: Optional[dict]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    source = raw_block if isinstance(raw_block, dict) else {}
+    output = dict(source)
+    diag = _mix_block_diagnostics(source)
+    if not diag.get("valid"):
+        return output, diag
+    for hit in diag.get("selected_hits") or []:
+        metric = str(hit["metric"])
+        output[metric] = f"{_format_metric_value(float(hit['value']))}*"
+    if diag.get("dltv_support"):
+        value = _coerce_metric_value(source.get("dltv_rating"))
+        if value is not None:
+            output["dltv_rating"] = f"{_format_metric_value(value)}*"
+    return output, diag
+
+
+def _mix_block_title(diag: Optional[Dict[str, Any]]) -> str:
+    payload = diag if isinstance(diag, dict) else {}
+    if not payload.get("valid"):
+        return "Mix (shadow):"
+    return (
+        f"Mix (shadow, index WR{int(payload['block_index'])}, "
+        f"empirical {float(payload['empirical_wr_pct']):.2f}%):"
+    )
 
 
 def _build_dota2protracker_debug_summary(
@@ -9152,13 +9082,16 @@ def _build_early_local_kills_message(
         section="mid_output",
         target_wr=star_target_wr,
     )
-    # all_output = post_lane_output + ProTracker star output — exactly as in the
-    # outcome-bet body, so both messages agree. Without a payload only the local
-    # (post_lane) part is built.
+    # All contains only local post-lane families. ProTracker is rendered in the
+    # independent Mix shadow block below.
     local_all_output = _build_all_star_output(
         s.get('post_lane_output', {}),
         protracker_payload if has_protracker else None,
     )
+    local_mix_output = _build_mix_star_output(
+        protracker_payload if has_protracker else None,
+    )
+    local_mix_output, local_mix_diag = _decorate_mix_block_for_display(local_mix_output)
     all_output_log = _decorate_star_block_for_display(
         raw_block=local_all_output,
         section="all_output",
@@ -9239,9 +9172,6 @@ def _build_early_local_kills_message(
         ('synergy_duo', 'Synergy_duo'),
         ('synergy_trio', 'Synergy_trio'),
     ]
-    # All block: Solo + ProTracker display metrics (1vs1 match WR, duo lane 1+1).
-    # The ProTracker rows are listed only when the payload is there — a missing
-    # payload used to print four bare ``None`` rows.
     all_metric_list = [
         ('counterpick_1vs1', 'Counterpick_1vs1'),
         ('pos1_vs_pos1', 'Pos1vsPos1'),
@@ -9250,16 +9180,13 @@ def _build_early_local_kills_message(
         ('synergy_duo', 'Synergy_duo'),
         ('synergy_trio', 'Synergy_trio'),
     ]
-    if has_protracker:
-        all_metric_list.extend(
-            [
-                ('dota2protracker_cp1vs1', 'Protracker_1vs1'),
-                ('dota2protracker_duo', 'Protracker_duo'),
-                ('dota2protracker_solo', 'Protracker_solo'),
-                ('dota2protracker_solo_overall', 'Protracker_solo_overall'),
-                ('dltv_rating', 'DLTV_rating'),
-            ]
-        )
+    mix_metric_list = [
+        ('dota2protracker_cp1vs1', 'Protracker_1vs1'),
+        ('dota2protracker_duo', 'Protracker_duo'),
+        ('dota2protracker_solo', 'Protracker_solo'),
+        ('dota2protracker_solo_overall', 'Protracker_solo_overall'),
+        ('dltv_rating', 'DLTV_rating'),
+    ]
 
     def _format_metrics(title: str, data: dict, metrics: list) -> str:
         lines = [title]
@@ -9276,6 +9203,11 @@ def _build_early_local_kills_message(
     )
     mid_block = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
     all_block = _format_metrics("All:", all_output_log, all_metric_list)
+    mix_block = (
+        _format_metrics(_mix_block_title(local_mix_diag), local_mix_output, mix_metric_list)
+        if has_protracker
+        else ""
+    )
 
     live_state_block = _format_live_message_state_block(
         game_time_seconds=game_time_seconds,
@@ -9292,7 +9224,7 @@ def _build_early_local_kills_message(
         f"{team_elo_block or ''}"
         f"{wr_block}"
         f"{star_hits_summary_block}"
-        f"{_compose_star_metric_blocks_for_message(early_block + early_end_block, mid_block, all_block)}"
+        f"{_compose_star_metric_blocks_for_message(early_block + early_end_block, mid_block, all_block, mix_block)}"
         f"{live_state_block}"
     )
 
@@ -9590,6 +9522,7 @@ def _stake_multiplier_from_context(
         ),
         selected_all_sign=stake_multiplier_context.get("selected_all_sign"),
         has_selected_all_star=bool(stake_multiplier_context.get("has_selected_all_star")),
+        all_wr_pct=stake_multiplier_context.get("all_wr_pct"),
         all_star_hit_count=stake_multiplier_context.get("all_star_hit_count"),
         early_star_hit_count=stake_multiplier_context.get("early_star_hit_count"),
         late_star_hit_metrics=stake_multiplier_context.get("late_star_hit_metrics"),
@@ -24903,7 +24836,7 @@ def _main_late_stake_already_sent_for_map(
 ) -> Optional[str]:
     """Return existing non-speculative ``СТАВКА НА …`` fingerprint for this map.
 
-    Main late (x1/x2/x3) and speculative comeback half (x0.5) share the team but
+    Main late (x1/x2) and speculative comeback half (x0.5) share the team but
     differ in the stake suffix of the dedup header. Exact-header dedup therefore
     does not cancel the comeback watcher after the main stake already fired.
     """
@@ -31891,10 +31824,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         star_base_early_output = dict(s.get('early_output', {}) or {})
         star_base_mid_output = dict(s.get('mid_output', {}) or {})
         star_base_all_output = _build_all_star_output(s.get('post_lane_output', {}), s)
-        # DLTV draft-vote как star-метрика All-блока: live_data уже на руках,
+        star_base_mix_output = _build_mix_star_output(s)
+        # DLTV draft-vote относится к отдельному Mix-блоку: live_data уже на руках,
         # поэтому резолв идёт без дополнительного HTTP-запроса.
         _dltv_star_value = _apply_dltv_rating_star_metric(
-            star_base_all_output,
+            star_base_mix_output,
             check_uniq_url,
             json_url=json_url,
             live_data=data,
@@ -31902,6 +31836,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         )
         if _dltv_star_value is not None:
             print(f"   📊 DLTV_rating star metric: {_dltv_star_value:+.1f} (radiant_pct-50)")
+        s['mix_output'] = dict(star_base_mix_output)
 
         # Подбор star-кандидата (отправка только если сигнал star).
         selected_star_wr = star_target_wr
@@ -32206,10 +32141,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 section="all_output",
                 target_wr=selected_star_wr,
             )
+            mix_output_log, mix_diag = _decorate_mix_block_for_display(
+                s.get('mix_output', {})
+            )
             early_output = early_output_log
             early_end_output = early_end_output_log
             mid_output = mid_output_log
             all_output = all_output_log
+            mix_output = mix_output_log
 
             pro_cp_early = s.get('pro_cp1vs1_early', 0)
             pro_duo_early = s.get('pro_duo_synergy_early', 0)
@@ -32253,6 +32192,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 ('solo', 'Solo'),
                 ('synergy_duo', 'Synergy_duo'),
                 ('synergy_trio', 'Synergy_trio'),
+            ]
+            mix_metric_list = [
                 ('dota2protracker_cp1vs1', 'Protracker_1vs1'),
                 ('dota2protracker_duo', 'Protracker_duo'),
                 ('dota2protracker_solo', 'Protracker_solo'),
@@ -32264,12 +32205,16 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 "Early Winner (20-28):", early_end_output, metric_list
             )
             all_block = _format_metrics("All:", all_output, all_metric_list)
+            mix_block = _format_metrics(_mix_block_title(mix_diag), mix_output, mix_metric_list)
             mid_block = _format_metrics("Late: (28-60 min):", mid_output, metric_list)
             early_block_log = _format_metrics("Early NW (20-28):", early_output_log, metric_list)
             early_end_block_log = _format_metrics(
                 "Early Winner (20-28):", early_end_output_log, metric_list
             )
             all_block_log = _format_metrics("All:", all_output_log, all_metric_list)
+            mix_block_log = _format_metrics(
+                _mix_block_title(mix_diag), mix_output_log, mix_metric_list
+            )
             mid_block_log = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
             lane_adv_dict_value = _lane_dict_adv_value(s.get('top'), s.get('mid'), s.get('bot'))
             lane_adv_dict_line = _build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot'))
@@ -32277,7 +32222,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             dota2protracker_lane_solo_value = _dota2protracker_lane_solo_value(s)
             dota2protracker_lane_adv_line = _build_dota2protracker_lane_adv_line(s)
             dota2protracker_block = _build_dota2protracker_block(
-                s, star_output=s.get("all_output") if isinstance(s, dict) else None
+                s, star_output=s.get("mix_output") if isinstance(s, dict) else None
             )
             # Surface lane advantage signals into the log unconditionally so
             # rejected/no-star matches still record them for postmortem.
@@ -32303,7 +32248,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             star_metrics_snapshot = _build_star_metrics_snapshot(
                 early_block_log=early_block_log + early_end_block_log,
                 mid_block_log=mid_block_log,
-                all_block_log=all_block_log,
+                all_block_log=all_block_log + mix_block_log,
                 raw_star_early_summary=raw_star_early_summary,
                 raw_star_late_summary=raw_star_late_summary,
                 raw_star_all_summary=raw_star_all_summary,
@@ -33692,6 +33637,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 force_half_due_to_early_no_valid_late=force_half_due_to_early_no_valid_late,
                 selected_all_sign=selected_all_sign,
                 has_selected_all_star=has_selected_all_star,
+                all_wr_pct=all_wr_pct,
                 all_star_hit_count=(
                     len(selected_all_diag.get("hit_metrics") or [])
                     if isinstance(selected_all_diag, dict) and has_selected_all_star
@@ -33748,7 +33694,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"{team_elo_block}"
                 f"{wr_block}"
                 f"{star_hits_summary_block}"
-                f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block)}"
+                f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block, mix_block)}"
                 f"{live_state_block}"
                 f"{odds_block}"
             )
@@ -33786,8 +33732,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
             current_game_time = float(game_time or 0.0)
             # Гейт допустимых комбинаций STAR-блоков: ставка на команду шлётся
-            # только при валидной конфигурации Early Winner / Late / All
-            # (WR >= 65 и >= 2 star-хита одного знака). Kills-ставки выше по
+            # только при валидной конфигурации Early Winner / Late / All.
+            # Каждый normal block уже содержит ровно 3 family-hit одного знака.
+            # Kills-ставки выше по
             # коду не затрагиваются — они живут по своим правилам.
             star_combination_gate = _evaluate_star_block_combination_gate(
                 target_sign=dispatch_message_sign,

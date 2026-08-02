@@ -38,6 +38,8 @@ STAR_SIGNAL_METRICS = frozenset({
     "counterpick_1vs1",
     "counterpick_1vs2",
     "solo",
+    "synergy_duo",
+    "synergy_trio",
 })
 CORE_POSITIONS = (1, 2, 3)
 ROLE_KEYS = ("hard_carry", "has_initiator", "save_count", "has_control")

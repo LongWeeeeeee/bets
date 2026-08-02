@@ -262,13 +262,17 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 > **Option C — post_lane `solo` (2026-06):** `post_lane_output['solo']` теперь ЭМИТИТСЯ (раньше был выключен `name != 'post_lane_output'`). Сам post_lane-словарь: cp/synergy/trio на широком окне, а **solo-записи (`{hero}pos{n}`) собираются ТОЛЬКО на последнем version-патче** (`analise_database._add_combinations_to_dict(write_solo=...)`, `LATEST_PATCH_START_TS` из `keys.DOTA_VERSION_PATCH_EVENTS`, сейчас 7.41d=1780531200). Solo уже в `STAR_SIGNAL_METRICS` и в sign-consistency `all_output` → автоматически участвует как сигнал в All-блоке; добавлен в display-списки. Порог `SOLO_MIN_MATCHES=50` (покрытие на 7.41d ≈95%).
 
 **Константы STAR (источник истины для решений):**
-- `STAR_SIGNAL_METRICS = {'counterpick_1vs1', 'counterpick_1vs2', 'dota2protracker_cp1vs1', 'solo'}` (frozenset, строка 1880).
+- `STAR_SIGNAL_METRICS = {'counterpick_1vs1', 'counterpick_1vs2', 'solo', 'synergy_duo', 'synergy_trio'}`. ProTracker/DLTV вынесены из normal All decision-space.
 - `STAR_DISABLED_METRICS = frozenset()` (пусто).
 - `STAR_THRESHOLD_SECTIONS = ('early_output', 'mid_output', 'all_output')`.
 - `STAR_THRESHOLDS_BY_WR = _load_star_thresholds()` ← `data/star_thresholds_by_wr.json` (env `STAR_THRESHOLDS_PATH`).
 - `STAR_THRESHOLD_WR` env default `60`.
+- `STAR_ODDS_USE_CALIBRATION` default `1`: raw family-index переводится через `data/star_confidence_calibration.json` в empirical WR latest-20% 7.41d; это значение используется stake/odds-логикой.
+- `select_star_family_block(data, section, target_wr=60)` выбирает ровно `solo + (cp1vs2 → cp1vs1 fallback) + (trio → duo fallback)`, требует единый знак и усредняет три metric-index. Primary с любым star index полностью подавляет fallback. Минимальный block index: Early/Early Winner/Late = 75, All = 60.
+- Для All добавлена solo-лестница WR60..95: `1,1,2,2,3,3,4,5`, проверенная на chronological latest-20% 7.41d.
+- `_build_mix_star_output(protracker_payload)` строит отдельный `Mix (shadow)` для ProTracker/DLTV; `_build_all_star_output(...)` копирует только post-lane normal metrics. Mix требует `Protracker_1vs1 abs>=3 + Protracker_duo abs>=5 + (Protracker_solo abs>=1 → solo_overall fallback)` одного знака; DLTV `abs>=30` противоположного знака veto. Mix-index 65/70/75 соответствует empirical WR 63.65/68.77/75.04% на 527k, но пока display/shadow-only: public 7.41d не содержит ни одного DLTV vote, поэтому включать его как четвёртую dispatch-ветку до live holdout нельзя.
 
-> Drift fixed: `synergy_duo`/`synergy_trio` НЕ входят в `STAR_SIGNAL_METRICS` (могут показываться в блоках, но не решают STAR).
+> Family contract: duo/trio снова STAR-eligible, но не являются двумя независимыми hits; trio всегда приоритетнее duo.
 
 ---
 

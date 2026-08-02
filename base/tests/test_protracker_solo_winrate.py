@@ -384,7 +384,7 @@ PAYLOAD = {
 }
 
 
-def test_all_block_carries_both_solo_metrics() -> None:
+def test_mix_block_carries_both_solo_metrics_without_polluting_all() -> None:
     out = runtime._build_dota2protracker_star_output(PAYLOAD)
     assert out["dota2protracker_solo"] == -1.75
     assert out["dota2protracker_solo_overall"] == 0.85
@@ -393,8 +393,11 @@ def test_all_block_carries_both_solo_metrics() -> None:
         post_lane_output={"counterpick_1vs1": 1.0, "solo": 0.5},
         protracker_payload=PAYLOAD,
     )
-    assert all_out["dota2protracker_solo"] == -1.75
-    assert all_out["dota2protracker_solo_overall"] == 0.85
+    assert "dota2protracker_solo" not in all_out
+    assert "dota2protracker_solo_overall" not in all_out
+    mix_out = runtime._build_mix_star_output(PAYLOAD)
+    assert mix_out["dota2protracker_solo"] == -1.75
+    assert mix_out["dota2protracker_solo_overall"] == 0.85
     # Локальный dict-solo и pro-solo — разные метрики, не путать.
     assert all_out["solo"] == 0.5
 

@@ -87,7 +87,7 @@ def test_sourcetv_module_paths_anchor_relative_override_to_repo_root(
     importlib.reload(probe)
 
 
-def test_stake_multiplier_requires_complete_late_core_coverage() -> None:
+def test_stake_multiplier_uses_empirical_wr_bands() -> None:
     common = dict(
         team_elo_meta=None,
         target_side="radiant",
@@ -96,15 +96,12 @@ def test_stake_multiplier_requires_complete_late_core_coverage() -> None:
         has_selected_early_star=True,
         has_selected_late_star=True,
         early_wr_pct=70.0,
-        late_wr_pct=65.0,
+        late_wr_pct=61.0,
         game_time_seconds=30 * 60,
         radiant_lead=2000.0,
         late_star_hit_count=3,
         early_star_hit_count=2,
     )
-    assert runtime._stake_multiplier_for_signal(
-        late_star_hit_metrics=["counterpick_1vs1", "solo"], **common
-    ) == 0.5
-    assert runtime._stake_multiplier_for_signal(
-        late_star_hit_metrics=["counterpick_1vs1", "counterpick_1vs2", "solo"], **common
-    ) != 0.5
+    assert runtime._stake_multiplier_for_signal(**common) == 0.5
+    assert runtime._stake_multiplier_for_signal(**{**common, "late_wr_pct": 62.5}) == 1
+    assert runtime._stake_multiplier_for_signal(**{**common, "late_wr_pct": 70.0}) == 2
