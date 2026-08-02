@@ -9753,6 +9753,7 @@ def _refresh_stake_multiplier_message(
     protracker_1vs1_idx = -1
     protracker_solo_idx = -1
     protracker_solo_overall_idx = -1
+    dltv_rating_idx = -1
     for idx, line in enumerate(filtered_lines):
         text = str(line)
         if text.startswith("Protracker_1vs1:"):
@@ -9763,6 +9764,8 @@ def _refresh_stake_multiplier_message(
             protracker_solo_idx = idx
         if text.startswith("Protracker_solo_overall:"):
             protracker_solo_overall_idx = idx
+        if text.startswith("DLTV_rating:"):
+            dltv_rating_idx = idx
         if any(text.startswith(prefix) for prefix in live_state_insert_prefixes):
             insert_after_idx = idx
     # If any ProTracker line exists, always insert after the LAST of them
@@ -9779,6 +9782,11 @@ def _refresh_stake_multiplier_message(
             protracker_solo_idx,
             protracker_solo_overall_idx,
         )
+    # DLTV_rating is the LAST All-block metric, so it must stay inside the
+    # metrics section: never let the ProTracker anchor above push the
+    # Time/Networth/window_* block between ProTracker and DLTV_rating.
+    if dltv_rating_idx > insert_after_idx:
+        insert_after_idx = dltv_rating_idx
     if insert_after_idx >= 0:
         filtered_lines[insert_after_idx + 1 : insert_after_idx + 1] = live_state_lines
     else:
@@ -34588,6 +34596,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 _pp_duo = -1
                                 _pp_solo = -1
                                 _pp_solo_all = -1
+                                _pp_dltv = -1
                                 for _i, _ln in enumerate(kills_pp_body_lines):
                                     _txt = str(_ln)
                                     if _txt.startswith("Protracker_1vs1:"):
@@ -34598,10 +34607,16 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                         _pp_solo = _i
                                     if _txt.startswith("Protracker_solo_overall:"):
                                         _pp_solo_all = _i
+                                    if _txt.startswith("DLTV_rating:"):
+                                        _pp_dltv = _i
                                     if any(_txt.startswith(_pref) for _pref in _pp_prefixes):
                                         _pp_ins = _i
                                 if _pp_1vs1 >= 0 or _pp_duo >= 0 or _pp_solo >= 0 or _pp_solo_all >= 0:
                                     _pp_ins = max(_pp_1vs1, _pp_duo, _pp_solo, _pp_solo_all)
+                                # DLTV_rating closes the All block — keep the
+                                # live-state lines strictly below it.
+                                if _pp_dltv > _pp_ins:
+                                    _pp_ins = _pp_dltv
                                 if _pp_ins >= 0:
                                     kills_pp_body_lines[_pp_ins + 1 : _pp_ins + 1] = _pp_live
                                 else:
