@@ -440,6 +440,27 @@ esports/...` и обрубки в 1-2 символа поисковыми фор
 
 ---
 
+## Политика перезагрузок страницы Winline (поллер текущей карты)
+
+`runtime/winline_current_map_odds_poller.py` опрашивает ОДНУ общую страницу-список.
+Перезагрузка стоит десятки секунд, и всё это время в DOM нет ни карточек, ни рынков,
+поэтому «рынка нет» само по себе перезагрузку больше не заказывает. Пороги (все
+переопределяются через env):
+
+| Константа | env | Значение | Смысл |
+|---|---|---|---|
+| `RELOAD_AFTER_CONSECUTIVE_MISSES` | `WINLINE_CURRENT_MAP_RELOAD_AFTER_MISSES` | 20 | длина серии промахов до перезагрузки |
+| `RELOAD_MIN_SPACING_SECONDS` | `WINLINE_CURRENT_MAP_RELOAD_SPACING_S` | 300 | минимум между перезагрузками одного матча |
+| `RELOAD_SETTLE_SECONDS` | `WINLINE_CURRENT_MAP_RELOAD_SETTLE_S` | 30 | окно после перезагрузки, в котором промахи не копятся |
+| `RELOAD_STALE_DOM_SECONDS` | `WINLINE_CURRENT_MAP_RELOAD_STALE_DOM_S` | 120 | застывшая подпись DOM = мёртвая страница, перезагрузка нужна |
+| `WINLINE_SHARED_RELOAD_MIN_SPACING_S` (cyberscore) | `WINLINE_SHARED_RELOAD_SPACING_S` | 300 | дедуп перезагрузок общей страницы между матчами |
+
+Перезагрузка также сбрасывает счётчик промахов. Восстановление сломанной страницы
+не изменилось: невалидная страница по-прежнему идёт через `initial_goto`, ошибки
+съёма — через ротацию прокси.
+
+---
+
 ## `base/team_name_aliases.py` — справочник написаний названий команд
 
 Данные + три функции: `alias_spellings(name)` (другие написания той же команды), `canonical_team_key(name)`
