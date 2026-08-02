@@ -11445,10 +11445,28 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                     details=guard_add_url_details,
                 )
                 _drop_delayed_match(match_key, reason="late27_dispatch_guard")
-                print(
+                _delayed_verdict_msg = (
                     f"⏱️ Отложенный late сигнал отменен без отправки (27+ late-гейт): {match_key} "
                     f"({_format_late27_dispatch_guard_log(late27_watcher_guard)}, "
                     f"game_time={int(current_game_time)})"
+                )
+                print(_delayed_verdict_msg)
+                _record_map_verdict(
+                    match_key,
+                    verdict=_delayed_verdict_msg,
+                    kind="cancel",
+                    reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
+                    dispatch={
+                        "dispatch_mode": "rejected_late27_dispatch_guard_watcher",
+                        "game_time": current_game_time,
+                        "target_side": monitor_target_side,
+                        "target_networth_diff": (
+                            float(monitor_target_diff)
+                            if monitor_target_diff is not None
+                            else None
+                        ),
+                    },
+                    extra=guard_add_url_details,
                 )
                 continue
             late_pub_comeback_table_decision = _late_star_pub_table_decision(
@@ -11815,10 +11833,28 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 details=add_url_details,
             )
             _drop_delayed_match(match_key, reason="same_sign_lane_adv_stale")
-            print(
+            _delayed_verdict_msg = (
                 f"⏱️ Отложенный сигнал отменен без отправки: {match_key} "
                 f"(reason={delayed_reason}, status={NETWORTH_STATUS_SAME_SIGN_LANE_ADV_STALE_NO_SEND}, "
                 f"game_time={int(current_game_time)})"
+            )
+            print(_delayed_verdict_msg)
+            _record_map_verdict(
+                match_key,
+                verdict=_delayed_verdict_msg,
+                kind="cancel",
+                reason="star_signal_rejected_same_sign_lane_adv_stale",
+                dispatch={
+                    "dispatch_mode": str(delayed_reason or "same_sign_lane_adv_wait_4_10"),
+                    "game_time": current_game_time,
+                    "target_side": monitor_target_side,
+                    "target_networth_diff": (
+                        float(monitor_target_diff)
+                        if monitor_target_diff is not None
+                        else None
+                    ),
+                },
+                extra=add_url_details,
             )
             continue
 
@@ -11872,10 +11908,28 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                         details=add_url_details,
                     )
                     _drop_delayed_match(match_key, reason="late_comeback_timeout")
-                    print(
+                    _delayed_verdict_msg = (
                         f"⏱️ Отложенный сигнал отменен без отправки: {match_key} "
                         f"(reason=late_comeback_monitor, status={timeout_status_label}, "
                         f"game_time={int(current_game_time)})"
+                    )
+                    print(_delayed_verdict_msg)
+                    _record_map_verdict(
+                        match_key,
+                        verdict=_delayed_verdict_msg,
+                        kind="cancel",
+                        reason="star_signal_rejected_late_comeback_monitor_timeout",
+                        dispatch={
+                            "dispatch_mode": "late_comeback_monitor",
+                            "game_time": current_game_time,
+                            "target_side": monitor_target_side,
+                            "target_networth_diff": (
+                                float(monitor_target_diff)
+                                if monitor_target_diff is not None
+                                else None
+                            ),
+                        },
+                        extra=add_url_details,
                     )
                     continue
             if (
@@ -11914,9 +11968,27 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                         details=add_url_details,
                     )
                     _drop_delayed_match(match_key, reason="top25_late_elo_block_timeout")
-                    print(
+                    _delayed_verdict_msg = (
                         f"⏱️ Отложенный сигнал отменен без отправки: {match_key} "
                         f"(reason={reason}, status={timeout_status_label}, game_time={int(current_game_time)})"
+                    )
+                    print(_delayed_verdict_msg)
+                    _record_map_verdict(
+                        match_key,
+                        verdict=_delayed_verdict_msg,
+                        kind="cancel",
+                        reason="star_signal_rejected_top25_late_elo_block_timeout",
+                        dispatch={
+                            "dispatch_mode": str(reason or "late_top25_elo_block_opposite_monitor"),
+                            "game_time": current_game_time,
+                            "target_side": monitor_target_side,
+                            "target_networth_diff": (
+                                float(monitor_target_diff)
+                                if monitor_target_diff is not None
+                                else None
+                            ),
+                        },
+                        extra=add_url_details,
                     )
                     continue
             if not monitor_ready and not send_on_target_game_time:
@@ -11936,9 +12008,27 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                     details=add_url_details,
                 )
                 _drop_delayed_match(match_key, reason="target_reached_no_send")
-                print(
+                _delayed_verdict_msg = (
                     f"⏱️ Отложенный сигнал отменен без отправки: {match_key} "
                     f"(reason={reason}, status={timeout_status_label}, game_time={int(current_game_time)})"
+                )
+                print(_delayed_verdict_msg)
+                _record_map_verdict(
+                    match_key,
+                    verdict=_delayed_verdict_msg,
+                    kind="cancel",
+                    reason=str(timeout_add_url_reason or "star_signal_rejected_delayed_timeout"),
+                    dispatch={
+                        "dispatch_mode": str(reason or "delayed_monitor"),
+                        "game_time": current_game_time,
+                        "target_side": monitor_target_side,
+                        "target_networth_diff": (
+                            float(monitor_target_diff)
+                            if monitor_target_diff is not None
+                            else None
+                        ),
+                    },
+                    extra=add_url_details,
                 )
                 continue
             player_denylist_block = payload.get("player_denylist_block")
@@ -11983,11 +12073,24 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                         details=add_url_details,
                     )
                     _drop_delayed_match(match_key, reason="delayed_player_denylist")
-                    print(
+                    _delayed_verdict_msg = (
                         f"⏱️ Отложенный сигнал отменен из-за player denylist: {match_key} "
                         f"(target_side={player_denylist_block.get('target_side')}, "
                         f"team={player_denylist_block.get('target_team')}, "
                         f"hits={blocked_player_account_ids})"
+                    )
+                    print(_delayed_verdict_msg)
+                    _record_map_verdict(
+                        match_key,
+                        verdict=_delayed_verdict_msg,
+                        kind="cancel",
+                        reason="skip_player_denylist",
+                        dispatch={
+                            "dispatch_mode": str(reason or "delayed_monitor"),
+                            "game_time": current_game_time,
+                            "target_side": player_denylist_block.get("target_side"),
+                        },
+                        extra=add_url_details,
                     )
                     continue
             # Dual-signal coordination: if a kills signal was already sent for
@@ -12020,10 +12123,23 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                     details=add_url_details,
                 )
                 _drop_delayed_match(match_key, reason="late_already_covered_by_kills")
-                print(
+                _delayed_verdict_msg = (
                     f"⏱️ Отложенный late сигнал отменен (kills уже покрыл этот side): {match_key} "
                     f"(kills_target_side={kills_target_side_for_match}, "
                     f"late_target_side={late_target_side_for_match})"
+                )
+                print(_delayed_verdict_msg)
+                _record_map_verdict(
+                    match_key,
+                    verdict=_delayed_verdict_msg,
+                    kind="cancel",
+                    reason="late_already_covered_by_kills",
+                    dispatch={
+                        "dispatch_mode": str(reason or "delayed_monitor"),
+                        "game_time": current_game_time,
+                        "target_side": late_target_side_for_match or None,
+                    },
+                    extra=add_url_details,
                 )
                 continue
             add_url_details.setdefault('sent_game_time', int(current_game_time))
@@ -12221,6 +12337,28 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 selected_side=delayed_selected_side,
             )
             if delivery_confirmed:
+                _delayed_send_verdict_msg = (
+                    f"⏱️ Отложенный сигнал отправлен (delayed worker): {match_key} "
+                    f"(reason={reason}, add_url_reason={add_url_reason}, "
+                    f"game_time={int(current_game_time)})"
+                )
+                _record_map_verdict(
+                    match_key,
+                    verdict=_delayed_send_verdict_msg,
+                    kind="send",
+                    reason=str(add_url_reason or "star_signal_sent_delayed"),
+                    dispatch={
+                        "dispatch_mode": str(reason or "delayed_monitor"),
+                        "game_time": current_game_time,
+                        "target_side": delayed_selected_side,
+                        "target_networth_diff": (
+                            float(monitor_target_diff)
+                            if monitor_target_diff is not None
+                            else None
+                        ),
+                    },
+                    extra=add_url_details,
+                )
                 if (
                     late_pub_comeback_table_active
                     and late_pub_comeback_table_ready
@@ -24072,12 +24210,25 @@ def _try_dispatch_early_winner_kills_window(
                     _kills_pre_pass_sent_urls.add(match_key)
             except Exception:
                 pass
-            print(
+            _kills_window_verdict_msg = (
                 "   ✅ ВЕРДИКТ: Early Winner STAR + kills_window "
                 f"{selected.get('label')} expected_diff="
                 f"{selected.get('expected_diff'):+.2f} → kills "
                 f"({target_team_name}), lead "
                 f"{float(selected.get('seconds_until_start') or 0)/60.0:.1f}m"
+            )
+            print(_kills_window_verdict_msg)
+            _record_map_verdict(
+                match_key,
+                verdict=_kills_window_verdict_msg,
+                kind="send",
+                reason="early_winner_kills_window_sent",
+                dispatch={
+                    "dispatch_mode": NETWORTH_STATUS_EARLY_WINNER_KILLS_WINDOW_SEND,
+                    "game_time": game_time_seconds,
+                    "target_side": target_side,
+                },
+                extra=details,
             )
             return True
         return False
@@ -24351,13 +24502,31 @@ def _try_dispatch_lane_adv_standalone_kills(
                     _kills_pre_pass_sent_urls.add(match_key)
             except Exception:
                 pass
-            print(
+            _lane_adv_kills_verdict_msg = (
                 "   ✅ ВЕРДИКТ: lane_adv_dict standalone kills отправлен "
                 f"(target_side={target_side}, "
                 f"lane_adv_dict={lane_adv_value:+.2f}, "
                 f"min_abs={threshold:.2f}, "
                 f"opposite_early_star={bool(opposite_early_star)}, "
                 f"game_time={current_game_time_int}) — другие ватчеры продолжают"
+            )
+            print(_lane_adv_kills_verdict_msg)
+            _record_map_verdict(
+                match_key,
+                verdict=_lane_adv_kills_verdict_msg,
+                kind="send",
+                reason="star_signal_sent_now_lane_adv_standalone_kills",
+                dispatch={
+                    "dispatch_mode": "immediate_lane_adv_standalone_kills",
+                    "game_time": current_game_time_int,
+                    "target_side": target_side,
+                    "target_networth_diff": (
+                        float(target_networth_diff)
+                        if target_networth_diff is not None
+                        else None
+                    ),
+                },
+                extra=details,
             )
             return True
         return False
@@ -24455,6 +24624,130 @@ def _lookup_match_map_num(url: Any) -> Optional[int]:
     if base and base != key:
         return _match_map_num_by_key.get(base)
     return None
+
+
+# ── Журнал вердиктов по картам ───────────────────────────────────────────────
+# Отдельный state-файл (по умолчанию рядом с map_id_check.txt): 1 карта =
+# 1 запись со ВСЕМИ метриками драфта (counterpick/synergy/solo, lanes, kills,
+# dltv_rating, protracker, ELO, star-диагностики). Вердикты накапливаются
+# массивом внутри записи (delayed → финальный исход, kills → основной сигнал),
+# поэтому дублей карт в файле нет. Существующее логирование (log.txt,
+# watcher-строки, add_url) не меняется — журнал только дополняет его.
+MAP_VERDICTS_PATH = str(
+    str(os.getenv("MAP_VERDICTS_PATH", "")).strip()
+    or str(LOCAL_STATE_DIR / "map_verdicts.json")
+)
+MAP_VERDICTS_MAX_PER_MAP = 50
+_map_verdicts_lock = threading.Lock()
+
+
+def _map_verdicts_path() -> Path:
+    # env-override нужен тестам (изоляция от общего state-файла)
+    override = str(os.getenv("MAP_VERDICTS_PATH", "")).strip()
+    return Path(override).expanduser() if override else Path(MAP_VERDICTS_PATH).expanduser()
+
+
+def _verdict_json_sanitize(value: Any) -> Any:
+    """Deep-copy value into JSON-safe primitives (orjson round-trip)."""
+    if value is None:
+        return None
+    try:
+        return orjson.loads(
+            orjson.dumps(value, option=orjson.OPT_NON_STR_KEYS, default=str)
+        )
+    except Exception:
+        return str(value)
+
+
+def _record_map_verdict(
+    match_key: Any,
+    *,
+    verdict: str,
+    kind: str,
+    reason: str = "",
+    metrics: Optional[Dict[str, Any]] = None,
+    protracker: Optional[Dict[str, Any]] = None,
+    star: Optional[Dict[str, Any]] = None,
+    elo: Optional[Dict[str, Any]] = None,
+    identity: Optional[Dict[str, Any]] = None,
+    dispatch: Optional[Dict[str, Any]] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Upsert per-map verdict journal entry (1 map = 1 record).
+
+    metrics/protracker/star/elo blocks are replaced by the latest snapshot
+    when provided; verdicts accumulate in ``verdicts`` (consecutive exact
+    duplicates are collapsed so soft-reject recheck cycles don't spam the
+    journal). Never raises: journaling must not break the live pipeline.
+    """
+    try:
+        if TEST_DISABLE_ADD_URL:
+            return
+        key = str(match_key or "").strip()
+        text = str(verdict or "").strip()
+        if not key or not text:
+            return
+        now_ts = time.time()
+        now_label = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        verdict_item: Dict[str, Any] = {
+            "ts": now_ts,
+            "at": now_label,
+            "kind": str(kind or "").strip() or "info",
+            "reason": str(reason or "").strip(),
+            "verdict": text,
+        }
+        safe_dispatch = _verdict_json_sanitize(dispatch)
+        if isinstance(safe_dispatch, dict) and safe_dispatch:
+            verdict_item["dispatch"] = safe_dispatch
+        safe_extra = _verdict_json_sanitize(extra)
+        if isinstance(safe_extra, dict) and safe_extra:
+            verdict_item["extra"] = safe_extra
+        path = _map_verdicts_path()
+        with _map_verdicts_lock:
+            data = _load_json_object(path, recover=True, label="MAP_VERDICTS_PATH")
+            entry = data.get(key)
+            if not isinstance(entry, dict):
+                entry = {
+                    "match_key": key,
+                    "first_seen_ts": now_ts,
+                    "first_seen_at": now_label,
+                    "verdicts": [],
+                }
+            entry["updated_ts"] = now_ts
+            entry["updated_at"] = now_label
+            safe_identity = _verdict_json_sanitize(identity)
+            if isinstance(safe_identity, dict):
+                for field, field_value in safe_identity.items():
+                    if field_value is not None:
+                        entry[field] = field_value
+            for block_name, block_value in (
+                ("metrics", metrics),
+                ("protracker", protracker),
+                ("star", star),
+                ("elo", elo),
+            ):
+                safe_block = _verdict_json_sanitize(block_value)
+                if isinstance(safe_block, dict) and safe_block:
+                    entry[block_name] = safe_block
+            verdicts = entry.get("verdicts")
+            if not isinstance(verdicts, list):
+                verdicts = []
+            last_item = verdicts[-1] if verdicts else None
+            is_consecutive_dup = (
+                isinstance(last_item, dict)
+                and last_item.get("kind") == verdict_item["kind"]
+                and last_item.get("reason") == verdict_item["reason"]
+                and last_item.get("verdict") == verdict_item["verdict"]
+            )
+            if not is_consecutive_dup:
+                verdicts.append(verdict_item)
+                if len(verdicts) > MAP_VERDICTS_MAX_PER_MAP:
+                    del verdicts[: len(verdicts) - MAP_VERDICTS_MAX_PER_MAP]
+            entry["verdicts"] = verdicts
+            data[key] = entry
+            _write_json_atomic(path, data)
+    except Exception:
+        logger.exception("MAP_VERDICTS: failed to record verdict for %s", match_key)
 
 
 def add_url(url, reason: str = "unspecified", details: Any = None):
@@ -30448,6 +30741,58 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # current than the stale series_game_number for Winline polling.
             bookmaker_map_num = _winline_sourcetv_map_num(data) or bookmaker_map_num
         _remember_match_map_num(check_uniq_url, bookmaker_map_num)
+        # ── Контекст журнала вердиктов ──
+        # Идентичность карты фиксируется сразу; metrics/star/elo — живые
+        # ссылки, снапшот снимается в момент вердикта (deepcopy+sanitize в
+        # _record_map_verdict), поэтому видны самые свежие значения.
+        _verdict_ctx: Dict[str, Any] = {
+            "identity": {
+                "match_id": str(series_key_from_path or ""),
+                "map_num": bookmaker_map_num,
+                "status": status,
+                "score": score,
+                "teams": {
+                    "radiant": str(radiant_team_name_original or ""),
+                    "dire": str(dire_team_name_original or ""),
+                },
+            },
+            "metrics": None,
+            "protracker": None,
+            "star": None,
+            "elo": None,
+            "dispatch": None,
+        }
+
+        def _verdict_print(
+            *args: Any,
+            reason: str,
+            kind: str,
+            dispatch: Optional[Dict[str, Any]] = None,
+            extra: Optional[Dict[str, Any]] = None,
+        ) -> None:
+            # Печать идентична прежнему print(); параллельно пишем вердикт
+            # в map_verdicts.json (1 карта = 1 запись, вердикты копятся).
+            print(*args)
+            merged_dispatch: Dict[str, Any] = {}
+            base_dispatch = _verdict_ctx.get("dispatch")
+            if isinstance(base_dispatch, dict):
+                merged_dispatch.update(base_dispatch)
+            if dispatch:
+                merged_dispatch.update(dispatch)
+            _record_map_verdict(
+                check_uniq_url,
+                verdict=" ".join(str(arg) for arg in args),
+                kind=kind,
+                reason=reason,
+                metrics=_verdict_ctx.get("metrics"),
+                protracker=_verdict_ctx.get("protracker"),
+                star=_verdict_ctx.get("star"),
+                elo=_verdict_ctx.get("elo"),
+                identity=_verdict_ctx.get("identity"),
+                dispatch=merged_dispatch or None,
+                extra=extra,
+            )
+
         # Раньше строка печаталась только при включённом префетче, а под --no-odds он
         # выключен — из-за этого номер карты в логе почти не появлялся и связать
         # сигнал с картой было нечем.
@@ -30641,7 +30986,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     bookmaker_reservation_context=minimal_odds_reservation
                 )
                 if delivery_confirmed:
-                    print("   ✅ ВЕРДИКТ: minimal odds-only сигнал отправлен")
+                    _verdict_print(
+                        "   ✅ ВЕРДИКТ: minimal odds-only сигнал отправлен",
+                        reason="minimal_odds_only_signal_sent_now",
+                        kind="send",
+                        dispatch={"dispatch_mode": "minimal_odds_only"},
+                        extra={"bookmaker_ready_reason": minimal_odds_reason},
+                    )
             finally:
                 _release_signal_send_slot(check_uniq_url)
             return return_status
@@ -31345,6 +31696,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 protracker_payload=protracker_payload,
             )
 
+        # Журнал вердиктов: полный набор draft-метрик (вкл. kills, lanes;
+        # dltv_rating и protracker-поля докладываются в s ниже по потоку) и
+        # сырой protracker-payload доступны с этого момента.
+        _verdict_ctx["metrics"] = s
+        _verdict_ctx["protracker"] = (
+            protracker_payload if isinstance(protracker_payload, dict) else None
+        )
 
         if DOTA2PROTRACKER_ENABLED and DOTA2PROTRACKER_ONLY_MODE and not PIPELINE_BYPASS_PROTRACKER_GATE:
             if not _has_valid_dota2protracker_signal(protracker_payload):
@@ -31416,7 +31774,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     skip_bookmaker_prepare=bool(DOTA2PROTRACKER_SKIP_BOOKMAKER_GATE)
                 )
                 if delivery_confirmed:
-                    print("   ✅ ВЕРДИКТ: Dota2ProTracker-only сигнал отправлен")
+                    _verdict_print(
+                        "   ✅ ВЕРДИКТ: Dota2ProTracker-only сигнал отправлен",
+                        reason="dota2protracker_signal_sent_now",
+                        kind="send",
+                        dispatch={"dispatch_mode": "dota2protracker_only"},
+                    )
             finally:
                 _release_signal_send_slot(check_uniq_url)
             return return_status
@@ -31516,7 +31879,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     skip_bookmaker_prepare=bool(PIPELINE_SKIP_BOOKMAKER_PREPARE_ON_SEND)
                 )
                 if delivery_confirmed:
-                    print("   ✅ ВЕРДИКТ: pipeline smoke-test матч отправлен в Telegram/VK")
+                    _verdict_print(
+                        "   ✅ ВЕРДИКТ: pipeline smoke-test матч отправлен в Telegram/VK",
+                        reason="pipeline_send_every_parsed_match",
+                        kind="send",
+                        dispatch={"dispatch_mode": "pipeline_send_every_parsed_match"},
+                    )
             finally:
                 _release_signal_send_slot(check_uniq_url)
             return return_status
@@ -32400,6 +32768,36 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             if top25_late_elo_block_override_active:
                 dispatch_mode = "delayed_late_elo_block_top25_opposite_monitor"
 
+            # Журнал вердиктов: star-диагностики, WR-блоков, ELO и ветка
+            # dispatch зафиксированы — доступны всем вердиктам ниже по потоку.
+            _verdict_ctx["star"] = {
+                "tier": star_match_tier,
+                "selected_star_wr": selected_star_wr,
+                "selected_star_mode": selected_star_mode,
+                "has_early_star": bool(has_selected_early_star),
+                "has_late_star": bool(has_selected_late_star),
+                "has_all_star": bool(has_selected_all_star),
+                "early_sign": selected_early_sign,
+                "late_sign": selected_late_sign,
+                "all_sign": selected_all_sign,
+                "early_wr_pct": early_wr_pct,
+                "late_wr_pct": late_wr_pct,
+                "all_wr_pct": all_wr_pct,
+                "early_end_wr_pct": early_end_wr_pct,
+                "opposite_signs_selected": bool(opposite_signs_selected),
+                "early_diag": selected_early_diag,
+                "late_diag": selected_late_diag,
+                "all_diag": selected_all_diag,
+                "diag_lines": list(star_diag_lines),
+            }
+            _verdict_ctx["elo"] = (
+                dict(team_elo_meta) if isinstance(team_elo_meta, dict) else None
+            )
+            _verdict_ctx["dispatch"] = {
+                "dispatch_mode": dispatch_mode,
+                "game_time": game_time,
+            }
+
             has_any_valid_star_block = bool(
                 has_selected_early_star
                 or has_selected_late_star
@@ -32410,9 +32808,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and not has_any_valid_star_block
                 and not top25_late_elo_block_override_active
             ):
-                print(
+                _verdict_print(
                     "   ⚠️ ВЕРДИКТ: ОТКАЗ "
-                    "(нет ни одного валидного STAR-блока) - матч пропущен"
+                    "(нет ни одного валидного STAR-блока) - матч пропущен",
+                    reason="star_signal_rejected_no_valid_star_block",
+                    kind="reject",
                 )
                 print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
                 add_url(
@@ -32445,9 +32845,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 not force_odds_signal_test_active
                 and no_late_early_all_opposite_signs
             ):
-                print(
+                _verdict_print(
                     "   ⚠️ ВЕРДИКТ: ОТКАЗ "
-                    "(нет late STAR, early/all в разных знаках) - матч пропущен"
+                    "(нет late STAR, early/all в разных знаках) - матч пропущен",
+                    reason="star_signal_rejected_no_late_early_all_opposite_signs",
+                    kind="reject",
                 )
                 print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
                 add_url(
@@ -32479,12 +32881,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and early_only_no_late_all_active
                 and not bool(early_only_no_late_all_gate.get("valid"))
             ):
-                print(
+                _verdict_print(
                     "   ⚠️ ВЕРДИКТ: ОТКАЗ "
                     "(only Early без All/Late: требуется Early NW WR>="
                     f"{int(float(EARLY_ONLY_NO_LATE_ALL_MIN_WR))} + Early Winner WR>="
                     f"{int(float(EARLY_ONLY_NO_LATE_ALL_EARLY_END_MIN_WR))} с >= "
-                    f"{int(EARLY_ONLY_NO_LATE_ALL_EARLY_END_MIN_HITS)} star hits) - матч пропущен"
+                    f"{int(EARLY_ONLY_NO_LATE_ALL_EARLY_END_MIN_HITS)} star hits) - матч пропущен",
+                    reason="star_signal_rejected_early_only_below_threshold",
+                    kind="reject",
+                    extra={"early_only_no_late_all_gate": early_only_no_late_all_gate},
                 )
                 print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
                 add_url(
@@ -32529,11 +32934,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 _single_block_label = {"late": "Late", "all": "All"}.get(
                     _single_block_name, _single_block_name
                 )
-                print(
+                _verdict_print(
                     "   ⚠️ ВЕРДИКТ: ОТКАЗ "
                     f"(only {_single_block_label} требует WR>="
                     f"{int(float(single_block_min_wr_gate.get('min_wr_required') or SINGLE_BLOCK_STAR_MIN_WR))}"
-                    ") - матч пропущен"
+                    ") - матч пропущен",
+                    reason=f"star_signal_rejected_{_single_block_name}_only_wr_below_65",
+                    kind="reject",
+                    extra={"single_block_min_wr_gate": single_block_min_wr_gate},
                 )
                 print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
                 add_url(
@@ -32576,11 +32984,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and bool(late_opposite_weak_wr_gate.get("active"))
                 and not bool(late_opposite_weak_wr_gate.get("valid"))
             ):
-                print(
+                _verdict_print(
                     "   ⚠️ ВЕРДИКТ: ОТКАЗ "
                     f"(Late WR{int(float(late_opposite_weak_wr_gate.get('wr_pct') or 0))} "
                     f"< {int(float(late_opposite_weak_wr_gate.get('min_wr_required') or SINGLE_BLOCK_STAR_MIN_WR))} "
-                    "с противоположным блоком) - матч пропущен"
+                    "с противоположным блоком) - матч пропущен",
+                    reason="star_signal_rejected_late_wr_below_65_with_opposite_block",
+                    kind="reject",
+                    extra={"late_opposite_weak_wr_gate": late_opposite_weak_wr_gate},
                 )
                 print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
                 add_url(
@@ -32616,11 +33027,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and bool(kills_gate_decision.get("active_but_blocked"))
             ):
                 wr_gate_info = kills_gate_decision.get("wr_gate") or {}
-                print(
+                _verdict_print(
                     "   ⚠️ ВЕРДИКТ: ОТКАЗ "
                     f"(Late содержит STAR-метрику, но Early не проходит "
                     f"WR>={KILLS_GATE_EARLY_STAR_MIN_WR:g} + hits>={KILLS_GATE_EARLY_STAR_MIN_HITS}) "
-                    "- матч пропущен"
+                    "- матч пропущен",
+                    reason="star_signal_rejected_kills_gate_early_wr_below_threshold",
+                    kind="reject",
+                    extra={"kills_gate_decision": kills_gate_decision},
                 )
                 print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
                 add_url(
@@ -33388,9 +33802,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 force_odds_signal_test_active=force_odds_signal_test_active,
             )
             if star_combination_gate.get("blocked"):
-                print(
+                _verdict_print(
                     "   ⛔ ВЕРДИКТ: ОТКАЗ (нет валидной комбинации STAR-блоков: "
-                    f"{_format_star_combination_gate_log(star_combination_gate)})"
+                    f"{_format_star_combination_gate_log(star_combination_gate)})",
+                    reason=STAR_COMBINATION_GATE_REJECT_REASON,
+                    kind="reject",
+                    dispatch={
+                        "dispatch_mode": "rejected_star_block_combination",
+                        "game_time": current_game_time,
+                        "target_side": dispatch_message_side,
+                    },
+                    extra=_star_combination_gate_reject_details(star_combination_gate),
                 )
                 add_url(
                     check_uniq_url,
@@ -33577,10 +33999,21 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             early_core_monitor_wait_status_label = NETWORTH_STATUS_EARLY_CORE_MONITOR_WAIT_NONNEGATIVE
             early_core_monitor_delay_reason = "early_star_late_core_wait_nonnegative"
             if all_only_watcher_timeout_active and not force_odds_signal_test_active:
-                print(
+                _verdict_print(
                     "   ⛔ ВЕРДИКТ: All-only watcher истёк за "
                     f"{_format_game_clock(ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS)} "
-                    f"(wr_level={all_only_watcher_wr_level_resolved}); URL отмечен без отправки"
+                    f"(wr_level={all_only_watcher_wr_level_resolved}); URL отмечен без отправки",
+                    reason="star_signal_rejected_all_only_watcher_timeout",
+                    kind="reject",
+                    dispatch={
+                        "dispatch_mode": "drop_all_only_watcher_timeout",
+                        "game_time": current_game_time,
+                        "target_side": dispatch_message_side,
+                    },
+                    extra={
+                        "all_only_watcher_wr_level": all_only_watcher_wr_level_resolved,
+                        "all_wr_pct": all_wr_pct,
+                    },
                 )
                 add_url(
                     check_uniq_url,
@@ -33629,9 +34062,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     force_odds_signal_test_active=force_odds_signal_test_active,
                 )
                 if _imm_late27_guard.get("blocked"):
-                    print(
+                    _verdict_print(
                         "   ⛔ ВЕРДИКТ: ОТКАЗ (27+ late-гейт для immediate: "
-                        f"{_format_late27_dispatch_guard_log(_imm_late27_guard)})"
+                        f"{_format_late27_dispatch_guard_log(_imm_late27_guard)})",
+                        reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
+                        kind="reject",
+                        dispatch={
+                            "dispatch_mode": "rejected_late27_dispatch_guard_immediate",
+                            "game_time": current_game_time,
+                            "target_side": dispatch_message_side,
+                        },
+                        extra=_late27_dispatch_guard_reject_details(_imm_late27_guard),
                     )
                     add_url(
                         check_uniq_url,
@@ -33658,13 +34099,22 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         target_networth_diff=target_networth_diff,
                     )
                     if not _imm_cb.get("ready"):
-                        print(
+                        _verdict_print(
                             "   ⛔ ВЕРДИКТ: 27+ comeback-гейт не пройден для immediate "
                             f"(target_side={dispatch_message_side}, "
                             f"target_diff={int(target_networth_diff)}, "
                             f"threshold={int(_imm_cb.get('threshold') or 0)}, "
                             f"wr={_imm_cb_wr}, game_time={int(current_game_time)}) "
-                            "— ставка не отправлена"
+                            "— ставка не отправлена",
+                            reason="late27_comeback_gate_not_passed_immediate",
+                            kind="reject",
+                            dispatch={
+                                "dispatch_mode": "immediate_late27_comeback_gate_soft_reject",
+                                "game_time": current_game_time,
+                                "target_side": dispatch_message_side,
+                                "target_networth_diff": float(target_networth_diff),
+                            },
+                            extra={"soft": True, "threshold": _imm_cb.get("threshold"), "wr": _imm_cb_wr},
                         )
                         return return_status
                 if not bool(early_only_no_late_all_gate.get("valid")):
@@ -33749,7 +34199,22 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         delivery_confirmed=delivery_confirmed,
                     )
                     if delivery_confirmed:
-                        print("   ✅ ВЕРДИКТ: STAR-сигнал отправлен немедленно")
+                        _verdict_print(
+                            "   ✅ ВЕРДИКТ: STAR-сигнал отправлен немедленно",
+                            reason="star_signal_sent_now",
+                            kind="send",
+                            dispatch={
+                                "dispatch_mode": dispatch_mode,
+                                "game_time": current_game_time,
+                                "target_side": dispatch_message_side,
+                                "target_networth_diff": (
+                                    float(target_networth_diff)
+                                    if target_networth_diff is not None
+                                    else None
+                                ),
+                            },
+                            extra=add_url_details,
+                        )
                 finally:
                     _release_signal_send_slot(check_uniq_url)
                 return return_status
@@ -34035,12 +34500,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                             _kills_pre_pass_sent_urls.add(check_uniq_url)
                                     except Exception:
                                         pass
-                                    print(
+                                    _verdict_print(
                                         "   ✅ ВЕРДИКТ (kills pre-pass): СТАВКА НА Ранние килы отправлена "
                                         f"(reason={kills_release_status_label_pp}, "
                                         f"kills_target_side={kills_pp_target_side}, "
                                         f"kills_target_diff={int(kills_pp_target_diff)}) "
-                                        "— продолжаем late watcher"
+                                        "— продолжаем late watcher",
+                                        reason="star_signal_sent_now_kills_dual",
+                                        kind="send",
+                                        dispatch={
+                                            "dispatch_mode": "immediate_tier1_early_kills_dual",
+                                            "game_time": current_game_time,
+                                            "target_side": kills_pp_target_side,
+                                            "target_networth_diff": float(kills_pp_target_diff),
+                                        },
                                     )
                             finally:
                                 _release_signal_send_slot(check_uniq_url)
@@ -34186,9 +34659,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     "json_retry_errors": json_retry_errors,
                                 },
                             )
-                            print(
+                            _verdict_print(
                                 "   ⚠️ ВЕРДИКТ: ОТКАЗ (early kills: target в минусе на 10+ мин, "
-                                f"target_diff={int(kills_target_networth_diff)})"
+                                f"target_diff={int(kills_target_networth_diff)})",
+                                reason="star_signal_rejected_early_kills_target_negative",
+                                kind="reject",
+                                dispatch={
+                                    "dispatch_mode": "tier1_early_kills_window_closed",
+                                    "game_time": current_game_time,
+                                    "target_side": kills_target_side,
+                                    "target_networth_diff": float(kills_target_networth_diff or 0.0),
+                                },
                             )
                             return return_status
                         else:
@@ -34405,11 +34886,27 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                         _kills_pre_pass_sent_urls.add(check_uniq_url)
                                 except Exception:
                                     pass
-                                print(
+                                _verdict_print(
                                     "   ✅ ВЕРДИКТ: Сигнал отправлен "
                                     f"(reason={early65_release_status_label}, "
                                     f"target_side={kills_release_target_side_for_message if tier1_early_kills_mode else early65_target_side}, "
-                                    f"target_diff={int(kills_target_networth_diff if tier1_early_kills_mode else (early65_target_diff or 0))})"
+                                    f"target_diff={int(kills_target_networth_diff if tier1_early_kills_mode else (early65_target_diff or 0))})",
+                                    reason="star_signal_sent_now_networth_gate",
+                                    kind="send",
+                                    dispatch={
+                                        "dispatch_mode": early_release_dispatch_mode,
+                                        "game_time": current_game_time,
+                                        "target_side": (
+                                            kills_release_target_side_for_message
+                                            if tier1_early_kills_mode
+                                            else early65_target_side
+                                        ),
+                                        "target_networth_diff": float(
+                                            kills_target_networth_diff
+                                            if tier1_early_kills_mode
+                                            else (early65_target_diff or 0.0)
+                                        ),
+                                    },
                                 )
                                 if kills_dual_signal_defer:
                                     kills_target_side_resolved = (
@@ -34581,11 +35078,19 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"(target_side={target_side}, target_diff={int(target_networth_diff)})"
                     )
             if same_sign_lane_adv_stale_after_fallback:
-                print(
+                _verdict_print(
                     "   ⚠️ ВЕРДИКТ: ОТКАЗ (same_sign_lane_adv fallback stale) "
                     f"target={_format_game_clock(NETWORTH_GATE_SAME_SIGN_LANE_ADV_FALLBACK_SECONDS)}, "
                     f"game_time={_format_game_clock(current_game_time)}, "
-                    f"grace={int(NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS)}s"
+                    f"grace={int(NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS)}s",
+                    reason="star_signal_rejected_same_sign_lane_adv_stale",
+                    kind="reject",
+                    dispatch={
+                        "dispatch_mode": dispatch_mode,
+                        "game_time": current_game_time,
+                        "target_side": target_side,
+                        "target_networth_diff": float(target_networth_diff or 0.0),
+                    },
                 )
                 add_url(
                     check_uniq_url,
@@ -35091,10 +35596,18 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 bookmaker_decision="sent"
                             )
                             if delivery_confirmed:
-                                print(
+                                _verdict_print(
                                     f"   ✅ ВЕРДИКТ: Сигнал отправлен раньше {target_human} "
                                     f"(reason={release_reason}, status={release_status_label}, target_side={target_side}, "
-                                    f"target_diff={int(target_networth_diff or 0)})"
+                                    f"target_diff={int(target_networth_diff or 0)})",
+                                    reason="star_signal_sent_now_networth_gate",
+                                    kind="send",
+                                    dispatch={
+                                        "dispatch_mode": dispatch_mode,
+                                        "game_time": current_game_time,
+                                        "target_side": target_side,
+                                        "target_networth_diff": float(target_networth_diff or 0.0),
+                                    },
                                 )
                         finally:
                             _release_signal_send_slot(check_uniq_url)
@@ -35150,7 +35663,16 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             bookmaker_decision="sent"
                         )
                         if delivery_confirmed:
-                            print(f"   ✅ ВЕРДИКТ: Сигнал отправлен немедленно (нет json_url для delayed)")
+                            _verdict_print(
+                                f"   ✅ ВЕРДИКТ: Сигнал отправлен немедленно (нет json_url для delayed)",
+                                reason="star_signal_sent_now_no_json_url",
+                                kind="send",
+                                dispatch={
+                                    "dispatch_mode": dispatch_mode,
+                                    "game_time": current_game_time,
+                                    "target_side": target_side,
+                                },
+                            )
                     finally:
                         _release_signal_send_slot(check_uniq_url)
                     return return_status
@@ -35167,9 +35689,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         force_odds_signal_test_active=force_odds_signal_test_active,
                     )
                     if _post_target_late27_guard.get("blocked"):
-                        print(
+                        _verdict_print(
                             "   ⛔ ВЕРДИКТ: ОТКАЗ (27+ late-гейт: "
-                            f"{_format_late27_dispatch_guard_log(_post_target_late27_guard)})"
+                            f"{_format_late27_dispatch_guard_log(_post_target_late27_guard)})",
+                            reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
+                            kind="reject",
+                            dispatch={
+                                "dispatch_mode": "rejected_late27_dispatch_guard",
+                                "game_time": current_game_time,
+                                "target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                            },
                         )
                         add_url(
                             check_uniq_url,
@@ -35266,11 +35796,19 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     bookmaker_decision="sent"
                                 )
                                 if delivery_confirmed:
-                                    print(
+                                    _verdict_print(
                                         "   ✅ ВЕРДИКТ: Сигнал отправлен по pub late comeback table "
                                         f"(wr={late_pub_comeback_table_wr_level}, "
                                         f"minute={source_minute}, "
-                                        f"target_diff={int(target_networth_diff or 0)})"
+                                        f"target_diff={int(target_networth_diff or 0)})",
+                                        reason="star_signal_sent_now_late_pub_comeback_table",
+                                        kind="send",
+                                        dispatch={
+                                            "dispatch_mode": dispatch_mode,
+                                            "game_time": current_game_time,
+                                            "target_side": target_side,
+                                            "target_networth_diff": float(target_networth_diff or 0.0),
+                                        },
                                     )
                                     _drop_delayed_matches_for_registry(
                                         check_uniq_url,
@@ -35380,7 +35918,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             except Exception:
                                 pass
                         _set_delayed_match(check_uniq_url, delayed_payload)
-                        print("   ✅ ВЕРДИКТ: Сигнал оставлен в delayed-очереди для pub late comeback table")
+                        _verdict_print(
+                            "   ✅ ВЕРДИКТ: Сигнал оставлен в delayed-очереди для pub late comeback table",
+                            reason="late_star_pub_comeback_table_monitor",
+                            kind="delayed",
+                            dispatch={
+                                "dispatch_mode": dispatch_mode,
+                                "game_time": current_game_time,
+                                "target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                            },
+                        )
                         return return_status
                     if queue_top25_late_elo_block_monitor and not queue_same_sign_lane_adv_monitor:
                         if target_networth_diff is not None and target_networth_diff > 0:
@@ -35439,16 +35987,32 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     bookmaker_decision="sent"
                                 )
                                 if delivery_confirmed:
-                                    print(
+                                    _verdict_print(
                                         "   ✅ ВЕРДИКТ: Сигнал отправлен по top25 late ELO-block target lead "
-                                        f"(target_side={target_side}, target_diff={int(target_networth_diff or 0)})"
+                                        f"(target_side={target_side}, target_diff={int(target_networth_diff or 0)})",
+                                        reason="star_signal_sent_now_top25_late_elo_block_target_lead",
+                                        kind="send",
+                                        dispatch={
+                                            "dispatch_mode": dispatch_mode,
+                                            "game_time": current_game_time,
+                                            "target_side": target_side,
+                                            "target_networth_diff": float(target_networth_diff or 0.0),
+                                        },
                                     )
                             finally:
                                 _release_signal_send_slot(check_uniq_url)
                             return return_status
-                        print(
+                        _verdict_print(
                             f"   ⚠️ ВЕРДИКТ: ОТКАЗ (top25 late ELO-block monitor не дал lead к {target_human}) "
-                            f"- матч пропущен"
+                            f"- матч пропущен",
+                            reason="star_signal_rejected_top25_late_elo_block_timeout",
+                            kind="reject",
+                            dispatch={
+                                "dispatch_mode": dispatch_mode,
+                                "game_time": current_game_time,
+                                "target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                            },
                         )
                         add_url(
                             check_uniq_url,
@@ -35468,9 +36032,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         )
                         return return_status
                     if queue_early_core_monitor:
-                        print(
+                        _verdict_print(
                             f"   ⚠️ ВЕРДИКТ: ОТКАЗ (early star без late star не добрал >=1500 до {target_human}) "
-                            f"- матч пропущен"
+                            f"- матч пропущен",
+                            reason="star_signal_rejected_early_core_monitor_timeout",
+                            kind="reject",
+                            dispatch={
+                                "dispatch_mode": dispatch_mode,
+                                "game_time": current_game_time,
+                                "target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                            },
                         )
                         print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
                         add_url(
@@ -35498,9 +36070,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         print("   ✅ map_id_check.txt обновлен: add_url после early-core timeout")
                         return return_status
                     if queue_late_core_monitor and not late_comeback_monitor_candidate:
-                        print(
+                        _verdict_print(
                             f"   ⚠️ ВЕРДИКТ: ОТКАЗ (late star без early star не добрал >={int(NETWORTH_GATE_4_TO_10_MIN_DIFF)} до {target_human}) "
-                            f"- матч пропущен"
+                            f"- матч пропущен",
+                            reason="star_signal_rejected_late_core_monitor_timeout",
+                            kind="reject",
+                            dispatch={
+                                "dispatch_mode": dispatch_mode,
+                                "game_time": current_game_time,
+                                "target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                            },
                         )
                         print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
                         add_url(
@@ -35603,10 +36183,18 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     bookmaker_decision="sent"
                                 )
                                 if delivery_confirmed:
-                                    print(
+                                    _verdict_print(
                                         "   ✅ ВЕРДИКТ: Сигнал отправлен по late comeback ceiling "
                                         f"(minute={late_comeback_check.get('minute')}, "
-                                        f"target_diff={int(target_networth_diff)})"
+                                        f"target_diff={int(target_networth_diff)})",
+                                        reason="star_signal_sent_now_late_comeback_ceiling",
+                                        kind="send",
+                                        dispatch={
+                                            "dispatch_mode": dispatch_mode,
+                                            "game_time": current_game_time,
+                                            "target_side": target_side,
+                                            "target_networth_diff": float(target_networth_diff),
+                                        },
                                     )
                             finally:
                                 _release_signal_send_slot(check_uniq_url)
@@ -35665,11 +36253,29 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 f"ceiling={int(late_comeback_check.get('threshold') or 0)}, "
                                 f"deadline={_format_game_clock(late_comeback_deadline)}"
                             )
-                            print("   ✅ ВЕРДИКТ: Сигнал оставлен в delayed-очереди для late comeback monitor")
+                            _verdict_print(
+                                "   ✅ ВЕРДИКТ: Сигнал оставлен в delayed-очереди для late comeback monitor",
+                                reason=str(comeback_delay_reason),
+                                kind="delayed",
+                                dispatch={
+                                    "dispatch_mode": dispatch_mode,
+                                    "game_time": current_game_time,
+                                    "target_side": target_side,
+                                    "target_networth_diff": float(target_networth_diff),
+                                },
+                            )
                             return return_status
-                        print(
+                        _verdict_print(
                             f"   ⚠️ ВЕРДИКТ: ОТКАЗ (не прошел comeback ceiling после {target_human}) "
-                            f"- матч пропущен"
+                            f"- матч пропущен",
+                            reason="star_signal_rejected_late_comeback_monitor_timeout",
+                            kind="reject",
+                            dispatch={
+                                "dispatch_mode": dispatch_mode,
+                                "game_time": current_game_time,
+                                "target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                            },
                         )
                         add_url(
                             check_uniq_url,
@@ -35754,10 +36360,18 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     bookmaker_decision="sent"
                                 )
                                 if delivery_confirmed:
-                                    print(
+                                    _verdict_print(
                                         "   ✅ ВЕРДИКТ: Сигнал отправлен по post-target comeback ceiling "
                                         f"(minute={post_target_comeback.get('minute')}, "
-                                        f"target_diff={int(target_networth_diff or 0)})"
+                                        f"target_diff={int(target_networth_diff or 0)})",
+                                        reason="star_signal_sent_now_late_comeback_ceiling",
+                                        kind="send",
+                                        dispatch={
+                                            "dispatch_mode": dispatch_mode,
+                                            "game_time": current_game_time,
+                                            "target_side": target_side,
+                                            "target_networth_diff": float(target_networth_diff or 0.0),
+                                        },
                                     )
                             finally:
                                 _release_signal_send_slot(check_uniq_url)
@@ -35810,12 +36424,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 f"ceiling={int(post_target_comeback.get('threshold') or 0)}, "
                                 f"deadline={_format_game_clock(post_target_comeback_deadline)}"
                             )
-                            print("   ✅ ВЕРДИКТ: Сигнал оставлен в delayed-очереди для post-target comeback monitor")
+                            _verdict_print(
+                                "   ✅ ВЕРДИКТ: Сигнал оставлен в delayed-очереди для post-target comeback monitor",
+                                reason="post_target_comeback_ceiling_monitor",
+                                kind="delayed",
+                                dispatch={
+                                    "dispatch_mode": dispatch_mode,
+                                    "game_time": current_game_time,
+                                    "target_side": target_side,
+                                    "target_networth_diff": float(target_networth_diff or 0.0),
+                                },
+                            )
                             return return_status
                         if post_target_comeback.get("should_timeout"):
-                            print(
+                            _verdict_print(
                                 f"   ⚠️ ВЕРДИКТ: ОТКАЗ (не прошел post-target comeback ceiling после {target_human}) "
-                                f"- матч пропущен"
+                                f"- матч пропущен",
+                                reason="star_signal_rejected_late_comeback_monitor_timeout",
+                                kind="reject",
+                                dispatch={
+                                    "dispatch_mode": dispatch_mode,
+                                    "game_time": current_game_time,
+                                    "target_side": target_side,
+                                    "target_networth_diff": float(target_networth_diff or 0.0),
+                                },
                             )
                             add_url(
                                 check_uniq_url,
@@ -35836,9 +36468,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             )
                             return return_status
                     if post_target_only_early90:
-                        print(
+                        _verdict_print(
                             f"   ⚠️ ВЕРДИКТ: ОТКАЗ (opposite-sign WR90 не дал post-target comeback после {target_human}) "
-                            f"- матч пропущен"
+                            f"- матч пропущен",
+                            reason="star_signal_rejected_late_comeback_monitor_timeout",
+                            kind="reject",
+                            dispatch={
+                                "dispatch_mode": dispatch_mode,
+                                "game_time": current_game_time,
+                                "target_side": target_side,
+                                "target_networth_diff": float(target_networth_diff or 0.0),
+                            },
                         )
                         add_url(
                             check_uniq_url,
@@ -35905,7 +36545,21 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             bookmaker_decision="sent"
                         )
                         if delivery_confirmed:
-                            print(f"   ✅ ВЕРДИКТ: Сигнал отправлен немедленно (game_time >= {target_human})")
+                            _verdict_print(
+                                f"   ✅ ВЕРДИКТ: Сигнал отправлен немедленно (game_time >= {target_human})",
+                                reason="star_signal_sent_now_target_reached",
+                                kind="send",
+                                dispatch={
+                                    "dispatch_mode": dispatch_mode,
+                                    "game_time": current_game_time,
+                                    "target_side": target_side,
+                                    "target_networth_diff": (
+                                        float(target_networth_diff)
+                                        if target_networth_diff is not None
+                                        else None
+                                    ),
+                                },
+                            )
                     finally:
                         _release_signal_send_slot(check_uniq_url)
                     return return_status
@@ -36348,7 +37002,21 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"{monitor_desc}, "
                         f"deadline={target_human}"
                     )
-                print(f"   ✅ ВЕРДИКТ: Сигнал добавлен в delayed-очередь (reason={delay_reason})")
+                _verdict_print(
+                    f"   ✅ ВЕРДИКТ: Сигнал добавлен в delayed-очередь (reason={delay_reason})",
+                    reason=str(delay_reason or "delayed_queue"),
+                    kind="delayed",
+                    dispatch={
+                        "dispatch_mode": dispatch_mode,
+                        "game_time": current_game_time,
+                        "target_side": target_side,
+                        "target_networth_diff": (
+                            float(target_networth_diff)
+                            if target_networth_diff is not None
+                            else None
+                        ),
+                    },
+                )
                 print("   ℹ️ map_id_check.txt будет обновлен после фактической отправки delayed send_message()")
                 return return_status
             if not _acquire_signal_send_slot(check_uniq_url):
@@ -36430,7 +37098,22 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     bookmaker_decision="sent"
                 )
                 if delivery_confirmed:
-                    print("   ✅ ВЕРДИКТ: STAR-сигнал отправлен немедленно")
+                    _verdict_print(
+                        "   ✅ ВЕРДИКТ: STAR-сигнал отправлен немедленно",
+                        reason=str(immediate_add_url_reason or "star_signal_sent_now"),
+                        kind="send",
+                        dispatch={
+                            "dispatch_mode": dispatch_mode,
+                            "game_time": current_game_time,
+                            "target_side": target_side,
+                            "target_networth_diff": (
+                                float(target_networth_diff)
+                                if target_networth_diff is not None
+                                else None
+                            ),
+                        },
+                        extra=immediate_add_url_details,
+                    )
             finally:
                 _release_signal_send_slot(check_uniq_url)
         else:
@@ -36651,7 +37334,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     if delivery_confirmed:
                         with _tempo_over_sent_lock:
                             _tempo_over_sent_urls[check_uniq_url] = time.monotonic()  # D6: record insert ts
-                        print("   ✅ ВЕРДИКТ: Tempo over>=51 отправлен немедленно — другие сигналы продолжают")
+                        _verdict_print(
+                            "   ✅ ВЕРДИКТ: Tempo over>=51 отправлен немедленно — другие сигналы продолжают",
+                            reason="tempo_over_fallback_sent",
+                            kind="send",
+                            dispatch={
+                                "dispatch_mode": "tempo_over_fallback_no_star",
+                                "game_time": current_game_time,
+                            },
+                        )
                 finally:
                     _release_signal_send_slot(check_uniq_url)
                 return return_status
@@ -36676,9 +37367,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     rejected_mid_output_log,
                     rejected_all_output_log,
                 )
-            print(
+            _verdict_print(
                 "   ⚠️ ВЕРДИКТ: ОТКАЗ "
-                "(нет star-сигнала) - матч пропущен"
+                "(нет star-сигнала) - матч пропущен",
+                reason="star_signal_rejected_no_star_signal",
+                kind="reject",
+                dispatch={"game_time": game_time},
             )
             if first_draft_metrics_compute:
                 print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")

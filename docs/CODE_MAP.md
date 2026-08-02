@@ -59,6 +59,7 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 | `_late_speculative_allowed_for_context(...)` | 9600 | разрешает speculative x0.5 только при валидном Late и потенциальном main stake > x0.5 |
 | `_half_stake_elo_underdog_reject(...)` | 8415 | блокирует доставку x0.5, если target ELO-андердог на `HALF_STAKE_ELO_UNDERDOG_MIN_DIFF`+ |
 | `_deliver_and_persist_signal(...)` | 24723 | единая точка доставки/персиста сигнала; применяет half-stake ELO-underdog gate перед `send_message` |
+| `_record_map_verdict(match_key, *, verdict, kind, reason, metrics, protracker, star, elo, identity, dispatch, extra)` | ~24493 | журнал вердиктов карт: upsert 1 карта = 1 запись в `MAP_VERDICTS_PATH`; verdicts копятся (склейка подряд-дублей, cap 50), metrics/protracker/star/elo заменяются последним снапшотом; никогда не бросает; вызывается из всех ✅/⚠️/⛔ ВЕРДИКТ-точек `check_head`, kills-диспетчеров и delayed worker |
 | `_build_stake_multiplier_context(...)` | 5122 | контекст для множителя |
 | `_evaluate_star_block_combination_gate(...)` | 5384 | terminal STAR combination gate для Early Winner/Late/All; одиночный Late блокируется при любом WR60+ star-хите противоположного знака в All независимо от Late WR; одинаковый знак Late/All разрешён |
 | `_build_late27_dispatch_guard_snapshot(...)` | 3477 | сериализуемый снимок фактов 27+ late-гейта (late знак/WR/hit count, поддержка early того же знака, WR60+ star-хиты All); уезжает в delayed payload через `stake_multiplier_context["all_star_hits"]` |
@@ -224,6 +225,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | env | default |
 |---|---|
 | `MAP_ID_CHECK_PATH` | `~/.local/state/ingame/map_id_check.txt` (единый для всех режимов) |
+| `MAP_VERDICTS_PATH` | `~/.local/state/ingame/map_verdicts.json` — журнал вердиктов карт (1 карта = 1 запись: identity + последний снапшот metrics/protracker/star/elo + массив verdicts с dispatch-инфо); чисто аддитивно, существующее логирование не меняет |
 | `SOURCETV_MATCHES_PATH` | `{PROJECT_ROOT}/runtime/sourcetv_matches.json` — мост live-матчей между `sourcetv_probe.py` и `cyberscore_try.py` (абсолютный путь; не зависит от cwd) |
 | `RUNTIME_INSTANCE_LOCK_PATH` | `runtime/cyberscore_try.instance.lock` |
 | `DELAYED_QUEUE_PATH` | `runtime/delayed_signal_queue.json` (суффиксируется режимом) |
