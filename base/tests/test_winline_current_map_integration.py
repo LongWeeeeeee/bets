@@ -486,6 +486,11 @@ def test_int_shared_runner_named_page_and_mode_matrix(tmp_path, monkeypatch) -> 
         # No injected collector → production _winline_current_map_poller_collect
         evidence_path=evidence,
         reload_min_spacing_seconds=RELOAD_SPACING,
+        # Пороги по умолчанию намеренно много выше: перезагрузка сама лишает
+        # общую страницу карточек на десятки секунд. Здесь проверяется матрица
+        # режимов, поэтому эскалацию задаём явно.
+        reload_after_consecutive_misses=3,
+        reload_settle_seconds=0.0,
     )
 
     page = registry.get_or_create_page(NAMED_PAGE)

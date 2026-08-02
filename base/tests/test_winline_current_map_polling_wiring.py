@@ -613,6 +613,10 @@ def test_controlled_reload_forwarded_after_miss_streak(tmp_path, monkeypatch):
         evidence_path=tmp_path / "latest.json",
         # speed up reload spacing for unit test via poller kwargs if accepted
         reload_min_spacing_seconds=0.0,
+        # Пороги по умолчанию намеренно много выше: перезагрузка сама лишает
+        # страницу карточек на десятки секунд. Здесь проверяется проводка режима.
+        reload_after_consecutive_misses=3,
+        reload_settle_seconds=0.0,
     )
     # attempt 1 initial_goto, 2-3 dynamic_dom, 4 controlled_reload (3 consecutive misses)
     for i in range(4):

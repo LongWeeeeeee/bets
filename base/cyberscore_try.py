@@ -362,6 +362,19 @@ WINLINE_CURRENT_MAP_SCHEDULER_NOMINAL_S = 5.0
 # budget; retry=False below prevents duplicate queued work.
 WINLINE_CURRENT_MAP_SHARED_JOB_TIMEOUT_S = 60.0
 WINLINE_CURRENT_MAP_RECOVERY_COOLDOWN_S = 60.0
+# Страница одна на все матчи, поэтому и перезагрузка общая. Замер по evidence
+# 02.08.2026: в первые 60 с после перезагрузки кэфы снимаются в 1-5% попыток, а
+# спустя 60 с без перезагрузок — в 25-79%. Окно дедупа должно быть не меньше
+# спейсинга в самом поллере, иначе три активных матча по очереди перезагружают
+# общую страницу раз в минуту и она никогда не успевает дорисоваться.
+try:
+    WINLINE_SHARED_RELOAD_MIN_SPACING_S = float(
+        str(os.getenv("WINLINE_SHARED_RELOAD_SPACING_S") or "").strip() or 300.0
+    )
+except (TypeError, ValueError):
+    WINLINE_SHARED_RELOAD_MIN_SPACING_S = 300.0
+if WINLINE_SHARED_RELOAD_MIN_SPACING_S <= 0:
+    WINLINE_SHARED_RELOAD_MIN_SPACING_S = 300.0
 
 
 def reset_winline_current_map_polling_state() -> None:
@@ -1265,9 +1278,12 @@ def _winline_current_map_poller_collect(
                 last_reload = _winline_shared_page_state.get("last_reload_monotonic")
             # All logical match pollers share this one physical page.  A reload
             # performed for one match refreshes every match card, so repeating
-            # it for another poller within the same 60s window only blocks the
-            # shared worker.
-            if last_reload is not None and (now_mono - float(last_reload)) < 60.0:
+            # it for another poller within the same window only blocks the
+            # shared worker — and leaves the page blank for tens of seconds.
+            if (
+                last_reload is not None
+                and (now_mono - float(last_reload)) < WINLINE_SHARED_RELOAD_MIN_SPACING_S
+            ):
                 effective_mode = "dynamic_dom"
 
         if effective_mode in {"dynamic_dom", "initial_goto"}:
