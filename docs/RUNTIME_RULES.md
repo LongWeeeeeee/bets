@@ -25,7 +25,8 @@
 
 ### Team kills≥27 shadow
 
-- Env prefix `TEAM_KILLS25_*` сохранён для совместимости, хотя target и runtime filenames теперь 27+.
+- Env читаются в двух префиксах: приоритетный `TEAM_KILLS27_*`, fallback — legacy `TEAM_KILLS25_*` (сохранён для совместимости, хотя target и runtime filenames теперь 27+). Заданный `TEAM_KILLS27_*` выигрывает даже со значением `0`. Ниже суффиксы приведены с legacy-префиксом; тот же суффикс работает с `TEAM_KILLS27_`.
+- Чтобы отправлять kills27 в отдельный бот, задай `TEAM_KILLS27_TELEGRAM_ENABLED=1`, `TEAM_KILLS27_TELEGRAM_BOT_TOKEN`, `TEAM_KILLS27_TELEGRAM_CHAT_ID` и **обязательно** отдельный `TEAM_KILLS27_TELEGRAM_SENT_PATH` — иначе dedupe-ledger разделит файл с legacy-потоком.
 - `TEAM_KILLS25_SHADOW_ENABLED=0` — включает скоринг/JSONL-аудит schema `team_kills27_shadow.v2` для кандидатов NW60 с `hits>=2`; основной dispatch и stake не меняются.
 - `TEAM_KILLS25_SHADOW_MODEL_PATH=ml-models/team_kills27/team_kills27_shadow.json` — frozen JSON logistic artifact на 95 признаков: 90 draft/ELO, два confidence-weighted latest-patch roster и три block-consensus (`blocks_target_count`, `blocks_opponent_count`, `blocks_consensus_target`). Production artifact: `C=0.003`.
 - `TEAM_KILLS25_SHADOW_LOG_PATH=runtime/team_kills27_shadow.jsonl` — append-only журнал признаков и прогнозов.

@@ -119,8 +119,23 @@ def _env_enabled(name: str, default: str = "0") -> bool:
     }
 
 
+def _env_enabled_any(*names: str, default: str = "0") -> bool:
+    for name in names:
+        if os.getenv(name) is not None:
+            return _env_enabled(name, default)
+    return _env_enabled(names[0], default) if names else _env_enabled("", default)
+
+
+def _env_first(*names: str, default: str = "") -> str:
+    for name in names:
+        value = str(os.getenv(name, "") or "").strip()
+        if value:
+            return value
+    return default
+
+
 def _enabled() -> bool:
-    return _env_enabled("TEAM_KILLS25_SHADOW_ENABLED")
+    return _env_enabled_any("TEAM_KILLS27_SHADOW_ENABLED", "TEAM_KILLS25_SHADOW_ENABLED")
 
 
 def _number(value: Any) -> float | None:
@@ -277,7 +292,13 @@ def build_features(
 
 
 def _artifact_path() -> Path:
-    return Path(os.getenv("TEAM_KILLS25_SHADOW_MODEL_PATH", str(DEFAULT_ARTIFACT_PATH)))
+    return Path(
+        _env_first(
+            "TEAM_KILLS27_SHADOW_MODEL_PATH",
+            "TEAM_KILLS25_SHADOW_MODEL_PATH",
+            default=str(DEFAULT_ARTIFACT_PATH),
+        )
+    )
 
 
 @lru_cache(maxsize=4)
@@ -308,9 +329,10 @@ def load_artifact(path: Path | None = None) -> dict[str, Any] | None:
 
 def _roster_history_path() -> Path:
     return Path(
-        os.getenv(
+        _env_first(
+            "TEAM_KILLS27_ROSTER_HISTORY_PATH",
             "TEAM_KILLS25_ROSTER_HISTORY_PATH",
-            str(DEFAULT_ROSTER_HISTORY_PATH),
+            default=str(DEFAULT_ROSTER_HISTORY_PATH),
         )
     )
 
@@ -499,9 +521,10 @@ def _json_safe(value: Any) -> Any:
 
 def _telegram_sent_path() -> Path:
     return Path(
-        os.getenv(
+        _env_first(
+            "TEAM_KILLS27_TELEGRAM_SENT_PATH",
             "TEAM_KILLS25_TELEGRAM_SENT_PATH",
-            str(DEFAULT_TELEGRAM_SENT_PATH),
+            default=str(DEFAULT_TELEGRAM_SENT_PATH),
         )
     )
 
@@ -680,15 +703,22 @@ def _post_telegram_message(
 def _maybe_send_telegram_bet(
     record: Mapping[str, Any],
 ) -> dict[str, Any]:
-    if not _env_enabled("TEAM_KILLS25_TELEGRAM_ENABLED"):
+    if not _env_enabled_any("TEAM_KILLS27_TELEGRAM_ENABLED", "TEAM_KILLS25_TELEGRAM_ENABLED"):
         return {"enabled": False, "eligible": False, "sent": False}
 
     probability = _number(record.get("ml_probability"))
     artifact_threshold = _number(record.get("ml_threshold"))
-    threshold = _number(os.getenv("TEAM_KILLS25_TELEGRAM_MIN_PROBABILITY"))
+    threshold = _number(
+        _env_first(
+            "TEAM_KILLS27_TELEGRAM_MIN_PROBABILITY",
+            "TEAM_KILLS25_TELEGRAM_MIN_PROBABILITY",
+        )
+    )
     if threshold is None:
         threshold = artifact_threshold
-    min_wr = _number(os.getenv("TEAM_KILLS25_TELEGRAM_MIN_WR", "60")) or 60.0
+    min_wr = _number(
+        _env_first("TEAM_KILLS27_TELEGRAM_MIN_WR", "TEAM_KILLS25_TELEGRAM_MIN_WR", default="60")
+    ) or 60.0
     roster = record.get("roster_kills")
     roster = roster if isinstance(roster, Mapping) else {}
     model_eligible = bool(
@@ -715,8 +745,8 @@ def _maybe_send_telegram_bet(
             "min_wr": min_wr,
         }
 
-    token = str(os.getenv("TEAM_KILLS25_TELEGRAM_BOT_TOKEN", "") or "").strip()
-    chat_id = str(os.getenv("TEAM_KILLS25_TELEGRAM_CHAT_ID", "") or "").strip()
+    token = _env_first("TEAM_KILLS27_TELEGRAM_BOT_TOKEN", "TEAM_KILLS25_TELEGRAM_BOT_TOKEN")
+    chat_id = _env_first("TEAM_KILLS27_TELEGRAM_CHAT_ID", "TEAM_KILLS25_TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         return {
             "enabled": True,

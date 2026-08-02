@@ -565,3 +565,130 @@ def test_telegram_gate_does_not_send_below_artifact_threshold(monkeypatch, tmp_p
     assert result is not None
     assert result["telegram"]["eligible"] is False
     assert calls == []
+
+
+def test_kills27_namespace_enables_shadow_without_the_legacy_variable(monkeypatch, tmp_path):
+    monkeypatch.delenv("TEAM_KILLS25_SHADOW_ENABLED", raising=False)
+    monkeypatch.setenv("TEAM_KILLS27_SHADOW_ENABLED", "1")
+    shadow.reset_shadow_state_for_tests()
+    output = tmp_path / "shadow.jsonl"
+    result = shadow.record_shadow_observation(
+        match_key="map-27-namespace",
+        match_id=27,
+        observed_at=2,
+        target_side="radiant",
+        target_team_id=10,
+        target_team_name="A",
+        opponent_team_id=20,
+        opponent_team_name="B",
+        tier_segment="T1-T2",
+        nw_hit_count=2,
+        nw_max_wr=65,
+        nw_hit_metrics=["solo", "counterpick_1vs1"],
+        metrics_payload=_metrics(),
+        team_elo_meta={"raw_radiant_wr": 60, "raw_dire_wr": 40, "raw_diff": 80},
+        artifact=_artifact(),
+        log_path=output,
+    )
+    assert result is not None
+    assert output.exists()
+
+
+def test_kills27_namespace_wins_over_the_legacy_variable(monkeypatch, tmp_path):
+    # An explicit kills27 "off" must not be resurrected by the legacy kills25 flag.
+    monkeypatch.setenv("TEAM_KILLS25_SHADOW_ENABLED", "1")
+    monkeypatch.setenv("TEAM_KILLS27_SHADOW_ENABLED", "0")
+    shadow.reset_shadow_state_for_tests()
+    output = tmp_path / "shadow.jsonl"
+    result = shadow.record_shadow_observation(
+        match_key="map-27-off",
+        match_id=28,
+        observed_at=2,
+        target_side="radiant",
+        target_team_id=10,
+        target_team_name="A",
+        opponent_team_id=20,
+        opponent_team_name="B",
+        tier_segment="T1-T2",
+        nw_hit_count=2,
+        nw_max_wr=65,
+        nw_hit_metrics=["solo", "counterpick_1vs1"],
+        metrics_payload=_metrics(),
+        team_elo_meta={"raw_radiant_wr": 60, "raw_dire_wr": 40, "raw_diff": 80},
+        artifact=_artifact(),
+        log_path=output,
+    )
+    assert result is None
+    assert not output.exists()
+
+
+def test_kills27_telegram_uses_its_own_bot_and_sent_namespace(monkeypatch, tmp_path):
+    # The kills27 stream must not inherit the kills25 bot, chat or dedupe ledger.
+    monkeypatch.delenv("TEAM_KILLS25_TELEGRAM_ENABLED", raising=False)
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_BOT_TOKEN", "legacy-token")
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_CHAT_ID", "111")
+    legacy_sent = tmp_path / "kills25-sent.jsonl"
+    monkeypatch.setenv("TEAM_KILLS25_TELEGRAM_SENT_PATH", str(legacy_sent))
+
+    monkeypatch.setenv("TEAM_KILLS27_TELEGRAM_ENABLED", "1")
+    monkeypatch.setenv("TEAM_KILLS27_TELEGRAM_BOT_TOKEN", "kills27-token")
+    monkeypatch.setenv("TEAM_KILLS27_TELEGRAM_CHAT_ID", "222")
+    kills27_sent = tmp_path / "kills27-sent.jsonl"
+    monkeypatch.setenv("TEAM_KILLS27_TELEGRAM_SENT_PATH", str(kills27_sent))
+
+    calls = []
+    monkeypatch.setattr(
+        shadow,
+        "_post_telegram_message",
+        lambda **kwargs: calls.append(kwargs) or (True, None),
+    )
+    shadow.reset_shadow_state_for_tests()
+    result = shadow._maybe_send_telegram_bet(
+        {
+            "match_key": "dltv.org/matches/9000000001.1",
+            "match_id": 9000000001,
+            "target_team_name": "Target Team",
+            "ml_probability": 0.8,
+            "ml_threshold": 0.6,
+            "nw_max_wr": 65,
+            "roster_kills": {"available": True, "patch_matches": 6},
+        }
+    )
+    assert result["sent"] is True
+    assert len(calls) == 1
+    assert calls[0]["bot_token"] == "kills27-token"
+    assert calls[0]["chat_id"] == "222"
+    assert "TEAM KILLS ≥27" in calls[0]["text"]
+    assert kills27_sent.exists()
+    assert not legacy_sent.exists()
+
+
+def test_kills27_min_probability_override_is_read_from_its_own_variable(monkeypatch, tmp_path):
+    monkeypatch.setenv("TEAM_KILLS27_TELEGRAM_ENABLED", "1")
+    monkeypatch.setenv("TEAM_KILLS27_TELEGRAM_BOT_TOKEN", "kills27-token")
+    monkeypatch.setenv("TEAM_KILLS27_TELEGRAM_CHAT_ID", "222")
+    monkeypatch.setenv("TEAM_KILLS27_TELEGRAM_MIN_PROBABILITY", "0.95")
+    monkeypatch.setenv(
+        "TEAM_KILLS27_TELEGRAM_SENT_PATH", str(tmp_path / "kills27-sent.jsonl")
+    )
+    calls = []
+    monkeypatch.setattr(
+        shadow,
+        "_post_telegram_message",
+        lambda **kwargs: calls.append(kwargs) or (True, None),
+    )
+    shadow.reset_shadow_state_for_tests()
+    result = shadow._maybe_send_telegram_bet(
+        {
+            "match_key": "dltv.org/matches/9000000002.1",
+            "match_id": 9000000002,
+            "ml_probability": 0.80,
+            "ml_threshold": 0.60,
+            "nw_max_wr": 65,
+            "roster_kills": {"available": True, "patch_matches": 6},
+        }
+    )
+    assert result["threshold"] == 0.95
+    assert result["eligible"] is False
+    assert result["reason"] == "model_gate"
+    assert calls == []
