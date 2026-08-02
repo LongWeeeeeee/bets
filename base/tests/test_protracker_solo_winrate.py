@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 
 import cyberscore_try as runtime  # noqa: E402
 import dota2protracker as protracker  # noqa: E402
+import check_old_maps  # noqa: E402
 
 FULL_POSITIONS = ("pos1", "pos2", "pos3", "pos4", "pos5")
 
@@ -250,6 +251,34 @@ def test_enrich_exposes_the_solo_metric_in_the_payload(monkeypatch) -> None:
 
     # cp1vs1/duo невалидны — обе solo-метрики считаются независимо от них.
     assert out["pro_cp1vs1_valid"] is False
+
+
+def test_offline_metrics_export_includes_both_protracker_solo_values() -> None:
+    """Large public backtests must preserve the same solo fields as live."""
+    stats = _flat_stats(radiant_wr=53.0, dire_wr=49.0)
+    _with_overall(stats, **{f"r{index}": 51.0 for index in range(1, 6)})
+    _with_overall(stats, **{f"d{index}": 50.0 for index in range(1, 6)})
+    radiant = {
+        pos: {"hero_name": f"r{index}"}
+        for index, pos in enumerate(FULL_POSITIONS, start=1)
+    }
+    dire = {
+        pos: {"hero_name": f"d{index}"}
+        for index, pos in enumerate(FULL_POSITIONS, start=1)
+    }
+
+    out = check_old_maps._protracker_metrics_for_match(
+        radiant,
+        dire,
+        hero_data={},
+        min_games=10,
+        hero_stats=stats,
+    )
+
+    assert out["pro_solo_wr_valid"] is True
+    assert out["pro_solo_wr_late"] == 4.0
+    assert out["pro_solo_wr_overall_valid"] is True
+    assert out["pro_solo_wr_overall_late"] == 1.0
 
 
 def test_incomplete_draft_leaves_solo_invalid(monkeypatch) -> None:

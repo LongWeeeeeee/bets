@@ -681,7 +681,13 @@ def _avg_or_zero(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
-def _protracker_metrics_for_match(radiant_draft: dict, dire_draft: dict, hero_data: dict, min_games: int) -> dict:
+def _protracker_metrics_for_match(
+    radiant_draft: dict,
+    dire_draft: dict,
+    hero_data: dict,
+    min_games: int,
+    hero_stats: Optional[dict[str, dict]] = None,
+) -> dict:
     result = {
         "pro_cp1vs1_early": 0.0,
         "pro_cp1vs1_late": 0.0,
@@ -691,6 +697,14 @@ def _protracker_metrics_for_match(radiant_draft: dict, dire_draft: dict, hero_da
         "pro_duo_synergy_late": 0.0,
         "pro_duo_synergy_valid": False,
         "pro_duo_synergy_reason": "not_computed",
+        "pro_solo_wr_early": 0.0,
+        "pro_solo_wr_late": 0.0,
+        "pro_solo_wr_valid": False,
+        "pro_solo_wr_reason": "not_computed",
+        "pro_solo_wr_overall_early": 0.0,
+        "pro_solo_wr_overall_late": 0.0,
+        "pro_solo_wr_overall_valid": False,
+        "pro_solo_wr_overall_reason": "not_computed",
         "pro_lane_advantage": 0.0,
         "pro_lane_cp1vs1_valid": False,
         "pro_lane_duo_valid": False,
@@ -727,6 +741,36 @@ def _protracker_metrics_for_match(radiant_draft: dict, dire_draft: dict, hero_da
         duo_score = _avg_or_zero(r_duo_data["scores"]) - _avg_or_zero(d_duo_data["scores"])
         result["pro_duo_synergy_early"] = duo_score
         result["pro_duo_synergy_late"] = duo_score
+
+    solo_valid, solo_data = dota2protracker.calculate_solo_winrate_advantage(
+        radiant_positions,
+        dire_positions,
+        hero_stats=hero_stats,
+        max_age_days=None,
+    )
+    result["pro_solo_wr_valid"] = bool(solo_valid)
+    result["pro_solo_wr_reason"] = str(solo_data.get("reason") or "unknown")
+    result["pro_solo_wr_games"] = int(solo_data.get("games") or 0)
+    if solo_valid and solo_data.get("score") is not None:
+        solo_score = float(solo_data["score"])
+        result["pro_solo_wr_early"] = solo_score
+        result["pro_solo_wr_late"] = solo_score
+
+    overall_valid, overall_data = dota2protracker.calculate_overall_winrate_advantage(
+        radiant_positions,
+        dire_positions,
+        hero_stats=hero_stats,
+        max_age_days=None,
+    )
+    result["pro_solo_wr_overall_valid"] = bool(overall_valid)
+    result["pro_solo_wr_overall_reason"] = str(
+        overall_data.get("reason") or "unknown"
+    )
+    result["pro_solo_wr_overall_games"] = int(overall_data.get("games") or 0)
+    if overall_valid and overall_data.get("score") is not None:
+        overall_score = float(overall_data["score"])
+        result["pro_solo_wr_overall_early"] = overall_score
+        result["pro_solo_wr_overall_late"] = overall_score
 
     lane_data = dota2protracker.calculate_lane_advantage(
         radiant_positions, dire_positions, hero_data, min_games,
@@ -923,12 +967,21 @@ def check_old_maps(
             refresh=dota2protracker_refresh,
             sleep_seconds=dota2protracker_sleep,
         )
+        hero_stats, hero_stats_age_days = (
+            dota2protracker.read_hero_overall_stats_cache(max_age_days=None)
+        )
+        print(
+            "[Dota2ProTracker] hero-list stats: "
+            f"heroes={len(hero_stats)}, age_days={hero_stats_age_days}",
+            flush=True,
+        )
         for idx, record in enumerate(records, 1):
             record["dota2protracker"] = _protracker_metrics_for_match(
                 record["radiant_draft"],
                 record["dire_draft"],
                 hero_data,
                 int(dota2protracker_min_games),
+                hero_stats=hero_stats,
             )
             if idx == 1 or idx % 250 == 0 or idx == len(records):
                 print(f"  dota2protracker [{idx:>5}/{len(records)}]", flush=True)

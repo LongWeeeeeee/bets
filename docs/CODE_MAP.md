@@ -370,7 +370,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 
 ## `base/check_old_maps.py` — offline backtest draft-метрик
 
-Прогоняет исторические/public карты через те же метрики, что в live-сигнале: словари `early/late/lane/post_lane_dict_raw`, d2pt `cp1vs1`/`duo`/`lane_advantage`, lane/early/late/post-lane outcomes.
+Прогоняет исторические/public карты через те же метрики, что в live-сигнале: словари `early/late/lane/post_lane_dict_raw`, d2pt `cp1vs1`/`duo`/`lane_advantage` и обе hero-list метрики `pro_solo_wr`/`pro_solo_wr_overall`, lane/early/late/post-lane outcomes. При `--dota2protracker` hero-list кэш читается один раз на весь прогон; обе solo-метрики записываются в `record["dota2protracker"]` вместе с valid/reason/games.
 
 **Ключевые функции:** `check_old_maps(...)` (692), `collect_matches(...)` (639), `_protracker_metrics_for_match(...)` (568), `_load_stats_dicts(...)` (381), `_resolve_maps_paths(maps_path, patch=None)` (99).
 
