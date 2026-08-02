@@ -104,6 +104,7 @@ Live-оценка использует строгую взаимоисключа
 - Любой множитель >0.5 требует **≥2 late star-hits**; иначе (включая неизвестный count) → `0.5`.
 - WR60-уровень late → всегда `0.5`.
 - **ELO-gate удалён**: при ≥2 late-hits множитель зависит только от late WR: `>=85 → 3`, `>=70 → 2`, иначе `1`.
+- Speculative comeback-вход всегда отправляет x0.5 на более глубоком NW-пороге (`LATE_PUB_COMEBACK_SPECULATIVE_THRESHOLD_MULT`, default `1.3`), но теперь допускается только если `_stake_multiplier_from_context(...)` для той же стороны/минуты даёт потенциальный основной сигнал **строго больше x0.5**. Поэтому пара `speculative x0.5 + main x0.5` запрещена; основной watcher и его stake-правила не меняются.
 
 #### Запрет x0.5 на ELO-андердога (`_half_stake_elo_underdog_reject`)
 Множитель считается как раньше, но доставка x0.5 запрещена, если target слабее оппонента по `base_rating` минимум на `HALF_STAKE_ELO_UNDERDOG_MIN_DIFF` (default 50): `opposite_rating - target_rating >= 50`. Gate стоит в `_deliver_and_persist_signal(...)`, поэтому покрывает immediate dispatch, delayed watcher и networth/comeback-релизы. Нет рейтингов/контекста или множитель не x0.5 → не блокируем. Выключатель — `HALF_STAKE_ELO_UNDERDOG_BLOCK_ENABLED` (default on).

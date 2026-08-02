@@ -55,6 +55,8 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 | `_get_team_tier(team_id)` | 12055 | tier 1/2/3 по `id_to_names` (см. ARCHITECTURE) |
 | `_match_has_tier1_team(radiant_team_id, dire_team_id)` | 12089 | True если ≥1 команда Tier-1 (OR; vs `_determine_star_signal_match_tier`=обе). Гейт kills-ставок (`KILLS_REQUIRE_TIER1_TEAM`) |
 | `_stake_multiplier_for_signal(...)` | 4990 | множитель ставки (x0.5/1/2/3) — см. ARCHITECTURE «Stake multiplier» |
+| `_stake_multiplier_from_context(...)` | 9560 | пересчитывает потенциальный main stake из сохранённого delayed-контекста на текущей минуте/NW |
+| `_late_speculative_allowed_for_context(...)` | 9600 | разрешает speculative x0.5 только при валидном Late и потенциальном main stake > x0.5 |
 | `_half_stake_elo_underdog_reject(...)` | 8415 | блокирует доставку x0.5, если target ELO-андердог на `HALF_STAKE_ELO_UNDERDOG_MIN_DIFF`+ |
 | `_deliver_and_persist_signal(...)` | 24723 | единая точка доставки/персиста сигнала; применяет half-stake ELO-underdog gate перед `send_message` |
 | `_build_stake_multiplier_context(...)` | 5122 | контекст для множителя |

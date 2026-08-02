@@ -130,3 +130,68 @@ def test_drop_delayed_matches_for_registry_clears_sibling_suffixes(
         assert "dltv.org/matches/8891742793.11" not in runtime.monitored_matches
         assert "dltv.org/matches/8891742793.44" not in runtime.monitored_matches
         assert "dltv.org/matches/9999999999.1" in runtime.monitored_matches
+
+
+def test_speculative_half_requires_potential_main_above_half() -> None:
+    common = {
+        "target_side": "radiant",
+        "selected_early_sign": None,
+        "selected_late_sign": 1,
+        "selected_all_sign": None,
+        "has_selected_early_star": False,
+        "has_selected_late_star": True,
+        "has_selected_all_star": False,
+        "early_wr_pct": None,
+        "late_wr_pct": 70.0,
+        "late_star_hit_count": 2,
+        "early_star_hit_count": 0,
+        "all_star_hit_count": 0,
+        "force_half_due_to_early_no_valid_late": False,
+    }
+
+    half_main = {
+        **common,
+        "late_star_hit_metrics": ["counterpick_1vs1", "counterpick_1vs2"],
+    }
+    assert runtime._stake_multiplier_from_context(
+        half_main,
+        game_time_seconds=31 * 60,
+        radiant_lead=-5000.0,
+    ) == 0.5
+    assert not runtime._late_speculative_allowed_for_context(
+        half_main,
+        game_time_seconds=31 * 60,
+        radiant_lead=-5000.0,
+    )
+
+    one_x_main = {
+        **common,
+        "late_star_hit_count": 3,
+        "late_star_hit_metrics": [
+            "counterpick_1vs1",
+            "counterpick_1vs2",
+            "solo",
+        ],
+    }
+    assert runtime._stake_multiplier_from_context(
+        one_x_main,
+        game_time_seconds=31 * 60,
+        radiant_lead=-5000.0,
+    ) == 1
+    assert runtime._late_speculative_allowed_for_context(
+        one_x_main,
+        game_time_seconds=31 * 60,
+        radiant_lead=-5000.0,
+    )
+
+    two_x_main = {**one_x_main, "late_wr_pct": 75.0}
+    assert runtime._stake_multiplier_from_context(
+        two_x_main,
+        game_time_seconds=31 * 60,
+        radiant_lead=-5000.0,
+    ) == 2
+    assert runtime._late_speculative_allowed_for_context(
+        two_x_main,
+        game_time_seconds=31 * 60,
+        radiant_lead=-5000.0,
+    )

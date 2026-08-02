@@ -3511,9 +3511,10 @@ DELAYED_SIGNAL_TARGET_GAME_TIME = (20 * 60) + 20
 LATE_PUB_COMEBACK_TABLE_START_SECONDS = 27 * 60
 # Спекулятивный x0.5 watcher для 27+ comeback-таблицы: пороги основной таблицы
 # умножаются на этот коэффициент (порог «глубже» → более ранний/рисковый вход),
-# отправляется ставка x0.5. Активен только при late WR >= MIN_WR и >= MIN_LATE_HITS
-# late star-хитов. Не отправляется, если основной watcher уже отправил по карте
-# (тогда delayed-запись уже закрыта), и не отправляется повторно (флаг
+# отправляется ставка x0.5. Активен только при late WR >= MIN_WR, >= MIN_LATE_HITS
+# late star-хитов и если этот же контекст даёт потенциальную основную ставку
+# строго больше x0.5. Не отправляется, если основной watcher уже отправил по
+# карте (тогда delayed-запись уже закрыта), и не отправляется повторно (флаг
 # speculative_half_sent). Основной watcher работает независимо.
 LATE_PUB_COMEBACK_SPECULATIVE_THRESHOLD_MULT = _safe_float_env(
     "LATE_PUB_COMEBACK_SPECULATIVE_THRESHOLD_MULT", 1.3
@@ -9560,6 +9561,69 @@ def _maybe_strip_early_kills_header_late(
         )
 
 
+def _stake_multiplier_from_context(
+    stake_multiplier_context: Optional[Dict[str, Any]],
+    *,
+    game_time_seconds: Optional[float],
+    radiant_lead: Optional[float],
+) -> float:
+    """Return the main-signal stake implied by a persisted dispatch context."""
+    if not isinstance(stake_multiplier_context, dict):
+        return 0.5
+    return _stake_multiplier_for_signal(
+        team_elo_meta=None,
+        target_side=stake_multiplier_context.get("target_side"),
+        selected_early_sign=stake_multiplier_context.get("selected_early_sign"),
+        selected_late_sign=stake_multiplier_context.get("selected_late_sign"),
+        has_selected_early_star=bool(stake_multiplier_context.get("has_selected_early_star")),
+        has_selected_late_star=bool(stake_multiplier_context.get("has_selected_late_star")),
+        early_wr_pct=stake_multiplier_context.get("early_wr_pct"),
+        late_wr_pct=stake_multiplier_context.get("late_wr_pct"),
+        game_time_seconds=game_time_seconds,
+        radiant_lead=radiant_lead,
+        late_star_hit_count=stake_multiplier_context.get("late_star_hit_count"),
+        target_rating=stake_multiplier_context.get("target_rating"),
+        opposite_rating=stake_multiplier_context.get("opposite_rating"),
+        target_elo_wr=stake_multiplier_context.get("target_elo_wr"),
+        force_half_due_to_early_no_valid_late=bool(
+            stake_multiplier_context.get("force_half_due_to_early_no_valid_late")
+        ),
+        selected_all_sign=stake_multiplier_context.get("selected_all_sign"),
+        has_selected_all_star=bool(stake_multiplier_context.get("has_selected_all_star")),
+        all_star_hit_count=stake_multiplier_context.get("all_star_hit_count"),
+        early_star_hit_count=stake_multiplier_context.get("early_star_hit_count"),
+        late_star_hit_metrics=stake_multiplier_context.get("late_star_hit_metrics"),
+    )
+
+
+def _late_speculative_allowed_for_context(
+    stake_multiplier_context: Optional[Dict[str, Any]],
+    *,
+    game_time_seconds: Optional[float],
+    radiant_lead: Optional[float],
+) -> bool:
+    """Allow speculative x0.5 only when the same context implies main > x0.5."""
+    if not isinstance(stake_multiplier_context, dict):
+        return False
+    try:
+        late_hits = int(stake_multiplier_context.get("late_star_hit_count") or 0)
+    except (TypeError, ValueError):
+        late_hits = 0
+    if (
+        not bool(stake_multiplier_context.get("has_selected_late_star"))
+        or late_hits < LATE_PUB_COMEBACK_SPECULATIVE_MIN_LATE_HITS
+    ):
+        return False
+    return bool(
+        _stake_multiplier_from_context(
+            stake_multiplier_context,
+            game_time_seconds=game_time_seconds,
+            radiant_lead=radiant_lead,
+        )
+        > 0.5
+    )
+
+
 def _refresh_stake_multiplier_message(
     message_text: str,
     *,
@@ -9589,30 +9653,11 @@ def _refresh_stake_multiplier_message(
     else:
         multiplier_skip_recompute = False
     if not multiplier_skip_recompute:
-        multiplier = _stake_multiplier_for_signal(
-        team_elo_meta=None,
-        target_side=stake_multiplier_context.get("target_side"),
-        selected_early_sign=stake_multiplier_context.get("selected_early_sign"),
-        selected_late_sign=stake_multiplier_context.get("selected_late_sign"),
-        has_selected_early_star=bool(stake_multiplier_context.get("has_selected_early_star")),
-        has_selected_late_star=bool(stake_multiplier_context.get("has_selected_late_star")),
-        early_wr_pct=stake_multiplier_context.get("early_wr_pct"),
-        late_wr_pct=stake_multiplier_context.get("late_wr_pct"),
-        game_time_seconds=game_time_seconds,
-        radiant_lead=radiant_lead,
-        late_star_hit_count=stake_multiplier_context.get("late_star_hit_count"),
-        target_rating=stake_multiplier_context.get("target_rating"),
-        opposite_rating=stake_multiplier_context.get("opposite_rating"),
-        target_elo_wr=stake_multiplier_context.get("target_elo_wr"),
-        force_half_due_to_early_no_valid_late=bool(
-            stake_multiplier_context.get("force_half_due_to_early_no_valid_late")
-        ),
-        selected_all_sign=stake_multiplier_context.get("selected_all_sign"),
-        has_selected_all_star=bool(stake_multiplier_context.get("has_selected_all_star")),
-        all_star_hit_count=stake_multiplier_context.get("all_star_hit_count"),
-        early_star_hit_count=stake_multiplier_context.get("early_star_hit_count"),
-        late_star_hit_metrics=stake_multiplier_context.get("late_star_hit_metrics"),
-    )
+        multiplier = _stake_multiplier_from_context(
+            stake_multiplier_context,
+            game_time_seconds=game_time_seconds,
+            radiant_lead=radiant_lead,
+        )
 
     new_header = _format_signal_header(
         stake_team_name=stake_team_name,
@@ -11470,13 +11515,10 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                     and int(late_pub_comeback_table_wr_level) >= LATE_PUB_COMEBACK_SPECULATIVE_MIN_WR
                 ):
                     _spec_smc = payload.get("stake_multiplier_context") or {}
-                    try:
-                        _spec_late_hits = int(_spec_smc.get("late_star_hit_count") or 0)
-                    except (TypeError, ValueError):
-                        _spec_late_hits = 0
-                    if (
-                        bool(_spec_smc.get("has_selected_late_star"))
-                        and _spec_late_hits >= LATE_PUB_COMEBACK_SPECULATIVE_MIN_LATE_HITS
+                    if _late_speculative_allowed_for_context(
+                        _spec_smc,
+                        game_time_seconds=current_game_time,
+                        radiant_lead=current_radiant_lead,
                     ):
                         _spec_decision = _late_star_pub_table_decision(
                             wr_level=late_pub_comeback_table_wr_level,
