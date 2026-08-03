@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import tempfile
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,9 +23,10 @@ from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_DIR = ROOT_DIR / "bets_data/analise_pub_matches/json_parts_split_from_object"
-DEFAULT_OUTPUT_DIR = ROOT_DIR / "data/public_draft_hero10_experiment/2026-08-03_all_public_v1"
+DEFAULT_OUTPUT_DIR = ROOT_DIR / "data/public_draft_hero10_experiment/2026-08-04_all_public_v2"
 FEATURE_NAMES = tuple(f"hero_{side}_{position}" for side in ("R", "D") for position in range(1, 6))
 C_GRID = (0.01, 0.1, 1.0, 10.0)
+RIDGE_GRID = (0.01, 0.1, 1.0, 10.0)
 SEED = 20260803
 
 @dataclass(frozen=True)
@@ -34,6 +36,7 @@ class Match:
     radiant_win: int
     heroes: tuple[int, ...]
     total_kills: int
+    duration_seconds: int
 
 
 def _int(value: Any) -> int | None:
@@ -66,13 +69,15 @@ def canonicalize_match(raw: Any, object_key: Any = None) -> tuple[Match | None, 
         if hero in heroes: return None, "duplicate_hero"
         sides[side][position] = hero; heroes.add(hero)
     if any(set(sides[s]) != set(range(1, 6)) for s in (True, False)): return None, "incomplete_positions"
+    duration = _int(raw.get("durationSeconds"))
+    if duration is None or duration <= 0: return None, "invalid_duration_seconds"
     radiant = raw.get("radiantKills"); dire = raw.get("direKills")
     if not isinstance(radiant, list) or not isinstance(dire, list): return None, "invalid_kills"
     r = [_int(x) for x in radiant]; d = [_int(x) for x in dire]
     if any(x is None or x < 0 for x in r + d): return None, "invalid_kills"
     total = int(sum(x for x in r if x is not None) + sum(x for x in d if x is not None))
     ordered = tuple(sides[s][p] for s in (True, False) for p in range(1, 6))
-    return Match(map_id, start, int(win), ordered, total), None
+    return Match(map_id, start, int(win), ordered, total, duration), None
 
 
 def iter_json_objects(path: Path) -> Iterator[tuple[Any, Any]]:
@@ -83,17 +88,22 @@ def iter_json_objects(path: Path) -> Iterator[tuple[Any, Any]]:
 
 def scan_public(paths: Iterable[Path]) -> tuple[list[Match], dict[str, Any]]:
     matches: list[Match] = []; rejected: Counter[str] = Counter(); seen: set[int] = set(); files = 0
+    rejected_rows: list[dict[str, Any]] = []
     for path in sorted(Path(p) for p in paths):
         files += 1
         try:
             for key, raw in iter_json_objects(path):
                 match, reason = canonicalize_match(raw, key)
-                if match is None: rejected[reason or "invalid"] += 1
-                elif match.map_id in seen: rejected["duplicate_map_id"] += 1
+                if match is None:
+                    reason = reason or "invalid"; rejected[reason] += 1
+                    rejected_rows.append({"source": path.name, "object_key": str(key), "reason": reason})
+                elif match.map_id in seen:
+                    rejected["duplicate_map_id"] += 1
+                    rejected_rows.append({"source": path.name, "object_key": str(key), "reason": "duplicate_map_id", "map_id": match.map_id})
                 else: seen.add(match.map_id); matches.append(match)
         except (OSError, ValueError, json.JSONDecodeError): rejected["file_error"] += 1
     matches.sort(key=lambda m: (m.start_time, m.map_id))
-    return matches, {"files": files, "accepted": len(matches), "rejected": dict(sorted(rejected.items()))}
+    return matches, {"files": files, "accepted": len(matches), "rejected": dict(sorted(rejected.items())), "rejected_rows": rejected_rows}
 
 
 def feature_frame(matches: list[Match]) -> np.ndarray:
@@ -124,6 +134,23 @@ def _metrics(y: np.ndarray, p: np.ndarray) -> dict[str, Any]:
     return out
 
 
+def atomic_joblib_dump(value: Any, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            joblib.dump(value, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, destination)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def train_experiment(matches: list[Match], output_dir: Path) -> dict[str, Any]:
     if output_dir.exists() and any(output_dir.iterdir()): raise FileExistsError(f"refusing to overwrite {output_dir}")
     train, validation, test = chronological_split(matches)
@@ -135,21 +162,29 @@ def train_experiment(matches: list[Match], output_dir: Path) -> dict[str, Any]:
     kills_train = np.asarray([m.total_kills for m in train], dtype=float); kills_val = np.asarray([m.total_kills for m in validation], dtype=float); kills_test = np.asarray([m.total_kills for m in test], dtype=float)
     scaler = MinMaxScaler().fit(kills_train.reshape(-1, 1))
     kill_model = Ridge(alpha=1.0).fit(xtr, scaler.transform(kills_train.reshape(-1, 1)).ravel())
+    duration_train = np.asarray([m.duration_seconds for m in train], dtype=float); duration_val = np.asarray([m.duration_seconds for m in validation], dtype=float); duration_test = np.asarray([m.duration_seconds for m in test], dtype=float)
+    duration_alpha = min(RIDGE_GRID, key=lambda alpha: mean_absolute_error(duration_val, Ridge(alpha=alpha).fit(xtr, duration_train).predict(xval)))
+    duration_model = Ridge(alpha=duration_alpha).fit(xtr, duration_train)
     median = float(np.median(kills_train)); yktr = (kills_train > median).astype(int); ykv = (kills_val > median).astype(int); ykte = (kills_test > median).astype(int)
     kill_c = min(C_GRID, key=lambda c: log_loss(ykv, LogisticRegression(C=c, max_iter=2000, random_state=SEED).fit(xtr, yktr).predict_proba(xval), labels=[0, 1]))
     kill_classifier = LogisticRegression(C=kill_c, max_iter=2000, random_state=SEED).fit(xtr, yktr)
     output_dir.mkdir(parents=True, exist_ok=False)
-    joblib.dump(win_model, output_dir / "radiant_win_model.joblib"); joblib.dump(kill_model, output_dir / "total_kills_regression_model.joblib"); joblib.dump(kill_classifier, output_dir / "total_kills_over_median_model.joblib"); joblib.dump(scaler, output_dir / "kills_minmax_scaler.joblib")
-    result = {"schema": {"feature_names": list(FEATURE_NAMES), "feature_count": 10, "uses_ingame_or_third_party_stats": False}, "counts": {"all": len(matches), "train": len(train), "validation": len(validation), "test": len(test)}, "selection": {"win_C": selected_c, "kills_over_median_C": kill_c, "kills_median_train": median}, "models": {"radiant_win": _metrics(yte, win_model.predict_proba(xte)[:, 1]), "total_kills_over_median": _metrics(ykte, kill_classifier.predict_proba(xte)[:, 1]), "total_kills_regression": {"rows": len(kills_test), "mae": float(mean_absolute_error(kills_test, scaler.inverse_transform(kill_model.predict(xte).reshape(-1, 1)).ravel()))}}
+    atomic_joblib_dump(win_model, output_dir / "radiant_win_model.joblib"); atomic_joblib_dump(kill_model, output_dir / "total_kills_regression_model.joblib"); atomic_joblib_dump(kill_classifier, output_dir / "total_kills_over_median_model.joblib"); atomic_joblib_dump(scaler, output_dir / "kills_minmax_scaler.joblib"); atomic_joblib_dump(duration_model, output_dir / "duration_seconds_regression_model.joblib")
+    kill_pred_norm = np.clip(kill_model.predict(xte), 0.0, 1.0)
+    kill_pred_raw = scaler.inverse_transform(kill_pred_norm.reshape(-1, 1)).ravel()
+    duration_pred = duration_model.predict(xte)
+    result = {"schema": {"feature_names": list(FEATURE_NAMES), "feature_count": 10, "uses_ingame_or_third_party_stats": False}, "counts": {"all": len(matches), "train": len(train), "validation": len(validation), "test": len(test)}, "selection": {"win_C": selected_c, "kills_over_median_C": kill_c, "kills_median_train": median}, "models": {"radiant_win": _metrics(yte, win_model.predict_proba(xte)[:, 1]), "total_kills_over_median": _metrics(ykte, kill_classifier.predict_proba(xte)[:, 1]), "total_kills_regression": {"rows": len(kills_test), "mae": float(mean_absolute_error(kills_test, kill_pred_raw)), "normalized_prediction_min": float(np.min(kill_pred_norm)), "normalized_prediction_max": float(np.max(kill_pred_norm)), "normalized_bounds": [0.0, 1.0]}, "duration_seconds_regression": {"rows": len(duration_test), "mae": float(mean_absolute_error(duration_test, duration_pred))}}
     }
     (output_dir / "results.json.tmp").write_text(json.dumps(result, indent=2, allow_nan=False), encoding="utf-8"); os.replace(output_dir / "results.json.tmp", output_dir / "results.json")
-    manifest = {"experiment": "public_draft_hero10", "version": "all_public_v1", "input": str(DEFAULT_INPUT_DIR), "counts": result["counts"], "artifacts": sorted(p.name for p in output_dir.iterdir())}
+    manifest = {"experiment": "public_draft_hero10", "version": "all_public_v2", "input": str(DEFAULT_INPUT_DIR), "counts": result["counts"], "artifacts": sorted(p.name for p in output_dir.iterdir())}
     (output_dir / "manifest.json.tmp").write_text(json.dumps(manifest, indent=2), encoding="utf-8"); os.replace(output_dir / "manifest.json.tmp", output_dir / "manifest.json")
     return result
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(); parser.add_argument("--input-dir", type=Path, default=DEFAULT_INPUT_DIR); parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR); args = parser.parse_args()
-    matches, audit = scan_public(args.input_dir.glob("*.json")); result = train_experiment(matches, args.output_dir); result["scan"] = audit; print(json.dumps(result, indent=2))
+    matches, audit = scan_public(args.input_dir.glob("*.json")); result = train_experiment(matches, args.output_dir); result["scan"] = audit
+    (args.output_dir / "audit.json").write_text(json.dumps(audit, indent=2, allow_nan=False), encoding="utf-8")
+    print(json.dumps(result, indent=2))
 
 if __name__ == "__main__": main()
