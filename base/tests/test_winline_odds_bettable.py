@@ -223,6 +223,66 @@ def test_pinned_bar_without_winner_market_does_not_decide() -> None:
     assert _bettable(f'<div class="page">{pinned}{card}</div>', 1) is True
 
 
+def test_stale_locked_shadow_does_not_override_live_card() -> None:
+    """Старая locked-тень не закрывает тот же рынок в живой карточке.
+
+    Angular может оставить закреплённое DOM-представление с предыдущим
+    состоянием кнопок и рядом отрисовать актуальную полную карточку. Доступность
+    должна агрегироваться по всем доказанным представлениям точного рынка.
+    """
+    stale_shadow = (
+        '<div class="ww-pinned-card shadow-card">'
+        f'<div class="card__teams">{TEAM1} — {TEAM2}</div>'
+        + _map_block(
+            1,
+            _market_button("generic2", "coefficient-button_locked", "1.50"),
+            _market_button("generic2", "coefficient-button_locked", "2.40"),
+        )
+        + "</div>"
+    )
+    live_card = _card(
+        _map_block(
+            1,
+            _market_button("generic2", "", "1.57"),
+            _market_button("generic2", "", "2.25"),
+        )
+    )
+
+    assert _bettable(f'<div class="page">{stale_shadow}{live_card}</div>', 1) is True
+
+
+def test_open_neighbour_does_not_override_locked_target() -> None:
+    """Открытая первая карта соседнего матча не делает целевой рынок live."""
+    target = _card(
+        _map_block(
+            1,
+            _market_button("generic2", "coefficient-button_locked", "1.50"),
+            _market_button("generic2", "coefficient-button_locked", "2.40"),
+        ),
+        team1="FTS",
+        team2="PuckChamp",
+    )
+    neighbour = _card(
+        _map_block(
+            1,
+            _market_button("generic2", "", "1.80"),
+            _market_button("generic2", "", "2.10"),
+        ),
+        team1="Spirit",
+        team2="Falcons",
+    )
+
+    assert (
+        odds._winline_map_odds_bettable(
+            f'<div class="multi-event-feed">{target}{neighbour}</div>',
+            "FTS",
+            "PuckChamp",
+            1,
+        )
+        is False
+    )
+
+
 # --- Путь ставки: замороженный кэф не должен доехать до диспетчера -----------
 
 

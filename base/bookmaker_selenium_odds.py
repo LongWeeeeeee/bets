@@ -2242,19 +2242,41 @@ def _winline_map_odds_bettable(
         scopes = []
         for element in soup.find_all(True):
             card_text = " ".join(element.stripped_strings)
-            if card_text and _text_matches_teams(card_text, team1, team2):
-                scopes.append((len(card_text), element))
+            if not card_text or not _text_matches_teams(card_text, team1, team2):
+                continue
+            if not _winline_single_card_scope(card_text):
+                # Общий feed/tournament ancestor содержит нужные команды, но
+                # одновременно охватывает соседние матчи и не является
+                # доказанной карточкой целевого события.
+                continue
+            if not any(
+                _labels_this_map(" ".join(label.stripped_strings))
+                for label in element.find_all(
+                    lambda tag: (
+                        _WINLINE_PERIOD_NAME_CLASS in _winline_node_classes(tag)
+                    )
+                )
+            ):
+                continue
+            scopes.append((len(card_text), element))
         if not scopes:
             # Карточки этих команд на странице нет — судить о доступности
             # исхода не по чему. Чужой рынок читать нельзя.
             return None
         scopes.sort(key=lambda item: item[0])
-        # Проверяем все совпавшие узлы: обрезка здесь способна скрыть
-        # настоящие кнопки рынка за закреплёнными/витринными DOM-тенями.
-        search_roots = [element for _, element in scopes]
+        scope_ids = {id(element) for _, element in scopes}
+        # Оставляем минимальные точные карточки. Их может быть несколько
+        # (stale pinned/shadow + актуальная full card), но общий ancestor,
+        # содержащий такую карточку и соседние события, читать нельзя.
+        search_roots = [
+            element
+            for _, element in scopes
+            if not any(id(child) in scope_ids for child in element.find_all(True))
+        ]
     else:
         search_roots = [soup]
 
+    saw_winner_buttons = False
     for root in search_roots:
         for label in root.find_all(
             lambda tag: _WINLINE_PERIOD_NAME_CLASS in _winline_node_classes(tag)
@@ -2275,8 +2297,16 @@ def _winline_map_odds_bettable(
                     # чужая разметка) — ответа не получено, ищем дальше, а не
                     # выдаём вердикт по чужим рынкам.
                     continue
-                return not any(_winline_button_is_unbettable(b) for b in buttons)
-    return None
+                saw_winner_buttons = True
+                if not any(_winline_button_is_unbettable(b) for b in buttons):
+                    # Angular может одновременно держать stale locked-тень и
+                    # актуальную полную карточку. Любое доказанное открытое
+                    # представление точного рынка сильнее старой тени.
+                    return True
+    # False допустим только когда кнопки точного winner-market действительно
+    # найдены и каждое найденное представление locked. Одна лишь строка карты
+    # без кнопок остаётся неопределённым состоянием.
+    return False if saw_winner_buttons else None
 
 
 async def _winline_page_odds_bettable(
