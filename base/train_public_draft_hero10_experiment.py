@@ -18,7 +18,7 @@ from typing import Any, Iterable, Iterator, Mapping
 import joblib
 import numpy as np
 from sklearn.linear_model import LogisticRegression, Ridge
-from base.bounded_ridge import BoundedRidgeRegressor
+from bounded_ridge import BoundedRidgeRegressor
 from sklearn.metrics import accuracy_score, log_loss, mean_absolute_error, roc_auc_score
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 
