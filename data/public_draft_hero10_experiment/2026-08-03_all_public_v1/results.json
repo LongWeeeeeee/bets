@@ -1,0 +1,49 @@
+{
+  "schema": {
+    "feature_names": [
+      "hero_R_1",
+      "hero_R_2",
+      "hero_R_3",
+      "hero_R_4",
+      "hero_R_5",
+      "hero_D_1",
+      "hero_D_2",
+      "hero_D_3",
+      "hero_D_4",
+      "hero_D_5"
+    ],
+    "feature_count": 10,
+    "uses_ingame_or_third_party_stats": false
+  },
+  "counts": {
+    "all": 1094752,
+    "train": 656851,
+    "validation": 218950,
+    "test": 218951
+  },
+  "selection": {
+    "win_C": 0.01,
+    "kills_over_median_C": 0.1,
+    "kills_median_train": 78.0
+  },
+  "models": {
+    "radiant_win": {
+      "rows": 218951,
+      "positive_rate": 0.5302875985951194,
+      "log_loss": 0.6858722804502332,
+      "auc": 0.5621725334330405,
+      "accuracy": 0.5492142077451119
+    },
+    "total_kills_over_median": {
+      "rows": 218951,
+      "positive_rate": 0.47786947764568327,
+      "log_loss": 0.6583329445510925,
+      "auc": 0.6468929900226288,
+      "accuracy": 0.6054733707541871
+    },
+    "total_kills_regression": {
+      "rows": 218951,
+      "mae": 15.780550031005248
+    }
+  }
+}

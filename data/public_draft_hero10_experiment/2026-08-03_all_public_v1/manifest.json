@@ -1,0 +1,18 @@
+{
+  "experiment": "public_draft_hero10",
+  "version": "all_public_v1",
+  "input": "/Users/alex/Documents/ingame/bets_data/analise_pub_matches/json_parts_split_from_object",
+  "counts": {
+    "all": 1094752,
+    "train": 656851,
+    "validation": 218950,
+    "test": 218951
+  },
+  "artifacts": [
+    "kills_minmax_scaler.joblib",
+    "radiant_win_model.joblib",
+    "results.json",
+    "total_kills_over_median_model.joblib",
+    "total_kills_regression_model.joblib"
+  ]
+}

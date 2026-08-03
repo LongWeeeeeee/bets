@@ -227,7 +227,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | env | default |
 |---|---|
 | `MAP_ID_CHECK_PATH` | `~/.local/state/ingame/map_id_check.txt` (единый для всех режимов) |
-| `MAP_VERDICTS_PATH` | `~/.local/state/ingame/map_verdicts.json` — журнал вердиктов карт (1 карта = 1 запись: identity + последний снапшот metrics/protracker/star/elo + блок kills_window (expected_diff по окнам киллов) + массив verdicts с dispatch-инфо). Первичная запись создаётся сразу при парсинге карты (`_record_map_verdict(..., create_only=True)`). Журнал — источник правды для Telegram-команды `tail_log` (`_send_admin_log_tail`): 3 последних матча, сгруппированных по match_id (последняя карта серии); тело — последний собранный текст ставки `bet_message` (формат Telegram-отправки, собирается и в star-, и в no-star ветке отказа; fallback — читаемый preview), далее секция полных собранных метрик (`_admin_tail_build_collected_metrics`: kills_window, post_lane, lane kills, protracker-диагностика, lane-детали), плюс история вердиктов и текущий статус (в delayed watcher / отправлен / отменён / отказано / распаршен без вердикта) |
+| `MAP_VERDICTS_PATH` | `~/.local/state/ingame/map_verdicts.json` — журнал вердиктов карт (1 карта = 1 запись: identity + последний снапшот metrics/protracker/star/elo + блок kills_window (expected_diff по окнам киллов) + массив verdicts с dispatch-инфо). Первичная запись создаётся сразу при парсинге карты (`_record_map_verdict(..., create_only=True)`). Журнал — источник правды для Telegram-команды `tail_log` (`_send_admin_log_tail`): 3 последних матча, сгруппированных по match_id (последняя карта серии); тело — последний собранный текст ставки `bet_message` (формат Telegram-отправки, собирается и в star-, и в no-star ветке отказа; fallback — читаемый preview), плюс история вердиктов и текущий статус (в delayed watcher / отправлен / отменён / отказано / распаршен без вердикта). Блок `kills_window` копится в entry для аналитики, но в `tail_log` не выводится |
 | `SOURCETV_MATCHES_PATH` | `{PROJECT_ROOT}/runtime/sourcetv_matches.json` — мост live-матчей между `sourcetv_probe.py` и `cyberscore_try.py` (абсолютный путь; не зависит от cwd) |
 | `RUNTIME_INSTANCE_LOCK_PATH` | `runtime/cyberscore_try.instance.lock` |
 | `DELAYED_QUEUE_PATH` | `runtime/delayed_signal_queue.json` (суффиксируется режимом) |
@@ -381,6 +381,14 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 - Tier 3 = всё остальное (нет в обоих dict). См. `_get_team_tier` в cyberscore (строка 11503).
 
 ---
+
+## `base/train_public_draft_hero10_experiment.py` — offline public draft experiment
+
+Обучает три leakage-safe модели только на полном наборе public-карт: `radiant_win_model.joblib`, `total_kills_regression_model.joblib` и `total_kills_over_median_model.joblib`; отдельно сохраняет train-only `kills_minmax_scaler.joblib`. Единственные признаки — ровно 10 fixed-position hero IDs (`hero_R_1`…`hero_R_5`, `hero_D_1`…`hero_D_5`); ingame-признаки и сторонняя статистика запрещены. Киллы формируются только как сумма `radiantKills` и `direKills` и используются как target. Парсер строго отклоняет неполные драфты, повторные позиции/героев, некорректные kills и duplicate map IDs.
+
+Хронологическое разбиение: 60% train / 20% validation / 20% test. Регуляризация (`C`) выбирается только по validation; результаты и модели пишутся атомарно в новый output directory и существующий каталог не перезаписывается.
+
+CLI: `--input-dir` (default `bets_data/analise_pub_matches/json_parts_split_from_object`) и `--output-dir` (default `data/public_draft_hero10_experiment/2026-08-03_all_public_v1`). Запуск только offline через `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_public_draft_hero10_experiment.py`.
 
 ## `base/check_old_maps.py` — offline backtest draft-метрик
 
