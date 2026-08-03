@@ -143,7 +143,9 @@ def build_full_no10_dicts(
     output_dir = Path(output_dir).resolve()
     runtime_root = Path(runtime_root).resolve()
     explore_script = Path(explore_script).resolve()
-    python_executable = Path(python_executable).resolve()
+    # Keep a venv/symlink interpreter path intact: resolving it can silently
+    # bypass the environment and invoke the underlying system Python.
+    python_executable = Path(os.path.abspath(os.fspath(python_executable)))
     if not explore_script.is_file():
         raise FileNotFoundError(f"explore_database.py not found: {explore_script}")
 
