@@ -1,9 +1,10 @@
-"""Offline helpers for core/support pooled synergy_trio experiments.
+"""Helpers for core/support pooled ``synergy_trio`` statistics.
 
-The live pipeline continues to use exact positions.  These helpers collapse
-pos1-pos3 to ``core`` and pos4-pos5 to ``support`` while retaining the raw
-match counts of distinct exact-position cells.  Permutations of one raw trio
-are de-duplicated exactly like ``functions._lookup_unordered_combo_winrate``.
+The role pool collapses pos1-pos3 to ``core`` and pos4-pos5 to ``support``
+while retaining the raw match counts of distinct exact-position cells.
+Permutations of one raw trio are de-duplicated exactly like
+``functions._lookup_unordered_combo_winrate``. The same key expansion is used
+by the frozen-OOS experiment and the live draft-scoped SQLite lookup.
 """
 from __future__ import annotations
 
@@ -137,3 +138,9 @@ def raw_lookup_keys_for_trio_role_key(role_key: str) -> set[str]:
                 )
                 keys.update(",".join(perm) for perm in permutations(exact))
     return keys
+
+
+def raw_lookup_keys_for_trio_tokens(tokens: Iterable[str]) -> set[str]:
+    """Expand one exact draft trio to all same-role raw position keys."""
+    role_key = make_trio_role_key(tokens)
+    return raw_lookup_keys_for_trio_role_key(role_key) if role_key else set()

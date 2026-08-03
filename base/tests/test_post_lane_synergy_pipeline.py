@@ -206,6 +206,21 @@ def test_synergy_trio_dedupes_identical_order_aliases() -> None:
     assert output["radiant_synergy_trio"] == [(0.8, 15)]
 
 
+def test_synergy_trio_role_pool_combines_thin_exact_position_cells() -> None:
+    data = {
+        "1pos1,2pos2,3pos4": {"wins": 10, "draws": 0, "games": 14},
+        "1pos3,2pos1,3pos5": {"wins": 6, "draws": 0, "games": 14},
+    }
+
+    value, games = functions._lookup_synergy_trio_role_pool_winrate(
+        data,
+        ["1pos1", "2pos2", "3pos4"],
+    )
+
+    assert games == 28
+    assert value == 16 / 28
+
+
 def test_counterpick_1vs2_accepts_duo_key_order_and_reverse_side() -> None:
     radiant = _side(1)
     dire = _side(6)
