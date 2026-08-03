@@ -4295,8 +4295,10 @@ def _coerce_metric_value(value: Any) -> Optional[float]:
         return None
     if isinstance(value, str):
         v = value.strip()
-        if v.endswith('*'):
-            v = v[:-1]
+        # Display-only synergy confirmations use ``**`` while STAR hits use
+        # ``*``.  Strip every trailing marker so decorated values remain safe
+        # for diagnostics and delayed-message refreshes.
+        v = v.rstrip('*').strip()
         if not v:
             return None
         try:
@@ -5160,6 +5162,11 @@ _STAR_LATE_CORE_METRIC_ORDER = (
     "counterpick_1vs1",
     "counterpick_1vs2",
     "solo",
+)
+SYNERGY_CONFIRMATION_ABS_THRESHOLD = 9.0
+_SYNERGY_CONFIRMATION_METRICS = (
+    "synergy_duo",
+    "synergy_trio",
 )
 _STAR_LATE_CORE_MIN_ABS_BY_METRIC: Dict[str, float] = {}
 # Single-block branches (E-only / L-only / A-only) require at least this WR.
@@ -6863,11 +6870,12 @@ def _decorate_star_block_for_display(
     section: str,
     target_wr: int,
 ) -> Dict[str, Any]:
-    """Render block with ``*`` markers on metric cells.
+    """Render STAR ``*`` and display-only synergy ``**`` markers.
 
-    The marker is purely a *visual* hint — it tells the reader which metric
-    cells crossed the WR60 (or higher) absolute-value threshold for this
-    section. It is intentionally decoupled from the block-level STAR
+    Both marker types are purely visual. A single star means a STAR metric
+    crossed the WR60 (or higher) threshold for this section; double stars mean
+    duo/trio reached the fixed confirmation threshold. Display is intentionally
+    decoupled from the block-level STAR
     diagnostics (``_star_block_diagnostics``), which can reject a block for
     reasons like sign-consistency or required-zero-metric checks even when
     one or more individual cells did pass the threshold. Without this
@@ -6898,6 +6906,17 @@ def _decorate_star_block_for_display(
                 out[metric] = _format_metric_value(value)
             continue
         out[metric] = f"{_format_metric_value(value)}*"
+    # Duo/trio confirmations deliberately do not belong to
+    # ``_STAR_SIGNAL_METRICS`` and therefore cannot create STAR hits.  Their
+    # fixed |index|>=9 marker is only a visual confirmation/veto hint.
+    for metric in _SYNERGY_CONFIRMATION_METRICS:
+        value = _coerce_metric_value(src.get(metric))
+        if value is None:
+            continue
+        if abs(value) >= float(SYNERGY_CONFIRMATION_ABS_THRESHOLD):
+            out[metric] = f"{_format_metric_value(value)}**"
+        elif isinstance(out.get(metric), str) and out[metric].strip().endswith("*"):
+            out[metric] = _format_metric_value(value)
     return out
 
 
@@ -8228,6 +8247,90 @@ def _opposite_signs_early90_tier1_fast_release_config(
     return None
 
 
+def _synergy_confirmation_snapshot_for_target(
+    *,
+    target_side: Optional[str],
+    early_output: Optional[dict] = None,
+    early_end_output: Optional[dict] = None,
+    mid_output: Optional[dict] = None,
+    all_output: Optional[dict] = None,
+) -> Dict[str, Any]:
+    """Collect display-only duo/trio confirmations relative to the target.
+
+    Synergy confirmations never become STAR hits.  A confirmation whose
+    absolute index reaches the fixed threshold and whose sign points at the
+    opposite side is persisted as a stake veto for every immediate/delayed
+    dispatch path.
+    """
+    target_sign = (
+        1 if target_side == "radiant" else -1 if target_side == "dire" else None
+    )
+    confirmations: List[Dict[str, Any]] = []
+    conflicts: List[Dict[str, Any]] = []
+    blocks = (
+        ("early", early_output),
+        ("early_winner", early_end_output),
+        ("late", mid_output),
+        ("all", all_output),
+    )
+    for phase, raw_block in blocks:
+        block = raw_block if isinstance(raw_block, dict) else {}
+        for metric in _SYNERGY_CONFIRMATION_METRICS:
+            value = _coerce_metric_value(block.get(metric))
+            if value is None or not math.isfinite(value):
+                continue
+            if abs(value) < float(SYNERGY_CONFIRMATION_ABS_THRESHOLD):
+                continue
+            sign = 1 if value > 0 else -1 if value < 0 else None
+            if sign is None:
+                continue
+            item = {
+                "phase": phase,
+                "metric": metric,
+                "value": float(value),
+                "sign": int(sign),
+                "side": _target_side_from_sign(sign),
+            }
+            confirmations.append(item)
+            if target_sign in (-1, 1) and sign != target_sign:
+                conflicts.append(dict(item))
+    return {
+        "threshold": float(SYNERGY_CONFIRMATION_ABS_THRESHOLD),
+        "target_side": target_side,
+        "confirmations": confirmations,
+        "conflicts": conflicts,
+        "has_opposite": bool(conflicts),
+    }
+
+
+def _retarget_stake_context_synergy_confirmation(
+    stake_multiplier_context: Optional[Dict[str, Any]],
+    *,
+    target_side: Optional[str],
+    early_output: Optional[dict] = None,
+    early_end_output: Optional[dict] = None,
+    mid_output: Optional[dict] = None,
+    all_output: Optional[dict] = None,
+) -> Dict[str, Any]:
+    """Copy a stake context and recompute synergy veto for a new target."""
+    context = (
+        dict(stake_multiplier_context)
+        if isinstance(stake_multiplier_context, dict)
+        else {}
+    )
+    snapshot = _synergy_confirmation_snapshot_for_target(
+        target_side=target_side,
+        early_output=early_output,
+        early_end_output=early_end_output,
+        mid_output=mid_output,
+        all_output=all_output,
+    )
+    context["target_side"] = target_side
+    context["synergy_confirmation_snapshot"] = snapshot
+    context["synergy_opposes_target"] = bool(snapshot.get("has_opposite"))
+    return context
+
+
 def _stake_multiplier_for_signal(
     *,
     team_elo_meta: Optional[Dict[str, Any]],
@@ -8250,9 +8353,15 @@ def _stake_multiplier_for_signal(
     all_star_hit_count: Optional[int] = None,
     early_star_hit_count: Optional[int] = None,
     late_star_hit_metrics: Optional[List[str]] = None,
+    synergy_opposes_target: bool = False,
 ) -> float:
     if target_side not in {"radiant", "dire"}:
         return 1
+    # A strong duo/trio against the actual target is an unconditional size
+    # veto.  Apply it before STAR dispatch-side fallbacks so no exceptional
+    # branch can return x1 merely because its selected block points elsewhere.
+    if synergy_opposes_target:
+        return 0.5
 
     early_side = _target_side_from_sign(selected_early_sign)
     late_side = _target_side_from_sign(selected_late_sign)
@@ -8383,6 +8492,7 @@ def _build_stake_multiplier_context(
     early_star_hit_count: Optional[int] = None,
     late_star_hit_metrics: Optional[List[str]] = None,
     all_star_hits: Optional[List[Dict[str, Any]]] = None,
+    synergy_confirmation_snapshot: Optional[Dict[str, Any]] = None,
     kills_window_ed_by_label: Optional[Dict[str, Any]] = None,
     kills_window_header_label: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -8411,6 +8521,15 @@ def _build_stake_multiplier_context(
             [dict(hit) for hit in all_star_hits if isinstance(hit, dict)]
             if all_star_hits is not None
             else None
+        ),
+        "synergy_confirmation_snapshot": (
+            dict(synergy_confirmation_snapshot)
+            if isinstance(synergy_confirmation_snapshot, dict)
+            else None
+        ),
+        "synergy_opposes_target": bool(
+            isinstance(synergy_confirmation_snapshot, dict)
+            and synergy_confirmation_snapshot.get("has_opposite")
         ),
         "force_half_due_to_early_no_valid_late": bool(force_half_due_to_early_no_valid_late),
         "special_header_mode": str(special_header_mode or ""),
@@ -9670,6 +9789,13 @@ def _stake_multiplier_from_context(
         all_star_hit_count=stake_multiplier_context.get("all_star_hit_count"),
         early_star_hit_count=stake_multiplier_context.get("early_star_hit_count"),
         late_star_hit_metrics=stake_multiplier_context.get("late_star_hit_metrics"),
+        synergy_opposes_target=bool(
+            stake_multiplier_context.get("synergy_opposes_target")
+            or (
+                isinstance(stake_multiplier_context.get("synergy_confirmation_snapshot"), dict)
+                and stake_multiplier_context["synergy_confirmation_snapshot"].get("has_opposite")
+            )
+        ),
     )
 
 
@@ -34026,6 +34152,24 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 s.get('all_output', {}),
                 "all_output",
             )
+            synergy_confirmation_snapshot = _synergy_confirmation_snapshot_for_target(
+                target_side=dispatch_message_side,
+                early_output=s.get('early_output', {}),
+                early_end_output=s.get('early_end_output', {}),
+                mid_output=s.get('mid_output', {}),
+                all_output=s.get('all_output', {}),
+            )
+            if synergy_confirmation_snapshot.get("has_opposite"):
+                _conflict_labels = [
+                    f"{item.get('phase')}:{item.get('metric')}={_format_metric_value(float(item.get('value')))}"
+                    for item in (synergy_confirmation_snapshot.get("conflicts") or [])
+                    if isinstance(item, dict) and item.get("value") is not None
+                ]
+                print(
+                    "   ⚠️ Stake cap x0.5: synergy confirmation opposes target "
+                    f"(threshold={SYNERGY_CONFIRMATION_ABS_THRESHOLD:g}, "
+                    f"target={dispatch_message_side}, conflicts={','.join(_conflict_labels)})"
+                )
             stake_multiplier_context = _build_stake_multiplier_context(
                 stake_team_name=stake_team_name,
                 target_side=dispatch_message_side,
@@ -34068,6 +34212,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     else None
                 ),
                 all_star_hits=all_star_hits_for_dispatch,
+                synergy_confirmation_snapshot=synergy_confirmation_snapshot,
                 kills_window_ed_by_label=tier1_early_kills_window_gate.get("ed_by_label"),
                 kills_window_header_label=tier1_early_kills_strongest_window,
             )
@@ -34111,6 +34256,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     list(selected_late_diag.get("hit_metrics") or [])
                     if isinstance(selected_late_diag, dict) and has_selected_late_star
                     else None
+                ),
+                synergy_opposes_target=bool(
+                    synergy_confirmation_snapshot.get("has_opposite")
                 ),
             )
             live_state_block = _format_live_message_state_block(
@@ -35221,11 +35369,19 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     else (dire_team_name_original or dire_team_name)
                                 )
                                 if isinstance(stake_multiplier_context, dict):
-                                    kills_release_smc = dict(stake_multiplier_context)
+                                    kills_release_smc = (
+                                        _retarget_stake_context_synergy_confirmation(
+                                            stake_multiplier_context,
+                                            target_side=early_kills_side,
+                                            early_output=s.get('early_output', {}),
+                                            early_end_output=s.get('early_end_output', {}),
+                                            mid_output=s.get('mid_output', {}),
+                                            all_output=s.get('all_output', {}),
+                                        )
+                                    )
                                     kills_release_smc["stake_team_name"] = str(
                                         early_kills_team_name or "НЕИЗВЕСТНАЯ КОМАНДА"
                                     )
-                                    kills_release_smc["target_side"] = early_kills_side
                                     # ``special_header_mode`` already set to
                                     # "early_kills" upstream; keep it so the
                                     # rendered header reads "Ранние килы …".
