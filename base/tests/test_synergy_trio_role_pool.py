@@ -1,3 +1,7 @@
+import subprocess
+import sys
+from pathlib import Path
+
 from base.synergy_trio_role_pool import (
     aggregate_trio_role_samples,
     make_trio_role_key,
@@ -6,6 +10,9 @@ from base.synergy_trio_role_pool import (
     raw_row_to_trio_sample,
     trio_role_entry_winrate,
 )
+
+
+BASE_DIR = Path(__file__).resolve().parents[1]
 
 
 def test_trio_positions_collapse_to_core_and_support_roles():
@@ -59,3 +66,15 @@ def test_exact_tokens_expand_to_the_same_role_family():
     assert raw_lookup_keys_for_trio_tokens(["60pos3", "13pos2", "110pos4"]) == (
         raw_lookup_keys_for_trio_role_key("13:core,60:core,110:support")
     )
+
+
+def test_functions_imports_from_runtime_base_working_directory():
+    result = subprocess.run(
+        [sys.executable, "-c", "import functions"],
+        cwd=BASE_DIR,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
