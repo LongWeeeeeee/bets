@@ -3,6 +3,7 @@ from itertools import combinations
 from base.cp1vs2_role_pool import make_role_key
 from base.evaluate_role_pool_experiment import (
     POSITIONS,
+    add_index_histogram,
     cp_score,
     draft_tokens,
     trio_score,
@@ -50,3 +51,25 @@ def test_role_pooled_trio_higher_n_changes_coverage_without_recounting():
     assert trio_score(radiant, dire, data, 25) > 0
     assert trio_score(radiant, dire, data, 75) > 0
     assert trio_score(radiant, dire, data, 100) is None
+
+
+def test_index_histogram_uses_absolute_integer_index_and_direction():
+    histogram = {}
+
+    class DefaultHistogram(dict):
+        def __missing__(self, key):
+            self[key] = [0, 0]
+            return self[key]
+
+    histogram = DefaultHistogram()
+    add_index_histogram(
+        histogram, ("validation", "full"), "all", "synergy_trio",
+        "role_n25", -13.0, -1,
+    )
+    assert histogram[("validation", "all", "synergy_trio", "role_n25", 13)] == [1, 1]
+    assert histogram[("full", "all", "synergy_trio", "role_n25", 13)] == [1, 1]
+    add_index_histogram(
+        histogram, ("validation",), "all", "synergy_trio",
+        "role_n25", 0, 1,
+    )
+    assert len(histogram) == 2

@@ -214,6 +214,28 @@ def wilson_lower(wins: int, n: int) -> float:
     return (centre - margin) / denominator
 
 
+def add_index_histogram(
+    histogram: dict[tuple[str, str, str, str, int], list[int]],
+    segments: Iterable[str],
+    phase: str,
+    metric: str,
+    variant: str,
+    score: float | int | None,
+    winner: int,
+) -> None:
+    """Record one non-zero absolute integer index and its directional outcome."""
+    if score in (None, 0):
+        return
+    index = abs(int(round(float(score))))
+    if index <= 0:
+        return
+    predicted = 1 if float(score) > 0 else -1
+    for segment in segments:
+        bucket = histogram[(segment, phase, metric, variant, index)]
+        bucket[0] += 1
+        bucket[1] += int(predicted == winner)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--metrics", required=True)
@@ -221,6 +243,7 @@ def main() -> int:
     parser.add_argument("--thresholds", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--paired-output", type=Path, required=True)
+    parser.add_argument("--index-output", type=Path)
     parser.add_argument("--split-index", type=int, default=52_711)
     parser.add_argument("--chunk-size", type=int, default=250)
     args = parser.parse_args()
@@ -238,6 +261,7 @@ def main() -> int:
     stats: dict[tuple[str, str, str, str, int], list[int]] = defaultdict(lambda: [0, 0])
     paired: dict[tuple[str, str, str, int, int, str], list[int]] = defaultdict(lambda: [0, 0, 0])
     coverage: dict[tuple[str, str, str, str], list[int]] = defaultdict(lambda: [0, 0])
+    index_histogram: dict[tuple[str, str, str, str, int], list[int]] = defaultdict(lambda: [0, 0])
 
     processed = 0
     for chunk in iter_record_chunks(args.metrics, max(1, args.chunk_size)):
@@ -285,6 +309,9 @@ def main() -> int:
                         coverage[(seg, phase, metric, candidate_variant)][1] += int(candidate_score is not None)
                     predictions = {}
                     for variant, score in ((baseline_variant, baseline_score), (candidate_variant, candidate_score)):
+                        add_index_histogram(
+                            index_histogram, segments, phase, metric, variant, score, winner
+                        )
                         level = metric_level(metric, score, star_maps[phase])
                         sign = 1 if score is not None and score > 0 else -1
                         predictions[variant] = (score, level, sign)
@@ -338,6 +365,21 @@ def main() -> int:
         for key, values in sorted(paired.items()):
             writer.writerow([*key, *values])
     paired_temp.replace(args.paired_output)
+    if args.index_output is not None:
+        args.index_output.parent.mkdir(parents=True, exist_ok=True)
+        index_temp = args.index_output.with_suffix(args.index_output.suffix + ".tmp")
+        with index_temp.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow([
+                "segment", "phase", "metric", "variant", "abs_index",
+                "n", "wins", "wr_pct", "wilson95_lower_pct",
+            ])
+            for key, (n, wins) in sorted(index_histogram.items()):
+                writer.writerow([
+                    *key, n, wins, round(100 * wins / n, 4),
+                    round(100 * wilson_lower(wins, n), 4),
+                ])
+        index_temp.replace(args.index_output)
     print(f"completed processed={processed:,} output={args.output}", flush=True)
     return 0
 
