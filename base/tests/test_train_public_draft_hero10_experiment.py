@@ -8,6 +8,7 @@ from base.train_public_draft_hero10_experiment import (
     canonicalize_match,
     chronological_split,
     feature_frame,
+    BoundedRidgeRegressor,
     train_experiment,
 )
 
@@ -46,6 +47,21 @@ def test_split_is_chronological_60_20_20():
     train, validation, test = chronological_split([m for m in matches if m is not None])
     assert [len(train), len(validation), len(test)] == [6, 2, 2]
     assert train[-1].start_time < validation[0].start_time < test[0].start_time
+
+
+def test_split_boundary_uses_map_id_for_ties():
+    matches = [canonicalize_match(sample(i, 100))[0] for i in range(1, 11)]
+    ordered = sorted((m for m in matches if m is not None), key=lambda m: (m.start_time, m.map_id))
+    train, validation, test = chronological_split(ordered)
+    assert (train[-1].start_time, train[-1].map_id) < (validation[0].start_time, validation[0].map_id)
+    assert (validation[-1].start_time, validation[-1].map_id) < (test[0].start_time, test[0].map_id)
+
+
+def test_persisted_ridge_wrapper_bounds_extreme_predictions():
+    model = BoundedRidgeRegressor(__import__("sklearn.linear_model", fromlist=["Ridge"]).Ridge(alpha=0.01)).fit(
+        np.array([[0.0], [1.0]]), np.array([0.0, 1.0])
+    )
+    assert np.all((0.0 <= model.predict(np.array([[-100.0], [100.0]]))) & (model.predict(np.array([[-100.0], [100.0]])) <= 1.0))
 
 
 def test_duration_is_required():

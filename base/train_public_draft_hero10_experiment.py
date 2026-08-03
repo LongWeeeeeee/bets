@@ -18,16 +18,43 @@ from typing import Any, Iterable, Iterator, Mapping
 import joblib
 import numpy as np
 from sklearn.linear_model import LogisticRegression, Ridge
+from base.bounded_ridge import BoundedRidgeRegressor
 from sklearn.metrics import accuracy_score, log_loss, mean_absolute_error, roc_auc_score
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT_DIR = ROOT_DIR / "bets_data/analise_pub_matches/json_parts_split_from_object"
-DEFAULT_OUTPUT_DIR = ROOT_DIR / "data/public_draft_hero10_experiment/2026-08-04_all_public_v2"
+DEFAULT_OUTPUT_DIR = ROOT_DIR / "data/public_draft_hero10_experiment/2026-08-04_all_public_v3"
 FEATURE_NAMES = tuple(f"hero_{side}_{position}" for side in ("R", "D") for position in range(1, 6))
 C_GRID = (0.01, 0.1, 1.0, 10.0)
 RIDGE_GRID = (0.01, 0.1, 1.0, 10.0)
 SEED = 20260803
+
+
+def _split_boundary(matches: list[Match]) -> dict[str, Any]:
+    if not matches:
+        return {"count": 0, "first": None, "last": None}
+    return {
+        "count": len(matches),
+        "first": {"start_time": matches[0].start_time, "map_id": matches[0].map_id},
+        "last": {"start_time": matches[-1].start_time, "map_id": matches[-1].map_id},
+    }
+
+
+def _validate_split_boundaries(splits: Mapping[str, list[Match]], total: int) -> dict[str, Any]:
+    expected = {"train": total * 60 // 100, "validation": total * 20 // 100}
+    expected["test"] = total - expected["train"] - expected["validation"]
+    if any(len(splits[name]) != expected[name] for name in expected):
+        raise ValueError("split counts must use exact chronological 60/20/20 allocation")
+    pairs = [(m.start_time, m.map_id) for name in ("train", "validation", "test") for m in splits[name]]
+    if pairs != sorted(pairs):
+        raise ValueError("split records must be sorted by (start_time, map_id)")
+    last_train = (splits["train"][-1].start_time, splits["train"][-1].map_id)
+    first_validation = (splits["validation"][0].start_time, splits["validation"][0].map_id)
+    first_test = (splits["test"][0].start_time, splits["test"][0].map_id)
+    if not last_train < first_validation < first_test:
+        raise ValueError("split boundary pairs must satisfy last(train)<first(validation)<first(test)")
+    return {name: _split_boundary(splits[name]) for name in ("train", "validation", "test")}
 
 @dataclass(frozen=True)
 class Match:
@@ -155,13 +182,14 @@ def train_experiment(matches: list[Match], output_dir: Path) -> dict[str, Any]:
     if output_dir.exists() and any(output_dir.iterdir()): raise FileExistsError(f"refusing to overwrite {output_dir}")
     train, validation, test = chronological_split(matches)
     if min(map(len, (train, validation, test))) == 0: raise ValueError("all splits must be non-empty")
+    boundaries = _validate_split_boundaries({"train": train, "validation": validation, "test": test}, len(matches))
     xtr, xval, xte = tuple(_encode(feature_frame(train), feature_frame(validation), feature_frame(test)))
     ytr = np.asarray([m.radiant_win for m in train]); yval = np.asarray([m.radiant_win for m in validation]); yte = np.asarray([m.radiant_win for m in test])
     selected_c = min(C_GRID, key=lambda c: log_loss(yval, LogisticRegression(C=c, max_iter=2000, random_state=SEED).fit(xtr, ytr).predict_proba(xval), labels=[0, 1]))
     win_model = LogisticRegression(C=selected_c, max_iter=2000, random_state=SEED).fit(xtr, ytr)
     kills_train = np.asarray([m.total_kills for m in train], dtype=float); kills_val = np.asarray([m.total_kills for m in validation], dtype=float); kills_test = np.asarray([m.total_kills for m in test], dtype=float)
     scaler = MinMaxScaler().fit(kills_train.reshape(-1, 1))
-    kill_model = Ridge(alpha=1.0).fit(xtr, scaler.transform(kills_train.reshape(-1, 1)).ravel())
+    kill_model = BoundedRidgeRegressor(Ridge(alpha=1.0)).fit(xtr, scaler.transform(kills_train.reshape(-1, 1)).ravel())
     duration_train = np.asarray([m.duration_seconds for m in train], dtype=float); duration_val = np.asarray([m.duration_seconds for m in validation], dtype=float); duration_test = np.asarray([m.duration_seconds for m in test], dtype=float)
     duration_alpha = min(RIDGE_GRID, key=lambda alpha: mean_absolute_error(duration_val, Ridge(alpha=alpha).fit(xtr, duration_train).predict(xval)))
     duration_model = Ridge(alpha=duration_alpha).fit(xtr, duration_train)
@@ -175,8 +203,9 @@ def train_experiment(matches: list[Match], output_dir: Path) -> dict[str, Any]:
     duration_pred = duration_model.predict(xte)
     result = {"schema": {"feature_names": list(FEATURE_NAMES), "feature_count": 10, "uses_ingame_or_third_party_stats": False}, "counts": {"all": len(matches), "train": len(train), "validation": len(validation), "test": len(test)}, "selection": {"win_C": selected_c, "kills_over_median_C": kill_c, "kills_median_train": median}, "models": {"radiant_win": _metrics(yte, win_model.predict_proba(xte)[:, 1]), "total_kills_over_median": _metrics(ykte, kill_classifier.predict_proba(xte)[:, 1]), "total_kills_regression": {"rows": len(kills_test), "mae": float(mean_absolute_error(kills_test, kill_pred_raw)), "normalized_prediction_min": float(np.min(kill_pred_norm)), "normalized_prediction_max": float(np.max(kill_pred_norm)), "normalized_bounds": [0.0, 1.0]}, "duration_seconds_regression": {"rows": len(duration_test), "mae": float(mean_absolute_error(duration_test, duration_pred))}}
     }
+    result["split_boundaries"] = boundaries
     (output_dir / "results.json.tmp").write_text(json.dumps(result, indent=2, allow_nan=False), encoding="utf-8"); os.replace(output_dir / "results.json.tmp", output_dir / "results.json")
-    manifest = {"experiment": "public_draft_hero10", "version": "all_public_v2", "input": str(DEFAULT_INPUT_DIR), "counts": result["counts"], "artifacts": sorted(p.name for p in output_dir.iterdir())}
+    manifest = {"experiment": "public_draft_hero10", "version": "all_public_v3", "input": str(DEFAULT_INPUT_DIR), "counts": result["counts"], "split_boundaries": boundaries, "artifacts": sorted(p.name for p in output_dir.iterdir())}
     (output_dir / "manifest.json.tmp").write_text(json.dumps(manifest, indent=2), encoding="utf-8"); os.replace(output_dir / "manifest.json.tmp", output_dir / "manifest.json")
     return result
 

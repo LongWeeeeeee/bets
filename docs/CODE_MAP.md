@@ -384,11 +384,11 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 
 ## `base/train_public_draft_hero10_experiment.py` — offline public draft experiment
 
-Обучает три leakage-safe модели только на полном наборе public-карт: `radiant_win_model.joblib`, `total_kills_regression_model.joblib` и `total_kills_over_median_model.joblib`; отдельно сохраняет train-only `kills_minmax_scaler.joblib`. Единственные признаки — ровно 10 fixed-position hero IDs (`hero_R_1`…`hero_R_5`, `hero_D_1`…`hero_D_5`); ingame-признаки и сторонняя статистика запрещены. Киллы формируются только как сумма `radiantKills` и `direKills` и используются как target. Парсер строго отклоняет неполные драфты, повторные позиции/героев, некорректные kills и duplicate map IDs.
+Обучает три leakage-safe модели только на полном наборе public-карт: `radiant_win_model.joblib`, bounded-wrapper `total_kills_regression_model.joblib` и `total_kills_over_median_model.joblib`; отдельно сохраняет train-only `kills_minmax_scaler.joblib`. Единственные признаки — ровно 10 fixed-position hero IDs (`hero_R_1`…`hero_R_5`, `hero_D_1`…`hero_D_5`); ingame-признаки и сторонняя статистика запрещены. Киллы формируются только как сумма `radiantKills` и `direKills` и используются как target. Парсер строго отклоняет неполные драфты, повторные позиции/героев, некорректные kills и duplicate map IDs.
 
-Хронологическое разбиение: 60% train / 20% validation / 20% test. Регуляризация (`C`) выбирается только по validation; результаты и модели пишутся атомарно в новый output directory и существующий каталог не перезаписывается.
+Хронологическое разбиение: строго 60% train / 20% validation / 20% test по `(start_time, map_id)`. И `manifest.json`, и `results.json` сохраняют для каждого split `count`, `first` и `last` boundary (`start_time`, `map_id`), а код проверяет сортировку и `last(train) < first(validation) < first(test)`. `BoundedRidgeRegressor` — top-level sklearn-compatible serializable wrapper; его `predict` всегда clip-ит normalized Ridge prediction в `[0, 1]`. Восстановление raw kills выполняется только через отдельный train-only `kills_minmax_scaler.joblib`. Регуляризация (`C`) выбирается только по validation; результаты и модели пишутся атомарно в новый output directory и существующий каталог не перезаписывается.
 
-CLI: `--input-dir` (default `bets_data/analise_pub_matches/json_parts_split_from_object`) и `--output-dir` (default `data/public_draft_hero10_experiment/2026-08-03_all_public_v1`). Запуск только offline через `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_public_draft_hero10_experiment.py`.
+CLI: `--input-dir` (default `bets_data/analise_pub_matches/json_parts_split_from_object`) и `--output-dir` (default `data/public_draft_hero10_experiment/2026-08-04_all_public_v3`). Запуск только offline через `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_public_draft_hero10_experiment.py`.
 
 ## `base/check_old_maps.py` — offline backtest draft-метрик
 
