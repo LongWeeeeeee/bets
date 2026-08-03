@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from itertools import permutations
 from typing import Any, Iterable, Mapping
 
-from base.cp1vs2_role_pool import position_role, split_hero_position, stats_games, stats_score
+try:
+    from base.cp1vs2_role_pool import position_role, split_hero_position, stats_games, stats_score
+except ImportError:  # systemd runs cyberscore_try.py with WorkingDirectory=base
+    from cp1vs2_role_pool import position_role, split_hero_position, stats_games, stats_score
 
 
 @dataclass(frozen=True)
