@@ -17812,6 +17812,174 @@ def _admin_tail_build_bet_preview(entry: Dict[str, Any]) -> List[str]:
     return preview
 
 
+_ADMIN_TAIL_COLLECTED_METRIC_SPECS: Tuple[Tuple[str, str], ...] = (
+    ("counterpick_1vs1", "Counterpick_1vs1"),
+    ("pos1_vs_pos1", "Pos1vsPos1"),
+    ("counterpick_1vs2", "Counterpick_1vs2"),
+    ("solo", "Solo"),
+    ("synergy_duo", "Synergy_duo"),
+    ("synergy_trio", "Synergy_trio"),
+)
+
+
+def _admin_tail_format_metric_block_with_games(
+    title: str,
+    block: Any,
+) -> List[str]:
+    """Метрический блок с числом игр (ключи ``<metric>_games``) — для полных
+    собранных метрик в tail_log."""
+    block = block if isinstance(block, dict) else {}
+    if not block:
+        return []
+    lines = [title]
+    for key, label in _ADMIN_TAIL_COLLECTED_METRIC_SPECS:
+        if key not in block and f"{key}_games" not in block:
+            continue
+        games = block.get(f"{key}_games")
+        games_label = f" (n={int(games)})" if isinstance(games, (int, float)) else ""
+        lines.append(
+            f"{label}: {_admin_tail_format_number(block.get(key))}{games_label}"
+        )
+    return lines
+
+
+def _admin_tail_build_collected_metrics(entry: Dict[str, Any]) -> List[str]:
+    """Все собираемые по матчу метрики, не вошедшие в текст ставки:
+    kills_window, post_lane-блок, lane kills полностью, protracker-диагностика
+    и lane-детали. Компактные строки вместо сырых дампов."""
+    metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
+    lines: List[str] = []
+
+    def _fmt(key: str) -> str:
+        return _admin_tail_format_number(metrics.get(key))
+
+    def _games(key: str) -> str:
+        games = metrics.get(key)
+        return f" (n={int(games)})" if isinstance(games, (int, float)) else ""
+
+    kills_window = (
+        entry.get("kills_window") if isinstance(entry.get("kills_window"), dict) else {}
+    )
+    ed_by_label = (
+        kills_window.get("ed_by_label")
+        if isinstance(kills_window.get("ed_by_label"), dict)
+        else {}
+    )
+    if ed_by_label:
+        lines.append(
+            "⚔️ Kills window: "
+            + " | ".join(
+                f"{label} ed={_admin_tail_format_number(value)}"
+                for label, value in ed_by_label.items()
+            )
+        )
+
+    lines.extend(
+        _admin_tail_format_metric_block_with_games(
+            "📊 Post-lane (после линий):", metrics.get("post_lane_output")
+        )
+    )
+
+    lane_kills = (
+        metrics.get("lane_kills_adv_dict")
+        if isinstance(metrics.get("lane_kills_adv_dict"), dict)
+        else {}
+    )
+    if lane_kills:
+        lines.append(
+            "🛣 Lane kills (полные): "
+            f"exp_diff={_admin_tail_format_number(lane_kills.get('expected_diff'))}, "
+            f"lead={_admin_tail_format_number(lane_kills.get('lead_probability'))}, "
+            f"draw={_admin_tail_format_number(lane_kills.get('draw_probability'))}, "
+            f"coverage={_admin_tail_format_number(lane_kills.get('coverage'))}"
+            f"/{_admin_tail_format_number(lane_kills.get('total_lanes'))}, "
+            f"games={_admin_tail_format_number(lane_kills.get('games'))}"
+        )
+
+    pro_lines: List[str] = []
+    if "pro_cp1vs1_valid" in metrics:
+        cp_line = (
+            f"cp1vs1: early={_fmt('pro_cp1vs1_early')}{_games('pro_cp1vs1_early_games')}, "
+            f"late={_fmt('pro_cp1vs1_late')}{_games('pro_cp1vs1_late_games')}, "
+            f"valid={metrics.get('pro_cp1vs1_valid')}"
+        )
+        cp_reason = str(metrics.get("pro_cp1vs1_reason") or "").strip()
+        if cp_reason:
+            cp_line += f" ({cp_reason})"
+        pro_lines.append(cp_line)
+    if "pro_duo_synergy_valid" in metrics:
+        duo_line = (
+            f"duo_synergy: metric={_fmt('pro_duo_synergy_metric')}, "
+            f"early={_fmt('pro_duo_synergy_early')}{_games('pro_duo_synergy_early_games')}, "
+            f"late={_fmt('pro_duo_synergy_late')}{_games('pro_duo_synergy_late_games')}, "
+            f"valid={metrics.get('pro_duo_synergy_valid')}"
+        )
+        duo_reason = str(metrics.get("pro_duo_synergy_reason") or "").strip()
+        if duo_reason:
+            duo_line += f" ({duo_reason})"
+        pro_lines.append(duo_line)
+    if "pro_duo_lane_valid" in metrics:
+        pro_lines.append(
+            f"duo_lane: metric={_fmt('pro_duo_lane_metric')}, "
+            f"games={_fmt('pro_duo_lane_games')}, valid={metrics.get('pro_duo_lane_valid')}"
+        )
+    if "pro_solo_wr_valid" in metrics:
+        solo_line = (
+            f"solo_wr: metric={_fmt('pro_solo_wr_metric')}, "
+            f"early={_fmt('pro_solo_wr_early')}{_games('pro_solo_wr_early_games')}, "
+            f"late={_fmt('pro_solo_wr_late')}{_games('pro_solo_wr_late_games')}, "
+            f"valid={metrics.get('pro_solo_wr_valid')}"
+        )
+        solo_reason = str(metrics.get("pro_solo_wr_reason") or "").strip()
+        if solo_reason:
+            solo_line += f" ({solo_reason})"
+        pro_lines.append(solo_line)
+    if "pro_solo_wr_overall_valid" in metrics:
+        overall_line = (
+            f"solo_wr_overall: metric={_fmt('pro_solo_wr_overall_metric')}, "
+            f"early={_fmt('pro_solo_wr_overall_early')}{_games('pro_solo_wr_overall_early_games')}, "
+            f"late={_fmt('pro_solo_wr_overall_late')}{_games('pro_solo_wr_overall_late_games')}, "
+            f"valid={metrics.get('pro_solo_wr_overall_valid')}"
+        )
+        overall_reason = str(metrics.get("pro_solo_wr_overall_reason") or "").strip()
+        if overall_reason:
+            overall_line += f" ({overall_reason})"
+        pro_lines.append(overall_line)
+    if pro_lines:
+        lines.append("🧬 Protracker:")
+        lines.extend(f"  {line}" for line in pro_lines)
+
+    if "pro_lane_advantage" in metrics or "pro_lane_metric" in metrics:
+        lines.append(
+            "🛣 Lane pro: "
+            f"advantage={_fmt('pro_lane_advantage')}, metric={_fmt('pro_lane_metric')}, "
+            f"solo={_fmt('pro_lane_solo')}, covered={metrics.get('pro_lane_solo_covered_lanes')}, "
+            f"fallback={metrics.get('pro_lane_solo_fallback_used')}, "
+            f"cp1vs1_valid={metrics.get('pro_lane_cp1vs1_valid')}, "
+            f"duo_valid={metrics.get('pro_lane_duo_valid')}, "
+            f"duo_lane_valid={metrics.get('pro_lane_duo_lane_valid')}, "
+            f"solo_valid={metrics.get('pro_lane_solo_valid')}"
+        )
+    lane_detail_parts: List[str] = []
+    for lane in ("top", "mid", "bot"):
+        segments: List[str] = []
+        for suffix in ("cp1vs1", "duo", "solo", "duo_lane"):
+            key = f"pro_lane_{lane}_{suffix}"
+            if key not in metrics:
+                continue
+            segment = f"{suffix}={_fmt(key)}{_games(f'{key}_games')}"
+            source = str(metrics.get(f"{key}_source") or "").strip()
+            if source:
+                segment += f"[{source}]"
+            segments.append(segment)
+        if segments:
+            lane_detail_parts.append(f"{lane}: " + ", ".join(segments))
+    if lane_detail_parts:
+        lines.append("🛣 Lane по линиям:")
+        lines.extend(f"  {part}" for part in lane_detail_parts)
+    return lines
+
+
 def _admin_tail_journal_status_lines(
     entry: Dict[str, Any],
     payload: Optional[Dict[str, Any]],
@@ -17915,6 +18083,13 @@ def _admin_tail_format_journal_match(
         else:
             lines.append("(данных по матчу пока нет — он только распаршен)")
 
+    # Полные собранные метрики (kills_window, post_lane, protracker-диагностика,
+    # lane-детали) — всё, что не вошло в текст ставки.
+    collected_lines = _admin_tail_build_collected_metrics(entry)
+    if collected_lines:
+        lines.append("")
+        lines.extend(collected_lines)
+
     verdicts = [item for item in (entry.get("verdicts") or []) if isinstance(item, dict)]
     if verdicts:
         lines.append("🧾 Вердикты:")
@@ -17994,7 +18169,7 @@ def _collect_admin_tail_last_matches(*, line_count: int = 100) -> List[Dict[str,
             continue
         seen_match_ids.add(match_id)
         merged_entry = dict(entry)
-        for field in ("bet_message", "metrics", "protracker", "star", "elo"):
+        for field in ("bet_message", "metrics", "protracker", "star", "elo", "kills_window"):
             if merged_entry.get(field):
                 continue
             for sibling in siblings_by_match_id.get(match_id, []):
@@ -25025,11 +25200,12 @@ def _record_map_verdict(
     extra: Optional[Dict[str, Any]] = None,
     create_only: bool = False,
     bet_message: Optional[str] = None,
+    kills_window: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Upsert per-map verdict journal entry (1 map = 1 record).
 
-    metrics/protracker/star/elo blocks are replaced by the latest snapshot
-    when provided; verdicts accumulate in ``verdicts`` (consecutive exact
+    metrics/protracker/star/elo/kills_window blocks are replaced by the latest
+    snapshot when provided; verdicts accumulate in ``verdicts`` (consecutive exact
     duplicates are collapsed so soft-reject recheck cycles don't spam the
     journal). ``bet_message`` сохраняет последний собранный текст ставки
     (в формате Telegram-отправки) для показа в tail_log. ``create_only=True``
@@ -25084,6 +25260,7 @@ def _record_map_verdict(
                 ("protracker", protracker),
                 ("star", star),
                 ("elo", elo),
+                ("kills_window", kills_window),
             ):
                 safe_block = _verdict_json_sanitize(block_value)
                 if isinstance(safe_block, dict) and safe_block:
@@ -31125,6 +31302,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             "elo": None,
             "dispatch": None,
             "bet_message": None,
+            "kills_window": None,
         }
         # Запись в журнал появляется сразу при парсинге карты (create_only —
         # только если записи ещё нет), чтобы tail_log видел матч и его
@@ -31167,6 +31345,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 dispatch=merged_dispatch or None,
                 extra=extra,
                 bet_message=_verdict_ctx.get("bet_message"),
+                kills_window=_verdict_ctx.get("kills_window"),
             )
 
         # Раньше строка печаталась только при включённом префетче, а под --no-odds он
@@ -32083,6 +32262,28 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         _verdict_ctx["protracker"] = (
             protracker_payload if isinstance(protracker_payload, dict) else None
         )
+        # Снапшот kills-window (expected_diff по окнам) в журнал вердиктов:
+        # tail_log показывает все собираемые метрики, включая окна киллов.
+        try:
+            if _ensure_kills_window_dict_loaded() and kills_window_dict is not None:
+                _kw_payload = calculate_kills_window_advantage(
+                    _draft_tokens_for_kills_window(radiant_heroes_and_pos),
+                    _draft_tokens_for_kills_window(dire_heroes_and_pos),
+                    kills_window_dict,
+                    window=None,
+                )
+                if isinstance(_kw_payload, dict) and _kw_payload:
+                    _kw_ed_by_label: Dict[str, Any] = {}
+                    for _kw_label, _kw_item in _kw_payload.items():
+                        if (
+                            isinstance(_kw_item, dict)
+                            and _kw_item.get("expected_diff") is not None
+                        ):
+                            _kw_ed_by_label[str(_kw_label)] = _kw_item.get("expected_diff")
+                    if _kw_ed_by_label:
+                        _verdict_ctx["kills_window"] = {"ed_by_label": _kw_ed_by_label}
+        except Exception:
+            pass
 
         if DOTA2PROTRACKER_ENABLED and DOTA2PROTRACKER_ONLY_MODE and not PIPELINE_BYPASS_PROTRACKER_GATE:
             if not _has_valid_dota2protracker_signal(protracker_payload):

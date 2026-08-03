@@ -3840,6 +3840,47 @@ def test_send_admin_log_tail_prefers_bet_message_over_metrics_dump(monkeypatch) 
     assert "early_output" not in message
 
 
+def test_send_admin_log_tail_shows_collected_metrics(monkeypatch) -> None:
+    """К телу ставки tail_log добавляет полные собранные метрики:
+    kills_window, post_lane-блок, lane kills, protracker-диагностику
+    и lane-детали."""
+    entry = _make_journal_entry(match_id="1", updated_ts=100.0)
+    entry["bet_message"] = "Alpha VS Beta\n0:0"
+    entry["kills_window"] = {"ed_by_label": {"10-20": 1.234, "20-30": -0.5}}
+    entry["metrics"] = {
+        "post_lane_output": {"pos1_vs_pos1": -2, "pos1_vs_pos1_games": 2105},
+        "lane_kills_adv_dict": {
+            "expected_diff": -0.7,
+            "lead_probability": 0.37,
+            "draw_probability": 0.12,
+            "coverage": 3,
+            "total_lanes": 3,
+            "games": 199,
+        },
+        "pro_cp1vs1_valid": True,
+        "pro_cp1vs1_early": 0.06,
+        "pro_cp1vs1_early_games": 9923,
+        "pro_lane_top_cp1vs1": -7.71,
+        "pro_lane_top_cp1vs1_games": 527,
+        "pro_lane_top_cp1vs1_source": "matchups",
+    }
+    _install_journal(monkeypatch, {"a": entry})
+    sent_messages = _capture_send_message(monkeypatch)
+
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
+
+    assert len(sent_messages) == 1
+    message = sent_messages[0]["message"]
+    assert "⚔️ Kills window:" in message
+    assert "10-20 ed=1.23" in message
+    assert "Post-lane" in message
+    assert "Pos1vsPos1: -2 (n=2105)" in message
+    assert "Lane kills (полные):" in message
+    assert "draw=0.12" in message
+    assert "cp1vs1: early=0.06 (n=9923)" in message
+    assert "top: cp1vs1=-7.71 (n=527)[matchups]" in message
+
+
 def test_load_telegram_subscribers_state_merges_primary_and_legacy(tmp_path, monkeypatch) -> None:
     import functions
 
