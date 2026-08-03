@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -147,7 +148,7 @@ def test_validate_sqlite_requires_quickcheck_and_nonempty(tmp_path):
         validate_sqlite(empty)
 
 
-def test_builder_runs_sequentially_and_preserves_current_artifacts(tmp_path):
+def test_builder_preserves_symlinked_python_and_runs_sequentially(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
     for name in ("7.41_part001.json", "7.41a_part001.json", "7.41d_part001.json"):
@@ -163,10 +164,13 @@ def test_builder_runs_sequentially_and_preserves_current_artifacts(tmp_path):
     runtime_root = tmp_path / "runtime"
     fake_explore = tmp_path / "explore_database.py"
     fake_explore.write_text("# fake", encoding="utf-8")
+    venv_python_link = tmp_path / "venv_python"
+    venv_python_link.symlink_to(Path(sys.executable))
     calls = []
 
     def fake_runner(command, *, cwd, env, check):
         assert check is True
+        assert command[0] == str(venv_python_link.absolute())
         metric = env["EXPLORE_METRICS"]
         calls.append(metric)
         view_names = sorted(path.name for path in Path(env["EXPLORE_JSON_DIR"]).iterdir())
@@ -179,7 +183,7 @@ def test_builder_runs_sequentially_and_preserves_current_artifacts(tmp_path):
         source_dir=source,
         output_dir=output,
         runtime_root=runtime_root,
-        python_executable=Path(__file__),
+        python_executable=venv_python_link,
         explore_script=fake_explore,
         run_id="test_run",
         runner=fake_runner,
