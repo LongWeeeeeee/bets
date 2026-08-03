@@ -204,3 +204,68 @@ def test_empty_key_or_verdict_ignored(monkeypatch, tmp_path) -> None:
     runtime._record_map_verdict("dltv.org/matches/95/x.1", verdict="  ", kind="send", reason="r1")
 
     assert not journal_path.exists()
+
+
+def test_create_only_records_once_per_map(monkeypatch, tmp_path) -> None:
+    """create_only (первичная запись при парсинге) создаёт entry один раз и
+    не затирает накопленные вердикты при повторных вызовах."""
+    journal_path = _use_tmp_journal(monkeypatch, tmp_path)
+    key = "dltv.org/matches/96/parse-once.1"
+
+    runtime._record_map_verdict(
+        key,
+        verdict="parsed",
+        kind="info",
+        reason="match_parsed",
+        identity={"match_id": "96", "teams": {"radiant": "A", "dire": "B"}},
+        create_only=True,
+    )
+    runtime._record_map_verdict(key, verdict="rejected", kind="reject", reason="no_star")
+    # Повторный парсинг той же карты не должен добавлять дубль info-записи.
+    runtime._record_map_verdict(
+        key,
+        verdict="parsed again",
+        kind="info",
+        reason="match_parsed",
+        identity={"match_id": "96", "teams": {"radiant": "A", "dire": "B"}},
+        create_only=True,
+    )
+
+    data = _load_journal(journal_path)
+    verdicts = data[key]["verdicts"]
+    assert [item["kind"] for item in verdicts] == ["info", "reject"]
+    assert data[key]["teams"] == {"radiant": "A", "dire": "B"}
+
+
+def test_tail_log_reads_journal_end_to_end(monkeypatch, tmp_path) -> None:
+    """tail_log берёт последние матчи прямо из журнала вердиктов."""
+    _use_tmp_journal(monkeypatch, tmp_path)
+    runtime._record_map_verdict(
+        "dltv.org/matches/97/lgd-vs-1win.1",
+        verdict="delayed",
+        kind="delayed",
+        reason="late_all_no_early_star_pre27_watcher",
+        metrics={"early_output": {"solo": 0.62}},
+        identity={
+            "match_id": "97",
+            "status": "live",
+            "score": "4 : 7",
+            "teams": {"radiant": "LGD Gaming", "dire": "1w"},
+        },
+    )
+    monkeypatch.setattr(runtime, "monitored_matches", {}, raising=False)
+    sent_messages = []
+    monkeypatch.setattr(
+        runtime,
+        "send_message",
+        lambda message, **kwargs: sent_messages.append(str(message)),
+    )
+
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
+
+    assert len(sent_messages) == 1
+    message = sent_messages[0]
+    assert "LGD Gaming vs 1w" in message
+    assert "97/lgd-vs-1win" in message
+    assert "early_output" in message
+    assert "late_all_no_early_star_pre27_watcher" in message

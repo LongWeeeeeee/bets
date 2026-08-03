@@ -225,7 +225,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | env | default |
 |---|---|
 | `MAP_ID_CHECK_PATH` | `~/.local/state/ingame/map_id_check.txt` (единый для всех режимов) |
-| `MAP_VERDICTS_PATH` | `~/.local/state/ingame/map_verdicts.json` — журнал вердиктов карт (1 карта = 1 запись: identity + последний снапшот metrics/protracker/star/elo + массив verdicts с dispatch-инфо); чисто аддитивно, существующее логирование не меняет |
+| `MAP_VERDICTS_PATH` | `~/.local/state/ingame/map_verdicts.json` — журнал вердиктов карт (1 карта = 1 запись: identity + последний снапшот metrics/protracker/star/elo + массив verdicts с dispatch-инфо). Первичная запись создаётся сразу при парсинге карты (`_record_map_verdict(..., create_only=True)`). Журнал — источник правды для Telegram-команды `tail_log` (`_send_admin_log_tail`): 3 последних матча, сгруппированных по match_id (последняя карта серии), с полными метриками, историей вердиктов и текущим статусом (в delayed watcher / отправлен / отменён / отказано / распаршен без вердикта) |
 | `SOURCETV_MATCHES_PATH` | `{PROJECT_ROOT}/runtime/sourcetv_matches.json` — мост live-матчей между `sourcetv_probe.py` и `cyberscore_try.py` (абсолютный путь; не зависит от cwd) |
 | `RUNTIME_INSTANCE_LOCK_PATH` | `runtime/cyberscore_try.instance.lock` |
 | `DELAYED_QUEUE_PATH` | `runtime/delayed_signal_queue.json` (суффиксируется режимом) |
