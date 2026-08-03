@@ -271,6 +271,7 @@ def test_tail_log_reads_journal_end_to_end(monkeypatch, tmp_path) -> None:
         kind="delayed",
         reason="late_all_no_early_star_pre27_watcher",
         metrics={"early_output": {"solo": 0.62}},
+        bet_message="СТАВКА НА LGD Gaming x0.5\nLGD Gaming VS 1w\n4:7",
         identity={
             "match_id": "97",
             "status": "live",
@@ -292,5 +293,26 @@ def test_tail_log_reads_journal_end_to_end(monkeypatch, tmp_path) -> None:
     message = sent_messages[0]
     assert "LGD Gaming vs 1w" in message
     assert "97/lgd-vs-1win" in message
-    assert "early_output" in message
+    assert "СТАВКА НА LGD Gaming x0.5" in message
     assert "late_all_no_early_star_pre27_watcher" in message
+
+
+def test_journal_prunes_oldest_entries_over_limit(monkeypatch, tmp_path) -> None:
+    """При превышении лимита записей самые старые выкидываются."""
+    journal_path = _use_tmp_journal(monkeypatch, tmp_path)
+    monkeypatch.setattr(runtime, "MAP_VERDICTS_MAX_ENTRIES", 5)
+    for idx in range(7):
+        runtime._record_map_verdict(
+            f"dltv.org/matches/{900 + idx}/t-vs-t.1",
+            verdict=f"v{idx}",
+            kind="info",
+            reason="match_parsed",
+            identity={"match_id": str(900 + idx)},
+        )
+
+    data = _load_journal(journal_path)
+    assert len(data) == 5
+    # Две самые старые записи удалены, свежая сохранена.
+    assert "dltv.org/matches/900/t-vs-t.1" not in data
+    assert "dltv.org/matches/901/t-vs-t.1" not in data
+    assert "dltv.org/matches/906/t-vs-t.1" in data

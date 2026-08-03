@@ -17260,28 +17260,8 @@ _ADMIN_DELAYED_OUTCOME_PATTERNS = (
 _ADMIN_SUMMARY_MATCH_URL_RE = re.compile(r"(dltv\.org/matches/\d+/[^\s)]+?)\.\d+(?=$|[\s)])")
 _ADMIN_SUMMARY_URL_LINE_RE = re.compile(r"^\s*URL:\s*(?P<url>\S+)\s*$")
 _ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT = 3
-_ADMIN_TAIL_LOG_JOURNAL_POOL_LIMIT = 30
+_ADMIN_TAIL_LOG_JOURNAL_POOL_LIMIT = 100
 _ADMIN_TAIL_VERDICT_HISTORY_LIMIT = 5
-_ADMIN_TAIL_METRIC_BLOCKS = (
-    "early_output",
-    "late_output",
-    "early_end_output",
-    "all_output",
-    "mid_output",
-    "post_lane_output",
-    "lane_kills_adv_dict",
-)
-_ADMIN_TAIL_PROTRACKER_KEYS = (
-    "pro_cp1vs1_early",
-    "pro_cp1vs1_late",
-    "pro_cp1vs1_valid",
-    "pro_duo_metric",
-    "pro_duo_synergy_metric",
-    "pro_solo_wr_metric",
-    "pro_solo_wr_overall_metric",
-    "pro_lane_advantage",
-    "pro_lane_metric",
-)
 
 
 def _is_admin_match_summary_line(compact_line: str) -> bool:
@@ -17726,6 +17706,64 @@ def _admin_tail_format_elo_summary(elo: Dict[str, Any]) -> str:
     return " | ".join(parts) if parts else "—"
 
 
+def _admin_tail_build_bet_preview(entry: Dict[str, Any]) -> List[str]:
+    """Читаемая сводка матча в стиле телеграм-ставки для случаев, когда
+    bet_message ещё не собран (ранний отказ до сборки сообщения, матч только
+    распаршен). Никаких сырых дампов dict — только витринные блоки."""
+    teams = entry.get("teams") if isinstance(entry.get("teams"), dict) else {}
+    metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
+    preview: List[str] = []
+
+    star_hits_block = ""
+    try:
+        star_hits_block = _build_star_hits_summary_block(
+            early_output=(
+                metrics.get("early_output")
+                if isinstance(metrics.get("early_output"), dict)
+                else None
+            ),
+            mid_output=(
+                metrics.get("mid_output")
+                if isinstance(metrics.get("mid_output"), dict)
+                else None
+            ),
+            all_output=(
+                metrics.get("all_output")
+                if isinstance(metrics.get("all_output"), dict)
+                else None
+            ),
+        )
+    except Exception:
+        star_hits_block = ""
+    if star_hits_block:
+        preview.extend(
+            line.rstrip() for line in str(star_hits_block).splitlines() if line.strip()
+        )
+
+    star = entry.get("star") if isinstance(entry.get("star"), dict) else {}
+    if star:
+        preview.append(f"⭐ Star: {_admin_tail_format_star_summary(star, teams)}")
+
+    elo = entry.get("elo") if isinstance(entry.get("elo"), dict) else {}
+    if elo:
+        preview.append(f"📊 ELO: {_admin_tail_format_elo_summary(elo)}")
+
+    lane_kills = (
+        metrics.get("lane_kills_adv_dict")
+        if isinstance(metrics.get("lane_kills_adv_dict"), dict)
+        else {}
+    )
+    if lane_kills:
+        preview.append(
+            "🛣 Lane kills: "
+            f"exp_diff={_admin_tail_format_number(lane_kills.get('expected_diff'))}, "
+            f"lead_prob={_admin_tail_format_number(lane_kills.get('lead_probability'))}, "
+            f"coverage={_admin_tail_format_number(lane_kills.get('coverage'))}"
+            f"/{_admin_tail_format_number(lane_kills.get('total_lanes'))}"
+        )
+    return preview
+
+
 def _admin_tail_journal_status_lines(
     entry: Dict[str, Any],
     payload: Optional[Dict[str, Any]],
@@ -17736,7 +17774,11 @@ def _admin_tail_journal_status_lines(
     if isinstance(payload, dict):
         return ["⏳ Статус: в delayed watcher"] + _admin_tail_watcher_footer(payload)
 
-    verdicts = [item for item in (entry.get("verdicts") or []) if isinstance(item, dict)]
+    verdicts = [
+        item
+        for item in (entry.get("verdicts") or [])
+        if isinstance(item, dict) and str(item.get("kind") or "").strip() != "info"
+    ]
     if not verdicts:
         return ["🕒 Статус: матч распаршен, вердикта ещё нет"]
     last = verdicts[-1]
@@ -17816,35 +17858,14 @@ def _admin_tail_format_journal_match(
         lines.append("")
         lines.extend(line.rstrip() for line in bet_message.splitlines() if line.strip())
     else:
-        metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
-        if metrics:
-            lines.append("🧮 Метрики:")
-            for block_name in _ADMIN_TAIL_METRIC_BLOCKS:
-                lines.append(
-                    f"  {block_name}: {_admin_tail_format_compact_dict(metrics.get(block_name))}"
-                )
-            lane_parts = [
-                f"{lane}={_admin_tail_format_compact_dict(metrics.get(lane))}"
-                for lane in ("top", "mid", "bot")
-            ]
-            lines.append("  lanes: " + " ".join(lane_parts))
-
-        protracker = entry.get("protracker") if isinstance(entry.get("protracker"), dict) else {}
-        protracker_summary = {
-            key: protracker[key]
-            for key in _ADMIN_TAIL_PROTRACKER_KEYS
-            if key in protracker and protracker[key] is not None
-        }
-        if protracker_summary:
-            lines.append(f"🏅 Protracker: {_admin_tail_format_compact_dict(protracker_summary)}")
-
-        star = entry.get("star") if isinstance(entry.get("star"), dict) else {}
-        if star:
-            lines.append(f"⭐ Star: {_admin_tail_format_star_summary(star, teams)}")
-
-        elo = entry.get("elo") if isinstance(entry.get("elo"), dict) else {}
-        if elo:
-            lines.append(f"📊 ELO: {_admin_tail_format_elo_summary(elo)}")
+        # Текста ставки ещё нет (ранний отказ до сборки сообщения либо матч
+        # только распаршен): показываем читаемую сводку в стиле телеграм-ставки.
+        preview_lines = _admin_tail_build_bet_preview(entry)
+        if preview_lines:
+            lines.append("")
+            lines.extend(preview_lines)
+        else:
+            lines.append("(данных по матчу пока нет — он только распаршен)")
 
     verdicts = [item for item in (entry.get("verdicts") or []) if isinstance(item, dict)]
     if verdicts:
@@ -17908,17 +17929,64 @@ def _collect_admin_tail_last_matches(*, line_count: int = 100) -> List[Dict[str,
 
     candidates: List[Dict[str, Any]] = []
     seen_match_ids: set[str] = set()
+    # Записи одной серии плодятся с разными uniq-суффиксами URL на каждом
+    # цикле парсинга: у самой свежей записи может ещё не быть метрик и
+    # bet_message, а у соседних — уже есть. Подтягиваем данные из соседей
+    # той же серии (от свежих к старым).
+    siblings_by_match_id: Dict[str, List[Dict[str, Any]]] = {}
+    for entry in entries:
+        sibling_key = str(entry.get("match_key") or "").strip()
+        sibling_id = _admin_tail_url_match_id(sibling_key) or sibling_key
+        if sibling_id:
+            siblings_by_match_id.setdefault(sibling_id, []).append(entry)
     for entry in entries:
         match_key = str(entry.get("match_key") or "").strip()
         match_id = _admin_tail_url_match_id(match_key) or match_key
         if not match_id or match_id in seen_match_ids:
             continue
         seen_match_ids.add(match_id)
+        merged_entry = dict(entry)
+        for field in ("bet_message", "metrics", "protracker", "star", "elo"):
+            if merged_entry.get(field):
+                continue
+            for sibling in siblings_by_match_id.get(match_id, []):
+                sibling_value = sibling.get(field)
+                if sibling_value:
+                    merged_entry[field] = sibling_value
+                    break
+        # Вердикты живут на тех ключах, где решения принимались: сливаем
+        # историю всей серии по времени (например, delayed-запись на старом
+        # ключе + свежий info на новом).
+        merged_verdicts: List[Dict[str, Any]] = []
+        for sibling in siblings_by_match_id.get(match_id, []):
+            sibling_verdicts = sibling.get("verdicts")
+            if isinstance(sibling_verdicts, list):
+                merged_verdicts.extend(
+                    item for item in sibling_verdicts if isinstance(item, dict)
+                )
+
+        def _verdict_ts(item: Dict[str, Any]) -> float:
+            try:
+                return float(item.get("ts") or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        # Повторяющиеся по всей серии kind+reason (например, info:match_parsed
+        # на каждом новом ключе) схлопываем до самого свежего.
+        latest_by_kind_reason: Dict[str, Dict[str, Any]] = {}
+        for item in sorted(merged_verdicts, key=_verdict_ts):
+            verdict_id = "|".join(
+                str(item.get(field) or "") for field in ("kind", "reason")
+            )
+            latest_by_kind_reason[verdict_id] = item
+        deduped_verdicts = sorted(latest_by_kind_reason.values(), key=_verdict_ts)
+        if deduped_verdicts:
+            merged_entry["verdicts"] = deduped_verdicts
         candidates.append(
             {
                 "match_id": match_id,
                 "match_key": match_key,
-                "entry": entry,
+                "entry": merged_entry,
                 "payload": watcher_by_match_id.get(match_id),
             }
         )
@@ -24847,6 +24915,32 @@ MAP_VERDICTS_PATH = str(
     or str(LOCAL_STATE_DIR / "map_verdicts.json")
 )
 MAP_VERDICTS_MAX_PER_MAP = 50
+# URL матча обрастает новым uniq-суффиксом на каждом цикле парсинга, поэтому
+# записей в журнале больше, чем карт; при превышении лимита выкидываем самые
+# старые, чтобы файл не рос бесконечно.
+MAP_VERDICTS_MAX_ENTRIES = 400
+
+
+def _prune_map_verdict_journal_entries(data: Dict[str, Any]) -> None:
+    """Выкинуть самые старые записи журнала при превышении лимита."""
+    excess = len(data) - MAP_VERDICTS_MAX_ENTRIES
+    if excess <= 0:
+        return
+    try:
+        ordered = sorted(
+            data.items(),
+            key=lambda item: (
+                float(item[1].get("updated_ts") or 0.0)
+                if isinstance(item[1], dict)
+                else 0.0
+            ),
+        )
+    except Exception:
+        return
+    for stale_key, _stale_entry in ordered[:excess]:
+        data.pop(stale_key, None)
+
+
 _map_verdicts_lock = threading.Lock()
 
 
@@ -24965,6 +25059,7 @@ def _record_map_verdict(
                     del verdicts[: len(verdicts) - MAP_VERDICTS_MAX_PER_MAP]
             entry["verdicts"] = verdicts
             data[key] = entry
+            _prune_map_verdict_journal_entries(data)
             _write_json_atomic(path, data)
     except Exception:
         logger.exception("MAP_VERDICTS: failed to record verdict for %s", match_key)

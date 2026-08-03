@@ -3576,9 +3576,8 @@ def test_send_admin_log_tail_shows_journal_matches_newest_first(monkeypatch) -> 
     assert "[2/2]" in sent_messages[1]["message"]
     assert sent_messages[0]["kwargs"]["admin_only"] is True
     assert sent_messages[0]["kwargs"]["mirror_to_vk"] is False
-    # Full metrics from the journal plus the delayed-watcher footer.
-    assert "Метрики:" in sent_messages[0]["message"]
-    assert "early_output" in sent_messages[0]["message"]
+    # Читаемая сводка из журнала плюс статус delayed-watcher'а.
+    assert "Метрики:" not in sent_messages[0]["message"]
     assert "в delayed watcher" in sent_messages[0]["message"]
     assert "Reason:" in sent_messages[0]["message"]
 
@@ -3663,54 +3662,59 @@ def test_send_admin_log_tail_groups_maps_of_same_match(monkeypatch) -> None:
 
 
 def test_send_admin_log_tail_keeps_finished_rejected_matches(monkeypatch) -> None:
-    """Finished matches keep showing their metrics and final verdict in the
+    """Finished matches keep showing their summary and final verdict in the
     snapshot — they are no longer filtered out by live-listing status."""
-    entries = {
-        "r": _make_journal_entry(
-            match_id="174999",
-            updated_ts=100.0,
-            status="finished",
-            score="12 : 30",
-            metrics=_journal_metrics(),
-            verdicts=[
-                {
-                    "ts": 1.0,
-                    "at": "2026-08-03 11:00:00",
-                    "kind": "reject",
-                    "reason": "star_signal_reject",
-                    "verdict": "ВЕРДИКТ: ОТКАЗ",
-                }
-            ],
-        )
+    rejected_entry = _make_journal_entry(
+        match_id="174999",
+        updated_ts=100.0,
+        status="finished",
+        score="12 : 30",
+        metrics=_journal_metrics(),
+        verdicts=[
+            {
+                "ts": 1.0,
+                "at": "2026-08-03 11:00:00",
+                "kind": "reject",
+                "reason": "star_signal_reject",
+                "verdict": "ВЕРДИКТ: ОТКАЗ",
+            }
+        ],
+    )
+    rejected_entry["elo"] = {
+        "radiant_rating": 1500.0,
+        "dire_rating": 1400.0,
     }
-    _install_journal(monkeypatch, entries)
+    _install_journal(monkeypatch, {"r": rejected_entry})
     sent_messages = _capture_send_message(monkeypatch)
 
     runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
     assert len(sent_messages) == 1
     assert "174999" in sent_messages[0]["message"]
-    assert "Метрики:" in sent_messages[0]["message"]
+    assert "📊 ELO: R=1500" in sent_messages[0]["message"]
     assert "star_signal_reject" in sent_messages[0]["message"]
     assert "❌ Статус: отказано" in sent_messages[0]["message"]
 
 
 def test_send_admin_log_tail_shows_freshly_parsed_match_without_verdict(monkeypatch) -> None:
-    """A match is visible right after parsing: full metrics are shown even
-    though no verdict exists yet."""
-    entries = {
-        "fresh": _make_journal_entry(
-            match_id="174356", updated_ts=100.0, metrics=_journal_metrics()
-        )
+    """A match is visible right after parsing: a readable summary is shown
+    even though no verdict exists yet."""
+    fresh_entry = _make_journal_entry(
+        match_id="174356", updated_ts=100.0, metrics=_journal_metrics()
+    )
+    fresh_entry["elo"] = {
+        "radiant_rating": 1520.0,
+        "dire_rating": 1480.0,
     }
-    _install_journal(monkeypatch, entries)
+    _install_journal(monkeypatch, {"fresh": fresh_entry})
     sent_messages = _capture_send_message(monkeypatch)
 
     runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
     assert len(sent_messages) == 1
     assert "174356" in sent_messages[0]["message"]
-    assert "Метрики:" in sent_messages[0]["message"]
+    assert "📊 ELO: R=1520" in sent_messages[0]["message"]
+    assert "Метрики:" not in sent_messages[0]["message"]
     assert "🕒 Статус: матч распаршен, вердикта ещё нет" in sent_messages[0]["message"]
 
 
@@ -3757,26 +3761,60 @@ def test_send_admin_log_tail_marks_delayed_sent_outcome(monkeypatch) -> None:
 
 def test_send_admin_log_tail_merges_watcher_status_into_journal_metrics(monkeypatch) -> None:
     """When a match is in both the journal and the delayed queue, the
-    snapshot shows the journal metrics block plus the live watcher status."""
-    entries = {
-        "live": _make_journal_entry(
-            match_id="100", updated_ts=100.0, metrics=_journal_metrics()
-        )
+    snapshot shows a readable journal summary plus the live watcher status."""
+    entry = _make_journal_entry(
+        match_id="100", updated_ts=100.0, metrics=_journal_metrics()
+    )
+    entry["star"] = {
+        "has_early_star": True,
+        "early_sign": 1,
+        "early_wr_pct": 70.0,
+        "tier": "1",
+        "selected_star_mode": "base_wr_65",
+        "selected_star_wr": 65.0,
+    }
+    entry["elo"] = {
+        "radiant_rating": 1600.0,
+        "dire_rating": 1500.0,
+        "adjusted_radiant_wr": 55.0,
+        "adjusted_dire_wr": 45.0,
     }
     queued = {
         "dltv.org/matches/100/live-now.0": _make_queued_payload(),
     }
-    _install_journal(monkeypatch, entries, queued=queued)
+    _install_journal(monkeypatch, {"live": entry}, queued=queued)
     sent_messages = _capture_send_message(monkeypatch)
 
     runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
     assert len(sent_messages) == 1
-    # Journal metrics block is present, augmented with the watcher footer.
-    assert "Метрики:" in sent_messages[0]["message"]
-    assert "early_output" in sent_messages[0]["message"]
-    assert "в delayed watcher" in sent_messages[0]["message"]
-    assert "Reason:" in sent_messages[0]["message"]
+    message = sent_messages[0]["message"]
+    # Читаемая сводка из журнала + живой статус watcher'а.
+    assert "⭐ Star: early=Alpha WR≈70.0%" in message
+    assert "📊 ELO: R=1600" in message
+    assert "в delayed watcher" in message
+    assert "Reason:" in message
+    # Никаких сырых дампов метрик.
+    assert "Метрики:" not in message
+
+
+def test_send_admin_log_tail_merges_data_from_sibling_entries(monkeypatch) -> None:
+    """Свежая запись серии (новый uniq-суффикс URL, только распаршена)
+    подтягивает bet_message и метрики из соседних записей той же серии."""
+    old_entry = _make_journal_entry(match_id="5", updated_ts=100.0)
+    old_entry["bet_message"] = "СТАВКА НА Alpha x0.5\nAlpha VS Beta\n1:0"
+    old_entry["metrics"] = _journal_metrics()
+    fresh_entry = _make_journal_entry(match_id="5", updated_ts=200.0)
+    _install_journal(monkeypatch, {"old": old_entry, "fresh": fresh_entry})
+    sent_messages = _capture_send_message(monkeypatch)
+
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
+
+    assert len(sent_messages) == 1
+    message = sent_messages[0]["message"]
+    # Текст ставки подтянут из соседней записи той же серии.
+    assert "СТАВКА НА Alpha x0.5" in message
+    assert "Метрики:" not in message
 
 
 def test_send_admin_log_tail_prefers_bet_message_over_metrics_dump(monkeypatch) -> None:
