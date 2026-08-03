@@ -68,17 +68,15 @@
 Состав сравнивается с прошлым матчем org по player_id. При совпадении >=3 игроков состав продолжает ту же линию (тот же roster segment); иначе — новый segment. Используется ELO/историей команды.
 
 ### Star System (источник истины: `functions.py`)
-- STAR-метрики нормальных блоков: `STAR_SIGNAL_METRICS = {counterpick_1vs1, counterpick_1vs2, solo, synergy_duo, synergy_trio}`. ProTracker/DLTV не подмешиваются в All.
+- STAR-метрики: `STAR_SIGNAL_METRICS = {counterpick_1vs1, counterpick_1vs2, dota2protracker_cp1vs1, solo}`.
 - Секции: `early_output`, `mid_output` (late), `all_output`.
 - **Приоритет early-блоков при разных знаках.** Early NW (`early_output`) и Early Winner (`early_end_output`) могут указывать на разные стороны. В этом случае для диспатча берётся блок с бо́льшим WR: при `wr(early_end) > wr(early)` авторитетным становится Early Winner — подменяются `selected_early_diag`, `selected_early_sign`, `early_wr_pct` и raw-блок, который читают `_block_signs_same_or_zero` и `_has_opposite_early_wr60_hit`. Без этого пара Early NW (одна сторона) + Late/All (другая) давала `delay_late_only_opposite_signs` и уводила карту в pre-27 watcher вместо обычного networth-гейта 0-10 / после 10 минуты. Предикат — `_early_winner_overrides_early_nw()`, флаг `EARLY_WINNER_OVERRIDES_EARLY_NW` (по умолчанию 1). В карточке Telegram обе строки WR печатаются без подмены.
 - Пороги: `STAR_THRESHOLDS_BY_WR` ← `data/star_thresholds_by_wr.json` (WR-уровни 60..90, `STAR_LEVEL_MIN/MAX`).
-- Валидный Early/Early Winner/Late/All всегда содержит ровно три независимых family-hit: `solo` + counterpick + synergy. Counterpick выбирается как `counterpick_1vs2`, а `counterpick_1vs1` используется только если 1vs2 не получил ни одного star index; synergy аналогично выбирает `synergy_trio`, затем fallback `synergy_duo`. Одновременные primary/fallback не считаются двумя подтверждениями.
-- Block index — ближайший WR-уровень к среднему индексу трёх выбранных метрик (при равенстве вверх). По 527,101 картам 7.41d безопасный floor для Early/Early Winner/Late — WR75; All допускается от WR60. STAR-hit фиксируется в `format_output_dict(...)`; итог проверяют `select_star_family_block`, `_star_block_diagnostics`, `_star_signal_dispatch_flags`, `_star_match_status_from_diags`.
+- `synergy_duo`/`synergy_trio` могут выводиться в Telegram-блоках, но **не** участвуют в STAR-решении.
+- STAR-hit фиксируется в `format_output_dict(...)`; знаки/консистентность блоков проверяют `_star_block_sign_consistency`, `_star_signal_dispatch_flags`, `_star_match_status_from_diags`.
 - Перед dispatch действует terminal `STAR_COMBINATION_GATE`: одиночный валидный Late разрешён только при отсутствии WR60+ star-хитов противоположного знака в All. Late WR, включая `70+`, не даёт исключения; валидные Late и All одного знака по-прежнему образуют допустимую комбинацию `late+all`. Отказ получает reason `star_signal_rejected_block_combination`; `FORCE_ODDS_SIGNAL_TEST=1` обходит gate.
 - **27+ late-гейт (late-driven dispatch).** Когда сторону ставки задаёт Late STAR и её НЕ подтверждает валидный Early того же знака (late-only, late+all, opposite-signs), любая отправка на `game_time >= 27:00` требует: `late_star_hit_count >= LATE27_DISPATCH_MIN_LATE_HITS` (2), `late_wr_pct >= LATE27_DISPATCH_MIN_LATE_WR` (65) и отсутствия WR60+ star-хита противоположного знака в блоке All — даже если All при этом не валидный STAR-блок. Нарушение → терминальный отказ `star_signal_rejected_late27_dispatch_guard` (label `late27_dispatch_guard_no_send`), delayed-watcher закрывается без отправки. Проверка стоит в двух точках: на входе в пост-target отправку основного пути (pub comeback table / top25 elo-block / post-target comeback / target reached) и в delayed watcher'е перед решением comeback-таблицы; снимок фактов едет в payload через `stake_multiplier_context["all_star_hits"]`. Immediate late+early одного знака под гейт не попадает; `FORCE_ODDS_SIGNAL_TEST=1` обходит его. Legacy delayed-записи без снимка All-хитов проверяются только по известным полям.
-- Калибровка уверенности: `data/star_confidence_calibration.json` (`_load_star_confidence_calibration`). По умолчанию включена (`STAR_ODDS_USE_CALIBRATION=1`) и переводит raw family-index в chronological latest-20% WR, по которому выбираются x0.5/x1/x2 и минимальный коэффициент; сам raw index сохраняется в `rec.level`.
-- Stake после калибровки единообразен для выбранного dispatch-блока: `<62.5% → x0.5`, `62.5–69.99% → x1`, `>=70% → x2`. Старый x3 и требование одновременных `cp1vs1+cp1vs2+solo` удалены как несовместимые с family fallback; opposite Late/All по-прежнему принудительно ограничивается x0.5.
-- `Mix (shadow)` — отдельный Telegram-блок из `Protracker_1vs1`, `Protracker_duo`, `Protracker_solo` (fallback `solo_overall`) и `DLTV_rating`; эти значения больше не выводятся внутри All и не участвуют в его STAR. До накопления DLTV holdout Mix показывается/логируется, но сам dispatch не открывает.
+- Калибровка уверенности: `data/star_confidence_calibration.json` (`_load_star_confidence_calibration` ~1574).
 
 ### Lane kills@10 (`analise_database.py` → `explore_database.py` → `functions.py`)
 
@@ -100,15 +98,12 @@ Live-оценка использует строгую взаимоисключа
 В Telegram-блоке `Lanes:` метрика отображается как `lane_kills_adv_dict: Radiant|Dire +N.NN kills @10 (lead PP%, C/3)`. Знак `expected_diff` выбирает показываемую сторону; для Dire lead probability вычисляется как `1 - p_radiant_lead - p_draw`. Это **только диагностический вывод**: существующие networth, early-kills, tier, STAR, delay и standalone lane-adv dispatch-gates не изменены.
 
 ### Stake multiplier (`_stake_multiplier_for_signal`, ~4990)
-Множитель ставки определяется по chronological latest-20% WR выбранного family-блока
-(`late → early → all` по фактически выбранной dispatch phase):
-- `<62.5%` → `x0.5`;
-- `62.5–69.99%` → `x1`;
-- `>=70%` → `x2`.
-
-Каждый валидный family-блок уже содержит ровно три независимых семейства (`solo + cp + synergy`),
-поэтому старые эвристики по числу hits, all-only и `x3` удалены. Если Late и All указывают на
-разные стороны, ставка остаётся принудительно `x0.5`.
+Множитель ставки по выбранной стороне и звёздам early/late/all блоков:
+- Сторона диспетча определяется late→early→all (приоритет late). Если сторона != target → `1`.
+- 1 валидный блок с ≤1 hit → `0.5`; all-only (нет early и late) → `0.5`; late и all указывают на разные стороны → `0.5`.
+- Любой множитель >0.5 требует **≥2 late star-hits**; иначе (включая неизвестный count) → `0.5`.
+- WR60-уровень late → всегда `0.5`.
+- **ELO-gate удалён**: при ≥2 late-hits множитель зависит только от late WR: `>=85 → 3`, `>=70 → 2`, иначе `1`.
 - Speculative comeback-вход всегда отправляет x0.5 на более глубоком NW-пороге (`LATE_PUB_COMEBACK_SPECULATIVE_THRESHOLD_MULT`, default `1.3`), но теперь допускается только если `_stake_multiplier_from_context(...)` для той же стороны/минуты даёт потенциальный основной сигнал **строго больше x0.5**. Поэтому пара `speculative x0.5 + main x0.5` запрещена; основной watcher и его stake-правила не меняются.
 
 #### Запрет x0.5 на ELO-андердога (`_half_stake_elo_underdog_reject`)

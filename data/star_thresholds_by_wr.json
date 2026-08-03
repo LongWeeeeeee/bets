@@ -46,10 +46,6 @@
     ],
     "all_output": [
       [
-        "solo",
-        1
-      ],
-      [
         "counterpick_1vs1",
         4
       ],
@@ -122,10 +118,6 @@
     ],
     "all_output": [
       [
-        "solo",
-        1
-      ],
-      [
         "counterpick_1vs1",
         6
       ],
@@ -194,10 +186,6 @@
     ],
     "all_output": [
       [
-        "solo",
-        2
-      ],
-      [
         "counterpick_1vs1",
         8
       ],
@@ -258,10 +246,6 @@
     ],
     "all_output": [
       [
-        "solo",
-        2
-      ],
-      [
         "counterpick_1vs1",
         11
       ],
@@ -314,10 +298,6 @@
     ],
     "all_output": [
       [
-        "solo",
-        3
-      ],
-      [
         "counterpick_1vs2",
         7
       ],
@@ -362,10 +342,6 @@
     ],
     "all_output": [
       [
-        "solo",
-        3
-      ],
-      [
         "counterpick_1vs2",
         9
       ],
@@ -398,10 +374,6 @@
     ],
     "all_output": [
       [
-        "solo",
-        4
-      ],
-      [
         "counterpick_1vs2",
         12
       ],
@@ -429,10 +401,6 @@
       ]
     ],
     "all_output": [
-      [
-        "solo",
-        5
-      ],
       [
         "counterpick_1vs2",
         15

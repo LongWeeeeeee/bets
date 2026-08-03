@@ -114,7 +114,7 @@ def test_early_local_kills_message_has_dual_early_blocks(monkeypatch):
     monkeypatch.setattr(
         runtime,
         "_compose_star_metric_blocks_for_message",
-        lambda early, mid, all_, mix="": f"{early}{mid}{all_}{mix}",
+        lambda early, mid, all_: f"{early}{mid}{all_}",
     )
     monkeypatch.setattr(runtime, "_format_live_message_state_block", lambda **kw: "")
     monkeypatch.setattr(runtime, "_build_all_star_output", lambda post, _pro: dict(post or {}))

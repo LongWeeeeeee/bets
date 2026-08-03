@@ -190,8 +190,5 @@ def test_all_star_output_includes_match_wr_protracker_duo_under_1vs1():
         post_lane_output={"counterpick_1vs1": 1.0, "solo": 0.5},
         protracker_payload=payload,
     )
-    assert "dota2protracker_cp1vs1" not in all_out
-    assert "dota2protracker_duo" not in all_out
-    mix_out = runtime._build_mix_star_output(payload)
-    assert mix_out["dota2protracker_cp1vs1"] == 2.5
-    assert mix_out["dota2protracker_duo"] == 4.0
+    assert all_out["dota2protracker_cp1vs1"] == 2.5
+    assert all_out["dota2protracker_duo"] == 4.0

@@ -37,16 +37,17 @@ def test_max_star_wr_level_for_metric_returns_highest_level_reached() -> None:
     assert level is None
 
 
-def test_max_star_wr_level_enables_synergy_metrics() -> None:
+def test_max_star_wr_level_ignores_disabled_support_metrics() -> None:
+    # synergy_duo / synergy_trio are not STAR-signal metrics anymore.
     level = runtime._max_star_wr_level_for_metric(
         metric="synergy_duo",
         value=9.0,
         section="all_output",
     )
-    assert level == 60
+    assert level is None
 
 
-def test_build_star_hits_summary_requires_all_three_families() -> None:
+def test_build_star_hits_summary_block_carstensz_case_highlights_late_cp1vs2() -> None:
     block = runtime._build_star_hits_summary_block(
         early_output={},
         mid_output={
@@ -57,14 +58,19 @@ def test_build_star_hits_summary_requires_all_three_families() -> None:
         },
         all_output={},
     )
-    assert block == ""
+    assert block
+    assert "⭐ Star hits (WR60+):" in block
+    assert "Late: Counterpick_1vs2 -6 (WR65)" in block
+    # Early and All had no hits, so their rows must not appear.
+    assert "Early:" not in block
+    assert "All:" not in block
 
 
 def test_build_star_hits_summary_block_returns_empty_without_hits() -> None:
     block = runtime._build_star_hits_summary_block(
         early_output={"counterpick_1vs1": 0, "solo": 0},
         mid_output={"counterpick_1vs2": 0},
-        all_output={"synergy_duo": 9},
+        all_output={"synergy_duo": 9},  # disabled STAR metric
     )
     assert block == ""
 
@@ -72,46 +78,41 @@ def test_build_star_hits_summary_block_returns_empty_without_hits() -> None:
 def test_build_star_hits_summary_block_combines_all_three_blocks() -> None:
     block = runtime._build_star_hits_summary_block(
         early_output={
-            "counterpick_1vs1": 11,
-            "solo": 7,
-            "synergy_duo": 12,
+            "counterpick_1vs1": 4,
+            "solo": 3,
         },
         mid_output={
-            "counterpick_1vs2": -9,
-            "solo": -8,
-            "synergy_trio": -11,
+            "counterpick_1vs1": -1,
+            "counterpick_1vs2": -6,
         },
         all_output={
-            "counterpick_1vs2": 6,
-            "solo": 2,
-            "synergy_trio": 8,
+            "counterpick_1vs1": 4,
         },
     )
     assert block.startswith("⭐ Star hits (WR60+):\n")
-    assert "Early: Solo +7 (WR75), Counterpick_1vs1 +11 (WR75), Synergy_duo +12 (WR75)" in block
-    assert "Late: Solo -8 (WR75), Counterpick_1vs2 -9 (WR75), Synergy_trio -11 (WR75)" in block
-    assert "All: Solo +2 (WR70), Counterpick_1vs2 +6 (WR75), Synergy_trio +8 (WR75)" in block
+    assert "Early: Counterpick_1vs1 +4" in block
+    assert "Solo +3" in block
+    assert "Late: Counterpick_1vs2 -6 (WR65)" in block
+    assert "All: Counterpick_1vs1 +4" in block
     # Pure separators: block ends with a trailing newline for message composition.
     assert block.endswith("\n")
 
 
-def test_build_star_hits_summary_uses_primary_and_suppresses_fallback() -> None:
+def test_build_star_hits_summary_block_preserves_metric_order() -> None:
     block = runtime._build_star_hits_summary_block(
         early_output={
-            "solo": 8,
-            "counterpick_1vs1": 19,
-            "counterpick_1vs2": 12,
-            "synergy_duo": 19,
-            "synergy_trio": 14,
+            "solo": 5,
+            "counterpick_1vs1": 4,
+            "counterpick_1vs2": 5,
         },
         mid_output={},
         all_output={},
     )
     early_line = next(line for line in block.splitlines() if "Early:" in line)
-    assert "Counterpick_1vs2" in early_line
-    assert "Synergy_trio" in early_line
-    assert "Counterpick_1vs1" not in early_line
-    assert "Synergy_duo" not in early_line
+    cp1_idx = early_line.index("Counterpick_1vs1")
+    cp2_idx = early_line.index("Counterpick_1vs2")
+    solo_idx = early_line.index("Solo")
+    assert cp1_idx < cp2_idx < solo_idx
 
 
 def test_compose_star_metric_blocks_still_concatenates_in_fixed_order() -> None:

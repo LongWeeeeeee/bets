@@ -897,8 +897,8 @@ def test_live_all_output_is_post_lane_score_alias_not_offline_phase() -> None:
     ):
         assert key not in all_out
 
-    assert "dota2protracker_cp1vs1" not in all_out
-    assert cs._build_mix_star_output(protracker)["dota2protracker_cp1vs1"] == 2.0
+    # ProTracker remains additive on top of post_lane scores (live key name).
+    assert all_out.get("dota2protracker_cp1vs1") == 2.0
 
 
 # --- Alchemist directional favored-side 0.7 factor on public early_output ---
