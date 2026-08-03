@@ -93,6 +93,9 @@ _CP1VS2_ROLE = {
     p: (CORE_POSITIONS if p in CORE_POSITIONS else SUPPORT_POSITIONS)
     for p in ("pos1", "pos2", "pos3", "pos4", "pos5")
 }
+# cp1vs1 n35 high-score authority always needs the enemy hero's same-role
+# positional keys in draft-scoped SQLite lookups.
+_CP1VS1_ROLE = _CP1VS2_ROLE
 try:
     from keys import api_to_proxy, BOOKMAKER_PROXY_URL, BOOKMAKER_PROXY_POOL, DLTV_PROXY_POOL
 except ImportError:
@@ -3139,8 +3142,11 @@ def _draft_stats_lookup_keys(radiant_heroes_and_pos: Any, dire_heroes_and_pos: A
         team_keys = [hero_key(entry) for entry in team_entries]
         opp_keys = [hero_key(entry) for entry in opp_entries]
         for left in team_keys:
-            for right in opp_keys:
+            for (right_pos, right_hero), right in zip(opp_entries, opp_keys):
                 _add_draft_vs_lookup_keys(keys, left, right)
+                for fallback_pos in _CP1VS1_ROLE.get(right_pos, ()):
+                    if fallback_pos != right_pos:
+                        _add_draft_vs_lookup_keys(keys, left, f"{right_hero}{fallback_pos}")
             for opp_duo in combinations(opp_keys, 2):
                 duo_key = ",".join(sorted(opp_duo))
                 _add_draft_vs_lookup_keys(keys, left, duo_key)

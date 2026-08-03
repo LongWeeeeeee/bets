@@ -262,6 +262,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 > **Option C — post_lane `solo` (2026-06):** `post_lane_output['solo']` теперь ЭМИТИТСЯ (раньше был выключен `name != 'post_lane_output'`). Сам post_lane-словарь: cp/synergy/trio на широком окне, а **solo-записи (`{hero}pos{n}`) собираются ТОЛЬКО на последнем version-патче** (`analise_database._add_combinations_to_dict(write_solo=...)`, `LATEST_PATCH_START_TS` из `keys.DOTA_VERSION_PATCH_EVENTS`, сейчас 7.41d=1780531200). Solo уже в `STAR_SIGNAL_METRICS` и в sign-consistency `all_output` → автоматически участвует как сигнал в All-блоке; добавлен в display-списки. Порог `SOLO_MIN_MATCHES=50` (покрытие на 7.41d ≈95%).
 
 **Константы STAR (источник истины для решений):**
+- `counterpick_1vs1` в сильной зоне использует enemy-role cap top-up: exact остаётся якорем, недостающее добирается same-role позициями противника ровно до `COUNTERPICK_1VS1_ROLE_TOPUP_MIN_MATCHES=35`. Authority включается около STAR-70 границы: Early/Early Winner `|score|>=9`, Late `>=10`, All `>=8`; ниже сохраняется legacy n30 lookup. Draft-scoped SQLite lookup всегда включает соответствующие cross-position cp1vs1-ключи.
 - `STAR_SIGNAL_METRICS = {'counterpick_1vs1', 'counterpick_1vs2', 'dota2protracker_cp1vs1', 'solo'}` (frozenset, строка 1880).
 - `STAR_DISABLED_METRICS = frozenset()` (пусто).
 - `STAR_THRESHOLD_SECTIONS = ('early_output', 'mid_output', 'all_output')`.
