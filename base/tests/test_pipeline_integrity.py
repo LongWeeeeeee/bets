@@ -3779,6 +3779,29 @@ def test_send_admin_log_tail_merges_watcher_status_into_journal_metrics(monkeypa
     assert "Reason:" in sent_messages[0]["message"]
 
 
+def test_send_admin_log_tail_prefers_bet_message_over_metrics_dump(monkeypatch) -> None:
+    """Тело снапшота — готовый текст ставки в Telegram-формате; компактный
+    дамп метрик используется только пока текста ставки ещё нет."""
+    bet_text = "СТАВКА НА Alpha x0.5\nAlpha VS Beta\n0:0\nLanes: safe/mid/off"
+    entry = _make_journal_entry(
+        match_id="1", updated_ts=100.0, metrics=_journal_metrics()
+    )
+    entry["bet_message"] = bet_text
+    _install_journal(monkeypatch, {"a": entry})
+    sent_messages = _capture_send_message(monkeypatch)
+
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
+
+    assert len(sent_messages) == 1
+    message = sent_messages[0]["message"]
+    assert "СТАВКА НА Alpha x0.5" in message
+    assert "Alpha VS Beta" in message
+    assert "Lanes: safe/mid/off" in message
+    # Compact metrics dump is replaced by the readable bet message.
+    assert "Метрики:" not in message
+    assert "early_output" not in message
+
+
 def test_load_telegram_subscribers_state_merges_primary_and_legacy(tmp_path, monkeypatch) -> None:
     import functions
 

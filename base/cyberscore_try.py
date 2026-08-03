@@ -17780,8 +17780,9 @@ def _admin_tail_format_journal_match(
     total: int,
     candidate: Dict[str, Any],
 ) -> str:
-    """Full snapshot of one match from the verdict journal: identity, all
-    draft metrics, star/ELO/protracker summaries, verdict history, status."""
+    """Full snapshot of one match from the verdict journal: identity, the bet
+    message in its Telegram format (or a compact metrics dump fallback),
+    verdict history, current status."""
     entry = candidate.get("entry") if isinstance(candidate.get("entry"), dict) else {}
     teams = entry.get("teams") if isinstance(entry.get("teams"), dict) else {}
     radiant = str(teams.get("radiant") or "?").strip() or "?"
@@ -17808,35 +17809,42 @@ def _admin_tail_format_journal_match(
     if info_parts:
         lines.append(" | ".join(info_parts))
 
-    metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
-    if metrics:
-        lines.append("🧮 Метрики:")
-        for block_name in _ADMIN_TAIL_METRIC_BLOCKS:
-            lines.append(
-                f"  {block_name}: {_admin_tail_format_compact_dict(metrics.get(block_name))}"
-            )
-        lane_parts = [
-            f"{lane}={_admin_tail_format_compact_dict(metrics.get(lane))}"
-            for lane in ("top", "mid", "bot")
-        ]
-        lines.append("  lanes: " + " ".join(lane_parts))
+    # Тело — готовый текст ставки в формате Telegram-отправки; если его ещё
+    # нет (матч только распаршен), показываем компактный дамп метрик.
+    bet_message = str(entry.get("bet_message") or "").strip()
+    if bet_message:
+        lines.append("")
+        lines.extend(line.rstrip() for line in bet_message.splitlines() if line.strip())
+    else:
+        metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
+        if metrics:
+            lines.append("🧮 Метрики:")
+            for block_name in _ADMIN_TAIL_METRIC_BLOCKS:
+                lines.append(
+                    f"  {block_name}: {_admin_tail_format_compact_dict(metrics.get(block_name))}"
+                )
+            lane_parts = [
+                f"{lane}={_admin_tail_format_compact_dict(metrics.get(lane))}"
+                for lane in ("top", "mid", "bot")
+            ]
+            lines.append("  lanes: " + " ".join(lane_parts))
 
-    protracker = entry.get("protracker") if isinstance(entry.get("protracker"), dict) else {}
-    protracker_summary = {
-        key: protracker[key]
-        for key in _ADMIN_TAIL_PROTRACKER_KEYS
-        if key in protracker and protracker[key] is not None
-    }
-    if protracker_summary:
-        lines.append(f"🏅 Protracker: {_admin_tail_format_compact_dict(protracker_summary)}")
+        protracker = entry.get("protracker") if isinstance(entry.get("protracker"), dict) else {}
+        protracker_summary = {
+            key: protracker[key]
+            for key in _ADMIN_TAIL_PROTRACKER_KEYS
+            if key in protracker and protracker[key] is not None
+        }
+        if protracker_summary:
+            lines.append(f"🏅 Protracker: {_admin_tail_format_compact_dict(protracker_summary)}")
 
-    star = entry.get("star") if isinstance(entry.get("star"), dict) else {}
-    if star:
-        lines.append(f"⭐ Star: {_admin_tail_format_star_summary(star, teams)}")
+        star = entry.get("star") if isinstance(entry.get("star"), dict) else {}
+        if star:
+            lines.append(f"⭐ Star: {_admin_tail_format_star_summary(star, teams)}")
 
-    elo = entry.get("elo") if isinstance(entry.get("elo"), dict) else {}
-    if elo:
-        lines.append(f"📊 ELO: {_admin_tail_format_elo_summary(elo)}")
+        elo = entry.get("elo") if isinstance(entry.get("elo"), dict) else {}
+        if elo:
+            lines.append(f"📊 ELO: {_admin_tail_format_elo_summary(elo)}")
 
     verdicts = [item for item in (entry.get("verdicts") or []) if isinstance(item, dict)]
     if verdicts:
@@ -24874,15 +24882,18 @@ def _record_map_verdict(
     dispatch: Optional[Dict[str, Any]] = None,
     extra: Optional[Dict[str, Any]] = None,
     create_only: bool = False,
+    bet_message: Optional[str] = None,
 ) -> None:
     """Upsert per-map verdict journal entry (1 map = 1 record).
 
     metrics/protracker/star/elo blocks are replaced by the latest snapshot
     when provided; verdicts accumulate in ``verdicts`` (consecutive exact
     duplicates are collapsed so soft-reject recheck cycles don't spam the
-    journal). ``create_only=True`` записывает entry только если карты ещё нет
-    в журнале (используется для первичной записи при парсинге). Never raises:
-    journaling must not break the live pipeline.
+    journal). ``bet_message`` сохраняет последний собранный текст ставки
+    (в формате Telegram-отправки) для показа в tail_log. ``create_only=True``
+    записывает entry только если карты ещё нет в журнале (используется для
+    первичной записи при парсинге). Never raises: journaling must not break
+    the live pipeline.
     """
     try:
         if TEST_DISABLE_ADD_URL:
@@ -24935,6 +24946,9 @@ def _record_map_verdict(
                 safe_block = _verdict_json_sanitize(block_value)
                 if isinstance(safe_block, dict) and safe_block:
                     entry[block_name] = safe_block
+            safe_bet_message = str(bet_message or "").strip()
+            if safe_bet_message:
+                entry["bet_message"] = safe_bet_message[:4000]
             verdicts = entry.get("verdicts")
             if not isinstance(verdicts, list):
                 verdicts = []
@@ -30967,6 +30981,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             "star": None,
             "elo": None,
             "dispatch": None,
+            "bet_message": None,
         }
         # Запись в журнал появляется сразу при парсинге карты (create_only —
         # только если записи ещё нет), чтобы tail_log видел матч и его
@@ -31008,6 +31023,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 identity=_verdict_ctx.get("identity"),
                 dispatch=merged_dispatch or None,
                 extra=extra,
+                bet_message=_verdict_ctx.get("bet_message"),
             )
 
         # Раньше строка печаталась только при включённом префетче, а под --no-odds он
@@ -33988,6 +34004,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"{live_state_block}"
                 f"{odds_block}"
             )
+            # Готовый текст ставки (формат Telegram-отправки) — в журнал
+            # вердиктов, чтобы tail_log показывал матч в том же виде.
+            _verdict_ctx["bet_message"] = message_text
             # Standalone "lane_adv_dict ≥ 8" kills trigger: fires in ANY
             # branch when lanes are dominated (|lane_adv_dict| ≥ 8),
             # regardless of early/late/all star presence. Uses the full

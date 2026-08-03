@@ -206,6 +206,31 @@ def test_empty_key_or_verdict_ignored(monkeypatch, tmp_path) -> None:
     assert not journal_path.exists()
 
 
+def test_record_bet_message_keeps_latest_and_never_clears(monkeypatch, tmp_path) -> None:
+    """bet_message (готовый текст ставки для tail_log) заменяется свежим
+    снапшотом и не затирается вызовами без него."""
+    journal_path = _use_tmp_journal(monkeypatch, tmp_path)
+    key = "dltv.org/matches/98/bet.1"
+
+    runtime._record_map_verdict(
+        key, verdict="v1", kind="reject", reason="r1", bet_message="СТАВКА НА A x1\nA VS B"
+    )
+    runtime._record_map_verdict(
+        key,
+        verdict="v2",
+        kind="reject",
+        reason="r2",
+        bet_message="СТАВКА НА A x0.5\nA VS B\nобновлено",
+    )
+    data = _load_journal(journal_path)
+    assert data[key]["bet_message"] == "СТАВКА НА A x0.5\nA VS B\nобновлено"
+
+    # Вызов без bet_message не затирает сохранённый текст.
+    runtime._record_map_verdict(key, verdict="v3", kind="send", reason="r3")
+    data = _load_journal(journal_path)
+    assert data[key]["bet_message"] == "СТАВКА НА A x0.5\nA VS B\nобновлено"
+
+
 def test_create_only_records_once_per_map(monkeypatch, tmp_path) -> None:
     """create_only (первичная запись при парсинге) создаёт entry один раз и
     не затирает накопленные вердикты при повторных вызовах."""
