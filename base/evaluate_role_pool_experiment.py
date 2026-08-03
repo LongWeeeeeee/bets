@@ -276,13 +276,15 @@ def main() -> int:
                 }
                 for (metric, gate), candidate_score in candidates.items():
                     baseline_score = number(output.get(metric))
+                    baseline_variant = f"exact_ref_n{gate}"
+                    candidate_variant = f"role_n{gate}"
                     for seg in segments:
-                        coverage[(seg, phase, metric, "exact")][0] += 1
-                        coverage[(seg, phase, metric, "exact")][1] += int(baseline_score is not None)
-                        coverage[(seg, phase, metric, f"role_n{gate}")][0] += 1
-                        coverage[(seg, phase, metric, f"role_n{gate}")][1] += int(candidate_score is not None)
+                        coverage[(seg, phase, metric, baseline_variant)][0] += 1
+                        coverage[(seg, phase, metric, baseline_variant)][1] += int(baseline_score is not None)
+                        coverage[(seg, phase, metric, candidate_variant)][0] += 1
+                        coverage[(seg, phase, metric, candidate_variant)][1] += int(candidate_score is not None)
                     predictions = {}
-                    for variant, score in (("exact", baseline_score), (f"role_n{gate}", candidate_score)):
+                    for variant, score in ((baseline_variant, baseline_score), (candidate_variant, candidate_score)):
                         level = metric_level(metric, score, star_maps[phase])
                         sign = 1 if score is not None and score > 0 else -1
                         predictions[variant] = (score, level, sign)
@@ -294,8 +296,8 @@ def main() -> int:
                                     bucket = stats[(seg, phase, metric, variant, target_level)]
                                     bucket[0] += 1
                                     bucket[1] += int(sign == winner)
-                    baseline = predictions["exact"]
-                    candidate = predictions[f"role_n{gate}"]
+                    baseline = predictions[baseline_variant]
+                    candidate = predictions[candidate_variant]
                     for target_level in LEVELS:
                         base_hit = baseline[1] is not None and baseline[1] >= target_level
                         cand_hit = candidate[1] is not None and candidate[1] >= target_level
