@@ -25,6 +25,10 @@ except ImportError:
 
 import keys
 try:
+    from base.synergy_trio_role_pool import raw_lookup_keys_for_trio_tokens
+except ImportError:  # Supports direct execution from the base directory.
+    from synergy_trio_role_pool import raw_lookup_keys_for_trio_tokens
+try:
     from signal_wrappers import apply_early_signal_wrapper, apply_late_signal_wrapper
 except ImportError:
     apply_early_signal_wrapper = None
@@ -156,13 +160,17 @@ COUNTERPICK_1VS1_ROLE_TOPUP_HIGH_ABS_BY_PHASE = {
 }
 POS1_VS_POS1_MIN_MATCHES = 30
 COUNTERPICK_1VS2_MIN_MATCHES = 15
-SYNERGY_TRIO_MIN_MATCHES = 15
+# Frozen public OOS (105,422 maps, two chronological halves): role-pooled
+# core/support trio at N>=25 improved directional WR and coverage in Early,
+# Late and All. Exact positional cells remain separate evidence inside the
+# pool; only their role-compatible counts are aggregated.
+SYNERGY_TRIO_MIN_MATCHES = 25
 # Более широкий post-lane словарь держим на более строгих порогах.
 POST_LANE_SYNERGY_DUO_MIN_MATCHES = 30
 POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES = 30
 POST_LANE_POS1_VS_POS1_MIN_MATCHES = 50
 POST_LANE_COUNTERPICK_1VS2_MIN_MATCHES = 15
-POST_LANE_SYNERGY_TRIO_MIN_MATCHES = 15
+POST_LANE_SYNERGY_TRIO_MIN_MATCHES = 25
 SYNERGY_DUO_REQUIRE_CP_ALIGN = False
 SYNERGY_DUO_MIN_CORE_PAIRS_PER_SIDE = 2
 SYNERGY_DUO_CORE_SUPPORT_CONFLICT_MIN_ABS = 5
@@ -2425,7 +2433,7 @@ def synergy_team(
                 third_key = f"{third_hero_id}{third_pos}"
 
                 parts = [hero_key, second_key, third_key]
-                value, games = _lookup_unordered_combo_winrate(data, parts)
+                value, games = _lookup_synergy_trio_role_pool_winrate(data, parts)
                 if games >= min_matches_trio:
                     combo = tuple(sorted(parts))
                     if combo not in unique_combinations:
@@ -2515,6 +2523,38 @@ def _lookup_unordered_combo_winrate(data, parts):
     if games <= 0:
         return None, 0
     return score / games, games
+
+
+def synergy_trio_role_lookup_keys(parts):
+    """Raw dictionary keys needed for one core/support pooled trio lookup."""
+    return raw_lookup_keys_for_trio_tokens(parts)
+
+
+def _lookup_synergy_trio_role_pool_winrate(data, parts):
+    """Aggregate distinct exact-position cells from the trio's role family.
+
+    Each exact position cell contributes once even when the source dictionary
+    stores several order aliases. Different exact cells remain independent
+    evidence even when their score/game counts happen to be identical.
+    """
+    if not isinstance(data, dict):
+        return None, 0
+
+    exact_cells = {
+        tuple(sorted(str(key).split(',')))
+        for key in synergy_trio_role_lookup_keys(parts)
+    }
+    total_score = 0.0
+    total_games = 0
+    for exact_parts in sorted(exact_cells):
+        value, games = _lookup_unordered_combo_winrate(data, exact_parts)
+        if value is None or games <= 0:
+            continue
+        total_score += float(value) * int(games)
+        total_games += int(games)
+    if total_games <= 0:
+        return None, 0
+    return total_score / total_games, total_games
 
 
 def _lookup_with_winrate(data, left, right):
@@ -4210,7 +4250,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                         f"{int(hero_j)}{pos_j}",
                         f"{int(hero_k)}{pos_k}",
                     ]
-                    _, games = _lookup_unordered_combo_winrate(data, parts)
+                    _, games = _lookup_synergy_trio_role_pool_winrate(data, parts)
                     has_games = games >= min_matches_trio
                     if has_games:
                         covered.update([i, j, k])

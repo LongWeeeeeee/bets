@@ -79,6 +79,7 @@ from functions import (
     CP1VS2_TOPUP_FALLBACK,
     CORE_POSITIONS,
     SUPPORT_POSITIONS,
+    synergy_trio_role_lookup_keys,
 )
 try:
     from team_kills25_shadow import record_shadow_observation as _record_kills25_shadow
@@ -3132,8 +3133,7 @@ def _draft_stats_lookup_keys(radiant_heroes_and_pos: Any, dire_heroes_and_pos: A
         for left, right in combinations(team_keys, 2):
             _add_draft_with_lookup_keys(keys, left, right)
         for trio in combinations(team_keys, 3):
-            for perm in permutations(trio):
-                keys.add(",".join(perm))
+            keys.update(synergy_trio_role_lookup_keys(trio))
 
     for team_entries, opp_entries in (
         (radiant_entries, dire_entries),

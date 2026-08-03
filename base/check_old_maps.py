@@ -39,6 +39,7 @@ from functions import (
     check_bad_map,
     structure_lane_dict,
     synergy_and_counterpick,
+    synergy_trio_role_lookup_keys,
 )
 try:
     from keys import DOTA_PATCH_START_TIMES
@@ -463,8 +464,7 @@ def _draft_stats_lookup_keys(radiant_draft: dict, dire_draft: dict) -> set[str]:
         for left, right in combinations(team_keys, 2):
             _add_draft_with_lookup_keys(keys, left, right)
         for trio in combinations(team_keys, 3):
-            for perm in permutations(trio):
-                keys.add(",".join(perm))
+            keys.update(synergy_trio_role_lookup_keys(trio))
 
     for team_entries, opp_entries in ((radiant_entries, dire_entries), (dire_entries, radiant_entries)):
         team_keys = [hero_key(entry) for entry in team_entries]

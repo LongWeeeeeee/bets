@@ -2,6 +2,7 @@ from base.synergy_trio_role_pool import (
     aggregate_trio_role_samples,
     make_trio_role_key,
     raw_lookup_keys_for_trio_role_key,
+    raw_lookup_keys_for_trio_tokens,
     raw_row_to_trio_sample,
     trio_role_entry_winrate,
 )
@@ -52,3 +53,9 @@ def test_role_key_expansion_covers_all_exact_permutations():
     assert "13pos2,60pos3,110pos4" in keys
     assert "110pos5,60pos1,13pos3" in keys
     assert len(keys) == 3 * 3 * 2 * 6
+
+
+def test_exact_tokens_expand_to_the_same_role_family():
+    assert raw_lookup_keys_for_trio_tokens(["60pos3", "13pos2", "110pos4"]) == (
+        raw_lookup_keys_for_trio_role_key("13:core,60:core,110:support")
+    )

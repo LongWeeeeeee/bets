@@ -44,7 +44,7 @@ assert len(PHASE_METRIC_NAMES) == 18
 # Pre-integration protected SHA-256 (captured before this file was created).
 _PROTECTED_SHA256 = {
     "data/star_thresholds_by_wr.json": (
-        "7b8a76899e89a5743809f3adbe999b562350417a01da8c02c01d93f9e2cb4d94"
+        "f96ff0b7d472561374ba19cd48381e88bbcaafb923c3eae5c86b79270c668d2b"
     ),
     "data/star_confidence_calibration.json": (
         "778637e6081f9eb1be80a09a550a6d9e7114cbd2d15d8098e952a0c5dd344413"
