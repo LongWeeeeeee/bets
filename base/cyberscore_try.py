@@ -17260,7 +17260,28 @@ _ADMIN_DELAYED_OUTCOME_PATTERNS = (
 _ADMIN_SUMMARY_MATCH_URL_RE = re.compile(r"(dltv\.org/matches/\d+/[^\s)]+?)\.\d+(?=$|[\s)])")
 _ADMIN_SUMMARY_URL_LINE_RE = re.compile(r"^\s*URL:\s*(?P<url>\S+)\s*$")
 _ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT = 3
-_ADMIN_TAIL_LOG_ENTRY_POOL_LIMIT = 20
+_ADMIN_TAIL_LOG_JOURNAL_POOL_LIMIT = 30
+_ADMIN_TAIL_VERDICT_HISTORY_LIMIT = 5
+_ADMIN_TAIL_METRIC_BLOCKS = (
+    "early_output",
+    "late_output",
+    "early_end_output",
+    "all_output",
+    "mid_output",
+    "post_lane_output",
+    "lane_kills_adv_dict",
+)
+_ADMIN_TAIL_PROTRACKER_KEYS = (
+    "pro_cp1vs1_early",
+    "pro_cp1vs1_late",
+    "pro_cp1vs1_valid",
+    "pro_duo_metric",
+    "pro_duo_synergy_metric",
+    "pro_solo_wr_metric",
+    "pro_solo_wr_overall_metric",
+    "pro_lane_advantage",
+    "pro_lane_metric",
+)
 
 
 def _is_admin_match_summary_line(compact_line: str) -> bool:
@@ -17604,74 +17625,254 @@ def _admin_tail_watcher_footer(payload: Dict[str, Any]) -> List[str]:
     return footer_lines
 
 
-def _admin_tail_format_queued_bet_message(payload: Dict[str, Any]) -> str:
-    """Format a delayed-queue payload into the same text used for Telegram delivery,
-    plus a short status footer (verdict/threshold/last game time)."""
-    if not isinstance(payload, dict):
-        return ""
-
-    raw_message = str(payload.get("message") or "").strip()
-    footer = "\n".join(_admin_tail_watcher_footer(payload)).strip()
-    if raw_message and footer:
-        return f"{raw_message}\n\n{footer}"
-    if raw_message:
-        return raw_message
-    return footer
+def _load_map_verdict_journal() -> Dict[str, Dict[str, Any]]:
+    """Read-only snapshot of the per-map verdict journal (map_verdicts.json)."""
+    try:
+        data = _load_json_object(
+            _map_verdicts_path(), recover=False, label="MAP_VERDICTS_PATH"
+        )
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): entry for key, entry in data.items() if isinstance(entry, dict)}
 
 
-def _admin_tail_match_status_footer(
-    lines: List[str],
+def _admin_tail_format_number(value: Any) -> str:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if numeric == int(numeric) and abs(numeric) < 1e15:
+        return str(int(numeric))
+    return f"{numeric:.2f}"
+
+
+def _admin_tail_format_compact_dict(value: Any) -> str:
+    if not isinstance(value, dict) or not value:
+        return "—"
+    parts = [f"{key}={_admin_tail_format_number(item)}" for key, item in value.items()]
+    return "{" + ", ".join(parts) + "}"
+
+
+def _admin_tail_format_star_summary(
+    star: Dict[str, Any],
+    teams: Dict[str, Any],
+) -> str:
+    def _side_name(sign: Any) -> str:
+        side = _target_side_from_sign(sign)
+        if side == "radiant":
+            return str(teams.get("radiant") or "Radiant")
+        if side == "dire":
+            return str(teams.get("dire") or "Dire")
+        return "?"
+
+    parts: List[str] = []
+    for label, has_key, sign_key, wr_key in (
+        ("early", "has_early_star", "early_sign", "early_wr_pct"),
+        ("all", "has_all_star", "all_sign", "all_wr_pct"),
+        ("late", "has_late_star", "late_sign", "late_wr_pct"),
+    ):
+        if star.get(has_key):
+            try:
+                wr_label = f" WR≈{float(star.get(wr_key)):.1f}%"
+            except (TypeError, ValueError):
+                wr_label = ""
+            parts.append(f"{label}={_side_name(star.get(sign_key))}{wr_label}")
+        else:
+            parts.append(f"{label}=no")
+    summary = " | ".join(parts)
+    tier = str(star.get("tier") or "").strip()
+    if tier:
+        summary += f" | tier={tier}"
+    selected_mode = str(star.get("selected_star_mode") or "").strip()
+    if selected_mode:
+        selected_label = f"selected={selected_mode}"
+        try:
+            selected_label += f" WR≈{float(star.get('selected_star_wr')):.1f}%"
+        except (TypeError, ValueError):
+            pass
+        summary += f" | {selected_label}"
+    return summary
+
+
+def _admin_tail_format_elo_summary(elo: Dict[str, Any]) -> str:
+    def _opt_float(name: str) -> Optional[float]:
+        try:
+            value = elo.get(name)
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    parts: List[str] = []
+    radiant_rating = _opt_float("radiant_rating")
+    dire_rating = _opt_float("dire_rating")
+    radiant_rank = elo.get("radiant_leaderboard_rank")
+    dire_rank = elo.get("dire_leaderboard_rank")
+    if radiant_rating is not None:
+        rank_label = f" (rank {radiant_rank})" if radiant_rank is not None else ""
+        parts.append(f"R={radiant_rating:.0f}{rank_label}")
+    if dire_rating is not None:
+        rank_label = f" (rank {dire_rank})" if dire_rank is not None else ""
+        parts.append(f"D={dire_rating:.0f}{rank_label}")
+    radiant_wr = _opt_float("adjusted_radiant_wr")
+    dire_wr = _opt_float("adjusted_dire_wr")
+    if radiant_wr is not None and dire_wr is not None:
+        parts.append(f"adjWR {radiant_wr:.1f}% vs {dire_wr:.1f}%")
+    tier_gap_key = str(elo.get("tier_gap_key") or "").strip()
+    tier_gap_bonus = _opt_float("tier_gap_bonus")
+    if tier_gap_key and tier_gap_bonus is not None:
+        parts.append(f"tier_gap {tier_gap_key} {tier_gap_bonus:+.1f}")
+    return " | ".join(parts) if parts else "—"
+
+
+def _admin_tail_journal_status_lines(
+    entry: Dict[str, Any],
     payload: Optional[Dict[str, Any]],
 ) -> List[str]:
-    """Current lifecycle status of a match for the tail_log snapshot.
-
-    A match accumulates state as it progresses: metrics right after parsing,
-    then dispatch wait, then the delayed watcher, and finally the outcome
-    (sent / cancelled / rejected). Priority: live delayed-watcher entry >
-    delayed outcome lines > immediate send via map_id_check > verdict lines >
-    dispatch wait > parsed but no verdict yet.
-    """
+    """Current lifecycle status of a match: live watcher payload first, then
+    the latest accumulated verdict of the map (sent/cancelled/rejected/
+    delayed), otherwise parsed-but-no-verdict-yet."""
     if isinstance(payload, dict):
         return ["⏳ Статус: в delayed watcher"] + _admin_tail_watcher_footer(payload)
 
-    compact_lines = [str(line or "").strip() for line in lines]
-    if any(line.startswith("⏱️ Отложенный сигнал отправлен") for line in compact_lines):
-        return ["✅ Статус: отправлен (delayed watcher)"]
-    if any(line.startswith("⏱️ Отложенный сигнал отменен") for line in compact_lines):
-        return ["❌ Статус: отменён без отправки (delayed watcher)"]
-    if any(line.startswith("✅ map_id_check.txt обновлен:") for line in compact_lines):
-        return ["✅ Статус: отправлен сразу"]
-    if any(line.startswith("⚠️ ВЕРДИКТ:") for line in compact_lines):
-        return ["❌ Статус: отказано"]
-    if any(line.startswith("⏳ Ожидание dispatch:") for line in compact_lines):
-        return ["⏳ Статус: ожидание dispatch"]
-    return ["🕒 Статус: матч распарсен, вердикта ещё нет"]
+    verdicts = [item for item in (entry.get("verdicts") or []) if isinstance(item, dict)]
+    if not verdicts:
+        return ["🕒 Статус: матч распаршен, вердикта ещё нет"]
+    last = verdicts[-1]
+    kind = str(last.get("kind") or "").strip()
+    reason = str(last.get("reason") or "").strip()
+    reason_suffix = f" ({reason})" if reason else ""
+    if kind == "send":
+        return [f"✅ Статус: отправлен{reason_suffix}"]
+    if kind == "cancel":
+        return [f"❌ Статус: отменён без отправки{reason_suffix}"]
+    if kind == "reject":
+        return [f"❌ Статус: отказано{reason_suffix}"]
+    if kind == "delayed":
+        lines = [f"⏳ Статус: отложен в delayed watcher{reason_suffix}"]
+        dispatch = last.get("dispatch") if isinstance(last.get("dispatch"), dict) else {}
+        target_side = str(dispatch.get("target_side") or "").strip()
+        target_parts: List[str] = []
+        if target_side:
+            target_parts.append(f"side={target_side}")
+        try:
+            target_diff = dispatch.get("target_networth_diff")
+            if target_diff is not None:
+                target_parts.append(f"diff={float(target_diff):+.0f}")
+        except (TypeError, ValueError):
+            pass
+        if target_parts:
+            lines.append("🎯 Target: " + ", ".join(target_parts))
+        try:
+            game_time = float(dispatch.get("game_time"))
+            lines.append(
+                f"⏱️ Отложен на game time: {int(game_time // 60):02d}:{int(game_time % 60):02d}"
+            )
+        except (TypeError, ValueError):
+            pass
+        return lines
+    return ["🕒 Статус: матч распаршен, вердикта ещё нет"]
 
 
-def _collect_admin_tail_last_matches(*, line_count: int) -> List[Dict[str, Any]]:
-    """Assemble the N most recent matches (newest first), each carrying full
-    metric lines plus the delayed-watcher payload when the match is queued.
+def _admin_tail_format_journal_match(
+    idx: int,
+    total: int,
+    candidate: Dict[str, Any],
+) -> str:
+    """Full snapshot of one match from the verdict journal: identity, all
+    draft metrics, star/ELO/protracker summaries, verdict history, status."""
+    entry = candidate.get("entry") if isinstance(candidate.get("entry"), dict) else {}
+    teams = entry.get("teams") if isinstance(entry.get("teams"), dict) else {}
+    radiant = str(teams.get("radiant") or "?").strip() or "?"
+    dire = str(teams.get("dire") or "?").strip() or "?"
 
-    Sources are merged, deduped by match_id:
+    lines: List[str] = [f"[{idx}/{total}] {radiant} vs {dire}"]
+    match_key = str(entry.get("match_key") or candidate.get("match_key") or "").strip()
+    if match_key:
+        lines.append(f"URL: {match_key}")
 
-    1. Recent log blocks (``_build_recent_match_summaries_entries``): URL /
-       Status / Score / lanes / star metrics / verdict lines — available as
-       soon as the match is parsed, and growing as it progresses.
-    2. Delayed queue (``monitored_matches``): attaches the live watcher
-       payload to its match; queue-only matches (no log block yet) fall back
-       to the queued bet message.
+    info_parts: List[str] = []
+    map_num = entry.get("map_num")
+    if map_num not in (None, ""):
+        info_parts.append(f"карта {map_num}")
+    status = str(entry.get("status") or "").strip()
+    if status:
+        info_parts.append(f"статус {status}")
+    score = str(entry.get("score") or "").strip()
+    if score:
+        info_parts.append(f"счёт {score}")
+    updated_at = str(entry.get("updated_at") or "").strip()
+    if updated_at:
+        info_parts.append(f"обновлено {updated_at}")
+    if info_parts:
+        lines.append(" | ".join(info_parts))
 
-    Every press returns a fresh snapshot — no seen-state — so the same match
-    shows its updated status on repeated tail_log calls.
+    metrics = entry.get("metrics") if isinstance(entry.get("metrics"), dict) else {}
+    if metrics:
+        lines.append("🧮 Метрики:")
+        for block_name in _ADMIN_TAIL_METRIC_BLOCKS:
+            lines.append(
+                f"  {block_name}: {_admin_tail_format_compact_dict(metrics.get(block_name))}"
+            )
+        lane_parts = [
+            f"{lane}={_admin_tail_format_compact_dict(metrics.get(lane))}"
+            for lane in ("top", "mid", "bot")
+        ]
+        lines.append("  lanes: " + " ".join(lane_parts))
+
+    protracker = entry.get("protracker") if isinstance(entry.get("protracker"), dict) else {}
+    protracker_summary = {
+        key: protracker[key]
+        for key in _ADMIN_TAIL_PROTRACKER_KEYS
+        if key in protracker and protracker[key] is not None
+    }
+    if protracker_summary:
+        lines.append(f"🏅 Protracker: {_admin_tail_format_compact_dict(protracker_summary)}")
+
+    star = entry.get("star") if isinstance(entry.get("star"), dict) else {}
+    if star:
+        lines.append(f"⭐ Star: {_admin_tail_format_star_summary(star, teams)}")
+
+    elo = entry.get("elo") if isinstance(entry.get("elo"), dict) else {}
+    if elo:
+        lines.append(f"📊 ELO: {_admin_tail_format_elo_summary(elo)}")
+
+    verdicts = [item for item in (entry.get("verdicts") or []) if isinstance(item, dict)]
+    if verdicts:
+        lines.append("🧾 Вердикты:")
+        for item in verdicts[-_ADMIN_TAIL_VERDICT_HISTORY_LIMIT:]:
+            at = str(item.get("at") or "").strip()
+            time_label = at.split(" ", 1)[1] if " " in at else at
+            kind = str(item.get("kind") or "").strip() or "info"
+            detail = str(item.get("reason") or "").strip() or str(item.get("verdict") or "").strip()
+            lines.append(f"  {time_label} {kind}: {detail}")
+
+    lines.append("")
+    lines.extend(_admin_tail_journal_status_lines(entry, candidate.get("payload")))
+    return "\n".join(lines).strip()
+
+
+def _collect_admin_tail_last_matches(*, line_count: int = 100) -> List[Dict[str, Any]]:
+    """The N most recent matches per the verdict journal (map_verdicts.json).
+
+    The journal is the source of truth: one entry per map with all draft
+    metrics and accumulating verdicts. Entries are grouped by match_id (the
+    freshest map of the series wins), so one series never produces duplicate
+    slots. Live matches get their delayed-watcher payload attached from
+    ``monitored_matches``. Every press returns a fresh snapshot — no
+    seen-state.
     """
-    scan_lines = max(6000, int(line_count) * 120)
+    del line_count  # параметр сохранён для совместимости сигнатуры вызова
+    journal = _load_map_verdict_journal()
     try:
-        log_entries = _build_recent_match_summaries_entries(
-            limit=_ADMIN_TAIL_LOG_ENTRY_POOL_LIMIT,
-            scan_lines=scan_lines,
-        )
+        entries = sorted(
+            journal.values(),
+            key=lambda item: float(item.get("updated_ts") or 0.0),
+            reverse=True,
+        )[:_ADMIN_TAIL_LOG_JOURNAL_POOL_LIMIT]
     except Exception:
-        log_entries = []
+        entries = []
 
     with monitored_matches_lock:
         queued_snapshot: Dict[str, Dict[str, Any]] = {
@@ -17679,52 +17880,6 @@ def _collect_admin_tail_last_matches(*, line_count: int) -> List[Dict[str, Any]]
             for match_key, payload in monitored_matches.items()
             if isinstance(payload, dict)
         }
-
-    queue_by_match_id: Dict[str, Tuple[str, Dict[str, Any]]] = {}
-    for match_key, payload in queued_snapshot.items():
-        match_id = _admin_tail_url_match_id(match_key)
-        if match_id:
-            queue_by_match_id.setdefault(match_id, (match_key, payload))
-
-    candidates: List[Dict[str, Any]] = []
-    covered_queue_keys: set[str] = set()
-    for entry in log_entries:
-        match_url = str(entry.get("url") or "").strip()
-        if not match_url:
-            continue
-        lines = [
-            str(line).rstrip()
-            for line in entry.get("lines") or []
-            if str(line).strip()
-        ]
-        if not lines:
-            continue
-        payload: Optional[Dict[str, Any]] = None
-        if match_url in queued_snapshot:
-            payload = queued_snapshot[match_url]
-            covered_queue_keys.add(match_url)
-        match_id = _admin_tail_url_match_id(match_url)
-        if payload is None and match_id and match_id in queue_by_match_id:
-            queue_key, queued_payload = queue_by_match_id[match_id]
-            payload = queued_payload
-            covered_queue_keys.add(queue_key)
-        candidates.append(
-            {
-                "url": match_url,
-                "lines": lines,
-                "line_no": int(entry.get("line_no") or 0),
-                "payload": payload,
-            }
-        )
-
-    # Queue-only matches (queued but no informative log block yet): treat as
-    # the freshest candidates, ordered by queue recency.
-    max_line_no = max((int(c["line_no"]) for c in candidates), default=0)
-    queue_only = [
-        (match_key, payload)
-        for match_key, payload in queued_snapshot.items()
-        if match_key not in covered_queue_keys
-    ]
 
     def _queue_recency(payload: Dict[str, Any]) -> float:
         for field in ("queued_at", "last_progress_at", "last_checked_at"):
@@ -17736,31 +17891,40 @@ def _collect_admin_tail_last_matches(*, line_count: int) -> List[Dict[str, Any]]
                 continue
         return 0.0
 
-    queue_only.sort(key=lambda item: _queue_recency(item[1]))
-    for rank, (match_key, payload) in enumerate(queue_only, start=1):
-        message = str(payload.get("message") or "").strip()
-        lines = [line.rstrip() for line in message.splitlines() if line.strip()]
-        if not lines:
-            lines = [f"Матч в delayed watcher: {match_key}"]
+    watcher_by_match_id: Dict[str, Dict[str, Any]] = {}
+    for queue_key, payload in queued_snapshot.items():
+        match_id = _admin_tail_url_match_id(queue_key) or queue_key
+        existing = watcher_by_match_id.get(match_id)
+        if existing is None or _queue_recency(payload) > _queue_recency(existing):
+            watcher_by_match_id[match_id] = payload
+
+    candidates: List[Dict[str, Any]] = []
+    seen_match_ids: set[str] = set()
+    for entry in entries:
+        match_key = str(entry.get("match_key") or "").strip()
+        match_id = _admin_tail_url_match_id(match_key) or match_key
+        if not match_id or match_id in seen_match_ids:
+            continue
+        seen_match_ids.add(match_id)
         candidates.append(
             {
-                "url": match_key,
-                "lines": lines,
-                "line_no": max_line_no + rank,
-                "payload": payload,
+                "match_id": match_id,
+                "match_key": match_key,
+                "entry": entry,
+                "payload": watcher_by_match_id.get(match_id),
             }
         )
-
-    candidates.sort(key=lambda item: int(item.get("line_no") or 0), reverse=True)
-    return candidates[:_ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT]
+        if len(candidates) >= _ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT:
+            break
+    return candidates
 
 
 def _send_admin_log_tail(*, line_count: int = 100, raw_odds: Any = None) -> None:
-    """Send a snapshot of the last N matches: full metrics plus current status.
+    """Snapshot of the last N matches from the verdict journal.
 
-    Re-pressing tail_log always re-sends the fresh snapshot, so a match is
-    shown accumulating state over its lifetime: metrics right after parsing,
-    then delayed-watcher details, and finally sent/rejected outcome.
+    Метрики видны сразу после парсинга матча, вердикты накапливаются по ходу
+    (в delayed watcher → отправлен/отменён/отказано). Повторное нажатие
+    tail_log пересылает свежее состояние тех же матчей.
     """
     matches = _collect_admin_tail_last_matches(line_count=line_count)
     if not matches:
@@ -17768,9 +17932,7 @@ def _send_admin_log_tail(*, line_count: int = 100, raw_odds: Any = None) -> None
         return
     total = len(matches)
     for idx, candidate in enumerate(matches, start=1):
-        lines = list(candidate.get("lines") or [])
-        footer_lines = _admin_tail_match_status_footer(lines, candidate.get("payload"))
-        message = "\n".join([f"[{idx}/{total}]"] + lines + [""] + footer_lines).strip()
+        message = _admin_tail_format_journal_match(idx, total, candidate)
         for chunk_idx, chunk in enumerate(_split_telegram_text_chunks(message), start=1):
             prefix = ""
             if chunk_idx > 1:
@@ -24711,13 +24873,16 @@ def _record_map_verdict(
     identity: Optional[Dict[str, Any]] = None,
     dispatch: Optional[Dict[str, Any]] = None,
     extra: Optional[Dict[str, Any]] = None,
+    create_only: bool = False,
 ) -> None:
     """Upsert per-map verdict journal entry (1 map = 1 record).
 
     metrics/protracker/star/elo blocks are replaced by the latest snapshot
     when provided; verdicts accumulate in ``verdicts`` (consecutive exact
     duplicates are collapsed so soft-reject recheck cycles don't spam the
-    journal). Never raises: journaling must not break the live pipeline.
+    journal). ``create_only=True`` записывает entry только если карты ещё нет
+    в журнале (используется для первичной записи при парсинге). Never raises:
+    journaling must not break the live pipeline.
     """
     try:
         if TEST_DISABLE_ADD_URL:
@@ -24745,6 +24910,8 @@ def _record_map_verdict(
         with _map_verdicts_lock:
             data = _load_json_object(path, recover=True, label="MAP_VERDICTS_PATH")
             entry = data.get(key)
+            if create_only and isinstance(entry, dict):
+                return
             if not isinstance(entry, dict):
                 entry = {
                     "match_key": key,
@@ -30801,6 +30968,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             "elo": None,
             "dispatch": None,
         }
+        # Запись в журнал появляется сразу при парсинге карты (create_only —
+        # только если записи ещё нет), чтобы tail_log видел матч и его
+        # identity ещё до первого вердикта.
+        _record_map_verdict(
+            check_uniq_url,
+            verdict=f"📝 Матч распарсен: {radiant_team_name} vs {dire_team_name}",
+            kind="info",
+            reason="match_parsed",
+            identity=_verdict_ctx["identity"],
+            create_only=True,
+        )
 
         def _verdict_print(
             *args: Any,
