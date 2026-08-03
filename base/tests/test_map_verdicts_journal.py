@@ -231,6 +231,35 @@ def test_record_bet_message_keeps_latest_and_never_clears(monkeypatch, tmp_path)
     assert data[key]["bet_message"] == "СТАВКА НА A x0.5\nA VS B\nобновлено"
 
 
+def test_record_kills_window_block(monkeypatch, tmp_path) -> None:
+    """Блок kills_window (expected_diff по окнам киллов) сохраняется в entry
+    и заменяется свежим снапшотом."""
+    journal_path = _use_tmp_journal(monkeypatch, tmp_path)
+    key = "dltv.org/matches/97/kw.1"
+
+    runtime._record_map_verdict(
+        key,
+        verdict="v1",
+        kind="reject",
+        reason="r1",
+        kills_window={"ed_by_label": {"10-20": 1.25}},
+    )
+    data = _load_journal(journal_path)
+    assert data[key]["kills_window"] == {"ed_by_label": {"10-20": 1.25}}
+
+    runtime._record_map_verdict(
+        key,
+        verdict="v2",
+        kind="reject",
+        reason="r2",
+        kills_window={"ed_by_label": {"10-20": 0.8, "20-30": -0.4}},
+    )
+    data = _load_journal(journal_path)
+    assert data[key]["kills_window"] == {
+        "ed_by_label": {"10-20": 0.8, "20-30": -0.4}
+    }
+
+
 def test_create_only_records_once_per_map(monkeypatch, tmp_path) -> None:
     """create_only (первичная запись при парсинге) создаёт entry один раз и
     не затирает накопленные вердикты при повторных вызовах."""
