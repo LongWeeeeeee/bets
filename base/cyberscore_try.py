@@ -3636,6 +3636,12 @@ EARLY_WINNER_KILLS_WINDOW_MIN_ABS_ED = max(
     0.0,
     _safe_float_env("EARLY_WINNER_KILLS_WINDOW_MIN_ABS_ED", 1.0),
 )
+# Minimum |expected_diff| for a kills_window block to be considered for the
+# kills bet title ("СТАВКА НА Ранние килы <window> <team>"). Env-tunable.
+KILLS_WINDOW_MIN_ABS_ED_GATE = max(
+    0.0,
+    _safe_float_env("KILLS_WINDOW_MIN_ABS_ED_GATE", 0.2),
+)
 EARLY_WINNER_KILLS_WINDOW_LEAD_SECONDS = max(
     0.0,
     _safe_float_env("EARLY_WINNER_KILLS_WINDOW_LEAD_SECONDS", 3 * 60.0),
@@ -8335,6 +8341,8 @@ def _build_stake_multiplier_context(
     early_star_hit_count: Optional[int] = None,
     late_star_hit_metrics: Optional[List[str]] = None,
     all_star_hits: Optional[List[Dict[str, Any]]] = None,
+    kills_window_ed_by_label: Optional[Dict[str, Any]] = None,
+    kills_window_header_label: Optional[str] = None,
 ) -> Dict[str, Any]:
     opposite_side = "dire" if target_side == "radiant" else "radiant"
     return {
@@ -8367,6 +8375,16 @@ def _build_stake_multiplier_context(
         "target_rating": _team_elo_base_rating_for_side(team_elo_meta, target_side),
         "opposite_rating": _team_elo_base_rating_for_side(team_elo_meta, opposite_side),
         "target_elo_wr": _team_elo_wr_for_side(team_elo_meta, target_side),
+        "kills_window_ed_by_label": (
+            dict(kills_window_ed_by_label)
+            if isinstance(kills_window_ed_by_label, dict)
+            else None
+        ),
+        "kills_window_header_label": (
+            str(kills_window_header_label).strip() or None
+            if kills_window_header_label is not None
+            else None
+        ),
     }
 
 
@@ -8385,11 +8403,16 @@ def _format_signal_header(
     stake_team_name: str,
     stake_multiplier: Optional[float],
     special_header_mode: str = "",
+    kills_window_label: Any = None,
 ) -> str:
     team_name = normalize_team_name_display(str(stake_team_name or "")) or "НЕИЗВЕСТНАЯ КОМАНДА"
     if special_header_mode == "kills_from":
         return f"СТАВКА НА килы от {team_name}"
     if special_header_mode == "early_kills":
+        # Окно kills_window (strongest same-side) — "СТАВКА НА Ранние килы 10-20 <team>"
+        window_text = str(kills_window_label or "").strip().replace("_", "-")
+        if window_text:
+            return f"СТАВКА НА Ранние килы {window_text} {team_name}"
         return f"СТАВКА НА Ранние килы {team_name}"
     return f"СТАВКА НА {team_name} x{_format_stake_multiplier_label(stake_multiplier)}"
 
@@ -9050,6 +9073,7 @@ def _build_lane_adv_standalone_kills_message(
     lane_kills_adv: Any = None,
     radiant_heroes_and_pos: Any = None,
     dire_heroes_and_pos: Any = None,
+    kills_window_header_label: Any = None,
 ) -> str:
     """Build the dispatch message for the standalone "lane_adv_dict ≥ 8" kills
     trigger. Used when the regular STAR signal block is empty/rejected — we
@@ -9059,6 +9083,7 @@ def _build_lane_adv_standalone_kills_message(
         stake_team_name=str(target_team_name or "НЕИЗВЕСТНАЯ КОМАНДА"),
         stake_multiplier=1.0,
         special_header_mode="early_kills",
+        kills_window_label=kills_window_header_label,
     )
     lane_block = _build_lane_block(
         top,
@@ -9102,6 +9127,7 @@ def _build_early_local_kills_message(
     protracker_payload: Optional[Dict[str, Any]] = None,
     radiant_heroes_and_pos: Any = None,
     dire_heroes_and_pos: Any = None,
+    kills_window_header_label: Any = None,
 ) -> str:
     """Build a FULL kills-bet body for the early (pre-networth-gate) release.
 
@@ -9123,6 +9149,7 @@ def _build_early_local_kills_message(
         stake_team_name=str(target_team_name or "НЕИЗВЕСТНАЯ КОМАНДА"),
         stake_multiplier=1.0,
         special_header_mode="early_kills",
+        kills_window_label=kills_window_header_label,
     )
     top = s.get('top')
     mid = s.get('mid')
@@ -9671,6 +9698,7 @@ def _refresh_stake_multiplier_message(
         stake_team_name=stake_team_name,
         stake_multiplier=multiplier,
         special_header_mode=special_header_mode,
+        kills_window_label=stake_multiplier_context.get("kills_window_header_label"),
     )
     lines = _strip_dota2protracker_message_block_lines(message_text.splitlines())
     if not lines:
@@ -10272,6 +10300,50 @@ def _format_kills_window_values_block(
         else:
             lines.append(f"  {label}: n/a")
     return "\n".join(lines) + "\n"
+
+
+def _strongest_kills_window_label(
+    ed_by_label: Any,
+    target_sign: Any,
+    *,
+    min_abs_ed: float = 0.0,
+) -> Optional[str]:
+    """Label of the same-side kills_window block with max |expected_diff|.
+
+    Used to name the concrete window in the "Ранние килы" bet title. Only
+    blocks whose expected_diff points at ``target_sign`` (and passes
+    ``min_abs_ed``) compete; ties keep the earliest window.
+    """
+    if not isinstance(ed_by_label, dict) or not ed_by_label:
+        return None
+    try:
+        sign = int(target_sign)
+    except (TypeError, ValueError):
+        return None
+    if sign not in (-1, 1):
+        return None
+    try:
+        min_abs = max(0.0, float(min_abs_ed))
+    except (TypeError, ValueError):
+        min_abs = 0.0
+    best_label: Optional[str] = None
+    best_abs = 0.0
+    for block in KILLS_WINDOW_BLOCKS:
+        label = str(block["label"])
+        try:
+            value = float(ed_by_label.get(label))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(value) or value == 0.0:
+            continue
+        if (1 if value > 0 else -1) != sign:
+            continue
+        if abs(value) < min_abs:
+            continue
+        if best_label is None or abs(value) > best_abs:
+            best_label = label
+            best_abs = abs(value)
+    return best_label
 
 
 def _format_live_message_state_block(
@@ -24015,6 +24087,9 @@ def _build_early_winner_kills_window_message(
         stake_team_name=str(target_team_name or "НЕИЗВЕСТНАЯ КОМАНДА"),
         stake_multiplier=1.0,
         special_header_mode="early_kills",
+        kills_window_label=(
+            selected_window.get("label") if isinstance(selected_window, dict) else None
+        ),
     )
     s = metrics_payload if isinstance(metrics_payload, dict) else {}
     early_end_log = _decorate_star_block_for_display(
@@ -33685,6 +33760,17 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 tier1_early_kills_base_mode
                 and tier1_early_kills_window_gate.get("valid")
             )
+            # Окно с максимальным same-side |expected_diff| — называем его в
+            # заголовке «СТАВКА НА Ранние килы <window> <team>».
+            tier1_early_kills_strongest_window = (
+                _strongest_kills_window_label(
+                    tier1_early_kills_window_gate.get("ed_by_label"),
+                    selected_early_sign,
+                    min_abs_ed=KILLS_WINDOW_MIN_ABS_ED_GATE,
+                )
+                if tier1_early_kills_mode
+                else None
+            )
             # WR60+ star-хиты блока All (тот же источник, что и блок
             # «⭐ Star hits» в сообщении) — используются 27+ late-гейтом.
             all_star_hits_for_dispatch = _collect_star_hits_for_block(
@@ -33733,6 +33819,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     else None
                 ),
                 all_star_hits=all_star_hits_for_dispatch,
+                kills_window_ed_by_label=tier1_early_kills_window_gate.get("ed_by_label"),
+                kills_window_header_label=tier1_early_kills_strongest_window,
             )
             # Снимок фактов для 27+ late-гейта: считается один раз здесь и
             # уезжает в delayed payload вместе со stake_multiplier_context,
