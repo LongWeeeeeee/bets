@@ -3948,7 +3948,6 @@ LEGACY_MAP_ID_CHECK_PATH = PROJECT_ROOT / "map_id_check.txt"
 LEGACY_MAP_ID_CHECK_PATH_ODDS = PROJECT_ROOT / "map_id_check_test.txt"
 DEFAULT_MAP_ID_CHECK_PATH = LOCAL_STATE_DIR / "map_id_check.txt"
 DEFAULT_MAP_ID_CHECK_PATH_ODDS = LOCAL_STATE_DIR / "map_id_check_test.txt"
-DEFAULT_ADMIN_TAIL_LOG_SEEN_MATCHES_PATH = LOCAL_STATE_DIR / "admin_tail_log_seen_matches.json"
 MAP_ID_CHECK_PATH = str(
     Path(
         str(os.getenv("MAP_ID_CHECK_PATH", str(DEFAULT_MAP_ID_CHECK_PATH))).strip()
@@ -3956,17 +3955,6 @@ MAP_ID_CHECK_PATH = str(
     ).expanduser()
 )
 MAP_ID_CHECK_PATH_ODDS_DEFAULT = str(DEFAULT_MAP_ID_CHECK_PATH_ODDS)
-ADMIN_TAIL_LOG_SEEN_MATCHES_PATH = str(
-    Path(
-        str(
-            os.getenv(
-                "ADMIN_TAIL_LOG_SEEN_MATCHES_PATH",
-                str(DEFAULT_ADMIN_TAIL_LOG_SEEN_MATCHES_PATH),
-            )
-        ).strip()
-        or str(DEFAULT_ADMIN_TAIL_LOG_SEEN_MATCHES_PATH)
-    ).expanduser()
-)
 DELAYED_QUEUE_PATH = str(
     os.getenv("DELAYED_QUEUE_PATH", "runtime/delayed_signal_queue.json")
 ).strip() or "runtime/delayed_signal_queue.json"
@@ -17361,13 +17349,13 @@ _ADMIN_MATCH_SUMMARY_PREFIXES = (
 )
 _ADMIN_DELAYED_OUTCOME_PATTERNS = (
     re.compile(r"^⏱️ Отложенный сигнал отправлен.*?: (?P<url>\S+)\b"),
-    re.compile(r"^⏱️ Отложенный сигнал отменен без отправки: (?P<url>\S+)\b"),
+    # Covers both "отменен без отправки" and "отменен из-за player denylist".
+    re.compile(r"^⏱️ Отложенный сигнал отменен.*?: (?P<url>\S+)\b"),
 )
 _ADMIN_SUMMARY_MATCH_URL_RE = re.compile(r"(dltv\.org/matches/\d+/[^\s)]+?)\.\d+(?=$|[\s)])")
 _ADMIN_SUMMARY_URL_LINE_RE = re.compile(r"^\s*URL:\s*(?P<url>\S+)\s*$")
-_ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT = 60
-_ADMIN_TAIL_LOG_SEND_LIMIT = 4
-_ADMIN_TAIL_LOG_MAX_EXPANSION_STEPS = 4
+_ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT = 3
+_ADMIN_TAIL_LOG_ENTRY_POOL_LIMIT = 20
 
 
 def _is_admin_match_summary_line(compact_line: str) -> bool:
@@ -17636,109 +17624,6 @@ def _extract_admin_summary_message_url(message: str) -> str:
     return ""
 
 
-def _admin_tail_log_seen_matches_path_for_mode(mode_label: str) -> Path:
-    return _mode_specific_runtime_path(ADMIN_TAIL_LOG_SEEN_MATCHES_PATH, mode_label)
-
-
-def _load_admin_tail_log_seen_urls(*, mode_label: str) -> List[str]:
-    path = _admin_tail_log_seen_matches_path_for_mode(mode_label)
-    try:
-        return _load_json_url_array(
-            path,
-            recover=True,
-            label="ADMIN_TAIL_LOG_SEEN_MATCHES_PATH",
-        )
-    except Exception:
-        return []
-
-
-def _save_admin_tail_log_seen_urls(urls: List[str], *, mode_label: str) -> None:
-    unique_urls: List[str] = []
-    seen: set[str] = set()
-    for raw_url in urls:
-        compact = str(raw_url or "").strip()
-        if not compact or compact in seen:
-            continue
-        seen.add(compact)
-        unique_urls.append(compact)
-    if len(unique_urls) > 1000:
-        unique_urls = unique_urls[-1000:]
-    _write_json_atomic(
-        _admin_tail_log_seen_matches_path_for_mode(mode_label),
-        unique_urls,
-    )
-
-
-def _admin_tail_entry_is_live_map(entry: Dict[str, Any]) -> bool:
-    """Return True when the entry's last 'Статус:' line indicates an active map."""
-    status_value: Optional[str] = None
-    for raw_line in entry.get("lines") or []:
-        compact = str(raw_line or "").strip()
-        if not compact.startswith("Статус:"):
-            continue
-        status_value = compact.split(":", 1)[1].strip().lower()
-    if status_value is None:
-        return False
-    return status_value not in {"finished", "draft...", "draft"}
-
-
-def _admin_tail_entry_is_finished_map(entry: Dict[str, Any]) -> bool:
-    for raw_line in entry.get("lines") or []:
-        compact = str(raw_line or "").strip()
-        if not compact.startswith("Статус:"):
-            continue
-        status_value = compact.split(":", 1)[1].strip().lower()
-        return status_value == "finished"
-    return False
-
-
-def _admin_tail_current_live_map_urls() -> Optional[set[str]]:
-    try:
-        answer = get_heads()
-    except Exception:
-        return None
-    if not answer:
-        return None
-    try:
-        heads, bodies = answer
-    except Exception:
-        return None
-    if heads is None or bodies is None:
-        return None
-
-    live_urls: set[str] = set()
-    try:
-        pair_count = min(len(heads), len(bodies))
-    except Exception:
-        return None
-
-    for idx in range(pair_count):
-        try:
-            listing_context = _extract_live_listing_context(heads[idx], bodies[idx])
-            status = str(listing_context.get("status") or "unknown").strip().lower()
-            if status == "finished":
-                continue
-            uniq_score = int(listing_context.get("uniq_score") or 0)
-            href = str(listing_context.get("href") or "").strip()
-            parsed_url = urlparse(href) if href else None
-            path = str(parsed_url.path or "") if parsed_url else ""
-            series_key_from_path = str(listing_context.get("series_id") or "")
-            if not series_key_from_path and path:
-                series_match = re.search(r"/matches/(\d+)", path)
-                series_key_from_path = series_match.group(1) if series_match else ""
-            check_uniq_url = (
-                f'dltv.org{path}.{uniq_score}'
-                if path
-                else (f'dltv.org/matches/{series_key_from_path}.{uniq_score}' if series_key_from_path else "")
-            )
-            check_uniq_url = str(check_uniq_url or "").strip()
-            if check_uniq_url:
-                live_urls.add(check_uniq_url)
-        except Exception:
-            continue
-    return live_urls
-
-
 def _admin_tail_url_match_id(url: str) -> str:
     """Extract numeric match id from various URL flavors used in entries/listings."""
     raw = str(url or "").strip()
@@ -17748,14 +17633,8 @@ def _admin_tail_url_match_id(url: str) -> str:
     return match.group(1) if match else ""
 
 
-def _admin_tail_format_queued_bet_message(payload: Dict[str, Any]) -> str:
-    """Format a delayed-queue payload into the same text used for Telegram delivery,
-    plus a short status footer (verdict/threshold/last game time)."""
-    if not isinstance(payload, dict):
-        return ""
-
-    raw_message = str(payload.get("message") or "").strip()
-
+def _admin_tail_watcher_footer(payload: Dict[str, Any]) -> List[str]:
+    """Short status footer for a delayed-queue payload (reason/status/target/time)."""
     footer_lines: List[str] = []
     delay_reason = str(payload.get("reason") or payload.get("delay_reason") or "").strip()
     if delay_reason:
@@ -17817,7 +17696,17 @@ def _admin_tail_format_queued_bet_message(payload: Dict[str, Any]) -> str:
     if timing_parts:
         footer_lines.append("⏱️ Game time: " + ", ".join(timing_parts))
 
-    footer = "\n".join(footer_lines).strip()
+    return footer_lines
+
+
+def _admin_tail_format_queued_bet_message(payload: Dict[str, Any]) -> str:
+    """Format a delayed-queue payload into the same text used for Telegram delivery,
+    plus a short status footer (verdict/threshold/last game time)."""
+    if not isinstance(payload, dict):
+        return ""
+
+    raw_message = str(payload.get("message") or "").strip()
+    footer = "\n".join(_admin_tail_watcher_footer(payload)).strip()
     if raw_message and footer:
         return f"{raw_message}\n\n{footer}"
     if raw_message:
@@ -17825,158 +17714,163 @@ def _admin_tail_format_queued_bet_message(payload: Dict[str, Any]) -> str:
     return footer
 
 
-def _collect_admin_tail_unseen_messages(
-    *,
-    mode_label: str,
-    line_count: int,
-) -> Tuple[List[str], List[Tuple[str, str]], List[int]]:
-    """Collect unseen messages for currently-active live matches.
+def _admin_tail_match_status_footer(
+    lines: List[str],
+    payload: Optional[Dict[str, Any]],
+) -> List[str]:
+    """Current lifecycle status of a match for the tail_log snapshot.
 
-    Two sources are merged, deduped by match_id:
-
-    1. Delayed queue (``monitored_matches``): rich Telegram-style message body
-       that would be sent on dispatch, plus a short status footer.
-    2. Recent log entries (``_build_recent_match_summaries_entries``): for
-       matches that the runtime already processed but did not queue (e.g.
-       rejected by the star-signal gate, or sent immediately and stored in
-       map_id_check). The log block carries URL/Status/Score/lanes/star
-       metrics/verdict, which is enough to see what the runtime decided.
-
-    Finished/disappeared matches are skipped; if the live listing is
-    unavailable we keep all candidates as a fallback. The seen-state still
-    applies so each call re-emits only entries that have not been delivered
-    yet.
+    A match accumulates state as it progresses: metrics right after parsing,
+    then dispatch wait, then the delayed watcher, and finally the outcome
+    (sent / cancelled / rejected). Priority: live delayed-watcher entry >
+    delayed outcome lines > immediate send via map_id_check > verdict lines >
+    dispatch wait > parsed but no verdict yet.
     """
-    seen_urls = _load_admin_tail_log_seen_urls(mode_label=mode_label)
-    seen_url_set = set(seen_urls)
-    current_live_map_urls = _admin_tail_current_live_map_urls()
-    current_live_match_ids: Optional[set[str]] = None
-    if current_live_map_urls is not None:
-        current_live_match_ids = {
-            mid
-            for mid in (_admin_tail_url_match_id(u) for u in current_live_map_urls)
-            if mid
-        }
+    if isinstance(payload, dict):
+        return ["⏳ Статус: в delayed watcher"] + _admin_tail_watcher_footer(payload)
 
-    with monitored_matches_lock:
-        queued_snapshot: List[Tuple[str, Dict[str, Any]]] = [
-            (str(match_key), copy.deepcopy(payload))
-            for match_key, payload in monitored_matches.items()
-            if isinstance(payload, dict)
-        ]
+    compact_lines = [str(line or "").strip() for line in lines]
+    if any(line.startswith("⏱️ Отложенный сигнал отправлен") for line in compact_lines):
+        return ["✅ Статус: отправлен (delayed watcher)"]
+    if any(line.startswith("⏱️ Отложенный сигнал отменен") for line in compact_lines):
+        return ["❌ Статус: отменён без отправки (delayed watcher)"]
+    if any(line.startswith("✅ map_id_check.txt обновлен:") for line in compact_lines):
+        return ["✅ Статус: отправлен сразу"]
+    if any(line.startswith("⚠️ ВЕРДИКТ:") for line in compact_lines):
+        return ["❌ Статус: отказано"]
+    if any(line.startswith("⏳ Ожидание dispatch:") for line in compact_lines):
+        return ["⏳ Статус: ожидание dispatch"]
+    return ["🕒 Статус: матч распарсен, вердикта ещё нет"]
 
-    # Sort by recency ascending (oldest first) so that the consumer's
-    # ``reversed(unseen_messages[-K:])`` slice yields newest entries first
-    # while preserving compatibility with the legacy log-tail ordering.
-    def _entry_recency(item: Tuple[str, Dict[str, Any]]) -> float:
-        _key, _payload = item
-        for field in ("last_progress_at", "last_checked_at", "queued_at"):
-            try:
-                value = _payload.get(field)
-            except Exception:
-                value = None
-            try:
-                if value is not None:
-                    return float(value)
-            except (TypeError, ValueError):
-                continue
-        return 0.0
 
-    queued_snapshot.sort(key=_entry_recency)
+def _collect_admin_tail_last_matches(*, line_count: int) -> List[Dict[str, Any]]:
+    """Assemble the N most recent matches (newest first), each carrying full
+    metric lines plus the delayed-watcher payload when the match is queued.
 
-    unseen_messages: List[Tuple[str, str]] = []
-    requested_limits: List[int] = [len(queued_snapshot)]
-    covered_match_ids: set[str] = set()
+    Sources are merged, deduped by match_id:
 
-    for match_key, payload in queued_snapshot:
-        entry_match_id = _admin_tail_url_match_id(match_key)
-        if current_live_match_ids is not None and entry_match_id:
-            if entry_match_id not in current_live_match_ids:
-                # Match no longer live on cyberscore listing → skip
-                continue
-        if match_key in seen_url_set:
-            if entry_match_id:
-                covered_match_ids.add(entry_match_id)
-            continue
-        message = _admin_tail_format_queued_bet_message(payload)
-        if not message:
-            continue
-        unseen_messages.append((match_key, message))
-        if entry_match_id:
-            covered_match_ids.add(entry_match_id)
+    1. Recent log blocks (``_build_recent_match_summaries_entries``): URL /
+       Status / Score / lanes / star metrics / verdict lines — available as
+       soon as the match is parsed, and growing as it progresses.
+    2. Delayed queue (``monitored_matches``): attaches the live watcher
+       payload to its match; queue-only matches (no log block yet) fall back
+       to the queued bet message.
 
-    # Second source: recent log entries (matches that ran through check_head
-    # but did not end up in the delayed queue — rejected, instantly sent, etc).
-    base_scan_lines = max(3000, int(line_count) * 60)
-    log_limit = max(1, int(_ADMIN_TAIL_LOG_RECENT_MATCH_SCAN_LIMIT))
-    log_entries: List[Dict[str, Any]] = []
+    Every press returns a fresh snapshot — no seen-state — so the same match
+    shows its updated status on repeated tail_log calls.
+    """
+    scan_lines = max(6000, int(line_count) * 120)
     try:
         log_entries = _build_recent_match_summaries_entries(
-            limit=log_limit,
-            scan_lines=base_scan_lines,
+            limit=_ADMIN_TAIL_LOG_ENTRY_POOL_LIMIT,
+            scan_lines=scan_lines,
         )
     except Exception:
         log_entries = []
-    requested_limits.append(len(log_entries))
 
+    with monitored_matches_lock:
+        queued_snapshot: Dict[str, Dict[str, Any]] = {
+            str(match_key): copy.deepcopy(payload)
+            for match_key, payload in monitored_matches.items()
+            if isinstance(payload, dict)
+        }
+
+    queue_by_match_id: Dict[str, Tuple[str, Dict[str, Any]]] = {}
+    for match_key, payload in queued_snapshot.items():
+        match_id = _admin_tail_url_match_id(match_key)
+        if match_id:
+            queue_by_match_id.setdefault(match_id, (match_key, payload))
+
+    candidates: List[Dict[str, Any]] = []
+    covered_queue_keys: set[str] = set()
     for entry in log_entries:
         match_url = str(entry.get("url") or "").strip()
         if not match_url:
-            continue
-        if match_url in seen_url_set:
-            continue
-        entry_match_id = _admin_tail_url_match_id(match_url)
-        if entry_match_id and entry_match_id in covered_match_ids:
-            continue  # Already represented by the delayed-queue payload above
-        if _admin_tail_entry_is_finished_map(entry):
-            continue
-        present_in_live_listing = bool(
-            current_live_match_ids is not None
-            and entry_match_id
-            and entry_match_id in current_live_match_ids
-        )
-        entry_status_is_live = _admin_tail_entry_is_live_map(entry)
-        if not (present_in_live_listing or entry_status_is_live):
             continue
         lines = [
             str(line).rstrip()
             for line in entry.get("lines") or []
             if str(line).strip()
         ]
-        message = "\n".join(lines).strip()
-        if not message:
+        if not lines:
             continue
-        unseen_messages.append((match_url, message))
-        if entry_match_id:
-            covered_match_ids.add(entry_match_id)
+        payload: Optional[Dict[str, Any]] = None
+        if match_url in queued_snapshot:
+            payload = queued_snapshot[match_url]
+            covered_queue_keys.add(match_url)
+        match_id = _admin_tail_url_match_id(match_url)
+        if payload is None and match_id and match_id in queue_by_match_id:
+            queue_key, queued_payload = queue_by_match_id[match_id]
+            payload = queued_payload
+            covered_queue_keys.add(queue_key)
+        candidates.append(
+            {
+                "url": match_url,
+                "lines": lines,
+                "line_no": int(entry.get("line_no") or 0),
+                "payload": payload,
+            }
+        )
 
-    return seen_urls, unseen_messages, requested_limits
+    # Queue-only matches (queued but no informative log block yet): treat as
+    # the freshest candidates, ordered by queue recency.
+    max_line_no = max((int(c["line_no"]) for c in candidates), default=0)
+    queue_only = [
+        (match_key, payload)
+        for match_key, payload in queued_snapshot.items()
+        if match_key not in covered_queue_keys
+    ]
+
+    def _queue_recency(payload: Dict[str, Any]) -> float:
+        for field in ("queued_at", "last_progress_at", "last_checked_at"):
+            try:
+                value = payload.get(field)
+                if value is not None:
+                    return float(value)
+            except (TypeError, ValueError):
+                continue
+        return 0.0
+
+    queue_only.sort(key=lambda item: _queue_recency(item[1]))
+    for rank, (match_key, payload) in enumerate(queue_only, start=1):
+        message = str(payload.get("message") or "").strip()
+        lines = [line.rstrip() for line in message.splitlines() if line.strip()]
+        if not lines:
+            lines = [f"Матч в delayed watcher: {match_key}"]
+        candidates.append(
+            {
+                "url": match_key,
+                "lines": lines,
+                "line_no": max_line_no + rank,
+                "payload": payload,
+            }
+        )
+
+    candidates.sort(key=lambda item: int(item.get("line_no") or 0), reverse=True)
+    return candidates[:_ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT]
 
 
 def _send_admin_log_tail(*, line_count: int = 100, raw_odds: Any = None) -> None:
-    mode_label = _runtime_instance_mode_label(raw_odds)
-    seen_urls, unseen_messages, _requested_limits = _collect_admin_tail_unseen_messages(
-        mode_label=mode_label,
-        line_count=line_count,
-    )
-    if not unseen_messages:
-        send_message("tail_log: текущих live ставок нет", admin_only=True, mirror_to_vk=False)
+    """Send a snapshot of the last N matches: full metrics plus current status.
+
+    Re-pressing tail_log always re-sends the fresh snapshot, so a match is
+    shown accumulating state over its lifetime: metrics right after parsing,
+    then delayed-watcher details, and finally sent/rejected outcome.
+    """
+    matches = _collect_admin_tail_last_matches(line_count=line_count)
+    if not matches:
+        send_message("tail_log: матчей пока нет", admin_only=True, mirror_to_vk=False)
         return
-    newly_sent_urls: List[str] = []
-    selected_messages = list(reversed(unseen_messages[-_ADMIN_TAIL_LOG_SEND_LIMIT:]))
-    for match_url, message in selected_messages:
-        for idx, chunk in enumerate(_split_telegram_text_chunks(message), start=1):
+    total = len(matches)
+    for idx, candidate in enumerate(matches, start=1):
+        lines = list(candidate.get("lines") or [])
+        footer_lines = _admin_tail_match_status_footer(lines, candidate.get("payload"))
+        message = "\n".join([f"[{idx}/{total}]"] + lines + [""] + footer_lines).strip()
+        for chunk_idx, chunk in enumerate(_split_telegram_text_chunks(message), start=1):
             prefix = ""
-            if idx > 1:
-                prefix = f"[part {idx}] "
+            if chunk_idx > 1:
+                prefix = f"[part {chunk_idx}] "
             send_message(f"{prefix}{chunk}", admin_only=True, mirror_to_vk=False)
-        if match_url:
-            newly_sent_urls.append(match_url)
-    if newly_sent_urls:
-        _save_admin_tail_log_seen_urls(
-            seen_urls + newly_sent_urls,
-            mode_label=mode_label,
-        )
 
 
 def _build_self_restart_command(raw_odds: Any) -> Tuple[str, Path]:
