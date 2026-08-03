@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Measure role-pooled synergy_trio only as a fourth STAR confirmation.
+"""Measure synergy metrics only as a fourth STAR confirmation.
 
 Base hits are the WR60 hits from counterpick_1vs1, solo and counterpick_1vs2.
 The experiment compares exact two-base-hit consensus, three-base-hit consensus,
-and the nested four-hit subset where role-pooled synergy_trio confirms the same
-side.  Trio thresholds are swept independently because a metric can add useful
-conditional evidence even when it has no reliable standalone WR threshold.
+and nested four-hit subsets where either role-pooled synergy_trio or the current
+production synergy_duo confirms the same side. Confirmation thresholds are
+swept independently because a metric can add useful conditional evidence even
+when it has no reliable standalone WR threshold.
 """
 from __future__ import annotations
 
@@ -68,6 +69,19 @@ def consensus_sign(hits: dict[str, int], exact_count: int) -> int | None:
 
 def exact_two_variant(hits: dict[str, int]) -> str:
     return "hits2_" + "+".join(metric.replace("counterpick_", "cp") for metric in BASE_METRICS if metric in hits)
+
+
+def confirmation_variant(
+    confirmation: str,
+    score: float | None,
+    threshold: int,
+    base_sign: int,
+) -> str:
+    if score in (None, 0) or abs(float(score)) < threshold:
+        return f"hits3_{confirmation}_below_or_missing"
+    if (1 if float(score) > 0 else -1) == base_sign:
+        return f"hits4_{confirmation}_same"
+    return f"hits3_{confirmation}_conflict"
 
 
 def add(
@@ -153,18 +167,20 @@ def main() -> int:
                 base_won = hits3_sign == winner
                 add(stats, segments, phase, "hits3_base", 0, base_won)
 
-                role_score = trio_score(radiant, dire, phase_data[phase], 25)
-                for threshold in trio_thresholds:
-                    if role_score in (None, 0) or abs(float(role_score)) < threshold:
-                        variant = "hits3_trio_below_or_missing"
+                confirmation_scores = {
+                    "trio": trio_score(radiant, dire, phase_data[phase], 25),
+                    "duo": number(output.get("synergy_duo")),
+                }
+                for confirmation, score in confirmation_scores.items():
+                    for threshold in trio_thresholds:
+                        variant = confirmation_variant(
+                            confirmation,
+                            score,
+                            threshold,
+                            hits3_sign,
+                        )
                         won = base_won
-                    elif (1 if float(role_score) > 0 else -1) == hits3_sign:
-                        variant = "hits4_trio_same"
-                        won = base_won
-                    else:
-                        variant = "hits3_trio_conflict"
-                        won = base_won
-                    add(stats, segments, phase, variant, threshold, won)
+                        add(stats, segments, phase, variant, threshold, won)
 
         if processed % 2_000 < len(chunk):
             print(f"processed={processed:,}", flush=True)
