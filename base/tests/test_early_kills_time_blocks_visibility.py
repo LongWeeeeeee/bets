@@ -31,8 +31,10 @@ cs = importlib.import_module("cyberscore_try")
         (600, 3),
         (644, 3),
         (779, 3),
-        (780, 4),
-        (900, 4),
+        (780, 3),
+        (900, 3),
+        (959, 3),
+        (960, 4),
     ],
 )
 def test_early_kills_time_block_index_from_game_time(game_time, expected_index):
@@ -73,6 +75,8 @@ def test_status_labels_map_to_block_indices():
 
 
 def test_live_state_includes_catalog_and_active_gate_for_10_44_fallback():
+    # Dispatch-кап поднят до 16:00 (связка 20-30), header strip тоже 16:00 —
+    # каталог в live-state блоке отражает актуальные границы.
     text = cs._format_live_message_state_block(
         game_time_seconds=644,
         radiant_lead=1720,
@@ -87,8 +91,8 @@ def test_live_state_includes_catalog_and_active_gate_for_10_44_fallback():
     assert "[0]" in text and "[3]" in text and "[4]" in text
     assert "Kills gate: [3]" in text
     assert "10-13m fallback" in text
-    assert "hard max 13:00" in text
-    assert "header strip 12:00" in text
+    assert "hard max 16:00" in text
+    assert "header strip 16:00" in text
     assert "status=tier1_early_kills_4_12_send_500" in text
 
 
@@ -118,7 +122,9 @@ def test_without_flag_no_kills_block_lines():
     assert "Kills gate:" not in text
 
 
-def test_refresh_keeps_protracker_duo_under_1vs1_and_adds_kills_blocks():
+def test_refresh_keeps_protracker_duo_under_1vs1_and_drops_kills_blocks():
+    # Килы идут строго по 4 связкам policy: мусорный каталог "Kills time
+    # blocks" из тела ставки удалён — refresh рендерит state-блок без него.
     msg = (
         "СТАВКА НА Ранние килы X\n"
         "A VS B\n"
@@ -153,5 +159,5 @@ def test_refresh_keeps_protracker_duo_under_1vs1_and_adds_kills_blocks():
     i1 = next(i for i, line in enumerate(lines) if line.startswith("Protracker_1vs1:"))
     assert lines[i1 + 1].startswith("Protracker_duo:")
     assert out.find("Protracker_duo:") < out.find("Time:")
-    assert "Kills time blocks:" in out
-    assert "Kills gate: [3]" in out
+    assert "Kills time blocks:" not in out
+    assert "Kills gate:" not in out

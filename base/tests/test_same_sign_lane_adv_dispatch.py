@@ -604,11 +604,38 @@ def test_late_all_no_early_uses_pre27_watcher_even_when_lane_adv_matches(monkeyp
     assert result.queued_payload["send_on_target_game_time"] is False
 
 
+# Valid kills-window policy payload (5-15 связка, radiant target). По новым
+# правилам ставка на килы идёт ТОЛЬКО по 4 связкам KILLS_WINDOW_POLICY, поэтому
+# standalone-диспатчер проверяется контрактом policy-селектора, а не старыми
+# порогами |lane_adv_dict|.
+VALID_515_KILLS_POLICY = {
+    "valid": True,
+    "status": "ok",
+    "window_label": "5_15",
+    "target_sign": 1,
+    "target_side": "radiant",
+    "expected_diff": 0.45,
+    "min_ed": 0.3,
+    "lane_kills_adv_ed": 0.35,
+    "target_networth_diff": 1000.0,
+    "band_start": 0.0,
+    "band_end": 120.0,
+}
+
+
+def _patch_kills_policy(monkeypatch, payload) -> None:
+    monkeypatch.setattr(
+        runtime,
+        "_kills_window_policy_select",
+        lambda **_kwargs: dict(payload),
+    )
+
+
 def test_lane_adv_standalone_kills_fires_in_late_only_branch_when_enabled(monkeypatch) -> None:
     # Late-only case (no early star) with dominated lanes (lane_adv_dict ≈ 31).
-    # With the standalone trigger enabled, a kills bet fires immediately on the
-    # lane-dominating side, but the WR60 Late-only signal itself is terminally
-    # rejected instead of being queued for the late watcher.
+    # Kills-window policy (5-15 связка) сошлась — kills bet уходит сразу с
+    # окном в заголовке, а WR60 Late-only сигнал терминально отклоняется.
+    _patch_kills_policy(monkeypatch, VALID_515_KILLS_POLICY)
     case = replace(
         _same_sign_case(
             game_time_seconds=30,
@@ -630,16 +657,20 @@ def test_lane_adv_standalone_kills_fires_in_late_only_branch_when_enabled(monkey
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
     assert kills_msgs, "expected a standalone kills bet to fire"
+    assert kills_msgs[0].startswith("СТАВКА НА Ранние килы 5-15 ")
     assert "lane_adv_dict: +31.00" in kills_msgs[0]
     assert result.queued_payload is None
     assert result.add_url_calls
+    # kills add_url идёт через defer_add_url (очередь delayed sender'а) и в
+    # харнессе не flushed — проверяем сам факт ставки по заголовку.
     assert result.add_url_calls[-1]["reason"] == "star_signal_rejected_late_only_wr_below_65"
 
 
 def test_lane_adv_standalone_kills_suppressed_when_no_tier1_team(monkeypatch) -> None:
-    # Same dominated-lanes late-only case as the positive test above, but
-    # neither team is Tier-1 -> the standalone kills bet must NOT fire and the
-    # WR60 Late-only signal must be terminally rejected without a watcher.
+    # Same dominated-lanes late-only case as the positive test above (policy
+    # combo valid), but neither team is Tier-1 -> the standalone kills bet must
+    # NOT fire and the WR60 Late-only signal must be terminally rejected.
+    _patch_kills_policy(monkeypatch, VALID_515_KILLS_POLICY)
     case = replace(
         _same_sign_case(
             game_time_seconds=30,
@@ -694,10 +725,14 @@ def _opposite_early_kills_case(*, game_time_seconds: int) -> BranchScenario:
     )
 
 
-def test_lane_adv_standalone_kills_blocked_when_opposite_early_star_and_lane_adv_below_12(monkeypatch) -> None:
-    # Early star (dire) opposes lane_adv_dict (radiant ≈ +8). Since |8| < 12,
-    # the standalone kills bet must NOT fire on the lane-dominating side.
+def test_lane_adv_standalone_kills_blocked_when_policy_lane_kills_gate_fails(monkeypatch) -> None:
+    # Policy вернул lane_kills_gate_failed (второй гейт связки 5-15 не сошёлся
+    # по знаку/величине) — standalone kills bet не отправляется.
     _patch_early_wr(monkeypatch, 70.0)
+    _patch_kills_policy(
+        monkeypatch,
+        {"valid": False, "status": "lane_kills_gate_failed", "window_label": "5_15"},
+    )
     result = _run_branch_scenario(
         monkeypatch,
         _opposite_early_kills_case(game_time_seconds=30),
@@ -706,14 +741,17 @@ def test_lane_adv_standalone_kills_blocked_when_opposite_early_star_and_lane_adv
     )
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
-    assert kills_msgs == [], "kills must be blocked when early star opposes lanes and |lane_adv_dict| < 12"
+    assert kills_msgs == [], "kills must be blocked when the policy lane_kills gate fails"
 
 
-def test_lane_adv_standalone_kills_blocked_when_opposite_early_star_even_at_high_lane_adv(monkeypatch) -> None:
-    # Early star (dire) opposes lane_adv_dict (radiant ≈ +13). An opposite-side
-    # early star is now a HARD BLOCK regardless of lane dominance magnitude —
-    # the 00-minute kills bet must NOT fire even though |13| ≥ 12.
+def test_lane_adv_standalone_kills_blocked_outside_policy_band(monkeypatch) -> None:
+    # Вне полосы отправки связки (outside_policy_band) килов нет, даже при
+    # сильном lane dominance.
     _patch_early_wr(monkeypatch, 70.0)
+    _patch_kills_policy(
+        monkeypatch,
+        {"valid": False, "status": "outside_policy_band"},
+    )
     result = _run_branch_scenario(
         monkeypatch,
         _opposite_early_kills_case(game_time_seconds=30),
@@ -722,12 +760,13 @@ def test_lane_adv_standalone_kills_blocked_when_opposite_early_star_even_at_high
     )
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
-    assert kills_msgs == [], "kills must be blocked when an opposite early star exists, regardless of lane_adv magnitude"
+    assert kills_msgs == [], "kills must be blocked outside the policy dispatch band"
 
 
-def test_lane_adv_standalone_kills_fires_at_8_when_no_opposite_early_star(monkeypatch) -> None:
-    # No early star at all: the default |lane_adv_dict| >= 8 threshold applies,
-    # so lane_adv_dict ≈ +8 still fires the standalone kills bet.
+def test_lane_adv_standalone_kills_fires_when_policy_valid_without_early_star(monkeypatch) -> None:
+    # No early star at all: ставка на килы идёт строго по связке policy
+    # (5-15), окно пишется в заголовок.
+    _patch_kills_policy(monkeypatch, VALID_515_KILLS_POLICY)
     case = replace(
         _opposite_early_kills_case(game_time_seconds=30),
         has_early_star=False,
@@ -743,14 +782,16 @@ def test_lane_adv_standalone_kills_fires_at_8_when_no_opposite_early_star(monkey
     )
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
-    assert kills_msgs, "kills must fire at |lane_adv_dict| >= 8 when there is no opposite early star"
+    assert kills_msgs, "kills must fire when the policy combo holds"
+    assert kills_msgs[0].startswith("СТАВКА НА Ранние килы 5-15 ")
     assert "lane_adv_dict: +8.00" in kills_msgs[0]
 
 
-def test_lane_adv_standalone_kills_blocked_when_early_metric_opposes_lanes_without_star(monkeypatch) -> None:
-    # No early STAR (sub-threshold), but a raw early metric (counterpick_1vs2)
-    # has the OPPOSITE sign to lane_adv_dict (radiant +8). The consistency gate
-    # must block the 00-minute kills bet even though no full early star formed.
+def test_lane_adv_standalone_kills_policy_is_sole_gate_without_early_star(monkeypatch) -> None:
+    # No early STAR: единственный гейт килов — kills-window policy. Старые
+    # consistency-пороги по raw early метрикам удалены: если связка сошлась,
+    # ставка уходит даже при mixed-sign raw early метриках.
+    _patch_kills_policy(monkeypatch, VALID_515_KILLS_POLICY)
     case = replace(
         _opposite_early_kills_case(game_time_seconds=30),
         has_early_star=False,
@@ -766,13 +807,14 @@ def test_lane_adv_standalone_kills_blocked_when_early_metric_opposes_lanes_witho
     )
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
-    assert kills_msgs == [], "kills must be blocked when a raw early metric opposes lane_adv_dict sign"
+    assert kills_msgs, "policy combo alone is sufficient for the kills bet"
+    assert kills_msgs[0].startswith("СТАВКА НА Ранние килы 5-15 ")
 
 
 def test_lane_adv_standalone_kills_fires_when_early_metrics_aligned_or_zero(monkeypatch) -> None:
-    # No early star. The three raw early metrics are all same-sign-as-lanes or
-    # zero (cp1vs1 +1, cp1vs2 0, solo +2) — the consistency gate passes and the
-    # kills bet fires at |lane_adv_dict| >= 8.
+    # No early star, связка policy сошлась — kills bet уходит с окном в
+    # заголовке.
+    _patch_kills_policy(monkeypatch, VALID_515_KILLS_POLICY)
     case = replace(
         _opposite_early_kills_case(game_time_seconds=30),
         has_early_star=False,
@@ -788,14 +830,15 @@ def test_lane_adv_standalone_kills_fires_when_early_metrics_aligned_or_zero(monk
     )
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
-    assert kills_msgs, "kills must fire when all early metrics are same-sign or zero"
+    assert kills_msgs, "kills must fire when the policy combo holds"
+    assert kills_msgs[0].startswith("СТАВКА НА Ранние килы 5-15 ")
     assert "lane_adv_dict: +8.00" in kills_msgs[0]
 
 
 def test_lane_adv_standalone_kills_fires_when_early_star_same_side_as_lanes(monkeypatch) -> None:
-    # Early star on the SAME side as the lanes (radiant). Even at lane_adv_dict
-    # ≈ +8 (< 12) the kills bet fires because the early star agrees with the
-    # lane dominance (opposite-early-star guard does not apply).
+    # Early star on the SAME side as the lanes (radiant) + valid policy combo:
+    # kills bet уходит с окном в заголовке.
+    _patch_kills_policy(monkeypatch, VALID_515_KILLS_POLICY)
     case = replace(
         _opposite_early_kills_case(game_time_seconds=30),
         has_early_star=True,
@@ -812,7 +855,8 @@ def test_lane_adv_standalone_kills_fires_when_early_star_same_side_as_lanes(monk
     )
 
     kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
-    assert kills_msgs, "kills must fire when early star is same-side as lanes at |lane_adv_dict| >= 8"
+    assert kills_msgs, "kills must fire when early star is same-side as lanes and policy holds"
+    assert kills_msgs[0].startswith("СТАВКА НА Ранние килы 5-15 ")
     assert "lane_adv_dict: +8.00" in kills_msgs[0]
 
 
@@ -821,6 +865,7 @@ def test_lane_adv_standalone_kills_message_carries_full_local_body(monkeypatch) 
     # body — lanes + lane_adv_dict + the early/late/all star metric blocks —
     # not a stripped teams-only message. ProTracker lines are allowed to be
     # absent (fetch not yet complete).
+    _patch_kills_policy(monkeypatch, VALID_515_KILLS_POLICY)
     case = replace(
         _same_sign_case(
             game_time_seconds=30,
@@ -899,7 +944,12 @@ def test_lane_adv_and_lane_kills_same_sign_helper() -> None:
 
 
 def test_lane_adv_standalone_kills_blocked_when_lane_kills_opposite_sign(monkeypatch) -> None:
-    # Positive lane_adv_dict but opposite lane_kills_adv_dict → no 0-min kills bet.
+    # Positive lane_adv_dict but opposite lane_kills_adv_dict → связка 5-15 не
+    # сходится (lane_kills_gate_failed) → no 0-min kills bet.
+    _patch_kills_policy(
+        monkeypatch,
+        {"valid": False, "status": "lane_kills_gate_failed", "window_label": "5_15"},
+    )
     case = replace(
         _same_sign_case(
             game_time_seconds=30,
@@ -930,6 +980,12 @@ def test_lane_adv_standalone_kills_blocked_when_lane_kills_opposite_sign(monkeyp
 
 
 def test_lane_adv_standalone_kills_blocked_when_lane_kills_missing(monkeypatch) -> None:
+    # Нет lane_kills_adv_dict → второй гейт связки 5-15 неподтвердим → no
+    # kills bet.
+    _patch_kills_policy(
+        monkeypatch,
+        {"valid": False, "status": "lane_kills_gate_failed", "window_label": "5_15"},
+    )
     case = replace(
         _same_sign_case(
             game_time_seconds=30,
