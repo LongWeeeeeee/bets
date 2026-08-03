@@ -27,13 +27,14 @@ def _env_bool(name, default=True):
     return bool(default)
 
 
-# Offline dictionary-build switches. Defaults preserve the current production
-# filters; callers may disable only the minute-10 gate in an isolated process.
+# Early retains the neutral minute-10 sample. All/Post-lane includes every
+# qualifying 20+ minute map by default; the environment variable remains an
+# explicit opt-in for historical gated rebuilds.
 ANALISE_EARLY_MINUTE10_GATE_ENABLED = _env_bool(
     "ANALISE_EARLY_MINUTE10_GATE_ENABLED", True
 )
 ANALISE_POST_LANE_MINUTE10_GATE_ENABLED = _env_bool(
-    "ANALISE_POST_LANE_MINUTE10_GATE_ENABLED", True
+    "ANALISE_POST_LANE_MINUTE10_GATE_ENABLED", False
 )
 
 
