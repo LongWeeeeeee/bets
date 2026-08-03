@@ -60,9 +60,9 @@ def _sqlite(path: Path, entries: int = 1) -> None:
         connection.close()
 
 
-def test_gate_flags_default_on_and_disable_only_gate(monkeypatch):
+def test_early_gate_default_on_and_post_lane_gate_default_off(monkeypatch):
     assert stats.ANALISE_EARLY_MINUTE10_GATE_ENABLED is True
-    assert stats.ANALISE_POST_LANE_MINUTE10_GATE_ENABLED is True
+    assert stats.ANALISE_POST_LANE_MINUTE10_GATE_ENABLED is False
 
     early_match = _match(duration=35, gate_lead=5000)
     assert stats.is_early_match(early_match) == (False, None)
@@ -74,9 +74,9 @@ def test_gate_flags_default_on_and_disable_only_gate(monkeypatch):
     assert stats.is_early_match(fast) == (True, "dire")
 
     post_match = _match(duration=25, gate_lead=5000)
-    assert stats.is_post_lane_match(post_match) is False
-    monkeypatch.setattr(stats, "ANALISE_POST_LANE_MINUTE10_GATE_ENABLED", False)
     assert stats.is_post_lane_match(post_match) is True
+    monkeypatch.setattr(stats, "ANALISE_POST_LANE_MINUTE10_GATE_ENABLED", True)
+    assert stats.is_post_lane_match(post_match) is False
     # Non-gate duration semantics remain enforced.
     assert stats.is_post_lane_match(_match(duration=19, gate_lead=0)) is False
 
