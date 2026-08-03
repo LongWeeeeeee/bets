@@ -9048,6 +9048,8 @@ def _build_lane_adv_standalone_kills_message(
     radiant_lead: Any,
     lane_adv_dict_value: Optional[float],
     lane_kills_adv: Any = None,
+    radiant_heroes_and_pos: Any = None,
+    dire_heroes_and_pos: Any = None,
 ) -> str:
     """Build the dispatch message for the standalone "lane_adv_dict ≥ 8" kills
     trigger. Used when the regular STAR signal block is empty/rejected — we
@@ -9073,6 +9075,8 @@ def _build_lane_adv_standalone_kills_message(
         dire_team_name=dire_team_name,
         show_kills_time_blocks=True,
         kills_release_status=NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND,
+        radiant_heroes_and_pos=radiant_heroes_and_pos,
+        dire_heroes_and_pos=dire_heroes_and_pos,
     )
     return (
         f"{header}\n"
@@ -9096,6 +9100,8 @@ def _build_early_local_kills_message(
     radiant_lead: Any,
     star_target_wr: int,
     protracker_payload: Optional[Dict[str, Any]] = None,
+    radiant_heroes_and_pos: Any = None,
+    dire_heroes_and_pos: Any = None,
 ) -> str:
     """Build a FULL kills-bet body for the early (pre-networth-gate) release.
 
@@ -9283,6 +9289,8 @@ def _build_early_local_kills_message(
         radiant_team_name=radiant_team_name,
         dire_team_name=dire_team_name,
         show_kills_time_blocks=True,
+        radiant_heroes_and_pos=radiant_heroes_and_pos,
+        dire_heroes_and_pos=dire_heroes_and_pos,
     )
     return (
         f"{header}\n"
@@ -9439,7 +9447,7 @@ def _build_pipeline_probe_message(
         f"{_format_signal_header(stake_team_name='PIPELINE CHECK', stake_multiplier=1)}\n"
         f"{normalize_team_name_display(str(radiant_team_name or ''))} VS {normalize_team_name_display(str(dire_team_name or ''))}\n"
         f"{_build_series_score_line_with_fallback(live_league, fallback_score_text)}"
-        f"{_format_live_message_state_block(game_time_seconds=game_time_seconds, radiant_lead=radiant_lead, radiant_team_name=radiant_team_name, dire_team_name=dire_team_name)}"
+        f"{_format_live_message_state_block(game_time_seconds=game_time_seconds, radiant_lead=radiant_lead, radiant_team_name=radiant_team_name, dire_team_name=dire_team_name, radiant_heroes_and_pos=radiant_heroes_and_pos, dire_heroes_and_pos=dire_heroes_and_pos)}"
         "mode: send_every_parsed_match\n"
         "source: get_heads/cyberscore_try\n"
         f"Radiant draft: {_format_pipeline_probe_draft_side(radiant_heroes_and_pos)}\n"
@@ -10226,6 +10234,46 @@ def _format_early_kills_time_blocks_block(
     return "\n".join(lines) + "\n"
 
 
+def _format_kills_window_values_block(
+    *,
+    radiant_heroes_and_pos: Any = None,
+    dire_heroes_and_pos: Any = None,
+) -> str:
+    """Compute kills_window expected_diff for all windows and format for display.
+
+    Always visible in the signal message above Time/Networth so the user can
+    see the draft-based kill-window estimates regardless of bet type.
+    """
+    if not _ensure_kills_window_dict_loaded():
+        return ""
+    try:
+        radiant_tokens = _draft_tokens_for_kills_window(radiant_heroes_and_pos)
+        dire_tokens = _draft_tokens_for_kills_window(dire_heroes_and_pos)
+        if not radiant_tokens or not dire_tokens:
+            return ""
+        kw = calculate_kills_window_advantage(
+            radiant_tokens, dire_tokens, kills_window_dict, window=None,
+        )
+    except Exception as exc:
+        logger.warning("kills_window display block failed: %s", exc)
+        return ""
+    if not isinstance(kw, dict) or not kw:
+        return ""
+    lines: list[str] = ["Kills_window:"]
+    for start_m, end_m in _kills_window_specs():
+        label = _kills_window_label(start_m, end_m)
+        payload = kw.get(label)
+        if isinstance(payload, dict):
+            try:
+                ed = float(payload.get("expected_diff", 0.0))
+                lines.append(f"  {label}: {ed:+.2f}")
+            except (TypeError, ValueError):
+                lines.append(f"  {label}: n/a")
+        else:
+            lines.append(f"  {label}: n/a")
+    return "\n".join(lines) + "\n"
+
+
 def _format_live_message_state_block(
     *,
     game_time_seconds: Any,
@@ -10235,6 +10283,8 @@ def _format_live_message_state_block(
     show_kills_time_blocks: bool = False,
     kills_release_status: Any = None,
     kills_window_label: Any = None,
+    radiant_heroes_and_pos: Any = None,
+    dire_heroes_and_pos: Any = None,
 ) -> str:
     time_line = f"Time: {_format_game_clock(game_time_seconds)}"
     try:
@@ -10248,7 +10298,11 @@ def _format_live_message_state_block(
         networth_line = f"Networth: {str(radiant_team_name or 'Radiant')} +{abs_lead}"
     else:
         networth_line = f"Networth: {str(dire_team_name or 'Dire')} +{abs_lead}"
-    body = f"{time_line}\n{networth_line}\n"
+    kills_window_block = _format_kills_window_values_block(
+        radiant_heroes_and_pos=radiant_heroes_and_pos,
+        dire_heroes_and_pos=dire_heroes_and_pos,
+    )
+    body = f"{kills_window_block}{time_line}\n{networth_line}\n"
     if show_kills_time_blocks or kills_window_label:
         body += _format_early_kills_time_blocks_block(
             game_time_seconds=game_time_seconds,
@@ -23953,6 +24007,8 @@ def _build_early_winner_kills_window_message(
     radiant_lead: Any,
     selected_window: Dict[str, Any],
     early_end_star_sign: int,
+    radiant_heroes_and_pos: Any = None,
+    dire_heroes_and_pos: Any = None,
 ) -> str:
     """Telegram body for Early Winner STAR + kills_window nearest-block bet."""
     header = _format_signal_header(
@@ -23995,6 +24051,8 @@ def _build_early_winner_kills_window_message(
         show_kills_time_blocks=True,
         kills_release_status=NETWORTH_STATUS_EARLY_WINNER_KILLS_WINDOW_SEND,
         kills_window_label=label,
+        radiant_heroes_and_pos=radiant_heroes_and_pos,
+        dire_heroes_and_pos=dire_heroes_and_pos,
     )
     ed = selected_window.get("expected_diff")
     secs = selected_window.get("seconds_until_start")
@@ -24143,6 +24201,8 @@ def _try_dispatch_early_winner_kills_window(
             radiant_lead=radiant_lead,
             selected_window=selected,
             early_end_star_sign=int(star_sign),
+            radiant_heroes_and_pos=radiant_heroes_and_pos,
+            dire_heroes_and_pos=dire_heroes_and_pos,
         )
         details = {
             "status": status,
@@ -24261,6 +24321,8 @@ def _try_dispatch_lane_adv_standalone_kills(
     radiant_team_id: Any = 0,
     dire_team_id: Any = 0,
     lane_kills_adv: Any = None,
+    radiant_heroes_and_pos: Any = None,
+    dire_heroes_and_pos: Any = None,
 ) -> bool:
     """Standalone kills trigger: when ``|lane_adv_dict| ≥ 8`` we dispatch a
     kills bet on the dominating side, regardless of star block availability.
@@ -24434,6 +24496,8 @@ def _try_dispatch_lane_adv_standalone_kills(
                 game_time_seconds=game_time_seconds,
                 radiant_lead=radiant_lead,
                 lane_adv_dict_value=lane_adv_value,
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
             )
         try:
             current_game_time_int = int(float(game_time_seconds or 0.0))
@@ -31509,6 +31573,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 radiant_lead=lead,
                 star_target_wr=star_target_wr,
                 protracker_payload=early_protracker_payload,
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
             )
             sent = _try_dispatch_lane_adv_standalone_kills(
                 match_key=check_uniq_url,
@@ -31534,6 +31600,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early_output_block=local_metrics.get('early_output'),
                 radiant_team_id=radiant_team_id,
                 dire_team_id=dire_team_id,
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
             )
             if sent:
                 _early_local_kills_done["sent"] = True
@@ -33723,6 +33791,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     locals().get("kills_release_status_label")
                     or locals().get("kills_release_status_label_pp")
                 ),
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
             )
             lane_block = _build_lane_block(
                 s.get('top'),
@@ -33783,6 +33853,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early_output_block=s.get('early_output'),
                 radiant_team_id=radiant_team_id,
                 dire_team_id=dire_team_id,
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
             )
             current_game_time = float(game_time or 0.0)
             # Гейт допустимых комбинаций STAR-блоков: ставка на команду шлётся
@@ -37442,6 +37514,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early_output_block=s.get('early_output'),
                 radiant_team_id=radiant_team_id,
                 dire_team_id=dire_team_id,
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
             )
 
             add_url(
