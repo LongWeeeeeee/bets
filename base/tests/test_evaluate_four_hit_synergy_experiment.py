@@ -1,6 +1,7 @@
 from base.evaluate_four_hit_synergy_experiment import (
     ALL_SOLO_WR60_THRESHOLD,
     base_hit_signs,
+    confirmation_variant,
     consensus_sign,
     exact_two_variant,
     wr60_thresholds,
@@ -48,3 +49,9 @@ def test_three_hits_must_have_one_consensus_sign():
         {"counterpick_1vs1": 1, "solo": -1, "counterpick_1vs2": 1},
         3,
     ) is None
+
+
+def test_confirmation_metric_can_confirm_conflict_or_miss():
+    assert confirmation_variant("duo", 8.0, 7, 1) == "hits4_duo_same"
+    assert confirmation_variant("duo", -8.0, 7, 1) == "hits3_duo_conflict"
+    assert confirmation_variant("duo", 6.0, 7, 1) == "hits3_duo_below_or_missing"
