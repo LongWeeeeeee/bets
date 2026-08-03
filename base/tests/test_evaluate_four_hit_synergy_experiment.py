@@ -18,15 +18,15 @@ def test_wr60_thresholds_select_only_base_metrics():
             ]
         }
     }
-
-
-def test_all_solo_wr60_family_threshold_is_four():
-    assert ALL_SOLO_WR60_THRESHOLD == 4.0
     assert wr60_thresholds(payload, "early_output") == {
         "counterpick_1vs1": 4.0,
         "solo": 3.0,
         "counterpick_1vs2": 4.0,
     }
+
+
+def test_all_solo_wr60_family_threshold_is_four():
+    assert ALL_SOLO_WR60_THRESHOLD == 4.0
 
 
 def test_base_hits_require_the_current_wr60_threshold():
