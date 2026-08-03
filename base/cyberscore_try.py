@@ -37736,27 +37736,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     rejected_mid_output_log,
                     rejected_all_output_log,
                 )
-            _verdict_print(
-                "   ⚠️ ВЕРДИКТ: ОТКАЗ "
-                "(нет star-сигнала) - матч пропущен",
-                reason="star_signal_rejected_no_star_signal",
-                kind="reject",
-                dispatch={"game_time": game_time},
-            )
-            if first_draft_metrics_compute:
-                print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
-                print(
-                    "   📉 Threshold block: "
-                    f"reason={tier_threshold_block_reason_label}, "
-                    f"status={tier_threshold_block_status_label}, "
-                    f"min_wr={int(star_target_wr)}%"
-                )
-                if star_filter_rejections:
-                    print(f"   📉 Star filter reject: {'; '.join(star_filter_rejections)}")
-
-            # Standalone "lane_adv_dict ≥ 8" kills trigger for the no-star
-            # rejection path: even when no star block is valid, dominate-on-
-            # lanes case still warrants a kills bet on the dominating side.
+            # Блоки для kills-триггера и bet_message no-star ветки.
             try:
                 noskip_lane_adv_dict_value = _lane_dict_adv_value(
                     s.get('top'), s.get('mid'), s.get('bot')
@@ -37780,6 +37760,41 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
             except Exception:
                 noskip_team_elo_block = ""
+            # bet_message для no-star ветки: сюда не доходит сборка message_text
+            # из star-ветки, но tail_log должен показывать матч в формате
+            # Telegram-ставки, а не пустым.
+            try:
+                _verdict_ctx["bet_message"] = (
+                    f"{normalize_team_name_display(str(radiant_team_name or ''))} VS "
+                    f"{normalize_team_name_display(str(dire_team_name or ''))}\n"
+                    f"{_build_series_score_line(data.get('live_league_data') or {})}"
+                    f"{_build_lane_block(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=_build_dota2protracker_lane_adv_line(s), lane_adv_dict_line=_build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot')), lane_kills_adv=s.get('lane_kills_adv_dict'))}"
+                    f"{noskip_team_elo_block}"
+                    f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=s.get('all_output', {}))}"
+                )
+            except Exception:
+                pass
+            _verdict_print(
+                "   ⚠️ ВЕРДИКТ: ОТКАЗ "
+                "(нет star-сигнала) - матч пропущен",
+                reason="star_signal_rejected_no_star_signal",
+                kind="reject",
+                dispatch={"game_time": game_time},
+            )
+            if first_draft_metrics_compute:
+                print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
+                print(
+                    "   📉 Threshold block: "
+                    f"reason={tier_threshold_block_reason_label}, "
+                    f"status={tier_threshold_block_status_label}, "
+                    f"min_wr={int(star_target_wr)}%"
+                )
+                if star_filter_rejections:
+                    print(f"   📉 Star filter reject: {'; '.join(star_filter_rejections)}")
+
+            # Standalone "lane_adv_dict ≥ 8" kills trigger for the no-star
+            # rejection path: even when no star block is valid, dominate-on-
+            # lanes case still warrants a kills bet on the dominating side.
             _try_dispatch_lane_adv_standalone_kills(
                 match_key=check_uniq_url,
                 status=status,
