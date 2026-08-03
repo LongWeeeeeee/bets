@@ -32864,6 +32864,23 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         f"{radiant_team_name_original} vs {dire_team_name_original}"
                     )
 
+            # Пре-сборка текста ставки ДО reject-гейтов: при раннем отказе
+            # финальный message_text не собирается, но tail_log должен
+            # показывать матч в формате Telegram-отправки. Если поток дойдёт
+            # до полной сборки, она перезапишет этот снапшот.
+            try:
+                _verdict_ctx["bet_message"] = (
+                    f"{normalize_team_name_display(str(radiant_team_name or ''))} VS "
+                    f"{normalize_team_name_display(str(dire_team_name or ''))}\n"
+                    f"{series_score_line}"
+                    f"{_build_lane_block(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=dota2protracker_lane_adv_line, lane_adv_dict_line=lane_adv_dict_line, lane_kills_adv=s.get('lane_kills_adv_dict'))}"
+                    f"{team_elo_block}"
+                    f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=s.get('all_output', {}))}"
+                    f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block)}"
+                )
+            except Exception:
+                pass
+
             # Isolated kills27 audit/sender: score/log every NW60 hits>=2 candidate.
             # This call cannot alter STAR validity, stake, bookmaker gates, or
             # the main Telegram dispatch; any failure is fail-open for it.
