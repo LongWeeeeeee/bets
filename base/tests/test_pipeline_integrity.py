@@ -3498,7 +3498,7 @@ def _install_monitored_matches(monkeypatch, snapshot: Dict[str, Dict[str, Any]])
     )
 
 
-def test_send_admin_log_tail_sends_one_message_per_queued_bet(monkeypatch) -> None:
+def test_send_admin_log_tail_shows_queued_matches_newest_first(monkeypatch) -> None:
     queued = {
         "dltv.org/matches/1/older-match.0": _make_queued_payload(
             message="СТАВКА НА Foo x1\nFoo VS Bar",
@@ -3512,16 +3512,8 @@ def test_send_admin_log_tail_sends_one_message_per_queued_bet(monkeypatch) -> No
         ),
     }
     sent_messages: List[Dict[str, Any]] = []
-    saved_seen_urls: List[List[str]] = []
 
     _install_monitored_matches(monkeypatch, queued)
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
-    monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
-    monkeypatch.setattr(
-        runtime,
-        "_save_admin_tail_log_seen_urls",
-        lambda urls, **_kwargs: saved_seen_urls.append(list(urls)),
-    )
     monkeypatch.setattr(
         runtime,
         "send_message",
@@ -3532,44 +3524,28 @@ def test_send_admin_log_tail_sends_one_message_per_queued_bet(monkeypatch) -> No
 
     assert len(sent_messages) == 2
     assert "Baz VS Qux" in sent_messages[0]["message"]
+    assert "[1/2]" in sent_messages[0]["message"]
     assert "Foo VS Bar" in sent_messages[1]["message"]
+    assert "[2/2]" in sent_messages[1]["message"]
     assert sent_messages[0]["kwargs"]["admin_only"] is True
     assert sent_messages[0]["kwargs"]["mirror_to_vk"] is False
-    # Each queued bet message is augmented with a status footer.
+    # Queued matches carry the delayed-watcher status footer.
+    assert "в delayed watcher" in sent_messages[0]["message"]
     assert "Reason:" in sent_messages[0]["message"]
     assert "Status:" in sent_messages[0]["message"]
-    assert saved_seen_urls == [[
-        "dltv.org/matches/2/newer-match.0",
-        "dltv.org/matches/1/older-match.0",
-    ]]
 
 
-def test_send_admin_log_tail_skips_seen_queued_bets(monkeypatch) -> None:
+def test_send_admin_log_tail_resends_snapshot_on_repeated_press(monkeypatch) -> None:
+    """No seen-state: every press returns the fresh snapshot again, so the
+    match shows its updated lifecycle status on repeated tail_log calls."""
     queued = {
-        "dltv.org/matches/1/already-seen.0": _make_queued_payload(
-            message="СТАВКА НА AlreadySeen x1\nA VS B",
-            queued_at=1.0,
-        ),
-        "dltv.org/matches/2/new-match.0": _make_queued_payload(
-            message="СТАВКА НА FreshOne x1\nF VS G",
-            queued_at=2.0,
+        "dltv.org/matches/1/match.0": _make_queued_payload(
+            message="СТАВКА НА Alpha x1\nAlpha VS Beta",
         ),
     }
     sent_messages: List[Dict[str, Any]] = []
-    saved_seen_urls: List[List[str]] = []
 
     _install_monitored_matches(monkeypatch, queued)
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
-    monkeypatch.setattr(
-        runtime,
-        "_load_admin_tail_log_seen_urls",
-        lambda **_kwargs: ["dltv.org/matches/1/already-seen.0"],
-    )
-    monkeypatch.setattr(
-        runtime,
-        "_save_admin_tail_log_seen_urls",
-        lambda urls, **_kwargs: saved_seen_urls.append(list(urls)),
-    )
     monkeypatch.setattr(
         runtime,
         "send_message",
@@ -3577,33 +3553,17 @@ def test_send_admin_log_tail_skips_seen_queued_bets(monkeypatch) -> None:
     )
 
     runtime._send_admin_log_tail(line_count=100, raw_odds=False)
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
-    assert len(sent_messages) == 1
-    assert "F VS G" in sent_messages[0]["message"]
-    assert "A VS B" not in sent_messages[0]["message"]
-    assert saved_seen_urls == [["dltv.org/matches/1/already-seen.0", "dltv.org/matches/2/new-match.0"]]
+    assert len(sent_messages) == 2
+    assert sent_messages[0]["message"] == sent_messages[1]["message"]
+    assert "Alpha VS Beta" in sent_messages[1]["message"]
 
 
-def test_send_admin_log_tail_reports_no_new_queued_bets(monkeypatch) -> None:
-    queued = {
-        "dltv.org/matches/1/already-seen.0": _make_queued_payload(
-            message="СТАВКА НА AlreadySeen x1\nA VS B",
-        ),
-    }
+def test_send_admin_log_tail_reports_no_matches(monkeypatch) -> None:
     sent_messages: List[Dict[str, Any]] = []
 
-    _install_monitored_matches(monkeypatch, queued)
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
-    monkeypatch.setattr(
-        runtime,
-        "_load_admin_tail_log_seen_urls",
-        lambda **_kwargs: ["dltv.org/matches/1/already-seen.0"],
-    )
-    monkeypatch.setattr(
-        runtime,
-        "_save_admin_tail_log_seen_urls",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("seen-state must not be rewritten")),
-    )
+    _install_monitored_matches(monkeypatch, {})
     monkeypatch.setattr(
         runtime,
         "send_message",
@@ -3614,13 +3574,13 @@ def test_send_admin_log_tail_reports_no_new_queued_bets(monkeypatch) -> None:
 
     assert sent_messages == [
         {
-            "message": "tail_log: текущих live ставок нет",
+            "message": "tail_log: матчей пока нет",
             "kwargs": {"admin_only": True, "mirror_to_vk": False},
         }
     ]
 
 
-def test_send_admin_log_tail_truncates_to_send_limit(monkeypatch) -> None:
+def test_send_admin_log_tail_limits_to_last_three_matches(monkeypatch) -> None:
     queued = {
         f"dltv.org/matches/{idx}/match-{idx}.0": _make_queued_payload(
             message=f"СТАВКА НА Team{idx}\nTeam{idx} VS Other{idx}",
@@ -3630,16 +3590,8 @@ def test_send_admin_log_tail_truncates_to_send_limit(monkeypatch) -> None:
         for idx in range(1, 6)
     }
     sent_messages: List[Dict[str, Any]] = []
-    saved_seen_urls: List[List[str]] = []
 
     _install_monitored_matches(monkeypatch, queued)
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
-    monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
-    monkeypatch.setattr(
-        runtime,
-        "_save_admin_tail_log_seen_urls",
-        lambda urls, **_kwargs: saved_seen_urls.append(list(urls)),
-    )
     monkeypatch.setattr(
         runtime,
         "send_message",
@@ -3648,38 +3600,37 @@ def test_send_admin_log_tail_truncates_to_send_limit(monkeypatch) -> None:
 
     runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
-    assert len(sent_messages) == runtime._ADMIN_TAIL_LOG_SEND_LIMIT
+    assert len(sent_messages) == runtime._ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT
     # newest first
     assert "Team5" in sent_messages[0]["message"]
     assert "Team4" in sent_messages[1]["message"]
     assert "Team3" in sent_messages[2]["message"]
-    assert "Team2" in sent_messages[3]["message"]
+    assert "Team2" not in "".join(item["message"] for item in sent_messages)
 
 
-def test_send_admin_log_tail_filters_by_live_listing(monkeypatch) -> None:
-    queued = {
-        "dltv.org/matches/100/live-now.0": _make_queued_payload(
-            message="СТАВКА НА Live100\nLive100 VS Foe",
-        ),
-        "dltv.org/matches/200/already-finished.0": _make_queued_payload(
-            message="СТАВКА НА Done200\nDone200 VS Foe",
-        ),
-    }
+def test_send_admin_log_tail_keeps_finished_rejected_matches(monkeypatch) -> None:
+    """Finished matches keep showing their metrics and final verdict in the
+    snapshot — they are no longer filtered out by live-listing status."""
+    log_entry_url = "cyberscore.live/en/matches/174999.map1"
+    log_entries = [
+        {
+            "url": log_entry_url,
+            "lines": [
+                "   Статус: finished",
+                f"   URL: {log_entry_url}",
+                "   Score: 12 : 30",
+                "   ⚠️ ВЕРДИКТ: ОТКАЗ (нет star-сигнала)",
+            ],
+            "line_no": 100,
+        }
+    ]
     sent_messages: List[Dict[str, Any]] = []
-    saved_seen_urls: List[List[str]] = []
 
-    _install_monitored_matches(monkeypatch, queued)
-    # Live listing only contains match 100 → match 200 must be filtered out.
+    monkeypatch.setattr(runtime, "monitored_matches", {}, raising=False)
     monkeypatch.setattr(
         runtime,
-        "_admin_tail_current_live_map_urls",
-        lambda: {"dltv.org/matches/100/anything.0"},
-    )
-    monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
-    monkeypatch.setattr(
-        runtime,
-        "_save_admin_tail_log_seen_urls",
-        lambda urls, **_kwargs: saved_seen_urls.append(list(urls)),
+        "_build_recent_match_summaries_entries",
+        lambda **_kwargs: log_entries,
     )
     monkeypatch.setattr(
         runtime,
@@ -3690,15 +3641,14 @@ def test_send_admin_log_tail_filters_by_live_listing(monkeypatch) -> None:
     runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
     assert len(sent_messages) == 1
-    assert "Live100" in sent_messages[0]["message"]
-    assert "Done200" not in sent_messages[0]["message"]
-    assert saved_seen_urls == [["dltv.org/matches/100/live-now.0"]]
+    assert "174999" in sent_messages[0]["message"]
+    assert "ВЕРДИКТ" in sent_messages[0]["message"]
+    assert "❌ Статус: отказано" in sent_messages[0]["message"]
 
 
-def test_send_admin_log_tail_falls_back_to_log_entries_for_processed_matches(monkeypatch) -> None:
-    """Live matches that ran through check_head but were not queued (rejected
-    by the star-signal gate, sent immediately, etc) should still appear in
-    tail_log via the log-summary fallback."""
+def test_send_admin_log_tail_shows_freshly_parsed_match_without_verdict(monkeypatch) -> None:
+    """A match is visible right after parsing: full metrics are shown even
+    though no verdict exists yet."""
     log_entry_url = "cyberscore.live/en/matches/174356.map1"
     log_entries = [
         {
@@ -3707,26 +3657,19 @@ def test_send_admin_log_tail_falls_back_to_log_entries_for_processed_matches(mon
                 "   Статус: live",
                 f"   URL: {log_entry_url}",
                 "   Score: 0 : 0",
-                "   ⚠️ ВЕРДИКТ: ОТКАЗ (нет star-сигнала)",
+                "   ✅ Драфт успешно распарсен",
+                "   🛣️ Lanes: safe/mid/off",
             ],
             "line_no": 100,
         }
     ]
     sent_messages: List[Dict[str, Any]] = []
-    saved_seen_urls: List[List[str]] = []
 
     monkeypatch.setattr(runtime, "monitored_matches", {}, raising=False)
     monkeypatch.setattr(
         runtime,
         "_build_recent_match_summaries_entries",
         lambda **_kwargs: log_entries,
-    )
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
-    monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
-    monkeypatch.setattr(
-        runtime,
-        "_save_admin_tail_log_seen_urls",
-        lambda urls, **_kwargs: saved_seen_urls.append(list(urls)),
     )
     monkeypatch.setattr(
         runtime,
@@ -3738,13 +3681,48 @@ def test_send_admin_log_tail_falls_back_to_log_entries_for_processed_matches(mon
 
     assert len(sent_messages) == 1
     assert "174356" in sent_messages[0]["message"]
-    assert "ВЕРДИКТ" in sent_messages[0]["message"]
-    assert saved_seen_urls == [[log_entry_url]]
+    assert "Драфт успешно распарсен" in sent_messages[0]["message"]
+    assert "🕒 Статус: матч распарсен, вердикта ещё нет" in sent_messages[0]["message"]
 
 
-def test_send_admin_log_tail_prefers_queue_over_log_for_same_match(monkeypatch) -> None:
+def test_send_admin_log_tail_marks_delayed_sent_outcome(monkeypatch) -> None:
+    """A delayed outcome line in the log block turns into an explicit status."""
+    log_entry_url = "cyberscore.live/en/matches/174777.map1"
+    log_entries = [
+        {
+            "url": log_entry_url,
+            "lines": [
+                "   Статус: live",
+                f"   URL: {log_entry_url}",
+                "   Score: 5 : 3",
+                f"   ⏱️ Отложенный сигнал отправлен (delayed worker): {log_entry_url} (reason=x)",
+            ],
+            "line_no": 100,
+        }
+    ]
+    sent_messages: List[Dict[str, Any]] = []
+
+    monkeypatch.setattr(runtime, "monitored_matches", {}, raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "_build_recent_match_summaries_entries",
+        lambda **_kwargs: log_entries,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "send_message",
+        lambda message, **kwargs: sent_messages.append({"message": str(message), "kwargs": dict(kwargs)}),
+    )
+
+    runtime._send_admin_log_tail(line_count=100, raw_odds=False)
+
+    assert len(sent_messages) == 1
+    assert "✅ Статус: отправлен (delayed watcher)" in sent_messages[0]["message"]
+
+
+def test_send_admin_log_tail_merges_watcher_status_into_log_metrics(monkeypatch) -> None:
     """When a match is in both the delayed queue and the recent log, the
-    queue payload (rich Telegram-style body) wins; the log entry is skipped."""
+    snapshot shows the log metrics block plus the live watcher status."""
     queue_url = "dltv.org/matches/100/live-now.0"
     log_entries = [
         {
@@ -3768,13 +3746,6 @@ def test_send_admin_log_tail_prefers_queue_over_log_for_same_match(monkeypatch) 
         "_build_recent_match_summaries_entries",
         lambda **_kwargs: log_entries,
     )
-    monkeypatch.setattr(runtime, "_admin_tail_current_live_map_urls", lambda: None)
-    monkeypatch.setattr(runtime, "_load_admin_tail_log_seen_urls", lambda **_kwargs: [])
-    monkeypatch.setattr(
-        runtime,
-        "_save_admin_tail_log_seen_urls",
-        lambda urls, **_kwargs: None,
-    )
     monkeypatch.setattr(
         runtime,
         "send_message",
@@ -3784,11 +3755,10 @@ def test_send_admin_log_tail_prefers_queue_over_log_for_same_match(monkeypatch) 
     runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
     assert len(sent_messages) == 1
-    # Queue payload wins (header line СТАВКА НА Foo, footer with Reason etc.)
-    assert "Foo VS Bar" in sent_messages[0]["message"]
+    # Log metrics block is present, augmented with the watcher status footer.
+    assert "Score: 0 : 0" in sent_messages[0]["message"]
+    assert "в delayed watcher" in sent_messages[0]["message"]
     assert "Reason:" in sent_messages[0]["message"]
-    # Log entry was deduped by match id; its plain Score line should not appear.
-    assert "Score: 0 : 0" not in sent_messages[0]["message"]
 
 
 def test_load_telegram_subscribers_state_merges_primary_and_legacy(tmp_path, monkeypatch) -> None:
