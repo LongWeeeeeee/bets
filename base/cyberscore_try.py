@@ -4662,6 +4662,54 @@ def _compose_star_metric_blocks_for_message(
     return f"{str(early_block or '')}{str(late_block or '')}{str(all_block or '')}"
 
 
+# Модульный уровень: тот же формат, что у nested _format_metrics в star-ветке
+# check_head — нужно, чтобы no-star ветка отказа тоже собирала bet_message
+# с детальными блоками Early/Late/All для tail_log.
+_STAR_METRICS_BLOCK_LIST: Tuple[Tuple[str, str], ...] = (
+    ('counterpick_1vs1', 'Counterpick_1vs1'),
+    ('pos1_vs_pos1', 'Pos1vsPos1'),
+    ('counterpick_1vs2', 'Counterpick_1vs2'),
+    ('solo', 'Solo'),
+    ('synergy_duo', 'Synergy_duo'),
+    ('synergy_trio', 'Synergy_trio'),
+)
+
+_STAR_METRICS_BLOCK_ALL_LIST: Tuple[Tuple[str, str], ...] = (
+    ('counterpick_1vs1', 'Counterpick_1vs1'),
+    ('pos1_vs_pos1', 'Pos1vsPos1'),
+    ('counterpick_1vs2', 'Counterpick_1vs2'),
+    # Option C: post_lane-solo (7.41d) эмитится — показываем Solo и в подробном All-блоке.
+    ('solo', 'Solo'),
+    ('synergy_duo', 'Synergy_duo'),
+    ('synergy_trio', 'Synergy_trio'),
+    ('dota2protracker_cp1vs1', 'Protracker_1vs1'),
+    ('dota2protracker_duo', 'Protracker_duo'),
+    ('dota2protracker_solo', 'Protracker_solo'),
+    ('dota2protracker_solo_overall', 'Protracker_solo_overall'),
+    ('dltv_rating', 'DLTV_rating'),
+)
+
+
+def _format_star_metrics_block(
+    title: str,
+    block: Any,
+    metrics: Any,
+) -> str:
+    data = block if isinstance(block, dict) else {}
+    lines = [title]
+    for key, label in metrics:
+        value = data.get(key)
+        if key in (
+            "dota2protracker_cp1vs1",
+            "dota2protracker_duo",
+            "dota2protracker_solo",
+            "dota2protracker_solo_overall",
+        ):
+            value = _format_dota2protracker_output_value(value)
+        lines.append(f"{label}: {value}")
+    return "\n".join(lines) + "\n"
+
+
 _STAR_HITS_SUMMARY_WR_LEVELS: Tuple[int, ...] = (60, 65, 70, 75, 80, 85, 90)
 
 _STAR_HITS_SUMMARY_METRIC_LABELS: Dict[str, str] = {
@@ -32651,41 +32699,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # All star metrics block below.
 
             def _format_metrics(title, data, metrics):
-                lines = [title]
-                for key, label in metrics:
-                    value = data.get(key)
-                    if key in (
-                        "dota2protracker_cp1vs1",
-                        "dota2protracker_duo",
-                        "dota2protracker_solo",
-                        "dota2protracker_solo_overall",
-                    ):
-                        value = _format_dota2protracker_output_value(value)
-                    lines.append(f"{label}: {value}")
-                return "\n".join(lines) + "\n"
+                return _format_star_metrics_block(title, data, metrics)
 
-            metric_list = [
-                ('counterpick_1vs1', 'Counterpick_1vs1'),
-                ('pos1_vs_pos1', 'Pos1vsPos1'),
-                ('counterpick_1vs2', 'Counterpick_1vs2'),
-                ('solo', 'Solo'),
-                ('synergy_duo', 'Synergy_duo'),
-                ('synergy_trio', 'Synergy_trio'),
-            ]
-            all_metric_list = [
-                ('counterpick_1vs1', 'Counterpick_1vs1'),
-                ('pos1_vs_pos1', 'Pos1vsPos1'),
-                ('counterpick_1vs2', 'Counterpick_1vs2'),
-                # Option C: post_lane-solo (7.41d) эмитится — показываем Solo и в подробном All-блоке.
-                ('solo', 'Solo'),
-                ('synergy_duo', 'Synergy_duo'),
-                ('synergy_trio', 'Synergy_trio'),
-                ('dota2protracker_cp1vs1', 'Protracker_1vs1'),
-                ('dota2protracker_duo', 'Protracker_duo'),
-                ('dota2protracker_solo', 'Protracker_solo'),
-                ('dota2protracker_solo_overall', 'Protracker_solo_overall'),
-                ('dltv_rating', 'DLTV_rating'),
-            ]
+            metric_list = list(_STAR_METRICS_BLOCK_LIST)
+            all_metric_list = list(_STAR_METRICS_BLOCK_ALL_LIST)
             early_block = _format_metrics("Early NW (20-28):", early_output, metric_list)
             early_end_block = _format_metrics(
                 "Early Winner (20-28):", early_end_output, metric_list
@@ -37864,8 +37881,20 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 noskip_team_elo_block = ""
             # bet_message для no-star ветки: сюда не доходит сборка message_text
             # из star-ветки, но tail_log должен показывать матч в формате
-            # Telegram-ставки, а не пустым.
+            # Telegram-ставки, а не пустым. Блоки Early/Late/All собираются
+            # тем же форматтером, что и в star-ветке.
             try:
+                _noskip_early_block = _format_star_metrics_block(
+                    "Early NW (20-28):", s.get('early_output', {}), _STAR_METRICS_BLOCK_LIST
+                ) + _format_star_metrics_block(
+                    "Early Winner (20-28):", s.get('early_end_output', {}), _STAR_METRICS_BLOCK_LIST
+                )
+                _noskip_mid_block = _format_star_metrics_block(
+                    "Late: (28-60 min):", s.get('mid_output', {}), _STAR_METRICS_BLOCK_LIST
+                )
+                _noskip_all_block = _format_star_metrics_block(
+                    "All:", s.get('all_output', {}), _STAR_METRICS_BLOCK_ALL_LIST
+                )
                 _verdict_ctx["bet_message"] = (
                     f"{normalize_team_name_display(str(radiant_team_name or ''))} VS "
                     f"{normalize_team_name_display(str(dire_team_name or ''))}\n"
@@ -37873,6 +37902,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     f"{_build_lane_block(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=_build_dota2protracker_lane_adv_line(s), lane_adv_dict_line=_build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot')), lane_kills_adv=s.get('lane_kills_adv_dict'))}"
                     f"{noskip_team_elo_block}"
                     f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=s.get('all_output', {}))}"
+                    f"{_compose_star_metric_blocks_for_message(_noskip_early_block, _noskip_mid_block, _noskip_all_block)}"
                 )
             except Exception:
                 pass
