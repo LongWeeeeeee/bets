@@ -834,6 +834,71 @@ class _WinlineFastResult:
         self.match_found = True
 
 
+# GC series_type — enum (0=BO1, 1=BO3, 2=BO5, 3=BO2). На последней возможной карте
+# серии Winline иногда не выставляет рынок карты и оставляет только «Матч»: там
+# победитель карты и победитель матча — одно событие (проверено на живой странице
+# 02.08.2026, REKONIX vs YAKULT BROTHERS, карта 3 при счёте 1:1).
+_WINLINE_GC_SERIES_TYPE_TO_BEST_OF = {0: 1, 1: 3, 2: 5, 3: 2}
+_winline_series_rows_cache: Dict[str, Any] = {"mtime": None, "rows": []}
+
+
+def _winline_team_match_key(value: Any) -> str:
+    """Ключ названия команды для сверки со срезом SourceTV (без пунктуации/регистра)."""
+    text = re.sub(r"[^0-9a-zA-Zа-яёА-ЯЁ]+", " ", str(value or "")).strip().lower()
+    return re.sub(r"\s+", " ", text)
+
+
+def _winline_sourcetv_series_rows() -> List[Dict[str, Any]]:
+    """Свежий срез live-матчей SourceTV с кэшем по mtime (probe пишет раз в ~2 c)."""
+    try:
+        mtime = os.path.getmtime(SOURCETV_MATCHES_PATH)
+    except OSError:
+        return []
+    if _winline_series_rows_cache.get("mtime") == mtime:
+        return list(_winline_series_rows_cache.get("rows") or [])
+    try:
+        with open(SOURCETV_MATCHES_PATH, "r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except (OSError, ValueError):
+        return []
+    values = raw.values() if isinstance(raw, dict) else raw if isinstance(raw, list) else []
+    rows = [item for item in values if isinstance(item, dict)]
+    _winline_series_rows_cache["mtime"] = mtime
+    _winline_series_rows_cache["rows"] = rows
+    return list(rows)
+
+
+def _winline_series_last_map(map_num: Any, team1: str, team2: str) -> bool:
+    """Последняя ли это возможная карта серии (по формату из GC).
+
+    Формат неизвестен — возвращаем False: подставлять матчевые кэфы в поток
+    карты можно только при доказанной последней карте.
+    """
+    try:
+        map_i = int(map_num)
+    except (TypeError, ValueError):
+        return False
+    keys = {_winline_team_match_key(team1), _winline_team_match_key(team2)}
+    if "" in keys or len(keys) < 2:
+        return False
+    for row in _winline_sourcetv_series_rows():
+        row_keys = {
+            _winline_team_match_key(row.get("radiant_team_name")),
+            _winline_team_match_key(row.get("dire_team_name")),
+        }
+        if row_keys != keys:
+            continue
+        raw_type = row.get("series_type")
+        try:
+            best_of = _WINLINE_GC_SERIES_TYPE_TO_BEST_OF.get(int(raw_type))
+        except (TypeError, ValueError):
+            best_of = None
+        if not best_of:
+            return False
+        return map_i == int(best_of)
+    return False
+
+
 def _winline_fast_collect(
     page: Any,
     *,
@@ -937,6 +1002,11 @@ def _winline_fast_collect_from_payload(
         and not _winline_urls_look_equivalent(current_url, expected_url)
     ):
         return None
+    # На последней карте серии Winline иногда не выставляет рынок карты вовсе и
+    # оставляет только «Матч» — там победитель карты и победитель матча одно
+    # событие. Флаг решает только вопрос «последняя ли карта»; двухисходность
+    # рынка и совпадение карты проверяет сам парсер по DOM.
+    series_last_map = _winline_series_last_map(map_num, team1, team2)
     try:
         card = card_ctx("", team1, team2, html=html, map_num=map_num)
         extract = extract_fn(
@@ -945,6 +1015,7 @@ def _winline_fast_collect_from_payload(
             team2,
             map_num,
             html=html,
+            series_last_map=series_last_map,
         )
     except Exception:
         return None
