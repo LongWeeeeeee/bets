@@ -17,6 +17,26 @@ from itertools import combinations
 from pathlib import Path
 
 
+def _env_bool(name, default=True):
+    default_value = "1" if default else "0"
+    raw = str(os.getenv(name, default_value)).strip().lower()
+    if raw in {"1", "true", "yes", "y", "on"}:
+        return True
+    if raw in {"0", "false", "no", "n", "off"}:
+        return False
+    return bool(default)
+
+
+# Offline dictionary-build switches. Defaults preserve the current production
+# filters; callers may disable only the minute-10 gate in an isolated process.
+ANALISE_EARLY_MINUTE10_GATE_ENABLED = _env_bool(
+    "ANALISE_EARLY_MINUTE10_GATE_ENABLED", True
+)
+ANALISE_POST_LANE_MINUTE10_GATE_ENABLED = _env_bool(
+    "ANALISE_POST_LANE_MINUTE10_GATE_ENABLED", True
+)
+
+
 ALCHEMIST_HERO_ID = 73
 EARLY_DOMINATOR_THRESHOLDS_PATH = Path(os.getenv(
     "EARLY_DOMINATOR_THRESHOLDS_PATH",
@@ -780,12 +800,13 @@ def is_early_match(match, n: int = 3000):
             return True, 'radiant' if final_lead > 0 else 'dire'
         return False, None
 
-    if duration <= EARLY_GATE_INDEX:
-        return False, None
+    if ANALISE_EARLY_MINUTE10_GATE_ENABLED:
+        if duration <= EARLY_GATE_INDEX:
+            return False, None
 
-    gate_lead = _as_float(leads[EARLY_GATE_INDEX])
-    if gate_lead is None or abs(gate_lead) > EARLY_GATE_MAX_ABS_LEAD:
-        return False, None
+        gate_lead = _as_float(leads[EARLY_GATE_INDEX])
+        if gate_lead is None or abs(gate_lead) > EARLY_GATE_MAX_ABS_LEAD:
+            return False, None
 
     if duration < EARLY_LEAD_WINDOW[0]:
         return False, None
@@ -895,17 +916,18 @@ def is_post_lane_match(match, if_check: bool = False):
     if did_radiant_win is None or duration < POST_LANE_MIN_DURATION:
         return (False, None) if if_check else False
 
-    gate_index = POST_LANE_GATE_MINUTE - 1
-    if len(leads) <= gate_index:
-        return (False, None) if if_check else False
+    if ANALISE_POST_LANE_MINUTE10_GATE_ENABLED:
+        gate_index = POST_LANE_GATE_MINUTE - 1
+        if len(leads) <= gate_index:
+            return (False, None) if if_check else False
 
-    try:
-        gate_lead = float(leads[gate_index])
-    except (TypeError, ValueError):
-        return (False, None) if if_check else False
+        try:
+            gate_lead = float(leads[gate_index])
+        except (TypeError, ValueError):
+            return (False, None) if if_check else False
 
-    if abs(gate_lead) > POST_LANE_MAX_ABS_LEAD_AT_GATE:
-        return (False, None) if if_check else False
+        if abs(gate_lead) > POST_LANE_MAX_ABS_LEAD_AT_GATE:
+            return (False, None) if if_check else False
 
     winner = 'radiant' if did_radiant_win else 'dire'
     return (True, winner) if if_check else True
