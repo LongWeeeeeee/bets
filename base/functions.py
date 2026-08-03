@@ -2098,8 +2098,7 @@ def format_output_dict(
             value = raw.strip()
             if not value:
                 return None
-            if value.endswith('*'):
-                value = value[:-1]
+            value = value.rstrip('*').strip()
             try:
                 return float(value)
             except ValueError:

@@ -54,13 +54,15 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 | `_extract_nearest_cyberscore_scheduled_match_info(html)` | 10818 | ближайший матч расписания (sleep-таргет) |
 | `_get_team_tier(team_id)` | 12055 | tier 1/2/3 по `id_to_names` (см. ARCHITECTURE) |
 | `_match_has_tier1_team(radiant_team_id, dire_team_id)` | 12089 | True если ≥1 команда Tier-1 (OR; vs `_determine_star_signal_match_tier`=обе). Гейт kills-ставок (`KILLS_REQUIRE_TIER1_TEAM`) |
-| `_stake_multiplier_for_signal(...)` | 4990 | множитель ставки (x0.5/1/2/3) — см. ARCHITECTURE «Stake multiplier» |
-| `_stake_multiplier_from_context(...)` | 9560 | пересчитывает потенциальный main stake из сохранённого delayed-контекста на текущей минуте/NW |
+| `_stake_multiplier_for_signal(...)` | 4990 | множитель ставки (x0.5/1/2/3); `synergy_opposes_target=True` ставит cap x0.5 — см. ARCHITECTURE «Stake multiplier» |
+| `_stake_multiplier_from_context(...)` | 9560 | пересчитывает потенциальный main stake из сохранённого delayed-контекста на текущей минуте/NW, включая сохранённый synergy-veto |
 | `_late_speculative_allowed_for_context(...)` | 9600 | разрешает speculative x0.5 только при валидном Late и потенциальном main stake > x0.5 |
 | `_half_stake_elo_underdog_reject(...)` | 8415 | блокирует доставку x0.5, если target ELO-андердог на `HALF_STAKE_ELO_UNDERDOG_MIN_DIFF`+ |
 | `_deliver_and_persist_signal(...)` | 24723 | единая точка доставки/персиста сигнала; применяет half-stake ELO-underdog gate перед `send_message` |
 | `_record_map_verdict(match_key, *, verdict, kind, reason, metrics, protracker, star, elo, identity, dispatch, extra, create_only, bet_message, kills_window)` | ~25013 | журнал вердиктов карт: upsert 1 карта = 1 запись в `MAP_VERDICTS_PATH`; verdicts копятся (склейка подряд-дублей, cap 50), metrics/protracker/star/elo/kills_window заменяются последним снапшотом; `bet_message` хранит последний текст ставки и не затирается пустым; никогда не бросает; вызывается из всех ✅/⚠️/⛔ ВЕРДИКТ-точек `check_head`, kills-диспетчеров и delayed worker |
-| `_build_stake_multiplier_context(...)` | 5122 | контекст для множителя |
+| `_build_stake_multiplier_context(...)` | 5122 | контекст для множителя; сохраняет `synergy_confirmation_snapshot` и производный `synergy_opposes_target`, чтобы x0.5 cap не терялся в delayed watcher |
+| `_synergy_confirmation_snapshot_for_target(...)` | 8250 | собирает по Early/Early Winner/Late/All display-only подтверждения `synergy_duo`/`synergy_trio` с `|index|>=9` и конфликты их знака с target |
+| `_retarget_stake_context_synergy_confirmation(...)` | 8300 | при early-kills retarget пересчитывает synergy snapshot/veto относительно новой Early-side, не сохраняя решение для прежней Late-side |
 | `_evaluate_star_block_combination_gate(...)` | 5384 | terminal STAR combination gate для Early Winner/Late/All; одиночный Late блокируется при любом WR60+ star-хите противоположного знака в All независимо от Late WR; одинаковый знак Late/All разрешён |
 | `_build_late27_dispatch_guard_snapshot(...)` | 3477 | сериализуемый снимок фактов 27+ late-гейта (late знак/WR/hit count, поддержка early того же знака, WR60+ star-хиты All); уезжает в delayed payload через `stake_multiplier_context["all_star_hits"]` |
 | `_late27_dispatch_guard_snapshot_from_context(smc)` | 3528 | восстановление снимка из `stake_multiplier_context` delayed-записи (legacy-записи без `all_star_hits` → неизвестные поля не блокируют) |
@@ -266,13 +268,14 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 - `counterpick_1vs1` в сильной зоне использует enemy-role cap top-up: exact остаётся якорем, недостающее добирается same-role позициями противника ровно до `COUNTERPICK_1VS1_ROLE_TOPUP_MIN_MATCHES=35`. Authority включается около STAR-70 границы: Early/Early Winner `|score|>=9`, Late `>=10`, All `>=8`; ниже сохраняется legacy n30 lookup. Draft-scoped SQLite lookup всегда включает соответствующие cross-position cp1vs1-ключи.
 - `synergy_trio` использует role pool: позиции героев схлопываются только внутри семейств core (`pos1-3`) и support (`pos4-5`), затем distinct exact-position ячейки суммируются по score/games; перестановки одной raw-ячейки учитываются один раз. `SYNERGY_TRIO_MIN_MATCHES=25` для Early/Late и `POST_LANE_SYNERGY_TRIO_MIN_MATCHES=25` для All/post-lane. `_draft_stats_lookup_keys(...)` через `synergy_trio_role_lookup_keys(...)` заранее добавляет все same-role raw-ключи, поэтому scoped SQLite видит тот же пул, что полный словарь.
 - Строгая OOS-калибровка role-pooled `synergy_trio` на 105 422 public-картах (две хронологические половины) оставляет только воспроизводимые пороги: Early WR60 `|index|>=25`; Late — ни одного WR60+; All WR60 `|index|>=10`, All WR65 `|index|>=19`; уровней WR70+ нет.
+- В live advisory применяется единый фиксированный `SYNERGY_CONFIRMATION_ABS_THRESHOLD=9` к `synergy_duo` и `synergy_trio` во всех четырёх отображаемых блоках. Ячейка с `|index|>=9` получает `**` (в отличие от `*` у настоящего STAR-hit). Если знак хотя бы одного такого подтверждения направлен против выбранного target, `_stake_multiplier_for_signal(...)` ограничивает ставку до x0.5. Полный snapshot и `synergy_opposes_target` сохраняются в `stake_multiplier_context`, поэтому тот же veto повторно применяется в delayed-пути через `_stake_multiplier_from_context(...)`.
 - `STAR_SIGNAL_METRICS = {'counterpick_1vs1', 'counterpick_1vs2', 'dota2protracker_cp1vs1', 'solo', 'dltv_rating'}` (frozenset; `synergy_duo`/`synergy_trio` сюда не входят).
 - `STAR_DISABLED_METRICS = frozenset()` (пусто).
 - `STAR_THRESHOLD_SECTIONS = ('early_output', 'mid_output', 'all_output')`.
 - `STAR_THRESHOLDS_BY_WR = _load_star_thresholds()` ← `data/star_thresholds_by_wr.json` (env `STAR_THRESHOLDS_PATH`).
 - `STAR_THRESHOLD_WR` env default `60`.
 
-> Drift fixed: `synergy_duo`/`synergy_trio` НЕ входят в `STAR_SIGNAL_METRICS` (могут показываться в блоках, но не решают STAR).
+> Инвариант: `synergy_duo`/`synergy_trio` НЕ входят в `STAR_SIGNAL_METRICS`, не попадают в STAR hits и не делают блок валидным STAR-блоком. `**` и x0.5 veto — отдельный advisory-контур, а не самостоятельный dispatch-сигнал.
 
 ## `base/synergy_trio_role_pool.py` — core/support pooling для trio
 
