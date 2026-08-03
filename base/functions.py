@@ -143,6 +143,17 @@ COUNTERPICK_1VS1_CORE_MATCHUPS_REQUIRED = math.ceil(len(CORE_POSITIONS) * 2 / 3)
 SOLO_MIN_MATCHES = 50
 SYNERGY_DUO_MIN_MATCHES = 30
 COUNTERPICK_1VS1_MIN_MATCHES = 30
+# High-confidence cp1vs1 authority: keep exact positional evidence as the
+# anchor and top it up only to 35 games with the enemy hero's same-role
+# positions.  Frozen 7.41d OOS (105,422 maps, chronological discovery/validation)
+# improved every phase at STAR >=70; lower scores keep the legacy lookup.
+COUNTERPICK_1VS1_ROLE_TOPUP_MIN_MATCHES = 35
+COUNTERPICK_1VS1_ROLE_TOPUP_HIGH_ABS_BY_PHASE = {
+    'early_output': 9,
+    'early_end_output': 9,
+    'mid_output': 10,
+    'post_lane_output': 8,
+}
 POS1_VS_POS1_MIN_MATCHES = 30
 COUNTERPICK_1VS2_MIN_MATCHES = 15
 SYNERGY_TRIO_MIN_MATCHES = 15
@@ -2594,6 +2605,80 @@ def _lookup_counterpick_1vs1_winrate(data, left, right, min_matches):
     )
 
 
+def _lookup_counterpick_1vs1_role_topup_winrate(
+    data,
+    left,
+    right,
+    min_matches=COUNTERPICK_1VS1_ROLE_TOPUP_MIN_MATCHES,
+):
+    """Top up a thin exact cp1vs1 sample with enemy same-role positions.
+
+    Exact positional games remain the anchor.  Alternative enemy positions are
+    games-weighted, and only the number of effective games needed to reach the
+    gate is blended; excess fallback evidence cannot dilute a covered exact
+    matchup.  The own hero position never changes.
+    """
+    exact_value, exact_games = _lookup_vs_winrate(data, left, right)
+    exact_games = int(exact_games or 0)
+    if exact_games >= min_matches:
+        return exact_value, exact_games
+
+    enemy_hero_id, enemy_pos = _split_hero_position_key(right)
+    if not enemy_hero_id or not enemy_pos:
+        return exact_value, exact_games
+
+    fallback_score = 0.0
+    fallback_games = 0
+    for fallback_pos in _counterpick_1vs1_fallback_positions(enemy_pos):
+        value, games = _lookup_vs_winrate(data, left, f"{enemy_hero_id}{fallback_pos}")
+        games = int(games or 0)
+        if value is None or games <= 0:
+            continue
+        fallback_score += float(value) * games
+        fallback_games += games
+    if fallback_games <= 0:
+        return exact_value, exact_games
+
+    used_fallback_games = min(fallback_games, max(0, int(min_matches) - exact_games))
+    if used_fallback_games <= 0:
+        return exact_value, exact_games
+    exact_score = float(exact_value) * exact_games if exact_value is not None and exact_games > 0 else 0.0
+    total_games = exact_games + used_fallback_games
+    blended_value = (
+        exact_score + (fallback_score / fallback_games) * used_fallback_games
+    ) / total_games
+    return blended_value, total_games
+
+
+def _select_counterpick_1vs1_role_topup_score(current_score, topup_score, phase_name):
+    """Use n35 role-top-up as the authority only around the STAR-70 boundary."""
+    threshold = COUNTERPICK_1VS1_ROLE_TOPUP_HIGH_ABS_BY_PHASE.get(phase_name)
+    if threshold is None or topup_score is None:
+        return current_score
+    current_high = current_score is not None and abs(float(current_score)) >= threshold
+    topup_high = abs(float(topup_score)) >= threshold
+    return topup_score if current_high or topup_high else current_score
+
+
+def _collect_counterpick_1vs1_values(
+    heroes_and_pos,
+    heroes_and_pos_opposite,
+    data,
+    lookup,
+    min_matches,
+):
+    """Collect position-indexed cp1vs1 observations for an alternate lookup."""
+    output = {}
+    for pos, hero_data in heroes_and_pos.items():
+        hero_key = f"{int(hero_data['hero_id'])}{pos}"
+        for enemy_pos, enemy_data in heroes_and_pos_opposite.items():
+            enemy_key = f"{int(enemy_data['hero_id'])}{enemy_pos}"
+            value, games = lookup(data, hero_key, enemy_key, min_matches)
+            if value is not None and games >= min_matches:
+                output.setdefault(pos, []).append((value, games, enemy_pos))
+    return output
+
+
 # Same-role TOP-UP for counterpick_1vs2 (flag-gated; default OFF -> prod unchanged).
 # A duo matchup with FEWER than COUNTERPICK_1VS2_MIN_MATCHES exact games is topped up
 # with the same-role cross-position aggregate (core: pos1-3, support: pos4-5),
@@ -4131,7 +4216,13 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                         covered.update([i, j, k])
         return len(covered) == n
 
-    def _covers_1vs1(data, team, opp, min_matches_1vs1):
+    def _covers_1vs1(
+        data,
+        team,
+        opp,
+        min_matches_1vs1,
+        lookup=_lookup_counterpick_1vs1_winrate,
+    ):
         if not isinstance(data, dict):
             return False
         core_team = [(pos, hero) for pos, hero in team if pos in CORE_POSITIONS]
@@ -4147,7 +4238,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     continue
                 left = f"{int(hero_i)}{pos_i}"
                 right = f"{int(hero_j)}{pos_j}"
-                _, games = _lookup_counterpick_1vs1_winrate(data, left, right, min_matches_1vs1)
+                _, games = lookup(data, left, right, min_matches_1vs1)
                 if games >= min_matches_1vs1:
                     covered_core_matchups += 1
             if covered_core_matchups < COUNTERPICK_1VS1_CORE_MATCHUPS_REQUIRED:
@@ -4425,8 +4516,9 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     _diag_pos_support(output.get('radiant_counterpick_1vs2')),
                     _diag_pos_support(output.get('dire_counterpick_1vs2')),
                 )
+        current_cp_1vs1 = None
         if has_all_1vs1 and all(f'{side}_counterpick_1vs1' in output for side in ['radiant', 'dire']):
-            cp_1vs1 = get_diff(
+            current_cp_1vs1 = get_diff(
                 output['radiant_counterpick_1vs1'],
                 output['dire_counterpick_1vs1'],
                 _1vs2=True,
@@ -4444,8 +4536,75 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                 # neutral (all 1.0), so this makes cp1vs1 a pure games-weighted average.
                 pair_weights=None,
             )
-            if cp_1vs1 is not None:
-                phase_bucket['counterpick_1vs1'] = cp_1vs1
+
+        role_topup_min = COUNTERPICK_1VS1_ROLE_TOPUP_MIN_MATCHES
+        role_topup_radiant = _collect_counterpick_1vs1_values(
+            radiant_heroes_and_pos,
+            dire_heroes_and_pos,
+            data_dict,
+            _lookup_counterpick_1vs1_role_topup_winrate,
+            role_topup_min,
+        )
+        role_topup_dire = _collect_counterpick_1vs1_values(
+            dire_heroes_and_pos,
+            radiant_heroes_and_pos,
+            data_dict,
+            _lookup_counterpick_1vs1_role_topup_winrate,
+            role_topup_min,
+        )
+        has_role_topup_1vs1 = (
+            all_heroes_known
+            and _covers_1vs1(
+                data_dict,
+                radiant_team,
+                dire_team,
+                role_topup_min,
+                lookup=_lookup_counterpick_1vs1_role_topup_winrate,
+            )
+            and _covers_1vs1(
+                data_dict,
+                dire_team,
+                radiant_team,
+                role_topup_min,
+                lookup=_lookup_counterpick_1vs1_role_topup_winrate,
+            )
+        )
+        role_topup_cp_1vs1 = None
+        if has_role_topup_1vs1:
+            role_topup_cp_1vs1 = get_diff(
+                role_topup_radiant,
+                role_topup_dire,
+                _1vs2=True,
+                custom_position_weights=(
+                    COUNTERPICK_1VS1_POSITION_WEIGHTS
+                    if name in ('mid_output', 'post_lane_output')
+                    else phase_weights
+                ),
+                pair_weights=None,
+            )
+
+        cp_1vs1 = _select_counterpick_1vs1_role_topup_score(
+            current_cp_1vs1,
+            role_topup_cp_1vs1,
+            name,
+        )
+        if cp_1vs1 is not None:
+            phase_bucket['counterpick_1vs1'] = cp_1vs1
+            high_abs = COUNTERPICK_1VS1_ROLE_TOPUP_HIGH_ABS_BY_PHASE.get(name)
+            uses_role_topup = (
+                role_topup_cp_1vs1 is not None
+                and high_abs is not None
+                and (
+                    (current_cp_1vs1 is not None and abs(float(current_cp_1vs1)) >= high_abs)
+                    or abs(float(role_topup_cp_1vs1)) >= high_abs
+                )
+            )
+            if uses_role_topup:
+                phase_bucket['counterpick_1vs1_games'] = _diagnostic_support_two_sides(
+                    _diag_pos_support(role_topup_radiant),
+                    _diag_pos_support(role_topup_dire),
+                )
+            else:
                 phase_bucket['counterpick_1vs1_games'] = _diagnostic_support_two_sides(
                     _diag_pos_support(output.get('radiant_counterpick_1vs1')),
                     _diag_pos_support(output.get('dire_counterpick_1vs1')),

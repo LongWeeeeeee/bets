@@ -475,6 +475,43 @@ def test_counterpick_1vs1_uses_support_position_fallback() -> None:
     assert output["radiant_counterpick_1vs1"]["pos1"] == [(0.8, games, "pos4")]
 
 
+def test_counterpick_1vs1_role_topup_keeps_exact_anchor_and_caps_at_35() -> None:
+    data: dict = {}
+    left = "1pos1"
+    right = "6pos1"
+    _put_vs(data, left, right, 0.6, 10)
+    _put_vs(data, left, "6pos2", 0.8, 50)
+
+    value, games = functions._lookup_counterpick_1vs1_role_topup_winrate(
+        data,
+        left,
+        right,
+    )
+
+    assert games == functions.COUNTERPICK_1VS1_ROLE_TOPUP_MIN_MATCHES == 35
+    assert value == (0.6 * 10 + 0.8 * 25) / 35
+
+
+def test_counterpick_1vs1_role_topup_does_not_dilute_covered_exact() -> None:
+    data: dict = {}
+    left = "1pos1"
+    right = "6pos1"
+    _put_vs(data, left, right, 0.6, 35)
+    _put_vs(data, left, "6pos2", 0.9, 100)
+
+    assert functions._lookup_counterpick_1vs1_role_topup_winrate(data, left, right) == (0.6, 35)
+
+
+def test_counterpick_1vs1_role_topup_is_authority_only_near_high_boundary() -> None:
+    select = functions._select_counterpick_1vs1_role_topup_score
+
+    assert select(8, 7, "early_output") == 8
+    assert select(9, 8, "early_output") == 8
+    assert select(8, 9, "early_output") == 9
+    assert select(10, 9, "mid_output") == 9
+    assert select(7, 8, "post_lane_output") == 8
+
+
 def test_counterpick_1vs2_does_not_use_position_fallback() -> None:
     radiant = _side(1)
     dire = _side(6)
