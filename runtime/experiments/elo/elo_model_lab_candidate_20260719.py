@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Narrow candidate sweep after broad ELO lab; no production writes."""
 from __future__ import annotations
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))  # соседи по каталогу эксперимента
 import argparse, json, math, sys, unicodedata
 from collections import defaultdict
 from dataclasses import replace
@@ -14,7 +16,7 @@ ROOT=Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path: sys.path.insert(0,str(ROOT))
 
 import ELO.models as elo_models
-import runtime.elo_model_lab_20260719 as lab
+import elo_model_lab_20260719 as lab
 from ELO.config import HybridEloConfig
 from ELO.data_loader import load_matches
 from ELO.domain import LeagueTier

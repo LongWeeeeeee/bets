@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Factorial ablation around the 25/75 player-core candidate; research only."""
 from __future__ import annotations
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))  # соседи по каталогу эксперимента
 import argparse, json, sys
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -11,8 +13,8 @@ ROOT=Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path: sys.path.insert(0,str(ROOT))
 
 import ELO.models as elo_models
-import runtime.elo_model_lab_20260719 as lab
-import runtime.elo_model_lab_candidate_20260719 as candidate
+import elo_model_lab_20260719 as lab
+import elo_model_lab_candidate_20260719 as candidate
 from ELO.config import HybridEloConfig
 from ELO.data_loader import load_matches
 from ELO.series_data import build_series_bundles

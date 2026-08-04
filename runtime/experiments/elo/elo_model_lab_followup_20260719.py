@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Follow-up ELO lab for narrow hypotheses found in the first sweep."""
 from __future__ import annotations
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))  # соседи по каталогу эксперимента
 import argparse, copy, json, sys
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -13,7 +15,7 @@ from ELO.config import HybridEloConfig
 from ELO.data_loader import load_matches
 from ELO.series_data import build_series_bundles
 from ELO.tiering import classify_leagues, attach_league_tiers, attach_league_tiers_time_aware
-from runtime.elo_model_lab_20260719 import (
+from elo_model_lab_20260719 import (
     ExactLineupResidualModel, aligned, by_tier, collect_rows, make_hybrid,
     metric, paired_block_ci, slice_rows, transform_temperature,
 )

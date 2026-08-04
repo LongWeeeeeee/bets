@@ -1,3 +1,6 @@
+
+import sys as _sys, pathlib as _pathlib
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent))  # соседи по каталогу эксперимента
 import json
 import os
 import sqlite3
@@ -7,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from runtime import setup_ruflo_isolated_roots as isolated_roots
+import setup_ruflo_isolated_roots as isolated_roots
 
 
 def create_agentdb(path: Path) -> None:
