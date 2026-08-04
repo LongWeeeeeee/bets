@@ -141,3 +141,13 @@ runtime/sourcetv_matches.json
 base/_archive/backups/
 base/_archive/research-data/logged_bets_with_outcomes.json
 runtime/_archive/
+
+# runtime/artifacts: маркеры и дампы прогонов не коммитим
+runtime/artifacts/**/*.pid
+runtime/artifacts/**/*.lock
+runtime/artifacts/**/*.ok
+runtime/artifacts/**/*.logpath
+runtime/artifacts/**/*.env
+runtime/artifacts/**/*.tmp
+runtime/artifacts/**/*.patch
+runtime/artifacts/**/*.html
