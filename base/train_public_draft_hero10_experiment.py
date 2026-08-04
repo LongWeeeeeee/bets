@@ -369,7 +369,8 @@ def train_experiment(matches: list[Match], output_dir: Path, pair_min_support: i
         "split_boundaries": boundaries,
     }
     _atomic_json(result, output_dir / "results.json")
-    manifest = {"experiment": "public_draft_hero10", "version": VERSION, "input": str(DEFAULT_INPUT_DIR),
+    manifest = {"experiment": "public_draft_hero10", "version": output_dir.name or VERSION,
+                "design_version": VERSION, "input": str(DEFAULT_INPUT_DIR),
                 "counts": result["counts"], "split_boundaries": boundaries,
                 "artifacts": sorted(p.name for p in output_dir.iterdir())}
     _atomic_json(manifest, output_dir / "manifest.json")
