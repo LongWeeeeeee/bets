@@ -67,6 +67,20 @@ def test_split_is_chronological_60_20_20():
     assert train[-1].start_time < validation[0].start_time < test[0].start_time
 
 
+def test_split_validation_accepts_every_corpus_size():
+    """floor(0.8n)-floor(0.6n) != floor(0.2n) for 40% of n; the validator must
+    follow the splitter's cut points rather than recompute the middle share."""
+    from base.train_public_draft_hero10_experiment import _validate_split_boundaries
+
+    mismatched = [n for n in range(10, 200) if (n * 80 // 100) - (n * 60 // 100) != n * 20 // 100]
+    assert mismatched, "expected sizes where the two formulas disagree"
+    for n in mismatched:
+        matches = [canonicalize_match(sample(i, i))[0] for i in range(1, n + 1)]
+        ordered = [m for m in matches if m is not None]
+        train, validation, test = chronological_split(ordered)
+        _validate_split_boundaries({"train": train, "validation": validation, "test": test}, n)
+
+
 def test_split_boundary_uses_map_id_for_ties():
     matches = [canonicalize_match(sample(i, 100))[0] for i in range(1, 11)]
     ordered = sorted((m for m in matches if m is not None), key=lambda m: (m.start_time, m.map_id))

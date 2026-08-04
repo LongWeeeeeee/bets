@@ -77,8 +77,11 @@ def _split_boundary(matches: list[Match]) -> dict[str, Any]:
 
 
 def _validate_split_boundaries(splits: Mapping[str, list[Match]], total: int) -> dict[str, Any]:
-    expected = {"train": total * 60 // 100, "validation": total * 20 // 100}
-    expected["test"] = total - expected["train"] - expected["validation"]
+    # Derive the expected sizes from the same cut points `chronological_split`
+    # uses.  Recomputing the middle share as `total * 20 // 100` disagrees with
+    # `floor(0.8n) - floor(0.6n)` for 40% of corpus sizes.
+    first_cut, second_cut = total * 60 // 100, total * 80 // 100
+    expected = {"train": first_cut, "validation": second_cut - first_cut, "test": total - second_cut}
     if any(len(splits[name]) != expected[name] for name in expected):
         raise ValueError("split counts must use exact chronological 60/20/20 allocation")
     pairs = [(m.start_time, m.map_id) for name in ("train", "validation", "test") for m in splits[name]]
