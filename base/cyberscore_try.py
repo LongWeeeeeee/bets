@@ -37903,8 +37903,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     section="mid_output",
                     target_wr=star_target_wr,
                 )
+                # Tempo обходит STAR-гейт, значит s['all_output'] не выставлен —
+                # логируем собранный All-блок, а не пустышку.
                 tempo_all_output_log = _decorate_star_block_for_display(
-                    raw_block=s.get('all_output', {}),
+                    raw_block=star_base_all_output,
                     section="all_output",
                     target_wr=star_target_wr,
                 )
@@ -38075,8 +38077,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 _noskip_mid_block = _format_star_metrics_block(
                     "Late: (28-60 min):", s.get('mid_output', {}), _STAR_METRICS_BLOCK_LIST
                 )
+                # s['all_output'] выставляется только в star-ветке, а сюда мы
+                # попадаем именно без star-сигнала — берём тот же собранный
+                # блок, что уходит в лог (post_lane + ProTracker + DLTV).
                 _noskip_all_block = _format_star_metrics_block(
-                    "All:", s.get('all_output', {}), _STAR_METRICS_BLOCK_ALL_LIST
+                    "All:", star_base_all_output, _STAR_METRICS_BLOCK_ALL_LIST
                 )
                 _verdict_ctx["bet_message"] = (
                     f"{normalize_team_name_display(str(radiant_team_name or ''))} VS "
@@ -38084,7 +38089,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     f"{_build_series_score_line(data.get('live_league_data') or {})}"
                     f"{_build_lane_block(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=_build_dota2protracker_lane_adv_line(s), lane_adv_dict_line=_build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot')), lane_kills_adv=s.get('lane_kills_adv_dict'))}"
                     f"{noskip_team_elo_block}"
-                    f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=s.get('all_output', {}))}"
+                    f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=star_base_all_output)}"
                     f"{_compose_star_metric_blocks_for_message(_noskip_early_block, _noskip_mid_block, _noskip_all_block)}"
                 )
             except Exception:
