@@ -44,8 +44,26 @@ def _env_float(name: str, default: float) -> float:
 # коалесцируются и это честно отражается в cadence_overrun.
 POLL_INTERVAL_SECONDS = _env_float("WINLINE_CURRENT_MAP_POLL_INTERVAL_S", 5.0)
 ACCELERATED_POLL_INTERVAL_SECONDS = 2.0
-RELOAD_AFTER_CONSECUTIVE_MISSES = 3
-RELOAD_MIN_SPACING_SECONDS = 60.0
+# Перезагрузка страницы не бесплатна: goto через прод-прокси занимает десятки
+# секунд, и всё это время в DOM нет ни карточек, ни рынков. Замер по evidence
+# 02.08.2026 (Team Falcons vs 1w, карта 2: 643 попытки, 53 перезагрузки) —
+# доля снимков с кэфами в первые 60 с после перезагрузки 1-5%, а спустя 60 с
+# без перезагрузок 25-79% (у соседних матчей того же окна 72-79%). С прежними
+# порогами (3 промаха, спейсинг 60 с) поллер уходил в самоподдерживающуюся
+# петлю: промахи -> перезагрузка -> пустая страница -> снова промахи.
+RELOAD_AFTER_CONSECUTIVE_MISSES = int(
+    _env_float("WINLINE_CURRENT_MAP_RELOAD_AFTER_MISSES", 20.0)
+)
+RELOAD_MIN_SPACING_SECONDS = _env_float("WINLINE_CURRENT_MAP_RELOAD_SPACING_S", 300.0)
+
+# Пока страница после перезагрузки дорисовывается, «рынка нет» говорит о нашей
+# перезагрузке, а не о букмекере: такие снимки не копят счётчик промахов.
+RELOAD_SETTLE_SECONDS = _env_float("WINLINE_CURRENT_MAP_RELOAD_SETTLE_S", 30.0)
+
+# Честная причина для перезагрузки — застывший DOM. Живая карточка меняет
+# счёт и таймер каждую секунду, поэтому неизменная подпись минутами означает,
+# что страница перестала получать обновления.
+RELOAD_STALE_DOM_SECONDS = _env_float("WINLINE_CURRENT_MAP_RELOAD_STALE_DOM_S", 120.0)
 SAFETY_CEILING_SECONDS = 90 * 60.0  # 90 minutes; not proof map ended
 
 PRIMARY_MARKET_NEVER_EXPOSED = "market_never_exposed"
@@ -300,6 +318,8 @@ class WinlineCurrentMapOddsPoller:
         poll_interval_seconds: float = POLL_INTERVAL_SECONDS,
         reload_after_consecutive_misses: int = RELOAD_AFTER_CONSECUTIVE_MISSES,
         reload_min_spacing_seconds: float = RELOAD_MIN_SPACING_SECONDS,
+        reload_settle_seconds: float = RELOAD_SETTLE_SECONDS,
+        reload_stale_dom_seconds: float = RELOAD_STALE_DOM_SECONDS,
         safety_ceiling_seconds: float = SAFETY_CEILING_SECONDS,
         continuous: bool = False,
         **_extra: Any,
@@ -314,6 +334,8 @@ class WinlineCurrentMapOddsPoller:
         self._poll_interval = float(poll_interval_seconds)
         self._reload_after = int(reload_after_consecutive_misses)
         self._reload_spacing = float(reload_min_spacing_seconds)
+        self._reload_settle = float(reload_settle_seconds)
+        self._reload_stale_dom = float(reload_stale_dom_seconds)
         self._safety_ceiling = float(safety_ceiling_seconds)
         # Continuous mode: accepted odds stop being terminal, so the same map keeps
         # being polled and later price moves are observed. Lifecycle terminals
@@ -504,6 +526,7 @@ class WinlineCurrentMapOddsPoller:
         self._last_reload_mono = None
         self._last_dom_signature = None
         self._last_dom_hash = None
+        self._last_dom_change_mono = None
         self._page_valid_for_dynamic = False
         self._next_poll_mono = 0.0
         self._started_mono = None
@@ -518,11 +541,22 @@ class WinlineCurrentMapOddsPoller:
         self._lifecycle_event = None
         self._accelerated = False
 
+    def _dom_is_stale(self, now_mono: float) -> bool:
+        """DOM не меняется дольше порога — страница перестала обновляться.
+
+        У живой карточки счёт и таймер меняются каждую секунду, поэтому
+        застывшая подпись минутами — это мёртвая страница, а не спокойный рынок.
+        """
+        if self._reload_stale_dom <= 0 or self._last_dom_change_mono is None:
+            return False
+        return (now_mono - self._last_dom_change_mono) >= self._reload_stale_dom
+
     def _choose_acquisition_mode(self, now_mono: float) -> str:
         if not self._page_valid_for_dynamic:
             return "initial_goto"
-        # reload escalation: 3 consecutive eligible misses + spacing
-        if self._consecutive_misses >= self._reload_after:
+        # Перезагрузка — крайняя мера: она сама на десятки секунд лишает страницу
+        # карточек. Поводов ровно два: длинная серия промахов и застывший DOM.
+        if self._consecutive_misses >= self._reload_after or self._dom_is_stale(now_mono):
             if self._last_reload_mono is None or (
                 now_mono - self._last_reload_mono
             ) >= self._reload_spacing:
@@ -595,6 +629,10 @@ class WinlineCurrentMapOddsPoller:
         if mode_used == "controlled_reload":
             self._reload_count += 1
             self._last_reload_mono = finished_mono
+            # Страницу только что обновили: доказательства «рынка нет» набираем
+            # заново, иначе прежняя серия промахов закажет следующую
+            # перезагрузку сразу, как истечёт спейсинг.
+            self._consecutive_misses = 0
 
         page_valid = result.get("page_valid")
         if page_valid is None:
@@ -603,6 +641,14 @@ class WinlineCurrentMapOddsPoller:
 
         dom_sig = _bounded_dom(result.get("dom_signature"))
         dom_hash = _bounded_dom(result.get("dom_hash"))
+        # Отметка живости страницы: любая смена подписи DOM означает, что
+        # обновления доходят. По ней (а не по отсутствию рынка) решается,
+        # нужна ли перезагрузка.
+        if self._last_dom_change_mono is None or (
+            (dom_sig and dom_sig != (self._last_dom_signature or ""))
+            or (dom_hash and dom_hash != (self._last_dom_hash or ""))
+        ):
+            self._last_dom_change_mono = finished_mono
         market_status = _normalize_market_status(result.get("market_status")) or "unknown"
         source = result.get("source") or "winline"
         parser_reasons = list(result.get("parser_failure_reasons") or [])
@@ -645,7 +691,17 @@ class WinlineCurrentMapOddsPoller:
             # change can therefore suppress recovery for the rest of a map.
             # A valid-page market miss remains a consecutive miss regardless of
             # unrelated DOM churn; accepted odds/browser failures still reset it.
-            self._consecutive_misses += 1
+            if (
+                self._last_reload_mono is not None
+                and self._reload_settle > 0
+                and (finished_mono - self._last_reload_mono) < self._reload_settle
+            ):
+                # Страница ещё дорисовывается после нашей же перезагрузки.
+                # Считать это промахом букмекера — значит немедленно набрать
+                # счётчик заново и заказать следующую перезагрузку.
+                pass
+            else:
+                self._consecutive_misses += 1
             self._last_dom_signature = dom_sig
             self._last_dom_hash = dom_hash
             self._page_valid_for_dynamic = True

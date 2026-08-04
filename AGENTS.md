@@ -26,6 +26,7 @@
 | sleep-политики, расписания опроса, quiet hours | `docs/SCHEDULING.md` |
 | полного объяснения операционных правил, деплоя, примеров запуска | `docs/RUNTIME_RULES.md` |
 | RuFlo swarm/goals/intelligence/autopilot/AgentDB, миграции anti-stall | `docs/RUFLO_RUNTIME.md` |
+| раскладки файлов на serv1: куда класть скрипт, артефакт, бэкап, что не трогать | `docs/SERVER_LAYOUT.md` |
 
 > **Правило свежести:** если содержимое дока противоречит реальному коду — **верь коду** и отметь расхождение (док устарел → обнови через subagent `scribe`).
 

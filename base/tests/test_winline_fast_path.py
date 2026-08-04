@@ -128,6 +128,43 @@ def test_fast_path_returns_odds_from_own_card():
     assert page.calls == 1
 
 
+def test_fast_path_bo3_map1_uses_map_market_not_series_market(monkeypatch):
+    """Первая карта BO3 не получает цены рынка серии и не промотируется."""
+    html = """
+    <ww-feature-block-event-dsk class="card">
+      <div class="card__teams"><a><div>FTS</div><div>PuckChamp</div></a></div>
+      <div class="card__header">1карта 12'</div>
+      <div class="card__body">
+        <div class="period-name">Матч</div>
+        <div class="card__coeffs">
+          <ww-feature-event-market-dsk>
+            <div class="coefficient-button coefficient-button_generic2"><span>3.70</span></div>
+            <div class="coefficient-button coefficient-button_generic2"><span>1.21</span></div>
+          </ww-feature-event-market-dsk>
+        </div>
+      </div>
+      <div class="card__body">
+        <div class="period-name">1 карта</div>
+        <div class="card__coeffs">
+          <ww-feature-event-market-dsk>
+            <div class="coefficient-button coefficient-button_generic2"><span>4.20</span></div>
+            <div class="coefficient-button coefficient-button_generic2"><span>1.16</span></div>
+          </ww-feature-event-market-dsk>
+        </div>
+      </div>
+    </ww-feature-block-event-dsk>
+    """
+    monkeypatch.setattr(cs, "_winline_series_last_map", lambda *_args: False)
+
+    out = _collect(FakePage(html), map_num=1, team1="FTS", team2="PuckChamp")
+
+    assert out is not None
+    assert out["market_status"] == "open"
+    assert out["odds_bettable"] is True
+    assert out["p1_odds"] == 4.20
+    assert out["p2_odds"] == 1.16
+
+
 def test_fast_path_never_returns_neighbour_odds():
     """Ключевой инвариант: чужие кэфы не подмешиваются.
 

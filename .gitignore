@@ -146,3 +146,17 @@ scratch/
 .codex-*/
 # модели экспериментов не коммитим — только manifest/results/audit
 data/public_draft_hero10_experiment/**/*.joblib
+# --- служебные архивы уборки 2026-08-04 (бэкапы и артефакты прогонов не коммитим)
+base/_archive/backups/
+base/_archive/research-data/logged_bets_with_outcomes.json
+runtime/_archive/
+
+# runtime/artifacts: маркеры и дампы прогонов не коммитим
+runtime/artifacts/**/*.pid
+runtime/artifacts/**/*.lock
+runtime/artifacts/**/*.ok
+runtime/artifacts/**/*.logpath
+runtime/artifacts/**/*.env
+runtime/artifacts/**/*.tmp
+runtime/artifacts/**/*.patch
+runtime/artifacts/**/*.html

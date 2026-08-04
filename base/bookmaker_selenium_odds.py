@@ -1454,6 +1454,10 @@ class _WinlineMapExtract:
     p1_team: Optional[str] = None
     p2_team: Optional[str] = None
     details: str = ""
+    # True — кэфы взяты из рынка «Матч» на ПОСЛЕДНЕЙ карте серии, где победитель
+    # карты и победитель матча — одно событие. Провенанс обязателен: во всех
+    # остальных случаях подставлять матчевые кэфы в поток карты запрещено.
+    promoted_from_match: bool = False
 
 
 _WINLINE_EVENT_BOUNDARY_RE = re.compile(
@@ -1719,6 +1723,13 @@ _WINLINE_COEFF_BUTTON_CLASS = "coefficient-button"
 # рынка, из которого разобраны кэфы.
 _WINLINE_WINNER_MARKET_BUTTON_CLASS = "coefficient-button_generic2"
 
+# Рынок из ТРЁХ исходов (с ничьей): на Bo2 «Матч» рисуется именно так. Победитель
+# карты — исход из двух, поэтому трёхисходный рынок подставлять вместо него нельзя.
+# Проверено на живой странице 02.08.2026: у VICI GAMING vs OG (Bo2, карта 2)
+# `Матч 5.81 1.10 -` набран классом `_generic3`, а строка `2 карта 5.87 1.11` —
+# `_generic2`.
+_WINLINE_THREE_WAY_MARKET_BUTTON_CLASS = "coefficient-button_generic3"
+
 
 def _winline_node_classes(node: Any) -> set:
     raw = node.get("class") if hasattr(node, "get") else None
@@ -1748,11 +1759,137 @@ def _winline_winner_market_buttons(container: Any) -> List[Any]:
     ]
 
 
+_WINLINE_MATCH_MARKET_LABEL_RE = re.compile(r"^\s*матч\s*$", re.I)
+
+
+def _winline_map_row_present(text: str, map_num: int) -> bool:
+    """Есть ли в тексте подпись рынка запрошенной карты (пусть и без цен).
+
+    Только подпись РЫНКА: она пишется с пробелом (`3 карта 1.87 1.83`). Шапка
+    живой карточки (`3карта 28'`) и счётчик по картам (`3К 39 30`) подписями
+    рынка не являются — иначе карточка, где рынка карты нет вовсе, выглядела бы
+    как карточка с рынком.
+    """
+    return bool(
+        re.search(
+            rf"(?:победитель\s*{int(map_num)}\s*карт[аы]|\b{int(map_num)}\s+карта\b)",
+            text or "",
+            re.I,
+        )
+    )
+
+
+def _winline_match_market_winner_prices(scope: Any) -> Optional[List[float]]:
+    """Две цены рынка «Матч» внутри карточки — только если исходов ровно два.
+
+    Трёхисходный рынок (`_generic3`, с ничьей) не годится: победитель карты —
+    исход из двух. На Bo2 «Матч» рисуется именно трёхисходным.
+    """
+    for label in scope.find_all(True):
+        if not _WINLINE_MATCH_MARKET_LABEL_RE.match(" ".join(label.stripped_strings) or ""):
+            continue
+        containers = [
+            candidate
+            for candidate in (label.find_next_sibling(), label.parent)
+            if candidate is not None
+        ]
+        for container in containers:
+            if any(
+                _WINLINE_THREE_WAY_MARKET_BUTTON_CLASS in _winline_node_classes(node)
+                for node in container.find_all(True)
+            ):
+                return None
+            buttons = _winline_winner_market_buttons(container)
+            if len(buttons) != 2 or any(_winline_button_is_unbettable(b) for b in buttons):
+                continue
+            prices: List[float] = []
+            for button in buttons:
+                match = re.search(
+                    r"(?<!\d)([0-9]+[.,][0-9]+)(?!\d)",
+                    " ".join(button.stripped_strings),
+                )
+                if not match:
+                    prices = []
+                    break
+                price = float(match.group(1).replace(",", "."))
+                if price <= 1.01:
+                    prices = []
+                    break
+                prices.append(price)
+            if len(prices) == 2:
+                return prices
+    return None
+
+
+def _winline_promote_last_map_match_market(
+    soup: Any,
+    team1: str,
+    team2: str,
+    map_num: int,
+) -> Optional["_WinlineMapExtract"]:
+    """Рынок «Матч» как рынок ПОСЛЕДНЕЙ карты серии.
+
+    На решающей карте Winline иногда не выставляет рынок карты вовсе и оставляет
+    только «Матч» — победитель этой карты и победитель матча тогда одно событие.
+    Проверено на живой странице 02.08.2026: у REKONIX vs YAKULT BROTHERS (Bo3,
+    счёт 1:1, карта 3) в карточке единственная подпись рынка — `Матч 3.30 1.25`,
+    и обе цены набраны классом двухисходного рынка.
+
+    Предохранители: подставляем только когда подписи рынка запрошенной карты нет
+    НИ В ОДНОЙ карточке пары (приостановленный рынок карты — это не отсутствие),
+    рынок «Матч» двухисходный, обе кнопки принимают ставку, а порядок сторон
+    доказан по тексту карточки.
+    """
+    candidates: List[Tuple[int, Any, str]] = []
+    for element in soup.find_all(True):
+        scope_text = " ".join(element.stripped_strings)
+        if not scope_text or not _text_matches_teams(scope_text, team1, team2):
+            continue
+        if not _winline_single_card_scope(scope_text):
+            # Широкий контейнер накрывает соседние матчи: его подписи рынков
+            # ничего не говорят о нашей карточке.
+            continue
+        if _winline_map_row_present(scope_text, map_num):
+            return None
+        candidates.append((len(scope_text), element, scope_text))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    for _length, element, scope_text in candidates:
+        header = _WINLINE_CARD_HEADER_MARKER_RE.search(scope_text)
+        if header is None or int(header.group()[0]) != int(map_num):
+            # Карточка сама пишет, какая карта идёт (`3карта`). Если она молчит
+            # или идёт другая карта — подставлять матчевые кэфы нельзя.
+            continue
+        order = _winline_team_order(scope_text, team1, team2)
+        if order is None:
+            continue
+        prices = _winline_match_market_winner_prices(element)
+        if not prices:
+            continue
+        if order == "reverse":
+            prices.reverse()
+        return _WinlineMapExtract(
+            odds=prices,
+            map_num=map_num,
+            market_kind="current_map_winner",
+            p1_team="team1",
+            p2_team="team2",
+            promoted_from_match=True,
+            details=(
+                "winline last map of series: map market not offered, match winner "
+                f"promoted | {scope_text[:600]}"
+            ),
+        )
+    return None
+
+
 def _winline_structured_current_map_winner(
     html: str,
     team1: str,
     team2: str,
     map_num: Optional[int],
+    series_last_map: bool = False,
 ) -> Optional["_WinlineMapExtract"]:
     """Extract only the two DOM buttons of the current-map winner market.
 
@@ -1771,7 +1908,23 @@ def _winline_structured_current_map_winner(
     except Exception:
         return None
 
-    exact_label_re = re.compile(rf"^{int(map_num)}\s*карта$", re.I)
+    # Подпись строки рынка пишется с пробелом (`3 карта`), а шапка живой карточки
+    # — слитно (`3карта 28'`). Без этого различия шапка принималась за подпись
+    # рынка: карточка с единственным рынком «Матч» выглядела как «рынок карты есть,
+    # но без кнопок», и промоция матчевого рынка на последней карте не срабатывала.
+    exact_label_re = re.compile(rf"^{int(map_num)}\s+карта$", re.I)
+    glued_label_re = re.compile(rf"^{int(map_num)}\s*карта$", re.I)
+
+    def _is_map_market_label(node: Any) -> bool:
+        text = " ".join(node.stripped_strings)
+        if exact_label_re.fullmatch(text):
+            return True
+        # Слитную подпись принимаем только у настоящей строки рынка, опознаваемой
+        # классом периода: у шапки карточки другой класс (header-left__time).
+        return bool(
+            glued_label_re.fullmatch(text)
+            and _WINLINE_PERIOD_NAME_CLASS in _winline_node_classes(node)
+        )
     saw_requested_row = False
     saw_unbettable_winner = False
     evidence = ""
@@ -1829,7 +1982,7 @@ def _winline_structured_current_map_winner(
                     continue
                 if " ".join(name.stripped_strings).lower() != "победитель":
                     continue
-                if not exact_label_re.fullmatch(" ".join(period.stripped_strings)):
+                if not _is_map_market_label(period):
                     continue
                 saw_requested_row = True
                 evidence = evidence or scope_text[:700]
@@ -1918,7 +2071,7 @@ def _winline_structured_current_map_winner(
         for label in event_scope.find_all(
             lambda tag: (
                 tag.name in {"div", "span"}
-                and exact_label_re.fullmatch(" ".join(tag.stripped_strings))
+                and _is_map_market_label(tag)
             )
         ):
             row = label.parent
@@ -1941,8 +2094,7 @@ def _winline_structured_current_map_winner(
     for label in soup.find_all(
         lambda tag: _WINLINE_PERIOD_NAME_CLASS in _winline_node_classes(tag)
     ):
-        label_text = " ".join(label.stripped_strings)
-        if not exact_label_re.fullmatch(label_text):
+        if not _is_map_market_label(label):
             continue
 
         # The period row itself does not contain team names. Climb only to the
@@ -2049,6 +2201,12 @@ def _winline_structured_current_map_winner(
                 )
             ),
         )
+    if series_last_map:
+        # Рынка запрошенной карты в карточке нет вовсе, а карта последняя в серии:
+        # победитель этой карты и победитель матча — одно событие.
+        promoted = _winline_promote_last_map_match_market(soup, team1, team2, map_num)
+        if promoted is not None:
+            return promoted
     return None
 
 
@@ -2084,19 +2242,41 @@ def _winline_map_odds_bettable(
         scopes = []
         for element in soup.find_all(True):
             card_text = " ".join(element.stripped_strings)
-            if card_text and _text_matches_teams(card_text, team1, team2):
-                scopes.append((len(card_text), element))
+            if not card_text or not _text_matches_teams(card_text, team1, team2):
+                continue
+            if not _winline_single_card_scope(card_text):
+                # Общий feed/tournament ancestor содержит нужные команды, но
+                # одновременно охватывает соседние матчи и не является
+                # доказанной карточкой целевого события.
+                continue
+            if not any(
+                _labels_this_map(" ".join(label.stripped_strings))
+                for label in element.find_all(
+                    lambda tag: (
+                        _WINLINE_PERIOD_NAME_CLASS in _winline_node_classes(tag)
+                    )
+                )
+            ):
+                continue
+            scopes.append((len(card_text), element))
         if not scopes:
             # Карточки этих команд на странице нет — судить о доступности
             # исхода не по чему. Чужой рынок читать нельзя.
             return None
         scopes.sort(key=lambda item: item[0])
-        # Проверяем все совпавшие узлы: обрезка здесь способна скрыть
-        # настоящие кнопки рынка за закреплёнными/витринными DOM-тенями.
-        search_roots = [element for _, element in scopes]
+        scope_ids = {id(element) for _, element in scopes}
+        # Оставляем минимальные точные карточки. Их может быть несколько
+        # (stale pinned/shadow + актуальная full card), но общий ancestor,
+        # содержащий такую карточку и соседние события, читать нельзя.
+        search_roots = [
+            element
+            for _, element in scopes
+            if not any(id(child) in scope_ids for child in element.find_all(True))
+        ]
     else:
         search_roots = [soup]
 
+    saw_winner_buttons = False
     for root in search_roots:
         for label in root.find_all(
             lambda tag: _WINLINE_PERIOD_NAME_CLASS in _winline_node_classes(tag)
@@ -2117,8 +2297,16 @@ def _winline_map_odds_bettable(
                     # чужая разметка) — ответа не получено, ищем дальше, а не
                     # выдаём вердикт по чужим рынкам.
                     continue
-                return not any(_winline_button_is_unbettable(b) for b in buttons)
-    return None
+                saw_winner_buttons = True
+                if not any(_winline_button_is_unbettable(b) for b in buttons):
+                    # Angular может одновременно держать stale locked-тень и
+                    # актуальную полную карточку. Любое доказанное открытое
+                    # представление точного рынка сильнее старой тени.
+                    return True
+    # False допустим только когда кнопки точного winner-market действительно
+    # найдены и каждое найденное представление locked. Одна лишь строка карты
+    # без кнопок остаётся неопределённым состоянием.
+    return False if saw_winner_buttons else None
 
 
 async def _winline_page_odds_bettable(
@@ -2176,8 +2364,17 @@ def _extract_winline_current_map_winner(
     forced_map_num: Optional[int] = None,
     *,
     html: str = "",
+    series_last_map: bool = False,
 ) -> _WinlineMapExtract:
-    """Strict Winline current-map winner only; never promote match odds."""
+    """Strict Winline current-map winner only.
+
+    Матчевые кэфы в поток карты не подставляются НИКОГДА, кроме одного случая:
+    `series_last_map=True` и рынка карты в карточке нет вовсе. На последней карте
+    серии победитель карты и победитель матча — одно событие, и Winline тогда
+    оставляет только «Матч». Решение принимается только по DOM (`html`), потому
+    что двухисходность рынка видна лишь по классам кнопок: в плоском тексте
+    трёхисходный «Матч» на Bo2 выглядит так же, как двухисходный.
+    """
     map_num = _normalize_map_num(forced_map_num)
     flat = " ".join((text or "").split())
     low = flat.lower()
@@ -2189,6 +2386,7 @@ def _extract_winline_current_map_winner(
         team1,
         team2,
         map_num,
+        series_last_map=series_last_map,
     )
     if structured is not None:
         return structured

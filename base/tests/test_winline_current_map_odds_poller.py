@@ -487,7 +487,17 @@ def test_controlled_reload_only_after_three_stable_eligible_misses_and_60s_spaci
     }
     # Enough misses for: initial + dynamics + reload + more + second reload after spacing
     collector = FakeCollector([dict(miss) for _ in range(12)])
-    poller, _, _ = _make_poller(mod, collector=collector, clock=clock)
+    # Пороги задаём явно: по умолчанию они намеренно много выше (перезагрузка
+    # сама лишает страницу карточек на десятки секунд), здесь проверяется сам
+    # механизм эскалации, а не значения по умолчанию.
+    poller, _, _ = _make_poller(
+        mod,
+        collector=collector,
+        clock=clock,
+        reload_after_consecutive_misses=3,
+        reload_min_spacing_seconds=60.0,
+        reload_settle_seconds=0.0,
+    )
     poller.begin(**_base_identity())
 
     modes: List[str] = []
@@ -761,7 +771,17 @@ def test_three_consecutive_market_missing_requests_one_controlled_reload() -> No
             },
         ]
     )
-    poller, _, _ = _make_poller(mod, collector=collector, clock=clock)
+    # Пороги задаём явно: значения по умолчанию намеренно много выше — сама
+    # перезагрузка на десятки секунд лишает страницу карточек. Здесь проверяется
+    # механизм эскалации, а не значения по умолчанию.
+    poller, _, _ = _make_poller(
+        mod,
+        collector=collector,
+        clock=clock,
+        reload_after_consecutive_misses=3,
+        reload_min_spacing_seconds=60.0,
+        reload_settle_seconds=0.0,
+    )
     poller.begin(**_base_identity())
 
     modes: List[str] = []
@@ -795,7 +815,17 @@ def test_reload_not_more_often_than_once_per_60s_per_canonical_map() -> None:
         for _ in range(10)
     ]
     collector = FakeCollector(results)
-    poller, _, _ = _make_poller(mod, collector=collector, clock=clock)
+    # Пороги задаём явно: значения по умолчанию намеренно много выше — сама
+    # перезагрузка на десятки секунд лишает страницу карточек. Здесь проверяется
+    # механизм эскалации, а не значения по умолчанию.
+    poller, _, _ = _make_poller(
+        mod,
+        collector=collector,
+        clock=clock,
+        reload_after_consecutive_misses=3,
+        reload_min_spacing_seconds=60.0,
+        reload_settle_seconds=0.0,
+    )
     poller.begin(**_base_identity())
 
     modes: List[str] = []
@@ -867,7 +897,16 @@ def test_changed_dom_signature_does_not_mask_consecutive_market_misses() -> None
             },
         ]
     )
-    poller, _, _ = _make_poller(mod, collector=collector, clock=clock)
+    # Пороги явные: проверяется, что смена подписи DOM не сбрасывает серию
+    # промахов, а не значения по умолчанию (они намеренно много выше).
+    poller, _, _ = _make_poller(
+        mod,
+        collector=collector,
+        clock=clock,
+        reload_after_consecutive_misses=3,
+        reload_min_spacing_seconds=60.0,
+        reload_settle_seconds=0.0,
+    )
     poller.begin(**_base_identity())
     modes = []
     for i in range(6):
@@ -1420,3 +1459,139 @@ def test_terminal_preserves_counters_timeline_and_last_diagnostics() -> None:
     diag = term.get("last_diagnostics") or term.get("last_attempt") or {}
     if diag:
         assert "dom_hash" in diag or "dom_signature" in diag or "market_status" in diag
+
+
+# ---------------------------------------------------------------------------
+# Политика перезагрузок (замер 02.08.2026, evidence winline-current-map)
+#
+# Перезагрузка общей страницы стоит десятки секунд, в течение которых в DOM нет
+# ни карточек, ни рынков. По записанным попыткам матча Team Falcons vs 1w
+# (карта 2: 643 попытки, 53 перезагрузки) доля снимков с кэфами в первые 60 с
+# после перезагрузки — 1-5%, а спустя 60 с без перезагрузок — 25-79%. Прежние
+# пороги (3 промаха, спейсинг 60 с) держали страницу в вечной перезагрузке:
+# промахи -> reload -> пустая страница -> снова промахи.
+# ---------------------------------------------------------------------------
+
+
+def _miss(**overrides: Any) -> Dict[str, Any]:
+    payload = {
+        "market_status": "missing",
+        "dom_signature": "sig",
+        "dom_hash": "hash",
+        "page_valid": True,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _drive(poller, clock, steps: int, step_seconds: float = 5.0) -> List[str]:
+    modes: List[str] = []
+    for i in range(steps):
+        if i > 0:
+            clock.advance(step_seconds)
+        r = poller.tick()
+        if r is None or r.get("status") in ("not_due", "waiting"):
+            continue
+        att = r.get("attempt") or r
+        mode = att.get("acquisition_mode")
+        if mode:
+            modes.append(str(mode))
+    return modes
+
+
+def test_defaults_do_not_reload_after_three_misses() -> None:
+    """Три промаха подряд — обычное поведение живого рынка, а не повод перезагружаться."""
+    mod = _load_mod()
+    assert mod.RELOAD_AFTER_CONSECUTIVE_MISSES >= 10, mod.RELOAD_AFTER_CONSECUTIVE_MISSES
+    assert mod.RELOAD_MIN_SPACING_SECONDS >= 300.0, mod.RELOAD_MIN_SPACING_SECONDS
+
+    clock = FakeClock()
+    collector = FakeCollector([_miss() for _ in range(8)])
+    poller, _, _ = _make_poller(mod, collector=collector, clock=clock)
+    poller.begin(**_base_identity())
+
+    modes = _drive(poller, clock, 8)
+
+    assert modes[0] == "initial_goto"
+    assert "controlled_reload" not in modes[1:], modes
+
+
+def test_misses_right_after_reload_do_not_rebuild_the_streak() -> None:
+    """Пока страница дорисовывается после нашей перезагрузки, «рынка нет» не считается."""
+    mod = _load_mod()
+    clock = FakeClock()
+    collector = FakeCollector([_miss() for _ in range(40)])
+    poller, _, _ = _make_poller(
+        mod,
+        collector=collector,
+        clock=clock,
+        reload_after_consecutive_misses=3,
+        reload_min_spacing_seconds=60.0,
+        reload_settle_seconds=30.0,
+    )
+    poller.begin(**_base_identity())
+
+    modes = _drive(poller, clock, 4)
+    assert modes[3] == "controlled_reload", modes
+
+    # Пять промахов внутри окна settle (30 с) счётчик не наращивают, поэтому и
+    # повторной перезагрузки не заказывают.
+    misses_in_window: List[int] = []
+    modes_after: List[str] = []
+    for _ in range(5):
+        clock.advance(5.0)
+        r = poller.tick()
+        if r is None or r.get("status") in ("not_due", "waiting"):
+            continue
+        att = r.get("attempt") or r
+        modes_after.append(str(att.get("acquisition_mode")))
+        misses_in_window.append(int(att.get("consecutive_misses") or 0))
+
+    assert "controlled_reload" not in modes_after, modes_after
+    assert misses_in_window and max(misses_in_window) == 0, misses_in_window
+
+
+def test_frozen_dom_still_triggers_reload() -> None:
+    """Застывший DOM — единственная честная причина перезагрузки: страница мертва."""
+    mod = _load_mod()
+    clock = FakeClock()
+    collector = FakeCollector([_miss(dom_signature="frozen", dom_hash="frozen") for _ in range(60)])
+    poller, _, _ = _make_poller(
+        mod,
+        collector=collector,
+        clock=clock,
+        reload_after_consecutive_misses=10_000,  # порог промахов недостижим
+        reload_min_spacing_seconds=0.0,
+        reload_settle_seconds=0.0,
+        reload_stale_dom_seconds=60.0,
+    )
+    poller.begin(**_base_identity())
+
+    early = _drive(poller, clock, 5, step_seconds=5.0)
+    assert "controlled_reload" not in early, early
+
+    later = _drive(poller, clock, 6, step_seconds=20.0)
+    assert "controlled_reload" in later, later
+
+
+def test_live_dom_churn_never_triggers_stale_reload() -> None:
+    """Меняющийся DOM (счёт, таймер) перезагрузку не заказывает, сколько бы ни шло время."""
+    mod = _load_mod()
+    clock = FakeClock()
+    collector = FakeCollector(
+        [_miss(dom_signature=f"sig-{i}", dom_hash=f"hash-{i}") for i in range(40)]
+    )
+    poller, _, _ = _make_poller(
+        mod,
+        collector=collector,
+        clock=clock,
+        reload_after_consecutive_misses=10_000,
+        reload_min_spacing_seconds=0.0,
+        reload_settle_seconds=0.0,
+        reload_stale_dom_seconds=60.0,
+    )
+    poller.begin(**_base_identity())
+
+    modes = _drive(poller, clock, 12, step_seconds=30.0)
+
+    assert "controlled_reload" not in modes, modes

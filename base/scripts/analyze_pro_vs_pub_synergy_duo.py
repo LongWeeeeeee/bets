@@ -157,7 +157,7 @@ def _metric_stats(rows: list[dict], phase: str, pro_thr: float, pub_thr: float) 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--input", type=Path, default=ROOT / "pro_matches_with_metrics.json")
+    ap.add_argument("--input", type=Path, default=ROOT / "data" / "pro_matches_with_metrics.json")
     ap.add_argument("--stats-dir", type=Path, default=ROOT / "bets_data/analise_pub_matches")
     ap.add_argument("--output", type=Path, default=ROOT / "base/ml_dataset/pro_vs_pub_synergy_duo_overlap.json")
     ap.add_argument("--pro-threshold", type=float, default=5.0)
