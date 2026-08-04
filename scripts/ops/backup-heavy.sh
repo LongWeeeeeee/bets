@@ -25,7 +25,9 @@ STAMP="$(date +%Y%m%d_%H%M%S)"
 DEST="$DEST_ROOT/$STAMP"
 [ -n "$DRY" ] && echo "(сухой прогон: каталог снимка не создаётся)"
 PREV="$(ls -1d "$DEST_ROOT"/2* 2>/dev/null | tail -1)"
-LINK=""; [ -n "$PREV" ] && LINK="--link-dest=$PREV"
+# путь для --link-dest считается ОТНОСИТЕЛЬНО каталога назначения, поэтому его
+# нужно указывать для каждого переноса отдельно (см. link_to() ниже)
+link_to() { [ -n "$PREV" ] && [ -d "$PREV/$1" ] && printf -- "--link-dest=%s" "$PREV/$1"; }
 
 # каталоги, которые копируются как есть
 PLAIN_DIRS=(
@@ -65,7 +67,7 @@ for db in "${DBS[@]}"; do
   echo "   снимок $name ($((free_needed/1024/1024)) МБ)"
   if [ -z "$DRY" ]; then
     ssh "$HOST" "mkdir -p /root/backup_tmp && sqlite3 '$db' \".backup /root/backup_tmp/$name\" && touch -r '$db' /root/backup_tmp/$name" || { echo "   ошибка снимка $name" >&2; continue; }
-    rsync -a --partial --stats $LINK "$HOST:/root/backup_tmp/$name" "$DEST/bets_data/" || echo "   ошибка переноса $name" >&2
+    rsync -a --partial --stats $(link_to bets_data) "$HOST:/root/backup_tmp/$name" "$DEST/bets_data/" || echo "   ошибка переноса $name" >&2
     ssh "$HOST" "rm -f /root/backup_tmp/$name"
   fi
 done
@@ -82,7 +84,7 @@ for d in "${PLAIN_DIRS[@]}"; do
   echo "-- $d"
   sub="$DEST${d#/root/main}"
   [ -z "$DRY" ] && mkdir -p "$(dirname "$sub")"
-  rsync -a --stats $DRY $LINK "$HOST:$d/" "$sub/" 2>&1 | grep -E "Number of files|Total transferred" | head -2 || echo "   пропущен" >&2
+  rsync -a --stats $DRY $(link_to "${d#/root/main/}") "$HOST:$d/" "$sub/" 2>&1 | grep -E "Number of files|Total transferred" | head -2 || echo "   пропущен" >&2
 done
 
 # --- 3. проверка целостности скачанных sqlite
