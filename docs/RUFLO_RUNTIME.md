@@ -116,7 +116,7 @@ The former shared ledger/root are retained as migration/audit sources and are no
 deleted. On startup each per-bot ledger idempotently imports only rows matching its
 Telegram bot id.
 
-`runtime/setup_ruflo_isolated_roots.py` creates missing AgentDB files through a
+`runtime/experiments/orchestration/setup_ruflo_isolated_roots.py` creates missing AgentDB files through a
 verified temporary database, materializes the complete SQLite/WAL state into a
 standalone replacement, and atomically renames it into place; it never replaces an
 existing valid database. `--repair-invalid` first snapshots an invalid database into
@@ -277,8 +277,8 @@ deployment directory to rebuild it.
 
 ```bash
 cd /root/main
-/usr/bin/python3 runtime/setup_ruflo_isolated_roots.py
-/usr/bin/python3 runtime/setup_ruflo_isolated_roots.py --check-only
+/usr/bin/python3 runtime/experiments/orchestration/setup_ruflo_isolated_roots.py
+/usr/bin/python3 runtime/experiments/orchestration/setup_ruflo_isolated_roots.py --check-only
 src=runtime/ruflo-universal-gateway
 dst=/opt/ruflo-universal-gateway
 for file in core.py gateway.py universal-fusion-v1.json claude-flow.config.json test_universal_controller.py; do

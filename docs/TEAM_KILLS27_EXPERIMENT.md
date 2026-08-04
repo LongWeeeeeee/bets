@@ -262,8 +262,8 @@ live artifact forward AUC 0.558 уже находится на этом пото
 ```bash
 /Users/alex/Documents/ingame/venv_catboost/bin/python3 \
   base/train_team_kills25_shadow.py \
-  --old runtime/team_kills27_old_patch_roster_features.csv \
-  --forward runtime/team_kills27_forward_patch_roster_features.csv \
+  --old runtime/artifacts/kills/team_kills27_old_patch_roster_features.csv \
+  --forward runtime/artifacts/kills/team_kills27_forward_patch_roster_features.csv \
   --artifact ml-models/team_kills27/team_kills27_shadow.json \
   --report runtime/team_kills27_shadow_training_report.json
 ```
