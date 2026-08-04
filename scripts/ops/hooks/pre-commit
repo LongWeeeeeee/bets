@@ -1,0 +1,71 @@
+#!/bin/bash
+# Гард раскладки файлов (см. docs/SERVER_LAYOUT.md).
+# Рубит коммит, если новый файл кладут не в тот каталог, и подсказывает правильный.
+# Обход в разовом случае: git commit --no-verify
+# Установка: bash scripts/ops/install-hooks.sh
+set -u
+ROOT="$(git rev-parse --show-toplevel)"
+fail=0
+say() { echo "  ✗ $1" >&2; echo "     → $2" >&2; }
+
+# --- локальный запрет на коммит AGENTS.md (маркер ставит установщик хуков)
+if [ -f "$ROOT/.git/agents-md-locked" ] && git diff --cached --name-only | grep -Fxq AGENTS.md; then
+  echo "AGENTS.md нельзя менять коммитом на этой машине (обход: git commit --no-verify)." >&2
+  exit 1
+fi
+
+# файлы, которым можно лежать в корне репозитория
+root_allow='^(AGENTS\.md|CLAUDE\.md|GEMINI\.md|README\.md|\.cursorrules|\.gitignore|\.gitattributes|\.mcp\.json|opencode\.json|claude-flow\.config\.json|requirements[^/]*\.txt|package\.json|package-lock\.json|pyrightconfig\.json|log\.txt|TODO\.md)$'
+# живое состояние, которому место в корне runtime/
+runtime_live='(\.lock|state\.json|_last\.json|_shadow\.jsonl|_telegram_sent\.jsonl|delayed_signal_queue[^/]*\.json|sourcetv_matches\.json|live_elo[^/]*|map_id_check[^/]*)$'
+
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  base="${f##*/}"
+  case "$f" in
+    */*) dir="${f%/*}" ;;
+    *)   dir="." ;;
+  esac
+
+  # 1. новые файлы в корне репозитория
+  if [ "$dir" = "." ] && ! echo "$base" | grep -qE "$root_allow"; then
+    case "$base" in
+      *.md)         say "$f — .md в корне репо" "docs/$base" ;;
+      *.sh)         say "$f — скрипт в корне репо" "scripts/run/$base или scripts/ops/$base" ;;
+      *.py)         say "$f — код в корне репо" "base/$base (модуль) или scripts/legacy/$base (разовая утилита)" ;;
+      *)            say "$f — файл в корне репо" "docs/, scripts/, data/ или _archive/ по смыслу" ;;
+    esac
+    fail=1; continue
+  fi
+
+  # 2. бэкапы рядом с прод-кодом
+  if [ "$dir" = "base" ] && echo "$base" | grep -qE '\.(bak_|orig$|baseline_|combgate$)'; then
+    say "$f — бэкап в base/" "base/_archive/backups/$base"
+    fail=1; continue
+  fi
+
+  # 3. корень runtime/: туда только живое состояние и импортируемые модули
+  if [ "$dir" = "runtime" ] && ! echo "$base" | grep -qE "$runtime_live"; then
+    case "$base" in
+      *.py|*.sh)
+        if ! grep -rqlE "(from runtime import|import runtime\.)\s*${base%.*}\b|^from ${base%.*} import|^import ${base%.*}$" "$ROOT/base" "$ROOT/tests" 2>/dev/null; then
+          say "$f — скрипт эксперимента в корне runtime/" "runtime/experiments/<тема>/$base (темы: odds-winline, dltv-protracker, cyberscore-prod, draft-cp, star-dispatch, kills, elo, pubs-rebuild, orchestration, misc)"
+          fail=1
+        fi ;;
+      *.json|*.csv|*.log|*.md|*.html|*.jsonl|*.txt|*.pid)
+        say "$f — артефакт прогона в корне runtime/" "runtime/artifacts/<тема>/$base"
+        fail=1 ;;
+    esac
+    continue
+  fi
+done < <(git diff --cached --name-only --diff-filter=A)
+
+if [ "$fail" -ne 0 ]; then
+  cat >&2 <<'MSG'
+
+Коммит остановлен: файлы лежат не по своим каталогам (правило — docs/SERVER_LAYOUT.md).
+Перенеси их (git mv) и повтори коммит. Если случай исключительный: git commit --no-verify
+MSG
+  exit 1
+fi
+exit 0
