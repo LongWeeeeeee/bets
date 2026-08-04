@@ -276,6 +276,56 @@ def test_message_body_shows_no_data_instead_of_fake_zero():
     assert "Networth: 0" not in text
 
 
+def test_second_kills_dispatch_on_same_map_is_refused(monkeypatch):
+    # Прод 04.08, матч 8928835463: на карту ушли ЧЕТЫРЕ ставки на килы (5_15,
+    # 10_20, 15_25, 20_30) — гард был ключёван по URL с суммой килов, и каждое
+    # убийство давало новый ключ. Ставка уже ушла под .0 -> под .18 отказ.
+    monkeypatch.setattr(runtime, "_match_has_tier1_team", lambda *_a, **_k: True)
+    monkeypatch.setattr(
+        runtime,
+        "_kills_window_policy_select",
+        lambda **_kwargs: {
+            "valid": True,
+            "status": "ok",
+            "window_label": "10_20",
+            "target_sign": 1,
+            "target_side": "radiant",
+            "expected_diff": 0.83,
+        },
+    )
+
+    def _fail_if_called(*_a, **_k):
+        raise AssertionError("вторая ставка на килы на ту же карту не должна отправляться")
+
+    monkeypatch.setattr(runtime, "_acquire_signal_send_slot", _fail_if_called)
+
+    sent_key = runtime._kills_bet_dedup_key("dltv.org/matches/8928835463.0")
+    with runtime._kills_pre_pass_sent_lock:
+        runtime._kills_pre_pass_sent_urls.add(sent_key)
+    try:
+        refused = runtime._try_dispatch_lane_adv_standalone_kills(
+            match_key="dltv.org/matches/8928835463.18",
+            status="live",
+            radiant_team_name="RE ARISE",
+            dire_team_name="FTS",
+            live_league=None,
+            top=None,
+            mid=None,
+            bot=None,
+            protracker_payload=None,
+            team_elo_block="",
+            game_time_seconds=801,
+            radiant_lead=3051,
+            lane_adv_dict_value=None,
+            radiant_team_id=1,
+            dire_team_id=2,
+        )
+    finally:
+        with runtime._kills_pre_pass_sent_lock:
+            runtime._kills_pre_pass_sent_urls.discard(sent_key)
+    assert refused is False
+
+
 def test_kills_dedup_key_is_per_map_not_per_kill():
     # check_uniq_url меняется после каждого убийства — гард обязан их склеить.
     assert runtime._kills_bet_dedup_key("dltv.org/matches/8928714146.4") == (
