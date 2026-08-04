@@ -3657,9 +3657,12 @@ NETWORTH_STATUS_KILLS_WINDOW_POLICY_SEND = "kills_window_policy_send"
 # нетворс. Раньше такой пустой лид проходил гейт nw_min=0, и ставка на килы
 # уходила по фейковым данным (BoomBoys vs OG 04.08: в теле «Networth: 0», по
 # факту у BetBoom +647 уже на 3:07, а на 4:20 фид показал +1342).
-KILLS_NETWORTH_UNKNOWN_AFTER_SECONDS = max(
+NETWORTH_UNKNOWN_AFTER_SECONDS = max(
     0.0,
-    _safe_float_env("KILLS_NETWORTH_UNKNOWN_AFTER_SECONDS", 120.0),
+    _safe_float_env(
+        "NETWORTH_UNKNOWN_AFTER_SECONDS",
+        _safe_float_env("KILLS_NETWORTH_UNKNOWN_AFTER_SECONDS", 120.0),
+    ),
 )
 # How long the early kills body may wait for the ProTracker payload so it can
 # show the same Protracker_* values as the later outcome bet. On the warm daily
@@ -7002,7 +7005,7 @@ def _networth_lead_is_unknown(
 
     Живой фид (GC/SourceTV, cyberscore networth-график) отдаёт ровный 0 как
     «данных ещё нет»; отличить его от настоящего нуля можно только по времени —
-    после ``KILLS_NETWORTH_UNKNOWN_AFTER_SECONDS`` ровный 0 в проде не
+    после ``NETWORTH_UNKNOWN_AFTER_SECONDS`` ровный 0 в проде не
     встречается. См. комментарий у константы.
     """
     if radiant_lead is None:
@@ -7019,7 +7022,7 @@ def _networth_lead_is_unknown(
         threshold = float(
             after_seconds
             if after_seconds is not None
-            else KILLS_NETWORTH_UNKNOWN_AFTER_SECONDS
+            else NETWORTH_UNKNOWN_AFTER_SECONDS
         )
     except (TypeError, ValueError):
         threshold = 120.0
@@ -7035,8 +7038,22 @@ def _networth_lead_is_unknown(
 def _target_networth_diff_from_radiant_lead(
     radiant_lead: Any,
     target_side: Optional[str],
+    game_time_seconds: Any = None,
 ) -> Optional[float]:
+    """NW-лид со стороны таргета; None — когда стороны нет или лид неизвестен.
+
+    ``game_time_seconds`` включает проверку пустого фида
+    (``_networth_lead_is_unknown``): ровный 0 после
+    ``NETWORTH_UNKNOWN_AFTER_SECONDS`` — «данных нет», а не равный нетворс.
+    Все NW-гейты трактуют None как «не сошлось» и ждут, поэтому пустой фид
+    больше нигде не проходит за настоящий ноль. Без ``game_time_seconds``
+    проверка не применяется (вызовы, где времени под рукой нет).
+    """
     if target_side not in {"radiant", "dire"}:
+        return None
+    if game_time_seconds is not None and _networth_lead_is_unknown(
+        radiant_lead, game_time_seconds
+    ):
         return None
     try:
         lead_value = float(radiant_lead)
@@ -11442,7 +11459,9 @@ def _try_release_delayed_from_live_recheck(
         details = payload.get("add_url_details")
         if isinstance(details, dict):
             target_side = str(details.get("target_side") or "").strip().lower()
-    target_diff = _target_networth_diff_from_radiant_lead(state.get("radiant_lead"), target_side)
+    target_diff = _target_networth_diff_from_radiant_lead(
+        state.get("radiant_lead"), target_side, current_game_time
+    )
     print(
         "   ⚡ Delayed live fast-check: "
         f"{match_key} crossed target={_format_game_clock(target_game_time)} "
@@ -11694,6 +11713,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
             monitor_target_diff = _target_networth_diff_from_radiant_lead(
                 current_radiant_lead,
                 monitor_target_side,
+                current_game_time,
             )
         if late_pub_comeback_table_active and not _late_pub_table_has_thresholds(late_pub_comeback_table_wr_level):
             resolved_wr_level = _late_pub_table_wr_level_from_payload(payload)
@@ -25096,7 +25116,7 @@ def _try_dispatch_lane_adv_standalone_kills(
             current_game_time_int = 0
         try:
             target_networth_diff = _target_networth_diff_from_radiant_lead(
-                radiant_lead, target_side
+                radiant_lead, target_side, game_time_seconds
             )
         except Exception:
             target_networth_diff = None
@@ -34629,8 +34649,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             early65_target_diff = _target_networth_diff_from_radiant_lead(
                 lead,
                 early65_target_side,
+                current_game_time,
             )
-            target_networth_diff = _target_networth_diff_from_radiant_lead(lead, target_side)
+            target_networth_diff = _target_networth_diff_from_radiant_lead(
+                lead, target_side, current_game_time
+            )
             kills_target_side = (
                 _target_side_from_sign(selected_early_sign)
                 if tier1_early_kills_mode and selected_early_sign in (-1, 1)
@@ -34639,6 +34662,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             kills_target_networth_diff = _target_networth_diff_from_radiant_lead(
                 lead,
                 kills_target_side,
+                current_game_time,
             )
             # On rechecks (metrics reused from cache) we suppress the full
             # draft/metrics/STAR block above; emit one compact summary line so

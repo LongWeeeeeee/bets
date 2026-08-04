@@ -206,7 +206,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | `KILLS_REQUIRE_TIER1_TEAM` | `1` | kills-ставки шлются ТОЛЬКО если ≥1 команда матча в Tier-1 (`id_to_names.tier_one_teams`). `0` → прежнее поведение (kills для всех). Гейт: `_match_has_tier1_team(r_id,d_id)` (OR-семантика, в отличие от `_determine_star_signal_match_tier` = обе Tier-1) применяется к `tier1_early_kills_mode` и к `_try_dispatch_lane_adv_standalone_kills`. |
 | `LANE_KILLS_MIN_GAMES` | `10` | минимум `kills10_games` для использования lane-ключа в диагностической kills@10-метрике |
 | `LANE_KILLS_RELIABILITY_PRIOR` | `100` | prior `K` в весе надёжности lane-оценки `games / (games + K)` |
-| `KILLS_NETWORTH_UNKNOWN_AFTER_SECONDS` | `120` | с какой минуты ровный `radiant_lead == 0` считается «данных нет», а не равным нетворсом (`_networth_lead_is_unknown`) |
+| `NETWORTH_UNKNOWN_AFTER_SECONDS` | `120` | с какой минуты ровный `radiant_lead == 0` считается «данных нет», а не равным нетворсом (`_networth_lead_is_unknown`). Действует на **все** NW-гейты: `_target_networth_diff_from_radiant_lead(lead, side, game_time)` отдаёт `None`, и гейт ждёт вместо отправки. Старое имя `KILLS_NETWORTH_UNKNOWN_AFTER_SECONDS` читается как fallback |
 
 `lane_kills_adv_dict` в сообщениях диагностический, но как **второй гейт связки 5-15** он входит в kills-policy (ниже); `LANE_KILLS_MIN_GAMES` / `LANE_KILLS_RELIABILITY_PRIOR` при этом влияют только на саму метрику, не на пороги.
 

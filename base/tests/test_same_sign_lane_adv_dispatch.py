@@ -1173,7 +1173,10 @@ def test_late_pre27_dominance_grid_keeps_zero_threshold_with_hold(monkeypatch) -
             name="late_pre27_dominance_zero_threshold",
             game_time_seconds=18 * 60,
             target_side="radiant",
-            target_networth_diff=0,
+            # +1, а не ровный 0: с 02:00 ровный 0 в лиде трактуется как «фида
+            # нет» (_networth_lead_is_unknown) и гейты ждут. Для порога 0.0
+            # значения 0 и +1 эквивалентны, проверяемое правило то же.
+            target_networth_diff=1,
             has_early_star=True,
             early_sign=-1,
             has_late_star=True,
@@ -1999,7 +2002,8 @@ def test_late_pre27_delayed_worker_labels_zero_release_as_pre27_monitor(monkeypa
     deliveries = _run_same_sign_delayed_worker(
         monkeypatch,
         game_time=18 * 60,
-        radiant_lead=0.0,
+        # +1, а не ровный 0: ровный 0 после 02:00 = «фида нет» (см. тест ниже).
+        radiant_lead=1.0,
         payload=payload,
     )
 
@@ -2009,3 +2013,13 @@ def test_late_pre27_delayed_worker_labels_zero_release_as_pre27_monitor(monkeypa
     assert details["release_reason"] == "networth_monitor_0"
     assert details["networth_monitor_early_release"] is True
     assert "late_pub_comeback_table_reached" not in details
+
+    # Тот же payload, но фид пустой (ровный 0 на 18-й минуте): релиза по
+    # порогу 0 быть не должно — раньше дыра в данных проходила за «не в минусе».
+    empty_feed = _run_same_sign_delayed_worker(
+        monkeypatch,
+        game_time=18 * 60,
+        radiant_lead=0.0,
+        payload=dict(payload),
+    )
+    assert empty_feed == []

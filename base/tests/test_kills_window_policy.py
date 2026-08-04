@@ -256,6 +256,17 @@ def test_band_boundaries_half_open(monkeypatch):
     assert on_end["status"] == "outside_policy_band"
 
 
+def test_target_diff_helper_hides_empty_feed_when_game_time_given():
+    # Без game_time — прежнее поведение (совместимость со старыми вызовами).
+    assert runtime._target_networth_diff_from_radiant_lead(0, "radiant") == 0.0
+    # С game_time ровный 0 после порога = «данных нет» для ЛЮБОГО гейта.
+    assert runtime._target_networth_diff_from_radiant_lead(0, "radiant", 200.0) is None
+    assert runtime._target_networth_diff_from_radiant_lead(0, "dire", 200.0) is None
+    # До порога 0 — законное значение, живые лиды не трогаем.
+    assert runtime._target_networth_diff_from_radiant_lead(0, "radiant", 30.0) == 0.0
+    assert runtime._target_networth_diff_from_radiant_lead(900, "dire", 1200.0) == -900.0
+
+
 def test_networth_unknown_helper_thresholds():
     # До порога ровный 0 — законное значение, после — «данных нет».
     assert runtime._networth_lead_is_unknown(0, 30.0) is False
