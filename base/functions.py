@@ -9612,65 +9612,72 @@ def calculate_kills_window_advantage(
         def raw(key, invert=False):
             return _kills_window_entry_stats(heroes_data.get(key), label, min_games, invert=invert)
 
-        # Build all layer candidates; policy decides which one is returned.
-        one_v_two = []
-        for r in radiant:
-            for d1, d2 in combinations(dire, 2):
-                one_v_two.append(_combine([raw(f"{r}_vs_{d1},{d2}")]))
-        layer_1v2 = _weighted_layer(one_v_two)
-        if layer_1v2 is not None:
-            layer_1v2["layer"] = "1v2"
+        # Layers are built on demand: the default policy (core_1v1_with) only
+        # ever reads 1v1/with, and 1v2+2v1 alone cost 100 dict lookups per
+        # window — computing them eagerly burned that on every live cycle for
+        # a result nothing read.
+        def _build_1v2():
+            return _weighted_layer([
+                _combine([raw(f"{r}_vs_{d1},{d2}")])
+                for r in radiant
+                for d1, d2 in combinations(dire, 2)
+            ])
 
-        two_v_one = []
-        for r1, r2 in combinations(radiant, 2):
-            for d in dire:
-                two_v_one.append(_combine([raw(f"{r1},{r2}_vs_{d}")]))
-        layer_2v1 = _weighted_layer(two_v_one)
-        if layer_2v1 is not None:
-            layer_2v1["layer"] = "2v1"
+        def _build_2v1():
+            return _weighted_layer([
+                _combine([raw(f"{r1},{r2}_vs_{d}")])
+                for r1, r2 in combinations(radiant, 2)
+                for d in dire
+            ])
 
-        one_v_one = []
-        for r in radiant:
-            for d in dire:
-                one_v_one.append(_combine([raw(f"{r}_vs_{d}")]))
-        layer_1v1 = _weighted_layer(one_v_one)
-        if layer_1v1 is not None:
-            layer_1v1["layer"] = "1v1"
+        def _build_1v1():
+            return _weighted_layer([
+                _combine([raw(f"{r}_vs_{d}")])
+                for r in radiant
+                for d in dire
+            ])
 
-        synergy = []
-        for r1, r2 in combinations(radiant, 2):
-            synergy.append(_combine([raw(f"{r1}_with_{r2}", invert=False)]))
-        for d1, d2 in combinations(dire, 2):
-            synergy.append(_combine([raw(f"{d1}_with_{d2}", invert=True)]))
-        layer_with = _weighted_layer(synergy)
-        if layer_with is not None:
-            layer_with["layer"] = "with"
+        def _build_with():
+            return _weighted_layer(
+                [_combine([raw(f"{r1}_with_{r2}", invert=False)])
+                 for r1, r2 in combinations(radiant, 2)]
+                + [_combine([raw(f"{d1}_with_{d2}", invert=True)])
+                   for d1, d2 in combinations(dire, 2)]
+            )
 
-        solo = (
-            [_combine([raw(token, invert=False)]) for token in radiant]
-            + [_combine([raw(token, invert=True)]) for token in dire]
-        )
-        layer_solo = _weighted_layer(solo)
-        if layer_solo is not None:
-            layer_solo["layer"] = "solo"
+        def _build_solo():
+            return _weighted_layer(
+                [_combine([raw(token, invert=False)]) for token in radiant]
+                + [_combine([raw(token, invert=True)]) for token in dire]
+            )
 
-        layers = {
-            "1v2": layer_1v2,
-            "2v1": layer_2v1,
-            "1v1": layer_1v1,
-            "with": layer_with,
-            "solo": layer_solo,
+        builders = {
+            "1v2": _build_1v2,
+            "2v1": _build_2v1,
+            "1v1": _build_1v1,
+            "with": _build_with,
+            "solo": _build_solo,
         }
         order = ("1v2", "2v1", "1v1", "with", "solo")
+        built = {}
+
+        def _layer(name):
+            if name not in built:
+                layer = builders[name]()
+                if layer is not None:
+                    layer["layer"] = name
+                built[name] = layer
+            return built[name]
 
         def _first_hit():
             for name in order:
-                if layers.get(name) is not None:
-                    return layers[name]
+                layer = _layer(name)
+                if layer is not None:
+                    return layer
             return None
 
         def _blend_all():
-            items = [layers[name] for name in order if layers.get(name) is not None]
+            items = [layer for layer in (_layer(name) for name in order) if layer is not None]
             blended = _weighted_layer(items)
             if blended is not None:
                 blended["layer"] = "blend:" + "+".join(
@@ -9682,7 +9689,7 @@ def calculate_kills_window_advantage(
             best = None
             best_score = -1.0
             for name in order:
-                lay = layers.get(name)
+                lay = _layer(name)
                 if lay is None:
                     continue
                 score = abs(float(lay["expected_diff"])) * (
@@ -9694,8 +9701,8 @@ def calculate_kills_window_advantage(
             return best
 
         def _core_1v1_with():
-            a = layers.get("1v1")
-            b = layers.get("with")
+            a = _layer("1v1")
+            b = _layer("with")
             if a is not None and b is not None:
                 ea = float(a["expected_diff"])
                 eb = float(b["expected_diff"])
@@ -9748,6 +9755,10 @@ def calculate_kills_window_advantage(
                 "lead_probability": payload["lead_probability"],
                 "draw_probability": payload["draw_probability"],
                 "games": payload["games"],
+                # How many sub-estimates actually backed the number: one valid
+                # key out of 25 yields an expected_diff indistinguishable from
+                # one averaged over all 25, and only this field tells them apart.
+                "sources": payload.get("sources"),
                 "layer": payload.get("layer"),
                 "window": label,
                 "window_start": start,
