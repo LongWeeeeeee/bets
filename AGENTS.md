@@ -82,6 +82,55 @@ RuFlo дополняет этот workflow, но не меняет роли/мо
 - Канонические настройки: `claude-flow.config.json`, `.claude-flow/config.yaml`, `.mcp.json`; из-за split-reader Ruflo JSON/YAML держи value-equivalent (см. `docs/RUFLO_RUNTIME.md`).
 - Старый `hermes-anti-stall-supervisor` выведен из эксплуатации; не включай его systemd timer. Проверенные policy/contracts импортированы в AgentDB namespace `ingame-orchestration`, исходники сохранены как audit evidence.
 
+
+## Раскладка файлов (обязательно)
+
+**Каждый создаваемый файл кладётся сразу в свой каталог — не в корень.** Полная карта и
+список неприкосновенного — `docs/SERVER_LAYOUT.md`. Коротко:
+
+| Что создаёшь | Куда |
+|---|---|
+| модуль прод-пайплайна | `base/` |
+| скрипт эксперимента / ресёрча | `runtime/experiments/<тема>/` |
+| json/csv/log/pid/отчёт прогона | `runtime/artifacts/<тема>/` |
+| каталог тяжёлого завершённого прогона | `runtime/_archive/runs/` |
+| бэкап прод-файла (`*.bak_*`, `*.orig`) | `base/_archive/backups/` |
+| документацию (.md) | `docs/` |
+| раннер/скрипт обслуживания (.sh) | `scripts/run/` или `scripts/ops/` |
+| датасет, модель | `data/`, `ml-models/` |
+
+Темы: `odds-winline`, `dltv-protracker`, `cyberscore-prod`, `draft-cp`, `star-dispatch`,
+`kills`, `elo`, `pubs-rebuild`, `orchestration`, `misc`.
+
+В корне `runtime/` остаётся **только живое состояние** (локи, очереди сигналов,
+`*_shadow.jsonl`, `*_telegram_sent.jsonl`, `live_elo_*`, `map_id_check*`, `sourcetv_matches.json`)
+и модули, которые кто-то импортирует. В корне репозитория — только `AGENTS.md`, активные
+конфиги, `requirements*.txt` и живой `log.txt`.
+
+Правило проверяется хуком `scripts/ops/hooks/pre-commit`: коммит с новым файлом не по месту
+отклоняется и в сообщении указывается правильный каталог. Установка на машине —
+`bash scripts/ops/install-hooks.sh`. Разовый обход — `git commit --no-verify`.
+
+Скрипт эксперимента, лежащий в `runtime/experiments/<тема>/`, получает соседей через общий
+bootstrap-заголовок (ищет корень репо по `.git` и добавляет `runtime/experiments/*` в `sys.path`) —
+копируй его из любого соседнего скрипта, а не возвращай файлы в корень `runtime/`.
+
+## Коммит и синхронизация (обязательно)
+
+**Конец хода = чистое дерево.** Всё, что сделано, коммитится в том же ходу отдельным
+осмысленным коммитом; `git status` не должен оставаться грязным между задачами — иначе
+`git pull`/`push` на другой машине упирается в незакоммиченные правки.
+
+- рабочий цикл: `bash scripts/ops/sync.sh -m "что сделано"` — коммитит остатки (кроме
+  `base/keys.py` и `*.bak_*`), делает `pull --rebase` и `push`, печатает расхождение с
+  origin и serv1. Проверить без изменений — `scripts/ops/sync.sh --check`;
+- мусор не коммитим, а закрываем `.gitignore` (venv, node_modules, дампы прогонов, модели);
+  разовые дампы чатов и проб — в `scratch/` (вне git);
+- обе машины ходят через `origin` (`github.com:LongWeeeeeee/bets`): serv1 и локальная копия
+  сводятся только через него, ручной rsync кода между ними не используем;
+- на serv1 правки коммитятся на месте, `push` — после проверки тестами; **правка логики
+  ставки = рестарт прода + чистка `map_id_check.txt` в том же ходу**.
+
 ---
 
 ## Runtime Rules (безопасность — обязательно к соблюдению)
