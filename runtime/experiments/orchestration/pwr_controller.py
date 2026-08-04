@@ -6,6 +6,13 @@ The gateway dispatcher executes cards.  This controller only advances explicit
 SQLite journal plus the lane's Ruflo AgentDB namespace.
 """
 from __future__ import annotations
+# --- bootstrap раскладки: соседние эксперименты живут в runtime/experiments/<тема>/
+import sys as _sys, pathlib as _pathlib
+_repo_root = next((p for p in _pathlib.Path(__file__).resolve().parents if (p / '.git').exists()), None)
+if _repo_root is not None:
+    for _exp_dir in sorted((_repo_root / 'runtime' / 'experiments').glob('*')):
+        if _exp_dir.is_dir() and str(_exp_dir) not in _sys.path:
+            _sys.path.insert(0, str(_exp_dir))
 
 import argparse
 import hashlib
