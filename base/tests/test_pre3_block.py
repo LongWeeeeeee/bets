@@ -26,12 +26,12 @@ def _patch_early_wr(monkeypatch, wr_pct: float) -> None:
 
 
 def test_early_kills_no_bet_outside_policy_band(monkeypatch, capsys) -> None:
-    # Kills-window policy: at 2:30 we sit in the gap between the 5-15 band
-    # (ends 02:00) and the 10-20 band (starts 03:00) — tier1_early_kills_mode
+    # Kills-window policy: at 4:30 we sit in the gap between the 5-15 band
+    # (ends 03:00) and the 10-20 band (starts 06:00) — tier1_early_kills_mode
     # is gated off, so no "Ранние килы" bet is dispatched.
     case = BranchScenario(
         name="early_kills_outside_policy_band",
-        game_time_seconds=(2 * 60) + 30,
+        game_time_seconds=(4 * 60) + 30,
         target_side="radiant",
         target_networth_diff=5000,
         has_early_star=True,
@@ -211,12 +211,12 @@ def test_early_kills_suppressed_when_no_tier1_team(monkeypatch) -> None:
 def test_early_kills_gate_uses_early_side_networth(monkeypatch, capsys) -> None:
     # Regression for Zero Tenacity vs PuckChamp: Late/All selected radiant,
     # Early selected dire, and radiant led by 243. The kills policy must read
-    # the Early (dire) networth as -243 — the 15-25 combo needs dire NW
-    # >= +500, so the kills bet is suppressed instead of releasing on
-    # radiant +243.
+    # the Early (dire) networth as -243 — the 15-25 combo (полоса 11:00–13:00)
+    # needs dire NW >= +1000, so the kills bet is suppressed instead of
+    # releasing on radiant +243.
     case = BranchScenario(
         name="early_kills_uses_early_side_networth",
-        game_time_seconds=(7 * 60) + 30,
+        game_time_seconds=(12 * 60),
         target_side="radiant",
         target_networth_diff=243,
         has_early_star=True,
