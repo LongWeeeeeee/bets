@@ -206,8 +206,25 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | `KILLS_REQUIRE_TIER1_TEAM` | `1` | kills-ставки шлются ТОЛЬКО если ≥1 команда матча в Tier-1 (`id_to_names.tier_one_teams`). `0` → прежнее поведение (kills для всех). Гейт: `_match_has_tier1_team(r_id,d_id)` (OR-семантика, в отличие от `_determine_star_signal_match_tier` = обе Tier-1) применяется к `tier1_early_kills_mode` и к `_try_dispatch_lane_adv_standalone_kills`. |
 | `LANE_KILLS_MIN_GAMES` | `10` | минимум `kills10_games` для использования lane-ключа в диагностической kills@10-метрике |
 | `LANE_KILLS_RELIABILITY_PRIOR` | `100` | prior `K` в весе надёжности lane-оценки `games / (games + K)` |
+| `KILLS_NETWORTH_UNKNOWN_AFTER_SECONDS` | `120` | с какой минуты ровный `radiant_lead == 0` считается «данных нет», а не равным нетворсом (`_networth_lead_is_unknown`) |
 
-`lane_kills_adv_dict` пока только диагностируется и выводится в сообщениях: эти две env-настройки **не добавляют и не меняют dispatch-gates**.
+`lane_kills_adv_dict` в сообщениях диагностический, но как **второй гейт связки 5-15** он входит в kills-policy (ниже); `LANE_KILLS_MIN_GAMES` / `LANE_KILLS_RELIABILITY_PRIOR` при этом влияют только на саму метрику, не на пороги.
+
+**Kills-window policy** (`KILLS_WINDOW_POLICY`, `_kills_window_policy_select`) — единственный путь отправки kills-ставок. 4 валидированные AND-связки «окно + полоса отправки + второй гейт»:
+
+| окно | полоса (игровое время) | `min_ed` | второй гейт |
+|---|---|---|---|
+| `5_15` | 00:00–02:00 | 0.3 | `lane_kills_adv_dict` того же знака, \|ed\| ≥ 0.2 |
+| `10_20` | 03:00–05:00 | 0.2 | NW-лид таргета ≥ 0 |
+| `15_25` | 07:00–11:00 | 0.2 | NW-лид таргета ≥ +500 |
+| `20_30` | 13:00–16:00 | 0.2 | NW-лид таргета ≥ 0 |
+
+Правила выбора:
+- **одна ставка на карту** — на окне с МАКСИМАЛЬНЫМ `|expected_diff|` в сторону таргета среди прошедших свой `min_ed` (при равенстве — более раннее окно). `expected_diff` считается по драфту и по ходу карты не меняется, поэтому выбор стабилен; в полосах более слабых окон ставки нет (статус `not_strongest_window`);
+- гард «одна ставка на карту» ключуется покарточно (`_kills_bet_dedup_key` = URL без numeric-суффикса `uniq_score`) и живёт до конца процесса; на рестарте дубль ловит реестр отпечатков сигналов;
+- NW-гейты требуют **известного** нетворса: пустой фид (`radiant_lead == 0` после `KILLS_NETWORTH_UNKNOWN_AFTER_SECONDS`) → статус `networth_unknown`, ставки нет; в теле сообщения такой лид печатается как `Networth: н/д (нет данных)`.
+
+Тесты: `base/tests/test_kills_window_policy.py`.
 
 **Schedule / quiet hours** — см. `docs/SCHEDULING.md`.
 

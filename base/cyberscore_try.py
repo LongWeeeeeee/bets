@@ -3650,6 +3650,17 @@ KILLS_WINDOW_POLICY_HORIZON_SECONDS = float(
     max(int(c["band_end"]) for c in KILLS_WINDOW_POLICY)
 )
 NETWORTH_STATUS_KILLS_WINDOW_POLICY_SEND = "kills_window_policy_send"
+# GC/SourceTV отдаёт radiant_lead=0, пока данные по карте ещё не поехали: в
+# прод-логе ровный ноль встречается на 3-4-й минуте в 7.8% замеров, на 5-10-й —
+# в 2.2%, а после 10-й минуты не встречается ни разу (0 из 3670 замеров). То
+# есть «ровно 0» на живой карте после первых минут = данных нет, а не равный
+# нетворс. Раньше такой пустой лид проходил гейт nw_min=0, и ставка на килы
+# уходила по фейковым данным (BoomBoys vs OG 04.08: в теле «Networth: 0», по
+# факту у BetBoom +647 уже на 3:07, а на 4:20 фид показал +1342).
+KILLS_NETWORTH_UNKNOWN_AFTER_SECONDS = max(
+    0.0,
+    _safe_float_env("KILLS_NETWORTH_UNKNOWN_AFTER_SECONDS", 120.0),
+)
 # How long the early kills body may wait for the ProTracker payload so it can
 # show the same Protracker_* values as the later outcome bet. On the warm daily
 # cache the enrichment finishes in ~0.1s; anything longer means the cache is
@@ -6979,6 +6990,46 @@ def _target_side_from_sign(sign: Optional[int]) -> Optional[str]:
     if sign == -1:
         return "dire"
     return None
+
+
+def _networth_lead_is_unknown(
+    radiant_lead: Any,
+    game_time_seconds: Any,
+    *,
+    after_seconds: Optional[float] = None,
+) -> bool:
+    """True, когда networth-лид недоступен, а не «равный счёт».
+
+    Живой фид (GC/SourceTV, cyberscore networth-график) отдаёт ровный 0 как
+    «данных ещё нет»; отличить его от настоящего нуля можно только по времени —
+    после ``KILLS_NETWORTH_UNKNOWN_AFTER_SECONDS`` ровный 0 в проде не
+    встречается. См. комментарий у константы.
+    """
+    if radiant_lead is None:
+        return True
+    try:
+        lead = float(radiant_lead)
+    except (TypeError, ValueError):
+        return True
+    if not math.isfinite(lead):
+        return True
+    if lead != 0.0:
+        return False
+    try:
+        threshold = float(
+            after_seconds
+            if after_seconds is not None
+            else KILLS_NETWORTH_UNKNOWN_AFTER_SECONDS
+        )
+    except (TypeError, ValueError):
+        threshold = 120.0
+    try:
+        gt = float(game_time_seconds)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(gt):
+        return False
+    return gt >= threshold
 
 
 def _target_networth_diff_from_radiant_lead(
@@ -10557,7 +10608,10 @@ def _format_live_message_state_block(
     except (TypeError, ValueError):
         lead_value = 0.0
     abs_lead = int(round(abs(lead_value)))
-    if abs_lead <= 0:
+    if _networth_lead_is_unknown(radiant_lead, game_time_seconds):
+        # Пустой фид больше не рисуем как «равный нетворс» — это фейковые данные.
+        networth_line = "Networth: н/д (нет данных)"
+    elif abs_lead <= 0:
         networth_line = "Networth: 0"
     elif lead_value > 0:
         networth_line = f"Networth: {str(radiant_team_name or 'Radiant')} +{abs_lead}"
@@ -15582,6 +15636,17 @@ monitored_matches_lock = threading.Lock()
 # without preserving the kills_already_sent flag.
 _kills_pre_pass_sent_urls: set = set()
 _kills_pre_pass_sent_lock = threading.Lock()
+
+
+def _kills_bet_dedup_key(match_key: Any) -> str:
+    """Ключ гарда «одна ставка на килы за карту».
+
+    ``check_uniq_url`` = ``<url>.<сумма килов>`` — суффикс растёт после каждого
+    убийства, поэтому гард, ключёванный по нему, пропускал вторую и третью
+    ставку на ту же карту (прод 04.08, матч 8928714146: окна 15_25 на 10:10 и
+    20_30 на 14:11 и 15:12). База URL стабильна на всю карту.
+    """
+    return _signal_fingerprint_registry_key(match_key)
 # D6: bounded TTL dict {url: insert_monotonic_ts} instead of plain set.
 # Entries older than TEMPO_OVER_SENT_TTL_SECONDS are pruned at insert time.
 # Finalize-time discard (:17224) still works (dict.pop/discard semantics).
@@ -24140,18 +24205,15 @@ def _drop_delayed_match(match_key: str, reason: str = "") -> bool:
     with monitored_matches_lock:
         removed = monitored_matches.pop(match_key, None)
         snapshot = copy.deepcopy(monitored_matches)
-    # Clear the "kills already sent" guard ONLY when the match is genuinely
-    # finalized (its URL has landed in map_id_check.txt). Dropping the late
-    # watcher for any other reason (timeout / stale / target-reached) must NOT
-    # erase this flag: the kills bet was dispatched with defer_add_url=True, so
-    # the URL is not yet in map_id_check.txt, the match is usually still live
-    # under the same check_uniq_url, and wiping the flag here lets the kills
-    # pre-pass re-fire next cycle — the "1-0 пришла дважды" duplicate. The set
-    # is the only lifetime guard during the deferred window.
+    # Гард «ставка на килы уже ушла» НЕ снимается здесь вообще. Раньше он
+    # чистился по факту попадания URL в map_id_check.txt, но check_uniq_url
+    # несёт суффикс с суммой килов: следующее убийство даёт новый URL, которого
+    # в map_id_check.txt нет, карта продолжает обрабатываться — и снятый гард
+    # пропускал вторую ставку на килы на ту же карту. Ключ гарда теперь
+    # покарточный (_kills_bet_dedup_key), живёт до конца процесса; на рестарте
+    # дубль ловит персистентный реестр отпечатков сигналов.
     try:
         if _is_url_processed(match_key):
-            with _kills_pre_pass_sent_lock:
-                _kills_pre_pass_sent_urls.discard(match_key)
             with _tempo_over_sent_lock:
                 _tempo_over_sent_urls.pop(match_key, None)  # D6: dict, use pop
     except Exception:
@@ -24417,7 +24479,13 @@ def _kills_window_policy_select(
     ``KILLS_WINDOW_POLICY``). Возвращает выбранную связку (окно + сторону
     таргета + гейт-факты) или причину отказа.
 
-    Полоса отправки привязана к игровому времени: вне полосы килов нет.
+    Ставка на карту одна — на окне с МАКСИМАЛЬНЫМ |expected_diff| в сторону
+    таргета среди прошедших свой ``min_ed`` (при равенстве — более раннее
+    окно). expected_diff считается по драфту и по ходу карты не меняется,
+    поэтому выбор окна стабилен на всех циклах. Полоса отправки — полоса
+    именно выбранного окна: пока сильнейшее окно не открылось, килов нет, а
+    полосы более слабых окон пропускаются (статус ``not_strongest_window``).
+
     Сторона таргета выводится из знака ``expected_diff`` выбранного окна;
     второй гейт (lane_kills_adv_dict или NW-лид) обязан совпадать по знаку.
     ``required_target_sign`` (±1) дополнительно требует, чтобы связка
@@ -24428,18 +24496,17 @@ def _kills_window_policy_select(
         gt = float(game_time_seconds or 0.0)
     except (TypeError, ValueError):
         gt = 0.0
-    combo: Optional[Dict[str, Any]] = None
+    current_combo: Optional[Dict[str, Any]] = None
     for candidate in KILLS_WINDOW_POLICY:
         if float(candidate["band_start"]) <= gt < float(candidate["band_end"]):
-            combo = candidate
+            current_combo = candidate
             break
-    if combo is None:
+    if current_combo is None:
         return {
             "valid": False,
             "status": "outside_policy_band",
             "game_time": gt,
         }
-    window_label = str(combo["window"])
     gate_payload = _kills_window_direction_gate_for_target(
         radiant_heroes_and_pos=radiant_heroes_and_pos,
         dire_heroes_and_pos=dire_heroes_and_pos,
@@ -24448,38 +24515,74 @@ def _kills_window_policy_select(
     )
     gate_status = str(gate_payload.get("status") or "")
     if gate_status in ("bad_target_sign", "dict_not_loaded", "calc_error", "no_payload"):
-        return {"valid": False, "status": gate_status, "window_label": window_label}
+        return {
+            "valid": False,
+            "status": gate_status,
+            "window_label": str(current_combo["window"]),
+        }
     ed_by_label = gate_payload.get("ed_by_label") or {}
-    try:
-        ed_value = float(ed_by_label.get(window_label))
-    except (TypeError, ValueError):
-        ed_value = None
-    if ed_value is None or not math.isfinite(ed_value) or ed_value == 0.0:
-        return {
-            "valid": False,
-            "status": "no_expected_diff",
-            "window_label": window_label,
-        }
-    target_sign = 1 if ed_value > 0 else -1
-    if abs(ed_value) < float(combo["min_ed"]):
-        return {
-            "valid": False,
-            "status": "ed_below_min",
-            "window_label": window_label,
-            "expected_diff": ed_value,
-            "min_ed": float(combo["min_ed"]),
-        }
     try:
         required_sign = int(required_target_sign)
     except (TypeError, ValueError):
         required_sign = 0
-    if required_sign in (-1, 1) and required_sign != target_sign:
+
+    # Сильнейшее окно карты: max |expected_diff| среди прошедших свой min_ed
+    # (и требуемую сторону). Строгое «>» оставляет при равенстве раннее окно.
+    combo: Optional[Dict[str, Any]] = None
+    ed_value: Optional[float] = None
+    saw_expected_diff = False
+    saw_sign_mismatch = False
+    for candidate in KILLS_WINDOW_POLICY:
+        try:
+            candidate_ed = float(ed_by_label.get(str(candidate["window"])))
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(candidate_ed) or candidate_ed == 0.0:
+            continue
+        saw_expected_diff = True
+        candidate_sign = 1 if candidate_ed > 0 else -1
+        if required_sign in (-1, 1) and required_sign != candidate_sign:
+            saw_sign_mismatch = True
+            continue
+        if abs(candidate_ed) < float(candidate["min_ed"]):
+            continue
+        if ed_value is None or abs(candidate_ed) > abs(ed_value):
+            combo = candidate
+            ed_value = candidate_ed
+    if combo is None or ed_value is None:
+        if not saw_expected_diff:
+            return {
+                "valid": False,
+                "status": "no_expected_diff",
+                "window_label": str(current_combo["window"]),
+            }
+        if saw_sign_mismatch:
+            return {
+                "valid": False,
+                "status": "sign_mismatch",
+                "window_label": str(current_combo["window"]),
+                "required_target_sign": required_sign,
+                "ed_by_label": ed_by_label,
+            }
         return {
             "valid": False,
-            "status": "sign_mismatch",
+            "status": "ed_below_min",
+            "window_label": str(current_combo["window"]),
+            "ed_by_label": ed_by_label,
+        }
+    window_label = str(combo["window"])
+    target_sign = 1 if ed_value > 0 else -1
+    if window_label != str(current_combo["window"]):
+        # Полоса чужого (более слабого) окна — ждём полосу сильнейшего.
+        return {
+            "valid": False,
+            "status": "not_strongest_window",
             "window_label": window_label,
+            "current_window": str(current_combo["window"]),
             "expected_diff": ed_value,
-            "required_target_sign": required_sign,
+            "band_start": float(combo["band_start"]),
+            "band_end": float(combo["band_end"]),
+            "game_time": gt,
         }
     target_side = "radiant" if target_sign > 0 else "dire"
     lane_kills_value = _lane_kills_adv_expected_diff(lane_kills_adv)
@@ -24501,6 +24604,17 @@ def _kills_window_policy_select(
     target_nw_diff = _target_networth_diff_from_radiant_lead(radiant_lead, target_side)
     if combo.get("nw_min") is not None:
         nw_min = float(combo["nw_min"])
+        if _networth_lead_is_unknown(radiant_lead, gt):
+            # Пустой фид (ровный 0 после первых минут) — не «равный нетворс»:
+            # раньше он проходил nw_min=0 и ставка уходила по фейковым данным.
+            return {
+                "valid": False,
+                "status": "networth_unknown",
+                "window_label": window_label,
+                "expected_diff": ed_value,
+                "radiant_lead": radiant_lead,
+                "game_time": gt,
+            }
         if target_nw_diff is None:
             return {
                 "valid": False,
@@ -24715,7 +24829,7 @@ def _try_dispatch_early_winner_kills_window(
 
     try:
         with _kills_pre_pass_sent_lock:
-            if match_key in _kills_pre_pass_sent_urls:
+            if _kills_bet_dedup_key(match_key) in _kills_pre_pass_sent_urls:
                 return False
     except Exception:
         pass
@@ -24807,7 +24921,7 @@ def _try_dispatch_early_winner_kills_window(
         if delivery_confirmed:
             try:
                 with _kills_pre_pass_sent_lock:
-                    _kills_pre_pass_sent_urls.add(match_key)
+                    _kills_pre_pass_sent_urls.add(_kills_bet_dedup_key(match_key))
             except Exception:
                 pass
             _kills_window_verdict_msg = (
@@ -24923,7 +25037,7 @@ def _try_dispatch_lane_adv_standalone_kills(
     # within the same cycle, or across cycles when watchers re-evaluate.
     try:
         with _kills_pre_pass_sent_lock:
-            if match_key in _kills_pre_pass_sent_urls:
+            if _kills_bet_dedup_key(match_key) in _kills_pre_pass_sent_urls:
                 return False
     except Exception:
         pass
@@ -25042,7 +25156,7 @@ def _try_dispatch_lane_adv_standalone_kills(
         if delivered:
             try:
                 with _kills_pre_pass_sent_lock:
-                    _kills_pre_pass_sent_urls.add(match_key)
+                    _kills_pre_pass_sent_urls.add(_kills_bet_dedup_key(match_key))
             except Exception:
                 pass
             _lane_adv_kills_verdict_msg = (
@@ -34247,7 +34361,18 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     "   ⛔ tier1 early kills заблокирован: kills-window policy не сошлась "
                     f"(game_time={int(game_time)}, "
                     f"status={tier1_early_kills_policy.get('status')}, "
-                    f"window={tier1_early_kills_policy.get('window_label')})"
+                    f"window={tier1_early_kills_policy.get('window_label')}"
+                    + (
+                        f", полоса окна {tier1_early_kills_policy.get('current_window')}"
+                        if tier1_early_kills_policy.get("current_window")
+                        else ""
+                    )
+                    + (
+                        f", radiant_lead={tier1_early_kills_policy.get('radiant_lead')}"
+                        if tier1_early_kills_policy.get("status") == "networth_unknown"
+                        else ""
+                    )
+                    + ")"
                 )
             tier1_early_kills_mode = bool(
                 tier1_early_kills_mode and tier1_early_kills_policy.get("valid")
@@ -34910,7 +35035,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             kills_already_sent_prev = False
             try:
                 with _kills_pre_pass_sent_lock:
-                    if check_uniq_url in _kills_pre_pass_sent_urls:
+                    if _kills_bet_dedup_key(check_uniq_url) in _kills_pre_pass_sent_urls:
                         kills_already_sent_prev = True
             except Exception:
                 kills_already_sent_prev = False
@@ -35102,7 +35227,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     kills_dual_pre_pass_target_side = str(kills_pp_target_side or "")
                                     try:
                                         with _kills_pre_pass_sent_lock:
-                                            _kills_pre_pass_sent_urls.add(check_uniq_url)
+                                            _kills_pre_pass_sent_urls.add(_kills_bet_dedup_key(check_uniq_url))
                                     except Exception:
                                         pass
                                     _verdict_print(
@@ -35132,7 +35257,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 _kills_already_sent_guard = False
                 try:
                     with _kills_pre_pass_sent_lock:
-                        _kills_already_sent_guard = check_uniq_url in _kills_pre_pass_sent_urls
+                        _kills_already_sent_guard = _kills_bet_dedup_key(check_uniq_url) in _kills_pre_pass_sent_urls
                 except Exception:
                     _kills_already_sent_guard = False
                 if _kills_already_sent_guard and tier1_early_kills_mode:
@@ -35256,7 +35381,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     _kills_already_sent_for_match = False
                     try:
                         with _kills_pre_pass_sent_lock:
-                            _kills_already_sent_for_match = check_uniq_url in _kills_pre_pass_sent_urls
+                            _kills_already_sent_for_match = _kills_bet_dedup_key(check_uniq_url) in _kills_pre_pass_sent_urls
                     except Exception:
                         _kills_already_sent_for_match = False
                     if _kills_already_sent_for_match:
@@ -35387,7 +35512,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 # need our own in-process guard).
                                 try:
                                     with _kills_pre_pass_sent_lock:
-                                        _kills_pre_pass_sent_urls.add(check_uniq_url)
+                                        _kills_pre_pass_sent_urls.add(_kills_bet_dedup_key(check_uniq_url))
                                 except Exception:
                                     pass
                                 _verdict_print(

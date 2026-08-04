@@ -101,6 +101,89 @@ def test_1020_band_requires_nw_nonnegative(monkeypatch):
     assert blocked["status"] == "nw_lead_below_min"
 
 
+# ── Одна ставка на карту: окно с максимальным |ed| в сторону таргета ────────
+def test_strongest_window_wins_over_current_band(monkeypatch):
+    # Кейс из прода (BoomBoys vs OG): на 03:36 полоса 10_20, но сильнейшее
+    # окно карты — 15_25 (-0.38). В полосе 10_20 ставки быть не должно.
+    ed = {"5_15": -0.22, "10_20": -0.31, "15_25": -0.38, "20_30": -0.16}
+    blocked = _select(monkeypatch, gt=216.0, ed_by_label=ed, lead=-800.0)
+    assert blocked["valid"] is False
+    assert blocked["status"] == "not_strongest_window"
+    assert blocked["window_label"] == "15_25"
+    assert blocked["current_window"] == "10_20"
+    # ... и уходит только в полосе 15_25, когда сходится её NW-гейт (>= +500).
+    passed = _select(monkeypatch, gt=8 * 60.0, ed_by_label=ed, lead=-800.0)
+    assert passed["valid"] is True
+    assert passed["window_label"] == "15_25"
+    assert passed["target_side"] == "dire"
+    assert passed["expected_diff"] == pytest.approx(-0.38)
+
+
+def test_strongest_window_ignores_blocks_below_their_min_ed(monkeypatch):
+    # 5_15 сильнее по модулю, но не проходит свой min_ed=0.3 -> выбирается
+    # 10_20 (min_ed=0.2), и ставка идёт в полосе 10_20.
+    result = _select(
+        monkeypatch,
+        gt=240.0,
+        ed_by_label={"5_15": 0.28, "10_20": 0.25},
+        lead=100.0,
+    )
+    assert result["valid"] is True
+    assert result["window_label"] == "10_20"
+
+
+def test_strongest_window_tie_keeps_earliest(monkeypatch):
+    ed = {"10_20": 0.4, "15_25": 0.4}
+    result = _select(monkeypatch, gt=240.0, ed_by_label=ed, lead=100.0)
+    assert result["valid"] is True
+    assert result["window_label"] == "10_20"
+
+
+def test_strongest_window_respects_required_sign(monkeypatch):
+    # Сильнейшее по модулю окно смотрит не на ту сторону -> берём сильнейшее
+    # среди окон нужной стороны.
+    result = _select(
+        monkeypatch,
+        gt=8 * 60.0,
+        ed_by_label={"10_20": -0.9, "15_25": 0.4},
+        lead=600.0,
+        required=1,
+    )
+    assert result["valid"] is True
+    assert result["window_label"] == "15_25"
+    assert result["target_side"] == "radiant"
+
+
+# ── Фейковый networth: пустой фид больше не проходит гейт ──────────────────
+def test_zero_lead_after_two_minutes_is_unknown_not_even(monkeypatch):
+    blocked = _select(
+        monkeypatch, gt=240.0, ed_by_label={"10_20": 0.3}, lead=0.0
+    )
+    assert blocked["valid"] is False
+    assert blocked["status"] == "networth_unknown"
+
+
+def test_missing_lead_blocks_nw_gate(monkeypatch):
+    blocked = _select(
+        monkeypatch, gt=240.0, ed_by_label={"10_20": 0.3}, lead=None
+    )
+    assert blocked["valid"] is False
+    assert blocked["status"] == "networth_unknown"
+
+
+def test_zero_lead_does_not_block_window_without_nw_gate(monkeypatch):
+    # У связки 5_15 второй гейт — lane_kills, NW не спрашиваем.
+    result = _select(
+        monkeypatch,
+        gt=30.0,
+        ed_by_label={"5_15": 0.45},
+        lane_kills={"expected_diff": 0.35, "coverage": 12},
+        lead=0.0,
+    )
+    assert result["valid"] is True
+    assert result["window_label"] == "5_15"
+
+
 def test_1020_dire_target_uses_inverted_lead(monkeypatch):
     result = _select(
         monkeypatch, gt=240.0, ed_by_label={"10_20": -0.2}, lead=-400.0
@@ -123,9 +206,9 @@ def test_1525_band_requires_nw_plus_500(monkeypatch):
     assert passed["window_label"] == "15_25"
 
 
-def test_2030_band_passes_with_zero_lead(monkeypatch):
+def test_2030_band_passes_with_small_positive_lead(monkeypatch):
     result = _select(
-        monkeypatch, gt=14 * 60.0, ed_by_label={"20_30": 0.2}, lead=0.0
+        monkeypatch, gt=14 * 60.0, ed_by_label={"20_30": 0.2}, lead=1.0
     )
     assert result["valid"] is True
     assert result["window_label"] == "20_30"
@@ -166,11 +249,42 @@ def test_required_target_sign_filters_wrong_side(monkeypatch):
 
 def test_band_boundaries_half_open(monkeypatch):
     # 10-20 полоса: [180, 300) — старт включён, конец исключён.
-    on_start = _select(monkeypatch, gt=180.0, ed_by_label={"10_20": 0.3}, lead=0.0)
+    on_start = _select(monkeypatch, gt=180.0, ed_by_label={"10_20": 0.3}, lead=1.0)
     assert on_start["valid"] is True
-    on_end = _select(monkeypatch, gt=300.0, ed_by_label={"10_20": 0.3}, lead=0.0)
+    on_end = _select(monkeypatch, gt=300.0, ed_by_label={"10_20": 0.3}, lead=1.0)
     assert on_end["valid"] is False
     assert on_end["status"] == "outside_policy_band"
+
+
+def test_networth_unknown_helper_thresholds():
+    # До порога ровный 0 — законное значение, после — «данных нет».
+    assert runtime._networth_lead_is_unknown(0, 30.0) is False
+    assert runtime._networth_lead_is_unknown(0, 200.0) is True
+    assert runtime._networth_lead_is_unknown(647, 200.0) is False
+    assert runtime._networth_lead_is_unknown(None, 10.0) is True
+    assert runtime._networth_lead_is_unknown("нет", 10.0) is True
+
+
+def test_message_body_shows_no_data_instead_of_fake_zero():
+    text = runtime._format_live_message_state_block(
+        game_time_seconds=216,
+        radiant_lead=0,
+        radiant_team_name="BetBoom Team",
+        dire_team_name="OG",
+    )
+    assert "Networth: н/д (нет данных)" in text
+    assert "Networth: 0" not in text
+
+
+def test_kills_dedup_key_is_per_map_not_per_kill():
+    # check_uniq_url меняется после каждого убийства — гард обязан их склеить.
+    assert runtime._kills_bet_dedup_key("dltv.org/matches/8928714146.4") == (
+        runtime._kills_bet_dedup_key("dltv.org/matches/8928714146.12")
+    )
+    # ...но карты внутри серии остаются разными ключами.
+    assert runtime._kills_bet_dedup_key(
+        "cyberscore.live/en/matches/123.map1"
+    ) != runtime._kills_bet_dedup_key("cyberscore.live/en/matches/123.map2")
 
 
 def test_kills_header_contains_window_label():
