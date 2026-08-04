@@ -136,3 +136,8 @@ log_dltv*.txt
 
 # --- живое состояние sourcetv ---
 runtime/sourcetv_matches.json
+
+# --- служебные архивы уборки 2026-08-04 (бэкапы и артефакты прогонов не коммитим)
+base/_archive/backups/
+base/_archive/research-data/logged_bets_with_outcomes.json
+runtime/_archive/
