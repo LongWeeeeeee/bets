@@ -61,15 +61,24 @@ def sync_from_serv1(dry_run: bool = False) -> dict[str, Any]:
         if dry_run:
             command.insert(1, "--dry-run")
         finished = subprocess.run(command, capture_output=True, text=True)
-        transferred = [
-            line for line in finished.stdout.splitlines()
-            if line.startswith("Number of regular files transferred")
-        ]
-        report[name] = {
-            "returncode": finished.returncode,
-            "detail": transferred[0].strip() if transferred else finished.stderr.strip()[:200],
-        }
+        report[name] = {"returncode": finished.returncode, "detail": _transfer_line(finished)}
     return report
+
+
+def _transfer_line(finished: subprocess.CompletedProcess) -> str:
+    """rsync 3.x says "regular files transferred", openrsync on macOS does not.
+
+    Falling through to an empty string would make "nothing to sync" and "we
+    failed to read the output" look identical in the report.
+    """
+    for prefix in ("Number of regular files transferred", "Number of files transferred"):
+        for line in finished.stdout.splitlines():
+            if line.strip().startswith(prefix):
+                return line.strip()
+    if finished.stderr.strip():
+        return finished.stderr.strip()[:200]
+    tail = [line for line in finished.stdout.splitlines() if line.strip()][-1:]
+    return f"неразобранный вывод rsync: {tail[0].strip()[:160]}" if tail else "rsync ничего не вывел"
 
 
 def fit_end(results: dict[str, Any]) -> int:

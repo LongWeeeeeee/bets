@@ -133,3 +133,19 @@ def test_sync_never_mirrors_deletions(monkeypatch):
         assert "--delete" not in command
         assert command[0] == "rsync"
     assert report["public"]["returncode"] == 0
+
+
+def test_sync_detail_survives_both_rsync_dialects(monkeypatch):
+    import subprocess
+
+    def finished(stdout="", stderr=""):
+        return subprocess.CompletedProcess(args=["rsync"], returncode=0, stdout=stdout, stderr=stderr)
+
+    modern = finished("Number of regular files transferred: 5\n")
+    assert refresh._transfer_line(modern) == "Number of regular files transferred: 5"
+    openrsync = finished("Number of files: 24\nNumber of files transferred: 0\n")
+    assert refresh._transfer_line(openrsync) == "Number of files transferred: 0"
+    # an unreadable dialect must never look like a clean no-op sync
+    assert "неразобранный" in refresh._transfer_line(finished("sent 126 bytes\n"))
+    assert refresh._transfer_line(finished("", "ssh: connect failed")) == "ssh: connect failed"
+    assert refresh._transfer_line(finished()) == "rsync ничего не вывел"
