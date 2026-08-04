@@ -1,0 +1,38 @@
+{
+  "task": "T3",
+  "timestamp": "2026-07-23T11:35:00+03:00",
+  "decision": "REMOVE",
+  "authorization_source": "User instruction (conversation history): 'в лайве начинается матч перезапусти если надо прод и следи чтобы парсились' + continuation 'Продолжи'. User explicitly requested odds-pipeline active during live matches.",
+  "rationale": {
+    "why_no_odds_is_present": "Service was restarted via systemd at 2026-07-22 21:41:38 MSK (planned stop/start). The base unit file /etc/systemd/system/cyberscore.service contains --no-odds in ExecStart. Previous session's restart (PID 2978999) ran without --no-odds via a temporary override that was not persisted to the unit file or a drop-in.",
+    "why_remove": "User's explicit instruction is to have odds polling active during live matches. The two-mode Winline odds polling implementation is complete, test-verified (200 tests passed), and was confirmed working in production (PID 2978999, attempt_index=61). The --no-odds flag is a residual from the base unit file, not a deliberate business decision.",
+    "evidence_not_deliberate": "No operator instruction or documentation found indicating --no-odds was intentionally set as policy. The flag exists in the original unit file from before the odds pipeline was implemented. The user's session explicitly overrode it."
+  },
+  "restart_window": {
+    "status": "BLOCKED_LIVE_MATCH",
+    "current_match": {
+      "match_id": 8909443684,
+      "teams": "Dandelions vs Zero Tenacity",
+      "map": 2,
+      "game_time_seconds": 358,
+      "score": "4-1",
+      "league": "EPL Masters 2026"
+    },
+    "assessment": "Live match in progress (game_time ~6 min). Restarting now would disrupt active parsing and lose in-flight match state.",
+    "safe_window_criteria": "Wait until current match ends (sourcetv_matches.json shows 0 active matches) OR between maps in the series (series_game_number transitions).",
+    "recommendation": "Poll sourcetv_matches.json every 30-60s. Execute restart within the first 60s window where active_matches == 0. Series is Bo3 (dire leads 1-0, this is map2), so there will be a between-maps gap if a map3 is needed, or the series ends after this map."
+  },
+  "match_state_evidence": {
+    "source": "/root/main/runtime/sourcetv_matches.json",
+    "active_matches": 1,
+    "match_details": "8909443684: Dandelions vs Zero Tenacity, map2, game_time=358s, score=4-1",
+    "winline_poller_state": "Running in shadow mode (producer_pid=3380020, attempt_index=13, market_status=missing)",
+    "service_state": "active/running, MainPID=3380020, NRestarts=0, uptime since 2026-07-22 21:41:38"
+  },
+  "gate_for_downstream": {
+    "T4_may_proceed": true,
+    "T5_may_proceed": false,
+    "reason": "Authorization granted (REMOVE). Snapshot (T4) may proceed immediately. Restart (T5) blocked by live match — must wait until match_state shows 0 active matches.",
+    "unblock_condition": "sourcetv_matches.json contains 0 entries OR operator explicitly overrides with 'restart now' instruction"
+  }
+}

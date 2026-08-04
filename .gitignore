@@ -160,3 +160,7 @@ runtime/artifacts/**/*.env
 runtime/artifacts/**/*.tmp
 runtime/artifacts/**/*.patch
 runtime/artifacts/**/*.html
+
+# сгенерированные данные прогонов, остающиеся в корне runtime/ по ссылкам из кода
+runtime/pro_maps_metrics_2025-12-15.json
+runtime/winline_name_probe_*.txt

@@ -1,0 +1,4 @@
+[Service]
+Environment=BOOKMAKER_PREFETCH_ENABLED=true
+ExecStart=
+ExecStart=/root/main/venv/bin/python3 -u /root/main/base/cyberscore_try.py --dltv-source sourcetv

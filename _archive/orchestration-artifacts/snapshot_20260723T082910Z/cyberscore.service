@@ -1,0 +1,22 @@
+[Unit]
+Description=Ingame Live Signals Runtime (sourcetv mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/main/base
+Environment=PYTHONUNBUFFERED=1
+Environment=DLTV_SOURCE_MODE=sourcetv
+Environment=USE_PROXY=false
+Environment=LIVE_PROXY_PREFLIGHT_ENABLED=false
+ExecStart=/root/main/venv/bin/python3 -u /root/main/base/cyberscore_try.py --dltv-source sourcetv --no-odds
+StandardOutput=append:/root/main/base/runtime/cyberscore_sourcetv.log
+StandardError=append:/root/main/base/runtime/cyberscore_sourcetv.log
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

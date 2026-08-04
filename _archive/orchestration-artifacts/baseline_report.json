@@ -1,0 +1,48 @@
+{
+  "task": "T1",
+  "timestamp": "2026-07-23T10:45:00+03:00",
+  "service": "cyberscore.service",
+  "baseline": {
+    "ActiveState": "active",
+    "SubState": "running",
+    "MainPID": 3380020,
+    "NRestarts": 0,
+    "ActiveEnterTimestamp": "Wed 2026-07-22 21:41:38 MSK",
+    "ExecStart_argv": "/root/main/venv/bin/python3 -u /root/main/base/cyberscore_try.py --dltv-source sourcetv --no-odds"
+  },
+  "three_way_no_odds_check": {
+    "systemctl_show": {
+      "source": "systemctl show cyberscore.service --property=ExecStart",
+      "argv": "/root/main/venv/bin/python3 -u /root/main/base/cyberscore_try.py --dltv-source sourcetv --no-odds",
+      "no_odds_present": true
+    },
+    "proc_cmdline": {
+      "source": "ps -p 3380020 -o args (equivalent to /proc/3380020/cmdline)",
+      "argv": "/root/main/venv/bin/python3 -u /root/main/base/cyberscore_try.py --dltv-source sourcetv --no-odds",
+      "no_odds_present": true
+    },
+    "unit_file": {
+      "source": "systemctl cat cyberscore.service (/etc/systemd/system/cyberscore.service)",
+      "exec_start_line": "ExecStart=/root/main/venv/bin/python3 -u /root/main/base/cyberscore_try.py --dltv-source sourcetv --no-odds",
+      "no_odds_present": true
+    },
+    "all_three_agree": true,
+    "verdict": "CONFIRMED: --no-odds present in all three sources"
+  },
+  "log_baseline": {
+    "file": "/root/main/base/runtime/cyberscore_sourcetv.log",
+    "total_lines": 182429,
+    "total_bytes": 13172504,
+    "current_run_start_line": 154470,
+    "current_run_start_byte_offset": 11018361,
+    "current_run_marker": "======================== RUN START 2026-07-22 21:41:41 +0300 pid=3380020 ========================",
+    "current_run_bytes_so_far": 2154143,
+    "current_run_lines_so_far": 27959
+  },
+  "drop_in_overrides": [
+    "/etc/systemd/system/cyberscore.service.d/oom.conf",
+    "/etc/systemd/system/cyberscore.service.d/stats.conf",
+    "/etc/systemd/system/cyberscore.service.d/topup.conf"
+  ],
+  "notes": "Read-only baseline capture. No mutations performed. /proc/<pid>/cmdline read via ps due to workspace boundary restriction; ps args output is equivalent."
+}

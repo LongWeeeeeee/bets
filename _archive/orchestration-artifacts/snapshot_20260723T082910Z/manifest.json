@@ -1,0 +1,39 @@
+{
+  "snapshot_id": "snapshot_20260723T082910Z",
+  "created_utc": "2026-07-23T08:29:10Z",
+  "created_msk": "2026-07-23T11:29:10+03:00",
+  "purpose": "Reversible pre-change snapshot of cyberscore.service for T4 (remove --no-odds plan)",
+  "service": "cyberscore.service",
+  "unit_file": {
+    "path": "/etc/systemd/system/cyberscore.service",
+    "sha256_live": "3d3ad01eb83b606f08f35fba69d59f68874baa144c4e8cbdf8832f623884d385",
+    "snapshot_copy": "cyberscore.service"
+  },
+  "drop_ins": {
+    "directory": "/etc/systemd/system/cyberscore.service.d/",
+    "active": ["oom.conf", "stats.conf", "topup.conf"],
+    "inactive": ["odds.conf.disabled"],
+    "snapshot_copies": "dropins/"
+  },
+  "service_state": {
+    "ActiveState": "active",
+    "SubState": "running",
+    "MainPID": 3380020,
+    "NRestarts": 0,
+    "ActiveEnterTimestamp": "Wed 2026-07-22 21:41:38 MSK",
+    "ExecStart_argv": "/root/main/venv/bin/python3 -u /root/main/base/cyberscore_try.py --dltv-source sourcetv --no-odds"
+  },
+  "log_baseline": {
+    "file": "/root/main/base/runtime/cyberscore_sourcetv.log",
+    "current_run_start_line": 154470,
+    "current_run_start_byte_offset": 11018361,
+    "current_run_marker": "======================== RUN START 2026-07-22 21:41:41 +0300 pid=3380020 ========================",
+    "total_lines_at_baseline": 182429,
+    "total_bytes_at_baseline": 13172504
+  },
+  "baseline_report_ref": "artifacts/baseline_report.json",
+  "verification": {
+    "method": "sha256sum comparison of snapshot copy vs live unit file",
+    "expected_checksum": "3d3ad01eb83b606f08f35fba69d59f68874baa144c4e8cbdf8832f623884d385"
+  }
+}
