@@ -366,19 +366,6 @@ WINLINE_CURRENT_MAP_SCHEDULER_NOMINAL_S = 5.0
 # budget; retry=False below prevents duplicate queued work.
 WINLINE_CURRENT_MAP_SHARED_JOB_TIMEOUT_S = 60.0
 WINLINE_CURRENT_MAP_RECOVERY_COOLDOWN_S = 60.0
-# Страница одна на все матчи, поэтому и перезагрузка общая. Замер по evidence
-# 02.08.2026: в первые 60 с после перезагрузки кэфы снимаются в 1-5% попыток, а
-# спустя 60 с без перезагрузок — в 25-79%. Окно дедупа должно быть не меньше
-# спейсинга в самом поллере, иначе три активных матча по очереди перезагружают
-# общую страницу раз в минуту и она никогда не успевает дорисоваться.
-try:
-    WINLINE_SHARED_RELOAD_MIN_SPACING_S = float(
-        str(os.getenv("WINLINE_SHARED_RELOAD_SPACING_S") or "").strip() or 300.0
-    )
-except (TypeError, ValueError):
-    WINLINE_SHARED_RELOAD_MIN_SPACING_S = 300.0
-if WINLINE_SHARED_RELOAD_MIN_SPACING_S <= 0:
-    WINLINE_SHARED_RELOAD_MIN_SPACING_S = 300.0
 
 
 def reset_winline_current_map_polling_state() -> None:
@@ -838,71 +825,6 @@ class _WinlineFastResult:
         self.match_found = True
 
 
-# GC series_type — enum (0=BO1, 1=BO3, 2=BO5, 3=BO2). На последней возможной карте
-# серии Winline иногда не выставляет рынок карты и оставляет только «Матч»: там
-# победитель карты и победитель матча — одно событие (проверено на живой странице
-# 02.08.2026, REKONIX vs YAKULT BROTHERS, карта 3 при счёте 1:1).
-_WINLINE_GC_SERIES_TYPE_TO_BEST_OF = {0: 1, 1: 3, 2: 5, 3: 2}
-_winline_series_rows_cache: Dict[str, Any] = {"mtime": None, "rows": []}
-
-
-def _winline_team_match_key(value: Any) -> str:
-    """Ключ названия команды для сверки со срезом SourceTV (без пунктуации/регистра)."""
-    text = re.sub(r"[^0-9a-zA-Zа-яёА-ЯЁ]+", " ", str(value or "")).strip().lower()
-    return re.sub(r"\s+", " ", text)
-
-
-def _winline_sourcetv_series_rows() -> List[Dict[str, Any]]:
-    """Свежий срез live-матчей SourceTV с кэшем по mtime (probe пишет раз в ~2 c)."""
-    try:
-        mtime = os.path.getmtime(SOURCETV_MATCHES_PATH)
-    except OSError:
-        return []
-    if _winline_series_rows_cache.get("mtime") == mtime:
-        return list(_winline_series_rows_cache.get("rows") or [])
-    try:
-        with open(SOURCETV_MATCHES_PATH, "r", encoding="utf-8") as handle:
-            raw = json.load(handle)
-    except (OSError, ValueError):
-        return []
-    values = raw.values() if isinstance(raw, dict) else raw if isinstance(raw, list) else []
-    rows = [item for item in values if isinstance(item, dict)]
-    _winline_series_rows_cache["mtime"] = mtime
-    _winline_series_rows_cache["rows"] = rows
-    return list(rows)
-
-
-def _winline_series_last_map(map_num: Any, team1: str, team2: str) -> bool:
-    """Последняя ли это возможная карта серии (по формату из GC).
-
-    Формат неизвестен — возвращаем False: подставлять матчевые кэфы в поток
-    карты можно только при доказанной последней карте.
-    """
-    try:
-        map_i = int(map_num)
-    except (TypeError, ValueError):
-        return False
-    keys = {_winline_team_match_key(team1), _winline_team_match_key(team2)}
-    if "" in keys or len(keys) < 2:
-        return False
-    for row in _winline_sourcetv_series_rows():
-        row_keys = {
-            _winline_team_match_key(row.get("radiant_team_name")),
-            _winline_team_match_key(row.get("dire_team_name")),
-        }
-        if row_keys != keys:
-            continue
-        raw_type = row.get("series_type")
-        try:
-            best_of = _WINLINE_GC_SERIES_TYPE_TO_BEST_OF.get(int(raw_type))
-        except (TypeError, ValueError):
-            best_of = None
-        if not best_of:
-            return False
-        return map_i == int(best_of)
-    return False
-
-
 def _winline_fast_collect(
     page: Any,
     *,
@@ -1006,11 +928,6 @@ def _winline_fast_collect_from_payload(
         and not _winline_urls_look_equivalent(current_url, expected_url)
     ):
         return None
-    # На последней карте серии Winline иногда не выставляет рынок карты вовсе и
-    # оставляет только «Матч» — там победитель карты и победитель матча одно
-    # событие. Флаг решает только вопрос «последняя ли карта»; двухисходность
-    # рынка и совпадение карты проверяет сам парсер по DOM.
-    series_last_map = _winline_series_last_map(map_num, team1, team2)
     try:
         card = card_ctx("", team1, team2, html=html, map_num=map_num)
         extract = extract_fn(
@@ -1019,7 +936,6 @@ def _winline_fast_collect_from_payload(
             team2,
             map_num,
             html=html,
-            series_last_map=series_last_map,
         )
     except Exception:
         return None
@@ -1353,12 +1269,9 @@ def _winline_current_map_poller_collect(
                 last_reload = _winline_shared_page_state.get("last_reload_monotonic")
             # All logical match pollers share this one physical page.  A reload
             # performed for one match refreshes every match card, so repeating
-            # it for another poller within the same window only blocks the
-            # shared worker — and leaves the page blank for tens of seconds.
-            if (
-                last_reload is not None
-                and (now_mono - float(last_reload)) < WINLINE_SHARED_RELOAD_MIN_SPACING_S
-            ):
+            # it for another poller within the same 60s window only blocks the
+            # shared worker.
+            if last_reload is not None and (now_mono - float(last_reload)) < 60.0:
                 effective_mode = "dynamic_dom"
 
         if effective_mode in {"dynamic_dom", "initial_goto"}:
@@ -3658,11 +3571,11 @@ NETWORTH_GATE_EARLY_CORE_HIGH_CONFIDENCE_MIN_LEAD = 0.0
 NETWORTH_GATE_EARLY_CORE_LOW_WR_MIN_LEAD = 800.0
 NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_END_SECONDS = 13 * 60
 # Жёсткий верхний потолок отправки «ранних килов» (kills heads-up / dual
-# pre-pass). Раньше fallback-ветка >=10 мин не имела потолка и могла слать
-# «Ранние килы» дублем к late на 24+ минуте. После этого времени ранние
-# килы НЕ шлём — остаётся только late watcher.
+# pre-pass). Поднят до 16:00 под kills-window policy: связка 20-30 шлётся
+# в полосе 13:00–16:00. После этого времени килы НЕ шлём — остаётся только
+# late watcher.
 NETWORTH_GATE_TIER1_EARLY_KILLS_DISPATCH_MAX_SECONDS = _safe_int_env(
-    "NETWORTH_GATE_TIER1_EARLY_KILLS_DISPATCH_MAX_SECONDS", 13 * 60
+    "NETWORTH_GATE_TIER1_EARLY_KILLS_DISPATCH_MAX_SECONDS", 16 * 60
 )
 NETWORTH_GATE_TIER1_EARLY_KILLS_4_TO_12_MIN_DIFF = 500.0
 # Kills dispatch — new prep6 window:
@@ -3713,6 +3626,30 @@ LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS = _safe_float_env(
     "LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS",
     10 * 60.0,
 )
+# ── Kills-window policy (ресёрч 2026-08, 1425 Tier-1 карт 7.41+, кэф 1.8) ──
+# Ставка на килы идёт ТОЛЬКО по 4 валидированным AND-связкам. Каждая связка:
+# окно kills_window с |expected_diff| >= min_ed в сторону таргета + второй
+# гейт того же знака (lane_kills_adv_dict для 5-15; текущий NW-лид таргета
+# для остальных) + полоса времени отправки («чем раньше, тем лучше» —
+# отправка на первом цикле, где связка сошлась):
+#   5-15  (00:00–02:00): |ed_5_15|  >= 0.3 & lane_kills_adv |ed| >= 0.2
+#   10-20 (03:00–05:00): |ed_10_20| >= 0.2 & NW-лид таргета >= 0
+#   15-25 (07:00–11:00): |ed_15_25| >= 0.2 & NW-лид таргета >= +500
+#   20-30 (13:00–16:00): |ed_20_30| >= 0.2 & NW-лид таргета >= 0
+KILLS_WINDOW_POLICY: tuple[Dict[str, Any], ...] = (
+    {"window": "5_15", "band_start": 0, "band_end": 2 * 60,
+     "min_ed": 0.3, "nw_min": None, "lane_kills_min": 0.2},
+    {"window": "10_20", "band_start": 3 * 60, "band_end": 5 * 60,
+     "min_ed": 0.2, "nw_min": 0.0, "lane_kills_min": None},
+    {"window": "15_25", "band_start": 7 * 60, "band_end": 11 * 60,
+     "min_ed": 0.2, "nw_min": 500.0, "lane_kills_min": None},
+    {"window": "20_30", "band_start": 13 * 60, "band_end": 16 * 60,
+     "min_ed": 0.2, "nw_min": 0.0, "lane_kills_min": None},
+)
+KILLS_WINDOW_POLICY_HORIZON_SECONDS = float(
+    max(int(c["band_end"]) for c in KILLS_WINDOW_POLICY)
+)
+NETWORTH_STATUS_KILLS_WINDOW_POLICY_SEND = "kills_window_policy_send"
 # How long the early kills body may wait for the ProTracker payload so it can
 # show the same Protracker_* values as the later outcome bet. On the warm daily
 # cache the enrichment finishes in ~0.1s; anything longer means the cache is
@@ -3724,7 +3661,9 @@ EARLY_KILLS_PROTRACKER_WAIT_SECONDS = max(
 )
 # Early Winner STAR + kills_window expected_diff ≥1 → kills bet on nearest
 # open window, must fire at least LEAD seconds before window start (default 3m).
-EARLY_WINNER_KILLS_WINDOW_ENABLED = _env_flag("EARLY_WINNER_KILLS_WINDOW_ENABLED", "1")
+# ВЫКЛЮЧЕНО по умолчанию: ставка на килы идёт только по 4 связкам
+# kills-window policy (см. KILLS_WINDOW_POLICY).
+EARLY_WINNER_KILLS_WINDOW_ENABLED = _env_flag("EARLY_WINNER_KILLS_WINDOW_ENABLED", "0")
 EARLY_WINNER_KILLS_WINDOW_MIN_ABS_ED = max(
     0.0,
     _safe_float_env("EARLY_WINNER_KILLS_WINDOW_MIN_ABS_ED", 1.0),
@@ -9346,7 +9285,7 @@ def _build_lane_adv_standalone_kills_message(
         radiant_lead=radiant_lead,
         radiant_team_name=radiant_team_name,
         dire_team_name=dire_team_name,
-        show_kills_time_blocks=True,
+        show_kills_time_blocks=False,
         kills_release_status=NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND,
         radiant_heroes_and_pos=radiant_heroes_and_pos,
         dire_heroes_and_pos=dire_heroes_and_pos,
@@ -9563,7 +9502,7 @@ def _build_early_local_kills_message(
         radiant_lead=radiant_lead,
         radiant_team_name=radiant_team_name,
         dire_team_name=dire_team_name,
-        show_kills_time_blocks=True,
+        show_kills_time_blocks=False,
         radiant_heroes_and_pos=radiant_heroes_and_pos,
         dire_heroes_and_pos=dire_heroes_and_pos,
     )
@@ -9805,7 +9744,7 @@ def _normalize_late_dispatch_smc(
 # tier1_early_kills bet that waited for the networth gate and fired late).
 EARLY_KILLS_HEADER_MAX_GAME_TIME_SECONDS = _safe_float_env(
     "EARLY_KILLS_HEADER_MAX_GAME_TIME_SECONDS",
-    12.0 * 60.0,
+    16.0 * 60.0,
 )
 
 
@@ -9971,13 +9910,12 @@ def _refresh_stake_multiplier_message(
         radiant_lead=radiant_lead,
         radiant_team_name=radiant_team_name,
         dire_team_name=dire_team_name,
-        show_kills_time_blocks=(str(special_header_mode or "").strip() == "early_kills"),
+        show_kills_time_blocks=False,
         kills_release_status=(
             stake_multiplier_context.get("kills_release_status")
             or stake_multiplier_context.get("release_reason")
             or stake_multiplier_context.get("dispatch_status_label")
         ),
-        kills_window_label=stake_multiplier_context.get("kills_window_label"),
     ).strip().splitlines()
     filtered_lines = [
         line
@@ -10008,7 +9946,6 @@ def _refresh_stake_multiplier_message(
     protracker_1vs1_idx = -1
     protracker_solo_idx = -1
     protracker_solo_overall_idx = -1
-    dltv_rating_idx = -1
     for idx, line in enumerate(filtered_lines):
         text = str(line)
         if text.startswith("Protracker_1vs1:"):
@@ -10019,8 +9956,6 @@ def _refresh_stake_multiplier_message(
             protracker_solo_idx = idx
         if text.startswith("Protracker_solo_overall:"):
             protracker_solo_overall_idx = idx
-        if text.startswith("DLTV_rating:"):
-            dltv_rating_idx = idx
         if any(text.startswith(prefix) for prefix in live_state_insert_prefixes):
             insert_after_idx = idx
     # If any ProTracker line exists, always insert after the LAST of them
@@ -10037,11 +9972,6 @@ def _refresh_stake_multiplier_message(
             protracker_solo_idx,
             protracker_solo_overall_idx,
         )
-    # DLTV_rating is the LAST All-block metric, so it must stay inside the
-    # metrics section: never let the ProTracker anchor above push the
-    # Time/Networth/window_* block between ProTracker and DLTV_rating.
-    if dltv_rating_idx > insert_after_idx:
-        insert_after_idx = dltv_rating_idx
     if insert_after_idx >= 0:
         filtered_lines[insert_after_idx + 1 : insert_after_idx + 1] = live_state_lines
     else:
@@ -24474,6 +24404,134 @@ def _kills_window_direction_gate_for_target(
     }
 
 
+def _kills_window_policy_select(
+    *,
+    game_time_seconds: Any,
+    radiant_heroes_and_pos: Any = None,
+    dire_heroes_and_pos: Any = None,
+    lane_kills_adv: Any = None,
+    radiant_lead: Any = None,
+    required_target_sign: Any = None,
+) -> Dict[str, Any]:
+    """Единый гейт ставок на килы: 4 валидированные AND-связки (см.
+    ``KILLS_WINDOW_POLICY``). Возвращает выбранную связку (окно + сторону
+    таргета + гейт-факты) или причину отказа.
+
+    Полоса отправки привязана к игровому времени: вне полосы килов нет.
+    Сторона таргета выводится из знака ``expected_diff`` выбранного окна;
+    второй гейт (lane_kills_adv_dict или NW-лид) обязан совпадать по знаку.
+    ``required_target_sign`` (±1) дополнительно требует, чтобы связка
+    указывала именно на эту сторону (используется ранним kills-потоком,
+    где сторона задана early star).
+    """
+    try:
+        gt = float(game_time_seconds or 0.0)
+    except (TypeError, ValueError):
+        gt = 0.0
+    combo: Optional[Dict[str, Any]] = None
+    for candidate in KILLS_WINDOW_POLICY:
+        if float(candidate["band_start"]) <= gt < float(candidate["band_end"]):
+            combo = candidate
+            break
+    if combo is None:
+        return {
+            "valid": False,
+            "status": "outside_policy_band",
+            "game_time": gt,
+        }
+    window_label = str(combo["window"])
+    gate_payload = _kills_window_direction_gate_for_target(
+        radiant_heroes_and_pos=radiant_heroes_and_pos,
+        dire_heroes_and_pos=dire_heroes_and_pos,
+        target_sign=1,
+        min_abs_ed=0.0,
+    )
+    gate_status = str(gate_payload.get("status") or "")
+    if gate_status in ("bad_target_sign", "dict_not_loaded", "calc_error", "no_payload"):
+        return {"valid": False, "status": gate_status, "window_label": window_label}
+    ed_by_label = gate_payload.get("ed_by_label") or {}
+    try:
+        ed_value = float(ed_by_label.get(window_label))
+    except (TypeError, ValueError):
+        ed_value = None
+    if ed_value is None or not math.isfinite(ed_value) or ed_value == 0.0:
+        return {
+            "valid": False,
+            "status": "no_expected_diff",
+            "window_label": window_label,
+        }
+    target_sign = 1 if ed_value > 0 else -1
+    if abs(ed_value) < float(combo["min_ed"]):
+        return {
+            "valid": False,
+            "status": "ed_below_min",
+            "window_label": window_label,
+            "expected_diff": ed_value,
+            "min_ed": float(combo["min_ed"]),
+        }
+    try:
+        required_sign = int(required_target_sign)
+    except (TypeError, ValueError):
+        required_sign = 0
+    if required_sign in (-1, 1) and required_sign != target_sign:
+        return {
+            "valid": False,
+            "status": "sign_mismatch",
+            "window_label": window_label,
+            "expected_diff": ed_value,
+            "required_target_sign": required_sign,
+        }
+    target_side = "radiant" if target_sign > 0 else "dire"
+    lane_kills_value = _lane_kills_adv_expected_diff(lane_kills_adv)
+    if combo.get("lane_kills_min") is not None:
+        lk_min = float(combo["lane_kills_min"])
+        if (
+            lane_kills_value is None
+            or lane_kills_value * target_sign <= 0
+            or abs(lane_kills_value) < lk_min
+        ):
+            return {
+                "valid": False,
+                "status": "lane_kills_gate_failed",
+                "window_label": window_label,
+                "expected_diff": ed_value,
+                "lane_kills_adv_ed": lane_kills_value,
+                "lane_kills_min": lk_min,
+            }
+    target_nw_diff = _target_networth_diff_from_radiant_lead(radiant_lead, target_side)
+    if combo.get("nw_min") is not None:
+        nw_min = float(combo["nw_min"])
+        if target_nw_diff is None:
+            return {
+                "valid": False,
+                "status": "no_networth_lead",
+                "window_label": window_label,
+                "expected_diff": ed_value,
+            }
+        if target_nw_diff < nw_min:
+            return {
+                "valid": False,
+                "status": "nw_lead_below_min",
+                "window_label": window_label,
+                "expected_diff": ed_value,
+                "target_networth_diff": target_nw_diff,
+                "nw_min": nw_min,
+            }
+    return {
+        "valid": True,
+        "status": "ok",
+        "window_label": window_label,
+        "target_sign": target_sign,
+        "target_side": target_side,
+        "expected_diff": ed_value,
+        "min_ed": float(combo["min_ed"]),
+        "lane_kills_adv_ed": lane_kills_value,
+        "target_networth_diff": target_nw_diff,
+        "band_start": float(combo["band_start"]),
+        "band_end": float(combo["band_end"]),
+    }
+
+
 def _build_early_winner_kills_window_message(
     *,
     radiant_team_name: str,
@@ -24806,28 +24864,17 @@ def _try_dispatch_lane_adv_standalone_kills(
     radiant_heroes_and_pos: Any = None,
     dire_heroes_and_pos: Any = None,
 ) -> bool:
-    """Standalone kills trigger: when ``|lane_adv_dict| ≥ 8`` we dispatch a
-    kills bet on the dominating side, regardless of star block availability.
+    """Standalone kills trigger по kills-window policy: ЕДИНСТВЕННЫЙ путь
+    отправки ставок на килы. Только 4 валидированные AND-связки
+    (``KILLS_WINDOW_POLICY``): 5-15 на 00:00–02:00, 10-20 на 03:00–05:00,
+    15-25 на 07:00–11:00, 20-30 на 13:00–16:00; окно связки пишется в
+    заголовок ставки. Срабатывает в ЛЮБОЙ ветке независимо от наличия
+    star-блоков, на первом цикле, где связка сошлась.
 
     Runs with ``defer_add_url=True`` so other watchers (late star, all-only,
     pub-comeback, etc.) can keep operating in the same cycle. The match URL
     is recorded in the global ``_kills_pre_pass_sent_urls`` set so we
     deliver this kills bet at most once per match lifetime.
-
-    Threshold / gating policy:
-      * default ``|lane_adv_dict| ≥ 8``;
-      * if an EARLY star exists whose sign points to the OPPOSITE team from
-        the lane_adv_dict-dominating side, the bet is BLOCKED outright — the
-        early star contradicts the lanes, so we do not fire the 00-minute bet
-        at all;
-      * EARLY metric consistency gate: each of the three raw early metrics
-        (``counterpick_1vs1``, ``counterpick_1vs2``, ``solo``) read from
-        ``early_output_block`` must either share the lane_adv_dict sign or be
-        zero / missing. A single opposite-sign early metric blocks the bet.
-        All-zero / all-missing early metrics pass the gate.
-      * ``lane_kills_adv_dict`` must share the same non-zero sign as
-        ``lane_adv_dict`` (0–1 min map-start kills bet). Missing / zero /
-        opposite kills-adv blocks the bet.
     """
     if not match_key:
         return False
@@ -24842,82 +24889,28 @@ def _try_dispatch_lane_adv_standalone_kills(
             "Tier-1 листа (kills только для tier1-матчей)"
         )
         return False
-    # Only fire in the early kills window (0-10 min). Ideally at 00, but if the
-    # match becomes visible later we still send as soon as we see it — up to
-    # the cutoff. After that the regular kills logic (early star) takes over.
-    try:
-        _gt = float(game_time_seconds or 0.0)
-    except (TypeError, ValueError):
-        _gt = 0.0
-    if _gt > float(LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS):
+    # Kills-window policy: окно связки задаёт и полосу времени отправки —
+    # вне полосы (а также при несходе второго гейта) килов нет.
+    policy = _kills_window_policy_select(
+        game_time_seconds=game_time_seconds,
+        radiant_heroes_and_pos=radiant_heroes_and_pos,
+        dire_heroes_and_pos=dire_heroes_and_pos,
+        lane_kills_adv=lane_kills_adv,
+        radiant_lead=radiant_lead,
+    )
+    if not bool(policy.get("valid")):
         return False
+    window_label = str(policy.get("window_label") or "")
+    target_side = str(policy.get("target_side") or "")
+    if target_side not in ("radiant", "dire") or not window_label:
+        return False
+
     try:
         lane_adv_value = (
             float(lane_adv_dict_value) if lane_adv_dict_value is not None else None
         )
     except (TypeError, ValueError):
         lane_adv_value = None
-    if lane_adv_value is None:
-        return False
-
-    target_side = "radiant" if lane_adv_value > 0 else "dire"
-    lane_adv_sign = 1 if lane_adv_value > 0 else -1
-
-    # Map-start kills bet: lane_kills_adv_dict must agree in sign with lane_adv_dict.
-    lane_pair_gate = _lane_adv_and_lane_kills_same_sign(
-        lane_adv_dict_value=lane_adv_value,
-        lane_kills_adv=lane_kills_adv,
-    )
-    if not bool(lane_pair_gate.get("valid")):
-        print(
-            "   ⛔ lane_adv_dict standalone kills заблокирован: "
-            "lane_kills_adv_dict и lane_adv_dict не одного знака "
-            f"(lane_adv={lane_pair_gate.get('lane_adv_dict')}, "
-            f"lane_adv_sign={lane_pair_gate.get('lane_adv_sign')}, "
-            f"lane_kills_diff={lane_pair_gate.get('lane_kills_adv_expected_diff')}, "
-            f"lane_kills_sign={lane_pair_gate.get('lane_kills_adv_sign')})"
-        )
-        return False
-
-    # Opposite early star → hard block: if an EARLY star exists whose sign
-    # points to the OPPOSITE team from the lane_adv_dict-dominating side, do
-    # NOT fire the 00-minute bet at all (the early star contradicts the lanes).
-    try:
-        early_sign_int = int(early_star_sign) if early_star_sign is not None else 0
-    except (TypeError, ValueError):
-        early_sign_int = 0
-    opposite_early_star = bool(
-        has_early_star and early_sign_int in (-1, 1) and early_sign_int != lane_adv_sign
-    )
-    if opposite_early_star:
-        print(
-            "   ⛔ lane_adv_dict standalone kills заблокирован: early star на "
-            "противоположной команде "
-            f"(target_side={target_side}, early_sign={early_sign_int})"
-        )
-        return False
-
-    # EARLY metric consistency gate: each of the three raw early metrics
-    # (counterpick_1vs1, counterpick_1vs2, solo) must share the lane_adv_dict
-    # sign or be zero / missing. A single opposite-sign metric blocks the bet;
-    # all-zero / all-missing early metrics pass.
-    early_block = early_output_block if isinstance(early_output_block, dict) else {}
-    for _metric in ("counterpick_1vs1", "counterpick_1vs2", "solo"):
-        _metric_value = _coerce_metric_value(early_block.get(_metric))
-        if _metric_value is None:
-            continue
-        _metric_sign = 1 if _metric_value > 0 else (-1 if _metric_value < 0 else 0)
-        if _metric_sign != 0 and _metric_sign != lane_adv_sign:
-            print(
-                "   ⛔ lane_adv_dict standalone kills заблокирован: early "
-                f"{_metric}={_metric_value:+.2f} противоположен lane_adv_dict "
-                f"(target_side={target_side}, lane_adv_sign={lane_adv_sign:+d})"
-            )
-            return False
-
-    threshold = float(NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS)
-    if abs(lane_adv_value) < threshold:
-        return False
 
     target_team_name = (
         str(radiant_team_name or "").strip()
@@ -24956,6 +24949,7 @@ def _try_dispatch_lane_adv_standalone_kills(
                     stake_team_name=target_team_name,
                     stake_multiplier=1.0,
                     special_header_mode="early_kills",
+                    kills_window_label=window_label,
                 )
                 body_lines = full_message_text.splitlines()
                 if body_lines:
@@ -24980,6 +24974,7 @@ def _try_dispatch_lane_adv_standalone_kills(
                 lane_adv_dict_value=lane_adv_value,
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
                 dire_heroes_and_pos=dire_heroes_and_pos,
+                kills_window_header_label=window_label,
             )
         try:
             current_game_time_int = int(float(game_time_seconds or 0.0))
@@ -24993,15 +24988,17 @@ def _try_dispatch_lane_adv_standalone_kills(
             target_networth_diff = None
         details = {
             "status": status,
-            "dispatch_mode": "immediate_lane_adv_standalone_kills",
-            "delay_reason": "lane_adv_dict_standalone_kills",
-            "release_reason": NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND,
-            "dispatch_status_label": NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND,
+            "dispatch_mode": "immediate_kills_window_policy",
+            "delay_reason": f"kills_window_policy_{window_label}",
+            "release_reason": NETWORTH_STATUS_KILLS_WINDOW_POLICY_SEND,
+            "dispatch_status_label": NETWORTH_STATUS_KILLS_WINDOW_POLICY_SEND,
+            "kills_window_label": window_label,
+            "kills_window_expected_diff": policy.get("expected_diff"),
+            "kills_window_min_ed": policy.get("min_ed"),
             "game_time": current_game_time_int,
             "target_side": target_side,
-            "lane_adv_dict": float(lane_adv_value),
-            "lane_adv_dict_threshold": threshold,
-            "lane_adv_dict_opposite_early_star": bool(opposite_early_star),
+            "lane_adv_dict": lane_adv_value,
+            "lane_kills_adv_ed": policy.get("lane_kills_adv_ed"),
             "kills_dual_signal_defer": True,
             "selected_star_wr": selected_star_wr,
             "selected_star_mode": selected_star_mode,
@@ -25036,7 +25033,7 @@ def _try_dispatch_lane_adv_standalone_kills(
             current_map_observation=_imm_obs,
             map_num=_imm_map,
             selected_side=target_side,
-            add_url_reason="star_signal_sent_now_lane_adv_standalone_kills",
+            add_url_reason="star_signal_sent_now_kills_window_policy",
             add_url_details=details,
             bookmaker_decision="sent",
             defer_add_url=True,
@@ -25049,11 +25046,10 @@ def _try_dispatch_lane_adv_standalone_kills(
             except Exception:
                 pass
             _lane_adv_kills_verdict_msg = (
-                "   ✅ ВЕРДИКТ: lane_adv_dict standalone kills отправлен "
-                f"(target_side={target_side}, "
-                f"lane_adv_dict={lane_adv_value:+.2f}, "
-                f"min_abs={threshold:.2f}, "
-                f"opposite_early_star={bool(opposite_early_star)}, "
+                "   ✅ ВЕРДИКТ: kills-window policy отправлен "
+                f"(window={window_label}, target_side={target_side}, "
+                f"expected_diff={policy.get('expected_diff'):+.2f}, "
+                f"min_ed={float(policy.get('min_ed') or 0.0):.2f}, "
                 f"game_time={current_game_time_int}) — другие ватчеры продолжают"
             )
             print(_lane_adv_kills_verdict_msg)
@@ -25061,9 +25057,10 @@ def _try_dispatch_lane_adv_standalone_kills(
                 match_key,
                 verdict=_lane_adv_kills_verdict_msg,
                 kind="send",
-                reason="star_signal_sent_now_lane_adv_standalone_kills",
+                reason="star_signal_sent_now_kills_window_policy",
                 dispatch={
-                    "dispatch_mode": "immediate_lane_adv_standalone_kills",
+                    "dispatch_mode": "immediate_kills_window_policy",
+                    "kills_window_label": window_label,
                     "game_time": current_game_time_int,
                     "target_side": target_side,
                     "target_networth_diff": (
@@ -32028,8 +32025,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 _gt_local = float(game_time or 0.0)
             except (TypeError, ValueError):
                 _gt_local = 0.0
-            # Only worth the early path inside the 0-10 min window.
-            if _gt_local > float(LANE_ADV_STANDALONE_KILLS_MAX_GAME_TIME_SECONDS):
+            # Kills-window policy полосы доходят до 16:00 (связка 20-30).
+            if _gt_local >= float(KILLS_WINDOW_POLICY_HORIZON_SECONDS):
                 return
             # Lanes are not computed inside _run_local_dictionary_metrics — do it
             # here so lane_adv_dict is available before ProTracker.
@@ -34230,14 +34227,35 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 tier1_early_kills_base_mode
                 and tier1_early_kills_window_gate.get("valid")
             )
-            # Окно с максимальным same-side |expected_diff| — называем его в
-            # заголовке «СТАВКА НА Ранние килы <window> <team>».
-            tier1_early_kills_strongest_window = (
-                _strongest_kills_window_label(
-                    tier1_early_kills_window_gate.get("ed_by_label"),
-                    selected_early_sign,
-                    min_abs_ed=KILLS_WINDOW_MIN_ABS_ED_GATE,
+            # Kills-window policy: ставка на килы идёт только по 4 связкам
+            # (ed окна + lane_kills/NW-лид того же знака в полосе отправки).
+            # Сторона связки обязана совпадать со стороной early star.
+            tier1_early_kills_policy: Dict[str, Any] = (
+                _kills_window_policy_select(
+                    game_time_seconds=game_time,
+                    radiant_heroes_and_pos=radiant_heroes_and_pos,
+                    dire_heroes_and_pos=dire_heroes_and_pos,
+                    lane_kills_adv=s.get('lane_kills_adv_dict'),
+                    radiant_lead=lead,
+                    required_target_sign=selected_early_sign,
                 )
+                if tier1_early_kills_mode
+                else {"valid": False, "status": "inactive"}
+            )
+            if tier1_early_kills_mode and not bool(tier1_early_kills_policy.get("valid")):
+                print(
+                    "   ⛔ tier1 early kills заблокирован: kills-window policy не сошлась "
+                    f"(game_time={int(game_time)}, "
+                    f"status={tier1_early_kills_policy.get('status')}, "
+                    f"window={tier1_early_kills_policy.get('window_label')})"
+                )
+            tier1_early_kills_mode = bool(
+                tier1_early_kills_mode and tier1_early_kills_policy.get("valid")
+            )
+            # Окно связки — называем его в заголовке «СТАВКА НА Ранние килы
+            # <window> <team>».
+            tier1_early_kills_strongest_window = (
+                str(tier1_early_kills_policy.get("window_label") or "") or None
                 if tier1_early_kills_mode
                 else None
             )
@@ -34361,12 +34379,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 radiant_lead=lead,
                 radiant_team_name=radiant_team_name_original or radiant_team_name,
                 dire_team_name=dire_team_name_original or dire_team_name,
-                show_kills_time_blocks=bool(
-                    tier1_early_kills_mode
-                    or early_only_kills_mode
-                    or str(stake_multiplier_context.get("special_header_mode") or "").strip()
-                    == "early_kills"
-                ),
+                show_kills_time_blocks=False,
                 kills_release_status=(
                     locals().get("kills_release_status_label")
                     or locals().get("kills_release_status_label_pp")
@@ -34945,75 +34958,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         if kills_pp_target_side == "radiant"
                         else (dire_team_name_original or dire_team_name)
                     )
-                    lane_adv_dict_kills_aligned_pp = bool(
-                        same_sign_lane_adv_guard.get("lane_adv_dict_sign") is not None
-                        and int(same_sign_lane_adv_guard.get("lane_adv_dict_sign") or 0) == int(selected_early_sign)
+                    # Kills-window policy уже проверена через
+                    # tier1_early_kills_mode — релиз сразу в полосе связки.
+                    kills_release_status_label_pp: Optional[str] = (
+                        NETWORTH_STATUS_KILLS_WINDOW_POLICY_SEND
                     )
-                    lane_adv_dict_kills_value_raw_pp = same_sign_lane_adv_guard.get("lane_adv_dict")
-                    try:
-                        lane_adv_dict_kills_value_pp = (
-                            float(lane_adv_dict_kills_value_raw_pp)
-                            if lane_adv_dict_kills_value_raw_pp is not None
-                            else None
-                        )
-                    except (TypeError, ValueError):
-                        lane_adv_dict_kills_value_pp = None
-                    lane_adv_dict_kills_immediate_pp = bool(
-                        lane_adv_dict_kills_aligned_pp
-                        and lane_adv_dict_kills_value_pp is not None
-                        and abs(lane_adv_dict_kills_value_pp)
-                        >= float(NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS)
-                    )
-                    kills_release_status_label_pp: Optional[str] = None
-                    if lane_adv_dict_kills_immediate_pp:
-                        kills_release_status_label_pp = NETWORTH_STATUS_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_SEND
-                    elif (
-                        current_game_time
-                        >= NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS
-                        and current_game_time
-                        < NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_END_SECONDS
-                        and kills_pp_target_diff
-                        >= NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_MIN_DIFF
-                    ):
-                        kills_release_status_label_pp = NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND
-                    elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS:
-                        if verbose_match_log:
-                            print(
-                                "   ⏳ kills pre-pass: pre3 wait "
-                                f"(kills_target_side={kills_pp_target_side}, "
-                                f"kills_target_diff={int(kills_pp_target_diff)}) "
-                                "— продолжаем late watcher"
-                            )
-                    elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS:
-                        if verbose_match_log:
-                            print(
-                                "   ⏳ kills pre-pass: pre6 wait "
-                                f"(kills_target_side={kills_pp_target_side}, "
-                                f"kills_target_diff={int(kills_pp_target_diff)}) "
-                                "— продолжаем late watcher"
-                            )
-                    elif current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
-                        if kills_pp_target_diff >= 0:
-                            kills_release_status_label_pp = NETWORTH_STATUS_TIER1_EARLY_KILLS_6_10_TARGET_NONNEG_SEND
-                        else:
-                            if verbose_match_log:
-                                print(
-                                    "   ⏳ kills pre-pass: 6_10 wait kills_target_diff<0 "
-                                    f"(kills_target_side={kills_pp_target_side}, "
-                                    f"kills_target_diff={int(kills_pp_target_diff)}) "
-                                    "— продолжаем late watcher"
-                                )
-                    else:
-                        if kills_pp_target_diff >= 0:
-                            kills_release_status_label_pp = NETWORTH_STATUS_TIER1_EARLY_KILLS_4_12_SEND_500
-                        else:
-                            # 10+ min and kills target negative → cancel kills,
-                            # but still let late watcher proceed.
-                            if verbose_match_log:
-                                print(
-                                    "   ⚠️ kills pre-pass: cancelled (kills target в минусе на 10+ мин) "
-                                    "— продолжаем late watcher"
-                                )
 
                     if (
                         kills_release_status_label_pp is not None
@@ -35041,6 +34990,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     stake_team_name=str(kills_pp_team_name or "НЕИЗВЕСТНАЯ КОМАНДА"),
                                     stake_multiplier=stake_multiplier,
                                     special_header_mode="early_kills",
+                                    kills_window_label=tier1_early_kills_strongest_window,
                                 )
                                 kills_pp_body_lines = message_text.splitlines()
                                 if kills_pp_body_lines:
@@ -35052,7 +35002,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                     radiant_lead=lead,
                                     radiant_team_name=radiant_team_name_original or radiant_team_name,
                                     dire_team_name=dire_team_name_original or dire_team_name,
-                                    show_kills_time_blocks=True,
+                                    show_kills_time_blocks=False,
                                     kills_release_status=kills_release_status_label_pp,
                                 ).strip().splitlines()
                                 kills_pp_body_lines = [
@@ -35083,7 +35033,6 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                 _pp_duo = -1
                                 _pp_solo = -1
                                 _pp_solo_all = -1
-                                _pp_dltv = -1
                                 for _i, _ln in enumerate(kills_pp_body_lines):
                                     _txt = str(_ln)
                                     if _txt.startswith("Protracker_1vs1:"):
@@ -35094,16 +35043,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                                         _pp_solo = _i
                                     if _txt.startswith("Protracker_solo_overall:"):
                                         _pp_solo_all = _i
-                                    if _txt.startswith("DLTV_rating:"):
-                                        _pp_dltv = _i
                                     if any(_txt.startswith(_pref) for _pref in _pp_prefixes):
                                         _pp_ins = _i
                                 if _pp_1vs1 >= 0 or _pp_duo >= 0 or _pp_solo >= 0 or _pp_solo_all >= 0:
                                     _pp_ins = max(_pp_1vs1, _pp_duo, _pp_solo, _pp_solo_all)
-                                # DLTV_rating closes the All block — keep the
-                                # live-state lines strictly below it.
-                                if _pp_dltv > _pp_ins:
-                                    _pp_ins = _pp_dltv
                                 if _pp_ins >= 0:
                                     kills_pp_body_lines[_pp_ins + 1 : _pp_ins + 1] = _pp_live
                                 else:
@@ -35213,133 +35156,24 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                             "(нет target_sign/lead)"
                         )
                         return return_status
-                    # Kills dispatch — new prep6 watcher:
-                    #   * any minute: lane_adv_dict aligned with target AND |adv| >= immediate threshold → release
-                    #   * pre-6:00: wait
-                    #   * 6:00 ≤ t < 10:00: target_diff >= 0 → release
-                    #   * 10:00 fallback: release unconditionally; if target_diff < 0 cancel
-                    lane_adv_dict_kills_aligned = bool(
-                        same_sign_lane_adv_guard.get("lane_adv_dict_sign") is not None
-                        and selected_early_sign in (-1, 1)
-                        and int(same_sign_lane_adv_guard.get("lane_adv_dict_sign") or 0) == int(selected_early_sign)
+                    # Kills-window policy уже проверена на входе в режим:
+                    # связка сошлась (ed + второй гейт того же знака в полосе
+                    # отправки) — шлём сразу, без legacy prep6-лестницы.
+                    early65_release_status_label = NETWORTH_STATUS_KILLS_WINDOW_POLICY_SEND
+                    early_release_dispatch_mode = "immediate_tier1_early_kills"
+                    early_release_delay_reason = (
+                        f"tier1_early_kills_policy_"
+                        f"{tier1_early_kills_policy.get('window_label')}"
                     )
-                    lane_adv_dict_kills_value_raw = same_sign_lane_adv_guard.get("lane_adv_dict")
-                    try:
-                        lane_adv_dict_kills_value = (
-                            float(lane_adv_dict_kills_value_raw)
-                            if lane_adv_dict_kills_value_raw is not None
-                            else None
-                        )
-                    except (TypeError, ValueError):
-                        lane_adv_dict_kills_value = None
-                    lane_adv_dict_kills_immediate = bool(
-                        lane_adv_dict_kills_aligned
-                        and lane_adv_dict_kills_value is not None
-                        and abs(lane_adv_dict_kills_value)
-                        >= float(NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS)
-                    )
-                    if lane_adv_dict_kills_immediate:
-                        early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_SEND
-                        early_release_dispatch_mode = "immediate_tier1_early_kills"
-                        early_release_delay_reason = "tier1_early_kills_lane_adv_immediate"
-                        if verbose_match_log:
-                            print(
-                                "   ✅ Early kills release: lane_adv_dict immediate "
-                                f"(value={lane_adv_dict_kills_value:+.2f}, "
-                                f"min_abs={NETWORTH_GATE_TIER1_EARLY_KILLS_LANE_ADV_DICT_IMMEDIATE_MIN_ABS:.2f}, "
-                                f"target_side={kills_target_side}, game_time={int(current_game_time)})"
-                            )
-                    elif (
-                        current_game_time
-                        >= NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS
-                        and current_game_time
-                        < NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_END_SECONDS
-                        and kills_target_networth_diff
-                        >= NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_MIN_DIFF
-                    ):
-                        early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND
-                        early_release_dispatch_mode = "immediate_tier1_early_kills"
-                        early_release_delay_reason = "tier1_early_kills_3_6_lead"
-                        if verbose_match_log:
-                            print(
-                                "   ✅ Early kills release: 3-6 min lead bypass "
-                                f"(target_side={kills_target_side}, "
-                                f"target_diff={int(kills_target_networth_diff)}, "
-                                f"need>={int(NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_MIN_DIFF)}, "
-                                f"game_time={int(current_game_time)})"
-                            )
-                    elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS:
+                    if verbose_match_log:
                         print(
-                            "   ⏳ Ожидание dispatch: pre3_block "
-                            f"(target_side={kills_target_side}, "
+                            "   ✅ Early kills release: kills-window policy "
+                            f"(window={tier1_early_kills_policy.get('window_label')}, "
+                            f"expected_diff={tier1_early_kills_policy.get('expected_diff'):+.2f}, "
+                            f"target_side={kills_target_side}, "
                             f"target_diff={int(kills_target_networth_diff)}, "
-                            f"window opens at "
-                            f"{_format_game_clock(NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_WINDOW_START_SECONDS)})"
+                            f"game_time={int(current_game_time)})"
                         )
-                        return return_status
-                    elif current_game_time < NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS:
-                        print(
-                            "   ⏳ Ожидание dispatch: early_kills_pre6_wait "
-                            f"(target_side={kills_target_side}, "
-                            f"target_diff={int(kills_target_networth_diff)}, "
-                            f"window opens at "
-                            f"{_format_game_clock(NETWORTH_GATE_TIER1_EARLY_KILLS_WINDOW_START_SECONDS)})"
-                        )
-                        return return_status
-                    elif current_game_time < NETWORTH_GATE_EARLY_WINDOW_END_SECONDS:
-                        if kills_target_networth_diff >= 0:
-                            early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY_KILLS_6_10_TARGET_NONNEG_SEND
-                            early_release_dispatch_mode = "immediate_tier1_early_kills"
-                            early_release_delay_reason = "tier1_early_kills"
-                        else:
-                            print(
-                                "   ⏳ Ожидание dispatch: early_kills_6_10_wait "
-                                f"(target_side={kills_target_side}, "
-                                f"target_diff={int(kills_target_networth_diff)}, "
-                                f"need>=0, window closes at "
-                                f"{_format_game_clock(NETWORTH_GATE_EARLY_WINDOW_END_SECONDS)})"
-                            )
-                            return return_status
-                    else:
-                        # Window closed (>=10 min): if target still negative → cancel
-                        if kills_target_networth_diff < 0:
-                            add_url(
-                                check_uniq_url,
-                                reason="star_signal_rejected_early_kills_target_negative",
-                                details={
-                                    "status": status,
-                                    "dispatch_mode": "tier1_early_kills_window_closed",
-                                    "dispatch_status_label": NETWORTH_STATUS_TIER1_EARLY_KILLS_WINDOW_CLOSED,
-                                    "game_time": int(current_game_time),
-                                    "target_side": kills_target_side,
-                                    "target_networth_diff": float(kills_target_networth_diff or 0.0),
-                                    "selected_early_star": has_selected_early_star,
-                                    "selected_late_star": has_selected_late_star,
-                                    "selected_early_diag": selected_early_diag,
-                                    "selected_late_diag": selected_late_diag,
-                                    "early_star_no_late_same_sign_gate": early_star_no_late_same_sign_gate,
-                                    "json_retry_errors": json_retry_errors,
-                                },
-                            )
-                            _verdict_print(
-                                "   ⚠️ ВЕРДИКТ: ОТКАЗ (early kills: target в минусе на 10+ мин, "
-                                f"target_diff={int(kills_target_networth_diff)})",
-                                reason="star_signal_rejected_early_kills_target_negative",
-                                kind="reject",
-                                dispatch={
-                                    "dispatch_mode": "tier1_early_kills_window_closed",
-                                    "game_time": current_game_time,
-                                    "target_side": kills_target_side,
-                                    "target_networth_diff": float(kills_target_networth_diff or 0.0),
-                                },
-                            )
-                            return return_status
-                        else:
-                            # Target >= 0 after 10 min → dispatch
-                            early65_release_status_label = NETWORTH_STATUS_TIER1_EARLY_KILLS_4_12_SEND_500
-                            early_release_dispatch_mode = "immediate_tier1_early_kills"
-                            early_release_delay_reason = "tier1_early_kills"
-                        return return_status
                 if (
                     early65_gate_active
                     and early65_target_side is not None

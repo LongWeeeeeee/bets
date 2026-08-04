@@ -25,11 +25,12 @@ def _patch_early_wr(monkeypatch, wr_pct: float) -> None:
     )
 
 
-def test_early_kills_pre3_block(monkeypatch, capsys) -> None:
-    # Under 3:00 (e.g., 2:30), in tier1_early_kills_mode (>= 2 hits) with no lane_adv hits,
-    # we expect it to be blocked by pre3_block and return return_status immediately.
+def test_early_kills_no_bet_outside_policy_band(monkeypatch, capsys) -> None:
+    # Kills-window policy: at 2:30 we sit in the gap between the 5-15 band
+    # (ends 02:00) and the 10-20 band (starts 03:00) — tier1_early_kills_mode
+    # is gated off, so no "Ранние килы" bet is dispatched.
     case = BranchScenario(
-        name="early_kills_pre3_block_wait",
+        name="early_kills_outside_policy_band",
         game_time_seconds=(2 * 60) + 30,
         target_side="radiant",
         target_networth_diff=5000,
@@ -38,7 +39,7 @@ def test_early_kills_pre3_block(monkeypatch, capsys) -> None:
         has_late_star=False,
         late_sign=1,
         expected_send_calls=0,
-        raw_early_output={"counterpick_1vs1": 6, "solo": 3},  # 2 hits => tier1_early_kills_mode is True
+        raw_early_output={"counterpick_1vs1": 6, "solo": 3},  # 2 hits
         raw_mid_output={"solo": 0},
     )
     _patch_early_wr(monkeypatch, 70.0)
@@ -63,23 +64,37 @@ def test_early_kills_pre3_block(monkeypatch, capsys) -> None:
         }
 
     monkeypatch.setattr(test_networth_dispatch_gates, "_star_diagnostics_for_case", _my_star_diagnostics_for_case)
+    # Direction gate валиден, чтобы main-путь дошёл до policy-селектора: в
+    # 2:30 ни одна связка не активна → outside_policy_band.
+    monkeypatch.setattr(
+        runtime,
+        "_kills_window_direction_gate_for_target",
+        lambda **_kwargs: {
+            "valid": True,
+            "status": "ok",
+            "matching_windows": ["5_15"],
+            "ed_by_label": {"5_15": 0.5},
+            "min_abs_ed": 0.0,
+            "target_sign": 1,
+        },
+    )
 
     result = _run_branch_scenario(monkeypatch, case)
     output = capsys.readouterr().out
 
-    assert result.sent_messages == []
-    # Verify that the pre3_block warning/wait statement was printed in stdout
-    assert "pre3_block" in output
+    kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
+    assert kills_msgs == [], "вне полосы kills-window policy килов быть не должно"
+    assert "kills-window policy не сошлась" in output
 
 
-def test_early_kills_allowed_after_three_minutes(monkeypatch) -> None:
-    # At 3:30 (above 3:00 boundary), in tier1_early_kills_mode with target limit >= 600,
-    # it bypasses/sends early kills signal.
+def test_early_kills_policy_release_in_band(monkeypatch) -> None:
+    # At 3:30 the 10-20 band is active; with a valid policy combo the kills
+    # bet releases immediately (no legacy prep6 ladder).
     case = BranchScenario(
-        name="early_kills_3_6_lead_bypass_send",
+        name="early_kills_policy_release_10_20",
         game_time_seconds=(3 * 60) + 30,
         target_side="radiant",
-        target_networth_diff=800,  # exceeds NETWORTH_GATE_TIER1_EARLY_KILLS_EARLY_LEAD_MIN_DIFF = 600.0
+        target_networth_diff=800,
         has_early_star=True,
         early_sign=1,
         has_late_star=False,
@@ -109,13 +124,43 @@ def test_early_kills_allowed_after_three_minutes(monkeypatch) -> None:
         }
 
     monkeypatch.setattr(test_networth_dispatch_gates, "_star_diagnostics_for_case", _my_star_diagnostics_for_case)
+    # Main-path direction gate: kills_window same-sign block exists.
+    monkeypatch.setattr(
+        runtime,
+        "_kills_window_direction_gate_for_target",
+        lambda **_kwargs: {
+            "valid": True,
+            "status": "ok",
+            "matching_windows": ["10_20"],
+            "ed_by_label": {"10_20": 0.3},
+            "min_abs_ed": 0.0,
+            "target_sign": 1,
+        },
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_kills_window_policy_select",
+        lambda **_kwargs: {
+            "valid": True,
+            "status": "ok",
+            "window_label": "10_20",
+            "target_sign": 1,
+            "target_side": "radiant",
+            "expected_diff": 0.3,
+            "min_ed": 0.2,
+            "lane_kills_adv_ed": None,
+            "target_networth_diff": 800.0,
+            "band_start": 180.0,
+            "band_end": 300.0,
+        },
+    )
 
     result = _run_branch_scenario(monkeypatch, case)
 
     assert len(result.sent_messages) == 1
+    assert result.sent_messages[0].startswith("СТАВКА НА Ранние килы 10-20 ")
     assert result.add_url_calls
-    # Should be released under tier1_early_kills_3_6_lead_send label
-    assert result.add_url_calls[-1]["details"]["release_reason"] == runtime.NETWORTH_STATUS_TIER1_EARLY_KILLS_3_6_LEAD_SEND
+    assert result.add_url_calls[-1]["details"]["release_reason"] == runtime.NETWORTH_STATUS_KILLS_WINDOW_POLICY_SEND
 
 
 def test_early_kills_suppressed_when_no_tier1_team(monkeypatch) -> None:
@@ -165,11 +210,13 @@ def test_early_kills_suppressed_when_no_tier1_team(monkeypatch) -> None:
 
 def test_early_kills_gate_uses_early_side_networth(monkeypatch, capsys) -> None:
     # Regression for Zero Tenacity vs PuckChamp: Late/All selected radiant,
-    # Early selected dire, and radiant led by 243. The kills gate must read
-    # the Early (dire) networth as -243 instead of releasing on radiant +243.
+    # Early selected dire, and radiant led by 243. The kills policy must read
+    # the Early (dire) networth as -243 — the 15-25 combo needs dire NW
+    # >= +500, so the kills bet is suppressed instead of releasing on
+    # radiant +243.
     case = BranchScenario(
         name="early_kills_uses_early_side_networth",
-        game_time_seconds=(6 * 60) + 23,
+        game_time_seconds=(7 * 60) + 30,
         target_side="radiant",
         target_networth_diff=243,
         has_early_star=True,
@@ -211,15 +258,26 @@ def test_early_kills_gate_uses_early_side_networth(monkeypatch, capsys) -> None:
         "_star_diagnostics_for_case",
         _diagnostics_with_real_early_hits,
     )
+    # kills_window dict: 15-25 ed points dire (early side), |ed| >= 0.2.
+    monkeypatch.setattr(
+        runtime,
+        "_kills_window_direction_gate_for_target",
+        lambda **_kwargs: {
+            "valid": True,
+            "status": "ok",
+            "matching_windows": ["15_25"],
+            "ed_by_label": {"15_25": -0.5},
+            "min_abs_ed": 0.0,
+            "target_sign": int(_kwargs.get("target_sign") or 1),
+        },
+    )
 
     result = _run_branch_scenario(monkeypatch, case)
     output = capsys.readouterr().out
 
-    assert result.sent_messages == []
-    assert result.add_url_calls == []
-    assert "early_kills_6_10_wait" in output
-    assert "target_side=dire" in output
-    assert "target_diff=-243" in output
+    kills_msgs = [m for m in result.sent_messages if m.startswith("СТАВКА НА Ранние килы")]
+    assert kills_msgs == [], "NW-гейт обязан читаться со стороны early star"
+    assert "nw_lead_below_min" in output
 
 
 def test_zero_tenacity_is_tier2_only() -> None:
