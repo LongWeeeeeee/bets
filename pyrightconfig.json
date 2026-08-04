@@ -1,0 +1,22 @@
+{
+  "include": [
+    "base",
+    "ELO",
+    "pro_heroes_data",
+    "runtime"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/*.shards",
+    "**/*.bak_*",
+    "venv_catboost",
+    "venv_mac",
+    "ELO/output",
+    "base/ml_dataset"
+  ],
+  "venvPath": ".",
+  "venv": "venv_catboost",
+  "pythonVersion": "3.9",
+  "typeCheckingMode": "basic"
+}

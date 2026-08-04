@@ -1,0 +1,78 @@
+{
+  "started": "2026-08-04T11:21:23",
+  "sync": {
+    "public": {
+      "returncode": 0,
+      "detail": ""
+    },
+    "pro": {
+      "returncode": 0,
+      "detail": ""
+    }
+  },
+  "challenger": {
+    "dir": "data/public_draft_hero10_experiment/2026-08-04_all_public_v5_serv1_full",
+    "counts": {
+      "all": 1483838,
+      "train": 890302,
+      "validation": 296768,
+      "test": 296768,
+      "shipped_fit_rows": 1187070
+    },
+    "test": {
+      "rows": 296768,
+      "positive_rate": 0.5309366238947596,
+      "log_loss": 0.66882081942421,
+      "auc": 0.6189065324608161,
+      "accuracy": 0.5874757386241104,
+      "brier": 0.23811906371366853,
+      "top_decile_rate": 0.7121242755088287,
+      "bottom_decile_rate": 0.34452082490901736,
+      "lift_over_base_rate": 0.36760345059981137
+    }
+  },
+  "comparison": {
+    "champion_dir": "2026-08-04_all_public_v4",
+    "champion_fit_end": 1779797679,
+    "challenger_fit_end": 1782627457,
+    "eligible_public_rows": 296768,
+    "champion_public_auc": 0.609704041086688,
+    "challenger_public_auc": 0.6189065324608161,
+    "eligible_pro_rows": 709,
+    "champion_pro": {
+      "rows": 709,
+      "base_rate": 0.5021156558533145,
+      "auc": 0.5764076773721234,
+      "auc_ci95": 0.051547503536189546,
+      "accuracy": 0.5641748942172073,
+      "top_decile_rate": 0.5428571428571428,
+      "bottom_decile_rate": 0.3142857142857143,
+      "decile_spread": 0.22857142857142854
+    },
+    "challenger_pro": {
+      "rows": 709,
+      "base_rate": 0.5021156558533145,
+      "auc": 0.5914950504503931,
+      "auc_ci95": 0.05127940029786095,
+      "accuracy": 0.5796897038081805,
+      "top_decile_rate": 0.5714285714285714,
+      "bottom_decile_rate": 0.2571428571428571,
+      "decile_spread": 0.3142857142857143
+    },
+    "pro_audit": {
+      "files": 11,
+      "records": 5732,
+      "accepted": 3873,
+      "duplicate_map_id": 802,
+      "rejected": 1057,
+      "file_error": 0
+    }
+  },
+  "verdict": {
+    "decision": "PROMOTE",
+    "reasons": [
+      "публичное окно: ΔAUC +0.0092",
+      "про-окно (709 карт): ΔAUC +0.0151"
+    ]
+  }
+}

@@ -136,3 +136,13 @@ log_dltv*.txt
 
 # --- живое состояние sourcetv ---
 runtime/sourcetv_matches.json
+
+# --- локальные окружения, сторонние проекты и скрэтч (уборка 2026-08-04)
+venv_mac/
+node_modules/
+outputs/
+the-ai-counsel/
+scratch/
+.codex-*/
+# модели экспериментов не коммитим — только manifest/results/audit
+data/public_draft_hero10_experiment/**/*.joblib

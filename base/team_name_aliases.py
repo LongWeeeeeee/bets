@@ -74,7 +74,7 @@ TEAM_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
     # Лог монитора 31.07.2026: карточка `L1GA REKONIX` — слова TEAM на сайте нет.
     "L1GA TEAM": ("L1GA",),
     # Лог монитора 31.07.2026: карточка `LEVEL UP NO HOODWINK`.
-    "Level UP esports": ("Level UP",),
+    "Level UP esports": ("Level UP", "Levelup"),
 }
 
 

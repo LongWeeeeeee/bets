@@ -1,0 +1,58 @@
+{
+  "experiment": "public_draft_hero10",
+  "version": "2026-08-04_all_public_v5_serv1_full",
+  "design_version": "all_public_v4",
+  "input": "/Users/alex/Documents/ingame/bets_data/analise_pub_matches/json_parts_split_from_object",
+  "counts": {
+    "all": 1483838,
+    "train": 890302,
+    "validation": 296768,
+    "test": 296768,
+    "shipped_fit_rows": 1187070
+  },
+  "split_boundaries": {
+    "train": {
+      "count": 890302,
+      "first": {
+        "start_time": 1774310401,
+        "map_id": 8741397037
+      },
+      "last": {
+        "start_time": 1779941349,
+        "map_id": 8828421097
+      }
+    },
+    "validation": {
+      "count": 296768,
+      "first": {
+        "start_time": 1779941353,
+        "map_id": 8828421121
+      },
+      "last": {
+        "start_time": 1782627457,
+        "map_id": 8870424949
+      }
+    },
+    "test": {
+      "count": 296768,
+      "first": {
+        "start_time": 1782627467,
+        "map_id": 8870425078
+      },
+      "last": {
+        "start_time": 1785367134,
+        "map_id": 8920194322
+      }
+    }
+  },
+  "artifacts": [
+    "duration_seconds_regression_model.joblib",
+    "kills_saturation_scale.joblib",
+    "level_feature_encoder.joblib",
+    "radiant_win_model.joblib",
+    "results.json",
+    "total_kills_over_median_model.joblib",
+    "total_kills_regression_model.joblib",
+    "win_feature_encoder.joblib"
+  ]
+}

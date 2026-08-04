@@ -32,6 +32,13 @@ IDENTITY = {
     "team2": "Aion",
 }
 
+WRAITHS_LEVELUP_IDENTITY = {
+    "series": "dltv.org/matches/wraiths-levelup",
+    "map_num": 1,
+    "team1": "Wraiths",
+    "team2": "Level UP esports",
+}
+
 
 def _result(**overrides):
     base = {
@@ -53,6 +60,7 @@ def _result(**overrides):
         ("AION", "Aion"),
         ("NEMIGA GAMING", "Nemiga Gaming"),
         ("LEVEL UP", "Level UP esports"),
+        ("Levelup", "Level UP esports"),
         ("CARSTENSZ", "Carstensz Esports"),
         ("Six  Cats", "Six Cats"),
         ("Nigma.Galaxy", "Nigma Galaxy"),
@@ -89,6 +97,12 @@ def test_odds_accepted_for_bookmaker_rendering():
     """Живой случай Ilbirs vs Aion: рынок открыт, кэфы обязаны приняться."""
     result = _result(team1="ILBIRS", team2="AION")
     assert _odds_accepted(result, identity=IDENTITY) is True
+
+
+def test_odds_accepted_for_wraiths_vs_levelup_bookmaker_rendering():
+    """Слитое Winline-написание Levelup обязано пройти проверку identity."""
+    result = _result(team1="Wraiths", team2="Levelup")
+    assert _odds_accepted(result, identity=WRAITHS_LEVELUP_IDENTITY) is True
 
 
 def test_odds_rejected_for_foreign_team():

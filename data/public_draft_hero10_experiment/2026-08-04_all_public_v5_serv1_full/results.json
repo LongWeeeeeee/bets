@@ -1,0 +1,183 @@
+{
+  "schema": {
+    "feature_names": [
+      "hero_R_1",
+      "hero_R_2",
+      "hero_R_3",
+      "hero_R_4",
+      "hero_R_5",
+      "hero_D_1",
+      "hero_D_2",
+      "hero_D_3",
+      "hero_D_4",
+      "hero_D_5"
+    ],
+    "feature_count": 10,
+    "uses_ingame_or_third_party_stats": false,
+    "win_design": {
+      "kind": "hero_role_pair",
+      "signed": true,
+      "columns": 16758,
+      "pair_min_support": 30
+    },
+    "level_design": {
+      "kind": "hero_role",
+      "signed": false,
+      "columns": 762
+    }
+  },
+  "counts": {
+    "all": 1483838,
+    "train": 890302,
+    "validation": 296768,
+    "test": 296768,
+    "shipped_fit_rows": 1187070
+  },
+  "selection": {
+    "win_C": 0.003,
+    "win_validation_log_loss": 0.6723291669548886,
+    "kills_over_median_C": 0.03,
+    "kills_over_median_validation_log_loss": 0.6575588885921954,
+    "kills_ridge_alpha": 100.0,
+    "kills_validation_mae": 15.759547054396053,
+    "duration_ridge_alpha": 1000.0,
+    "duration_validation_mae": 455.6095684662721,
+    "kills_median_train": 78.0,
+    "kills_saturation_median_train": 0.5083235800885543
+  },
+  "evaluation": {
+    "radiant_win": {
+      "rows": 296768,
+      "positive_rate": 0.5309366238947596,
+      "log_loss": 0.6718910008084857,
+      "auc": 0.6104330830048714,
+      "accuracy": 0.582276390985551,
+      "brier": 0.23958986134721683,
+      "top_decile_rate": 0.6988475535786494,
+      "bottom_decile_rate": 0.35624747270521634
+    },
+    "total_kills_over_median": {
+      "rows": 296768,
+      "positive_rate": 0.46593635432391634,
+      "log_loss": 0.6542828997948825,
+      "auc": 0.6518375518023656,
+      "accuracy": 0.6106958971317662,
+      "brier": 0.231288170192488,
+      "top_decile_rate": 0.6928831378892034,
+      "bottom_decile_rate": 0.23770049871950397
+    },
+    "total_kills_regression": {
+      "rows": 296768,
+      "mae": 15.791976728709766,
+      "rmse": 19.978582399291067,
+      "median_baseline_mae": 16.675948889368126,
+      "r2": 0.10545633131992593,
+      "spearman": 0.3148728414981468,
+      "top_decile_actual": 90.22813047580536,
+      "bottom_decile_actual": 66.11480657770589
+    },
+    "duration_seconds_regression": {
+      "rows": 296768,
+      "mae": 455.59611004967917,
+      "rmse": 580.1517134976465,
+      "median_baseline_mae": 459.6772360901445,
+      "r2": 0.04515731791900823,
+      "spearman": 0.20838930481699383,
+      "top_decile_actual": 2594.0603854966976,
+      "bottom_decile_actual": 2133.7941434155546
+    }
+  },
+  "models": {
+    "radiant_win": {
+      "rows": 296768,
+      "positive_rate": 0.5309366238947596,
+      "log_loss": 0.66882081942421,
+      "auc": 0.6189065324608161,
+      "accuracy": 0.5874757386241104,
+      "brier": 0.23811906371366853,
+      "top_decile_rate": 0.7121242755088287,
+      "bottom_decile_rate": 0.34452082490901736,
+      "lift_over_base_rate": 0.36760345059981137
+    },
+    "total_kills_over_median": {
+      "rows": 296768,
+      "positive_rate": 0.46593635432391634,
+      "log_loss": 0.6538075352605316,
+      "auc": 0.652731274607371,
+      "accuracy": 0.6110766659478111,
+      "brier": 0.23106461850722748,
+      "top_decile_rate": 0.6953767354090847,
+      "bottom_decile_rate": 0.23513950667205824,
+      "lift_over_base_rate": 0.4602372287370265
+    },
+    "total_kills_regression": {
+      "rows": 296768,
+      "mae": 15.777928178893571,
+      "rmse": 19.964667084671913,
+      "median_baseline_mae": 16.675948889368126,
+      "r2": 0.10670201745553198,
+      "spearman": 0.3166080292704147,
+      "top_decile_actual": 90.32251651165926,
+      "bottom_decile_actual": 66.06193557083165
+    },
+    "duration_seconds_regression": {
+      "rows": 296768,
+      "mae": 454.3089870609897,
+      "rmse": 579.5601039799302,
+      "median_baseline_mae": 459.6772360901445,
+      "r2": 0.047103726005929714,
+      "spearman": 0.20994844150016145,
+      "top_decile_actual": 2595.279518803073,
+      "bottom_decile_actual": 2132.7586264995284
+    },
+    "kill_saturation": {
+      "rows": 296768,
+      "scale": "empirical_cdf_of_train_total_kills",
+      "bounds": [
+        0.0,
+        1.0
+      ],
+      "prediction_min": 0.0222124124703084,
+      "prediction_max": 0.9125208972224933,
+      "prediction_mean": 0.5147225488644732,
+      "spearman_vs_actual_kills": 0.3166080292704147,
+      "minmax_prediction_min": 0.1533260610622264,
+      "minmax_prediction_max": 0.4532897327586571
+    }
+  },
+  "split_boundaries": {
+    "train": {
+      "count": 890302,
+      "first": {
+        "start_time": 1774310401,
+        "map_id": 8741397037
+      },
+      "last": {
+        "start_time": 1779941349,
+        "map_id": 8828421097
+      }
+    },
+    "validation": {
+      "count": 296768,
+      "first": {
+        "start_time": 1779941353,
+        "map_id": 8828421121
+      },
+      "last": {
+        "start_time": 1782627457,
+        "map_id": 8870424949
+      }
+    },
+    "test": {
+      "count": 296768,
+      "first": {
+        "start_time": 1782627467,
+        "map_id": 8870425078
+      },
+      "last": {
+        "start_time": 1785367134,
+        "map_id": 8920194322
+      }
+    }
+  }
+}
