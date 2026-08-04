@@ -384,11 +384,23 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 
 ## `base/train_public_draft_hero10_experiment.py` — offline public draft experiment
 
-Обучает три leakage-safe модели только на полном наборе public-карт: `radiant_win_model.joblib`, bounded-wrapper `total_kills_regression_model.joblib` и `total_kills_over_median_model.joblib`; отдельно сохраняет train-only `kills_minmax_scaler.joblib`. Единственные признаки — ровно 10 fixed-position hero IDs (`hero_R_1`…`hero_R_5`, `hero_D_1`…`hero_D_5`); ingame-признаки и сторонняя статистика запрещены. Киллы формируются только как сумма `radiantKills` и `direKills` и используются как target. Парсер строго отклоняет неполные драфты, повторные позиции/героев, некорректные kills и duplicate map IDs.
+Обучает четыре leakage-safe модели на полном наборе public-карт (v4): `radiant_win_model.joblib`, `total_kills_over_median_model.joblib`, bounded-wrapper `total_kills_regression_model.joblib` и `duration_seconds_regression_model.joblib`; рядом кладёт два энкодера (`win_feature_encoder.joblib`, `level_feature_encoder.joblib`) и `kills_saturation_scale.joblib`. Вход — ровно 10 fixed-position hero IDs (`hero_R_1`…`hero_R_5`, `hero_D_1`…`hero_D_5`); ВСЕ колонки дизайн-матриц выводятся только из этих десяти ID (см. `base/draft_features.py`), ingame-признаки и сторонняя статистика запрещены. Киллы формируются только как сумма `radiantKills` и `direKills` и используются как target. Парсер строго отклоняет неполные драфты, повторные позиции/героев, некорректные kills и duplicate map IDs.
 
-Хронологическое разбиение: строго 60% train / 20% validation / 20% test по `(start_time, map_id)`. И `manifest.json`, и `results.json` сохраняют для каждого split `count`, `first` и `last` boundary (`start_time`, `map_id`), а код проверяет сортировку и `last(train) < first(validation) < first(test)`. `BoundedRidgeRegressor` — top-level sklearn-compatible serializable wrapper; его `predict` всегда clip-ит normalized Ridge prediction в `[0, 1]`. Восстановление raw kills выполняется только через отдельный train-only `kills_minmax_scaler.joblib`. Регуляризация (`C`) выбирается только по validation; результаты и модели пишутся атомарно в новый output directory и существующий каталог не перезаписывается.
+Дизайн под таргет: победа — `hero_role_pair` **signed** (герой + роль + синергия внутри команды + контрпик между командами, ~16.7k колонок); киллы и длительность — `hero_role` **unsigned** (~0.8k колонок). Pair-блок даёт основной прирост по победе (AUC 0.562 → 0.597), по килам и длительности не помогает. Матрицы строятся во float64 намеренно: на float32 lbfgs расходится на pair-ширине.
 
-CLI: `--input-dir` (default `bets_data/analise_pub_matches/json_parts_split_from_object`) и `--output-dir` (default `data/public_draft_hero10_experiment/2026-08-04_all_public_v3`). Запуск только offline через `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_public_draft_hero10_experiment.py`.
+Хронологическое разбиение: строго 60% train / 20% validation / 20% test по `(start_time, map_id)`. И `manifest.json`, и `results.json` сохраняют для каждого split `count`, `first` и `last` boundary (`start_time`, `map_id`), а код проверяет сортировку и `last(train) < first(validation) < first(test)`. Гиперпараметры (`C`, `alpha`) выбираются только по validation; секция `results.json → evaluation` — метрики модели, обученной ТОЛЬКО на train (сопоставимо с v3), секция `models` — метрики финальной модели, переобученной на train+validation, и именно она сериализуется. Test не используется ни для обучения, ни для отбора. Результаты и модели пишутся атомарно в новый output directory, существующий каталог не перезаписывается.
+
+CLI: `--input-dir` (default `bets_data/analise_pub_matches/json_parts_split_from_object`) и `--output-dir` (default `data/public_draft_hero10_experiment/2026-08-04_all_public_v4`). `train_experiment(matches, output_dir, pair_min_support=30)` — порог поддержки пары в train; на маленьких выборках (тесты) снижается. Запуск только offline через `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_public_draft_hero10_experiment.py`.
+
+## `base/draft_features.py` — сериализуемые энкодеры драфта
+
+`DraftFeatureEncoder.fit(heroes, kind, signed, pair_min_support=30)` → `.transform(heroes) -> csr_matrix`. `kind`: `KIND_ROLE` (`hero_role`) или `KIND_PAIR` (`hero_role_pair`). `signed=True` — победный дизайн: при обмене сторон местами матрица **точно меняет знак** (герой/роль меняют знак, синергия радианта ↔ дайра, контрпик антисимметричен по индексу героя). `signed=False` — дизайн для килов/длительности: при обмене сторон матрица **не меняется**. Неизвестный на train герой не роняет transform — его вклад обнуляется. Пары фильтруются по `pair_min_support` в train.
+
+`KillSaturationScale.fit(kills)` — эмпирическая CDF килов train: `.saturation(kills) -> [0,1]`, `.kills(saturation)` — обратно. Медианная карта → 0.50, p5 → 0.05, p95 → 0.95. MinMax по сырым тоталам так не умеет: train покрывает 6..231 килов, поэтому медиана падает на 0.32, а предсказания зажимаются в 0.17..0.47.
+
+## `base/bounded_ridge.py` — clip-обёртка Ridge
+
+`BoundedRidgeRegressor(Ridge(...))` — top-level sklearn-compatible serializable wrapper; `predict` всегда clip-ит prediction в `[0, 1]`.
 
 ## `base/check_old_maps.py` — offline backtest draft-метрик
 
