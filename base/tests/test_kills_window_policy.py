@@ -34,7 +34,7 @@ def _select(monkeypatch, *, gt, ed_by_label, lane_kills=None, lead=None, require
         runtime, "_kills_window_direction_gate_for_target", _fake_gate(ed_by_label)
     )
     if lead is None and gt is not None and float(gt) < 180.0:
-        lead = 300.0
+        lead = 300.0  # 5_15 требует ненулевой лид, иначе "нет данных"
     return runtime._kills_window_policy_select(
         game_time_seconds=gt,
         radiant_heroes_and_pos={"pos1": {"hero_id": 1}},
@@ -110,13 +110,13 @@ def test_strongest_window_wins_over_current_band(monkeypatch):
     # Кейс из прода (BoomBoys vs OG): на 03:36 полоса 10_20, но сильнейшее
     # окно карты — 15_25 (-0.38). В полосе 10_20 ставки быть не должно.
     ed = {"5_15": -0.22, "10_20": -0.31, "15_25": -0.38, "20_30": -0.16}
-    blocked = _select(monkeypatch, gt=7 * 60.0, ed_by_label=ed, lead=-800.0)
+    blocked = _select(monkeypatch, gt=4 * 60.0, ed_by_label=ed, lead=-800.0)
     assert blocked["valid"] is False
     assert blocked["status"] == "not_strongest_window"
     assert blocked["window_label"] == "15_25"
     assert blocked["current_window"] == "10_20"
     # ... и уходит только в полосе 15_25, когда сходится её NW-гейт (>= +1000).
-    passed = _select(monkeypatch, gt=12 * 60.0, ed_by_label=ed, lead=-1200.0)
+    passed = _select(monkeypatch, gt=9 * 60.0, ed_by_label=ed, lead=-1200.0)
     assert passed["valid"] is True
     assert passed["window_label"] == "15_25"
     assert passed["target_side"] == "dire"
@@ -235,9 +235,10 @@ def test_2030_band_requires_nw_plus_1500(monkeypatch):
 
 @pytest.mark.parametrize(
     "gt",
-    [30.0, 200.0, 5 * 60, 9 * 60, 14 * 60, 20 * 60],
+    [18 * 60, 20 * 60, 30 * 60],
 )
 def test_outside_policy_bands_never_fire(monkeypatch, gt):
+    # После 18:00 (дедлайн последнего окна) килов нет ни при каких сигналах.
     result = _select(
         monkeypatch,
         gt=gt,
@@ -267,13 +268,27 @@ def test_required_target_sign_filters_wrong_side(monkeypatch):
 
 
 def test_band_boundaries_half_open(monkeypatch):
-    # 10-20 полоса: [360, 480) — старт включён, конец (дедлайн 08:00) исключён,
+    # 10-20 полоса: [180, 480) — старт включён, конец (дедлайн 08:00) исключён,
     # чтобы ставка ушла ДО закрытия рынка.
-    on_start = _select(monkeypatch, gt=360.0, ed_by_label={"10_20": 0.3}, lead=800.0)
+    on_start = _select(monkeypatch, gt=180.0, ed_by_label={"10_20": 0.3}, lead=800.0)
     assert on_start["valid"] is True
+    # На 08:00 полоса 10_20 уже закрыта (рынок окна закрылся) — активна
+    # полоса 15_25, поэтому ставки на 10_20 быть не может.
     on_end = _select(monkeypatch, gt=480.0, ed_by_label={"10_20": 0.3}, lead=800.0)
     assert on_end["valid"] is False
-    assert on_end["status"] == "outside_policy_band"
+    assert on_end["current_window"] == "15_25"
+
+
+def test_bands_are_contiguous_up_to_each_deadline():
+    # Полоса окна = [дедлайн предыдущего окна, свой дедлайн): между полосами
+    # не должно быть дырок, иначе часть карт остаётся без ставки вовсе.
+    starts = {"5_15": 5, "10_20": 10, "15_25": 15, "20_30": 20}
+    prev_end = 0
+    for combo in runtime.KILLS_WINDOW_POLICY:
+        w = str(combo["window"])
+        assert combo["band_start"] == prev_end, w
+        assert combo["band_end"] == (starts[w] - 2) * 60, w
+        prev_end = combo["band_end"]
 
 
 def test_bands_close_before_market_deadline():
