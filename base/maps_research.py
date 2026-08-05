@@ -171,6 +171,26 @@ def _iter_json_object_keys(file_path):
         yield from data.keys()
 
 
+def _scan_output_dir_match_ids(output_dir) -> set:
+    """match_id, уже лежащие в part-файлах каталога — источник правды для дедупа.
+
+    Читает только top-level ключи (значения не разбираются), поэтому проход по
+    десятку гигабайт стоит минуты, а не десятков минут.
+    """
+    ids = set()
+    for path in sorted(Path(output_dir).glob("*_part*.json")):
+        if path.stat().st_size < 10:
+            continue
+        try:
+            for raw_key in _iter_json_object_keys(path):
+                normalized = _normalize_map_id(raw_key)
+                if normalized is not None:
+                    ids.add(normalized)
+        except Exception as e:
+            print(f"⚠️ Не удалось просканировать {path.name} для дедупа: {e}")
+    return ids
+
+
 def _load_hero_ids_from_json(path: Path) -> set[int]:
     hero_ids = set()
     for key in _iter_json_object_keys(path):
@@ -767,6 +787,7 @@ async def get_maps_new(ids, mkdir,
     # Преобразуем все входные ID в int для консистентности
     ids_set = set(int(id) for id in ids)
     maps_counter = 0
+    failed_batches = 0
     run_map_ids = set()
     for map_id in output_data.keys():
         try:
@@ -827,6 +848,33 @@ async def get_maps_new(ids, mkdir,
                 if not batch:
                     continue
                 batch_group.append(batch)
+
+            # Получаем полные данные матчей с retry логикой (параллельно по батчам).
+            # return_exceptions=True: упавший батч не роняет остальные и, главное,
+            # не помечает своих игроков обработанными — иначе сбой прокси навсегда
+            # выкидывал бы игрока из будущих прогонов с недокачанными матчами.
+            tasks = [
+                retry_request_with_proxy_rotation(
+                    proceed_get_maps_with_data,
+                    skip=skip,
+                    ids_to_graph=batch,
+                    player_ids_check=True,
+                    pro=pro,
+                    existing_match_ids=existing_match_ids,
+                    start_date_time=start_date_time,
+                )
+                for batch in batch_group
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            ok_results = []
+            for batch, result in zip(batch_group, results):
+                if isinstance(result, BaseException):
+                    failed_batches += 1
+                    print(f"⚠️ Батч из {len(batch)} игроков не скачан ({type(result).__name__}: "
+                          f"{result}); игроки остаются неопрошенными")
+                    continue
+                # Игрок считается обработанным ТОЛЬКО после успешного ответа.
                 for check_id in batch:
                     count += 1
                     check_id_int = int(check_id)
@@ -834,23 +882,9 @@ async def get_maps_new(ids, mkdir,
                     processed_graph_ids.add(check_id_int)
                     if show_prints:
                         print(f'{count}/{len(ids_set)}')
+                ok_results.append(result)
 
-            # Получаем полные данные матчей с retry логикой (параллельно по батчам)
-            tasks = [
-                retry_request_with_proxy_rotation(
-                    proceed_get_maps_with_data,
-                    skip=skip,
-                    ids_to_graph=batch,
-                    player_ids_check=False,
-                    pro=pro,
-                    existing_match_ids=existing_match_ids,
-                    start_date_time=start_date_time,
-                )
-                for batch in batch_group
-            ]
-            results = await asyncio.gather(*tasks)
-
-            for matches, new_player_ids in results:
+            for matches, new_player_ids in ok_results:
                 # Обрабатываем каждый матч
                 for match in matches:
                     map_id = int(match['id'])
@@ -1066,6 +1100,12 @@ async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=Non
     Возвращает: (matches, player_ids) - список матчей и множество ID игроков
 
     """
+    # Замер 05.08 на 25 игроках, одна страница (runtime/artifacts/misc/
+    # stratz_isstats_bracket_probe.md): `isStats: false` отдаёт 0 матчей, то есть
+    # флаг не «парсенность», а взаимоисключающий фильтр. Без него страница даёт
+    # +6% матчей при том же качестве полей (позиции 89%, networth>=20м 80% против
+    # 81%), пригодны 81% добавленных. Брекет 7 (Divine) добавляет +68% матчей,
+    # пригодны 85%. Вместе: 1317 -> 2276 матчей, 88% пригодных.
     if start_date_time is None:
         from keys import start_date_time as start_date_time_default
         start_date_time = start_date_time_default
@@ -1089,8 +1129,7 @@ async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=Non
              {{take: 100,
               skip: {skip},
                gameModeIds: [22],
-                 bracketIds: [8],
-                  isStats: true}}) {{
+                 bracketIds: [7, 8]}}) {{
               id
               startDateTime
               durationSeconds
@@ -1297,10 +1336,16 @@ async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=Non
                 for player in players_data or []:
                     page_matches = player.get('matches') or []
                     kept_in_window = 0
+                    in_window = 0
                     for match in page_matches:
                         sdt = match.get('startDateTime')
                         if sdt is None or int(sdt) < threshold:
                             continue
+                        # Матч в окне независимо от того, есть он у нас уже или нет:
+                        # пагинацию двигает именно это. Считать только НОВЫЕ значило
+                        # вставать на первой полностью известной странице, а дыра под
+                        # ней (оборванный прошлый прогон) не заполнялась бы никогда.
+                        in_window += 1
                         match_id = match.get('id')
                         if match_id is not None:
                             match_id_int = int(match_id)
@@ -1328,7 +1373,7 @@ async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=Non
                     # неупорядоченная дата в середине страницы ложно оборвала бы пагинацию
                     # и потеряла бы свежие матчи дальше. Лишняя страница за границей дёшева;
                     # skip<100000 — backstop от рантэвея, если порядок Stratz окажется не desc.
-                    if len(page_matches) == 100 and kept_in_window > 0:
+                    if len(page_matches) == 100 and in_window > 0:
                         need_more = True
                 if need_more and skip < 100000:
                     skip += 100
@@ -1990,6 +2035,18 @@ def merge_temp_files_by_patch(
                         processed_ids.add(normalized)
         except Exception as e:
             print(f"⚠️ Не удалось прочитать processed_ids.txt, начинаю с пустого набора: {e}")
+
+    # Источник правды — сами part-файлы, а не processed_ids.txt. Раньше дедуп
+    # опирался только на сайдкар: стоило ему отстать, потеряться или уехать в
+    # backup (clear_output_dir), и уже записанные матчи писались повторно.
+    # Именно так корпус набрал 466 708 дублей = 23.9% записей при
+    # «Дубликатов=0» в отчёте merge.
+    from_parts = _scan_output_dir_match_ids(output_dir)
+    if from_parts:
+        missed = len(from_parts - processed_ids)
+        processed_ids |= from_parts
+        print(f"🧾 Сверка с part-файлами: {len(from_parts)} match_id на диске, "
+              f"из них не было в processed_ids.txt: {missed}")
 
     patch_part_numbers = {}
     for patch_name, *_ in patch_specs:

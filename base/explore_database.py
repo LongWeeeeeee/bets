@@ -1112,6 +1112,37 @@ def _dict_len(data) -> int:
     return len(data) if data is not None else 0
 
 
+def _reset_players_crawl_cursor(stats_dir: Path) -> None:
+    """Сбросить курсор обхода игроков после успешной публикации словарей.
+
+    `maps_research.get_maps_new` вычитает `processed_ids_to_graph.txt` из списка
+    игроков (`ids_set - processed_graph_ids`), поэтому опрошенный игрок выпадал
+    из всех будущих прогонов навсегда, и новые матчи известных игроков больше не
+    собирались. Курсор осмысленно жить ровно один цикл «сбор -> пересборка»:
+    словари построены, значит следующий сбор должен снова обойти всех.
+
+    Прежний файл сохраняется рядом с меткой времени — на случай, если прогон
+    сбора придётся повторить с того же места.
+    """
+    cursor = Path(stats_dir) / "processed_ids_to_graph.txt"
+    if not cursor.exists():
+        return
+    try:
+        backup = cursor.with_name(f"{cursor.name}.bak_{time.strftime('%Y%m%d_%H%M%S')}")
+        shutil.copy2(cursor, backup)
+        count = None
+        try:
+            count = len(json.loads(cursor.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+        cursor.write_text("[]", encoding="utf-8")
+        suffix = f" ({count} игроков)" if count is not None else ""
+        print(f"\n♻️  Курсор обхода игроков сброшен{suffix}: {cursor.name}")
+        print(f"   Копия прежнего: {backup.name}")
+    except Exception as exc:
+        print(f"\n⚠️  Не удалось сбросить {cursor.name}: {exc}")
+
+
 def _match_is_train_candidate(
     match_id, match, test_match_ids: set[str], seen_match_ids: set | None = None
 ) -> tuple[bool, str | None]:
@@ -1564,6 +1595,8 @@ def _main_impl(
     else:
         shutil.rmtree(staging_dir, ignore_errors=True)
         print(f"  Staging dir очищен: {staging_dir}")
+
+    _reset_players_crawl_cursor(stats_dir)
 
     print(f"\n{'=' * 80}")
     print("ЗАВЕРШЕНО!")
