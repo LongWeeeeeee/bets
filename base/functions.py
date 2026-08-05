@@ -9631,6 +9631,10 @@ def calculate_kills_window_advantage(
     reliability_prior = max(
         0.0, float(os.getenv("KILLS_WINDOW_RELIABILITY_PRIOR", "100") or "100")
     )
+    # Обе ориентации vs-ключа как один матчап (в билдере это разные наборы матчей).
+    KILLS_WINDOW_MIRROR_POOLING = str(
+        os.getenv("KILLS_WINDOW_MIRROR_POOLING", "0") or "0"
+    ).strip().lower() not in ("", "0", "false", "no", "off")
     layer_policy = (
         str(os.getenv("KILLS_WINDOW_LAYER_POLICY", "core_1v1_with") or "core_1v1_with")
         .strip()
@@ -9724,23 +9728,44 @@ def calculate_kills_window_advantage(
         def _group(*tokens):
             return ",".join(sorted(tokens))
 
+        def _vs(left, right):
+            """Ячейка матчапа. Под флагом — обе ориентации ключа.
+
+            Билдер пишет матчап один раз, с якорем на radiant, поэтому
+            `A_vs_B` и `B_vs_A` — НЕПЕРЕСЕКАЮЩИЕСЯ наборы матчей (проверено
+            в аудите ориентаций). Драфтовые читатели пулят обе стороны, этот
+            исторически читал только прямую — то есть терял половину выборки.
+            Порог min_games применяется к объединённой ячейке, иначе смысл
+            добора теряется на самых редких матчапах.
+            """
+            if not KILLS_WINDOW_MIRROR_POOLING:
+                return _combine([raw(f"{left}_vs_{right}")])
+            direct = _kills_window_entry_stats(
+                heroes_data.get(f"{left}_vs_{right}"), label, 0)
+            mirror = _kills_window_entry_stats(
+                heroes_data.get(f"{right}_vs_{left}"), label, 0, invert=True)
+            got = _combine([direct, mirror])
+            if got is None or got['games'] < min_games:
+                return None
+            return got
+
         def _build_1v2():
             return _weighted_layer([
-                _combine([raw(f"{r}_vs_{_group(d1, d2)}")])
+                _vs(r, _group(d1, d2))
                 for r in radiant
                 for d1, d2 in combinations(dire, 2)
             ])
 
         def _build_2v1():
             return _weighted_layer([
-                _combine([raw(f"{_group(r1, r2)}_vs_{d}")])
+                _vs(_group(r1, r2), d)
                 for r1, r2 in combinations(radiant, 2)
                 for d in dire
             ])
 
         def _build_1v1():
             return _weighted_layer([
-                _combine([raw(f"{r}_vs_{d}")])
+                _vs(r, d)
                 for r in radiant
                 for d in dire
             ])
