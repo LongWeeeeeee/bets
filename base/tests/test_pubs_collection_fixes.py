@@ -78,3 +78,53 @@ def test_paginator_advances_on_known_page():
     assert kept_in_window == 0, "все матчи известны"
     assert in_window == 100
     assert len(page) == 100 and in_window > 0, "пагинация обязана продолжиться"
+
+
+def test_post_lane_solo_scope_walks_back_until_threshold(tmp_path, monkeypatch):
+    """Свежий патч не добирает объём — окно расширяется на предыдущие."""
+    import json as _json
+
+    def shard(name, count, first_id=800_000_000):
+        payload = {str(first_id + i): {"x": i} for i in range(count)}
+        (tmp_path / name).write_text(_json.dumps(payload), encoding="utf-8")
+
+    shard("7.41c_part001.json", 40, first_id=800_000_000)
+    shard("7.41d_part001.json", 30, first_id=810_000_000)
+    shard("7.41e_part001.json", 10, first_id=820_000_000)
+
+    counts = explore_database._count_matches_per_patch(tmp_path)
+    assert counts == {"7.41c": 40, "7.41d": 30, "7.41e": 10}
+
+    from keys import DOTA_PATCH_START_TIMES
+
+    # порог 10: хватает одного свежего патча
+    ts, patches, total = explore_database._resolve_post_lane_solo_scope(tmp_path, 10)
+    assert patches == ["7.41e"] and total == 10
+    assert ts == DOTA_PATCH_START_TIMES["7.41e"]
+
+    # порог 35: 7.41e не добирает, подключается 7.41d
+    ts, patches, total = explore_database._resolve_post_lane_solo_scope(tmp_path, 35)
+    assert patches == ["7.41e", "7.41d"] and total == 40
+    assert ts == DOTA_PATCH_START_TIMES["7.41d"]
+
+    # порог 75: нужны все три
+    ts, patches, total = explore_database._resolve_post_lane_solo_scope(tmp_path, 75)
+    assert patches[:3] == ["7.41e", "7.41d", "7.41c"] and total == 80
+    assert ts == DOTA_PATCH_START_TIMES["7.41c"]
+
+
+def test_post_lane_solo_scope_start_ts_gates_writes(monkeypatch):
+    """Матч старше границы окна не пишет solo, свежее — пишет."""
+    import analise_database
+
+    monkeypatch.setattr(analise_database, "POST_LANE_SOLO_SCOPE_START_TS", 1_780_531_200)
+    r_by_pos = {p: p for p in range(1, 6)}
+    d_by_pos = {p: 100 + p for p in range(1, 6)}
+
+    inside, outside = {}, {}
+    analise_database._add_combinations_to_dict(r_by_pos, d_by_pos, inside, 1, 0, write_solo=True)
+    analise_database._add_combinations_to_dict(r_by_pos, d_by_pos, outside, 1, 0, write_solo=False)
+
+    solo_keys = lambda d: [k for k in d if ',' not in k and '_vs_' not in k and '_with_' not in k]
+    assert len(solo_keys(inside)) == 10
+    assert solo_keys(outside) == []

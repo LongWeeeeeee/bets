@@ -13,6 +13,7 @@ from __future__ import annotations
 import gc
 import json
 import os
+import re
 import resource
 import shutil
 import sqlite3
@@ -1112,6 +1113,60 @@ def _dict_len(data) -> int:
     return len(data) if data is not None else 0
 
 
+_TOP_LEVEL_MATCH_KEY_RE = re.compile(rb'"(\d{9,12})"\s*:\s*\{')
+
+
+def _count_matches_per_patch(json_dir: Path) -> dict[str, int]:
+    """Матчей в каждом патче — по top-level ключам шардов `{patch}_part{N}.json`.
+
+    Байтовый скан вместо разбора JSON: значения матчей не нужны, нужен только
+    счётчик, поэтому десяток гигабайт проходится за минуты, а не десятки минут.
+    """
+    counts: dict[str, int] = {}
+    for path in sorted(Path(json_dir).glob("*_part*.json")):
+        if path.stat().st_size < 10:
+            continue
+        patch = path.name.rsplit("_part", 1)[0]
+        found = 0
+        with path.open("rb") as fh:
+            tail = b""
+            while True:
+                chunk = fh.read(64 << 20)
+                if not chunk:
+                    break
+                buf = tail + chunk
+                found += sum(1 for _ in _TOP_LEVEL_MATCH_KEY_RE.finditer(buf))
+                tail = buf[-64:]
+        counts[patch] = counts.get(patch, 0) + found
+    return counts
+
+
+def _resolve_post_lane_solo_scope(json_dir: Path, min_matches: int) -> tuple[int, list[str], int]:
+    """Окно патчей для post_lane-solo: от свежего вглубь, пока не наберём объём.
+
+    Возвращает (start_ts окна, включённые патчи от свежего к старым, матчей в окне).
+    Раньше solo жёстко скоупился на последний патч, и свежий патч обнулял
+    покрытие метрики, пока не накопит данные.
+    """
+    try:
+        from keys import DOTA_PATCH_SPECS
+    except Exception:
+        return analise_database_module.LATEST_PATCH_START_TS, [], 0
+
+    counts = _count_matches_per_patch(json_dir)
+    ordered = sorted(DOTA_PATCH_SPECS, key=lambda spec: int(spec[1]), reverse=True)
+    included: list[str] = []
+    total = 0
+    start_ts = int(ordered[0][1]) if ordered else analise_database_module.LATEST_PATCH_START_TS
+    for label, patch_start, _patch_end in ordered:
+        included.append(str(label))
+        total += counts.get(str(label), 0)
+        start_ts = int(patch_start)
+        if total >= min_matches:
+            break
+    return start_ts, included, total
+
+
 def _reset_players_crawl_cursor(stats_dir: Path) -> None:
     """Сбросить курсор обхода игроков после успешной публикации словарей.
 
@@ -1370,6 +1425,17 @@ def _main_impl(
     )
     stats_dir.mkdir(parents=True, exist_ok=True)
     staging_dir.mkdir(parents=True, exist_ok=True)
+
+    if "post_lane" in metric_names:
+        min_solo = analise_database_module.POST_LANE_SOLO_MIN_MATCHES
+        scope_ts, scope_patches, scope_total = _resolve_post_lane_solo_scope(json_dir, min_solo)
+        analise_database_module.POST_LANE_SOLO_SCOPE_START_TS = scope_ts
+        if scope_patches:
+            enough = "набрано" if scope_total >= min_solo else "НЕ добрано"
+            print(f"  post_lane solo scope: {' + '.join(reversed(scope_patches))} "
+                  f"({scope_total:,} матчей, порог {min_solo:,} — {enough})")
+        else:
+            print("  post_lane solo scope: последний патч (спеки патчей недоступны)")
 
     if kv_builds is None:
         kv_builds = {metric: _OwnedKvSqliteBuild(metric) for metric in kv_metrics}
