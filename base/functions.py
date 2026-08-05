@@ -145,8 +145,19 @@ SUPPORT_POSITIONS = ('pos4', 'pos5')
 COUNTERPICK_1VS1_CORE_MATCHUPS_REQUIRED = math.ceil(len(CORE_POSITIONS) * 2 / 3)
 # Пороги по количеству матчей для early/late фаз
 SOLO_MIN_MATCHES = 50
-SYNERGY_DUO_MIN_MATCHES = 30
-COUNTERPICK_1VS1_MIN_MATCHES = 30
+# Порог поднят с 30 до 100 (ПРО 2026-08-05, thresholds_2d_sweep.md). Ячейки duo
+# заполнены почти всегда, поэтому покрытие карт остаётся 100% на любом пороге.
+# Late выигрывает заметно, All чуть теряет — размен принят владельцем:
+#   Late: 30 -> 0.6292, 50 -> 0.6298, 100 -> 0.6302 (с гейтом fill>=75%: 0.6376)
+#   All:  30 -> 0.5531, 50 -> 0.5504, 100 -> 0.5506
+SYNERGY_DUO_MIN_MATCHES = 100
+# Порог поднят с 30 до 100 по замеру на ПРО 2026-08-05 (каждый блок на своей
+# популяции; отчёт runtime/artifacts/misc/thresholds_2d_sweep.md). Кривая имеет
+# максимум: 30 -> 50 -> 100 растёт, на 200 падает. Покрытие карт остаётся 100%,
+# потому что медианная заполненность ячеек cp1vs1 при этих порогах ~100%.
+#   All:  30 -> 0.5703, 50 -> 0.5725, 100 -> 0.5723, 200 -> 0.5694
+#   Late: 30 -> 0.6321, 50 -> 0.6337, 100 -> 0.6395, 200 -> 0.6323
+COUNTERPICK_1VS1_MIN_MATCHES = 100
 # High-confidence cp1vs1 authority: keep exact positional evidence as the
 # anchor and top it up only to 35 games with the enemy hero's same-role
 # positions.  Frozen 7.41d OOS (105,422 maps, chronological discovery/validation)
@@ -166,8 +177,8 @@ COUNTERPICK_1VS2_MIN_MATCHES = 15
 # pool; only their role-compatible counts are aggregated.
 SYNERGY_TRIO_MIN_MATCHES = 25
 # Более широкий post-lane словарь держим на более строгих порогах.
-POST_LANE_SYNERGY_DUO_MIN_MATCHES = 30
-POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES = 30
+POST_LANE_SYNERGY_DUO_MIN_MATCHES = 100
+POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES = 100
 POST_LANE_POS1_VS_POS1_MIN_MATCHES = 50
 POST_LANE_COUNTERPICK_1VS2_MIN_MATCHES = 15
 POST_LANE_SYNERGY_TRIO_MIN_MATCHES = 25
