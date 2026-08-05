@@ -2967,6 +2967,7 @@ def counterpick_team(
     check_solo=False,
     min_matches_1vs1=COUNTERPICK_1VS1_MIN_MATCHES,
     min_matches_1vs2=COUNTERPICK_1VS2_MIN_MATCHES,
+    min_matches_pos1=POS1_VS_POS1_MIN_MATCHES,
 ):
     """
     Анализирует контрпики против вражеской команды
@@ -2991,13 +2992,23 @@ def counterpick_team(
             enemy_hero_id = str(enemy_data['hero_id'])
             enemy_key = f"{enemy_hero_id}{enemy_pos}"
 
+            # pos1_vs_pos1 — отдельная метрика со своим порогом. Раньше её сбор
+            # шёл внутри гейта cp1vs1, из-за чего подъём порога cp1vs1 молча
+            # поднимал и её: ячейки с играми между двумя порогами не доезжали до
+            # агрегации, где POS1_VS_POS1_MIN_MATCHES применяется.
+            if pos == 'pos1' and enemy_pos == 'pos1':
+                pos1_value, pos1_games = _lookup_counterpick_1vs1_winrate(
+                    data, hero_key, enemy_key, min_matches_pos1
+                )
+                if pos1_games >= min_matches_pos1:
+                    output.setdefault(f'{mkdir}_pos1_vs_pos1', []).append(
+                        (pos1_value, pos1_games)
+                    )
+
             value, games = _lookup_counterpick_1vs1_winrate(data, hero_key, enemy_key, min_matches_1vs1)
             if games >= min_matches_1vs1:
                 # Сохраняем (winrate, count, enemy_pos) для pair-weights в get_diff.
                 output.setdefault(f'{mkdir}_1vs1', {}).setdefault(pos, []).append((value, games, enemy_pos))
-                if pos == 'pos1' and enemy_pos == 'pos1':
-                    # Отдельно сохраняем carry-vs-carry матчап для отдельной метрики.
-                    output.setdefault(f'{mkdir}_pos1_vs_pos1', []).append((value, games))
 
                 # Core vs Core matchups (pos1-3 vs pos1-3)
                 if pos in CORE_POSITIONS and enemy_pos in CORE_POSITIONS:
@@ -4503,6 +4514,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
             check_solo=True,
             min_matches_1vs1=POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES,
             min_matches_1vs2=POST_LANE_COUNTERPICK_1VS2_MIN_MATCHES,
+            min_matches_pos1=POST_LANE_POS1_VS_POS1_MIN_MATCHES,
         )
         counterpick_team(
             dire_heroes_and_pos,
@@ -4513,6 +4525,7 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
             check_solo=True,
             min_matches_1vs1=POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES,
             min_matches_1vs2=POST_LANE_COUNTERPICK_1VS2_MIN_MATCHES,
+            min_matches_pos1=POST_LANE_POS1_VS_POS1_MIN_MATCHES,
         )
     
     # # Вычисление разниц с проверкой значимости
