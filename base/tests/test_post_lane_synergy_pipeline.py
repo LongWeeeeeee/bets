@@ -67,8 +67,9 @@ def _put_exact_two_of_three_core_cp(data: dict, radiant: dict, dire: dict, games
         )
 
 
-def _build_post_lane_stats(radiant: dict, dire: dict) -> dict:
-    games = max(
+def _base_stats_games() -> int:
+    """Заполнение ячейки для базовой фикстуры: выше любого действующего порога."""
+    return max(
         functions.SOLO_MIN_MATCHES,
         functions.SYNERGY_DUO_MIN_MATCHES,
         functions.SYNERGY_TRIO_MIN_MATCHES,
@@ -76,6 +77,10 @@ def _build_post_lane_stats(radiant: dict, dire: dict) -> dict:
         functions.COUNTERPICK_1VS2_MIN_MATCHES,
         functions.GET_DIFF_MIN_MATCHES,
     ) + 100
+
+
+def _build_post_lane_stats(radiant: dict, dire: dict) -> dict:
+    games = _base_stats_games()
     data: dict = {}
     radiant_items = list(radiant.items())
     dire_items = list(dire.items())
@@ -804,22 +809,36 @@ def test_all_draft_metrics_games_are_conservative_min_across_phases() -> None:
     # families with unequal support so min << sum while gates still pass.
     base = _build_post_lane_stats(radiant, dire)
 
-    # Solo: keep above SOLO_MIN_MATCHES (50) but unequal mins across heroes.
+    # Пороги берём из констант: тест проверяет семантику min, а не конкретные
+    # числа, и не должен краснеть при каждом пересмотре порогов.
+    solo_min = functions.SOLO_MIN_MATCHES
+    cp1_min = max(functions.COUNTERPICK_1VS1_MIN_MATCHES,
+                  functions.POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES)
+    pos1_min = max(functions.POS1_VS_POS1_MIN_MATCHES,
+                   functions.POST_LANE_POS1_VS_POS1_MIN_MATCHES)
+    duo_min = max(functions.SYNERGY_DUO_MIN_MATCHES,
+                  functions.POST_LANE_SYNERGY_DUO_MIN_MATCHES)
+
+    # Solo: keep above SOLO_MIN_MATCHES but unequal mins across heroes.
+    solo_lowest = solo_min + 5
     for pos in POSITIONS:
         hid_r = int(radiant[pos]["hero_id"])
         hid_d = int(dire[pos]["hero_id"])
-        g_r = 55 if pos == "pos1" else 120
-        g_d = 60
+        g_r = solo_lowest if pos == "pos1" else solo_min + 70
+        g_d = solo_min + 10
         base[f"{hid_r}{pos}"] = {"wins": int(0.8 * g_r), "games": g_r}
         base[f"{hid_d}{pos}"] = {"wins": int(0.2 * g_d), "games": g_d}
 
-    # 1vs1 unequal: keep pos1-vs-pos1 above POST_LANE_POS1_VS_POS1_MIN_MATCHES (50)
-    # but still the lowest used entry so diagnostic min stays non-sum.
+    # 1vs1 unequal. pos1-vs-pos1 живёт по своему порогу (он развязан от cp1vs1),
+    # поэтому кладём его между pos1_min и cp1_min: для pos1_vs_pos1 ячейка
+    # используется, в cp1vs1 не попадает — остальные 24 пары держат метрику.
+    pos1_cell = pos1_min + 2
+    cp1_cell = cp1_min + 5
     for r_pos in ("pos1", "pos2", "pos3", "pos4", "pos5"):
         for d_pos in ("pos1", "pos2", "pos3", "pos4", "pos5"):
             r_key = f"{int(radiant[r_pos]['hero_id'])}{r_pos}"
             d_key = f"{int(dire[d_pos]['hero_id'])}{d_pos}"
-            g = 52 if (r_pos == "pos1" and d_pos == "pos1") else 90
+            g = pos1_cell if (r_pos == "pos1" and d_pos == "pos1") else cp1_cell
             _put_vs(base, r_key, d_key, 0.8, g)
 
     # Trio: unequal used entries (min on dire side)
@@ -836,12 +855,13 @@ def test_all_draft_metrics_games_are_conservative_min_across_phases() -> None:
                 g = 28  # radiant min trio entry
             base[tk] = {"wins": int(round(wr * g)), "games": g}
 
-    # Duo pairs unequal (above SYNERGY_DUO_MIN_MATCHES=30)
+    # Duo pairs unequal (все выше SYNERGY_DUO_MIN_MATCHES, но с разным запасом)
+    duo_lowest = duo_min + 2
     for team, wr in ((radiant, 0.8), (dire, 0.2)):
         for a, b in (("pos1", "pos2"), ("pos1", "pos3"), ("pos2", "pos3"), ("pos4", "pos5")):
-            g = 32 if wr < 0.5 and a == "pos1" and b == "pos2" else 70
-            if wr >= 0.5 and a == "pos1" and b == "pos2":
-                g = 36
+            g = duo_min + 40
+            if a == "pos1" and b == "pos2":
+                g = duo_lowest if wr < 0.5 else duo_min + 6
             _put_duo(base, team, a, b, wr, g)
 
     # Snapshot scores with equal high-support base first to prove diagnostics
@@ -886,13 +906,15 @@ def test_all_draft_metrics_games_are_conservative_min_across_phases() -> None:
             # Score still present on equal-support baseline (formula independent of diagnostic).
             assert equal_bucket.get(metric) is not None, f"{phase}.{metric} missing on equal base"
 
-        # Explicit non-sum bounds for each family under unequal support.
-        assert bucket["counterpick_1vs2_games"] <= 150
-        assert bucket["solo_games"] <= 60
-        assert bucket["pos1_vs_pos1_games"] <= 60
+        # Explicit non-sum bounds for each family under unequal support:
+        # каждая граница — «минимальная использованная ячейка семейства», а не
+        # сумма по всем. 1vs2 мы не переписывали, там ячейки базовой фикстуры.
+        assert bucket["counterpick_1vs2_games"] <= _base_stats_games()
+        assert bucket["solo_games"] <= solo_lowest
+        assert bucket["pos1_vs_pos1_games"] <= pos1_cell
         assert bucket["synergy_trio_games"] <= 40
-        assert bucket["synergy_duo_games"] <= 50
-        assert bucket["counterpick_1vs1_games"] <= 60
+        assert bucket["synergy_duo_games"] <= duo_lowest
+        assert bucket["counterpick_1vs1_games"] <= cp1_cell
 
 
 def test_live_all_output_is_post_lane_score_alias_not_offline_phase() -> None:
@@ -1144,8 +1166,11 @@ def _assert_alchemist_early_output_scores(
     early_output: dict,
     expected_scores: dict[str, int],
     *,
-    games: int = 150,
+    games: int | None = None,
 ) -> None:
+    # По умолчанию ждём заполнение базовой фикстуры — оно едет вслед за порогами.
+    if games is None:
+        games = _base_stats_games()
     for key, expected in expected_scores.items():
         assert key in early_output
         value = early_output[key]
@@ -1347,7 +1372,7 @@ def test_alchemist_early_output_preserves_games_none_absent_and_non_scores() -> 
         radiant, dire, _alchemist_early_output_build_stats(radiant, dire, radiant_wr=0.8)
     )
     for key in _ALCHEMIST_EARLY_OUTPUT_GAMES_KEYS:
-        assert full[key] == 150
+        assert full[key] == _base_stats_games()
         assert type(full[key]) is int
     for key in _ALCHEMIST_EARLY_OUTPUT_SCORE_KEYS:
         assert type(full[key]) is int

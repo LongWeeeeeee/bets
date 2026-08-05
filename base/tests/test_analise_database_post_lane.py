@@ -106,20 +106,35 @@ def test_post_lane_solo_scoped_to_latest_patch() -> None:
     assert latest["6pos1"]["wins"] == 0
 
 
-def test_post_lane_dict_requires_min_duration_and_minute_10_gate() -> None:
-    for match in (
+def test_post_lane_dict_requires_min_duration() -> None:
+    post_lane_dict = {}
+    stats.analise_database(
         _match(duration=19, minute_10_lead=0),
-        _match(duration=25, minute_10_lead=2500),
-    ):
-        post_lane_dict = {}
-        stats.analise_database(
-            match,
-            {},
-            {},
-            {},
-            post_lane_dict=post_lane_dict,
-        )
-        assert post_lane_dict == {}
+        {},
+        {},
+        {},
+        post_lane_dict=post_lane_dict,
+    )
+    assert post_lane_dict == {}
+
+
+def test_post_lane_minute_10_gate_applies_only_when_enabled(monkeypatch) -> None:
+    """Гейт минуты 10 для блока All выключен по умолчанию и включается флагом.
+
+    Карта с большим NW-перевесом на 10-й минуте: при выключенном гейте она
+    попадает в словарь, при включённом — отсекается.
+    """
+    match = _match(duration=25, minute_10_lead=2500)
+
+    monkeypatch.setattr(stats, "ANALISE_POST_LANE_MINUTE10_GATE_ENABLED", False)
+    default_dict = {}
+    stats.analise_database(match, {}, {}, {}, post_lane_dict=default_dict)
+    assert default_dict != {}
+
+    monkeypatch.setattr(stats, "ANALISE_POST_LANE_MINUTE10_GATE_ENABLED", True)
+    gated_dict = {}
+    stats.analise_database(match, {}, {}, {}, post_lane_dict=gated_dict)
+    assert gated_dict == {}
 
 
 def test_lane_dict_ignores_imp_field() -> None:
