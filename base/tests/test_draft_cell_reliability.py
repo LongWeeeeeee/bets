@@ -60,6 +60,37 @@ def test_broken_games_value_is_rejected(monkeypatch) -> None:
     assert mod._draft_cell_admit("много", 100)[0] is False
 
 
+def test_weight_and_games_live_in_separate_fields(monkeypatch) -> None:
+    """Ячейка = (значение, СЫРЫЕ игры, позиция врага, вес).
+
+    Смысл развода: диагностика `*_games` читает индекс 1 и не должна зависеть
+    от того, какой схемой взвешивания мы пользуемся. Раньше вес занимал то же
+    поле, и включение любого взвешивания портило цифры в сообщении.
+    """
+    mod = _reloaded(monkeypatch, "50")
+
+    radiant = {f"pos{i}": {"hero_id": i} for i in range(1, 6)}
+    dire = {f"pos{i}": {"hero_id": 10 + i} for i in range(1, 6)}
+    data = {}
+    for i in range(1, 6):
+        for j in range(1, 6):
+            data[f"{i}pos{i}_vs_{10 + j}pos{j}"] = {"wins": 16, "games": 20}
+
+    output = {}
+    mod.counterpick_team(radiant, dire, output, "radiant_counterpick", data)
+
+    cells = output["radiant_counterpick_1vs1"]["pos1"]
+    assert cells, "ячейки должны собираться: в режиме надёжности гейта нет"
+    for value, games, enemy_pos, weight in cells:
+        assert games == 20, "в поле игр обязаны лежать сырые игры"
+        assert isinstance(enemy_pos, str)
+        assert abs(weight - 20 / 70) < 1e-9, "вес — отдельным полем"
+        assert value == 0.8
+
+    # Диагностика читает именно игры, а не вес.
+    assert mod._diagnostic_support_from_entry(cells[0]) == 20
+
+
 def teardown_module(_module) -> None:
     """Возвращаем модуль в дефолт, иначе следующие тесты увидят чужой режим."""
     import os

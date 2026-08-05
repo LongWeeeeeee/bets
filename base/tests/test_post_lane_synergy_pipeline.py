@@ -492,7 +492,10 @@ def test_counterpick_1vs1_uses_support_position_fallback() -> None:
         data,
     )
 
-    assert output["radiant_counterpick_1vs1"]["pos1"] == [(0.8, games, "pos4")]
+    # Ячейка: (значение, СЫРЫЕ игры, позиция врага, вес). Игры и вес — разные
+    # поля: игры читают диагностики `*_games`, вес идёт в агрегатор. Без режима
+    # надёжности вес равен числу игр.
+    assert output["radiant_counterpick_1vs1"]["pos1"] == [(0.8, games, "pos4", games)]
 
 
 def test_counterpick_1vs1_role_topup_keeps_exact_anchor_and_caps_at_35() -> None:
