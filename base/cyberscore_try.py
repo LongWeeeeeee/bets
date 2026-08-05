@@ -5411,6 +5411,10 @@ _STAR_SIGNAL_METRICS = frozenset({
     "dota2protracker_cp1vs1",
     "solo",
     "dltv_rating",
+    # Пороги только на WR60 (solo>=3, duo>=9): выше обе метрики на ПРО
+    # обрываются до монетки, см. docs/EXPERIMENTS.md E-18.
+    "dota2protracker_solo",
+    "dota2protracker_duo",
 })
 _STAR_SUPPORT_METRIC_ORDER = (
     "counterpick_1vs1",

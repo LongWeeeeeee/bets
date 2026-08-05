@@ -2074,6 +2074,11 @@ STAR_SIGNAL_METRICS = frozenset({
     # DLTV draft-vote (radiant_pct - 50); порог 30 задан только для all_output
     # на WR60/WR65, поэтому в Star hits метрика всегда печатается как WR65.
     'dltv_rating',
+    # ProTracker solo/duo: пороги заданы только для all_output на WR60
+    # (solo>=3, duo>=9) — выше уровня обе метрики на ПРО обрываются, см.
+    # docs/EXPERIMENTS.md E-18.
+    'dota2protracker_solo',
+    'dota2protracker_duo',
 })
 STAR_DISABLED_METRICS = frozenset()
 STAR_THRESHOLD_SECTIONS = (

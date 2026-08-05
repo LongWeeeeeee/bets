@@ -64,6 +64,14 @@
       [
         "dltv_rating",
         30
+      ],
+      [
+        "dota2protracker_solo",
+        3
+      ],
+      [
+        "dota2protracker_duo",
+        9
       ]
     ]
   },

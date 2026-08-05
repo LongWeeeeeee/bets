@@ -113,3 +113,42 @@ def test_star_hits_summary_splits_mix_out_of_all() -> None:
     assert "DLTV_rating" not in all_line
     assert "DLTV_rating" in mix_line
     assert "Protracker_1vs1" in mix_line
+
+
+def test_protracker_solo_and_duo_are_star_only_at_wr60() -> None:
+    """Пороги заданы ровно на WR60 и больше нигде.
+
+    На ПРО обе метрики растут до середины шкалы и обрываются в хвосте
+    (solo: 3+ -> 60.1%, 4+ -> 51.8%; duo: пик ~58.8% и плато), поэтому уровни
+    выше WR60 им не заводились — см. docs/EXPERIMENTS.md E-18.
+    """
+    import functions
+
+    for metric in ("dota2protracker_solo", "dota2protracker_duo"):
+        assert metric in functions.STAR_SIGNAL_METRICS
+        assert metric in cs._STAR_SIGNAL_METRICS
+
+    wr60 = cs._star_thresholds_for_wr(60, "all_output")
+    assert wr60["dota2protracker_solo"] == 3
+    assert wr60["dota2protracker_duo"] == 9
+
+    for wr in (65, 70, 75, 80):
+        higher = cs._star_thresholds_for_wr(wr, "all_output")
+        assert "dota2protracker_solo" not in higher
+        assert "dota2protracker_duo" not in higher
+
+
+def test_new_star_metrics_do_not_join_sign_consistency_set() -> None:
+    """Согласие знаков в all_output считается по прежней четвёрке.
+
+    Иначе каждая новая метрика повышала бы шанс конфликта знаков и глушила
+    блок целиком — эффект, обратный задуманному.
+    """
+    required = cs._STAR_BLOCK_SIGN_CONSISTENCY_METRICS_BY_SECTION["all_output"]
+
+    assert set(required) == {
+        "counterpick_1vs1",
+        "counterpick_1vs2",
+        "solo",
+        "dota2protracker_cp1vs1",
+    }
