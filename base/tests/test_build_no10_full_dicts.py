@@ -106,10 +106,12 @@ def test_select_shards_includes_only_exact_741_parts(tmp_path):
         "7.41b_part003.json",
         "7.41c_part004.json",
         "7.41d_part005.json",
+        # 7.41e добавлен 2026-08-05 вместе с патчем (keys.DOTA_PATCH_EVENTS)
+        "7.41e_part006.json",
     )
     excluded = (
         "7.40_part001.json",
-        "7.41e_part001.json",
+        "7.41f_part001.json",
         "7.41d.json",
         "merge_patch_summary.json",
         "7.41d_partABC.json",
