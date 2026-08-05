@@ -1113,15 +1113,29 @@ def _dict_len(data) -> int:
 
 
 def _match_is_train_candidate(
-    match_id, match, test_match_ids: set[str]
+    match_id, match, test_match_ids: set[str], seen_match_ids: set | None = None
 ) -> tuple[bool, str | None]:
-    """Apply only structural/test-set gates; never filter source data by time."""
+    """Apply only structural/test-set gates; never filter source data by time.
+
+    ``seen_match_ids`` guards against the same map being counted twice: shards
+    may overlap after a merge, and a repeated match inflates every key it
+    touches. The local corpus carried 466 708 repeats (23.9% of records) over
+    the same 1 485 286 unique ids the deduplicated serv1 corpus has.
+    """
     if not isinstance(match, dict):
         return False, "not_dict"
     if "players" not in match or len(match.get("players", [])) != 10:
         return False, "bad_players"
     if str(match_id) in test_match_ids:
         return False, "test_set"
+    if seen_match_ids is not None:
+        try:
+            key = int(match_id)
+        except (TypeError, ValueError):
+            key = str(match_id)
+        if key in seen_match_ids:
+            return False, "duplicate_match_id"
+        seen_match_ids.add(key)
     return True, None
 
 
@@ -1371,6 +1385,9 @@ def _main_impl(
     analysis_errors = 0
     skip_reasons = Counter()
     quality_reasons = Counter()
+    # Один match_id учитывается один раз за прогон, даже если он встретился в
+    # нескольких шардах (после merge такие пересечения бывают).
+    seen_match_ids: set = set()
     started_at = time.monotonic()
 
     for idx, file in enumerate(pub_files, 1):
@@ -1392,7 +1409,9 @@ def _main_impl(
 
         try:
             for match_id, match in _iter_json_object_items(file):
-                ok, reason = _match_is_train_candidate(match_id, match, test_match_ids)
+                ok, reason = _match_is_train_candidate(
+                    match_id, match, test_match_ids, seen_match_ids
+                )
                 if not ok:
                     skip_reasons[reason or "unknown"] += 1
                     if reason == "test_set":
