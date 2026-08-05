@@ -981,6 +981,20 @@ try:
 except Exception:
     LATEST_PATCH_START_TS = 1780531200  # 7.41d fallback (2026-06-04 UTC)
 
+# Начало окна, с которого пишутся post_lane-solo записи. По умолчанию — последний
+# патч (прежнее поведение), но explore_database перед сборкой сдвигает границу
+# вглубь, пока окно не наберёт POST_LANE_SOLO_MIN_MATCHES матчей: свежий патч
+# сам по себе не должен обнулять покрытие solo.
+#
+# Сколько нужно матчей: на 479 токенах «герой+позиция» текущего словаря
+# (502 507 матчей в скоупе) порог n=140 берут 95% токенов при ~335 000 матчей,
+# 99% при ~1.02M, все — при ~1.41M (упирается в экзотику вроде саппорта на pos1,
+# её всё равно режет SOLO_MIN_MATCHES=50 на чтении). Отсюда дефолт 350 000.
+POST_LANE_SOLO_MIN_MATCHES = max(0, int(
+    os.getenv("POST_LANE_SOLO_MIN_MATCHES", "350000") or "350000"
+))
+POST_LANE_SOLO_SCOPE_START_TS = LATEST_PATCH_START_TS
+
 
 def _add_combinations_to_dict(r_by_pos, d_by_pos, target_dict, r_value, d_value=None, write_solo=True):
     """
@@ -1139,9 +1153,12 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
         win_rates = match.get('winRates', [])
         did_radiant_win = win_rates[-1] > 0.5 if win_rates else False
 
-    # Последний патч? (post_lane-solo собираем только на нём; см. write_solo ниже)
+    # В скоупе post_lane-solo? Раньше это был жёстко последний патч, из-за чего
+    # свежий патч обнулял покрытие solo, пока не наберёт объём. Теперь скоуп —
+    # окно, набранное от свежего патча вглубь до POST_LANE_SOLO_MIN_MATCHES
+    # (см. explore_database._resolve_post_lane_solo_scope).
     try:
-        is_latest_patch = int(match.get('startDateTime', 0)) >= LATEST_PATCH_START_TS
+        is_latest_patch = int(match.get('startDateTime', 0)) >= POST_LANE_SOLO_SCOPE_START_TS
     except (TypeError, ValueError):
         is_latest_patch = False
 

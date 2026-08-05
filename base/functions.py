@@ -235,6 +235,23 @@ COUNTERPICK_1VS1_POSITION_WEIGHTS = {
     'pos4': 1.0,
     'pos5': 1.0,
 }
+# Solo идёт без позиционного перекоса. Замер на ПРО 2026-08-05 (4680 карт,
+# каждый блок на СВОЕЙ популяции — Late-гейт проходят лишь 40% карт, и на
+# полной выборке метрика ложно выглядит инвертированной):
+#   All  solo: прод-веса 0.5324, равномерные 0.5438, к саппортам 0.5496
+#   Late solo: прод-веса 0.6223, равномерные 0.6252, к саппортам 0.6068
+# Прод-веса худшие в обоих блоках; перекос к саппортам меняет знак между
+# блоками, то есть нестабилен. Равномерные не хуже нигде и лучше в обоих.
+# ВАЖНО: передавать явно — custom_position_weights=None включает в get_diff
+# жёсткий дефолт 3.0/2.0/1.5/0.9/0.7, ещё более кор-перекошенный.
+# Отчёт: runtime/artifacts/misc/block_population_check.md
+SOLO_POSITION_WEIGHTS = {
+    'pos1': 1.0,
+    'pos2': 1.0,
+    'pos3': 1.0,
+    'pos4': 1.0,
+    'pos5': 1.0,
+}
 
 
 def structure_lane_dict(flat_lane_dict):
@@ -566,13 +583,12 @@ def get_diff(
     elif _ENV_POS_WEIGHTS:
         weights = _ENV_POS_WEIGHTS
     else:
-        weights = {
-            'pos1': 3.0,   # carry - самый важный
-            'pos2': 2.0,   # mid
-            'pos3': 1.5,   # offlane
-            'pos4': 0.9,   # soft support
-            'pos5': 0.7,   # hard support
-        }
+        # Фолбэк равномерный. Прежний кор-перекос 3.0/2.0/1.5/0.9/0.7 был худшей
+        # схемой из проверенных (ПРО 2026-08-05, каждый блок на своей популяции):
+        # All solo 0.5269 против 0.5438 у равномерных, Late cp1vs2 0.6200 против
+        # 0.6241. В проде он недостижим — все живые вызовы передают веса явно, —
+        # но новый вызов без весов молча получал бы именно его.
+        weights = {pos: 1.0 for pos in ('pos1', 'pos2', 'pos3', 'pos4', 'pos5')}
 
     def weighted_average_by_position(side):
         """
@@ -4696,7 +4712,8 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                 output['radiant_counterpick_solo'],
                 output['dire_counterpick_solo'],
                 _1vs2=True,
-                custom_position_weights=phase_weights,
+                # solo без позиционного перекоса — см. SOLO_POSITION_WEIGHTS
+                custom_position_weights=SOLO_POSITION_WEIGHTS,
             )
             if phase_bucket.get('solo') is not None:
                 phase_bucket['solo_games'] = _diagnostic_support_two_sides(
