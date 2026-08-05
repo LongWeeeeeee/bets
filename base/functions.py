@@ -9506,8 +9506,8 @@ def calculate_kills_window_advantage(
     Layer policy (env ``KILLS_WINDOW_LAYER_POLICY``, default ``core_1v1_with``):
       - core_1v1_with: prefer same-sign reliability blend of 1v1+with (best
         unit-stake EV @ odds 1.8 on pro Tier-1 7.41+ kill-lead backtest);
-        else 1v1; else with; else first-hit 1v2→2v1→solo.
-      - first_hit: legacy 1v2→2v1→1v1→with→solo.
+        else 1v1; else with; else first-hit 1v2→2v1→trio→solo.
+      - first_hit: legacy 1v2→2v1→1v1→with→trio→solo.
       - blend_all: reliability-weighted mean of all non-empty layers.
       - best_abs: layer with largest |expected_diff|.
 
@@ -9651,6 +9651,14 @@ def calculate_kills_window_advantage(
                    for d1, d2 in combinations(dire, 2)]
             )
 
+        def _build_trio():
+            return _weighted_layer(
+                [_combine([raw(_group(*trio), invert=False)])
+                 for trio in combinations(radiant, 3)]
+                + [_combine([raw(_group(*trio), invert=True)])
+                   for trio in combinations(dire, 3)]
+            )
+
         def _build_solo():
             return _weighted_layer(
                 [_combine([raw(token, invert=False)]) for token in radiant]
@@ -9662,9 +9670,13 @@ def calculate_kills_window_advantage(
             "2v1": _build_2v1,
             "1v1": _build_1v1,
             "with": _build_with,
+            "trio": _build_trio,
             "solo": _build_solo,
         }
-        order = ("1v2", "2v1", "1v1", "with", "solo")
+        # trio стоит ПОСЛЕ with: ключей у него в 10 раз больше, значит игр на
+        # ключ меньше, поэтому в first_hit он подхватывает только там, где пары
+        # пусты. Прод-политика core_1v1_with его не читает вовсе.
+        order = ("1v2", "2v1", "1v1", "with", "trio", "solo")
         built = {}
 
         def _layer(name):

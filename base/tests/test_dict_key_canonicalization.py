@@ -101,19 +101,7 @@ def test_builder_writes_one_key_per_unordered_group():
     assert sum(stats['games'] for stats in target.values()) == 175
 
 
-def test_kills_builder_skips_high_order_by_default():
-    r_by_pos, d_by_pos = _draft()
-    target = {}
-    analise_database._add_kills_window_combinations(
-        r_by_pos, d_by_pos, target, [1.0, 2.0, 3.0, 4.0])
-
-    assert not any(',' in key for key in target), "старшие слои выключены по умолчанию"
-    # 10 solo + 25 1v1 + 20 with
-    assert len(target) == 55
-
-
-def test_kills_builder_high_order_flag_is_canonical(monkeypatch):
-    monkeypatch.setattr(analise_database, "KILLS_WINDOW_BUILD_HIGH_ORDER", True)
+def test_kills_builder_writes_all_layers_canonically():
     r_by_pos, d_by_pos = _draft()
     target = {}
     analise_database._add_kills_window_combinations(
@@ -124,8 +112,43 @@ def test_kills_builder_high_order_flag_is_canonical(monkeypatch):
         sig = _group_of(key)
         assert sig not in signatures, f"дубль порядка: {key}"
         signatures.add(sig)
-    # 10 solo + 50 1v2 + 50 2v1 + 25 1v1 + 20 with
-    assert len(target) == 155
+    # 10 solo + 50 1v2 + 50 2v1 + 25 1v1 + 20 with + 20 trio
+    assert len(target) == 175
+    assert sum(1 for key in target if key.count(',') == 2 and '_vs_' not in key) == 20
+
+
+def test_kills_builder_high_order_flag_off_drops_1v2_2v1(monkeypatch):
+    monkeypatch.setattr(analise_database, "KILLS_WINDOW_BUILD_HIGH_ORDER", False)
+    r_by_pos, d_by_pos = _draft()
+    target = {}
+    analise_database._add_kills_window_combinations(
+        r_by_pos, d_by_pos, target, [1.0, 2.0, 3.0, 4.0])
+
+    assert not any('_vs_' in key and ',' in key for key in target)
+    # 10 solo + 25 1v1 + 20 with + 20 trio
+    assert len(target) == 75
+
+
+def test_kills_trio_layer_is_read_back(monkeypatch):
+    """Слой trio читается там, где парные слои пусты."""
+    monkeypatch.setenv("KILLS_WINDOW_MIN_GAMES", "1")
+    monkeypatch.setenv("KILLS_WINDOW_LAYER_POLICY", "first_hit")
+    r_by_pos, d_by_pos = _draft()
+    full = {}
+    analise_database._add_kills_window_combinations(
+        r_by_pos, d_by_pos, full, [2.0, 2.0, 2.0, 2.0])
+
+    r_tokens = [f'{h}pos{p}' for p, h in r_by_pos.items()]
+    d_tokens = [f'{h}pos{p}' for p, h in d_by_pos.items()]
+    trio_only = {k: v for k, v in full.items()
+                 if k.count(',') == 2 and '_vs_' not in k}
+    assert trio_only
+
+    payload = functions.calculate_kills_window_advantage(
+        r_tokens, d_tokens, trio_only, window="10_20")
+    assert payload is not None
+    assert payload["layer"] == "trio"
+    assert payload["expected_diff"] == 2.0
 
 
 def test_trio_keys_do_not_fragment_across_player_order():
@@ -173,7 +196,11 @@ def test_readers_match_legacy_two_order_dictionary():
 
 
 def test_kills_window_reader_matches_legacy_dictionary(monkeypatch):
-    """calculate_kills_window_advantage читает канонический словарь как прежний."""
+    """calculate_kills_window_advantage читает канонический словарь как прежний.
+
+    Legacy-словарь строится без trio (их в kills не собирали), поэтому
+    канонический тут тоже берётся без trio — сверяются одни и те же слои.
+    """
     monkeypatch.setattr(analise_database, "KILLS_WINDOW_BUILD_HIGH_ORDER", True)
     r_by_pos, d_by_pos = _draft()
     canonical = {}
@@ -222,6 +249,9 @@ def test_kills_window_reader_matches_legacy_dictionary(monkeypatch):
                     continue
                 analise_database._append_kills_window_entry(
                     legacy, f'{d_hero1}pos{d_pos1}_with_{d_hero2}pos{d_pos2}', diffs, invert=True)
+
+    canonical = {k: v for k, v in canonical.items()
+                 if not (k.count(',') == 2 and '_vs_' not in k)}
 
     r_tokens = [f'{h}pos{p}' for p, h in r_by_pos.items()]
     d_tokens = [f'{h}pos{p}' for p, h in d_by_pos.items()]
