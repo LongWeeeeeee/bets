@@ -788,6 +788,11 @@ class WinlineCurrentMapOddsPoller:
             "page_valid": page_valid,
             "error": result.get("error"),
             "acquisition_error": result.get("acquisition_error"),
+            # Решающая карта серии и факт промоции рынка «Матч» в рынок карты:
+            # без этих меток по evidence не отличить «промоция сработала» от
+            # «рынок карты был выставлен» и не проверить проводку флага.
+            "series_last_map": bool(result.get("series_last_map")),
+            "odds_promoted_from_match": bool(result.get("odds_promoted_from_match")),
         }
         # Preserve empty selected_side explicitly when provided as empty string
         if self._selected_side is not None and not side:
