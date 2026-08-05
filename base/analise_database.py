@@ -89,14 +89,14 @@ def _draft_entries(by_pos):
     return [(f'{hero_id}pos{pos_num}', hero_id) for pos_num, hero_id in by_pos.items()]
 
 
-# Старшие слои kills_window (1v2/2v1) политика `core_1v1_with` не читает: она
-# берёт только 1v1 и with, а до fallback-цепочки доходит лишь когда оба пусты —
-# на 1099 про-картах покрытие 1v1 и with было 1099/1099, то есть не доходит
-# никогда. Слои стоят 100 записей на матч (65% словаря kills). Ребилд с
-# KILLS_WINDOW_BUILD_HIGH_ORDER=1 возвращает их (нужно для политик
-# first_hit/blend_all/best_abs и слоевых A/B-экспериментов).
+# Старшие слои kills_window (1v2/2v1) прод-политика `core_1v1_with` не читает:
+# она берёт 1v1 и with, а до fallback-цепочки доходит лишь когда оба пусты — на
+# 3000 про-картах x 4 окна таких случаев 0. Слои стоят 100 записей на матч, но
+# держим их собранными для политик first_hit/blend_all/best_abs и слоевых A/B.
+# KILLS_WINDOW_BUILD_HIGH_ORDER=0 при ребилде убирает их (словарь ужимается
+# c ~2x до ~150x, но слоевые эксперименты на таком словаре не поставить).
 KILLS_WINDOW_BUILD_HIGH_ORDER = str(
-    os.getenv("KILLS_WINDOW_BUILD_HIGH_ORDER", "0") or "0"
+    os.getenv("KILLS_WINDOW_BUILD_HIGH_ORDER", "1") or "1"
 ).strip().lower() not in ("", "0", "false", "no", "off")
 
 
@@ -300,8 +300,9 @@ def _append_kills_window_entry(target_dict, key, window_diffs, invert=False):
 def _add_kills_window_combinations(r_by_pos, d_by_pos, target_dict, window_diffs):
     """Write full-draft solo/cp/synergy keys for kill-window targets.
 
-    Same key grammar as early/late/post_lane, but WITHOUT trios: team-level
-    kill targets do not need sparse trio keys and they dominate dict size.
+    Same key grammar as early/late/post_lane, trios included: they used to be
+    skipped because ordered duplicates made the dict explode, but after
+    canonicalisation (`_canonical_group`) a trio costs 20 records per match.
     Radiant-leading keys store Radiant-minus-Dire; Dire-leading keys invert.
     """
     r_entries = _draft_entries(r_by_pos)
@@ -342,6 +343,14 @@ def _add_kills_window_combinations(r_by_pos, d_by_pos, target_dict, window_diffs
             continue
         left, right = sorted((token1, token2))
         _append_kills_window_entry(target_dict, f'{left}_with_{right}', window_diffs, invert=True)
+
+    for trio in combinations(r_entries, 3):
+        key = _canonical_group(*(token for token, _ in trio))
+        _append_kills_window_entry(target_dict, key, window_diffs, invert=False)
+
+    for trio in combinations(d_entries, 3):
+        key = _canonical_group(*(token for token, _ in trio))
+        _append_kills_window_entry(target_dict, key, window_diffs, invert=True)
 
 
 def kills_windows(match, kills_window_dict):
