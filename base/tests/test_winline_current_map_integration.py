@@ -405,7 +405,18 @@ def test_int_shared_runner_named_page_and_mode_matrix(tmp_path, monkeypatch) -> 
             with lock:
                 concurrency["n"] -= 1
 
-    def fake_parse(page, site, url, team1, team2, mode, forced_map_num=None, acquisition_mode=None):
+    def fake_parse(
+        page,
+        site,
+        url,
+        team1,
+        team2,
+        mode,
+        forced_map_num=None,
+        acquisition_mode=None,
+        # Сборщик прокидывает флаг решающей карты серии (промоция рынка «Матч»).
+        series_last_map=False,
+    ):
         # Route through real page policy loader so goto/reload/sleep counters apply.
         parse_modes.append(str(acquisition_mode or ""))
         assert site == "winline"
