@@ -252,6 +252,10 @@ SOLO_POSITION_WEIGHTS = {
     'pos4': 1.0,
     'pos5': 1.0,
 }
+# Сила шринкеджа cp1vs1 к ролевой оценке: тонкая ячейка подтягивается к пулу по
+# ролевому семейству врага с весом k. 0 = прежняя жёсткая отсечка.
+# Подробности и замеры — в докстринге _lookup_counterpick_1vs1_winrate.
+CP1VS1_SHRINKAGE_K = max(0.0, float(os.getenv("CP1VS1_SHRINKAGE_K", "100") or "100"))
 
 
 def structure_lane_dict(flat_lane_dict):
@@ -2637,12 +2641,58 @@ def _counterpick_1vs1_fallback_positions(pos):
     return ()
 
 
+def _counterpick_1vs1_role_pool(data, left, enemy_hero_id, enemy_pos):
+    """Матчап против врага по всему его ролевому семейству, включая точную позицию.
+
+    Своя позиция не меняется — это прод-инвариант ролевого добора.
+    """
+    score = games = 0.0
+    for pos in (enemy_pos, *_counterpick_1vs1_fallback_positions(enemy_pos)):
+        value, pos_games = _lookup_vs_winrate(data, left, f"{enemy_hero_id}{pos}")
+        if value is None or pos_games <= 0:
+            continue
+        score += float(value) * pos_games
+        games += pos_games
+    return (score / games, games) if games > 0 else (None, 0)
+
+
 def _lookup_counterpick_1vs1_winrate(data, left, right, min_matches):
+    """Точная ячейка, подтянутая к ролевой оценке тем сильнее, чем она тоньше.
+
+    Прежде тонкая ячейка просто выбрасывалась (`games < min_matches`), и карта
+    целиком теряла метрику. Шринкедж `(n*wr_точной + k*wr_ролевой)/(n+k)` ничего
+    не выбрасывает: на плотных ячейках он равен точной оценке, на тонких плавно
+    сползает к ролевой.
+
+    Замер на ПРО 2026-08-05, каждый блок на своей популяции
+    (runtime/artifacts/misc/shrinkage_variant_check.md):
+      Late: отсечка n>=30 — 83% покрытия, AUC 0.6383; шринкедж k=100 — 99%, 0.6392
+      All:  отсечка n>=30 — 91% покрытия, AUC 0.5691; шринкедж k=100 — 99%, 0.5703
+    То есть точность не хуже, а покрытие вырастает до ~100%.
+
+    `CP1VS1_SHRINKAGE_K=0` возвращает прежнее поведение (жёсткая отсечка
+    с ролевым добором).
+    """
     value, games = _lookup_vs_winrate(data, left, right)
+    enemy_hero_id, enemy_pos = _split_hero_position_key(right)
+
+    if CP1VS1_SHRINKAGE_K > 0 and enemy_hero_id and enemy_pos:
+        pool_value, pool_games = _counterpick_1vs1_role_pool(
+            data, left, enemy_hero_id, enemy_pos
+        )
+        if pool_value is None:
+            return value, games
+        exact_games = int(games) if value is not None else 0
+        exact_score = float(value) * exact_games if exact_games > 0 else 0.0
+        k = CP1VS1_SHRINKAGE_K
+        # Возвращаемые games — эффективный размер выборки (n + k): именно по нему
+        # гейтится покрытие. На агрегацию число не влияет, get_diff усредняет
+        # ячейки равномерно (GET_DIFF_WEIGHT_POWER=0.0).
+        return (exact_score + k * pool_value) / (exact_games + k), int(exact_games + k)
+
     if games >= min_matches:
         return value, games
 
-    enemy_hero_id, enemy_pos = _split_hero_position_key(right)
     if not enemy_hero_id or not enemy_pos:
         return value, games
 
