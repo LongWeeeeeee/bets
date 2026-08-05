@@ -593,8 +593,14 @@ WINLINE_BOUNDED_NAVIGATION_TIMEOUT_MS = 12_000
 # дорисовывает следующие; уже отрисованные при этом НЕ выгружаются — замер
 # 05.08.2026 на живой странице: 9 блоков после загрузки, 12 после прокрутки,
 # включая первые.
-WINLINE_FEED_SWEEP_STEPS = 6
-WINLINE_FEED_SWEEP_PAUSE_SECONDS = 0.35
+# Шагов столько, чтобы хватило на длинную ленту: у дотовской страницы к живым
+# матчам снизу приклеена вся линия на завтра, и шести экранов до нижних карточек
+# не хватало (05.08.2026 `RE ARISE — Team Synapse` не находился весь матч, хотя
+# на сайте был). Выход из цикла — по остановке контейнера, по найденной паре
+# (`probe`) или по бюджету времени, а не по числу шагов.
+WINLINE_FEED_SWEEP_STEPS = 24
+WINLINE_FEED_SWEEP_PAUSE_SECONDS = 0.2
+WINLINE_FEED_SWEEP_BUDGET_SECONDS = 6.0
 WINLINE_FEED_SWEEP_MIN_INTERVAL_SECONDS = 20.0
 _FEED_SWEEP_JS = """() => {
   let moved = false;
@@ -626,11 +632,19 @@ def _feed_sweep_due(page, *, now: Optional[float] = None) -> bool:
     return (stamp - last_run) >= max(0.0, float(WINLINE_FEED_SWEEP_MIN_INTERVAL_SECONDS))
 
 
-async def _sweep_camoufox_feed(page, *, force: bool = False, now: Optional[float] = None) -> bool:
-    """Дорисовать ленту прокруткой внутреннего контейнера.
+async def _sweep_camoufox_feed(
+    page,
+    *,
+    force: bool = False,
+    now: Optional[float] = None,
+    probe: Any = None,
+) -> bool:
+    """Дорисовать ленту прокруткой внутреннего контейнера до конца.
 
-    Возвращает True, только если контейнер реально сдвинулся — то есть в DOM
-    могли появиться новые карточки и снимок имеет смысл перечитать.
+    `probe` — необязательная проверка «искомое уже в DOM»: как только она
+    возвращает True, прокрутка прекращается, чтобы не тратить шаги впустую.
+    Возвращает True, если контейнер сдвигался — то есть снимок имеет смысл
+    перечитать.
     """
     if page is None:
         return False
@@ -638,6 +652,7 @@ async def _sweep_camoufox_feed(page, *, force: bool = False, now: Optional[float
     if not force and not _feed_sweep_due(page, now=stamp):
         return False
     _feed_sweep_last_run[id(page)] = stamp
+    started = time.monotonic()
     moved_any = False
     for _ in range(max(1, int(WINLINE_FEED_SWEEP_STEPS))):
         try:
@@ -647,6 +662,14 @@ async def _sweep_camoufox_feed(page, *, force: bool = False, now: Optional[float
         if not moved:
             break
         moved_any = True
+        if probe is not None:
+            try:
+                if bool(await _maybe_await(probe())):
+                    break
+            except Exception:
+                pass
+        if (time.monotonic() - started) >= max(0.0, float(WINLINE_FEED_SWEEP_BUDGET_SECONDS)):
+            break
         time.sleep(max(0.0, float(WINLINE_FEED_SWEEP_PAUSE_SECONDS)))
     return moved_any
 
@@ -1389,6 +1412,8 @@ class SiteResult:
     # снимку, а не сверкой с параллельным парсером.
     card_team_order: Optional[str] = None
     card_odds: List[float] = field(default_factory=list)
+    # Почему пары не оказалось в снимке (заполняется только на промахе).
+    miss_fingerprint: Optional[str] = None
     # Optional acquisition diagnostics for Winline dynamic poller (bounded).
     acquisition_mode: Optional[str] = None
     page_url: Optional[str] = None
@@ -2027,6 +2052,34 @@ def _winline_promote_last_map_match_market(
             ),
         )
     return None
+
+
+def _winline_miss_fingerprint(
+    *,
+    body_text: str,
+    html: str,
+    team1: str,
+    team2: str,
+) -> str:
+    """Почему пары нет в снимке: сколько блоков дорисовано и кто из двух виден.
+
+    Различает три исхода, которые в логе выглядели одинаково («match not found»):
+    лента коротка (мало блоков), букмекер не выставил матч (блоков много, ни
+    одного имени), написание разошлось (видно только одно из двух имён).
+    """
+    text = str(body_text or "")
+    blocks = len(_WINLINE_EVENT_BOUNDARY_RE.findall(text))
+    seen1 = bool(_first_index_with_fallback(text.lower(), team1) >= 0)
+    seen2 = bool(_first_index_with_fallback(text.lower(), team2) >= 0)
+    # HTML проверяем отдельно: имя может быть в разметке, но не в видимом тексте.
+    html_low = str(html or "").lower()
+    html1 = bool(team1 and _first_index_with_fallback(html_low, team1) >= 0)
+    html2 = bool(team2 and _first_index_with_fallback(html_low, team2) >= 0)
+    return (
+        f"feed_blocks={blocks} body_len={len(text)} "
+        f"t1_text={int(seen1)} t2_text={int(seen2)} "
+        f"t1_html={int(html1)} t2_html={int(html2)}"
+    )
 
 
 def _winline_card_order_label(order: Optional[str], team1: str, team2: str) -> str:
@@ -3514,31 +3567,47 @@ async def parse_site_in_camoufox_page_async(
     # живёт на одной странице сутками и не навигируется, а лента подгружается
     # порциями при прокрутке контейнера. Один проход прокрутки и перечитывание
     # снимка; троттлинг не даёт делать это на каждом промахе подряд.
+    miss_fingerprint = ""
     if (
         site == "winline"
         and effective_acq
         and team1
         and team2
         and not _text_matches_teams(body_text or visible or "", team1, team2)
-        and await _sweep_camoufox_feed(page)
     ):
-        _payload = await _load_site_render_payload_camoufox_async(
-            page,
-            url,
-            initial_wait_seconds=0.0,
-            scroll_wait_seconds=0.0,
-            acquisition_mode=effective_acq,
-        )
-        if len(_payload) >= 6:
-            load_status, load_error, html, visible, body_text, acq_diag = _payload[:6]
-        else:
-            load_status, load_error, html, visible, body_text = _payload[:5]
-            acq_diag = {}
+        async def _teams_rendered() -> bool:
+            return _text_matches_teams(await _camoufox_body_text(page), team1, team2)
+
+        if await _sweep_camoufox_feed(page, probe=_teams_rendered):
+            _payload = await _load_site_render_payload_camoufox_async(
+                page,
+                url,
+                initial_wait_seconds=0.0,
+                scroll_wait_seconds=0.0,
+                acquisition_mode=effective_acq,
+            )
+            if len(_payload) >= 6:
+                load_status, load_error, html, visible, body_text, acq_diag = _payload[:6]
+            else:
+                load_status, load_error, html, visible, body_text = _payload[:5]
+                acq_diag = {}
+        if not _text_matches_teams(body_text or visible or "", team1, team2):
+            # Пары нет даже после дорисовки. Дальше по evidence будет видно
+            # только «match not found», из чего нельзя понять, чего не хватило:
+            # ленты, конкретного названия или страницы целиком.
+            miss_fingerprint = _winline_miss_fingerprint(
+                body_text=body_text,
+                html=html,
+                team1=team1,
+                team2=team2,
+            )
 
     initial_body_text = body_text
     match_fallback_odds: List[float] = []
 
     def _with_acq(result: SiteResult) -> SiteResult:
+        if miss_fingerprint:
+            result.miss_fingerprint = miss_fingerprint
         return _apply_acquisition_diag(result, acq_diag)
 
     if _is_deeplink(site, url):

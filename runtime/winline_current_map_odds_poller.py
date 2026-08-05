@@ -797,6 +797,7 @@ class WinlineCurrentMapOddsPoller:
             # приведены к порядку запроса) — доказательство стороны по одному файлу.
             "card_team_order": result.get("card_team_order"),
             "card_odds": result.get("card_odds"),
+            "miss_fingerprint": result.get("miss_fingerprint"),
             # Возраст DOM: сколько секунд подпись страницы не менялась к моменту
             # опроса. Отличает «цена отстала» (страница замерла) от «сторона уехала».
             "dom_age_seconds": (

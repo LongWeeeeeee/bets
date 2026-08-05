@@ -1323,6 +1323,8 @@ def _winline_map_site_result_to_collector_dict(
         # поэтому читаем его оттуда (парсер пишет фиксированную формулировку).
         # Порядок и цены так, как их написал Winline: по ним одним видно, уехала
         # ли сторона, — `p1_odds/p2_odds` уже приведены к порядку запроса.
+        # Отпечаток промаха: сколько блоков ленты дорисовано и кого из пары видно.
+        "miss_fingerprint": str(getattr(result, "miss_fingerprint", None) or "")[:200] or None,
         "card_team_order": str(getattr(result, "card_team_order", None) or "")[:120] or None,
         "card_odds": [
             float(x) for x in (getattr(result, "card_odds", None) or [])[:2]
