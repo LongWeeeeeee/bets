@@ -271,7 +271,11 @@ def test_dltv_rating_summary_label_and_line() -> None:
         all_output={"dltv_rating": -33.0},
     )
     assert "⭐ Star hits (WR60+):" in block
-    assert "All: DLTV_rating -33 (WR65)" in block
+    # DLTV — метрика внешнего источника, поэтому в сводке она идёт строкой Mix,
+    # а не внутри All. STAR-принадлежность при этом прежняя: хит считается по
+    # секции all_output, просто показывается отдельно.
+    assert "Mix: DLTV_rating -33 (WR65)" in block
+    assert "All: DLTV_rating" not in block
 
 
 def test_dltv_rating_alone_validates_all_block_at_wr60() -> None:
