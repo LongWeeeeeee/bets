@@ -211,8 +211,11 @@ def test_winline_adjacent_cards_requested_map_odds_stay_on_target_card() -> None
 
 
 def test_winline_live_acquisition_uses_explicit_live_feed() -> None:
+    # Общий live-фид рендерил ленту порциями во внутреннем контейнере, и матч
+    # ниже первой порции отсутствовал в DOM. Дотовская страница отдаёт всю
+    # дотовскую ленту без прокрутки.
     assert odds_parser.BOOKMAKER_URLS["live"]["winline"] == (
-        "https://winline.ru/stavki/sport/kibersport/live"
+        "https://winline.ru/stavki/sport/kibersport/dota_2"
     )
 
 

@@ -128,7 +128,14 @@ BOOKMAKER_URLS: Dict[str, Dict[str, str]] = {
     "live": {
         "betboom": "https://betboom.ru/esport/live/dota-2",
         "pari": "https://pari.ru/esports-live/category/dota2",
-        "winline": "https://winline.ru/stavki/sport/kibersport/live",
+        # Дотовская страница, а не общий live-фид: общий фид рендерит ленту
+        # порциями (~9 блоков) во ВНУТРЕННЕМ контейнере `div.main__wrapper`,
+        # тело страницы там не скроллится вовсе, поэтому дотовский матч ниже
+        # первой порции просто отсутствовал в DOM ("match not found").
+        # Проверено 05.08.2026: на `dota_2` вся дотовская лента попадает в DOM
+        # без единой прокрутки. Цена — на странице соседствует линия
+        # (`Завтра 15:00`), её отсекает `_looks_future_context`.
+        "winline": "https://winline.ru/stavki/sport/kibersport/dota_2",
     },
     "all": {
         "betboom": "https://betboom.ru/esport/dota-2?period=all",
@@ -579,6 +586,70 @@ _PAGE_URL_DIAG_MAX = 500
 # legacy/non-Winline callers retain the historical 60s timeout.
 WINLINE_BOUNDED_NAVIGATION_TIMEOUT_MS = 12_000
 
+# Winline рисует ленту событий во ВНУТРЕННЕМ контейнере (`div.main`,
+# `div.main__wrapper`): само тело страницы не скроллится (`document.body`
+# scrollHeight равен innerHeight), поэтому `window.scrollTo(...)` ничего не
+# двигает, а в DOM попадает только первая порция карточек. Прокрутка контейнера
+# дорисовывает следующие; уже отрисованные при этом НЕ выгружаются — замер
+# 05.08.2026 на живой странице: 9 блоков после загрузки, 12 после прокрутки,
+# включая первые.
+WINLINE_FEED_SWEEP_STEPS = 6
+WINLINE_FEED_SWEEP_PAUSE_SECONDS = 0.35
+WINLINE_FEED_SWEEP_MIN_INTERVAL_SECONDS = 20.0
+_FEED_SWEEP_JS = """() => {
+  let moved = false;
+  for (const el of document.querySelectorAll('*')) {
+    if (el.scrollHeight - el.clientHeight > 300 && el.clientHeight > 300) {
+      const before = el.scrollTop;
+      el.scrollTop = before + Math.max(400, el.clientHeight);
+      if (el.scrollTop > before) { moved = true; }
+    }
+  }
+  window.scrollBy(0, 800);
+  return moved;
+}"""
+# Прокрутка привязана к физической странице: поллер живёт на одной и той же
+# сколь угодно долго, поэтому троттлим по id(page), а протухшие записи чистим.
+_feed_sweep_last_run: Dict[int, float] = {}
+_FEED_SWEEP_STATE_TTL_SECONDS = 600.0
+
+
+def _feed_sweep_due(page, *, now: Optional[float] = None) -> bool:
+    """True, если по этой странице прокрутку можно делать снова."""
+    stamp = float(now if now is not None else time.monotonic())
+    for key, last in list(_feed_sweep_last_run.items()):
+        if stamp - last > _FEED_SWEEP_STATE_TTL_SECONDS:
+            _feed_sweep_last_run.pop(key, None)
+    last_run = _feed_sweep_last_run.get(id(page))
+    if last_run is None:
+        return True
+    return (stamp - last_run) >= max(0.0, float(WINLINE_FEED_SWEEP_MIN_INTERVAL_SECONDS))
+
+
+async def _sweep_camoufox_feed(page, *, force: bool = False, now: Optional[float] = None) -> bool:
+    """Дорисовать ленту прокруткой внутреннего контейнера.
+
+    Возвращает True, только если контейнер реально сдвинулся — то есть в DOM
+    могли появиться новые карточки и снимок имеет смысл перечитать.
+    """
+    if page is None:
+        return False
+    stamp = float(now if now is not None else time.monotonic())
+    if not force and not _feed_sweep_due(page, now=stamp):
+        return False
+    _feed_sweep_last_run[id(page)] = stamp
+    moved_any = False
+    for _ in range(max(1, int(WINLINE_FEED_SWEEP_STEPS))):
+        try:
+            moved = bool(await _maybe_await(page.evaluate(_FEED_SWEEP_JS)))
+        except Exception:
+            break
+        if not moved:
+            break
+        moved_any = True
+        time.sleep(max(0.0, float(WINLINE_FEED_SWEEP_PAUSE_SECONDS)))
+    return moved_any
+
 
 def _bounded_dom_signature(text: str, *, max_len: int = _DOM_SIGNATURE_MAX) -> str:
     """Stable bounded SHA-256 of whitespace-normalized DOM text (no raw dumps)."""
@@ -659,6 +730,7 @@ async def _load_site_render_payload_camoufox_async(
     load_status = "ok"
     load_error = ""
     acq_error = ""
+    navigated = False
 
     try:
         if mode == "dynamic_dom":
@@ -666,6 +738,7 @@ async def _load_site_render_payload_camoufox_async(
             # stable miss: repair with exactly one goto, then read DOM. No reload,
             # no synthetic sleep (call budget is the caller's).
             if _page_needs_navigation(page, url):
+                navigated = True
                 try:
                     await _maybe_await(
                         page.goto(
@@ -683,6 +756,7 @@ async def _load_site_render_payload_camoufox_async(
             # redirect Winline to its root page; retrying reload there can never
             # recover the live market, so repair the existing named page with a
             # bounded goto instead.
+            navigated = True
             if _page_needs_navigation(page, url):
                 await _maybe_await(
                     page.goto(
@@ -719,6 +793,7 @@ async def _load_site_render_payload_camoufox_async(
                         load_error = acq_error
         elif mode == "initial_goto":
             if _page_needs_navigation(page, url):
+                navigated = True
                 await _maybe_await(
                     page.goto(
                         url,
@@ -741,6 +816,7 @@ async def _load_site_render_payload_camoufox_async(
             # already on target: skip goto/reload
         else:
             # Legacy default: always navigate.
+            navigated = True
             await _maybe_await(page.goto(url, wait_until="domcontentloaded", timeout=60000))
             time.sleep(max(0.0, float(initial_wait_seconds)))
             try:
@@ -758,6 +834,13 @@ async def _load_site_render_payload_camoufox_async(
         load_status = "partial_load"
         acq_error = _sanitize_acquisition_error(exc)
         load_error = acq_error
+
+    # После свежей навигации в DOM только первая порция карточек: прокрутки выше
+    # адресованы окну, а лента Winline скроллится внутренним контейнером. Режимы
+    # acquisition — это Winline, для остальных букмекеров поведение не меняется.
+    if mode and navigated:
+        with contextlib.suppress(Exception):
+            await _sweep_camoufox_feed(page, force=True)
 
     html = ""
     visible = ""
@@ -1197,25 +1280,41 @@ def _current_page_matches_teams(
     return False
 
 
+# Живая карточка Winline всегда несёт СТАТУС игры: слитное `2карта`, счётчик
+# сыгранных карт `2К`, игровой таймер `18'` или счёт в скобках. Эти маркеры у
+# линии не встречаются.
+_LIVE_STRONG_MARKER_RE = re.compile(
+    r"\b\d{1,2}'|\(\d{1,2}\s*-\s*\d{1,2}\)|\b[1-5]карта\b|\b[1-5]\s*к\b"
+)
+# Слабые маркеры двусмысленны: `1 карта` (с пробелом) — это НАЗВАНИЕ РЫНКА, оно
+# есть и у предматчевой карточки; `15:00` одинаково читается и как счёт, и как
+# время начала. Они не доказывают live.
+_LIVE_WEAK_MARKER_RE = re.compile(r"\b[1-5]\s*карта\b|\b\d{1,2}\s*:\s*\d{1,2}\b")
+# Часы старта у карточки линии: `Завтра 15:00`, `Сегодня 21:00`.
+_PREMATCH_CLOCK_RE = re.compile(
+    r"(?:завтра|сегодня|tomorrow|today)\s*\d{1,2}\s*:\s*\d{2}"
+)
+
+
 def _looks_future_context(context: str) -> bool:
+    """True для карточки линии (предматч), False для живой карточки.
+
+    Раньше live-маркером считались и `1 карта`, и любое `\\d+:\\d+`. На дотовской
+    странице Winline live-карточки соседствуют с линией на завтра, у которой ЕСТЬ
+    и рынок `1 карта` с кэфами, и часы старта с двоеточием, — то есть обе
+    «улики» предматч сам себе и создавал, и опровергал. Поэтому часы старта
+    отменяются только СИЛЬНЫМИ маркерами живой игры.
+    """
     low = context.lower()
-    live_markers_present = bool(
-        re.search(r"\b\d{1,2}'\b", low)
-        or re.search(r"\(\d{1,2}\s*-\s*\d{1,2}\)", low)
-        or re.search(r"\b\d{1,2}\s*:\s*\d{1,2}\b", low)
-        or re.search(r"\b[1-5]\s*карта\b", low)
-        or re.search(r"\b[1-5]карта\b", low)
-        or re.search(r"\b[1-5]\s*к\b", low)
-    )
+    strong_live = bool(_LIVE_STRONG_MARKER_RE.search(low))
+    weak_live = bool(_LIVE_WEAK_MARKER_RE.search(low))
+    if _PREMATCH_CLOCK_RE.search(low):
+        return not strong_live
     if any(m in low for m in FUTURE_MARKERS):
-        if live_markers_present:
-            return False
-        return True
+        return not (strong_live or weak_live)
     # Explicit future date token like 18.03.26 close to teams is usually prematch.
     if re.search(r"\b\d{1,2}\.\d{2}\.\d{2}\b", low):
-        if live_markers_present:
-            return False
-        return True
+        return not (strong_live or weak_live)
     return False
 
 
@@ -3345,6 +3444,32 @@ async def parse_site_in_camoufox_page_async(
     else:
         load_status, load_error, html, visible, body_text = _payload[:5]
         acq_diag = {}
+
+    # Пары нет в снимке — возможно, её карточка просто не дорисована: поллер
+    # живёт на одной странице сутками и не навигируется, а лента подгружается
+    # порциями при прокрутке контейнера. Один проход прокрутки и перечитывание
+    # снимка; троттлинг не даёт делать это на каждом промахе подряд.
+    if (
+        site == "winline"
+        and effective_acq
+        and team1
+        and team2
+        and not _text_matches_teams(body_text or visible or "", team1, team2)
+        and await _sweep_camoufox_feed(page)
+    ):
+        _payload = await _load_site_render_payload_camoufox_async(
+            page,
+            url,
+            initial_wait_seconds=0.0,
+            scroll_wait_seconds=0.0,
+            acquisition_mode=effective_acq,
+        )
+        if len(_payload) >= 6:
+            load_status, load_error, html, visible, body_text, acq_diag = _payload[:6]
+        else:
+            load_status, load_error, html, visible, body_text = _payload[:5]
+            acq_diag = {}
+
     initial_body_text = body_text
     match_fallback_odds: List[float] = []
 
