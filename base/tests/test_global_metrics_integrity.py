@@ -41,22 +41,32 @@ PHASE_METRIC_NAMES = tuple(
 )
 assert len(PHASE_METRIC_NAMES) == 18
 
-# Pre-integration protected SHA-256 (captured before this file was created).
+# Защита от НЕЗАМЕЧЕННОЙ правки калибровок: хеш обновляется только вместе с
+# осознанным изменением порогов и записью в docs/EXPERIMENTS.md.
+# 06.08.2026 — добавлены пороги WR60 для ProTracker solo (>=3) и duo (>=9),
+# подобранные на про-корпусе (E-18).
 _PROTECTED_SHA256 = {
     "data/star_thresholds_by_wr.json": (
-        "f96ff0b7d472561374ba19cd48381e88bbcaafb923c3eae5c86b79270c668d2b"
+        "d24cb38027f0fd881ce2f4372e06419cb464114e017361cfb58a586e86f7d098"
     ),
     "data/star_confidence_calibration.json": (
         "778637e6081f9eb1be80a09a550a6d9e7114cbd2d15d8098e952a0c5dd344413"
     ),
 }
 
+# Состав STAR-метрик. Сторож дрейфа: список меняется только осознанно, вместе
+# с порогами в data/star_thresholds_by_wr.json и записью в docs/EXPERIMENTS.md.
 PRODUCTION_STAR_METRICS = frozenset(
     {
         "counterpick_1vs1",
         "counterpick_1vs2",
         "dota2protracker_cp1vs1",
         "solo",
+        # Голосование DLTV: порог 30 только на all_output WR60/WR65.
+        "dltv_rating",
+        # ProTracker solo/duo: пороги только на all_output WR60 (3 и 9).
+        "dota2protracker_solo",
+        "dota2protracker_duo",
     }
 )
 DISPLAY_ONLY_METRICS = frozenset({"synergy_duo", "synergy_trio", "pos1_vs_pos1"})
