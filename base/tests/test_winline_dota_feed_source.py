@@ -229,6 +229,49 @@ def test_missing_card_triggers_sweep_and_rereads_snapshot(monkeypatch) -> None:
     assert getattr(result, "map_num", None) == 2
 
 
+def test_miss_fingerprint_explains_why_the_pair_was_not_found() -> None:
+    """«match not found» обязан различать три разных исхода."""
+    feed = (
+        "DOTA 2 | Games of the Future PLAYTIME YAKULT BROTHERS 2карта 16' 2К Матч 1.53 2.40 "
+        "DOTA 2 | 1w Essence TEAM LIQUID 1W 2карта 2К Матч 1.34 3.05"
+    )
+    # Букмекер не выставил матч: лента дорисована, ни одного имени нет.
+    absent = odds_parser._winline_miss_fingerprint(
+        body_text=feed, html=f"<html>{feed}</html>", team1="RE ARISE", team2="Team Synapse"
+    )
+    assert "feed_blocks=2" in absent
+    assert "t1_text=0 t2_text=0" in absent
+
+    # Разошлось написание: одна команда видна, вторая нет.
+    partial = odds_parser._winline_miss_fingerprint(
+        body_text=feed, html=f"<html>{feed}</html>", team1="Team Liquid", team2="Team Synapse"
+    )
+    assert "t1_text=1 t2_text=0" in partial
+
+    # Ленты нет вовсе (пустой снимок) — это уже про страницу, а не про матч.
+    empty = odds_parser._winline_miss_fingerprint(
+        body_text="", html="", team1="Team Liquid", team2="1w"
+    )
+    assert "feed_blocks=0 body_len=0" in empty
+
+
+def test_sweep_stops_as_soon_as_the_pair_is_rendered() -> None:
+    """Дорисовка прекращается по факту находки, а не по числу шагов."""
+    page = _make_page()
+    calls = {"probe": 0}
+
+    def _probe():
+        calls["probe"] += 1
+        return page.scrolled  # после первого шага пара уже в DOM
+
+    assert odds_parser._run_coroutine_blocking(
+        odds_parser._sweep_camoufox_feed(page, force=True, probe=_probe)
+    ) is True
+    assert calls["probe"] == 1
+    # Один шаг прокрутки, а не весь бюджет.
+    assert len([c for c in page.evaluate_calls if "scrollTop" in c]) == 1
+
+
 def test_present_card_does_not_scroll(monkeypatch) -> None:
     page = _make_page()
     page.scrolled = True  # карточка уже в DOM
