@@ -61,6 +61,19 @@ THREE_CARDS_PAGE_TEXT = (
 )
 
 
+# Дамп живой страницы 05.08.2026, 20:41 MSK (runtime/artifacts/odds-winline/
+# probe_arise_full_card_2026-08-05_2040.log): наша пара идёт live на карте 2, а
+# следом в ленте стоят карточки ЛИНИИ с тем же `RE.ARISE` и рынком `1 карта` —
+# на дотовской странице линия соседствует с live, и перепутать их нельзя.
+ASGARD_LIVE_AND_LINE_PAGE_TEXT = (
+    "DOTA 2 | Asgard Championship TEAM SYNTAX RE.ARISE 2карта +16 0 1 3 6 2К "
+    "Матч 3.80 1.20 2.40 + 1.5 - 1.50 1.50 2.5 2.40 2 карта 2.40 1.50 - - - - - - "
+    "DOTA 2 | European Pro League LEVEL UP RE.ARISE Завтра 12:00 +27 "
+    "Матч 1.59 2.22 2.64 - 1.5 + 1.43 1.78 2.5 1.93 1 карта 1.66 2.09 - - - - - - "
+    "RE.ARISE NO HOODWINK Завтра 15:00 +9 Матч 2.46 1.48 1.50 + 1.5 - 2.43 1.75"
+)
+
+
 def _odds(text: str, team1: str, team2: str, map_num: int):
     extract = bk._extract_winline_current_map_winner(
         text, team1, team2, forced_map_num=map_num
@@ -106,6 +119,28 @@ def test_bookmaker_spelling_of_our_team_is_found():
 
     mirrored, _ = _odds(THREE_CARDS_PAGE_TEXT, "MOUZ", "BoomBoys", 2)
     assert mirrored == [2.67, 1.44]
+
+
+def test_bookmaker_writes_our_team_as_a_different_word():
+    """`Team Synapse` у нас — `TEAM SYNTAX` на сайте, и рядом линия с тем же соперником."""
+    odds, extract = _odds(ASGARD_LIVE_AND_LINE_PAGE_TEXT, "Team Synapse", "RE ARISE", 2)
+
+    assert odds == [2.40, 1.50], f"карточка TEAM SYNTAX не найдена: {extract.reason!r}"
+    assert odds != [1.66, 2.09], "это рынок линии LEVEL UP — RE.ARISE"
+    assert extract.map_num == 2
+
+    mirrored, _ = _odds(ASGARD_LIVE_AND_LINE_PAGE_TEXT, "RE ARISE", "Team Synapse", 2)
+    assert mirrored == [1.50, 2.40]
+
+
+def test_without_the_alias_that_card_is_not_found(monkeypatch):
+    """Контроль фикстуры: пару держит справочник, а не случайное совпадение слов."""
+    monkeypatch.setattr(bk, "_alias_spellings", lambda _name: [])
+
+    odds, extract = _odds(ASGARD_LIVE_AND_LINE_PAGE_TEXT, "Team Synapse", "RE ARISE", 2)
+
+    assert odds == []
+    assert extract.reason == "no_card"
 
 
 def test_three_cards_in_one_page_text_are_split_by_event():
