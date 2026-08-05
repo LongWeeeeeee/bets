@@ -29,7 +29,7 @@ EXPLORE_SCRIPT = PROJECT_ROOT / "base" / "explore_database.py"
 DEFAULT_SOURCE_DIR = Path("/root/main/bets_data/analise_pub_matches/json_parts_split_from_object")
 DEFAULT_OUTPUT_DIR = Path("/root/main/bets_data/analise_pub_matches/no10gate_full_dicts")
 DEFAULT_RUNTIME_ROOT = Path("/root/main/runtime/no10_full_dicts")
-SHARD_NAME_RE = re.compile(r"^7\.41(?:[a-d])?_part\d+\.json$")
+SHARD_NAME_RE = re.compile(r"^7\.41(?:[a-e])?_part\d+\.json$")
 
 PHASES: tuple[dict[str, str], ...] = (
     {
