@@ -75,6 +75,13 @@ TEAM_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
     "L1GA TEAM": ("L1GA",),
     # Лог монитора 31.07.2026: карточка `LEVEL UP NO HOODWINK`.
     "Level UP esports": ("Level UP", "Levelup"),
+    # SourceTV отдаёт `Team Synapse`, Winline рендерит `TEAM SYNTAX` — это разные
+    # СЛОВА, а не сокращение, поэтому пара не находилась вообще: дамп живой
+    # страницы 05.08.2026 (`DOTA 2 | Asgard Championship TEAM SYNTAX RE.ARISE
+    # 2карта ... 2К`) показал SYNAPSE = 0 вхождений в тексте и в html при
+    # ARISE = 1. Матч шёл, кэфы не приходили всю карту. Канон — официальное имя
+    # (Asgard Championship S1, 05.08: `Syntax vs RE Arise`).
+    "Team Syntax": ("Team Synapse",),
 }
 
 
