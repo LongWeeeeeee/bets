@@ -1,4 +1,4 @@
-"""cp1vs1: шринкедж к ролевой оценке вместо жёсткой отсечки.
+"""cp1vs1: шринкедж к ролевой оценке (механика; по умолчанию ВЫКЛЮЧЕН).
 
 Тонкая ячейка больше не выбрасывается, а подтягивается к пулу по ролевому
 семейству врага с весом CP1VS1_SHRINKAGE_K. Своя позиция при этом не меняется —
@@ -21,8 +21,9 @@ def _dict(**pairs):
     return {k: {"wins": w, "draws": 0, "games": g} for k, (w, g) in pairs.items()}
 
 
-def test_thin_cell_is_no_longer_dropped():
+def test_thin_cell_is_no_longer_dropped(monkeypatch):
     """Раньше ячейка с 4 играми при min_matches=30 давала отказ по покрытию."""
+    monkeypatch.setattr(functions, "CP1VS1_SHRINKAGE_K", 100.0)
     data = _dict(**{
         "1pos1_vs_2pos1": (4, 4),      # тонкая точная: 100% на 4 играх
         "1pos1_vs_2pos2": (300, 600),  # ролевой сосед: 50% на 600
@@ -36,8 +37,9 @@ def test_thin_cell_is_no_longer_dropped():
     assert 0.50 < value < 0.56, value
 
 
-def test_dense_cell_stays_close_to_exact():
+def test_dense_cell_stays_close_to_exact(monkeypatch):
     """На плотной ячейке шринкедж почти не сдвигает оценку."""
+    monkeypatch.setattr(functions, "CP1VS1_SHRINKAGE_K", 100.0)
     data = _dict(**{
         "1pos1_vs_2pos1": (3500, 5000),  # 70% на 5000 игр
         "1pos1_vs_2pos2": (250, 500),    # 50%
@@ -47,8 +49,9 @@ def test_dense_cell_stays_close_to_exact():
     assert abs(value - 0.70) < 0.01, value
 
 
-def test_own_position_is_never_pooled():
+def test_own_position_is_never_pooled(monkeypatch):
     """Пул идёт только по позициям врага; свои позиции не подмешиваются."""
+    monkeypatch.setattr(functions, "CP1VS1_SHRINKAGE_K", 100.0)
     data = _dict(**{
         "1pos1_vs_2pos1": (10, 20),
         "1pos2_vs_2pos1": (900, 1000),   # своя другая позиция — не должна влиять
@@ -57,7 +60,11 @@ def test_own_position_is_never_pooled():
     assert value < 0.6, "оценка уехала к чужой своей позиции — пул слишком широкий"
 
 
-def test_flag_zero_restores_legacy_cutoff(monkeypatch):
+def test_flag_is_off_by_default():
+    assert functions.CP1VS1_SHRINKAGE_K == 0.0, "шринкедж должен быть выключен"
+
+
+def test_legacy_cutoff_when_disabled(monkeypatch):
     monkeypatch.setattr(functions, "CP1VS1_SHRINKAGE_K", 0.0)
     data = _dict(**{"1pos1_vs_2pos1": (4, 4)})
     value, games = functions._lookup_counterpick_1vs1_winrate(data, "1pos1", "2pos1", 30)
