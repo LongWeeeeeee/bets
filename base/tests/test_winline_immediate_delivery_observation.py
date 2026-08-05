@@ -681,13 +681,22 @@ def test_speculative_and_lane_kills_source_wiring() -> None:
     """Speculative + lane-adv kills immediate sites must pass obs+map via local enrich."""
     src = _module_source()
     _assert_no_forbidden_helper(src, context="production source")
+    # Второй сайт — тот же lane-adv standalone kills (`_build_lane_adv_standalone_
+    # kills_message`), но с объединением kills-ставок под единый policy-гейт его
+    # add_url_reason стал `star_signal_sent_now_kills_window_policy`; строки
+    # `..._lane_adv_standalone_kills` в исходнике нет вовсе, и тест падал на
+    # `assert idx > 0` ещё до проверки обвязки.
     for marker in (
         'add_url_reason="star_signal_sent_late_pub_comeback_speculative_half"',
-        'add_url_reason="star_signal_sent_now_lane_adv_standalone_kills"',
+        'add_url_reason="star_signal_sent_now_kills_window_policy"',
     ):
         idx = src.find(marker)
         assert idx > 0, marker
-        block = src[max(0, idx - 1200) : idx + 350]
+        # Окно смотрит ВВЕРХ от места отправки: обвязка должна стоять рядом, а не
+        # быть позаимствованной у соседнего сайта. Замер 05.08.2026: до вызова
+        # enrich 1202 и 828 символов, поэтому прежние 1200 обрезали имя хелпера
+        # на два символа и тест падал на живом коде.
+        block = src[max(0, idx - 1600) : idx + 350]
         assert "current_map_observation=" in block, (
             f"{marker}: missing current_map_observation "
             "(immediate local production wiring)"
