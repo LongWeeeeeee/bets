@@ -538,7 +538,18 @@ def test_collector_routes_through_shared_camoufox_job_and_named_page(tmp_path, m
         shared_policies.append({"timeout": timeout, "retry": retry})
         return callback(object())  # browser token
 
-    def fake_parse(page, site, url, team1, team2, mode, forced_map_num=None, acquisition_mode=None):
+    def fake_parse(
+        page,
+        site,
+        url,
+        team1,
+        team2,
+        mode,
+        forced_map_num=None,
+        acquisition_mode=None,
+        # Сборщик прокидывает флаг решающей карты серии (промоция рынка «Матч»).
+        series_last_map=False,
+    ):
         acq_modes.append(acquisition_mode)
         assert site == "winline"
         assert page is not None
@@ -964,7 +975,18 @@ def test_collector_routes_only_through_shared_camoufox_no_duplicate_scheduler_pa
         shared_calls.append(str(label))
         return callback(object())
 
-    def fake_parse(page, site, url, team1, team2, mode, forced_map_num=None, acquisition_mode=None):
+    def fake_parse(
+        page,
+        site,
+        url,
+        team1,
+        team2,
+        mode,
+        forced_map_num=None,
+        acquisition_mode=None,
+        # Сборщик прокидывает флаг решающей карты серии (промоция рынка «Матч»).
+        series_last_map=False,
+    ):
         return _FakeResult()
 
     monkeypatch.setattr(cs, "_run_shared_camoufox_job", fake_run_shared)
@@ -1859,7 +1881,18 @@ def test_w8_scheduler_serializes_camoufox_max_concurrency_one(tmp_path, monkeypa
             with lock:
                 concurrent -= 1
 
-    def fake_parse(page, site, url, team1, team2, mode, forced_map_num=None, acquisition_mode=None):
+    def fake_parse(
+        page,
+        site,
+        url,
+        team1,
+        team2,
+        mode,
+        forced_map_num=None,
+        acquisition_mode=None,
+        # Сборщик прокидывает флаг решающей карты серии (промоция рынка «Матч»).
+        series_last_map=False,
+    ):
         return _FakeResult()
 
     monkeypatch.setattr(cs, "_run_shared_camoufox_job", fake_run_shared)

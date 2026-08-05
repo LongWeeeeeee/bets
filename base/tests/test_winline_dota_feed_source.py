@@ -68,6 +68,56 @@ def test_live_card_survives_neighbouring_prematch_clock() -> None:
     assert odds_parser._looks_future_context(spilled) is False
 
 
+# Реальный текст закреплённой карточки со страницы dota_2 (05.08.2026, 17:48).
+# Шапка пишется через ЗАПЯТУЮ, и название лиги `1w Essence` содержит токен `1w`,
+# равный названию команды.
+PINNED_CARD = (
+    "DOTA 2, 1w Essence TEAM LIQUID 0 8 1 : 0 12:13 15 >2k 1W 2 44 : 5 8 : 15 "
+    "3 карта Популярные на матч Все маркеты Победитель 1.53 2.40 Тотал матч 2.67 1.41 "
+    "М 2.5 Б Популярные на карту Все маркеты Победитель 2 карта 2.67 1.44 "
+    "Тотал убийств 2 карта 1.80 1.90 М 63.5 Б"
+)
+FEED_CARD = (
+    "DOTA 2 | Games of the Future PLAYTIME YAKULT BROTHERS 2карта 16' +68 1 0 16 5 2К "
+    "Матч 1.53 2.40 2 карта 1.52 2.42"
+)
+
+
+def test_tournament_name_does_not_decide_team_order() -> None:
+    # До правки токен `1w` из названия лиги встречался раньше `TEAM LIQUID`,
+    # порядок читался как reverse, и цены уезжали не на ту команду.
+    assert odds_parser._winline_team_order(PINNED_CARD, "Team Liquid", "1w") == "direct"
+    assert odds_parser._winline_team_order(PINNED_CARD, "1w", "Team Liquid") == "reverse"
+
+
+def test_discipline_header_is_stripped_for_both_separators() -> None:
+    assert odds_parser._winline_strip_discipline_header(PINNED_CARD).startswith("TEAM LIQUID")
+    assert odds_parser._winline_strip_discipline_header(FEED_CARD).startswith("PLAYTIME")
+    # Текст без шапки не трогаем.
+    assert odds_parser._winline_strip_discipline_header("TEAM A TEAM B 2карта") == (
+        "TEAM A TEAM B 2карта"
+    )
+
+
+def test_pinned_card_odds_land_on_the_requested_side() -> None:
+    extract = odds_parser._extract_winline_current_map_winner(
+        PINNED_CARD,
+        "Team Liquid",
+        "1w",
+        forced_map_num=2,
+    )
+    # На карте 2 вёл 1w (8:15), поэтому фаворит — 1.44, и он обязан достаться 1w.
+    assert [round(x, 2) for x in list(extract.odds or [])] == [2.67, 1.44]
+
+    reversed_request = odds_parser._extract_winline_current_map_winner(
+        PINNED_CARD,
+        "1w",
+        "Team Liquid",
+        forced_map_num=2,
+    )
+    assert [round(x, 2) for x in list(reversed_request.odds or [])] == [1.44, 2.67]
+
+
 class _SweepPage:
     """Страница с внутренней лентой: карточка появляется после прокрутки."""
 

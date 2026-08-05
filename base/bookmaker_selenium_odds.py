@@ -1773,11 +1773,43 @@ def _winline_matched_card_context(
     return card
 
 
+# Заголовок «дисциплина + турнир»: в ленте он пишется через `|`
+# (`DOTA 2 | 1w Essence`), а в закреплённой карточке сверху — через запятую
+# (`DOTA 2, 1w Essence`). Вариант с запятой не был границей карточки, поэтому
+# название турнира попадало внутрь текста события.
+_WINLINE_DISCIPLINE_HEADER_RE = re.compile(
+    r"^\s*(?:dota\s*2|counter[-\s]*strike(?:\s*2)?|cs(?:\s*2)?|lol|"
+    r"valorant|mobile\s+legends|king\s+of\s+glory)\s*[|,]\s*",
+    re.I,
+)
+
+
+def _winline_strip_discipline_header(text: str) -> str:
+    """Убрать ведущий заголовок дисциплины и название турнира перед командами.
+
+    Турнир может содержать токен, равный названию команды: у `DOTA 2, 1w Essence`
+    токен `1w` — это лига, а не команда `1w`, и порядок сторон определялся по
+    ней. Итог 05.08.2026: `Team Liquid` при лидерстве +6158 нетворса уезжал в
+    сообщение аутсайдером (3.13 против 1.33). Название турнира набрано НЕ капсом,
+    поэтому режем до первого «капсового» токена — он уже принадлежит команде.
+    """
+    if not text:
+        return text
+    header = _WINLINE_DISCIPLINE_HEADER_RE.match(text)
+    if header is None:
+        return text
+    rest = text[header.end():]
+    for token in re.finditer(r"\S+", rest):
+        if _winline_token_is_name_like(token.group()):
+            return rest[token.start():]
+    return rest
+
+
 def _winline_team_order(text: str, team1: str, team2: str) -> Optional[str]:
     """Return 'direct', 'reverse', or None when order is ambiguous."""
     if not text or not team1 or not team2:
         return None
-    low = text.lower()
+    low = _winline_strip_discipline_header(text).lower()
     i1 = _first_index_with_fallback(low, team1)
     i2 = _first_index_with_fallback(low, team2)
     if i1 == -1 or i2 == -1:
@@ -3428,6 +3460,7 @@ async def parse_site_in_camoufox_page_async(
     mode: str,
     forced_map_num: Optional[int] = None,
     acquisition_mode: Optional[str] = None,
+    series_last_map: bool = False,
 ) -> SiteResult:
     # Acquisition mode is honored only for Winline; other bookmakers keep legacy goto.
     effective_acq = acquisition_mode if site == "winline" else None
@@ -3898,6 +3931,22 @@ async def parse_site_in_camoufox_page_async(
             team2,
             forced_map_num=forced_map_num,
         )
+        if not wl.odds and series_last_map and html:
+            # Решающая карта серии: рынка карты Winline может не выставить вовсе
+            # и оставить только «Матч» — это одно и то же событие. Промоция живёт
+            # в структурном (DOM) разборе, потому что двухисходность рынка видна
+            # только по классам кнопок. Добор строго АДДИТИВНЫЙ: текстовый разбор
+            # уже отработал, промоция может лишь добавить кэфы, но не отнять.
+            promoted = _extract_winline_current_map_winner(
+                winline_card,
+                team1,
+                team2,
+                forced_map_num=forced_map_num,
+                html=html,
+                series_last_map=True,
+            )
+            if promoted.odds:
+                wl = promoted
         if wl.odds and _winline_map_odds_bettable(
             html, team1, team2, wl.map_num or forced_map_num
         ) is False:

@@ -576,6 +576,134 @@ def _winline_sourcetv_map_num(match: Any) -> Optional[int]:
     return resolved if 1 <= resolved <= 5 else None
 
 
+# Bo-формат серии из моста SourceTV: сколько побед нужно для матча.
+_WINLINE_SERIES_WINS_NEEDED = {1: 2, 2: 3}  # 1 = Bo3, 2 = Bo5
+_WINLINE_SERIES_TYPE_BO2 = 3
+# Формулировка, которой парсер помечает промоцию рынка «Матч» на решающей карте
+# (`_winline_promote_last_map_match_market`). Признак не переживает конвертацию
+# в SiteResult отдельным полем, поэтому опознаём его по тексту details.
+_WINLINE_PROMOTED_DETAILS_MARKER = "match winner promoted"
+# Срез моста читается на каждой регистрации поллера, а меняется раз в цикл GC.
+_winline_series_rows_cache: Dict[str, Any] = {"mtime": None, "rows": []}
+
+
+def _winline_series_int(value: Any) -> Optional[int]:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _winline_series_name_key(value: Any) -> str:
+    return re.sub(r"[^0-9a-zа-яё]+", "", str(value or "").strip().lower())
+
+
+def _winline_series_rows() -> List[Dict[str, Any]]:
+    """Строки моста SourceTV с кэшем по mtime файла (fail-open: [] при сбое)."""
+    path = str(globals().get("SOURCETV_MATCHES_PATH") or "")
+    if not path:
+        return []
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return []
+    cache = _winline_series_rows_cache
+    if cache.get("mtime") == mtime:
+        return list(cache.get("rows") or [])
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    if isinstance(raw, dict):
+        values = list(raw.values())
+    elif isinstance(raw, list):
+        values = list(raw)
+    else:
+        values = []
+    rows = [item for item in values if isinstance(item, dict)]
+    cache["mtime"] = mtime
+    cache["rows"] = rows
+    return list(rows)
+
+
+def _winline_series_row_last_map(row: Any, map_num: Any) -> bool:
+    """Решающая ли карта `map_num` для этой строки серии.
+
+    На последней карте серии Winline иногда не выставляет рынок карты вовсе и
+    оставляет только «Матч»: победитель карты и победитель матча — одно событие
+    (05.08.2026, `No Hoodwink — Lynx`, Bo3 при счёте 1:1, карта 3 — в карточке
+    только `Матч 2.55 1.42`). Bo2 тоже «последняя карта» по смыслу, но там рынок
+    «Матч» ТРЁХисходный (возможна ничья) — его отсекает уже структурный разбор
+    парсера, а не этот флаг.
+
+    Формат неизвестен или счёт серии нечитаем — False: подстановка матчевого
+    рынка на НЕрешающей карте дала бы цену другого события.
+    """
+    if not isinstance(row, dict):
+        return False
+    map_i = _winline_series_int(map_num)
+    if map_i is None or not (1 <= map_i <= 5):
+        return False
+    series_type = _winline_series_int(row.get("series_type"))
+    if series_type == _WINLINE_SERIES_TYPE_BO2:
+        return map_i == 2
+    needed = _WINLINE_SERIES_WINS_NEEDED.get(series_type)
+    if needed is None:
+        return False
+    r_wins = _winline_series_int(row.get("radiant_series_wins"))
+    d_wins = _winline_series_int(row.get("dire_series_wins"))
+    if r_wins is None or d_wins is None:
+        return False
+    if not (r_wins == needed - 1 and d_wins == needed - 1):
+        return False
+    # Счёт серии должен согласовываться с номером карты: 1:1 — это карта 3.
+    return map_i == r_wins + d_wins + 1
+
+
+def _winline_series_last_map(map_num: Any, team1: Any, team2: Any, *payloads: Any) -> bool:
+    """Последняя карта серии для этой пары команд.
+
+    Payload'ы (данные матча, уже прочитанные вызывающим) главнее файла: они
+    свежее. Без них пара ищется в срезе моста `SOURCETV_MATCHES_PATH`; матча в
+    срезе нет — False.
+    """
+    merged: Dict[str, Any] = {}
+    for payload in payloads:
+        if isinstance(payload, dict):
+            merged.update(payload)
+    if merged.get("series_type") is not None:
+        return _winline_series_row_last_map(merged, map_num)
+
+    key1 = _winline_series_name_key(team1)
+    key2 = _winline_series_name_key(team2)
+    if not key1 or not key2:
+        return False
+    wanted = {key1, key2}
+    for row in _winline_series_rows():
+        pair = {
+            _winline_series_name_key(row.get("radiant_team_name")),
+            _winline_series_name_key(row.get("dire_team_name")),
+        }
+        if "" in pair or pair != wanted:
+            continue
+        return _winline_series_row_last_map(row, map_num)
+    return False
+
+
+def _winline_registry_series_last_map(series: Any) -> bool:
+    """Флаг решающей карты, сохранённый при регистрации поллера серии."""
+    key = str(series or "").strip()
+    if not key:
+        return False
+    try:
+        with _winline_current_map_state_lock:
+            entry = _winline_current_map_registry.get(key)
+        return bool(isinstance(entry, dict) and entry.get("series_last_map"))
+    except Exception:
+        return False
+
+
 def _winline_polling_series_key(
     fallback: Any,
     *,
@@ -813,6 +941,8 @@ class _WinlineFastResult:
     p2_team = None
     # None = доступность исхода не доказана ни в одну сторону (fail-open).
     odds_bettable = None
+    # Кэфы взяты из рынка «Матч» на решающей карте серии (промоция парсера).
+    promoted_from_match = False
 
     def __init__(self, *, odds, map_num, page_url, details, dom_signature):
         self.odds = list(odds)
@@ -936,6 +1066,10 @@ def _winline_fast_collect_from_payload(
             team2,
             map_num,
             html=html,
+            # Решающая карта серии: рынка карты у Winline может не быть вовсе,
+            # тогда её победитель — это рынок «Матч» (промоция внутри парсера,
+            # только по DOM и только при двухисходном рынке).
+            series_last_map=_winline_registry_series_last_map(series),
         )
     except Exception:
         return None
@@ -986,6 +1120,14 @@ def _winline_fast_collect_from_payload(
         details=str(card or "")[:700],
         dom_signature=str(abs(hash(card or "")))[:32],
     )
+    result.promoted_from_match = bool(getattr(extract, "promoted_from_match", False))
+    if result.promoted_from_match:
+        # Держим в details объяснение парсера («рынка карты нет, взят Матч»):
+        # без него в evidence не отличить промоцию от обычного рынка карты.
+        promoted_details = str(getattr(extract, "details", "") or "")[:700]
+        if promoted_details:
+            result.details = promoted_details
+            result.body_text = promoted_details
     # Числа распарсены, но принимает ли БК ставку — видно только по классам
     # кнопок исхода. Ошибку детектора глушим: он уточняет разбор, а не правит его.
     bettable_fn = globals().get("_bookmaker_winline_bettable")
@@ -1169,6 +1311,16 @@ def _winline_map_site_result_to_collector_dict(
         "page_valid": bool(page_valid),
         "acquisition_mode_echo": str(acq_echo or acquisition_mode),
         "match_found": match_found,
+        # Решающая карта серии: у неё рынка карты может не быть, и кэфы берутся
+        # из рынка «Матч». Держим обе метки в evidence — иначе по файлу не
+        # отличить «промоция сработала» от «рынок карты был выставлен».
+        # Признак промоции переживает конвертацию в SiteResult только в details,
+        # поэтому читаем его оттуда (парсер пишет фиксированную формулировку).
+        "series_last_map": _winline_registry_series_last_map(series),
+        "odds_promoted_from_match": bool(
+            getattr(result, "promoted_from_match", False)
+            or _WINLINE_PROMOTED_DETAILS_MARKER in body_text.lower()
+        ),
     }
     return out
 
@@ -1329,6 +1481,7 @@ def _winline_current_map_poller_collect(
             mode="odds",
             forced_map_num=resolved_map,
             acquisition_mode=effective_mode,
+            series_last_map=_winline_registry_series_last_map(series_s),
         )
         if effective_mode == "controlled_reload":
             with _winline_current_map_state_lock:
@@ -1664,6 +1817,7 @@ def ensure_winline_current_map_polling(
     collector: Any = None,
     is_map_current: Any = None,
     evidence_path: Any = None,
+    series_last_map: Any = None,
     **poller_kwargs: Any,
 ) -> Any:
     """Create/update exactly one poller for the exact canonical current map.
@@ -1698,6 +1852,8 @@ def ensure_winline_current_map_polling(
                 "active": True,
                 "inactive_reason": None,
                 "inactive_proven": False,
+                # Решающая карта: разрешает промоцию рынка «Матч» в рынок карты.
+                "series_last_map": bool(series_last_map),
             }
 
         pid = int(producer_pid) if producer_pid is not None else int(os.getpid())
@@ -31763,6 +31919,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         team2=dire_team_name_original,
                         selected_side=None,
                         producer_pid=os.getpid(),
+                        series_last_map=_winline_series_last_map(
+                            bookmaker_map_num,
+                            radiant_team_name_original,
+                            dire_team_name_original,
+                            live_league_data,
+                            data,
+                        ),
                     )
                     match_log(
                         "   📊 Winline polling active before draft: "
@@ -32022,6 +32185,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 team2=dire_team_name_original,
                 selected_side=None,
                 producer_pid=os.getpid(),
+                series_last_map=_winline_series_last_map(
+                    bookmaker_map_num,
+                    radiant_team_name_original,
+                    dire_team_name_original,
+                    live_league_data,
+                    data,
+                ),
             )
         except Exception as _winline_poll_exc:
             try:
