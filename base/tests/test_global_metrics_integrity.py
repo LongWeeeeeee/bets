@@ -336,11 +336,26 @@ def test_all_six_metrics_conservative_effective_n_and_score_snapshots() -> None:
     # Import helpers from the owned sibling test module without redefining logic.
     from tests.test_post_lane_synergy_pipeline import (  # type: ignore
         POSITIONS,
+        _base_stats_games,
         _build_post_lane_stats,
         _put_duo,
         _put_vs,
         _side,
     )
+
+    # Числа берём от самих порогов: тест проверяет семантику min у диагностик,
+    # а не конкретные значения, и не должен краснеть при их пересмотре.
+    solo_min = functions.SOLO_MIN_MATCHES
+    cp1_min = max(functions.COUNTERPICK_1VS1_MIN_MATCHES,
+                  functions.POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES)
+    pos1_min = max(functions.POS1_VS_POS1_MIN_MATCHES,
+                   functions.POST_LANE_POS1_VS_POS1_MIN_MATCHES)
+    duo_min = max(functions.SYNERGY_DUO_MIN_MATCHES,
+                  functions.POST_LANE_SYNERGY_DUO_MIN_MATCHES)
+    solo_lowest = solo_min + 5
+    pos1_cell = pos1_min + 2
+    cp1_cell = cp1_min + 5
+    duo_lowest = duo_min + 2
 
     radiant = _side(1)
     dire = _side(6)
@@ -351,8 +366,8 @@ def test_all_six_metrics_conservative_effective_n_and_score_snapshots() -> None:
     for pos in POSITIONS:
         hid_r = int(radiant[pos]["hero_id"])
         hid_d = int(dire[pos]["hero_id"])
-        g_r = 55 if pos == "pos1" else 120
-        g_d = 60
+        g_r = solo_lowest if pos == "pos1" else solo_min + 70
+        g_d = solo_min + 10
         base[f"{hid_r}{pos}"] = {"wins": int(0.8 * g_r), "games": g_r}
         base[f"{hid_d}{pos}"] = {"wins": int(0.2 * g_d), "games": g_d}
 
@@ -360,7 +375,9 @@ def test_all_six_metrics_conservative_effective_n_and_score_snapshots() -> None:
         for d_pos in POSITIONS:
             r_key = f"{int(radiant[r_pos]['hero_id'])}{r_pos}"
             d_key = f"{int(dire[d_pos]['hero_id'])}{d_pos}"
-            g = 52 if (r_pos == "pos1" and d_pos == "pos1") else 90
+            # pos1_vs_pos1 живёт по своему порогу — держим его между pos1_min
+            # и cp1_min: для своей метрики ячейка годна, в cp1vs1 не попадает.
+            g = pos1_cell if (r_pos == "pos1" and d_pos == "pos1") else cp1_cell
             _put_vs(base, r_key, d_key, 0.8, g)
 
     import itertools as _it
@@ -383,9 +400,9 @@ def test_all_six_metrics_conservative_effective_n_and_score_snapshots() -> None:
 
     for team, wr in ((radiant, 0.8), (dire, 0.2)):
         for a, b in (("pos1", "pos2"), ("pos1", "pos3"), ("pos2", "pos3"), ("pos4", "pos5")):
-            g = 32 if wr < 0.5 and a == "pos1" and b == "pos2" else 70
-            if wr >= 0.5 and a == "pos1" and b == "pos2":
-                g = 36
+            g = duo_min + 40
+            if a == "pos1" and b == "pos2":
+                g = duo_lowest if wr < 0.5 else duo_min + 6
             _put_duo(base, team, a, b, wr, g)
 
     equal_base = _build_post_lane_stats(radiant, dire)
@@ -419,12 +436,14 @@ def test_all_six_metrics_conservative_effective_n_and_score_snapshots() -> None:
             assert equal_bucket.get(metric) is not None
             score_snapshot[(phase, metric)] = score
 
-        assert bucket["counterpick_1vs2_games"] <= 150
-        assert bucket["solo_games"] <= 60
-        assert bucket["pos1_vs_pos1_games"] <= 60
+        # Каждая граница — «минимальная использованная ячейка семейства», а не
+        # сумма по всем. 1vs2 не переписывали: там ячейки базовой фикстуры.
+        assert bucket["counterpick_1vs2_games"] <= _base_stats_games()
+        assert bucket["solo_games"] <= solo_lowest
+        assert bucket["pos1_vs_pos1_games"] <= pos1_cell
         assert bucket["synergy_trio_games"] <= 40
-        assert bucket["synergy_duo_games"] <= 50
-        assert bucket["counterpick_1vs1_games"] <= 60
+        assert bucket["synergy_duo_games"] <= duo_lowest
+        assert bucket["counterpick_1vs1_games"] <= cp1_cell
 
     # Invalid-only used entries never produce positive support.
     for bad in (None, 0, -0.0, False, True, float("nan"), float("inf"), "bad"):

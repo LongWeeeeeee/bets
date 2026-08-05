@@ -63,11 +63,11 @@ GET_DIFF_TRIM_ALPHA = 0.1  # доля отсечения/винзоризаци�
 # считает kills_window; на драфтовых метриках порог всегда был жёстким.
 # 0 = выключено, поведение прода не меняется.
 #
-# ВНИМАНИЕ, пока только для замеров: второй элемент кортежа ячейки читается ещё
-# и как диагностика `*_games` (`_diagnostic_support_from_entry`). При включённом
-# режиме туда попадёт вес 0..1, а не число игр, — то есть сломается то же, обо
-# что споткнулся шринкедж cp1vs1. Включать в проде можно только после того, как
-# вес и диагностика разведены по разным полям.
+# Вес и диагностика разведены: ячейка кладётся как
+# `(значение, игры, позиция_врага_или_None, вес)`. Индекс 1 — всегда СЫРЫЕ игры,
+# их читают `*_games` в сообщении; индекс 3 — вес для агрегатора. Раньше они
+# делили одно поле, и любая схема взвешивания ломала цифры диагностики (об это
+# споткнулся шринкедж cp1vs1).
 DRAFT_CELL_RELIABILITY_K = max(
     0.0, float(os.getenv("DRAFT_CELL_RELIABILITY_K", "0") or "0")
 )
@@ -475,6 +475,16 @@ def get_diff(
                     enemy_pos = it[2]
                     if isinstance(enemy_pos, str):
                         pair_weight = float(pair_weights.get((own_pos, enemy_pos), 1.0))
+                # 4-е поле — ЯВНЫЙ вес ячейки, отдельно от числа игр. Поле игр
+                # (индекс 1) читают диагностики `*_games`, поэтому схема
+                # взвешивания не имеет права его занимать: раньше вес и
+                # диагностика делили одно поле, и любое взвешивание ломало
+                # цифры в сообщении. Когда веса нет — поведение прежнее.
+                if len(it) >= 4 and it[3] is not None:
+                    try:
+                        weight = float(it[3])
+                    except (TypeError, ValueError):
+                        pass
             else:
                 try:
                     val = float(it)
@@ -2465,7 +2475,7 @@ def synergy_team(
                 if combo not in unique_combinations:
                     unique_combinations.add(combo)
                     # Сохраняем (winrate, count) для взвешивания в get_diff
-                    output.setdefault(f'{mkdir}_duo', []).append((value, weight))
+                    output.setdefault(f'{mkdir}_duo', []).append((value, games, None, weight))
 
                     # Support duo (pos4+pos5)
                     if all(p in ['pos4', 'pos5'] for p in (pos, second_pos)):
@@ -3044,11 +3054,11 @@ def counterpick_team(
             admit, weight = _draft_cell_admit(games, min_matches_1vs1)
             if admit:
                 # Сохраняем (winrate, count, enemy_pos) для pair-weights в get_diff.
-                output.setdefault(f'{mkdir}_1vs1', {}).setdefault(pos, []).append((value, weight, enemy_pos))
+                output.setdefault(f'{mkdir}_1vs1', {}).setdefault(pos, []).append((value, games, enemy_pos, weight))
 
                 # Core vs Core matchups (pos1-3 vs pos1-3)
                 if pos in CORE_POSITIONS and enemy_pos in CORE_POSITIONS:
-                    output.setdefault(f'{mkdir}_1vs1_cores', {}).setdefault(pos, []).append((value, weight))
+                    output.setdefault(f'{mkdir}_1vs1_cores', {}).setdefault(pos, []).append((value, games, None, weight))
 
             # 1vs2 matchups
         for i in range(len(opp_items)):
@@ -3079,13 +3089,13 @@ def counterpick_team(
                         unique_combinations.add(combo)
                         # Сохраняем (winrate, count) для взвешивания в get_diff
                         if pos in {'pos1', 'pos2', 'pos3'} and any(i in {'pos1', 'pos2', 'pos3'} for i in [second_enemy_pos, enemy_pos]):
-                            output.setdefault(f'{mkdir}_1vs2_two_cores', {}).setdefault(pos, []).append((value, weight))
+                            output.setdefault(f'{mkdir}_1vs2_two_cores', {}).setdefault(pos, []).append((value, games, None, weight))
                         if pos in {'pos1', 'pos2', 'pos3'}:
-                            output.setdefault(f'{mkdir}_1vs2_one_core', {}).setdefault(pos, []).append((value, weight))
+                            output.setdefault(f'{mkdir}_1vs2_one_core', {}).setdefault(pos, []).append((value, games, None, weight))
                         if pos in {'pos1', 'pos2', 'pos3'} and all(i in {'pos1', 'pos2', 'pos3'} for i in [second_enemy_pos, enemy_pos]):
-                            output.setdefault(f'{mkdir}_1vs2_all_cores', {}).setdefault(pos, []).append((value, weight))
+                            output.setdefault(f'{mkdir}_1vs2_all_cores', {}).setdefault(pos, []).append((value, games, None, weight))
                         # Сохраняем все 1vs2
-                        output.setdefault(f'{mkdir}_1vs2', {}).setdefault(pos, []).append((value, weight))
+                        output.setdefault(f'{mkdir}_1vs2', {}).setdefault(pos, []).append((value, games, None, weight))
 
 
 # functions.py
