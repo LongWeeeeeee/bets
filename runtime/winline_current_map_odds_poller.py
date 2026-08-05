@@ -793,6 +793,17 @@ class WinlineCurrentMapOddsPoller:
             # «рынок карты был выставлен» и не проверить проводку флага.
             "series_last_map": bool(result.get("series_last_map")),
             "odds_promoted_from_match": bool(result.get("odds_promoted_from_match")),
+            # Порядок и цены так, как их написал Winline (`p1_odds/p2_odds` уже
+            # приведены к порядку запроса) — доказательство стороны по одному файлу.
+            "card_team_order": result.get("card_team_order"),
+            "card_odds": result.get("card_odds"),
+            # Возраст DOM: сколько секунд подпись страницы не менялась к моменту
+            # опроса. Отличает «цена отстала» (страница замерла) от «сторона уехала».
+            "dom_age_seconds": (
+                None
+                if self._last_dom_change_mono is None
+                else round(max(0.0, finished_mono - self._last_dom_change_mono), 3)
+            ),
         }
         # Preserve empty selected_side explicitly when provided as empty string
         if self._selected_side is not None and not side:

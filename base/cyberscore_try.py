@@ -943,6 +943,9 @@ class _WinlineFastResult:
     odds_bettable = None
     # Кэфы взяты из рынка «Матч» на решающей карте серии (промоция парсера).
     promoted_from_match = False
+    # Сырой порядок карточки Winline (имена в порядке карточки + неразвёрнутая пара).
+    card_team_order = None
+    card_odds = None
 
     def __init__(self, *, odds, map_num, page_url, details, dom_signature):
         self.odds = list(odds)
@@ -1121,6 +1124,8 @@ def _winline_fast_collect_from_payload(
         dom_signature=str(abs(hash(card or "")))[:32],
     )
     result.promoted_from_match = bool(getattr(extract, "promoted_from_match", False))
+    result.card_team_order = getattr(extract, "card_team_order", None)
+    result.card_odds = list(getattr(extract, "card_odds", None) or [])
     if result.promoted_from_match:
         # Держим в details объяснение парсера («рынка карты нет, взят Матч»):
         # без него в evidence не отличить промоцию от обычного рынка карты.
@@ -1316,6 +1321,13 @@ def _winline_map_site_result_to_collector_dict(
         # отличить «промоция сработала» от «рынок карты был выставлен».
         # Признак промоции переживает конвертацию в SiteResult только в details,
         # поэтому читаем его оттуда (парсер пишет фиксированную формулировку).
+        # Порядок и цены так, как их написал Winline: по ним одним видно, уехала
+        # ли сторона, — `p1_odds/p2_odds` уже приведены к порядку запроса.
+        "card_team_order": str(getattr(result, "card_team_order", None) or "")[:120] or None,
+        "card_odds": [
+            float(x) for x in (getattr(result, "card_odds", None) or [])[:2]
+            if isinstance(x, (int, float))
+        ] or None,
         "series_last_map": _winline_registry_series_last_map(series),
         "odds_promoted_from_match": bool(
             getattr(result, "promoted_from_match", False)
