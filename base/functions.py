@@ -9616,16 +9616,22 @@ def calculate_kills_window_advantage(
         # ever reads 1v1/with, and 1v2+2v1 alone cost 100 dict lookups per
         # window — computing them eagerly burned that on every live cycle for
         # a result nothing read.
+        # Группы героев канонизированы в билдере (`_canonical_group`): один
+        # порядок на неупорядоченный набор. Остальные читатели перебирают
+        # перестановки, этот собирает ключ напрямую — значит сортирует сам.
+        def _group(*tokens):
+            return ",".join(sorted(tokens))
+
         def _build_1v2():
             return _weighted_layer([
-                _combine([raw(f"{r}_vs_{d1},{d2}")])
+                _combine([raw(f"{r}_vs_{_group(d1, d2)}")])
                 for r in radiant
                 for d1, d2 in combinations(dire, 2)
             ])
 
         def _build_2v1():
             return _weighted_layer([
-                _combine([raw(f"{r1},{r2}_vs_{d}")])
+                _combine([raw(f"{_group(r1, r2)}_vs_{d}")])
                 for r1, r2 in combinations(radiant, 2)
                 for d in dire
             ])
@@ -9639,9 +9645,9 @@ def calculate_kills_window_advantage(
 
         def _build_with():
             return _weighted_layer(
-                [_combine([raw(f"{r1}_with_{r2}", invert=False)])
+                [_combine([raw("_with_".join(sorted((r1, r2))), invert=False)])
                  for r1, r2 in combinations(radiant, 2)]
-                + [_combine([raw(f"{d1}_with_{d2}", invert=True)])
+                + [_combine([raw("_with_".join(sorted((d1, d2))), invert=True)])
                    for d1, d2 in combinations(dire, 2)]
             )
 
