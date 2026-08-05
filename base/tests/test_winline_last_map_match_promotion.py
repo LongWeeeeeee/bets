@@ -64,6 +64,33 @@ def test_last_map_without_map_market_uses_match_winner():
     assert "match winner promoted" in extract.details
 
 
+def test_promotion_reports_raw_card_order_and_prices():
+    """Провенанс стороны: имена в порядке карточки и НЕразвёрнутая пара цен.
+
+    `odds` приведены к порядку запроса, поэтому по ним одним нельзя доказать,
+    что сторона не уехала. С этими двумя полями доказательство помещается в один
+    снимок evidence — сверка с параллельным парсером больше не нужна.
+    """
+    extract = _extract(LAST_MAP_MATCH_ONLY, "Yakult Brothers", "REKONIX", 3, True)
+
+    assert extract.card_team_order == "REKONIX|Yakult Brothers"
+    assert [round(x, 2) for x in (extract.card_odds or [])] == [3.30, 1.25]
+    # А запрошенный порядок — обратный, и цены в нём развёрнуты.
+    assert [round(x, 2) for x in (extract.odds or [])] == [1.25, 3.30]
+
+
+def test_card_order_is_independent_of_requested_order():
+    """Сырая пара всегда в порядке карточки, как бы ни был задан запрос."""
+    direct = _extract(BO2_THREE_WAY_MATCH, "Vici Gaming", "OG", 2, False)
+    reverse = _extract(BO2_THREE_WAY_MATCH, "OG", "Vici Gaming", 2, False)
+
+    assert [round(x, 2) for x in (direct.odds or [])] == [5.87, 1.11]
+    assert [round(x, 2) for x in (reverse.odds or [])] == [1.11, 5.87]
+    for extract in (direct, reverse):
+        assert extract.card_team_order == "Vici Gaming|OG"
+        assert [round(x, 2) for x in (extract.card_odds or [])] == [5.87, 1.11]
+
+
 def test_promotion_is_symmetric_in_requested_order():
     """Порядок запроса разворачивает цены и ничего больше."""
     direct = _extract(LAST_MAP_MATCH_ONLY, "REKONIX", "Yakult Brothers", 3, True)

@@ -1384,6 +1384,11 @@ class SiteResult:
     map_num: Optional[int] = None
     p1_team: Optional[str] = None
     p2_team: Optional[str] = None
+    # Сырой порядок карточки Winline: имена в порядке карточки и НЕразвёрнутая
+    # пара цен. Нужны, чтобы неверную сторону можно было доказать по одному
+    # снимку, а не сверкой с параллельным парсером.
+    card_team_order: Optional[str] = None
+    card_odds: List[float] = field(default_factory=list)
     # Optional acquisition diagnostics for Winline dynamic poller (bounded).
     acquisition_mode: Optional[str] = None
     page_url: Optional[str] = None
@@ -1557,6 +1562,12 @@ class _WinlineMapExtract:
     # карты и победитель матча — одно событие. Провенанс обязателен: во всех
     # остальных случаях подставлять матчевые кэфы в поток карты запрещено.
     promoted_from_match: bool = False
+    # Сырой порядок так, как его написал Winline: имена (наши, из SourceTV) в
+    # порядке карточки и НЕразвёрнутая пара цен. `odds` уже приведены к порядку
+    # запроса, поэтому по ним одним нельзя доказать, что сторона не уехала;
+    # с этой парой доказательство помещается в один файл evidence.
+    card_team_order: Optional[str] = None
+    card_odds: Optional[List[float]] = None
 
 
 _WINLINE_EVENT_BOUNDARY_RE = re.compile(
@@ -1998,6 +2009,7 @@ def _winline_promote_last_map_match_market(
         prices = _winline_match_market_winner_prices(element)
         if not prices:
             continue
+        card_prices = list(prices)
         if order == "reverse":
             prices.reverse()
         return _WinlineMapExtract(
@@ -2007,12 +2019,23 @@ def _winline_promote_last_map_match_market(
             p1_team="team1",
             p2_team="team2",
             promoted_from_match=True,
+            card_team_order=_winline_card_order_label(order, team1, team2),
+            card_odds=card_prices,
             details=(
                 "winline last map of series: map market not offered, match winner "
                 f"promoted | {scope_text[:600]}"
             ),
         )
     return None
+
+
+def _winline_card_order_label(order: Optional[str], team1: str, team2: str) -> str:
+    """Наши имена (из SourceTV) в том порядке, в каком их написал Winline."""
+    if order == "reverse":
+        return f"{team2}|{team1}"
+    if order == "direct":
+        return f"{team1}|{team2}"
+    return ""
 
 
 def _winline_structured_current_map_winner(
@@ -2084,9 +2107,10 @@ def _winline_structured_current_map_winner(
         if len(prices) != 2:
             saw_unbettable_winner = True
             return
+        card_prices = list(prices)
         if order == "reverse":
             prices.reverse()
-        valid.append((prices, scope_text[:700]))
+        valid.append((prices, scope_text[:700], order, card_prices))
 
     # The selected-event panel uses a different DOM from listing cards:
     # `odd-btn` under an explicitly named "Популярные на карту / Победитель"
@@ -2141,9 +2165,10 @@ def _winline_structured_current_map_winner(
                 if len(prices) != 2:
                     saw_unbettable_winner = True
                     continue
+                card_prices = list(prices)
                 if order == "reverse":
                     prices.reverse()
-                valid.append((prices, scope_text[:700]))
+                valid.append((prices, scope_text[:700], order, card_prices))
 
         # Older Winline snapshots do not expose the newer fast-bet CSS
         # classes. The semantic component names and the exact
@@ -2286,16 +2311,17 @@ def _winline_structured_current_map_winner(
         if len(prices) != 2:
             saw_unbettable_winner = True
             continue
+        card_prices = list(prices)
         if order == "reverse":
             prices.reverse()
-        valid.append((prices, scope_text[:700]))
+        valid.append((prices, scope_text[:700], order, card_prices))
 
     unique = {
         (round(prices[0], 6), round(prices[1], 6))
-        for prices, _details in valid
+        for prices, _details, _order, _card_prices in valid
     }
     if len(unique) == 1:
-        prices, details = valid[0]
+        prices, details, order, card_prices = valid[0]
         return _WinlineMapExtract(
             odds=prices,
             map_num=map_num,
@@ -2303,6 +2329,8 @@ def _winline_structured_current_map_winner(
             p1_team="team1",
             p2_team="team2",
             details=details,
+            card_team_order=_winline_card_order_label(order, team1, team2),
+            card_odds=list(card_prices or []),
         )
     if len(unique) > 1:
         return _WinlineMapExtract(
@@ -2666,6 +2694,8 @@ def _site_result_with_provenance(
     map_num: Optional[int] = None,
     p1_team: Optional[str] = None,
     p2_team: Optional[str] = None,
+    card_team_order: Optional[str] = None,
+    card_odds: Optional[List[float]] = None,
 ) -> SiteResult:
     return SiteResult(
         site=site,
@@ -2681,6 +2711,8 @@ def _site_result_with_provenance(
         map_num=map_num,
         p1_team=p1_team,
         p2_team=p2_team,
+        card_team_order=card_team_order,
+        card_odds=list(card_odds or []),
     )
 
 
@@ -3557,6 +3589,8 @@ async def parse_site_in_camoufox_page_async(
                     map_num=wl.map_num,
                     p1_team=wl.p1_team,
                     p2_team=wl.p2_team,
+                    card_team_order=wl.card_team_order,
+                    card_odds=wl.card_odds,
                     match_odds=match_diag,
                 ))
             if wl.market_closed or wl.reason == "closed":
@@ -3763,6 +3797,8 @@ async def parse_site_in_camoufox_page_async(
                     map_num=wl.map_num,
                     p1_team=wl.p1_team,
                     p2_team=wl.p2_team,
+                    card_team_order=wl.card_team_order,
+                    card_odds=wl.card_odds,
                     match_odds=match_diag,
                 ))
             if wl.market_closed or wl.reason == "closed":
@@ -3888,6 +3924,8 @@ async def parse_site_in_camoufox_page_async(
                     map_num=wl.map_num,
                     p1_team=wl.p1_team,
                     p2_team=wl.p2_team,
+                    card_team_order=wl.card_team_order,
+                    card_odds=wl.card_odds,
                 ))
         else:
             return _with_acq(SiteResult(
@@ -3964,6 +4002,8 @@ async def parse_site_in_camoufox_page_async(
                 map_num=wl.map_num,
                 p1_team=wl.p1_team,
                 p2_team=wl.p2_team,
+                card_team_order=wl.card_team_order,
+                card_odds=wl.card_odds,
             ))
         if wl.reason == "closed" or wl.market_closed:
             winline_source = _map_closed_source(site)
@@ -4276,6 +4316,8 @@ def parse_site(
                     map_num=wl.map_num,
                     p1_team=wl.p1_team,
                     p2_team=wl.p2_team,
+                    card_team_order=wl.card_team_order,
+                    card_odds=wl.card_odds,
                     match_odds=match_diag,
                 )
             if wl.market_closed or wl.reason == "closed":

@@ -174,6 +174,9 @@ def test_fast_collect_passes_series_last_map(monkeypatch) -> None:
         promoted_from_match = True
         p1_team = "team1"
         p2_team = "team2"
+        # Карточка пишет пару в обратном порядке — провенанс обязан это сохранить.
+        card_team_order = "No Hoodwink|Team Lynx"
+        card_odds = [1.42, 2.55]
         details = "winline last map of series: map market not offered, match winner promoted"
 
     def _fake_extract(card, team1, team2, map_num, **kwargs):  # noqa: ANN001
@@ -211,3 +214,6 @@ def test_fast_collect_passes_series_last_map(monkeypatch) -> None:
     assert out["market_status"] == "open"
     assert (out["p1_odds"], out["p2_odds"]) == (2.55, 1.42)
     assert out["odds_promoted_from_match"] is True
+    # Провенанс стороны доезжает до поллера в сыром виде карточки.
+    assert out["card_team_order"] == "No Hoodwink|Team Lynx"
+    assert out["card_odds"] == [1.42, 2.55]
