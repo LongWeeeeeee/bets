@@ -4799,8 +4799,19 @@ def _compose_star_metric_blocks_for_message(
     early_block: str,
     late_block: str,
     all_block: str,
+    mix_block: str = "",
 ) -> str:
-    return f"{str(early_block or '')}{str(late_block or '')}{str(all_block or '')}"
+    """Порядок блоков в сообщении: Early → Late → All → Mix.
+
+    Mix идёт последним и по умолчанию пуст — так старые вызовы (и тесты,
+    сверяющие текст без него) продолжают собирать прежнее сообщение.
+    """
+    return (
+        f"{str(early_block or '')}"
+        f"{str(late_block or '')}"
+        f"{str(all_block or '')}"
+        f"{str(mix_block or '')}"
+    )
 
 
 # Модульный уровень: тот же формат, что у nested _format_metrics в star-ветке
@@ -4823,6 +4834,14 @@ _STAR_METRICS_BLOCK_ALL_LIST: Tuple[Tuple[str, str], ...] = (
     ('solo', 'Solo'),
     ('synergy_duo', 'Synergy_duo'),
     ('synergy_trio', 'Synergy_trio'),
+)
+
+# Метрики из ВНЕШНИХ источников (dota2protracker, голосование DLTV) — они не
+# считаются по нашим словарям и живут отдельным блоком Mix, а не внутри All.
+# Значения по-прежнему лежат в ``all_output``: переезд касается подачи, а не
+# места хранения. DLTV_rating и Protracker_1vs1 при этом остаются STAR-метриками
+# (пороги заданы в секции ``all_output``), остальные три — display-only.
+_STAR_METRICS_BLOCK_MIX_LIST: Tuple[Tuple[str, str], ...] = (
     ('dota2protracker_cp1vs1', 'Protracker_1vs1'),
     ('dota2protracker_duo', 'Protracker_duo'),
     ('dota2protracker_solo', 'Protracker_solo'),
@@ -5040,13 +5059,26 @@ def _build_star_hits_summary_block(
 
     early_hits = _collect_star_hits_for_block(early_output, "early_output")
     mid_hits = _collect_star_hits_for_block(mid_output, "mid_output")
-    all_hits = _collect_star_hits_for_block(all_output, "all_output")
+    section_all_hits = _collect_star_hits_for_block(all_output, "all_output")
 
-    if not any((early_hits, mid_hits, all_hits)):
+    # Хиты внешних источников (ProTracker, голосование DLTV) показываем строкой
+    # Mix, а не внутри All — как и сами метрики в детальных блоках. Считаются
+    # они по-прежнему в секции ``all_output``: делится ПОДАЧА, а не оценка,
+    # поэтому набор сработавших метрик и решения диспатча не меняются.
+    mix_metric_names = {metric for metric, _label in _STAR_METRICS_BLOCK_MIX_LIST}
+    all_hits = [h for h in section_all_hits if h.get("metric") not in mix_metric_names]
+    mix_hits = [h for h in section_all_hits if h.get("metric") in mix_metric_names]
+
+    if not any((early_hits, mid_hits, all_hits, mix_hits)):
         return ""
 
     lines: List[str] = ["⭐ Star hits (WR60+):"]
-    for label, hits in (("Early", early_hits), ("Late", mid_hits), ("All", all_hits)):
+    for label, hits in (
+        ("Early", early_hits),
+        ("Late", mid_hits),
+        ("All", all_hits),
+        ("Mix", mix_hits),
+    ):
         if not hits:
             continue
         lines.append(f"  {label}: {_format_star_hits_line(hits)}")
@@ -7019,6 +7051,7 @@ def _build_star_metrics_snapshot(
     early_block_log: str,
     mid_block_log: str,
     all_block_log: str = "",
+    mix_block_log: str = "",
     raw_star_early_summary: str = "",
     raw_star_late_summary: str = "",
     raw_star_all_summary: str = "",
@@ -7028,6 +7061,7 @@ def _build_star_metrics_snapshot(
         "early_block_log": str(early_block_log or ""),
         "mid_block_log": str(mid_block_log or ""),
         "all_block_log": str(all_block_log or ""),
+        "mix_block_log": str(mix_block_log or ""),
         "raw_star_early_summary": str(raw_star_early_summary or ""),
         "raw_star_late_summary": str(raw_star_late_summary or ""),
         "raw_star_all_summary": str(raw_star_all_summary or ""),
@@ -7049,6 +7083,9 @@ def _print_star_metrics_snapshot(snapshot: Optional[dict], label: str = "delayed
     all_block_log = str(snapshot.get("all_block_log") or "")
     if all_block_log:
         print("      " + all_block_log.rstrip().replace("\n", "\n      "))
+    mix_block_log = str(snapshot.get("mix_block_log") or "")
+    if mix_block_log:
+        print("      " + mix_block_log.rstrip().replace("\n", "\n      "))
     star_diag_lines = [str(line) for line in (snapshot.get("star_diag_lines") or []) if str(line)]
     if star_diag_lines:
         print(f"   📉 Star checks: {' | '.join(star_diag_lines)}")
@@ -9750,6 +9787,7 @@ def _build_early_local_kills_message(
     )
     mid_block = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
     all_block = _format_metrics("All:", all_output_log, all_metric_list)
+    mix_block = _format_metrics("Mix:", all_output_log, _STAR_METRICS_BLOCK_MIX_LIST)
 
     live_state_block = _format_live_message_state_block(
         game_time_seconds=game_time_seconds,
@@ -9768,7 +9806,7 @@ def _build_early_local_kills_message(
         f"{team_elo_block or ''}"
         f"{wr_block}"
         f"{star_hits_summary_block}"
-        f"{_compose_star_metric_blocks_for_message(early_block + early_end_block, mid_block, all_block)}"
+        f"{_compose_star_metric_blocks_for_message(early_block + early_end_block, mid_block, all_block, mix_block)}"
         f"{live_state_block}"
     )
 
@@ -33193,12 +33231,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 "Early Winner (20-28):", early_end_output, metric_list
             )
             all_block = _format_metrics("All:", all_output, all_metric_list)
+            mix_block = _format_metrics("Mix:", all_output, _STAR_METRICS_BLOCK_MIX_LIST)
             mid_block = _format_metrics("Late: (28-60 min):", mid_output, metric_list)
             early_block_log = _format_metrics("Early NW (20-28):", early_output_log, metric_list)
             early_end_block_log = _format_metrics(
                 "Early Winner (20-28):", early_end_output_log, metric_list
             )
             all_block_log = _format_metrics("All:", all_output_log, all_metric_list)
+            mix_block_log = _format_metrics("Mix:", all_output_log, _STAR_METRICS_BLOCK_MIX_LIST)
             mid_block_log = _format_metrics("Late: (28-60 min):", mid_output_log, metric_list)
             lane_adv_dict_value = _lane_dict_adv_value(s.get('top'), s.get('mid'), s.get('bot'))
             lane_adv_dict_line = _build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot'))
@@ -33233,6 +33273,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early_block_log=early_block_log + early_end_block_log,
                 mid_block_log=mid_block_log,
                 all_block_log=all_block_log,
+                mix_block_log=mix_block_log,
                 raw_star_early_summary=raw_star_early_summary,
                 raw_star_late_summary=raw_star_late_summary,
                 raw_star_all_summary=raw_star_all_summary,
@@ -33378,7 +33419,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     f"{_build_lane_block(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=dota2protracker_lane_adv_line, lane_adv_dict_line=lane_adv_dict_line, lane_kills_adv=s.get('lane_kills_adv_dict'))}"
                     f"{team_elo_block}"
                     f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=s.get('all_output', {}))}"
-                    f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block)}"
+                    f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block, mix_block)}"
                 )
             except Exception:
                 pass
@@ -34758,7 +34799,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 f"{team_elo_block}"
                 f"{wr_block}"
                 f"{star_hits_summary_block}"
-                f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block)}"
+                f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block, mix_block)}"
                 f"{live_state_block}"
                 f"{odds_block}"
             )
@@ -38103,19 +38144,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     ('synergy_trio', 'Synergy_trio'),
                 ]
                 # All block: Solo теперь выводится (Option C: post_lane-solo на 7.41d, эмитится).
-                tempo_all_metric_list = [
-                    ('counterpick_1vs1', 'Counterpick_1vs1'),
-                    ('pos1_vs_pos1', 'Pos1vsPos1'),
-                    ('counterpick_1vs2', 'Counterpick_1vs2'),
-                    ('solo', 'Solo'),
-                    ('synergy_duo', 'Synergy_duo'),
-                    ('synergy_trio', 'Synergy_trio'),
-                    ('dota2protracker_cp1vs1', 'Protracker_1vs1'),
-                    ('dota2protracker_duo', 'Protracker_duo'),
-                    ('dota2protracker_solo', 'Protracker_solo'),
-                    ('dota2protracker_solo_overall', 'Protracker_solo_overall'),
-                    ('dltv_rating', 'DLTV_rating'),
-                    ]
+                # Списки — общие с основной веткой, чтобы состав блоков не
+                # разъезжался между ветками при правках.
+                tempo_all_metric_list = list(_STAR_METRICS_BLOCK_ALL_LIST)
+                tempo_mix_metric_list = list(_STAR_METRICS_BLOCK_MIX_LIST)
 
                 def _tempo_format_metrics(title: str, data: dict, metrics: list) -> str:
                     lines = [title]
@@ -38140,6 +38172,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     ),
                     all_block_log=_tempo_format_metrics(
                         "All:", tempo_all_output_log, tempo_all_metric_list
+                    ),
+                    mix_block_log=_tempo_format_metrics(
+                        "Mix:", tempo_all_output_log, tempo_mix_metric_list
                     ),
                 )
                 _print_star_metrics_snapshot(tempo_star_metrics_snapshot, label="tempo")
@@ -38267,6 +38302,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 _noskip_all_block = _format_star_metrics_block(
                     "All:", star_base_all_output, _STAR_METRICS_BLOCK_ALL_LIST
                 )
+                _noskip_mix_block = _format_star_metrics_block(
+                    "Mix:", star_base_all_output, _STAR_METRICS_BLOCK_MIX_LIST
+                )
                 _verdict_ctx["bet_message"] = (
                     f"{normalize_team_name_display(str(radiant_team_name or ''))} VS "
                     f"{normalize_team_name_display(str(dire_team_name or ''))}\n"
@@ -38274,7 +38312,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     f"{_build_lane_block(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=_build_dota2protracker_lane_adv_line(s), lane_adv_dict_line=_build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot')), lane_kills_adv=s.get('lane_kills_adv_dict'))}"
                     f"{noskip_team_elo_block}"
                     f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=star_base_all_output)}"
-                    f"{_compose_star_metric_blocks_for_message(_noskip_early_block, _noskip_mid_block, _noskip_all_block)}"
+                    f"{_compose_star_metric_blocks_for_message(_noskip_early_block, _noskip_mid_block, _noskip_all_block, _noskip_mix_block)}"
                 )
             except Exception:
                 pass
