@@ -58,7 +58,22 @@ GET_DIFF_VARIANT = 'winsorized'  # варианты: 'mean' | 'median' | 'trimme
 # Параметры агрегации (для median/trimmed/winsorized)
 GET_DIFF_TRIM_ALPHA = 0.1  # доля отсечения/винзоризации по хвостам
 # Преобразование веса матчапа (влияние количества игр)
-GET_DIFF_WEIGHT_POWER = 0.0  # 1.0=linear, 0.5=sqrt, 0.0=uniform
+# Ненулевое значение включает вес надёжности ВМЕСТО жёсткого гейта min_matches:
+# ячейка ниже порога не выбрасывается, а входит с весом games/(games+K). Так уже
+# считает kills_window; на драфтовых метриках порог всегда был жёстким.
+# 0 = выключено, поведение прода не меняется.
+#
+# ВНИМАНИЕ, пока только для замеров: второй элемент кортежа ячейки читается ещё
+# и как диагностика `*_games` (`_diagnostic_support_from_entry`). При включённом
+# режиме туда попадёт вес 0..1, а не число игр, — то есть сломается то же, обо
+# что споткнулся шринкедж cp1vs1. Включать в проде можно только после того, как
+# вес и диагностика разведены по разным полям.
+DRAFT_CELL_RELIABILITY_K = max(
+    0.0, float(os.getenv("DRAFT_CELL_RELIABILITY_K", "0") or "0")
+)
+# Вес надёжности уже насыщающий (0..1], поэтому применяется линейно; без этого
+# GET_DIFF_WEIGHT_POWER=0 схлопнул бы его обратно в единицу.
+GET_DIFF_WEIGHT_POWER = 1.0 if DRAFT_CELL_RELIABILITY_K > 0 else 0.0  # 1.0=linear, 0.5=sqrt, 0.0=uniform
 GET_DIFF_WEIGHT_CAP = None  # например 300 или None чтобы не ограничивать
 # Дискретизация индекса (1 = без бина)
 GET_DIFF_INDEX_BIN = 1
@@ -2443,13 +2458,14 @@ def synergy_team(
             second_key = f"{second_hero_id}{second_pos}"
 
             value, games = _lookup_with_winrate(data, hero_key, second_key)
-            if games >= min_matches_duo:
+            admit, weight = _draft_cell_admit(games, min_matches_duo)
+            if admit:
                 # Учитываем позиции, чтобы не смешивать разные конфигурации дуо
                 combo = tuple(sorted([f"{hero_id}{pos}", f"{second_hero_id}{second_pos}"]))
                 if combo not in unique_combinations:
                     unique_combinations.add(combo)
                     # Сохраняем (winrate, count) для взвешивания в get_diff
-                    output.setdefault(f'{mkdir}_duo', []).append((value, games))
+                    output.setdefault(f'{mkdir}_duo', []).append((value, weight))
 
                     # Support duo (pos4+pos5)
                     if all(p in ['pos4', 'pos5'] for p in (pos, second_pos)):
@@ -2596,6 +2612,25 @@ def _lookup_synergy_trio_role_pool_winrate(data, parts):
     if total_games <= 0:
         return None, 0
     return total_score / total_games, total_games
+
+
+def _draft_cell_admit(games, min_matches):
+    """(брать ли ячейку, с каким весом) для драфт-метрик.
+
+    Прод-режим: жёсткий порог, вес = число игр (get_diff всё равно схлопывает
+    его в единицу при GET_DIFF_WEIGHT_POWER=0). Режим надёжности: порога нет,
+    редкая ячейка входит с малым весом games/(games+K) вместо того, чтобы
+    выбрасываться целиком.
+    """
+    try:
+        games = int(games or 0)
+    except (TypeError, ValueError):
+        return False, 0
+    if DRAFT_CELL_RELIABILITY_K <= 0:
+        return games >= min_matches, games
+    if games <= 0:
+        return False, 0.0
+    return True, games / (games + DRAFT_CELL_RELIABILITY_K)
 
 
 def _lookup_with_winrate(data, left, right):
@@ -3006,13 +3041,14 @@ def counterpick_team(
                     )
 
             value, games = _lookup_counterpick_1vs1_winrate(data, hero_key, enemy_key, min_matches_1vs1)
-            if games >= min_matches_1vs1:
+            admit, weight = _draft_cell_admit(games, min_matches_1vs1)
+            if admit:
                 # Сохраняем (winrate, count, enemy_pos) для pair-weights в get_diff.
-                output.setdefault(f'{mkdir}_1vs1', {}).setdefault(pos, []).append((value, games, enemy_pos))
+                output.setdefault(f'{mkdir}_1vs1', {}).setdefault(pos, []).append((value, weight, enemy_pos))
 
                 # Core vs Core matchups (pos1-3 vs pos1-3)
                 if pos in CORE_POSITIONS and enemy_pos in CORE_POSITIONS:
-                    output.setdefault(f'{mkdir}_1vs1_cores', {}).setdefault(pos, []).append((value, games))
+                    output.setdefault(f'{mkdir}_1vs1_cores', {}).setdefault(pos, []).append((value, weight))
 
             # 1vs2 matchups
         for i in range(len(opp_items)):
@@ -3029,7 +3065,8 @@ def counterpick_team(
                 duo_key = ",".join(duo_parts)
 
                 value, games = _lookup_cp1vs2_topup_winrate(data, hero_key, duo_key)
-                if games >= min_matches_1vs2:
+                admit, weight = _draft_cell_admit(games, min_matches_1vs2)
+                if admit:
                     # Учитываем позиции, чтобы не смешивать разные конфигурации
                     combo = (
                         f"{hero_id}{pos}",
@@ -3042,13 +3079,13 @@ def counterpick_team(
                         unique_combinations.add(combo)
                         # Сохраняем (winrate, count) для взвешивания в get_diff
                         if pos in {'pos1', 'pos2', 'pos3'} and any(i in {'pos1', 'pos2', 'pos3'} for i in [second_enemy_pos, enemy_pos]):
-                            output.setdefault(f'{mkdir}_1vs2_two_cores', {}).setdefault(pos, []).append((value, games))
+                            output.setdefault(f'{mkdir}_1vs2_two_cores', {}).setdefault(pos, []).append((value, weight))
                         if pos in {'pos1', 'pos2', 'pos3'}:
-                            output.setdefault(f'{mkdir}_1vs2_one_core', {}).setdefault(pos, []).append((value, games))
+                            output.setdefault(f'{mkdir}_1vs2_one_core', {}).setdefault(pos, []).append((value, weight))
                         if pos in {'pos1', 'pos2', 'pos3'} and all(i in {'pos1', 'pos2', 'pos3'} for i in [second_enemy_pos, enemy_pos]):
-                            output.setdefault(f'{mkdir}_1vs2_all_cores', {}).setdefault(pos, []).append((value, games))
+                            output.setdefault(f'{mkdir}_1vs2_all_cores', {}).setdefault(pos, []).append((value, weight))
                         # Сохраняем все 1vs2
-                        output.setdefault(f'{mkdir}_1vs2', {}).setdefault(pos, []).append((value, games))
+                        output.setdefault(f'{mkdir}_1vs2', {}).setdefault(pos, []).append((value, weight))
 
 
 # functions.py
