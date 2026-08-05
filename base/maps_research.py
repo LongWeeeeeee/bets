@@ -201,12 +201,49 @@ def _load_hero_ids_from_json(path: Path) -> set[int]:
     return hero_ids
 
 
+# Реальные лимиты Stratz НА КЛЮЧ, сняты 2026-08-05 из заголовков ответа
+# (x-ratelimit-limit-*): 8/сек, 150/мин, 1500/час, 15000/сутки. Суточное окно —
+# главный потолок: 5 ключей = 75к запросов в день на весь сбор. Локальный
+# самотормоз держим чуть ниже реального: 429-ответы наш счётчик не пишет, а API
+# их считает, поэтому идти впритык нельзя.
 RATE_LIMITS = {
     'second': 7,
-    'minute': 138,
-    'hour': 1488,
-    'day': 14988
+    'minute': 145,
+    'hour': 1450,
+    'day': 14800
 }
+
+# Блокировка пары, если API не прислал ни retry-after, ни ratelimit-reset.
+RATE_LIMIT_FALLBACK_BLOCK = 180
+# Потолок одной блокировки: даже при retry-after на 4 часа перепроверяем раз в час,
+# чтобы не залипнуть навсегда на кривом заголовке.
+RATE_LIMIT_MAX_BLOCK = 3600
+# Пауза по окну, когда его остаток вышел в 0, а reset брать нельзя: в ответе
+# Stratz reset привязан к суточному окну.
+RATE_LIMIT_WINDOW_BLOCK = {'second': 2, 'minute': 65, 'hour': 300, 'day': 900}
+
+
+def _header_int(headers, name):
+    """Целое из заголовка ответа без учёта регистра; None, если нет или не число."""
+    if not headers:
+        return None
+    try:
+        value = headers.get(name)
+    except AttributeError:
+        return None
+    if value is None:
+        try:
+            lowered = {str(k).lower(): v for k, v in headers.items()}
+        except Exception:
+            return None
+        value = lowered.get(name.lower())
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
 
 CONCURRENCY_LIMIT = 20  # Одновременных запросов
 
@@ -238,43 +275,44 @@ class RateLimitTracker:
                     'day': deque()
                 },
                 'lock': asyncio.Lock(),
-                'is_rate_limited': False,
-                'rate_limit_time': 0,
+                'blocked_until': 0.0,
+                'block_scope': '',
             }
         self._shared = shared_state
         self.requests_log = shared_state['requests_log']
         self.lock = shared_state['lock']
 
     @property
-    def is_rate_limited(self):
-        return self._shared['is_rate_limited']
-
-    @is_rate_limited.setter
-    def is_rate_limited(self, value):
-        self._shared['is_rate_limited'] = value
+    def short_name(self):
+        proxy = self.proxy_url or 'direct'
+        return proxy.split('@')[-1] if '@' in proxy else proxy[:30]
 
     @property
-    def rate_limit_time(self):
-        return self._shared['rate_limit_time']
+    def blocked_until(self):
+        return self._shared['blocked_until']
 
-    @rate_limit_time.setter
-    def rate_limit_time(self, value):
-        self._shared['rate_limit_time'] = value
-    
+    @property
+    def block_scope(self):
+        return self._shared['block_scope']
+
+    @property
+    def is_rate_limited(self):
+        return time.time() < self._shared['blocked_until']
+
     async def can_make_request(self):
         """Проверяет, можно ли сделать запрос с учетом всех лимитов"""
         async with self.lock:
             now = time.time()
-            
-            # Проверяем, прошло ли 3 минуты с момента rate limit от API
-            if self.is_rate_limited:
-                if now - self.rate_limit_time < 180:  # 3 минуты = 180 секунд
-                    return False
-                else:
-                    # Прошло 3 минуты, сбрасываем флаг
-                    self.is_rate_limited = False
-                    print(f"✅ Восстановление пары: прошло 3 минуты с момента rate limit")
-            
+
+            # Блокировка от API держится ровно столько, сколько сказал сам API,
+            # а не фиксированные 3 минуты: суточное окно так не переждать.
+            if now < self._shared['blocked_until']:
+                return False
+            if self._shared['block_scope']:
+                print(f"✅ Восстановление пары {self.short_name}: "
+                      f"блокировка «{self._shared['block_scope']}» истекла")
+                self._shared['block_scope'] = ''
+
             # Очищаем старые записи и проверяем лимиты
             time_windows = {
                 'second': 1,
@@ -282,26 +320,58 @@ class RateLimitTracker:
                 'hour': 3600,
                 'day': 86400
             }
-            
+
             for period, window in time_windows.items():
                 # Удаляем старые записи
                 while self.requests_log[period] and now - self.requests_log[period][0] > window:
                     self.requests_log[period].popleft()
-                
+
                 # Проверяем лимит
                 if len(self.requests_log[period]) >= RATE_LIMITS[period]:
                     return False
-            
+
             return True
-    
-    async def mark_rate_limited(self):
-        """Помечает tracker как достигший лимита по ответу API"""
+
+    async def mark_rate_limited(self, retry_after=None, scope=None):
+        """Блокирует пару до конца выбитого окна.
+
+        retry_after — секунды из заголовка API (авторитет), scope — какое окно
+        кончилось. Без заголовка откатываемся на фиксированную паузу.
+        """
         async with self.lock:
-            self.is_rate_limited = True
-            self.rate_limit_time = time.time()
-            proxy_short = (self.proxy_url.split('@')[-1] if '@' in (self.proxy_url or '') else (self.proxy_url or 'direct')[:30])
-            print(f"⛔ API вернул rate limit для прокси {proxy_short}, блокируем на 3 минуты")
-    
+            if retry_after is not None:
+                delay = float(retry_after)
+            else:
+                delay = float(RATE_LIMIT_WINDOW_BLOCK.get(scope, RATE_LIMIT_FALLBACK_BLOCK))
+            delay = max(1.0, min(delay, float(RATE_LIMIT_MAX_BLOCK)))
+            self._shared['blocked_until'] = time.time() + delay
+            self._shared['block_scope'] = scope or 'unknown'
+            until = time.strftime('%H:%M:%S', time.localtime(self._shared['blocked_until']))
+            print(f"⛔ {self.short_name}: выбито окно «{self._shared['block_scope']}», "
+                  f"пара заблокирована на {int(delay)} c (до {until})")
+
+    async def apply_rate_limit_headers(self, headers):
+        """Синхронизирует пару с заголовками Stratz (x-ratelimit-*).
+
+        Возвращает имя выбитого окна или None. Для секунды/минуты retry-after не
+        берём: в ответе он привязан к суточному окну и загнал бы пару в час
+        простоя из-за секундного всплеска.
+        """
+        if not headers:
+            return None
+        reset = _header_int(headers, 'retry-after')
+        if reset is None:
+            reset = _header_int(headers, 'ratelimit-reset')
+        for window in ('day', 'hour', 'minute', 'second'):
+            remaining = _header_int(headers, f'x-ratelimit-remaining-{window}')
+            if remaining is not None and remaining <= 0:
+                await self.mark_rate_limited(
+                    reset if window in ('day', 'hour') else None,
+                    scope=window,
+                )
+                return window
+        return None
+
     async def record_request(self):
         """Записывает факт выполнения запроса"""
         async with self.lock:
@@ -344,14 +414,32 @@ class ProxyAPIPool:
                         self.current_index = (idx + 1) % len(self.trackers)
                         return tracker
 
-            # Если ни один не доступен, ждем немного
-            print(f"⏳ Все API достигли лимитов, ожидание 0.5 сек...")
-            await asyncio.sleep(0.5)
+            # Если пары блокированы самим API — спим до конца блокировки, а не
+            # крутим полусекундный цикл: запрос в заблокированную пару только
+            # добавляет 429. Локальный самотормоз ждём как раньше.
+            if any(t.is_rate_limited for t in self.trackers):
+                await self._sleep_until_first_free()
+            else:
+                if attempt % 20 == 0:
+                    print("⏳ Все пары упёрлись в локальный самотормоз, ожидание...")
+                await asyncio.sleep(0.5)
             attempt += 1
 
-        # Если после всех попыток все еще нет доступных, берем первый
-        print("⚠️ Превышено время ожидания, использую первый доступный tracker")
-        return self.trackers[0]
+        # Раньше здесь безусловно бралась первая пара — то есть запрос уходил в
+        # заведомо заблокированную пару. Теперь дожидаемся ближайшей свободной.
+        await self._sleep_until_first_free()
+        return min(self.trackers, key=lambda t: t.blocked_until)
+
+    async def _sleep_until_first_free(self, cap=300):
+        """Спит до освобождения ближайшей пары, но не дольше cap секунд."""
+        now = time.time()
+        unblock = min((t.blocked_until for t in self.trackers), default=now)
+        wait = max(1.0, min(unblock - now, float(cap)))
+        scopes = ", ".join(sorted({t.block_scope for t in self.trackers if t.block_scope}))
+        until = time.strftime('%H:%M:%S', time.localtime(unblock))
+        print(f"😴 Все пары заблокированы ({scopes or 'rate limit'}); ближайшая свободна "
+              f"в {until}, спим {int(wait)} c...")
+        await asyncio.sleep(wait)
 
     @staticmethod
     def _post_json_with_requests(url, proxy_url, **kwargs):
@@ -369,7 +457,7 @@ class ProxyAPIPool:
             **request_kwargs,
         )
         try:
-            return response.json()
+            return response.json(), response.headers
         except ValueError as exc:
             body = response.text[:300].replace('\n', ' ')
             raise RuntimeError(f"HTTP {response.status_code}: {body}") from exc
@@ -389,43 +477,37 @@ class ProxyAPIPool:
                 
                 try:
                     # Используем requests с HTTP прокси
-                    data = await asyncio.to_thread(
+                    data, headers = await asyncio.to_thread(
                         self._post_json_with_requests,
                         url,
                         tracker.proxy_url,
                         **kwargs,
                     )
-                            
+
                     # Проверяем на rate limit от API
                     if isinstance(data, dict) and data.get('message') == 'API rate limit exceeded':
-                        proxy_short = tracker.proxy_url.split('@')[-1] if '@' in (tracker.proxy_url or '') else (tracker.proxy_url or 'direct')[:30]
-                        print(f"⛔ API rate limit exceeded для прокси {proxy_short}")
-                        
-                        # Помечаем tracker как заблокированный
-                        await tracker.mark_rate_limited()
-                        
+                        scope = await tracker.apply_rate_limit_headers(headers)
+                        if scope is None:
+                            await tracker.mark_rate_limited(scope='unknown')
+
                         # Переключаемся на следующий tracker
-                        old_index = self.current_index
                         self.current_index = (self.current_index + 1) % len(self.trackers)
                         retry_count += 1
-                        
+
                         # Проверяем, все ли пары заблокированы
-                        all_limited = all(t.is_rate_limited for t in self.trackers)
-                        if all_limited:
-                            print(f"😴 Все пары заблокированы rate limit! Сон на 3 минуты...")
-                            await asyncio.sleep(180)  # 3 минуты
-                            # Сбрасываем флаги после сна
-                            for t in self.trackers:
-                                t.is_rate_limited = False
-                            print(f"⏰ Пробуждение! Продолжаем работу...")
+                        if all(t.is_rate_limited for t in self.trackers):
+                            await self._sleep_until_first_free()
                             retry_count = 0  # Сбрасываем счетчик после сна
-                        
+
                         continue  # Пробуем следующую пару
-                    
-                    # Если все ок, записываем запрос и возвращаем данные
+
+                    # Если все ок — пишем запрос в счётчики и сверяем остаток окна
+                    # по заголовкам: остаток 0 при HTTP 200 блокирует пару заранее,
+                    # не дожидаясь 429.
                     await tracker.record_request()
+                    await tracker.apply_rate_limit_headers(headers)
                     return data
-                            
+
                 except Exception as e:
                     proxy_short = tracker.proxy_url.split('@')[-1] if '@' in (tracker.proxy_url or '') else (tracker.proxy_url or 'direct')[:30]
                     print(f"❌ Ошибка запроса через прокси {proxy_short}: {e}")
@@ -668,13 +750,11 @@ async def retry_request_with_proxy_rotation(request_func, *args, max_retries=Non
                     print(f"❌ Все {total_proxies} прокси были перепробованы, спим {sleep_time} секунд (5 минут)...")
                     await asyncio.sleep(sleep_time)
                     
-                    # Сбрасываем rate limits для всех прокси
-                    for tracker in pool.trackers:
-                        tracker.is_rate_limited = False
-                        tracker.rate_limit_time = 0
-                    
+                    # Блокировки от API здесь больше НЕ сбрасываем: их держит сам
+                    # Stratz (retry-after), и принудительный сброс возвращал нас в
+                    # тот же 429 на первом же запросе.
                     proxies_tried_in_cycle = 0  # Сбрасываем счетчик для нового цикла
-                    print("⏰ Пробуждение! Сбросили rate limits, продолжаем с первого прокси...")
+                    print("⏰ Пробуждение! Продолжаем с первого прокси...")
                 else:
                     # Небольшая задержка перед повторной попыткой
                     await asyncio.sleep(2)
