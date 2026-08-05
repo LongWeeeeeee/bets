@@ -66,6 +66,40 @@ EARLY_DOMINATOR_FALLBACK_THRESHOLDS = {
 }
 
 
+def _canonical_group(*tokens):
+    """Ключ неупорядоченной группы героев: ровно один порядок на набор.
+
+    Раньше билдер писал каждую пару в обоих порядках (`A,B` и `B,A`) с
+    одинаковыми инкрементами — 42% ключей словаря были побайтовыми копиями.
+    Трио писались в порядке `r_items`, то есть в порядке игроков из JSON, и
+    один и тот же набор растекался по перестановкам (82% трио имели близнецов,
+    ~80% их выборки лежало в чужих ключах).
+
+    Читатели (`_lookup_vs_winrate`, `_lookup_with_winrate`,
+    `_lookup_unordered_combo_winrate`) перебирают перестановки и суммируют
+    найденное, поэтому канонический порядок находится и в новых словарях, и в
+    старых. Единственное исключение — `calculate_kills_window_advantage`,
+    который собирает ключ напрямую; он канонизирован тем же `sorted`.
+    """
+    return ",".join(sorted(tokens))
+
+
+def _draft_entries(by_pos):
+    """[(токен, hero_id)] — токен собирается один раз на матч, а не в каждом цикле."""
+    return [(f'{hero_id}pos{pos_num}', hero_id) for pos_num, hero_id in by_pos.items()]
+
+
+# Старшие слои kills_window (1v2/2v1) политика `core_1v1_with` не читает: она
+# берёт только 1v1 и with, а до fallback-цепочки доходит лишь когда оба пусты —
+# на 1099 про-картах покрытие 1v1 и with было 1099/1099, то есть не доходит
+# никогда. Слои стоят 100 записей на матч (65% словаря kills). Ребилд с
+# KILLS_WINDOW_BUILD_HIGH_ORDER=1 возвращает их (нужно для политик
+# first_hit/blend_all/best_abs и слоевых A/B-экспериментов).
+KILLS_WINDOW_BUILD_HIGH_ORDER = str(
+    os.getenv("KILLS_WINDOW_BUILD_HIGH_ORDER", "0") or "0"
+).strip().lower() not in ("", "0", "false", "no", "off")
+
+
 def _append_to_dict(target_dict, key, value, is_defaultdict=None):
     """
     Вспомогательная функция для добавления значения в словарь.
@@ -270,48 +304,44 @@ def _add_kills_window_combinations(r_by_pos, d_by_pos, target_dict, window_diffs
     kill targets do not need sparse trio keys and they dominate dict size.
     Radiant-leading keys store Radiant-minus-Dire; Dire-leading keys invert.
     """
-    r_items = list(r_by_pos.items())
-    d_items = list(d_by_pos.items())
+    r_entries = _draft_entries(r_by_pos)
+    d_entries = _draft_entries(d_by_pos)
 
-    for pos_num, hero_id in r_items:
-        _append_kills_window_entry(target_dict, f'{hero_id}pos{pos_num}', window_diffs, invert=False)
-    for pos_num, hero_id in d_items:
-        _append_kills_window_entry(target_dict, f'{hero_id}pos{pos_num}', window_diffs, invert=True)
+    for token, _hero in r_entries:
+        _append_kills_window_entry(target_dict, token, window_diffs, invert=False)
+    for token, _hero in d_entries:
+        _append_kills_window_entry(target_dict, token, window_diffs, invert=True)
 
-    for r_pos, r_hero in r_items:
-        for d_pos1, d_hero1 in d_items:
-            for d_pos2, d_hero2 in d_items:
+    if KILLS_WINDOW_BUILD_HIGH_ORDER:
+        for r_token, _r_hero in r_entries:
+            for (d_token1, d_hero1), (d_token2, d_hero2) in combinations(d_entries, 2):
                 if d_hero1 == d_hero2:
                     continue
-                key = f'{r_hero}pos{r_pos}_vs_{d_hero1}pos{d_pos1},{d_hero2}pos{d_pos2}'
+                key = f'{r_token}_vs_{_canonical_group(d_token1, d_token2)}'
                 _append_kills_window_entry(target_dict, key, window_diffs, invert=False)
 
-    for r_pos1, r_hero1 in r_items:
-        for r_pos2, r_hero2 in r_items:
+        for (r_token1, r_hero1), (r_token2, r_hero2) in combinations(r_entries, 2):
             if r_hero1 == r_hero2:
                 continue
-            for d_pos, d_hero in d_items:
-                key = f'{r_hero1}pos{r_pos1},{r_hero2}pos{r_pos2}_vs_{d_hero}pos{d_pos}'
-                _append_kills_window_entry(target_dict, key, window_diffs, invert=False)
+            left = _canonical_group(r_token1, r_token2)
+            for d_token, _d_hero in d_entries:
+                _append_kills_window_entry(target_dict, f'{left}_vs_{d_token}', window_diffs, invert=False)
 
-    for r_pos, r_hero in r_items:
-        for d_pos, d_hero in d_items:
-            key = f'{r_hero}pos{r_pos}_vs_{d_hero}pos{d_pos}'
-            _append_kills_window_entry(target_dict, key, window_diffs, invert=False)
+    for r_token, _r_hero in r_entries:
+        for d_token, _d_hero in d_entries:
+            _append_kills_window_entry(target_dict, f'{r_token}_vs_{d_token}', window_diffs, invert=False)
 
-    for r_pos1, r_hero1 in r_items:
-        for r_pos2, r_hero2 in r_items:
-            if r_hero1 == r_hero2:
-                continue
-            key = f'{r_hero1}pos{r_pos1}_with_{r_hero2}pos{r_pos2}'
-            _append_kills_window_entry(target_dict, key, window_diffs, invert=False)
+    for (token1, hero1), (token2, hero2) in combinations(r_entries, 2):
+        if hero1 == hero2:
+            continue
+        left, right = sorted((token1, token2))
+        _append_kills_window_entry(target_dict, f'{left}_with_{right}', window_diffs, invert=False)
 
-    for d_pos1, d_hero1 in d_items:
-        for d_pos2, d_hero2 in d_items:
-            if d_hero1 == d_hero2:
-                continue
-            key = f'{d_hero1}pos{d_pos1}_with_{d_hero2}pos{d_pos2}'
-            _append_kills_window_entry(target_dict, key, window_diffs, invert=True)
+    for (token1, hero1), (token2, hero2) in combinations(d_entries, 2):
+        if hero1 == hero2:
+            continue
+        left, right = sorted((token1, token2))
+        _append_kills_window_entry(target_dict, f'{left}_with_{right}', window_diffs, invert=True)
 
 
 def kills_windows(match, kills_window_dict):
@@ -961,76 +991,59 @@ def _add_combinations_to_dict(r_by_pos, d_by_pos, target_dict, r_value, d_value=
     if d_value is None:
         d_value = r_value
 
-    r_items = list(r_by_pos.items())
-    d_items = list(d_by_pos.items())
+    r_entries = _draft_entries(r_by_pos)
+    d_entries = _draft_entries(d_by_pos)
 
     # Одиночные герои (solo) — опционально (пер-патч скоуп для post_lane)
     if write_solo:
-        for pos_num, hero_id in r_items:
-            _append_to_dict(target_dict, f'{hero_id}pos{pos_num}', r_value)
+        for token, _hero in r_entries:
+            _append_to_dict(target_dict, token, r_value)
 
-        for pos_num, hero_id in d_items:
-            _append_to_dict(target_dict, f'{hero_id}pos{pos_num}', d_value)
+        for token, _hero in d_entries:
+            _append_to_dict(target_dict, token, d_value)
 
-    # Контрипики 1x2
-    for r_pos, r_hero in r_items:
-        for d_pos1, d_hero1 in d_items:
-            for d_pos2, d_hero2 in d_items:
-                if d_hero1 == d_hero2:
-                    continue
-                key = f'{r_hero}pos{r_pos}_vs_{d_hero1}pos{d_pos1},{d_hero2}pos{d_pos2}'
-                _append_to_dict(target_dict, key, r_value)
-    
-    # Контрипики 2x1
-    for r_pos1, r_hero1 in r_items:
-        for r_pos2, r_hero2 in r_items:
-            if r_hero1 == r_hero2:
-                continue
-            for d_pos, d_hero in d_items:
-                key = f'{r_hero1}pos{r_pos1},{r_hero2}pos{r_pos2}_vs_{d_hero}pos{d_pos}'
-                _append_to_dict(target_dict, key, r_value)
-    
-    # Контрипики 1x1
-    for r_pos, r_hero in r_items:
-        for d_pos, d_hero in d_items:
-            key = f'{r_hero}pos{r_pos}_vs_{d_hero}pos{d_pos}'
-            _append_to_dict(target_dict, key, r_value)
-    
-    # Синергия 1+1 (Radiant)
-    for r_pos1, r_hero1 in r_items:
-        for r_pos2, r_hero2 in r_items:
-            if r_hero1 == r_hero2:
-                continue
-            key = f'{r_hero1}pos{r_pos1}_with_{r_hero2}pos{r_pos2}'
-            _append_to_dict(target_dict, key, r_value)
-    
-    # Синергия 1+1 (Dire)
-    for d_pos1, d_hero1 in d_items:
-        for d_pos2, d_hero2 in d_items:
+    # Контрипики 1x2 (пара врагов — неупорядоченная группа)
+    for r_token, _r_hero in r_entries:
+        for (d_token1, d_hero1), (d_token2, d_hero2) in combinations(d_entries, 2):
             if d_hero1 == d_hero2:
                 continue
-            key = f'{d_hero1}pos{d_pos1}_with_{d_hero2}pos{d_pos2}'
-            _append_to_dict(target_dict, key, d_value)
-    
+            key = f'{r_token}_vs_{_canonical_group(d_token1, d_token2)}'
+            _append_to_dict(target_dict, key, r_value)
+
+    # Контрипики 2x1 (пара своих — неупорядоченная группа)
+    for (r_token1, r_hero1), (r_token2, r_hero2) in combinations(r_entries, 2):
+        if r_hero1 == r_hero2:
+            continue
+        left = _canonical_group(r_token1, r_token2)
+        for d_token, _d_hero in d_entries:
+            _append_to_dict(target_dict, f'{left}_vs_{d_token}', r_value)
+
+    # Контрипики 1x1
+    for r_token, _r_hero in r_entries:
+        for d_token, _d_hero in d_entries:
+            _append_to_dict(target_dict, f'{r_token}_vs_{d_token}', r_value)
+
+    # Синергия 1+1 (Radiant)
+    for (token1, hero1), (token2, hero2) in combinations(r_entries, 2):
+        if hero1 == hero2:
+            continue
+        left, right = sorted((token1, token2))
+        _append_to_dict(target_dict, f'{left}_with_{right}', r_value)
+
+    # Синергия 1+1 (Dire)
+    for (token1, hero1), (token2, hero2) in combinations(d_entries, 2):
+        if hero1 == hero2:
+            continue
+        left, right = sorted((token1, token2))
+        _append_to_dict(target_dict, f'{left}_with_{right}', d_value)
+
     # Трио синергия (Radiant)
-    for i in range(len(r_items)):
-        for j in range(i + 1, len(r_items)):
-            for k in range(j + 1, len(r_items)):
-                r_pos1, r_hero1 = r_items[i]
-                r_pos2, r_hero2 = r_items[j]
-                r_pos3, r_hero3 = r_items[k]
-                key = f'{r_hero1}pos{r_pos1},{r_hero2}pos{r_pos2},{r_hero3}pos{r_pos3}'
-                _append_to_dict(target_dict, key, r_value)
-    
+    for trio in combinations(r_entries, 3):
+        _append_to_dict(target_dict, _canonical_group(*(token for token, _ in trio)), r_value)
+
     # Трио синергия (Dire)
-    for i in range(len(d_items)):
-        for j in range(i + 1, len(d_items)):
-            for k in range(j + 1, len(d_items)):
-                d_pos1, d_hero1 = d_items[i]
-                d_pos2, d_hero2 = d_items[j]
-                d_pos3, d_hero3 = d_items[k]
-                key = f'{d_hero1}pos{d_pos1},{d_hero2}pos{d_pos2},{d_hero3}pos{d_pos3}'
-                _append_to_dict(target_dict, key, d_value)
+    for trio in combinations(d_entries, 3):
+        _append_to_dict(target_dict, _canonical_group(*(token for token, _ in trio)), d_value)
 
 
 def is_pro_match(match):
