@@ -118,7 +118,7 @@ python3 scripts/ops/experiments_index.py     # пересобрать реест
 
 <!-- BEGIN GENERATED REGISTRY -->
 
-Записей: **44**. Полный текст — в `docs/experiments/`; здесь только строка на запись, чтобы реестр можно было читать целиком.
+Записей: **45**. Полный текст — в `docs/experiments/`; здесь только строка на запись, чтобы реестр можно было читать целиком.
 
 ### Драфт-метрики и словари
 
@@ -162,6 +162,7 @@ python3 scripts/ops/experiments_index.py     # пересобрать реест
 | [E-36](experiments/E-36-filtratsiya-matchey-ne-menyaet-kills-window-dyra.md) | Фильтрация матчей не меняет kills_window: дыра E-25 закрыта | 1 098 про-карт, 3 варианта словаря | **дыра E-25 закрыта**: отбор меняется на 2-3 карты из 420, McNemar p=0.48/1.00 |
 | [E-41](experiments/E-41-porog-min-games-u-kills-window-ne-rychag-ni-dlya.md) | Порог min_games у kills_window — не рычаг ни для объёма, ни для качества | 1 098 про-карт, 6 порогов | **не рычаг**: 2..80 (в 40 раз) — отбор 424-428 ставок при WR 0.770-0.774, на общих картах совпадение |
 | [E-43](experiments/E-43-tselye-bashni-pri-ravnom-netvorte-signal-silnee.md) | Целые башни при равном нетворте — сигнал сильнее нашего драфта | 3 877 про + 50k паблик | **сильный сигнал**: T3-диф>=2 даёт 76-89%, согласие с late — 88.8%; окно 30-38' |
+| [E-45](experiments/E-45-experience-lead-daet-plus-10-pp-late-signalu.md) | Experience lead даёт +10 п.п. late-сигналу — и его в проде нет | 50 000 honest-holdout паблик-карт + 3 877 про-карт (контроль) | **+10.4 п.п. на про и +9.1…+15.9 на holdout**: гейт по опыту в зонах равной игры и отставания; в прод-зоне лида потолок (+1.1) |
 
 ### STAR и диспетчеризация
 
