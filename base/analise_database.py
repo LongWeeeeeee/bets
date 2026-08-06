@@ -641,7 +641,15 @@ LATE_EQUAL_MODE = os.getenv("ANALISE_LATE_EQUAL_MODE", "any").strip().lower()
 #                    отставал >= DEFICIT в окне COMEBACK_WINDOW;
 #   'comeback_max' — победитель отыграл дефицит >= DEFICIT (минимум его lead за
 #                    игру <= -DEFICIT), то есть «камбек с N тысяч».
+#   ВНИМАНИЕ: оба comeback-режима отбирают карту ПО ИСХОДУ (условие сформулировано
+#   про победителя), поэтому игры, где отстающий не вытащил, в выборку не попадают,
+#   и винрейты лейтовых героев в таком словаре завышены. Для честного «кто вытаскивает
+#   из отставания» есть режим ниже, где условие только про состояние игры.
+#   'deficit_state'   — на минуте DEFICIT_MINUTE разрыв >= DEFICIT_MIN, КТО БЫ ни выиграл;
+#   'equal_or_deficit'— объединение: равный поздний счёт ИЛИ позиция отставания.
 LATE_RULE = os.getenv("ANALISE_LATE_RULE", "equal").strip().lower()
+LATE_DEFICIT_MIN = float(os.getenv("ANALISE_LATE_DEFICIT_MIN", "8000"))
+LATE_DEFICIT_MINUTE = int(os.getenv("ANALISE_LATE_DEFICIT_MINUTE", "30"))
 LATE_COMEBACK_DEFICIT = float(os.getenv("ANALISE_LATE_COMEBACK_DEFICIT", "10000"))
 LATE_COMEBACK_WINDOW = tuple(
     int(part) for part in os.getenv("ANALISE_LATE_COMEBACK_WINDOW", "15,25").split(",")[:2]
@@ -940,6 +948,23 @@ def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
         return (False, None) if if_check else False
 
     winner = 'radiant' if did_radiant_win else 'dire'
+
+    def _deficit_state_hit() -> bool:
+        """Позиция отставания на заданной минуте — условие НЕ зависит от исхода."""
+        idx = int(LATE_DEFICIT_MINUTE) - 1
+        if idx < 0 or len(leads) <= idx:
+            return False
+        value = _as_float(leads[idx])
+        return value is not None and abs(value) >= LATE_DEFICIT_MIN
+
+    if LATE_RULE == 'deficit_state':
+        ok = _deficit_state_hit()
+        return (ok, winner if ok else None) if if_check else ok
+
+    if LATE_RULE == 'equal_or_deficit':
+        if _deficit_state_hit():
+            return (True, winner) if if_check else True
+        # иначе падаем в обычную проверку равного позднего счёта ниже
 
     if LATE_RULE in ('comeback_avg', 'comeback_max'):
         # Знак lead всегда «в пользу radiant», разворачиваем под победителя.
