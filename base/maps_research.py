@@ -2664,6 +2664,7 @@ def check_match_quality(
     enable_death_anomaly_filter=False,
     strict_lane_positions=False,
     enable_smurf_pair_filter=False,
+    smurf_min_flags=2,
 ):
     """Проверяет качество данных карты.
 
@@ -2681,10 +2682,13 @@ def check_match_quality(
     По параметру:
       * `strict_lane_positions` — любая невалидная для героя позиция = отказ.
         Включён при сборке словарей;
-      * `enable_smurf_pair_filter` — ДВА и более помеченных смурф-флагом игрока.
-        Лучшее правило по цене: 4.1% корпуса за +0.0024 AUC, вдвое эффективнее
-        полного смурф-фильтра (14.6% за +0.0056). Выключен по умолчанию, потому
-        что при сборе отказ НЕОБРАТИМ — матч не сохраняется вовсе;
+      * `enable_smurf_pair_filter` — отказ, если помеченных смурф-флагом игроков
+        не меньше `smurf_min_flags` (по умолчанию 2). Пара — лучшее правило по
+        цене: 4.1% корпуса за +0.0024 AUC, вдвое эффективнее полного фильтра
+        (`smurf_min_flags=1`: 14.6% за +0.0056). Выключен по умолчанию, потому
+        что при сборе отказ НЕОБРАТИМ — матч не сохраняется вовсе. Порог вынесен
+        в параметр ради E-38: сумма агрессивных фильтров впервые проходит критерий
+        E-37, и её надо померить на прод-отборе, а не на паблик-AUC;
       * `enable_death_anomaly_filter` — ИЗМЕРЕН И ВРЕДЕН. Отсекает 4.6% карт,
         которые НЕ грязнее остальных: драфт предсказывает на них так же
         (AUC 0.6281 против 0.6265). Не включать;
@@ -2716,7 +2720,7 @@ def check_match_quality(
             flag = account.get('smurfFlag')
             if flag is not None and flag not in (0, 2):
                 flagged += 1
-        if flagged >= 2:
+        if flagged >= max(1, int(smurf_min_flags)):
             return False, f'smurf pair ({flagged})'
 
     invalid_positions = 0

@@ -112,3 +112,33 @@ def test_missing_steam_account_does_not_crash() -> None:
 
     # Остался один помеченный из двух — матч проходит.
     assert ok is True
+
+
+def test_smurf_min_flags_default_is_pair():
+    """Дефолт обязан совпадать с прежним поведением: один флаг матч не рубит."""
+    one = _match(flags_radiant=(4, 0, 0, 0, 0))
+    ok, _ = _quality(one, enable_smurf_pair_filter=True)
+    assert ok is True
+
+
+def test_smurf_min_flags_one_rejects_single_flag():
+    """Порог 1+ — полный смурф-фильтр: 14.6% корпуса за +0.0056 AUC (E-21)."""
+    one = _match(flags_radiant=(4, 0, 0, 0, 0))
+    ok, reason = _quality(one, enable_smurf_pair_filter=True, smurf_min_flags=1)
+    assert ok is False
+    assert "smurf" in reason
+
+
+def test_smurf_min_flags_one_keeps_clean_match():
+    """Порог 1+ не должен рубить матч вообще без флагов."""
+    ok, _ = _quality(_match(), enable_smurf_pair_filter=True, smurf_min_flags=1)
+    assert ok is True
+
+
+def test_smurf_min_flags_zero_clamped_to_one():
+    """0 и отрицательные приводятся к 1, иначе фильтр выбросил бы весь корпус."""
+    ok, _ = _quality(_match(), enable_smurf_pair_filter=True, smurf_min_flags=0)
+    assert ok is True
+    ok, _ = _quality(_match(flags_radiant=(4, 0, 0, 0, 0)),
+                     enable_smurf_pair_filter=True, smurf_min_flags=0)
+    assert ok is False

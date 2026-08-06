@@ -1216,6 +1216,12 @@ HERO_POS_BASELINES_PATH = Path(
 SMURF_PAIR_FILTER_ENABLED = str(
     os.getenv("EXPLORE_SMURF_PAIR_FILTER", "0") or "0"
 ).strip().lower() not in ("", "0", "false", "no", "off")
+# Сколько помеченных смурф-флагом игроков считать поводом выбросить матч.
+# Дефолт 2 сохраняет прежнее поведение (пара). Значение 1 — полный смурф-фильтр:
+# 14.6% корпуса за +0.0056 AUC против 4.1% за +0.0024 у пары (E-21). Ручка нужна
+# для E-38: по критерию E-37 сумма агрессивных фильтров впервые проходит порог,
+# и её надо проверить прод-отбором, а не паблик-AUC.
+SMURF_MIN_FLAGS = max(1, int(os.getenv("EXPLORE_SMURF_MIN_FLAGS", "2") or "2"))
 # Строгий режим позиций отбраковывает матч за ЛЮБУЮ невалидную для героя
 # позицию — 65 109 матчей, 4.5% корпуса. Замер (E-24) показал, что это в
 # основном офф-мета пики, а не мусор: такие матчи не хуже остальных. Ручка
@@ -1663,6 +1669,7 @@ def _main_impl(
                     match,
                     strict_lane_positions=STRICT_POSITIONS_ENABLED,
                     enable_smurf_pair_filter=SMURF_PAIR_FILTER_ENABLED,
+                    smurf_min_flags=SMURF_MIN_FLAGS,
                 )
                 if not result:
                     quality_reasons[message or "quality_unknown"] += 1
