@@ -11,7 +11,9 @@ follow-up; never burst-replay missed ticks; flag overrun truthfully.
 from __future__ import annotations
 
 import math
+import json
 import os
+import pathlib
 import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -302,6 +304,18 @@ def _bounded_dom(value: Any, limit: int = 128) -> str:
     return text
 
 
+# История движения линии: append-jsonl, пишется только при ИЗМЕНЕНИИ цены.
+# Пустое значение полностью отключает запись. По умолчанию включено — данные
+# копятся только вперёд, и каждый день без записи безвозвратно потерян.
+WINLINE_ODDS_HISTORY_PATH = str(
+    os.getenv(
+        "WINLINE_ODDS_HISTORY_PATH",
+        str(pathlib.Path(__file__).resolve().parent / "winline_odds_history.jsonl"),
+    )
+    or ""
+).strip()
+
+
 class WinlineCurrentMapOddsPoller:
     """Serial 5-second whole-map poller state machine (no sleep)."""
 
@@ -350,6 +364,9 @@ class WinlineCurrentMapOddsPoller:
         self._canonical_key: Optional[str] = None
         self._attempt_index = 0
         self._attempts: List[Dict[str, Any]] = []
+        # Последняя записанная в историю комбинация (цены + статус рынка):
+        # поллер опрашивает раз в секунду, а интересно только ДВИЖЕНИЕ линии.
+        self._history_last_key: Optional[tuple] = None
         self._consecutive_misses = 0
         self._reload_count = 0
         self._last_reload_mono: Optional[float] = None
@@ -540,6 +557,7 @@ class WinlineCurrentMapOddsPoller:
         self._pending_generation_change = False
         self._lifecycle_event = None
         self._accelerated = False
+        self._history_last_key = None
 
     def _dom_is_stale(self, now_mono: float) -> bool:
         """DOM не меняется дольше порога — страница перестала обновляться.
@@ -815,6 +833,7 @@ class WinlineCurrentMapOddsPoller:
             attempt["selected_side"] = None
 
         self._attempts.append(attempt)
+        self._record_history(attempt)
 
         if accepted:
             if self._continuous:
@@ -832,6 +851,61 @@ class WinlineCurrentMapOddsPoller:
             return {"attempt": attempt, "terminal": terminal, "status": "success", "success": True}
 
         return {"attempt": attempt, "status": "pending", "pending": True}
+
+    def _record_history(self, attempt: Dict[str, Any]) -> None:
+        """Дописывает движение линии в append-jsonl.
+
+        Зачем: история попыток живёт в `self._attempts` и умирает вместе с
+        процессом — на диске её не остаётся, поэтому проверить гипотезу
+        «движение линии против нас = контр-сигнал» не на чем. Данные копятся
+        только вперёд, восстановить прошлое неоткуда.
+
+        Пишем ТОЛЬКО при изменении (цены + статус рынка + сторона): опрос идёт
+        раз в секунду, и без дедупа это десятки мегабайт в сутки при том, что
+        интересны именно переходы. Первая попытка карты пишется всегда.
+
+        Fail-open: любая ошибка записи гасится — история не имеет права
+        уронить опрос кэфов в живом матче.
+        """
+        path = WINLINE_ODDS_HISTORY_PATH
+        if not path:
+            return
+        try:
+            key = (
+                attempt.get("p1_odds"),
+                attempt.get("p2_odds"),
+                attempt.get("market_status"),
+                attempt.get("selected_side"),
+            )
+            if key == self._history_last_key:
+                return
+            self._history_last_key = key
+
+            identity = self._identity if isinstance(self._identity, dict) else {}
+            record = {
+                "wall": attempt.get("wall"),
+                "canonical_key": self._canonical_key,
+                "match_url": identity.get("url") or identity.get("match_url"),
+                "map_num": identity.get("map_num"),
+                "attempt_index": attempt.get("attempt_index"),
+                "p1_odds": attempt.get("p1_odds"),
+                "p2_odds": attempt.get("p2_odds"),
+                "card_odds": attempt.get("card_odds"),
+                "card_team_order": attempt.get("card_team_order"),
+                "market_status": attempt.get("market_status"),
+                "selected_side": attempt.get("selected_side"),
+                "accepted": attempt.get("accepted"),
+                "source": attempt.get("source"),
+                "series_last_map": attempt.get("series_last_map"),
+                "odds_promoted_from_match": attempt.get("odds_promoted_from_match"),
+                "dom_age_seconds": attempt.get("dom_age_seconds"),
+            }
+            line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+        except Exception:
+            # Молча: запись истории — побочный эффект, а не часть опроса.
+            pass
 
     def _classify_primary_reason(self, *, map_end_proven: bool) -> str:
         if not map_end_proven:
