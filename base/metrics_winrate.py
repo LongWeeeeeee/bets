@@ -672,13 +672,16 @@ def process_metrics_winrate_buckets(matches: list[dict]) -> dict:
     return results
 
 
-def print_bucket_results(results: dict, *, min_matches: int = 6) -> None:
+def print_bucket_results(results: dict, *, min_matches: int = 6, min_index: int = 0) -> None:
     print("РЕЗУЛЬТАТЫ BUCKET WINRATE")
     print("=" * 120)
     print("Bucket N означает интервал [N,N+1), например 1=[1,2). Плюс/минус объединены по predicted side.")
+    print(f"Фильтры: min_index={min_index}, min_matches={min_matches}")
     for metric_name in sorted(results):
         parts = []
         for bucket in sorted(results[metric_name]):
+            if bucket < min_index:
+                continue
             stats = results[metric_name][bucket]
             total = stats['wins'] + stats['looses']
             if total < min_matches:
@@ -1359,16 +1362,69 @@ def print_results(results, unique_matches_per_metric: Optional[dict] = None, sum
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
+    """CLI — необязательный. Всё, что не передано, берётся из блока настроек в __main__."""
     parser = argparse.ArgumentParser(description="Winrate analysis for precomputed draft metrics.")
-    parser.add_argument("--input", default=str(PRECOMPUTED_FILE), help="Precomputed JSON from base/check_old_maps.py")
+    parser.add_argument("--maps-path", default=None, help="JSON публичных карт / глоб / каталог patch-частей. Перекрывает MAPS_PATH.")
+    parser.add_argument("--patch", default=None, help="Префикс патча для split-файлов, например 7.41.")
+    parser.add_argument("--max-matches", type=int, default=None)
+    parser.add_argument("--input", default=None, help="Промежуточный JSON от base/check_old_maps.py. Перекрывает PRECOMPUTED_PATH.")
     parser.add_argument("--bucket-mode", dest="bucket_mode", action="store_true", default=BUCKET_MODE)
     parser.add_argument("--old-mode", dest="bucket_mode", action="store_false")
-    parser.add_argument("--min-matches", type=int, default=6)
+    parser.add_argument("--min-matches", type=int, default=None)
+    parser.add_argument("--min-index", type=int, default=None)
     return parser
 
 
 if __name__ == '__main__':
+    # =========================================================================
+    # НАСТРОЙКИ ПРОГОНА — правь здесь. Одноимённые CLI-флаги, если переданы,
+    # перекрывают эти значения.
+    # =========================================================================
+
+    # Входной файл с публичными картами: JSON, список через запятую, глоб или
+    # каталог patch-частей. None -> шаг check_old_maps ПРОПУСКАЕТСЯ и читается
+    # готовый промежуточный файл PRECOMPUTED_PATH.
+    MAPS_PATH = None
+    PATCH = None              # '7.41' — префикс patch-частей; задаёт start_date_time
+    START_DATE_TIME = None    # None -> из PATCH_START_TIMES (или DEC_15_2025_UTC)
+    MAX_MATCHES = None        # ограничение числа карт на шаге check_old_maps
+    DOTA2PROTRACKER = False   # считать ли метрики dota2protracker_*
+
+    # Промежуточный файл: выход check_old_maps и вход анализа винрейта.
+    PRECOMPUTED_PATH = str(PRECOMPUTED_FILE)
+
+    # Фильтры вывода (bucket-режим).
+    MIN_MATCHES = 6           # минимум n матчей на бакет, иначе бакет не печатается
+    MIN_INDEX = 0             # минимальный индекс бакета для ВСЕХ метрик (0 = все)
+    # Примечание: в --old-mode пороги индекса берутся из EARLY_MIN_INDEX /
+    # LATE_MIN_INDEX / POST_LANE_MIN_INDEX наверху файла, MIN_INDEX туда не лезет.
+
     args = _build_arg_parser().parse_args()
+    maps_path = args.maps_path if args.maps_path is not None else MAPS_PATH
+    patch = args.patch if args.patch is not None else PATCH
+    max_matches = args.max_matches if args.max_matches is not None else MAX_MATCHES
+    precomputed_path = args.input if args.input is not None else PRECOMPUTED_PATH
+    min_matches = args.min_matches if args.min_matches is not None else MIN_MATCHES
+    min_index = args.min_index if args.min_index is not None else MIN_INDEX
+
+    if maps_path is not None:
+        from check_old_maps import DEC_15_2025_UTC, PATCH_START_TIMES, check_old_maps
+
+        start_date_time = START_DATE_TIME
+        if start_date_time is None:
+            start_date_time = PATCH_START_TIMES.get(str(patch), DEC_15_2025_UTC) if patch else DEC_15_2025_UTC
+        print(f"Сборка промежуточного файла из публичных карт: {maps_path} -> {precomputed_path}")
+        check_old_maps(
+            maps_path=maps_path,
+            patch=patch,
+            output_path=precomputed_path,
+            start_date_time=start_date_time,
+            max_matches=max_matches,
+            dota2protracker_enabled=DOTA2PROTRACKER,
+        )
+    else:
+        print(f"MAPS_PATH=None -> используем готовый промежуточный файл: {precomputed_path}")
+
     if DATA_MODE == 'on_the_fly' and not args.bucket_mode:
         train_files = sorted(TRAIN_DIR.glob('combined*.json'))
         if TRAIN_MAX_FILES:
@@ -1404,12 +1460,12 @@ if __name__ == '__main__':
         )
         print_results(results, unique_matches, summary_outcomes)
     else:
-        matches = load_matches(str(args.input))
+        matches = load_matches(str(precomputed_path))
         print(f"Загружено матчей: {len(matches)}")
         if args.bucket_mode:
             print("\nОбработка bucket winrate...")
             bucket_results = process_metrics_winrate_buckets(matches)
-            print_bucket_results(bucket_results, min_matches=args.min_matches)
+            print_bucket_results(bucket_results, min_matches=min_matches, min_index=min_index)
         else:
             print("\nОбработка метрик...")
             results, unique_matches, summary_outcomes = process_metrics_winrate(matches)

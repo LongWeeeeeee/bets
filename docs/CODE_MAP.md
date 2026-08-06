@@ -500,11 +500,26 @@ CLI: `--champion DIR` (по умолчанию свежайший каталог
 
 ## `base/metrics_winrate.py` — bucket winrate из JSON `check_old_maps`
 
-CLI: `--input` (precomputed JSON), `--bucket-mode`/`--old-mode`, `--min-matches` (6).
+Все настройки прогона собраны в блоке в `if __name__ == '__main__':` — правь там, CLI нужен
+только для разовых перекрытий: `MAPS_PATH` (публичные карты; `None` → шаг `check_old_maps`
+пропускается и читается готовый промежуточный файл), `PATCH`, `START_DATE_TIME`, `MAX_MATCHES`,
+`DOTA2PROTRACKER`, `PRECOMPUTED_PATH` (промежуточный JSON: выход `check_old_maps` = вход анализа),
+`MIN_MATCHES` (мин. n на бакет) и `MIN_INDEX` (мин. индекс бакета для всех метрик).
+
+CLI (всё по умолчанию `None` = взять из блока настроек): `--maps-path`, `--patch`, `--max-matches`,
+`--input`, `--min-matches`, `--min-index`, плюс `--bucket-mode`/`--old-mode`.
+`MIN_INDEX` фильтрует вывод только в bucket-режиме; в `--old-mode` пороги индекса по-прежнему берутся
+из `EARLY_MIN_INDEX`/`LATE_MIN_INDEX`/`POST_LANE_MIN_INDEX` наверху файла.
 ```bash
+# только чтение готового промежуточного файла (MAPS_PATH=None)
 /Users/alex/Documents/ingame/venv_catboost/bin/python3 base/metrics_winrate.py \
-  --input runtime/pub_7.41_50k_metrics.json --bucket-mode --min-matches 6 \
+  --input runtime/pub_7.41_50k_metrics.json --min-index 3 --min-matches 50 \
   > runtime/pub_7.41_50k_winrate.txt
+
+# полный цикл: публичные карты -> промежуточный JSON -> винрейт по бакетам
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/metrics_winrate.py \
+  --maps-path bets_data/analise_pub_matches/json_parts_split_from_object --patch 7.41 \
+  --input runtime/pub_7.41_50k_metrics.json --min-index 3 --min-matches 50
 ```
 
 ---
