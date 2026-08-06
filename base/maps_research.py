@@ -362,6 +362,7 @@ class RateLimitTracker:
         reset = _header_int(headers, 'retry-after')
         if reset is None:
             reset = _header_int(headers, 'ratelimit-reset')
+        await self._sync_day_window(headers)
         for window in ('day', 'hour', 'minute', 'second'):
             remaining = _header_int(headers, f'x-ratelimit-remaining-{window}')
             if remaining is not None and remaining <= 0:
@@ -371,6 +372,32 @@ class RateLimitTracker:
                 )
                 return window
         return None
+
+    async def _sync_day_window(self, headers):
+        """Приводит локальный суточный счётчик к серверному остатку.
+
+        Зачем. Локально сутки считаются СКОЛЬЗЯЩИМ окном по нашему же журналу
+        запросов, а у Stratz окно ФИКСИРОВАННОЕ и откатывается разом. После
+        отката сервер отдаёт свежие 15 000, но наш журнал всё ещё помнит вчерашние
+        отметки — и пара стоит в «локальном самотормозе» при полностью свободной
+        квоте. Замер 06.08: три аккаунта имели остаток 14 998 из 15 000, пока
+        сбор писал «все пары упёрлись в локальный самотормоз».
+
+        Авторитет здесь — сервер: он единственный знает, сколько израсходовано в
+        ТЕКУЩЕМ окне. Подрезаем журнал до серверного `used`, лишнего не
+        добавляем — счётчик только опускается, поэтому наш запас (14 800 против
+        реальных 15 000) сохраняется.
+        """
+        remaining = _header_int(headers, 'x-ratelimit-remaining-day')
+        if remaining is None:
+            return
+        limit = _header_int(headers, 'x-ratelimit-limit-day') or RATE_LIMITS['day']
+        used = max(0, int(limit) - int(remaining))
+        async with self.lock:
+            log = self.requests_log['day']
+            extra = len(log) - used
+            for _ in range(extra):
+                log.popleft()
 
     async def record_request(self):
         """Записывает факт выполнения запроса"""
