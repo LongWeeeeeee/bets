@@ -1198,6 +1198,79 @@ def _reset_players_crawl_cursor(stats_dir: Path) -> None:
         print(f"\n⚠️  Не удалось сбросить {cursor.name}: {exc}")
 
 
+# Отсев по ИЗОЛИРОВАННОМУ провалу GPM: один игрок сильно ниже своей же команды
+# в единицах бейзлайна герой+позиция. Абсолютный провал фильтровать нельзя — он
+# следствие проигранного драфта, и на таких картах драфт предсказывает ЛУЧШЕ
+# (docs/EXPERIMENTS.md E-21). А изолированный рвёт связь: при пороге 0.4
+# AUC падает 0.6266 -> 0.5729 на 1.7% карт.
+#
+# Место здесь, а не в check_match_quality: нужны бейзлайны, которых на этапе
+# сбора нет. Плюс решение обратимо — корпус остаётся на диске.
+ISO_GPM_MAX = max(0.0, float(os.getenv("EXPLORE_ISO_GPM_MAX", "0") or "0"))
+HERO_POS_BASELINES_PATH = Path(
+    os.getenv(
+        "EXPLORE_HERO_POS_BASELINES",
+        str(ROOT_DIR / "runtime" / "artifacts" / "misc" / "hero_pos_baselines.json"),
+    )
+)
+SMURF_PAIR_FILTER_ENABLED = str(
+    os.getenv("EXPLORE_SMURF_PAIR_FILTER", "0") or "0"
+).strip().lower() not in ("", "0", "false", "no", "off")
+
+_BASELINES_CACHE: dict | None = None
+
+
+def _hero_pos_baselines() -> dict:
+    """Медианы GPM по (герой, позиция). Строится
+    `runtime/experiments/misc/build_hero_pos_baselines.py`."""
+    global _BASELINES_CACHE
+    if _BASELINES_CACHE is None:
+        try:
+            payload = json.loads(HERO_POS_BASELINES_PATH.read_text(encoding="utf-8"))
+            _BASELINES_CACHE = payload.get("cells") or {}
+        except Exception as exc:
+            print(f"  ⚠️  Бейзлайны GPM недоступны ({exc}); гейт iso отключён")
+            _BASELINES_CACHE = {}
+    return _BASELINES_CACHE
+
+
+def _isolated_gpm_collapse(match: dict, cells: dict):
+    """Насколько худший игрок отстал от МЕДИАНЫ СВОЕЙ команды в долях бейзлайна.
+
+    Возвращает максимум по двум командам или None, если бейзлайнов не хватило.
+    Сравнение именно с медианой команды, а не с абсолютом: просевшая целиком
+    команда — это проигрыш, а не поломка.
+    """
+    if not cells:
+        return None
+    per_team: dict = {True: [], False: []}
+    for player in match.get("players") or []:
+        hero = player.get("heroId")
+        pos = player.get("position")
+        if hero is None or pos is None:
+            continue
+        base = cells.get(f"{hero}|{pos}")
+        if not base:
+            continue
+        med = ((base.get("gpm") or {}).get("med")) or 0
+        if not med:
+            continue
+        try:
+            gpm = float(player.get("goldPerMinute") or 0)
+        except (TypeError, ValueError):
+            continue
+        per_team[bool(player.get("isRadiant"))].append(gpm / float(med))
+
+    worst = None
+    for ratios in per_team.values():
+        if len(ratios) < 4:
+            continue
+        ratios = sorted(ratios)
+        gap = ratios[len(ratios) // 2] - ratios[0]
+        worst = gap if worst is None else max(worst, gap)
+    return worst
+
+
 def _match_is_train_candidate(
     match_id, match, test_match_ids: set[str], seen_match_ids: set | None = None
 ) -> tuple[bool, str | None]:
@@ -1516,10 +1589,20 @@ def _main_impl(
                         test_excluded += 1
                     continue
 
-                result, message = check_match_quality(match, strict_lane_positions=True)
+                result, message = check_match_quality(
+                    match,
+                    strict_lane_positions=True,
+                    enable_smurf_pair_filter=SMURF_PAIR_FILTER_ENABLED,
+                )
                 if not result:
                     quality_reasons[message or "quality_unknown"] += 1
                     continue
+
+                if ISO_GPM_MAX > 0:
+                    iso = _isolated_gpm_collapse(match, _hero_pos_baselines())
+                    if iso is not None and iso >= ISO_GPM_MAX:
+                        quality_reasons[f"iso gpm collapse (>={ISO_GPM_MAX:g})"] += 1
+                        continue
 
                 try:
                     analise_database_module.analise_database(
