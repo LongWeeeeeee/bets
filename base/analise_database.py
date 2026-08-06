@@ -655,6 +655,13 @@ LATE_DEFICIT_MINUTE = int(os.getenv("ANALISE_LATE_DEFICIT_MINUTE", "30"))
 #                 Условие про состояние карты, не про исход (E-43).
 LATE_TOWER_MINUTE = int(os.getenv("ANALISE_LATE_TOWER_MINUTE", "32"))
 LATE_TOWER_MIN_GAP = int(os.getenv("ANALISE_LATE_TOWER_MIN_GAP", "2"))
+# Чему учится словарь (МАРКЕР, а не правило допуска):
+#   'winner'     — победитель карты (все наши словари исторически такие);
+#   'tower_lead' — сторона, у которой к минуте TOWER_MINUTE башни целее.
+# Второй режим даёт метрику «этот драфт держит/сносит строения», а не «побеждает».
+# Расхождение между такой метрикой и фактическим состоянием карты — и есть
+# кандидат в сигнал на камбек (идея alex).
+LATE_MARKER = os.getenv("ANALISE_LATE_MARKER", "winner").strip().lower()
 # npcId башен и бараков по сторонам (E-43, восстановлены по медиане времени падения)
 _T3_IDS = {"radiant": {22, 23, 24}, "dire": {32, 33, 34}}
 _RAX_IDS = {"radiant": set(range(38, 44)), "dire": set(range(44, 50))}
@@ -1311,11 +1318,20 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
     # Проверяем условия для late_dict
     # Используем улучшенный фильтр is_late_match()
     if late_dict is not None and is_late_match(match, dominator):
-        # Записываем кто выиграл матч
-        r_val = 1 if did_radiant_win else 0
-        d_val = 0 if did_radiant_win else 1
-        _add_combinations_to_dict(r_by_pos, d_by_pos, late_dict, r_val, d_val)
-        updated = True
+        late_marker = None
+        if LATE_MARKER == 'tower_lead':
+            # Маркер — у кого целее строения к заданной минуте. Карты без данных о
+            # башнях и с равной структурой в словарь не пишутся: метки нет.
+            scores = _tower_structure_score(match, LATE_TOWER_MINUTE)
+            if scores is not None and scores[0] != scores[1]:
+                late_marker = scores[0] < scores[1]  # True = строения целее у Radiant
+        else:
+            late_marker = bool(did_radiant_win)
+        if late_marker is not None:
+            r_val = 1 if late_marker else 0
+            d_val = 0 if late_marker else 1
+            _add_combinations_to_dict(r_by_pos, d_by_pos, late_dict, r_val, d_val)
+            updated = True
 
     if post_lane_dict is not None and is_post_lane_match(match):
         # После post-lane gate записываем фактического победителя матча.
