@@ -2754,6 +2754,22 @@ def check_match_quality(
                     core_hero = core_player.get('heroId')
                     support_hero = support_player.get('heroId')
                     if _hero_can_play(core_hero, support_pos) and _hero_can_play(support_hero, core_pos):
+                        # Перестановка мутирует матч ДО сохранения, исходные
+                        # позиции нигде не остаются — из-за этого починку
+                        # невозможно сравнить с отбраковкой на корпусе (E-24).
+                        # Метка даёт выборку на будущее: через месяц сбора по
+                        # ней можно проверить главный риск — что перестановка
+                        # иногда делается неверно и матч заезжает в словарь с
+                        # чужими позиционными ключами.
+                        match.setdefault('positions_repaired', []).append({
+                            'team_radiant': bool(team_key),
+                            'core_pos': core_pos,
+                            'support_pos': support_pos,
+                            'core_hero': core_hero,
+                            'support_hero': support_hero,
+                            'core_networth': core_net,
+                            'support_networth': support_net,
+                        })
                         core_player['position'] = support_pos
                         support_player['position'] = core_pos
                     else:
