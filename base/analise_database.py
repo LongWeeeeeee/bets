@@ -662,6 +662,8 @@ LATE_TOWER_MIN_GAP = int(os.getenv("ANALISE_LATE_TOWER_MIN_GAP", "2"))
 # Расхождение между такой метрикой и фактическим состоянием карты — и есть
 # кандидат в сигнал на камбек (идея alex).
 LATE_MARKER = os.getenv("ANALISE_LATE_MARKER", "winner").strip().lower()
+# Ограничить solo-записи late последним version-патчем, как у post_lane (E-46).
+LATE_SOLO_LATEST_PATCH_ONLY = _env_bool("ANALISE_LATE_SOLO_LATEST_PATCH_ONLY", False)
 # npcId башен и бараков по сторонам (E-43, восстановлены по медиане времени падения)
 _T3_IDS = {"radiant": {22, 23, 24}, "dire": {32, 33, 34}}
 _RAX_IDS = {"radiant": set(range(38, 44)), "dire": set(range(44, 50))}
@@ -1330,7 +1332,13 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
         if late_marker is not None:
             r_val = 1 if late_marker else 0
             d_val = 0 if late_marker else 1
-            _add_combinations_to_dict(r_by_pos, d_by_pos, late_dict, r_val, d_val)
+            # solo-записи late исторически копятся по ВСЕМ патчам, тогда как у
+            # post_lane они ограничены последним (Option C). Флаг позволяет
+            # собрать late-solo в том же скоупе и померить, решает ли свежесть.
+            _add_combinations_to_dict(
+                r_by_pos, d_by_pos, late_dict, r_val, d_val,
+                write_solo=(is_latest_patch if LATE_SOLO_LATEST_PATCH_ONLY else True),
+            )
             updated = True
 
     if post_lane_dict is not None and is_post_lane_match(match):
