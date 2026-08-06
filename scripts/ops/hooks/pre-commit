@@ -68,4 +68,18 @@ if [ "$fail" -ne 0 ]; then
 MSG
   exit 1
 fi
+
+# Реестр экспериментов генерируется из фронтматтера записей. Разъехавшийся реестр
+# хуже отсутствующего: он читается ВСЕГДА (правило индекса в AGENTS.md), и агент
+# поверит строке «отвергнуто», не открывая файл с другим вердиктом.
+if git diff --cached --name-only | grep -qE '^docs/(experiments/|EXPERIMENTS\.md)'; then
+  if ! python3 scripts/ops/experiments_index.py --check >/dev/null 2>&1; then
+    cat >&2 <<'MSG'
+
+Коммит остановлен: реестр в docs/EXPERIMENTS.md не соответствует записям.
+Выполни:  python3 scripts/ops/experiments_index.py && git add docs/EXPERIMENTS.md
+MSG
+    exit 1
+  fi
+fi
 exit 0
