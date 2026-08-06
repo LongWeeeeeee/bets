@@ -46,7 +46,7 @@ except Exception:  # pragma: no cover - fallback for machines without orjson
 
 import analise_database as analise_database_module
 from keys import start_date_time_739 as start_date_time
-from maps_research import check_match_quality
+from maps_research import _position_is_valid_for_hero, check_match_quality
 
 
 DEFAULT_JSON_DIR = Path("/Users/alex/Documents/ingame/bets_data/analise_pub_matches/json_parts_split_from_object")
@@ -1216,6 +1216,23 @@ HERO_POS_BASELINES_PATH = Path(
 SMURF_PAIR_FILTER_ENABLED = str(
     os.getenv("EXPLORE_SMURF_PAIR_FILTER", "0") or "0"
 ).strip().lower() not in ("", "0", "false", "no", "off")
+# Строгий режим позиций отбраковывает матч за ЛЮБУЮ невалидную для героя
+# позицию — 65 109 матчей, 4.5% корпуса. Замер (E-24) показал, что это в
+# основном офф-мета пики, а не мусор: такие матчи не хуже остальных. Ручка
+# нужна, чтобы это можно было сравнить пересборкой; дефолт сохраняет прежнее
+# поведение.
+STRICT_POSITIONS_ENABLED = str(
+    os.getenv("EXPLORE_STRICT_POSITIONS", "1") or "1"
+).strip().lower() not in ("", "0", "false", "no", "off")
+# Отбраковка ПОДТВЕРЖДЁННЫХ подмен позиций: каталог допускает обмен местами И
+# нетворт противоречит меткам («корный» слот беднее) И хотя бы один герой
+# реально играется на обеих позициях. Только на таких подмена портит ячейку
+# незаметно — редкую отсечёт min_games. Живёт в 0.78% матчей (E-24).
+DROP_POSITION_SWAPS = str(
+    os.getenv("EXPLORE_DROP_POSITION_SWAPS", "0") or "0"
+).strip().lower() not in ("", "0", "false", "no", "off")
+SWAP_FLEX_MIN_GAMES = int(os.getenv("EXPLORE_SWAP_FLEX_MIN_GAMES", "2000") or "2000")
+_CORE_LIKE_POSITIONS = ("POSITION_1", "POSITION_2", "POSITION_3")
 
 _BASELINES_CACHE: dict | None = None
 
@@ -1232,6 +1249,59 @@ def _hero_pos_baselines() -> dict:
             print(f"  ⚠️  Бейзлайны GPM недоступны ({exc}); гейт iso отключён")
             _BASELINES_CACHE = {}
     return _BASELINES_CACHE
+
+
+def _confirmed_position_swap(match: dict, cells: dict):
+    """Подтверждённая подмена позиций внутри команды -> (поз_a, поз_b) или None.
+
+    Проверяются ВСЕ пары, а не только линейные: существующая починка в
+    `check_match_quality` знает лишь pos1<->pos5 и pos3<->pos4, что покрывает
+    четверть случаев (E-24). Три условия сразу, иначе метки скорее верны:
+      * каталог допускает обмен (оба героя валидны на позициях друг друга);
+      * нетворт ПРОТИВОРЕЧИТ меткам — «корный» слот беднее;
+      * хотя бы один герой реально играется на обеих позициях. Только тогда
+        подмена портит ячейку незаметно; редкую ячейку отсечёт min_games.
+    """
+    if not cells:
+        return None
+    from itertools import combinations as _combinations
+
+    def _games_at(hero, pos):
+        rec = cells.get(f"{hero}|{pos}")
+        return int((rec or {}).get("n") or 0)
+
+    players = [
+        p for p in (match.get("players") or [])
+        if p.get("heroId") is not None and p.get("position") is not None
+    ]
+    for team in (True, False):
+        mates = [p for p in players if bool(p.get("isRadiant")) == team]
+        for a, b in _combinations(mates, 2):
+            pa, pb = str(a["position"]), str(b["position"])
+            if pa == pb:
+                continue
+            if not (_position_is_valid_for_hero(a["heroId"], pa) is False
+                    or _position_is_valid_for_hero(b["heroId"], pb) is False):
+                continue
+            if not (_position_is_valid_for_hero(a["heroId"], pb) is True
+                    and _position_is_valid_for_hero(b["heroId"], pa) is True):
+                continue
+            if pa in _CORE_LIKE_POSITIONS and pb not in _CORE_LIKE_POSITIONS:
+                core, other = a, b
+            elif pb in _CORE_LIKE_POSITIONS and pa not in _CORE_LIKE_POSITIONS:
+                core, other = b, a
+            else:
+                continue
+            if (core.get("networth") or 0) >= (other.get("networth") or 0):
+                continue
+            flexible = any(
+                _games_at(p["heroId"], pa) >= SWAP_FLEX_MIN_GAMES
+                and _games_at(p["heroId"], pb) >= SWAP_FLEX_MIN_GAMES
+                for p in (a, b)
+            )
+            if flexible:
+                return (pa, pb)
+    return None
 
 
 def _isolated_gpm_collapse(match: dict, cells: dict):
@@ -1591,12 +1661,18 @@ def _main_impl(
 
                 result, message = check_match_quality(
                     match,
-                    strict_lane_positions=True,
+                    strict_lane_positions=STRICT_POSITIONS_ENABLED,
                     enable_smurf_pair_filter=SMURF_PAIR_FILTER_ENABLED,
                 )
                 if not result:
                     quality_reasons[message or "quality_unknown"] += 1
                     continue
+
+                if DROP_POSITION_SWAPS:
+                    swap = _confirmed_position_swap(match, _hero_pos_baselines())
+                    if swap is not None:
+                        quality_reasons[f"position swap {swap[0][-1]}<->{swap[1][-1]}"] += 1
+                        continue
 
                 if ISO_GPM_MAX > 0:
                     iso = _isolated_gpm_collapse(match, _hero_pos_baselines())
