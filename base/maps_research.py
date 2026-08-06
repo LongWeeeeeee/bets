@@ -2636,8 +2636,39 @@ def check_match_quality(
     enable_skill_gap_filters=False,
     enable_death_anomaly_filter=False,
     strict_lane_positions=False,
+    enable_smurf_pair_filter=False,
 ):
-    """Проверяет качество данных карты"""
+    """Проверяет качество данных карты.
+
+    СОСТОЯНИЕ ФИЛЬТРОВ (замеры — docs/EXPERIMENTS.md E-20, E-21).
+
+    Активны всегда:
+      * `position is None` — три четверти всего отсева (791k карт). Скорее всего
+        непаршенные матчи, а не мусор по качеству;
+      * `heroId is None`;
+      * `intentionalFeeding` у любого игрока (флаг Stratz) — 5.3k;
+      * 2+ невалидные для героя позиции: сначала попытка починить перестановкой
+        кора и саппорта в паре линий, иначе отказ (`lane mismatch`, `nonstandard`,
+        `networth order`).
+
+    По параметру:
+      * `strict_lane_positions` — любая невалидная для героя позиция = отказ.
+        Включён при сборке словарей;
+      * `enable_smurf_pair_filter` — ДВА и более помеченных смурф-флагом игрока.
+        Лучшее правило по цене: 4.1% корпуса за +0.0024 AUC, вдвое эффективнее
+        полного смурф-фильтра (14.6% за +0.0056). Выключен по умолчанию, потому
+        что при сборе отказ НЕОБРАТИМ — матч не сохраняется вовсе;
+      * `enable_death_anomaly_filter` — ИЗМЕРЕН И ВРЕДЕН. Отсекает 4.6% карт,
+        которые НЕ грязнее остальных: драфт предсказывает на них так же
+        (AUC 0.6281 против 0.6265). Не включать;
+      * `enable_skill_gap_filters` — ИЗМЕРЕН И БЕСПОЛЕЗЕН на паблике: пороги
+        (15k нетворта на 15-й минуте) калибровались под про и срабатывают на
+        13 картах из 50 000. Либо перекалибровать, либо не трогать.
+
+    Не реализовано здесь: изолированный провал по GPM (`iso >= 0.4`, ещё +1.6%
+    цены за +0.0008) — ему нужны бейзлайны герой+позиция, которых на этапе сбора
+    нет. Его место — этап сборки словарей.
+    """
     if strict_lane_positions and not _has_position_catalog():
         return False, 'hero valid positions unavailable'
 
@@ -2645,6 +2676,21 @@ def check_match_quality(
     #     return False, 'kills None'
     # iytf len(match.get('radiantNetworthLeads', [])) < 20:
     #     return False, 'too short'
+    # Смурфы: помеченный игрок ломает связь драфта с исходом, и ОДИН уже даёт
+    # просадку (AUC 0.6030 против 0.6266). Но отсекать по одному дорого — это
+    # 14.6% корпуса; по двум и более цена падает до 4.1% при половине выигрыша.
+    # Флаги 0 и 2 считаются чистыми (так же было в исходной закомментированной
+    # проверке); у анонимных аккаунтов флага нет вовсе, и на них фильтр слеп.
+    if enable_smurf_pair_filter:
+        flagged = 0
+        for player in match.get('players', []):
+            account = player.get('steamAccount') or {}
+            flag = account.get('smurfFlag')
+            if flag is not None and flag not in (0, 2):
+                flagged += 1
+        if flagged >= 2:
+            return False, f'smurf pair ({flagged})'
+
     invalid_positions = 0
     invalid_by_team = {True: {}, False: {}}
     for player in match.get('players', []):
