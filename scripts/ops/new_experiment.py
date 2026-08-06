@@ -71,6 +71,9 @@ def main() -> int:
 
     body = TEMPLATE.read_text(encoding="utf-8") if TEMPLATE.exists() else ""
     body = body.split("---\n", 2)[-1] if body.startswith("---") else body
+    # У шаблона свой заголовок «# E-NN. Название» — свой мы уже поставили выше,
+    # иначе в новой записи окажутся два h1 подряд.
+    body = re.sub(r"^\s*#\s+E-NN\..*?\n", "", body, count=1)
     today = dt.date.today().isoformat()
     head = "\n".join([
         "---",
