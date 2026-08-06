@@ -635,6 +635,19 @@ LATE_REQUIRE_EQUAL_MOMENT = _env_bool("ANALISE_LATE_REQUIRE_EQUAL_MOMENT", True)
 # 'any' — равный момент на ЛЮБОЙ минуте начиная со START (историческое правило);
 # 'at'  — равенство ИМЕННО на минуте START (совпадает с тем, что видно в live).
 LATE_EQUAL_MODE = os.getenv("ANALISE_LATE_EQUAL_MODE", "any").strip().lower()
+# Какое правило допуска использовать:
+#   'equal'        — длинная игра с равным поздним счётом (текущий прод);
+#   'comeback_avg' — историческое правило до 28.04.2026: победитель в СРЕДНЕМ
+#                    отставал >= DEFICIT в окне COMEBACK_WINDOW;
+#   'comeback_max' — победитель отыграл дефицит >= DEFICIT (минимум его lead за
+#                    игру <= -DEFICIT), то есть «камбек с N тысяч».
+LATE_RULE = os.getenv("ANALISE_LATE_RULE", "equal").strip().lower()
+LATE_COMEBACK_DEFICIT = float(os.getenv("ANALISE_LATE_COMEBACK_DEFICIT", "10000"))
+LATE_COMEBACK_WINDOW = tuple(
+    int(part) for part in os.getenv("ANALISE_LATE_COMEBACK_WINDOW", "15,25").split(",")[:2]
+)
+# только для comeback_avg: отбрасывать карты, где победитель был ранним доминатором
+LATE_COMEBACK_REQUIRE_EARLY_LOSS = _env_bool("ANALISE_LATE_COMEBACK_REQUIRE_EARLY_LOSS", True)
 LATE_WR60_FALLBACK_THRESHOLDS = {
     20: 2498.74,
     21: 2666.64,
@@ -927,6 +940,32 @@ def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
         return (False, None) if if_check else False
 
     winner = 'radiant' if did_radiant_win else 'dire'
+
+    if LATE_RULE in ('comeback_avg', 'comeback_max'):
+        # Знак lead всегда «в пользу radiant», разворачиваем под победителя.
+        sign = 1.0 if winner == 'radiant' else -1.0
+        if LATE_RULE == 'comeback_max':
+            # Победитель отыграл дефицит: его минимальный lead за игру <= -DEFICIT.
+            worst = None
+            for raw in leads:
+                value = _as_float(raw)
+                if value is None:
+                    continue
+                own = sign * value
+                if worst is None or own < worst:
+                    worst = own
+            ok = worst is not None and worst <= -LATE_COMEBACK_DEFICIT
+            return (ok, winner if ok else None) if if_check else ok
+
+        # comeback_avg: средний дефицит победителя в окне
+        avg = _avg_in_window(leads, LATE_COMEBACK_WINDOW[0], LATE_COMEBACK_WINDOW[1])
+        if avg is None:
+            return (False, None) if if_check else False
+        if LATE_COMEBACK_REQUIRE_EARLY_LOSS and dominator in ('radiant', 'dire') and dominator == winner:
+            return (False, None) if if_check else False
+        ok = (sign * avg) <= -LATE_COMEBACK_DEFICIT
+        return (ok, winner if ok else None) if if_check else ok
+
     if not LATE_REQUIRE_EQUAL_MOMENT:
         # Правило «просто длинная игра»: условие равенства выключено.
         return (True, winner) if if_check else True
