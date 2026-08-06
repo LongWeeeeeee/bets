@@ -650,6 +650,15 @@ LATE_EQUAL_MODE = os.getenv("ANALISE_LATE_EQUAL_MODE", "any").strip().lower()
 LATE_RULE = os.getenv("ANALISE_LATE_RULE", "equal").strip().lower()
 LATE_DEFICIT_MIN = float(os.getenv("ANALISE_LATE_DEFICIT_MIN", "8000"))
 LATE_DEFICIT_MINUTE = int(os.getenv("ANALISE_LATE_DEFICIT_MINUTE", "30"))
+#   'tower_gap' — на минуте TOWER_MINUTE структурный перекос: разница «очков»
+#                 (потерянные T3 + снесённые линии бараков * 3) >= TOWER_MIN_GAP.
+#                 Условие про состояние карты, не про исход (E-43).
+LATE_TOWER_MINUTE = int(os.getenv("ANALISE_LATE_TOWER_MINUTE", "32"))
+LATE_TOWER_MIN_GAP = int(os.getenv("ANALISE_LATE_TOWER_MIN_GAP", "2"))
+# npcId башен и бараков по сторонам (E-43, восстановлены по медиане времени падения)
+_T3_IDS = {"radiant": {22, 23, 24}, "dire": {32, 33, 34}}
+_RAX_IDS = {"radiant": set(range(38, 44)), "dire": set(range(44, 50))}
+_RAX_PER_LANE = 2
 LATE_COMEBACK_DEFICIT = float(os.getenv("ANALISE_LATE_COMEBACK_DEFICIT", "10000"))
 LATE_COMEBACK_WINDOW = tuple(
     int(part) for part in os.getenv("ANALISE_LATE_COMEBACK_WINDOW", "15,25").split(",")[:2]
@@ -913,6 +922,43 @@ def is_early_match(match, n: int = 3000):
     return False, None
 
 
+def _tower_structure_score(match, minute):
+    """«Очки» структурных потерь каждой стороны к указанной минуте.
+
+    Потерянная T3 = 1 очко, снесённая линия бараков (два барака) = 3 очка.
+    Возвращает (radiant_score, dire_score) или None, если данных о башнях нет.
+    """
+    deaths = match.get('towerDeaths')
+    if not deaths:
+        return None
+    cutoff = int(minute) * 60
+    lost = {'radiant': {'t3': 0, 'rax': 0}, 'dire': {'t3': 0, 'rax': 0}}
+    for event in deaths:
+        npc_id = event.get('npcId')
+        is_radiant = event.get('isRadiant')
+        time_seconds = event.get('time')
+        if npc_id is None or time_seconds is None or time_seconds >= cutoff:
+            continue
+        side = 'radiant' if is_radiant is True else ('dire' if is_radiant is False else None)
+        if side is None:
+            continue
+        if npc_id in _T3_IDS[side]:
+            lost[side]['t3'] += 1
+        elif npc_id in _RAX_IDS[side]:
+            lost[side]['rax'] += 1
+    return tuple(
+        lost[side]['t3'] + (lost[side]['rax'] // _RAX_PER_LANE) * 3
+        for side in ('radiant', 'dire')
+    )
+
+
+def _tower_gap_hit(match, minute, min_gap) -> bool:
+    scores = _tower_structure_score(match, minute)
+    if scores is None:
+        return False
+    return abs(scores[0] - scores[1]) >= int(min_gap)
+
+
 def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
     """
     Проверяет, подходит ли матч для late словаря.
@@ -956,6 +1002,10 @@ def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
             return False
         value = _as_float(leads[idx])
         return value is not None and abs(value) >= LATE_DEFICIT_MIN
+
+    if LATE_RULE == 'tower_gap':
+        ok = _tower_gap_hit(match, LATE_TOWER_MINUTE, LATE_TOWER_MIN_GAP)
+        return (ok, winner if ok else None) if if_check else ok
 
     if LATE_RULE == 'deficit_state':
         ok = _deficit_state_hit()
