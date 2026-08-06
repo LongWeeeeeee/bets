@@ -616,7 +616,9 @@ EARLY_LEAD_WINDOW = (20, 28)         # реальные минуты дости�
 EARLY_FAST_FINISH_MAX_MINUTES = 34   # быстрые карты считаем early по победителю
 
 # Late: длинная игра, где networth gap не разъехался сильнее WR60 ladder.
-LATE_MIN_DURATION = 34
+# Все четыре параметра правила сбора вынесены в env для A/B-пересборок словаря;
+# дефолты равны историческим значениям, поведение прода без env не меняется.
+LATE_MIN_DURATION = int(os.getenv("ANALISE_LATE_MIN_DURATION", "34"))
 LATE_MAX_DURATION = None  # None если не нужен верхний предел
 LATE_EARLY_WINDOW = (15, 25)         # окно для оценки раннего snowball
 LATE_EARLY_STOMP_MAX = 12000         # max |lead| для раннего snowball
@@ -625,7 +627,14 @@ LATE_CLOSE_WINDOW = (20, 30)         # окно "близкой" игры
 LATE_CLOSE_MAX_LEAD = 5000           # max |lead| в close-окне
 LATE_MODE = 'comeback'               # 'either' | 'comeback' | 'close'
 LATE_REQUIRE_EARLY_LOSS = True      # late = победитель не был early-доминатором
-LATE_WR60_START_MINUTE = 28
+LATE_WR60_START_MINUTE = int(os.getenv("ANALISE_LATE_WR60_START_MINUTE", "28"))
+# Множитель WR60-лестницы: <1 = более строгое требование «равной» игры.
+LATE_EQUAL_GATE_K = float(os.getenv("ANALISE_LATE_EQUAL_GATE_K", "1.0"))
+# 0 = брать любую игру нужной длины, не требуя равного момента вообще.
+LATE_REQUIRE_EQUAL_MOMENT = _env_bool("ANALISE_LATE_REQUIRE_EQUAL_MOMENT", True)
+# 'any' — равный момент на ЛЮБОЙ минуте начиная со START (историческое правило);
+# 'at'  — равенство ИМЕННО на минуте START (совпадает с тем, что видно в live).
+LATE_EQUAL_MODE = os.getenv("ANALISE_LATE_EQUAL_MODE", "any").strip().lower()
 LATE_WR60_FALLBACK_THRESHOLDS = {
     20: 2498.74,
     21: 2666.64,
@@ -918,15 +927,21 @@ def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
         return (False, None) if if_check else False
 
     winner = 'radiant' if did_radiant_win else 'dire'
+    if not LATE_REQUIRE_EQUAL_MOMENT:
+        # Правило «просто длинная игра»: условие равенства выключено.
+        return (True, winner) if if_check else True
+
     late_thresholds_by_minute = _load_late_wr60_thresholds()
     for minute, threshold in sorted(late_thresholds_by_minute.items()):
         if minute < int(LATE_WR60_START_MINUTE):
             continue
+        if LATE_EQUAL_MODE == 'at' and minute != int(LATE_WR60_START_MINUTE):
+            break
         idx = minute - 1
         if idx < 0 or len(leads) <= idx:
             continue
         lead = _as_float(leads[idx])
-        if lead is not None and abs(lead) <= threshold:
+        if lead is not None and abs(lead) <= threshold * LATE_EQUAL_GATE_K:
             return (True, winner) if if_check else True
 
     return (False, None) if if_check else False

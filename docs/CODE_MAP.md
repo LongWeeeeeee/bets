@@ -292,6 +292,15 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 - Слой `trio` у kills_window: порядок слоёв `1v2 → 2v1 → 1v1 → with → trio → solo`. trio стоит после `with` (ключей на порядок больше, игр на ключ меньше), поэтому в `first_hit` подхватывает только там, где пары пусты; прод-политика его не читает.
 - Проверяется `base/tests/test_dict_key_canonicalization.py` (отсутствие дублей порядка, устойчивость трио к перемешиванию игроков, равенство показаний читателей на каноническом и legacy-словаре).
 
+**Правило допуска карты в late-словарь (`analise_database.is_late_match`), env-параметры 2026-08:**
+- Базовое правило: длина карты >= `LATE_MIN_DURATION` И хотя бы на одной минуте начиная с `LATE_WR60_START_MINUTE` абсолютный networth-lead не больше WR60-порога этой минуты (лестница из `is_late_wr60_70pct_thresholds.json`).
+- `ANALISE_LATE_MIN_DURATION` (default `34`) — минимальная длительность карты.
+- `ANALISE_LATE_WR60_START_MINUTE` (default `28`) — с какой минуты искать «равный момент».
+- `ANALISE_LATE_EQUAL_GATE_K` (default `1.0`) — множитель порогов лестницы; `<1` требует более равной игры.
+- `ANALISE_LATE_REQUIRE_EQUAL_MOMENT` (default `1`) — `0` отключает условие равенства целиком (в словарь идёт любая карта нужной длины).
+- `ANALISE_LATE_EQUAL_MODE` (default `any`) — `any` ищет равный момент на любой минуте начиная со старта, `at` требует равенства РОВНО на минуте старта.
+- Дефолты равны историческим значениям: без env поведение прода не меняется. Переменные добавлены под A/B-пересборки словаря (E-33), константы `LATE_MODE`/`LATE_REQUIRE_EARLY_LOSS`/`LATE_CLOSE_WINDOW`/`LATE_EARLY_WINDOW` в файле — мёртвый след старой comeback-логики и ни на что не влияют.
+
 > **Option C — post_lane `solo` (2026-06):** `post_lane_output['solo']` теперь ЭМИТИТСЯ (раньше был выключен `name != 'post_lane_output'`). Сам post_lane-словарь: cp/synergy/trio на широком окне, а **solo-записи (`{hero}pos{n}`) собираются ТОЛЬКО на последнем version-патче** (`analise_database._add_combinations_to_dict(write_solo=...)`, `LATEST_PATCH_START_TS` из `keys.DOTA_VERSION_PATCH_EVENTS`, сейчас 7.41d=1780531200). Solo уже в `STAR_SIGNAL_METRICS` и в sign-consistency `all_output` → автоматически участвует как сигнал в All-блоке; добавлен в display-списки. Порог `SOLO_MIN_MATCHES=50` (покрытие на 7.41d ≈95%).
 
 **Константы STAR (источник истины для решений):**
