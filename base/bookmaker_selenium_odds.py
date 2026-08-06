@@ -1911,6 +1911,36 @@ def _winline_button_is_unbettable(button: Any) -> bool:
     return bool(_winline_node_classes(button) & _WINLINE_UNBETTABLE_BUTTON_CLASSES)
 
 
+# Классы кнопки исхода в обеих живых разметках: карточка ленты рисует
+# `coefficient-button`, панель выбранного события — `odd-btn` (её модификатор
+# заморозки в том же компоненте называется `coef-btn--locked`).
+_WINLINE_PRICE_BUTTON_CLASSES = frozenset(
+    {
+        "coefficient-button",
+        "odd-btn",
+        "coef-btn",
+    }
+)
+
+
+def _winline_price_node_unbettable(node: Any) -> bool:
+    """Заморожена ли кнопка, с которой снято число.
+
+    Судим ТОЛЬКО по узлу, несущему цену, и по кнопкам внутри него. Соседние
+    ячейки контейнера сюда не входят намеренно: `any(...)` по всему
+    `card__coeffs` однажды уже объявлял замороженным почти каждый рабочий рынок
+    из-за заполнителей `coefficient-button_empty` соседних колонок.
+    """
+    if _winline_button_is_unbettable(node):
+        return True
+    for inner in node.find_all(True):
+        if not (_winline_node_classes(inner) & _WINLINE_PRICE_BUTTON_CLASSES):
+            continue
+        if _winline_button_is_unbettable(inner):
+            return True
+    return False
+
+
 def _winline_winner_market_buttons(container: Any) -> List[Any]:
     """Кнопки рынка «победитель карты» внутри контейнера коэффициентов.
 
@@ -2145,18 +2175,25 @@ def _winline_structured_current_map_winner(
     ) -> None:
         """Read one proven winner container from the pre-CSS-class Winline DOM."""
         nonlocal saw_unbettable_winner
-        tokens = [
-            " ".join(node.stripped_strings)
-            for node in container.find_all(["div", "span"], recursive=False)
-        ]
         prices: List[float] = []
-        for token in tokens:
+        for node in container.find_all(["div", "span"], recursive=False):
+            token = " ".join(node.stripped_strings)
             match = re.fullmatch(r"\s*([0-9]+[.,][0-9]+)\s*", token)
             if not match:
                 continue
             price = float(match.group(1).replace(",", "."))
-            if price > 1.01:
-                prices.append(price)
+            if price <= 1.01:
+                continue
+            # Число несёт сама кнопка исхода (`coefficient-button_generic2` в
+            # карточке ленты, `odd-btn` в панели события), а заморозка видна
+            # только её классом — при `_locked` цена остаётся на месте. Без этой
+            # проверки ветка отдавала цену рынка, на который БК ставку не берёт:
+            # детектор `_winline_map_odds_bettable` знает лишь разметку карточки
+            # ленты и на странице события вердикта не выносит (fail-open None).
+            if _winline_price_node_unbettable(node):
+                saw_unbettable_winner = True
+                return
+            prices.append(price)
         if len(prices) != 2:
             saw_unbettable_winner = True
             return
