@@ -619,7 +619,10 @@ EARLY_FAST_FINISH_MAX_MINUTES = 34   # быстрые карты считаем 
 # Все четыре параметра правила сбора вынесены в env для A/B-пересборок словаря;
 # дефолты равны историческим значениям, поведение прода без env не меняется.
 LATE_MIN_DURATION = int(os.getenv("ANALISE_LATE_MIN_DURATION", "34"))
-LATE_MAX_DURATION = None  # None если не нужен верхний предел
+LATE_MAX_DURATION = (
+    int(os.getenv("ANALISE_LATE_MAX_DURATION"))
+    if os.getenv("ANALISE_LATE_MAX_DURATION") else None
+)  # верхний предел длины карты; нужен, чтобы собрать «короткую» половину для метрики скейлинга
 LATE_EARLY_WINDOW = (15, 25)         # окно для оценки раннего snowball
 LATE_EARLY_STOMP_MAX = 12000         # max |lead| для раннего snowball
 LATE_COMEBACK_AVG_DEFICIT = 4000     # средний deficit победителя в 15-25
