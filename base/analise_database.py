@@ -735,7 +735,10 @@ LATE_WR60_FALLBACK_THRESHOLDS = {
 # Гейты только на 10-й минуте и минимальную длину; дальше любая длительность.
 POST_LANE_GATE_MINUTE = 10
 POST_LANE_MAX_ABS_LEAD_AT_GATE = 2000
-POST_LANE_MIN_DURATION = 20
+POST_LANE_MIN_DURATION = int(os.getenv("ANALISE_POST_LANE_MIN_DURATION", "28"))
+# 28 вместо 20 (E-52, решение alex): поминутная развёртка дала на 28-й отчётливый
+# пик (64.4/64.5/64.5 против 64.2/64.0/63.0 у прежних 20), соседи 27 и 29 ниже.
+# Это ровно граница EARLY_LEAD_WINDOW: до неё карта «ранняя», после — другая фаза.
 
 
 def _max_abs_in_window(leads, start, end):
