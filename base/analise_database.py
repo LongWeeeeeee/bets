@@ -667,6 +667,19 @@ LATE_TOWER_MIN_GAP = int(os.getenv("ANALISE_LATE_TOWER_MIN_GAP", "2"))
 LATE_MARKER = os.getenv("ANALISE_LATE_MARKER", "winner").strip().lower()
 # Ограничить solo-записи late последним version-патчем, как у post_lane (E-46).
 LATE_SOLO_LATEST_PATCH_ONLY = _env_bool("ANALISE_LATE_SOLO_LATEST_PATCH_ONLY", False)
+# --- Структурное условие для EARLY-словарей (идея alex, E-48) ---
+# Карта идёт в early-словарь только если у стороны-метки строения целы:
+#   'off'              — как сейчас, без условия;
+#   'target_intact'    — у стороны-метки все башни тира целы;
+#   'intact_vs_lost'   — у стороны-метки все целы И у оппонента пала хотя бы одна.
+EARLY_TOWER_RULE = os.getenv("ANALISE_EARLY_TOWER_RULE", "off").strip().lower()
+EARLY_TOWER_TIER = os.getenv("ANALISE_EARLY_TOWER_TIER", "t3").strip().lower()
+EARLY_TOWER_MINUTE = int(os.getenv("ANALISE_EARLY_TOWER_MINUTE", "28"))
+_TIER_IDS = {
+    "t1": {"radiant": {16, 17, 18}, "dire": {26, 27, 28}},
+    "t2": {"radiant": {19, 20, 21}, "dire": {29, 30, 31}},
+    "t3": {"radiant": {22, 23, 24}, "dire": {32, 33, 34}},
+}
 # npcId башен и бараков по сторонам (E-43, восстановлены по медиане времени падения)
 _T3_IDS = {"radiant": {22, 23, 24}, "dire": {32, 33, 34}}
 _RAX_IDS = {"radiant": set(range(38, 44)), "dire": set(range(44, 50))}
@@ -932,6 +945,41 @@ def is_early_match(match, n: int = 3000):
             return True, dominator
 
     return False, None
+
+
+def _early_tower_ok(match, side):
+    """Структурное условие early: у стороны `side` строения целы (E-48).
+
+    side — 'radiant'/'dire', сторона, чей исход записывается меткой. Карты без
+    данных о башнях не проходят условие: проверить его нечем.
+    """
+    if EARLY_TOWER_RULE == "off":
+        return True
+    if side not in ("radiant", "dire"):
+        return False
+    deaths = match.get("towerDeaths")
+    if not deaths:
+        return False
+    ids = _TIER_IDS.get(EARLY_TOWER_TIER) or _TIER_IDS["t3"]
+    cutoff = int(EARLY_TOWER_MINUTE) * 60
+    lost = {"radiant": 0, "dire": 0}
+    for event in deaths:
+        npc_id = event.get("npcId")
+        is_radiant = event.get("isRadiant")
+        time_seconds = event.get("time")
+        if npc_id is None or time_seconds is None or time_seconds >= cutoff:
+            continue
+        owner = "radiant" if is_radiant is True else ("dire" if is_radiant is False else None)
+        if owner is None:
+            continue
+        if npc_id in ids[owner]:
+            lost[owner] += 1
+    opponent = "dire" if side == "radiant" else "radiant"
+    if lost[side] != 0:
+        return False
+    if EARLY_TOWER_RULE == "intact_vs_lost":
+        return lost[opponent] > 0
+    return True
 
 
 def _tower_structure_score(match, minute):
@@ -1309,16 +1357,18 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
     # early_end_dict: true = map winner (same early sample gates)
     early_result, dominator = is_early_match(match)
     if early_result:
-        if early_dict is not None:
+        if early_dict is not None and _early_tower_ok(match, dominator):
             r_val = 1 if dominator == 'radiant' else 0
             d_val = 1 if dominator == 'dire' else 0
             _add_combinations_to_dict(r_by_pos, d_by_pos, early_dict, r_val, d_val)
             updated = True
         if early_end_dict is not None:
-            r_val = 1 if did_radiant_win else 0
-            d_val = 0 if did_radiant_win else 1
-            _add_combinations_to_dict(r_by_pos, d_by_pos, early_end_dict, r_val, d_val)
-            updated = True
+            winner_side = 'radiant' if did_radiant_win else 'dire'
+            if _early_tower_ok(match, winner_side):
+                r_val = 1 if did_radiant_win else 0
+                d_val = 0 if did_radiant_win else 1
+                _add_combinations_to_dict(r_by_pos, d_by_pos, early_end_dict, r_val, d_val)
+                updated = True
     
     # Проверяем условия для late_dict
     # Используем улучшенный фильтр is_late_match()
