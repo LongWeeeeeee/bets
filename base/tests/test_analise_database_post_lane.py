@@ -246,22 +246,46 @@ def test_early_filter_uses_alchemist_trailing_thresholds() -> None:
     assert dominator == "radiant"
 
 
-def test_late_filter_uses_wr60_abs_networth_gap_threshold() -> None:
-    match = _match(duration=34, radiant_win=True)
-    match["radiantNetworthLeads"][20] = 3500
+def test_late_filter_takes_long_match_by_duration_alone() -> None:
+    """Дефолт с 2026-08-07: длина >= 36, условие равенства выключено (E-49).
 
-    ok, winner = stats.is_late_match(match, if_check=True)
-
-    assert ok is True
-    assert winner == "radiant"
-
-
-def test_late_filter_rejects_long_match_without_wr60_deficit() -> None:
+    Разъехавшаяся карта нужной длины теперь ПРИНИМАЕТСЯ: на honest holdout
+    отбор по равенству ухудшал solo на 5-7 п.п., а фильтр по длине давал +6.
+    """
     match = _match(duration=40, radiant_win=False)
     for idx in range(20, 40):
         match["radiantNetworthLeads"][idx] = 20000
 
     ok, winner = stats.is_late_match(match, if_check=True)
 
+    assert ok is True
+    assert winner == "dire"
+
+
+def test_late_filter_rejects_match_shorter_than_min_duration() -> None:
+    match = _match(duration=34, radiant_win=True)
+    match["radiantNetworthLeads"][20] = 3500
+
+    ok, winner = stats.is_late_match(match, if_check=True)
+
+    assert ok is False
+    assert winner is None
+
+
+def test_late_filter_equal_moment_still_works_when_enabled(monkeypatch) -> None:
+    """Механика равенства осталась опцией и продолжает отсекать разъехавшиеся карты."""
+    monkeypatch.setattr(stats, "LATE_REQUIRE_EQUAL_MOMENT", True)
+    monkeypatch.setattr(stats, "LATE_MIN_DURATION", 34)
+
+    close = _match(duration=34, radiant_win=True)
+    close["radiantNetworthLeads"][20] = 3500
+    ok, winner = stats.is_late_match(close, if_check=True)
+    assert ok is True
+    assert winner == "radiant"
+
+    blown_out = _match(duration=40, radiant_win=False)
+    for idx in range(20, 40):
+        blown_out["radiantNetworthLeads"][idx] = 20000
+    ok, winner = stats.is_late_match(blown_out, if_check=True)
     assert ok is False
     assert winner is None

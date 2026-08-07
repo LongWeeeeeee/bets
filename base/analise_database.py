@@ -618,7 +618,7 @@ EARLY_FAST_FINISH_MAX_MINUTES = 34   # быстрые карты считаем 
 # Late: длинная игра, где networth gap не разъехался сильнее WR60 ladder.
 # Все четыре параметра правила сбора вынесены в env для A/B-пересборок словаря;
 # дефолты равны историческим значениям, поведение прода без env не меняется.
-LATE_MIN_DURATION = int(os.getenv("ANALISE_LATE_MIN_DURATION", "34"))
+LATE_MIN_DURATION = int(os.getenv("ANALISE_LATE_MIN_DURATION", "36"))
 LATE_MAX_DURATION = (
     int(os.getenv("ANALISE_LATE_MAX_DURATION"))
     if os.getenv("ANALISE_LATE_MAX_DURATION") else None
@@ -634,7 +634,7 @@ LATE_WR60_START_MINUTE = int(os.getenv("ANALISE_LATE_WR60_START_MINUTE", "28"))
 # Множитель WR60-лестницы: <1 = более строгое требование «равной» игры.
 LATE_EQUAL_GATE_K = float(os.getenv("ANALISE_LATE_EQUAL_GATE_K", "1.0"))
 # 0 = брать любую игру нужной длины, не требуя равного момента вообще.
-LATE_REQUIRE_EQUAL_MOMENT = _env_bool("ANALISE_LATE_REQUIRE_EQUAL_MOMENT", True)
+LATE_REQUIRE_EQUAL_MOMENT = _env_bool("ANALISE_LATE_REQUIRE_EQUAL_MOMENT", False)
 # 'any' — равный момент на ЛЮБОЙ минуте начиная со START (историческое правило);
 # 'at'  — равенство ИМЕННО на минуте START (совпадает с тем, что видно в live).
 LATE_EQUAL_MODE = os.getenv("ANALISE_LATE_EQUAL_MODE", "any").strip().lower()

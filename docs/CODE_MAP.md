@@ -293,11 +293,11 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 - Проверяется `base/tests/test_dict_key_canonicalization.py` (отсутствие дублей порядка, устойчивость трио к перемешиванию игроков, равенство показаний читателей на каноническом и legacy-словаре).
 
 **Правило допуска карты в late-словарь (`analise_database.is_late_match`), env-параметры 2026-08:**
-- Базовое правило: длина карты >= `LATE_MIN_DURATION` И хотя бы на одной минуте начиная с `LATE_WR60_START_MINUTE` абсолютный networth-lead не больше WR60-порога этой минуты (лестница из `is_late_wr60_70pct_thresholds.json`).
-- `ANALISE_LATE_MIN_DURATION` (default `34`) — минимальная длительность карты.
-- `ANALISE_LATE_WR60_START_MINUTE` (default `28`) — с какой минуты искать «равный момент».
+- **Правило с 2026-08-07 (E-49): только длина карты >= `LATE_MIN_DURATION`.** Условие равенства выключено по умолчанию — на honest holdout оно ухудшало solo на 5–7 п.п., тогда как фильтр по длине давал +6 п.п. над прежним правилом.
+- `ANALISE_LATE_MIN_DURATION` (default `36`) — минимальная длительность карты; оптимум пологий (33–39 различаются на 0.8 п.п.), лучший единый порог 36.
+- `ANALISE_LATE_REQUIRE_EQUAL_MOMENT` (default `0`) — `1` возвращает историческое условие «равного момента».
+- `ANALISE_LATE_WR60_START_MINUTE` (default `28`) — с какой минуты искать «равный момент» (читается только при включённом условии).
 - `ANALISE_LATE_EQUAL_GATE_K` (default `1.0`) — множитель порогов лестницы; `<1` требует более равной игры.
-- `ANALISE_LATE_REQUIRE_EQUAL_MOMENT` (default `1`) — `0` отключает условие равенства целиком (в словарь идёт любая карта нужной длины).
 - `ANALISE_LATE_EQUAL_MODE` (default `any`) — `any` ищет равный момент на любой минуте начиная со старта, `at` требует равенства РОВНО на минуте старта.
 - `ANALISE_LATE_RULE` (default `equal`) — какое правило допуска применять: `equal` (всё вышеописанное), `comeback_avg` (историческое правило до 28.04.2026: победитель в среднем отставал >= `ANALISE_LATE_COMEBACK_DEFICIT` в окне `ANALISE_LATE_COMEBACK_WINDOW`, по умолчанию `15,25`, и при `ANALISE_LATE_COMEBACK_REQUIRE_EARLY_LOSS=1` не был ранним доминатором), `comeback_max` (победитель отыграл дефицит: минимум его networth-lead за игру <= `-ANALISE_LATE_COMEBACK_DEFICIT`).
 - `ANALISE_LATE_COMEBACK_DEFICIT` (default `10000`), `ANALISE_LATE_COMEBACK_WINDOW` (default `15,25`), `ANALISE_LATE_COMEBACK_REQUIRE_EARLY_LOSS` (default `1`) — параметры камбек-режимов; при `ANALISE_LATE_RULE=equal` не читаются.
