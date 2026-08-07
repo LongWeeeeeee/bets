@@ -889,13 +889,19 @@ def is_early_match(match, n: int = 3000):
         tuple: (bool, dominator)
             dominator: 'radiant' | 'dire' | None
     """
-    leads = match.get('radiantNetworthLeads', [])
+    leads = match.get('radiantNetworthLeads') or []
     duration = len(leads)
+
+    if not duration:
+        # Карта без networth-полосы (в про-дампах таких ~14%) раньше проходила
+        # как «быстрая» и получала метку по одному лишь победителю. Данных для
+        # ранней фазы у неё нет — в early-выборку она не идёт.
+        return False, None
 
     if duration <= EARLY_FAST_FINISH_MAX_MINUTES:
         did_radiant_win = match.get('didRadiantWin')
         if did_radiant_win is None:
-            win_rates = match.get('winRates', [])
+            win_rates = match.get('winRates') or []
             did_radiant_win = win_rates[-1] > 0.5 if win_rates else None
         if did_radiant_win is not None:
             return True, 'radiant' if did_radiant_win else 'dire'
@@ -1039,12 +1045,12 @@ def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
         bool | tuple: подходит ли матч для late словаря
             При if_check=True возвращает (bool, winner)
     """
-    leads = match.get('radiantNetworthLeads', [])
+    leads = match.get('radiantNetworthLeads') or []
     did_radiant_win = match.get('didRadiantWin')
     duration = len(leads)
     
     if did_radiant_win is None:
-        win_rates = match.get('winRates', [])
+        win_rates = match.get('winRates') or []
         did_radiant_win = win_rates[-1] > 0.5 if win_rates else None
 
     if did_radiant_win is None or duration < LATE_MIN_DURATION:
@@ -1134,12 +1140,12 @@ def is_post_lane_match(match, if_check: bool = False):
     Returns:
         bool | tuple: подходит ли матч, и победитель при if_check=True.
     """
-    leads = match.get('radiantNetworthLeads', [])
+    leads = match.get('radiantNetworthLeads') or []
     did_radiant_win = match.get('didRadiantWin')
     duration = len(leads)
 
     if did_radiant_win is None:
-        win_rates = match.get('winRates', [])
+        win_rates = match.get('winRates') or []
         did_radiant_win = win_rates[-1] > 0.5 if win_rates else None
 
     if did_radiant_win is None or duration < POST_LANE_MIN_DURATION:
@@ -1339,7 +1345,7 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
     did_radiant_win = match.get('didRadiantWin')
     if did_radiant_win is None:
         # Используем последний элемент winRates
-        win_rates = match.get('winRates', [])
+        win_rates = match.get('winRates') or []
         did_radiant_win = win_rates[-1] > 0.5 if win_rates else False
 
     # В скоупе post_lane-solo? Раньше это был жёстко последний патч, из-за чего
