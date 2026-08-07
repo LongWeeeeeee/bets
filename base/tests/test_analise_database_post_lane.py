@@ -124,7 +124,9 @@ def test_post_lane_minute_10_gate_applies_only_when_enabled(monkeypatch) -> None
     Карта с большим NW-перевесом на 10-й минуте: при выключенном гейте она
     попадает в словарь, при включённом — отсекается.
     """
-    match = _match(duration=25, minute_10_lead=2500)
+    # длина 30: с 2026-08-07 POST_LANE_MIN_DURATION = 28 (E-52), карта на 25 минут
+    # больше не проходит порог допуска и до гейта минуты 10 просто не доходит.
+    match = _match(duration=30, minute_10_lead=2500)
 
     monkeypatch.setattr(stats, "ANALISE_POST_LANE_MINUTE10_GATE_ENABLED", False)
     default_dict = {}
