@@ -610,10 +610,17 @@ def lanes(match, lane_dict):
 # НАСТРОЙКИ ФИЛЬТРОВ EARLY/LATE (подбираются экспериментально)
 # ============================================================================
 # Early: требуем близкий networth на gate-точке и ищем ранний перевес.
-EARLY_GATE_INDEX = 9                 # фильтр на leads[9] (minute 10)
-EARLY_GATE_MAX_ABS_LEAD = 2000       # игра не должна разъехаться до early-gate
-EARLY_LEAD_WINDOW = (20, 28)         # реальные минуты достижения 20% comeback threshold
-EARLY_FAST_FINISH_MAX_MINUTES = 34   # быстрые карты считаем early по победителю
+# Параметры популяции early. Были зашиты числами и ни разу не перебирались, хотя
+# `EARLY_GATE_MAX_ABS_LEAD` — прямой аналог условия равенства у late, снятие
+# которого дало +4.5…+11 п.п. (E-53). Вынесены в env; дефолты = прежним числам,
+# поэтому без явной установки поведение не меняется.
+EARLY_GATE_INDEX = int(os.getenv("ANALISE_EARLY_GATE_MINUTE", "10")) - 1  # индекс leads
+EARLY_GATE_MAX_ABS_LEAD = int(os.getenv("ANALISE_EARLY_GATE_MAX_ABS_LEAD", "2000"))
+EARLY_LEAD_WINDOW = (
+    int(os.getenv("ANALISE_EARLY_LEAD_WINDOW_FROM", "20")),
+    int(os.getenv("ANALISE_EARLY_LEAD_WINDOW_TO", "28")),
+)
+EARLY_FAST_FINISH_MAX_MINUTES = int(os.getenv("ANALISE_EARLY_FAST_FINISH_MAX", "34"))
 
 # Late: длинная игра, где networth gap не разъехался сильнее WR60 ladder.
 # Все четыре параметра правила сбора вынесены в env для A/B-пересборок словаря;
