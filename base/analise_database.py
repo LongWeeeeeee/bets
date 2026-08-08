@@ -661,6 +661,12 @@ EARLY_FAST_FINISH_MAX_MINUTES = int(os.getenv("ANALISE_EARLY_FAST_FINISH_MAX", "
 # 28 короткие проседают до 79.5. Взят край плато с запасом.
 EARLY_MIN_DURATION = int(os.getenv("ANALISE_EARLY_MIN_DURATION", "24"))
 
+# Популяция early_dict (см. `is_early_nw_match`): у него свой вопрос — «кто
+# наберёт ранний перевес», поэтому ни ветка быстрых карт, ни гейт ему не нужны.
+# Обе ручки возвращают прежнее поведение.
+EARLY_NW_USE_FAST_BRANCH = _env_bool("ANALISE_EARLY_NW_USE_FAST_BRANCH", False)
+EARLY_NW_USE_GATE = _env_bool("ANALISE_EARLY_NW_USE_GATE", False)
+
 # Late: длинная игра, где networth gap не разъехался сильнее WR60 ladder.
 # Все четыре параметра правила сбора вынесены в env для A/B-пересборок словаря;
 # дефолты равны историческим значениям, поведение прода без env не меняется.
@@ -912,6 +918,53 @@ def _first_dynamic_threshold_reach(match, leads, start_minute, end_minute):
         if threshold is not None and abs(lead) >= threshold:
             return dominator, minute
     return None, None
+
+
+def is_early_nw_match(match):
+    """Популяция `early_dict`: карта идёт в словарь, ТОЛЬКО если ранний перевес
+    реально сложился по маркеру в окне EARLY_LEAD_WINDOW.
+
+    Отличие от `is_early_match` (популяция `early_end_dict`) — нет ветки быстрых
+    карт и нет гейта на 10-й минуте. Замер E-60 при равном объёме, цель —
+    предсказать ранний перевес:
+
+        как сейчас (быстрая ветка до 40 + маркер)  80.4 / 78.2 / 74.3 / 69.7
+        только маркер, без гейта                   86.6 / 83.6 / 79.8 / 75.5
+
+    На НЕЗАВИСИМОЙ цели (знак фактического среднего перевеса на 24-28 минуте, на
+    неё не учился ни один вариант) — 79.6 / 77.3 / 73.0 / 69.9 против
+    74.0 / 69.5 / 68.6 / 65.7, то есть эффект не тавтология метки.
+
+    Почему ветка мешала: она размечает 92% карт словаря ЧУЖОЙ функцией —
+    победителем карты вместо доминатора. Гейт же вместе с маркером оставляет
+    очень узкий класс «на 10-й ровно, потом разгром» (11% карт) и роняет
+    метрику до 62%.
+
+    Прежнее поведение возвращается переменными окружения.
+    """
+    leads = match.get('radiantNetworthLeads') or []
+    duration = len(leads)
+    if not duration or duration < EARLY_MIN_DURATION:
+        return False, None
+
+    if EARLY_NW_USE_FAST_BRANCH and duration <= EARLY_FAST_FINISH_MAX_MINUTES:
+        did_radiant_win = match.get('didRadiantWin')
+        if did_radiant_win is not None:
+            return True, 'radiant' if did_radiant_win else 'dire'
+
+    if EARLY_NW_USE_GATE and ANALISE_EARLY_MINUTE10_GATE_ENABLED:
+        if duration <= EARLY_GATE_INDEX:
+            return False, None
+        gate_lead = _as_float(leads[EARLY_GATE_INDEX])
+        if gate_lead is None or abs(gate_lead) > EARLY_GATE_MAX_ABS_LEAD:
+            return False, None
+
+    dominator, _minute = _first_dynamic_threshold_reach(
+        match, leads, EARLY_LEAD_WINDOW[0], EARLY_LEAD_WINDOW[1]
+    )
+    if dominator is None:
+        return False, None
+    return True, dominator
 
 
 def _late_wr60_gap_hit(leads, start_minute=LATE_WR60_START_MINUTE):
@@ -1427,16 +1480,22 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
         is_latest_patch = False
 
     # 3. Обработка EARLY словарей
-    # Используем новый фильтр is_early_match()
-    # early_dict: true = NW dominator (current production semantics)
-    # early_end_dict: true = map winner (same early sample gates)
-    early_result, dominator = is_early_match(match)
+    # У двух словарей РАЗНЫЕ вопросы, поэтому с 09.08 у них разные популяции
+    # (E-60). early_dict спрашивает «кто наберёт ранний перевес» — ему нужна
+    # только ветка маркера; ветка «карта короткая, значит доминатор = победитель»
+    # размечает 92% его карт ЧУЖОЙ функцией и стоит 4-8 п.п. на независимой цели
+    # (знак фактического перевеса на 24-28'). early_end_dict спрашивает «кто
+    # выиграет карту», и для него та же ветка, наоборот, полезна.
+    early_result, dominator = is_early_nw_match(match)
     if early_result:
         if early_dict is not None and _early_tower_ok(match, dominator):
             r_val = 1 if dominator == 'radiant' else 0
             d_val = 1 if dominator == 'dire' else 0
             _add_combinations_to_dict(r_by_pos, d_by_pos, early_dict, r_val, d_val)
             updated = True
+
+    early_win_result, _ = is_early_match(match)
+    if early_win_result:
         if early_end_dict is not None:
             winner_side = 'radiant' if did_radiant_win else 'dire'
             if _early_tower_ok(match, winner_side):

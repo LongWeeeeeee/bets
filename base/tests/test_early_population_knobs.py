@@ -104,3 +104,30 @@ def _restore():
     for key in [k for k in os.environ if k.startswith("ANALISE_EARLY_")]:
         os.environ.pop(key, None)
     importlib.reload(analise_database)
+
+
+def test_early_nw_population_needs_marker_not_winner(monkeypatch):
+    """early_dict больше не берёт короткую карту по одному лишь победителю.
+
+    Ветка «карта короче FF -> доминатор = победитель» размечала 92% его карт
+    чужой функцией и стоила 4-8 п.п. на независимой цели (E-60). Для
+    early_end_dict она осталась — у него другой вопрос.
+    """
+    ad = _reload(monkeypatch)
+    # Короткая карта без раннего перевеса: победитель есть, маркер не сработал.
+    leads = [0] * 9 + [100] + [500] * 20
+    match = {"radiantNetworthLeads": leads, "didRadiantWin": True}
+    assert ad.is_early_nw_match(match) == (False, None)
+    assert ad.is_early_match(match) == (True, "radiant")
+
+
+def test_early_nw_population_takes_dominator_regardless_of_gate(monkeypatch):
+    """Гейт 10-й минуты для early_dict больше не применяется."""
+    ad = _reload(monkeypatch)
+    leads = [0] * 9 + [9000] + [1000] * 9 + [9000] * 12
+    match = {"radiantNetworthLeads": leads, "didRadiantWin": False}
+    ok, dominator = ad.is_early_nw_match(match)
+    assert ok is True and dominator == "radiant"
+    # Прежнее поведение возвращается ручкой.
+    ad = _reload(monkeypatch, ANALISE_EARLY_NW_USE_GATE=1)
+    assert ad.is_early_nw_match(match) == (False, None)

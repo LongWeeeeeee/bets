@@ -122,7 +122,15 @@ def test_analise_writes_both_early_labels_on_diverging_match():
     assert early_end[d_key]["games"] == 1
 
 
-def test_analise_fast_map_both_labels_match_winner():
+def test_analise_fast_map_without_early_lead_goes_only_to_early_end():
+    """Быстрая карта без раннего перевеса идёт ТОЛЬКО в early_end.
+
+    До 09.08 обе популяции совпадали, и такая карта попадала и в early_dict —
+    с меткой победителя, то есть чужой функцией. Замер E-60 показал, что этим
+    размечены 92% карт словаря и стоит это 4-8 п.п. на независимой цели, поэтому
+    популяции разделены: early_dict берёт карту, только если ранний перевес
+    реально сложился по маркеру.
+    """
     match = _fast_match(did_radiant_win=True)
     early_nw: dict = {}
     early_end: dict = {}
@@ -136,6 +144,6 @@ def test_analise_fast_map_both_labels_match_winner():
     )
     assert updated is True
     r_key = "1pos1"
-    # fast maps: NW dominator == winner, so both dicts agree
-    assert early_nw[r_key]["wins"] == 1
+    assert early_nw == {}
     assert early_end[r_key]["wins"] == 1
+    assert early_end[r_key]["games"] == 1
