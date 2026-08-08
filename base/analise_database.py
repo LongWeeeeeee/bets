@@ -658,6 +658,16 @@ LATE_DEFICIT_MINUTE = int(os.getenv("ANALISE_LATE_DEFICIT_MINUTE", "30"))
 #                 Условие про состояние карты, не про исход (E-43).
 LATE_TOWER_MINUTE = int(os.getenv("ANALISE_LATE_TOWER_MINUTE", "32"))
 LATE_TOWER_MIN_GAP = int(os.getenv("ANALISE_LATE_TOWER_MIN_GAP", "2"))
+# Вторая, БОЛЕЕ РАННЯЯ минута: требуем, чтобы структура тогда была ещё ровной.
+# Зачем. `_tower_structure_score(match, M)` считает все падения башен со временем
+# меньше M и НЕ требует, чтобы матч дожил до M. Поэтому одиночное условие на
+# поздней минуте вырождается: у законченной игры перекос почти всегда есть, и
+# правило пропускает 88% корпуса вместо 26% (замер 08.08). Пара условий
+# «ровно на EVEN_MINUTE и разошлось к TOWER_MINUTE» отбирает именно игры, которые
+# решились ПОЗДНО, — а это и есть популяция late-блока.
+# 0 = выключено, поведение прежнее.
+LATE_TOWER_EVEN_MINUTE = int(os.getenv("ANALISE_LATE_TOWER_EVEN_MINUTE", "0"))
+LATE_TOWER_EVEN_MAX_GAP = int(os.getenv("ANALISE_LATE_TOWER_EVEN_MAX_GAP", "1"))
 # Чему учится словарь (МАРКЕР, а не правило допуска):
 #   'winner'     — победитель карты (все наши словари исторически такие);
 #   'tower_lead' — сторона, у которой к минуте TOWER_MINUTE башни целее.
@@ -1074,6 +1084,11 @@ def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
 
     if LATE_RULE == 'tower_gap':
         ok = _tower_gap_hit(match, LATE_TOWER_MINUTE, LATE_TOWER_MIN_GAP)
+        if ok and LATE_TOWER_EVEN_MINUTE > 0:
+            # Игра должна была быть ещё СТРУКТУРНО РОВНОЙ на ранней минуте:
+            # иначе в выборку попадают партии, решённые задолго до TOWER_MINUTE.
+            early = _tower_structure_score(match, LATE_TOWER_EVEN_MINUTE)
+            ok = early is not None and abs(early[0] - early[1]) <= LATE_TOWER_EVEN_MAX_GAP
         return (ok, winner if ok else None) if if_check else ok
 
     if LATE_RULE == 'deficit_state':
