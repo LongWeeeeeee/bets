@@ -30,7 +30,9 @@ def _reload(monkeypatch, **env):
 def test_defaults_match_previous_hardcoded_values(monkeypatch):
     ad = _reload(monkeypatch)
     assert ad.EARLY_GATE_INDEX == 9
-    assert ad.EARLY_GATE_MAX_ABS_LEAD == 2000
+    # 2000 -> 500 по итогам E-57/E-58: ужесточение не стоит покрытия (100% карт
+    # при любом гейте), а точность растёт до плато 250-1000.
+    assert ad.EARLY_GATE_MAX_ABS_LEAD == 500
     assert ad.EARLY_LEAD_WINDOW == (20, 28)
     assert ad.EARLY_FAST_FINISH_MAX_MINUTES == 34
 

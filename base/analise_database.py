@@ -631,10 +631,17 @@ def lanes(match, lane_dict):
 # Early: требуем близкий networth на gate-точке и ищем ранний перевес.
 # Параметры популяции early. Были зашиты числами и ни разу не перебирались, хотя
 # `EARLY_GATE_MAX_ABS_LEAD` — прямой аналог условия равенства у late, снятие
-# которого дало +4.5…+11 п.п. (E-53). Вынесены в env; дефолты = прежним числам,
-# поэтому без явной установки поведение не меняется.
+# которого дало +4.5…+11 п.п. (E-53). Вынесены в env.
+#
+# Гейт 2000 -> 500 (решение alex 08.08 по итогам E-57 и E-58). Ужесточение не
+# стоит ничего: ячеек 635, все выше порога 50 игр при любом гейте, покрытие
+# holdout остаётся 100%, а объём отбора даже растёт. Точность: 54.8% при 2000,
+# 55.6% при 1000, 55.8% при 500; ниже 1000 кривая ложится на плато (250/500/750
+# в пределах 0.3 п.п.), поэтому взята середина плато, а не край.
+# Гейт действует ТОЛЬКО на картах длиннее EARLY_FAST_FINISH_MAX_MINUTES —
+# короткие идут в словарь целиком с меткой победителя.
 EARLY_GATE_INDEX = int(os.getenv("ANALISE_EARLY_GATE_MINUTE", "10")) - 1  # индекс leads
-EARLY_GATE_MAX_ABS_LEAD = int(os.getenv("ANALISE_EARLY_GATE_MAX_ABS_LEAD", "2000"))
+EARLY_GATE_MAX_ABS_LEAD = int(os.getenv("ANALISE_EARLY_GATE_MAX_ABS_LEAD", "500"))
 EARLY_LEAD_WINDOW = (
     int(os.getenv("ANALISE_EARLY_LEAD_WINDOW_FROM", "20")),
     int(os.getenv("ANALISE_EARLY_LEAD_WINDOW_TO", "28")),
