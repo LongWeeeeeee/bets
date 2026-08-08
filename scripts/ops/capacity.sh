@@ -19,6 +19,19 @@ echo "  ядер: $cores, load: $load, свободно ≈ $free"
 echo "  наших python-прогонов: $(pgrep -fc 'venv_catboost/bin/python3' 2>/dev/null || echo 0)"
 df -h . | tail -1 | awk '{print "  диск: занято "$5", свободно "$4}'
 
+echo "=== SERV2 (Apple M1, 8 ядер / 8 ГБ, локальная сеть) ==="
+PW=$(cd "$(dirname "$0")/../.." && venv_catboost/bin/python3 -c "import sys; sys.path.insert(0,'base'); import keys; print(keys.serv_passwd)" 2>/dev/null)
+if [ -n "$PW" ] && command -v sshpass >/dev/null; then
+  sshpass -p "$PW" ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no serv2 '
+    cores=$(sysctl -n hw.ncpu)
+    load=$(uptime | sed "s/.*averages*: *//" | awk "{print \$1}" | tr "," ".")
+    echo "  ядер: $cores, load: $load, свободно ≈ $(echo "$cores $load" | awk "{printf \"%.1f\", \$1-\$2}")"
+    df -h / | tail -1 | awk "{print \"  диск: занято \"\$5\", свободно \"\$4}"
+  ' 2>/dev/null || echo "  serv2 недоступен"
+else
+  echo "  нет sshpass или пароля в base/keys.py"
+fi
+
 echo "=== SERV1 ==="
 ssh -o ConnectTimeout=15 "$SERVER" '
   cores=$(nproc)
@@ -37,4 +50,10 @@ cat <<'HINT'
   - прогон check_old_maps (RSS ~2.5 ГБ)          -> не больше 3 параллельно на машину
   - сторожевые циклы pgrep НЕ писать в одной строке с именем целевого процесса:
     цикл найдёт сам себя и повиснет навсегда (проверено на баракaх 07.08)
+
+serv2 (появился 08.08): Apple M1, 8 ядер / 8 ГБ, 36 ГБ диска, в локальной сети.
+  - репозитория и корпуса там НЕТ; сеть быстрая, 200 МБ уходят мгновенно
+  - памяти всего 8 ГБ: check_old_maps (RSS 2.5 ГБ) — максимум 2 параллельно
+  - для сборок словарей нужен корпус 26 ГБ: влезет, но останется 10 ГБ — тесно
+  - доступ: sshpass с keys.serv_passwd, ключ не прописан
 HINT
