@@ -154,7 +154,7 @@ def test_lane_dict_ignores_imp_field() -> None:
 
 
 def test_early_filter_uses_networth_dominator_not_match_winner() -> None:
-    match = _match(duration=35, radiant_win=False)
+    match = _match(duration=45, radiant_win=False)
     match["radiantNetworthLeads"][19] = 6100
 
     ok, dominator = stats.is_early_match(match)
@@ -165,7 +165,7 @@ def test_early_filter_uses_networth_dominator_not_match_winner() -> None:
 
 def test_early_gate_reads_index_9_not_10() -> None:
     # Minute-10 STAR gate must use zero-based index 9, not 10 (minute 11).
-    match = _match(duration=35, radiant_win=True)
+    match = _match(duration=45, radiant_win=True)
     match["radiantNetworthLeads"][9] = 5000
     match["radiantNetworthLeads"][10] = 100
     match["radiantNetworthLeads"][19] = 7000
@@ -178,7 +178,7 @@ def test_early_gate_reads_index_9_not_10() -> None:
 
 def test_early_gate_allows_when_index_9_within_max() -> None:
     # Adjacent mapping: idx9 decides gate; idx10 must not decide allow/reject.
-    match = _match(duration=35, radiant_win=True)
+    match = _match(duration=45, radiant_win=True)
     match["radiantNetworthLeads"][9] = 100
     match["radiantNetworthLeads"][10] = 5000
     match["radiantNetworthLeads"][19] = 7000
@@ -196,7 +196,7 @@ def test_early_gate_index_is_minute_10_zero_based() -> None:
 
 def test_early_gate_missing_gate_value_rejects() -> None:
     # Missing/None at the gate index rejects; threshold window must not override.
-    match = _match(duration=35, radiant_win=True)
+    match = _match(duration=45, radiant_win=True)
     match["radiantNetworthLeads"][9] = None
     match["radiantNetworthLeads"][10] = 100
     match["radiantNetworthLeads"][19] = 7000
@@ -217,7 +217,7 @@ def test_early_filter_fast_finish_uses_winner_and_bypasses_gate() -> None:
 
 
 def test_early_filter_threshold_window_ends_at_28() -> None:
-    match = _match(duration=35, radiant_win=True)
+    match = _match(duration=45, radiant_win=True)
     match["radiantNetworthLeads"][28] = 20000
 
     ok, dominator = stats.is_early_match(match)
@@ -227,7 +227,7 @@ def test_early_filter_threshold_window_ends_at_28() -> None:
 
 
 def test_early_filter_uses_alchemist_leading_thresholds() -> None:
-    match = _match(duration=35, radiant_win=True)
+    match = _match(duration=45, radiant_win=True)
     match["players"][0]["heroId"] = stats.ALCHEMIST_HERO_ID
     match["radiantNetworthLeads"][23] = 7500
 
@@ -238,7 +238,7 @@ def test_early_filter_uses_alchemist_leading_thresholds() -> None:
 
 
 def test_early_filter_uses_alchemist_trailing_thresholds() -> None:
-    match = _match(duration=35, radiant_win=True)
+    match = _match(duration=45, radiant_win=True)
     match["players"][5]["heroId"] = stats.ALCHEMIST_HERO_ID
     match["radiantNetworthLeads"][23] = 6600
 

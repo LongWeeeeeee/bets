@@ -646,7 +646,20 @@ EARLY_LEAD_WINDOW = (
     int(os.getenv("ANALISE_EARLY_LEAD_WINDOW_FROM", "20")),
     int(os.getenv("ANALISE_EARLY_LEAD_WINDOW_TO", "28")),
 )
-EARLY_FAST_FINISH_MAX_MINUTES = int(os.getenv("ANALISE_EARLY_FAST_FINISH_MAX", "34"))
+# Порог «быстрой карты» 34 -> 40 (решение alex 08.08 по итогам E-59). До этой
+# минуты карта идёт в словарь целиком с меткой победителя, дальше ищется
+# NW-доминатор. Развёртка 34/40/45/50/55/снят: 40 выигрывает во ВСЕХ бакетах
+# длительности (0-28: 82.1 против 81.2, 28-34: 73.1 против 70.6, 34-40: 61.5
+# против 56.6, 40+: 48.8 против 46.6), а дальше на коротких картах падение до
+# 71.0 — победа на 55-й минуте раннюю силу уже не отражает.
+EARLY_FAST_FINISH_MAX_MINUTES = int(os.getenv("ANALISE_EARLY_FAST_FINISH_MAX", "40"))
+
+# Минимальная длина карты для early. Ручки не существовало вовсе: разгром за
+# 12 минут попадал в словарь наравне с осмысленной ранней игрой. Поминутная
+# развёртка 20-28 (E-59): до 24-25 на коротких картах не теряется ничего
+# (81.1-81.2), а на 34-40 растёт (56.6 -> 57.2); после 26 начинается размен, на
+# 28 короткие проседают до 79.5. Взят край плато с запасом.
+EARLY_MIN_DURATION = int(os.getenv("ANALISE_EARLY_MIN_DURATION", "24"))
 
 # Late: длинная игра, где networth gap не разъехался сильнее WR60 ladder.
 # Все четыре параметра правила сбора вынесены в env для A/B-пересборок словаря;
@@ -921,7 +934,9 @@ def is_early_match(match, n: int = 3000):
     Проверяет, подходит ли матч для early словаря.
     
     ЛОГИКА EARLY:
-    - Быстрые карты duration <= 34 минут считаются early; dominator = winner
+    - Карты короче EARLY_MIN_DURATION (24 мин) не берутся вовсе
+    - Быстрые карты duration <= EARLY_FAST_FINISH_MAX_MINUTES (40 мин) считаются
+      early; dominator = winner
     - Для длинных карт на gate-точке leads[9] (minute 10) игра не должна быть уже слишком разъехавшейся
     - Early dominator = кто первым достиг 20% comeback networth threshold
       в окне 20-28 минут
@@ -942,6 +957,9 @@ def is_early_match(match, n: int = 3000):
         # Карта без networth-полосы (в про-дампах таких ~14%) раньше проходила
         # как «быстрая» и получала метку по одному лишь победителю. Данных для
         # ранней фазы у неё нет — в early-выборку она не идёт.
+        return False, None
+
+    if duration < EARLY_MIN_DURATION:
         return False, None
 
     if duration <= EARLY_FAST_FINISH_MAX_MINUTES:
