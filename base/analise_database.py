@@ -100,6 +100,24 @@ KILLS_WINDOW_BUILD_HIGH_ORDER = str(
 ).strip().lower() not in ("", "0", "false", "no", "off")
 
 
+# Вес текущего матча при накоплении счётчиков. Ставится билдером перед обработкой
+# очередного патча (см. ANALISE_PATCH_WEIGHT_HALFLIFE в explore_database.py) и
+# умножает вклад матча в `games`/`wins`/`draws`. По умолчанию 1.0 — поведение
+# прежнее, счётчики остаются целыми.
+#
+# Зачем глобальная переменная, а не аргумент: инкремент вызывается из десятков
+# мест по всему модулю, и протаскивать вес через каждую сигнатуру значит трогать
+# весь рабочий код ради эксперимента. Билдер обрабатывает патчи ПОСЛЕДОВАТЕЛЬНО,
+# файл за файлом, поэтому гонки здесь нет.
+MATCH_WEIGHT = 1.0
+
+
+def set_match_weight(weight: float) -> None:
+    """Вес вклада последующих матчей; билдер зовёт это на каждом патче."""
+    global MATCH_WEIGHT
+    MATCH_WEIGHT = max(0.0, float(weight))
+
+
 def _append_to_dict(target_dict, key, value, is_defaultdict=None):
     """
     Вспомогательная функция для добавления значения в словарь.
@@ -115,11 +133,12 @@ def _append_to_dict(target_dict, key, value, is_defaultdict=None):
     """
     if key not in target_dict:
         target_dict[key] = {'wins': 0, 'draws': 0, 'games': 0}
-    target_dict[key]['games'] += 1
+    w = MATCH_WEIGHT
+    target_dict[key]['games'] += w
     if value == 1:
-        target_dict[key]['wins'] += 1
+        target_dict[key]['wins'] += w
     elif value == 0.5:
-        target_dict[key]['draws'] += 1
+        target_dict[key]['draws'] += w
 
 
 def _append_lane_entry(target_dict, key, value, kills10_diff=None):

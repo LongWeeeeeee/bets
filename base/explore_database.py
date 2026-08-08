@@ -1636,8 +1636,23 @@ def _main_impl(
     seen_match_ids: set = set()
     started_at = time.monotonic()
 
+    # Веса патчей: чем старше патч, тем меньше вклад его матчей в счётчики.
+    # Полураспад задаётся в ШАГАХ ПАТЧЕЙ (7.41e -> 7.41d -> ... ), 0 = выключено.
+    # Порядок патчей берём из имён файлов `{patch}_part{N}.json`.
+    patch_halflife = float(os.getenv("ANALISE_PATCH_WEIGHT_HALFLIFE", "0") or "0")
+    patch_rank: dict[str, int] = {}
+    if patch_halflife > 0:
+        patches = sorted({f.name.rsplit("_part", 1)[0] for f in pub_files if "_part" in f.name})
+        # patches отсортированы по возрастанию: последний — самый свежий.
+        patch_rank = {p: (len(patches) - 1 - i) for i, p in enumerate(patches)}
+        print(f"  Веса патчей: полураспад {patch_halflife:g} шагов, "
+              f"порядок {' < '.join(patches)}", flush=True)
+
     for idx, file in enumerate(pub_files, 1):
         file_started_at = time.monotonic()
+        if patch_halflife > 0:
+            age = patch_rank.get(file.name.rsplit("_part", 1)[0], 0)
+            analise_database_module.set_match_weight(0.5 ** (age / patch_halflife))
         print(f"  [{idx}/{len(pub_files)}] Обработка {file.name}...", end=" ", flush=True)
         file_train = 0
         file_excluded = 0
