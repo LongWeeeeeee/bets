@@ -6182,6 +6182,13 @@ LANE_2V2_MIN_GAMES = _lane_min_games_env("LANE_2V2_MIN_GAMES", 30)
 # до ветки counterpick_lanes, которая усредняет четыре пары. Вернуть прежнее
 # поведение — переменной LANE_2V1_MIN_GAMES.
 LANE_2V1_MIN_GAMES = _lane_min_games_env("LANE_2V1_MIN_GAMES", 10 ** 9)
+# Средняя линия — это чистый 1v1 (pos2 против pos2, ключ из `1v1_lanes`), но
+# исторически она читала порог LANE_2V1_MIN_GAMES: одна и та же переменная стояла
+# в двух не связанных ветках `lane_2vs1`. Из-за этого отключение боковой ветки
+# 2v1 обнулило mid целиком (дым-тест на боевом словаре: 399/400 вердиктов -> 0).
+# Порог вынесен отдельно и равен прежнему значению 2v1 (20), чтобы поведение mid
+# не менялось; его собственная калибровка не проводилась.
+LANE_MID_MIN_GAMES = _lane_min_games_env("LANE_MID_MIN_GAMES", 20)
 LANE_1V1_MIN_GAMES = _lane_min_games_env("LANE_1V1_MIN_GAMES", 50)
 LANE_SYNERGY_MIN_GAMES = _lane_min_games_env("LANE_SYNERGY_MIN_GAMES", 30)
 LANE_SOLO_MIN_GAMES = _lane_min_games_env("LANE_SOLO_MIN_GAMES", 10)
@@ -6586,7 +6593,7 @@ def lane_2vs1(radiant, dire, heroes_data, lane, core_support_side_lanes=False):
     elif lane == 'mid':
         key = f'{radiant["pos2"]["hero_id"]}pos2_vs_{dire["pos2"]["hero_id"]}pos2'
         stats, invert, _, _ = _get_lane_stats_for_key(key, heroes_data)
-        probs = _lane_probs_from_stats(stats, LANE_2V1_MIN_GAMES, invert=invert)
+        probs = _lane_probs_from_stats(stats, LANE_MID_MIN_GAMES, invert=invert)
         if probs:
             output.setdefault('mid_radiant', {}).update(probs)
     return output

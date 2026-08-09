@@ -251,3 +251,26 @@ def test_counterpick_lanes_adds_2v2_as_fifth_member_not_replacement():
     # перевернуть его: пятый член из пяти, а не единственный источник
     assert with_pair["win"] < without_pair["win"]
     assert with_pair["win"] > 50
+
+
+def test_mid_lane_survives_disabled_2v1_branch():
+    """Средняя линия не зависит от порога боковой ветки 2v1 (E-66).
+
+    Регрессия, пойманная дым-тестом на боевом словаре: mid читает ключ pos2 vs
+    pos2 из `1v1_lanes`, но брал порог LANE_2V1_MIN_GAMES. Когда ветку 2v1
+    выключили (порог до недостижимого), mid обнулился целиком — 399 из 400 карт
+    остались без вердикта. Порог у mid теперь свой.
+    """
+    radiant = _heroes(0)
+    dire = _heroes(10)
+    heroes_data = {
+        "1v1_lanes": {"2pos2_vs_12pos2": {"wins": 40, "draws": 5, "games": 60}},
+        "2v1_lanes": {},
+    }
+
+    # ветка 2v1 выключена ровно так, как в проде
+    assert lane_functions.LANE_2V1_MIN_GAMES > 10 ** 6
+    layer = lane_functions.lane_2vs1(radiant, dire, heroes_data, "mid")
+
+    assert layer.get("mid_radiant"), "mid остался без статистики при выключенной ветке 2v1"
+    assert layer["mid_radiant"]["win"] > layer["mid_radiant"]["lose"]
