@@ -6190,6 +6190,22 @@ LANE_2V1_MIN_GAMES = _lane_min_games_env("LANE_2V1_MIN_GAMES", 10 ** 9)
 # не менялось; его собственная калибровка не проводилась.
 LANE_MID_MIN_GAMES = _lane_min_games_env("LANE_MID_MIN_GAMES", 20)
 LANE_1V1_MIN_GAMES = _lane_min_games_env("LANE_1V1_MIN_GAMES", 50)
+# Ключи 2v1/1v2 возвращены в ансамбль `counterpick_lanes` — но не равным членом,
+# а с весом, который подобрала логистическая регрессия по всем слоям сразу
+# (про-корпус, 6 708 линий; ячейки, обучение и проверка на непересекающихся
+# данных):
+#   pairs4 +6.704 | 2v1/1v2 +2.853 | 2v2 +0.139 | solo +0.017 | синергия +0.015
+# Прибавка на про: AUC 0.7096 -> 0.7133, точность 64.7 -> 65.3%, топ-2000
+# 78.3 -> 79.1%. В E-66 этот же слой признавался бесполезным — но там он входил
+# РАВНЫМ членом простого среднего и разбавлял четвёрку пар вместо того, чтобы её
+# дополнять. Вес решает: 2.853/6.704 = 0.43 от блока пар, а блок пар несёт
+# суммарный вес 4 (по единице на пару), отсюда 4 * 0.43 = 1.7.
+LANE_DUO_VS_SOLO_WEIGHT = float(os.getenv("LANE_DUO_VS_SOLO_WEIGHT", "1.7"))
+LANE_2V1_ENSEMBLE_MIN_GAMES = _lane_min_games_env("LANE_2V1_ENSEMBLE_MIN_GAMES", 20)
+# Ячейка 2v2 остаётся, но её прежний вес 1.0 моделью не подтверждён: 0.139/6.704
+# = 0.02 от блока пар, то есть 4 * 0.02 = 0.08. Совпадает с кривой порога, где
+# значения 30 и 200 неразличимы, — вклад ячейки близок к нулю в обе стороны.
+LANE_PAIR_VS_PAIR_WEIGHT = float(os.getenv("LANE_PAIR_VS_PAIR_WEIGHT", "0.08"))
 LANE_SYNERGY_MIN_GAMES = _lane_min_games_env("LANE_SYNERGY_MIN_GAMES", 30)
 LANE_SOLO_MIN_GAMES = _lane_min_games_env("LANE_SOLO_MIN_GAMES", 10)
 LANE_SOURCE_CONFIDENCE_DELTAS = {
@@ -6649,6 +6665,7 @@ def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, 
     """
     heroes_data_1v1 = heroes_data.get('1v1_lanes', {})
     heroes_data_2v2 = heroes_data.get('2v2_lanes', {})
+    heroes_data_2v1 = heroes_data.get('2v1_lanes', {})
 
     def _pair_bucket(radiant_pair, dire_pair):
         """Ячейка 2v2, если она набрала достаточно игр."""
@@ -6660,7 +6677,37 @@ def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, 
         )
         return _lane_probs_from_stats(stats, LANE_2V2_MIN_GAMES, invert=invert)
 
-    def _aggregate_matchups(matchups, pair_probs=None):
+    def _duo_vs_solo_bucket(radiant_pair, dire_pair):
+        """Средняя оценка ключей 2v1 и 1v2 — один член ансамбля на все шесть.
+
+        Каждый ключ описывает «пара против одиночки», то есть ту же линию с
+        другой стороны. Усредняются они между собой, а в ансамбль входят одним
+        членом с весом LANE_DUO_VS_SOLO_WEIGHT, иначе шесть ключей задавили бы
+        четыре пары числом.
+        """
+        if not heroes_data_2v1:
+            return None
+        # Билдер пишет ОБЕ формы уже с ориентацией на радианта:
+        #   пара радианта _vs_ одиночка дайра   (2v1)
+        #   одиночка радианта _vs_ пара дайра   (1v2)
+        # Поэтому знак не переворачивается вручную — берётся тот invert, который
+        # вернул сам поиск ключа. Ручной переворот второй половины гасил первую
+        # и давал ровно нулевой эффект при 95% доступности члена.
+        entries = []
+        keys = [f"{radiant_pair[0]},{radiant_pair[1]}_vs_{solo}" for solo in dire_pair]
+        keys += [f"{solo}_vs_{dire_pair[0]},{dire_pair[1]}" for solo in radiant_pair]
+        for key in keys:
+            stats, invert, _, _ = _get_lane_stats_for_key(
+                key, heroes_data_2v1, core_support_side_lanes=core_support_side_lanes,
+            )
+            probs = _lane_probs_from_stats(stats, LANE_2V1_ENSEMBLE_MIN_GAMES, invert=invert)
+            if probs:
+                entries.append((probs, 1.0))
+        if not entries:
+            return None
+        return _lane_probs_weighted_average(entries)
+
+    def _aggregate_matchups(matchups, pair_probs=None, duo_probs=None):
         buckets = []
         for matchup_key in matchups:
             stats, invert, _, _ = _get_lane_stats_for_key(
@@ -6674,9 +6721,12 @@ def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, 
 
         if len(buckets) < 2:
             return None
+        entries = [(bucket, 1.0) for bucket in buckets]
+        if duo_probs:
+            entries.append((duo_probs, LANE_DUO_VS_SOLO_WEIGHT))
         if pair_probs:
-            buckets.append(pair_probs)
-        aggregated = _lane_probs_weighted_average([(bucket, 1.0) for bucket in buckets])
+            entries.append((pair_probs, LANE_PAIR_VS_PAIR_WEIGHT))
+        aggregated = _lane_probs_weighted_average(entries)
         if return_probs:
             return aggregated
         return _lane_prediction_from_probs(aggregated)
@@ -6689,12 +6739,15 @@ def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, 
             f"{radiant_heroes_and_pos['pos5']['hero_id']}pos5_vs_{dire_heroes_and_pos['pos3']['hero_id']}pos3",
             f"{radiant_heroes_and_pos['pos5']['hero_id']}pos5_vs_{dire_heroes_and_pos['pos4']['hero_id']}pos4",
         ]
-        res = _aggregate_matchups(matchups, _pair_bucket(
-            sorted([f"{radiant_heroes_and_pos['pos1']['hero_id']}pos1",
-                    f"{radiant_heroes_and_pos['pos5']['hero_id']}pos5"]),
-            sorted([f"{dire_heroes_and_pos['pos3']['hero_id']}pos3",
-                    f"{dire_heroes_and_pos['pos4']['hero_id']}pos4"]),
-        ))
+        radiant_pair = sorted([f"{radiant_heroes_and_pos['pos1']['hero_id']}pos1",
+                               f"{radiant_heroes_and_pos['pos5']['hero_id']}pos5"])
+        dire_pair = sorted([f"{dire_heroes_and_pos['pos3']['hero_id']}pos3",
+                            f"{dire_heroes_and_pos['pos4']['hero_id']}pos4"])
+        res = _aggregate_matchups(
+            matchups,
+            _pair_bucket(radiant_pair, dire_pair),
+            _duo_vs_solo_bucket(radiant_pair, dire_pair),
+        )
         if res is not None:
             return res
 
@@ -6706,12 +6759,15 @@ def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, 
             f"{radiant_heroes_and_pos['pos4']['hero_id']}pos4_vs_{dire_heroes_and_pos['pos1']['hero_id']}pos1",
             f"{radiant_heroes_and_pos['pos4']['hero_id']}pos4_vs_{dire_heroes_and_pos['pos5']['hero_id']}pos5",
         ]
-        res = _aggregate_matchups(matchups, _pair_bucket(
-            sorted([f"{radiant_heroes_and_pos['pos3']['hero_id']}pos3",
-                    f"{radiant_heroes_and_pos['pos4']['hero_id']}pos4"]),
-            sorted([f"{dire_heroes_and_pos['pos1']['hero_id']}pos1",
-                    f"{dire_heroes_and_pos['pos5']['hero_id']}pos5"]),
-        ))
+        radiant_pair = sorted([f"{radiant_heroes_and_pos['pos3']['hero_id']}pos3",
+                               f"{radiant_heroes_and_pos['pos4']['hero_id']}pos4"])
+        dire_pair = sorted([f"{dire_heroes_and_pos['pos1']['hero_id']}pos1",
+                            f"{dire_heroes_and_pos['pos5']['hero_id']}pos5"])
+        res = _aggregate_matchups(
+            matchups,
+            _pair_bucket(radiant_pair, dire_pair),
+            _duo_vs_solo_bucket(radiant_pair, dire_pair),
+        )
         if res is not None:
             return res
 

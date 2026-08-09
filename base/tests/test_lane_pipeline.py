@@ -274,3 +274,38 @@ def test_mid_lane_survives_disabled_2v1_branch():
 
     assert layer.get("mid_radiant"), "mid остался без статистики при выключенной ветке 2v1"
     assert layer["mid_radiant"]["win"] > layer["mid_radiant"]["lose"]
+
+
+def test_duo_vs_solo_member_keeps_radiant_orientation():
+    """Ключи 2v1 и 1v2 входят в ансамбль без ручного переворота знака.
+
+    Билдер пишет ОБЕ формы уже ориентированными на радианта: «пара радианта
+    против одиночки дайра» и «одиночка радианта против пары дайра». Первая
+    реализация строила обратную форму и переворачивала знак вручную — половина
+    членов уходила с противоположным знаком и гасила вторую, давая ровно нулевой
+    эффект при 95% доступности члена. Тест ловит именно это: когда все ключи
+    говорят «радиант выигрывает», член ансамбля обязан тянуть вверх, а не в ноль.
+    """
+    radiant = _heroes(0)          # pos3=3, pos4=4
+    dire = _heroes(10)            # pos1=11, pos5=15
+    ones = {}
+    for r in ("3pos3", "4pos4"):
+        for d in ("11pos1", "15pos5"):
+            ones[f"{r}_vs_{d}"] = {"wins": 50, "draws": 0, "games": 100}   # ровно
+    two_v_one = {
+        "3pos3,4pos4_vs_11pos1": {"wins": 90, "draws": 0, "games": 100},
+        "3pos3,4pos4_vs_15pos5": {"wins": 90, "draws": 0, "games": 100},
+        "3pos3_vs_11pos1,15pos5": {"wins": 90, "draws": 0, "games": 100},
+        "4pos4_vs_11pos1,15pos5": {"wins": 90, "draws": 0, "games": 100},
+    }
+    heroes_data = {"1v1_lanes": ones, "2v1_lanes": two_v_one, "2v2_lanes": {}}
+
+    with_duo = lane_functions.counterpick_lanes(
+        radiant, dire, heroes_data, "top", return_probs=True)
+    without_duo = lane_functions.counterpick_lanes(
+        radiant, dire, {"1v1_lanes": ones, "2v1_lanes": {}, "2v2_lanes": {}},
+        "top", return_probs=True)
+
+    assert with_duo is not None and without_duo is not None
+    assert without_duo["win"] == pytest.approx(without_duo["lose"], abs=1.0)
+    assert with_duo["win"] > without_duo["win"] + 5
