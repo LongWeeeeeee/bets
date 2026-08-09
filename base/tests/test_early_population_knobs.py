@@ -34,15 +34,16 @@ def test_defaults_match_previous_hardcoded_values(monkeypatch):
     # при любом гейте), а точность растёт до плато 250-1000.
     assert ad.EARLY_GATE_MAX_ABS_LEAD == 500
     assert ad.EARLY_LEAD_WINDOW == (20, 28)
-    # 34 -> 40 и новая ручка минимальной длины по итогам E-59.
+    # 34 -> 40 (E-59); минимальная длина 24 -> 20 (09.08): у early NW маркер и так
+    # требует дожить до 20-й минуты, а 24 выбрасывал 15 тысяч карт задаром.
     assert ad.EARLY_FAST_FINISH_MAX_MINUTES == 40
-    assert ad.EARLY_MIN_DURATION == 24
+    assert ad.EARLY_MIN_DURATION == 20
 
 
 def test_short_match_is_not_early(monkeypatch):
     """Карта короче минимума не идёт в early, даже если победитель известен."""
     ad = _reload(monkeypatch)
-    match = {"radiantNetworthLeads": [100] * 20, "didRadiantWin": True, "players": []}
+    match = {"radiantNetworthLeads": [100] * 18, "didRadiantWin": True, "players": []}
     assert ad.is_early_match(match) == (False, None)
     match["radiantNetworthLeads"] = [100] * 30
     ok, dominator = ad.is_early_match(match)
@@ -50,9 +51,9 @@ def test_short_match_is_not_early(monkeypatch):
 
 
 def test_min_duration_knob_applies(monkeypatch):
-    ad = _reload(monkeypatch, ANALISE_EARLY_MIN_DURATION=18)
-    assert ad.EARLY_MIN_DURATION == 18
-    match = {"radiantNetworthLeads": [100] * 20, "didRadiantWin": True, "players": []}
+    ad = _reload(monkeypatch, ANALISE_EARLY_MIN_DURATION=15)
+    assert ad.EARLY_MIN_DURATION == 15
+    match = {"radiantNetworthLeads": [100] * 18, "didRadiantWin": True, "players": []}
     assert ad.is_early_match(match)[0] is True
 
 
