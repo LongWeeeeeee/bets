@@ -132,7 +132,11 @@ def test_check_match_quality_accepts_secondary_role_from_counts_catalog(monkeypa
         ({"value": [1] * 20}, True),
     ],
 )
-def test_get_values_uses_same_threshold_for_legacy_and_aggregated_stats(stats, should_use):
+def test_get_values_uses_same_threshold_for_legacy_and_aggregated_stats(stats, should_use, monkeypatch):
+    # Тест про СОГЛАСОВАННОСТЬ порога у двух форматов статистики, а не про его
+    # величину. С E-66 ветка 2v1/1v2 выключена (порог поднят до недостижимого),
+    # поэтому здесь он возвращается к прежним 20 — иначе проверяется не то.
+    monkeypatch.setattr(lane_functions, "LANE_2V1_MIN_GAMES", 20, raising=False)
     output = {}
     lane_functions.get_values("bot_radiant", "1pos1,2pos5_vs_3pos3", {"1pos1,2pos5_vs_3pos3": stats}, output)
 
