@@ -34,9 +34,10 @@ def test_defaults_match_previous_hardcoded_values(monkeypatch):
     # при любом гейте), а точность растёт до плато 250-1000.
     assert ad.EARLY_GATE_MAX_ABS_LEAD == 500
     assert ad.EARLY_LEAD_WINDOW == (20, 28)
-    # 34 -> 40 (E-59); минимальная длина 24 -> 20 (09.08): у early NW маркер и так
-    # требует дожить до 20-й минуты, а 24 выбрасывал 15 тысяч карт задаром.
-    assert ad.EARLY_FAST_FINISH_MAX_MINUTES == 40
+    # FF вернулся к 34: подъём до 40 (E-59) мерился на смешанном словаре, а на
+    # собственной популяции early_end максимум ровно на 34. Минимальная длина
+    # 24 -> 20: у early NW маркер и так требует дожить до 20-й минуты.
+    assert ad.EARLY_FAST_FINISH_MAX_MINUTES == 34
     assert ad.EARLY_MIN_DURATION == 20
 
 
