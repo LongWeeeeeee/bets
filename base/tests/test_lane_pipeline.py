@@ -220,3 +220,34 @@ def test_synergy_lanes_uses_side_strength_proxy():
 
     assert outcome == "win"
     assert conf >= 55
+
+
+def test_counterpick_lanes_adds_2v2_as_fifth_member_not_replacement():
+    """Ячейка 2v2 входит В ансамбль, а не подменяет его (E-66).
+
+    До правки каскад брал 2v2 ВМЕСТО четвёрки пар и терял 22 п.п. Теперь она
+    добавляется пятым членом: при 30+ играх это 73.2% против 72.1% у чистого
+    ансамбля, при 10-29 — 67.5% против 67.3%.
+    """
+    radiant = _heroes(0)
+    dire = _heroes(10)
+    # четыре пары 1v1 говорят «радиант выигрывает», ячейка 2v2 — наоборот
+    ones = {}
+    for r in ("3pos3", "4pos4"):
+        for d in ("11pos1", "15pos5"):
+            ones[f"{r}_vs_{d}"] = {"wins": 90, "draws": 0, "games": 100}
+    heroes_data = {
+        "1v1_lanes": ones,
+        "2v2_lanes": {"3pos3,4pos4_vs_11pos1,15pos5": {"wins": 0, "draws": 0, "games": 60}},
+    }
+
+    with_pair = lane_functions.counterpick_lanes(radiant, dire, heroes_data, "top", return_probs=True)
+    without_pair = lane_functions.counterpick_lanes(
+        radiant, dire, {"1v1_lanes": ones, "2v2_lanes": {}}, "top", return_probs=True
+    )
+
+    assert with_pair is not None and without_pair is not None
+    # противоположная по знаку ячейка обязана сдвинуть ансамбль вниз, но не
+    # перевернуть его: пятый член из пяти, а не единственный источник
+    assert with_pair["win"] < without_pair["win"]
+    assert with_pair["win"] > 50

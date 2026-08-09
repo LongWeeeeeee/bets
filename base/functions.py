@@ -6138,11 +6138,16 @@ def _lane_min_games_env(name: str, default: int) -> int:
         return default
 
 
-# 2 -> 30 (E-66, 09.08). Каскад `calculate_lanes` идёт 2v2 -> 2v1 -> 1v1, то есть
-# сначала берёт САМЫЙ СПЕЦИФИЧНЫЙ ключ. При пороге 2 игры он срабатывал на 37.4%
-# боковых линий, медиана игр в сработавшей ячейке — 2, а 63% сработок приходилось
-# на ячейки с 2-3 играми. Винрейт такой ячейки равен 0%, 50% или 100% — это не
-# оценка, а монетка с тремя гранями, и она вытесняла ключи с порогами 20 и 50.
+# 2 -> 30 (E-66, 09.08). Порог служит ДВУМ местам: старой ветке каскада (она
+# теперь почти не срабатывает) и новому пятому члену ансамбля в
+# `counterpick_lanes`. Именно вторым он и полезен: при 30+ играх добавление 2v2
+# к четвёрке пар даёт 73.2% против 72.1%, при 10-29 — 67.5% против 67.3%,
+# а ниже десяти игр вредит (67.1% против 67.7%).
+#
+# Прежнее значение 2 ломало каскад: ветка срабатывала на 37.4% боковых линий,
+# медиана игр в сработавшей ячейке — 2, а 63% сработок приходилось на ячейки с
+# 2-3 играми. Винрейт такой ячейки равен 0%, 50% или 100% — это не оценка, а
+# монетка с тремя гранями, и она вытесняла ключи с порогами 20 и 50.
 #
 # Замер на honest holdout (исход боковой линии, равный объём):
 #   каскад с порогом 2      71.2 / 72.5 / 71.4   (топ-2000 / 6000 / 20000)
@@ -6608,10 +6613,34 @@ def both_found(lane, data, output=None, return_probs=False):
 
 
 def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, lane, return_probs=False, core_support_side_lanes=False):
-    """Анализ индивидуальных 1v1 матчапов на лайне (контрпики)"""
-    heroes_data_1v1 = heroes_data.get('1v1_lanes', {})
+    """Анализ индивидуальных 1v1 матчапов на лайне (контрпики).
 
-    def _aggregate_matchups(matchups):
+    С E-66 сюда же добавляется ячейка 2v2 — ПЯТЫМ членом ансамбля, а не вместо
+    него. Замер на honest holdout по линиям, где такая ячейка есть:
+
+        размер 2v2      один ключ 2v2   ансамбль 1v1   ансамбль + 2v2
+        10-29 игр           65.3%          67.3%          67.5%
+        30+ игр             72.1%          72.1%          73.2%
+
+    Смысл в том, что 2v2 — единственный ключ, описывающий ВСЕХ четверых героев
+    линии. Пары воспроизводят 91% его значения (корреляция 0.910), а оставшаяся
+    десятая доля — взаимодействие, которого в парах нет. Поэтому он добавляет,
+    но не заменяет: сам по себе он на порядок хуже набран.
+    """
+    heroes_data_1v1 = heroes_data.get('1v1_lanes', {})
+    heroes_data_2v2 = heroes_data.get('2v2_lanes', {})
+
+    def _pair_bucket(radiant_pair, dire_pair):
+        """Ячейка 2v2, если она набрала достаточно игр."""
+        if not heroes_data_2v2:
+            return None
+        key = f"{radiant_pair[0]},{radiant_pair[1]}_vs_{dire_pair[0]},{dire_pair[1]}"
+        stats, invert, _, _ = _get_lane_stats_for_key(
+            key, heroes_data_2v2, core_support_side_lanes=core_support_side_lanes,
+        )
+        return _lane_probs_from_stats(stats, LANE_2V2_MIN_GAMES, invert=invert)
+
+    def _aggregate_matchups(matchups, pair_probs=None):
         buckets = []
         for matchup_key in matchups:
             stats, invert, _, _ = _get_lane_stats_for_key(
@@ -6625,6 +6654,8 @@ def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, 
 
         if len(buckets) < 2:
             return None
+        if pair_probs:
+            buckets.append(pair_probs)
         aggregated = _lane_probs_weighted_average([(bucket, 1.0) for bucket in buckets])
         if return_probs:
             return aggregated
@@ -6638,7 +6669,12 @@ def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, 
             f"{radiant_heroes_and_pos['pos5']['hero_id']}pos5_vs_{dire_heroes_and_pos['pos3']['hero_id']}pos3",
             f"{radiant_heroes_and_pos['pos5']['hero_id']}pos5_vs_{dire_heroes_and_pos['pos4']['hero_id']}pos4",
         ]
-        res = _aggregate_matchups(matchups)
+        res = _aggregate_matchups(matchups, _pair_bucket(
+            sorted([f"{radiant_heroes_and_pos['pos1']['hero_id']}pos1",
+                    f"{radiant_heroes_and_pos['pos5']['hero_id']}pos5"]),
+            sorted([f"{dire_heroes_and_pos['pos3']['hero_id']}pos3",
+                    f"{dire_heroes_and_pos['pos4']['hero_id']}pos4"]),
+        ))
         if res is not None:
             return res
 
@@ -6650,7 +6686,12 @@ def counterpick_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, 
             f"{radiant_heroes_and_pos['pos4']['hero_id']}pos4_vs_{dire_heroes_and_pos['pos1']['hero_id']}pos1",
             f"{radiant_heroes_and_pos['pos4']['hero_id']}pos4_vs_{dire_heroes_and_pos['pos5']['hero_id']}pos5",
         ]
-        res = _aggregate_matchups(matchups)
+        res = _aggregate_matchups(matchups, _pair_bucket(
+            sorted([f"{radiant_heroes_and_pos['pos3']['hero_id']}pos3",
+                    f"{radiant_heroes_and_pos['pos4']['hero_id']}pos4"]),
+            sorted([f"{dire_heroes_and_pos['pos1']['hero_id']}pos1",
+                    f"{dire_heroes_and_pos['pos5']['hero_id']}pos5"]),
+        ))
         if res is not None:
             return res
 
