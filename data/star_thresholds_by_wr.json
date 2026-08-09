@@ -25,19 +25,19 @@
     "mid_output": [
       [
         "counterpick_1vs1",
-        4
+        2
       ],
       [
         "counterpick_1vs2",
-        4
+        2
       ],
       [
         "solo",
-        3
+        2
       ],
       [
         "synergy_duo",
-        6
+        3
       ]
     ],
     "all_output": [
@@ -97,19 +97,19 @@
     "mid_output": [
       [
         "counterpick_1vs1",
-        7
+        4
       ],
       [
         "counterpick_1vs2",
-        6
+        3
       ],
       [
         "solo",
-        5
+        3
       ],
       [
         "synergy_duo",
-        7
+        4
       ]
     ],
     "all_output": [
@@ -157,19 +157,19 @@
     "mid_output": [
       [
         "counterpick_1vs1",
-        10
-      ],
-      [
-        "counterpick_1vs2",
-        8
-      ],
-      [
-        "solo",
         6
       ],
       [
+        "counterpick_1vs2",
+        4
+      ],
+      [
+        "solo",
+        3
+      ],
+      [
         "synergy_duo",
-        9
+        5
       ]
     ],
     "all_output": [
@@ -209,15 +209,15 @@
     "mid_output": [
       [
         "counterpick_1vs1",
-        10
+        6
       ],
       [
         "counterpick_1vs2",
-        9
+        5
       ],
       [
         "solo",
-        8
+        5
       ]
     ],
     "all_output": [
@@ -253,11 +253,11 @@
     "mid_output": [
       [
         "counterpick_1vs1",
-        15
+        9
       ],
       [
         "counterpick_1vs2",
-        11
+        6
       ]
     ],
     "all_output": [
@@ -289,7 +289,7 @@
     "mid_output": [
       [
         "counterpick_1vs2",
-        14
+        8
       ]
     ],
     "all_output": [
@@ -313,7 +313,7 @@
     "mid_output": [
       [
         "counterpick_1vs2",
-        20
+        12
       ]
     ],
     "all_output": [
@@ -333,7 +333,7 @@
     "mid_output": [
       [
         "counterpick_1vs2",
-        24
+        14
       ]
     ],
     "all_output": [
