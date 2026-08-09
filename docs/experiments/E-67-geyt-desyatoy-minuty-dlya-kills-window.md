@@ -1,6 +1,6 @@
 ---
 id: E-67
-title: "Гейт 10-й минуты для kills_window: идея верна, но популяция у прода обратная"
+title: "Гейт 10-й минуты для kills_window: верно на своей популяции, бесполезно для прода"
 date: "2026-08-09"
 area: kills
 status: full
@@ -9,7 +9,7 @@ verdict: "популяцию сборки kills_window менять НЕ НА Ч
 harness: "`runtime/experiments/misc/kills_gate_sweep.py`, `kills_gate_eval.py`, `runtime/experiments/kills/kills_tilt_experiment.py`, `kills_baseline_nw.py`, `kills_total_market.py`, `kills_total_pub_calibrated.py`"
 ---
 
-# E-67. Гейт, который прав по сути и бесполезен на практике
+# E-67. Гейт, который прав на своей популяции и бесполезен на практике
 
 - **Дата:** 2026-08-09 (alex: «для kills_window можно рассмотреть gate 10 минут
   500 networth для окон >= 10 … после того как сделали гейт можно считать diff по
