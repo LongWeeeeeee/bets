@@ -201,7 +201,9 @@ COUNTERPICK_1VS1_ROLE_TOPUP_HIGH_ABS_BY_PHASE = {
     'post_lane_output': 8,
 }
 POS1_VS_POS1_MIN_MATCHES = 30
-COUNTERPICK_1VS2_MIN_MATCHES = 15
+# 15 -> 30 (09.08). Перебор на пересобранных словарях, про-карты: post_lane
+# 59.8 -> 62.7% (лучшая точка), late 55.2 -> 56.2%, early 61.8 -> 61.2%.
+COUNTERPICK_1VS2_MIN_MATCHES = 30
 # Frozen public OOS (105,422 maps, two chronological halves): role-pooled
 # core/support trio at N>=25 improved directional WR and coverage in Early,
 # Late and All. Exact positional cells remain separate evidence inside the
@@ -211,7 +213,7 @@ SYNERGY_TRIO_MIN_MATCHES = 25
 POST_LANE_SYNERGY_DUO_MIN_MATCHES = 100
 POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES = 100
 POST_LANE_POS1_VS_POS1_MIN_MATCHES = 50
-POST_LANE_COUNTERPICK_1VS2_MIN_MATCHES = 15
+POST_LANE_COUNTERPICK_1VS2_MIN_MATCHES = 30
 POST_LANE_SYNERGY_TRIO_MIN_MATCHES = 25
 SYNERGY_DUO_REQUIRE_CP_ALIGN = False
 SYNERGY_DUO_MIN_CORE_PAIRS_PER_SIDE = 2
@@ -1448,6 +1450,14 @@ def _refresh_telegram_subscribers() -> list[str]:
                         _extract_admin_commands_from_telegram_update(update)
                     )
                 if batch_max_update_id < offset:
+                    # Апдейты с id НИЖЕ сохранённого маркера означают, что маркер
+                    # достался от другого бота: у каждого токена своя нумерация,
+                    # и после смены токена она начинается почти с нуля. Прежний
+                    # код двигал маркер только вперёд, поэтому подтвердить такие
+                    # апдейты не мог — одно нажатие кнопки переобрабатывалось
+                    # каждый цикл и tail_log уходил в бесконечный круг.
+                    max_update_id = batch_max_update_id
+                    changed = True
                     break
                 offset = batch_max_update_id + 1
                 if len(updates) < TELEGRAM_UPDATES_FETCH_LIMIT:
