@@ -160,12 +160,19 @@ SUPPORT_POSITIONS = ('pos4', 'pos5')
 COUNTERPICK_1VS1_CORE_MATCHUPS_REQUIRED = math.ceil(len(CORE_POSITIONS) * 2 / 3)
 # Пороги по количеству матчей для early/late фаз
 SOLO_MIN_MATCHES = 50
-# Порог поднят с 30 до 100 (ПРО 2026-08-05, thresholds_2d_sweep.md). Ячейки duo
-# заполнены почти всегда, поэтому покрытие карт остаётся 100% на любом пороге.
-# Late выигрывает заметно, All чуть теряет — размен принят владельцем:
-#   Late: 30 -> 0.6292, 50 -> 0.6298, 100 -> 0.6302 (с гейтом fill>=75%: 0.6376)
+# 30 -> 100 (05.08) -> 30 (09.08). Подъём до сотни опирался на AUC:
+#   Late: 30 -> 0.6292, 50 -> 0.6298, 100 -> 0.6302
 #   All:  30 -> 0.5531, 50 -> 0.5504, 100 -> 0.5506
-SYNERGY_DUO_MIN_MATCHES = 100
+# Перемер на ПЕРЕСОБРАННЫХ словарях по прод-критерию — точности в топе отбора,
+# как требует правило журнала, — даёт другой ответ. Про-карты, цель «победа
+# карты», топ-600 у early и топ-400 у late:
+#   порог      5      10     30      50     100     200
+#   early   60.7%  60.7%  60.7%  60.5%   60.3%   60.0%
+#   late    53.8%  54.0%  54.8%  54.2%   53.2%   52.8%
+# Кривая одногорбая с максимумом на 30, дальше монотонный спад в обоих блоках;
+# сотня стоит на спадающей ветке (-1.6 п.п. у late). Это ровно та же ошибка, что
+# была у COUNTERPICK_1VS1_MIN_MATCHES: выбор по AUC вместо прод-отбора.
+SYNERGY_DUO_MIN_MATCHES = 30
 # 30 -> 100 -> 50 (09.08). Подъём до 100 (05.08) опирался на AUC по ВСЕМ картам:
 #   All:  30 -> 0.5703, 50 -> 0.5725, 100 -> 0.5723, 200 -> 0.5694
 #   Late: 30 -> 0.6321, 50 -> 0.6337, 100 -> 0.6395, 200 -> 0.6323
@@ -198,7 +205,16 @@ COUNTERPICK_1VS1_ROLE_TOPUP_HIGH_ABS_BY_PHASE = {
     'post_lane_output': 8,
 }
 POS1_VS_POS1_MIN_MATCHES = 30
-COUNTERPICK_1VS2_MIN_MATCHES = 15
+# 15 -> 30 (09.08, решение alex). Перебор на пересобранных словарях, про-карты,
+# топ-600 у early и топ-400 у late/post_lane:
+#   порог        5      10      15      30      50
+#   early     62.0%   62.5%   61.8%   61.2%   57.3%
+#   late      56.5%   55.8%   55.2%   56.2%   56.5%
+#   post      57.8%   60.2%   59.8%   62.7%   59.2%
+# У post_lane 30 — лучшая точка (+2.9 п.п.), у late чуть выше прежнего, у early
+# чуть ниже; всё поодиночке в пределах сигмы 2.4 п.п. Ставится единым значением
+# на оба блока.
+COUNTERPICK_1VS2_MIN_MATCHES = 30
 # Frozen public OOS (105,422 maps, two chronological halves): role-pooled
 # core/support trio at N>=25 improved directional WR and coverage in Early,
 # Late and All. Exact positional cells remain separate evidence inside the
@@ -208,7 +224,7 @@ SYNERGY_TRIO_MIN_MATCHES = 25
 POST_LANE_SYNERGY_DUO_MIN_MATCHES = 100
 POST_LANE_COUNTERPICK_1VS1_MIN_MATCHES = 100
 POST_LANE_POS1_VS_POS1_MIN_MATCHES = 50
-POST_LANE_COUNTERPICK_1VS2_MIN_MATCHES = 15
+POST_LANE_COUNTERPICK_1VS2_MIN_MATCHES = 30
 POST_LANE_SYNERGY_TRIO_MIN_MATCHES = 25
 SYNERGY_DUO_REQUIRE_CP_ALIGN = False
 SYNERGY_DUO_MIN_CORE_PAIRS_PER_SIDE = 2
@@ -1445,6 +1461,14 @@ def _refresh_telegram_subscribers() -> list[str]:
                         _extract_admin_commands_from_telegram_update(update)
                     )
                 if batch_max_update_id < offset:
+                    # Апдейты с id НИЖЕ сохранённого маркера означают, что маркер
+                    # достался от другого бота: у каждого токена своя нумерация,
+                    # и после смены токена она начинается почти с нуля. Прежний
+                    # код двигал маркер только вперёд, поэтому подтвердить такие
+                    # апдейты не мог — одно нажатие кнопки переобрабатывалось
+                    # каждый цикл и tail_log уходил в бесконечный круг.
+                    max_update_id = batch_max_update_id
+                    changed = True
                     break
                 offset = batch_max_update_id + 1
                 if len(updates) < TELEGRAM_UPDATES_FETCH_LIMIT:
