@@ -675,13 +675,12 @@ LATE_MAX_DURATION = (
     int(os.getenv("ANALISE_LATE_MAX_DURATION"))
     if os.getenv("ANALISE_LATE_MAX_DURATION") else None
 )  # верхний предел длины карты; нужен, чтобы собрать «короткую» половину для метрики скейлинга
-LATE_EARLY_WINDOW = (15, 25)         # окно для оценки раннего snowball
-LATE_EARLY_STOMP_MAX = 12000         # max |lead| для раннего snowball
-LATE_COMEBACK_AVG_DEFICIT = 4000     # средний deficit победителя в 15-25
-LATE_CLOSE_WINDOW = (20, 30)         # окно "близкой" игры
-LATE_CLOSE_MAX_LEAD = 5000           # max |lead| в close-окне
-LATE_MODE = 'comeback'               # 'either' | 'comeback' | 'close'
-LATE_REQUIRE_EARLY_LOSS = True      # late = победитель не был early-доминатором
+# Здесь до 09.08 стояли семь констант прежней конструкции late (LATE_EARLY_WINDOW,
+# LATE_EARLY_STOMP_MAX, LATE_COMEBACK_AVG_DEFICIT, LATE_CLOSE_WINDOW,
+# LATE_CLOSE_MAX_LEAD, LATE_MODE, LATE_REQUIRE_EARLY_LOSS). Проверка показала, что
+# каждая упоминается в репозитории ровно один раз — в собственном объявлении, — и
+# ни одна не читается: правило давно живёт на LATE_RULE и LATE_MIN_DURATION.
+# Убраны, чтобы не выглядели ручками, которые можно крутить. История — в git.
 LATE_WR60_START_MINUTE = int(os.getenv("ANALISE_LATE_WR60_START_MINUTE", "28"))
 # Множитель WR60-лестницы: <1 = более строгое требование «равной» игры.
 LATE_EQUAL_GATE_K = float(os.getenv("ANALISE_LATE_EQUAL_GATE_K", "1.0"))
