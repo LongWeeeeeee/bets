@@ -168,10 +168,14 @@ def test_lane_2vs2_does_not_double_count_canonical_and_reverse_entries():
     output = {}
     canonical_key = "3pos3,4pos4_vs_11pos1,15pos5"
     reverse_key = "11pos1,15pos5_vs_3pos3,4pos4"
+    # Игр 40, а не 10: с E-66 порог ветки 2v2 поднят до 30 игр (двухигровые
+    # ячейки давали 37% вердиктов по боковым линиям и теряли 22 п.п.). На десяти
+    # играх каскад теперь проваливается к 2v1/1v1, и тест проверял бы не двойной
+    # учёт канонического и обратного ключа, а сам порог.
     heroes_data = {
         "2v2_lanes": {
-            canonical_key: {"wins": 10, "draws": 0, "games": 10},
-            reverse_key: {"wins": 0, "draws": 0, "games": 10},
+            canonical_key: {"wins": 40, "draws": 0, "games": 40},
+            reverse_key: {"wins": 0, "draws": 0, "games": 40},
         }
     }
 
