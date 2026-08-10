@@ -2307,32 +2307,6 @@ def merge_temp_files_by_patch(
 
     return output_files
 
-def _part_ids_covered(path, known_ids, probe=200):
-    """True, если первые `probe` match_id из patch-part файла уже есть в known_ids.
-
-    Дешёвая проверка «этот файл уже учтён в processed_ids.txt»: полное
-    сканирование 500-МБ файла нужно только когда он реально не учтён.
-    Пустой/нечитаемый файл считаем непокрытым — пусть его просканируют явно.
-    """
-    if not known_ids:
-        return False
-    seen = 0
-    try:
-        for raw_key in _iter_json_object_keys(path):
-            try:
-                mid = int(str(raw_key).strip())
-            except Exception:
-                continue
-            if mid not in known_ids:
-                return False
-            seen += 1
-            if seen >= probe:
-                return True
-    except Exception:
-        return False
-    return seen > 0
-
-
 def merge_temp_files_by_patch_streaming(
     mkdir,
     max_size_mb=500,
@@ -2441,28 +2415,27 @@ def merge_temp_files_by_patch_streaming(
         if path.is_file()
     )
     if existing_part_files:
-        unscanned = [p for p in existing_part_files if not _part_ids_covered(p, processed_ids)]
-        if unscanned:
-            print(
-                f"🔁 processed_ids.txt не покрывает {len(unscanned)}/{len(existing_part_files)} "
-                f"patch-part файлов → пересобираю дедуп-набор из них"
-            )
-            for i, path in enumerate(unscanned, 1):
-                added = 0
-                try:
-                    for raw_key in _iter_json_object_keys(path):
-                        normalized = _normalize_match_id(raw_key)
-                        if normalized is not None and normalized not in processed_ids:
-                            processed_ids.add(normalized)
-                            added += 1
-                except Exception as e:
-                    # Битый/недописанный part нельзя молча проглатывать: без его id
-                    # merge продублирует его матчи. Сообщаем явно.
-                    print(f"  ⚠️ Не удалось просканировать {path.name}: {e} — его матчи могут продублироваться")
-                    continue
-                print(f"  📥 {i}/{len(unscanned)} {path.name}: +{added} id (всего {len(processed_ids)})")
-        else:
-            print(f"✅ processed_ids.txt покрывает все {len(existing_part_files)} patch-part файлов")
+        # Раньше файл пропускался, если его ПЕРВЫЕ 200 ключей уже были в сайдкаре.
+        # Проба — выборка, а не доказательство: у файла с учтённым началом и
+        # неучтённым хвостом хвост молча выпадал из дедуп-набора, и его матчи
+        # писались повторно. Так 31.07.2026 прошло 12 дублей уже ПОСЛЕ фикса
+        # сайдкара. Сканируем ключи целиком — читаются только ключи, значения
+        # не разбираются.
+        print(f"🔁 пересобираю дедуп-набор из {len(existing_part_files)} patch-part файлов")
+        for i, path in enumerate(existing_part_files, 1):
+            added = 0
+            try:
+                for raw_key in _iter_json_object_keys(path):
+                    normalized = _normalize_match_id(raw_key)
+                    if normalized is not None and normalized not in processed_ids:
+                        processed_ids.add(normalized)
+                        added += 1
+            except Exception as e:
+                # Битый/недописанный part нельзя молча проглатывать: без его id
+                # merge продублирует его матчи. Сообщаем явно.
+                print(f"  ⚠️ Не удалось просканировать {path.name}: {e} — его матчи могут продублироваться")
+                continue
+            print(f"  📥 {i}/{len(existing_part_files)} {path.name}: +{added} id (всего {len(processed_ids)})")
 
     existing_processed_ids_count = len(processed_ids)
     patch_part_numbers = {}

@@ -54,6 +54,72 @@ def test_merge_dedup_reads_part_files_not_sidecar(tmp_path):
     assert found == {8000000001, 8000000002, 8000000003}
 
 
+def test_merge_dedup_scans_whole_part_file_not_first_keys(tmp_path):
+    """Хвост part-файла тоже должен попадать в дедуп-набор.
+
+    Раньше файл признавался учтённым по первым 200 ключам. Здесь сайдкар знает
+    ровно эти 200, а матч из хвоста — нет; он обязан быть отброшен как дубль, а
+    не записан в новый part.
+    """
+    import maps_research
+
+    output_dir = tmp_path / "parts"
+    output_dir.mkdir()
+    head_ids = [8_000_000_000 + i for i in range(200)]
+    tail_id = 8_000_000_999
+    existing = {str(mid): {"id": mid, "startDateTime": 1_780_000_100}
+                for mid in head_ids + [tail_id]}
+    (output_dir / "7.41_part001.json").write_text(json.dumps(existing), encoding="utf-8")
+    # сайдкар отстал ровно на хвост
+    (output_dir / "processed_ids.txt").write_text(json.dumps(head_ids), encoding="utf-8")
+
+    temp_dir = tmp_path / "src" / "temp_files"
+    temp_dir.mkdir(parents=True)
+    (temp_dir / "batch.txt").write_text(
+        json.dumps({str(tail_id): {"id": tail_id, "startDateTime": 1_780_000_100}}),
+        encoding="utf-8")
+
+    maps_research.merge_temp_files_by_patch_streaming(
+        tmp_path / "src", output_dir=output_dir,
+        patch_specs=[("7.41", 1_780_000_000, None)])
+
+    summary = json.loads((output_dir / "merge_patch_summary.json").read_text(encoding="utf-8"))
+    assert summary["duplicates_filtered"] == 1
+    assert summary["unique_matches_added"] == 0
+    assert not list(output_dir.glob("7.41_part002.json"))
+
+
+def test_collect_matches_dedupes_by_match_id(tmp_path):
+    """Один матч в двух part-файлах = одна запись, причём более полная копия."""
+    import check_old_maps
+
+    def _match(mid, leads):
+        return {
+            "id": mid, "startDateTime": 1_780_000_100, "didRadiantWin": True,
+            "radiantNetworthLeads": leads, "winRates": [], "players": [],
+            "topLaneOutcome": "RADIANT_VICTORY" if leads else None,
+        }
+
+    thin = tmp_path / "a.json"
+    fat = tmp_path / "b.json"
+    thin.write_text(json.dumps({"9001": _match(9001, [])}), encoding="utf-8")
+    fat.write_text(json.dumps({"9001": _match(9001, [0, 100, 250])}), encoding="utf-8")
+
+    def _fake_check_bad_map(match, start_date_time=0):
+        return ({}, {})
+
+    original = check_old_maps.check_bad_map
+    check_old_maps.check_bad_map = _fake_check_bad_map
+    try:
+        records = check_old_maps.collect_matches([thin, fat], 0, None)
+    finally:
+        check_old_maps.check_bad_map = original
+
+    assert len(records) == 1
+    # порядок файлов не должен решать: побеждает копия с телеметрией
+    assert records[0]["radiantNetworthLeads"] == [0, 100, 250]
+
+
 def test_paginator_advances_on_known_page():
     """Страница из уже известных матчей не должна обрывать пагинацию.
 

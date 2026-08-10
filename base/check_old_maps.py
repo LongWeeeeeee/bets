@@ -796,6 +796,21 @@ def _protracker_metrics_for_match(
     return result
 
 
+def _record_completeness(record: dict) -> tuple[int, int, int]:
+    """Насколько полна запись матча — для выбора между копиями одного match_id.
+
+    Копии не обязаны совпадать: часть матчей собрана до того, как Stratz отдал
+    телеметрию, и в такой копии пусты `radiantNetworthLeads` и исходы линий.
+    Выбрасывать наугад нельзя — можно оставить именно пустую.
+    """
+    return (
+        len(record.get("radiantNetworthLeads") or []),
+        sum(1 for key in ("topLaneOutcome", "midLaneOutcome", "bottomLaneOutcome")
+            if record.get(key)),
+        len(record.get("winRates") or []),
+    )
+
+
 def collect_matches(
     maps_paths: str | Path | Iterable[Path],
     start_date_time: int,
@@ -806,6 +821,13 @@ def collect_matches(
     else:
         paths = [Path(path) for path in maps_paths]
     records: list[dict] = []
+    # Один и тот же матч лежит в нескольких part-файлах: до 30.07.2026 merge
+    # дедуплицировал только по сайдкару processed_ids.txt, и отставший сайдкар
+    # приводил к повторной записи. На про-корпусе это 891 матч из 5732 записей.
+    # Дедуп на чтении нужен независимо от чистки корпуса: файлы приходят с
+    # сервера как есть.
+    index_by_id: dict[int, int] = {}
+    duplicates = 0
     scanned = 0
     skipped = 0
     for path in paths:
@@ -822,30 +844,37 @@ def collect_matches(
                 skipped += 1
                 continue
             radiant_draft, dire_draft = parsed
-            records.append(
-                {
-                    "id": int(match.get("id") or match_id or 0),
-                    "startDateTime": int(match.get("startDateTime") or 0),
-                    "radiantTeam": match.get("radiantTeam"),
-                    "direTeam": match.get("direTeam"),
-                    "didRadiantWin": match.get("didRadiantWin"),
-                    "radiantNetworthLeads": match.get("radiantNetworthLeads", []),
-                    "winRates": match.get("winRates", []),
-                    "topLaneOutcome": match.get("topLaneOutcome"),
-                    "midLaneOutcome": match.get("midLaneOutcome"),
-                    "bottomLaneOutcome": match.get("bottomLaneOutcome"),
-                    "radiant_draft": _team_payload(radiant_draft),
-                    "dire_draft": _team_payload(dire_draft),
-                    **_match_outcomes(match),
-                }
-            )
+            record = {
+                "id": int(match.get("id") or match_id or 0),
+                "startDateTime": int(match.get("startDateTime") or 0),
+                "radiantTeam": match.get("radiantTeam"),
+                "direTeam": match.get("direTeam"),
+                "didRadiantWin": match.get("didRadiantWin"),
+                "radiantNetworthLeads": match.get("radiantNetworthLeads", []),
+                "winRates": match.get("winRates", []),
+                "topLaneOutcome": match.get("topLaneOutcome"),
+                "midLaneOutcome": match.get("midLaneOutcome"),
+                "bottomLaneOutcome": match.get("bottomLaneOutcome"),
+                "radiant_draft": _team_payload(radiant_draft),
+                "dire_draft": _team_payload(dire_draft),
+                **_match_outcomes(match),
+            }
+            previous = index_by_id.get(record["id"])
+            if previous is not None:
+                duplicates += 1
+                if _record_completeness(record) > _record_completeness(records[previous]):
+                    records[previous] = record
+                continue
+            index_by_id[record["id"]] = len(records)
+            records.append(record)
             if max_matches is not None and len(records) >= int(max_matches):
                 break
             if scanned % 5000 == 0:
                 print(f"  scanned={scanned:,} selected={len(records):,} skipped={skipped:,}", flush=True)
         if max_matches is not None and len(records) >= int(max_matches):
             break
-    print(f"Selected matches: {len(records):,} (scanned={scanned:,}, skipped={skipped:,})")
+    print(f"Selected matches: {len(records):,} (scanned={scanned:,}, skipped={skipped:,}, "
+          f"duplicates={duplicates:,})")
     return records
 
 
