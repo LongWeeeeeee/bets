@@ -68,7 +68,7 @@
 Состав сравнивается с прошлым матчем org по player_id. При совпадении >=3 игроков состав продолжает ту же линию (тот же roster segment); иначе — новый segment. Используется ELO/историей команды.
 
 ### Star System (источник истины: `functions.py`)
-- STAR-метрики: `STAR_SIGNAL_METRICS = {counterpick_1vs1, counterpick_1vs2, dota2protracker_cp1vs1, solo, dltv_rating}`; synergy-метрики остаются display-only.
+- STAR-метрики: `STAR_SIGNAL_METRICS = {counterpick_1vs1, counterpick_1vs2, dota2protracker_cp1vs1, solo, dltv_rating, dota2protracker_solo, dota2protracker_duo, pos1_vs_pos1}`; synergy-метрики остаются display-only. `pos1_vs_pos1` добавлен 11.08 (E-71): пороги только `early_output` 7/11/15 -> WR60/65/70 и `mid_output` 8 -> WR60.
 - Секции: `early_output`, `mid_output` (late), `all_output`.
 - **Приоритет early-блоков при разных знаках.** Early NW (`early_output`) и Early Winner (`early_end_output`) могут указывать на разные стороны. В этом случае для диспатча берётся блок с бо́льшим WR: при `wr(early_end) > wr(early)` авторитетным становится Early Winner — подменяются `selected_early_diag`, `selected_early_sign`, `early_wr_pct` и raw-блок, который читают `_block_signs_same_or_zero` и `_has_opposite_early_wr60_hit`. Без этого пара Early NW (одна сторона) + Late/All (другая) давала `delay_late_only_opposite_signs` и уводила карту в pre-27 watcher вместо обычного networth-гейта 0-10 / после 10 минуты. Предикат — `_early_winner_overrides_early_nw()`, флаг `EARLY_WINNER_OVERRIDES_EARLY_NW` (по умолчанию 1). В карточке Telegram обе строки WR печатаются без подмены.
 - Пороги: `STAR_THRESHOLDS_BY_WR` ← `data/star_thresholds_by_wr.json` (WR-уровни 60..90, `STAR_LEVEL_MIN/MAX`).
