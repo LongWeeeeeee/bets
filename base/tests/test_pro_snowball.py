@@ -73,3 +73,33 @@ def test_opponents_are_discovered_from_corpus(tmp_path):
 
     assert MR._teams_from_corpus(str(tmp_path)) == {100, 200, 300}
     assert MR._teams_from_corpus(str(tmp_path / "нет-такой")) == set()
+
+
+def test_outside_patch_matches_go_to_bucket_not_trash(tmp_path):
+    """Матч вне известных патчей складывается в бакет, а не выбрасывается.
+
+    Историческому сбору патч не важен — важен сам факт матча для рейтингов и
+    сыгранности. Прежнее поведение выкинуло 59 649 матчей из 87 293 за одну волну.
+    """
+    import maps_research
+
+    src = tmp_path / "src" / "temp_files"
+    src.mkdir(parents=True)
+    out = tmp_path / "parts"
+    out.mkdir()
+    # 1 000 000 000 = 2001 год, заведомо вне любых спецификаций патчей
+    (src / "batch.txt").write_text(json.dumps({
+        "9000000001": {"id": 9000000001, "startDateTime": 1_000_000_000},
+        "9000000002": {"id": 9000000002, "startDateTime": 1_780_000_100},
+    }), encoding="utf-8")
+
+    maps_research.merge_temp_files_by_patch_streaming(
+        tmp_path / "src", output_dir=out,
+        patch_specs=[("7.41", 1_780_000_000, None)])
+
+    summary = json.loads((out / "merge_patch_summary.json").read_text(encoding="utf-8"))
+    assert summary["unique_matches_added"] == 2          # оба матча сохранены
+    assert summary["outside_patch_skipped"] == 1         # счётчик всё равно считает
+    bucket = list(out.glob(f"{maps_research.OUTSIDE_PATCH_BUCKET}_part*.json"))
+    assert len(bucket) == 1
+    assert "9000000001" in json.loads(bucket[0].read_text(encoding="utf-8"))

@@ -1203,6 +1203,16 @@ def collect_all_maps(folder_path, maps=None, output=None):
 
 
 
+# Матчи вне известных границ патчей. Спецификация начинается с 2025-05-21, а
+# исторический про-сбор уходит на годы назад: при прежнем поведении две трети
+# скачанного молча выбрасывалось (волна 1 от 11.08: 59 649 матчей из 87 293).
+# Для истории игроков и ростеров патч не важен вовсе — важен сам факт матча,
+# поэтому такие карты складываются в отдельный бакет, а не удаляются.
+# Вернуть прежнее поведение — MERGE_DROP_OUTSIDE_PATCH=1.
+OUTSIDE_PATCH_BUCKET = os.getenv("OUTSIDE_PATCH_BUCKET", "historical")
+MERGE_DROP_OUTSIDE_PATCH = os.getenv("MERGE_DROP_OUTSIDE_PATCH", "0") == "1"
+
+
 PRO_REQUIRE_LEAGUE = os.getenv("PRO_REQUIRE_LEAGUE", "0") == "1"
 
 
@@ -2183,8 +2193,11 @@ def merge_temp_files_by_patch(
         print(f"🧾 Сверка с part-файлами: {len(from_parts)} match_id на диске, "
               f"из них не было в processed_ids.txt: {missed}")
 
+    patch_names_all = [str(p[0]) for p in patch_specs]
+    if not MERGE_DROP_OUTSIDE_PATCH and OUTSIDE_PATCH_BUCKET not in patch_names_all:
+        patch_names_all.append(OUTSIDE_PATCH_BUCKET)   # бакет «вне патчей»
     patch_part_numbers = {}
-    for patch_name, *_ in patch_specs:
+    for patch_name in patch_names_all:
         existing_parts = sorted(Path(output_dir).glob(f"{patch_name}_part*.json"))
         max_part = 0
         for path in existing_parts:
@@ -2205,7 +2218,7 @@ def merge_temp_files_by_patch(
             "part_number": patch_part_numbers[str(patch_name)],
             "written_matches": 0,
         }
-        for patch_name, *_ in patch_specs
+        for patch_name in patch_names_all
     }
     output_files = []
     session_ids = set()
@@ -2261,7 +2274,9 @@ def merge_temp_files_by_patch(
             patch_name = _resolve_patch_name(raw_match_data.get("startDateTime"))
             if patch_name is None:
                 skipped_outside_patch += 1
-                continue
+                if MERGE_DROP_OUTSIDE_PATCH:
+                    continue
+                patch_name = OUTSIDE_PATCH_BUCKET
 
             match_data = dict(raw_match_data)
             match_data["id"] = int(match_id_norm)
@@ -2465,8 +2480,11 @@ def merge_temp_files_by_patch_streaming(
             print(f"  📥 {i}/{len(existing_part_files)} {path.name}: +{added} id (всего {len(processed_ids)})")
 
     existing_processed_ids_count = len(processed_ids)
+    patch_names_all = [str(p[0]) for p in patch_specs]
+    if not MERGE_DROP_OUTSIDE_PATCH and OUTSIDE_PATCH_BUCKET not in patch_names_all:
+        patch_names_all.append(OUTSIDE_PATCH_BUCKET)   # бакет «вне патчей»
     patch_part_numbers = {}
-    for patch_name, *_ in patch_specs:
+    for patch_name in patch_names_all:
         max_part = 0
         for path in output_dir.glob(f"{patch_name}_part*.json"):
             match = re.match(rf"^{re.escape(str(patch_name))}_part(\d+)\.json$", path.name)
@@ -2488,7 +2506,7 @@ def merge_temp_files_by_patch_streaming(
             "written_matches": 0,
             "written_files": 0,
         }
-        for patch_name, *_ in patch_specs
+        for patch_name in patch_names_all
     }
 
     def _open_part(patch_name):
@@ -2594,7 +2612,9 @@ def merge_temp_files_by_patch_streaming(
                 patch_name = _resolve_patch_name(raw_match_data.get("startDateTime"))
                 if patch_name is None:
                     skipped_outside_patch += 1
-                    continue
+                    if MERGE_DROP_OUTSIDE_PATCH:
+                        continue
+                    patch_name = OUTSIDE_PATCH_BUCKET
 
                 match_data = dict(raw_match_data)
                 match_data["id"] = int(match_id_norm)
