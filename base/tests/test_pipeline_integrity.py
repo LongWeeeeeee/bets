@@ -5988,9 +5988,10 @@ def test_format_output_dict_ignores_synergy_and_unknown_metrics(monkeypatch) -> 
 def test_format_output_dict_counts_pos1_vs_pos1_star(monkeypatch) -> None:
     """pos1_vs_pos1 стал звёздной метрикой — но только там, где есть порог.
 
-    Порог задан только для `early_output` (7/11/15 на WR60/65/70): на своей цели
-    метрика даёт 64.9/68.4/69.4% на про. В `mid_output` порога нет намеренно —
-    на популяции late хвост |v|>=14 выдыхается до 50.8%.
+    `early_output`: 7/11/15 на WR60/65/70 (64.9/68.4/69.4% на своей цели).
+    `mid_output`: только 8 на WR60 (58.8% на популяции late). Выше 60 для late
+    порога нет намеренно — хвост |v|>=14 выдыхается до 50.8%.
+    В `all_output` порогов нет вовсе, и блок звезды по этой метрике не даёт.
     """
     import functions
 
