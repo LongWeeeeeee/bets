@@ -1001,18 +1001,22 @@ async def get_maps_new(ids, mkdir,
                     is_valid, reason = check_match_quality(match)
 
                     if pro:
+                        # Матчи БЕЗ лиги и матчи любительских лиг больше не
+                        # выбрасываются: для обучения нужен весь доступный объём,
+                        # а история игрока одинаково полезна из любого матча.
+                        # Вернуть прежнее поведение — PRO_REQUIRE_LEAGUE=1.
                         league = match.get('league') or {}
                         league_id = match.get('leagueId') or league.get('id')
-                        if league_id is None:
+                        if PRO_REQUIRE_LEAGUE and league_id is None:
                             continue
                         if not league:
                             league = {}
-                        if league.get('id') is None:
+                        if league.get('id') is None and league_id is not None:
                             league['id'] = int(league_id)
                         if not league.get('tier'):
                             league['tier'] = 'UNKNOWN'
                         match['league'] = league
-                        if league.get('tier') == 'AMATEUR':
+                        if PRO_REQUIRE_LEAGUE and league.get('tier') == 'AMATEUR':
                             continue
                         if map_id not in run_map_ids:
                             output_data[str(map_id)] = match
@@ -1197,6 +1201,9 @@ def collect_all_maps(folder_path, maps=None, output=None):
     print(f"Всего собрано {len(ids_to_exclude_from_json)} уникальных ID для исключения из JSON файлов.")
     return ids_to_exclude_from_json
 
+
+
+PRO_REQUIRE_LEAGUE = os.getenv("PRO_REQUIRE_LEAGUE", "0") == "1"
 
 
 def _start_date_for(pro: bool) -> int:
