@@ -5965,15 +5965,15 @@ def test_format_output_dict_ignores_synergy_and_unknown_metrics(monkeypatch) -> 
         "STAR_THRESHOLDS_BY_WR",
         {
             60: {
-                "early_output": [("synergy_duo", 7), ("synergy_trio", 6), ("pos1_vs_pos1", 1)],
-                "mid_output": [("synergy_duo", 9), ("synergy_trio", 6), ("pos1_vs_pos1", 1)],
+                "early_output": [("synergy_duo", 7), ("synergy_trio", 6)],
+                "mid_output": [("synergy_duo", 9), ("synergy_trio", 6)],
             }
         },
         raising=False,
     )
     payload = {
-        "early_output": {"synergy_duo": 99, "synergy_trio": 99, "pos1_vs_pos1": 99},
-        "mid_output": {"synergy_duo": 99, "synergy_trio": 99, "pos1_vs_pos1": 99},
+        "early_output": {"synergy_duo": 99, "synergy_trio": 99},
+        "mid_output": {"synergy_duo": 99, "synergy_trio": 99},
     }
 
     has_star = functions.format_output_dict(payload, target_wr=60, late_signal_gate_enabled=False)
@@ -5981,10 +5981,37 @@ def test_format_output_dict_ignores_synergy_and_unknown_metrics(monkeypatch) -> 
     assert has_star is False
     assert payload["early_output"]["synergy_duo"] == 99
     assert payload["early_output"]["synergy_trio"] == 99
-    assert payload["early_output"]["pos1_vs_pos1"] == 99
     assert payload["mid_output"]["synergy_duo"] == 99
     assert payload["mid_output"]["synergy_trio"] == 99
-    assert payload["mid_output"]["pos1_vs_pos1"] == 99
+
+
+def test_format_output_dict_counts_pos1_vs_pos1_star(monkeypatch) -> None:
+    """pos1_vs_pos1 стал звёздной метрикой — но только там, где есть порог.
+
+    Порог задан только для `early_output` (7/11/15 на WR60/65/70): на своей цели
+    метрика даёт 64.9/68.4/69.4% на про. В `mid_output` порога нет намеренно —
+    на популяции late хвост |v|>=14 выдыхается до 50.8%.
+    """
+    import functions
+
+    monkeypatch.setattr(
+        functions,
+        "STAR_THRESHOLDS_BY_WR",
+        {60: {"early_output": [("pos1_vs_pos1", 7)], "mid_output": []}},
+        raising=False,
+    )
+
+    assert functions.format_output_dict(
+        {"early_output": {"pos1_vs_pos1": 9}}, target_wr=60,
+        late_signal_gate_enabled=False) is True
+    # ниже порога — не звезда
+    assert functions.format_output_dict(
+        {"early_output": {"pos1_vs_pos1": 5}}, target_wr=60,
+        late_signal_gate_enabled=False) is False
+    # в блоке без порога метрика звезды не даёт
+    assert functions.format_output_dict(
+        {"mid_output": {"pos1_vs_pos1": 99}}, target_wr=60,
+        late_signal_gate_enabled=False) is False
 
 
 def test_runtime_star_thresholds_keep_only_signal_metrics(monkeypatch) -> None:

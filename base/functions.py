@@ -2116,6 +2116,13 @@ STAR_SIGNAL_METRICS = frozenset({
     # docs/EXPERIMENTS.md E-18.
     'dota2protracker_solo',
     'dota2protracker_duo',
+    # pos1 против pos1: пороги заданы только для early_output (7/11/15 на
+    # WR60/65/70). На своей цели — маркере раннего перевеса по нетворту —
+    # даёт 64.9% / 68.4% / 69.4% на про (1229 / 656 / 324 карты,
+    # дедуплицированный корпус). В mid_output и all_output порогов нет: там
+    # метрика на своей популяции выдыхается к хвосту (late |v|>=14 — 50.8%),
+    # см. docs/EXPERIMENTS.md E-71.
+    'pos1_vs_pos1',
 })
 STAR_DISABLED_METRICS = frozenset()
 STAR_THRESHOLD_SECTIONS = (
