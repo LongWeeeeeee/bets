@@ -24,6 +24,7 @@ except ImportError:
     BeautifulSoup = None
 
 import keys
+import win_model_veto
 try:
     from base.synergy_trio_role_pool import raw_lookup_keys_for_trio_tokens
 except ImportError:  # Supports direct execution from the base directory.
@@ -2281,6 +2282,18 @@ def format_output_dict(
         if block_star_count > 0 and block_conflict:
             for key, original_value in starred_original_values.items():
                 data[key] = original_value
+        # Вето драфтовой ML-модели: знак блока против модели -> блок не идёт.
+        # Проверяется ДО поздних гейтов, чтобы отменённый блок не считался
+        # валидным ни при каких условиях. Модель недоступна -> вето не сработает.
+        if (
+            block_star_count > 0
+            and not block_conflict
+            and block_sign is not None
+            and win_model_veto.blocks_veto(block_sign, data, section)
+        ):
+            for key, original_value in starred_original_values.items():
+                data[key] = original_value
+            continue
         if (
             block_star_count > 0
             and not block_conflict
@@ -5092,6 +5105,20 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                     _value < 0 and _dire_has_alchemist
                 ):
                     _early_output[_score_key] = int(round(_value * 0.7))
+
+    # Драфтовая ML-оценка победы кладётся в КАЖДЫЙ блок как display-метрика:
+    # звёзд она не создаёт (в STAR_SIGNAL_METRICS её нет и порогов в таблице
+    # тоже), но по ней работает вето — блок со знаком против модели отменяется.
+    # Считается один раз на драфт; отказ модели даёт None и вето не включает.
+    try:
+        _ml_index = win_model_veto.win_index(radiant_heroes_and_pos, dire_heroes_and_pos)
+    except Exception:
+        _ml_index = None
+    if _ml_index is not None:
+        for _block_key in ('early_output', 'early_end_output', 'mid_output', 'post_lane_output'):
+            _block = return_dict.get(_block_key)
+            if isinstance(_block, dict):
+                _block[win_model_veto.INDEX_KEY] = _ml_index
     return return_dict
 
 

@@ -64,6 +64,7 @@ except Exception as _curl_cffi_import_error:
     curl_cffi_requests = None
     CurlCffiRequestException = None
     CURL_CFFI_AVAILABLE = False
+import win_model_veto
 from functions import (
     send_message,
     send_winline_odds_message,
@@ -5821,6 +5822,20 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
         }
 
     block_sign = next(iter(hit_signs)) if hit_signs else None
+    # Вето драфтовой ML-модели: блок со знаком против модели не валиден ни при
+    # каком составе хитов. Индекс кладёт в блок `synergy_and_counterpick`;
+    # модель недоступна или индекса нет -> вето не срабатывает (fail-open).
+    if block_sign in (-1, 1) and win_model_veto.blocks_veto(block_sign, block, section):
+        return {
+            "valid": False,
+            "status": "win_model_veto",
+            "sign": block_sign,
+            "hit_metrics": hit_metrics,
+            "hit_count": len(hit_metrics),
+            "conflict_metric": None,
+            "win_model_index": block.get(win_model_veto.INDEX_KEY),
+            **consistency_fields,
+        }
     if not bool(sign_consistency.get("valid")):
         consistency_status = str(sign_consistency.get("status") or "")
         required_metric_names = set(sign_consistency.get("required_metrics") or [])
