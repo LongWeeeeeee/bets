@@ -1199,6 +1199,28 @@ def collect_all_maps(folder_path, maps=None, output=None):
 
 
 
+def _start_date_for(pro: bool) -> int:
+    """Нижняя граница даты сбора: у паблика и у про она СВОЯ.
+
+    Раньше про-ветка молча перезаписывала `start_date_time` значением
+    `start_date_time_736`, поэтому правка паблик-константы на про не влияла
+    вовсе — и наоборот. Теперь имена разведены:
+
+        start_date_time_pro      — про-сбор (фолбэк: start_date_time_736)
+        start_date_time_publick  — паблик-сбор (фолбэк: start_date_time)
+
+    Фолбэки оставлены, чтобы старый `keys.py` на другой машине не ломал сбор.
+    """
+    import keys as _keys
+    names = (("start_date_time_pro", "start_date_time_736")
+             if pro else ("start_date_time_publick", "start_date_time"))
+    for name in names:
+        value = getattr(_keys, name, None)
+        if value is not None:
+            return int(value)
+    raise RuntimeError(f"в keys.py нет ни одной из констант даты: {names}")
+
+
 async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=None,
                                     game_mods=None, all_teams=None, player_ids_check=False,
                                     pro=False, existing_match_ids=None,
@@ -1215,8 +1237,7 @@ async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=Non
     # 81%), пригодны 81% добавленных. Брекет 7 (Divine) добавляет +68% матчей,
     # пригодны 85%. Вместе: 1317 -> 2276 матчей, 88% пригодных.
     if start_date_time is None:
-        from keys import start_date_time as start_date_time_default
-        start_date_time = start_date_time_default
+        start_date_time = _start_date_for(pro=False)
     # Клиентский порог даты: серверный startDateTime у Stratz таймаутит на свежих
     # датах (NPGSQL TIMEOUT), поэтому в pub-ветке матчи фильтруем по дате на стороне
     # клиента (Stratz отдаёт матчи newest-first), а не через серверный startDateTime.
@@ -1284,8 +1305,7 @@ async def proceed_get_maps_with_data(skip=0, only_in_ids=False, ids_to_graph=Non
         }}
         '''
         if pro:
-            from keys import start_date_time_736
-            start_date_time = start_date_time_736
+            start_date_time = _start_date_for(pro=True)
             query = f'''
                 query {{
                   teams(teamIds: {ids_to_graph}) {{
@@ -2994,24 +3014,115 @@ async def get_maps_new_multiworker(ids, mkdir, show_prints=None, pro=False,
 
 
 
-def get_pros():
+PRO_VISITED_TEAMS_FILE = "visited_teams.json"
+
+
+def _seed_team_ids():
+    """Стартовый набор: команды из tier_one_teams / tier_two_teams."""
     from id_to_names import tier_one_teams, tier_two_teams
-    ids = list(tier_one_teams.values()) + list(tier_two_teams.values())
-    ids_clean = []
-    for i in ids:
-        if isinstance(i, set):
-            for foo in i:
-                ids_clean.append(foo)
-        else:
-            ids_clean.append(i)
+    out = []
+    for mapping in (tier_one_teams, tier_two_teams):
+        for value in mapping.values():
+            if isinstance(value, (set, list, tuple)):
+                out.extend(int(v) for v in value if isinstance(v, int))
+            elif isinstance(value, int):
+                out.append(int(value))
+    return sorted(set(out))
+
+
+def _load_visited_teams(path):
+    if not os.path.exists(path):
+        return set()
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return {int(x) for x in json.load(fh)}
+    except Exception as e:
+        print(f"⚠️ Не удалось прочитать {path}: {e} — начинаю с пустого набора")
+        return set()
+
+
+def _save_visited_teams(path, visited):
+    """rebuild-then-replace: набор посещённых нельзя потерять при обрыве."""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(sorted(int(x) for x in visited), fh)
+    os.replace(tmp, path)
+
+
+def _teams_from_corpus(output_dir):
+    """Id команд, уже встречавшихся в собранных матчах — соперники прошлых волн."""
+    found = set()
+    if not os.path.isdir(output_dir):
+        return found
+    for name in os.listdir(output_dir):
+        if not name.endswith(".json") or name in ("merge_patch_summary.json",):
+            continue
+        try:
+            with open(os.path.join(output_dir, name), "rb") as fh:
+                data = orjson.loads(fh.read())
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        for match in data.values():
+            if not isinstance(match, dict):
+                continue
+            for key in ("radiantTeam", "direTeam"):
+                team = match.get(key) or {}
+                tid = team.get("id")
+                if isinstance(tid, int) and tid > 0:
+                    found.add(tid)
+    return found
+
+
+def get_pros(max_waves=None):
+    """Снежный ком по КОМАНДАМ: сиды -> их соперники -> соперники соперников.
+
+    Раньше собирались только команды из tier1/tier2, то есть те, кто считается
+    сильным СЕЙЧАС. История игрока, наигранная в другой команде, и матчи против
+    команд вне списков в корпус не попадали вовсе.
+
+    Волна = один прогон сбора по очереди неопрошенных команд. После него из
+    свежесобранных матчей вынимаются id обеих команд, новые попадают в очередь
+    следующей волны. Конец — когда новых команд не появилось.
+
+    Каждая команда опрашивается ОДИН раз за всё время: набор посещённых лежит в
+    `visited_teams.json` рядом с корпусом и переживает перезапуск. Без него
+    повторные волны гоняли бы одни и те же команды и жгли квоту Stratz.
+    """
+    output_dir = os.path.join(str(PRO_HEROES_DIR), "json_parts_split_from_object")
+    visited_path = os.path.join(str(PRO_HEROES_DIR), PRO_VISITED_TEAMS_FILE)
+    visited = _load_visited_teams(visited_path)
+
+    known = set(_seed_team_ids()) | _teams_from_corpus(output_dir)
+    queue = sorted(known - visited)
+    print(f"🌱 команд известно {len(known):,}, уже опрошено {len(visited):,}, "
+          f"в очереди {len(queue):,}")
+
     try:
         proxy_count = len(STRATZ_PROXY_MAP) if STRATZ_PROXY_MAP else 1
     except Exception:
         proxy_count = 1
     batch_concurrency = max(1, min(10, proxy_count))
-    asyncio.run(get_maps_new(ids=ids_clean, pro=True,
-                             mkdir=str(PRO_HEROES_DIR), skip_auxiliary_files=True,
-                             batch_concurrency=batch_concurrency))
+
+    wave = 0
+    while queue:
+        wave += 1
+        if max_waves is not None and wave > int(max_waves):
+            print(f"⏹️ достигнут предел волн ({max_waves}), в очереди осталось {len(queue):,}")
+            break
+        print(f"\n🌊 волна {wave}: опрашиваю {len(queue):,} команд", flush=True)
+        asyncio.run(get_maps_new(ids=list(queue), pro=True,
+                                 mkdir=str(PRO_HEROES_DIR), skip_auxiliary_files=True,
+                                 batch_concurrency=batch_concurrency))
+        visited |= set(queue)
+        _save_visited_teams(visited_path, visited)
+
+        discovered = _teams_from_corpus(output_dir)
+        queue = sorted(discovered - visited)
+        print(f"🔎 волна {wave} закончена: всего команд в корпусе {len(discovered):,}, "
+              f"новых для следующей волны {len(queue):,}", flush=True)
+    print(f"\n✅ снежный ком остановился: опрошено команд {len(visited):,}, волн {wave}")
 
 
 def get_pubs():
