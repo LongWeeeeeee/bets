@@ -5045,6 +5045,31 @@ def _format_star_hits_line(hits: List[Dict[str, Any]]) -> str:
     return ", ".join(parts)
 
 
+def _format_win_model_line(*blocks) -> str:
+    """Строка с оценкой драфтовой ML-модели для Telegram и лога.
+
+    Индекс кладёт в каждый блок `synergy_and_counterpick`; он одинаков во всех,
+    поэтому берётся первый найденный. Печатается ВСЕГДА, когда модель доступна —
+    по ней работает вето, и оператор должен видеть её мнение даже там, где вето
+    не сработало. Модель недоступна -> строки нет (шум вместо данных не нужен).
+    """
+    index = None
+    for block in blocks:
+        if isinstance(block, dict):
+            raw = block.get(win_model_veto.INDEX_KEY)
+            if raw is not None:
+                try:
+                    index = float(raw)
+                except (TypeError, ValueError):
+                    index = None
+                if index is not None:
+                    break
+    if index is None:
+        return ""
+    side = "Radiant" if index > 0 else ("Dire" if index < 0 else "\u2014")
+    return f"\U0001F916 ML-\u043c\u043e\u0434\u0435\u043b\u044c: {side} {50.0 + abs(index):.1f}%\n"
+
+
 def _build_star_hits_summary_block(
     *,
     early_output: Optional[dict],
@@ -5070,8 +5095,9 @@ def _build_star_hits_summary_block(
     all_hits = [h for h in section_all_hits if h.get("metric") not in mix_metric_names]
     mix_hits = [h for h in section_all_hits if h.get("metric") in mix_metric_names]
 
+    model_line = _format_win_model_line(early_output, mid_output, all_output)
     if not any((early_hits, mid_hits, all_hits, mix_hits)):
-        return ""
+        return model_line
 
     lines: List[str] = ["⭐ Star hits (WR60+):"]
     for label, hits in (
@@ -5083,7 +5109,7 @@ def _build_star_hits_summary_block(
         if not hits:
             continue
         lines.append(f"  {label}: {_format_star_hits_line(hits)}")
-    return "\n".join(lines) + "\n"
+    return model_line + "\n".join(lines) + "\n"
 
 
 def _late_star_hits_by_sign(raw_mid_output: Optional[dict]) -> Dict[str, Any]:

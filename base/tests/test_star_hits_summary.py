@@ -75,6 +75,37 @@ def test_build_star_hits_summary_block_returns_empty_without_hits() -> None:
     assert block == ""
 
 
+def test_star_summary_shows_win_model_line_even_without_hits() -> None:
+    """Оценка ML-модели должна быть видна в КАЖДОМ сообщении, а не только при хитах."""
+    import win_model_veto as V
+
+    block = runtime._build_star_hits_summary_block(
+        early_output={V.INDEX_KEY: 6.3},
+        mid_output={V.INDEX_KEY: 6.3},
+        all_output={V.INDEX_KEY: 6.3},
+    )
+    assert block.strip() == "\U0001F916 ML-модель: Radiant 56.3%"
+
+    # знак читается как сторона
+    block = runtime._build_star_hits_summary_block(
+        early_output={V.INDEX_KEY: -8.0}, mid_output={}, all_output={})
+    assert "Dire 58.0%" in block
+
+    # модель недоступна -> строки нет, шум вместо данных не печатаем
+    assert runtime._build_star_hits_summary_block(
+        early_output={}, mid_output={}, all_output={}) == ""
+
+
+def test_star_summary_keeps_model_line_together_with_hits() -> None:
+    import win_model_veto as V
+
+    block = runtime._build_star_hits_summary_block(
+        early_output={"counterpick_1vs1": 9, V.INDEX_KEY: 4.0},
+        mid_output={}, all_output={})
+    assert block.startswith("\U0001F916 ML-модель: Radiant 54.0%\n")
+    assert "\u2b50 Star hits (WR60+):" in block
+
+
 def test_build_star_hits_summary_block_combines_all_three_blocks() -> None:
     block = runtime._build_star_hits_summary_block(
         early_output={
