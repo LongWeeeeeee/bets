@@ -456,6 +456,40 @@ CLI: `--input-dir` (default `bets_data/analise_pub_matches/json_parts_split_from
 
 `KillSaturationScale.fit(kills)` — эмпирическая CDF килов train: `.saturation(kills) -> [0,1]`, `.kills(saturation)` — обратно. Медианная карта → 0.50, p5 → 0.05, p95 → 0.95. MinMax по сырым тоталам так не умеет: train покрывает 6..231 килов, поэтому медиана падает на 0.32, а предсказания зажимаются в 0.17..0.47.
 
+## `base/prematch_scorer.py` — предматчевая модель победы (29 признаков, AUC 0.7140)
+
+Оценка до первой минуты: 20 базовых признаков + `lvl_rel_pos` / `kda_player` / `farm_dep` + 6 колонок взаимодействий (драфт-логит, ELO и форма × |разрыв рейтингов| и опыт составов). Ансамбль из 4 окон обучения (90/180/365/730 дней).
+
+**Артефакт: `data/prematch_model_artifact_v3.npz`** (env `PREMATCH_ARTIFACT`). Именно v3, а не v2: цепочка сборки `build_prematch_artifact.py` → `_v2.py` → `add_org_identity.py`, и последний шаг добавляет опознание организации по составу. Раннер — `scripts/run/rebuild_prematch_snapshot.sh` (собирает локально, доставляет на serv1 атомарным переименованием).
+
+`get_model(path=ARTIFACT_PATH) -> PrematchModel` (кэш процесса).
+
+`PrematchModel.score(*, radiant_accounts, dire_accounts, radiant_heroes, dire_heroes, radiant_team_id, dire_team_id, draft_logit=None, strictness="teams", now_ts=None, max_age_days=3.0) -> ScoreResult`. **Дефолты не подставляются**: при нехватке данных бросает `MissingData` с перечнем недостающего. Уровни строгости: `accounts` / `teams` / `cells` / `full`. Три отдельные причины отказа — неизвестные игроки, протухший снимок (`wr30` — окно 30 дней, `vs_wr` — полураспад 45 дней), разметка позиций против истории (≥3 конфликтных слота).
+
+`ScoreResult`: `probability`, `lan_winrate`, `features` (словарь из 29), `notes`; свойства `confidence`, `pick_radiant`.
+
+`resolve_org(team_id, accounts) -> int` — организация по СОСТАВУ (пересечение ≥4 из 5), тег только запасной. Чинит ребрендинг: состав Iron Wing опознаётся как организация 8121295, склеившая пять team_id вместе с Tundra (8291895), и приносит 95 пар личных встреч вместо 12 у нового тега.
+
+`lan_min_odds(confidence) -> float` / `lan_expected_wr(confidence) -> float` — сетка `LAN_ODDS_GRID` (уверенность в процентах 50..99 → фактический винрейт полосы на настоящих офлайн-турнирах и безубыточный кэф). Выше 85% заморожено: в полосах меньше 40 карт. `lan_winrate(confidence)`, `veto_error_rate(confidence) -> (доля ошибок, нужный кэф против модели)`.
+
+## `base/win_model_veto.py` — индекс победы + вето и ставка по модели
+
+Индекс = `(P(radiant) − 0.5) × 100`. Кладётся в блоки `synergy_and_counterpick` под `INDEX_KEY = "ml_win_index"`, источник — рядом под `SOURCE_KEY = "ml_win_index_src"` (`"prematch"` / `"draft"`). Источник обязателен: шкалы двух моделей разные, и порог вето выбирается по нему.
+
+`win_index_ex(rad, dire) -> (значение, источник)` — предматчевая модель приоритетна, драфтовая запасная. `win_index(rad, dire)` — совместимость (только значение). `win_index_draft(rad, dire)` — прежний путь через паблик-модель.
+
+Словари позиций читаются по ключам **`"pos1".."pos5"`** (боевой формат). Числовые `1..5` приняты как запасные — для тестов.
+
+`blocks_veto(block_sign, block, section="") -> bool` — True, когда знак блока против модели выше порога секции. `_min_index_for(section, source)`: предматчевый источник → **8 на все секции** (перекалибровка E-142: заветованные карты берут 25.9-27.7% во всех четырёх блоках), драфтовый → таблица E-73 (`early_output` 10, `early_end_output` 5, `mid_output` 9, `all_output` 0).
+
+`model_bet(*blocks) -> dict | None` — `{side, index, confidence, min_odds, expected_wr}` при |индекс| ≥ 8 у предматчевого источника, иначе None. Драфтовый источник не пускается.
+
+**Отказ всегда в сторону РАЗРЕШЕНИЯ:** нет модели, незнакомый игрок, любая ошибка → None, вето не срабатывает.
+
+Env: `WIN_MODEL_VETO_ENABLED` (1), `WIN_MODEL_VETO_PREMATCH_MIN` (8), `WIN_MODEL_VETO_MIN_<SECTION>`, `WIN_MODEL_VETO_MIN_INDEX`, `WIN_MODEL_DIR`.
+
+В `cyberscore_try.py`: `_try_dispatch_prematch_model_bet(...)` — самостоятельная ставка на 00-й минуте на стороне модели, вызывается в трёх ветках (ранние локальные метрики, star-ветка, ветка без звёзд), идемпотентна по `match_key`. Тело сигнала берётся ГОТОВОЕ — переписывается только строка заголовка, все блоки остаются. Env: `PREMATCH_MODEL_BET_ENABLED` (1), `PREMATCH_MODEL_BET_MAX_GAME_TIME_SECONDS` (180). Строка «ML от кэфа» печатается в `_format_win_model_line` только для предматчевого источника.
+
 ## `base/refresh_public_draft_model.py` — переобучение по патчу + ворота промоута
 
 Одна команда на выход патча: синк корпуса с serv1 → переобучение → сравнение с текущей моделью → вердикт. **Ничего не удаляет, не переключает и не перезаписывает** — промоут остаётся ручным решением, скрипт только печатает вердикт и пишет `refresh_report.json` в каталог претендента.
