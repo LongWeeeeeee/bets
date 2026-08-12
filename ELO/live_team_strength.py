@@ -306,6 +306,21 @@ def _apply_live_probability_policy(
     }
 
 
+SNAPSHOT_PIN_ENV = "ELO_SNAPSHOT_PIN"
+
+
+def _snapshot_is_pinned() -> bool:
+    """Запрет пересобирать снапшот из-за свежих файлов корпуса.
+
+    Снапшот, собранный на полном корпусе, переносится на прод файлом: корпус там
+    меньше, и любое его пополнение делает mtime свежее снапшота — тогда
+    `ensure_snapshot` молча пересоберёт рейтинги на маленьком корпусе и откатит
+    перенос. Пин выключает ТОЛЬКО эту причину пересборки; структурные (нет
+    model_state, устаревшая схема kills-истории) продолжают работать.
+    """
+    return str(os.getenv(SNAPSHOT_PIN_ENV, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _latest_data_mtime(data_dir: Path) -> float:
     latest = 0.0
     for json_path in data_dir.glob("*.json"):
@@ -849,6 +864,25 @@ def _build_snapshot_dict(
     config: HybridEloConfig,
 ) -> dict[str, Any]:
     matches, load_summary = load_matches(data_dir)
+    # Combined archives keep the same map in more than one file, so the raw
+    # stream carries copies (3.7% of the pro corpus as of 2026-08-12). A copy is
+    # a second rating update for one outcome, and inside build_series_bundles it
+    # also counts as an extra map win, which can close a Bo3 after two copies of
+    # the same map. Drop copies before anything reads the stream.
+    duplicate_records = 0
+    if matches:
+        seen_match_ids: set[int] = set()
+        unique_matches: list[MatchRecord] = []
+        for match in matches:
+            if match.match_id in seen_match_ids:
+                duplicate_records += 1
+                continue
+            seen_match_ids.add(match.match_id)
+            unique_matches.append(match)
+        matches = unique_matches
+        load_summary = dict(load_summary)
+        load_summary["duplicate_records"] = duplicate_records
+        load_summary["loaded_matches"] = len(matches)
     if not matches:
         empty_model_state = None
         return {
@@ -1012,6 +1046,7 @@ def _build_snapshot_dict(
             "active_cutoff_days": active_cutoff_days,
             "display_decay_half_life_days": display_decay_half_life_days,
             "loaded_matches": int(load_summary.get("loaded_matches", 0)),
+            "duplicate_records": int(load_summary.get("duplicate_records", 0)),
             "series_groups": int(series_summary.get("all_series_groups", 0)),
             "eligible_series": int(series_summary.get("eligible_series", 0)),
             "team_count": len(teams_by_org_key),
@@ -1077,7 +1112,9 @@ def ensure_snapshot(
         except FileNotFoundError:
             snapshot_mtime = 0.0
     data_mtime = _latest_data_mtime(data_dir)
-    snapshot_is_stale = bool(snapshot is not None and data_mtime > snapshot_mtime)
+    snapshot_is_stale = bool(
+        snapshot is not None and data_mtime > snapshot_mtime and not _snapshot_is_pinned()
+    )
     snapshot_missing_model_state = bool(snapshot is not None and not isinstance(snapshot.get("model_state"), dict))
     snapshot_missing_kills_history = bool(
         snapshot is not None
