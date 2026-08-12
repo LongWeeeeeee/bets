@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -128,6 +129,67 @@ def test_duplicate_map_does_not_move_ratings_twice(tmp_path) -> None:
     assert duplicated["model_state"]["player_global"] == pytest.approx(
         single["model_state"]["player_global"]
     )
+
+
+def test_snapshot_pin_blocks_rebuild_on_fresh_corpus(tmp_path, monkeypatch) -> None:
+    """Пин запрещает пересборку по mtime, но не по структурным причинам."""
+    _reset_live_team_strength_caches()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    players = [
+        {
+            "isRadiant": index < 5,
+            "steamAccount": {"id": index + 1},
+            "position": f"POSITION_{(index % 5) + 1}",
+        }
+        for index in range(10)
+    ]
+    raw_match = {
+        "id": 999,
+        "startDateTime": 1771153200,
+        "didRadiantWin": True,
+        "radiantTeam": {"id": 10, "name": "A"},
+        "direTeam": {"id": 20, "name": "B"},
+        "players": players,
+        "radiantKills": [2],
+        "direKills": [1],
+        "leagueId": 1,
+        "league": {"name": "Test League", "tier": "PROFESSIONAL"},
+        "series": {"id": 50, "type": "1"},
+    }
+    (data_dir / "7.41d_part001.json").write_text(json.dumps({"999": raw_match}), encoding="utf-8")
+    snapshot_path = tmp_path / "snapshot.json"
+    build_snapshot(data_dir=data_dir, snapshot_path=snapshot_path)
+
+    # корпус пополнился уже ПОСЛЕ сборки снапшота
+    os.utime(snapshot_path, (1_600_000_000, 1_600_000_000))
+    builds: list[int] = []
+    real_build = live_team_strength_module.build_snapshot
+
+    def _counting_build(**kwargs):
+        builds.append(1)
+        return real_build(**kwargs)
+
+    monkeypatch.setattr(live_team_strength_module, "build_snapshot", _counting_build)
+
+    monkeypatch.delenv(live_team_strength_module.SNAPSHOT_PIN_ENV, raising=False)
+    _reset_live_team_strength_caches()
+    live_team_strength_module.ensure_snapshot(data_dir=data_dir, snapshot_path=snapshot_path)
+    assert builds == [1], "без пина устаревший снапшот обязан пересобираться"
+
+    monkeypatch.setenv(live_team_strength_module.SNAPSHOT_PIN_ENV, "1")
+    os.utime(snapshot_path, (1_600_000_000, 1_600_000_000))
+    _reset_live_team_strength_caches()
+    live_team_strength_module.ensure_snapshot(data_dir=data_dir, snapshot_path=snapshot_path)
+    assert builds == [1], "с пином пересборки по mtime быть не должно"
+
+    # структурная причина сильнее пина
+    broken = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    broken["model_state"] = None
+    snapshot_path.write_text(json.dumps(broken), encoding="utf-8")
+    _reset_live_team_strength_caches()
+    live_team_strength_module.ensure_snapshot(data_dir=data_dir, snapshot_path=snapshot_path)
+    assert builds == [1, 1], "снапшот без model_state обязан пересобираться и с пином"
 
 
 def _reset_live_team_strength_caches() -> None:

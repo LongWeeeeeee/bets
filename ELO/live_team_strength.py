@@ -306,6 +306,21 @@ def _apply_live_probability_policy(
     }
 
 
+SNAPSHOT_PIN_ENV = "ELO_SNAPSHOT_PIN"
+
+
+def _snapshot_is_pinned() -> bool:
+    """Запрет пересобирать снапшот из-за свежих файлов корпуса.
+
+    Снапшот, собранный на полном корпусе, переносится на прод файлом: корпус там
+    меньше, и любое его пополнение делает mtime свежее снапшота — тогда
+    `ensure_snapshot` молча пересоберёт рейтинги на маленьком корпусе и откатит
+    перенос. Пин выключает ТОЛЬКО эту причину пересборки; структурные (нет
+    model_state, устаревшая схема kills-истории) продолжают работать.
+    """
+    return str(os.getenv(SNAPSHOT_PIN_ENV, "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _latest_data_mtime(data_dir: Path) -> float:
     latest = 0.0
     for json_path in data_dir.glob("*.json"):
@@ -1097,7 +1112,9 @@ def ensure_snapshot(
         except FileNotFoundError:
             snapshot_mtime = 0.0
     data_mtime = _latest_data_mtime(data_dir)
-    snapshot_is_stale = bool(snapshot is not None and data_mtime > snapshot_mtime)
+    snapshot_is_stale = bool(
+        snapshot is not None and data_mtime > snapshot_mtime and not _snapshot_is_pinned()
+    )
     snapshot_missing_model_state = bool(snapshot is not None and not isinstance(snapshot.get("model_state"), dict))
     snapshot_missing_kills_history = bool(
         snapshot is not None

@@ -704,6 +704,10 @@ Telegram: `Token`, `Chat_id`, `Chat_ids`. VK: `VK_GROUP_ID`, `VK_PEER_ID`, `VK_P
 
 `build_snapshot()` пишет JSON атомарно. `ensure_snapshot(..., rebuild_if_missing=True)` пересобирает legacy-снапшот без `team_kills_history_by_team_id` или с версией history schema не равной 2; raw-дубликаты одной карты учитываются один раз по `match_id`. `meta.team_kills_history_latest_patch` определяется по source patch самой поздней датированной карты.
 
+Дедуп по `match_id` делается сразу после `load_matches` в `_build_snapshot_dict` и распространяется на ВСЁ: модель, серии, kills-историю. Число отброшенных копий — в `meta.duplicate_records`.
+
+Env `ELO_SNAPSHOT_PIN=1` запрещает пересборку снапшота по mtime корпуса (структурные причины — нет `model_state`, устаревшая схема kills-истории — продолжают действовать). Нужен там, где снапшот собран на полном корпусе и перенесён файлом, а локальный корпус меньше: без пина ближайшее пополнение корпуса молча пересоберёт рейтинги на маленьких данных.
+
 ---
 
 ## SourceTV bridge
