@@ -189,3 +189,60 @@ def test_model_bet_silent_below_threshold_and_for_draft_source():
     # на этой шкале не проверялся.
     assert V.model_bet(_draft(20.0)) is None
     assert V.model_bet({}, None, "не словарь") is None
+
+
+def test_prematch_bridge_reads_pos_keys_not_integers():
+    """Мост обязан понимать боевой формат словаря позиций — `pos1`..`pos5`.
+
+    Куплено на проде 13.08: `_prematch_index` читал ключи 1..5 и "1".."5",
+    которых в живых словарях нет, поэтому предматчевая модель молча возвращала
+    None, а вето всё это время работало на драфтовой. Ошибка невидима снаружи:
+    индекс приходит, просто не от той модели.
+    """
+    captured = {}
+
+    class _Model:
+        def score(self, **kw):
+            captured.update(kw)
+            raise RuntimeError("дальше не идём — проверяем только извлечение слотов")
+
+    import types
+
+    import base as _base_pkg
+
+    stub = types.ModuleType("prematch_scorer")
+    stub.get_model = lambda: _Model()
+    # Мост сперва пробует `from base import prematch_scorer`, поэтому подменять
+    # надо и запись в sys.modules, и атрибут пакета — иначе подхватится живой
+    # модуль и тест проверит не то.
+    saved = {k: sys.modules.get(k) for k in ("prematch_scorer", "base.prematch_scorer")}
+    saved_attr = getattr(_base_pkg, "prematch_scorer", None)
+    sys.modules["prematch_scorer"] = stub
+    sys.modules["base.prematch_scorer"] = stub
+    _base_pkg.prematch_scorer = stub
+    # Драфтовый логит нужен мосту раньше скорера — подменяем и его.
+    saved_draft = V.win_index_draft
+    V.win_index_draft = lambda a, b: 5.0
+    try:
+        rad = {f"pos{i}": {"account_id": 100 + i, "hero_id": i} for i in range(1, 6)}
+        dire = {f"pos{i}": {"account_id": 200 + i, "hero_id": 5 + i} for i in range(1, 6)}
+        V._prematch_index(rad, dire)
+    finally:
+        V.win_index_draft = saved_draft
+        for key, mod in saved.items():
+            if mod is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = mod
+        if saved_attr is None:
+            if hasattr(_base_pkg, "prematch_scorer"):
+                delattr(_base_pkg, "prematch_scorer")
+        else:
+            _base_pkg.prematch_scorer = saved_attr
+
+    assert captured, "скорер не был вызван — слоты из pos-ключей не извлеклись"
+    assert captured["radiant_accounts"] == [101, 102, 103, 104, 105]
+    assert captured["dire_accounts"] == [201, 202, 203, 204, 205]
+    assert captured["radiant_heroes"] == [1, 2, 3, 4, 5]
+    assert captured["dire_heroes"] == [6, 7, 8, 9, 10]
+    assert captured["strictness"] == "accounts"

@@ -150,9 +150,15 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[flo
             return None
     try:
         def slots(d):
+            # Ключи позиций в проде — строки "pos1".."pos5" (см. `_heroes_vector`
+            # и сборку словарей в cyberscore_try). Числовые 1..5 и "1".."5"
+            # оставлены запасными: на них зовут тесты и ручные проверки.
             acc, her = [], []
             for i in range(1, 6):
-                e = (d or {}).get(i) or (d or {}).get(str(i)) or {}
+                src = d or {}
+                e = src.get(f"pos{i}") or src.get(i) or src.get(str(i)) or {}
+                if not isinstance(e, dict):
+                    e = {}
                 acc.append(int(e.get("account_id") or 0))
                 her.append(int(e.get("hero_id") or 0))
             return acc, her
