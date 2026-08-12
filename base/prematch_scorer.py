@@ -54,7 +54,7 @@ import numpy as np
 
 ARTIFACT_PATH = os.getenv(
     "PREMATCH_ARTIFACT",
-    str(Path(__file__).resolve().parents[1] / "data" / "prematch_model_artifact_v2.npz"),
+    str(Path(__file__).resolve().parents[1] / "data" / "prematch_model_artifact_v3.npz"),
 )
 BASE20 = ["draft_logit", "elo", "games", "hero_games", "pos_games", "opp_elo",
           "hero_pool", "form", "hero_gpm_rel", "imp_recent", "wr30", "h2h_resid",
@@ -65,10 +65,16 @@ INTER_KEYS = ["draft_logit", "elo", "form"]
 FEATURES = BASE20 + EXTRA3 + [f"{k}_x_{c}" for c in ("elo_gap", "games_exp") for k in INTER_KEYS]
 STRICTNESS = ("accounts", "teams", "cells", "full")
 
-# уверенность модели -> фактический винрейт на офлайн-турнирах (E-141, 1 391 карта)
-LAN_CALIBRATION = ((0.50, 0.60, 0.603, 370), (0.60, 0.70, 0.661, 292),
-                   (0.70, 0.80, 0.737, 224), (0.80, 0.90, 0.894, 226),
-                   (0.90, 1.01, 0.975, 279))
+# Пороги на НАСТОЯЩИХ офлайн-турнирах, без открытых квалификаций (E-142).
+# 2 456 карт, честные предсказания из шести forward-окон. Прежняя таблица
+# считалась на выборке, где 74% — квалификации (профи против любителей), и была
+# завышена: там ≥90% даёт 95.9%, а на настоящих LAN 83.8%.
+# (порог уверенности, доля отбора, винрейт, карт, безубыточный кэф)
+LAN_THRESHOLDS = ((0.50, 1.00, 0.651, 2456, 1.54), (0.55, 0.82, 0.677, 2017, 1.48),
+                  (0.60, 0.66, 0.710, 1621, 1.41), (0.65, 0.52, 0.743, 1282, 1.35),
+                  (0.70, 0.38, 0.777, 942, 1.29), (0.75, 0.29, 0.803, 702, 1.24),
+                  (0.80, 0.20, 0.830, 489, 1.20), (0.85, 0.12, 0.859, 284, 1.16))
+# ≥90% намеренно не включён: 83.8% на 111 картах, монотонность ломается.
 
 
 class MissingData(Exception):
@@ -96,11 +102,29 @@ class ScoreResult:
 
 
 def lan_winrate(confidence: float) -> float:
-    """Фактический винрейт на офлайне для заявленной уверенности."""
-    for lo, hi, wr, _n in LAN_CALIBRATION:
-        if lo <= confidence < hi:
-            return wr
-    return LAN_CALIBRATION[-1][2]
+    """Фактический винрейт на НАСТОЯЩИХ офлайн-турнирах для этой уверенности.
+
+    Возвращает винрейт самого высокого порога, который уверенность проходит.
+    Выше 85% значение не растёт: на 111 картах хвоста винрейт падает до 83.8%,
+    и экстраполировать туда нечего.
+    """
+    wr = LAN_THRESHOLDS[0][2]
+    for thr, _share, val, _n, _k in LAN_THRESHOLDS:
+        if confidence >= thr:
+            wr = val
+    return wr
+
+
+def veto_error_rate(confidence: float) -> tuple[float, float]:
+    """Для вето: как часто оно ошибётся и какой кэф нужен ставке ПРОТИВ модели.
+
+    Вето «не отправлять сигнал против модели» ошибается ровно в (1 - винрейт)
+    случаев. Ставка против уверенной модели окупается только при коэффициенте
+    выше 1/(1-винрейт): на пороге 60% это 3.45, на 70% — 4.48, на 80% — 5.88.
+    Медианная цена андердога у нас 2.35 (E-76), то есть заметно ниже.
+    """
+    wr = lan_winrate(confidence)
+    return 1.0 - wr, 1.0 / max(1.0 - wr, 1e-9)
 
 
 class PrematchModel:
@@ -117,6 +141,49 @@ class PrematchModel:
         self.hero_farm = {int(r[0]): r[1] for r in z["hero_farm"]} if "hero_farm" in z else {}
         self.ctx_mu = z["ctx_mu"] if "ctx_mu" in z else None
         self.ctx_sd = z["ctx_sd"] if "ctx_sd" in z else None
+        # Идентичность ОРГАНИЗАЦИИ, а не тега: 64 710 team_id схлопнуты в 57 608
+        # организаций склейкой по составу (>=4 из 5). Нужно потому, что при
+        # ребрендинге team_id новый и история личных встреч обнулялась бы —
+        # Iron Wing = 1win = Tundra с составом Pure/bzm/33/Ari/Whitemon.
+        self.team_merge = {int(a): int(b) for a, b in z["team_merge"]} if "team_merge" in z else {}
+        self.h2h_org = {(int(r[0]), int(r[1])): r[2] for r in z["h2h_org"]} if "h2h_org" in z else {}
+        self.org_by_acc: dict[int, set] = {}
+        if "org_roster" in z:
+            for row in z["org_roster"]:
+                org = int(row[0])
+                for a in row[1:]:
+                    self.org_by_acc.setdefault(int(a), set()).add(org)
+            self.org_roster = {int(r[0]): frozenset(int(x) for x in r[1:]) for r in z["org_roster"]}
+        else:
+            self.org_roster = {}
+
+    def resolve_org(self, team_id: int, accounts: Sequence[int]) -> int:
+        """Организация по СОСТАВУ, а тег — только запасной вариант.
+
+        Порядок именно такой, и он куплен проверкой. Состав Pure/bzm/33/Ari/
+        Whitemon опознаётся как организация 8121295, склеившая пять team_id,
+        включая Tundra (8291895) и «1w» (10182357). А алиас `1win` в
+        `id_to_names` указывает на team_id 9255039, чей состав пересекается с
+        этой пятёркой на 0 из 5 — то есть справочник имён ведёт не туда.
+        Пересечение 4 из 5 живых аккаунтов — свидетельство сильнее тега.
+        """
+        tid = int(team_id)
+        members = {int(a) for a in accounts if int(a) > 0}
+        if len(members) < 4:
+            return self.team_merge.get(tid, tid if tid > 0 else -1)
+        best, best_ov = -1, 0
+        seen: set[int] = set()
+        for a in members:
+            for org in self.org_by_acc.get(a, ()):  # noqa: SIM118
+                if org in seen:
+                    continue
+                seen.add(org)
+                ov = len(self.org_roster[org] & members)
+                if ov > best_ov:
+                    best, best_ov = org, ov
+        if best_ov >= 4:
+            return best
+        return self.team_merge.get(tid, tid if tid > 0 else -1)
 
     def _check_positions(self, accs: Sequence[int], miss: list[str], notes: list[str]) -> None:
         """Ловит сломанную разметку позиций.
@@ -203,8 +270,15 @@ class PrematchModel:
             no_pos = [(a, p) for p, a in enumerate(accs, 1) if (a, ((p - 1) % 5) + 1) not in self.acc_pos]
             if no_pos:
                 miss.append(f"нет игр на этой позиции: {no_pos}")
-        key = (min(rt, dt), max(rt, dt)) if rt > 0 and dt > 0 else None
-        if strictness == "full" and (key is None or key not in self.h2h):
+        org_r = self.resolve_org(rt, radiant_accounts)
+        org_d = self.resolve_org(dt, dire_accounts)
+        if self.h2h_org and org_r > 0 and org_d > 0 and org_r != org_d:
+            key = (min(org_r, org_d), max(org_r, org_d))
+            h2h_src, swap = self.h2h_org, org_r > org_d
+        else:
+            key = (min(rt, dt), max(rt, dt)) if rt > 0 and dt > 0 else None
+            h2h_src, swap = self.h2h, rt > dt
+        if strictness == "full" and (key is None or key not in h2h_src):
             miss.append("нет истории личных встреч этих команд")
         if miss:
             raise MissingData(miss)
@@ -238,10 +312,10 @@ class PrematchModel:
         r, d = side(radiant_accounts, radiant_heroes), side(dire_accounts, dire_heroes)
         vv = [(self.vs.get((int(x), int(y)), (0.0, 0.0))) for x in radiant_heroes for y in dire_heroes]
         vs_val = float(np.mean([(w + 5.0) / (g + 10.0) for w, g in vv])) - 0.5
-        h2h = float(self.h2h.get(key, 0.0)) if key else 0.0
-        if key and key not in self.h2h:
-            notes.append("команды раньше не встречались — h2h нейтрален")
-        if key and rt > dt:
+        h2h = float(h2h_src.get(key, 0.0)) if key else 0.0
+        if key and key not in h2h_src:
+            notes.append("организации раньше не встречались — h2h нейтрален")
+        if key and swap:
             h2h = -h2h
         lg1 = lambda x: math.log1p(max(x, 0))
         f = {
