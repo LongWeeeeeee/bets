@@ -1,0 +1,38 @@
+{
+ "schema": {
+  "feature_names": [
+   "hero_R_1",
+   "hero_R_2",
+   "hero_R_3",
+   "hero_R_4",
+   "hero_R_5",
+   "hero_D_1",
+   "hero_D_2",
+   "hero_D_3",
+   "hero_D_4",
+   "hero_D_5"
+  ],
+  "feature_count": 10,
+  "win_design": {
+   "kind": "hero_role_pair",
+   "signed": true,
+   "columns": 16764,
+   "pair_min_support": 30
+  }
+ },
+ "counts": {
+  "all": 5093540,
+  "shipped_fit_rows": 5093540
+ },
+ "selection": {
+  "win_C": 0.003
+ },
+ "split_boundaries": {
+  "validation": {
+   "last": {
+    "start_time": 1786263658
+   }
+  }
+ },
+ "note": "сравнение с чемпионом — см. draft_model_5m_vs_prod.md: паблик 0.6248 против 0.6147, про 7.41+ 0.6031 против 0.5968"
+}
