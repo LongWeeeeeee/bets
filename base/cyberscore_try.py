@@ -5628,7 +5628,11 @@ def _format_metric_value(value: float) -> str:
 
 
 LANE_ADV_DICT_CONFIDENCE_BASELINE = 39.0
-LANE_ADV_DICT_SIGN_MIN_ABS = 3.0
+# Порог, с которого lane_adv_dict считается имеющим сторону. Значение
+# привязано к ШКАЛЕ метрики: при LANE_CELL_VALUE=nw_mean шкала другая
+# (медиана |adv| 10.0 против 4.33 у метки), и равному объёму отбора
+# соответствует 7.33 (E-86, замер на holdout).
+LANE_ADV_DICT_SIGN_MIN_ABS = _safe_float_env("LANE_ADV_DICT_SIGN_MIN_ABS", 3.0)
 LANE_ADV_PROTRACKER_SIGN_MIN_ABS = 3.0
 # Альтернативный якорь направления для immediate-отправки в 00: когда
 # |lane_adv_dict| не добрал своего порога, сторону задаёт согласованная пара
