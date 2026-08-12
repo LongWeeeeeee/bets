@@ -162,3 +162,21 @@ def test_unserializable_attempt_never_raises(rec) -> None:
     a["card_odds"] = object()
 
     poller._record_history(a)
+
+def test_wall_is_filled_from_production_attempt_shape(rec):
+    """Прод-attempt НЕ содержит ключа "wall" — там attempt_started_at/finished_at.
+
+    Именно поэтому метка времени была null во всех 5 315 записях архива, а
+    фикстура этого не ловила: в ней ключ "wall" был, в проде его нет (E-100).
+    Тест фиксирует прод-форму: без метки времени архив нельзя сцепить с корпусом.
+    """
+    recorder, path = rec
+    attempt = _attempt(1.8, 2.0)
+    attempt.pop("wall")
+    attempt["attempt_started_at"] = 1755000000.0
+    attempt["attempt_finished_at"] = 1755000003.5
+    recorder._record_history(attempt)
+    rows = _lines(path)
+    assert len(rows) == 1
+    assert rows[0]["wall"] == 1755000003.5
+    assert "match_id" in rows[0]

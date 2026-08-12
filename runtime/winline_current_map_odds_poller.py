@@ -883,7 +883,17 @@ class WinlineCurrentMapOddsPoller:
 
             identity = self._identity if isinstance(self._identity, dict) else {}
             record = {
-                "wall": attempt.get("wall"),
+                # attempt не содержит ключа "wall" — там attempt_started_at /
+                # attempt_finished_at. Из-за этого метка времени была null во всех
+                # записях, и архив линии нельзя было сцепить с корпусом иначе как
+                # по номеру карты (E-100: контроль падал до 49%).
+                "wall": (
+                    attempt.get("wall")
+                    or attempt.get("attempt_finished_at")
+                    or attempt.get("attempt_started_at")
+                    or time.time()
+                ),
+                "match_id": (identity.get("match_id") or identity.get("map_id")),
                 "canonical_key": self._canonical_key,
                 "match_url": identity.get("url") or identity.get("match_url"),
                 "map_num": identity.get("map_num"),
