@@ -52,8 +52,16 @@ _DEFAULT_MIN_INDEX = {
 }
 
 
-def _min_index_for(section: str) -> float:
-    """Порог секции: env `WIN_MODEL_VETO_MIN_<SECTION>` перекрывает значение по умолчанию."""
+def _min_index_for(section: str, source: str = "") -> float:
+    """Порог секции: env `WIN_MODEL_VETO_MIN_<SECTION>` перекрывает значение по умолчанию.
+
+    У предматчевой модели порог ОДИН на все секции. Перекалибровка методом E-73
+    на 3 776-3 837 сигналах показала, что блоки перестали различаться: при
+    |индекс| >= 8 заветованные карты берут 25.9-27.7% в early_nw, early_win,
+    late и all — разброс меньше двух пунктов. Старая таблица 10/5/9/0 описывала
+    паблик-драфтовую модель, где секции расходились, и к новой шкале отношения
+    не имеет.
+    """
     name = str(section or "")
     override = os.getenv(f"WIN_MODEL_VETO_MIN_{name.upper()}")
     if override is None:
@@ -63,9 +71,20 @@ def _min_index_for(section: str) -> float:
             return float(override)
         except (TypeError, ValueError):
             pass
+    if str(source or "") == SOURCE_PREMATCH:
+        return _PREMATCH_MIN_INDEX
     return _DEFAULT_MIN_INDEX.get(name, 0.0)
 # Ключ, под которым индекс кладётся в блоки вывода метрик.
 INDEX_KEY = "ml_win_index"
+# Источник индекса кладётся рядом: шкалы двух моделей РАЗНЫЕ, и пороги E-73
+# (10/5/9/0) калибровались под паблик-драфтовую. Смешивать их нельзя.
+SOURCE_KEY = "ml_win_index_src"
+SOURCE_PREMATCH = "prematch"
+SOURCE_DRAFT = "draft"
+# Порог предматчевой модели: |индекс| >= 8 -> вето на ставку против неё.
+# Замер на 2 456 настоящих LAN-карт (forward-окна): при >=8 модель берёт 70.0%
+# на 72% потока, ставка ПРОТИВ неё окупалась бы только при кэфе выше 3.3.
+_PREMATCH_MIN_INDEX = float(os.getenv("WIN_MODEL_VETO_PREMATCH_MIN", "8"))
 
 _lock = threading.Lock()
 _state: dict[str, Any] = {"loaded": False, "encoder": None, "model": None, "error": None}
@@ -114,7 +133,63 @@ def _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[tupl
     return tuple(out)
 
 
+def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[float]:
+    """Индекс предматчевой модели или None, если данных не хватает.
+
+    Аккаунты берутся из тех же диктов позиций — они там уже есть. Организация
+    опознаётся скорером по составу, поэтому team_id не нужен. Любой отказ
+    (неизвестный игрок, протухший снимок, сломанные позиции) даёт None: молча
+    подставлять дефолты нельзя, это и есть источник вранья.
+    """
+    try:
+        from base import prematch_scorer as ps
+    except Exception:                                # noqa: BLE001
+        try:
+            import prematch_scorer as ps            # запуск из base/
+        except Exception:                            # noqa: BLE001
+            return None
+    try:
+        def slots(d):
+            acc, her = [], []
+            for i in range(1, 6):
+                e = (d or {}).get(i) or (d or {}).get(str(i)) or {}
+                acc.append(int(e.get("account_id") or 0))
+                her.append(int(e.get("hero_id") or 0))
+            return acc, her
+        ra, rh = slots(radiant_heroes_and_pos)
+        da, dh = slots(dire_heroes_and_pos)
+        if min(rh + dh) <= 0:
+            return None
+        draft = win_index_draft(radiant_heroes_and_pos, dire_heroes_and_pos)
+        if draft is None:
+            return None
+        p_draft = draft / 100.0 + 0.5
+        import math
+        logit = math.log(max(p_draft, 1e-6) / max(1.0 - p_draft, 1e-6))
+        model = ps.get_model()
+        res = model.score(radiant_accounts=ra, dire_accounts=da,
+                          radiant_heroes=rh, dire_heroes=dh,
+                          radiant_team_id=0, dire_team_id=0,
+                          draft_logit=logit, strictness="accounts")
+        return round((res.probability - 0.5) * 100.0, 3)
+    except Exception:                                # noqa: BLE001
+        return None
+
+
+def win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos):
+    """(индекс, источник). Предматчевая модель приоритетна, драфтовая — запасная."""
+    value = _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos)
+    if value is not None:
+        return value, SOURCE_PREMATCH
+    return win_index_draft(radiant_heroes_and_pos, dire_heroes_and_pos), SOURCE_DRAFT
+
+
 def win_index(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[float]:
+    """Совместимость: возвращает индекс без источника."""
+    return win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos)[0]
+
+
+def win_index_draft(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[float]:
     """(P(radiant) − 0.5) × 100 либо None, если оценить нечем."""
     heroes = _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos)
     if heroes is None:
@@ -154,9 +229,50 @@ def blocks_veto(block_sign: Any, block: Any, section: str = "") -> bool:
         index = float(raw)
     except (TypeError, ValueError):
         return False
-    if abs(index) < _min_index_for(section):
+    if abs(index) < _min_index_for(section, block.get(SOURCE_KEY)):
         return False
     model_sign = 1 if index > 0 else (-1 if index < 0 else 0)
     if model_sign == 0:
         return False
     return int(block_sign) != model_sign
+
+
+def model_bet(*blocks) -> Optional[dict]:
+    """Сторона и цена самостоятельной ставки по предматчевой модели.
+
+    Возвращает None, пока модель не набрала |индекс| >= порога, и словарь
+    `{side, index, confidence, min_odds, expected_wr}` когда набрала. Ставка
+    идёт САМА ПО СЕБЕ, без звёзд: замер на 2 456 настоящих LAN-картах даёт
+    1 769 карт (72% потока) с винрейтом 70.0% при |индекс| >= 8.
+
+    Драфтовый источник сюда не пускается: у него другая шкала и другой винрейт,
+    порог 8 на ней не проверялся.
+    """
+    index = None
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if str(block.get(SOURCE_KEY) or "") != SOURCE_PREMATCH:
+            continue
+        try:
+            index = float(block.get(INDEX_KEY))
+        except (TypeError, ValueError):
+            continue
+        break
+    if index is None or abs(index) < _PREMATCH_MIN_INDEX:
+        return None
+    confidence = (50.0 + abs(index)) / 100.0
+    try:
+        from base import prematch_scorer as ps
+    except Exception:                                # noqa: BLE001
+        try:
+            import prematch_scorer as ps            # запуск из base/
+        except Exception:                            # noqa: BLE001
+            return None
+    return {
+        "side": "radiant" if index > 0 else "dire",
+        "index": index,
+        "confidence": confidence,
+        "min_odds": ps.lan_min_odds(confidence),
+        "expected_wr": ps.lan_expected_wr(confidence),
+    }

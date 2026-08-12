@@ -5116,14 +5116,19 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
     # тоже), но по ней работает вето — блок со знаком против модели отменяется.
     # Считается один раз на драфт; отказ модели даёт None и вето не включает.
     try:
-        _ml_index = win_model_veto.win_index(radiant_heroes_and_pos, dire_heroes_and_pos)
+        _ml_index, _ml_source = win_model_veto.win_index_ex(
+            radiant_heroes_and_pos, dire_heroes_and_pos
+        )
     except Exception:
-        _ml_index = None
+        _ml_index, _ml_source = None, None
     if _ml_index is not None:
         for _block_key in ('early_output', 'early_end_output', 'mid_output', 'post_lane_output'):
             _block = return_dict.get(_block_key)
             if isinstance(_block, dict):
                 _block[win_model_veto.INDEX_KEY] = _ml_index
+                # Источник обязателен рядом с индексом: шкалы предматчевой и
+                # драфтовой моделей разные, и порог вето выбирается по нему.
+                _block[win_model_veto.SOURCE_KEY] = _ml_source
     return return_dict
 
 

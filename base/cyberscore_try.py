@@ -3793,6 +3793,23 @@ NETWORTH_STATUS_LANE_ADV_DICT_STANDALONE_KILLS_SEND = "lane_adv_dict_standalone_
 # at minute 00 on the lane-dominating side, in parallel with other watchers.
 # Default ON in production; tests disable it unless explicitly exercising it.
 LANE_ADV_STANDALONE_KILLS_ENABLED = _env_flag("LANE_ADV_STANDALONE_KILLS_ENABLED", "1")
+# ── Самостоятельная ставка предматчевой модели на 00-й минуте ────────────────
+# Модель (29 признаков, AUC 0.7140) при |индекс| >= 8 берёт 70.0% на 1 769 из
+# 2 456 настоящих LAN-карт — 72% потока. Это её собственный сигнал: звёзд он не
+# требует и с блоками не советуется, поэтому идёт отдельным диспетчером рядом
+# с остальными ватчерами.
+PREMATCH_MODEL_BET_ENABLED = _env_flag("PREMATCH_MODEL_BET_ENABLED", "1")
+# Окно отправки. Модель ПРЕДМАТЧЕВАЯ: она не видит ни минуты, ни нетворса, и
+# калибровка кэфов (LAN_ODDS_GRID) снята с предматчевой цены. На 20-й минуте
+# рынок уже переехал на живой счёт, и та же уверенность стоит других денег,
+# поэтому позже окна не шлём вовсе, а не шлём «как получится».
+PREMATCH_MODEL_BET_MAX_GAME_TIME_SECONDS = _safe_float_env(
+    "PREMATCH_MODEL_BET_MAX_GAME_TIME_SECONDS",
+    3 * 60.0,
+)
+NETWORTH_STATUS_PREMATCH_MODEL_BET_SEND = "prematch_model_bet_send"
+_prematch_model_bet_sent_urls: set = set()
+_prematch_model_bet_sent_lock = threading.Lock()
 # Kills bets ("СТАВКА НА Ранние килы" / standalone lane_adv kills) are only
 # dispatched when at least one team in the match is in the Tier-1 list
 # (id_to_names.tier_one_teams). Default ON; set KILLS_REQUIRE_TIER1_TEAM=0 to
@@ -5063,6 +5080,7 @@ def _format_win_model_line(*blocks) -> str:
     не сработало. Модель недоступна -> строки нет (шум вместо данных не нужен).
     """
     index = None
+    source = None
     for block in blocks:
         if isinstance(block, dict):
             raw = block.get(win_model_veto.INDEX_KEY)
@@ -5072,11 +5090,26 @@ def _format_win_model_line(*blocks) -> str:
                 except (TypeError, ValueError):
                     index = None
                 if index is not None:
+                    source = block.get(win_model_veto.SOURCE_KEY)
                     break
     if index is None:
         return ""
     side = "Radiant" if index > 0 else ("Dire" if index < 0 else "\u2014")
-    return f"\U0001F916 ML-\u043c\u043e\u0434\u0435\u043b\u044c: {side} {50.0 + abs(index):.1f}%\n"
+    confidence = 50.0 + abs(index)
+    line = f"\U0001F916 ML-\u043c\u043e\u0434\u0435\u043b\u044c: {side} {confidence:.1f}%"
+    # \u00abML \u043e\u0442 \u043a\u044d\u0444\u0430\u00bb \u2014 \u043c\u0438\u043d\u0438\u043c\u0430\u043b\u044c\u043d\u044b\u0439 \u043a\u043e\u044d\u0444\u0444\u0438\u0446\u0438\u0435\u043d\u0442, \u043f\u0440\u0438 \u043a\u043e\u0442\u043e\u0440\u043e\u043c \u0441\u0442\u0430\u0432\u043a\u0430 \u043f\u043e \u043c\u043e\u0434\u0435\u043b\u0438
+    # \u043e\u043a\u0443\u043f\u0430\u0435\u0442\u0441\u044f. \u0421\u0447\u0438\u0442\u0430\u0435\u0442\u0441\u044f \u041d\u0415 \u043e\u0442 \u0441\u0430\u043c\u043e\u0439 \u0443\u0432\u0435\u0440\u0435\u043d\u043d\u043e\u0441\u0442\u0438, \u0430 \u043e\u0442 \u0444\u0430\u043a\u0442\u0438\u0447\u0435\u0441\u043a\u043e\u0433\u043e \u0432\u0438\u043d\u0440\u0435\u0439\u0442\u0430
+    # \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u043e\u0441\u044b \u043d\u0430 \u043d\u0430\u0441\u0442\u043e\u044f\u0449\u0438\u0445 \u043e\u0444\u043b\u0430\u0439\u043d-\u0442\u0443\u0440\u043d\u0438\u0440\u0430\u0445 (prematch_scorer.LAN_ODDS_GRID):
+    # \u043c\u043e\u0434\u0435\u043b\u044c \u043f\u0435\u0440\u0435\u043e\u0446\u0435\u043d\u0438\u0432\u0430\u0435\u0442 \u0441\u0435\u0431\u044f, \u0438 \u0431\u0440\u0430\u0442\u044c \u0435\u0451 \u043f\u0440\u043e\u0446\u0435\u043d\u0442 \u0437\u0430 \u0432\u0435\u0440\u043e\u044f\u0442\u043d\u043e\u0441\u0442\u044c \u0437\u043d\u0430\u0447\u0438\u043b\u043e \u0431\u044b
+    # \u0437\u0430\u043d\u0438\u0436\u0430\u0442\u044c \u0442\u0440\u0435\u0431\u0443\u0435\u043c\u0443\u044e \u0446\u0435\u043d\u0443. \u0422\u043e\u043b\u044c\u043a\u043e \u043f\u0440\u0435\u0434\u043c\u0430\u0442\u0447\u0435\u0432\u044b\u0439 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u2014 \u0434\u0440\u0430\u0444\u0442\u043e\u0432\u0430\u044f \u0448\u043a\u0430\u043b\u0430
+    # \u043d\u0430 LAN \u043d\u0435 \u043c\u0435\u0440\u044f\u043b\u0430\u0441\u044c.
+    if str(source or "") == win_model_veto.SOURCE_PREMATCH:
+        try:
+            from base import prematch_scorer as _ps
+            line += f" | ML \u043e\u0442 \u043a\u044d\u0444\u0430: {_ps.lan_min_odds(confidence / 100.0):.2f}"
+        except Exception:                            # noqa: BLE001
+            pass
+    return line + "\n"
 
 
 def _build_star_hits_summary_block(
@@ -9271,6 +9304,13 @@ def _build_all_star_output(
             "synergy_duo",
             "synergy_trio",
             "pos1_vs_pos1",
+            # Индекс ML-модели и его источник. Без них вето на секции
+            # all_output было МЁРТВЫМ: `blocks_veto` читает индекс из самого
+            # блока, а сюда его никто не копировал, поэтому порог 0 («режем
+            # любое несогласие») ни разу ничего не отрезал. Секция при этом
+            # состоит в STAR_THRESHOLD_SECTIONS и вето для неё вызывается.
+            win_model_veto.INDEX_KEY,
+            win_model_veto.SOURCE_KEY,
         ):
             if key in post_lane_output:
                 all_output[key] = post_lane_output.get(key)
@@ -9643,6 +9683,81 @@ def _build_lane_adv_standalone_kills_message(
         f"{header}\n"
         f"{normalize_team_name_display(str(radiant_team_name or ''))} VS {normalize_team_name_display(str(dire_team_name or ''))}\n"
         f"{_build_series_score_line(live_league)}"
+        f"{lane_block}"
+        f"{team_elo_block or ''}"
+        f"{live_state_block}"
+    )
+
+
+def _build_prematch_model_bet_message(
+    *,
+    radiant_team_name: str,
+    dire_team_name: str,
+    target_team_name: str,
+    live_league: Optional[Dict[str, Any]],
+    top: Any,
+    mid: Any,
+    bot: Any,
+    protracker_payload: Optional[Dict[str, Any]],
+    team_elo_block: str,
+    game_time_seconds: Any,
+    radiant_lead: Any,
+    model_line: str,
+    radiant_heroes_and_pos: Any = None,
+    dire_heroes_and_pos: Any = None,
+    full_message_text: Any = None,
+) -> str:
+    """Тело самостоятельной ставки предматчевой модели.
+
+    Заголовок — обычный «СТАВКА НА <team> x1»: это ставка на победу, а не на
+    килы. ВСЁ ОСТАЛЬНОЕ СОДЕРЖИМОЕ СООБЩЕНИЯ СОХРАНЯЕТСЯ: если вызывающий
+    передал готовое тело сигнала (звёздные хиты, блоки Early/Late/All/Mix, WR,
+    ELO, линии, кэфы), переписывается ТОЛЬКО первая строка — таргет
+    разворачивается на сторону модели, а оператор видит ту же картину, что и в
+    обычной ставке. Строка модели с минимальным кэфом уже входит в блок
+    звёздных хитов, отдельно её добавлять не нужно.
+
+    Компактная сборка ниже — запасной путь для веток, где готового тела нет.
+    """
+    header = _format_signal_header(
+        stake_team_name=str(target_team_name or "НЕИЗВЕСТНАЯ КОМАНДА"),
+        stake_multiplier=1.0,
+    )
+    body = str(full_message_text or "").strip()
+    if body:
+        lines = body.splitlines()
+        if lines and lines[0].startswith("СТАВКА НА "):
+            lines[0] = header                       # только таргет, блоки на месте
+        else:
+            lines.insert(0, header)                 # тело без заголовка (no-star ветка)
+        text = "\n".join(lines)
+        if model_line and model_line.strip() and model_line.strip() not in text:
+            # Тело собрано без блока звёздных хитов — вносим строку модели сами,
+            # иначе минимальный кэф в сообщении не появится.
+            lines.insert(1, model_line.rstrip("\n"))
+            text = "\n".join(lines)
+        return text
+    lane_block = _build_lane_block(
+        top,
+        mid,
+        bot,
+        lane_adv_line=_build_dota2protracker_lane_adv_line(protracker_payload),
+        lane_adv_dict_line=_build_lane_dict_adv_line(top, mid, bot),
+    )
+    live_state_block = _format_live_message_state_block(
+        game_time_seconds=game_time_seconds,
+        radiant_lead=radiant_lead,
+        radiant_team_name=radiant_team_name,
+        dire_team_name=dire_team_name,
+        show_kills_time_blocks=False,
+        radiant_heroes_and_pos=radiant_heroes_and_pos,
+        dire_heroes_and_pos=dire_heroes_and_pos,
+    )
+    return (
+        f"{header}\n"
+        f"{normalize_team_name_display(str(radiant_team_name or ''))} VS {normalize_team_name_display(str(dire_team_name or ''))}\n"
+        f"{_build_series_score_line(live_league)}"
+        f"{model_line or ''}"
         f"{lane_block}"
         f"{team_elo_block or ''}"
         f"{live_state_block}"
@@ -25254,6 +25369,190 @@ def _try_dispatch_early_winner_kills_window(
         _release_signal_send_slot(match_key)
 
 
+def _try_dispatch_prematch_model_bet(
+    *,
+    match_key: str,
+    status: str,
+    radiant_team_name: str,
+    dire_team_name: str,
+    live_league: Optional[Dict[str, Any]],
+    top: Any,
+    mid: Any,
+    bot: Any,
+    protracker_payload: Optional[Dict[str, Any]],
+    team_elo_block: str,
+    game_time_seconds: Any,
+    radiant_lead: Any,
+    early_output: Optional[Dict[str, Any]] = None,
+    mid_output: Optional[Dict[str, Any]] = None,
+    all_output: Optional[Dict[str, Any]] = None,
+    radiant_heroes_and_pos: Any = None,
+    dire_heroes_and_pos: Any = None,
+    selected_star_wr: Optional[int] = None,
+    selected_star_mode: Optional[str] = None,
+    json_retry_errors: Any = None,
+    full_message_text: Any = None,
+) -> bool:
+    """Ставка по предматчевой модели на 00-й минуте — её собственный сигнал.
+
+    Условие ровно одно: |индекс| >= 8 у ПРЕДМАТЧЕВОГО источника. Звёзды,
+    нетворс, линии и тир команд не спрашиваются: замер на 2 456 настоящих
+    LAN-картах (открытые квалификации исключены) даёт при этом пороге 1 769
+    карт, 72% потока, винрейт 70.0%. Сторона — та, на которую показывает
+    модель; там же, где вето запрещает ставку против неё, таргет просто
+    разворачивается на модель.
+
+    Идёт с ``defer_add_url=True``, чтобы остальные ватчеры продолжали работать
+    в том же цикле, и ровно один раз за матч.
+    """
+    if not match_key or not PREMATCH_MODEL_BET_ENABLED:
+        return False
+    bet = win_model_veto.model_bet(early_output, mid_output, all_output)
+    if not bet:
+        return False
+    try:
+        game_time_value = float(game_time_seconds or 0.0)
+    except (TypeError, ValueError):
+        game_time_value = 0.0
+    if game_time_value > PREMATCH_MODEL_BET_MAX_GAME_TIME_SECONDS:
+        # Не «поздно, но всё же отправим»: калибровка снята с предматчевой
+        # цены, а после окна букмекер уже переоценил матч по живому счёту.
+        return False
+    target_side = str(bet.get("side") or "")
+    if target_side not in ("radiant", "dire"):
+        return False
+    target_team_name = (
+        str(radiant_team_name or "").strip()
+        if target_side == "radiant"
+        else str(dire_team_name or "").strip()
+    ) or "НЕИЗВЕСТНАЯ КОМАНДА"
+
+    dedup_key = str(match_key or "").strip()
+    try:
+        with _prematch_model_bet_sent_lock:
+            if dedup_key in _prematch_model_bet_sent_urls:
+                return False
+    except Exception:
+        pass
+    if _skip_dispatch_for_processed_url(match_key, "prematch model bet dispatch"):
+        return False
+    if not _acquire_signal_send_slot(match_key):
+        return False
+    try:
+        if _skip_dispatch_for_processed_url(match_key, "prematch model bet (after lock)"):
+            return False
+        message_text = _build_prematch_model_bet_message(
+            radiant_team_name=str(radiant_team_name or ""),
+            dire_team_name=str(dire_team_name or ""),
+            target_team_name=target_team_name,
+            live_league=live_league,
+            top=top,
+            mid=mid,
+            bot=bot,
+            protracker_payload=protracker_payload,
+            team_elo_block=team_elo_block or "",
+            game_time_seconds=game_time_seconds,
+            radiant_lead=radiant_lead,
+            model_line=_format_win_model_line(early_output, mid_output, all_output),
+            radiant_heroes_and_pos=radiant_heroes_and_pos,
+            dire_heroes_and_pos=dire_heroes_and_pos,
+            full_message_text=full_message_text,
+        )
+        try:
+            current_game_time_int = int(game_time_value)
+        except (TypeError, ValueError):
+            current_game_time_int = 0
+        details = {
+            "status": status,
+            "dispatch_mode": "immediate_prematch_model",
+            "delay_reason": "prematch_model_index",
+            "release_reason": NETWORTH_STATUS_PREMATCH_MODEL_BET_SEND,
+            "dispatch_status_label": NETWORTH_STATUS_PREMATCH_MODEL_BET_SEND,
+            "game_time": current_game_time_int,
+            "target_side": target_side,
+            "prematch_model_index": bet.get("index"),
+            "prematch_model_confidence": bet.get("confidence"),
+            "prematch_model_min_odds": bet.get("min_odds"),
+            "prematch_model_expected_wr": bet.get("expected_wr"),
+            "selected_star_wr": selected_star_wr,
+            "selected_star_mode": selected_star_mode,
+            "json_retry_errors": json_retry_errors,
+        }
+        _imm_obs, _imm_map = None, None
+        _s: Dict[str, Any] = {}
+        _mc = _bookmaker_infer_map_num(
+            live_league if isinstance(live_league, dict) else {}, score_text="",
+        )
+        try:
+            _mi = int(_mc) if _mc is not None else None
+        except (TypeError, ValueError):
+            _mi = None
+        if _mi is not None and 1 <= _mi <= 5:
+            _s["map_num"] = _mi
+        if status is not None and str(status).strip():
+            _s["status"] = str(status).strip().lower()
+        _imm_enriched = _bookmaker_enrich_delayed_match_state(
+            _s if _s else {}, live_league if isinstance(live_league, dict) else {},
+        )
+        if isinstance(_imm_enriched, dict):
+            try:
+                _rm = int(_imm_enriched.get("map_num"))
+            except (TypeError, ValueError):
+                _rm = None
+            if isinstance(_rm, int) and 1 <= _rm <= 5:
+                _imm_obs = dict(_imm_enriched)
+                _imm_obs["map_num"] = _rm
+                if dedup_key:
+                    _imm_obs["match_key"] = dedup_key
+                if not _imm_obs.get("status"):
+                    _imm_obs["status"] = str(status or "live").lower()
+                _imm_obs.setdefault("observed_at", float(time.time()))
+                _imm_map = _rm
+        delivered = _deliver_and_persist_signal(
+            match_key,
+            message_text,
+            current_map_observation=_imm_obs,
+            map_num=_imm_map,
+            selected_side=target_side,
+            add_url_reason="star_signal_sent_now_prematch_model",
+            add_url_details=details,
+            bookmaker_decision="sent",
+            defer_add_url=True,
+        )
+        if delivered:
+            try:
+                with _prematch_model_bet_sent_lock:
+                    _prematch_model_bet_sent_urls.add(dedup_key)
+            except Exception:
+                pass
+            verdict_msg = (
+                "   ✅ ВЕРДИКТ: ставка предматчевой модели отправлена "
+                f"(side={target_side}, index={float(bet.get('index') or 0.0):+.2f}, "
+                f"conf={float(bet.get('confidence') or 0.0) * 100.0:.1f}%, "
+                f"min_odds={float(bet.get('min_odds') or 0.0):.2f}, "
+                f"game_time={current_game_time_int}) — другие ватчеры продолжают"
+            )
+            print(verdict_msg)
+            _record_map_verdict(
+                match_key,
+                verdict=verdict_msg,
+                kind="send",
+                reason="star_signal_sent_now_prematch_model",
+                dispatch={
+                    "dispatch_mode": "immediate_prematch_model",
+                    "game_time": current_game_time_int,
+                    "target_side": target_side,
+                    "prematch_model_index": bet.get("index"),
+                    "prematch_model_min_odds": bet.get("min_odds"),
+                },
+                extra=details,
+            )
+            return True
+        return False
+    finally:
+        _release_signal_send_slot(match_key)
+
+
 def _try_dispatch_lane_adv_standalone_kills(
     *,
     match_key: str,
@@ -32542,6 +32841,32 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
                 dire_heroes_and_pos=dire_heroes_and_pos,
             )
+            # Ставка предматчевой модели идёт из этой же самой ранней ветки:
+            # тут минута 00 и локальные метрики уже посчитаны, а модели больше
+            # ничего не нужно — ни ProTracker, ни нетворса, ни звёзд.
+            _try_dispatch_prematch_model_bet(
+                match_key=check_uniq_url,
+                status=status,
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=data.get('live_league_data') or {},
+                top=local_metrics.get('top'),
+                mid=local_metrics.get('mid'),
+                bot=local_metrics.get('bot'),
+                protracker_payload=early_protracker_payload,
+                team_elo_block=early_local_elo_block,
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                early_output=local_metrics.get('early_output'),
+                mid_output=local_metrics.get('mid_output'),
+                all_output=local_metrics.get('all_output'),
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
+                selected_star_wr=star_target_wr,
+                selected_star_mode="prematch_model_00",
+                json_retry_errors=json_retry_errors,
+                full_message_text=early_local_body,
+            )
             sent = _try_dispatch_lane_adv_standalone_kills(
                 match_key=check_uniq_url,
                 status=status,
@@ -34871,6 +35196,32 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # and does NOT block the rest of the dispatch flow (other watchers
             # keep operating). One kills bet per match guaranteed by the
             # _kills_pre_pass_sent_urls set (defer_add_url=True).
+            # Дубль ставки предматчевой модели на случай, если ранняя ветка
+            # локальных метрик в этом цикле не отработала. Диспетчер
+            # идемпотентен (дедуп по match_key), лишнего не отправит.
+            _try_dispatch_prematch_model_bet(
+                match_key=check_uniq_url,
+                status=status,
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=data.get('live_league_data') or {},
+                top=s.get('top'),
+                mid=s.get('mid'),
+                bot=s.get('bot'),
+                protracker_payload=s,
+                team_elo_block=team_elo_block,
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                early_output=s.get('early_output'),
+                mid_output=s.get('mid_output'),
+                all_output=s.get('all_output'),
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
+                selected_star_wr=selected_star_wr,
+                selected_star_mode=selected_star_mode,
+                json_retry_errors=json_retry_errors,
+                full_message_text=message_text,
+            )
             _try_dispatch_lane_adv_standalone_kills(
                 match_key=check_uniq_url,
                 status=status,
@@ -38395,6 +38746,33 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # Standalone "lane_adv_dict ≥ 8" kills trigger for the no-star
             # rejection path: even when no star block is valid, dominate-on-
             # lanes case still warrants a kills bet on the dominating side.
+            # Ставка предматчевой модели в ветке БЕЗ звёзд: её сигнал звёзд не
+            # требует, поэтому отказ отбора его не отменяет.
+            _try_dispatch_prematch_model_bet(
+                match_key=check_uniq_url,
+                status=status,
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=data.get('live_league_data') or {},
+                top=s.get('top'),
+                mid=s.get('mid'),
+                bot=s.get('bot'),
+                protracker_payload=s,
+                team_elo_block=noskip_team_elo_block,
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                early_output=s.get('early_output'),
+                mid_output=s.get('mid_output'),
+                all_output=s.get('all_output'),
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
+                selected_star_wr=selected_star_wr,
+                selected_star_mode=selected_star_mode,
+                json_retry_errors=json_retry_errors,
+                # В no-star ветке готового заголовка нет, но полное тело со
+                # всеми блоками уже собрано для журнала вердиктов — берём его.
+                full_message_text=_verdict_ctx.get("bet_message"),
+            )
             _try_dispatch_lane_adv_standalone_kills(
                 match_key=check_uniq_url,
                 status=status,

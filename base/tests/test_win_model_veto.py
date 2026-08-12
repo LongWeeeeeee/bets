@@ -132,3 +132,60 @@ def test_star_and_veto_do_not_conflict(monkeypatch):
     assert functions.format_output_dict(
         {"all_output": {"counterpick_1vs1": 9, V.INDEX_KEY: -12.0}}, target_wr=60,
         late_signal_gate_enabled=False) is False
+
+
+# ── Предматчевая модель: единый порог 8 и самостоятельная ставка (E-142) ──────
+# Пороги E-73 (10/5/9/0) описывают ПАБЛИК-ДРАФТОВУЮ шкалу. У предматчевой модели
+# порог один на все секции, и перепутать источники — значит резать не то.
+
+
+def _pre(index):
+    return {V.INDEX_KEY: index, V.SOURCE_KEY: V.SOURCE_PREMATCH}
+
+
+def _draft(index):
+    return {V.INDEX_KEY: index, V.SOURCE_KEY: V.SOURCE_DRAFT}
+
+
+def test_prematch_threshold_is_the_same_in_every_section():
+    for section in ("early_output", "early_end_output", "mid_output", "all_output"):
+        assert V._min_index_for(section, V.SOURCE_PREMATCH) == 8.0
+
+
+def test_draft_source_keeps_legacy_thresholds():
+    assert V._min_index_for("early_output", V.SOURCE_DRAFT) == 10.0
+    assert V._min_index_for("mid_output", V.SOURCE_DRAFT) == 9.0
+    assert V._min_index_for("early_end_output", V.SOURCE_DRAFT) == 5.0
+    # Блок без источника трактуется как драфтовый: старое поведение сохраняется.
+    assert V._min_index_for("early_output") == 10.0
+
+
+def test_prematch_veto_fires_above_eight_in_every_section():
+    for section in ("early_output", "early_end_output", "mid_output", "all_output"):
+        assert V.blocks_veto(-1, _pre(8.5), section) is True     # блок против модели
+        assert V.blocks_veto(1, _pre(8.5), section) is False     # блок за модель
+        assert V.blocks_veto(-1, _pre(7.9), section) is False    # ниже порога
+
+
+def test_draft_index_does_not_borrow_prematch_threshold():
+    # 8.5 выше предматчевого порога, но ниже драфтовых 10 и 9 — резать нельзя.
+    assert V.blocks_veto(-1, _draft(8.5), "early_output") is False
+    assert V.blocks_veto(-1, _draft(8.5), "mid_output") is False
+
+
+def test_model_bet_side_and_price():
+    bet = V.model_bet({}, _pre(8.5), None)
+    assert bet is not None
+    assert bet["side"] == "radiant"
+    assert round(bet["confidence"], 4) == 0.585
+    assert bet["min_odds"] > 1.0
+    # Отрицательный индекс -> сторона Dire.
+    assert V.model_bet(_pre(-9.0))["side"] == "dire"
+
+
+def test_model_bet_silent_below_threshold_and_for_draft_source():
+    assert V.model_bet(_pre(7.9)) is None
+    # Драфтовый источник не пускается: его винрейт на LAN не мерялся, и порог 8
+    # на этой шкале не проверялся.
+    assert V.model_bet(_draft(20.0)) is None
+    assert V.model_bet({}, None, "не словарь") is None
