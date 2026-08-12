@@ -58,28 +58,32 @@
         3
       ],
       [
-        "synergy_duo",
-        5
-      ],
-      [
-        "synergy_trio",
-        10
+        "dltv_rating",
+        30
       ],
       [
         "dota2protracker_cp1vs1",
         3
       ],
       [
-        "dltv_rating",
-        30
+        "dota2protracker_duo",
+        9
       ],
       [
         "dota2protracker_solo",
         3
       ],
       [
-        "dota2protracker_duo",
-        9
+        "ml_win_index",
+        10
+      ],
+      [
+        "synergy_duo",
+        5
+      ],
+      [
+        "synergy_trio",
+        10
       ]
     ]
   },

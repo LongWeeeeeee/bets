@@ -86,3 +86,49 @@ def test_format_output_dict_respects_veto(monkeypatch):
     assert functions.format_output_dict(
         {"all_output": {"counterpick_1vs1": 9}},
         target_wr=60, late_signal_gate_enabled=False) is True
+
+
+def test_ml_win_index_is_star_only_in_all_output(monkeypatch):
+    """Модель как ЗВЁЗДНАЯ метрика: порог только в all_output, 10 на WR60.
+
+    В early и late порогов нет намеренно — там замер показал шум либо минус,
+    а в all_output метрика лишь добавляет карты: вето стоит на нуле и уже сняло
+    все несогласия, поэтому убирать ей нечего (E-73, E-76).
+    """
+    import functions
+
+    monkeypatch.setattr(
+        functions, "STAR_THRESHOLDS_BY_WR",
+        {60: {"all_output": [("ml_win_index", 10)], "early_output": [], "mid_output": []}},
+        raising=False)
+
+    # модель одна делает блок валидным
+    assert functions.format_output_dict(
+        {"all_output": {V.INDEX_KEY: 12.0}}, target_wr=60,
+        late_signal_gate_enabled=False) is True
+    # ниже порога — нет
+    assert functions.format_output_dict(
+        {"all_output": {V.INDEX_KEY: 8.0}}, target_wr=60,
+        late_signal_gate_enabled=False) is False
+    # в блоке без порога метрика звезды не создаёт
+    assert functions.format_output_dict(
+        {"early_output": {V.INDEX_KEY: 12.0}}, target_wr=60,
+        late_signal_gate_enabled=False) is False
+
+
+def test_star_and_veto_do_not_conflict(monkeypatch):
+    """Метрика и вето — один индекс: согласие даёт звезду, несогласие рушит блок."""
+    import functions
+
+    monkeypatch.setattr(
+        functions, "STAR_THRESHOLDS_BY_WR",
+        {60: {"all_output": [("counterpick_1vs1", 4), ("ml_win_index", 10)]}},
+        raising=False)
+
+    assert functions.format_output_dict(
+        {"all_output": {"counterpick_1vs1": 9, V.INDEX_KEY: 12.0}}, target_wr=60,
+        late_signal_gate_enabled=False) is True
+    # знак модели против знака блока: конфликт хитов, блок не идёт
+    assert functions.format_output_dict(
+        {"all_output": {"counterpick_1vs1": 9, V.INDEX_KEY: -12.0}}, target_wr=60,
+        late_signal_gate_enabled=False) is False
