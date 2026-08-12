@@ -71,6 +71,65 @@ def test_snapshot_builds_deduplicated_team_kills_history(tmp_path) -> None:
     ]
 
 
+def test_duplicate_map_does_not_move_ratings_twice(tmp_path) -> None:
+    """Копия карты в другом файле не должна быть вторым апдейтом рейтинга.
+
+    До правки дубль проходил и через модель, и через build_series_bundles: там он
+    считался лишней победой на карте и мог закрыть Bo3 двумя копиями одной игры.
+    """
+    players = [
+        {
+            "isRadiant": index < 5,
+            "steamAccount": {"id": index + 1},
+            "position": f"POSITION_{(index % 5) + 1}",
+        }
+        for index in range(10)
+    ]
+    raw_match = {
+        "id": 777,
+        "startDateTime": 1771153200,
+        "didRadiantWin": True,
+        "radiantTeam": {"id": 10, "name": "A"},
+        "direTeam": {"id": 20, "name": "B"},
+        "players": players,
+        "radiantKills": [2, 3, 4],
+        "direKills": [1, 1, 1],
+        "leagueId": 1,
+        "league": {"name": "Test League", "tier": "PROFESSIONAL"},
+        "series": {"id": 50, "type": "1"},
+    }
+
+    def _build(file_names: list[str]) -> dict:
+        _reset_live_team_strength_caches()
+        data_dir = tmp_path / f"data_{len(file_names)}"
+        data_dir.mkdir()
+        for name in file_names:
+            (data_dir / name).write_text(json.dumps({"777": raw_match}), encoding="utf-8")
+        return build_snapshot(
+            data_dir=data_dir,
+            snapshot_path=tmp_path / f"snapshot_{len(file_names)}.json",
+        )
+
+    single = _build(["7.41d_part001.json"])
+    duplicated = _build(["7.41d_part001.json", "combined1.json"])
+
+    assert single["meta"]["loaded_matches"] == 1
+    assert single["meta"]["duplicate_records"] == 0
+    assert duplicated["meta"]["loaded_matches"] == 1
+    assert duplicated["meta"]["duplicate_records"] == 1
+    assert duplicated["meta"]["series_groups"] == single["meta"]["series_groups"]
+    assert (
+        duplicated["teams_by_org_key"].keys() == single["teams_by_org_key"].keys()
+    )
+    for org_key, row in single["teams_by_org_key"].items():
+        assert duplicated["teams_by_org_key"][org_key]["raw_team_strength"] == pytest.approx(
+            row["raw_team_strength"]
+        )
+    assert duplicated["model_state"]["player_global"] == pytest.approx(
+        single["model_state"]["player_global"]
+    )
+
+
 def _reset_live_team_strength_caches() -> None:
     live_team_strength_module._SNAPSHOT_CACHE = None
     live_team_strength_module._MODEL_FROM_SNAPSHOT_CACHE["snapshot_id"] = None

@@ -849,6 +849,25 @@ def _build_snapshot_dict(
     config: HybridEloConfig,
 ) -> dict[str, Any]:
     matches, load_summary = load_matches(data_dir)
+    # Combined archives keep the same map in more than one file, so the raw
+    # stream carries copies (3.7% of the pro corpus as of 2026-08-12). A copy is
+    # a second rating update for one outcome, and inside build_series_bundles it
+    # also counts as an extra map win, which can close a Bo3 after two copies of
+    # the same map. Drop copies before anything reads the stream.
+    duplicate_records = 0
+    if matches:
+        seen_match_ids: set[int] = set()
+        unique_matches: list[MatchRecord] = []
+        for match in matches:
+            if match.match_id in seen_match_ids:
+                duplicate_records += 1
+                continue
+            seen_match_ids.add(match.match_id)
+            unique_matches.append(match)
+        matches = unique_matches
+        load_summary = dict(load_summary)
+        load_summary["duplicate_records"] = duplicate_records
+        load_summary["loaded_matches"] = len(matches)
     if not matches:
         empty_model_state = None
         return {
@@ -1012,6 +1031,7 @@ def _build_snapshot_dict(
             "active_cutoff_days": active_cutoff_days,
             "display_decay_half_life_days": display_decay_half_life_days,
             "loaded_matches": int(load_summary.get("loaded_matches", 0)),
+            "duplicate_records": int(load_summary.get("duplicate_records", 0)),
             "series_groups": int(series_summary.get("all_series_groups", 0)),
             "eligible_series": int(series_summary.get("eligible_series", 0)),
             "team_count": len(teams_by_org_key),
