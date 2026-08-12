@@ -127,27 +127,38 @@ def _list_append_to_dict(target_dict, key, value, is_defaultdict=None):
         stats[1] += 1
 
 
-def _list_append_lane_entry(target_dict, key, value, kills10_diff=None):
-    """Compact lane accumulator including the optional kills@10 target."""
+def _list_append_lane_entry(target_dict, key, value, kills10_diff=None, nw10_diff=None):
+    """Compact lane accumulator including the kills@10 and NW@10 targets."""
     stats = target_dict.get(key)
     if stats is None:
-        # wins, draws, games, leads, kill_draws, kill_games, diff_sum, diff_sq_sum
-        stats = [0, 0, 0, 0, 0, 0, 0.0, 0.0]
+        # wins, draws, games,
+        # kills10: leads, draws, games, diff_sum, diff_sq_sum,
+        # nw10:    leads, draws, games, diff_sum, diff_sq_sum, clip_sum
+        stats = [0, 0, 0, 0, 0, 0, 0.0, 0.0, 0, 0, 0, 0.0, 0.0, 0.0]
         target_dict[key] = stats
     stats[2] += 1
     if value == 1:
         stats[0] += 1
     elif value == 0.5:
         stats[1] += 1
-    if kills10_diff is None:
-        return
-    stats[5] += 1
-    stats[6] += kills10_diff
-    stats[7] += kills10_diff * kills10_diff
-    if kills10_diff > 0:
-        stats[3] += 1
-    elif kills10_diff == 0:
-        stats[4] += 1
+    if kills10_diff is not None:
+        stats[5] += 1
+        stats[6] += kills10_diff
+        stats[7] += kills10_diff * kills10_diff
+        if kills10_diff > 0:
+            stats[3] += 1
+        elif kills10_diff == 0:
+            stats[4] += 1
+    if nw10_diff is not None:
+        clip = analise_database_module.NW10_CLIP
+        stats[10] += 1
+        stats[11] += nw10_diff
+        stats[12] += nw10_diff * nw10_diff
+        stats[13] += max(-clip, min(clip, nw10_diff))
+        if nw10_diff > 0:
+            stats[8] += 1
+        elif nw10_diff == 0:
+            stats[9] += 1
 
 
 def _packed_append_to_dict(target_dict, key, value, is_defaultdict=None):
@@ -212,11 +223,17 @@ def _stats_values(stats) -> tuple[int, int, int]:
     return 0, 0, 0
 
 
-def _lane_stats_values(stats) -> tuple[int, int, int, int, int, int, float, float]:
+def _lane_stats_values(stats) -> tuple:
+    """Ровно те же значения, что и колонки таблицы `stats` lane-словаря."""
     wins, draws, games = _stats_values(stats)
     if isinstance(stats, list):
-        extra = list(stats[3:8]) + [0] * max(0, 5 - len(stats[3:8]))
-        return wins, draws, games, int(extra[0]), int(extra[1]), int(extra[2]), float(extra[3]), float(extra[4])
+        extra = list(stats[3:14]) + [0] * max(0, 11 - len(stats[3:14]))
+        return (
+            wins, draws, games,
+            int(extra[0]), int(extra[1]), int(extra[2]), float(extra[3]), float(extra[4]),
+            int(extra[5]), int(extra[6]), int(extra[7]),
+            float(extra[8]), float(extra[9]), float(extra[10]),
+        )
     if isinstance(stats, dict):
         return (
             wins, draws, games,
@@ -225,8 +242,14 @@ def _lane_stats_values(stats) -> tuple[int, int, int, int, int, int, float, floa
             int(stats.get("kills10_games", 0) or 0),
             float(stats.get("kills10_diff_sum", 0.0) or 0.0),
             float(stats.get("kills10_diff_sq_sum", 0.0) or 0.0),
+            int(stats.get("nw10_leads", 0) or 0),
+            int(stats.get("nw10_draws", 0) or 0),
+            int(stats.get("nw10_games", 0) or 0),
+            float(stats.get("nw10_diff_sum", 0.0) or 0.0),
+            float(stats.get("nw10_diff_sq_sum", 0.0) or 0.0),
+            float(stats.get("nw10_clip_sum", 0.0) or 0.0),
         )
-    return wins, draws, games, 0, 0, 0, 0.0, 0.0
+    return wins, draws, games, 0, 0, 0, 0.0, 0.0, 0, 0, 0, 0.0, 0.0, 0.0
 
 
 def _kills_window_column_names() -> list[str]:
@@ -725,7 +748,13 @@ def _open_lane_sqlite(temp_path: Path) -> sqlite3.Connection:
             kills10_draws INTEGER NOT NULL,
             kills10_games INTEGER NOT NULL,
             kills10_diff_sum REAL NOT NULL,
-            kills10_diff_sq_sum REAL NOT NULL
+            kills10_diff_sq_sum REAL NOT NULL,
+            nw10_leads INTEGER NOT NULL,
+            nw10_draws INTEGER NOT NULL,
+            nw10_games INTEGER NOT NULL,
+            nw10_diff_sum REAL NOT NULL,
+            nw10_diff_sq_sum REAL NOT NULL,
+            nw10_clip_sum REAL NOT NULL
         ) WITHOUT ROWID"""
     )
     conn.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value BLOB) WITHOUT ROWID")
@@ -736,24 +765,21 @@ def _upsert_lane_stats(conn: sqlite3.Connection, lane_dict: dict) -> None:
     rows = []
     append = rows.append
     for key, stats in lane_dict.items():
-        if isinstance(stats, list) and len(stats) >= 8:
+        if isinstance(stats, list) and len(stats) >= 14:
             append(
                 (
                     str(key),
-                    int(stats[0]),
-                    int(stats[1]),
-                    int(stats[2]),
-                    int(stats[3]),
-                    int(stats[4]),
-                    int(stats[5]),
-                    float(stats[6]),
-                    float(stats[7]),
+                    int(stats[0]), int(stats[1]), int(stats[2]),
+                    int(stats[3]), int(stats[4]), int(stats[5]),
+                    float(stats[6]), float(stats[7]),
+                    int(stats[8]), int(stats[9]), int(stats[10]),
+                    float(stats[11]), float(stats[12]), float(stats[13]),
                 )
             )
         else:
             append((str(key), *_lane_stats_values(stats)))
     conn.executemany(
-        """INSERT INTO stats VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """INSERT INTO stats VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(key) DO UPDATE SET
             wins=wins+excluded.wins,
             draws=draws+excluded.draws,
@@ -762,7 +788,13 @@ def _upsert_lane_stats(conn: sqlite3.Connection, lane_dict: dict) -> None:
             kills10_draws=kills10_draws+excluded.kills10_draws,
             kills10_games=kills10_games+excluded.kills10_games,
             kills10_diff_sum=kills10_diff_sum+excluded.kills10_diff_sum,
-            kills10_diff_sq_sum=kills10_diff_sq_sum+excluded.kills10_diff_sq_sum""",
+            kills10_diff_sq_sum=kills10_diff_sq_sum+excluded.kills10_diff_sq_sum,
+            nw10_leads=nw10_leads+excluded.nw10_leads,
+            nw10_draws=nw10_draws+excluded.nw10_draws,
+            nw10_games=nw10_games+excluded.nw10_games,
+            nw10_diff_sum=nw10_diff_sum+excluded.nw10_diff_sum,
+            nw10_diff_sq_sum=nw10_diff_sq_sum+excluded.nw10_diff_sq_sum,
+            nw10_clip_sum=nw10_clip_sum+excluded.nw10_clip_sum""",
         rows,
     )
 

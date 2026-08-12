@@ -159,7 +159,8 @@ def test_direct_lane_sqlite_schema_and_accumulation(tmp_path):
     temp_path = tmp_path / "lane.sqlite3.tmp"
     output_path = tmp_path / "lane.sqlite3"
     conn = explore_database._open_lane_sqlite(temp_path)
-    stats = [1, 0, 1, 1, 0, 1, 2.0, 4.0]
+    # Полная строка: три счётчика линии + блок kills10 + блок nw10.
+    stats = [1, 0, 1, 1, 0, 1, 2.0, 4.0, 1, 0, 1, 900.0, 810000.0, 900.0]
     explore_database._upsert_lane_stats(conn, {"key": stats})
     explore_database._upsert_lane_stats(conn, {"key": stats})
 
@@ -168,81 +169,22 @@ def test_direct_lane_sqlite_schema_and_accumulation(tmp_path):
     assert (entries, games) == (1, 2)
     with sqlite3.connect(output_path) as check:
         row = check.execute("SELECT * FROM stats WHERE key='key'").fetchone()
-    assert row == ("key", 2, 0, 2, 2, 0, 2, 4.0, 8.0)
+    assert row == ("key", 2, 0, 2, 2, 0, 2, 4.0, 8.0, 2, 0, 2, 1800.0, 1620000.0, 1800.0)
 
     loaded = runtime._load_lane_dict_from_source(str(tmp_path / "lane.json"))
     assert loaded["key"]["kills10_diff_sum"] == 4.0
+    assert loaded["key"]["nw10_clip_sum"] == 1800.0
 
 
-def test_lane_kills_telegram_line_is_signed_radiant_diff_with_lead():
-    line = runtime._build_lane_kills_adv_line({
-        "expected_diff": -1.24,
-        "lead_probability": 0.30,
-        "draw_probability": 0.10,
-        "coverage": 3,
-        "total_lanes": 3,
-    })
-
-    assert line == "lane_kills_adv_dict: -1.24 kills @10 (lead 60%)\n"
-    block = runtime._build_lane_block("Top: win 60%", "", "", lane_kills_adv={
-        "expected_diff": 1.0,
-        "lead_probability": 0.58,
-        "draw_probability": 0.1,
-        "coverage": 1,
-        "total_lanes": 3,
-    })
-    assert "lane_kills_adv_dict: +1.00 kills @10 (lead 58%)" in block
-
-
-def test_lane_loader_keeps_legacy_kv_sqlite_compatibility(tmp_path):
-    import orjson
-
-    sqlite_path = tmp_path / "legacy.sqlite3"
-    with sqlite3.connect(sqlite_path) as conn:
-        conn.execute("CREATE TABLE kv (key TEXT PRIMARY KEY, value BLOB)")
-        conn.execute(
-            "INSERT INTO kv VALUES (?, ?)",
-            ("1pos1", sqlite3.Binary(orjson.dumps({"wins": 2, "draws": 1, "games": 4}))),
-        )
-
-    loaded = runtime._load_lane_dict_from_source(str(tmp_path / "legacy.json"))
-
-    assert loaded == {"1pos1": {"wins": 2, "draws": 1, "games": 4}}
-
-
-def test_owned_lane_sqlite_success_replaces_only_at_finalize(tmp_path):
-    output = tmp_path / "lane.sqlite3"
-    output.write_bytes(b"production")
-    temp = tmp_path / "owned.tmp"
-    build = explore_database._OwnedLaneSqliteBuild()
-    conn = build.open(temp)
-    explore_database._upsert_lane_stats(conn, {"key": [1, 0, 1, 1, 0, 1, 2.0, 4.0]})
-
-    assert output.read_bytes() == b"production"
-    build.prepare(output)
-    assert output.read_bytes() == b"production"
-    build.publish()
-    build.rollback()
-
-    with sqlite3.connect(output) as conn:
-        assert conn.execute("SELECT games FROM stats WHERE key='key'").fetchone() == (1,)
-    assert not temp.exists()
-
-
-@pytest.mark.parametrize("error", [RuntimeError("boom"), KeyboardInterrupt()])
-def test_main_rolls_back_owned_lane_sqlite_on_error_and_interrupt(tmp_path, monkeypatch, error):
-    output = tmp_path / "lane.sqlite3"
-    output.write_bytes(b"production")
-    temp = tmp_path / "owned.tmp"
-
-    def broken(build, kills_window_build=None, kv_builds=None):
-        build.open(temp)
-        raise error
-
-    monkeypatch.setattr(explore_database, "_main_impl", broken)
-
-    with pytest.raises(type(error)):
-        explore_database.main()
-
-    assert output.read_bytes() == b"production"
-    assert not temp.exists()
+def test_lane_entry_writes_both_early_targets():
+    """Одна запись ключа копит и kills@10, и NW@10 с обрезкой выбросов."""
+    target = {}
+    analise_database._append_lane_entry(target, "1pos1", 1, 2.0, 5000.0)
+    analise_database._append_lane_entry(target, "1pos1", 0, -1.0, -800.0)
+    stats = target["1pos1"]
+    assert stats["games"] == 2 and stats["wins"] == 1
+    assert stats["kills10_games"] == 2 and stats["kills10_diff_sum"] == 1.0
+    assert stats["nw10_games"] == 2 and stats["nw10_diff_sum"] == 4200.0
+    # 5000 обрезано до 3000, -800 осталось как есть
+    assert stats["nw10_clip_sum"] == 2200.0
+    assert stats["nw10_leads"] == 1

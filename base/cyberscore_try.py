@@ -3285,18 +3285,27 @@ def _load_lane_dict_from_source(source_path: str):
                 for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
             if "stats" in tables:
+                # Схема наращивалась: сначала wins/draws/games, потом kills10,
+                # потом nw10. Читаем по фактическому составу колонок, иначе
+                # новый SELECT падает на словаре, собранном старым билдером.
+                present = {
+                    row[1] for row in conn.execute("PRAGMA table_info(stats)")
+                }
+                # nw10-колонки материализуются ТОЛЬКО когда каскад их читает:
+                # словарь на 7.3 млн ключей стоит 5.5 ГБ RSS с ними и 3.4 ГБ
+                # без. Иначе снятие LANE_CELL_VALUE не возвращало бы память.
+                wanted = [
+                    "wins", "draws", "games",
+                    "kills10_leads", "kills10_draws", "kills10_games",
+                    "kills10_diff_sum", "kills10_diff_sq_sum",
+                ]
+                if (os.getenv("LANE_CELL_VALUE", "label") or "label").strip().lower() != "label":
+                    wanted += ["nw10_leads", "nw10_draws", "nw10_games", "nw10_clip_sum"]
+                columns = [name for name in wanted if name in present]
+                select = "SELECT key, " + ", ".join(columns) + " FROM stats"
                 return {
-                    row[0]: {
-                        "wins": row[1], "draws": row[2], "games": row[3],
-                        "kills10_leads": row[4], "kills10_draws": row[5],
-                        "kills10_games": row[6], "kills10_diff_sum": row[7],
-                        "kills10_diff_sq_sum": row[8],
-                    }
-                    for row in conn.execute(
-                        "SELECT key, wins, draws, games, kills10_leads, "
-                        "kills10_draws, kills10_games, kills10_diff_sum, "
-                        "kills10_diff_sq_sum FROM stats"
-                    )
+                    row[0]: dict(zip(columns, row[1:]))
+                    for row in conn.execute(select)
                 }
             return {
                 row[0]: orjson.loads(row[1])
@@ -5619,7 +5628,11 @@ def _format_metric_value(value: float) -> str:
 
 
 LANE_ADV_DICT_CONFIDENCE_BASELINE = 39.0
-LANE_ADV_DICT_SIGN_MIN_ABS = 3.0
+# Порог, с которого lane_adv_dict считается имеющим сторону. Значение
+# привязано к ШКАЛЕ метрики: при LANE_CELL_VALUE=nw_mean шкала другая
+# (медиана |adv| 10.0 против 4.33 у метки), и равному объёму отбора
+# соответствует 7.33 (E-86, замер на holdout).
+LANE_ADV_DICT_SIGN_MIN_ABS = _safe_float_env("LANE_ADV_DICT_SIGN_MIN_ABS", 3.0)
 LANE_ADV_PROTRACKER_SIGN_MIN_ABS = 3.0
 # Альтернативный якорь направления для immediate-отправки в 00: когда
 # |lane_adv_dict| не добрал своего порога, сторону задаёт согласованная пара

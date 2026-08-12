@@ -100,6 +100,24 @@ KILLS_WINDOW_BUILD_HIGH_ORDER = str(
 ).strip().lower() not in ("", "0", "false", "no", "off")
 
 
+# Вес текущего матча при накоплении счётчиков. Ставится билдером перед обработкой
+# очередного патча (см. ANALISE_PATCH_WEIGHT_HALFLIFE в explore_database.py) и
+# умножает вклад матча в `games`/`wins`/`draws`. По умолчанию 1.0 — поведение
+# прежнее, счётчики остаются целыми.
+#
+# Зачем глобальная переменная, а не аргумент: инкремент вызывается из десятков
+# мест по всему модулю, и протаскивать вес через каждую сигнатуру значит трогать
+# весь рабочий код ради эксперимента. Билдер обрабатывает патчи ПОСЛЕДОВАТЕЛЬНО,
+# файл за файлом, поэтому гонки здесь нет.
+MATCH_WEIGHT = 1.0
+
+
+def set_match_weight(weight: float) -> None:
+    """Вес вклада последующих матчей; билдер зовёт это на каждом патче."""
+    global MATCH_WEIGHT
+    MATCH_WEIGHT = max(0.0, float(weight))
+
+
 def _append_to_dict(target_dict, key, value, is_defaultdict=None):
     """
     Вспомогательная функция для добавления значения в словарь.
@@ -115,36 +133,57 @@ def _append_to_dict(target_dict, key, value, is_defaultdict=None):
     """
     if key not in target_dict:
         target_dict[key] = {'wins': 0, 'draws': 0, 'games': 0}
-    target_dict[key]['games'] += 1
+    w = MATCH_WEIGHT
+    target_dict[key]['games'] += w
     if value == 1:
-        target_dict[key]['wins'] += 1
+        target_dict[key]['wins'] += w
     elif value == 0.5:
-        target_dict[key]['draws'] += 1
+        target_dict[key]['draws'] += w
 
 
-def _append_lane_entry(target_dict, key, value, kills10_diff=None):
-    """Append the lane outcome and, when available, the team kills@10 result.
+# Обрезка выбросов у маркера NW@10 (E-81): среднее по ячейке с обрезкой на
+# ±3000 точнее сырого (AUC 0.7875 против 0.7873), а хвосты в 20-30 тысяч золота
+# на 10-й минуте — это уже не про линию.
+NW10_CLIP = float(os.getenv("ANALISE_LANE_NW10_CLIP", "3000") or "3000")
 
-    ``kills10_diff`` is always expressed from the side at the start of ``key``.
-    Keeping the kill counters beside the existing lane counters avoids storing
-    millions of duplicate draft keys.
+
+def _append_lane_entry(target_dict, key, value, kills10_diff=None, nw10_diff=None):
+    """Append the lane outcome and, when available, the team early-game targets.
+
+    ``kills10_diff`` and ``nw10_diff`` are always expressed from the side at the
+    start of ``key``.  Keeping those counters beside the existing lane counters
+    avoids storing millions of duplicate draft keys.
     """
     _append_to_dict(target_dict, key, value)
-    if kills10_diff is None:
-        return
     stats = target_dict[key]
-    stats.setdefault('kills10_leads', 0)
-    stats.setdefault('kills10_draws', 0)
-    stats.setdefault('kills10_games', 0)
-    stats.setdefault('kills10_diff_sum', 0.0)
-    stats.setdefault('kills10_diff_sq_sum', 0.0)
-    stats['kills10_games'] += 1
-    stats['kills10_diff_sum'] += kills10_diff
-    stats['kills10_diff_sq_sum'] += kills10_diff * kills10_diff
-    if kills10_diff > 0:
-        stats['kills10_leads'] += 1
-    elif kills10_diff == 0:
-        stats['kills10_draws'] += 1
+    if kills10_diff is not None:
+        stats.setdefault('kills10_leads', 0)
+        stats.setdefault('kills10_draws', 0)
+        stats.setdefault('kills10_games', 0)
+        stats.setdefault('kills10_diff_sum', 0.0)
+        stats.setdefault('kills10_diff_sq_sum', 0.0)
+        stats['kills10_games'] += 1
+        stats['kills10_diff_sum'] += kills10_diff
+        stats['kills10_diff_sq_sum'] += kills10_diff * kills10_diff
+        if kills10_diff > 0:
+            stats['kills10_leads'] += 1
+        elif kills10_diff == 0:
+            stats['kills10_draws'] += 1
+    if nw10_diff is not None:
+        stats.setdefault('nw10_leads', 0)
+        stats.setdefault('nw10_draws', 0)
+        stats.setdefault('nw10_games', 0)
+        stats.setdefault('nw10_diff_sum', 0.0)
+        stats.setdefault('nw10_diff_sq_sum', 0.0)
+        stats.setdefault('nw10_clip_sum', 0.0)
+        stats['nw10_games'] += 1
+        stats['nw10_diff_sum'] += nw10_diff
+        stats['nw10_diff_sq_sum'] += nw10_diff * nw10_diff
+        stats['nw10_clip_sum'] += max(-NW10_CLIP, min(NW10_CLIP, nw10_diff))
+        if nw10_diff > 0:
+            stats['nw10_leads'] += 1
+        elif nw10_diff == 0:
+            stats['nw10_draws'] += 1
 
 
 def _normalize_comparable_id(value):
@@ -258,6 +297,24 @@ def _kills10_diff(match):
     exactly the same boundary.
     """
     return _kills_window_diff(match, 0, 10)
+
+
+def _nw10_diff(match):
+    """Radiant minus Dire networth at minute ten.
+
+    Index 10 is the same boundary the lane backtest uses as ground truth
+    (`abs(radiantNetworthLeads[10]) >= 1500`), so the training marker and the
+    target speak about exactly the same moment.
+    """
+    leads = match.get('radiantNetworthLeads')
+    if not isinstance(leads, list) or len(leads) <= 10:
+        return None
+    value = leads[10]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(float(value)):
+        return None
+    return float(value)
 
 
 def _empty_kills_window_stats():
@@ -467,6 +524,7 @@ def lanes(match, lane_dict):
     mid_outcome = match.get('midLaneOutcome', '')
     bot_outcome = match.get('bottomLaneOutcome', '')
     radiant_kills10_diff = _kills10_diff(match)
+    radiant_nw10_diff = _nw10_diff(match)
     
     def get_lane_value(outcome, key_starts_with_radiant):
         """
@@ -526,12 +584,15 @@ def lanes(match, lane_dict):
 
         # Соло герои Radiant
         for hero_id, pos in r_heroes:
-            _append_lane_entry(lane_dict, f'{hero_id}pos{pos}', value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, f'{hero_id}pos{pos}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
             wrote = True
         
         # Соло герои Dire
         for hero_id, pos in d_heroes:
-            _append_lane_entry(lane_dict, f'{hero_id}pos{pos}', value_d, -radiant_kills10_diff if radiant_kills10_diff is not None else None)
+            _append_lane_entry(lane_dict, f'{hero_id}pos{pos}', value_d,
+                               -radiant_kills10_diff if radiant_kills10_diff is not None else None,
+                               -radiant_nw10_diff if radiant_nw10_diff is not None else None)
             wrote = True
         
         # Если это парный лайн (2v2)
@@ -543,26 +604,34 @@ def lanes(match, lane_dict):
             
             # Контрипики 2x2
             key = f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}'
-            _append_lane_entry(lane_dict, key, value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, key, value_r, radiant_kills10_diff, radiant_nw10_diff)
             
             # Контрипики 2x1 (Radiant 2 vs Dire 1)
-            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1}', value_r, radiant_kills10_diff)
-            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h2}pos{d_p2}', value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
+            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h2}pos{d_p2}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
             
             # Контрипики 1x2 (Radiant 1 vs Dire 2)
-            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}', value_r, radiant_kills10_diff)
-            _append_lane_entry(lane_dict, f'{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}', value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
+            _append_lane_entry(lane_dict, f'{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
             
             # Контрипики 1x1 (все комбинации)
             for r_hero, r_pos in r_heroes:
                 for d_hero, d_pos in d_heroes:
-                    _append_lane_entry(lane_dict, f'{r_hero}pos{r_pos}_vs_{d_hero}pos{d_pos}', value_r, radiant_kills10_diff)
+                    _append_lane_entry(lane_dict, f'{r_hero}pos{r_pos}_vs_{d_hero}pos{d_pos}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
             
             # Синергия 1+1 для Radiant
-            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1}_with_{r_h2}pos{r_p2}', value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1}_with_{r_h2}pos{r_p2}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
             
             # Синергия 1+1 для Dire
-            _append_lane_entry(lane_dict, f'{d_h1}pos{d_p1}_with_{d_h2}pos{d_p2}', value_d, -radiant_kills10_diff if radiant_kills10_diff is not None else None)
+            _append_lane_entry(lane_dict, f'{d_h1}pos{d_p1}_with_{d_h2}pos{d_p2}', value_d,
+                               -radiant_kills10_diff if radiant_kills10_diff is not None else None,
+                               -radiant_nw10_diff if radiant_nw10_diff is not None else None)
             wrote = True
         
         # Если это 1v1
@@ -571,7 +640,8 @@ def lanes(match, lane_dict):
             d_h, d_p = d_heroes[0]
             
             # Контрипик 1x1
-            _append_lane_entry(lane_dict, f'{r_h}pos{r_p}_vs_{d_h}pos{d_p}', value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, f'{r_h}pos{r_p}_vs_{d_h}pos{d_p}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
             wrote = True
 
         if wrote:
@@ -610,22 +680,147 @@ def lanes(match, lane_dict):
 # НАСТРОЙКИ ФИЛЬТРОВ EARLY/LATE (подбираются экспериментально)
 # ============================================================================
 # Early: требуем близкий networth на gate-точке и ищем ранний перевес.
-EARLY_GATE_INDEX = 9                 # фильтр на leads[9] (minute 10)
-EARLY_GATE_MAX_ABS_LEAD = 2000       # игра не должна разъехаться до early-gate
-EARLY_LEAD_WINDOW = (20, 28)         # реальные минуты достижения 20% comeback threshold
-EARLY_FAST_FINISH_MAX_MINUTES = 34   # быстрые карты считаем early по победителю
+# Параметры популяции early. Были зашиты числами и ни разу не перебирались, хотя
+# `EARLY_GATE_MAX_ABS_LEAD` — прямой аналог условия равенства у late, снятие
+# которого дало +4.5…+11 п.п. (E-53). Вынесены в env.
+#
+# Гейт 2000 -> 500 (решение alex 08.08 по итогам E-57 и E-58). Ужесточение не
+# стоит ничего: ячеек 635, все выше порога 50 игр при любом гейте, покрытие
+# holdout остаётся 100%, а объём отбора даже растёт. Точность: 54.8% при 2000,
+# 55.6% при 1000, 55.8% при 500; ниже 1000 кривая ложится на плато (250/500/750
+# в пределах 0.3 п.п.), поэтому взята середина плато, а не край.
+# Гейт действует ТОЛЬКО на картах длиннее EARLY_FAST_FINISH_MAX_MINUTES —
+# короткие идут в словарь целиком с меткой победителя.
+EARLY_GATE_INDEX = int(os.getenv("ANALISE_EARLY_GATE_MINUTE", "10")) - 1  # индекс leads
+EARLY_GATE_MAX_ABS_LEAD = int(os.getenv("ANALISE_EARLY_GATE_MAX_ABS_LEAD", "500"))
+EARLY_LEAD_WINDOW = (
+    int(os.getenv("ANALISE_EARLY_LEAD_WINDOW_FROM", "20")),
+    int(os.getenv("ANALISE_EARLY_LEAD_WINDOW_TO", "28")),
+)
+# Порог «быстрой карты»: до этой минуты карта идёт в early_end целиком, дальше
+# должна пройти гейт и маркер. После разделения популяций (E-60) параметр влияет
+# ТОЛЬКО на early_end — у early NW быстрой ветки нет.
+#
+# 34 -> 40 -> ОБРАТНО 34 (09.08). Подъём до 40 в E-59 мерился на СМЕШАННОМ
+# словаре, где обе метки жили вместе, и по всем бакетам сразу. На собственной
+# популяции early_end (карты короче 34 минут) при равном объёме кривая
+# одногорбая с максимумом на 34:
+#   FF      24     28     30     32     34     36     40     45
+#   solo  76.2   83.6   84.0   84.4   85.2   84.6   83.0   81.4   (топ-500)
+#   cp    79.0   83.8   85.4   86.2   86.4   86.4   85.8   84.2
+# Требование «карты 35-40 минут проходят гейт и маркер» полезно: оно отсекает
+# длинные игры, где победитель уже не про раннюю фазу.
+EARLY_FAST_FINISH_MAX_MINUTES = int(os.getenv("ANALISE_EARLY_FAST_FINISH_MAX", "34"))
+
+# Минимальная длина карты для early. Ручки не существовало вовсе: разгром за
+# 12 минут попадал в словарь наравне с осмысленной ранней игрой.
+#
+# 24 -> 20 (09.08). Замечание alex: нужен ли минимум early NW вообще. Нет —
+# маркер ищет перевес в окне 20-28, и карта короче 20 минут не доживает до первой
+# минуты окна, отсеиваясь сама. Замер это подтвердил буквально: варианты «без
+# минимума» и «20» дали 808 931 карту оба, до единицы. А порог 24 выбрасывает
+# 15 тысяч карт и стоит 0.9 п.п. по cp1vs1 (74.2 -> 73.3), 0.2 по solo.
+#
+# Прежние 24 подбирались в E-59 на ДРУГОЙ популяции — с быстрой веткой, где 92%
+# словаря составляли карты с меткой победителя. После её удаления (E-60)
+# обоснование протухло, а число осталось.
+#
+# Для early_end 20 тоже оптимум: на его собственной популяции (карты до 28 минут)
+# без минимума 82.7%, при 20 — 82.6%, при 24 — 81.9%, при 28 — 78.1%. Короткие
+# игры для метки «кто выиграл карту» самый чистый материал: игра кончилась на
+# 22-й минуте, значит победитель и продавил раннюю фазу.
+EARLY_MIN_DURATION = int(os.getenv("ANALISE_EARLY_MIN_DURATION", "20"))
+
+# Популяция early_dict (см. `is_early_nw_match`): у него свой вопрос — «кто
+# наберёт ранний перевес», поэтому ни ветка быстрых карт, ни гейт ему не нужны.
+# Обе ручки возвращают прежнее поведение.
+EARLY_NW_USE_FAST_BRANCH = _env_bool("ANALISE_EARLY_NW_USE_FAST_BRANCH", False)
+EARLY_NW_USE_GATE = _env_bool("ANALISE_EARLY_NW_USE_GATE", False)
 
 # Late: длинная игра, где networth gap не разъехался сильнее WR60 ladder.
-LATE_MIN_DURATION = 34
-LATE_MAX_DURATION = None  # None если не нужен верхний предел
-LATE_EARLY_WINDOW = (15, 25)         # окно для оценки раннего snowball
-LATE_EARLY_STOMP_MAX = 12000         # max |lead| для раннего snowball
-LATE_COMEBACK_AVG_DEFICIT = 4000     # средний deficit победителя в 15-25
-LATE_CLOSE_WINDOW = (20, 30)         # окно "близкой" игры
-LATE_CLOSE_MAX_LEAD = 5000           # max |lead| в close-окне
-LATE_MODE = 'comeback'               # 'either' | 'comeback' | 'close'
-LATE_REQUIRE_EARLY_LOSS = True      # late = победитель не был early-доминатором
-LATE_WR60_START_MINUTE = 28
+# Все четыре параметра правила сбора вынесены в env для A/B-пересборок словаря;
+# дефолты равны историческим значениям, поведение прода без env не меняется.
+LATE_MIN_DURATION = int(os.getenv("ANALISE_LATE_MIN_DURATION", "36"))
+LATE_MAX_DURATION = (
+    int(os.getenv("ANALISE_LATE_MAX_DURATION"))
+    if os.getenv("ANALISE_LATE_MAX_DURATION") else None
+)  # верхний предел длины карты; нужен, чтобы собрать «короткую» половину для метрики скейлинга
+# Здесь до 09.08 стояли семь констант прежней конструкции late (LATE_EARLY_WINDOW,
+# LATE_EARLY_STOMP_MAX, LATE_COMEBACK_AVG_DEFICIT, LATE_CLOSE_WINDOW,
+# LATE_CLOSE_MAX_LEAD, LATE_MODE, LATE_REQUIRE_EARLY_LOSS). Проверка показала, что
+# каждая упоминается в репозитории ровно один раз — в собственном объявлении, — и
+# ни одна не читается: правило давно живёт на LATE_RULE и LATE_MIN_DURATION.
+# Убраны, чтобы не выглядели ручками, которые можно крутить. История — в git.
+LATE_WR60_START_MINUTE = int(os.getenv("ANALISE_LATE_WR60_START_MINUTE", "28"))
+# Множитель WR60-лестницы: <1 = более строгое требование «равной» игры.
+LATE_EQUAL_GATE_K = float(os.getenv("ANALISE_LATE_EQUAL_GATE_K", "1.0"))
+# 0 = брать любую игру нужной длины, не требуя равного момента вообще.
+LATE_REQUIRE_EQUAL_MOMENT = _env_bool("ANALISE_LATE_REQUIRE_EQUAL_MOMENT", False)
+# 'any' — равный момент на ЛЮБОЙ минуте начиная со START (историческое правило);
+# 'at'  — равенство ИМЕННО на минуте START (совпадает с тем, что видно в live).
+LATE_EQUAL_MODE = os.getenv("ANALISE_LATE_EQUAL_MODE", "any").strip().lower()
+# Какое правило допуска использовать:
+#   'equal'        — длинная игра с равным поздним счётом (текущий прод);
+#   'comeback_avg' — историческое правило до 28.04.2026: победитель в СРЕДНЕМ
+#                    отставал >= DEFICIT в окне COMEBACK_WINDOW;
+#   'comeback_max' — победитель отыграл дефицит >= DEFICIT (минимум его lead за
+#                    игру <= -DEFICIT), то есть «камбек с N тысяч».
+#   ВНИМАНИЕ: оба comeback-режима отбирают карту ПО ИСХОДУ (условие сформулировано
+#   про победителя), поэтому игры, где отстающий не вытащил, в выборку не попадают,
+#   и винрейты лейтовых героев в таком словаре завышены. Для честного «кто вытаскивает
+#   из отставания» есть режим ниже, где условие только про состояние игры.
+#   'deficit_state'   — на минуте DEFICIT_MINUTE разрыв >= DEFICIT_MIN, КТО БЫ ни выиграл;
+#   'equal_or_deficit'— объединение: равный поздний счёт ИЛИ позиция отставания.
+LATE_RULE = os.getenv("ANALISE_LATE_RULE", "equal").strip().lower()
+LATE_DEFICIT_MIN = float(os.getenv("ANALISE_LATE_DEFICIT_MIN", "8000"))
+LATE_DEFICIT_MINUTE = int(os.getenv("ANALISE_LATE_DEFICIT_MINUTE", "30"))
+#   'tower_gap' — на минуте TOWER_MINUTE структурный перекос: разница «очков»
+#                 (потерянные T3 + снесённые линии бараков * 3) >= TOWER_MIN_GAP.
+#                 Условие про состояние карты, не про исход (E-43).
+LATE_TOWER_MINUTE = int(os.getenv("ANALISE_LATE_TOWER_MINUTE", "32"))
+LATE_TOWER_MIN_GAP = int(os.getenv("ANALISE_LATE_TOWER_MIN_GAP", "2"))
+# Вторая, БОЛЕЕ РАННЯЯ минута: требуем, чтобы структура тогда была ещё ровной.
+# Зачем. `_tower_structure_score(match, M)` считает все падения башен со временем
+# меньше M и НЕ требует, чтобы матч дожил до M. Поэтому одиночное условие на
+# поздней минуте вырождается: у законченной игры перекос почти всегда есть, и
+# правило пропускает 88% корпуса вместо 26% (замер 08.08). Пара условий
+# «ровно на EVEN_MINUTE и разошлось к TOWER_MINUTE» отбирает именно игры, которые
+# решились ПОЗДНО, — а это и есть популяция late-блока.
+# 0 = выключено, поведение прежнее.
+LATE_TOWER_EVEN_MINUTE = int(os.getenv("ANALISE_LATE_TOWER_EVEN_MINUTE", "0"))
+LATE_TOWER_EVEN_MAX_GAP = int(os.getenv("ANALISE_LATE_TOWER_EVEN_MAX_GAP", "1"))
+# Чему учится словарь (МАРКЕР, а не правило допуска):
+#   'winner'     — победитель карты (все наши словари исторически такие);
+#   'tower_lead' — сторона, у которой к минуте TOWER_MINUTE башни целее.
+# Второй режим даёт метрику «этот драфт держит/сносит строения», а не «побеждает».
+# Расхождение между такой метрикой и фактическим состоянием карты — и есть
+# кандидат в сигнал на камбек (идея alex).
+LATE_MARKER = os.getenv("ANALISE_LATE_MARKER", "winner").strip().lower()
+# Ограничить solo-записи late последним version-патчем, как у post_lane (E-46).
+LATE_SOLO_LATEST_PATCH_ONLY = _env_bool("ANALISE_LATE_SOLO_LATEST_PATCH_ONLY", False)
+# --- Структурное условие для EARLY-словарей (идея alex, E-48) ---
+# Карта идёт в early-словарь только если у стороны-метки строения целы:
+#   'off'              — как сейчас, без условия;
+#   'target_intact'    — у стороны-метки все башни тира целы;
+#   'intact_vs_lost'   — у стороны-метки все целы И у оппонента пала хотя бы одна.
+EARLY_TOWER_RULE = os.getenv("ANALISE_EARLY_TOWER_RULE", "off").strip().lower()
+EARLY_TOWER_TIER = os.getenv("ANALISE_EARLY_TOWER_TIER", "t3").strip().lower()
+EARLY_TOWER_MINUTE = int(os.getenv("ANALISE_EARLY_TOWER_MINUTE", "28"))
+_TIER_IDS = {
+    "t1": {"radiant": {16, 17, 18}, "dire": {26, 27, 28}},
+    "t2": {"radiant": {19, 20, 21}, "dire": {29, 30, 31}},
+    "t3": {"radiant": {22, 23, 24}, "dire": {32, 33, 34}},
+}
+# npcId башен и бараков по сторонам (E-43, восстановлены по медиане времени падения)
+_T3_IDS = {"radiant": {22, 23, 24}, "dire": {32, 33, 34}}
+_RAX_IDS = {"radiant": set(range(38, 44)), "dire": set(range(44, 50))}
+_RAX_PER_LANE = 2
+LATE_COMEBACK_DEFICIT = float(os.getenv("ANALISE_LATE_COMEBACK_DEFICIT", "10000"))
+LATE_COMEBACK_WINDOW = tuple(
+    int(part) for part in os.getenv("ANALISE_LATE_COMEBACK_WINDOW", "15,25").split(",")[:2]
+)
+# только для comeback_avg: отбрасывать карты, где победитель был ранним доминатором
+LATE_COMEBACK_REQUIRE_EARLY_LOSS = _env_bool("ANALISE_LATE_COMEBACK_REQUIRE_EARLY_LOSS", True)
 LATE_WR60_FALLBACK_THRESHOLDS = {
     20: 2498.74,
     21: 2666.64,
@@ -671,7 +866,17 @@ LATE_WR60_FALLBACK_THRESHOLDS = {
 # Гейты только на 10-й минуте и минимальную длину; дальше любая длительность.
 POST_LANE_GATE_MINUTE = 10
 POST_LANE_MAX_ABS_LEAD_AT_GATE = 2000
-POST_LANE_MIN_DURATION = 20
+# 20 -> 28 -> ОБРАТНО 20 (решение alex 09.08 по итогам E-63).
+# Подъём порога обосновывался пиком на solo, но на парных метриках он не
+# воспроизводится, а платят за него именно они: поминутная развёртка 20/22/24/26/28
+# даёт у duo монотонное падение 66.8 -> 65.6, у cp1vs1 68.7 -> 68.3, а solo
+# болтается 68.9-69.6 без закономерности (разброс 0.7 п.п. при ДИ 3).
+# Причина простая: порог 28 режет 16% карт, и разреженным парным ключам это
+# дороже, чем чистота популяции.
+POST_LANE_MIN_DURATION = int(os.getenv("ANALISE_POST_LANE_MIN_DURATION", "20"))
+# 28 вместо 20 (E-52, решение alex): поминутная развёртка дала на 28-й отчётливый
+# пик (64.4/64.5/64.5 против 64.2/64.0/63.0 у прежних 20), соседи 27 и 29 ниже.
+# Это ровно граница EARLY_LEAD_WINDOW: до неё карта «ранняя», после — другая фаза.
 
 
 def _max_abs_in_window(leads, start, end):
@@ -791,6 +996,53 @@ def _first_dynamic_threshold_reach(match, leads, start_minute, end_minute):
     return None, None
 
 
+def is_early_nw_match(match):
+    """Популяция `early_dict`: карта идёт в словарь, ТОЛЬКО если ранний перевес
+    реально сложился по маркеру в окне EARLY_LEAD_WINDOW.
+
+    Отличие от `is_early_match` (популяция `early_end_dict`) — нет ветки быстрых
+    карт и нет гейта на 10-й минуте. Замер E-60 при равном объёме, цель —
+    предсказать ранний перевес:
+
+        как сейчас (быстрая ветка до 40 + маркер)  80.4 / 78.2 / 74.3 / 69.7
+        только маркер, без гейта                   86.6 / 83.6 / 79.8 / 75.5
+
+    На НЕЗАВИСИМОЙ цели (знак фактического среднего перевеса на 24-28 минуте, на
+    неё не учился ни один вариант) — 79.6 / 77.3 / 73.0 / 69.9 против
+    74.0 / 69.5 / 68.6 / 65.7, то есть эффект не тавтология метки.
+
+    Почему ветка мешала: она размечает 92% карт словаря ЧУЖОЙ функцией —
+    победителем карты вместо доминатора. Гейт же вместе с маркером оставляет
+    очень узкий класс «на 10-й ровно, потом разгром» (11% карт) и роняет
+    метрику до 62%.
+
+    Прежнее поведение возвращается переменными окружения.
+    """
+    leads = match.get('radiantNetworthLeads') or []
+    duration = len(leads)
+    if not duration or duration < EARLY_MIN_DURATION:
+        return False, None
+
+    if EARLY_NW_USE_FAST_BRANCH and duration <= EARLY_FAST_FINISH_MAX_MINUTES:
+        did_radiant_win = match.get('didRadiantWin')
+        if did_radiant_win is not None:
+            return True, 'radiant' if did_radiant_win else 'dire'
+
+    if EARLY_NW_USE_GATE and ANALISE_EARLY_MINUTE10_GATE_ENABLED:
+        if duration <= EARLY_GATE_INDEX:
+            return False, None
+        gate_lead = _as_float(leads[EARLY_GATE_INDEX])
+        if gate_lead is None or abs(gate_lead) > EARLY_GATE_MAX_ABS_LEAD:
+            return False, None
+
+    dominator, _minute = _first_dynamic_threshold_reach(
+        match, leads, EARLY_LEAD_WINDOW[0], EARLY_LEAD_WINDOW[1]
+    )
+    if dominator is None:
+        return False, None
+    return True, dominator
+
+
 def _late_wr60_gap_hit(leads, start_minute=LATE_WR60_START_MINUTE):
     thresholds = _load_late_wr60_thresholds()
     for minute in sorted(thresholds):
@@ -811,7 +1063,9 @@ def is_early_match(match, n: int = 3000):
     Проверяет, подходит ли матч для early словаря.
     
     ЛОГИКА EARLY:
-    - Быстрые карты duration <= 34 минут считаются early; dominator = winner
+    - Карты короче EARLY_MIN_DURATION (24 мин) не берутся вовсе
+    - Быстрые карты duration <= EARLY_FAST_FINISH_MAX_MINUTES (40 мин) считаются
+      early; dominator = winner
     - Для длинных карт на gate-точке leads[9] (minute 10) игра не должна быть уже слишком разъехавшейся
     - Early dominator = кто первым достиг 20% comeback networth threshold
       в окне 20-28 минут
@@ -825,13 +1079,22 @@ def is_early_match(match, n: int = 3000):
         tuple: (bool, dominator)
             dominator: 'radiant' | 'dire' | None
     """
-    leads = match.get('radiantNetworthLeads', [])
+    leads = match.get('radiantNetworthLeads') or []
     duration = len(leads)
+
+    if not duration:
+        # Карта без networth-полосы (в про-дампах таких ~14%) раньше проходила
+        # как «быстрая» и получала метку по одному лишь победителю. Данных для
+        # ранней фазы у неё нет — в early-выборку она не идёт.
+        return False, None
+
+    if duration < EARLY_MIN_DURATION:
+        return False, None
 
     if duration <= EARLY_FAST_FINISH_MAX_MINUTES:
         did_radiant_win = match.get('didRadiantWin')
         if did_radiant_win is None:
-            win_rates = match.get('winRates', [])
+            win_rates = match.get('winRates') or []
             did_radiant_win = win_rates[-1] > 0.5 if win_rates else None
         if did_radiant_win is not None:
             return True, 'radiant' if did_radiant_win else 'dire'
@@ -883,6 +1146,78 @@ def is_early_match(match, n: int = 3000):
     return False, None
 
 
+def _early_tower_ok(match, side):
+    """Структурное условие early: у стороны `side` строения целы (E-48).
+
+    side — 'radiant'/'dire', сторона, чей исход записывается меткой. Карты без
+    данных о башнях не проходят условие: проверить его нечем.
+    """
+    if EARLY_TOWER_RULE == "off":
+        return True
+    if side not in ("radiant", "dire"):
+        return False
+    deaths = match.get("towerDeaths")
+    if not deaths:
+        return False
+    ids = _TIER_IDS.get(EARLY_TOWER_TIER) or _TIER_IDS["t3"]
+    cutoff = int(EARLY_TOWER_MINUTE) * 60
+    lost = {"radiant": 0, "dire": 0}
+    for event in deaths:
+        npc_id = event.get("npcId")
+        is_radiant = event.get("isRadiant")
+        time_seconds = event.get("time")
+        if npc_id is None or time_seconds is None or time_seconds >= cutoff:
+            continue
+        owner = "radiant" if is_radiant is True else ("dire" if is_radiant is False else None)
+        if owner is None:
+            continue
+        if npc_id in ids[owner]:
+            lost[owner] += 1
+    opponent = "dire" if side == "radiant" else "radiant"
+    if lost[side] != 0:
+        return False
+    if EARLY_TOWER_RULE == "intact_vs_lost":
+        return lost[opponent] > 0
+    return True
+
+
+def _tower_structure_score(match, minute):
+    """«Очки» структурных потерь каждой стороны к указанной минуте.
+
+    Потерянная T3 = 1 очко, снесённая линия бараков (два барака) = 3 очка.
+    Возвращает (radiant_score, dire_score) или None, если данных о башнях нет.
+    """
+    deaths = match.get('towerDeaths')
+    if not deaths:
+        return None
+    cutoff = int(minute) * 60
+    lost = {'radiant': {'t3': 0, 'rax': 0}, 'dire': {'t3': 0, 'rax': 0}}
+    for event in deaths:
+        npc_id = event.get('npcId')
+        is_radiant = event.get('isRadiant')
+        time_seconds = event.get('time')
+        if npc_id is None or time_seconds is None or time_seconds >= cutoff:
+            continue
+        side = 'radiant' if is_radiant is True else ('dire' if is_radiant is False else None)
+        if side is None:
+            continue
+        if npc_id in _T3_IDS[side]:
+            lost[side]['t3'] += 1
+        elif npc_id in _RAX_IDS[side]:
+            lost[side]['rax'] += 1
+    return tuple(
+        lost[side]['t3'] + (lost[side]['rax'] // _RAX_PER_LANE) * 3
+        for side in ('radiant', 'dire')
+    )
+
+
+def _tower_gap_hit(match, minute, min_gap) -> bool:
+    scores = _tower_structure_score(match, minute)
+    if scores is None:
+        return False
+    return abs(scores[0] - scores[1]) >= int(min_gap)
+
+
 def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
     """
     Проверяет, подходит ли матч для late словаря.
@@ -903,12 +1238,12 @@ def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
         bool | tuple: подходит ли матч для late словаря
             При if_check=True возвращает (bool, winner)
     """
-    leads = match.get('radiantNetworthLeads', [])
+    leads = match.get('radiantNetworthLeads') or []
     did_radiant_win = match.get('didRadiantWin')
     duration = len(leads)
     
     if did_radiant_win is None:
-        win_rates = match.get('winRates', [])
+        win_rates = match.get('winRates') or []
         did_radiant_win = win_rates[-1] > 0.5 if win_rates else None
 
     if did_radiant_win is None or duration < LATE_MIN_DURATION:
@@ -918,15 +1253,73 @@ def is_late_match(match, dominator=None, if_check: bool = False, n: int = 7000):
         return (False, None) if if_check else False
 
     winner = 'radiant' if did_radiant_win else 'dire'
+
+    def _deficit_state_hit() -> bool:
+        """Позиция отставания на заданной минуте — условие НЕ зависит от исхода."""
+        idx = int(LATE_DEFICIT_MINUTE) - 1
+        if idx < 0 or len(leads) <= idx:
+            return False
+        value = _as_float(leads[idx])
+        return value is not None and abs(value) >= LATE_DEFICIT_MIN
+
+    if LATE_RULE == 'tower_gap':
+        ok = _tower_gap_hit(match, LATE_TOWER_MINUTE, LATE_TOWER_MIN_GAP)
+        if ok and LATE_TOWER_EVEN_MINUTE > 0:
+            # Игра должна была быть ещё СТРУКТУРНО РОВНОЙ на ранней минуте:
+            # иначе в выборку попадают партии, решённые задолго до TOWER_MINUTE.
+            early = _tower_structure_score(match, LATE_TOWER_EVEN_MINUTE)
+            ok = early is not None and abs(early[0] - early[1]) <= LATE_TOWER_EVEN_MAX_GAP
+        return (ok, winner if ok else None) if if_check else ok
+
+    if LATE_RULE == 'deficit_state':
+        ok = _deficit_state_hit()
+        return (ok, winner if ok else None) if if_check else ok
+
+    if LATE_RULE == 'equal_or_deficit':
+        if _deficit_state_hit():
+            return (True, winner) if if_check else True
+        # иначе падаем в обычную проверку равного позднего счёта ниже
+
+    if LATE_RULE in ('comeback_avg', 'comeback_max'):
+        # Знак lead всегда «в пользу radiant», разворачиваем под победителя.
+        sign = 1.0 if winner == 'radiant' else -1.0
+        if LATE_RULE == 'comeback_max':
+            # Победитель отыграл дефицит: его минимальный lead за игру <= -DEFICIT.
+            worst = None
+            for raw in leads:
+                value = _as_float(raw)
+                if value is None:
+                    continue
+                own = sign * value
+                if worst is None or own < worst:
+                    worst = own
+            ok = worst is not None and worst <= -LATE_COMEBACK_DEFICIT
+            return (ok, winner if ok else None) if if_check else ok
+
+        # comeback_avg: средний дефицит победителя в окне
+        avg = _avg_in_window(leads, LATE_COMEBACK_WINDOW[0], LATE_COMEBACK_WINDOW[1])
+        if avg is None:
+            return (False, None) if if_check else False
+        if LATE_COMEBACK_REQUIRE_EARLY_LOSS and dominator in ('radiant', 'dire') and dominator == winner:
+            return (False, None) if if_check else False
+        ok = (sign * avg) <= -LATE_COMEBACK_DEFICIT
+        return (ok, winner if ok else None) if if_check else ok
+
+    if not LATE_REQUIRE_EQUAL_MOMENT:
+        # Правило «просто длинная игра»: условие равенства выключено.
+        return (True, winner) if if_check else True
+
     late_thresholds_by_minute = _load_late_wr60_thresholds()
     for minute, threshold in sorted(late_thresholds_by_minute.items()):
         if minute < int(LATE_WR60_START_MINUTE):
             continue
+        if LATE_EQUAL_MODE == 'at' and minute != int(LATE_WR60_START_MINUTE):
+            break
         idx = minute - 1
         if idx < 0 or len(leads) <= idx:
             continue
         lead = _as_float(leads[idx])
-        if lead is not None and abs(lead) <= threshold:
+        if lead is not None and abs(lead) <= threshold * LATE_EQUAL_GATE_K:
             return (True, winner) if if_check else True
 
     return (False, None) if if_check else False
@@ -945,12 +1338,12 @@ def is_post_lane_match(match, if_check: bool = False):
     Returns:
         bool | tuple: подходит ли матч, и победитель при if_check=True.
     """
-    leads = match.get('radiantNetworthLeads', [])
+    leads = match.get('radiantNetworthLeads') or []
     did_radiant_win = match.get('didRadiantWin')
     duration = len(leads)
 
     if did_radiant_win is None:
-        win_rates = match.get('winRates', [])
+        win_rates = match.get('winRates') or []
         did_radiant_win = win_rates[-1] > 0.5 if win_rates else None
 
     if did_radiant_win is None or duration < POST_LANE_MIN_DURATION:
@@ -1150,7 +1543,7 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
     did_radiant_win = match.get('didRadiantWin')
     if did_radiant_win is None:
         # Используем последний элемент winRates
-        win_rates = match.get('winRates', [])
+        win_rates = match.get('winRates') or []
         did_radiant_win = win_rates[-1] > 0.5 if win_rates else False
 
     # В скоупе post_lane-solo? Раньше это был жёстко последний патч, из-за чего
@@ -1163,30 +1556,53 @@ def analise_database(match, lane_dict, early_dict, late_dict, *,
         is_latest_patch = False
 
     # 3. Обработка EARLY словарей
-    # Используем новый фильтр is_early_match()
-    # early_dict: true = NW dominator (current production semantics)
-    # early_end_dict: true = map winner (same early sample gates)
-    early_result, dominator = is_early_match(match)
+    # У двух словарей РАЗНЫЕ вопросы, поэтому с 09.08 у них разные популяции
+    # (E-60). early_dict спрашивает «кто наберёт ранний перевес» — ему нужна
+    # только ветка маркера; ветка «карта короткая, значит доминатор = победитель»
+    # размечает 92% его карт ЧУЖОЙ функцией и стоит 4-8 п.п. на независимой цели
+    # (знак фактического перевеса на 24-28'). early_end_dict спрашивает «кто
+    # выиграет карту», и для него та же ветка, наоборот, полезна.
+    early_result, dominator = is_early_nw_match(match)
     if early_result:
-        if early_dict is not None:
+        if early_dict is not None and _early_tower_ok(match, dominator):
             r_val = 1 if dominator == 'radiant' else 0
             d_val = 1 if dominator == 'dire' else 0
             _add_combinations_to_dict(r_by_pos, d_by_pos, early_dict, r_val, d_val)
             updated = True
+
+    early_win_result, _ = is_early_match(match)
+    if early_win_result:
         if early_end_dict is not None:
-            r_val = 1 if did_radiant_win else 0
-            d_val = 0 if did_radiant_win else 1
-            _add_combinations_to_dict(r_by_pos, d_by_pos, early_end_dict, r_val, d_val)
-            updated = True
+            winner_side = 'radiant' if did_radiant_win else 'dire'
+            if _early_tower_ok(match, winner_side):
+                r_val = 1 if did_radiant_win else 0
+                d_val = 0 if did_radiant_win else 1
+                _add_combinations_to_dict(r_by_pos, d_by_pos, early_end_dict, r_val, d_val)
+                updated = True
     
     # Проверяем условия для late_dict
     # Используем улучшенный фильтр is_late_match()
     if late_dict is not None and is_late_match(match, dominator):
-        # Записываем кто выиграл матч
-        r_val = 1 if did_radiant_win else 0
-        d_val = 0 if did_radiant_win else 1
-        _add_combinations_to_dict(r_by_pos, d_by_pos, late_dict, r_val, d_val)
-        updated = True
+        late_marker = None
+        if LATE_MARKER == 'tower_lead':
+            # Маркер — у кого целее строения к заданной минуте. Карты без данных о
+            # башнях и с равной структурой в словарь не пишутся: метки нет.
+            scores = _tower_structure_score(match, LATE_TOWER_MINUTE)
+            if scores is not None and scores[0] != scores[1]:
+                late_marker = scores[0] < scores[1]  # True = строения целее у Radiant
+        else:
+            late_marker = bool(did_radiant_win)
+        if late_marker is not None:
+            r_val = 1 if late_marker else 0
+            d_val = 0 if late_marker else 1
+            # solo-записи late исторически копятся по ВСЕМ патчам, тогда как у
+            # post_lane они ограничены последним (Option C). Флаг позволяет
+            # собрать late-solo в том же скоупе и померить, решает ли свежесть.
+            _add_combinations_to_dict(
+                r_by_pos, d_by_pos, late_dict, r_val, d_val,
+                write_solo=(is_latest_patch if LATE_SOLO_LATEST_PATCH_ONLY else True),
+            )
+            updated = True
 
     if post_lane_dict is not None and is_post_lane_match(match):
         # После post-lane gate записываем фактического победителя матча.

@@ -6305,9 +6305,58 @@ def _lane_raw_counts(stats, invert=False):
     return wins, draws, losses, games, stomp_win, stomp_lose
 
 
+# Чем считается значение ячейки линии. `label` (дефолт) — доля побед по метке
+# Stratz, как было всегда. `nw_share` — доля матчей, где сторона вела по золоту на
+# 10-й минуте; `nw_mean` — среднее NW@10 с обрезкой, протянутое в вероятность
+# через tanh с масштабом LANE_CELL_NW_SCALE. Гейты, выбор слоя и веса каскада во
+# всех режимах одинаковы: меняется ТОЛЬКО значение ячейки (E-86).
+LANE_CELL_VALUE = (os.getenv("LANE_CELL_VALUE", "label") or "label").strip().lower()
+LANE_CELL_NW_SCALE = max(1.0, float(os.getenv("LANE_CELL_NW_SCALE", "1000") or "1000"))
+
+
+def _lane_nw_raw(entry, invert=False):
+    """Блок счётчиков NW@10 одной ячейки: leads, draws, losses, games, clip_sum."""
+    if not isinstance(entry, dict):
+        return None
+    games = float(entry.get('nw10_games', 0) or 0)
+    if games <= 0:
+        return None
+    leads = float(entry.get('nw10_leads', 0) or 0)
+    draws = float(entry.get('nw10_draws', 0) or 0)
+    clip = float(entry.get('nw10_clip_sum', 0.0) or 0.0)
+    losses = max(0.0, games - leads - draws)
+    if invert:
+        leads, losses = losses, leads
+        clip = -clip
+    return leads, draws, losses, games, clip
+
+
+def _lane_counts_from_nw(stats, games, invert=False):
+    """Пересобирает (wins, draws, losses) ячейки из маркера NW@10.
+
+    Число игр НЕ меняется — оно решает, какой слой каскада сработает, и должно
+    остаться тем же, что у метки. Меняется только распределение внутри.
+    """
+    block = _lane_nw_raw(stats, invert=invert)
+    if block is None or games <= 0:
+        return None
+    leads, draws, losses, nw_games, clip = block
+    draw_frac = draws / nw_games
+    if LANE_CELL_VALUE == "nw_share":
+        p_win = leads / nw_games
+        p_lose = losses / nw_games
+    else:
+        mean = clip / nw_games
+        p = 0.5 * (1.0 + math.tanh(mean / LANE_CELL_NW_SCALE))
+        p_win = p * (1.0 - draw_frac)
+        p_lose = (1.0 - p) * (1.0 - draw_frac)
+    return games * p_win, games * draw_frac, games * p_lose
+
+
 def _aggregate_lane_entry_group(entries, *, invert=False):
     wins = draws = losses = games = 0
     stomp_win = stomp_lose = 0
+    nw_leads = nw_draws = nw_games = nw_clip = 0.0
     seen_stats = set()
     for entry in entries:
         counts = _lane_raw_counts(entry, invert=invert)
@@ -6324,7 +6373,15 @@ def _aggregate_lane_entry_group(entries, *, invert=False):
         games += g
         stomp_win += sw
         stomp_lose += sl
-    return wins, draws, losses, games, stomp_win, stomp_lose
+        nw_block = _lane_nw_raw(entry, invert=invert)
+        if nw_block is not None:
+            nw_leads += nw_block[0]
+            nw_draws += nw_block[1]
+            nw_games += nw_block[3]
+            nw_clip += nw_block[4]
+    return (wins, draws, losses, games, stomp_win, stomp_lose,
+            {'nw10_leads': nw_leads, 'nw10_draws': nw_draws,
+             'nw10_games': nw_games, 'nw10_clip_sum': nw_clip})
 
 
 def _lane_group_variants(parts):
@@ -6351,21 +6408,24 @@ def _aggregate_lane_vs_stats(data, left_parts, right_parts, core_support_side_la
                     if isinstance(rev_entry, dict) and _lane_raw_counts(rev_entry) is not None:
                         reverse_entries.append(rev_entry)
 
-    d_w, d_d, d_l, d_g, d_sw, d_sl = _aggregate_lane_entry_group(direct_entries, invert=False)
-    r_w, r_d, r_l, r_g, r_sw, r_sl = _aggregate_lane_entry_group(reverse_entries, invert=True)
+    d_w, d_d, d_l, d_g, d_sw, d_sl, d_nw = _aggregate_lane_entry_group(direct_entries, invert=False)
+    r_w, r_d, r_l, r_g, r_sw, r_sl, r_nw = _aggregate_lane_entry_group(reverse_entries, invert=True)
     games = d_g + r_g
     if games <= 0:
         return {}
     wins = d_w + r_w
     draws = d_d + r_d
     losses = d_l + r_l
-    return {
+    merged = {
         'wins': wins,
         'draws': draws,
         'games': games,
         'stomp_win': d_sw + r_sw,
         'stomp_lose': d_sl + r_sl,
     }
+    for field in ('nw10_leads', 'nw10_draws', 'nw10_games', 'nw10_clip_sum'):
+        merged[field] = d_nw[field] + r_nw[field]
+    return merged
 
 
 def _aggregate_lane_with_stats(data, left, right, core_support_side_lanes=False):
@@ -6383,16 +6443,18 @@ def _aggregate_lane_with_stats(data, left, right, core_support_side_lanes=False)
                         entry = data.get(key)
                         if isinstance(entry, dict) and _lane_raw_counts(entry) is not None:
                             entries.append(entry)
-    wins, draws, losses, games, stomp_win, stomp_lose = _aggregate_lane_entry_group(entries, invert=False)
+    wins, draws, losses, games, stomp_win, stomp_lose, nw = _aggregate_lane_entry_group(entries, invert=False)
     if games <= 0:
         return {}
-    return {
+    merged = {
         'wins': wins,
         'draws': draws,
         'games': games,
         'stomp_win': stomp_win,
         'stomp_lose': stomp_lose,
     }
+    merged.update(nw)
+    return merged
 
 
 def _aggregate_lane_solo_stats(data, token, core_support_side_lanes=False):
@@ -6403,16 +6465,18 @@ def _aggregate_lane_solo_stats(data, token, core_support_side_lanes=False):
         entry = data.get(variant)
         if isinstance(entry, dict) and _lane_raw_counts(entry) is not None:
             entries.append(entry)
-    wins, draws, losses, games, stomp_win, stomp_lose = _aggregate_lane_entry_group(entries, invert=False)
+    wins, draws, losses, games, stomp_win, stomp_lose, nw = _aggregate_lane_entry_group(entries, invert=False)
     if games <= 0:
         return {}
-    return {
+    merged = {
         'wins': wins,
         'draws': draws,
         'games': games,
         'stomp_win': stomp_win,
         'stomp_lose': stomp_lose,
     }
+    merged.update(nw)
+    return merged
 
 
 def _lane_stats_to_counts(stats, invert=False):
@@ -6421,6 +6485,10 @@ def _lane_stats_to_counts(stats, invert=False):
         return None
     wins, draws, losses, games, _stomp_win, _stomp_lose = counts
     wins, draws, losses = _apply_stomp_weighted_counts(wins, draws, losses, stats, invert=invert)
+    if LANE_CELL_VALUE != "label":
+        from_nw = _lane_counts_from_nw(stats, games, invert=invert)
+        if from_nw is not None:
+            wins, draws, losses = from_nw
     return wins, draws, losses, games
 
 
