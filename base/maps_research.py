@@ -2349,6 +2349,37 @@ def merge_temp_files_by_patch(
 
     return output_files
 
+def _scan_manifest_path(output_dir) -> Path:
+    return Path(output_dir) / "scan_manifest.json"
+
+
+def _load_scan_manifest(output_dir):
+    """{имя файла: [размер, mtime, [id...]]} — что уже сканировали и в каком виде."""
+    path = _scan_manifest_path(output_dir)
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "rb") as fh:
+            data = orjson.loads(fh.read())
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        print(f"⚠️ Не читается {path.name}: {e} — пересканирую всё заново")
+        return {}
+
+
+def _save_scan_manifest(output_dir, manifest):
+    path = _scan_manifest_path(output_dir)
+    tmp = path.with_suffix(".json.tmp")
+    with open(tmp, "wb") as fh:
+        fh.write(orjson.dumps(manifest))
+    tmp.replace(path)
+
+
+def _file_stamp(path):
+    st = os.stat(path)
+    return [int(st.st_size), int(st.st_mtime)]
+
+
 def merge_temp_files_by_patch_streaming(
     mkdir,
     max_size_mb=500,
@@ -2463,21 +2494,45 @@ def merge_temp_files_by_patch_streaming(
         # писались повторно. Так 31.07.2026 прошло 12 дублей уже ПОСЛЕ фикса
         # сайдкара. Сканируем ключи целиком — читаются только ключи, значения
         # не разбираются.
-        print(f"🔁 пересобираю дедуп-набор из {len(existing_part_files)} patch-part файлов")
+        # Полный скан корректен, но линеен по числу файлов: на 147 частях он
+        # стоит минуты В КАЖДОМ слиянии, а слияние идёт после каждой волны сбора.
+        # Кеш держит id уже просканированных файлов и переснимает только те, у
+        # которых изменились размер или mtime. Корректность та же: изменившийся
+        # или новый файл читается целиком.
+        manifest = _load_scan_manifest(output_dir)
+        fresh = {}
+        rescanned = 0
         for i, path in enumerate(existing_part_files, 1):
-            added = 0
+            name = path.name
+            try:
+                stamp = _file_stamp(path)
+            except OSError:
+                stamp = None
+            cached = manifest.get(name)
+            if stamp is not None and cached and cached[:2] == stamp:
+                processed_ids.update(int(x) for x in cached[2])
+                fresh[name] = cached
+                continue
+            ids = []
             try:
                 for raw_key in _iter_json_object_keys(path):
                     normalized = _normalize_match_id(raw_key)
-                    if normalized is not None and normalized not in processed_ids:
-                        processed_ids.add(normalized)
-                        added += 1
+                    if normalized is not None:
+                        ids.append(int(normalized))
             except Exception as e:
                 # Битый/недописанный part нельзя молча проглатывать: без его id
-                # merge продублирует его матчи. Сообщаем явно.
-                print(f"  ⚠️ Не удалось просканировать {path.name}: {e} — его матчи могут продублироваться")
+                # merge продублирует его матчи. Сообщаем явно и в кеш не пишем.
+                print(f"  ⚠️ Не удалось просканировать {name}: {e} — его матчи могут продублироваться")
                 continue
-            print(f"  📥 {i}/{len(existing_part_files)} {path.name}: +{added} id (всего {len(processed_ids)})")
+            processed_ids.update(ids)
+            if stamp is not None:
+                fresh[name] = [stamp[0], stamp[1], ids]
+            rescanned += 1
+            print(f"  📥 {i}/{len(existing_part_files)} {name}: {len(ids)} id "
+                  f"(всего {len(processed_ids)})")
+        print(f"🔁 дедуп-набор: {len(processed_ids)} id, пересканировано файлов "
+              f"{rescanned} из {len(existing_part_files)} (остальные из кеша)")
+        _save_scan_manifest(output_dir, fresh)
 
     existing_processed_ids_count = len(processed_ids)
     patch_names_all = [str(p[0]) for p in patch_specs]

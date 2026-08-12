@@ -103,3 +103,48 @@ def test_outside_patch_matches_go_to_bucket_not_trash(tmp_path):
     bucket = list(out.glob(f"{maps_research.OUTSIDE_PATCH_BUCKET}_part*.json"))
     assert len(bucket) == 1
     assert "9000000001" in json.loads(bucket[0].read_text(encoding="utf-8"))
+
+
+def test_scan_cache_skips_unchanged_files_but_rereads_changed(tmp_path):
+    """Кеш скана: неизменившийся файл не перечитывается, изменившийся — читается.
+
+    Полный скан всех part-файлов корректен, но линеен: на 147 частях он стоит
+    минуты В КАЖДОМ слиянии. Кеш обязан сохранять корректность — то есть ловить
+    и дописанный файл, и новый.
+    """
+    import maps_research
+
+    src = tmp_path / "src" / "temp_files"
+    src.mkdir(parents=True)
+    out = tmp_path / "parts"
+    out.mkdir()
+    (out / "7.41_part001.json").write_text(
+        json.dumps({"8000000001": {"id": 8000000001}}), encoding="utf-8")
+    (src / "a.txt").write_text(json.dumps(
+        {"8000000002": {"id": 8000000002, "startDateTime": 1_780_000_100}}), encoding="utf-8")
+
+    specs = [("7.41", 1_780_000_000, None)]
+    maps_research.merge_temp_files_by_patch_streaming(tmp_path / "src", output_dir=out,
+                                                      patch_specs=specs)
+    manifest = json.loads((out / "scan_manifest.json").read_text(encoding="utf-8"))
+    assert "7.41_part001.json" in manifest
+    assert 8000000001 in set(manifest["7.41_part001.json"][2])
+
+    # тот же матч во втором заходе обязан быть отброшен как дубль
+    (src / "b.txt").write_text(json.dumps(
+        {"8000000002": {"id": 8000000002, "startDateTime": 1_780_000_100}}), encoding="utf-8")
+    maps_research.merge_temp_files_by_patch_streaming(tmp_path / "src", output_dir=out,
+                                                      patch_specs=specs)
+    summary = json.loads((out / "merge_patch_summary.json").read_text(encoding="utf-8"))
+    assert summary["duplicates_filtered"] >= 1
+    assert summary["unique_matches_added"] == 0
+
+
+def test_scan_cache_survives_broken_manifest(tmp_path):
+    """Битый кеш не должен ронять слияние — просто пересканируем."""
+    import maps_research
+
+    out = tmp_path / "parts"
+    out.mkdir()
+    (out / "scan_manifest.json").write_text("не json", encoding="utf-8")
+    assert maps_research._load_scan_manifest(out) == {}
