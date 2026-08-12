@@ -21,6 +21,10 @@ harness: "`runtime/experiments/draft-cp/lane_target10_grades_ab.py`, `lane_targe
 - **Артефакты:** `runtime/artifacts/draft-cp/target10_grades_report.txt`,
   `postlane_margin_report.txt`
 
+> **Проверено на реальном пересборе — E-86.** Обрезанное среднее `nw10_clip_sum`
+> собрано штатным билдером и померено на честном holdout: маркер подтверждён,
+> но реализуется только внутри прод-каскада линий.
+
 ## 1. Линии, цель «кто вёл на 10-й» (holdout 521 437, цель n=254 525)
 
 Каскад, гейты и выбор слоя одинаковы у всех вариантов; меняется только величина
