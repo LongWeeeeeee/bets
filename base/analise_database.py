@@ -141,29 +141,49 @@ def _append_to_dict(target_dict, key, value, is_defaultdict=None):
         target_dict[key]['draws'] += w
 
 
-def _append_lane_entry(target_dict, key, value, kills10_diff=None):
-    """Append the lane outcome and, when available, the team kills@10 result.
+# Обрезка выбросов у маркера NW@10 (E-81): среднее по ячейке с обрезкой на
+# ±3000 точнее сырого (AUC 0.7875 против 0.7873), а хвосты в 20-30 тысяч золота
+# на 10-й минуте — это уже не про линию.
+NW10_CLIP = float(os.getenv("ANALISE_LANE_NW10_CLIP", "3000") or "3000")
 
-    ``kills10_diff`` is always expressed from the side at the start of ``key``.
-    Keeping the kill counters beside the existing lane counters avoids storing
-    millions of duplicate draft keys.
+
+def _append_lane_entry(target_dict, key, value, kills10_diff=None, nw10_diff=None):
+    """Append the lane outcome and, when available, the team early-game targets.
+
+    ``kills10_diff`` and ``nw10_diff`` are always expressed from the side at the
+    start of ``key``.  Keeping those counters beside the existing lane counters
+    avoids storing millions of duplicate draft keys.
     """
     _append_to_dict(target_dict, key, value)
-    if kills10_diff is None:
-        return
     stats = target_dict[key]
-    stats.setdefault('kills10_leads', 0)
-    stats.setdefault('kills10_draws', 0)
-    stats.setdefault('kills10_games', 0)
-    stats.setdefault('kills10_diff_sum', 0.0)
-    stats.setdefault('kills10_diff_sq_sum', 0.0)
-    stats['kills10_games'] += 1
-    stats['kills10_diff_sum'] += kills10_diff
-    stats['kills10_diff_sq_sum'] += kills10_diff * kills10_diff
-    if kills10_diff > 0:
-        stats['kills10_leads'] += 1
-    elif kills10_diff == 0:
-        stats['kills10_draws'] += 1
+    if kills10_diff is not None:
+        stats.setdefault('kills10_leads', 0)
+        stats.setdefault('kills10_draws', 0)
+        stats.setdefault('kills10_games', 0)
+        stats.setdefault('kills10_diff_sum', 0.0)
+        stats.setdefault('kills10_diff_sq_sum', 0.0)
+        stats['kills10_games'] += 1
+        stats['kills10_diff_sum'] += kills10_diff
+        stats['kills10_diff_sq_sum'] += kills10_diff * kills10_diff
+        if kills10_diff > 0:
+            stats['kills10_leads'] += 1
+        elif kills10_diff == 0:
+            stats['kills10_draws'] += 1
+    if nw10_diff is not None:
+        stats.setdefault('nw10_leads', 0)
+        stats.setdefault('nw10_draws', 0)
+        stats.setdefault('nw10_games', 0)
+        stats.setdefault('nw10_diff_sum', 0.0)
+        stats.setdefault('nw10_diff_sq_sum', 0.0)
+        stats.setdefault('nw10_clip_sum', 0.0)
+        stats['nw10_games'] += 1
+        stats['nw10_diff_sum'] += nw10_diff
+        stats['nw10_diff_sq_sum'] += nw10_diff * nw10_diff
+        stats['nw10_clip_sum'] += max(-NW10_CLIP, min(NW10_CLIP, nw10_diff))
+        if nw10_diff > 0:
+            stats['nw10_leads'] += 1
+        elif nw10_diff == 0:
+            stats['nw10_draws'] += 1
 
 
 def _normalize_comparable_id(value):
@@ -277,6 +297,24 @@ def _kills10_diff(match):
     exactly the same boundary.
     """
     return _kills_window_diff(match, 0, 10)
+
+
+def _nw10_diff(match):
+    """Radiant minus Dire networth at minute ten.
+
+    Index 10 is the same boundary the lane backtest uses as ground truth
+    (`abs(radiantNetworthLeads[10]) >= 1500`), so the training marker and the
+    target speak about exactly the same moment.
+    """
+    leads = match.get('radiantNetworthLeads')
+    if not isinstance(leads, list) or len(leads) <= 10:
+        return None
+    value = leads[10]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(float(value)):
+        return None
+    return float(value)
 
 
 def _empty_kills_window_stats():
@@ -486,6 +524,7 @@ def lanes(match, lane_dict):
     mid_outcome = match.get('midLaneOutcome', '')
     bot_outcome = match.get('bottomLaneOutcome', '')
     radiant_kills10_diff = _kills10_diff(match)
+    radiant_nw10_diff = _nw10_diff(match)
     
     def get_lane_value(outcome, key_starts_with_radiant):
         """
@@ -545,12 +584,15 @@ def lanes(match, lane_dict):
 
         # Соло герои Radiant
         for hero_id, pos in r_heroes:
-            _append_lane_entry(lane_dict, f'{hero_id}pos{pos}', value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, f'{hero_id}pos{pos}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
             wrote = True
         
         # Соло герои Dire
         for hero_id, pos in d_heroes:
-            _append_lane_entry(lane_dict, f'{hero_id}pos{pos}', value_d, -radiant_kills10_diff if radiant_kills10_diff is not None else None)
+            _append_lane_entry(lane_dict, f'{hero_id}pos{pos}', value_d,
+                               -radiant_kills10_diff if radiant_kills10_diff is not None else None,
+                               -radiant_nw10_diff if radiant_nw10_diff is not None else None)
             wrote = True
         
         # Если это парный лайн (2v2)
@@ -562,26 +604,34 @@ def lanes(match, lane_dict):
             
             # Контрипики 2x2
             key = f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}'
-            _append_lane_entry(lane_dict, key, value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, key, value_r, radiant_kills10_diff, radiant_nw10_diff)
             
             # Контрипики 2x1 (Radiant 2 vs Dire 1)
-            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1}', value_r, radiant_kills10_diff)
-            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h2}pos{d_p2}', value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
+            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1},{r_h2}pos{r_p2}_vs_{d_h2}pos{d_p2}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
             
             # Контрипики 1x2 (Radiant 1 vs Dire 2)
-            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}', value_r, radiant_kills10_diff)
-            _append_lane_entry(lane_dict, f'{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}', value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
+            _append_lane_entry(lane_dict, f'{r_h2}pos{r_p2}_vs_{d_h1}pos{d_p1},{d_h2}pos{d_p2}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
             
             # Контрипики 1x1 (все комбинации)
             for r_hero, r_pos in r_heroes:
                 for d_hero, d_pos in d_heroes:
-                    _append_lane_entry(lane_dict, f'{r_hero}pos{r_pos}_vs_{d_hero}pos{d_pos}', value_r, radiant_kills10_diff)
+                    _append_lane_entry(lane_dict, f'{r_hero}pos{r_pos}_vs_{d_hero}pos{d_pos}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
             
             # Синергия 1+1 для Radiant
-            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1}_with_{r_h2}pos{r_p2}', value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, f'{r_h1}pos{r_p1}_with_{r_h2}pos{r_p2}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
             
             # Синергия 1+1 для Dire
-            _append_lane_entry(lane_dict, f'{d_h1}pos{d_p1}_with_{d_h2}pos{d_p2}', value_d, -radiant_kills10_diff if radiant_kills10_diff is not None else None)
+            _append_lane_entry(lane_dict, f'{d_h1}pos{d_p1}_with_{d_h2}pos{d_p2}', value_d,
+                               -radiant_kills10_diff if radiant_kills10_diff is not None else None,
+                               -radiant_nw10_diff if radiant_nw10_diff is not None else None)
             wrote = True
         
         # Если это 1v1
@@ -590,7 +640,8 @@ def lanes(match, lane_dict):
             d_h, d_p = d_heroes[0]
             
             # Контрипик 1x1
-            _append_lane_entry(lane_dict, f'{r_h}pos{r_p}_vs_{d_h}pos{d_p}', value_r, radiant_kills10_diff)
+            _append_lane_entry(lane_dict, f'{r_h}pos{r_p}_vs_{d_h}pos{d_p}', value_r, radiant_kills10_diff,
+                               radiant_nw10_diff)
             wrote = True
 
         if wrote:

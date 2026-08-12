@@ -159,7 +159,8 @@ def test_direct_lane_sqlite_schema_and_accumulation(tmp_path):
     temp_path = tmp_path / "lane.sqlite3.tmp"
     output_path = tmp_path / "lane.sqlite3"
     conn = explore_database._open_lane_sqlite(temp_path)
-    stats = [1, 0, 1, 1, 0, 1, 2.0, 4.0]
+    # Полная строка: три счётчика линии + блок kills10 + блок nw10.
+    stats = [1, 0, 1, 1, 0, 1, 2.0, 4.0, 1, 0, 1, 900.0, 810000.0, 900.0]
     explore_database._upsert_lane_stats(conn, {"key": stats})
     explore_database._upsert_lane_stats(conn, {"key": stats})
 
@@ -168,10 +169,45 @@ def test_direct_lane_sqlite_schema_and_accumulation(tmp_path):
     assert (entries, games) == (1, 2)
     with sqlite3.connect(output_path) as check:
         row = check.execute("SELECT * FROM stats WHERE key='key'").fetchone()
-    assert row == ("key", 2, 0, 2, 2, 0, 2, 4.0, 8.0)
+    assert row == ("key", 2, 0, 2, 2, 0, 2, 4.0, 8.0, 2, 0, 2, 1800.0, 1620000.0, 1800.0)
 
     loaded = runtime._load_lane_dict_from_source(str(tmp_path / "lane.json"))
     assert loaded["key"]["kills10_diff_sum"] == 4.0
+    assert loaded["key"]["nw10_clip_sum"] == 1800.0
+
+
+def test_lane_entry_writes_both_early_targets():
+    """Одна запись ключа копит и kills@10, и NW@10 с обрезкой выбросов."""
+    target = {}
+    analise_database._append_lane_entry(target, "1pos1", 1, 2.0, 5000.0)
+    analise_database._append_lane_entry(target, "1pos1", 0, -1.0, -800.0)
+    stats = target["1pos1"]
+    assert stats["games"] == 2 and stats["wins"] == 1
+    assert stats["kills10_games"] == 2 and stats["kills10_diff_sum"] == 1.0
+    assert stats["nw10_games"] == 2 and stats["nw10_diff_sum"] == 4200.0
+    # 5000 обрезано до 3000, -800 осталось как есть
+    assert stats["nw10_clip_sum"] == 2200.0
+    assert stats["nw10_leads"] == 1
+
+
+def test_lane_nw_advantage_reads_nw_block():
+    """Новый читатель берёт nw10-колонки и не смешивает их с kills10."""
+    def cell(games, nw_per_game):
+        return {
+            "wins": games, "draws": 0, "games": games,
+            "kills10_leads": games, "kills10_draws": 0, "kills10_games": games,
+            "kills10_diff_sum": games * 3.0, "kills10_diff_sq_sum": games * 9.0,
+            "nw10_leads": games, "nw10_draws": 0, "nw10_games": games,
+            "nw10_diff_sum": games * nw_per_game, "nw10_diff_sq_sum": games * nw_per_game ** 2,
+            "nw10_clip_sum": games * nw_per_game,
+        }
+
+    data = {"2pos2_vs_7pos2": cell(50, 400.0)}
+    result = functions.calculate_lane_nw_advantage(_draft(1), _draft(6), data)
+    assert result is not None
+    assert result["expected_diff"] == pytest.approx(400.0)
+    kills = functions.calculate_lane_kills_advantage(_draft(1), _draft(6), data)
+    assert kills["expected_diff"] == pytest.approx(3.0)
 
 
 def test_lane_kills_telegram_line_is_signed_radiant_diff_with_lead():

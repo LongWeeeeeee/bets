@@ -3285,18 +3285,27 @@ def _load_lane_dict_from_source(source_path: str):
                 for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
             if "stats" in tables:
-                return {
-                    row[0]: {
-                        "wins": row[1], "draws": row[2], "games": row[3],
-                        "kills10_leads": row[4], "kills10_draws": row[5],
-                        "kills10_games": row[6], "kills10_diff_sum": row[7],
-                        "kills10_diff_sq_sum": row[8],
-                    }
-                    for row in conn.execute(
-                        "SELECT key, wins, draws, games, kills10_leads, "
-                        "kills10_draws, kills10_games, kills10_diff_sum, "
-                        "kills10_diff_sq_sum FROM stats"
+                # Схема наращивалась: сначала wins/draws/games, потом kills10,
+                # потом nw10. Читаем по фактическому составу колонок, иначе
+                # новый SELECT падает на словаре, собранном старым билдером.
+                present = {
+                    row[1] for row in conn.execute("PRAGMA table_info(stats)")
+                }
+                columns = [
+                    name
+                    for name in (
+                        "wins", "draws", "games",
+                        "kills10_leads", "kills10_draws", "kills10_games",
+                        "kills10_diff_sum", "kills10_diff_sq_sum",
+                        "nw10_leads", "nw10_draws", "nw10_games",
+                        "nw10_diff_sum", "nw10_diff_sq_sum", "nw10_clip_sum",
                     )
+                    if name in present
+                ]
+                select = "SELECT key, " + ", ".join(columns) + " FROM stats"
+                return {
+                    row[0]: dict(zip(columns, row[1:]))
+                    for row in conn.execute(select)
                 }
             return {
                 row[0]: orjson.loads(row[1])

@@ -9630,32 +9630,41 @@ def calculate_lanes(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, me
     return top_message, bot_message, mid_message
 
 
-def calculate_lane_kills_advantage(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data):
-    """Estimate the Radiant team kill difference at ten minutes from lane keys.
+def _calculate_lane_metric_advantage(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data,
+                                     *, prefix='kills10', sum_field=None,
+                                     min_games=None, reliability_prior=None):
+    """Estimate a Radiant-oriented team early-game target from lane keys.
 
-    Every lane key was trained against the same team-level kills@10 target, so
-    lane estimates are reliability-weighted, never summed.  The metric is
-    diagnostic and intentionally independent from the existing lane outcome
-    calculation and dispatch gates.
+    Every lane key was trained against the same team-level target (kills@10 or
+    networth@10), so lane estimates are reliability-weighted, never summed.
+    ``prefix`` selects which counter block of the cell is read; ``sum_field``
+    overrides the accumulated sum (NW@10 keeps both a raw and a clipped sum).
     """
     if heroes_data is not None and isinstance(heroes_data, dict) and '2v2_lanes' not in heroes_data:
         heroes_data = structure_lane_dict(heroes_data)
     if not isinstance(heroes_data, dict):
         return None
 
-    min_games = max(1, int(os.getenv("LANE_KILLS_MIN_GAMES", "10") or "10"))
-    reliability_prior = max(0.0, float(os.getenv("LANE_KILLS_RELIABILITY_PRIOR", "100") or "100"))
+    if min_games is None:
+        min_games = max(1, int(os.getenv("LANE_KILLS_MIN_GAMES", "10") or "10"))
+    if reliability_prior is None:
+        reliability_prior = max(0.0, float(os.getenv("LANE_KILLS_RELIABILITY_PRIOR", "100") or "100"))
+    games_field = f"{prefix}_games"
+    leads_field = f"{prefix}_leads"
+    draws_field = f"{prefix}_draws"
+    value_field = sum_field or f"{prefix}_diff_sum"
+    sq_field = f"{prefix}_diff_sq_sum"
 
     def _raw(entry, invert=False):
         if not isinstance(entry, dict):
             return None
-        games = int(entry.get('kills10_games', 0) or 0)
+        games = int(entry.get(games_field, 0) or 0)
         if games < min_games:
             return None
-        leads = int(entry.get('kills10_leads', 0) or 0)
-        draws = int(entry.get('kills10_draws', 0) or 0)
-        diff_sum = float(entry.get('kills10_diff_sum', 0.0) or 0.0)
-        diff_sq_sum = float(entry.get('kills10_diff_sq_sum', 0.0) or 0.0)
+        leads = int(entry.get(leads_field, 0) or 0)
+        draws = int(entry.get(draws_field, 0) or 0)
+        diff_sum = float(entry.get(value_field, 0.0) or 0.0)
+        diff_sq_sum = float(entry.get(sq_field, 0.0) or 0.0)
         losses = max(0, games - leads - draws)
         if invert:
             leads, losses = losses, leads
@@ -9798,6 +9807,36 @@ def calculate_lane_kills_advantage(radiant_heroes_and_pos, dire_heroes_and_pos, 
         'total_lanes': 3,
         'games': sum(item[4] for item in weighted),
     }
+
+
+def calculate_lane_kills_advantage(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data):
+    """Ожидаемая разница командных килов на 10-й минуте по ключам линий."""
+    return _calculate_lane_metric_advantage(
+        radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data, prefix='kills10'
+    )
+
+
+def calculate_lane_nw_advantage(radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data):
+    """Ожидаемый командный перевес по золоту на 10-й минуте по ключам линий.
+
+    Маркер E-80/E-81: ячейка хранит среднее NW@10, и на цели «кто вёл на 10-й»
+    он точнее доли побед по метке Stratz. По умолчанию берётся сумма с обрезкой
+    выбросов (`nw10_clip_sum`), сырую можно вернуть через
+    `LANE_NW_USE_CLIP=0`. Пороги свои: у NW@10 плотность ячеек другая, чем у
+    килов.
+    """
+    use_clip = (os.getenv("LANE_NW_USE_CLIP", "1") or "1").strip().lower() not in ("0", "false", "no", "off")
+    min_games = max(1, int(os.getenv("LANE_NW_MIN_GAMES", os.getenv("LANE_KILLS_MIN_GAMES", "10")) or "10"))
+    reliability_prior = max(0.0, float(
+        os.getenv("LANE_NW_RELIABILITY_PRIOR", os.getenv("LANE_KILLS_RELIABILITY_PRIOR", "100")) or "100"
+    ))
+    return _calculate_lane_metric_advantage(
+        radiant_heroes_and_pos, dire_heroes_and_pos, heroes_data,
+        prefix='nw10',
+        sum_field='nw10_clip_sum' if use_clip else 'nw10_diff_sum',
+        min_games=min_games,
+        reliability_prior=reliability_prior,
+    )
 
 
 def _normalize_kills_window_spec(window):
