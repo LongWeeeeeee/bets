@@ -28,9 +28,20 @@ SERV1=root@23.26.193.167
   #    если файл уже есть — шаг пропускается внутри скрипта
   $PY runtime/experiments/misc/combined_model_eval.py > /dev/null
   # 3. признаки и артефакт
+  #    v1 -> v2 (29 признаков) -> v3 (опознание организации по составу).
+  #    ПРОД ЧИТАЕТ ИМЕННО v3 (`prematch_scorer.ARTIFACT_PATH`), поэтому шаг
+  #    add_org_identity обязателен: без него ночная пересборка обновляла бы v2,
+  #    прод продолжал бы читать вчерашний v3 и через трое суток отказал бы
+  #    вообще на всех матчах по протухшему снимку.
   $PY runtime/experiments/misc/build_prematch_artifact.py
   $PY runtime/experiments/misc/build_prematch_artifact_v2.py
-  # 4. доставка
+  $PY runtime/experiments/misc/add_org_identity.py
+  # 4. доставка. Атомарно: пишем .tmp и переименовываем поверх, чтобы прод
+  #    никогда не увидел недокачанный файл.
+  scp -q runtime/artifacts/misc/prematch_model_artifact_v3.npz \
+      "$SERV1:/root/main/data/prematch_model_artifact_v3.npz.tmp"
+  ssh "$SERV1" "mv /root/main/data/prematch_model_artifact_v3.npz.tmp \
+                   /root/main/data/prematch_model_artifact_v3.npz"
   scp -q runtime/artifacts/misc/prematch_model_artifact_v2.npz \
       "$SERV1:/root/main/data/prematch_model_artifact_v2.npz.tmp"
   ssh "$SERV1" "mv /root/main/data/prematch_model_artifact_v2.npz.tmp \
