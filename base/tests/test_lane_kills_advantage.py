@@ -173,7 +173,15 @@ def test_direct_lane_sqlite_schema_and_accumulation(tmp_path):
 
     loaded = runtime._load_lane_dict_from_source(str(tmp_path / "lane.json"))
     assert loaded["key"]["kills10_diff_sum"] == 4.0
-    assert loaded["key"]["nw10_clip_sum"] == 1800.0
+    # nw10 материализуется только когда каскад их читает (иначе +2 ГБ RSS зря)
+    assert "nw10_clip_sum" not in loaded["key"]
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("LANE_CELL_VALUE", "nw_mean")
+    try:
+        loaded_nw = runtime._load_lane_dict_from_source(str(tmp_path / "lane.json"))
+    finally:
+        monkeypatch.undo()
+    assert loaded_nw["key"]["nw10_clip_sum"] == 1800.0
 
 
 def test_lane_entry_writes_both_early_targets():

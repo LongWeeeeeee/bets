@@ -3291,17 +3291,17 @@ def _load_lane_dict_from_source(source_path: str):
                 present = {
                     row[1] for row in conn.execute("PRAGMA table_info(stats)")
                 }
-                columns = [
-                    name
-                    for name in (
-                        "wins", "draws", "games",
-                        "kills10_leads", "kills10_draws", "kills10_games",
-                        "kills10_diff_sum", "kills10_diff_sq_sum",
-                        "nw10_leads", "nw10_draws", "nw10_games",
-                        "nw10_diff_sum", "nw10_diff_sq_sum", "nw10_clip_sum",
-                    )
-                    if name in present
+                # nw10-колонки материализуются ТОЛЬКО когда каскад их читает:
+                # словарь на 7.3 млн ключей стоит 5.5 ГБ RSS с ними и 3.4 ГБ
+                # без. Иначе снятие LANE_CELL_VALUE не возвращало бы память.
+                wanted = [
+                    "wins", "draws", "games",
+                    "kills10_leads", "kills10_draws", "kills10_games",
+                    "kills10_diff_sum", "kills10_diff_sq_sum",
                 ]
+                if (os.getenv("LANE_CELL_VALUE", "label") or "label").strip().lower() != "label":
+                    wanted += ["nw10_leads", "nw10_draws", "nw10_games", "nw10_clip_sum"]
+                columns = [name for name in wanted if name in present]
                 select = "SELECT key, " + ", ".join(columns) + " FROM stats"
                 return {
                     row[0]: dict(zip(columns, row[1:]))
