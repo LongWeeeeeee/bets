@@ -168,6 +168,11 @@ def pick(i: int, ed: dict, scores: dict, nw, valid, mode: str, weight: float,
 def run_policy(rows, ed_rows, scores, z, keep, tag: str, allow_515: bool,
                veto_threshold: float = 0.5) -> None:
     valid, diffs, nw_all, nwok = z["valid"][keep], z["diffs"][keep], z["nwlead"][keep], z["nwok"][keep]
+    # Оценки моделей лежат по mid, а строки нумерованы по индексу. Первая версия
+    # брала scores[индекс] и молча получала пусто: вариант «модель» дал 0 ставок,
+    # а «вето» совпало с продом до последнего знака — это и был признак поломки,
+    # а не результат.
+    mids_all = z["mid"][keep]
     wtags = [f"{a}_{b}" for a, b in WINDOWS]
     variants: dict[str, dict[int, bool]] = {k: {} for k in
                                             ("прод", "модель", "смесь 0.5", "вето")}
@@ -175,7 +180,7 @@ def run_policy(rows, ed_rows, scores, z, keep, tag: str, allow_515: bool,
         if not nwok[i]:
             continue
         ed = ed_rows.get(int(i)) or {}
-        sc = scores.get(int(i)) or {}
+        sc = scores.get(int(mids_all[i])) or {}
         nw = nw_all[i]
         for mode, key, w in (("prod", "прод", 0.0), ("model", "модель", 1.0),
                              ("mix", "смесь 0.5", 0.5)):
