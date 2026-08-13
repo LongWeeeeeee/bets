@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ingame.netwatchdog</string>
+    <!-- Сторож сети serv2: пинг шлюза, при потере — передёргивание Wi-Fi.
+         Исходник в репозитории: scripts/ops/serv2_net_watchdog.sh -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/usr/local/bin/serv2_net_watchdog.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardErrorPath</key>
+    <string>/var/log/ingame_net_watchdog.err</string>
+</dict>
+</plist>
