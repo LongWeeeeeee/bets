@@ -49,6 +49,7 @@ from kills_v3_train import (  # noqa: E402
 )
 
 OUT_DIR = ROOT / "runtime/artifacts/kills/window_model_v2"
+WINDOWS = ((5, 15), (10, 20), (15, 25), (20, 30))
 OOF_FOLDS = 3
 PARAMS = {
     "objective": "binary", "metric": "auc", "learning_rate": 0.05,
@@ -207,6 +208,16 @@ def run(corpus: str, targets: list[str], draft_mode: str, use_extra: bool,
         entry["A_draft"] = metrics(y["test"], 1.0 / (1.0 + np.exp(-ds["test"])))
         imp = sorted(imp_map.items(), key=lambda x: -x[1])[:25]
         entry["top_gain"] = [[k, round(float(v), 1)] for k, v in imp]
+        # Доля объяснённой дисперсии САМОЙ разницы килов — она сравнима с
+        # таблицей «f -> AUC» из kills_v4_ceiling_theory.py, а AUC не сравним.
+        wi = [f"w_{a}_{b}" for a, b in WINDOWS].index(name) if name.startswith("w_") else -1
+        if wi >= 0:
+            dd = z["diffs"][rows["test"], wi].astype(np.float64)
+            entry["explained_var_share"] = float(np.corrcoef(dd, p_s)[0, 1] ** 2)
+        np.savez_compressed(OUT_DIR / f"{tag}_{corpus}_{name}_test.npz",
+                            y=y["test"], p_gbdt=p_g, p_stack=p_s,
+                            p_draft=1.0 / (1.0 + np.exp(-ds["test"])),
+                            mid=z["mid"][rows["test"]], ts=z["ts"][rows["test"]])
         report["targets"][name] = entry
         for k in ("A_draft", "G_gbdt", "GS_stacked"):
             v = entry[k]
