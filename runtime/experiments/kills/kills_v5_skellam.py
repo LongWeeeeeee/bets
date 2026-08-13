@@ -92,14 +92,18 @@ def run(corpus: str, targets: list[str], rounds: int, max_train: int, tag: str) 
         rows = {k: parts[k][sel[k]] for k in parts}
         y = {k: t["y"][v][sel[k]] for k, v in parts.items()}
         if max_train and len(rows["train"]) > max_train:
+            # Обрезать надо ТРОЕ сразу: строки, метки и маску отбора. Первая
+            # версия резала только первые два, и draft_scores строил дизайн по
+            # полной маске, а метки получал урезанные — падение по длинам.
             rows["train"] = rows["train"][-max_train:]
             y["train"] = y["train"][-max_train:]
+            keep_mask = np.zeros(len(sel["train"]), bool)
+            keep_mask[np.flatnonzero(sel["train"])[-max_train:]] = True
+            sel = {**sel, "train": keep_mask}
         # OOF, а не "stack": внутривыборочная оценка драфта на train ломает тест
         # (замер на про 14.08: 0.6264 против 0.6604). Сравнение C/R/S от этого не
         # зависит — все трое видят одну колонку, — но абсолютные числа зависят.
         ds = draft_scores(z, parts, sel, y, SYM[name], "oof", heroes)
-        if max_train and len(ds["train"]) > len(rows["train"]):
-            ds["train"] = ds["train"][-len(rows["train"]):]
         cols = names + ["draft_score"]
 
         def design(part: str, flip: bool = False) -> np.ndarray:
