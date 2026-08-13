@@ -94,7 +94,10 @@ def run(corpus: str, targets: list[str], rounds: int, max_train: int, tag: str) 
         if max_train and len(rows["train"]) > max_train:
             rows["train"] = rows["train"][-max_train:]
             y["train"] = y["train"][-max_train:]
-        ds = draft_scores(z, parts, sel, y, SYM[name], "stack", heroes)
+        # OOF, а не "stack": внутривыборочная оценка драфта на train ломает тест
+        # (замер на про 14.08: 0.6264 против 0.6604). Сравнение C/R/S от этого не
+        # зависит — все трое видят одну колонку, — но абсолютные числа зависят.
+        ds = draft_scores(z, parts, sel, y, SYM[name], "oof", heroes)
         if max_train and len(ds["train"]) > len(rows["train"]):
             ds["train"] = ds["train"][-len(rows["train"]):]
         cols = names + ["draft_score"]
