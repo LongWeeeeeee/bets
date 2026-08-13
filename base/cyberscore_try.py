@@ -17940,7 +17940,9 @@ _ADMIN_DELAYED_OUTCOME_PATTERNS = (
 )
 _ADMIN_SUMMARY_MATCH_URL_RE = re.compile(r"(dltv\.org/matches/\d+/[^\s)]+?)\.\d+(?=$|[\s)])")
 _ADMIN_SUMMARY_URL_LINE_RE = re.compile(r"^\s*URL:\s*(?P<url>\S+)\s*$")
-_ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT = 3
+# Карточек в tail_log. Ключ группировки включает НОМЕР КАРТЫ, поэтому одна
+# серия занимает столько карточек, сколько карт в ней разобрано.
+_ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT = 4
 _ADMIN_TAIL_LOG_JOURNAL_POOL_LIMIT = 100
 _ADMIN_TAIL_VERDICT_HISTORY_LIMIT = 5
 
@@ -18601,6 +18603,20 @@ def _collect_admin_tail_last_matches(*, line_count: int = 100) -> List[Dict[str,
                 continue
         return 0.0
 
+    def _group_id(entry_obj: Any, key_value: str) -> str:
+        """Идентичность КАРТЫ, а не серии.
+
+        Раньше группировка шла по match_id, общему для всей серии, и вторая
+        карта схлопывалась в первую: в tail_log её не было вовсе. Номер карты
+        в ключе делает каждую карту отдельной карточкой.
+        """
+        base = _admin_tail_url_match_id(key_value) or key_value
+        try:
+            mp = int((entry_obj or {}).get("map_num"))
+        except (TypeError, ValueError, AttributeError):
+            mp = None
+        return f"{base}|map{mp}" if mp else base
+
     watcher_by_match_id: Dict[str, Dict[str, Any]] = {}
     for queue_key, payload in queued_snapshot.items():
         match_id = _admin_tail_url_match_id(queue_key) or queue_key
@@ -18617,12 +18633,13 @@ def _collect_admin_tail_last_matches(*, line_count: int = 100) -> List[Dict[str,
     siblings_by_match_id: Dict[str, List[Dict[str, Any]]] = {}
     for entry in entries:
         sibling_key = str(entry.get("match_key") or "").strip()
-        sibling_id = _admin_tail_url_match_id(sibling_key) or sibling_key
+        sibling_id = _group_id(entry, sibling_key)
         if sibling_id:
             siblings_by_match_id.setdefault(sibling_id, []).append(entry)
     for entry in entries:
         match_key = str(entry.get("match_key") or "").strip()
-        match_id = _admin_tail_url_match_id(match_key) or match_key
+        base_id = _admin_tail_url_match_id(match_key) or match_key
+        match_id = _group_id(entry, match_key)
         if not match_id or match_id in seen_match_ids:
             continue
         seen_match_ids.add(match_id)
@@ -18668,7 +18685,7 @@ def _collect_admin_tail_last_matches(*, line_count: int = 100) -> List[Dict[str,
                 "match_id": match_id,
                 "match_key": match_key,
                 "entry": merged_entry,
-                "payload": watcher_by_match_id.get(match_id),
+                "payload": watcher_by_match_id.get(base_id),
             }
         )
         if len(candidates) >= _ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT:

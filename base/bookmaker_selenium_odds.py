@@ -135,7 +135,14 @@ BOOKMAKER_URLS: Dict[str, Dict[str, str]] = {
         # Проверено 05.08.2026: на `dota_2` вся дотовская лента попадает в DOM
         # без единой прокрутки. Цена — на странице соседствует линия
         # (`Завтра 15:00`), её отсекает `_looks_future_context`.
-        "winline": "https://winline.ru/stavki/sport/kibersport/dota_2",
+        # Замер 13.08: на dota_2 раскрыт РОВНО ОДИН матч, у остальных рынка
+        # в карточке нет. На общем live-фиде рынок лежит прямо в строке ленты
+        # () — там рынок нашёлся у 2 матчей из 3 против 1.
+        # Переключаемо через env, чтобы вернуться без правки кода.
+        "winline": os.getenv(
+            "WINLINE_LIVE_URL",
+            "https://winline.ru/stavki/sport/kibersport/dota_2",
+        ),
     },
     "all": {
         "betboom": "https://betboom.ru/esport/dota-2?period=all",
