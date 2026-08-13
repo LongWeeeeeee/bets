@@ -290,3 +290,112 @@ def test_main_rolls_back_owned_lane_sqlite_on_error_and_interrupt(tmp_path, monk
 
     assert output.read_bytes() == b"production"
     assert not temp.exists()
+
+
+def _write_lane_sqlite(path: Path, stats: dict) -> None:
+    temp = path.with_suffix(".tmp")
+    conn = explore_database._open_lane_sqlite(temp)
+    explore_database._upsert_lane_stats(conn, stats)
+    explore_database._finalize_lane_sqlite(conn, temp, path)
+
+
+def test_structure_lane_dict_wraps_point_lookup_without_scanning():
+    class _ExplodingBackend(dict):
+        def get_many(self, keys):
+            return {}
+
+        def get(self, key, default=None):
+            if key == "3pos3,4pos4_vs_6pos1,10pos5":
+                return {"wins": 8, "draws": 1, "games": 10}
+            return default
+
+        def items(self):
+            raise AssertionError("lane sqlite backend must not be scanned")
+
+        def keys(self):
+            raise AssertionError("lane sqlite backend must not be scanned")
+
+        def __iter__(self):
+            raise AssertionError("lane sqlite backend must not be scanned")
+
+    structured = functions.structure_lane_dict(_ExplodingBackend())
+    assert isinstance(structured, functions._StructuredLaneLookup)
+    assert "2v2_lanes" in structured
+    assert structured["2v2_lanes"].get("3pos3,4pos4_vs_6pos1,10pos5")["games"] == 10
+    assert structured["2v2_lanes"].get("missing") is None
+
+
+def test_sqlite_lane_lookup_matches_in_memory_kills_advantage(tmp_path):
+    cell = {
+        "wins": 30, "draws": 2, "games": 40,
+        "kills10_leads": 30, "kills10_draws": 2, "kills10_games": 40,
+        "kills10_diff_sum": 80.0, "kills10_diff_sq_sum": 240.0,
+        "nw10_leads": 24, "nw10_draws": 2, "nw10_games": 40,
+        "nw10_diff_sum": 16000.0, "nw10_diff_sq_sum": 8_000_000.0,
+        "nw10_clip_sum": 12000.0,
+    }
+    stats = {"3pos3,4pos4_vs_6pos1,10pos5": cell}
+    sqlite_path = tmp_path / "lane_dict_raw.sqlite3"
+    _write_lane_sqlite(sqlite_path, stats)
+
+    memory = functions.calculate_lane_kills_advantage(_draft(1), _draft(6), stats)
+    lookup = runtime._prepare_indexed_stats_lookup(str(tmp_path / "lane_dict_raw.json"), "lane")
+    try:
+        wrapped = functions.structure_lane_dict(lookup)
+        sqlite = functions.calculate_lane_kills_advantage(_draft(1), _draft(6), wrapped)
+        top, _bot, _mid = functions.calculate_lanes(_draft(1), _draft(6), wrapped)
+    finally:
+        lookup.close()
+
+    assert memory is not None
+    assert sqlite == memory
+    assert sqlite["expected_diff"] == pytest.approx(2.0)
+    assert top.startswith("Top: win ")
+
+
+def test_load_stats_dicts_opens_lane_sqlite_without_materializing(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, "LIVE_LANE_ANALYSIS_ENABLED", True, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SEQUENTIAL_WARMUP_ENABLED", False, raising=False)
+    monkeypatch.setattr(runtime, "STATS_SQLITE_AUTOBUILD", False, raising=False)
+    monkeypatch.setattr(runtime, "STATS_LOOKUP_BACKEND", "auto", raising=False)
+    monkeypatch.setattr(runtime, "stats_warmup_last_heavy_load_ts", 0.0, raising=False)
+    monkeypatch.setattr(runtime, "lane_data", None, raising=False)
+    monkeypatch.setattr(runtime, "early_dict", {"ok": 1}, raising=False)
+    monkeypatch.setattr(runtime, "early_end_dict", {"ok": 1}, raising=False)
+    monkeypatch.setattr(runtime, "late_dict", {"ok": 1}, raising=False)
+    monkeypatch.setattr(runtime, "post_lane_dict", {"ok": 1}, raising=False)
+    monkeypatch.setattr(runtime, "late_pub_comeback_table_data", None, raising=False)
+    monkeypatch.setattr(runtime, "late_pre27_watcher_data", None, raising=False)
+    monkeypatch.setattr(runtime, "all_only_watcher_data", None, raising=False)
+
+    stats = {
+        "3pos3,4pos4_vs_6pos1,10pos5": {
+            "wins": 15, "draws": 1, "games": 20,
+            "kills10_leads": 15, "kills10_draws": 1, "kills10_games": 20,
+            "kills10_diff_sum": 40.0, "kills10_diff_sq_sum": 120.0,
+        }
+    }
+    json_path = tmp_path / "lane_dict_raw.json"
+    _write_lane_sqlite(tmp_path / "lane_dict_raw.sqlite3", stats)
+    table_path = tmp_path / "pub_late_star_comeback_table_piecewise.json"
+    table_path.write_text('{"table_rows": []}', encoding="utf-8")
+    pre27_path = tmp_path / "pub_late_pre27_watcher_thresholds.json"
+    pre27_path.write_text('{"table_rows": []}', encoding="utf-8")
+    all_only_path = tmp_path / "pub_all_only_watcher_thresholds.json"
+    all_only_path.write_text('{"table_rows": []}', encoding="utf-8")
+
+    monkeypatch.setenv("STATS_DIR", str(tmp_path))
+    monkeypatch.setenv("STATS_LANE_PATH", str(json_path))
+    monkeypatch.setenv("STATS_LATE_PUB_COMEBACK_TABLE_PATH", str(table_path))
+    monkeypatch.setenv("STATS_LATE_PRE27_WATCHER_PATH", str(pre27_path))
+    monkeypatch.setenv("STATS_ALL_ONLY_WATCHER_PATH", str(all_only_path))
+
+    assert runtime._load_stats_dicts() is True
+    assert isinstance(runtime.lane_data, functions._StructuredLaneLookup)
+    backend = runtime.lane_data._backend
+    assert isinstance(backend, runtime._SqliteStatsLookup)
+    assert len(backend) == 0
+    cell = runtime.lane_data["2v2_lanes"].get("3pos3,4pos4_vs_6pos1,10pos5")
+    assert cell["kills10_diff_sum"] == 40.0
+    assert len(backend) == 0
+    runtime.lane_data.close()

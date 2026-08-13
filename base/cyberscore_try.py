@@ -72,6 +72,7 @@ from functions import (
     synergy_and_counterpick,
     calculate_lanes,
     calculate_lane_kills_advantage,
+    structure_lane_dict,
     calculate_kills_window_advantage,
     format_output_dict,
     STAR_THRESHOLDS_BY_WR,
@@ -3267,11 +3268,10 @@ def _stats_sqlite_db_path(source: Path) -> Path:
 
 
 def _load_lane_dict_from_source(source_path: str):
-    """Load lane dict from sqlite if present, otherwise from JSON.
+    """Materialize the full lane table into a Python dict (tests / offline).
 
-    Lane dict is small enough (~4.5M keys, ~700MB in RAM) to fit in memory
-    and is consumed wholesale by ``calculate_lanes``. We materialise it as a
-    plain dict regardless of the on-disk backend.
+    Live runtime does **not** use this: ``_load_stats_dicts`` opens the sqlite
+    file through ``_prepare_indexed_stats_lookup`` like early/late/post_lane.
     """
     source = Path(source_path)
     sqlite_path = _stats_sqlite_db_path(source)
@@ -24035,6 +24035,13 @@ def _runtime_object_summary(value: Any) -> str:
         if isinstance(value, _SqliteStatsLookup):
             cached_keys = len(value._key_cache)
             return f"sqlite(cached_keys={cached_keys})"
+        backend = getattr(value, "_backend", None)
+        if (
+            backend is not None
+            and isinstance(value, dict)
+            and "2v2_lanes" in value
+        ):
+            return f"sqlite_lane({_runtime_object_summary(backend)})"
         if isinstance(value, dict):
             return f"dict(len={len(value)})"
         if isinstance(value, (set, list, tuple, deque)):
@@ -38501,7 +38508,13 @@ def _load_stats_dicts():
         if not LIVE_LANE_ANALYSIS_ENABLED:
             lane_data = None
         elif lane_data is None:
-            lane_data = _load_lane_dict_from_source(lane_path)
+            # Same sqlite point-lookup as early/late/post_lane. Do not
+            # materialize the 7M-key table into a Python dict.
+            if _stats_should_use_indexed_lookup(lane_path, "lane"):
+                raw_lane = _prepare_indexed_stats_lookup(lane_path, "lane")
+            else:
+                raw_lane = _load_lane_dict_from_source(lane_path)
+            lane_data = structure_lane_dict(raw_lane)
             gc.collect()
 
         if late_pub_comeback_table_data is None:
