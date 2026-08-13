@@ -94,7 +94,13 @@ def mcnemar(a: dict[int, bool], b: dict[int, bool]) -> tuple[int, int, float]:
 
 
 def v2_scores(mids_wanted: set[int]) -> dict[int, dict[str, float]]:
-    """Оценки модели E-165 (v2) на тех же картах — контроль «а стало ли лучше»."""
+    """Оценки модели E-165 (v2) на тех же картах — контроль «а стало ли лучше».
+
+    Справочная колонка, а не часть вывода: артефакты v2 лежат с 13.08 и могли
+    разойтись между собой (кодировщик от одного прогона, модель от другого).
+    Поэтому любая поломка здесь гасится — из-за необязательного сравнения ронять
+    прод-политику нельзя.
+    """
     import joblib
     import scipy.sparse as sp
     path = V2 / "features_pro.npz"
@@ -290,7 +296,11 @@ def main() -> int:
     emit()
 
     # ---------- голова к голове по AUC ----------
-    v2s = v2_scores({int(mids[i]) for i in sel741})
+    try:
+        v2s = v2_scores({int(mids[i]) for i in sel741})
+    except Exception as exc:                      # noqa: BLE001 — справочная колонка
+        print(f"  сравнение с v2 пропущено: {type(exc).__name__}: {exc}", flush=True)
+        v2s = {}
     emit("## Ранжирование (AUC) на 7.41+: словарь, v2 (E-165) и v3")
     emit()
     elo = z["elo"]
