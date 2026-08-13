@@ -33,7 +33,17 @@ import numpy as np
 ROOT = Path(os.getenv("DRAFT_ROOT", "/Users/alex/Documents/ingame"))
 sys.path.insert(0, str(ROOT / "base"))
 
-from train_public_draft_hero10_experiment import iter_json_objects  # noqa: E402
+try:                                    # на serv1 прод-репо разошёлся, модуля там нет
+    from train_public_draft_hero10_experiment import iter_json_objects  # noqa: E402
+except ModuleNotFoundError:             # файл корпуса — один объект «id -> матч»
+    import json
+
+    def iter_json_objects(path):
+        with open(path, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        if not isinstance(payload, dict):
+            raise ValueError("top-level JSON must be object")
+        return payload.items()
 
 CORPUS = {
     "public": ROOT / "bets_data/analise_pub_matches/json_parts_split_from_object",
