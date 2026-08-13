@@ -156,8 +156,8 @@ def run(corpus: str, targets: list[str], draft_mode: str, use_extra: bool,
         # ТОЛЬКО для верхней оценки: сколько вообще можно выжать, если знать
         # состояние карты на минуте гейта. В предматчевую модель это НЕ входит.
         X = np.hstack([X, z["nwlead"].astype(np.float32), z["xplead"].astype(np.float32)])
-        names = names + [f"nw_at_{i}" for i in range(z["nwlead"].shape[1])] \
-                      + [f"xp_at_{i}" for i in range(z["xplead"].shape[1])]
+        names = names + [f"nw_at_w{i}" for i in range(z["nwlead"].shape[1])] \
+                      + [f"xp_at_w{i}" for i in range(z["xplead"].shape[1])]
         print("  ВНИМАНИЕ: включены ИНГЕЙМ-колонки — это потолок, не продукт", flush=True)
     n = len(X)
     heroes, patch = z["heroes"], z["patch"]
@@ -185,11 +185,27 @@ def run(corpus: str, targets: list[str], draft_mode: str, use_extra: bool,
 
         ds = draft_scores(z, parts, sel, y, SYM[name], draft_mode, heroes)
         cols = names + ["draft_score"]
+        # Ингейм-колонка допустима, только если её минута НЕ позже гейта этого окна:
+        # иначе «потолок» считался бы по будущему относительно момента решения.
+        drop = []
+        if ingame and name.startswith("w_"):
+            wi_t = [f"w_{a}_{b}" for a, b in WINDOWS].index(name)
+            drop = [j for j, c in enumerate(cols)
+                    if (c.startswith("nw_at_w") or c.startswith("xp_at_w"))
+                    and int(c[-1]) > wi_t]
+        take_cols = np.setdiff1d(np.arange(len(cols)), np.asarray(drop, dtype=int)) \
+            if drop else np.arange(len(cols))
+        if drop:
+            print(f"    выброшены колонки позже гейта: "
+                  f"{[cols[j] for j in drop]}", flush=True)
+        cols_used = [cols[j] for j in take_cols]
         def design(k):
-            return np.hstack([X[rows[k]], ds[k][:, None].astype(np.float32)])
+            full = np.hstack([X[rows[k]], ds[k][:, None].astype(np.float32)])
+            return full if len(take_cols) == full.shape[1] else full[:, take_cols]
 
         predict, trees, val_auc, imp_map, model = fit_backend(
-            backend, design("train"), y["train"], design("val"), y["val"], cols, rounds)
+            backend, design("train"), y["train"], design("val"), y["val"], cols_used,
+            rounds)
         Xte = design("test")
         p_g = predict(Xte)
         entry = {"G_gbdt": metrics(y["test"], p_g), "trees": trees,
@@ -207,6 +223,7 @@ def run(corpus: str, targets: list[str], draft_mode: str, use_extra: bool,
         entry["GS_stacked"] = metrics(y["test"], p_s)
         entry["A_draft"] = metrics(y["test"], 1.0 / (1.0 + np.exp(-ds["test"])))
         imp = sorted(imp_map.items(), key=lambda x: -x[1])[:25]
+        entry["columns_used"] = int(len(take_cols))
         entry["top_gain"] = [[k, round(float(v), 1)] for k, v in imp]
         # Доля объяснённой дисперсии САМОЙ разницы килов — она сравнима с
         # таблицей «f -> AUC» из kills_v4_ceiling_theory.py, а AUC не сравним.
