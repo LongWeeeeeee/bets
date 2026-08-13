@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ingame.revtunnel</string>
+    <!-- Обратный ssh-туннель serv2 -> serv1: на serv1 поднимается
+         127.0.0.1:2222, который ведёт в sshd serv2. Даёт доступ независимо от
+         домашнего NAT, смены IP и капризов роутера.
+         Заходить с любой машины: ssh serv2t  (ProxyJump serv1).
+         launchd поднимает соединение заново при любом обрыве. -->
+    <key>UserName</key>
+    <string>alexford</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/ssh</string>
+        <string>-N</string>
+        <string>-T</string>
+        <string>-o</string><string>ServerAliveInterval=30</string>
+        <string>-o</string><string>ServerAliveCountMax=3</string>
+        <string>-o</string><string>ExitOnForwardFailure=yes</string>
+        <string>-o</string><string>StrictHostKeyChecking=accept-new</string>
+        <string>-o</string><string>UserKnownHostsFile=/Users/alexford/.ssh/known_hosts</string>
+        <string>-i</string><string>/Users/alexford/.ssh/id_ed25519</string>
+        <string>-R</string><string>127.0.0.1:2222:127.0.0.1:22</string>
+        <string>root@23.26.193.167</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ingame_revtunnel.err</string>
+</dict>
+</plist>
