@@ -27,6 +27,7 @@ SOURCES = [
     ("v4 бустинг", "report_v4gbdt_{corpus}.json", ("targets", "G_gbdt", "auc")),
     ("v4 бустинг + драфт", "report_v4gbdt_{corpus}.json", ("targets", "GS_stacked", "auc")),
     ("v4 перенос паблик→про", "report_v4gbdt_{corpus}.json|pro", ("targets", "T_transfer", "auc")),
+    ("v4 бустинг без упрощений", "report_v4full_{corpus}.json", ("targets", "GS_stacked", "auc")),
     ("v4 ПОТОЛОК (с ингеймом)", "report_v4ceil_{corpus}.json", ("targets", "GS_stacked", "auc")),
     ("v5 регрессия разницы", "report_v5skellam_{corpus}.json", ("targets", "R_diff", "auc")),
     ("v5 Скеллам", "report_v5skellam_{corpus}.json", ("targets", "S_skellam", "auc")),
