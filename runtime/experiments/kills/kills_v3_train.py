@@ -65,6 +65,7 @@ TARGET_TOTAL = 51
 PRO_TEST_MIN_ROWS = 8000
 SWAP = np.asarray([5, 6, 7, 8, 9, 0, 1, 2, 3, 4])
 SYM = {**{f"w_{a}_{b}": "anti" for a, b in WINDOWS},
+       **{f"tot_{a}_{b}": "sym" for a, b in WINDOWS},
        "map": "anti", "ge27": "side", "tot51": "sym"}
 
 # Модули разностей для уровневых целей: при сильном перекосе карта короче и
@@ -84,6 +85,17 @@ def make_targets(z, keep: np.ndarray) -> dict[str, dict]:
     for wi, (a, b) in enumerate(WINDOWS):
         out[f"w_{a}_{b}"] = {"y": (diffs[:, wi] > 0).astype(np.int32),
                              "mask": valid[:, wi].astype(bool)}
+    # Тотал килов в окне. Порог — медиана по ПЕРВЫМ 60% строк (хронологический
+    # train), а не по всему корпусу: иначе разметка знала бы про распределение
+    # теста. Рынок «тотал килов к N-й минуте» у букмекеров существует, в отличие
+    # от «кто сделает больше», поэтому цель не академическая.
+    tot = z["totals"][keep].astype(np.int32)
+    head = max(1, int(n * 0.6))
+    for wi, (a, b) in enumerate(WINDOWS):
+        ok = valid[:head, wi].astype(bool)
+        thr = int(np.median(tot[:head, wi][ok])) if ok.any() else 0
+        out[f"tot_{a}_{b}"] = {"y": (tot[:, wi] > thr).astype(np.int32),
+                               "mask": valid[:, wi].astype(bool), "threshold": thr}
     out["map"] = {"y": (ks[:, 0] > ks[:, 1]).astype(np.int32), "mask": np.ones(n, bool)}
     out["ge27"] = {"y": (ks[:, 0] >= TARGET_KILLS).astype(np.int32), "mask": np.ones(n, bool)}
     out["tot51"] = {"y": (ks.sum(1) >= TARGET_TOTAL).astype(np.int32), "mask": np.ones(n, bool)}
