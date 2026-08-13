@@ -32746,10 +32746,15 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             and across cycles (the dispatcher records the URL in
             ``_kills_pre_pass_sent_urls``).
             """
-            if _early_local_kills_done["sent"]:
-                return
-            if not LANE_ADV_STANDALONE_KILLS_ENABLED:
-                return
+            # Два условия ниже — про КИЛЫ, а не про ставку предматчевой модели,
+            # которая живёт в этой же ветке (тут минута 00 и посчитаны локальные
+            # метрики). Раньше они стояли ранним `return` и уносили ставку
+            # модели вместе с собой: ушла kills-ставка — и модель на 00 уже не
+            # отправлялась, хотя её условие (|индекс| >= 8) выполнено.
+            # Теперь это флаг, и он гасит только kills-диспетчер.
+            _kills_blocked = bool(
+                _early_local_kills_done["sent"] or not LANE_ADV_STANDALONE_KILLS_ENABLED
+            )
             if not isinstance(local_metrics, dict):
                 return
             try:
@@ -32867,6 +32872,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 json_retry_errors=json_retry_errors,
                 full_message_text=early_local_body,
             )
+            if _kills_blocked:
+                return                              # килы уже ушли или выключены
             sent = _try_dispatch_lane_adv_standalone_kills(
                 match_key=check_uniq_url,
                 status=status,

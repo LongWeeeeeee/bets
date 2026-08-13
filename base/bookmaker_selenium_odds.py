@@ -633,7 +633,16 @@ _FEED_SWEEP_JS = """() => {
 # Поэтому перед разбором раскрываем карточку запрошенной пары кликом. Отказ
 # не ломает ничего: дальше идёт прежний путь.
 WINLINE_OPEN_REQUESTED_MATCH = os.getenv("WINLINE_OPEN_REQUESTED_MATCH", "1") == "1"
-WINLINE_OPEN_MATCH_WAIT_SECONDS = 2.0
+# Пауза после клика — только на перерисовку панели. Двух секунд оказалось
+# дорого: замер 13.08 показал рост медианы задачи опроса с 1.57с до 3.11с, а
+# прод разбирает матчи ПОСЛЕДОВАТЕЛЬНО, и лишние секунды на первом матче
+# отодвигают второй за пределы цикла — в tail_log он не появлялся вовсе.
+try:
+    WINLINE_OPEN_MATCH_WAIT_SECONDS = float(
+        os.getenv("WINLINE_OPEN_MATCH_WAIT_SECONDS", "0.8")
+    )
+except (TypeError, ValueError):
+    WINLINE_OPEN_MATCH_WAIT_SECONDS = 0.8
 # Строка ленты короткая; панель события длинная. Ограничение по длине не даёт
 # кликнуть по контейнеру со всей лентой сразу.
 WINLINE_OPEN_MATCH_MAX_ROW_CHARS = 200
@@ -3758,18 +3767,16 @@ async def parse_site_in_camoufox_page_async(
             except Exception:                          # noqa: BLE001
                 _opened = False
             if _opened:
-                _payload = await _load_site_render_payload_camoufox_async(
-                    page,
-                    url,
-                    initial_wait_seconds=0.0,
-                    scroll_wait_seconds=0.0,
-                    acquisition_mode=effective_acq,
-                )
-                if len(_payload) >= 6:
-                    load_status, load_error, html, visible, body_text, acq_diag = _payload[:6]
-                else:
-                    load_status, load_error, html, visible, body_text = _payload[:5]
-                    acq_diag = {}
+                # Перечитываем ДЁШЕВО: только текст тела и DOM, без полного
+                # цикла загрузки. Полное перечитывание удваивало стоимость
+                # попытки (1.57с -> 3.11с по медиане), а страница уже открыта —
+                # переоткрывать её незачем, изменилась только раскрытая панель.
+                try:
+                    body_text = " ".join((await _camoufox_body_text(page)).split())
+                    html = str(await _maybe_await(page.content()) or "")
+                    visible = body_text
+                except Exception:                      # noqa: BLE001
+                    load_status, load_error, html, visible, body_text, acq_diag = _before
                 if not _own_panel(body_text or visible or "", html or ""):
                     load_status, load_error, html, visible, body_text, acq_diag = _before
 
