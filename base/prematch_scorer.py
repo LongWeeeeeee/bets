@@ -399,7 +399,8 @@ class PrematchModel:
             "hero_pool": lg1(r["hero_pool"]) - lg1(d["hero_pool"]),
             "form": r["form"] - d["form"],
             "hero_gpm_rel": (r["hero_gpm_rel"] - d["hero_gpm_rel"]) / 100.0,
-            "imp_recent": r["imp30"] - d["imp30"],
+            # train (ideas_batch1 i2_imp_recent) делит на 100; без деления live AUC -0.116 (E-166)
+            "imp_recent": (r["imp30"] - d["imp30"]) / 100.0,
             "wr30": r["wr30"] - d["wr30"],
             "h2h_resid": h2h,
             "gpm_rel_pos": (r["gpm_rel_pos"] - d["gpm_rel_pos"]) / 100.0,
