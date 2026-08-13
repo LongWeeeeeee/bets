@@ -30,6 +30,7 @@ SOURCES = [
     ("v4 ПОТОЛОК (с ингеймом)", "report_v4ceil_{corpus}.json", ("targets", "GS_stacked", "auc")),
     ("v5 регрессия разницы", "report_v5skellam_{corpus}.json", ("targets", "R_diff", "auc")),
     ("v5 Скеллам", "report_v5skellam_{corpus}.json", ("targets", "S_skellam", "auc")),
+    ("v5 λr+λd на тотал", "report_v5skellam_{corpus}.json", ("targets", "S_total", "auc")),
 ]
 
 

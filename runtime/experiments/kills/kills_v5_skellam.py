@@ -149,6 +149,20 @@ def run(corpus: str, targets: list[str], rounds: int, max_train: int, tag: str) 
         entry["S_skellam"] = metrics(y["test"], ps)
         entry["S_skellam"]["lam_corr"] = float(
             np.corrcoef(lam_r - lam_d, dif["test"])[0, 1])
+        # Та же пара λ бесплатно отвечает на вторую цель: λr+λd — это ожидаемый
+        # ТОТАЛ окна. Отдельной модели под тотал не нужно.
+        tot_name = f"tot_{name[2:]}"
+        if tot_name in tg:
+            tt = tg[tot_name]
+            m_t = tt["mask"][rows["test"]]
+            y_t = tt["y"][rows["test"]]
+            entry["S_total"] = {
+                "auc": auc_of(y_t[m_t], (lam_r + lam_d)[m_t]),
+                "n": int(m_t.sum()), "base": float(y_t[m_t].mean()),
+                "corr": float(np.corrcoef((lam_r + lam_d)[m_t],
+                                          (kr["test"] + kd["test"])[m_t])[0, 1])}
+            print(f"  {name} S_total    AUC {entry['S_total']['auc']:.4f} "
+                  f"(цель {tot_name})", flush=True)
         entry["seconds"] = round(time.time() - t0, 1)
         report["targets"][name] = entry
         for k in ("C_sign", "R_diff", "S_skellam"):
