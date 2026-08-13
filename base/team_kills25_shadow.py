@@ -13,6 +13,7 @@ import json
 import math
 import os
 import re
+import sys
 import threading
 import time
 from datetime import datetime
@@ -35,6 +36,9 @@ DEFAULT_ROSTER_HISTORY_PATH = (
 )
 SCHEMA_VERSION = "team_kills27_shadow.v2"
 ROSTER_HISTORY_SCHEMA_VERSION = 2
+# Живой цикл не должен парсить гигантский json синхронно: 349-МБ снимок ELO
+# разворачивался в несколько ГБ и укладывал прод в своп.
+DEFAULT_ROSTER_HISTORY_MAX_MB = 64
 ODDS = 1.8
 TARGET_KILLS = 27
 ELO_GATE_THRESHOLD = 0.45
@@ -337,10 +341,7 @@ def _roster_history_path() -> Path:
     )
 
 
-@lru_cache(maxsize=4)
-def _load_roster_history_cached(path_text: str, mtime_ns: int) -> dict[str, Any]:
-    del mtime_ns
-    payload = json.loads(Path(path_text).read_text(encoding="utf-8"))
+def _validate_roster_history(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("team-kills27 roster history root must be an object")
     meta = payload.get("meta")
@@ -356,13 +357,90 @@ def _load_roster_history_cached(path_text: str, mtime_ns: int) -> dict[str, Any]
     return payload
 
 
+@lru_cache(maxsize=4)
+def _load_roster_history_cached(path_text: str, mtime_ns: int) -> dict[str, Any]:
+    del mtime_ns
+    return _validate_roster_history(
+        json.loads(Path(path_text).read_text(encoding="utf-8"))
+    )
+
+
+def _roster_history_max_bytes() -> int:
+    """0 = без ограничения. Иначе файл крупнее лимита в живой путь не берём."""
+    raw = _env_first(
+        "TEAM_KILLS27_ROSTER_HISTORY_MAX_MB",
+        "TEAM_KILLS25_ROSTER_HISTORY_MAX_MB",
+        default=str(DEFAULT_ROSTER_HISTORY_MAX_MB),
+    )
+    try:
+        limit_mb = float(str(raw).strip())
+    except (TypeError, ValueError):
+        limit_mb = float(DEFAULT_ROSTER_HISTORY_MAX_MB)
+    return int(limit_mb * 1024 * 1024) if limit_mb > 0 else 0
+
+
+def _shared_elo_snapshot(resolved: Path) -> dict[str, Any] | None:
+    """Уже загруженный живым пайплайном снимок ELO — вместо второй копии.
+
+    История килов лежит ВНУТРИ live_team_elo_snapshot.json, который
+    ELO/live_team_strength держит в _SNAPSHOT_CACHE. Независимый json.load того
+    же файла давал вторую копию структуры в памяти: на проде это 2×349 МБ json
+    → RSS 4 ГБ + 6.8 ГБ свопа, main-thread вставал в read_text на десятки минут
+    (D-state) и цикл матчей не проворачивался. Берём готовый объект.
+    """
+    module = sys.modules.get("live_team_strength") or sys.modules.get(
+        "ELO.live_team_strength"
+    )
+    if module is None:
+        return None
+    cached = getattr(module, "_SNAPSHOT_CACHE", None)
+    if not isinstance(cached, dict):
+        return None
+    default_path = getattr(module, "DEFAULT_SNAPSHOT_PATH", None)
+    if default_path is None:
+        return None
+    try:
+        same_file = Path(default_path).resolve() == Path(resolved).resolve()
+    except OSError:
+        same_file = False
+    return cached if same_file else None
+
+
 def load_roster_history(path: Path | None = None) -> dict[str, Any] | None:
     resolved = path or _roster_history_path()
+    shared = _shared_elo_snapshot(resolved)
+    if shared is not None:
+        try:
+            return _validate_roster_history(shared)
+        except ValueError:
+            return None
     try:
         stat = resolved.stat()
+    except (FileNotFoundError, OSError):
+        return None
+    limit_bytes = _roster_history_max_bytes()
+    if limit_bytes and int(stat.st_size) > limit_bytes:
+        _warn_roster_history_oversized(resolved, int(stat.st_size), limit_bytes)
+        return None
+    try:
         return _load_roster_history_cached(str(resolved), int(stat.st_mtime_ns))
     except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
         return None
+
+
+_ROSTER_HISTORY_OVERSIZED_SEEN: set[tuple[str, int]] = set()
+
+
+def _warn_roster_history_oversized(path: Path, size: int, limit: int) -> None:
+    key = (str(path), size)
+    if key in _ROSTER_HISTORY_OVERSIZED_SEEN:
+        return
+    _ROSTER_HISTORY_OVERSIZED_SEEN.add(key)
+    print(
+        f"⚠️ team-kills27 roster history пропущена: {path} = {size / 1048576:.0f} МБ "
+        f"> лимита {limit / 1048576:.0f} МБ (TEAM_KILLS27_ROSTER_HISTORY_MAX_MB). "
+        "Контекст ростера будет history_unavailable."
+    )
 
 
 def build_roster_kills_context(

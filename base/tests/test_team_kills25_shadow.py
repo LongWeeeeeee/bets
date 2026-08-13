@@ -174,6 +174,50 @@ def test_roster_history_loader_requires_patch_aware_schema(tmp_path):
     assert shadow.load_roster_history(path) == payload
 
 
+def _valid_roster_history() -> dict:
+    return {
+        "meta": {
+            "team_kills_history_schema_version": 2,
+            "team_kills_history_latest_patch": "7.41e",
+        },
+        "team_kills_history_by_team_id": {},
+    }
+
+
+def test_roster_history_skips_oversized_file(monkeypatch, tmp_path):
+    """Гигантский снимок не парсится в живом цикле: прод вставал в read_text."""
+    path = tmp_path / "huge.json"
+    path.write_text(json.dumps(_valid_roster_history()), encoding="utf-8")
+    shadow._load_roster_history_cached.cache_clear()
+    shadow._ROSTER_HISTORY_OVERSIZED_SEEN.clear()
+
+    monkeypatch.setenv("TEAM_KILLS27_ROSTER_HISTORY_MAX_MB", "0.00001")
+    assert shadow.load_roster_history(path) is None
+
+    monkeypatch.setenv("TEAM_KILLS27_ROSTER_HISTORY_MAX_MB", "64")
+    assert shadow.load_roster_history(path) == _valid_roster_history()
+
+
+def test_roster_history_reuses_loaded_elo_snapshot(monkeypatch, tmp_path):
+    """История берётся из уже загруженного снимка ELO, а не вторым json.load."""
+    import types
+
+    payload = _valid_roster_history()
+    snapshot_path = tmp_path / "live_team_elo_snapshot.json"  # файла на диске НЕТ
+    fake = types.SimpleNamespace(
+        _SNAPSHOT_CACHE=payload,
+        DEFAULT_SNAPSHOT_PATH=snapshot_path,
+    )
+    monkeypatch.setitem(sys.modules, "live_team_strength", fake)
+    shadow._load_roster_history_cached.cache_clear()
+
+    # Путь совпадает со снимком ELO → отдаём готовый объект, диск не трогаем.
+    assert shadow.load_roster_history(snapshot_path) is payload
+
+    # Чужой путь кэш ELO не подменяет: файла нет → None, а не payload.
+    assert shadow.load_roster_history(tmp_path / "other.json") is None
+
+
 def test_roster_history_requires_four_players_and_excludes_current_future_and_duplicates():
     current_players = [1, 2, 3, 4, 5]
     rows = [
