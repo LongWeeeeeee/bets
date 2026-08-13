@@ -314,6 +314,68 @@ SOLO_POSITION_WEIGHTS = {
 CP1VS1_SHRINKAGE_K = max(0.0, float(os.getenv("CP1VS1_SHRINKAGE_K", "0") or "0"))
 
 
+
+_LANE_STRUCTURE_KEYS = (
+    "2v2_lanes",
+    "2v1_lanes",
+    "1v1_lanes",
+    "1_with_1_lanes",
+    "solo_lanes",
+)
+
+
+class _LanePointLookupBucket(dict):
+    """Partition view over a point-lookup backend (sqlite / sharded).
+
+    Lane keys are unique across 2v2/2v1/1v1/with/solo, so every bucket
+    forwards ``.get()`` to the same backend. Never iterates the store.
+    """
+
+    def __init__(self, backend):
+        super().__init__()
+        self._backend = backend
+
+    def __bool__(self):
+        return True
+
+    def get(self, key, default=None):
+        if key is None:
+            return default
+        value = self._backend.get(key, default)
+        return default if value is None else value
+
+    def __getitem__(self, key):
+        value = self.get(key)
+        if value is None:
+            raise KeyError(key)
+        return value
+
+    def __contains__(self, key):
+        return self.get(key) is not None
+
+
+class _StructuredLaneLookup(dict):
+    """``calculate_lanes``-shaped wrapper around a sqlite/sharded lane backend."""
+
+    def __init__(self, backend):
+        super().__init__(
+            (name, _LanePointLookupBucket(backend)) for name in _LANE_STRUCTURE_KEYS
+        )
+        self._backend = backend
+
+    def __bool__(self):
+        return True
+
+    def close(self):
+        closer = getattr(self._backend, "close", None)
+        if callable(closer):
+            closer()
+
+
+def _is_point_lookup_lane_backend(obj) -> bool:
+    return callable(getattr(obj, "get_many", None)) and callable(getattr(obj, "get", None))
+
+
 def structure_lane_dict(flat_lane_dict):
     """
     Преобразует плоский lane_dict в структурированный формат для calculate_lanes.
@@ -332,7 +394,17 @@ def structure_lane_dict(flat_lane_dict):
             '1v1_lanes': {...},
             '1_with_1_lanes': {...}
         }
+
+    Sqlite/sharded backends (``get_many``) are wrapped as point-lookup views
+    instead of scanning every key into RAM.
     """
+    if isinstance(flat_lane_dict, _StructuredLaneLookup):
+        return flat_lane_dict
+    if isinstance(flat_lane_dict, dict) and "2v2_lanes" in flat_lane_dict:
+        return flat_lane_dict
+    if _is_point_lookup_lane_backend(flat_lane_dict):
+        return _StructuredLaneLookup(flat_lane_dict)
+
     structured = {
         '2v2_lanes': {},
         '2v1_lanes': {},

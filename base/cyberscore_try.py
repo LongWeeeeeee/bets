@@ -24168,6 +24168,13 @@ def _runtime_object_summary(value: Any) -> str:
         if isinstance(value, _SqliteStatsLookup):
             cached_keys = len(value._key_cache)
             return f"sqlite(cached_keys={cached_keys})"
+        backend = getattr(value, "_backend", None)
+        if (
+            backend is not None
+            and isinstance(value, dict)
+            and "2v2_lanes" in value
+        ):
+            return f"sqlite_lane({_runtime_object_summary(backend)})"
         if isinstance(value, dict):
             return f"dict(len={len(value)})"
         if isinstance(value, (set, list, tuple, deque)):
@@ -38904,22 +38911,14 @@ def _load_stats_dicts():
         if not LIVE_LANE_ANALYSIS_ENABLED:
             lane_data = None
         elif lane_data is None:
-            lane_data = _load_lane_dict_from_source(lane_path)
-            # Партиционируем ОДИН раз при загрузке. calculate_lanes и
-            # calculate_lane_kills_advantage конвертируют плоский словарь сами,
-            # и на живом потоке это означало полный проход по ~7 млн ключей на
-            # КАЖДЫЙ вызов: py-spy показал 10 из 11 активных сэмплов главного
-            # потока в structure_lane_dict, оценка матча раз в 90 c, ставки
-            # уходили с задержкой. Структурированная форма держит те же объекты
-            # значений, поэтому память не растёт (плоскую таблицу освобождаем).
-            _t_struct = time.time()
-            _flat_lane_keys = len(lane_data) if isinstance(lane_data, dict) else 0
-            lane_data = structure_lane_dict(lane_data)
+            # Same sqlite point-lookup as early/late/post_lane. Do not
+            # materialize the 7M-key table into a Python dict.
+            if _stats_should_use_indexed_lookup(lane_path, "lane"):
+                raw_lane = _prepare_indexed_stats_lookup(lane_path, "lane")
+            else:
+                raw_lane = _load_lane_dict_from_source(lane_path)
+            lane_data = structure_lane_dict(raw_lane)
             gc.collect()
-            print(
-                f"🧱 Lane dict структурирован один раз: {_flat_lane_keys} ключей "
-                f"за {time.time() - _t_struct:.1f}c"
-            )
 
         if late_pub_comeback_table_data is None:
             late_pub_comeback_table_data = {}
