@@ -23,9 +23,10 @@ SOURCES = [
     ("v3 линейная A (драфт)", "report_v3{c}.json", ("targets", "A_draft", "auc")),
     ("v3 линейная B (признаки)", "report_v3{c}.json", ("targets", "B_features", "auc")),
     ("v3 линейная C (связка)", "report_v3{c}.json", ("targets", "C_stacked", "auc")),
-    ("v3 перенос паблик→про", "report_v3prot.json", ("targets", "T_transfer", "auc")),
+    ("v3 перенос паблик→про", "report_v3prot.json|pro", ("targets", "T_transfer", "auc")),
     ("v4 бустинг", "report_v4gbdt_{corpus}.json", ("targets", "G_gbdt", "auc")),
     ("v4 бустинг + драфт", "report_v4gbdt_{corpus}.json", ("targets", "GS_stacked", "auc")),
+    ("v4 перенос паблик→про", "report_v4gbdt_{corpus}.json|pro", ("targets", "T_transfer", "auc")),
     ("v4 ПОТОЛОК (с ингеймом)", "report_v4ceil_{corpus}.json", ("targets", "GS_stacked", "auc")),
     ("v5 регрессия разницы", "report_v5skellam_{corpus}.json", ("targets", "R_diff", "auc")),
     ("v5 Скеллам", "report_v5skellam_{corpus}.json", ("targets", "S_skellam", "auc")),
@@ -49,6 +50,10 @@ def main() -> int:
     for corpus, suffix in (("public", "pub"), ("pro", "pro")):
         loaded: list[tuple[str, dict]] = []
         for label, pattern, path in SOURCES:
+            if "|" in pattern:                 # строка только для одного корпуса
+                pattern, only = pattern.split("|", 1)
+                if only != corpus:
+                    continue
             fname = pattern.format(c=suffix, corpus=corpus)
             p = OUT_DIR / fname
             if not p.exists():
