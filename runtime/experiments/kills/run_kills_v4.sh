@@ -17,20 +17,24 @@ echo "[$(ts)] === 1/5 пакет v4 и словарные колонки: про
 $PY $K/kills_v4_extra.py --corpus pro || exit 1
 $PY $K/kills_v4_dict_features.py --corpus pro || exit 1
 
-echo "[$(ts)] === 2/5 бустинг на про: все цели ==="
+echo "[$(ts)] === 2/5 пакет v4: паблик ==="
+$PY $K/kills_v4_extra.py --corpus public || exit 1
+
+# Паблик СНАЧАЛА: про-прогон применяет паблик-модель к про-строкам и печатает
+# перенос. По v3 перенос обгоняет обучение на про, и без этой колонки вывод
+# «про-модель такая-то» ничего не значит.
+echo "[$(ts)] === 3/5 бустинг на паблике ==="
+$PY $K/kills_v4_gbdt.py --corpus public --extra --draft stack --rounds 800 --leaves 127 --lr 0.08 --ff 0.5 --max-train 2000000 \
+    --targets w_5_15,w_10_20,w_15_25,w_20_30,tot_5_15,tot_10_20,tot_15_25,tot_20_30,ge27,tot51,map \
+    --tag v4gbdt || exit 1
+
+echo "[$(ts)] === 4/5 бустинг на про: все цели + перенос паблик-модели ==="
 $PY $K/kills_v4_gbdt.py --corpus pro --extra --draft oof --rounds 2000 \
     --targets w_5_15,w_10_20,w_15_25,w_20_30,tot_5_15,tot_10_20,tot_15_25,tot_20_30,ge27,tot51,map \
     --tag v4gbdt || exit 1
 
-echo "[$(ts)] === 3/5 пакет v4: паблик ==="
-$PY $K/kills_v4_extra.py --corpus public || exit 1
-
-echo "[$(ts)] === 4/5 бустинг на паблике ==="
-$PY $K/kills_v4_gbdt.py --corpus public --extra --draft stack --rounds 1500 \
-    --targets w_5_15,w_10_20,w_20_30,tot_5_15,tot_10_20,tot51 --tag v4gbdt || exit 1
-
 echo "[$(ts)] === 5/5 потолок: то же плюс состояние карты на минуте гейта ==="
-$PY $K/kills_v4_gbdt.py --corpus public --extra --draft stack --ingame --rounds 1500 \
+$PY $K/kills_v4_gbdt.py --corpus public --extra --draft stack --ingame --rounds 800 --leaves 127 --lr 0.08 --ff 0.5 --max-train 2000000 \
     --targets w_10_20,w_20_30 --tag v4ceil || exit 1
 $PY $K/kills_v4_gbdt.py --corpus pro --extra --draft stack --ingame --rounds 2000 \
     --targets w_10_20,w_20_30 --tag v4ceil || exit 1

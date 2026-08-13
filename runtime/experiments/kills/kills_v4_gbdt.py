@@ -35,6 +35,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import scipy.sparse as sp
 
 ROOT = Path(os.getenv("DRAFT_ROOT", "/Users/alex/Documents/ingame"))
 sys.path.insert(0, str(ROOT / "base"))
@@ -63,9 +64,6 @@ def load_matrix(corpus: str, use_extra: bool) -> tuple[np.ndarray, list[str], di
     z = np.load(OUT_DIR / f"featuresv3_{corpus}.npz", allow_pickle=True)
     names = [str(s) for s in z["names"]]
     X = z["X"]
-    if z["Xteam"].size:
-        X = np.hstack([X, z["Xteam"]])
-        names += [str(s) for s in z["team_names"]]
     if use_extra:
         for kind in ("extrav4", "dictv4"):
             p = OUT_DIR / f"{kind}_{corpus}.npz"
@@ -79,6 +77,12 @@ def load_matrix(corpus: str, use_extra: bool) -> tuple[np.ndarray, list[str], di
             X = np.hstack([X, e["X"]])
             names += [str(s) for s in e["names"]]
             print(f"  добавлен {kind}: {e['X'].shape[1]} колонок", flush=True)
+    # Командный блок идёт ПОСЛЕДНИМ намеренно: в паблике команд нет, и при таком
+    # порядке набор колонок паблика — префикс набора про. Тогда паблик-модель
+    # применяется к про-строкам просто первыми k колонками, без перетасовки.
+    if z["Xteam"].size:
+        X = np.hstack([X, z["Xteam"]])
+        names += [str(s) for s in z["team_names"]]
     return X, names, z
 
 
@@ -116,6 +120,7 @@ def draft_scores(z, parts, sel, y, sym: str, mode: str, heroes) -> dict[str, np.
     else:
         out["train"] = full.decision_function(block(tr)).astype(np.float32)
     out["_model"] = full
+    out["_enc"] = {"pair": enc_pair, "role": enc_role}
     return out
 
 
@@ -150,7 +155,8 @@ def fit_backend(backend: str, Xtr, ytr, Xva, yva, cols, rounds):
 
 
 def run(corpus: str, targets: list[str], draft_mode: str, use_extra: bool,
-        rounds: int, tag: str, backend: str = "lgb", ingame: bool = False) -> None:
+        rounds: int, tag: str, backend: str = "lgb", ingame: bool = False,
+        max_train: int = 0) -> None:
     X, names, z = load_matrix(corpus, use_extra)
     if ingame:
         # ТОЛЬКО для верхней оценки: сколько вообще можно выжать, если знать
@@ -180,6 +186,15 @@ def run(corpus: str, targets: list[str], draft_mode: str, use_extra: bool,
         sel = {k: t["mask"][v] for k, v in parts.items()}
         y = {k: t["y"][v][sel[k]] for k, v in parts.items()}
         rows = {k: parts[k][sel[k]] for k in parts}
+        if max_train and len(rows["train"]) > max_train:
+            # Режем СВЕЖИЕ строки, а не случайные: сплит хронологический, и
+            # обучение на хвосте ближе к тесту по мете.
+            rows["train"] = rows["train"][-max_train:]
+            y["train"] = y["train"][-max_train:]
+            sel = {**sel, "train": sel["train"].copy()}
+            keep_mask = np.zeros(len(sel["train"]), bool)
+            keep_mask[np.flatnonzero(sel["train"])[-max_train:]] = True
+            sel["train"] = keep_mask
         print(f"\n=== {name}: train {len(y['train']):,} / test {len(y['test']):,}, "
               f"база {y['test'].mean():.3f} ===", flush=True)
 
@@ -235,6 +250,37 @@ def run(corpus: str, targets: list[str], draft_mode: str, use_extra: bool,
                             y=y["test"], p_gbdt=p_g, p_stack=p_s,
                             p_draft=1.0 / (1.0 + np.exp(-ds["test"])),
                             mid=z["mid"][rows["test"]], ts=z["ts"][rows["test"]])
+        # Перенос: паблик-модель НА ПРО-СТРОКАХ. По v3 (E-174) паблик-модель
+        # переносится на про лучше, чем модель, обученная на 250 тыс. про-карт, —
+        # значит это сравнение обязано быть в отчёте, а не в голове.
+        if corpus == "pro":
+            pm = OUT_DIR / f"{tag}_public_{name}.lgb"
+            pa = OUT_DIR / f"{tag}_public_{name}_aux.joblib"
+            if pm.exists() and pa.exists():
+                import joblib
+                import lightgbm as lgb
+                aux = joblib.load(pa)
+                pub_cols = list(aux.get("names") or [])
+                kk = len([c for c in pub_cols if c != "draft_score"])
+                if kk and names[:kk] == pub_cols[:kk]:
+                    h = heroes[rows["test"]]
+                    enc = aux["enc"]
+                    if SYM[name] == "sym":
+                        A = enc["role"].transform(h)
+                    elif SYM[name] == "side":
+                        A = sp.hstack([enc["pair"].transform(h),
+                                       enc["role"].transform(h)], format="csr")
+                    else:
+                        A = enc["pair"].transform(h)
+                    dp = aux["draft"].decision_function(A).astype(np.float32)
+                    Xt = np.hstack([X[rows["test"]][:, :kk], dp[:, None]])
+                    pt = lgb.Booster(model_file=str(pm)).predict(Xt)
+                    entry["T_transfer"] = metrics(y["test"], pt)
+                    print(f"  {name:8s} T_transfer   AUC "
+                          f"{entry['T_transfer']['auc']:.4f}", flush=True)
+                else:
+                    print(f"  {name}: колонки паблика не префикс про — перенос пропущен",
+                          flush=True)
         report["targets"][name] = entry
         for k in ("A_draft", "G_gbdt", "GS_stacked"):
             v = entry[k]
@@ -245,7 +291,8 @@ def run(corpus: str, targets: list[str], draft_mode: str, use_extra: bool,
             model.save_model(str(OUT_DIR / f"{tag}_{corpus}_{name}.lgb"))
         else:
             atomic_joblib_dump(model, OUT_DIR / f"{tag}_{corpus}_{name}.joblib")
-        atomic_joblib_dump({"comb": comb, "draft": ds["_model"]},
+        atomic_joblib_dump({"comb": comb, "draft": ds["_model"], "enc": ds["_enc"],
+                            "names": cols_used},
                            OUT_DIR / f"{tag}_{corpus}_{name}_aux.joblib")
         del Xte, ds
 
@@ -266,9 +313,19 @@ def main() -> None:
     ap.add_argument("--backend", default="lgb", choices=("lgb", "hgb"))
     ap.add_argument("--ingame", action="store_true",
                     help="верхняя оценка: добавить состояние карты на минуте гейта")
+    ap.add_argument("--max-train", type=int, default=0)
+    ap.add_argument("--leaves", type=int, default=0)
+    ap.add_argument("--lr", type=float, default=0.0)
+    ap.add_argument("--ff", type=float, default=0.0)
     args = ap.parse_args()
+    if args.leaves:
+        PARAMS["num_leaves"] = args.leaves
+    if args.lr:
+        PARAMS["learning_rate"] = args.lr
+    if args.ff:
+        PARAMS["feature_fraction"] = args.ff
     run(args.corpus, [s for s in args.targets.split(",") if s], args.draft,
-        args.extra, args.rounds, args.tag, args.backend, args.ingame)
+        args.extra, args.rounds, args.tag, args.backend, args.ingame, args.max_train)
 
 
 if __name__ == "__main__":
