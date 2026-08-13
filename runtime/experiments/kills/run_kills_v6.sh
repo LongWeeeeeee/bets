@@ -12,7 +12,7 @@ ts() { date +%H:%M:%S; }
 # связки. Вывод «нелинейность не даёт ничего» стоит слишком дорого, чтобы делать
 # его по урезанному прогону: здесь тот же бустинг без единого упрощения.
 echo "[$(ts)] === 0/3 честная перепроверка бустинга на полном объёме ==="
-$PY $K/kills_v4_gbdt.py --corpus public --extra --draft stack --rounds 3000 \
+$PY $K/kills_v4_gbdt.py --corpus public --extra --draft oof --rounds 3000 \
     --leaves 255 --lr 0.05 --ff 0.75 --targets w_10_20,tot_10_20 --tag v4full || true
 
 echo "[$(ts)] === 1/3 сводная таблица ==="

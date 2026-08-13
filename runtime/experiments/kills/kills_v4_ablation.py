@@ -76,7 +76,11 @@ def run(corpus: str, target: str, rows_cap: int, backend: str, sweep: bool,
     print(f"[{corpus}/{target}] карт {n:,}, колонок {X.shape[1]}, "
           f"train {len(y['train']):,}, test {len(y['test']):,}", flush=True)
 
-    ds = draft_scores(z, parts, sel, y, SYM[target], "stack", z["heroes"][keep])
+    # ТОЛЬКО OOF. При "stack" оценка драфта для train-строк внутривыборочная:
+    # парная модель на 16 тыс. колонок и 250 тыс. строк подгоняется почти идеально,
+    # бустинг делает её главным признаком, а на тесте она рассыпается. Замер на про
+    # 14.08: с внутривыборочной колонкой AUC 0.6264, без колонки вовсе — 0.6604.
+    ds = draft_scores(z, parts, sel, y, SYM[target], "oof", z["heroes"][keep])
     cols = names + ["draft_score"]
     extra_names, dict_names, team_names = set(), set(), set()
     for kind, holder in (("extrav4", extra_names), ("dictv4", dict_names)):
