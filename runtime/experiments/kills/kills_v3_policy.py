@@ -229,7 +229,12 @@ def main() -> int:
     names = [str(s) for s in z["names"]]
     n = len(z["ts"])
     keep = np.arange(n)
+    # ВАЖНО: NpzFile разжимает массив ПРИ КАЖДОМ обращении. `z["heroes"][i]` в
+    # цикле по 28 тыс. карт — это 28 тыс. распаковок массива на 12 МБ, из-за чего
+    # пересчёт `ed` шёл 83 карты/с вместо 1700. Всё, что нужно в циклах, достаём
+    # один раз.
     patch, mids, valid, diffs = z["patch"], z["mid"], z["valid"], z["diffs"]
+    heroes_all = z["heroes"]
     sel741 = np.flatnonzero(patch >= PATCH_741)
     parts, cut = split_pro(patch, n)
     test_rows = parts["test"]
@@ -267,7 +272,7 @@ def main() -> int:
                 i = idx_by_mid.get(int(r.get("mid", -1)))
                 if i is None:
                     continue
-                got = ed_for(z["heroes"][i], lookup)
+                got = ed_for(heroes_all[i], lookup)
                 for t, val in got.items():
                     ref = r.get(f"ed_{t}")
                     if ref is None or val is None:
@@ -288,7 +293,7 @@ def main() -> int:
     t0 = time.time()
     ed_rows: dict[int, dict] = {}
     for c, i in enumerate(sel741, 1):
-        ed_rows[int(i)] = ed_for(z["heroes"][i], lookup)
+        ed_rows[int(i)] = ed_for(heroes_all[i], lookup)
         if c % 10000 == 0:
             print(f"  ed: {c:,}/{len(sel741):,}", flush=True)
     emit(f"Пересчитано `ed` для {len(ed_rows):,} карт 7.41+ "
