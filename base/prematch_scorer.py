@@ -381,8 +381,13 @@ class PrematchModel:
             }
 
         r, d = side(radiant_accounts, radiant_heroes), side(dire_accounts, dire_heroes)
-        vv = [(self.vs.get((int(x), int(y)), (0.0, 0.0))) for x in radiant_heroes for y in dire_heroes]
-        vs_val = float(np.mean([(w + 5.0) / (g + 10.0) for w, g in vv])) - 0.5
+        def pair_wr(a_heroes: Sequence[int], b_heroes: Sequence[int]) -> float:
+            vv = [(self.vs.get((int(x), int(y)), (0.0, 0.0))) for x in a_heroes for y in b_heroes]
+            if not vv:
+                return 0.5
+            return float(np.mean([(w + 5.0) / (g + 10.0) for w, g in vv]))
+
+        vs_val = pair_wr(radiant_heroes, dire_heroes) - pair_wr(dire_heroes, radiant_heroes)
         h2h = float(h2h_src.get(key, 0.0)) if key else 0.0
         if key and key not in h2h_src:
             notes.append("организации раньше не встречались — h2h нейтрален")
@@ -399,7 +404,7 @@ class PrematchModel:
             "hero_pool": lg1(r["hero_pool"]) - lg1(d["hero_pool"]),
             "form": r["form"] - d["form"],
             "hero_gpm_rel": (r["hero_gpm_rel"] - d["hero_gpm_rel"]) / 100.0,
-            # train (ideas_batch1 i2_imp_recent) делит на 100; без деления live AUC -0.116 (E-166)
+            # train (ideas_batch1 i2_imp_recent) делит на 100; без деления live AUC −0.116
             "imp_recent": (r["imp30"] - d["imp30"]) / 100.0,
             "wr30": r["wr30"] - d["wr30"],
             "h2h_resid": h2h,
