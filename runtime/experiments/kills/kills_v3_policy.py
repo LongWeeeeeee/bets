@@ -359,8 +359,13 @@ def main() -> int:
         y = np.concatenate([(ks[rows, 0] >= TARGET_KILLS).astype(int),
                             (ks[rows, 1] >= TARGET_KILLS).astype(int)]) \
             if "ge27_flip" in sc else (ks[rows, 0] >= TARGET_KILLS).astype(int)
+        # E-164 закрылась выводом «модель 27+ уступает одному числу
+        # elo_target_win_prob». Поэтому ELO печатается рядом на ТЕХ ЖЕ картах —
+        # без него «модель хорошая» ничего не значит.
+        el = np.concatenate([elo[rows, 0] - elo[rows, 1], elo[rows, 1] - elo[rows, 0]]) \
+            if "ge27_flip" in sc else (elo[rows, 0] - elo[rows, 1])
         emit(f"**{label}:** наблюдений {len(y):,}, база {y.mean():.3f}, "
-             f"AUC {auc_of(y, p):.4f}.")
+             f"AUC модели {auc_of(y, p):.4f}, AUC одного ELO {auc_of(y, el):.4f}.")
         emit()
         emit("| порог p | ставок | доля 27+ | ROI@1.8 |")
         emit("|---:|---:|---:|---:|")
