@@ -44,6 +44,7 @@
 """
 from __future__ import annotations
 
+import itertools
 import math
 import os
 from dataclasses import dataclass, field
@@ -62,8 +63,19 @@ BASE20 = ["draft_logit", "elo", "games", "hero_games", "pos_games", "opp_elo",
           "gpm_ewma", "lh30", "imp30"]
 EXTRA3 = ["lvl_rel_pos", "kda_player", "farm_dep"]
 INTER_KEYS = ["draft_logit", "elo", "form"]
+# E-168: шесть колонок кандидата C. Порядок обязан совпадать со сборщиком
+# (`build_prematch_artifact_v2.py`), но опорой служит `feature_names` из самого
+# артефакта — константа ниже нужна только для артефактов без этого поля.
+NEW6 = ["hybrid_strength", "cp_lane", "syn_pos_mean",
+        "a_hdmg_rel_pos", "a_hdmg_rel_hero", "a_nw_rel_pos"]
 FEATURES = BASE20 + EXTRA3 + [f"{k}_x_{c}" for c in ("elo_gap", "games_exp") for k in INTER_KEYS]
 STRICTNESS = ("accounts", "teams", "cells", "full")
+# Позиционные про-ячейки контрпика и синергии: распад 45 дней и шринкедж к
+# позиционно-агностичной паре — один в один с `ideas_batch8.build`, которым
+# считались обучающие колонки. Линиями считаются те же пять противостояний,
+# что и в продовом cp1vs1.
+DRAFT_HL_DAYS = 45.0
+LANES = ((1, 3), (2, 2), (3, 1), (4, 5), (5, 4))
 
 # Пороги на НАСТОЯЩИХ офлайн-турнирах, без открытых квалификаций (E-142).
 # 2 456 карт, честные предсказания из шести forward-окон. Прежняя таблица
@@ -212,6 +224,23 @@ class PrematchModel:
         self.hero_farm = {int(r[0]): r[1] for r in z["hero_farm"]} if "hero_farm" in z else {}
         self.ctx_mu = z["ctx_mu"] if "ctx_mu" in z else None
         self.ctx_sd = z["ctx_sd"] if "ctx_sd" in z else None
+        # Набор признаков берётся ИЗ АРТЕФАКТА, а не из константы: иначе при
+        # смене артефакта веса молча встанут не на свои места (цена ошибки в
+        # одной колонке измерена в E-166 — 0.116 AUC).
+        self.features = ([str(x) for x in z["feature_names"]]
+                         if "feature_names" in z else list(FEATURES))
+        # Состояние под колонки E-168. Отклонения урона/нетворса лежат ДОПОЛНИТЕЛЬНЫМИ
+        # колонками в `accounts` и `acc_hero` (см. `finalize_artifact.py`): отдельные
+        # словари на 1.7 млн ячеек стоили +424 МБ RSS.
+        self.vs_pos = {(int(r[0]), int(r[1]), int(r[2]), int(r[3])): (r[4], r[5], r[6])
+                       for r in z["vs_pos"]} if "vs_pos" in z else {}
+        self.vs_flat = {(int(r[0]), int(r[1])): (r[2], r[3], r[4])
+                        for r in z["vs_flat"]} if "vs_flat" in z else {}
+        self.syn_pos = {((int(r[0]), int(r[1])), (int(r[2]), int(r[3]))): (r[4], r[5], r[6])
+                        for r in z["syn_pos"]} if "syn_pos" in z else {}
+        self.syn_flat = {(int(r[0]), int(r[1])): (r[2], r[3], r[4])
+                         for r in z["syn_flat"]} if "syn_flat" in z else {}
+
         # Идентичность ОРГАНИЗАЦИИ, а не тега: 64 710 team_id схлопнуты в 57 608
         # организаций склейкой по составу (>=4 из 5). Нужно потому, что при
         # ребрендинге team_id новый и история личных встреч обнулялась бы —
@@ -228,6 +257,40 @@ class PrematchModel:
         else:
             self.org_roster = {}
 
+    def _draft_cells(self, rh: list[tuple[int, int]], dh: list[tuple[int, int]],
+                     now: int) -> tuple[float, float]:
+        """(cp_lane, syn_pos_mean) из позиционных про-ячеек на момент `now`."""
+        lam = math.log(2) / (DRAFT_HL_DAYS * 86400.0)
+
+        def dec(cell):
+            if cell is None:
+                return 0.0, 0.0
+            w, g, t0 = cell
+            f = math.exp(-lam * max(now - float(t0), 0.0)) if g > 0 else 0.0
+            return w * f, g * f
+
+        def val(cell, prior_cell, k=8.0):
+            w, g = dec(cell)
+            pw, pg = dec(prior_cell)
+            prior = (pw + 5.0) / (pg + 10.0) if pg > 0 else 0.5
+            return (w + k * prior) / (g + k)
+
+        lane_v = []
+        for (h1, p1) in rh:
+            for (h2, p2) in dh:
+                if (p1, p2) in LANES:
+                    lane_v.append(val(self.vs_pos.get((h1, p1, h2, p2)),
+                                      self.vs_flat.get((h1, h2))))
+        syn_v = []
+        for side, own in ((rh, True), (dh, False)):
+            for a, b in itertools.combinations(side, 2):
+                key = (min(a, b), max(a, b))
+                v = val(self.syn_pos.get(key),
+                        self.syn_flat.get((min(a[0], b[0]), max(a[0], b[0]))))
+                syn_v.append(v if own else 1.0 - v)
+        cp_lane = (float(np.mean(lane_v)) - 0.5) if lane_v else 0.0
+        syn_mean = (float(np.mean(syn_v)) - 0.5) if syn_v else 0.0
+        return cp_lane, syn_mean
     def resolve_org(self, team_id: int, accounts: Sequence[int]) -> int:
         """Организация по СОСТАВУ, а тег — только запасной вариант.
 
@@ -295,6 +358,7 @@ class PrematchModel:
               radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
               radiant_team_id: int, dire_team_id: int,
               draft_logit: Optional[float] = None,
+              hybrid_strength: Optional[float] = None,
               strictness: str = "teams",
               now_ts: Optional[int] = None,
               max_age_days: float = 3.0) -> ScoreResult:
@@ -320,6 +384,11 @@ class PrematchModel:
             raise MissingData(["ожидались 10 аккаунтов и 10 героев по позициям 1..5"])
         if draft_logit is None:
             miss.append("не передан draft_logit (паблик-модель по героям)")
+        if "hybrid_strength" in self.features and hybrid_strength is None:
+            # Дефолт здесь означал бы «команды равны по силе» — ровно то враньё,
+            # против которого построен весь модуль.
+            miss.append("не передан hybrid_strength "
+                        "((сила радианта − сила дайра) / 400 по Hybrid-рейтингу)")
         zero = [i + 1 for i, a in enumerate(accs) if a <= 0]
         if zero:
             miss.append(f"нет account_id у слотов {zero}")
@@ -375,6 +444,15 @@ class PrematchModel:
                 "farm_dep": float(np.mean([self.hero_farm.get(int(h), 0.0) for h in h5])),
                 "hero_games": float(np.mean([math.log1p(max(x, 0)) for x in hg])),
                 "hero_gpm_rel": float(np.mean(gpm_rel)), "lh_rel_hero": float(np.mean(lh_rel)),
+                # Отклонения от норм позиции и героя — сырые (не поминутные)
+                # величины, как в `ideas_batch5.build`; масштаб /1000 ниже.
+                # Среднее берётся по ВСЕМ пяти слотам с нулём за отсутствующую
+                # ячейку — так же, как в обучении (там ноль подставлялся ячейке
+                # без истории), а не по `known`, как у hero_gpm_rel.
+                "a_hdmg_rel_pos": A[:, 13].mean() if A.shape[1] > 13 else 0.0,
+                "a_nw_rel_pos": A[:, 14].mean() if A.shape[1] > 14 else 0.0,
+                "a_hdmg_rel_hero": float(np.mean(
+                    [c[3] if (c is not None and len(c) > 3) else 0.0 for c in cells])),
                 "wr30": float(np.mean([self.hero_wr30[int(h)] for h in h5])),
                 "pos_games": float(np.mean([math.log1p(self.acc_pos.get((int(a), p), 0.0))
                                             for p, a in enumerate(a5, 1)])),
@@ -420,6 +498,24 @@ class PrematchModel:
             "kda_player": r["kda_player"] - d["kda_player"],
             "farm_dep": r["farm_dep"] - d["farm_dep"],
         }
+        if set(NEW6) & set(self.features):
+            now_draft = int(now_ts) if now_ts is not None else self.snapshot_ts
+            rh = [(int(h), p) for p, h in enumerate(radiant_heroes, 1)]
+            dh = [(int(h), p) for p, h in enumerate(dire_heroes, 1)]
+            cp_lane, syn_mean = self._draft_cells(rh, dh, now_draft)
+            new = {
+                "hybrid_strength": float(hybrid_strength or 0.0),
+                "cp_lane": cp_lane,
+                "syn_pos_mean": syn_mean,
+                # scale "raw1k" в `ideas_batch5.NEW`
+                "a_hdmg_rel_pos": (r["a_hdmg_rel_pos"] - d["a_hdmg_rel_pos"]) / 1000.0,
+                "a_hdmg_rel_hero": (r["a_hdmg_rel_hero"] - d["a_hdmg_rel_hero"]) / 1000.0,
+                "a_nw_rel_pos": (r["a_nw_rel_pos"] - d["a_nw_rel_pos"]) / 1000.0,
+            }
+            # в отчёт попадает только то, что артефакт действительно использует:
+            # `hybrid_strength` с нулём рядом с реальными числами читался бы как
+            # посчитанная величина, а он в этом артефакте выключен
+            f.update({k: v for k, v in new.items() if k in self.features})
         if self.ctx_mu is not None:
             # контекст матча как МНОЖИТЕЛЬ антисимметричных признаков: признак
             # уровня матча в разностной схеме тождественно нулевой (E-95 §3),
@@ -430,7 +526,7 @@ class PrematchModel:
             for j, cname in enumerate(("elo_gap", "games_exp")):
                 for k in INTER_KEYS:
                     f[f"{k}_x_{cname}"] = f[k] * float(z[j])
-        x = np.array([f[k] for k in FEATURES])
+        x = np.array([f[k] for k in self.features])
         ps = []
         for i in range(len(self.coef)):
             z = (x - self.mu[i]) / self.sd[i]
