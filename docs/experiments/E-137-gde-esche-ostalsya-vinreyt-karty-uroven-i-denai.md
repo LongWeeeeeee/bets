@@ -1,12 +1,12 @@
 ---
 id: E-137
-title: "Где ещё остался винрейт карты: production Hybrid ELO дал +0.0032 поверх level/denies"
+title: "Где ещё остался винрейт карты: Hybrid, current draft и расширенный public draft"
 date: "2026-08-12"
 area: ml
 status: full
 corpus: "482 486 про-карт; exact Hybrid-прогрев на 922 069 уникальных исторических картах; исправленный forward-протокол E-96: три непересекающихся окна после 26.05.2026, 13 653 OOF-карты после исключения 1 984 строк с repeated timestamp; pickBans snapshot — 11 263 карты / 4 505 rolling OOF"
-verdict: "Цель во всех новых прогонах — didRadiantWin, total-kills target и kills-фильтры не используются. Исправленная полная предматчевая модель даёт 0.7121 AUC; level/denies поднимают её до 0.7133, +0.0013 [95% ДИ +0.0001,+0.0025]. Exact production HybridPlayerRosterElo поверх E99+level/denies даёт 0.7166, ещё +0.0032 [95% ДИ +0.0011,+0.0055], положительно во всех трёх окнах. После удаления всех epoch/time/KDA/farm конструкций найден ещё один актуальный current-match блок: causal `cp_lane + positional synergy + previous-map/coverage` поднимает exact Hybrid до 0.7173, +0.00077 [95% ДИ +0.00017,+0.00137], положительно во всех окнах; top-10 WR 90.0% -> 90.4%, top-25 82.1% -> 82.0%. По отдельности CP/SYN не проходят Holm, previous-map около нуля, поэтому результат относится только к заранее фиксированному совместному блоку. Time/era interactions из поиска исключены по решению alex: они описывают эпоху корпуса, но не различают команды в матче сейчас. Causal live-transfer удержался после исправления двух P1: state+E99 0.8480 -> state+Hybrid 0.8490, +0.0010 [+0.0003,+0.0016] на 79 202 строках. PVP/roster/meta/novelty/style и четыре pick/ban семейства, включая stage-aware flex-regret, плюса не дали. Collector продолжает сбор на serv1; serv2 недоступен по сети"
-harness: "`runtime/experiments/misc/combined_all_that_works.py`, `verify_combined_all_that_works.py`, `map_winner_level_denies_forward.py`, `map_winner_hybrid_joint_forward.py`, `map_winner_current_stack_forward.py`, `map_winner_current_only_forward.py`, `map_winner_pvp_residual_forward.py`, `map_winner_roster_meta_novelty_forward.py`, `map_winner_team_style_draft_fit_forward.py`, `map_winner_live_new_prior_forward.py`; `runtime/experiments/elo/build_compact_hybrid_features.py`; `runtime/experiments/draft-cp/pickbans_{mapwinner,signature_bans,reactive_counter,flex_regret}_pilot.py`"
+verdict: "Цель во всех новых прогонах — didRadiantWin, total-kills target и kills-фильтры не используются. Исправленная полная предматчевая модель даёт 0.7121 AUC; level/denies поднимают её до 0.7133, exact production HybridPlayerRosterElo — до 0.7166, а актуальный current-match блок `cp_lane + positional synergy + previous-map/coverage` — до 0.7173. Новый exact replacement последних 2 млн паблик-карт на весь причинно доступный до каждого окна корпус (2.08M / 2.76M / 3.73M) поднимает результат до 0.7179, +0.00056 [95% ДИ +0.00013,+0.00100], положительно во всех трёх окнах. Это не epoch/date feature: timestamp используется только для запрета будущего, а вход текущего матча — его драфт. Pair support 30->5 даёт exact zero, а нормализация C по fit_n вредит на −0.00020 [−0.00030,−0.00010]. Time/era interactions исключены по решению alex. All-блок поверх нового baseline остаётся положительным (+0.00285), но на 1 246 test-картах ДИ широкий и пересекает ноль; Hybrid reliability, нелинейные interactions и дополнительный live-transfer expanded residual тоже не подтверждены. Исправленный causal live-transfer Hybrid удержался: state+E99 0.8480 -> state+Hybrid 0.8490, +0.0010 [+0.0003,+0.0016]. PVP/roster/meta/novelty/style и четыре pick/ban семейства плюса не дали; serv2 недоступен, serv1 перегружен продом"
+harness: "`runtime/experiments/misc/combined_all_that_works.py`, `verify_combined_all_that_works.py`, `map_winner_level_denies_forward.py`, `map_winner_hybrid_joint_forward.py`, `map_winner_current_stack_forward.py`, `map_winner_current_only_forward.py`, `map_winner_expanded_draft_exact_forward.py`, `map_winner_expanded_draft_support5_forward.py`, `map_winner_expanded_draft_cnormalized_forward.py`, `map_winner_all_block_forward.py`, `map_winner_current_nonlinear_forward.py`, `map_winner_hybrid_reliability_forward.py`, `map_winner_live_expanded_prior_stack.py`, `map_winner_pvp_residual_forward.py`, `map_winner_roster_meta_novelty_forward.py`, `map_winner_team_style_draft_fit_forward.py`, `map_winner_live_new_prior_forward.py`; `runtime/experiments/elo/build_compact_hybrid_features.py`; `runtime/experiments/draft-cp/pickbans_{mapwinner,signature_bans,reactive_counter,flex_regret}_pilot.py`, `pickbans_between_map_adaptation_forward.py`"
 ---
 
 # E-137. После полного аудита нашлись level/denies и production Hybrid ELO
@@ -263,19 +263,83 @@ add/drop-one атрибуции после Holm незначимы; previous-map
 самостоятельный победитель. Previous-map восстановлен только из строго прошлой
 карты серии: 2 213 OOF-карт с coverage, as-of violations 0.
 
-### Приоритет 2 — адаптация draft между картами серии
+### Приоритет 1b — больше паблика в текущей draft-модели
 
-После досбора проверять не ещё одну линейную сумму rank, а конструкции, которым
-действительно нужна последовательность:
+Старый `F_bigdraft` показывал +0.0006, но аудит его метаданных обнаружил важную
+деталь: исторический раннер имел потолок 3 млн, поэтому на трёх окнах реально
+учился на 2.08 / 2.76 / 3.00 млн, а не на сегодняшних 5.09 млн. Чтобы не
+переносить старую этикетку на другой объём, сделан прямой exact refit текущей
+модели: меняется только draft-logit, а Hybrid, level/denies, causal pool и
+current-only CP/SYN остаются прежними.
 
-- blind/reactive pick отдельно по позиции и стадии;
-- ban regret: качество лучшего доступного comfort-пика до и после банов;
-- flex entropy **на момент выбора**, а не по финальным ролям;
-- адаптацию между картами серии: проиграл герою → ban/pick в следующей.
+| окно | паблик-карт строго до test | база 2M | expanded | ΔAUC |
+|---:|---:|---:|---:|---:|
+| 1 | 2 082 721 | 0.725188 | 0.725221 | +0.000033 |
+| 2 | 2 763 879 | 0.712688 | 0.713248 | +0.000561 |
+| 3 | 3 729 094 | 0.713982 | 0.715076 | +0.001094 |
+| **pooled** | — | **0.717334** | **0.717891** | **+0.000557** |
 
-Четыре pilot на 11 263 картах, включая counterfactual flex-regret, не
-подтверждают order/signature/reactive/flex конструкции. Из списка по-настоящему
-непроверенной остаётся адаптация между картами серии.
+Series-cluster bootstrap 10 000×: **95% ДИ `[+0.000125,+0.000998]`**,
+one-sided p=0.0063. Verifier прошёл 12/12, включая независимый replay всех
+10 000 bootstrap draw; все draft-fit имеют
+`fit_max_ts < test_min_ts`, warnings 0, OOF-строки и baseline exact. Top-10 WR
+изменился 90.4% → 90.3%, top-25 — 82.0% → 82.1%: это подтверждённый общий
+ranking lift, но не доказанная прибавка самого узкого хвоста.
+
+Это **не признак эпохи**. Timestamp не подаётся в модель и используется только
+для запрета будущих карт в обучении. Признак текущего матча остаётся тем же —
+его десять героев по позициям; улучшилось покрытие hero-pair весов историей.
+На текущем дне доступно 5.09 млн паблик-карт, но exact historical окна доходят
+максимум до 3.73 млн: обещать ещё один численный прирост от оставшегося объёма
+без будущего holdout нельзя.
+
+Старые настройки encoder проверены поверх этой же current-модели (E-162).
+`pair_min_support 30 -> 5` дал побайтно тот же полный дизайн и Δ=0 с CI
+`[0,0]`. Размерно-нормализованный `C=0.003*2M/fit_n` дал −0.000203 с CI95
+`[−0.000299,−0.000104]`, отрицательно во всех окнах. Поэтому ни один из этих
+вариантов не добавляется; остаются support 30 и fixed `C=0.003`.
+
+### Текущие кандидаты, которые пока не прошли порог доказательства
+
+| кандидат поверх 0.717891 | ΔAUC | 95% ДИ | вывод |
+|---|---:|---:|---|
+| signed WR60 All hits | +0.002850 | [−0.002534,+0.008226] | положителен в обоих rolling окнах, но test n=1 246 |
+| curvature текущих draft/Hybrid/ELO/CP/SYN | +0.000093 | [−0.000034,+0.000224] | ноль задет |
+| agreement interactions тех же сигналов | −0.000031 | [−0.000098,+0.000038] | ноль |
+| Hybrid reliability: history/lineup/overlap | +0.000374 | [−0.000797,+0.001540] | нестабилен по окнам |
+
+All-блок — current-draft transform из `post_lane_output`, outcome текущей карты
+при построении признака не читается. Но старый архив не хранит per-cell as-of и
+пересекается с OOF лишь на 2 321 карте; поэтому это перспективный forward
+diagnostic, не готовая колонка основной модели. Reliability-блок причинный и
+имеет полный coverage, но его окна −0.00049 / −0.00094 / +0.00220: сильное
+последнее окно недостаточно, чтобы задним числом объявить дрейф фактом.
+
+Expanded residual отдельно проверен внутри уже обученной live-state модели.
+На 53 174 live-строках окон 2–3 direct block дал +0.000173 с ДИ
+`[−0.000091,+0.000442]`; раздельный CP/SYN и draft residual — +0.000296 с ДИ
+`[−0.000026,+0.000644]`. Значит новый prematch lift подтверждён для карты до
+старта, но его дополнительный перенос сверх уже встроенного Hybrid live-prior
+пока не доказан.
+
+### Приоритет 2 — адаптация draft между картами серии закрыта
+
+Полный досбор E-160 закрыл order/ban на 26 015 картах. Последняя отличающаяся
+конструкция — реакция после непосредственно предыдущей карты той же серии — проверена отдельно:
+сколько героев прошлого соперника команда забанила/забрала, сколько своих
+повторила и кто выиграл предыдущую карту. На 2 225 covered OOF-картах:
+
+```
+expanded current baseline 0.711510
++ between-map adaptation  0.709928
+Δ                         -0.001581, CI95 [-0.004715,+0.001711]
+```
+
+Знак отрицательный во всех трёх окнах; previous-map strict as-of violations 0,
+verifier 20/20 независимо проверил immediate adjacency, ориентацию, exact
+target/population и все 5 000 bootstrap draws. Поэтому класс `pickBans` теперь
+закрыт и для текущей процедуры, и для простой межкартовой адаптации. Сложную
+ненаблюдаемую семантику причины конкретного бана этот вывод не доказывает.
 
 ### Исправленные старые нули теперь перепроверены
 
@@ -313,7 +377,9 @@ PVP coverage по ролям 38.8–47.3%, новые roster/meta/novelty при
   exact Hybrid-прогрев, joint refit, пять исправленных старых семейств и
   live-transfer;
 - **serv1:** независимая проверка quality OOF выполнена ранее; сейчас живой
-  многопоточный collector `pickBans` (11 263 строки на момент повторного snapshot);
+  многопоточный collector `pickBans` (11 263 строки на момент повторного snapshot).
+  Новые короткие refit туда не отправлялись: повторная сверка показала load
+  6.97 на 6 ядрах, 18 Python-процессов и 94% занятого диска;
 - **serv2:** проверен обязательным `capacity.sh` и прямым SSH с password-only
   параметрами — `No route to host`; вычисление там в этом ходе невозможно.
 
@@ -331,6 +397,13 @@ draft-артефактов ради дублирования локальног�
 - exact Hybrid joint: `runtime/artifacts/misc/map_winner_hybrid_joint_forward/`;
 - current stack E-140 audit: `runtime/artifacts/misc/map_winner_current_stack_forward/`;
 - current-only stack: `runtime/artifacts/misc/map_winner_current_only_forward/`;
+- expanded public draft: `runtime/artifacts/misc/map_winner_expanded_draft_exact_forward/`;
+- expanded residual inside live: `runtime/artifacts/misc/map_winner_live_expanded_prior_stack/`;
+- All current-draft block: `runtime/artifacts/misc/map_winner_all_block_forward/`;
+- current nonlinear interactions: `runtime/artifacts/misc/map_winner_current_nonlinear_forward/`;
+- Hybrid reliability: `runtime/artifacts/misc/map_winner_hybrid_reliability_forward/`;
+- between-map pick/ban adaptation:
+  `runtime/artifacts/draft-cp/pickbans_between_map_adaptation_forward/`;
 - PVP: `runtime/artifacts/misc/map_winner_pvp_residual_forward/`;
 - roster/meta/novelty: `runtime/artifacts/misc/map_winner_roster_meta_novelty_forward/`;
 - team style: `runtime/artifacts/misc/map_winner_team_style_draft_fit_forward/`;
