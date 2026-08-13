@@ -614,6 +614,77 @@ _FEED_SWEEP_JS = """() => {
   window.scrollBy(0, 800);
   return moved;
 }"""
+# ── Раскрытие карточки ЗАПРОШЕННОГО матча ───────────────────────────────────
+# Замер 13.08.2026 на живой странице: рынок на ней РОВНО ОДИН («Популярные на
+# карту» встречается 1 раз), потому что раскрыт только один матч. Остальные
+# видны короткими строками ленты без единого кэфа:
+#
+#     The International 1карта BOOMBOYS OG 0 0 8 9
+#     The International 1карта IRON WING NIGMA GALAXY 1 0 30 5
+#
+# Сужение карточки берёт САМУЮ ТЕСНУЮ пару имён, а это всегда строка ленты:
+# карточка BoomBoys выходила в 11 символов `BOOMBOYS OG`. Дальше рынка в ней,
+# разумеется, нет, и наружу это шло как «winline current map winner market
+# missing» — сообщение, по которому кажется, что рынка нет У БУКМЕКЕРА.
+# Цена ошибки измерена: Iron Wing 0 кэфов из 24 попыток, TEAM VISION 0 из 8,
+# BoomBoys 325 из 689 (47%) — успех выпадал ровно тогда, когда раскрытым
+# оказывался его собственный матч.
+#
+# Поэтому перед разбором раскрываем карточку запрошенной пары кликом. Отказ
+# не ломает ничего: дальше идёт прежний путь.
+WINLINE_OPEN_REQUESTED_MATCH = os.getenv("WINLINE_OPEN_REQUESTED_MATCH", "1") == "1"
+WINLINE_OPEN_MATCH_WAIT_SECONDS = 2.0
+# Строка ленты короткая; панель события длинная. Ограничение по длине не даёт
+# кликнуть по контейнеру со всей лентой сразу.
+WINLINE_OPEN_MATCH_MAX_ROW_CHARS = 200
+_OPEN_MATCH_JS = """(args) => {
+  const norm = (s) => (s || '').toLowerCase()
+      .replace(/[^0-9a-zа-яё]+/g, ' ').replace(/\\s+/g, ' ').trim();
+  const hasAny = (txt, names) => names.some((n) => n && txt.includes(n));
+  const n1 = args.team1.map(norm).filter(Boolean);
+  const n2 = args.team2.map(norm).filter(Boolean);
+  let best = null, bestLen = 1e9;
+  for (const el of document.querySelectorAll('*')) {
+    const raw = el.innerText || '';
+    if (!raw || raw.length > args.maxChars) continue;
+    const txt = norm(raw);
+    if (!txt || !hasAny(txt, n1) || !hasAny(txt, n2)) continue;
+    if (txt.length < bestLen) { best = el; bestLen = txt.length; }
+  }
+  if (!best) return false;
+  try { best.scrollIntoView({block: 'center'}); } catch (e) {}
+  try { best.click(); return true; } catch (e) {}
+  return false;
+}"""
+
+
+async def _winline_open_requested_match(page, team1: str, team2: str) -> bool:
+    """Кликнуть строку ленты запрошенной пары, чтобы раскрылся ЕЁ рынок.
+
+    Ищем самый КОРОТКИЙ элемент, где встречаются оба названия: это строка
+    ленты, а не панель события и не контейнер со всей лентой. Написания берём
+    вместе с алиасами — на странице команда может называться прежним тегом.
+
+    Возвращает True, если клик состоялся: тогда снимок страницы имеет смысл
+    перечитать. Любая ошибка — False, и работает прежний путь.
+    """
+    if page is None or not team1 or not team2:
+        return False
+    names1 = [str(team1)] + list(_alias_spellings(team1))
+    names2 = [str(team2)] + list(_alias_spellings(team2))
+    try:
+        clicked = bool(await _maybe_await(page.evaluate(_OPEN_MATCH_JS, {
+            "team1": names1,
+            "team2": names2,
+            "maxChars": int(WINLINE_OPEN_MATCH_MAX_ROW_CHARS),
+        })))
+    except Exception:                                  # noqa: BLE001
+        return False
+    if clicked:
+        time.sleep(max(0.0, float(WINLINE_OPEN_MATCH_WAIT_SECONDS)))
+    return clicked
+
+
 # Прокрутка привязана к физической странице: поллер живёт на одной и той же
 # сколь угодно долго, поэтому троттлим по id(page), а протухшие записи чистим.
 _feed_sweep_last_run: Dict[int, float] = {}
@@ -3638,6 +3709,69 @@ async def parse_site_in_camoufox_page_async(
                 team1=team1,
                 team2=team2,
             )
+
+    # Пара в снимке ЕСТЬ, но это может быть строка ленты без кэфов: раскрыт на
+    # странице только один матч, и рынок принадлежит ему. Раскрываем нужный и
+    # перечитываем снимок.
+    #
+    # Критерий приёмки — «панель НАША», а не «рынок нужной карты нашёлся».
+    # Разница принципиальная и куплена замером 13.08: у Team Resilience —
+    # TEAM VISION на 41-й минуте Winline отдаёт победителя ВТОРОЙ карты, первой
+    # там нет вовсе. По узкому критерию снимок откатывался, и разбор возвращался
+    # к чужой панели, где карточка нашей пары склеивалась с матчем BOOMBOYS — а
+    # это уже не «нет кэфов», а РИСК ВЗЯТЬ ЧУЖИЕ. Панель своей пары без нужного
+    # рынка честно даёт «рынка нет»; чужая панель с рынком даёт неверные цены.
+    if (
+        site == "winline"
+        and effective_acq
+        and team1
+        and team2
+        and WINLINE_OPEN_REQUESTED_MATCH
+        and _text_matches_teams(body_text or visible or "", team1, team2)
+    ):
+        _before = (load_status, load_error, html, visible, body_text, acq_diag)
+
+        def _own_panel(text_value: str, html_value: str) -> bool:
+            """Раскрытая панель принадлежит ИМЕННО нашей паре.
+
+            Проверять наличие слова «Популярные» в карточке недостаточно:
+            карточка пары начинается со строки ленты и затекает в СОСЕДНЮЮ
+            панель, поэтому маркер рынка там есть всегда. Берём последний
+            заголовок панели («DOTA 2, <турнир>») и требуем, чтобы после него
+            встречались оба наших названия — тогда рынок ниже наш.
+            """
+            _map = _normalize_map_num(forced_map_num)
+            card = _winline_matched_card_context(
+                text_value or "", team1, team2, html=html_value or "", map_num=_map,
+            )
+            if not card:
+                return False
+            low = card.lower()
+            head = low.rfind("dota 2,")
+            if head < 0 or ("популярные" not in low[head:]):
+                return False
+            return _text_matches_teams(card[head:], team1, team2)
+
+        if not _own_panel(body_text or visible or "", html or ""):
+            try:
+                _opened = await _winline_open_requested_match(page, team1, team2)
+            except Exception:                          # noqa: BLE001
+                _opened = False
+            if _opened:
+                _payload = await _load_site_render_payload_camoufox_async(
+                    page,
+                    url,
+                    initial_wait_seconds=0.0,
+                    scroll_wait_seconds=0.0,
+                    acquisition_mode=effective_acq,
+                )
+                if len(_payload) >= 6:
+                    load_status, load_error, html, visible, body_text, acq_diag = _payload[:6]
+                else:
+                    load_status, load_error, html, visible, body_text = _payload[:5]
+                    acq_diag = {}
+                if not _own_panel(body_text or visible or "", html or ""):
+                    load_status, load_error, html, visible, body_text, acq_diag = _before
 
     initial_body_text = body_text
     match_fallback_odds: List[float] = []
