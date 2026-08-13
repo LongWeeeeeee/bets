@@ -18,13 +18,15 @@
 """
 from __future__ import annotations
 
+import os
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 __all__ = [
     "TEAM_NAME_ALIASES",
     "alias_spellings",
     "canonical_team_key",
+    "compact_key",
     "fold_confusables",
     "match_key",
 ]
@@ -63,6 +65,17 @@ def match_key(value: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^0-9a-zа-я]+", " ", folded)).strip()
 
 
+def compact_key(value: str) -> str:
+    """`match_key` без пробелов: `Iron Wing` и `ironwing` дают один ключ.
+
+    Справочник `id_to_names` хранит имена свёрнутыми (`teamspiritacademy`), а из
+    live-потока они приходят с пробелами. Для ПОИСКА по таблице переименований
+    это одно и то же имя; для ручного справочника свёртка не применяется — там
+    написания подтверждённые и сверяются как есть.
+    """
+    return match_key(value).replace(" ", "")
+
+
 # Канон -> написания той же команды. Канон выбираем официальным именем
 # организации; все написания равноправны при поиске.
 TEAM_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
@@ -97,17 +110,72 @@ def _build_groups() -> Dict[str, Tuple[str, ...]]:
 
 
 _ALIAS_GROUPS = _build_groups()
+# Таблица переименований читается лениво и один раз: её собирают ночью, а
+# импортируется модуль в том числе из букмекерского подпроцесса.
+_ORG_TABLE: Optional[Dict[str, Tuple[str, ...]]] = None
+
+
+def _org_table() -> Dict[str, Tuple[str, ...]]:
+    """Написания из цепочек ПЕРЕИМЕНОВАНИЙ (`data/team_org_aliases.json`).
+
+    Файл собирает `base/tools/build_team_org_aliases.py` по активности тегов во
+    времени: в него попадают только организации, у которых интервалы матчей
+    старого и нового тега НЕ пересекаются. Переходы игроков (Talon -> Aurora,
+    G2.iG -> Invictus) отброшены намеренно: обе команды продолжают играть, и
+    подстановка чужого имени в поиск карточки может принести кэфы другого матча.
+
+    Файла может не быть (не собран, не доставлен) — тогда работает только
+    ручной справочник, как раньше.
+    """
+    global _ORG_TABLE
+    if _ORG_TABLE is None:
+        table: Dict[str, Tuple[str, ...]] = {}
+        try:
+            import json
+            from pathlib import Path
+
+            path = os.getenv(
+                "TEAM_ORG_ALIASES",
+                str(Path(__file__).resolve().parent.parent / "data" / "team_org_aliases.json"),
+            )
+            raw = json.loads(Path(path).read_text(encoding="utf-8"))
+            for key, spellings in raw.items():
+                normalized = compact_key(key)
+                if normalized and isinstance(spellings, list):
+                    table[normalized] = tuple(str(s) for s in spellings if s)
+        except Exception:                              # noqa: BLE001
+            table = {}
+        _ORG_TABLE = table
+    return _ORG_TABLE
 
 
 def alias_spellings(name: str) -> List[str]:
-    """Другие известные написания той же команды (без самого `name`)."""
+    """Другие известные написания той же команды (без самого `name`).
+
+    Порядок важен: сперва РУЧНОЙ справочник — там написания, подтверждённые на
+    странице букмекера (`BoomBoys` -> `BB TEAM`), и они точнее наших внутренних
+    имён. Следом — цепочки переименований из корпуса: они дают старый тег той же
+    организации (`Iron Wing` -> `Tundra`, `1w`), когда букмекер ещё не обновил
+    название.
+    """
     key = match_key(name)
     if not key:
         return []
+    out: List[str] = []
+    seen = {key}
     group = _ALIAS_GROUPS.get(key)
-    if not group:
-        return []
-    return [spelling for spelling in group if match_key(spelling) != key]
+    if group:
+        for spelling in group:
+            spelling_key = match_key(spelling)
+            if spelling_key and spelling_key not in seen:
+                seen.add(spelling_key)
+                out.append(spelling)
+    for spelling in _org_table().get(compact_key(name), ()):
+        spelling_key = match_key(spelling)
+        if spelling_key and spelling_key not in seen:
+            seen.add(spelling_key)
+            out.append(spelling)
+    return out
 
 
 def canonical_team_key(name: str) -> str:

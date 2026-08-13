@@ -36,6 +36,13 @@ SERV1=root@23.26.193.167
   $PY runtime/experiments/misc/build_prematch_artifact.py
   $PY runtime/experiments/misc/build_prematch_artifact_v2.py
   $PY runtime/experiments/misc/add_org_identity.py
+  # 3b. справочник написаний из цепочек ПЕРЕИМЕНОВАНИЙ (для поиска карточки у
+  #     букмекера). Имена берём с прода: записи вида `tier_two_teams['ironwing']`
+  #     дописывает рантайм на serv1, и локальная копия про новые теги не знает.
+  NAMES_DIR="$(mktemp -d)"
+  scp -q "$SERV1:/root/main/base/id_to_names.py" "$NAMES_DIR/id_to_names.py"
+  TEAM_NAMES_DIR="$NAMES_DIR" $PY base/tools/build_team_org_aliases.py
+  rm -rf "$NAMES_DIR"
   # 4. доставка. Атомарно: пишем .tmp и переименовываем поверх, чтобы прод
   #    никогда не увидел недокачанный файл.
   scp -q runtime/artifacts/misc/prematch_model_artifact_v3.npz \
@@ -48,6 +55,10 @@ SERV1=root@23.26.193.167
                    /root/main/data/prematch_model_artifact_v2.npz"
   scp -q runtime/artifacts/misc/prematch_model_spec_v2.json \
       "$SERV1:/root/main/data/prematch_model_spec_v2.json"
+  scp -q data/team_org_aliases.json \
+      "$SERV1:/root/main/data/team_org_aliases.json.tmp"
+  ssh "$SERV1" "mv /root/main/data/team_org_aliases.json.tmp \
+                   /root/main/data/team_org_aliases.json"
   echo "=== $(date '+%F %T') готово ==="
 } > "$LOG" 2>&1 &
 
