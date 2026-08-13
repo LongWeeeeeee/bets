@@ -72,6 +72,7 @@ from functions import (
     synergy_and_counterpick,
     calculate_lanes,
     calculate_lane_kills_advantage,
+    structure_lane_dict,
     calculate_kills_window_advantage,
     format_output_dict,
     STAR_THRESHOLDS_BY_WR,
@@ -38904,7 +38905,21 @@ def _load_stats_dicts():
             lane_data = None
         elif lane_data is None:
             lane_data = _load_lane_dict_from_source(lane_path)
+            # Партиционируем ОДИН раз при загрузке. calculate_lanes и
+            # calculate_lane_kills_advantage конвертируют плоский словарь сами,
+            # и на живом потоке это означало полный проход по ~7 млн ключей на
+            # КАЖДЫЙ вызов: py-spy показал 10 из 11 активных сэмплов главного
+            # потока в structure_lane_dict, оценка матча раз в 90 c, ставки
+            # уходили с задержкой. Структурированная форма держит те же объекты
+            # значений, поэтому память не растёт (плоскую таблицу освобождаем).
+            _t_struct = time.time()
+            _flat_lane_keys = len(lane_data) if isinstance(lane_data, dict) else 0
+            lane_data = structure_lane_dict(lane_data)
             gc.collect()
+            print(
+                f"🧱 Lane dict структурирован один раз: {_flat_lane_keys} ключей "
+                f"за {time.time() - _t_struct:.1f}c"
+            )
 
         if late_pub_comeback_table_data is None:
             late_pub_comeback_table_data = {}
