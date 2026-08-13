@@ -1,12 +1,12 @@
 ---
 id: E-137
-title: "Где ещё остался винрейт карты: Hybrid, current draft и расширенный public draft"
+title: "Где ещё остался винрейт карты: Hybrid, current draft и side-bias лиги"
 date: "2026-08-12"
 area: ml
 status: full
 corpus: "482 486 про-карт; exact Hybrid-прогрев на 922 069 уникальных исторических картах; исправленный forward-протокол E-96: три непересекающихся окна после 26.05.2026, 13 653 OOF-карты после исключения 1 984 строк с repeated timestamp; pickBans snapshot — 11 263 карты / 4 505 rolling OOF"
-verdict: "Цель во всех новых прогонах — didRadiantWin, total-kills target и kills-фильтры не используются. Исправленная полная предматчевая модель даёт 0.7121 AUC; level/denies поднимают её до 0.7133, exact production HybridPlayerRosterElo — до 0.7166, а актуальный current-match блок `cp_lane + positional synergy + previous-map/coverage` — до 0.7173. Новый exact replacement последних 2 млн паблик-карт на весь причинно доступный до каждого окна корпус (2.08M / 2.76M / 3.73M) поднимает результат до 0.7179, +0.00056 [95% ДИ +0.00013,+0.00100], положительно во всех трёх окнах. Это не epoch/date feature: timestamp используется только для запрета будущего, а вход текущего матча — его драфт. Pair support 30->5 даёт exact zero, а нормализация C по fit_n вредит на −0.00020 [−0.00030,−0.00010]. Time/era interactions исключены по решению alex. All-блок поверх нового baseline остаётся положительным (+0.00285), но на 1 246 test-картах ДИ широкий и пересекает ноль; Hybrid reliability, нелинейные interactions и дополнительный live-transfer expanded residual тоже не подтверждены. Исправленный causal live-transfer Hybrid удержался: state+E99 0.8480 -> state+Hybrid 0.8490, +0.0010 [+0.0003,+0.0016]. PVP/roster/meta/novelty/style и четыре pick/ban семейства плюса не дали; serv2 недоступен, serv1 перегружен продом"
-harness: "`runtime/experiments/misc/combined_all_that_works.py`, `verify_combined_all_that_works.py`, `map_winner_level_denies_forward.py`, `map_winner_hybrid_joint_forward.py`, `map_winner_current_stack_forward.py`, `map_winner_current_only_forward.py`, `map_winner_expanded_draft_exact_forward.py`, `map_winner_expanded_draft_support5_forward.py`, `map_winner_expanded_draft_cnormalized_forward.py`, `map_winner_all_block_forward.py`, `map_winner_current_nonlinear_forward.py`, `map_winner_hybrid_reliability_forward.py`, `map_winner_live_expanded_prior_stack.py`, `map_winner_pvp_residual_forward.py`, `map_winner_roster_meta_novelty_forward.py`, `map_winner_team_style_draft_fit_forward.py`, `map_winner_live_new_prior_forward.py`; `runtime/experiments/elo/build_compact_hybrid_features.py`; `runtime/experiments/draft-cp/pickbans_{mapwinner,signature_bans,reactive_counter,flex_regret}_pilot.py`, `pickbans_between_map_adaptation_forward.py`"
+verdict: "Цель — didRadiantWin, total-kills target и kills-фильтров нет. Исправленная prematch-модель растёт: E99 0.7121 -> level/denies 0.7133 -> production Hybrid 0.7166 -> current CP/SYN/previous coverage 0.7173 -> expanded public draft 0.7179 -> причинный side-bias текущей лиги 0.7183. Последний шаг даёт +0.000366, CI95 [+0.000051,+0.000682], Holm p=0.0327 внутри трёх заранее фиксированных side-вариантов и положителен во всех окнах. Это current-match, не epoch/date: timestamp только запрещает будущее; входы — текущие draft и league id. Pair support 30->5 даёт exact zero, нормализация C вредит. Time/era исключены по решению alex. All-блок перспективен, но мал; reliability/nonlinear/live-expanded не подтверждены. Causal live-transfer Hybrid сохраняется: 0.8480 -> 0.8490, +0.0010 [+0.0003,+0.0016]. PVP/roster/meta/novelty/style и pick/ban семейства плюса не дали; serv2 недоступен, serv1 перегружен продом"
+harness: "`runtime/experiments/misc/combined_all_that_works.py`, `verify_combined_all_that_works.py`, `map_winner_level_denies_forward.py`, `map_winner_hybrid_joint_forward.py`, `map_winner_current_stack_forward.py`, `map_winner_current_only_forward.py`, `map_winner_expanded_draft_exact_forward.py`, `map_winner_expanded_draft_support5_forward.py`, `map_winner_expanded_draft_cnormalized_forward.py`, `map_winner_current_side_bias_forward.py`, `map_winner_all_block_forward.py`, `map_winner_current_nonlinear_forward.py`, `map_winner_hybrid_reliability_forward.py`, `map_winner_live_expanded_prior_stack.py`, `map_winner_pvp_residual_forward.py`, `map_winner_roster_meta_novelty_forward.py`, `map_winner_team_style_draft_fit_forward.py`, `map_winner_live_new_prior_forward.py`; `runtime/experiments/elo/build_compact_hybrid_features.py`; `runtime/experiments/draft-cp/pickbans_{mapwinner,signature_bans,reactive_counter,flex_regret}_pilot.py`, `pickbans_between_map_adaptation_forward.py`"
 ---
 
 # E-137. После полного аудита нашлись level/denies и production Hybrid ELO
@@ -299,7 +299,32 @@ ranking lift, но не доказанная прибавка самого уз�
 `[−0.000299,−0.000104]`, отрицательно во всех окнах. Поэтому ни один из этих
 вариантов не добавляется; остаются support 30 и fixed `C=0.003`.
 
-### Текущие кандидаты, которые пока не прошли порог доказательства
+### Приоритет 1c — причинный side-bias текущей лиги
+
+Ещё один current-only класс найден после E-162. Исторический Radiant-rate
+текущей лиги считается только по более старым timestamp и усаживается к
+причинному глобальному Radiant-rate. League id и сторона известны до карты;
+дата/эпоха/патч/time и kills не входят в модель.
+
+| вариант поверх 0.717891 | AUC | ΔAUC | CI95 | Holm p |
+|---|---:|---:|---:|---:|
+| team side susceptibility | 0.717894 | +0.000003 | [−0.000165,+0.000168] | 0.4877 |
+| **league Radiant/Dire bias** | **0.718257** | **+0.000366** | **[+0.000051,+0.000682]** | **0.0327** |
+| team + league | 0.718229 | +0.000338 | [+0.000004,+0.000674] | 0.0478 |
+
+Holm относится к заранее фиксированной семье из трёх сравнений. League-only
+положителен во всех окнах: +0.000515 / +0.000252 / +0.000309. Team-only —
+ноль, а смесь слабее league-only, поэтому подтверждён именно один новый
+столбец. Verifier 20/20 и independent reviewer APPROVE (E-163).
+
+Текущий подтверждённый prematch-путь теперь заканчивается так:
+`current-only 0.717334 -> expanded public draft 0.717891 -> league side-bias
+0.718257`.
+
+### Ранее проверенные поверх 0.717891 кандидаты
+
+Их нужно отдельно перепроверять поверх нового best 0.718257; приведённые ниже
+дельты относятся только к прежнему baseline.
 
 | кандидат поверх 0.717891 | ΔAUC | 95% ДИ | вывод |
 |---|---:|---:|---|
@@ -398,6 +423,7 @@ draft-артефактов ради дублирования локальног�
 - current stack E-140 audit: `runtime/artifacts/misc/map_winner_current_stack_forward/`;
 - current-only stack: `runtime/artifacts/misc/map_winner_current_only_forward/`;
 - expanded public draft: `runtime/artifacts/misc/map_winner_expanded_draft_exact_forward/`;
+- league side-bias: `runtime/artifacts/misc/map_winner_current_side_bias_forward/`;
 - expanded residual inside live: `runtime/artifacts/misc/map_winner_live_expanded_prior_stack/`;
 - All current-draft block: `runtime/artifacts/misc/map_winner_all_block_forward/`;
 - current nonlinear interactions: `runtime/artifacts/misc/map_winner_current_nonlinear_forward/`;
