@@ -340,5 +340,214 @@
   "item": 0,
   "strength": 2,
   "note": "копьё прибивает и тащит (alex 14.08)"
+ },
+ "Legion Commander|dispel": {
+  "side": "ally",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "Press The Attack: у Valve в примечании DISPEL TYPE: Strong Dispel — моё «обычное» было догадкой"
+ },
+ "Juggernaut|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "Blade Fury: «Applies a strong dispel at the end of the spin»"
+ },
+ "Phoenix|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "Supernova, DISPEL TYPE: Strong"
+ },
+ "Phoenix|dispel_ally": {
+  "side": "ally",
+  "level": 1,
+  "item": 2,
+  "strength": 2,
+  "note": "со скипетра Supernova вешается на союзника"
+ },
+ "Weaver|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "Time Lapse, DISPEL TYPE: Strong"
+ },
+ "Weaver|dispel_ally": {
+  "side": "ally",
+  "level": 1,
+  "item": 2,
+  "strength": 2,
+  "note": "со скипетра Time Lapse на союзного героя"
+ },
+ "Chaos Knight|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "Phantasm, DISPEL TYPE: Basic"
+ },
+ "Kez|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "Raptor Dance и Raven's Veil — обычное развеивание на себя"
+ },
+ "Outworld Destroyer|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "Objurgation: сильное развеивание на себя"
+ },
+ "Ringmaster|dispel": {
+  "side": "self",
+  "level": 25,
+  "item": 0,
+  "strength": 2,
+  "note": "талант 25 Escape Act Grants Strong Dispel — на себя"
+ },
+ "Ringmaster|dispel_ally": {
+  "side": "ally",
+  "level": 25,
+  "item": 0,
+  "strength": 2,
+  "note": "и на союзника, кого посадил в коробку"
+ },
+ "Invoker|dispel": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "Tornado снимает баффы с врагов"
+ },
+ "Dark Willow|dispel": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "у Cursed Crown диспела нет"
+ },
+ "Alchemist|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Lifestealer|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Meepo|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Naga Siren|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Pangolier|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Phantom Lancer|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Slark|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Strong"
+ },
+ "Troll Warlord|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Ursa|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Strong"
+ },
+ "Huskar|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Shadow Shaman|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Strong"
+ },
+ "Oracle|dispel": {
+  "side": "ally",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "False Promise: DISPEL TYPE Strong"
+ },
+ "Oracle|dispel_enemy": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "Fortune's End: DISPEL TYPE Basic"
+ },
+ "Chen|dispel": {
+  "side": "ally",
+  "level": 25,
+  "item": 0,
+  "strength": 2,
+  "note": "талант 25: Hand of God applies a Strong Dispel"
+ },
+ "Keeper of the Light|dispel": {
+  "side": "ally",
+  "level": 25,
+  "item": 0,
+  "strength": 2,
+  "note": "талант 25: Chakra Magic Strong Dispels"
+ },
+ "Shadow Demon|dispel": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "Demonic Purge: DISPEL TYPE Basic"
+ },
+ "Shadow Demon|dispel_ally": {
+  "side": "ally",
+  "level": 1,
+  "item": 1,
+  "strength": 1,
+  "note": "шард Demonic Cleanse: Basic"
  }
 }
