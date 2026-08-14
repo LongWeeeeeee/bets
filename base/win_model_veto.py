@@ -143,6 +143,11 @@ def _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[tupl
 # иначе поедут ролевые рейтинги.
 _HYBRID_TIER_DEFAULT = "TIER3"
 _HYBRID_MISS = 0
+_STALE_WARNED = 0
+# сутки, после которых снимок считается мёртвым (замер E-177)
+_SNAPSHOT_MAX_AGE_DAYS = 30.0
+# сутки, после которых устаревание уже видно в качестве и его пора чинить
+_SNAPSHOT_WARN_DAYS = 3.0
 
 
 def _live_elo_model():
@@ -155,10 +160,28 @@ def _live_elo_model():
 
     module = _sys.modules.get("live_team_strength") or _sys.modules.get("ELO.live_team_strength")
     if module is None:
-        return None
+        # importlib вернёт УЖЕ загруженный модуль, если он есть в sys.modules под
+        # другим именем; свежий импорт возможен только когда копии в памяти нет
+        # вовсе, так что второй копии 349-МБ снимка не появится.
+        try:
+            import importlib
+
+            module = importlib.import_module("ELO.live_team_strength")
+        except Exception:  # noqa: BLE001
+            return None
     snapshot = getattr(module, "_SNAPSHOT_CACHE", None)
     if not isinstance(snapshot, dict):
-        return None
+        # снимок ещё не читали в этом процессе. `load_snapshot` кладёт его в тот
+        # же модульный кэш `_SNAPSHOT_CACHE`, поэтому копия остаётся одна.
+        loader = getattr(module, "load_snapshot", None)
+        if loader is None:
+            return None
+        try:
+            snapshot = loader()
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(snapshot, dict):
+            return None
     restore = getattr(module, "_restore_model_from_snapshot", None)
     if restore is None:
         return None
@@ -285,11 +308,26 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                     print(f"[win_model] hybrid_strength недоступен ({_HYBRID_MISS}-й раз): "
                           f"radiant_team_name={radiant_team_name!r} "
                           f"dire_team_name={dire_team_name!r}", flush=True)
+        # E-177: раньше `now_ts` не передавался вовсе, и гейт протухания снимка
+        # (`if now_ts is not None and max_age_days > 0`) не срабатывал НИКОГДА.
+        # Порог выбран по замеру, а не по умолчанию: снимок старше месяца даёт
+        # AUC 0.6883 против 0.7313 на свежем, но запасная драфтовая модель — 0.61.
+        # Отказ на трёх сутках обменял бы 0.69 на 0.61, то есть был бы вреден;
+        # тридцать суток ловят мёртвый конвейер, не выключая рабочую модель.
+        _now = int(time.time())
+        _age = (_now - int(getattr(model, "snapshot_ts", _now))) / 86400.0
+        if _age > _SNAPSHOT_WARN_DAYS:
+            global _STALE_WARNED
+            _STALE_WARNED += 1
+            if _STALE_WARNED <= 3 or _STALE_WARNED % 200 == 0:
+                print(f"[win_model] снимок старше {_SNAPSHOT_WARN_DAYS} суток: "
+                      f"{_age:.1f} — ночная пересборка не доехала", flush=True)
         res = model.score(radiant_accounts=ra, dire_accounts=da,
                           radiant_heroes=rh, dire_heroes=dh,
                           radiant_team_id=0, dire_team_id=0,
                           draft_logit=logit, hybrid_strength=hybrid,
-                          strictness="accounts")
+                          strictness="accounts",
+                          now_ts=_now, max_age_days=_SNAPSHOT_MAX_AGE_DAYS)
         return round((res.probability - 0.5) * 100.0, 3)
     except Exception:                                # noqa: BLE001
         return None
