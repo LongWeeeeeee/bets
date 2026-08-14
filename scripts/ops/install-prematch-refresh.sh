@@ -5,28 +5,17 @@
 # копию из ~/Library/LaunchAgents, и плист в репозитории сам по себе ничего не
 # планирует. До 14.08.2026 `rebuild_prematch_snapshot.sh` существовал, но в
 # расписании не стоял и ни разу не запускался — снимок обновлялся только руками.
+#
+# ТРЕБУЕТСЯ РАЗОВО: `/bin/bash` в списке «Полный доступ к диску». Без него агент
+# launchd не может даже прочитать скрипт в ~/Documents (TCC, exit 126), причём
+# промпт macOS фоновым агентам не показывает — отказ молчаливый. Обойти это со
+# стороны кода нельзя: копия /bin/bash вне системного пути убивается сигналом
+# KILL, других шеллов на машине нет, ssh на localhost выключен.
 set -eu
 REPO=/Users/alex/Documents/ingame
 LABEL=com.ingame.prematch-refresh
 SRC="$REPO/scripts/ops/$LABEL.plist"
 DST="$HOME/Library/LaunchAgents/$LABEL.plist"
-LAUNCHER="$HOME/Library/Application Support/ingame/prematch_refresh_launcher.sh"
-
-# Плист указывает на ЗАПУСКАЛКУ вне ~/Documents: агенту launchd этот каталог
-# закрыт защитой macOS (TCC), и прямая ссылка на скрипт в репозитории падает с
-# exit 126 «Operation not permitted».
-mkdir -p "$(dirname "$LAUNCHER")"
-cat > "$LAUNCHER" <<'SH'
-#!/bin/bash
-REPO=/Users/alex/Documents/ingame
-if ! cd "$REPO" 2>/dev/null; then
-  echo "$(date '+%F %T') нет доступа к $REPO — дай Full Disk Access для /bin/bash" >&2
-  exit 77
-fi
-exec /bin/bash "$REPO/scripts/run/rebuild_prematch_snapshot.sh"
-SH
-chmod +x "$LAUNCHER"
-
 cp "$SRC" "$DST"
 plutil -lint "$DST" >/dev/null
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true

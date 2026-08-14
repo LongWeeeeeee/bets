@@ -34,7 +34,7 @@ PY=venv_catboost/bin/python3
 LOG="runtime/prematch_rebuild_$(date +%Y%m%d_%H%M).log"
 SERV1=root@23.26.193.167
 
-{
+run_chain() {
   echo "=== $(date '+%F %T') пересборка снимка предматчевой модели ==="
   # 1. выжимки корпуса (компактная и богатая)
   $PY runtime/experiments/misc/pro_corpus_extract.py
@@ -100,10 +100,20 @@ CHECK
                 : > /root/.local/state/ingame/map_id_check.txt && \
                 systemctl is-active cyberscore.service"
   echo "=== $(date '+%F %T') готово ==="
-} > "$LOG" 2>&1 &
+}
 
-PID=$!
-echo "$PID" > runtime/prematch_rebuild.pid
-echo "PID=$PID"
-echo "лог: $LOG"
-echo "проверка: kill -0 $PID && tail -3 $LOG"
+# Под launchd работать НАДО В ПЕРЕДНЕМ ПЛАНЕ. Если уйти в фон и выйти, launchd
+# считает задание завершённым и убивает всю группу процессов — цепочка умирает
+# через секунду, оставляя пустой лог (проверено 14.08: лог создавался нулевого
+# размера, ни одного шага не выполнялось). В терминале, наоборот, удобнее фон.
+if [ -t 1 ]; then
+  run_chain > "$LOG" 2>&1 &
+  PID=$!
+  echo "$PID" > runtime/prematch_rebuild.pid
+  echo "PID=$PID"
+  echo "лог: $LOG"
+  echo "проверка: kill -0 $PID && tail -3 $LOG"
+else
+  echo $$ > runtime/prematch_rebuild.pid
+  run_chain > "$LOG" 2>&1
+fi
