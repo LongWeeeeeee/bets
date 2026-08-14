@@ -44,7 +44,7 @@ run_chain() {
   #    требуют кэшей (`ideas_batch*.npz`, EXT, драфт-логит), а они привязаны к
   #    длине корпуса — как только корпус подрос, склейка падает по форме. Веса
   #    устаревают куда медленнее снимка и обновляются отдельно, с замером.
-  $PY runtime/experiments/misc/build_prematch_artifact.py
+  PREMATCH_SNAPSHOT_ONLY=1 $PY runtime/experiments/misc/build_prematch_artifact.py
   PREMATCH_SNAPSHOT_ONLY=1 $PY runtime/experiments/misc/build_prematch_artifact_v2.py
   # 3. состояние под шесть колонок E-168: отклонения урона и нетворса по
   #    аккаунту и позиционные ячейки контрпика/синергии
