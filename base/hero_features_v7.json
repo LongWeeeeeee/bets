@@ -3256,7 +3256,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.056,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0631,
+  "item_share_angels_demise": 0.0
  },
  "10": {
   "hero_id": 10,
@@ -6401,7 +6403,7 @@
   "silence_needs_item": 0,
   "stun_min_level": 1,
   "stun_needs_item": 0,
-  "slow_min_level": 1,
+  "slow_min_level": 0,
   "slow_needs_item": 0,
   "disarm_min_level": 0,
   "disarm_needs_item": 0,
@@ -6409,7 +6411,7 @@
   "leash_needs_item": 0,
   "banish_min_level": 0,
   "banish_needs_item": 0,
-  "forced_movement_min_level": 1,
+  "forced_movement_min_level": 0,
   "forced_movement_needs_item": 0,
   "dispel_min_level": 0,
   "dispel_needs_item": 0,
@@ -6440,7 +6442,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.1179,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0165,
+  "item_share_angels_demise": 0.0
  },
  "100": {
   "hero_id": 100,
@@ -9728,8 +9732,8 @@
   "leash_needs_item": 0,
   "banish_min_level": 0,
   "banish_needs_item": 0,
-  "forced_movement_min_level": 1,
-  "forced_movement_needs_item": 1,
+  "forced_movement_min_level": 0,
+  "forced_movement_needs_item": 0,
   "dispel_min_level": 0,
   "dispel_needs_item": 0,
   "has_global_ability": 0,
@@ -9759,7 +9763,9 @@
   "item_share_wind_waker": 0.0063,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.119,
-  "item_share_ghost": 0.0721
+  "item_share_ghost": 0.0721,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "101": {
   "hero_id": 101,
@@ -12958,7 +12964,7 @@
   "root_needs_item": 0,
   "sleep_min_level": 0,
   "sleep_needs_item": 0,
-  "silence_min_level": 1,
+  "silence_min_level": 0,
   "silence_needs_item": 0,
   "stun_min_level": 0,
   "stun_needs_item": 0,
@@ -13001,7 +13007,9 @@
   "item_share_wind_waker": 0.0034,
   "item_share_sphere": 0.0034,
   "item_share_force_staff": 0.1316,
-  "item_share_ghost": 0.3068
+  "item_share_ghost": 0.3068,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0011
  },
  "102": {
   "hero_id": 102,
@@ -16316,7 +16324,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0264,
-  "item_share_ghost": 0.0069
+  "item_share_ghost": 0.0069,
+  "item_share_disperser": 0.0126,
+  "item_share_angels_demise": 0.0
  },
  "103": {
   "hero_id": 103,
@@ -19602,7 +19612,9 @@
   "item_share_wind_waker": 0.0206,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1644,
-  "item_share_ghost": 0.0685
+  "item_share_ghost": 0.0685,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "104": {
   "hero_id": 104,
@@ -22872,7 +22884,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0045,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0045,
+  "item_share_angels_demise": 0.0
  },
  "105": {
   "hero_id": 105,
@@ -26169,7 +26183,9 @@
   "item_share_wind_waker": 0.045,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.2712,
-  "item_share_ghost": 0.1364
+  "item_share_ghost": 0.1364,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "106": {
   "hero_id": 106,
@@ -29479,7 +29495,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0712,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "107": {
   "hero_id": 107,
@@ -32790,7 +32808,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0159,
   "item_share_force_staff": 0.01,
-  "item_share_ghost": 0.075
+  "item_share_ghost": 0.075,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "108": {
   "hero_id": 108,
@@ -36084,7 +36104,9 @@
   "item_share_wind_waker": 0.0172,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0427
+  "item_share_ghost": 0.0427,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "109": {
   "hero_id": 109,
@@ -39284,7 +39306,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.02,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0278,
+  "item_share_angels_demise": 0.0
  },
  "11": {
   "hero_id": 11,
@@ -42495,7 +42519,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0316,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "110": {
   "hero_id": 110,
@@ -45776,7 +45802,7 @@
   "silence_needs_item": 0,
   "stun_min_level": 1,
   "stun_needs_item": 0,
-  "slow_min_level": 1,
+  "slow_min_level": 0,
   "slow_needs_item": 0,
   "disarm_min_level": 0,
   "disarm_needs_item": 0,
@@ -45815,7 +45841,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0055,
   "item_share_force_staff": 0.0608,
-  "item_share_ghost": 0.0619
+  "item_share_ghost": 0.0619,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "111": {
   "hero_id": 111,
@@ -49041,7 +49069,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1716,
-  "item_share_ghost": 0.2653
+  "item_share_ghost": 0.2653,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "112": {
   "hero_id": 112,
@@ -52367,7 +52397,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.2379,
-  "item_share_ghost": 0.0936
+  "item_share_ghost": 0.0936,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "113": {
   "hero_id": 113,
@@ -55579,7 +55611,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0106,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0247,
+  "item_share_angels_demise": 0.0
  },
  "114": {
   "hero_id": 114,
@@ -58923,7 +58957,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0417,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.1011,
+  "item_share_angels_demise": 0.0
  },
  "119": {
   "hero_id": 119,
@@ -62207,7 +62243,9 @@
   "item_share_wind_waker": 0.0334,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1754,
-  "item_share_ghost": 0.0592
+  "item_share_ghost": 0.0592,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "12": {
   "hero_id": 12,
@@ -65114,7 +65152,7 @@
   "banish_needs_item": 0,
   "forced_movement_min_level": 0,
   "forced_movement_needs_item": 0,
-  "dispel_min_level": 1,
+  "dispel_min_level": 0,
   "dispel_needs_item": 0,
   "has_global_ability": 0,
   "global_ability_count": 0,
@@ -65143,7 +65181,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0282,
+  "item_share_angels_demise": 0.0094
  },
  "120": {
   "hero_id": 120,
@@ -68435,7 +68475,9 @@
   "item_share_wind_waker": 0.0077,
   "item_share_sphere": 0.0937,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.1647,
+  "item_share_angels_demise": 0.0
  },
  "121": {
   "hero_id": 121,
@@ -71454,7 +71496,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1624,
-  "item_share_ghost": 0.2113
+  "item_share_ghost": 0.2113,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "123": {
   "hero_id": 123,
@@ -74781,8 +74825,8 @@
   "dispel_min_level": 0,
   "dispel_needs_item": 0,
   "has_global_ability": 0,
-  "global_ability_count": 1,
-  "global_needs_item": 1,
+  "global_ability_count": 0,
+  "global_needs_item": 0,
   "item_share_black_king_bar": 0.0,
   "item_share_nullifier": 0.0,
   "item_share_monkey_king_bar": 0.0,
@@ -74807,7 +74851,9 @@
   "item_share_wind_waker": 0.0273,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.3062,
-  "item_share_ghost": 0.1037
+  "item_share_ghost": 0.1037,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "126": {
   "hero_id": 126,
@@ -78134,7 +78180,9 @@
   "item_share_wind_waker": 0.0118,
   "item_share_sphere": 0.0917,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0013
+  "item_share_ghost": 0.0013,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "128": {
   "hero_id": 128,
@@ -81482,7 +81530,9 @@
   "item_share_wind_waker": 0.0012,
   "item_share_sphere": 0.0167,
   "item_share_force_staff": 0.2321,
-  "item_share_ghost": 0.0981
+  "item_share_ghost": 0.0981,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "129": {
   "hero_id": 129,
@@ -84728,7 +84778,7 @@
   "stun_min_level": 1,
   "stun_needs_item": 0,
   "slow_min_level": 1,
-  "slow_needs_item": 1,
+  "slow_needs_item": 2,
   "disarm_min_level": 0,
   "disarm_needs_item": 0,
   "leash_min_level": 0,
@@ -84766,7 +84816,9 @@
   "item_share_wind_waker": 0.0323,
   "item_share_sphere": 0.0189,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "13": {
   "hero_id": 13,
@@ -87943,7 +87995,9 @@
   "item_share_wind_waker": 0.0131,
   "item_share_sphere": 0.2099,
   "item_share_force_staff": 0.0179,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "131": {
   "hero_id": 131,
@@ -90914,7 +90968,9 @@
   "item_share_wind_waker": 0.0034,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.2467,
-  "item_share_ghost": 0.1412
+  "item_share_ghost": 0.1412,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "135": {
   "hero_id": 135,
@@ -94249,7 +94305,7 @@
   "leash_needs_item": 0,
   "banish_min_level": 0,
   "banish_needs_item": 0,
-  "forced_movement_min_level": 1,
+  "forced_movement_min_level": 0,
   "forced_movement_needs_item": 0,
   "dispel_min_level": 0,
   "dispel_needs_item": 0,
@@ -94280,7 +94336,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0119,
   "item_share_force_staff": 0.0004,
-  "item_share_ghost": 0.0004
+  "item_share_ghost": 0.0004,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "136": {
   "hero_id": 136,
@@ -97616,7 +97674,7 @@
   "stun_needs_item": 0,
   "slow_min_level": 1,
   "slow_needs_item": 0,
-  "disarm_min_level": 1,
+  "disarm_min_level": 0,
   "disarm_needs_item": 0,
   "leash_min_level": 1,
   "leash_needs_item": 0,
@@ -97653,7 +97711,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0066,
   "item_share_force_staff": 0.0191,
-  "item_share_ghost": 0.0147
+  "item_share_ghost": 0.0147,
+  "item_share_disperser": 0.0088,
+  "item_share_angels_demise": 0.0
  },
  "137": {
   "hero_id": 137,
@@ -100881,7 +100941,7 @@
   "stun_needs_item": 0,
   "slow_min_level": 1,
   "slow_needs_item": 0,
-  "disarm_min_level": 1,
+  "disarm_min_level": 0,
   "disarm_needs_item": 0,
   "leash_min_level": 0,
   "leash_needs_item": 0,
@@ -100889,7 +100949,7 @@
   "banish_needs_item": 0,
   "forced_movement_min_level": 1,
   "forced_movement_needs_item": 0,
-  "dispel_min_level": 20,
+  "dispel_min_level": 0,
   "dispel_needs_item": 0,
   "has_global_ability": 0,
   "global_ability_count": 0,
@@ -100918,7 +100978,9 @@
   "item_share_wind_waker": 0.0073,
   "item_share_sphere": 0.0518,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0293
+  "item_share_ghost": 0.0293,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "138": {
   "hero_id": 138,
@@ -104253,7 +104315,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0457,
   "item_share_force_staff": 0.0211,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "14": {
   "hero_id": 14,
@@ -107615,7 +107679,9 @@
   "item_share_wind_waker": 0.007,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0823,
-  "item_share_ghost": 0.1384
+  "item_share_ghost": 0.1384,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "145": {
   "hero_id": 145,
@@ -110352,7 +110418,7 @@
   "stun_needs_item": 0,
   "slow_min_level": 1,
   "slow_needs_item": 0,
-  "disarm_min_level": 1,
+  "disarm_min_level": 0,
   "disarm_needs_item": 0,
   "leash_min_level": 0,
   "leash_needs_item": 0,
@@ -110360,7 +110426,7 @@
   "banish_needs_item": 0,
   "forced_movement_min_level": 0,
   "forced_movement_needs_item": 0,
-  "dispel_min_level": 1,
+  "dispel_min_level": 0,
   "dispel_needs_item": 0,
   "has_global_ability": 0,
   "global_ability_count": 0,
@@ -110389,7 +110455,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0776,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0103,
+  "item_share_angels_demise": 0.0
  },
  "15": {
   "hero_id": 15,
@@ -113654,7 +113722,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0678,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0212,
+  "item_share_angels_demise": 0.0
  },
  "155": {
   "hero_id": 155,
@@ -116954,9 +117024,9 @@
   "silence_needs_item": 0,
   "stun_min_level": 0,
   "stun_needs_item": 0,
-  "slow_min_level": 1,
+  "slow_min_level": 0,
   "slow_needs_item": 0,
-  "disarm_min_level": 1,
+  "disarm_min_level": 0,
   "disarm_needs_item": 0,
   "leash_min_level": 0,
   "leash_needs_item": 0,
@@ -116993,7 +117063,9 @@
   "item_share_wind_waker": 0.0127,
   "item_share_sphere": 0.1062,
   "item_share_force_staff": 0.021,
-  "item_share_ghost": 0.056
+  "item_share_ghost": 0.056,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "16": {
   "hero_id": 16,
@@ -120232,7 +120304,9 @@
   "item_share_wind_waker": 0.0292,
   "item_share_sphere": 0.0149,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0317
+  "item_share_ghost": 0.0317,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "17": {
   "hero_id": 17,
@@ -123427,7 +123501,9 @@
   "item_share_wind_waker": 0.0006,
   "item_share_sphere": 0.1686,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "18": {
   "hero_id": 18,
@@ -126601,7 +126677,7 @@
   "silence_needs_item": 0,
   "stun_min_level": 1,
   "stun_needs_item": 0,
-  "slow_min_level": 1,
+  "slow_min_level": 0,
   "slow_needs_item": 0,
   "disarm_min_level": 0,
   "disarm_needs_item": 0,
@@ -126640,7 +126716,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0051,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "19": {
   "hero_id": 19,
@@ -129964,7 +130042,7 @@
   "stun_min_level": 1,
   "stun_needs_item": 0,
   "slow_min_level": 1,
-  "slow_needs_item": 0,
+  "slow_needs_item": 1,
   "disarm_min_level": 0,
   "disarm_needs_item": 0,
   "leash_min_level": 0,
@@ -130002,7 +130080,9 @@
   "item_share_wind_waker": 0.0222,
   "item_share_sphere": 0.0019,
   "item_share_force_staff": 0.0719,
-  "item_share_ghost": 0.0215
+  "item_share_ghost": 0.0215,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0068
  },
  "2": {
   "hero_id": 2,
@@ -133355,7 +133435,9 @@
   "item_share_wind_waker": 0.0005,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0159,
-  "item_share_ghost": 0.0009
+  "item_share_ghost": 0.0009,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0199
  },
  "20": {
   "hero_id": 20,
@@ -136714,7 +136796,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1288,
-  "item_share_ghost": 0.0328
+  "item_share_ghost": 0.0328,
+  "item_share_disperser": 0.0042,
+  "item_share_angels_demise": 0.0
  },
  "21": {
   "hero_id": 21,
@@ -140078,7 +140162,9 @@
   "item_share_wind_waker": 0.0073,
   "item_share_sphere": 0.0916,
   "item_share_force_staff": 0.0977,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.023,
+  "item_share_angels_demise": 0.0
  },
  "22": {
   "hero_id": 22,
@@ -143413,7 +143499,9 @@
   "item_share_wind_waker": 0.0215,
   "item_share_sphere": 0.0131,
   "item_share_force_staff": 0.0582,
-  "item_share_ghost": 0.0874
+  "item_share_ghost": 0.0874,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0212
  },
  "23": {
   "hero_id": 23,
@@ -146752,7 +146840,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "25": {
   "hero_id": 25,
@@ -150099,7 +150189,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0973,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0501
+  "item_share_ghost": 0.0501,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "26": {
   "hero_id": 26,
@@ -153452,7 +153544,9 @@
   "item_share_wind_waker": 0.0056,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.2468,
-  "item_share_ghost": 0.2265
+  "item_share_ghost": 0.2265,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "27": {
   "hero_id": 27,
@@ -156402,7 +156496,7 @@
   "banish_needs_item": 0,
   "forced_movement_min_level": 0,
   "forced_movement_needs_item": 0,
-  "dispel_min_level": 1,
+  "dispel_min_level": 0,
   "dispel_needs_item": 0,
   "has_global_ability": 0,
   "global_ability_count": 0,
@@ -156431,7 +156525,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1439,
-  "item_share_ghost": 0.124
+  "item_share_ghost": 0.124,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "28": {
   "hero_id": 28,
@@ -159731,7 +159827,9 @@
   "item_share_wind_waker": 0.0215,
   "item_share_sphere": 0.0191,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0013
+  "item_share_ghost": 0.0013,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "29": {
   "hero_id": 29,
@@ -163093,7 +163191,9 @@
   "item_share_wind_waker": 0.0193,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0404
+  "item_share_ghost": 0.0404,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "3": {
   "hero_id": 3,
@@ -166101,7 +166201,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1179,
-  "item_share_ghost": 0.104
+  "item_share_ghost": 0.104,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "30": {
   "hero_id": 30,
@@ -169080,7 +169182,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1233,
-  "item_share_ghost": 0.1382
+  "item_share_ghost": 0.1382,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "31": {
   "hero_id": 31,
@@ -172277,7 +172381,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.2716,
-  "item_share_ghost": 0.1771
+  "item_share_ghost": 0.1771,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "32": {
   "hero_id": 32,
@@ -175591,7 +175697,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0513,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.4392,
+  "item_share_angels_demise": 0.0494
  },
  "33": {
   "hero_id": 33,
@@ -178871,7 +178979,7 @@
   "silence_min_level": 0,
   "silence_needs_item": 0,
   "stun_min_level": 1,
-  "stun_needs_item": 0,
+  "stun_needs_item": 1,
   "slow_min_level": 0,
   "slow_needs_item": 0,
   "disarm_min_level": 0,
@@ -178911,7 +179019,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0864,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0187
+  "item_share_ghost": 0.0187,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "34": {
   "hero_id": 34,
@@ -182114,7 +182224,7 @@
   "leash_needs_item": 0,
   "banish_min_level": 0,
   "banish_needs_item": 0,
-  "forced_movement_min_level": 15,
+  "forced_movement_min_level": 0,
   "forced_movement_needs_item": 0,
   "dispel_min_level": 0,
   "dispel_needs_item": 0,
@@ -182145,7 +182255,9 @@
   "item_share_wind_waker": 0.1457,
   "item_share_sphere": 0.1111,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.1333
+  "item_share_ghost": 0.1333,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0074
  },
  "35": {
   "hero_id": 35,
@@ -185506,7 +185618,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0328,
   "item_share_force_staff": 0.0029,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.055,
+  "item_share_angels_demise": 0.0164
  },
  "36": {
   "hero_id": 36,
@@ -188775,7 +188889,9 @@
   "item_share_wind_waker": 0.0556,
   "item_share_sphere": 0.042,
   "item_share_force_staff": 0.0148,
-  "item_share_ghost": 0.0243
+  "item_share_ghost": 0.0243,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "37": {
   "hero_id": 37,
@@ -191976,7 +192092,9 @@
   "item_share_wind_waker": 0.0009,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.246,
-  "item_share_ghost": 0.1805
+  "item_share_ghost": 0.1805,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "38": {
   "hero_id": 38,
@@ -195211,7 +195329,7 @@
   "sleep_needs_item": 0,
   "silence_min_level": 0,
   "silence_needs_item": 0,
-  "stun_min_level": 1,
+  "stun_min_level": 0,
   "stun_needs_item": 0,
   "slow_min_level": 1,
   "slow_needs_item": 0,
@@ -195252,7 +195370,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0355,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0342,
+  "item_share_angels_demise": 0.0
  },
  "39": {
   "hero_id": 39,
@@ -198605,7 +198725,9 @@
   "item_share_wind_waker": 0.0365,
   "item_share_sphere": 0.1257,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0345
+  "item_share_ghost": 0.0345,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "4": {
   "hero_id": 4,
@@ -201858,7 +201980,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0579,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0414,
+  "item_share_angels_demise": 0.0
  },
  "40": {
   "hero_id": 40,
@@ -205195,7 +205319,9 @@
   "item_share_wind_waker": 0.0052,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.3324,
-  "item_share_ghost": 0.1732
+  "item_share_ghost": 0.1732,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "41": {
   "hero_id": 41,
@@ -208496,7 +208622,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.1202,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0307,
+  "item_share_angels_demise": 0.0
  },
  "42": {
   "hero_id": 42,
@@ -211726,7 +211854,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "43": {
   "hero_id": 43,
@@ -215081,7 +215211,9 @@
   "item_share_wind_waker": 0.0574,
   "item_share_sphere": 0.0366,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0834
+  "item_share_ghost": 0.0834,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "44": {
   "hero_id": 44,
@@ -217988,7 +218120,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0428,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0066,
+  "item_share_angels_demise": 0.0
  },
  "45": {
   "hero_id": 45,
@@ -221207,9 +221341,9 @@
   "silence_needs_item": 0,
   "stun_min_level": 0,
   "stun_needs_item": 0,
-  "slow_min_level": 1,
+  "slow_min_level": 0,
   "slow_needs_item": 0,
-  "disarm_min_level": 1,
+  "disarm_min_level": 0,
   "disarm_needs_item": 0,
   "leash_min_level": 0,
   "leash_needs_item": 0,
@@ -221246,7 +221380,9 @@
   "item_share_wind_waker": 0.0132,
   "item_share_sphere": 0.0227,
   "item_share_force_staff": 0.225,
-  "item_share_ghost": 0.0567
+  "item_share_ghost": 0.0567,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "46": {
   "hero_id": 46,
@@ -224174,7 +224310,7 @@
   "banish_needs_item": 0,
   "forced_movement_min_level": 0,
   "forced_movement_needs_item": 0,
-  "dispel_min_level": 20,
+  "dispel_min_level": 0,
   "dispel_needs_item": 0,
   "has_global_ability": 0,
   "global_ability_count": 1,
@@ -224203,7 +224339,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0298,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.012,
+  "item_share_angels_demise": 0.0
  },
  "47": {
   "hero_id": 47,
@@ -227557,7 +227695,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0347,
   "item_share_force_staff": 0.0078,
-  "item_share_ghost": 0.0155
+  "item_share_ghost": 0.0155,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "48": {
   "hero_id": 48,
@@ -230727,7 +230867,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0183,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0082,
+  "item_share_angels_demise": 0.0
  },
  "49": {
   "hero_id": 49,
@@ -233980,7 +234122,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0021,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "5": {
   "hero_id": 5,
@@ -237219,7 +237363,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.2516,
-  "item_share_ghost": 0.1522
+  "item_share_ghost": 0.1522,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "50": {
   "hero_id": 50,
@@ -240490,7 +240636,7 @@
   "slow_needs_item": 0,
   "disarm_min_level": 0,
   "disarm_needs_item": 0,
-  "leash_min_level": 1,
+  "leash_min_level": 0,
   "leash_needs_item": 0,
   "banish_min_level": 0,
   "banish_needs_item": 0,
@@ -240525,7 +240671,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1828,
-  "item_share_ghost": 0.0989
+  "item_share_ghost": 0.0989,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "51": {
   "hero_id": 51,
@@ -243794,7 +243942,9 @@
   "item_share_wind_waker": 0.0127,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.3923,
-  "item_share_ghost": 0.1696
+  "item_share_ghost": 0.1696,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "52": {
   "hero_id": 52,
@@ -247124,7 +247274,9 @@
   "item_share_wind_waker": 0.0528,
   "item_share_sphere": 0.0345,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0845
+  "item_share_ghost": 0.0845,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "53": {
   "hero_id": 53,
@@ -250484,7 +250636,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0279,
   "item_share_force_staff": 0.0084,
-  "item_share_ghost": 0.0106
+  "item_share_ghost": 0.0106,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "54": {
   "hero_id": 54,
@@ -253668,7 +253822,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0272,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0096,
+  "item_share_angels_demise": 0.0
  },
  "55": {
   "hero_id": 55,
@@ -256895,7 +257051,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0273,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0371
+  "item_share_ghost": 0.0371,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "56": {
   "hero_id": 56,
@@ -260132,7 +260290,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.1103,
   "item_share_force_staff": 0.0008,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0163,
+  "item_share_angels_demise": 0.0
  },
  "57": {
   "hero_id": 57,
@@ -263483,7 +263643,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0217,
   "item_share_force_staff": 0.0415,
-  "item_share_ghost": 0.0297
+  "item_share_ghost": 0.0297,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "58": {
   "hero_id": 58,
@@ -266801,7 +266963,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1731,
-  "item_share_ghost": 0.0297
+  "item_share_ghost": 0.0297,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "59": {
   "hero_id": 59,
@@ -270160,7 +270324,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0202,
-  "item_share_ghost": 0.0076
+  "item_share_ghost": 0.0076,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "6": {
   "hero_id": 6,
@@ -273403,7 +273569,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0807,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0113,
+  "item_share_angels_demise": 0.0
  },
  "60": {
   "hero_id": 60,
@@ -276717,7 +276885,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0078,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0007
  },
  "61": {
   "hero_id": 61,
@@ -279489,7 +279659,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.085,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0971,
+  "item_share_angels_demise": 0.0
  },
  "62": {
   "hero_id": 62,
@@ -282807,7 +282979,9 @@
   "item_share_wind_waker": 0.0542,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1463,
-  "item_share_ghost": 0.0217
+  "item_share_ghost": 0.0217,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.019
  },
  "63": {
   "hero_id": 63,
@@ -286163,7 +286337,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.223,
   "item_share_force_staff": 0.0117,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0092,
+  "item_share_angels_demise": 0.0
  },
  "64": {
   "hero_id": 64,
@@ -289483,7 +289659,9 @@
   "item_share_wind_waker": 0.0093,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.4049,
-  "item_share_ghost": 0.1479
+  "item_share_ghost": 0.1479,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "65": {
   "hero_id": 65,
@@ -292844,7 +293022,9 @@
   "item_share_wind_waker": 0.0011,
   "item_share_sphere": 0.0493,
   "item_share_force_staff": 0.3848,
-  "item_share_ghost": 0.0695
+  "item_share_ghost": 0.0695,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "66": {
   "hero_id": 66,
@@ -295550,7 +295730,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0596,
-  "item_share_ghost": 0.0752
+  "item_share_ghost": 0.0752,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "67": {
   "hero_id": 67,
@@ -298713,7 +298895,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0528,
+  "item_share_angels_demise": 0.0
  },
  "68": {
   "hero_id": 68,
@@ -301938,7 +302122,9 @@
   "item_share_wind_waker": 0.014,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.2968,
-  "item_share_ghost": 0.1807
+  "item_share_ghost": 0.1807,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "69": {
   "hero_id": 69,
@@ -305268,7 +305454,9 @@
   "item_share_wind_waker": 0.0128,
   "item_share_sphere": 0.0224,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0073
+  "item_share_ghost": 0.0073,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "7": {
   "hero_id": 7,
@@ -308609,7 +308797,9 @@
   "item_share_wind_waker": 0.034,
   "item_share_sphere": 0.0262,
   "item_share_force_staff": 0.0689,
-  "item_share_ghost": 0.0393
+  "item_share_ghost": 0.0393,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "70": {
   "hero_id": 70,
@@ -311803,7 +311993,7 @@
   "banish_needs_item": 0,
   "forced_movement_min_level": 0,
   "forced_movement_needs_item": 0,
-  "dispel_min_level": 1,
+  "dispel_min_level": 0,
   "dispel_needs_item": 0,
   "has_global_ability": 0,
   "global_ability_count": 0,
@@ -311832,7 +312022,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0177,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0489,
+  "item_share_angels_demise": 0.0
  },
  "71": {
   "hero_id": 71,
@@ -315151,7 +315343,9 @@
   "item_share_wind_waker": 0.0289,
   "item_share_sphere": 0.002,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0216
+  "item_share_ghost": 0.0216,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "72": {
   "hero_id": 72,
@@ -318470,7 +318664,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0142,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0233,
+  "item_share_angels_demise": 0.0
  },
  "73": {
   "hero_id": 73,
@@ -321829,7 +322025,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0133,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "74": {
   "hero_id": 74,
@@ -325113,7 +325311,7 @@
   "banish_min_level": 0,
   "banish_needs_item": 0,
   "forced_movement_min_level": 1,
-  "forced_movement_needs_item": 0,
+  "forced_movement_needs_item": 1,
   "dispel_min_level": 1,
   "dispel_needs_item": 0,
   "has_global_ability": 1,
@@ -325143,7 +325341,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0864,
   "item_share_force_staff": 0.0448,
-  "item_share_ghost": 0.0166
+  "item_share_ghost": 0.0166,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "75": {
   "hero_id": 75,
@@ -328428,7 +328628,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.4741,
-  "item_share_ghost": 0.1577
+  "item_share_ghost": 0.1577,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "76": {
   "hero_id": 76,
@@ -331626,8 +331828,8 @@
   "banish_needs_item": 0,
   "forced_movement_min_level": 0,
   "forced_movement_needs_item": 0,
-  "dispel_min_level": 1,
-  "dispel_needs_item": 2,
+  "dispel_min_level": 0,
+  "dispel_needs_item": 0,
   "has_global_ability": 0,
   "global_ability_count": 0,
   "global_needs_item": 0,
@@ -331655,7 +331857,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0548,
   "item_share_force_staff": 0.0669,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "77": {
   "hero_id": 77,
@@ -334870,7 +335074,7 @@
   "silence_needs_item": 0,
   "stun_min_level": 0,
   "stun_needs_item": 0,
-  "slow_min_level": 1,
+  "slow_min_level": 0,
   "slow_needs_item": 0,
   "disarm_min_level": 0,
   "disarm_needs_item": 0,
@@ -334909,7 +335113,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "78": {
   "hero_id": 78,
@@ -338228,7 +338434,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0144,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "79": {
   "hero_id": 79,
@@ -341213,7 +341421,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1695,
-  "item_share_ghost": 0.1683
+  "item_share_ghost": 0.1683,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "8": {
   "hero_id": 8,
@@ -344120,7 +344330,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0302,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0361,
+  "item_share_angels_demise": 0.0
  },
  "80": {
   "hero_id": 80,
@@ -347384,7 +347596,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "81": {
   "hero_id": 81,
@@ -350691,7 +350905,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "82": {
   "hero_id": 82,
@@ -353859,8 +354075,8 @@
   "banish_needs_item": 0,
   "forced_movement_min_level": 0,
   "forced_movement_needs_item": 0,
-  "dispel_min_level": 1,
-  "dispel_needs_item": 1,
+  "dispel_min_level": 0,
+  "dispel_needs_item": 0,
   "has_global_ability": 1,
   "global_ability_count": 1,
   "global_needs_item": 0,
@@ -353888,7 +354104,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.1766,
+  "item_share_angels_demise": 0.0
  },
  "83": {
   "hero_id": 83,
@@ -357080,7 +357298,7 @@
   "taunt_min_level": 0,
   "taunt_needs_item": 0,
   "root_min_level": 1,
-  "root_needs_item": 0,
+  "root_needs_item": 1,
   "sleep_min_level": 0,
   "sleep_needs_item": 0,
   "silence_min_level": 0,
@@ -357089,7 +357307,7 @@
   "stun_needs_item": 0,
   "slow_min_level": 1,
   "slow_needs_item": 0,
-  "disarm_min_level": 1,
+  "disarm_min_level": 0,
   "disarm_needs_item": 0,
   "leash_min_level": 0,
   "leash_needs_item": 0,
@@ -357126,7 +357344,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1694,
-  "item_share_ghost": 0.0614
+  "item_share_ghost": 0.0614,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "84": {
   "hero_id": 84,
@@ -360458,7 +360678,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1704,
-  "item_share_ghost": 0.0784
+  "item_share_ghost": 0.0784,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "85": {
   "hero_id": 85,
@@ -363811,7 +364033,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1146,
-  "item_share_ghost": 0.1215
+  "item_share_ghost": 0.1215,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "86": {
   "hero_id": 86,
@@ -367112,7 +367336,9 @@
   "item_share_wind_waker": 0.0292,
   "item_share_sphere": 0.0059,
   "item_share_force_staff": 0.2499,
-  "item_share_ghost": 0.1543
+  "item_share_ghost": 0.1543,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0094
  },
  "87": {
   "hero_id": 87,
@@ -370327,7 +370553,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.1358,
-  "item_share_ghost": 0.1669
+  "item_share_ghost": 0.1669,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "88": {
   "hero_id": 88,
@@ -373618,8 +373846,8 @@
   "stun_needs_item": 0,
   "slow_min_level": 0,
   "slow_needs_item": 0,
-  "disarm_min_level": 1,
-  "disarm_needs_item": 2,
+  "disarm_min_level": 0,
+  "disarm_needs_item": 0,
   "leash_min_level": 0,
   "leash_needs_item": 0,
   "banish_min_level": 0,
@@ -373655,7 +373883,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0021,
   "item_share_force_staff": 0.1475,
-  "item_share_ghost": 0.084
+  "item_share_ghost": 0.084,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0061
  },
  "89": {
   "hero_id": 89,
@@ -376889,7 +377119,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0714,
+  "item_share_angels_demise": 0.0
  },
  "9": {
   "hero_id": 9,
@@ -380242,7 +380474,9 @@
   "item_share_wind_waker": 0.0471,
   "item_share_sphere": 0.023,
   "item_share_force_staff": 0.1316,
-  "item_share_ghost": 0.0538
+  "item_share_ghost": 0.0538,
+  "item_share_disperser": 0.0019,
+  "item_share_angels_demise": 0.0
  },
  "90": {
   "hero_id": 90,
@@ -383536,7 +383770,9 @@
   "item_share_wind_waker": 0.054,
   "item_share_sphere": 0.033,
   "item_share_force_staff": 0.3205,
-  "item_share_ghost": 0.185
+  "item_share_ghost": 0.185,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "91": {
   "hero_id": 91,
@@ -386855,7 +387091,7 @@
   "disarm_min_level": 0,
   "disarm_needs_item": 0,
   "leash_min_level": 1,
-  "leash_needs_item": 0,
+  "leash_needs_item": 1,
   "banish_min_level": 0,
   "banish_needs_item": 0,
   "forced_movement_min_level": 0,
@@ -386889,7 +387125,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.1878
+  "item_share_ghost": 0.1878,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "92": {
   "hero_id": 92,
@@ -390227,7 +390465,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0057,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.017
  },
  "93": {
   "hero_id": 93,
@@ -393557,7 +393797,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0802,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.2403,
+  "item_share_angels_demise": 0.0
  },
  "94": {
   "hero_id": 94,
@@ -396491,7 +396733,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0069,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.1364,
+  "item_share_angels_demise": 0.0
  },
  "95": {
   "hero_id": 95,
@@ -399416,7 +399660,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0147,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0
+  "item_share_ghost": 0.0,
+  "item_share_disperser": 0.0441,
+  "item_share_angels_demise": 0.0
  },
  "96": {
   "hero_id": 96,
@@ -402685,7 +402931,7 @@
   "stun_needs_item": 0,
   "slow_min_level": 1,
   "slow_needs_item": 0,
-  "disarm_min_level": 1,
+  "disarm_min_level": 0,
   "disarm_needs_item": 0,
   "leash_min_level": 0,
   "leash_needs_item": 0,
@@ -402722,7 +402968,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0161
+  "item_share_ghost": 0.0161,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "97": {
   "hero_id": 97,
@@ -406091,7 +406339,9 @@
   "item_share_wind_waker": 0.0,
   "item_share_sphere": 0.0699,
   "item_share_force_staff": 0.1215,
-  "item_share_ghost": 0.0366
+  "item_share_ghost": 0.0366,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "98": {
   "hero_id": 98,
@@ -409340,7 +409590,7 @@
   "leash_needs_item": 0,
   "banish_min_level": 0,
   "banish_needs_item": 0,
-  "forced_movement_min_level": 1,
+  "forced_movement_min_level": 0,
   "forced_movement_needs_item": 0,
   "dispel_min_level": 0,
   "dispel_needs_item": 0,
@@ -409371,7 +409621,9 @@
   "item_share_wind_waker": 0.0208,
   "item_share_sphere": 0.0124,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0185
+  "item_share_ghost": 0.0185,
+  "item_share_disperser": 0.0,
+  "item_share_angels_demise": 0.0
  },
  "99": {
   "hero_id": 99,
@@ -412616,8 +412868,8 @@
   "stun_needs_item": 0,
   "slow_min_level": 0,
   "slow_needs_item": 0,
-  "disarm_min_level": 1,
-  "disarm_needs_item": 2,
+  "disarm_min_level": 0,
+  "disarm_needs_item": 0,
   "leash_min_level": 0,
   "leash_needs_item": 0,
   "banish_min_level": 0,
@@ -412653,6 +412905,8 @@
   "item_share_wind_waker": 0.0103,
   "item_share_sphere": 0.0461,
   "item_share_force_staff": 0.0,
-  "item_share_ghost": 0.0121
+  "item_share_ghost": 0.0121,
+  "item_share_disperser": 0.0017,
+  "item_share_angels_demise": 0.0
  }
 }
