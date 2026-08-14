@@ -3199,7 +3199,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 52.03,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1100
  },
  "10": {
   "hero_id": 10,
@@ -6326,7 +6327,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 15.0,
   "magic_res_effective_max": 37.86,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1000
  },
  "100": {
   "hero_id": 100,
@@ -9588,7 +9590,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.8,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1400
  },
  "101": {
   "hero_id": 101,
@@ -12773,7 +12776,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1600
  },
  "102": {
   "hero_id": 102,
@@ -16031,7 +16035,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.9,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 625
  },
  "103": {
   "hero_id": 103,
@@ -19260,7 +19265,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.3,
-  "enemy_magic_res_reduction_max": 100.0
+  "enemy_magic_res_reduction_max": 100.0,
+  "max_ability_reach": 2400
  },
  "104": {
   "hero_id": 104,
@@ -22473,7 +22479,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 700
  },
  "105": {
   "hero_id": 105,
@@ -25713,7 +25720,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 15.0,
   "magic_res_effective_max": 38.38,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1000
  },
  "106": {
   "hero_id": 106,
@@ -28966,7 +28974,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1400
  },
  "107": {
   "hero_id": 107,
@@ -32220,7 +32229,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.7,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 3000
  },
  "108": {
   "hero_id": 108,
@@ -35457,7 +35467,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.8,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1500.0
  },
  "109": {
   "hero_id": 109,
@@ -38600,7 +38611,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.9,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 700
  },
  "11": {
   "hero_id": 11,
@@ -41754,7 +41766,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.6,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1200
  },
  "110": {
   "hero_id": 110,
@@ -45017,7 +45030,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.6,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1400
  },
  "111": {
   "hero_id": 111,
@@ -48186,7 +48200,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.6,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 900
  },
  "112": {
   "hero_id": 112,
@@ -51455,7 +51470,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.6,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1150
  },
  "113": {
   "hero_id": 113,
@@ -54610,7 +54626,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.4,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 2000
  },
  "114": {
   "hero_id": 114,
@@ -57897,7 +57914,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1850.0
  },
  "119": {
   "hero_id": 119,
@@ -61124,7 +61142,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.2,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1300
  },
  "12": {
   "hero_id": 12,
@@ -64003,7 +64022,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.1,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 825.0
  },
  "120": {
   "hero_id": 120,
@@ -67238,7 +67258,8 @@
   "magic_res_self_active_max": 80.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.6,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 850.0
  },
  "121": {
   "hero_id": 121,
@@ -70200,7 +70221,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1400
  },
  "123": {
   "hero_id": 123,
@@ -73496,7 +73518,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.1,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 3000
  },
  "126": {
   "hero_id": 126,
@@ -76766,7 +76789,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.4,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1000.0
  },
  "128": {
   "hero_id": 128,
@@ -80057,7 +80081,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.1,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 3000
  },
  "129": {
   "hero_id": 129,
@@ -83284,7 +83309,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.1,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1200.0
  },
  "13": {
   "hero_id": 13,
@@ -86404,7 +86430,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.3,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1950
  },
  "131": {
   "hero_id": 131,
@@ -89318,7 +89345,8 @@
   "magic_res_self_active_max": 80.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 2400
  },
  "135": {
   "hero_id": 135,
@@ -92627,7 +92655,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1300.0
  },
  "136": {
   "hero_id": 136,
@@ -95943,7 +95972,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.9,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 750
  },
  "137": {
   "hero_id": 137,
@@ -99151,7 +99181,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 25.0,
   "magic_res_effective_max": 44.95,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 2000.0
  },
  "138": {
   "hero_id": 138,
@@ -102429,7 +102460,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.3,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1000
  },
  "14": {
   "hero_id": 14,
@@ -105734,7 +105766,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.6,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1300
  },
  "145": {
   "hero_id": 145,
@@ -108451,7 +108484,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 2000.0
  },
  "15": {
   "hero_id": 15,
@@ -111659,7 +111693,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.1,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 550
  },
  "155": {
   "hero_id": 155,
@@ -114941,7 +114976,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.1,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 2000.0
  },
  "16": {
   "hero_id": 16,
@@ -118123,7 +118159,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.7,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 775
  },
  "17": {
   "hero_id": 17,
@@ -121261,7 +121298,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.3,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1200.0
  },
  "18": {
   "hero_id": 18,
@@ -124417,7 +124455,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.6,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 700.0
  },
  "19": {
   "hero_id": 19,
@@ -127722,7 +127761,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.7,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1200
  },
  "2": {
   "hero_id": 2,
@@ -131018,7 +131058,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.8,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 900
  },
  "20": {
   "hero_id": 20,
@@ -134320,7 +134361,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.9,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1400
  },
  "21": {
   "hero_id": 21,
@@ -137627,7 +137669,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.8,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 3000
  },
  "22": {
   "hero_id": 22,
@@ -140905,7 +140948,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.3,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1000.0
  },
  "23": {
   "hero_id": 23,
@@ -144187,7 +144231,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.8,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 2000.0
  },
  "25": {
   "hero_id": 25,
@@ -147477,7 +147522,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 5.0,
   "magic_res_effective_max": 55.54,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1075
  },
  "26": {
   "hero_id": 26,
@@ -150773,7 +150819,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.9,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1100.0
  },
  "27": {
   "hero_id": 27,
@@ -153695,7 +153742,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.3,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 650
  },
  "28": {
   "hero_id": 28,
@@ -156938,7 +156986,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 900
  },
  "29": {
   "hero_id": 29,
@@ -160243,7 +160292,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 700
  },
  "3": {
   "hero_id": 3,
@@ -163194,7 +163244,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.3,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1000
  },
  "30": {
   "hero_id": 30,
@@ -166116,7 +166167,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.2,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 650.0
  },
  "31": {
   "hero_id": 31,
@@ -169256,7 +169308,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.8,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 800
  },
  "32": {
   "hero_id": 32,
@@ -172513,7 +172566,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.4,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 900
  },
  "33": {
   "hero_id": 33,
@@ -175776,7 +175830,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.9,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 700
  },
  "34": {
   "hero_id": 34,
@@ -178953,7 +179008,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 28.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 2000.0
  },
  "35": {
   "hero_id": 35,
@@ -182257,7 +182313,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 3000
  },
  "36": {
   "hero_id": 36,
@@ -185469,7 +185526,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.3,
-  "enemy_magic_res_reduction_max": 25.0
+  "enemy_magic_res_reduction_max": 25.0,
+  "max_ability_reach": 600
  },
  "37": {
   "hero_id": 37,
@@ -188613,7 +188671,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1000
  },
  "38": {
   "hero_id": 38,
@@ -191832,7 +191891,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.6,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1500
  },
  "39": {
   "hero_id": 39,
@@ -195128,7 +195188,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1300
  },
  "4": {
   "hero_id": 4,
@@ -198324,7 +198385,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.7,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1500
  },
  "40": {
   "hero_id": 40,
@@ -201604,7 +201666,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.9,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 900
  },
  "41": {
   "hero_id": 41,
@@ -204848,7 +204911,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1200.0
  },
  "42": {
   "hero_id": 42,
@@ -208021,7 +208085,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.6,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 525
  },
  "43": {
   "hero_id": 43,
@@ -211319,7 +211384,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.4,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 2000.0
  },
  "44": {
   "hero_id": 44,
@@ -214169,7 +214235,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1150
  },
  "45": {
   "hero_id": 45,
@@ -217370,7 +217437,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.7,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1200.0
  },
  "46": {
   "hero_id": 46,
@@ -220270,7 +220338,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1800
  },
  "47": {
   "hero_id": 47,
@@ -223567,7 +223636,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 45.03,
-  "enemy_magic_res_reduction_max": 10.0
+  "enemy_magic_res_reduction_max": 10.0,
+  "max_ability_reach": 1200.0
  },
  "48": {
   "hero_id": 48,
@@ -226680,7 +226750,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.3,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 800
  },
  "49": {
   "hero_id": 49,
@@ -229876,7 +229947,8 @@
   "magic_res_self_active_max": 20.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.8,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1000
  },
  "5": {
   "hero_id": 5,
@@ -233058,7 +233130,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 700
  },
  "50": {
   "hero_id": 50,
@@ -236307,7 +236380,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 900
  },
  "51": {
   "hero_id": 51,
@@ -239519,7 +239593,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.8,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 3000
  },
  "52": {
   "hero_id": 52,
@@ -242792,7 +242867,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.2,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 650
  },
  "53": {
   "hero_id": 53,
@@ -246095,7 +246171,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.2,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 900.0
  },
  "54": {
   "hero_id": 54,
@@ -249222,7 +249299,8 @@
   "magic_res_self_active_max": 80.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 600
  },
  "55": {
   "hero_id": 55,
@@ -252392,7 +252470,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.3,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1100.0
  },
  "56": {
   "hero_id": 56,
@@ -255572,7 +255651,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.1,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1200
  },
  "57": {
   "hero_id": 57,
@@ -258866,7 +258946,8 @@
   "magic_res_self_active_max": 60.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.8,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 700
  },
  "58": {
   "hero_id": 58,
@@ -262127,7 +262208,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.2,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1750.0
  },
  "59": {
   "hero_id": 59,
@@ -265429,7 +265511,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 48.76,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 550
  },
  "6": {
   "hero_id": 6,
@@ -268615,7 +268698,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 900
  },
  "60": {
   "hero_id": 60,
@@ -271872,7 +271956,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 525
  },
  "61": {
   "hero_id": 61,
@@ -274587,7 +274672,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.8,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1200
  },
  "62": {
   "hero_id": 62,
@@ -277848,7 +277934,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1000
  },
  "63": {
   "hero_id": 63,
@@ -281147,7 +281234,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 3000
  },
  "64": {
   "hero_id": 64,
@@ -284410,7 +284498,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.6,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1400
  },
  "65": {
   "hero_id": 65,
@@ -287714,7 +287803,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.2,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1300
  },
  "66": {
   "hero_id": 66,
@@ -290363,7 +290453,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.9,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1200
  },
  "67": {
   "hero_id": 67,
@@ -293469,7 +293560,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.6,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1800
  },
  "68": {
   "hero_id": 68,
@@ -296637,7 +296729,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.3,
-  "enemy_magic_res_reduction_max": 25.0
+  "enemy_magic_res_reduction_max": 25.0,
+  "max_ability_reach": 1200
  },
  "69": {
   "hero_id": 69,
@@ -299910,7 +300003,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 10.0,
   "magic_res_effective_max": 33.85,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 666
  },
  "7": {
   "hero_id": 7,
@@ -303194,7 +303288,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.8,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1600
  },
  "70": {
   "hero_id": 70,
@@ -306360,7 +306455,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.6,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 250.0
  },
  "71": {
   "hero_id": 71,
@@ -309622,7 +309718,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 55.84,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 900.0
  },
  "72": {
   "hero_id": 72,
@@ -312884,7 +312981,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.1,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1500.0
  },
  "73": {
   "hero_id": 73,
@@ -316186,7 +316284,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 900
  },
  "74": {
   "hero_id": 74,
@@ -319443,7 +319542,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.2,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 3900.0
  },
  "75": {
   "hero_id": 75,
@@ -322671,7 +322771,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 925.0
  },
  "76": {
   "hero_id": 76,
@@ -325841,7 +325942,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 28.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 700
  },
  "77": {
   "hero_id": 77,
@@ -329038,7 +329140,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.3,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1200.0
  },
  "78": {
   "hero_id": 78,
@@ -332300,7 +332403,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 41.36,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 950
  },
  "79": {
   "hero_id": 79,
@@ -335228,7 +335332,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.2,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1500
  },
  "8": {
   "hero_id": 8,
@@ -338078,7 +338183,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.4,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 450
  },
  "80": {
   "hero_id": 80,
@@ -341285,7 +341391,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.3,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1100.0
  },
  "81": {
   "hero_id": 81,
@@ -344535,7 +344642,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.8,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 750
  },
  "82": {
   "hero_id": 82,
@@ -347675,7 +347783,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.8,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1200
  },
  "83": {
   "hero_id": 83,
@@ -350856,7 +350965,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1500
  },
  "84": {
   "hero_id": 84,
@@ -354131,7 +354241,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 25.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1000
  },
  "85": {
   "hero_id": 85,
@@ -357427,7 +357538,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.7,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 750
  },
  "86": {
   "hero_id": 86,
@@ -360671,7 +360783,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.4,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1000
  },
  "87": {
   "hero_id": 87,
@@ -363829,7 +363942,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1800
  },
  "88": {
   "hero_id": 88,
@@ -367100,7 +367214,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.1,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 800
  },
  "89": {
   "hero_id": 89,
@@ -370277,7 +370392,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.9,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1400
  },
  "9": {
   "hero_id": 9,
@@ -373573,7 +373689,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.2,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 3000
  },
  "90": {
   "hero_id": 90,
@@ -376810,7 +376927,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.4,
-  "enemy_magic_res_reduction_max": 50.0
+  "enemy_magic_res_reduction_max": 50.0,
+  "max_ability_reach": 1800
  },
  "91": {
   "hero_id": 91,
@@ -380106,7 +380224,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.1,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1600
  },
  "92": {
   "hero_id": 92,
@@ -383387,7 +383506,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.2,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 3500.0
  },
  "93": {
   "hero_id": 93,
@@ -386660,7 +386780,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.6,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 700.0
  },
  "94": {
   "hero_id": 94,
@@ -389537,7 +389658,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1200
  },
  "95": {
   "hero_id": 95,
@@ -392405,7 +392527,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.3,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 950
  },
  "96": {
   "hero_id": 96,
@@ -395654,7 +395777,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.5,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 600.0
  },
  "97": {
   "hero_id": 97,
@@ -398966,7 +399090,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.0,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 1200
  },
  "98": {
   "hero_id": 98,
@@ -402189,7 +402314,8 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 27.4,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 2000.0
  },
  "99": {
   "hero_id": 99,
@@ -405414,6 +405540,7 @@
   "magic_res_self_active_max": 0.0,
   "magic_res_talent_max": 0.0,
   "magic_res_effective_max": 26.4,
-  "enemy_magic_res_reduction_max": 0.0
+  "enemy_magic_res_reduction_max": 0.0,
+  "max_ability_reach": 750
  }
 }

@@ -430,7 +430,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 
 ---
 
-## `base/hero_features_v7.json` — карточка героев v7 (патч 7.41, 127 × 163 поля)
+## `base/hero_features_v7.json` — карточка героев v7 (патч 7.41, 127 × 164 поля)
 
 Наследник v6: объективные величины перезаписаны из официального датафида Valve
 (`dota2.com/datafeed/herodata`), измеренное и рукописные баллы перенесены как есть.
@@ -455,11 +455,16 @@ Dota2ProTracker подгружается динамически (`importlib`) �
   Сырой базовый урон — в `damage_min_base`/`damage_max_base`.
 - `magic_resistance` — `25 + 0.1 × int_base` (в датафиде 25 у всех 127 героев).
   Разброс 25.0…28.0%.
+- `max_cast_range` считается по `cast_ranges` Valve, куда попадают и радиусы аур,
+  и не видит прыжков и бросков (они лежат в special-величинах вида
+  `pounce_distance`, `spear_range`, `travel_distance`). Для них рядом
+  `max_ability_reach`: Slark 700 против 400, Mars 1200 против 400, Invoker 3900.
 
 **Поля, добавленные сверх датафида:** `has_global_cast`, `ult_is_passive` (ульт без
 перезарядки — пассивка, а не мгновенная), `damage_min_base`/`damage_max_base`,
 `magic_res_self_sustained_max` / `magic_res_self_active_max` / `magic_res_talent_max` /
-`magic_res_effective_max` / `enemy_magic_res_reduction_max`, и пять величин из
+`magic_res_effective_max` / `enemy_magic_res_reduction_max`, `max_ability_reach`,
+и пять величин из
 Liquipedia, которых у Valve нет: `attack_point`, `attack_backswing`,
 `base_attack_speed`, `collision_size`, `bound_radius`.
 
