@@ -345,7 +345,12 @@ def win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
                             radiant_team_name, dire_team_name, match)
     if value is not None:
         return value, SOURCE_PREMATCH
-    return win_index_draft(radiant_heroes_and_pos, dire_heroes_and_pos), SOURCE_DRAFT
+    # ЗАПАСНОЙ МОДЕЛИ НЕТ (решение alex 14.08.2026). Раньше здесь отдавалась
+    # драфтовая оценка по одним героям: другая модель, другая шкала и заметно
+    # слабее (AUC самого драфт-логита 0.6093 против 0.7184 у предматчевой).
+    # Под общим ключом индекса она выглядела как та же величина, и по ней
+    # срабатывало вето. Лучше молчание, чем число не от той модели.
+    return None, None
 
 
 def win_index(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[float]:
