@@ -17,7 +17,7 @@
   "damage_max": 58,
   "projectile_speed": 0,
   "armor": 6.166667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.2,
   "movement_speed": 315,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -3185,7 +3185,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 29,
+  "damage_max_base": 33,
+  "attack_point": 0.3,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 35.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 52.03,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "10": {
   "hero_id": 10,
@@ -3205,7 +3219,7 @@
   "damage_max": 54,
   "projectile_speed": 1300,
   "armor": 4.5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.9,
   "movement_speed": 285,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -6298,7 +6312,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 12,
+  "damage_max_base": 21,
+  "attack_point": 0.5,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 15.0,
+  "magic_res_effective_max": 37.86,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "100": {
   "hero_id": 100,
@@ -6316,9 +6344,9 @@
   "attack_rate": 1.7,
   "damage_min": 50,
   "damage_max": 54,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 4.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.8,
   "movement_speed": 310,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -9546,7 +9574,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 27,
+  "damage_max_base": 31,
+  "attack_point": 0.36,
+  "attack_backswing": 0.64,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.8,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "101": {
   "hero_id": 101,
@@ -9566,7 +9608,7 @@
   "damage_max": 51,
   "projectile_speed": 1000,
   "armor": 0.16666675,
-  "magic_resistance": 25,
+  "magic_resistance": 27.5,
   "movement_speed": 325,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -12717,7 +12759,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 16,
+  "damage_max_base": 26,
+  "attack_point": 0.4,
+  "attack_backswing": 0.78,
+  "base_attack_speed": 90.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "102": {
   "hero_id": 102,
@@ -12733,11 +12789,11 @@
   "complexity": 1,
   "attack_range": 150,
   "attack_rate": 1.5,
-  "damage_min": 22,
-  "damage_max": 32,
-  "projectile_speed": 900,
+  "damage_min": 49.9,
+  "damage_max": 59.9,
+  "projectile_speed": 0,
   "armor": 2.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.9,
   "movement_speed": 325,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -15961,7 +16017,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 22,
+  "damage_max_base": 32,
+  "attack_point": 0.56,
+  "attack_backswing": 0.41,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.9,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "103": {
   "hero_id": 103,
@@ -15979,9 +16049,9 @@
   "attack_rate": 1.7,
   "damage_min": 49,
   "damage_max": 59,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 2.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.3,
   "movement_speed": 305,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -19176,7 +19246,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 23,
+  "damage_max_base": 33,
+  "attack_point": 0.35,
+  "attack_backswing": 0.97,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.3,
+  "enemy_magic_res_reduction_max": 100.0
  },
  "104": {
   "hero_id": 104,
@@ -19194,9 +19278,9 @@
   "attack_rate": 1.7,
   "damage_min": 58,
   "damage_max": 62,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 2,
-  "magic_resistance": 25,
+  "magic_resistance": 27.0,
   "movement_speed": 325,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -22375,7 +22459,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 33,
+  "damage_max_base": 37,
+  "attack_point": 0.46,
+  "attack_backswing": 0.64,
+  "base_attack_speed": 105.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "105": {
   "hero_id": 105,
@@ -22391,11 +22489,11 @@
   "complexity": 2,
   "attack_range": 600,
   "attack_rate": 1.7,
-  "damage_min": 20,
-  "damage_max": 22,
+  "damage_min": 47.0,
+  "damage_max": 49.0,
   "projectile_speed": 900,
   "armor": 4.666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.5,
   "movement_speed": 310,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -25601,7 +25699,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 1,
+  "damage_min_base": 20,
+  "damage_max_base": 22,
+  "attack_point": 0.5,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 90.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 15.0,
+  "magic_res_effective_max": 38.38,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "106": {
   "hero_id": 106,
@@ -25619,9 +25731,9 @@
   "attack_rate": 1.7,
   "damage_min": 52,
   "damage_max": 56,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 3.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.0,
   "movement_speed": 295,
   "turn_rate": 0.8,
   "sight_range_day": 1800,
@@ -25643,7 +25755,7 @@
   "channeling_ult_count": 0,
   "bkb_pierce_ability_count": 6,
   "undispellable_count": 3,
-  "max_cast_range": 99999,
+  "max_cast_range": 1400,
   "ult_cd_lvl1": 0.5,
   "ult_cd_lvl3": 0.5,
   "role_carry": 2,
@@ -28840,7 +28952,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 1,
+  "ult_is_passive": 0,
+  "damage_min_base": 30,
+  "damage_max_base": 34,
+  "attack_point": 0.4,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "107": {
   "hero_id": 107,
@@ -28858,9 +28984,9 @@
   "attack_rate": 1.7,
   "damage_min": 48,
   "damage_max": 52,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 2.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.7,
   "movement_speed": 290,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -32080,7 +32206,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 25,
+  "damage_max_base": 29,
+  "attack_point": 0.35,
+  "attack_backswing": 0.65,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.7,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "108": {
   "hero_id": 108,
@@ -32098,9 +32238,9 @@
   "attack_rate": 1.7,
   "damage_min": 62,
   "damage_max": 68,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.8,
   "movement_speed": 290,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -35303,7 +35443,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 37,
+  "damage_max_base": 43,
+  "attack_point": 0.45,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.8,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "109": {
   "hero_id": 109,
@@ -35321,9 +35475,9 @@
   "attack_rate": 1.5,
   "damage_min": 49,
   "damage_max": 55,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 9.833334,
-  "magic_resistance": 25,
+  "magic_resistance": 26.9,
   "movement_speed": 315,
   "turn_rate": 0.8,
   "sight_range_day": 1800,
@@ -38432,7 +38586,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 26,
+  "damage_max_base": 32,
+  "attack_point": 0.3,
+  "attack_backswing": 0.8,
+  "base_attack_speed": 110.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.9,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "11": {
   "hero_id": 11,
@@ -38452,7 +38620,7 @@
   "damage_max": 47,
   "projectile_speed": 1200,
   "armor": 4.166667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.6,
   "movement_speed": 305,
   "turn_rate": 0.9,
   "sight_range_day": 1800,
@@ -41572,7 +41740,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 16,
+  "damage_max_base": 22,
+  "attack_point": 0.5,
+  "attack_backswing": 0.54,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.6,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "110": {
   "hero_id": 110,
@@ -41592,7 +41774,7 @@
   "damage_max": 54,
   "projectile_speed": 1100,
   "armor": 1,
-  "magic_resistance": 25,
+  "magic_resistance": 26.6,
   "movement_speed": 280,
   "turn_rate": 0.9,
   "sight_range_day": 1800,
@@ -44821,7 +45003,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 21,
+  "damage_max_base": 31,
+  "attack_point": 0.35,
+  "attack_backswing": 0.633,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.6,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "111": {
   "hero_id": 111,
@@ -44841,7 +45037,7 @@
   "damage_max": 45,
   "projectile_speed": 900,
   "armor": 3.5,
-  "magic_resistance": 25,
+  "magic_resistance": 27.6,
   "movement_speed": 295,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -47976,7 +48172,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 13,
+  "damage_max_base": 19,
+  "attack_point": 0.3,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.6,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "112": {
   "hero_id": 112,
@@ -47996,7 +48206,7 @@
   "damage_max": 49,
   "projectile_speed": 700,
   "armor": 3.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.6,
   "movement_speed": 285,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -51231,7 +51441,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 16,
+  "damage_max_base": 23,
+  "attack_point": 0.25,
+  "attack_backswing": 0.8,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.6,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "113": {
   "hero_id": 113,
@@ -51247,11 +51471,11 @@
   "complexity": 3,
   "attack_range": 625,
   "attack_rate": 1.7,
-  "damage_min": 23,
-  "damage_max": 29,
+  "damage_min": 52.7,
+  "damage_max": 58.7,
   "projectile_speed": 900,
   "armor": 3.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.4,
   "movement_speed": 300,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -54372,7 +54596,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 23,
+  "damage_max_base": 29,
+  "attack_point": 0.3,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 110.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.4,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "114": {
   "hero_id": 114,
@@ -54390,9 +54628,9 @@
   "attack_rate": 1.6,
   "damage_min": 52,
   "damage_max": 56,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 4.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.0,
   "movement_speed": 300,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -57645,7 +57883,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 29,
+  "damage_max_base": 33,
+  "attack_point": 0.45,
+  "attack_backswing": 0.2,
+  "base_attack_speed": 95.0,
+  "collision_size": 18.0,
+  "bound_radius": 8.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "119": {
   "hero_id": 119,
@@ -57665,7 +57917,7 @@
   "damage_max": 57,
   "projectile_speed": 1200,
   "armor": 3,
-  "magic_resistance": 25,
+  "magic_resistance": 27.2,
   "movement_speed": 290,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -60858,7 +61110,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 27,
+  "damage_max_base": 35,
+  "attack_point": 0.3,
+  "attack_backswing": 1.0,
+  "base_attack_speed": 115.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.2,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "12": {
   "hero_id": 12,
@@ -60876,9 +61142,9 @@
   "attack_rate": 1.7,
   "damage_min": 52,
   "damage_max": 62,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 4.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.1,
   "movement_speed": 285,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -63723,7 +63989,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 1,
+  "damage_min_base": 26,
+  "damage_max_base": 36,
+  "attack_point": 0.5,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 110.0,
+  "collision_size": 18.0,
+  "bound_radius": 8.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.1,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "120": {
   "hero_id": 120,
@@ -63739,11 +64019,11 @@
   "complexity": 2,
   "attack_range": 150,
   "attack_rate": 1.7,
-  "damage_min": 26,
-  "damage_max": 32,
-  "projectile_speed": 900,
+  "damage_min": 49.85,
+  "damage_max": 55.85,
+  "projectile_speed": 0,
   "armor": 3.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.6,
   "movement_speed": 300,
   "turn_rate": 0.9,
   "sight_range_day": 1800,
@@ -66944,7 +67224,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 26,
+  "damage_max_base": 32,
+  "attack_point": 0.33,
+  "attack_backswing": 0.77,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 80.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.6,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "121": {
   "hero_id": 121,
@@ -66964,7 +67258,7 @@
   "damage_max": 51,
   "projectile_speed": 900,
   "armor": 3,
-  "magic_resistance": 25,
+  "magic_resistance": 27.5,
   "movement_speed": 290,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -69892,7 +70186,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 22,
+  "damage_max_base": 26,
+  "attack_point": 0.35,
+  "attack_backswing": 0.85,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "123": {
   "hero_id": 123,
@@ -69912,7 +70220,7 @@
   "damage_max": 54,
   "projectile_speed": 1800,
   "armor": 3.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.1,
   "movement_speed": 315,
   "turn_rate": 0.9,
   "sight_range_day": 1800,
@@ -73174,7 +73482,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 25,
+  "damage_max_base": 32,
+  "attack_point": 0.4,
+  "attack_backswing": 1.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 18.0,
+  "bound_radius": 8.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.1,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "126": {
   "hero_id": 126,
@@ -73190,11 +73512,11 @@
   "complexity": 2,
   "attack_range": 200,
   "attack_rate": 1.7,
-  "damage_min": 18,
-  "damage_max": 22,
-  "projectile_speed": 900,
+  "damage_min": 48.15,
+  "damage_max": 52.15,
+  "projectile_speed": 0,
   "armor": 2.5,
-  "magic_resistance": 25,
+  "magic_resistance": 27.4,
   "movement_speed": 290,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -76430,7 +76752,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 1,
+  "damage_min_base": 18,
+  "damage_max_base": 22,
+  "attack_point": 0.35,
+  "attack_backswing": 0.78,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.4,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "128": {
   "hero_id": 128,
@@ -76446,11 +76782,11 @@
   "complexity": 1,
   "attack_range": 400,
   "attack_rate": 1.8,
-  "damage_min": 27,
-  "damage_max": 33,
+  "damage_min": 53.1,
+  "damage_max": 59.1,
   "projectile_speed": 1800,
   "armor": 3.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.1,
   "movement_speed": 300,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -79707,7 +80043,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 27,
+  "damage_max_base": 33,
+  "attack_point": 0.35,
+  "attack_backswing": 1.23,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.1,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "129": {
   "hero_id": 129,
@@ -79725,9 +80075,9 @@
   "attack_rate": 1.8,
   "damage_min": 49,
   "damage_max": 57,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 2,
-  "magic_resistance": 25,
+  "magic_resistance": 27.1,
   "movement_speed": 310,
   "turn_rate": 0.8,
   "sight_range_day": 1800,
@@ -82920,7 +83270,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 26,
+  "damage_max_base": 34,
+  "attack_point": 0.4,
+  "attack_backswing": 1.38,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.1,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "13": {
   "hero_id": 13,
@@ -82940,7 +83304,7 @@
   "damage_max": 53,
   "projectile_speed": 900,
   "armor": 2.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.3,
   "movement_speed": 290,
   "turn_rate": 0.9,
   "sight_range_day": 1800,
@@ -86026,7 +86390,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 22,
+  "damage_max_base": 30,
+  "attack_point": 0.5,
+  "attack_backswing": 0.8,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.3,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "131": {
   "hero_id": 131,
@@ -86046,7 +86424,7 @@
   "damage_max": 58,
   "projectile_speed": 1200,
   "armor": 2.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.5,
   "movement_speed": 310,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -88926,7 +89304,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 23,
+  "damage_max_base": 33,
+  "attack_point": 0.5,
+  "attack_backswing": 0.93,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 80.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "135": {
   "hero_id": 135,
@@ -88944,9 +89336,9 @@
   "attack_rate": 1.7,
   "damage_min": 55,
   "damage_max": 59,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 4.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.0,
   "movement_speed": 300,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -92221,7 +92613,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 30,
+  "damage_max_base": 34,
+  "attack_point": 0.46,
+  "attack_backswing": 1.02,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "136": {
   "hero_id": 136,
@@ -92237,11 +92643,11 @@
   "complexity": 2,
   "attack_range": 150,
   "attack_rate": 1.7,
-  "damage_min": 29,
-  "damage_max": 33,
+  "damage_min": 56.9,
+  "damage_max": 60.9,
   "projectile_speed": 0,
   "armor": 3.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.9,
   "movement_speed": 315,
   "turn_rate": 0.9,
   "sight_range_day": 1800,
@@ -95523,7 +95929,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 29,
+  "damage_max_base": 33,
+  "attack_point": 0.3,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.9,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "137": {
   "hero_id": 137,
@@ -95541,9 +95961,9 @@
   "attack_rate": 1.8,
   "damage_min": 62,
   "damage_max": 64,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 4.5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.6,
   "movement_speed": 305,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -98717,7 +99137,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 36,
+  "damage_max_base": 38,
+  "attack_point": 0.6,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 25.0,
+  "magic_res_effective_max": 44.95,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "138": {
   "hero_id": 138,
@@ -98737,7 +99171,7 @@
   "damage_max": 55,
   "projectile_speed": 3000,
   "armor": 3.5,
-  "magic_resistance": 25,
+  "magic_resistance": 27.3,
   "movement_speed": 295,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -101981,7 +102415,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 24,
+  "damage_max_base": 32,
+  "attack_point": 0.35,
+  "attack_backswing": 1.1,
+  "base_attack_speed": 110.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.3,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "14": {
   "hero_id": 14,
@@ -102001,7 +102449,7 @@
   "damage_max": 76,
   "projectile_speed": 0,
   "armor": 2.1666667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.6,
   "movement_speed": 280,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -105272,7 +105720,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 45,
+  "damage_max_base": 51,
+  "attack_point": 0.5,
+  "attack_backswing": 1.17,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.6,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "145": {
   "hero_id": 145,
@@ -105290,9 +105752,9 @@
   "attack_rate": 1.9,
   "damage_min": 50,
   "damage_max": 56,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 5.5,
-  "magic_resistance": 25,
+  "magic_resistance": 27.0,
   "movement_speed": 310,
   "turn_rate": 1,
   "sight_range_day": 1800,
@@ -107975,7 +108437,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 23,
+  "damage_max_base": 29,
+  "attack_point": 0.35,
+  "attack_backswing": 1.12,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "15": {
   "hero_id": 15,
@@ -107995,7 +108471,7 @@
   "damage_max": 49,
   "projectile_speed": 2000,
   "armor": 4,
-  "magic_resistance": 25,
+  "magic_resistance": 27.1,
   "movement_speed": 280,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -111169,7 +111645,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 23,
+  "damage_max_base": 25,
+  "attack_point": 0.3,
+  "attack_backswing": 0.4,
+  "base_attack_speed": 110.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.1,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "155": {
   "hero_id": 155,
@@ -111189,7 +111679,7 @@
   "damage_max": 69,
   "projectile_speed": 0,
   "armor": 4.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.1,
   "movement_speed": 290,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -114437,7 +114927,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 39,
+  "damage_max_base": 45,
+  "attack_point": 0.35,
+  "attack_backswing": 0.95,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.1,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "16": {
   "hero_id": 16,
@@ -114453,11 +114957,11 @@
   "complexity": 2,
   "attack_range": 150,
   "attack_rate": 1.7,
-  "damage_min": 19,
-  "damage_max": 29,
-  "projectile_speed": 900,
+  "damage_min": 45.55,
+  "damage_max": 55.55,
+  "projectile_speed": 0,
   "armor": 4.166667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.7,
   "movement_speed": 290,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -117605,7 +118109,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 19,
+  "damage_max_base": 29,
+  "attack_point": 0.53,
+  "attack_backswing": 0.47,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.7,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "17": {
   "hero_id": 17,
@@ -117625,7 +118143,7 @@
   "damage_max": 57,
   "projectile_speed": 1100,
   "armor": 4.666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.3,
   "movement_speed": 285,
   "turn_rate": 0.8,
   "sight_range_day": 1800,
@@ -120729,7 +121247,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 1,
+  "damage_min_base": 24,
+  "damage_max_base": 34,
+  "attack_point": 0.5,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 110.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.3,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "18": {
   "hero_id": 18,
@@ -120749,7 +121281,7 @@
   "damage_max": 63,
   "projectile_speed": 0,
   "armor": 3,
-  "magic_resistance": 25,
+  "magic_resistance": 26.6,
   "movement_speed": 325,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -123871,7 +124403,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 37,
+  "damage_max_base": 39,
+  "attack_point": 0.4,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 110.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.6,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "19": {
   "hero_id": 19,
@@ -123889,9 +124435,9 @@
   "attack_rate": 1.7,
   "damage_min": 61,
   "damage_max": 67,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 0,
-  "magic_resistance": 25,
+  "magic_resistance": 26.7,
   "movement_speed": 275,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -127162,7 +127708,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 1,
+  "damage_min_base": 31,
+  "damage_max_base": 37,
+  "attack_point": 0.4,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 85.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.7,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "2": {
   "hero_id": 2,
@@ -127180,9 +127740,9 @@
   "attack_rate": 1.7,
   "damage_min": 56,
   "damage_max": 60,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 3,
-  "magic_resistance": 25,
+  "magic_resistance": 26.8,
   "movement_speed": 315,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -130444,7 +131004,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 31,
+  "damage_max_base": 35,
+  "attack_point": 0.4,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.8,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "20": {
   "hero_id": 20,
@@ -130464,7 +131038,7 @@
   "damage_max": 57,
   "projectile_speed": 1500,
   "armor": 3.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.9,
   "movement_speed": 300,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -133732,7 +134306,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 28,
+  "damage_max_base": 34,
+  "attack_point": 0.33,
+  "attack_backswing": 0.64,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.9,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "21": {
   "hero_id": 21,
@@ -133748,11 +134336,11 @@
   "complexity": 2,
   "attack_range": 600,
   "attack_rate": 1.5,
-  "damage_min": 24,
-  "damage_max": 36,
+  "damage_min": 49.2,
+  "damage_max": 61.2,
   "projectile_speed": 1250,
   "armor": 3.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.8,
   "movement_speed": 285,
   "turn_rate": 0.8,
   "sight_range_day": 1800,
@@ -137025,7 +137613,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 24,
+  "damage_max_base": 36,
+  "attack_point": 0.4,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 90.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.8,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "22": {
   "hero_id": 22,
@@ -137045,7 +137647,7 @@
   "damage_max": 63,
   "projectile_speed": 1100,
   "armor": 2.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.3,
   "movement_speed": 305,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -140289,7 +140891,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 30,
+  "damage_max_base": 40,
+  "attack_point": 0.35,
+  "attack_backswing": 0.55,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.3,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "23": {
   "hero_id": 23,
@@ -140307,9 +140923,9 @@
   "attack_rate": 1.7,
   "damage_min": 54,
   "damage_max": 60,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 4.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.8,
   "movement_speed": 315,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -143557,7 +144173,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 30,
+  "damage_max_base": 36,
+  "attack_point": 0.4,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.8,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "25": {
   "hero_id": 25,
@@ -143577,7 +144207,7 @@
   "damage_max": 59,
   "projectile_speed": 1000,
   "armor": 3.5,
-  "magic_resistance": 25,
+  "magic_resistance": 28.0,
   "movement_speed": 290,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -146833,7 +147463,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 21,
+  "damage_max_base": 29,
+  "attack_point": 0.65,
+  "attack_backswing": 0.6,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 35.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 5.0,
+  "magic_res_effective_max": 55.54,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "26": {
   "hero_id": 26,
@@ -146853,7 +147497,7 @@
   "damage_max": 54,
   "projectile_speed": 900,
   "armor": 2.5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.9,
   "movement_speed": 290,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -150115,7 +150759,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 29,
+  "damage_max_base": 35,
+  "attack_point": 0.43,
+  "attack_backswing": 0.74,
+  "base_attack_speed": 115.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.9,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "27": {
   "hero_id": 27,
@@ -150135,7 +150793,7 @@
   "damage_max": 70,
   "projectile_speed": 900,
   "armor": 4.666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.3,
   "movement_speed": 285,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -153023,7 +153681,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 40,
+  "damage_max_base": 47,
+  "attack_point": 0.3,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.3,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "28": {
   "hero_id": 28,
@@ -153043,7 +153715,7 @@
   "damage_max": 59,
   "projectile_speed": 0,
   "armor": 4.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.5,
   "movement_speed": 300,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -156252,7 +156924,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 30,
+  "damage_max_base": 38,
+  "attack_point": 0.36,
+  "attack_backswing": 0.64,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "29": {
   "hero_id": 29,
@@ -156270,9 +156956,9 @@
   "attack_rate": 1.7,
   "damage_min": 50,
   "damage_max": 56,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 2.5,
-  "magic_resistance": 25,
+  "magic_resistance": 27.0,
   "movement_speed": 300,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -159543,7 +160229,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 25,
+  "damage_max_base": 31,
+  "attack_point": 0.6,
+  "attack_backswing": 0.56,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "3": {
   "hero_id": 3,
@@ -159559,11 +160259,11 @@
   "complexity": 2,
   "attack_range": 425,
   "attack_rate": 1.7,
-  "damage_min": 24,
-  "damage_max": 30,
+  "damage_min": 55.05,
+  "damage_max": 61.05,
   "projectile_speed": 900,
   "armor": 4.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.3,
   "movement_speed": 305,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -162480,7 +163180,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 24,
+  "damage_max_base": 30,
+  "attack_point": 0.3,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.3,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "30": {
   "hero_id": 30,
@@ -162500,7 +163214,7 @@
   "damage_max": 58,
   "projectile_speed": 1200,
   "armor": 2.1666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.2,
   "movement_speed": 300,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -165388,7 +166102,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 26,
+  "damage_max_base": 36,
+  "attack_point": 0.4,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.2,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "31": {
   "hero_id": 31,
@@ -165408,7 +166136,7 @@
   "damage_max": 61,
   "projectile_speed": 900,
   "armor": 1.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.8,
   "movement_speed": 290,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -168514,7 +169242,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 24,
+  "damage_max_base": 33,
+  "attack_point": 0.46,
+  "attack_backswing": 0.54,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.8,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "32": {
   "hero_id": 32,
@@ -168532,9 +169274,9 @@
   "attack_rate": 1.7,
   "damage_min": 52,
   "damage_max": 56,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.4,
   "movement_speed": 315,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -171757,7 +172499,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 1,
+  "damage_min_base": 22,
+  "damage_max_base": 26,
+  "attack_point": 0.3,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 90.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.4,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "33": {
   "hero_id": 33,
@@ -171773,11 +172529,11 @@
   "complexity": 2,
   "attack_range": 500,
   "attack_rate": 1.7,
-  "damage_min": 19,
-  "damage_max": 25,
+  "damage_min": 43.3,
+  "damage_max": 49.3,
   "projectile_speed": 900,
   "armor": 3.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.9,
   "movement_speed": 280,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -175006,7 +175762,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 19,
+  "damage_max_base": 25,
+  "attack_point": 0.4,
+  "attack_backswing": 0.77,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.9,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "34": {
   "hero_id": 34,
@@ -175026,7 +175796,7 @@
   "damage_max": 58,
   "projectile_speed": 900,
   "armor": 4.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 28.0,
   "movement_speed": 305,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -178169,7 +178939,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 22,
+  "damage_max_base": 28,
+  "attack_point": 0.35,
+  "attack_backswing": 0.65,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 28.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "35": {
   "hero_id": 35,
@@ -178189,7 +178973,7 @@
   "damage_max": 46,
   "projectile_speed": 3000,
   "armor": 4.5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.5,
   "movement_speed": 285,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -181459,7 +182243,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 13,
+  "damage_max_base": 19,
+  "attack_point": 0.17,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "36": {
   "hero_id": 36,
@@ -181479,7 +182277,7 @@
   "damage_max": 53,
   "projectile_speed": 1200,
   "armor": 4,
-  "magic_resistance": 25,
+  "magic_resistance": 27.3,
   "movement_speed": 280,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -184657,7 +185455,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 26,
+  "damage_max_base": 30,
+  "attack_point": 0.3,
+  "attack_backswing": 0.47,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.3,
+  "enemy_magic_res_reduction_max": 25.0
  },
  "37": {
   "hero_id": 37,
@@ -184677,7 +185489,7 @@
   "damage_max": 62,
   "projectile_speed": 1200,
   "armor": 2.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.5,
   "movement_speed": 300,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -187787,7 +188599,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 27,
+  "damage_max_base": 37,
+  "attack_point": 0.3,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 90.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "38": {
   "hero_id": 38,
@@ -187803,11 +188629,11 @@
   "complexity": 2,
   "attack_range": 150,
   "attack_rate": 1.7,
-  "damage_min": 23,
-  "damage_max": 27,
+  "damage_min": 49.55,
+  "damage_max": 53.55,
   "projectile_speed": 0,
   "armor": 2.1666667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.6,
   "movement_speed": 305,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -190992,7 +191818,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 23,
+  "damage_max_base": 27,
+  "attack_point": 0.3,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 90.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.6,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "39": {
   "hero_id": 39,
@@ -191012,7 +191852,7 @@
   "damage_max": 57,
   "projectile_speed": 1500,
   "armor": 3.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.5,
   "movement_speed": 290,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -194274,7 +195114,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 26,
+  "damage_max_base": 32,
+  "attack_point": 0.56,
+  "attack_backswing": 0.41,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "4": {
   "hero_id": 4,
@@ -194292,9 +195146,9 @@
   "attack_rate": 1.7,
   "damage_min": 59,
   "damage_max": 65,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 6,
-  "magic_resistance": 25,
+  "magic_resistance": 26.7,
   "movement_speed": 285,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -197456,7 +198310,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 35,
+  "damage_max_base": 41,
+  "attack_point": 0.43,
+  "attack_backswing": 0.74,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.7,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "40": {
   "hero_id": 40,
@@ -197472,11 +198340,11 @@
   "complexity": 1,
   "attack_range": 450,
   "attack_rate": 1.7,
-  "damage_min": 18,
-  "damage_max": 21,
+  "damage_min": 46.35,
+  "damage_max": 49.35,
   "projectile_speed": 900,
   "armor": 4.166667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.9,
   "movement_speed": 280,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -200722,7 +201590,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 18,
+  "damage_max_base": 21,
+  "attack_point": 0.3,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 115.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.9,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "41": {
   "hero_id": 41,
@@ -200740,9 +201622,9 @@
   "attack_rate": 1.7,
   "damage_min": 58,
   "damage_max": 64,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 4,
-  "magic_resistance": 25,
+  "magic_resistance": 26.5,
   "movement_speed": 300,
   "turn_rate": 0.9,
   "sight_range_day": 1800,
@@ -203952,7 +204834,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 34,
+  "damage_max_base": 40,
+  "attack_point": 0.5,
+  "attack_backswing": 0.56,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "42": {
   "hero_id": 42,
@@ -203972,7 +204868,7 @@
   "damage_max": 64,
   "projectile_speed": 0,
   "armor": 2.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.6,
   "movement_speed": 310,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -207111,7 +208007,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 40,
+  "damage_max_base": 42,
+  "attack_point": 0.56,
+  "attack_backswing": 0.44,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.6,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "43": {
   "hero_id": 43,
@@ -207127,11 +208037,11 @@
   "complexity": 1,
   "attack_range": 600,
   "attack_rate": 1.7,
-  "damage_min": 22,
-  "damage_max": 32,
+  "damage_min": 49.9,
+  "damage_max": 59.9,
   "projectile_speed": 1000,
   "armor": 3.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.4,
   "movement_speed": 290,
   "turn_rate": 0.8,
   "sight_range_day": 1800,
@@ -210395,7 +211305,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 22,
+  "damage_max_base": 32,
+  "attack_point": 0.5,
+  "attack_backswing": 0.51,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.4,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "44": {
   "hero_id": 44,
@@ -210413,9 +211337,9 @@
   "attack_rate": 1.7,
   "damage_min": 57,
   "damage_max": 59,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 4.666667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.5,
   "movement_speed": 310,
   "turn_rate": 0.8,
   "sight_range_day": 1800,
@@ -213231,7 +214155,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 1,
+  "damage_min_base": 35,
+  "damage_max_base": 37,
+  "attack_point": 0.3,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 110.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "45": {
   "hero_id": 45,
@@ -213251,7 +214189,7 @@
   "damage_max": 55,
   "projectile_speed": 900,
   "armor": 3.5,
-  "magic_resistance": 25,
+  "magic_resistance": 27.7,
   "movement_speed": 325,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -216418,7 +217356,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 21,
+  "damage_max_base": 28,
+  "attack_point": 0.5,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.7,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "46": {
   "hero_id": 46,
@@ -216438,7 +217390,7 @@
   "damage_max": 56,
   "projectile_speed": 1000,
   "armor": 3.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.0,
   "movement_speed": 315,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -219304,7 +220256,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 28,
+  "damage_max_base": 33,
+  "attack_point": 0.3,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "47": {
   "hero_id": 47,
@@ -219324,7 +220290,7 @@
   "damage_max": 50,
   "projectile_speed": 1200,
   "armor": 1.5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.7,
   "movement_speed": 275,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -222587,7 +223553,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 27,
+  "damage_max_base": 29,
+  "attack_point": 0.33,
+  "attack_backswing": 1.0,
+  "base_attack_speed": 120.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 25.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 45.03,
+  "enemy_magic_res_reduction_max": 10.0
  },
  "48": {
   "hero_id": 48,
@@ -222607,7 +223587,7 @@
   "damage_max": 56,
   "projectile_speed": 900,
   "armor": 6,
-  "magic_resistance": 25,
+  "magic_resistance": 27.3,
   "movement_speed": 325,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -225686,7 +226666,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 26,
+  "damage_max_base": 32,
+  "attack_point": 0.35,
+  "attack_backswing": 0.54,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.3,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "49": {
   "hero_id": 49,
@@ -225704,9 +226698,9 @@
   "attack_rate": 1.6,
   "damage_min": 55,
   "damage_max": 61,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 2.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.8,
   "movement_speed": 310,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -228868,7 +229862,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 34,
+  "damage_max_base": 40,
+  "attack_point": 0.5,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 20.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.8,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "5": {
   "hero_id": 5,
@@ -228888,7 +229896,7 @@
   "damage_max": 54,
   "projectile_speed": 900,
   "armor": 2.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.0,
   "movement_speed": 280,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -228910,7 +229918,7 @@
   "channeling_ult_count": 1,
   "bkb_pierce_ability_count": 6,
   "undispellable_count": 3,
-  "max_cast_range": 4294967295,
+  "max_cast_range": 700,
   "ult_cd_lvl1": 100,
   "ult_cd_lvl3": 90,
   "role_carry": 0,
@@ -232036,7 +233044,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 1,
+  "ult_is_passive": 0,
+  "damage_min_base": 28,
+  "damage_max_base": 34,
+  "attack_point": 0.45,
+  "attack_backswing": 0.0,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "50": {
   "hero_id": 50,
@@ -232052,11 +233074,11 @@
   "complexity": 1,
   "attack_range": 575,
   "attack_rate": 1.7,
-  "damage_min": 19,
-  "damage_max": 25,
+  "damage_min": 47.8,
+  "damage_max": 53.8,
   "projectile_speed": 1200,
   "armor": 3.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.5,
   "movement_speed": 305,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -235271,7 +236293,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 19,
+  "damage_max_base": 25,
+  "attack_point": 0.3,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "51": {
   "hero_id": 51,
@@ -235289,9 +236325,9 @@
   "attack_rate": 1.7,
   "damage_min": 50,
   "damage_max": 52,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 3.1666667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.8,
   "movement_speed": 310,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -238469,7 +239505,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 24,
+  "damage_max_base": 26,
+  "attack_point": 0.33,
+  "attack_backswing": 0.64,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.8,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "52": {
   "hero_id": 52,
@@ -238489,7 +239539,7 @@
   "damage_max": 53,
   "projectile_speed": 900,
   "armor": 3.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.2,
   "movement_speed": 325,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -241728,7 +242778,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 27,
+  "damage_max_base": 31,
+  "attack_point": 0.4,
+  "attack_backswing": 0.6,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.2,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "53": {
   "hero_id": 53,
@@ -241744,11 +242808,11 @@
   "complexity": 2,
   "attack_range": 600,
   "attack_rate": 1.5,
-  "damage_min": 20,
-  "damage_max": 26,
+  "damage_min": 44.75,
+  "damage_max": 50.75,
   "projectile_speed": 1125,
   "armor": 2.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.2,
   "movement_speed": 295,
   "turn_rate": 0.9,
   "sight_range_day": 1800,
@@ -245017,7 +246081,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 20,
+  "damage_max_base": 26,
+  "attack_point": 0.4,
+  "attack_backswing": 0.6,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.2,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "54": {
   "hero_id": 54,
@@ -245035,9 +246113,9 @@
   "attack_rate": 1.7,
   "damage_min": 46,
   "damage_max": 52,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 3.5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.5,
   "movement_speed": 320,
   "turn_rate": 0.9,
   "sight_range_day": 1800,
@@ -248130,7 +249208,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 23,
+  "damage_max_base": 29,
+  "attack_point": 0.39,
+  "attack_backswing": 0.44,
+  "base_attack_speed": 120.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 80.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "55": {
   "hero_id": 55,
@@ -248148,9 +249240,9 @@
   "attack_rate": 1.7,
   "damage_min": 54,
   "damage_max": 60,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 5.166667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.3,
   "movement_speed": 295,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -251286,7 +252378,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 31,
+  "damage_max_base": 37,
+  "attack_point": 0.59,
+  "attack_backswing": 0.58,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.3,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "56": {
   "hero_id": 56,
@@ -251306,7 +252412,7 @@
   "damage_max": 50,
   "projectile_speed": 900,
   "armor": 4.166667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.1,
   "movement_speed": 285,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -254452,7 +255558,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 19,
+  "damage_max_base": 25,
+  "attack_point": 0.4,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.1,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "57": {
   "hero_id": 57,
@@ -254470,9 +255590,9 @@
   "attack_rate": 1.7,
   "damage_min": 53,
   "damage_max": 63,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 4.5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.8,
   "movement_speed": 310,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -257732,7 +258852,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 31,
+  "damage_max_base": 41,
+  "attack_point": 0.433,
+  "attack_backswing": 0.567,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 60.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.8,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "58": {
   "hero_id": 58,
@@ -257752,7 +258886,7 @@
   "damage_max": 53,
   "projectile_speed": 900,
   "armor": 4.166667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.2,
   "movement_speed": 320,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -260979,7 +262113,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 1,
+  "damage_min_base": 21,
+  "damage_max_base": 31,
+  "attack_point": 0.3,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.2,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "59": {
   "hero_id": 59,
@@ -260999,7 +262147,7 @@
   "damage_max": 49,
   "projectile_speed": 1400,
   "armor": 2.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.8,
   "movement_speed": 290,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -264267,7 +265415,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 21,
+  "damage_max_base": 26,
+  "attack_point": 0.3,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 30.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 48.76,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "6": {
   "hero_id": 6,
@@ -264287,7 +265449,7 @@
   "damage_max": 58,
   "projectile_speed": 1250,
   "armor": 4,
-  "magic_resistance": 25,
+  "magic_resistance": 26.5,
   "movement_speed": 310,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -267439,7 +268601,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 1,
+  "damage_min_base": 27,
+  "damage_max_base": 34,
+  "attack_point": 0.5,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "60": {
   "hero_id": 60,
@@ -267457,9 +268633,9 @@
   "attack_rate": 1.7,
   "damage_min": 63,
   "damage_max": 67,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.5,
   "movement_speed": 295,
   "turn_rate": 0.6,
   "sight_range_day": 800,
@@ -270682,7 +271858,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 40,
+  "damage_max_base": 44,
+  "attack_point": 0.55,
+  "attack_backswing": 0.55,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "61": {
   "hero_id": 61,
@@ -270700,9 +271890,9 @@
   "attack_rate": 1.7,
   "damage_min": 47,
   "damage_max": 53,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 2.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.8,
   "movement_speed": 285,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -273383,7 +274573,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 27,
+  "damage_max_base": 33,
+  "attack_point": 0.4,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 125.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.8,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "62": {
   "hero_id": 62,
@@ -273401,9 +274605,9 @@
   "attack_rate": 1.5,
   "damage_min": 54,
   "damage_max": 62,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 8.5,
-  "magic_resistance": 25,
+  "magic_resistance": 27.0,
   "movement_speed": 325,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -276630,7 +277834,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 33,
+  "damage_max_base": 41,
+  "attack_point": 0.59,
+  "attack_backswing": 0.59,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "63": {
   "hero_id": 63,
@@ -276650,7 +277868,7 @@
   "damage_max": 60,
   "projectile_speed": 900,
   "armor": 3.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.0,
   "movement_speed": 275,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -279915,7 +281133,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 37,
+  "damage_max_base": 43,
+  "attack_point": 0.55,
+  "attack_backswing": 0.36,
+  "base_attack_speed": 120.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "64": {
   "hero_id": 64,
@@ -279935,7 +281167,7 @@
   "damage_max": 61,
   "projectile_speed": 1100,
   "armor": 3.5,
-  "magic_resistance": 25,
+  "magic_resistance": 27.6,
   "movement_speed": 290,
   "turn_rate": 0.8,
   "sight_range_day": 1800,
@@ -283164,7 +284396,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 27,
+  "damage_max_base": 35,
+  "attack_point": 0.4,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.6,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "65": {
   "hero_id": 65,
@@ -283180,11 +284426,11 @@
   "complexity": 2,
   "attack_range": 400,
   "attack_rate": 1.7,
-  "damage_min": 12,
-  "damage_max": 16,
+  "damage_min": 38.1,
+  "damage_max": 42.1,
   "projectile_speed": 900,
   "armor": 3.1666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.2,
   "movement_speed": 310,
   "turn_rate": 0.9,
   "sight_range_day": 1800,
@@ -286454,7 +287700,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 12,
+  "damage_max_base": 16,
+  "attack_point": 0.3,
+  "attack_backswing": 0.54,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.2,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "66": {
   "hero_id": 66,
@@ -286474,7 +287734,7 @@
   "damage_max": 58,
   "projectile_speed": 1100,
   "armor": 1.5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.9,
   "movement_speed": 305,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -289089,7 +290349,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 29,
+  "damage_max_base": 39,
+  "attack_point": 0.5,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.9,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "67": {
   "hero_id": 67,
@@ -289107,9 +290381,9 @@
   "attack_rate": 1.8,
   "damage_min": 52,
   "damage_max": 56,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 4.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.6,
   "movement_speed": 295,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -292181,7 +293455,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 23,
+  "damage_max_base": 27,
+  "attack_point": 0.3,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 110.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.6,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "68": {
   "hero_id": 68,
@@ -292201,7 +293489,7 @@
   "damage_max": 54,
   "projectile_speed": 1250,
   "armor": 2.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.3,
   "movement_speed": 285,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -295335,7 +296623,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 21,
+  "damage_max_base": 31,
+  "attack_point": 0.45,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.3,
+  "enemy_magic_res_reduction_max": 25.0
  },
  "69": {
   "hero_id": 69,
@@ -295353,9 +296655,9 @@
   "attack_rate": 1.9,
   "damage_min": 56,
   "damage_max": 66,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 3.5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.5,
   "movement_speed": 290,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -298594,7 +299896,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 32,
+  "damage_max_base": 42,
+  "attack_point": 0.5,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 10.0,
+  "magic_res_effective_max": 33.85,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "7": {
   "hero_id": 7,
@@ -298614,7 +299930,7 @@
   "damage_max": 59,
   "projectile_speed": 0,
   "armor": 4,
-  "magic_resistance": 25,
+  "magic_resistance": 26.8,
   "movement_speed": 315,
   "turn_rate": 0.9,
   "sight_range_day": 1800,
@@ -301864,7 +303180,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 27,
+  "damage_max_base": 37,
+  "attack_point": 0.467,
+  "attack_backswing": 0.863,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.8,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "70": {
   "hero_id": 70,
@@ -301882,9 +303212,9 @@
   "attack_rate": 1.7,
   "damage_min": 42,
   "damage_max": 46,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 4,
-  "magic_resistance": 25,
+  "magic_resistance": 26.6,
   "movement_speed": 310,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -305016,7 +306346,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 24,
+  "damage_max_base": 28,
+  "attack_point": 0.3,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.6,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "71": {
   "hero_id": 71,
@@ -305034,9 +306378,9 @@
   "attack_rate": 1.9,
   "damage_min": 62,
   "damage_max": 72,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 3.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.4,
   "movement_speed": 295,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -308264,7 +309608,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 34,
+  "damage_max_base": 44,
+  "attack_point": 0.6,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 40.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 55.84,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "72": {
   "hero_id": 72,
@@ -308284,7 +309642,7 @@
   "damage_max": 49,
   "projectile_speed": 3000,
   "armor": 5.166667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.1,
   "movement_speed": 315,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -311512,7 +312870,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 18,
+  "damage_max_base": 24,
+  "attack_point": 0.2,
+  "attack_backswing": 0.1,
+  "base_attack_speed": 115.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.1,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "73": {
   "hero_id": 73,
@@ -311530,9 +312902,9 @@
   "attack_rate": 1.7,
   "damage_min": 50,
   "damage_max": 56,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 3.1666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.5,
   "movement_speed": 290,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -314800,7 +316172,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 27,
+  "damage_max_base": 33,
+  "attack_point": 0.35,
+  "attack_backswing": 0.65,
+  "base_attack_speed": 110.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "74": {
   "hero_id": 74,
@@ -314820,7 +316206,7 @@
   "damage_max": 47,
   "projectile_speed": 900,
   "armor": 1.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.2,
   "movement_speed": 280,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -318043,7 +319429,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 19,
+  "damage_max_base": 25,
+  "attack_point": 0.4,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.2,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "75": {
   "hero_id": 75,
@@ -318063,7 +319463,7 @@
   "damage_max": 57,
   "projectile_speed": 900,
   "armor": 3.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.5,
   "movement_speed": 300,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -321257,7 +322657,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 18,
+  "damage_max_base": 32,
+  "attack_point": 0.5,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 110.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "76": {
   "hero_id": 76,
@@ -321277,7 +322691,7 @@
   "damage_max": 62,
   "projectile_speed": 900,
   "armor": 2.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 28.0,
   "movement_speed": 315,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -324413,7 +325827,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 23,
+  "damage_max_base": 32,
+  "attack_point": 0.46,
+  "attack_backswing": 0.54,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 28.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "77": {
   "hero_id": 77,
@@ -324431,9 +325859,9 @@
   "attack_rate": 1.7,
   "damage_min": 52,
   "damage_max": 57,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 3,
-  "magic_resistance": 25,
+  "magic_resistance": 27.3,
   "movement_speed": 305,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -327596,7 +329024,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 24,
+  "damage_max_base": 29,
+  "attack_point": 0.55,
+  "attack_backswing": 0.25,
+  "base_attack_speed": 110.0,
+  "collision_size": 18.0,
+  "bound_radius": 8.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.3,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "78": {
   "hero_id": 78,
@@ -327612,11 +329054,11 @@
   "complexity": 3,
   "attack_range": 150,
   "attack_rate": 1.7,
-  "damage_min": 26,
-  "damage_max": 33,
-  "projectile_speed": 900,
+  "damage_min": 53.0,
+  "damage_max": 60.0,
+  "projectile_speed": 0,
   "armor": 4.166667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.7,
   "movement_speed": 310,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -330844,7 +332286,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 26,
+  "damage_max_base": 33,
+  "attack_point": 0.35,
+  "attack_backswing": 0.65,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 20.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 41.36,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "79": {
   "hero_id": 79,
@@ -330864,7 +332320,7 @@
   "damage_max": 55,
   "projectile_speed": 900,
   "armor": 3,
-  "magic_resistance": 25,
+  "magic_resistance": 27.2,
   "movement_speed": 290,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -333758,7 +335214,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 29,
+  "damage_max_base": 33,
+  "attack_point": 0.35,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.2,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "8": {
   "hero_id": 8,
@@ -333778,7 +335248,7 @@
   "damage_max": 56,
   "projectile_speed": 0,
   "armor": 5.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.4,
   "movement_speed": 305,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -336594,7 +338064,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 22,
+  "damage_max_base": 24,
+  "attack_point": 0.33,
+  "attack_backswing": 0.84,
+  "base_attack_speed": 110.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.4,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "80": {
   "hero_id": 80,
@@ -336614,7 +338098,7 @@
   "damage_max": 48,
   "projectile_speed": 1125,
   "armor": 3.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.3,
   "movement_speed": 300,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -339787,7 +341271,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 22,
+  "damage_max_base": 26,
+  "attack_point": 0.33,
+  "attack_backswing": 0.53,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.3,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "81": {
   "hero_id": 81,
@@ -339805,9 +341303,9 @@
   "attack_rate": 1.7,
   "damage_min": 56,
   "damage_max": 76,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.8,
   "movement_speed": 325,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -343023,7 +344521,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 32,
+  "damage_max_base": 52,
+  "attack_point": 0.5,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.8,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "82": {
   "hero_id": 82,
@@ -343041,9 +344553,9 @@
   "attack_rate": 1.7,
   "damage_min": 46,
   "damage_max": 52,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 5.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.8,
   "movement_speed": 310,
   "turn_rate": 0.9,
   "sight_range_day": 1800,
@@ -346149,7 +347661,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 1,
+  "damage_min_base": 29,
+  "damage_max_base": 35,
+  "attack_point": 0.38,
+  "attack_backswing": 0.6,
+  "base_attack_speed": 100.0,
+  "collision_size": 18.0,
+  "bound_radius": 8.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.8,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "83": {
   "hero_id": 83,
@@ -346167,9 +347693,9 @@
   "attack_rate": 1.9,
   "damage_min": 85,
   "damage_max": 93,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 3.5,
-  "magic_resistance": 25,
+  "magic_resistance": 27.0,
   "movement_speed": 280,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -349316,7 +350842,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 60,
+  "damage_max_base": 68,
+  "attack_point": 0.6,
+  "attack_backswing": 0.4,
+  "base_attack_speed": 90.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "84": {
   "hero_id": 84,
@@ -349334,9 +350874,9 @@
   "attack_rate": 1.7,
   "damage_min": 71,
   "damage_max": 77,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 6.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 25.0,
   "movement_speed": 290,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -352577,7 +354117,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 1,
+  "damage_min_base": 45,
+  "damage_max_base": 51,
+  "attack_point": 0.3,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 25.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "85": {
   "hero_id": 85,
@@ -352595,9 +354149,9 @@
   "attack_rate": 1.7,
   "damage_min": 55,
   "damage_max": 63,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 2.1666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.7,
   "movement_speed": 295,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -355859,7 +357413,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 33,
+  "damage_max_base": 41,
+  "attack_point": 0.3,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.7,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "86": {
   "hero_id": 86,
@@ -355879,7 +357447,7 @@
   "damage_max": 55,
   "projectile_speed": 1125,
   "armor": 4.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.4,
   "movement_speed": 290,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -359089,7 +360657,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 25,
+  "damage_max_base": 31,
+  "attack_point": 0.4,
+  "attack_backswing": 0.77,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.4,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "87": {
   "hero_id": 87,
@@ -359109,7 +360691,7 @@
   "damage_max": 51,
   "projectile_speed": 1200,
   "armor": 2.5,
-  "magic_resistance": 25,
+  "magic_resistance": 27.0,
   "movement_speed": 300,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -362233,7 +363815,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 27,
+  "damage_max_base": 31,
+  "attack_point": 0.4,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "88": {
   "hero_id": 88,
@@ -362249,11 +363845,11 @@
   "complexity": 2,
   "attack_range": 150,
   "attack_rate": 1.7,
-  "damage_min": 26,
-  "damage_max": 30,
-  "projectile_speed": 900,
+  "damage_min": 51.2,
+  "damage_max": 55.2,
+  "projectile_speed": 0,
   "armor": 4,
-  "magic_resistance": 25,
+  "magic_resistance": 27.1,
   "movement_speed": 310,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -365490,7 +367086,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 26,
+  "damage_max_base": 30,
+  "attack_point": 0.46,
+  "attack_backswing": 0.54,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.1,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "89": {
   "hero_id": 89,
@@ -365508,9 +367118,9 @@
   "attack_rate": 1.7,
   "damage_min": 45,
   "damage_max": 47,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 4.666667,
-  "magic_resistance": 25,
+  "magic_resistance": 26.9,
   "movement_speed": 330,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -368653,7 +370263,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 23,
+  "damage_max_base": 25,
+  "attack_point": 0.5,
+  "attack_backswing": 0.5,
+  "base_attack_speed": 100.0,
+  "collision_size": 18.0,
+  "bound_radius": 8.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.9,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "9": {
   "hero_id": 9,
@@ -368673,7 +370297,7 @@
   "damage_max": 54,
   "projectile_speed": 900,
   "armor": 2.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.2,
   "movement_speed": 285,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -371935,7 +373559,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 22,
+  "damage_max_base": 28,
+  "attack_point": 0.35,
+  "attack_backswing": 0.7,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.2,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "90": {
   "hero_id": 90,
@@ -371955,7 +373593,7 @@
   "damage_max": 51,
   "projectile_speed": 900,
   "armor": 2.5,
-  "magic_resistance": 25,
+  "magic_resistance": 27.4,
   "movement_speed": 310,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -375158,7 +376796,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 20,
+  "damage_max_base": 27,
+  "attack_point": 0.3,
+  "attack_backswing": 0.85,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.4,
+  "enemy_magic_res_reduction_max": 50.0
  },
  "91": {
   "hero_id": 91,
@@ -375174,11 +376826,11 @@
   "complexity": 3,
   "attack_range": 500,
   "attack_rate": 1.7,
-  "damage_min": 21,
-  "damage_max": 27,
+  "damage_min": 45.3,
+  "damage_max": 51.3,
   "projectile_speed": 1200,
   "armor": 3.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.1,
   "movement_speed": 320,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -378440,7 +380092,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 21,
+  "damage_max_base": 27,
+  "attack_point": 0.3,
+  "attack_backswing": 0.4,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.1,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "92": {
   "hero_id": 92,
@@ -378456,11 +380122,11 @@
   "complexity": 3,
   "attack_range": 600,
   "attack_rate": 1.7,
-  "damage_min": 21,
-  "damage_max": 31,
+  "damage_min": 45.75,
+  "damage_max": 55.75,
   "projectile_speed": 1400,
   "armor": 1.8333334,
-  "magic_resistance": 25,
+  "magic_resistance": 27.2,
   "movement_speed": 285,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -381707,7 +383373,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 21,
+  "damage_max_base": 31,
+  "attack_point": 0.4,
+  "attack_backswing": 0.54,
+  "base_attack_speed": 110.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.2,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "93": {
   "hero_id": 93,
@@ -381727,7 +383407,7 @@
   "damage_max": 64,
   "projectile_speed": 0,
   "armor": 3.5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.6,
   "movement_speed": 300,
   "turn_rate": 0.7,
   "sight_range_day": 1800,
@@ -384966,7 +386646,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 37,
+  "damage_max_base": 43,
+  "attack_point": 0.5,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 120.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.6,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "94": {
   "hero_id": 94,
@@ -384986,7 +386680,7 @@
   "damage_max": 54,
   "projectile_speed": 1200,
   "armor": 2.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.5,
   "movement_speed": 275,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -387829,7 +389523,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 26,
+  "damage_max_base": 32,
+  "attack_point": 0.5,
+  "attack_backswing": 0.6,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "95": {
   "hero_id": 95,
@@ -387849,7 +389557,7 @@
   "damage_max": 59,
   "projectile_speed": 1200,
   "armor": 3,
-  "magic_resistance": 25,
+  "magic_resistance": 26.3,
   "movement_speed": 290,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -390683,7 +392391,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 27,
+  "damage_max_base": 35,
+  "attack_point": 0.3,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.3,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "96": {
   "hero_id": 96,
@@ -390701,9 +392423,9 @@
   "attack_rate": 1.7,
   "damage_min": 64,
   "damage_max": 66,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 0.5,
-  "magic_resistance": 25,
+  "magic_resistance": 26.5,
   "movement_speed": 300,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -393918,7 +395640,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 36,
+  "damage_max_base": 38,
+  "attack_point": 0.3,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 90.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.5,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "97": {
   "hero_id": 97,
@@ -393934,11 +395670,11 @@
   "complexity": 2,
   "attack_range": 200,
   "attack_rate": 1.8,
-  "damage_min": 31,
-  "damage_max": 39,
-  "projectile_speed": 900,
+  "damage_min": 56.65,
+  "damage_max": 64.65,
+  "projectile_speed": 0,
   "armor": 3.3333335,
-  "magic_resistance": 25,
+  "magic_resistance": 27.0,
   "movement_speed": 305,
   "turn_rate": 0.8,
   "sight_range_day": 1800,
@@ -397216,7 +398952,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 31,
+  "damage_max_base": 39,
+  "attack_point": 0.5,
+  "attack_backswing": 0.84,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.0,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "98": {
   "hero_id": 98,
@@ -397234,9 +398984,9 @@
   "attack_rate": 1.7,
   "damage_min": 48,
   "damage_max": 52,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 2.6666667,
-  "magic_resistance": 25,
+  "magic_resistance": 27.4,
   "movement_speed": 280,
   "turn_rate": 0.6,
   "sight_range_day": 1800,
@@ -400425,7 +402175,21 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 0,
+  "damage_min_base": 25,
+  "damage_max_base": 29,
+  "attack_point": 0.36,
+  "attack_backswing": 0.64,
+  "base_attack_speed": 90.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 27.4,
+  "enemy_magic_res_reduction_max": 0.0
  },
  "99": {
   "hero_id": 99,
@@ -400443,9 +402207,9 @@
   "attack_rate": 1.8,
   "damage_min": 53,
   "damage_max": 59,
-  "projectile_speed": 900,
+  "projectile_speed": 0,
   "armor": 3.8333335,
-  "magic_resistance": 25,
+  "magic_resistance": 26.4,
   "movement_speed": 295,
   "turn_rate": 0.9,
   "sight_range_day": 1800,
@@ -403636,6 +405400,20 @@
      "neutral": {}
     }
    }
-  }
+  },
+  "has_global_cast": 0,
+  "ult_is_passive": 1,
+  "damage_min_base": 31,
+  "damage_max_base": 37,
+  "attack_point": 0.3,
+  "attack_backswing": 0.3,
+  "base_attack_speed": 100.0,
+  "collision_size": 27.0,
+  "bound_radius": 24.0,
+  "magic_res_self_sustained_max": 0.0,
+  "magic_res_self_active_max": 0.0,
+  "magic_res_talent_max": 0.0,
+  "magic_res_effective_max": 26.4,
+  "enemy_magic_res_reduction_max": 0.0
  }
 }

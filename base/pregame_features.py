@@ -53,6 +53,10 @@ SKIP_FIELDS = {
     "primary_attr", "lane_role", "primary_position", "damage_pattern",
     "positions", "facet_names", "dmg_by_pos_legacy", "dmg_by_pos_legacy_note",
     "baselines", "items_by_pos", "dmg_by_pos",
+    # Одно и то же значение у всех 127 героев: инейт есть у каждого, талантов
+    # везде восемь, роль джанглера Valve убрала. Признак из константы — это
+    # четыре мёртвые колонки на поле, а не информация.
+    "innate_count", "talent_count", "role_jungler",
 }
 # Списки способностей: не числа, но их ДЛИНА — осмысленный признак
 LIST_AS_COUNT_SUFFIX = "_abilities"

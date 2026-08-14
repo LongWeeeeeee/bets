@@ -430,6 +430,44 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 
 ---
 
+## `base/hero_features_v7.json` — карточка героев v7 (патч 7.41, 127 × 166 полей)
+
+Наследник v6: объективные величины перезаписаны из официального датафида Valve
+(`dota2.com/datafeed/herodata`), измеренное и рукописные баллы перенесены как есть.
+Сверх v6 внутри лежат два блока данных: `baselines` (герой×позиция по нашим корпусам,
+про 28 084 карты и паблик 5 093 540) и `items_by_pos` (доли предметов на конец игры).
+
+Потребитель — `base/pregame_features.py` (env `HERO_CARD_PATH`). Прод-скореры читают
+по-прежнему v6 `hero_features_processed.json`; рукописные баллы в обоих файлах совпадают.
+
+Цепочка сборки: `fetch_official_hero_data.py` → `build_hero_features_official.py`
+(в конце вызывает `patch_hero_card_v7.apply_fixes`) → `merge_hero_baselines.py` →
+`merge_hero_items.py`. Все — в `runtime/experiments/misc/`.
+
+**Величины, у которых семантика ОТЛИЧАЕТСЯ от сырого датафида** (починено 14.08.2026,
+`patch_hero_card_v7.py`, сверка с Liquipedia):
+- `max_cast_range` — максимум КОНЕЧНЫХ дальностей. Заглушки «глобально» (Crystal Maiden
+  4294967295, Ember Spirit 99999) вынесены во флаг `has_global_cast`.
+- `projectile_speed` — 0 у ближников. В датафиде у них стоит 900; Liquipedia прямо пишет:
+  «Melee units have their projectile speed set to 900, if they should ever need it».
+- `damage_min`/`damage_max` — базовый урон ПЛЮС атрибутная прибавка для всех типов
+  атрибута (у universal датафид её не добавляет вовсе: 0.45 за очко каждого атрибута).
+  Сырой базовый урон — в `damage_min_base`/`damage_max_base`.
+- `magic_resistance` — `25 + 0.1 × int_base` (в датафиде 25 у всех 127 героев).
+  Разброс 25.0…28.0%.
+
+**Поля, добавленные сверх датафида:** `has_global_cast`, `ult_is_passive` (ульт без
+перезарядки — пассивка, а не мгновенная), `damage_min_base`/`damage_max_base`,
+`magic_res_self_sustained_max` / `magic_res_self_active_max` / `magic_res_talent_max` /
+`magic_res_effective_max` / `enemy_magic_res_reduction_max`, и пять величин из
+Liquipedia, которых у Valve нет: `attack_point`, `attack_backswing`,
+`base_attack_speed`, `collision_size`, `bound_radius`.
+
+`SKIP_FIELDS` в `pregame_features.py` дополнительно исключает `innate_count`,
+`talent_count`, `role_jungler` — они одинаковы у всех 127 героев.
+
+---
+
 ## `base/id_to_names.py` — справочник команд (tier1/tier2)
 
 - `tier_one_teams: dict {name: team_id | set[ids]}` (строка 1).
@@ -450,11 +488,29 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 
 CLI: `--input-dir` (default `bets_data/analise_pub_matches/json_parts_split_from_object`) и `--output-dir` (default `data/public_draft_hero10_experiment/2026-08-04_all_public_v4`). `train_experiment(matches, output_dir, pair_min_support=30)` — порог поддержки пары в train; на маленьких выборках (тесты) снижается. Запуск только offline через `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_public_draft_hero10_experiment.py`.
 
+Бинарный over/under 43 минут — отдельный артефакт, не в этом каталоге: `base/duration_over43.py` / `base/train_duration_over43.py`.
+
 ## `base/draft_features.py` — сериализуемые энкодеры драфта
 
 `DraftFeatureEncoder.fit(heroes, kind, signed, pair_min_support=30)` → `.transform(heroes) -> csr_matrix`. `kind`: `KIND_ROLE` (`hero_role`) или `KIND_PAIR` (`hero_role_pair`). `signed=True` — победный дизайн: при обмене сторон местами матрица **точно меняет знак** (герой/роль меняют знак, синергия радианта ↔ дайра, контрпик антисимметричен по индексу героя). `signed=False` — дизайн для килов/длительности: при обмене сторон матрица **не меняется**. Неизвестный на train герой не роняет transform — его вклад обнуляется. Пары фильтруются по `pair_min_support` в train.
 
 `KillSaturationScale.fit(kills)` — эмпирическая CDF килов train: `.saturation(kills) -> [0,1]`, `.kills(saturation)` — обратно. Медианная карта → 0.50, p5 → 0.05, p95 → 0.95. MinMax по сырым тоталам так не умеет: train покрывает 6..231 килов, поэтому медиана падает на 0.32, а предсказания зажимаются в 0.17..0.47.
+
+## `base/duration_over43.py` — P(карта ≥ 43 мин) по десяти героям
+
+Предматчевый классификатор over/under 43 минуты (2580 с). Вход — ровно 10 hero ID по позициям (R1..R5, D1..D5), дизайн unsigned `hero_role` (как у duration-regression / kills-over-median: обмен сторон матрицу не меняет). Ingame-статистики и сторонние рейтинги не используются.
+
+`predict_proba(heroes) -> np.ndarray | None` — P(duration ≥ 43) по строкам. `predict_over43(heroes) -> dict | None` — одна карта: `{probability, over43, threshold_minutes, threshold_seconds}`. `over43` = `probability >= 0.5`. Отказ (нет артефакта, битый драфт, ошибка sklearn) → `None`.
+
+Артефакт: `data/duration_over43/{encoder,model}.joblib` (+ `results.json`). Env: `DURATION_OVER43_DIR`. В `cyberscore_try.py` не подключено.
+
+Прогон 2026-08-14, паблик 5 093 540 карт (доля ≥43 = 0.3273), chrono 60/20/20, C=0.03, 762 колонки. Shipped (train+val) на паблик-тесте 1 018 708: AUC **0.6015**, acc 0.6757 (majority-under ≈ 0.6747), logloss 0.6164, верхний дециль 47.1% vs нижний 19.5% при базе 32.5%. Перенос на про-тест (`TEST_FROM=1774742400`, 26 016 карт, доля 0.3410): AUC **0.5866**, acc 0.6585.
+
+## `base/train_duration_over43.py` — обучение over/under 43 минут
+
+Читает шарды `runtime/artifacts/kills/window_model_v2/rows_public.shard*.npz` (`heroes`, `ts`, `duration` в секундах). Энкодер на train, C-grid `(0.03, 0.1, 0.3, 1.0)` по val logloss, финальная модель — train+val. Пишет атомарно в `--output-dir` (default `data/duration_over43`). Дополнительно считает перенос на про (`pro_corpus_compact.npz` ∩ `pro_corpus_rich.npz`) и справочный logistic по боевым 29 (`pro_29_not_shipped`, в артефакт не входит).
+
+CLI: `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_duration_over43.py`. Тесты: `base/tests/test_duration_over43.py`.
 
 ## `base/prematch_scorer.py` — предматчевая модель победы (29 признаков, AUC 0.7140)
 
@@ -467,6 +523,8 @@ CLI: `--input-dir` (default `bets_data/analise_pub_matches/json_parts_split_from
 `PrematchModel.score(*, radiant_accounts, dire_accounts, radiant_heroes, dire_heroes, radiant_team_id, dire_team_id, draft_logit=None, strictness="teams", now_ts=None, max_age_days=3.0) -> ScoreResult`. **Дефолты не подставляются**: при нехватке данных бросает `MissingData` с перечнем недостающего. Уровни строгости: `accounts` / `teams` / `cells` / `full`. Три отдельные причины отказа — неизвестные игроки, протухший снимок (`wr30` — окно 30 дней, `vs_wr` — полураспад 45 дней), разметка позиций против истории (≥3 конфликтных слота).
 
 `ScoreResult`: `probability`, `lan_winrate`, `features` (словарь из 29), `notes`; свойства `confidence`, `pick_radiant`.
+
+Шкала колонок как в обучении (E-166): `imp_recent` = `(imp30_rad − imp30_dire) / 100` — та же `/100`, что у `hero_gpm_rel`. Без деления боевой AUC 0.7142 → 0.5981: сырой IMP даёт +10.2 в логит на типичный перевес вместо +0.10 и забивает ELO/драфт. Снимок отдаёт last-30 raw IMP, не last-10; после `/100` цена окна −0.0002. `vs_wr` = WR(rad→dire) − WR(dire→rad), не `p − 0.5`.
 
 `resolve_org(team_id, accounts) -> int` — организация по СОСТАВУ (пересечение ≥4 из 5), тег только запасной. Чинит ребрендинг: состав Iron Wing опознаётся как организация 8121295, склеившая пять team_id вместе с Tundra (8291895), и приносит 95 пар личных встреч вместо 12 у нового тега.
 
