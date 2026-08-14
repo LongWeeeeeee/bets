@@ -4411,7 +4411,7 @@ def _team_counterplay_traits(team_side_or_ids):
     return traits
 
 
-def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_dict, mid_dict, match=None, custom_weights=None,
+def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_dict, mid_dict, match=None, custom_weights=None, radiant_team_name=None, dire_team_name=None,
                               early_trio_threshold=SYNERGY_TRIO_MIN_MATCHES, mid_trio_threshold=SYNERGY_TRIO_MIN_MATCHES,
                               synergy_duo_use_max=False, early_position_weights=None, late_position_weights=None,
                               post_lane_dict=None, post_lane_trio_threshold=POST_LANE_SYNERGY_TRIO_MIN_MATCHES,
@@ -5189,7 +5189,8 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
     # Считается один раз на драфт; отказ модели даёт None и вето не включает.
     try:
         _ml_index, _ml_source = win_model_veto.win_index_ex(
-            radiant_heroes_and_pos, dire_heroes_and_pos
+            radiant_heroes_and_pos, dire_heroes_and_pos,
+            radiant_team_name, dire_team_name, match
         )
     except Exception:
         _ml_index, _ml_source = None, None
@@ -5427,6 +5428,9 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
         early_dict=early_dict,
         mid_dict=late_dict,
         post_lane_dict=post_lane_dict,
+        match=match,
+        radiant_team_name=radiant_team_name,
+        dire_team_name=dire_team_name,
     )
     base_top, base_bot, base_mid = calculate_lanes(
         radiant_heroes_and_pos, dire_heroes_and_pos, structured_lane_data

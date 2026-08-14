@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any, Optional
 
@@ -133,7 +134,98 @@ def _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[tupl
     return tuple(out)
 
 
-def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[float]:
+# --- Hybrid-рейтинг для предматчевой модели -----------------------------------
+# Колонка `hybrid_strength` артефакта равна (сила радианта − сила дайра)/400, где
+# сила — это `team_strength` из `_build_team_context`. Ту же функцию зовут и
+# `predict_match` (обучение), и `preview_team_strength` (бой), поэтому величины
+# совпадают при совпадении АРГУМЕНТОВ. Порядок игроков — по возрастанию
+# account_id: так их складывает `_extract_player_slots` в ELO/data_loader, и
+# иначе поедут ролевые рейтинги.
+_HYBRID_TIER_DEFAULT = "TIER3"
+_HYBRID_MISS = 0
+
+
+def _live_elo_model():
+    """Модель из снимка, который живой пайплайн уже держит в памяти, либо None.
+
+    Свой `json.load` того же файла запрещён: на проде это вторая копия 349-МБ
+    структуры, RSS 4 ГБ и main-thread в D-state на десятки минут.
+    """
+    import sys as _sys
+
+    module = _sys.modules.get("live_team_strength") or _sys.modules.get("ELO.live_team_strength")
+    if module is None:
+        return None
+    snapshot = getattr(module, "_SNAPSHOT_CACHE", None)
+    if not isinstance(snapshot, dict):
+        return None
+    restore = getattr(module, "_restore_model_from_snapshot", None)
+    if restore is None:
+        return None
+    try:
+        return restore(snapshot)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _slots_for_elo(side: Any) -> Optional[tuple]:
+    """((account_id, ...), ("POSITION_i", ...)) в порядке возрастания account_id."""
+    src = side or {}
+    pairs = []
+    for i in range(1, 6):
+        entry = src.get(f"pos{i}") or src.get(i) or src.get(str(i)) or {}
+        if not isinstance(entry, dict):
+            return None
+        try:
+            account = int(entry.get("account_id") or 0)
+        except (TypeError, ValueError):
+            return None
+        if account <= 0:
+            return None
+        pairs.append((account, f"POSITION_{i}"))
+    if len({a for a, _ in pairs}) != 5:
+        return None
+    pairs.sort()
+    return tuple(a for a, _ in pairs), tuple(p for _, p in pairs)
+
+
+def hybrid_strength_diff(radiant_heroes_and_pos, dire_heroes_and_pos,
+                         radiant_team_name, dire_team_name,
+                         timestamp: Optional[int] = None) -> Optional[float]:
+    """(сила радианта − сила дайра)/400 по Hybrid-рейтингу либо None."""
+    if not radiant_team_name or not dire_team_name:
+        return None
+    model = _live_elo_model()
+    if model is None:
+        return None
+    rad = _slots_for_elo(radiant_heroes_and_pos)
+    dire = _slots_for_elo(dire_heroes_and_pos)
+    if rad is None or dire is None:
+        return None
+    try:
+        from ELO.domain import LeagueTier
+    except Exception:  # noqa: BLE001
+        return None
+    tier = getattr(LeagueTier, _HYBRID_TIER_DEFAULT, None)
+    if tier is None:
+        return None
+    ts = int(timestamp or time.time())
+    try:
+        out = []
+        for name, (ids, positions) in ((str(radiant_team_name), rad), (str(dire_team_name), dire)):
+            preview = model.preview_team_strength(
+                team_id=None, team_name=name, player_ids=ids,
+                player_positions=positions, tier=tier, timestamp=max(ts, 1),
+            )
+            out.append(float(preview["team_strength"]))
+    except Exception:  # noqa: BLE001
+        return None
+    return (out[0] - out[1]) / 400.0
+
+
+def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
+                    radiant_team_name=None, dire_team_name=None,
+                    match=None) -> Optional[float]:
     """Индекс предматчевой модели или None, если данных не хватает.
 
     Аккаунты берутся из тех же диктов позиций — они там уже есть. Организация
@@ -173,18 +265,46 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[flo
         import math
         logit = math.log(max(p_draft, 1e-6) / max(1.0 - p_draft, 1e-6))
         model = ps.get_model()
+        hybrid = None
+        if "hybrid_strength" in getattr(model, "features", ()):
+            ts = None
+            if isinstance(match, dict):
+                try:
+                    ts = int(match.get("startDateTime") or 0) or None
+                except (TypeError, ValueError):
+                    ts = None
+            hybrid = hybrid_strength_diff(radiant_heroes_and_pos, dire_heroes_and_pos,
+                                          radiant_team_name, dire_team_name, ts)
+            if hybrid is None:
+                # Молчаливый уход на драфтовую модель — худший исход: предматчевая
+                # сильнее, а по логам этого не видно. Печатаем первые разы и
+                # дальше каждый сотый, чтобы не залить журнал.
+                global _HYBRID_MISS
+                _HYBRID_MISS += 1
+                if _HYBRID_MISS <= 5 or _HYBRID_MISS % 100 == 0:
+                    print(f"[win_model] hybrid_strength недоступен ({_HYBRID_MISS}-й раз): "
+                          f"radiant_team_name={radiant_team_name!r} "
+                          f"dire_team_name={dire_team_name!r}", flush=True)
         res = model.score(radiant_accounts=ra, dire_accounts=da,
                           radiant_heroes=rh, dire_heroes=dh,
                           radiant_team_id=0, dire_team_id=0,
-                          draft_logit=logit, strictness="accounts")
+                          draft_logit=logit, hybrid_strength=hybrid,
+                          strictness="accounts")
         return round((res.probability - 0.5) * 100.0, 3)
     except Exception:                                # noqa: BLE001
         return None
 
 
-def win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos):
-    """(индекс, источник). Предматчевая модель приоритетна, драфтовая — запасная."""
-    value = _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos)
+def win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
+                 radiant_team_name=None, dire_team_name=None, match=None):
+    """(индекс, источник). Предматчевая модель приоритетна, драфтовая — запасная.
+
+    Имена команд и `match` нужны только Hybrid-рейтингу: по имени резолвится
+    ключ организации (`resolve_org_key`), по `startDateTime` — момент оценки.
+    Без них предматчевая модель отказывает штатно и работает драфтовая.
+    """
+    value = _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
+                            radiant_team_name, dire_team_name, match)
     if value is not None:
         return value, SOURCE_PREMATCH
     return win_index_draft(radiant_heroes_and_pos, dire_heroes_and_pos), SOURCE_DRAFT

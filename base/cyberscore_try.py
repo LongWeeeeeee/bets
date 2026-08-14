@@ -32743,6 +32743,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     mid_dict=scoped_late_dict,
                     post_lane_dict=scoped_post_lane_dict,
                     early_end_dict=scoped_early_end_dict,
+                    radiant_team_name=radiant_team_name,
+                    dire_team_name=dire_team_name,
                 )
             finally:
                 if prev_wrapper_enabled is None:
