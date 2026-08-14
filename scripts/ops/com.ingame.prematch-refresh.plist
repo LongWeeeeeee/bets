@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ingame.prematch-refresh</string>
+    <!-- Ночная пересборка снимка предматчевой модели и доставка на serv1.
+         Исходник: scripts/run/rebuild_prematch_snapshot.sh
+
+         Зачем расписание. Снимок протухает молча: `wr30` — окно 30 дней,
+         `vs_wr` — распад 45 дней. Цена измерена (E-177): AUC 0.7313 на снимке
+         моложе трёх суток против 0.6883 на снимке старше месяца. До 14.08.2026
+         скрипт существовал, но в расписании не стоял и ни разу не запускался.
+
+         Ежедневно, потому что скорер отказывает на снимке старше трёх суток:
+         суточный шаг оставляет запас на два пропущенных прогона.
+
+         Ставится: bash scripts/ops/install-prematch-refresh.sh
+         Снять:    launchctl bootout gui/$(id -u)/com.ingame.prematch-refresh -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/alex/Documents/ingame/scripts/run/rebuild_prematch_snapshot.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>5</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <!-- RunAtLoad НЕ ставим: установка джобы не должна сама по себе запускать
+         двухчасовую пересборку и рестарт прода. -->
+    <key>StandardOutPath</key>
+    <string>/tmp/ingame_prematch_refresh.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ingame_prematch_refresh.err</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/alex/Documents/ingame</string>
+</dict>
+</plist>

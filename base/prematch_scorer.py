@@ -431,8 +431,13 @@ class PrematchModel:
             if not known:
                 notes.append("ни одной ячейки (аккаунт, герой) — hero_* нейтральны")
             hg = [c[0] if c is not None else 0.0 for c in cells]
-            gpm_rel = [c[1] for c in known] or [0.0]
-            lh_rel = [c[2] for c in known] or [0.0]
+            # E-177: усреднять надо по ВСЕМ пяти слотам с нулём за отсутствующую
+            # ячейку — так собиралась обучающая колонка (`ideas_batch1`:
+            # `gr.append(... if c_ and ca else 0.0)`). Среднее только по
+            # существующим ячейкам давало другую величину: sd 1.48 против
+            # обучающей при корреляции 0.85.
+            gpm_rel = [c[1] if c is not None else 0.0 for c in cells]
+            lh_rel = [c[2] if c is not None else 0.0 for c in cells]
             return {
                 "elo": A[:, 0].mean(), "games": A[:, 1].mean(), "opp_elo": A[:, 2].mean(),
                 "hero_pool": A[:, 3].mean(), "form": A[:, 4].mean(), "imp50": A[:, 5].mean(),
@@ -441,6 +446,12 @@ class PrematchModel:
                 "lh30": A[:, 10].mean(),
                 "lvl_rel_pos": A[:, 11].mean() if A.shape[1] > 11 else 0.0,
                 "kda_player": A[:, 12].mean() if A.shape[1] > 12 else 0.0,
+                # E-177: три величины, которые модель учила, а снимок не отдавал.
+                # Пока их в артефакте нет — старое поведение, чтобы прежний
+                # артефакт продолжал работать.
+                "imp_recent10": A[:, 15].mean() if A.shape[1] > 15 else A[:, 6].mean(),
+                "imp30_resid": A[:, 16].mean() if A.shape[1] > 16 else A[:, 6].mean(),
+                "lh30_resid": A[:, 17].mean() if A.shape[1] > 17 else A[:, 10].mean(),
                 "farm_dep": float(np.mean([self.hero_farm.get(int(h), 0.0) for h in h5])),
                 "hero_games": float(np.mean([math.log1p(max(x, 0)) for x in hg])),
                 "hero_gpm_rel": float(np.mean(gpm_rel)), "lh_rel_hero": float(np.mean(lh_rel)),
@@ -482,8 +493,11 @@ class PrematchModel:
             "hero_pool": lg1(r["hero_pool"]) - lg1(d["hero_pool"]),
             "form": r["form"] - d["form"],
             "hero_gpm_rel": (r["hero_gpm_rel"] - d["hero_gpm_rel"]) / 100.0,
-            # train (ideas_batch1 i2_imp_recent) делит на 100; без деления live AUC −0.116
-            "imp_recent": (r["imp30"] - d["imp30"]) / 100.0,
+            # train (ideas_batch1 i2_imp_recent) делит на 100; без деления live AUC −0.116.
+            # E-177: окно ДЕСЯТЬ матчей, а не тридцать — раньше сюда шло то же
+            # поле, что и в imp30, из-за чего две колонки из 35 были в бою
+            # коллинеарны (отношение sd 99.99 против 76.04 в обучении).
+            "imp_recent": (r["imp_recent10"] - d["imp_recent10"]) / 100.0,
             "wr30": r["wr30"] - d["wr30"],
             "h2h_resid": h2h,
             "gpm_rel_pos": (r["gpm_rel_pos"] - d["gpm_rel_pos"]) / 100.0,
@@ -492,8 +506,10 @@ class PrematchModel:
             "imp_rel_pos": r["imp_rel_pos"] - d["imp_rel_pos"],
             "lh_rel_hero": (r["lh_rel_hero"] - d["lh_rel_hero"]) / 100.0,
             "gpm_ewma": (r["gpm_ewma"] - d["gpm_ewma"]) / 100.0,
-            "lh30": (r["lh30"] - d["lh30"]) / 100.0,
-            "imp30": r["imp30"] - d["imp30"],
+            # E-177: обучающие v_lh30 и v_imp30 — ОСТАТКИ против нормы позиции
+            # (`ideas_batch5b`: r = st[k] - pn[k]), а не сырые величины
+            "lh30": (r["lh30_resid"] - d["lh30_resid"]) / 100.0,
+            "imp30": r["imp30_resid"] - d["imp30_resid"],
             "lvl_rel_pos": r["lvl_rel_pos"] - d["lvl_rel_pos"],
             "kda_player": r["kda_player"] - d["kda_player"],
             "farm_dep": r["farm_dep"] - d["farm_dep"],
