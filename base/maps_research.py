@@ -3329,31 +3329,38 @@ async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
     batches = [[i] for i in todo]      # один матч на запрос: батч недоступен
     run_tag = time.strftime('%Y%m%d_%H%M%S')
     path = os.path.join(out_dir, f'playback_{run_tag}.jsonl.gz')
-    # Пул строим по ВСЕМ парам, включая ключи-одиночки на общем IP: квота у
-    # каждого аккаунта своя, и простаивающий аккаунт — это потерянные 1500
-    # запросов в час.
+    # По ОДНОМУ работнику на пару, и каждый ходит ТОЛЬКО своим ключом.
+    # Общий пул тут вреден: он перебирает трекеры и повторяет запрос в уже
+    # заблокированные, из-за чего на одну карту уходило под десяток обращений
+    # (проверено 15.08: 3000 сожжённых запросов на 250 собранных карт).
+    # Свой темп на пару держит расход ниже 1500/час на аккаунт — квота считается
+    # по аккаунту, и выбитое окно стоит получаса простоя.
     try:
-        from keys import STRATZ_PAIRS
-        pool = ProxyAPIPool(STRATZ_PAIRS)
-        if show_prints:
-            print(f"🔑 пар ключ-прокси в сборе: {len(STRATZ_PAIRS)}", flush=True)
+        from keys import STRATZ_PAIRS as _PAIRS
     except Exception:
-        pool = get_proxy_pool()
-    sem = asyncio.Semaphore(max(1, int(concurrency)))
-    stats = {'ok': 0, 'unparsed': 0, 'err': 0, 'batches': 0}
-    lock = asyncio.Lock()
+        _PAIRS = list(STRATZ_PROXY_MAP.items())
+    pools = [ProxyAPIPool([pair]) for pair in _PAIRS]
+    if show_prints:
+        print(f"🔑 пар ключ-прокси в сборе: {len(pools)}, темп {pace} c на пару", flush=True)
+
+    stats = {'ok': 0, 'unparsed': 0, 'err': 0, 'batches': 0, 'requeued': 0}
     fh = _gzip.open(path, 'wt', encoding='utf-8')
+    queue = asyncio.Queue()
+    for b in batches:
+        queue.put_nowait(b)
 
-    next_at = [0.0]
-    pace_lock = asyncio.Lock()
-
-    async def one(batch):
-        async with sem:
-            async with pace_lock:
-                delay = next_at[0] - time.time()
-                if delay > 0:
-                    await asyncio.sleep(delay)
-                next_at[0] = max(time.time(), next_at[0]) + float(pace)
+    async def worker(pool_i):
+        pool = pools[pool_i]
+        next_at = 0.0
+        while True:
+            try:
+                batch = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            delay = next_at - time.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            next_at = time.time() + float(pace)
             try:
                 data = await pool.make_request(
                     url='https://api.stratz.com/graphql',
@@ -3362,30 +3369,30 @@ async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
                              "User-Agent": "STRATZ_API"},
                 )
             except Exception as exc:
-                async with lock:
-                    stats['err'] += 1
-                if show_prints and stats['err'] % 20 == 0:
+                stats['err'] += 1
+                if show_prints and stats['err'] % 50 == 0:
                     print(f"   ⚠️ ошибок {stats['err']}: {str(exc)[:80]}", flush=True)
-                return
+                data = None
             one_match = ((data or {}).get('data') or {}).get('match')
-            matches = [one_match] if one_match else []
-            async with lock:
-                for m in matches:
-                    if not m:
-                        continue
-                    row = _playback_compact(m)
-                    fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-                    stats['ok'] += 1
-                    if not row['parsed']:
-                        stats['unparsed'] += 1
-                fh.flush()          # без сброса убитый прогон теряет всё, что в буфере
-                stats['batches'] += 1
-                if show_prints and stats['batches'] % 50 == 0:
-                    print(f"   собрано {stats['ok']:,} карт ({stats['unparsed']:,} без разбора), "
-                          f"пачек {stats['batches']:,} из {len(batches):,}, ошибок {stats['err']}",
-                          flush=True)
+            if one_match is None:
+                # Ответа нет — карта не потеряна, а возвращается в очередь.
+                stats['requeued'] += 1
+                queue.put_nowait(batch)
+                await asyncio.sleep(5)
+                continue
+            row = _playback_compact(one_match)
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            fh.flush()
+            stats['ok'] += 1
+            if not row['parsed']:
+                stats['unparsed'] += 1
+            stats['batches'] += 1
+            if show_prints and stats['batches'] % 100 == 0:
+                print(f"   собрано {stats['ok']:,} карт ({stats['unparsed']:,} без разбора), "
+                      f"осталось {queue.qsize():,}, возвратов {stats['requeued']}, "
+                      f"ошибок {stats['err']}", flush=True)
 
-    await asyncio.gather(*(one(b) for b in batches))
+    await asyncio.gather(*(worker(i) for i in range(len(pools))))
     fh.close()
     if show_prints:
         print(f"✅ playback: собрано {stats['ok']:,} карт, без разбора {stats['unparsed']:,}, "
