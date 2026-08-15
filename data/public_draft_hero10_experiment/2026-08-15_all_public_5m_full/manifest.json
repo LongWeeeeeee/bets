@@ -1,0 +1,24 @@
+{
+  "experiment": "public_draft_hero10",
+  "version": "2026-08-15_all_public_5m_full",
+  "design_version": "all_public_v4_full5m",
+  "input": "/Users/alexford/ingame_ctrl/runtime/artifacts/misc/draft_full_corpus.npz",
+  "counts": {
+    "all": 5093540,
+    "train": 5093540,
+    "validation": 0,
+    "test": 0,
+    "shipped_fit_rows": 5093540
+  },
+  "held_out_test": false,
+  "artifacts": [
+    "duration_seconds_regression_model.joblib",
+    "kills_saturation_scale.joblib",
+    "level_feature_encoder.joblib",
+    "radiant_win_model.joblib",
+    "results.json",
+    "total_kills_over_median_model.joblib",
+    "total_kills_regression_model.joblib",
+    "win_feature_encoder.joblib"
+  ]
+}

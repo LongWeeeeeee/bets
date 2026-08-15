@@ -28,7 +28,7 @@ from typing import Any, Optional
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MODEL_DIR = Path(os.getenv(
     "WIN_MODEL_DIR",
-    str(PROJECT_ROOT / "data/public_draft_hero10_experiment/2026-08-04_all_public_v5_serv1_full"),
+    str(PROJECT_ROOT / "data/public_draft_hero10_experiment/2026-08-15_all_public_5m_full"),
 ))
 # Вето включено по умолчанию; выключается WIN_MODEL_VETO_ENABLED=0 без деплоя.
 VETO_ENABLED = os.getenv("WIN_MODEL_VETO_ENABLED", "1") == "1"
@@ -144,6 +144,87 @@ def _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[tupl
 _HYBRID_TIER_DEFAULT = "TIER3"
 _HYBRID_MISS = 0
 _STALE_WARNED = 0
+# Заполненность входа: сколько из 21 величины собрано из реальных данных, а не
+# заменено нулём. Отказ бросается только на семь причин, отсутствующая ячейка
+# (игрок, герой) молча становится нулём — так же, как в обучении. Замер 15.08:
+# полный вход лишь у 17% карт, в среднем занулено 3.29 слота из 10 (E-195).
+_COV_N = 0
+_COV_SUM = 0.0
+# Заполненность входа последней оценки, чтобы показать её В КАРТОЧКЕ рядом с
+# процентом модели. Держим вместе с индексом: если индекс в карточке другой,
+# значит оценка была не эта, и печатать чужое число нельзя.
+_LAST_FILL = {"index": None, "fill": None, "elo": None,
+               "draft_rank": None, "draft_share": None}
+_DRAFT_FIRST_ONLY = str(os.getenv("WIN_MODEL_DRAFT_FIRST_ONLY", "0")).strip() in ("1", "true", "yes", "on")
+# Чисто драфтовые: считаются только по десяти hero_id (и позициям).
+_DRAFT_FEATURES = frozenset({
+    "draft_logit", "vs_wr", "cp_lane", "syn_pos_mean", "wr30", "farm_dep",
+    "draft_logit_x_elo_gap", "draft_logit_x_games_exp",
+})
+# Игрок НА ГЕРОЕ — смешанные, в долю драфта не входят.
+_HERO_PLAYER_FEATURES = frozenset({
+    "hero_games", "hero_gpm_rel", "lh_rel_hero", "a_hdmg_rel_hero",
+})
+_EVAL_JOURNAL = "/root/main/runtime/prematch_model_eval.jsonl"
+_EVAL_SEEN: set = set()
+
+
+def _journal_eval(**rec) -> None:
+    """Одна строка на оценку. Дедуп в памяти: за матч снимок не меняется."""
+    try:
+        key = (rec.get("radiant_team"), rec.get("dire_team"),
+               round(float(rec.get("index") or 0.0), 2), rec.get("reason"))
+        if key in _EVAL_SEEN:
+            return
+        if len(_EVAL_SEEN) > 20000:
+            _EVAL_SEEN.clear()
+        _EVAL_SEEN.add(key)
+        import json as _json, time as _time
+        rec["ts"] = int(_time.time())
+        with open(_EVAL_JOURNAL, "a", encoding="utf-8") as f:
+            f.write(_json.dumps(rec, ensure_ascii=False) + chr(10))
+    except Exception:                                # noqa: BLE001
+        pass
+
+
+def last_model_elo(index):
+    """Разность рейтингов В ОЧКАХ, какой её видит МОДЕЛЬ.
+
+    На карточке печатается живой ELO по составу (ELO/live_team_strength.py), а
+    модель смотрит на свой рейтинг игроков из pro_features_wide (K-обновление
+    по про-корпусу, колонка хранится делённой на 400). Это разные системы, и
+    они расходятся вплоть до знака: 15.08 на карте Xtreme vs Resilience карточка
+    показывала −16, а модель видела +132. Оператор из-за этого читал «модель
+    спорит с рейтингом», хотя она с ним согласна — просто с другим.
+    """
+    try:
+        if _LAST_FILL["index"] is not None and abs(float(index) - float(_LAST_FILL["index"])) < 1e-6:
+            v = _LAST_FILL["elo"]
+            return None if v is None else float(v) * 400.0
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def last_draft_rank(index):
+    """Место драфта среди признаков, тянущих в сторону ставки, и его вклад."""
+    try:
+        if _LAST_FILL["index"] is not None and abs(float(index) - float(_LAST_FILL["index"])) < 1e-6:
+            s = _LAST_FILL.get("draft_share")
+            return (_LAST_FILL.get("draft_rank"), s) if s is not None else None
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def last_fill(index):
+    """Заполненность входа для этого индекса или None, если он не тот."""
+    try:
+        if _LAST_FILL["index"] is not None and abs(float(index) - float(_LAST_FILL["index"])) < 1e-6:
+            return _LAST_FILL["fill"]
+    except (TypeError, ValueError):
+        pass
+    return None
 # сутки, после которых снимок считается мёртвым (замер E-177)
 _SNAPSHOT_MAX_AGE_DAYS = 30.0
 # сутки, после которых устаревание уже видно в качестве и его пора чинить
@@ -328,8 +409,76 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                           draft_logit=logit, hybrid_strength=hybrid,
                           strictness="accounts",
                           now_ts=_now, max_age_days=_SNAPSHOT_MAX_AGE_DAYS)
-        return round((res.probability - 0.5) * 100.0, 3)
-    except Exception:                                # noqa: BLE001
+        _cov = getattr(res, "coverage", None) or {}
+        if _cov:
+            global _COV_N, _COV_SUM
+            _COV_N += 1
+            _COV_SUM += float(_cov.get("filled", 1.0))
+            # Пульс раз в сто оценок печатается ДАЖЕ при полном входе: иначе
+            # отсутствие строк одинаково выглядит и при заполненности 100%, и
+            # при сломанном логировании — ровно та ошибка, что дала E-193.
+            if _COV_N % 100 == 0:
+                print(f"[win_model] пульс: оценок {_COV_N}, средняя "
+                      f"заполненность входа {_COV_SUM/_COV_N:.0%}", flush=True)
+            if float(_cov.get("filled", 1.0)) < 1.0 and (_COV_N <= 20 or _COV_N % 50 == 0):
+                print(f"[win_model] вход заполнен {_cov['filled']:.0%}: ячейки "
+                      f"{_cov['cells']*10:.0f}/10, позиции {_cov['pos']*10:.0f}/10, "
+                      f"h2h {'есть' if _cov.get('h2h') else 'нет'}; p={res.probability:.3f}; "
+                      f"средняя заполненность за {_COV_N} оценок {_COV_SUM/_COV_N:.0%}",
+                      flush=True)
+        _idx = round((res.probability - 0.5) * 100.0, 3)
+        _LAST_FILL["index"] = _idx
+        _LAST_FILL["fill"] = (_cov or {}).get("filled")
+        _LAST_FILL["elo"] = (getattr(res, "features", None) or {}).get("elo")
+        _f = getattr(res, "features", None) or {}
+        # Разложение логита: вклад признака = коэффициент * стандартизованное
+        # значение. Усредняем по моделям ансамбля (сейчас модель одна).
+        try:
+            import numpy as _np
+            _x = _np.array([_f.get(k, 0.0) for k in model.features], dtype=float)
+            _contrib = _np.zeros(len(_x))
+            for _mu, _sd, _co in zip(model.mu, model.sd, model.coef):
+                _contrib += ((_x - _mu) / _sd) * _co
+            _contrib /= max(len(model.coef), 1)
+            if _idx < 0:
+                _contrib = -_contrib          # приводим к стороне ставки
+            _tot = float(_np.clip(_contrib, 0, None).sum()) or 1.0
+            _feat = list(model.features)
+            _grp = {"draft": 0.0, "hero_player": 0.0, "player": 0.0}
+            for _j, _n in enumerate(_feat):
+                _g = ("draft" if _n in _DRAFT_FEATURES else
+                      "hero_player" if _n in _HERO_PLAYER_FEATURES else "player")
+                _grp[_g] += float(_contrib[_j])
+            _LAST_FILL["draft_share"] = round(_grp["draft"] / _tot, 4)
+            _LAST_FILL["groups"] = {k: round(v / _tot, 4) for k, v in _grp.items()}
+            # ранг оставляем: место группы драфта среди трёх
+            _LAST_FILL["draft_rank"] = 1 + sorted(_grp.values(), reverse=True).index(_grp["draft"])
+        except Exception:                            # noqa: BLE001
+            _LAST_FILL["draft_rank"] = None
+            _LAST_FILL["draft_share"] = None
+            _LAST_FILL["groups"] = None
+        _journal_eval(radiant_team=str(radiant_team_name or ""),
+                      dire_team=str(dire_team_name or ""),
+                      index=_idx, confidence=round(0.5 + abs(_idx) / 100.0, 4),
+                      side="radiant" if _idx > 0 else "dire",
+                      model_elo=(None if _f.get("elo") is None
+                                 else round(float(_f["elo"]) * 400.0, 1)),
+                      draft_logit=_f.get("draft_logit"),
+                      fill=(_cov or {}).get("filled"),
+                      cells=(_cov or {}).get("cells"),
+                      h2h=(_cov or {}).get("h2h"),
+                      missing_cells=(_cov or {}).get("missing_cells"),
+                      draft_share=_LAST_FILL.get("draft_share"),
+                      groups=_LAST_FILL.get("groups"),
+                      bet=abs(_idx) >= _PREMATCH_MIN_INDEX,
+                      reason="ok")
+        return _idx
+    except Exception as _exc:                     # noqa: BLE001
+        # Причина отказа больше не теряется: без неё нельзя отличить
+        # «модель отказала» от «индекс не дотянул до порога ставки».
+        _journal_eval(radiant_team=str(radiant_team_name or ""),
+                      dire_team=str(dire_team_name or ""), index=0.0,
+                      bet=False, reason=str(_exc)[:300] or type(_exc).__name__)
         return None
 
 
@@ -430,6 +579,10 @@ def model_bet(*blocks) -> Optional[dict]:
         break
     if index is None or abs(index) < _PREMATCH_MIN_INDEX:
         return None
+    if _DRAFT_FIRST_ONLY:
+        _dr = last_draft_rank(index)
+        if not _dr or _dr[0] != 1:
+            return None
     confidence = (50.0 + abs(index)) / 100.0
     try:
         from base import prematch_scorer as ps
