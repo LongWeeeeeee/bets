@@ -3224,10 +3224,21 @@ def get_pros(max_waves=None):
 # Карты старше собирать бессмысленно.
 #
 # Лимиты. Проверено 15.08: счётчики у всех четырёх ключей ОДИНАКОВЫ
-# (час 0/1500, сутки 7500/15000) — квота общая на аккаунт, а не на ключ.
-# Поэтому смысл имеет не параллелизм по парам, а батч: по 5 матчей в запросе.
-PLAYBACK_QUERY = """query($ids: [Long]!) {
-  matches(ids: $ids) {
+# (час 0/1500, сутки 7500/15000) — квота ОБЩАЯ на аккаунт, а не на ключ.
+# Параллелизм по парам поэтому не ускоряет: он лишь быстрее выжигает одну квоту,
+# после чего всё стоит. Нужен ровный темп 1 запрос в 2.4 секунды.
+#
+# Батча нет и не будет, это проверено дважды:
+#   * `matches(ids: [...])` закрыт — «User is not an admin»;
+#   * playback внутри `teams -> matches` не влезает в бюджет сложности: потолок
+#     эндпоинта 300 000, а минимальный playback в этой форме стоит 336 821.
+#     Сложность считается СТАТИЧЕСКИ по форме запроса — take=5, take=2 и take=1
+#     дают одно и то же число, поэтому уменьшать выборку бесполезно. Проходит
+#     только `deathEvents { time }`, то есть без атакующего и жертвы — а именно
+#     они и нужны.
+# Значит один матч = один запрос.
+PLAYBACK_QUERY = """query($id: Long!) {
+  match(id: $id) {
     id parsedDateTime durationSeconds
     players {
       heroId isRadiant position
@@ -3287,8 +3298,13 @@ def _playback_done_ids(out_dir):
     return done
 
 
-async def get_playback_new(ids, out_dir, batch_size=5, concurrency=2, show_prints=True):
-    """Сбор playbackData пачками по match id. Возобновляемый."""
+async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
+                           show_prints=True):
+    """Сбор playbackData по одному матчу. Возобновляемый.
+
+    `pace` — секунд между запросами. Квота общая на аккаунт (1500/час), поэтому
+    темп держится глобально, а не на пару: иначе всплеск и получасовой простой.
+    """
     import gzip as _gzip
 
     os.makedirs(out_dir, exist_ok=True)
@@ -3300,8 +3316,7 @@ async def get_playback_new(ids, out_dir, batch_size=5, concurrency=2, show_print
     if not todo:
         return 0
 
-    batch_size = max(1, min(5, int(batch_size)))
-    batches = [todo[i:i + batch_size] for i in range(0, len(todo), batch_size)]
+    batches = [[i] for i in todo]      # один матч на запрос: батч недоступен
     run_tag = time.strftime('%Y%m%d_%H%M%S')
     path = os.path.join(out_dir, f'playback_{run_tag}.jsonl.gz')
     pool = get_proxy_pool()
@@ -3310,12 +3325,20 @@ async def get_playback_new(ids, out_dir, batch_size=5, concurrency=2, show_print
     lock = asyncio.Lock()
     fh = _gzip.open(path, 'wt', encoding='utf-8')
 
+    next_at = [0.0]
+    pace_lock = asyncio.Lock()
+
     async def one(batch):
         async with sem:
+            async with pace_lock:
+                delay = next_at[0] - time.time()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                next_at[0] = max(time.time(), next_at[0]) + float(pace)
             try:
                 data = await pool.make_request(
                     url='https://api.stratz.com/graphql',
-                    json={"query": PLAYBACK_QUERY, "variables": {"ids": batch}},
+                    json={"query": PLAYBACK_QUERY, "variables": {"id": batch[0]}},
                     headers={"Content-Type": "application/json", "Accept": "application/json",
                              "User-Agent": "STRATZ_API"},
                 )
@@ -3325,7 +3348,8 @@ async def get_playback_new(ids, out_dir, batch_size=5, concurrency=2, show_print
                 if show_prints and stats['err'] % 20 == 0:
                     print(f"   ⚠️ ошибок {stats['err']}: {str(exc)[:80]}", flush=True)
                 return
-            matches = ((data or {}).get('data') or {}).get('matches') or []
+            one_match = ((data or {}).get('data') or {}).get('match')
+            matches = [one_match] if one_match else []
             async with lock:
                 for m in matches:
                     if not m:
