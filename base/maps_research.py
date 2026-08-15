@@ -3352,6 +3352,7 @@ async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
     async def worker(pool_i):
         pool = pools[pool_i]
         next_at = 0.0
+        misses = 0        # подряд идущие пустые ответы -> растущая пауза
         while True:
             try:
                 batch = queue.get_nowait()
@@ -3378,12 +3379,15 @@ async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
                 # Ответа нет — карта не потеряна, а возвращается в очередь.
                 stats['requeued'] += 1
                 queue.put_nowait(batch)
-                # Пауза длинная намеренно: пока окно закрыто, повтор каждые пять
-                # секунд просто жжёт квоту — каждый 429 списывается как запрос.
-                # Замер 15.08: за 25 минут ожидания так ушло около тысячи
-                # запросов на ноль собранных карт.
-                await asyncio.sleep(60)
+                # Пауза растёт: каждый 429 Stratz списывает как обычный запрос,
+                # поэтому ждать надо молча. Замер 15.08: повтор каждые пять
+                # секунд сжёг около тысячи запросов за 25 минут простоя, а
+                # выбитое СУТОЧНОЕ окно ждать до полусуток — фиксированная
+                # минута стоила бы ещё 240 запросов в час из завтрашней квоты.
+                misses += 1
+                await asyncio.sleep(min(900, 60 * (2 ** min(misses - 1, 4))))
                 continue
+            misses = 0
             row = _playback_compact(one_match)
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
             fh.flush()
