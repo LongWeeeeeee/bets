@@ -26,6 +26,10 @@
 пул прокси. IP самого serv1 не занимаем: с него в OpenDota ходит прод
 (`cyberscore_try.py`).
 
+Оба лимита отвечают кодом 429, и различать их надо по заголовку `remaining-day`:
+первый прогон принял минутный отказ за суточный, все шесть адресов вышли на
+400-й карте, и вместо 18 000 собралось 2 401.
+
 Запуск — см. `collect_pro_patch()` внизу.
 """
 from __future__ import annotations
@@ -137,11 +141,12 @@ def done_ids(out_dir):
 
 # ─────────────────────────── сбор ───────────────────────────
 
-def collect(ids, out_dir, endpoints, pace=1.05, show_prints=True):
+def collect(ids, out_dir, endpoints, pace=1.25, show_prints=True):
     """По одному потоку на адрес. Каждый адрес держит СВОЮ суточную квоту.
 
-    Адрес, у которого квота кончилась, молча выходит: долбиться в 429 бесполезно,
-    Stratz и OpenDota одинаково списывают отказ как обычный запрос.
+    Ограничений ДВА, и путать их дорого: 60 запросов в минуту и 3000 в сутки.
+    Минутный отказ — повод подождать двадцать секунд, суточный — повод выйти до
+    завтра. Отличать по остатку суток в заголовке, а не по коду 429.
     """
     os.makedirs(out_dir, exist_ok=True)
     have = done_ids(out_dir)
@@ -187,11 +192,18 @@ def collect(ids, out_dir, endpoints, pace=1.05, show_prints=True):
             except Exception:                       # noqa: BLE001
                 pass
             if r.status_code == 429:
-                _requeue(mid, q, tries, stats)
-                if show_prints:
-                    print(f"   ⛔ {tag}: суточная квота выбрана, адрес выходит",
-                          flush=True)
-                return
+                # 429 бывает ДВУХ РОДОВ, и путать их дорого: первый прогон
+                # 15.08 принял минутный отказ за суточный, все шесть адресов
+                # вышли на 400-й карте, и вместо 18 000 собралось 2 401.
+                # Различать по остатку суток из заголовка, а не по коду.
+                q.put(mid)                          # не тратим попытку
+                if left is not None and left <= DAY_RESERVE:
+                    if show_prints:
+                        print(f"   ⛔ {tag}: суточная квота выбрана, адрес выходит",
+                              flush=True)
+                    return
+                time.sleep(20)
+                continue
             if r.status_code != 200:
                 with lock:
                     stats["err"] += 1
@@ -221,6 +233,11 @@ def collect(ids, out_dir, endpoints, pace=1.05, show_prints=True):
                     print(f"   💤 {tag}: осталось {left} запросов в сутках, выходит",
                           flush=True)
                 return
+            try:                                    # минутное окно у OpenDota
+                if int(r.headers.get("x-rate-limit-remaining-minute", 60)) <= 2:
+                    time.sleep(12)
+            except Exception:                       # noqa: BLE001
+                pass
             time.sleep(max(0.0, pace - (time.time() - t0)))
 
     threads = [threading.Thread(target=worker, args=(px, tag), daemon=True)
@@ -272,7 +289,7 @@ def proxy_endpoints(include_direct=False):
     return eps
 
 
-def collect_pro_patch(ids_file, out_dir, include_direct=False, pace=1.05,
+def collect_pro_patch(ids_file, out_dir, include_direct=False, pace=1.25,
                       loop_sleep=3600):
     """Проход за проходом, пока очередь не кончится.
 
