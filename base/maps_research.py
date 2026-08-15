@@ -3378,7 +3378,11 @@ async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
                 # Ответа нет — карта не потеряна, а возвращается в очередь.
                 stats['requeued'] += 1
                 queue.put_nowait(batch)
-                await asyncio.sleep(5)
+                # Пауза длинная намеренно: пока окно закрыто, повтор каждые пять
+                # секунд просто жжёт квоту — каждый 429 списывается как запрос.
+                # Замер 15.08: за 25 минут ожидания так ушло около тысячи
+                # запросов на ноль собранных карт.
+                await asyncio.sleep(60)
                 continue
             row = _playback_compact(one_match)
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
