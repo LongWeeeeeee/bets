@@ -51,8 +51,16 @@ run_chain() {
   $PY runtime/experiments/misc/add_live_maps.py
   # 4. опознание организаций по составу + история личных встреч
   $PY runtime/experiments/misc/add_org_identity.py
-  # 5. сборка боевого артефакта: снимок + веса от прошлого артефакта
+  # 5. сборка боевого артефакта: снимок + веса из отдельного файла весов.
+  #    ИМЯ ВЫХОДА ЗАДАЁТСЯ ЯВНО. До 15.08 шаг молча писал в
+  #    `prematch_model_artifact_v3_nohybrid.npz` (умолчание finalize_artifact),
+  #    а шаги 6-7 проверяли и отправляли `_v3_hybrid.npz`, которого в этой
+  #    цепочке никто не писал. Пересборка отрабатывала каждую ночь без ошибок и
+  #    доставляла на прод один и тот же файл от 14.08: снимок 11.08 и 354 тыс.
+  #    аккаунтов вместо 1.55 млн. Именно это и выглядело как «модель бесполезна»:
+  #    половина составов ей неизвестна, и она отказывается считать.
   PREMATCH_SRC=runtime/artifacts/misc/prematch_model_artifact_v2_snapshot.npz \
+  PREMATCH_OUT=runtime/artifacts/misc/prematch_model_artifact_v3_hybrid.npz \
     $PY runtime/experiments/misc/finalize_artifact.py
   # 5b. справочник написаний из цепочек ПЕРЕИМЕНОВАНИЙ (для поиска карточки у
   #     букмекера). Имена берём с прода: записи вида `tier_two_teams['ironwing']`
