@@ -174,6 +174,14 @@ class ScoreResult:
     lan_winrate: float
     features: dict[str, float] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    # Доля входа, собранная из РЕАЛЬНЫХ данных, а не заменённая нулём. При
+    # боевой строгости `teams` отказ бросается только на семь причин, а
+    # отсутствующая ячейка (игрок, герой) молча становится нулём — так же, как
+    # в обучении, поэтому это не ошибка. Но раньше об этом никто не узнавал:
+    # при трёх занулённых слотах из десяти число выглядело так же уверенно, как
+    # при полном входе. Замер 15.08: полный вход только у 17.0% карт, в среднем
+    # занулено 3.29 слота из 10 (E-195).
+    coverage: dict[str, float] = field(default_factory=dict)
 
     @property
     def confidence(self) -> float:
@@ -424,10 +432,18 @@ class PrematchModel:
             raise MissingData(miss)
 
         # ---- признаки; к этому месту все нужные данные есть
+        # Счётчики заполненности входа: сколько величин собрано из реальных
+        # данных, а сколько заменено нулём. Считаются здесь же, чтобы не
+        # расходиться с тем, что действительно попало в признаки.
+        fill = {"cells": 0, "pos": 0}
+
         def side(a5: Sequence[int], h5: Sequence[int]) -> dict[str, float]:
             A = np.array([self.acc[int(a)] for a in a5])
             cells = [self.acc_hero.get((int(a), int(h))) for a, h in zip(a5, h5)]
             known = [c for c in cells if c is not None]
+            fill["cells"] += len(known)
+            fill["pos"] += sum(1 for p, a in enumerate(a5, 1)
+                               if (int(a), p) in self.acc_pos)
             if not known:
                 notes.append("ни одной ячейки (аккаунт, герой) — hero_* нейтральны")
             hg = [c[0] if c is not None else 0.0 for c in cells]
@@ -548,7 +564,23 @@ class PrematchModel:
             z = (x - self.mu[i]) / self.sd[i]
             ps.append(1.0 / (1.0 + math.exp(-(float(z @ self.coef[i]) + float(self.intercept[i])))))
         p = float(np.mean(ps))
-        return ScoreResult(p, lan_winrate(max(p, 1.0 - p)), f, notes)
+        # h2h входит в знаменатель, только если его вообще спрашивали: при
+        # строгости `accounts` id команд не передаются (боевой вызов в
+        # `win_model_veto._prematch_index`), ключа нет, и записывать это в дыры
+        # неверно — заполненность тогда упиралась бы в 20/21 навсегда.
+        h2h_asked = key is not None
+        h2h_known = 1.0 if (h2h_asked and key in h2h_src) else 0.0
+        cov = {"cells": fill["cells"] / 10.0, "pos": fill["pos"] / 10.0,
+               "h2h": h2h_known if h2h_asked else float("nan")}
+        cov["filled"] = ((fill["cells"] + fill["pos"] + (h2h_known if h2h_asked else 0.0))
+                         / (21.0 if h2h_asked else 20.0))
+        if cov["filled"] < 1.0:
+            notes.append(
+                f"вход заполнен на {cov['filled']:.0%}: ячеек (игрок,герой) "
+                f"{fill['cells']}/10, игр на позиции {fill['pos']}/10"
+                + (f", личные встречи {'есть' if h2h_known else 'нет'}"
+                   if h2h_asked else ""))
+        return ScoreResult(p, lan_winrate(max(p, 1.0 - p)), f, notes, cov)
 
 
 _MODEL: Optional[PrematchModel] = None
