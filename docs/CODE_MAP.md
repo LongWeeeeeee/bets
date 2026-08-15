@@ -385,6 +385,20 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 
 ---
 
+## `base/ml_panel.py` — панель предматчевых ML-моделей (калибровка, пороги, журнал)
+
+- Семь предматчевых целей одним блоком: окна килов 5-15 / 10-20 / 15-25 / 20-30 («кто сделает больше»), длительность 43+, тотал карты ≥55 против ≤50, одна сторона ≥30 против ≤25. Ставок модуль **не диспатчит** — отмечает вердикты и пишет журнал.
+- `ModelSpec.calibrate(raw)` переводит сырой скор в вероятность по изотонической лестнице `knots_x → knots_y` (двоичный поиск + линейная интерполяция, без numpy и sklearn на проде). Без узлов — тождество.
+- `evaluate(spec, raw, present)` → `ModelVerdict(key, title, side, probability, threshold, fill, ok, missing, raw)`. `fill` = доля групп признаков, реально найденных; `ok` требует одновременно `confidence >= threshold` и `fill >= MIN_FILL`.
+- `best_of(verdicts)` выбирает лучшего в семействе по **калиброванной** уверенности: у моделей с разными AUC сырые шкалы несопоставимы.
+- `render(verdicts, highlight)` даёт блок `🤖 ML:` со строками `🟢/🔴 <цель>: <сторона> NN% · зап. NN%`, `✅` для выделенных.
+- `journal_row()` / `append_journal()` — JSONL по строке на карту, `schema = 1`; изменение состава полей обязано повышать номер.
+- `load_specs()` читает `panel.json` из каталога артефакта и **молчит при его отсутствии** (панель не должна ронять live). `atomic_write_specs()` пишет через tmp + `os.replace`.
+- Env: `ML_PANEL_DIR` (default `ml-models/prematch_panel`), `ML_PANEL_JOURNAL` (default `runtime/ml_panel.jsonl`), `ML_PANEL_MIN_FILL` (default `0.75`).
+- Тесты: `base/tests/test_ml_panel.py` (23 шт.) — границы калибровки, монотонность, гейт заполненности, выбор лучшего не по сырому скору, замороженный формат журнала.
+
+---
+
 ## `base/dota2protracker.py` (~1600 строк) — pro matchups/synergy + hero-registry
 
 Парсер dota2protracker.com (Camoufox/Selenium против Cloudflare). **Здесь живут hero-getters проекта.**
