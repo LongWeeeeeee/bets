@@ -411,9 +411,19 @@ class ProxyAPIPool:
     """Управляет пулом прокси-API пар с автоматическим переключением"""
     
     def __init__(self, api_to_proxy_dict):
+        """Принимает dict {прокси: ключ} ИЛИ список пар [(прокси, ключ), ...].
+
+        Список нужен, потому что на одном IP может жить больше одного ключа:
+        квота Stratz считается по АККАУНТУ (SteamId в JWT), а привязка к IP —
+        по ключу. Проверено 15.08: ключ stratz-450 отвечает 200 через
+        88.218.187.153, где уже сидит stratz-432, и счётчик у него свой.
+        Словарь такую пару выразить не может — ключ прокси в нём один.
+        """
         token_states = {}
         self.trackers = []
-        for proxy_url, api_token in api_to_proxy_dict.items():
+        pairs = (api_to_proxy_dict.items() if hasattr(api_to_proxy_dict, 'items')
+                 else list(api_to_proxy_dict))
+        for proxy_url, api_token in pairs:
             state = token_states.get(api_token)
             tracker = RateLimitTracker(proxy_url, api_token, shared_state=state)
             if api_token not in token_states:
@@ -3319,7 +3329,16 @@ async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
     batches = [[i] for i in todo]      # один матч на запрос: батч недоступен
     run_tag = time.strftime('%Y%m%d_%H%M%S')
     path = os.path.join(out_dir, f'playback_{run_tag}.jsonl.gz')
-    pool = get_proxy_pool()
+    # Пул строим по ВСЕМ парам, включая ключи-одиночки на общем IP: квота у
+    # каждого аккаунта своя, и простаивающий аккаунт — это потерянные 1500
+    # запросов в час.
+    try:
+        from keys import STRATZ_PAIRS
+        pool = ProxyAPIPool(STRATZ_PAIRS)
+        if show_prints:
+            print(f"🔑 пар ключ-прокси в сборе: {len(STRATZ_PAIRS)}", flush=True)
+    except Exception:
+        pool = get_proxy_pool()
     sem = asyncio.Semaphore(max(1, int(concurrency)))
     stats = {'ok': 0, 'unparsed': 0, 'err': 0, 'batches': 0}
     lock = asyncio.Lock()
