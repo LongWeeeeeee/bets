@@ -3233,10 +3233,12 @@ def get_pros(max_waves=None):
 # на матче возрастом 84 дня события ещё есть, на 88 уже пусто при parsedDateTime.
 # Карты старше собирать бессмысленно.
 #
-# Лимиты. Проверено 15.08: счётчики у всех четырёх ключей ОДИНАКОВЫ
-# (час 0/1500, сутки 7500/15000) — квота ОБЩАЯ на аккаунт, а не на ключ.
-# Параллелизм по парам поэтому не ускоряет: он лишь быстрее выжигает одну квоту,
-# после чего всё стоит. Нужен ровный темп 1 запрос в 2.4 секунды.
+# Лимиты. Квота СВОЯ у каждого ключа, а не общая: 15000 запросов в сутки на ключ.
+# Первый замер 15.08 («счётчики одинаковы -> квота общая») был ошибкой: счётчики
+# совпадали потому, что сборщик раскладывал нагрузку по парам поровну. Проверка
+# 15.08 вечером: у четырёх ключей x-ratelimit-limit-day = 15000 каждый, а
+# retry-after различается (39852 / 39851 / 39851 / 39850 c) — у общего счётчика
+# момент сброса был бы ОДИН. Значит параллелизм по парам ускоряет линейно.
 #
 # Батча нет и не будет, это проверено дважды:
 #   * `matches(ids: [...])` закрыт — «User is not an admin»;
@@ -3262,6 +3264,33 @@ PLAYBACK_QUERY = """query($id: Long!) {
 }"""
 
 
+# Расширенная форма. В deathEvents у Stratz есть ещё три вещи, ради которых
+# стоит второй проход:
+#   * assist — СПИСОК помогавших. Без него саппорт, который готовит убийство и
+#     не добивает, невидим совсем; «двойки-тройки kill squad» без ассистов не
+#     считаются в принципе.
+#   * timeDead — время смерти в секундах. Отделяет гибель ГЕРОЯ от гибели его
+#     юнита или клона: сейчас Meepo, Tinker и Chen выкинуты целиком, потому что
+#     различить нечем.
+#   * positionX/positionY — где убили. Даёт привязку к линии и к лесу.
+# Поля добавлены В КОНЕЦ записи смерти, чтобы старые читатели (ev[0..6])
+# продолжали работать на смешанном корпусе.
+PLAYBACK_QUERY_V2 = """query($id: Long!) {
+  match(id: $id) {
+    id parsedDateTime durationSeconds
+    players {
+      heroId isRadiant position
+      playbackData {
+        deathEvents { time attacker target byAbility byItem isBurst isFeed
+                      timeDead assist positionX positionY }
+        purchaseEvents { time itemId }
+        playerUpdateLevelEvents { time level }
+      }
+    }
+  }
+}"""
+
+
 def _playback_compact(match):
     """Только нужное: сырой ответ на 43 тысячи карт весит под гигабайт."""
     out = {"id": match.get("id"), "parsed": match.get("parsedDateTime"),
@@ -3272,9 +3301,12 @@ def _playback_compact(match):
             "hero": p.get("heroId"),
             "rad": p.get("isRadiant"),
             "pos": (p.get("position") or "").replace("POSITION_", ""),
-            "deaths": [[d.get("time"), d.get("attacker"), d.get("target"),
-                        d.get("byAbility"), d.get("byItem"),
-                        int(bool(d.get("isBurst"))), int(bool(d.get("isFeed")))]
+            "deaths": [([d.get("time"), d.get("attacker"), d.get("target"),
+                         d.get("byAbility"), d.get("byItem"),
+                         int(bool(d.get("isBurst"))), int(bool(d.get("isFeed")))]
+                        + ([d.get("timeDead"), d.get("assist") or [],
+                            d.get("positionX"), d.get("positionY")]
+                           if "assist" in d else []))
                        for d in (pb.get("deathEvents") or [])],
             "buys": [[e.get("time"), e.get("itemId")] for e in (pb.get("purchaseEvents") or [])],
             "levels": [[e.get("time"), e.get("level")]
@@ -3309,7 +3341,7 @@ def _playback_done_ids(out_dir):
 
 
 async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
-                           show_prints=True):
+                           show_prints=True, query=None):
     """Сбор playbackData по одному матчу. Возобновляемый.
 
     `pace` — секунд между запросами. Квота общая на аккаунт (1500/час), поэтому
@@ -3365,7 +3397,7 @@ async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
             try:
                 data = await pool.make_request(
                     url='https://api.stratz.com/graphql',
-                    json={"query": PLAYBACK_QUERY, "variables": {"id": batch[0]}},
+                    json={"query": query or PLAYBACK_QUERY, "variables": {"id": batch[0]}},
                     headers={"Content-Type": "application/json", "Accept": "application/json",
                              "User-Agent": "STRATZ_API"},
                 )
