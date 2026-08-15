@@ -60,6 +60,10 @@ SKIP_FIELDS = {
 }
 # Списки способностей: не числа, но их ДЛИНА — осмысленный признак
 LIST_AS_COUNT_SUFFIX = "_abilities"
+# Описательные поля карточки: строки с небольшим набором значений. Разворачиваются
+# в двоичные колонки; без этого они терялись молча (строка -> не число -> мимо).
+CATEGORICAL_FIELDS = ("initiation_reliability", "lockdown_reliability",
+                      "damage_pattern")
 
 
 def _num(x: Any) -> Optional[float]:
@@ -87,6 +91,9 @@ class PregameFeatures:
         self.hero_numeric_fields: list[str] = []
         self.baseline_metrics: dict[str, list[str]] = {}
         self.missing_families: list[str] = []
+        self.dropped_constant: list[str] = []
+        self.dropped_duplicate: list[tuple[str, str]] = []
+        self.categorical_expanded: dict[str, list[str]] = {}
         path = Path(hero_card)
         if not path.exists():
             self.missing_families.append("hero_constants+hero_baselines")
@@ -111,10 +118,38 @@ class PregameFeatures:
 
     # ---------- подготовка ----------
     def _index_fields(self) -> None:
-        """Какие поля карточки числовые у ВСЕХ героев — только их и агрегируем."""
+        """Какие поля карточки числовые у ВСЕХ героев — только их и агрегируем.
+
+        Разбор карточки 15.08 (`runtime/experiments/misc/audit_card_columns.py`):
+        из 290 числовых полей, доходивших до модели, **16 были константой на всех
+        127 героях** (`banish_*_needs_item`, `item_share_aghanims_shard` и другие),
+        а ещё 29 — точными копиями соседних колонок. Константа не может ни на что
+        повлиять, но занимает место в регуляризации и в отборе признаков у
+        деревьев, а копия удваивает вес одного и того же факта. Поэтому и то и
+        другое отсекается здесь, а не в каждом харнессе заново.
+
+        Обратное упущение: три ОПИСАТЕЛЬНЫХ поля карточки — `initiation_reliability`
+        (5 значений), `lockdown_reliability` (6), `damage_pattern` (5) — молча
+        терялись, потому что они строки. Значения распределены хорошо
+        (у lockdown: none 47, reliable 28, conditional 19, aoe 17, skillshot 12,
+        channel 4), так что это была потеря информации, а не мусор. Разворачиваем
+        в двоичные `<поле>__<значение>`.
+        """
         ids = sorted(self.heroes)
         if not ids:
             return
+        # строковые описания -> двоичные колонки (до пересечения полей)
+        for f in CATEGORICAL_FIELDS:
+            vals = {self.heroes[h].get(f) for h in ids}
+            vals = {v for v in vals if isinstance(v, str) and v}
+            if not 2 <= len(vals) <= 8:
+                continue
+            for v in sorted(vals):
+                key = f"{f}__{v}"
+                for h in ids:
+                    self.heroes[h][key] = 1.0 if self.heroes[h].get(f) == v else 0.0
+            self.categorical_expanded[f] = sorted(vals)
+
         cand = set(self.heroes[ids[0]])
         for h in ids[1:]:
             cand &= set(self.heroes[h])
@@ -127,7 +162,21 @@ class PregameFeatures:
                 num.append(f)
             elif f.endswith(LIST_AS_COUNT_SUFFIX) and all(isinstance(v, list) for v in vals):
                 lst.append(f)
-        self.hero_numeric_fields = num
+
+        seen: dict[tuple, str] = {}
+        keep = []
+        for f in num:
+            col = tuple(_num(self.heroes[h].get(f)) for h in ids)
+            if len(set(col)) == 1:
+                self.dropped_constant.append(f)
+                continue
+            first = seen.get(col)
+            if first is not None:
+                self.dropped_duplicate.append((f, first))
+                continue
+            seen[col] = f
+            keep.append(f)
+        self.hero_numeric_fields = keep
         self.hero_list_fields = lst
         # какие baseline-метрики доступны и в каком корпусе
         for corp in ("pro", "pub"):
