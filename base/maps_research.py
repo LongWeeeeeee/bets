@@ -3037,6 +3037,180 @@ def get_pros():
                              batch_concurrency=batch_concurrency))
 
 
+# ----------------------------------------------------------------------------
+# playbackData: события внутри матча
+# ----------------------------------------------------------------------------
+# Старое тело запроса (ветка pro в get_maps_new) НЕ трогаем — оно собирает итоги
+# карты. Здесь отдельный запрос за тем, чего в итогах нет в принципе:
+#   * deathEvents  — кто кого убил и чем (attacker/target/byAbility/byItem);
+#   * purchaseEvents — во сколько куплен предмет;
+#   * playerUpdateLevelEvents — во сколько взят уровень (значит и талант).
+#
+# Три вещи, которые без этого не считаются: «садится на саппортов» (нужна жертва),
+# «с какой минуты у героя сейв со скипетра» и «когда включается талант 15».
+#
+# Оговорка по хранению: детальный playback живёт у Stratz около 85 суток —
+# на матче возрастом 84 дня события ещё есть, на 88 уже пусто при parsedDateTime.
+# Карты старше собирать бессмысленно.
+#
+# Лимиты. Проверено 15.08: счётчики у всех четырёх ключей ОДИНАКОВЫ
+# (час 0/1500, сутки 7500/15000) — квота общая на аккаунт, а не на ключ.
+# Поэтому смысл имеет не параллелизм по парам, а батч: по 5 матчей в запросе.
+PLAYBACK_QUERY = """query($ids: [Long]!) {
+  matches(ids: $ids) {
+    id parsedDateTime durationSeconds
+    players {
+      heroId isRadiant position
+      playbackData {
+        deathEvents { time attacker target byAbility byItem isBurst isFeed }
+        purchaseEvents { time itemId }
+        playerUpdateLevelEvents { time level }
+      }
+    }
+  }
+}"""
+
+
+def _playback_compact(match):
+    """Только нужное: сырой ответ на 43 тысячи карт весит под гигабайт."""
+    out = {"id": match.get("id"), "parsed": match.get("parsedDateTime"),
+           "dur": match.get("durationSeconds"), "players": []}
+    for p in match.get("players") or []:
+        pb = p.get("playbackData") or {}
+        out["players"].append({
+            "hero": p.get("heroId"),
+            "rad": p.get("isRadiant"),
+            "pos": (p.get("position") or "").replace("POSITION_", ""),
+            "deaths": [[d.get("time"), d.get("attacker"), d.get("target"),
+                        d.get("byAbility"), d.get("byItem"),
+                        int(bool(d.get("isBurst"))), int(bool(d.get("isFeed")))]
+                       for d in (pb.get("deathEvents") or [])],
+            "buys": [[e.get("time"), e.get("itemId")] for e in (pb.get("purchaseEvents") or [])],
+            "levels": [[e.get("time"), e.get("level")]
+                       for e in (pb.get("playerUpdateLevelEvents") or [])],
+        })
+    return out
+
+
+def _playback_done_ids(out_dir):
+    """Обработано = карта РЕАЛЬНО лежит в данных, а не «мы к ней ходили».
+
+    Отметка по факту похода теряет карты: при исчерпании попыток id уходил в
+    обработанные пустым. Плюс убитый прогон оставляет недописанный gzip-член, и
+    всё, что дописано после него, читателю уже не видно — поэтому каждый прогон
+    пишет в СВОЙ файл.
+    """
+    import gzip as _gzip
+    done = set()
+    for name in os.listdir(out_dir) if os.path.isdir(out_dir) else []:
+        if not name.endswith('.jsonl.gz'):
+            continue
+        try:
+            with _gzip.open(os.path.join(out_dir, name), 'rt', encoding='utf-8') as fh:
+                for line in fh:
+                    try:
+                        done.add(int(json.loads(line)['id']))
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+    return done
+
+
+async def get_playback_new(ids, out_dir, batch_size=5, concurrency=2, show_prints=True):
+    """Сбор playbackData пачками по match id. Возобновляемый."""
+    import gzip as _gzip
+
+    os.makedirs(out_dir, exist_ok=True)
+    done = _playback_done_ids(out_dir)
+    todo = [int(i) for i in ids if int(i) not in done]
+    if show_prints:
+        print(f"🎬 playback: карт всего {len(ids):,}, уже собрано {len(done):,}, "
+              f"к сбору {len(todo):,}", flush=True)
+    if not todo:
+        return 0
+
+    batch_size = max(1, min(5, int(batch_size)))
+    batches = [todo[i:i + batch_size] for i in range(0, len(todo), batch_size)]
+    run_tag = time.strftime('%Y%m%d_%H%M%S')
+    path = os.path.join(out_dir, f'playback_{run_tag}.jsonl.gz')
+    pool = get_proxy_pool()
+    sem = asyncio.Semaphore(max(1, int(concurrency)))
+    stats = {'ok': 0, 'unparsed': 0, 'err': 0, 'batches': 0}
+    lock = asyncio.Lock()
+    fh = _gzip.open(path, 'wt', encoding='utf-8')
+
+    async def one(batch):
+        async with sem:
+            try:
+                data = await pool.make_request(
+                    url='https://api.stratz.com/graphql',
+                    json={"query": PLAYBACK_QUERY, "variables": {"ids": batch}},
+                    headers={"Content-Type": "application/json", "Accept": "application/json",
+                             "User-Agent": "STRATZ_API"},
+                )
+            except Exception as exc:
+                async with lock:
+                    stats['err'] += 1
+                if show_prints and stats['err'] % 20 == 0:
+                    print(f"   ⚠️ ошибок {stats['err']}: {str(exc)[:80]}", flush=True)
+                return
+            matches = ((data or {}).get('data') or {}).get('matches') or []
+            async with lock:
+                for m in matches:
+                    if not m:
+                        continue
+                    row = _playback_compact(m)
+                    fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+                    stats['ok'] += 1
+                    if not row['parsed']:
+                        stats['unparsed'] += 1
+                fh.flush()          # без сброса убитый прогон теряет всё, что в буфере
+                stats['batches'] += 1
+                if show_prints and stats['batches'] % 50 == 0:
+                    print(f"   собрано {stats['ok']:,} карт ({stats['unparsed']:,} без разбора), "
+                          f"пачек {stats['batches']:,} из {len(batches):,}, ошибок {stats['err']}",
+                          flush=True)
+
+    await asyncio.gather(*(one(b) for b in batches))
+    fh.close()
+    if show_prints:
+        print(f"✅ playback: собрано {stats['ok']:,} карт, без разбора {stats['unparsed']:,}, "
+              f"ошибок {stats['err']}, файл {path}", flush=True)
+    return stats['ok']
+
+
+def get_pros_playback(max_age_days=85, out_dir=None, limit=None):
+    """playbackData по про-картам корпуса, у которых он ещё существует.
+
+    Возраст берётся не с потолка: у Stratz детальный playback живёт около 85
+    суток (проверено на матчах 84 и 88 дней), у старых собирать нечего.
+    """
+    corpus = os.path.join(str(PRO_HEROES_DIR), "json_parts_split_from_object")
+    out_dir = out_dir or os.path.join(str(PRO_HEROES_DIR), "playback")
+    cutoff = time.time() - float(max_age_days) * 86400
+    rows = []
+    for name in sorted(os.listdir(corpus)):
+        if not name.endswith('.json') or name == 'merge_patch_summary.json':
+            continue
+        try:
+            with open(os.path.join(corpus, name), 'rb') as fh:
+                for _key, match in ijson.kvitems(fh, '', use_float=True):
+                    if not isinstance(match, dict):
+                        continue
+                    ts = match.get('startDateTime') or 0
+                    if ts and ts >= cutoff and match.get('id'):
+                        rows.append((int(ts), int(match['id'])))
+        except Exception as exc:
+            print(f"⚠️ {name}: {exc}")
+    rows = sorted(set(rows), reverse=True)      # сначала самые свежие
+    ids = [i for _ts, i in rows]
+    if limit:
+        ids = ids[:int(limit)]
+    print(f"🎬 карт моложе {max_age_days} дней: {len(ids):,}")
+    return asyncio.run(get_playback_new(ids=ids, out_dir=out_dir))
+
+
 def get_pubs():
     from concurrent.futures import ProcessPoolExecutor
     import multiprocessing
