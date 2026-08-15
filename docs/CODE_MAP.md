@@ -924,3 +924,13 @@ venv_catboost/bin/python3 pro_heroes_data/tempo_revamp_backtest.py \
 
 ## Вспомогательные / исследовательские (не live)
 `analise_database.py`, `explore_database.py`, `maps_research.py`, `networth_comeback_research.py`, `bookmaker_ocr.py`, `avito_monitor.py`, `signal_wrappers.py` (см. выше), `test.py`.
+
+### `maps_research.py` — сбор корпусов из Stratz
+
+- `get_pros()` / `get_pubs()` — сбор ИТОГОВ карт (снежный ком по командам и обход по игрокам). Тело запроса — в `get_maps_new`, ветки pub и pro.
+- `get_pros_playback(max_age_days=85, out_dir=None, limit=None)` — сбор СОБЫТИЙ внутри карты: `deathEvents` (кто кого убил, чем), `purchaseEvents` (во сколько куплен предмет), `playerUpdateLevelEvents` (во сколько взят уровень). Отдельный запрос `PLAYBACK_QUERY` по match id пачками по 5; итоги старым запросом не трогаются.
+- Ограничения Stratz, проверенные 15.08.2026 по заголовкам ответа:
+  - детальный playback живёт **около 85 суток** (на 84 днях события есть, на 88 уже нет при `parsedDateTime`), у старых карт собирать нечего;
+  - квота **общая на аккаунт, а не на ключ**: у всех четырёх пар счётчики совпадают (`час 0/1500`, `сутки 7500/15000`). Параллелизм по парам не ускоряет, ускоряет батч;
+  - ключ привязан к ОДНОМУ IP: на смену прокси API отвечает «You cannot use different IP Addresses when using the API» — отсюда пары ключ↔прокси 1:1.
+- Результат: `pro_heroes_data/playback/playback_<прогон>.jsonl.gz`, по файлу на прогон (дописывание в чужой gzip теряет данные), сброс на диск после каждой пачки, возобновляемость по фактически лежащим в файлах id.
