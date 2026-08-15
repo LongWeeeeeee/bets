@@ -471,6 +471,13 @@ Liquipedia, которых у Valve нет: `attack_point`, `attack_backswing`,
 `SKIP_FIELDS` в `pregame_features.py` дополнительно исключает `innate_count`,
 `talent_count`, `role_jungler` — они одинаковы у всех 127 героев.
 
+**Из playbackData** (`runtime/experiments/misc/playback_analysis.py`, про-корпус
+7.41, карты моложе 85 суток): `support_kill_share` и `support_kill_lift` — доля
+убийств героя, пришедшихся на вражеские позиции 4-5, и её отношение к фону;
+`scepter_minute`, `shard_minute`, `level15_minute`, `level20_minute` — медианные
+минуты по главной позиции; `playback_by_pos` — то же по каждой позиции. Значения
+считаны по 7 953 картам с событиями и уточняются после добора.
+
 ---
 
 ## `base/id_to_names.py` — справочник команд (tier1/tier2)
