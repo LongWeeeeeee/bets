@@ -73,13 +73,23 @@ run_chain() {
   # 6. проверка ПЕРЕД доставкой: артефакт обязан читаться и содержать тот же
   #    набор признаков, что и боевой. Иначе прод останется на старом файле.
   $PY - <<'CHECK'
-import sys, numpy as np
+import sys, time, numpy as np
 from pathlib import Path
 R = Path("/Users/alex/Documents/ingame")
 sys.path.insert(0, str(R / "base"))
 import prematch_scorer as ps
 new = R / "runtime/artifacts/misc/prematch_model_artifact_v3_hybrid.npz"
+# Файл ОБЯЗАН быть написан этим прогоном. Проверка структуры такого не ловит: с
+# 14.08 по 15.08 цепочка отправляла на прод файл, который сама не собирала
+# (шаг 5 писал под другим именем), и все структурные проверки проходили (E-193).
+age_min = (time.time() - new.stat().st_mtime) / 60.0
+assert age_min <= 120, f"артефакт написан {age_min:.0f} минут назад — это не результат этого прогона"
 m = ps.PrematchModel(new)
+snap_days = (time.time() - m.snapshot_ts) / 86400.0
+assert snap_days <= 10, f"снимок старше 10 суток ({snap_days:.1f}) — корпус не пополняется"
+if snap_days > 3:
+    print(f"ВНИМАНИЕ: снимку {snap_days:.1f} суток, корпус пора пополнить "
+          f"(base/maps_research.py); по E-177 это стоит до 0.04 AUC")
 assert len(m.features) == len(m.coef[0]), (len(m.features), len(m.coef[0]))
 need = ("hybrid_strength", "cp_lane", "syn_pos_mean",
         "a_hdmg_rel_pos", "a_hdmg_rel_hero", "a_nw_rel_pos")
@@ -88,7 +98,7 @@ assert not missing, f"в новом артефакте нет колонок: {m
 acc = np.load(new)["accounts"]
 assert acc.shape[1] >= 19, f"в accounts {acc.shape[1]} колонок, ожидалось >= 19"
 print(f"проверка пройдена: признаков {len(m.features)}, колонок в accounts {acc.shape[1]}, "
-      f"аккаунтов {len(m.acc):,}")
+      f"аккаунтов {len(m.acc):,}, моделей {len(m.coef)}, снимку {snap_days:.1f} суток")
 CHECK
 
   # 7. доставка. Атомарно: пишем .tmp и переименовываем поверх, чтобы прод
@@ -97,6 +107,16 @@ CHECK
       "$SERV1:/root/main/data/prematch_model_artifact_v3.npz.tmp"
   ssh "$SERV1" "mv /root/main/data/prematch_model_artifact_v3.npz.tmp \
                    /root/main/data/prematch_model_artifact_v3.npz"
+  # Сверка ПОСЛЕ доставки: единственная проверка, которая поймала бы E-193.
+  # Совпадение sha1 локального и боевого файла — доказательство, что уехало
+  # именно то, что собрано, а не одноимённый файл прошлой недели.
+  LOCAL_SHA=$(shasum -a 1 runtime/artifacts/misc/prematch_model_artifact_v3_hybrid.npz | cut -d' ' -f1)
+  REMOTE_SHA=$(ssh "$SERV1" "sha1sum /root/main/data/prematch_model_artifact_v3.npz | cut -d' ' -f1")
+  if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+    echo "ОШИБКА: на сервере другой файл ($REMOTE_SHA против $LOCAL_SHA), рестарт не делаю"
+    exit 1
+  fi
+  echo "доставка подтверждена: sha1 $LOCAL_SHA"
   scp -q data/team_org_aliases.json \
       "$SERV1:/root/main/data/team_org_aliases.json.tmp"
   ssh "$SERV1" "mv /root/main/data/team_org_aliases.json.tmp \
