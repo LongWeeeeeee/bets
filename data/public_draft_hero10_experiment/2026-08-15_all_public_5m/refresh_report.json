@@ -1,0 +1,54 @@
+{
+  "champion": "2026-08-04_all_public_v5_serv1_full",
+  "challenger": "2026-08-15_all_public_5m",
+  "champion_fit_end": 1782627457,
+  "challenger_fit_end": 1784051660,
+  "eligible_public_rows": 1018708,
+  "champion_public_auc": 0.6139629591981799,
+  "challenger_public_auc": 0.6255766124282338,
+  "eligible_pro_rows": 3563,
+  "champion_pro": {
+    "rows": 3563,
+    "base_rate": 0.5276452427729441,
+    "auc": 0.5852530309351336,
+    "auc_ci95": 0.023538428228335434,
+    "accuracy": 0.5576761156328937,
+    "top_decile_rate": 0.6657303370786517,
+    "bottom_decile_rate": 0.37640449438202245,
+    "decile_spread": 0.28932584269662925
+  },
+  "challenger_pro": {
+    "rows": 3563,
+    "base_rate": 0.5276452427729441,
+    "auc": 0.5893288327581194,
+    "auc_ci95": 0.023503901821257295,
+    "accuracy": 0.5548694920011227,
+    "top_decile_rate": 0.6685393258426966,
+    "bottom_decile_rate": 0.3651685393258427,
+    "decile_spread": 0.3033707865168539
+  },
+  "volume_control": {
+    "rows": 1187070,
+    "columns": 16763,
+    "auc": 0.6176790097169815,
+    "test_rows": 1018708,
+    "C": 0.003,
+    "warning": "контроль обучен при C=0.003, а претендент выбрал C=0.01 — числа несопоставимы"
+  },
+  "pro_audit": {
+    "files": 280,
+    "records": 1708412,
+    "accepted": 1260250,
+    "duplicate_map_id": 802,
+    "rejected": 447360,
+    "file_error": 0
+  },
+  "verdict": {
+    "decision": "PROMOTE",
+    "reasons": [
+      "публичное окно: ΔAUC +0.0116",
+      "про-окно пропущено: 0 карт < 500, статистики не хватает"
+    ]
+  },
+  "pro_delta": 0.004075801822985836
+}
