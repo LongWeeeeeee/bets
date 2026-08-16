@@ -444,6 +444,37 @@ def note_winline_current_map_service_generation(
                 pass
 
 
+# Пропажа матча из фида SourceTV — не доказательство конца карты. Probe может
+# на минуты перестать обновлять sourcetv_matches.json (реконнект к GC, пауза),
+# запись протухает по SOURCETV_STALE_SECONDS, и серия исчезает из снимка при
+# живой игре. Гасить опрос по такому сигналу нельзя: линия теряется посреди
+# карты, а в админ-чат уходит ложное «карта завершена» (16.08.2026, LGD Gaming —
+# Team Yandex, карта 3: терминал в 14:37:43 на 57-й минуте игры).
+def _winline_source_blackout_grace_seconds() -> float:
+    raw = os.getenv("WINLINE_SOURCE_BLACKOUT_GRACE_S")
+    if raw is None or str(raw).strip() == "":
+        return 300.0
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return 300.0
+    return value if value >= 0 else 300.0
+
+
+def _winline_source_blackout_within_grace(reg: Any) -> bool:
+    """Слепота источника моложе грейса — карта считается всё ещё текущей."""
+    if not isinstance(reg, dict):
+        return False
+    since = reg.get("inactive_since")
+    if since is None:
+        return False
+    try:
+        elapsed = time.time() - float(since)
+    except (TypeError, ValueError):
+        return False
+    return elapsed < _winline_source_blackout_grace_seconds()
+
+
 def _winline_current_map_is_current(**kwargs: Any) -> Any:
     """Exact-map-current predicate for the parent poller controller.
 
@@ -477,10 +508,14 @@ def _winline_current_map_is_current(**kwargs: Any) -> Any:
     if reg is None:
         return True
     if reg.get("active") is False:
+        proven = bool(reg.get("inactive_proven"))
+        if not proven and _winline_source_blackout_within_grace(reg):
+            # Источник молчит, но конец карты этим не доказан: продолжаем опрос.
+            return True
         return {
             "current": False,
             "reason": str(reg.get("inactive_reason") or "source_absent"),
-            "proven": bool(reg.get("inactive_proven")),
+            "proven": proven,
         }
     if int(reg.get("map_num") or 0) != int(map_num):
         return {"current": False, "reason": "map_rollover"}
@@ -756,6 +791,7 @@ def _reconcile_winline_sourcetv_polling(
             "active": True,
             "inactive_reason": None,
             "inactive_proven": False,
+            "inactive_since": None,
         }
 
     with _winline_current_map_state_lock:
@@ -764,11 +800,16 @@ def _reconcile_winline_sourcetv_polling(
         for series, current in list(_winline_current_map_registry.items()):
             if not str(series).startswith("sourcetv:") or series in active:
                 continue
+            was_active = current.get("active") is not False
             current["active"] = False
             current["inactive_reason"] = (
                 "source_absent" if authoritative else "source_stale"
             )
             current["inactive_proven"] = bool(authoritative)
+            # Момент начала слепоты: по нему предикат отмеряет грейс, а не гасит
+            # опрос на первом же пропуске снимка.
+            if was_active or current.get("inactive_since") is None:
+                current["inactive_since"] = time.time()
 
 
 def _winline_evidence_path_for_key(canonical_key: str) -> Path:
@@ -1868,6 +1909,7 @@ def ensure_winline_current_map_polling(
                 "active": True,
                 "inactive_reason": None,
                 "inactive_proven": False,
+                "inactive_since": None,
                 # Решающая карта: разрешает промоцию рынка «Матч» в рынок карты.
                 "series_last_map": bool(series_last_map),
             }
@@ -2157,6 +2199,7 @@ def _winline_build_odds_message(
         "change": "📊 Winline",
         "closed": "🔒 Winline",
         "terminal": "🏁 Winline",
+        "stopped": "⏹️ Winline",
     }.get(kind, "📊 Winline")
     map_label = f" · карта {map_num}" if map_num else ""
     lines = [f"{head}{map_label}", f"{team1} — {team2}"]
@@ -2164,6 +2207,10 @@ def _winline_build_odds_message(
         lines.append("рынок закрыт")
     elif kind == "terminal":
         lines.append("карта завершена")
+    elif kind == "stopped":
+        # Опрос кончился не потому, что кончилась карта: потолок безопасности или
+        # молчащий источник. Писать «карта завершена» тут значит врать в чат.
+        lines.append("опрос остановлен, конец карты не подтверждён")
     else:
         lines.append(
             f"{_winline_odds_side(prev_p1, p1)}   |   {_winline_odds_side(prev_p2, p2)}"
@@ -2177,6 +2224,7 @@ def _winline_odds_telegram_notify(
     canonical_key: Any,
     *,
     is_terminal: bool = False,
+    map_end_proven: bool = True,
     send_fn: Any = None,
     monotonic_fn: Any = None,
     stamp_fn: Any = None,
@@ -2214,7 +2262,9 @@ def _winline_odds_telegram_notify(
         prev = dict(_winline_odds_notify_state.get(key) or {})
 
     if is_terminal:
-        kind = "terminal"
+        # Терминал без доказанного конца карты (потолок 90 минут, молчащий фид)
+        # объявляем остановкой опроса, а не финишем карты.
+        kind = "terminal" if map_end_proven else "stopped"
     elif status in {"closed", "suspended"}:
         kind = "closed"
     elif not has_odds:
@@ -2227,16 +2277,18 @@ def _winline_odds_telegram_notify(
         kind = "change"
 
     # Не повторяем один и тот же служебный статус подряд.
-    if kind in {"closed", "terminal"} and prev.get("kind") == kind:
+    if kind in {"closed", "terminal", "stopped"} and prev.get("kind") == kind:
         return None
 
+    # Финальные события карты — одноразовые: троттлинг потока цен их не глушит.
+    lifecycle_kind = kind in {"terminal", "stopped"}
     min_spacing = _winline_env_float(WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, 3.0)
     max_per_min = _winline_env_float(WINLINE_ODDS_TELEGRAM_MAX_PER_MIN_ENV, 12.0)
     last_sent = prev.get("last_sent_mono")
-    if kind != "terminal" and last_sent is not None and (mono - float(last_sent)) < min_spacing:
+    if not lifecycle_kind and last_sent is not None and (mono - float(last_sent)) < min_spacing:
         return None
     recent = [t for t in (prev.get("sent_mono") or []) if mono - float(t) < 60.0]
-    if kind != "terminal" and max_per_min > 0 and len(recent) >= max_per_min:
+    if not lifecycle_kind and max_per_min > 0 and len(recent) >= max_per_min:
         return None
 
     map_num, team1, team2 = _winline_parse_canonical_key(key)
@@ -2355,11 +2407,22 @@ def _tick_winline_current_map_polling_impl(
                     notify_payload = attempt if isinstance(attempt, dict) else None
                     if notify_payload is None and isinstance(terminal, dict):
                         notify_payload = terminal
+                    lifecycle_terminal = (
+                        terminal
+                        if isinstance(terminal, dict) and not isinstance(attempt, dict)
+                        else None
+                    )
                     if isinstance(notify_payload, dict) and not from_main_loop:
                         _winline_odds_telegram_notify(
                             notify_payload,
                             key,
-                            is_terminal=isinstance(terminal, dict) and not isinstance(attempt, dict),
+                            is_terminal=lifecycle_terminal is not None,
+                            # «Карта завершена» — только когда конец карты доказан
+                            # поллером; иначе это остановка опроса.
+                            map_end_proven=bool(
+                                lifecycle_terminal
+                                and lifecycle_terminal.get("map_end_proven")
+                            ),
                         )
                 except Exception:
                     pass

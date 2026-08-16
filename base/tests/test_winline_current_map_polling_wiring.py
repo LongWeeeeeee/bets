@@ -858,6 +858,121 @@ def test_sourcetv_rollover_terminalizes_and_prunes_old_map(tmp_path, monkeypatch
     assert cs.list_winline_current_map_polling_keys() == []
 
 
+def _blackout_series_payload() -> Dict[str, Any]:
+    return {
+        "match_id": 8919836261,
+        "league_id": 17999,
+        "radiant_team_id": 101,
+        "dire_team_id": 202,
+        "radiant_team_name": "Team Spirit Academy",
+        "dire_team_name": "Aion",
+        "series_game_number": 1,
+    }
+
+
+def _register_blackout_map(tmp_path, clock) -> str:
+    payload = _blackout_series_payload()
+    series = cs._winline_sourcetv_series_key(payload)
+    cs.ensure_winline_current_map_polling(
+        series=series,
+        map_num=1,
+        team1=payload["radiant_team_name"],
+        team2=payload["dire_team_name"],
+        producer_pid=1,
+        producer_start_generation="g1",
+        monotonic_fn=clock.monotonic,
+        wall_fn=clock.time,
+        collector=lambda **_k: _missing_collector_result(),
+        evidence_path=tmp_path / "blackout.json",
+    )
+    return series
+
+
+def test_stale_sourcetv_snapshot_keeps_live_map_polling(tmp_path, monkeypatch):
+    """Probe замолчал — карта продолжает опрашиваться, а не «завершается».
+
+    Регрессия 16.08.2026 (LGD Gaming — Team Yandex, карта 3): один цикл без
+    свежего снимка убивал поллер на 57-й минуте живой игры и слал в чат
+    «карта завершена».
+    """
+    _clear_wiring_state()
+    clock = FakeClock()
+    monkeypatch.setattr(cs, "DLTV_SOURCE_MODE", "sourcetv", raising=False)
+    monkeypatch.setattr(cs, "start_winline_current_map_polling_scheduler", lambda **_k: True)
+    series = _register_blackout_map(tmp_path, clock)
+
+    # Снимок протух целиком: свежих матчей нет, но и отсутствие не доказано.
+    cs._reconcile_winline_sourcetv_polling({}, authoritative=False)
+    registry = cs._winline_current_map_registry[series]
+    assert registry["active"] is False
+    assert registry["inactive_reason"] == "source_stale"
+    assert registry["inactive_since"] is not None
+
+    clock.advance(5.0)
+    result = cs.tick_winline_current_map_polling(
+        monotonic_fn=clock.monotonic,
+        wall_fn=clock.time,
+    )
+
+    assert result and result[0].get("terminal") is None
+    assert cs.list_winline_current_map_polling_keys()
+
+
+def test_source_blackout_terminalizes_after_grace_without_proving_map_end(
+    tmp_path, monkeypatch
+):
+    """Молчание дольше грейса опрос всё же гасит, но концом карты не зовётся."""
+    _clear_wiring_state()
+    clock = FakeClock()
+    monkeypatch.setattr(cs, "DLTV_SOURCE_MODE", "sourcetv", raising=False)
+    monkeypatch.setattr(cs, "start_winline_current_map_polling_scheduler", lambda **_k: True)
+    series = _register_blackout_map(tmp_path, clock)
+
+    cs._reconcile_winline_sourcetv_polling({}, authoritative=False)
+    registry = cs._winline_current_map_registry[series]
+    registry["inactive_since"] = float(registry["inactive_since"]) - 600.0
+
+    clock.advance(5.0)
+    result = cs.tick_winline_current_map_polling(
+        monotonic_fn=clock.monotonic,
+        wall_fn=clock.time,
+    )
+
+    terminal = (result[0].get("terminal") or {}) if result else {}
+    assert terminal.get("lifecycle_event") == "source_stale"
+    assert terminal.get("map_end_proven") is False
+
+
+def test_authoritative_source_absence_terminalizes_without_grace(tmp_path, monkeypatch):
+    """Доказанное исчезновение серии из свежего снимка гасит опрос сразу."""
+    _clear_wiring_state()
+    clock = FakeClock()
+    monkeypatch.setattr(cs, "DLTV_SOURCE_MODE", "sourcetv", raising=False)
+    monkeypatch.setattr(cs, "start_winline_current_map_polling_scheduler", lambda **_k: True)
+    _register_blackout_map(tmp_path, clock)
+
+    other = {
+        "match_id": 8919999999,
+        "league_id": 17999,
+        "radiant_team_id": 303,
+        "dire_team_id": 404,
+        "radiant_team_name": "OG",
+        "dire_team_name": "Vici Gaming",
+        "series_game_number": 1,
+    }
+    cs._reconcile_winline_sourcetv_polling({"other": other}, authoritative=True)
+
+    clock.advance(5.0)
+    result = cs.tick_winline_current_map_polling(
+        monotonic_fn=clock.monotonic,
+        wall_fn=clock.time,
+    )
+
+    terminal = (result[0].get("terminal") or {}) if result else {}
+    assert terminal.get("lifecycle_event") == "source_absent"
+    assert terminal.get("map_end_proven") is True
+
+
 def test_two_active_maps_share_one_browser_snapshot(tmp_path, monkeypatch):
     _clear_wiring_state()
     clock = FakeClock()
