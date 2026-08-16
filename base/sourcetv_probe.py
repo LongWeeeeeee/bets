@@ -98,8 +98,61 @@ def _note_sourcetv_snapshot(state, game, now=None):
     return float(state.get("last_progress_at") or moment)
 
 
+# Сколько секунд молчания GC при живом матче считать эпизодом, о котором стоит
+# сказать в лог. Раньше такое молчание было невидимым: строка статуса просто
+# повторялась, а запись матча тихо исчезала из моста через 300 с.
+GC_STALL_WARN_SECONDS = 120.0
+
+def _note_gc_stall(mid, state, now=None, logger=None):
+    """Один раз на эпизод сообщить, что GC молчит, и один раз — что ожил."""
+    if not isinstance(state, dict):
+        return False
+    moment = float(time.time() if now is None else now)
+    try:
+        progress_at = float(state.get("last_progress_at") or 0)
+    except (TypeError, ValueError):
+        progress_at = 0.0
+    if progress_at <= 0:
+        return False
+    stall = moment - progress_at
+    sink = logger if logger is not None else log
+    if stall >= GC_STALL_WARN_SECONDS:
+        if state.get("gc_stall_logged"):
+            return False
+        state["gc_stall_logged"] = True
+        try:
+            api_seen = float(state.get("last_api_seen") or 0)
+        except (TypeError, ValueError):
+            api_seen = 0.0
+        sink.warning(
+            "матч %s: GC молчит %.0f c; live-список подтверждал %.0f c назад — "
+            "держим запись живой",
+            mid,
+            stall,
+            (moment - api_seen) if api_seen > 0 else -1.0,
+        )
+        return True
+    if state.get("gc_stall_logged"):
+        state["gc_stall_logged"] = False
+        sink.info("матч %s: GC снова отдаёт прогресс", mid)
+        return True
+    return False
+
+
 def _sourcetv_snapshot_timestamp(state, now=None):
-    """Timestamp exported to the bridge: last real progress, not last rewrite."""
+    """Timestamp exported to the bridge: last real progress, not last rewrite.
+
+    Замерший GC — НЕ признак конца карты. Ретрансляция SourceTV пропадает на
+    минуты при живой игре (16.08.2026, LGD Gaming — Team Yandex, карта 3: между
+    51:47 и 57:23 не пришло ни одной свежей строки), и точно так же замирает
+    любая техническая пауза. Пока live-список Valve подтверждает матч, запись
+    не имеет права стареть: иначе мост сам выбрасывает живую карту, файл
+    становится пустым, и потребитель читает это как доказанный конец карты.
+
+    Тот же live-список — единственный признак конца у матча-призрака, который
+    Valve может отдавать по GC бесконечно: из списка он исчезает, и запись
+    стареет ровно как раньше.
+    """
     moment = float(time.time() if now is None else now)
     game = state.get("game") if isinstance(state, dict) else {}
     try:
@@ -112,6 +165,11 @@ def _sourcetv_snapshot_timestamp(state, now=None):
         value = float(state.get(key) or 0)
     except (TypeError, ValueError, AttributeError):
         value = 0.0
+    try:
+        api_seen = float((state or {}).get("last_api_seen") or 0)
+    except (TypeError, ValueError, AttributeError):
+        api_seen = 0.0
+    value = max(value, api_seen)
     return value if value > 0 else moment
 
 
@@ -678,7 +736,8 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                  mid, t["rad"], t["rad_id"], t["dire"], t["dire_id"],
                  t["lobby_id"], t["league_id"], t.get("series_id"))
 
-    # per-match mutable state (last_seen: time of last GC update — used for refetch pruning)
+    # per-match mutable state (last_seen: time of last GC update — used for refetch pruning;
+    # last_api_seen: time of last live-list confirmation — держит запись живой при замершем GC)
     states = {
         mid: {
             "game": None,
@@ -686,7 +745,9 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
             "last_heroes_key": None,
             "last_seen": 0.0,
             "last_progress_at": 0.0,
+            "last_api_seen": 0.0,
             "progress_signature": None,
+            "gc_stall_logged": False,
         }
         for mid in targets
     }
@@ -984,7 +1045,9 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                     "last_heroes_key": None,
                                     "last_seen": 0.0,
                                     "last_progress_at": 0.0,
+                                    "last_api_seen": 0.0,
                                     "progress_signature": None,
+                                    "gc_stall_logged": False,
                                 }
                                 if ft["lobby_id"]:
                                     all_lobby_ids.append(ft["lobby_id"])
@@ -995,6 +1058,10 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                 for _sf in ("series_id", "series_type", "radiant_series_wins",
                                             "dire_series_wins", "game_number"):
                                     targets[fmid][_sf] = fg.get(_sf)
+                            # Матч в live-списке Valve — подтверждение, что карта идёт,
+                            # даже когда GC замер и прогресса нет. По этой метке запись
+                            # в мосте не стареет (см. _sourcetv_snapshot_timestamp).
+                            states[fmid]["last_api_seen"] = _refetch_now
                         # Прунинг: матчи, исчезнувшие из API и давно не обновлявшиеся
                         for fmid in list(targets):
                             if fmid not in fresh_mids and _refetch_now - states[fmid].get("last_seen", 0) > 300:
@@ -1012,6 +1079,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                     g = st["game"]
                     if not g:
                         continue
+                    _note_gc_stall(mid, st)
                     hk = tuple(p["hero"] for p in g["players"])
                     heroes_changed = hk != st["last_heroes_key"] and any(h != "—" for h in hk)
                     if heroes_changed:

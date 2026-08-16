@@ -62,6 +62,75 @@ def test_sourcetv_bridge_timestamp_tracks_real_progress_not_rewrites() -> None:
     assert probe._sourcetv_snapshot_timestamp(state, now=501.0) == 501.0
 
 
+def test_live_list_keeps_bridge_record_fresh_while_gc_is_silent() -> None:
+    """Замерший GC при живом матче не имеет права состарить запись.
+
+    Регрессия 16.08.2026 (LGD Gaming — Team Yandex, карта 3): ретрансляция
+    молчала с 51:47 до 57:23, запись протухла по last_progress_at, probe сам
+    вычистил живую карту из моста, и потребитель прочитал пустой файл как
+    доказанный конец карты.
+    """
+    state = {"game": None, "last_seen": 0.0, "last_progress_at": 0.0}
+    row = {
+        "game_time": 3107,
+        "radiant_score": 24,
+        "dire_score": 23,
+        "radiant_lead": 18553,
+    }
+    probe._note_sourcetv_snapshot(state, row, now=100.0)
+    state["game"] = row
+
+    # GC молчит пять с половиной минут, но live-список Valve держит матч.
+    state["last_api_seen"] = 420.0
+    assert probe._sourcetv_snapshot_timestamp(state, now=430.0) == 420.0
+
+
+def test_ghost_match_without_live_list_confirmation_still_ages() -> None:
+    """Матч-призрак исчезает из live-списка — запись стареет ровно как раньше."""
+    state = {"game": None, "last_seen": 0.0, "last_progress_at": 0.0}
+    row = {
+        "game_time": 4092,
+        "radiant_score": 26,
+        "dire_score": 40,
+        "radiant_lead": 80583,
+    }
+    probe._note_sourcetv_snapshot(state, row, now=100.0)
+    state["game"] = row
+    state["last_api_seen"] = 100.0
+
+    # Valve продолжает отдавать ту же законченную строку по GC.
+    probe._note_sourcetv_snapshot(state, dict(row), now=600.0)
+    assert state["last_seen"] == 600.0
+    assert probe._sourcetv_snapshot_timestamp(state, now=600.0) == 100.0
+
+
+class _LogSink:
+    def __init__(self) -> None:
+        self.warnings: list = []
+        self.infos: list = []
+
+    def warning(self, *args) -> None:
+        self.warnings.append(args)
+
+    def info(self, *args) -> None:
+        self.infos.append(args)
+
+
+def test_gc_stall_is_reported_once_per_episode() -> None:
+    """Молчание ретранслятора видно в логе, но не заливает его каждую секунду."""
+    sink = _LogSink()
+    state = {"last_progress_at": 100.0, "last_api_seen": 400.0, "gc_stall_logged": False}
+
+    assert probe._note_gc_stall(1, state, now=150.0, logger=sink) is False
+    assert probe._note_gc_stall(1, state, now=400.0, logger=sink) is True
+    assert probe._note_gc_stall(1, state, now=402.0, logger=sink) is False
+    assert len(sink.warnings) == 1
+
+    state["last_progress_at"] = 410.0
+    assert probe._note_gc_stall(1, state, now=411.0, logger=sink) is True
+    assert len(sink.infos) == 1
+
+
 def test_sourcetv_pregame_timestamp_uses_latest_receipt() -> None:
     state = {
         "game": {"game_time": -45},
