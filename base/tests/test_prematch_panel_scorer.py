@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from prematch_panel_scorer import (  # noqa: E402
     NEUTRAL, PanelBundle, assemble, block_from_matrix,
-    block_from_prod_features, group_of, load_bundle, score,
+    block_from_prod_features, draft_mask, group_of, load_bundle, score,
 )
 
 COLS = ("prod35_0", "prod35_1", "sym_0", "kwdict_a", "publogit_x",
@@ -153,3 +153,27 @@ class TestLoadBundle:
         atomic_write_specs([spec()], tmp_path)
         (tmp_path / "feature_names.json").write_text("{", encoding="utf-8")
         assert load_bundle(tmp_path).ready is False
+
+
+class TestDraftMask:
+    def test_hero_derived_blocks_are_draft(self):
+        m = draft_mask(("sym_0", "publogit_x", "kwdict_a", "F6_h_dur_mean_diff",
+                        "F8_pair_syn0_mean"))
+        assert m.all()
+
+    def test_player_and_team_blocks_are_not_draft(self):
+        """F7 — приоры ИГРОКА, rating и hybrid — сила команд, это не пик."""
+        m = draft_mask(("F7_p_dur_mean_sum", "rating_0", "hybrid_1"))
+        assert not m.any()
+
+    def test_prod35_split_by_name_order(self):
+        cols = ("prod35_0", "prod35_1", "prod35_2")
+        m = draft_mask(cols, prod35_names=["draft_logit", "elo", "cp_lane"])
+        assert list(m) == [True, False, True]
+
+    def test_prod35_without_order_counts_as_not_draft(self):
+        assert not draft_mask(("prod35_0",)).any()
+
+    def test_length_matches_columns(self):
+        cols = ("sym_0", "rating_1", "F6_x", "prod35_0")
+        assert len(draft_mask(cols, ["draft_logit"])) == len(cols)

@@ -148,7 +148,8 @@ class TestJournal:
         assert row["league"] == "X"
         assert set(row["models"][0]) == {"key", "side", "p", "confidence",
                                          "threshold", "fill", "ok", "missing",
-                                         "raw"}
+                                         "raw", "draft_share", "band_hit",
+                                         "band_n", "odds"}
 
     def test_append_writes_one_line_each(self, tmp_path):
         p = tmp_path / "j.jsonl"
@@ -158,7 +159,61 @@ class TestJournal:
         assert [json.loads(x)["a"] for x in lines] == [1, 2]
 
 
+BANDS = ({"lo": 0.50, "hit": 0.535, "n": 6415},
+         {"lo": 0.70, "hit": 0.718, "n": 1705},
+         {"lo": 0.85, "hit": 0.940, "n": 521})
+
+
+def banded(threshold=0.60):
+    return ModelSpec("w", "окно", "Radiant", "Dire", threshold, ("draft",),
+                     KNOTS_X, KNOTS_Y, BANDS)
+
+
+class TestBandsAndOdds:
+    def test_band_picked_by_upper_bound(self):
+        s = banded()
+        assert s.band_hit(0.72) == (0.718, 1705)
+        assert s.band_hit(0.99) == (0.940, 521)
+
+    def test_below_first_band_is_none(self):
+        assert ModelSpec("w", "t", "A", "B", 0.6, bands=BANDS).band_hit(0.10) is None
+
+    def test_odds_are_break_even_of_observed_hit(self):
+        assert banded().fair_odds(0.86) == pytest.approx(1 / 0.940)
+
+    def test_no_bands_no_odds(self):
+        assert ModelSpec("w", "t", "A", "B", 0.6).fair_odds(0.9) is None
+
+    def test_verdict_carries_band_and_odds(self):
+        v = evaluate(banded(), 2.0, {"draft": True})
+        assert v.band_hit == pytest.approx(0.940)
+        assert v.band_n == 521
+        assert v.odds == pytest.approx(1 / 0.940)
+
+    def test_render_shows_draft_and_odds(self):
+        v = evaluate(banded(0.55), 2.0, {"draft": True}, draft_share=0.42)
+        text = render([v])
+        assert "драфт +42%" in text
+        assert "кэф от 1.06" in text
+
+    def test_render_shows_draft_against(self):
+        """Отрицательная доля означает, что решение принято ВОПРЕКИ драфту."""
+        v = evaluate(banded(0.55), 2.0, {"draft": True}, draft_share=-0.19)
+        assert "драфт -19%" in render([v])
+
+    def test_render_omits_absent_extras(self):
+        v = evaluate(ModelSpec("w", "окно", "A", "B", 0.55, ("draft",),
+                               KNOTS_X, KNOTS_Y), 2.0, {"draft": True})
+        text = render([v])
+        assert "драфт" not in text and "кэф" not in text
+
+
 class TestArtifact:
+    def test_bands_survive_roundtrip(self, tmp_path):
+        atomic_write_specs([banded()], tmp_path)
+        back = load_specs(tmp_path)[0]
+        assert back.band_hit(0.9) == (0.940, 521)
+
     def test_roundtrip(self, tmp_path):
         s = spec()
         atomic_write_specs([s], tmp_path)

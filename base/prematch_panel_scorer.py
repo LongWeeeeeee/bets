@@ -91,9 +91,12 @@ def load_bundle(directory: Path | None = None) -> PanelBundle:
             m.load_model(str(path))
         except Exception:                      # битый файл не должен ронять live
             continue
-        if m.n_features_in_ != len(columns):
+        # Ширину спрашиваем у `feature_names_`: `n_features_in_` после
+        # `load_model` остаётся нулём, и проверка по нему падала бы всегда.
+        width = len(getattr(m, "feature_names_", None) or ()) or None
+        if width is not None and width != len(columns):
             raise ValueError(
-                f"{s.key}: модель ждёт {m.n_features_in_} колонок, а в "
+                f"{s.key}: модель ждёт {width} колонок, а в "
                 f"feature_names.json их {len(columns)} — артефакт несогласован")
         models[s.key] = m
     return PanelBundle(tuple(specs), columns, models, n_prior)
@@ -130,8 +133,73 @@ def assemble(columns: Sequence[str],
     return out, present
 
 
+# Драфтовые блоки: всё, что определяется выбранными героями и их позициями.
+# `F6_` — приоры ГЕРОЯ, тоже свойство драфта; `F7_` — приоры ИГРОКА, это уже
+# сила состава, а не пик, и в долю драфта не входит. `rating` и `hybrid` —
+# сила команд, тоже не драфт.
+DRAFT_PREFIX: tuple[str, ...] = ("sym_", "publogit_", "kwdict_", "F6_", "F8_")
+# Драфтовые имена внутри боевых 35 колонок — сопоставляются через `prod35_names`
+# из артефакта, потому что сами колонки названы позиционно.
+DRAFT_PROD35: frozenset[str] = frozenset({
+    "draft_logit", "vs_wr", "cp_lane", "syn_pos_mean", "hero_pool", "wr30",
+    "farm_dep", "draft_logit_x_elo_gap", "draft_logit_x_games_exp"})
+
+
+def draft_mask(columns: Sequence[str],
+               prod35_names: Sequence[str] = ()) -> np.ndarray:
+    """Какие колонки относятся к драфту, а какие к силе состава."""
+    order = list(prod35_names)
+    out = np.zeros(len(columns), dtype=bool)
+    for i, nm in enumerate(columns):
+        if nm.startswith(DRAFT_PREFIX):
+            out[i] = True
+        elif nm.startswith("prod35_") and order:
+            try:
+                j = int(nm.split("_", 1)[1])
+            except ValueError:
+                continue
+            if 0 <= j < len(order) and order[j] in DRAFT_PROD35:
+                out[i] = True
+    return out
+
+
+def draft_share(model: Any, row: np.ndarray, mask: np.ndarray,
+                toward_positive: bool = True) -> float | None:
+    """Доля драфта в решении по ЭТОЙ карте — ЗНАКОВАЯ, к стороне вердикта.
+
+      +N%  драфт тянет ЗА ту сторону, которую называет модель;
+      −N%  драфт тянет ПРОТИВ неё, и модель приняла решение вопреки ему.
+
+    Без знака число отвечало бы на вопрос «насколько драфт вообще участвовал»,
+    а спрашивают обычно другое: «драфт был за или против?». Знак приводится к
+    стороне вердикта, как это сделано в боевой строке предматчевой модели.
+
+    Знаменатель — сумма МОДУЛЕЙ всех вкладов, поэтому доли групп в сумме дают
+    единицу и число не может улететь за 100%. В боевой строке знаменателем
+    служит сумма только положительных вкладов, из-за чего доли там не
+    складываются; здесь это исправлено.
+    """
+    try:
+        from catboost import Pool
+
+        sv = model.get_feature_importance(Pool(row), type="ShapValues")
+    except Exception:
+        return None
+    v = np.asarray(sv)[0][:-1]                  # последний элемент — базовое значение
+    if len(v) != len(mask):
+        return None
+    total = float(np.abs(v).sum())
+    if total <= 0:
+        return None
+    signed = float(v[mask].sum())
+    if not toward_positive:                     # вердикт назвал отрицательную сторону
+        signed = -signed
+    return signed / total
+
+
 def score(bundle: PanelBundle,
-          blocks: Mapping[str, Mapping[str, float] | None]):
+          blocks: Mapping[str, Mapping[str, float] | None],
+          prod35_names: Sequence[str] = (), with_draft: bool = True):
     """Вердикты по всем моделям панели. Пустой список, если артефакта нет."""
     from ml_panel import evaluate
 
@@ -139,6 +207,7 @@ def score(bundle: PanelBundle,
         return []
     x, present = assemble(bundle.columns, blocks)
     row = x.reshape(1, -1)
+    mask = draft_mask(bundle.columns, prod35_names) if with_draft else None
     out = []
     for s in bundle.specs:
         m = bundle.models.get(s.key)
@@ -148,7 +217,14 @@ def score(bundle: PanelBundle,
             raw = float(m.predict_proba(row)[0, 1])
         except Exception:
             raw = None
-        v = evaluate(s, raw, present)
+        share = None
+        if with_draft and raw is not None and mask is not None:
+            # Сторона вердикта — та же, что выберет `evaluate`: по КАЛИБРОВАННОЙ
+            # вероятности, а не по сырой. Иначе у моделей с сильной калибровкой
+            # знак доли драфта разошёлся бы со стороной в той же строке.
+            share = draft_share(m, row, mask,
+                                toward_positive=s.calibrate(raw) >= 0.5)
+        v = evaluate(s, raw, present, draft_share=share)
         if v is not None:
             out.append(v)
     return out

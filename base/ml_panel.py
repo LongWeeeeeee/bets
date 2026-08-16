@@ -45,7 +45,7 @@ DEFAULT_ARTIFACT_DIR = Path(os.getenv(
     "ML_PANEL_DIR", str(PROJECT_ROOT / "ml-models" / "prematch_panel")))
 DEFAULT_JOURNAL = Path(os.getenv(
     "ML_PANEL_JOURNAL", str(PROJECT_ROOT / "runtime" / "ml_panel.jsonl")))
-JOURNAL_SCHEMA = 1
+JOURNAL_SCHEMA = 2   # +draft_share, band_hit, band_n, odds
 OK_MARK = "🟢"
 NO_MARK = "🔴"
 # Ниже этой заполненности вердикт не выставляется вообще: предикт по половине
@@ -65,6 +65,28 @@ class ModelSpec:
     groups: tuple[str, ...] = ()
     knots_x: tuple[float, ...] = ()
     knots_y: tuple[float, ...] = ()
+    # Полосы уверенности с ФАКТИЧЕСКОЙ долей попаданий на тесте:
+    # ({"lo": 0.75, "hit": 0.76, "n": 1221}, ...). Кэф считается от неё, а не от
+    # калиброванной вероятности: рекомендовать цену надо по тому, что сбылось.
+    bands: tuple[Mapping[str, float], ...] = ()
+
+    def band_hit(self, confidence: float) -> tuple[float, int] | None:
+        """Доля попаданий и объём полосы, в которую попала уверенность."""
+        best: tuple[float, int] | None = None
+        for b in self.bands:
+            try:
+                if confidence >= float(b["lo"]):
+                    best = (float(b["hit"]), int(b.get("n", 0)))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return best
+
+    def fair_odds(self, confidence: float) -> float | None:
+        """Кэф безубытка по факту полосы: ниже него ставка убыточна."""
+        band = self.band_hit(confidence)
+        if band is None or band[0] <= 0.0:
+            return None
+        return 1.0 / band[0]
 
     def calibrate(self, raw: float) -> float:
         """Сырой скор → вероятность по изотонической лестнице."""
@@ -101,6 +123,10 @@ class ModelVerdict:
     ok: bool
     missing: tuple[str, ...] = ()
     raw: float | None = None
+    draft_share: float | None = None    # доля драфта в решении по этой карте
+    band_hit: float | None = None       # фактическая доля попаданий полосы
+    band_n: int = 0
+    odds: float | None = None           # кэф безубытка
 
     @property
     def confidence(self) -> float:
@@ -108,8 +134,8 @@ class ModelVerdict:
         return self.probability if self.probability >= 0.5 else 1.0 - self.probability
 
 
-def evaluate(spec: ModelSpec, raw: float | None, present: Mapping[str, bool]
-             ) -> ModelVerdict | None:
+def evaluate(spec: ModelSpec, raw: float | None, present: Mapping[str, bool],
+             draft_share: float | None = None) -> ModelVerdict | None:
     """Вердикт одной модели. `None`, если скор не посчитался вовсе."""
     if raw is None:
         return None
@@ -121,9 +147,13 @@ def evaluate(spec: ModelSpec, raw: float | None, present: Mapping[str, bool]
     side = spec.positive if p >= 0.5 else spec.negative
     conf = p if p >= 0.5 else 1.0 - p
     ok = bool(conf >= spec.threshold and fill >= MIN_FILL)
+    band = spec.band_hit(conf)
     return ModelVerdict(key=spec.key, title=spec.title, side=side, probability=p,
                         threshold=spec.threshold, fill=fill, ok=ok,
-                        missing=missing, raw=float(raw))
+                        missing=missing, raw=float(raw), draft_share=draft_share,
+                        band_hit=None if band is None else band[0],
+                        band_n=0 if band is None else band[1],
+                        odds=spec.fair_odds(conf))
 
 
 def best_of(verdicts: Iterable[ModelVerdict]) -> ModelVerdict | None:
@@ -140,16 +170,28 @@ def best_of(verdicts: Iterable[ModelVerdict]) -> ModelVerdict | None:
 
 
 def render(verdicts: Sequence[ModelVerdict], highlight: Iterable[str] = ()) -> str:
-    """Блок ML для телеграм-сообщения."""
+    """Блок ML для телеграм-сообщения.
+
+    В строке: сторона, уверенность, заполненность, ЗНАКОВАЯ доля драфта
+    (+N% — за сторону вердикта, −N% — против неё) и кэф безубытка. Кэф берётся из ФАКТИЧЕСКОЙ доли попаданий полосы на тесте, а не
+    из калиброванной вероятности: рекомендовать цену надо по тому, что сбылось.
+    Ниже этого кэфа ставка убыточна даже при идеальном исполнении.
+    """
     if not verdicts:
         return ""
     star = set(highlight)
     lines = ["🤖 ML:"]
     for v in verdicts:
         mark = OK_MARK if v.ok else NO_MARK
+        bits = [f"{v.side} {v.confidence*100:.0f}%",
+                f"зап. {v.fill*100:.0f}%"]
+        if v.draft_share is not None:
+            # Знак обязателен: +N% — драфт за сторону вердикта, −N% — против.
+            bits.append(f"драфт {v.draft_share*100:+.0f}%")
+        if v.odds is not None:
+            bits.append(f"кэф от {v.odds:.2f}")
         tail = " ✅" if v.key in star else ""
-        lines.append(f"{mark} {v.title}: {v.side} {v.confidence*100:.0f}%"
-                     f" · зап. {v.fill*100:.0f}%{tail}")
+        lines.append(f"{mark} {v.title}: " + " · ".join(bits) + tail)
     return "\n".join(lines)
 
 
@@ -163,7 +205,11 @@ def journal_row(map_id: Any, verdicts: Sequence[ModelVerdict], *,
             {"key": v.key, "side": v.side, "p": round(v.probability, 6),
              "confidence": round(v.confidence, 6), "threshold": v.threshold,
              "fill": round(v.fill, 4), "ok": v.ok,
-             "missing": list(v.missing), "raw": v.raw}
+             "missing": list(v.missing), "raw": v.raw,
+             "draft_share": (None if v.draft_share is None
+                             else round(v.draft_share, 4)),
+             "band_hit": v.band_hit, "band_n": v.band_n,
+             "odds": None if v.odds is None else round(v.odds, 4)}
             for v in verdicts
         ],
     }
@@ -198,7 +244,8 @@ def load_specs(directory: Path | None = None) -> tuple[ModelSpec, ...]:
                 threshold=float(item["threshold"]),
                 groups=tuple(str(g) for g in item.get("groups", ())),
                 knots_x=tuple(float(x) for x in item.get("knots_x", ())),
-                knots_y=tuple(float(y) for y in item.get("knots_y", ()))))
+                knots_y=tuple(float(y) for y in item.get("knots_y", ())),
+                bands=tuple(dict(b) for b in item.get("bands", ()))))
         except (KeyError, TypeError, ValueError):
             continue
     return tuple(out)
@@ -211,7 +258,8 @@ def atomic_write_specs(specs: Sequence[ModelSpec], directory: Path) -> Path:
         {"key": s.key, "title": s.title, "positive": s.positive,
          "negative": s.negative, "threshold": s.threshold,
          "groups": list(s.groups), "knots_x": list(s.knots_x),
-         "knots_y": list(s.knots_y)} for s in specs]}
+         "knots_y": list(s.knots_y), "bands": [dict(b) for b in s.bands]}
+        for s in specs]}
     target = directory / "panel.json"
     fd, tmp = tempfile.mkstemp(prefix=".panel.", suffix=".tmp", dir=directory)
     try:
