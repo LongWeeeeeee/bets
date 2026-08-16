@@ -858,6 +858,74 @@ def test_sourcetv_rollover_terminalizes_and_prunes_old_map(tmp_path, monkeypatch
     assert cs.list_winline_current_map_polling_keys() == []
 
 
+def _decider_payload(**overrides: Any) -> Dict[str, Any]:
+    """Снимок моста: Bo3 при счёте 1:1 — идёт решающая третья карта."""
+    base = {
+        "match_id": 8919836261,
+        "league_id": 17999,
+        "radiant_team_id": 101,
+        "dire_team_id": 202,
+        "radiant_team_name": "Team Spirit Academy",
+        "dire_team_name": "Aion",
+        "series_type": 1,  # GC-энум: 1 = Bo3
+        "radiant_series_wins": 1,
+        "dire_series_wins": 1,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_reconcile_computes_decider_flag_from_the_snapshot():
+    """Сверка сама считает решающую карту, а не обнуляет флаг до регистрации."""
+    _clear_wiring_state()
+    item = _decider_payload()
+    series = cs._winline_sourcetv_series_key(item)
+
+    cs._reconcile_winline_sourcetv_polling({"live": item}, authoritative=True)
+
+    assert cs._winline_current_map_registry[series]["map_num"] == 3
+    assert cs._winline_registry_series_last_map(series) is True
+
+
+def test_reconcile_keeps_proven_decider_flag_when_snapshot_cannot_prove_it():
+    """Снимок без series_type не имеет права гасить уже доказанный флаг."""
+    _clear_wiring_state()
+    item = _decider_payload()
+    series = cs._winline_sourcetv_series_key(item)
+    cs._reconcile_winline_sourcetv_polling({"live": item}, authoritative=True)
+    assert cs._winline_registry_series_last_map(series) is True
+
+    blind = _decider_payload()
+    blind.pop("series_type")
+    cs._reconcile_winline_sourcetv_polling({"live": blind}, authoritative=True)
+
+    assert cs._winline_current_map_registry[series]["map_num"] == 3
+    assert cs._winline_registry_series_last_map(series) is True
+
+
+def test_decider_flag_does_not_leak_to_the_next_map():
+    """Флаг прошлой карты не переносится: промоция «Матч» — только на решающей."""
+    _clear_wiring_state()
+    item = _decider_payload(series_type=2, radiant_series_wins=1, dire_series_wins=1)
+    series = cs._winline_sourcetv_series_key(item)
+    cs._winline_current_map_registry[series] = {
+        "map_num": 2,
+        "team1": item["radiant_team_name"],
+        "team2": item["dire_team_name"],
+        "active": True,
+        "inactive_reason": None,
+        "inactive_proven": False,
+        "inactive_since": None,
+        "series_last_map": True,
+    }
+
+    cs._reconcile_winline_sourcetv_polling({"live": item}, authoritative=True)
+
+    # Bo5 при 1:1 — идёт третья карта, решающей она не является.
+    assert cs._winline_current_map_registry[series]["map_num"] == 3
+    assert cs._winline_registry_series_last_map(series) is False
+
+
 def _blackout_series_payload() -> Dict[str, Any]:
     return {
         "match_id": 8919836261,

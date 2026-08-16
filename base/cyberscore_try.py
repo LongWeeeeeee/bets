@@ -792,10 +792,27 @@ def _reconcile_winline_sourcetv_polling(
             "inactive_reason": None,
             "inactive_proven": False,
             "inactive_since": None,
+            # Решающая карта считается из того же снимка: `series_type` мост
+            # пишет GC-энумом (0=BO1, 1=BO3, 2=BO5), под который и сделан
+            # _WINLINE_SERIES_WINS_NEEDED. Раньше сверка перетирала запись без
+            # этого поля, флаг гас до следующей регистрации поллера, и промоция
+            # рынка «Матч» в рынок карты моргала внутри одной карты.
+            "series_last_map": _winline_series_row_last_map(item, map_num),
         }
 
     with _winline_current_map_state_lock:
         for series, payload in active.items():
+            previous = _winline_current_map_registry.get(series)
+            if (
+                not payload["series_last_map"]
+                and isinstance(previous, dict)
+                and previous.get("series_last_map")
+                and _winline_series_int(previous.get("map_num")) == payload["map_num"]
+            ):
+                # Снимок не смог доказать решающую карту (нет series_type или
+                # счёт серии нечитаем) — уже доказанный флаг ТОЙ ЖЕ карты не
+                # гасим. При смене карты флаг не переносится.
+                payload["series_last_map"] = True
             _winline_current_map_registry[series] = payload
         for series, current in list(_winline_current_map_registry.items()):
             if not str(series).startswith("sourcetv:") or series in active:
