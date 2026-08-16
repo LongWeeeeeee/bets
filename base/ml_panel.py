@@ -135,15 +135,27 @@ class ModelVerdict:
 
 
 def evaluate(spec: ModelSpec, raw: float | None, present: Mapping[str, bool],
-             draft_share: float | None = None) -> ModelVerdict | None:
-    """Вердикт одной модели. `None`, если скор не посчитался вовсе."""
+             draft_share: float | None = None,
+             fill: float | None = None,
+             missing: Sequence[str] | None = None) -> ModelVerdict | None:
+    """Вердикт одной модели. `None`, если скор не посчитался вовсе.
+
+    `fill` лучше передавать посчитанной ПО ДОЛЕ КОЛОНОК: блок из шести колонок
+    и блок из семисот сорока двух — не одно и то же, а счёт по группам делает
+    их равными. Без него берётся запасной счёт по группам.
+    """
     if raw is None:
         return None
     p = spec.calibrate(raw)
     p = min(max(p, 0.0), 1.0)
-    need = spec.groups or tuple(present)
-    missing = tuple(g for g in need if not present.get(g, False))
-    fill = 1.0 - (len(missing) / len(need)) if need else 1.0
+    if missing is None:
+        need = spec.groups or tuple(present)
+        missing = tuple(g for g in need if not present.get(g, False))
+    else:
+        missing = tuple(missing)
+    if fill is None:
+        need = spec.groups or tuple(present)
+        fill = 1.0 - (len(missing) / len(need)) if need else 1.0
     side = spec.positive if p >= 0.5 else spec.negative
     conf = p if p >= 0.5 else 1.0 - p
     ok = bool(conf >= spec.threshold and fill >= MIN_FILL)

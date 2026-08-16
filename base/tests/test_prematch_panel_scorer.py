@@ -21,15 +21,16 @@ from prematch_panel_scorer import (  # noqa: E402
 
 COLS = ("prod35_0", "prod35_1", "sym_0", "kwdict_a", "publogit_x",
         "F6_h_dur_mean_diff", "F7_p_dur_mean_sum")
+CORE = {"prod35": {"prod35_0": 1.0, "prod35_1": 2.0}, "card": {"sym_0": 3.0}}
 
 
 class TestGrouping:
     @pytest.mark.parametrize("name,grp", [
         ("F6_h_dur_mean_diff", "priors"), ("F7_p_x", "priors"),
-        ("F8_pair_syn0_mean", "priors"), ("kwdict_5_15_games", "dict"),
-        ("publogit_dur43", "public"), ("prod35_7", "core"),
-        ("sym_100", "core"), ("rating_2", "rating"), ("hybrid_1", "core"),
-        ("нечто_новое", "core"),
+        ("F8_pair_syn0_mean", "pairs"), ("kwdict_5_15_games", "dict"),
+        ("publogit_dur43", "public"), ("prod35_7", "prod35"),
+        ("sym_100", "card"), ("rating_2", "rating"), ("hybrid_1", "hybrid"),
+        ("нечто_новое", "other"),
     ])
     def test_prefix_maps_to_group(self, name, grp):
         assert group_of(name) == grp
@@ -37,26 +38,25 @@ class TestGrouping:
 
 class TestAssemble:
     def test_values_land_in_column_order(self):
-        blocks = {"core": {"prod35_0": 1.0, "prod35_1": 2.0, "sym_0": 3.0},
-                  "dict": {"kwdict_a": 4.0}, "public": {"publogit_x": 5.0},
+        blocks = {**CORE, "dict": {"kwdict_a": 4.0},
+                  "public": {"publogit_x": 5.0},
                   "priors": {"F6_h_dur_mean_diff": 6.0, "F7_p_dur_mean_sum": 7.0}}
-        x, present = assemble(COLS, blocks)
+        x, present, _ = assemble(COLS, blocks)
         assert list(x) == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
         assert all(present.values())
 
     def test_missing_block_marked_and_filled_neutral(self):
-        blocks = {"core": {"prod35_0": 1.0, "prod35_1": 2.0, "sym_0": 3.0},
-                  "dict": {"kwdict_a": 4.0}, "public": {"publogit_x": 5.0},
-                  "priors": None}
-        x, present = assemble(COLS, blocks)
+        blocks = {**CORE, "dict": {"kwdict_a": 4.0},
+                  "public": {"publogit_x": 5.0}, "priors": None}
+        x, present, _ = assemble(COLS, blocks)
         assert present["priors"] is False
         assert x[5] == NEUTRAL and x[6] == NEUTRAL
         assert x[0] == 1.0
 
     def test_partial_block_is_an_error_not_silence(self):
         """Пропуск колонки внутри поставленного блока = рассинхрон имён."""
-        blocks = {"core": {"prod35_0": 1.0}, "dict": {"kwdict_a": 4.0},
-                  "public": {"publogit_x": 5.0},
+        blocks = {"prod35": {"prod35_0": 1.0}, "card": {"sym_0": 3.0},
+                  "dict": {"kwdict_a": 4.0}, "public": {"publogit_x": 5.0},
                   "priors": {"F6_h_dur_mean_diff": 6.0,
                              "F7_p_dur_mean_sum": 7.0}}
         with pytest.raises(KeyError):
@@ -64,7 +64,8 @@ class TestAssemble:
 
     def test_order_follows_columns_not_dict(self):
         cols = ("sym_0", "prod35_0")
-        x, _ = assemble(cols, {"core": {"prod35_0": 9.0, "sym_0": 1.0}})
+        x, _, _ = assemble(cols, {"prod35": {"prod35_0": 9.0},
+                                  "card": {"sym_0": 1.0}})
         assert list(x) == [1.0, 9.0]
 
 
@@ -104,7 +105,8 @@ def spec(key="w_5_15", threshold=0.60):
 
 class TestScore:
     def _blocks(self, priors=True):
-        b = {"core": {"prod35_0": 0.0, "prod35_1": 0.0, "sym_0": 0.0},
+        b = {"prod35": {"prod35_0": 0.0, "prod35_1": 0.0},
+             "card": {"sym_0": 0.0},
              "dict": {"kwdict_a": 0.0}, "public": {"publogit_x": 0.0},
              "priors": {"F6_h_dur_mean_diff": 0.0, "F7_p_dur_mean_sum": 0.0}}
         if not priors:
@@ -118,11 +120,25 @@ class TestScore:
         assert [v.key for v in out] == ["a", "b"]
         assert out[0].fill == pytest.approx(1.0)
 
-    def test_missing_priors_lower_fill_and_block_verdict(self):
+    def test_missing_priors_lower_fill_by_column_share(self):
+        """Заполненность — доля КОЛОНОК: из семи пропали две приорных."""
         b = PanelBundle((spec("a"),), COLS, {"a": FakeModel(p=0.95)})
         v = score(b, self._blocks(priors=False))[0]
-        assert v.fill == pytest.approx(2 / 3)
+        assert v.fill == pytest.approx(5 / 7)
         assert v.ok is False
+
+    def test_small_missing_block_barely_moves_fill(self):
+        """Блок из одной колонки не должен гасить вердикт как треть входа."""
+        cols = tuple(f"sym_{i}" for i in range(99)) + ("rating_0",)
+        blocks = {"card": {f"sym_{i}": 0.0 for i in range(99)}, "rating": None}
+
+        class Wide(FakeModel):
+            pass
+
+        b = PanelBundle((spec("a", 0.55),), cols, {"a": Wide(p=0.9)})
+        v = score(b, blocks, with_draft=False)[0]
+        assert v.fill == pytest.approx(0.99)
+        assert v.ok is True
 
     def test_vector_passed_to_model_has_full_width(self):
         m = FakeModel()

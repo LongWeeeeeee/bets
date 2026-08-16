@@ -36,19 +36,25 @@ NEUTRAL = 0.0          # чем заполняются колонки непос
 
 # Префикс имени колонки → группа заполненности. Порядок проверки важен:
 # `F6_`/`F7_`/`F8_` относятся к снимку, всё остальное считается живьём.
+# `F8` вынесен из `priors` намеренно: снимок хранит ключи по герою и аккаунту,
+# а парная синергия требует ключей на ПАРЫ, которых там нет. Общая группа
+# заставила бы поставщика приоров отдавать колонки, которых у него не бывает.
 GROUP_OF: tuple[tuple[str, str], ...] = (
-    ("F6_", "priors"), ("F7_", "priors"), ("F8_", "priors"),
+    ("F6_", "priors"), ("F7_", "priors"), ("F8_", "pairs"),
     ("kwdict_", "dict"), ("publogit_", "public"),
-    ("prod35_", "core"), ("sym_", "core"), ("rating_", "rating"),
-    ("hybrid_", "core"),
+    ("prod35_", "prod35"), ("sym_", "card"), ("rating_", "rating"),
+    ("hybrid_", "hybrid"),
 )
 
 
 def group_of(name: str) -> str:
+    """Группа поставки. `prod35` и `card` разделены намеренно: первый приходит
+    из живого пути, второй считается из статических таблиц, и падение одного не
+    должно требовать второго."""
     for pref, grp in GROUP_OF:
         if name.startswith(pref):
             return grp
-    return "core"
+    return "other"
 
 
 @dataclass
@@ -104,14 +110,18 @@ def load_bundle(directory: Path | None = None) -> PanelBundle:
 
 def assemble(columns: Sequence[str],
              blocks: Mapping[str, Mapping[str, float] | None]
-             ) -> tuple[np.ndarray, dict[str, bool]]:
-    """Вектор в порядке `columns` и отметка, какие группы реально поставлены.
+             ) -> tuple[np.ndarray, dict[str, bool], dict[str, int]]:
+    """Вектор, отметка поставленных групп и размер каждой группы в колонках.
 
     `blocks` — имя группы → словарь «имя колонки → значение», либо None, если
     блок не поставлен. Колонки непоставленной группы получают NEUTRAL, а сама
     группа помечается отсутствующей: это и есть заполненность.
     """
     present = {g: (v is not None) for g, v in blocks.items()}
+    sizes: dict[str, int] = {}
+    for nm in columns:
+        g = group_of(nm)
+        sizes[g] = sizes.get(g, 0) + 1
     out = np.full(len(columns), NEUTRAL, dtype=np.float32)
     missing_named: list[str] = []
     for i, nm in enumerate(columns):
@@ -130,7 +140,7 @@ def assemble(columns: Sequence[str],
         # чем упасть на сборке артефакта.
         raise KeyError(f"блок поставлен, но не дал {len(missing_named)} колонок, "
                        f"например {missing_named[:3]}")
-    return out, present
+    return out, present, sizes
 
 
 # Драфтовые блоки: всё, что определяется выбранными героями и их позициями.
@@ -199,13 +209,21 @@ def draft_share(model: Any, row: np.ndarray, mask: np.ndarray,
 
 def score(bundle: PanelBundle,
           blocks: Mapping[str, Mapping[str, float] | None],
-          prod35_names: Sequence[str] = (), with_draft: bool = True):
+          prod35_names: Sequence[str] = (), with_draft: bool = True,
+          draft_keys: Sequence[str] | None = None):
     """Вердикты по всем моделям панели. Пустой список, если артефакта нет."""
     from ml_panel import evaluate
 
     if not bundle.ready:
         return []
-    x, present = assemble(bundle.columns, blocks)
+    x, present, sizes = assemble(bundle.columns, blocks)
+    # Заполненность — доля КОЛОНОК, а не групп: отсутствие шести колонок
+    # рейтинга и семисот сорока двух колонок карточки — разные события, а счёт
+    # по группам делает их одинаковыми и гасит вердикт на пустом месте.
+    total_cols = sum(sizes.values()) or 1
+    missing_groups = tuple(sorted(g for g in sizes if not present.get(g, False)))
+    lost = sum(sizes[g] for g in missing_groups)
+    fill = 1.0 - lost / total_cols
     row = x.reshape(1, -1)
     mask = draft_mask(bundle.columns, prod35_names) if with_draft else None
     out = []
@@ -218,13 +236,17 @@ def score(bundle: PanelBundle,
         except Exception:
             raw = None
         share = None
-        if with_draft and raw is not None and mask is not None:
+        # SHAP стоит ~90 мс на модель. Считаем только там, где доля драфта
+        # реально показывается, иначе платим за восемь ради четырёх.
+        want = draft_keys is None or s.key in draft_keys
+        if with_draft and want and raw is not None and mask is not None:
             # Сторона вердикта — та же, что выберет `evaluate`: по КАЛИБРОВАННОЙ
             # вероятности, а не по сырой. Иначе у моделей с сильной калибровкой
             # знак доли драфта разошёлся бы со стороной в той же строке.
             share = draft_share(m, row, mask,
                                 toward_positive=s.calibrate(raw) >= 0.5)
-        v = evaluate(s, raw, present, draft_share=share)
+        v = evaluate(s, raw, present, draft_share=share, fill=fill,
+                     missing=missing_groups)
         if v is not None:
             out.append(v)
     return out
