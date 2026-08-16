@@ -223,8 +223,10 @@ def save_snapshot(path: Path, *, metrics: Iterable[str],
             m = len(tuple(metrics))
             return (np.zeros(0, np.int64), np.zeros((0, m)), np.zeros((0, m)))
         ks = np.array(sorted(d), dtype=np.int64)        # отсортированы под searchsorted
-        s = np.stack([np.asarray(d[int(k)][0], dtype=np.float64) for k in ks])
-        c = np.stack([np.asarray(d[int(k)][1], dtype=np.float64) for k in ks])
+        # float32: снимок с полутора миллионами аккаунтов в float64 весит 650 МБ,
+        # а приор всё равно шринкуется к глобальному — седьмой знак там не нужен.
+        s = np.stack([np.asarray(d[int(k)][0], dtype=np.float32) for k in ks])
+        c = np.stack([np.asarray(d[int(k)][1], dtype=np.float32) for k in ks])
         return ks, s, c
 
     hk, hs, hc = pack(hero)
