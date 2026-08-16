@@ -32,6 +32,10 @@ from typing import Any, Mapping, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CARD_PATH = Path(os.getenv("PANEL_CARD", str(PROJECT_ROOT / "base" / "hero_features_v7.json")))
+KILLS_DB = Path(os.getenv(
+    "PANEL_KILLS_DB",
+    str(PROJECT_ROOT / "bets_data" / "analise_pub_matches" /
+        "kills_window_dict_raw.sqlite3")))
 BASELINES = Path(os.getenv("PANEL_BASELINES",
                            str(PROJECT_ROOT / "base" / "hero_baselines_protest.json")))
 ENABLED = os.getenv("ML_PANEL_ENABLED", "1") not in ("0", "false", "False")
@@ -39,6 +43,9 @@ ENABLED = os.getenv("ML_PANEL_ENABLED", "1") not in ("0", "false", "False")
 # именно они показываются, а тотал и время в панели всё равно молчат.
 DRAFT_KEYS = tuple(os.getenv("ML_PANEL_DRAFT_KEYS",
                              "w_5_15,w_10_20,w_15_25,w_20_30").split(","))
+
+WINDOWS = ("5_15", "10_20", "15_25", "20_30")
+DICT_FIELDS = ("expected_diff", "lead_probability", "games")
 
 _lock = threading.Lock()
 _state: dict[str, Any] = {"loaded": False, "bundle": None, "tables": None,
@@ -75,6 +82,70 @@ def _load() -> dict[str, Any]:
         return _state
 
 
+class _SqliteKillsWindow(dict):
+    """Ленивый словарь окон поверх боевой sqlite.
+
+    Наследование от `dict` обязательно: `calculate_kills_window_advantage`
+    начинается с `if not isinstance(heroes_data, dict): return None` и на
+    обычной обёртке молча вернула бы None. Таблица называется `stats` и хранит
+    колонки, а не kv-блоб.
+    """
+
+    def __init__(self, path: Path) -> None:
+        super().__init__()
+        import sqlite3
+
+        self.conn = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)
+        self.cols = [d[1] for d in self.conn.execute("pragma table_info(stats)")][1:]
+
+    def get(self, key, default=None):
+        k = str(key)
+        if k in self:
+            return dict.__getitem__(self, k)
+        row = self.conn.execute("select * from stats where key=?", (k,)).fetchone()
+        val = dict(zip(self.cols, row[1:])) if row else default
+        dict.__setitem__(self, k, val)
+        return val
+
+
+def _kills_dict():
+    """Словарь окон, если он есть. Загружается один раз."""
+    if "kwdict" in _state:
+        return _state["kwdict"]
+    obj = None
+    try:
+        if KILLS_DB.exists():
+            obj = _SqliteKillsWindow(KILLS_DB)
+    except Exception as exc:                         # noqa: BLE001
+        _state["dict_error"] = f"{type(exc).__name__}: {exc}"
+    _state["kwdict"] = obj
+    return obj
+
+
+def _dict_block(heroes10) -> dict[str, float] | None:
+    """Двенадцать колонок словаря окон. NaN там, где словарь молчит — ровно то,
+    что писал офлайн-сборщик, и ровно то, что видела модель при обучении."""
+    hd = _kills_dict()
+    if hd is None:
+        return None
+    try:
+        import functions as F
+
+        rad = [f"{int(h)}pos{p}" for p, h in enumerate(heroes10[0][:5], 1)]
+        dire = [f"{int(h)}pos{p}" for p, h in enumerate(heroes10[0][5:], 1)]
+        res = F.calculate_kills_window_advantage(rad, dire, hd) or {}
+    except Exception as exc:                         # noqa: BLE001
+        _state["dict_error"] = f"{type(exc).__name__}: {exc}"
+        return None
+    out: dict[str, float] = {}
+    for w in WINDOWS:
+        payload = res.get(w) or {}
+        for f in DICT_FIELDS:
+            v = payload.get(f)
+            out[f"kwdict_{w}_{f}"] = float("nan") if v is None else float(v)
+    return out
+
+
 def status() -> dict[str, Any]:
     """Что загрузилось — для диагностики и журнала."""
     st = _load()
@@ -84,7 +155,9 @@ def status() -> dict[str, Any]:
             "columns": len(getattr(b, "columns", ()) or ()),
             "snapshot": st.get("snap") is not None,
             "card": st.get("card"), "error": st.get("error"),
-            "last_error": st.get("last_error")}
+            "last_error": st.get("last_error"),
+            "kills_dict": st.get("kwdict") is not None,
+            "dict_error": st.get("dict_error")}
 
 
 def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
@@ -125,6 +198,9 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
             # F8 (парная синергия) в снимке отсутствует — блок отдаём как есть,
             # а недостающие имена добьём нейтралью через отдельную группу.
             blocks["priors"] = pri
+        dblock = _dict_block(heroes10)
+        if dblock is not None:
+            blocks["dict"] = dblock
         return score(bundle, blocks, prod35_names=prod_order,
                      with_draft=bool(DRAFT_KEYS), draft_keys=DRAFT_KEYS)
     except Exception as exc:                         # noqa: BLE001

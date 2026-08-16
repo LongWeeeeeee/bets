@@ -33,6 +33,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DIR = Path(os.getenv(
     "ML_PANEL_DIR", str(PROJECT_ROOT / "ml-models" / "prematch_panel")))
 NEUTRAL = 0.0          # чем заполняются колонки непоставленного блока
+# У словаря окон офлайн ПИСАЛ NaN там, где данных нет, и модель училась именно
+# на этом. Подставлять ноль вместо него — подсовывать значение, которого модель
+# не видела; NaN у CatBoost имеет свою ветку.
+NEUTRAL_BY_GROUP: dict[str, float] = {"dict": float("nan")}
 
 # Префикс имени колонки → группа заполненности. Порядок проверки важен:
 # `F6_`/`F7_`/`F8_` относятся к снимку, всё остальное считается живьём.
@@ -129,6 +133,7 @@ def assemble(columns: Sequence[str],
         src = blocks.get(grp)
         if src is None:
             present.setdefault(grp, False)
+            out[i] = NEUTRAL_BY_GROUP.get(grp, NEUTRAL)
             continue
         if nm in src:
             out[i] = float(src[nm])
