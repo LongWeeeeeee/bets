@@ -166,6 +166,24 @@ _HERO_PLAYER_FEATURES = frozenset({
     "hero_games", "hero_gpm_rel", "lh_rel_hero", "a_hdmg_rel_hero",
 })
 _EVAL_JOURNAL = "/root/main/runtime/prematch_model_eval.jsonl"
+# Панель окон: последний посчитанный набор вердиктов и готовая строка для
+# сообщения. Живёт в модуле, потому что считается там, где есть входы, а
+# показывается там, где строится карточка.
+_LAST_PANEL: dict = {"text": "", "verdicts": [], "error": None, "map_id": None}
+
+
+def last_panel_text() -> str:
+    """Готовый блок ML для карточки. Пустая строка — панели нет."""
+    return str(_LAST_PANEL.get("text") or "")
+
+
+def last_panel_verdicts() -> list:
+    """Вердикты панели для журнала."""
+    return list(_LAST_PANEL.get("verdicts") or [])
+
+
+def last_panel_error() -> str:
+    return str(_LAST_PANEL.get("error") or "")
 _EVAL_SEEN: set = set()
 
 
@@ -409,6 +427,39 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                           draft_logit=logit, hybrid_strength=hybrid,
                           strictness="accounts",
                           now_ts=_now, max_age_days=_SNAPSHOT_MAX_AGE_DAYS)
+        # --- панель окон килов: те же входы, что у предматчевой модели ---
+        _LAST_PANEL["text"] = ""
+        _LAST_PANEL["verdicts"] = []
+        try:
+            import prematch_panel_live as _panel
+            import ml_panel as _mlp
+
+            _vs = _panel.evaluate_map(rh, dh, ra, da,
+                                      getattr(res, "features", None),
+                                      list(getattr(model, "features", ()) or ()))
+            _wins = [v for v in _vs if str(v.key).startswith("w_")]
+            _best = _mlp.best_of(_wins)
+            _LAST_PANEL["verdicts"] = _vs
+            _LAST_PANEL["text"] = _mlp.render(
+                _wins, highlight=[_best.key] if _best else [])
+            _LAST_PANEL["error"] = None
+            _mid = None
+            if isinstance(match, dict):
+                for _k in ("id", "match_id", "map_id", "matchId"):
+                    if match.get(_k):
+                        _mid = match.get(_k)
+                        break
+            _LAST_PANEL["map_id"] = _mid
+            if _vs:
+                _mlp.append_journal(_mlp.journal_row(
+                    _mid or "", _vs,
+                    extra={"radiant_team": str(radiant_team_name or ""),
+                           "dire_team": str(dire_team_name or ""),
+                           "ts": int(time.time())}))
+        except Exception as _exc:                    # noqa: BLE001
+            # Панель не влияет на ставку, но её отказ не должен теряться:
+            # «блок просто не появился» — самый неудобный вид поломки.
+            _LAST_PANEL["error"] = f"{type(_exc).__name__}: {_exc}"
         _cov = getattr(res, "coverage", None) or {}
         if _cov:
             global _COV_N, _COV_SUM

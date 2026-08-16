@@ -5110,6 +5110,29 @@ def _format_win_model_line(*blocks) -> str:
             line += f" | ML \u043e\u0442 \u043a\u044d\u0444\u0430: {_ps.lan_min_odds(confidence / 100.0):.2f}"
         except Exception:                            # noqa: BLE001
             pass
+    # Доля входа, собранная из реальных данных. Печатается ВСЕГДА, когда
+    # известна: отсутствие пометки раньше означало и «всё заполнено», и
+    # «счётчика нет» — различить было нельзя (E-195).
+    try:
+        _elo = win_model_veto.last_model_elo(index)
+        if _elo is not None:
+            line += f" | ELO модели: {_elo:+.0f}"
+        _dr = win_model_veto.last_draft_rank(index)
+        if _dr:
+            line += f" | драфт {_dr[1]:+.0%}"
+        _fill = win_model_veto.last_fill(index)
+        if _fill is not None:
+            line += f" | вход {float(_fill):.0%}"
+    except Exception:                                # noqa: BLE001
+        pass
+    # Блок панели окон килов. Пустая строка, если панель не готова, — карточка
+    # тогда выглядит ровно как раньше.
+    try:
+        _panel_text = win_model_veto.last_panel_text()
+    except Exception:                                # noqa: BLE001
+        _panel_text = ""
+    if _panel_text:
+        return line + "\n" + _panel_text + "\n"
     return line + "\n"
 
 
@@ -25550,6 +25573,32 @@ def _try_dispatch_prematch_model_bet(
                     _prematch_model_bet_sent_urls.add(dedup_key)
             except Exception:
                 pass
+            # Журнал отправленных ставок по модели. До 15.08 его не было вовсе:
+            # дедуп жил в памяти процесса, на диск не писалось ничего, и живой
+            # винрейт модели измерить было НЕЧЕМ — по логу сшивается 7 ставок
+            # из 85. У ставок на килы такой журнал есть, у модели победы не было.
+            try:
+                import json as _json, time as _time
+                _rec = {
+                    "ts": int(_time.time()),
+                    "match_key": match_key,
+                    "side": target_side,
+                    "index": float(bet.get("index") or 0.0),
+                    "confidence": float(bet.get("confidence") or 0.0),
+                    "min_odds": float(bet.get("min_odds") or 0.0),
+                    "expected_wr": float(bet.get("expected_wr") or 0.0),
+                    "radiant_team": str(radiant_team_name or ""),
+                    "dire_team": str(dire_team_name or ""),
+                    "map_num": _imm_map,
+                    "game_time": current_game_time_int,
+                    "model_elo": win_model_veto.last_model_elo(bet.get("index")),
+                    "fill": win_model_veto.last_fill(bet.get("index")),
+                }
+                with open("/root/main/runtime/prematch_model_bet_sent.jsonl", "a",
+                          encoding="utf-8") as _f:
+                    _f.write(_json.dumps(_rec, ensure_ascii=False) + chr(10))
+            except Exception as _exc:                # noqa: BLE001
+                print(f"[win_model] журнал ставки не записан: {_exc}", flush=True)
             verdict_msg = (
                 "   ✅ ВЕРДИКТ: ставка предматчевой модели отправлена "
                 f"(side={target_side}, index={float(bet.get('index') or 0.0):+.2f}, "

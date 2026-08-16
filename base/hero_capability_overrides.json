@@ -1,0 +1,553 @@
+{
+ "_meta": {
+  "что это": "Ручные правки к автоматическому разбору способностей. Автомат читает описания Valve и ошибается на стороне эффекта (на себя / на союзника / на врага) и на типе развеивания. Здесь правка человека, и она сильнее автомата.",
+  "как править": "Ключ — 'Имя героя|эффект'. side: enemy | ally | self | none (none = эффекта у героя нет). level: 1 (с базовой способности), 10/15/20/25 (талант), 0 если нет. item: 0 ничего не нужно, 1 шард, 2 скипетр. strength — только для dispel: 2 сильное, 1 обычное, 0 нет. note: чем обосновано.",
+  "эффекты": [
+   "hex",
+   "break",
+   "fear",
+   "taunt",
+   "root",
+   "sleep",
+   "silence",
+   "stun",
+   "slow",
+   "disarm",
+   "leash",
+   "banish",
+   "forced_movement",
+   "dispel"
+  ],
+  "источник правок": "alex, 14.08.2026",
+  "классы вне автомата": "displacement — «может перемещать противников». Автомат его не выводит: в описаниях это не одно слово, а разные механики (крюк, свап, тосс, скьюер, притяжка, телекинез). Список и деление на полноценное (strength 2) и частичное (strength 1) — от alex 14.08."
+ },
+ "Abaddon|dispel": {
+  "side": "ally",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "Aphotic Shield — сильное развеивание на любого, включая себя; Borrowed Time — сильное на себя. Обе способности базовые."
+ },
+ "Abaddon|dispel_self": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "Borrowed Time: сильное развеивание на себя"
+ },
+ "Centaur Warrunner|disarm": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "разоружения нет вовсе; Hoof Stomp только оглушает"
+ },
+ "Kez|disarm": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "note": "разоружение на себя, это защитная способность"
+ },
+ "Chaos Knight|break": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "у Reality Rift нет брейка"
+ },
+ "Chaos Knight|silence": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "у Reality Rift нет молчания"
+ },
+ "Naga Siren|break": {
+  "side": "enemy",
+  "level": 1,
+  "item": 2,
+  "note": "брейк есть, но только со скипетра"
+ },
+ "Mirana|root": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "у Leap корня нет"
+ },
+ "Marci|root": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "у Rebound только оглушение"
+ },
+ "Marci|leash": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "у Rebound только оглушение"
+ },
+ "Dazzle|leash": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "note": "привязка Nothl Projection на себя — как наступательной способности нет"
+ },
+ "Nyx Assassin|break": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "note": "брейк с ульты"
+ },
+ "Hoodwink|break": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "note": "брейк с ульты"
+ },
+ "Hoodwink|global": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "Decoy не глобалка: у неё просто нет дальности каста, это уход в невидимость"
+ },
+ "Bristleback|disarm": {
+  "side": "self",
+  "level": 1,
+  "item": 2,
+  "note": "в скипетре разоружает себя на время выброса игл"
+ },
+ "Largo|disarm": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "note": "Amphibian Rhapsody: разоружается сам"
+ },
+ "Marci|disarm": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "note": "Unleash: на себя"
+ },
+ "Marci|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 2,
+  "note": "скипетр у Unleash: развеивание на себя",
+  "strength": 1
+ },
+ "Primal Beast|disarm": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "note": "Trample: на себя"
+ },
+ "Primal Beast|dispel": {
+  "side": "self",
+  "level": 20,
+  "item": 0,
+  "strength": 1,
+  "note": "талант 20: обычное развеивание себя на касте Uproar"
+ },
+ "Templar Assassin|dispel": {
+  "side": "self",
+  "level": 20,
+  "item": 0,
+  "strength": 1,
+  "note": "талант 20: Refraction накладывает обычное развеивание на неё саму"
+ },
+ "Timbersaw|forced_movement": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "note": "Timber Chain тянет самого Timbersaw"
+ },
+ "Chaos Knight|disarm": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "разоружения у Reality Rift нет"
+ },
+ "Elder Titan|banish": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "Astral Spirit — это его собственный дух, изгнания врага нет"
+ },
+ "Shadow Demon|banish": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "note": "Disruption: может на врага (сетап)"
+ },
+ "Shadow Demon|banish_ally": {
+  "side": "ally",
+  "level": 1,
+  "item": 0,
+  "note": "Disruption: может и на союзника — это сейв"
+ },
+ "Shadow Demon|banish_self": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "note": "Disruption: и на себя"
+ },
+ "Outworld Destroyer|banish": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "note": "Astral Imprisonment: на врага — сетап"
+ },
+ "Outworld Destroyer|banish_ally": {
+  "side": "ally",
+  "level": 1,
+  "item": 0,
+  "note": "и на союзника — сейв"
+ },
+ "Outworld Destroyer|banish_self": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "note": "и на себя"
+ },
+ "Io|leash": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "Relocate — это перемещение, не привязка. Саппорт-Io часто увозит кора и остаётся умирать"
+ },
+ "Ringmaster|silence": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "Escape Act — сейв, на врагов нельзя, молчания нет"
+ },
+ "Ringmaster|disarm": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "Escape Act — сейв, не разоружение"
+ },
+ "Tidehunter|leash": {
+  "side": "enemy",
+  "level": 1,
+  "item": 1,
+  "note": "якорь с шарда — привязка, да"
+ },
+ "Batrider|leash": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "note": "лассо цепляет и без скипетра; со скипетром цепляет двоих"
+ },
+ "Vengeful Spirit|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "свап"
+ },
+ "Batrider|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "лассо тащит за собой"
+ },
+ "Pudge|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "крюк"
+ },
+ "Tiny|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "тосс"
+ },
+ "Magnus|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "скьюер"
+ },
+ "Clockwerk|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "шестерёнками"
+ },
+ "Bane|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "направленным слипом"
+ },
+ "Dark Seer|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "притяжка"
+ },
+ "Disruptor|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "glimpse"
+ },
+ "Earth Spirit|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "и без скипетра, со скипетром сильнее"
+ },
+ "Rubick|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "телекинез"
+ },
+ "Spirit Breaker|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "ультом"
+ },
+ "Naga Siren|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 2,
+  "strength": 1,
+  "note": "со скипетра"
+ },
+ "Tusk|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 2,
+  "strength": 1,
+  "note": "со скипетра"
+ },
+ "Mars|displacement": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "копьё прибивает и тащит (alex 14.08)"
+ },
+ "Legion Commander|dispel": {
+  "side": "ally",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "Press The Attack: у Valve в примечании DISPEL TYPE: Strong Dispel — моё «обычное» было догадкой"
+ },
+ "Juggernaut|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "Blade Fury: «Applies a strong dispel at the end of the spin»"
+ },
+ "Phoenix|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "Supernova, DISPEL TYPE: Strong"
+ },
+ "Phoenix|dispel_ally": {
+  "side": "ally",
+  "level": 1,
+  "item": 2,
+  "strength": 2,
+  "note": "со скипетра Supernova вешается на союзника"
+ },
+ "Weaver|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "Time Lapse, DISPEL TYPE: Strong"
+ },
+ "Weaver|dispel_ally": {
+  "side": "ally",
+  "level": 1,
+  "item": 2,
+  "strength": 2,
+  "note": "со скипетра Time Lapse на союзного героя"
+ },
+ "Chaos Knight|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "Phantasm, DISPEL TYPE: Basic"
+ },
+ "Kez|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "Raptor Dance и Raven's Veil — обычное развеивание на себя"
+ },
+ "Outworld Destroyer|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "Objurgation: сильное развеивание на себя"
+ },
+ "Ringmaster|dispel": {
+  "side": "self",
+  "level": 25,
+  "item": 0,
+  "strength": 2,
+  "note": "талант 25 Escape Act Grants Strong Dispel — на себя"
+ },
+ "Ringmaster|dispel_ally": {
+  "side": "ally",
+  "level": 25,
+  "item": 0,
+  "strength": 2,
+  "note": "и на союзника, кого посадил в коробку"
+ },
+ "Invoker|dispel": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "Tornado снимает баффы с врагов"
+ },
+ "Dark Willow|dispel": {
+  "side": "none",
+  "level": 0,
+  "item": 0,
+  "note": "у Cursed Crown диспела нет"
+ },
+ "Alchemist|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Lifestealer|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Meepo|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Naga Siren|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Pangolier|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Phantom Lancer|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Slark|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Strong"
+ },
+ "Troll Warlord|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Ursa|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Strong"
+ },
+ "Huskar|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Basic"
+ },
+ "Shadow Shaman|dispel": {
+  "side": "self",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "развеивание на себя, DISPEL TYPE у Valve = Strong"
+ },
+ "Oracle|dispel": {
+  "side": "ally",
+  "level": 1,
+  "item": 0,
+  "strength": 2,
+  "note": "False Promise: DISPEL TYPE Strong"
+ },
+ "Oracle|dispel_enemy": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "Fortune's End: DISPEL TYPE Basic"
+ },
+ "Chen|dispel": {
+  "side": "ally",
+  "level": 25,
+  "item": 0,
+  "strength": 2,
+  "note": "талант 25: Hand of God applies a Strong Dispel"
+ },
+ "Keeper of the Light|dispel": {
+  "side": "ally",
+  "level": 25,
+  "item": 0,
+  "strength": 2,
+  "note": "талант 25: Chakra Magic Strong Dispels"
+ },
+ "Shadow Demon|dispel": {
+  "side": "enemy",
+  "level": 1,
+  "item": 0,
+  "strength": 1,
+  "note": "Demonic Purge: DISPEL TYPE Basic"
+ },
+ "Shadow Demon|dispel_ally": {
+  "side": "ally",
+  "level": 1,
+  "item": 1,
+  "strength": 1,
+  "note": "шард Demonic Cleanse: Basic"
+ }
+}

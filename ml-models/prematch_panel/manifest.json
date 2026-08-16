@@ -1,0 +1,21 @@
+{
+  "built": "build_panel_models.py",
+  "columns": 928,
+  "columns_source": 1988,
+  "n_prior": 122,
+  "target_hit": 0.66,
+  "min_share": 0.1,
+  "lift_over_base": 0.04,
+  "test_maps": 26016,
+  "models": [
+    "w_5_15",
+    "w_10_20",
+    "w_15_25",
+    "w_20_30",
+    "dur43",
+    "total_55_50",
+    "rad_30_25",
+    "dire_30_25"
+  ],
+  "card_fingerprint": "54dee6998569"
+}
