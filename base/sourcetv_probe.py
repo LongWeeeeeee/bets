@@ -103,6 +103,24 @@ def _note_sourcetv_snapshot(state, game, now=None):
 # повторялась, а запись матча тихо исчезала из моста через 300 с.
 GC_STALL_WARN_SECONDS = 120.0
 
+# Как часто отбивать пульс в лог, когда живых матчей нет. Должно быть заметно
+# меньше порога watchdog'а (900 с по mtime лога), иначе тихий probe считается
+# залипшим и перезапускается на ровном месте.
+HEARTBEAT_SECONDS = 300.0
+
+
+def _heartbeat_due(printed_rows, last_heartbeat_ts, now=None):
+    """Пора ли отбить пульс: на экране пусто и пауза затянулась."""
+    if printed_rows:
+        return False
+    moment = float(time.time() if now is None else now)
+    try:
+        last = float(last_heartbeat_ts or 0)
+    except (TypeError, ValueError):
+        last = 0.0
+    return (moment - last) >= HEARTBEAT_SECONDS
+
+
 def _note_gc_stall(mid, state, now=None, logger=None):
     """Один раз на эпизод сообщить, что GC молчит, и один раз — что ожил."""
     if not isinstance(state, dict):
@@ -966,6 +984,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
         sweep_cursor = 0           # курсор round-robin по пулу кандидатов
         kw_candidates = _keyword_candidate_league_ids() if auto_kw_mode else []
         last_kw_refresh = time.time()
+        last_heartbeat_ts = time.time()
 
         while True:
             try:
@@ -1241,6 +1260,15 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                     count += 1
                 status_lines[0] = count
                 sys.stdout.flush()
+
+                # Пустой экран = пустой лог. Watchdog (`sourcetv-probe-watchdog`)
+                # судит о жизни probe по mtime лога и в паузе между матчами видит
+                # мёртвый процесс: 16.08.2026 он рестартовал probe в 15:15 и 15:35
+                # при живом и здоровом процессе. Каждый такой рестарт — новый
+                # логин в Steam и провал в мосте, если матч стартует в этот момент.
+                if _heartbeat_due(count, last_heartbeat_ts):
+                    last_heartbeat_ts = time.time()
+                    log.info("пульс: активных матчей нет, целей %d", len(targets))
 
             except KeyboardInterrupt:
                 _clear_status()

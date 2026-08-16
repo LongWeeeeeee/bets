@@ -131,6 +131,20 @@ def test_gc_stall_is_reported_once_per_episode() -> None:
     assert len(sink.infos) == 1
 
 
+def test_idle_probe_still_beats_so_watchdog_sees_a_live_process() -> None:
+    """Пауза между матчами — не залипание: лог обязан обновляться.
+
+    Watchdog судит о жизни probe по mtime лога (порог 900 с), а тихий probe в
+    паузе не печатал ничего и перезапускался на ровном месте (16.08.2026,
+    рестарты в 15:15 и 15:35 при живом процессе).
+    """
+    assert probe.HEARTBEAT_SECONDS < 900.0
+    assert probe._heartbeat_due(0, 0.0, now=probe.HEARTBEAT_SECONDS) is True
+    assert probe._heartbeat_due(0, 0.0, now=probe.HEARTBEAT_SECONDS - 1) is False
+    # Пока матчи на экране, лог и так пишется каждой итерацией.
+    assert probe._heartbeat_due(2, 0.0, now=probe.HEARTBEAT_SECONDS * 10) is False
+
+
 def test_sourcetv_pregame_timestamp_uses_latest_receipt() -> None:
     state = {
         "game": {"game_time": -45},
