@@ -408,7 +408,39 @@ def _ensure_pro_index():
 _LAST_POS_RESOLUTION = {}
 
 
-def _resolve_positions(team_players, team_id=0):
+# Подробный журнал разрешения позиций. Раньше лог писал ТОЛЬКО конфликты, и
+# знаменателя не было: «103 перебора» невозможно превратить в долю. Теперь
+# пишется каждая разрешённая сторона, с номером карты и составом, а разбор
+# ложится строкой в jsonl рядом с остальным runtime.
+POSRES_JSONL = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "runtime", "pos_resolution.jsonl")
+_POSRES_SEEN = set()
+
+
+def _posres_record(payload):
+    """Строка в журнал: один раз на (карта, сторона, состав)."""
+    key = (payload.get("match_id"), payload.get("side"),
+           tuple(sorted((payload.get("resolved") or {}).items())))
+    if key in _POSRES_SEEN:
+        return
+    _POSRES_SEEN.add(key)
+    if len(_POSRES_SEEN) > 5000:
+        _POSRES_SEEN.clear()
+    try:
+        os.makedirs(os.path.dirname(POSRES_JSONL), exist_ok=True)
+        with open(POSRES_JSONL, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception as exc:  # noqa: BLE001 — журнал не имеет права ронять сбор
+        log.debug("журнал позиций недоступен: %s", exc)
+    log.info(
+        "Позиции [%s/%s]: метод=%s conf=%s | %s",
+        payload.get("match_id"), payload.get("side"), payload.get("method"),
+        payload.get("conf"), payload.get("slots"),
+    )
+
+
+def _resolve_positions(team_players, team_id=0, match_id=None, side=None,
+                       hero_names=None):
     """Resolve positions for 5 players [{account_id, hero_id}, ...] → {account_id: pos_int}.
 
     Priority:
@@ -425,6 +457,8 @@ def _resolve_positions(team_players, team_id=0):
     # Step 1: determine raw position per player
     from collections import Counter
     raw = {}
+    raw_src = {}          # откуда взялась позиция: override / команда / все матчи
+    raw_hist = {}         # сколько записей истории было в основе
     for p in team_players:
         aid = p["account_id"]
 
@@ -432,6 +466,7 @@ def _resolve_positions(team_players, team_id=0):
         override_pos = (_POS_OVERRIDES.get(aid) or {}).get(team_id)
         if override_pos:
             raw[aid] = override_pos
+            raw_src[aid] = "override"
             continue
 
         all_history = _PRO_POSITIONS_INDEX.get(aid, [])
@@ -442,6 +477,8 @@ def _resolve_positions(team_players, team_id=0):
             if len(team_hist) >= 3:
                 counts = Counter(pos for _, pos in team_hist)
                 raw[aid] = counts.most_common(1)[0][0]
+                raw_src[aid] = "история команды"
+                raw_hist[aid] = len(team_hist)
                 continue
 
         # 1c. All-teams mode fallback
@@ -449,6 +486,8 @@ def _resolve_positions(team_players, team_id=0):
         if history:
             counts = Counter(pos for _, pos in history)
             raw[aid] = counts.most_common(1)[0][0]
+            raw_src[aid] = "история игрока"
+            raw_hist[aid] = len(history)
 
     # Step 2: build permutation scoring using hero_position_stats
     def _pos_score(hero_id, pos):
@@ -474,6 +513,16 @@ def _resolve_positions(team_players, team_id=0):
 
     if not has_dupes and not missing:
         _LAST_POS_RESOLUTION = {"method": "raw", "raw_known": len(raw)}
+        _posres_record({
+            "ts": int(time.time()), "match_id": match_id, "side": side,
+            "team_id": team_id, "method": "raw", "conf": 1.0,
+            "resolved": {str(a): raw[a] for a in aids},
+            "slots": [{"account": aids[i], "hero": hids[i],
+                       "hero_name": (hero_names or [None] * 5)[i],
+                       "pos": raw.get(aids[i]),
+                       "источник": raw_src.get(aids[i]),
+                       "матчей истории": raw_hist.get(aids[i])} for i in range(5)],
+        })
         return raw  # perfect, no conflict
 
     log.info(
@@ -518,10 +567,21 @@ def _resolve_positions(team_players, team_id=0):
             "stats_conf": round(stats_conf, 3),
             "conf": round(combined_conf, 3),
         }
-        log.info(
-            "Позиции: разрешено перестановкой: %s (conf=%.2f, stats_conf=%.2f, raw_matched=%d/%d)",
-            resolved, combined_conf, stats_conf, best_raw_matches, len(raw),
-        )
+        _posres_record({
+            "ts": int(time.time()), "match_id": match_id, "side": side,
+            "team_id": team_id, "method": "перебор",
+            "conf": round(combined_conf, 3), "stats_conf": round(stats_conf, 3),
+            "raw_matched": best_raw_matches, "raw_known": len(raw),
+            "resolved": {str(a): resolved[a] for a in aids},
+            "slots": [{"account": aids[i], "hero": hids[i],
+                       "hero_name": (hero_names or [None] * 5)[i],
+                       "pos": best_perm[i], "сырая": raw.get(aids[i]),
+                       "совпало": raw.get(aids[i]) == best_perm[i],
+                       "источник": raw_src.get(aids[i]),
+                       "матчей истории": raw_hist.get(aids[i]),
+                       "P(герой на позиции)": round(_pos_score(hids[i], best_perm[i]), 3)
+                       if hids[i] else None} for i in range(5)],
+        })
         return resolved
     _LAST_POS_RESOLUTION = {"method": "raw_fallback", "raw_known": len(raw)}
     return raw
@@ -558,11 +618,13 @@ def load_pro_players():
         return {}
 
 
-def load_player_positions(account_ids, hero_ids=None, team_id=0):
+def load_player_positions(account_ids, hero_ids=None, team_id=0, match_id=None,
+                          side=None, hero_names=None):
     if hero_ids is None:
         hero_ids = [None] * len(account_ids)
     team_players = [{"account_id": a, "hero_id": h} for a, h in zip(account_ids, hero_ids)]
-    return _resolve_positions(team_players, team_id=team_id)
+    return _resolve_positions(team_players, team_id=team_id, match_id=match_id,
+                              side=side, hero_names=hero_names)
 
 
 def fetch_steam_names(account_ids):
@@ -1125,7 +1187,11 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                     # Use team_id from targets so position overrides/team filter work
                                     side_tid = t.get("side_tid", {})
                                     tid = side_tid.get(aids[0], t.get("rad_id" if side_radiant else "dire_id", 0))
-                                    st["pos_map"].update(load_player_positions(aids, hids, team_id=tid))
+                                    hnames = [p.get("hero") for p in side_players]
+                                    st["pos_map"].update(load_player_positions(
+                                        aids, hids, team_id=tid, match_id=int(mid),
+                                        side="radiant" if side_radiant else "dire",
+                                        hero_names=hnames))
                                     st.setdefault("pos_meta", {})[
                                         "radiant" if side_radiant else "dire"
                                     ] = dict(_LAST_POS_RESOLUTION)
