@@ -3240,15 +3240,19 @@ def get_pros(max_waves=None):
 # retry-after различается (39852 / 39851 / 39851 / 39850 c) — у общего счётчика
 # момент сброса был бы ОДИН. Значит параллелизм по парам ускоряет линейно.
 #
-# Батча нет и не будет, это проверено дважды:
+# Батч ЕСТЬ, но не в тех формах, что пробовались сначала:
 #   * `matches(ids: [...])` закрыт — «User is not an admin»;
 #   * playback внутри `teams -> matches` не влезает в бюджет сложности: потолок
 #     эндпоинта 300 000, а минимальный playback в этой форме стоит 336 821.
 #     Сложность считается СТАТИЧЕСКИ по форме запроса — take=5, take=2 и take=1
-#     дают одно и то же число, поэтому уменьшать выборку бесполезно. Проходит
-#     только `deathEvents { time }`, то есть без атакующего и жертвы — а именно
-#     они и нужны.
-# Значит один матч = один запрос.
+#     дают одно и то же число, поэтому уменьшать выборку бесполезно;
+#   * а вот АЛИАСЫ GraphQL работают: `query { m0: match(id: X){...} m1: ... }`.
+#     Множителя списка у них нет, поэтому стоимость просто складывается.
+#     Замер 17.08 на форме отчётов: 8 матчей проходят, 9 дают 310 914 при
+#     лимите 300 000, то есть один матч стоит около 34 546. Проверено на живом
+#     сборе: 8.0 карт на запрос, ошибок ноль.
+# Прежняя запись «один матч = один запрос» была неверной и стоила нам
+# восьмикратного расхода квоты на сборе playback. Батчить через `get_batched`.
 PLAYBACK_QUERY = """query($id: Long!) {
   match(id: $id) {
     id parsedDateTime durationSeconds
@@ -3315,6 +3319,73 @@ def _playback_compact(match):
     return out
 
 
+# Ингейм-отчёты Stratz: то, чего нет ни в playback, ни у OpenDota.
+#
+#   * dealtTotal/receivedTotal — урон РАЗБИТ ПО ТИПАМ (физический, магический,
+#     чистый) и, главное, КОНТРОЛЬ: сколько станов/дизейблов/замедлений герой
+#     наложил и получил, и какой суммарной длительности. Ни в одном нашем
+#     источнике этого нет;
+#   * dealtTargets — парный урон (дублирует OpenDota, берём для сверки);
+#   * abilityCastReport — по КАЖДОЙ способности и КАЖДОЙ цели: сколько раз
+#     применена, сколько урона и какой длительности эффект. Это парная матрица
+#     контроля, а не только урона.
+#
+# Проверено 17.08: весь матч (10 игроков) укладывается в 15 КБ, один запрос.
+STATS_QUERY = """query($id: Long!) {
+  match(id: $id) {
+    id parsedDateTime durationSeconds didRadiantWin
+    players {
+      heroId isRadiant position
+      stats {
+        heroDamageReport {
+          dealtTotal { physicalDamage magicalDamage pureDamage
+                       stunCount stunDuration disableCount disableDuration
+                       slowCount slowDuration }
+          receivedTotal { physicalDamage magicalDamage pureDamage
+                          stunCount stunDuration disableCount disableDuration
+                          slowCount slowDuration }
+          dealtTargets { target amount }
+        }
+        abilityCastReport { abilityId count targets { target count damage duration } }
+      }
+    }
+  }
+}"""
+
+_TOTAL_KEYS = ("physicalDamage", "magicalDamage", "pureDamage",
+               "stunCount", "stunDuration", "disableCount", "disableDuration",
+               "slowCount", "slowDuration")
+
+
+def _stats_compact(match):
+    """Ужимаем отчёты: списки словарей -> плоские массивы."""
+    out = {"id": match.get("id"), "parsed": match.get("parsedDateTime"),
+           "dur": match.get("durationSeconds"), "rw": match.get("didRadiantWin"),
+           "players": []}
+    for p in match.get("players") or []:
+        st = p.get("stats") or {}
+        hd = st.get("heroDamageReport") or {}
+
+        def tot(block):
+            b = block or {}
+            return [b.get(k) or 0 for k in _TOTAL_KEYS]
+
+        out["players"].append({
+            "hero": p.get("heroId"),
+            "rad": p.get("isRadiant"),
+            "pos": (p.get("position") or "").replace("POSITION_", ""),
+            "dealt": tot(hd.get("dealtTotal")),
+            "recv": tot(hd.get("receivedTotal")),
+            "tgt": [[t.get("target"), t.get("amount")]
+                    for t in (hd.get("dealtTargets") or [])],
+            "casts": [[a.get("abilityId"), a.get("count"),
+                       [[x.get("target"), x.get("count"), x.get("damage"),
+                         x.get("duration")] for x in (a.get("targets") or [])]]
+                      for a in (st.get("abilityCastReport") or [])],
+        })
+    return out
+
+
 def _playback_done_ids(out_dir):
     """Обработано = карта РЕАЛЬНО лежит в данных, а не «мы к ней ходили».
 
@@ -3341,7 +3412,7 @@ def _playback_done_ids(out_dir):
 
 
 async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
-                           show_prints=True, query=None):
+                           show_prints=True, query=None, compact=None):
     """Сбор playbackData по одному матчу. Возобновляемый.
 
     `pace` — секунд между запросами. Квота общая на аккаунт (1500/час), поэтому
@@ -3420,7 +3491,7 @@ async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
                 await asyncio.sleep(min(900, 60 * (2 ** min(misses - 1, 4))))
                 continue
             misses = 0
-            row = _playback_compact(one_match)
+            row = (compact or _playback_compact)(one_match)
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
             fh.flush()
             stats['ok'] += 1
