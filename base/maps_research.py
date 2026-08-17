@@ -411,9 +411,19 @@ class ProxyAPIPool:
     """Управляет пулом прокси-API пар с автоматическим переключением"""
     
     def __init__(self, api_to_proxy_dict):
+        """Принимает dict {прокси: ключ} ИЛИ список пар [(прокси, ключ), ...].
+
+        Список нужен, потому что на одном IP может жить больше одного ключа:
+        квота Stratz считается по АККАУНТУ (SteamId в JWT), а привязка к IP —
+        по ключу. Проверено 15.08: ключ stratz-450 отвечает 200 через
+        88.218.187.153, где уже сидит stratz-432, и счётчик у него свой.
+        Словарь такую пару выразить не может — ключ прокси в нём один.
+        """
         token_states = {}
         self.trackers = []
-        for proxy_url, api_token in api_to_proxy_dict.items():
+        pairs = (api_to_proxy_dict.items() if hasattr(api_to_proxy_dict, 'items')
+                 else list(api_to_proxy_dict))
+        for proxy_url, api_token in pairs:
             state = token_states.get(api_token)
             tracker = RateLimitTracker(proxy_url, api_token, shared_state=state)
             if api_token not in token_states:
@@ -3054,15 +3064,59 @@ def get_pros():
 # Карты старше собирать бессмысленно.
 #
 # Лимиты. Проверено 15.08: счётчики у всех четырёх ключей ОДИНАКОВЫ
-# (час 0/1500, сутки 7500/15000) — квота общая на аккаунт, а не на ключ.
-# Поэтому смысл имеет не параллелизм по парам, а батч: по 5 матчей в запросе.
-PLAYBACK_QUERY = """query($ids: [Long]!) {
-  matches(ids: $ids) {
+# (час 0/1500, сутки 7500/15000) — квота ОБЩАЯ на аккаунт, а не на ключ.
+# Параллелизм по парам поэтому не ускоряет: он лишь быстрее выжигает одну квоту,
+# после чего всё стоит. Нужен ровный темп 1 запрос в 2.4 секунды.
+#
+# Батча нет и не будет, это проверено дважды:
+#   * `matches(ids: [...])` закрыт — «User is not an admin»;
+#   * playback внутри `teams -> matches` не влезает в бюджет сложности: потолок
+#     эндпоинта 300 000, а минимальный playback в этой форме стоит 336 821.
+#     Сложность считается СТАТИЧЕСКИ по форме запроса — take=5, take=2 и take=1
+#     дают одно и то же число, поэтому уменьшать выборку бесполезно. Проходит
+#     только `deathEvents { time }`, то есть без атакующего и жертвы — а именно
+#     они и нужны.
+#   * а вот АЛИАСЫ GraphQL работают: query { m0: match(id: X){...} m1: ... }
+#     Множителя списка у них нет, поэтому стоимость просто складывается.
+#     Замер 17.08 на форме отчётов: 8 матчей проходят, 9 дают 310 914 при
+#     лимите 300 000, то есть один матч стоит около 34 546. На живом сборе —
+#     8.0 карт на запрос, ошибок ноль.
+# Прежняя запись «один матч = один запрос» была неверной и стоила
+# восьмикратного расхода квоты на сборе playback. Батчить через get_batched.
+PLAYBACK_QUERY = """query($id: Long!) {
+  match(id: $id) {
     id parsedDateTime durationSeconds
     players {
       heroId isRadiant position
       playbackData {
         deathEvents { time attacker target byAbility byItem isBurst isFeed }
+        purchaseEvents { time itemId }
+        playerUpdateLevelEvents { time level }
+      }
+    }
+  }
+}"""
+
+
+# Расширенная форма. В deathEvents у Stratz есть ещё три вещи, ради которых
+# стоит второй проход:
+#   * assist — СПИСОК помогавших. Без него саппорт, который готовит убийство и
+#     не добивает, невидим совсем; «двойки-тройки kill squad» без ассистов не
+#     считаются в принципе.
+#   * timeDead — время смерти в секундах. Отделяет гибель ГЕРОЯ от гибели его
+#     юнита или клона: сейчас Meepo, Tinker и Chen выкинуты целиком, потому что
+#     различить нечем.
+#   * positionX/positionY — где убили. Даёт привязку к линии и к лесу.
+# Поля добавлены В КОНЕЦ записи смерти, чтобы старые читатели (ev[0..6])
+# продолжали работать на смешанном корпусе.
+PLAYBACK_QUERY_V2 = """query($id: Long!) {
+  match(id: $id) {
+    id parsedDateTime durationSeconds
+    players {
+      heroId isRadiant position
+      playbackData {
+        deathEvents { time attacker target byAbility byItem isBurst isFeed
+                      timeDead assist positionX positionY }
         purchaseEvents { time itemId }
         playerUpdateLevelEvents { time level }
       }
@@ -3081,13 +3135,91 @@ def _playback_compact(match):
             "hero": p.get("heroId"),
             "rad": p.get("isRadiant"),
             "pos": (p.get("position") or "").replace("POSITION_", ""),
-            "deaths": [[d.get("time"), d.get("attacker"), d.get("target"),
-                        d.get("byAbility"), d.get("byItem"),
-                        int(bool(d.get("isBurst"))), int(bool(d.get("isFeed")))]
+            "deaths": [([d.get("time"), d.get("attacker"), d.get("target"),
+                         d.get("byAbility"), d.get("byItem"),
+                         int(bool(d.get("isBurst"))), int(bool(d.get("isFeed")))]
+                        + ([d.get("timeDead"), d.get("assist") or [],
+                            d.get("positionX"), d.get("positionY")]
+                           if "assist" in d else []))
                        for d in (pb.get("deathEvents") or [])],
+            # killEvents запрашиваются формой V4 и раньше выбрасывались: там
+            # флаги, которых нет в deathEvents — isSolo (убийство без помощи
+            # команды рядом), isGank, isSmoke, isInvisible. Соло-убийство —
+            # самое парное событие из всех, ради него и стоит хранить.
+            "kills": [[e.get("time"), e.get("target"), e.get("assist") or [],
+                       int(bool(e.get("isSolo"))), int(bool(e.get("isGank"))),
+                       int(bool(e.get("isSmoke"))), int(bool(e.get("isInvisible")))]
+                      for e in (pb.get("killEvents") or [])],
             "buys": [[e.get("time"), e.get("itemId")] for e in (pb.get("purchaseEvents") or [])],
             "levels": [[e.get("time"), e.get("level")]
                        for e in (pb.get("playerUpdateLevelEvents") or [])],
+        })
+    return out
+
+
+# Ингейм-отчёты Stratz: то, чего нет ни в playback, ни у OpenDota.
+#
+#   * dealtTotal/receivedTotal — урон РАЗБИТ ПО ТИПАМ (физический, магический,
+#     чистый) и, главное, КОНТРОЛЬ: сколько станов/дизейблов/замедлений герой
+#     наложил и получил, и какой суммарной длительности. Ни в одном нашем
+#     источнике этого нет;
+#   * dealtTargets — парный урон (дублирует OpenDota, берём для сверки);
+#   * abilityCastReport — по КАЖДОЙ способности и КАЖДОЙ цели: сколько раз
+#     применена, сколько урона и какой длительности эффект. Это парная матрица
+#     контроля, а не только урона.
+#
+# Проверено 17.08: весь матч (10 игроков) укладывается в 15 КБ, один запрос.
+STATS_QUERY = """query($id: Long!) {
+  match(id: $id) {
+    id parsedDateTime durationSeconds didRadiantWin
+    players {
+      heroId isRadiant position
+      stats {
+        heroDamageReport {
+          dealtTotal { physicalDamage magicalDamage pureDamage
+                       stunCount stunDuration disableCount disableDuration
+                       slowCount slowDuration }
+          receivedTotal { physicalDamage magicalDamage pureDamage
+                          stunCount stunDuration disableCount disableDuration
+                          slowCount slowDuration }
+          dealtTargets { target amount }
+        }
+        abilityCastReport { abilityId count targets { target count damage duration } }
+      }
+    }
+  }
+}"""
+
+_TOTAL_KEYS = ("physicalDamage", "magicalDamage", "pureDamage",
+               "stunCount", "stunDuration", "disableCount", "disableDuration",
+               "slowCount", "slowDuration")
+
+
+def _stats_compact(match):
+    """Ужимаем отчёты: списки словарей -> плоские массивы."""
+    out = {"id": match.get("id"), "parsed": match.get("parsedDateTime"),
+           "dur": match.get("durationSeconds"), "rw": match.get("didRadiantWin"),
+           "players": []}
+    for p in match.get("players") or []:
+        st = p.get("stats") or {}
+        hd = st.get("heroDamageReport") or {}
+
+        def tot(block):
+            b = block or {}
+            return [b.get(k) or 0 for k in _TOTAL_KEYS]
+
+        out["players"].append({
+            "hero": p.get("heroId"),
+            "rad": p.get("isRadiant"),
+            "pos": (p.get("position") or "").replace("POSITION_", ""),
+            "dealt": tot(hd.get("dealtTotal")),
+            "recv": tot(hd.get("receivedTotal")),
+            "tgt": [[t.get("target"), t.get("amount")]
+                    for t in (hd.get("dealtTargets") or [])],
+            "casts": [[a.get("abilityId"), a.get("count"),
+                       [[x.get("target"), x.get("count"), x.get("damage"),
+                         x.get("duration")] for x in (a.get("targets") or [])]]
+                      for a in (st.get("abilityCastReport") or [])],
         })
     return out
 
@@ -3117,8 +3249,13 @@ def _playback_done_ids(out_dir):
     return done
 
 
-async def get_playback_new(ids, out_dir, batch_size=5, concurrency=2, show_prints=True):
-    """Сбор playbackData пачками по match id. Возобновляемый."""
+async def get_playback_new(ids, out_dir, batch_size=1, concurrency=1, pace=2.5,
+                           show_prints=True, query=None, compact=None):
+    """Сбор playbackData по одному матчу. Возобновляемый.
+
+    `pace` — секунд между запросами. Квота общая на аккаунт (1500/час), поэтому
+    темп держится глобально, а не на пару: иначе всплеск и получасовой простой.
+    """
     import gzip as _gzip
 
     os.makedirs(out_dir, exist_ok=True)
@@ -3130,53 +3267,179 @@ async def get_playback_new(ids, out_dir, batch_size=5, concurrency=2, show_print
     if not todo:
         return 0
 
-    batch_size = max(1, min(5, int(batch_size)))
-    batches = [todo[i:i + batch_size] for i in range(0, len(todo), batch_size)]
+    batches = [[i] for i in todo]      # один матч на запрос: батч недоступен
     run_tag = time.strftime('%Y%m%d_%H%M%S')
     path = os.path.join(out_dir, f'playback_{run_tag}.jsonl.gz')
-    pool = get_proxy_pool()
-    sem = asyncio.Semaphore(max(1, int(concurrency)))
-    stats = {'ok': 0, 'unparsed': 0, 'err': 0, 'batches': 0}
-    lock = asyncio.Lock()
-    fh = _gzip.open(path, 'wt', encoding='utf-8')
+    # По ОДНОМУ работнику на пару, и каждый ходит ТОЛЬКО своим ключом.
+    # Общий пул тут вреден: он перебирает трекеры и повторяет запрос в уже
+    # заблокированные, из-за чего на одну карту уходило под десяток обращений
+    # (проверено 15.08: 3000 сожжённых запросов на 250 собранных карт).
+    # Свой темп на пару держит расход ниже 1500/час на аккаунт — квота считается
+    # по аккаунту, и выбитое окно стоит получаса простоя.
+    try:
+        from keys import STRATZ_PAIRS as _PAIRS
+    except Exception:
+        _PAIRS = list(STRATZ_PROXY_MAP.items())
+    pools = [ProxyAPIPool([pair]) for pair in _PAIRS]
+    if show_prints:
+        print(f"🔑 пар ключ-прокси в сборе: {len(pools)}, темп {pace} c на пару", flush=True)
 
-    async def one(batch):
-        async with sem:
+    stats = {'ok': 0, 'unparsed': 0, 'err': 0, 'batches': 0, 'requeued': 0}
+    fh = _gzip.open(path, 'wt', encoding='utf-8')
+    queue = asyncio.Queue()
+    for b in batches:
+        queue.put_nowait(b)
+
+    async def worker(pool_i):
+        pool = pools[pool_i]
+        next_at = 0.0
+        misses = 0        # подряд идущие пустые ответы -> растущая пауза
+        while True:
+            try:
+                batch = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            delay = next_at - time.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            next_at = time.time() + float(pace)
             try:
                 data = await pool.make_request(
                     url='https://api.stratz.com/graphql',
-                    json={"query": PLAYBACK_QUERY, "variables": {"ids": batch}},
+                    json={"query": query or PLAYBACK_QUERY, "variables": {"id": batch[0]}},
                     headers={"Content-Type": "application/json", "Accept": "application/json",
                              "User-Agent": "STRATZ_API"},
                 )
             except Exception as exc:
-                async with lock:
-                    stats['err'] += 1
-                if show_prints and stats['err'] % 20 == 0:
+                stats['err'] += 1
+                if show_prints and stats['err'] % 50 == 0:
                     print(f"   ⚠️ ошибок {stats['err']}: {str(exc)[:80]}", flush=True)
-                return
-            matches = ((data or {}).get('data') or {}).get('matches') or []
-            async with lock:
-                for m in matches:
-                    if not m:
-                        continue
-                    row = _playback_compact(m)
-                    fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-                    stats['ok'] += 1
-                    if not row['parsed']:
-                        stats['unparsed'] += 1
-                fh.flush()          # без сброса убитый прогон теряет всё, что в буфере
-                stats['batches'] += 1
-                if show_prints and stats['batches'] % 50 == 0:
-                    print(f"   собрано {stats['ok']:,} карт ({stats['unparsed']:,} без разбора), "
-                          f"пачек {stats['batches']:,} из {len(batches):,}, ошибок {stats['err']}",
-                          flush=True)
+                data = None
+            one_match = ((data or {}).get('data') or {}).get('match')
+            if one_match is None:
+                # Ответа нет — карта не потеряна, а возвращается в очередь.
+                stats['requeued'] += 1
+                queue.put_nowait(batch)
+                # Пауза растёт: каждый 429 Stratz списывает как обычный запрос,
+                # поэтому ждать надо молча. Замер 15.08: повтор каждые пять
+                # секунд сжёг около тысячи запросов за 25 минут простоя, а
+                # выбитое СУТОЧНОЕ окно ждать до полусуток — фиксированная
+                # минута стоила бы ещё 240 запросов в час из завтрашней квоты.
+                misses += 1
+                await asyncio.sleep(min(900, 60 * (2 ** min(misses - 1, 4))))
+                continue
+            misses = 0
+            row = (compact or _playback_compact)(one_match)
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            fh.flush()
+            stats['ok'] += 1
+            if not row['parsed']:
+                stats['unparsed'] += 1
+            stats['batches'] += 1
+            if show_prints and stats['batches'] % 100 == 0:
+                print(f"   собрано {stats['ok']:,} карт ({stats['unparsed']:,} без разбора), "
+                      f"осталось {queue.qsize():,}, возвратов {stats['requeued']}, "
+                      f"ошибок {stats['err']}", flush=True)
 
-    await asyncio.gather(*(one(b) for b in batches))
+    await asyncio.gather(*(worker(i) for i in range(len(pools))))
     fh.close()
     if show_prints:
         print(f"✅ playback: собрано {stats['ok']:,} карт, без разбора {stats['unparsed']:,}, "
               f"ошибок {stats['err']}, файл {path}", flush=True)
+    return stats['ok']
+
+
+async def get_batched(ids, out_dir, body, compact, batch=8, pace=2.7,
+                      show_prints=True):
+    """Сбор пачками через АЛИАСЫ GraphQL: `m0: match(id: X){...} m1: ...`.
+
+    Прежняя запись «один матч = один запрос» была неполной: закрыт `matches(ids:)`
+    и не влезает `teams -> matches`, но алиасы никто не пробовал. Замер 17.08 на
+    форме отчётов: 8 матчей проходят, 9 дают сложность 310 914 при лимите
+    300 000, то есть один матч стоит около 34 546. Восемь за запрос — это
+    ВОСЬМИКРАТНАЯ экономия квоты против прежнего сбора.
+
+    `body` — тело внутри `match(id:)`, `compact` — функция сжатия одного матча.
+    Размер пачки подбирать под форму: чем больше вложенных списков, тем дороже.
+    """
+    import gzip as _gzip
+
+    os.makedirs(out_dir, exist_ok=True)
+    done = _playback_done_ids(out_dir)
+    todo = [int(i) for i in ids if int(i) not in done]
+    if show_prints:
+        print(f"📦 батч-сбор: всего {len(ids):,}, есть {len(done):,}, "
+              f"к сбору {len(todo):,} пачками по {batch}", flush=True)
+    if not todo:
+        return 0
+
+    try:
+        from keys import STRATZ_PAIRS as _PAIRS
+    except Exception:
+        _PAIRS = list(STRATZ_PROXY_MAP.items())
+    pools = [ProxyAPIPool([pair]) for pair in _PAIRS]
+    run_tag = time.strftime('%Y%m%d_%H%M%S')
+    path = os.path.join(out_dir, f'batch_{run_tag}.jsonl.gz')
+    fh = _gzip.open(path, 'wt', encoding='utf-8')
+    stats = {'ok': 0, 'empty': 0, 'err': 0, 'req': 0}
+    queue = asyncio.Queue()
+    for i in range(0, len(todo), batch):
+        queue.put_nowait(todo[i:i + batch])
+
+    async def worker(pool_i):
+        pool = pools[pool_i]
+        next_at = 0.0
+        misses = 0
+        while True:
+            try:
+                chunk = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            delay = next_at - time.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            next_at = time.time() + float(pace)
+            q = "query { " + " ".join(
+                f"m{k}: match(id: {mid}) {body}" for k, mid in enumerate(chunk)) + " }"
+            try:
+                data = await pool.make_request(
+                    url='https://api.stratz.com/graphql',
+                    json={"query": q},
+                    headers={"Content-Type": "application/json",
+                             "Accept": "application/json",
+                             "User-Agent": "STRATZ_API"},
+                )
+            except Exception:
+                stats['err'] += 1
+                data = None
+            stats['req'] += 1
+            payload = (data or {}).get('data') or {}
+            if not payload:
+                queue.put_nowait(chunk)
+                misses += 1
+                await asyncio.sleep(min(900, 60 * (2 ** min(misses - 1, 4))))
+                continue
+            misses = 0
+            for k in range(len(chunk)):
+                one = payload.get(f"m{k}")
+                if not one:
+                    stats['empty'] += 1
+                    continue
+                fh.write(json.dumps(compact(one), ensure_ascii=False) + "\n")
+                stats['ok'] += 1
+            fh.flush()
+            if show_prints and stats['req'] % 50 == 0:
+                print(f"   собрано {stats['ok']:,} карт за {stats['req']:,} запросов "
+                      f"({stats['ok'] / max(1, stats['req']):.1f} на запрос), "
+                      f"осталось пачек {queue.qsize():,}, ошибок {stats['err']}",
+                      flush=True)
+
+    await asyncio.gather(*(worker(i) for i in range(len(pools))))
+    fh.close()
+    if show_prints:
+        print(f"✅ батч-сбор: {stats['ok']:,} карт за {stats['req']:,} запросов, "
+              f"пусто {stats['empty']:,}, ошибок {stats['err']}\n   файл: {path}",
+              flush=True)
     return stats['ok']
 
 
