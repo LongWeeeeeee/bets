@@ -49,6 +49,10 @@ from ideas_batch2 import COMPACT, RICH, TEST_FROM  # noqa: E402
 from pro_features_wide import auc  # noqa: E402
 
 ART = ROOT / "runtime/artifacts/misc"
+# Боевые веса. Полная ветка берётся ОТСЮДА побитово, а не переобучается: иначе
+# у каждой карты, которая и сегодня получает вердикт, число молча поехало бы.
+# Проверено на сквозном прогоне: при переобучении совпало 0 вердиктов из 11 064.
+DEPLOYED = Path(os.getenv("PREMATCH_WEIGHTS", ART / "prematch_weights_win120.npz"))
 OUT_NPZ = ART / "branch_weights.npz"
 OUT_MD = ART / "branch_weights.md"
 HYB = ART / "map_winner_hybrid_quality_forward/hybrid_features.npz"
@@ -117,34 +121,55 @@ def main() -> None:
              f"Окно обучения {WINDOW_DAYS} суток — как в бою (E-192, E-193): "
              f"{int(tr.sum()):,} карт. Тест {int(te.sum()):,} карт после "
              f"`TEST_FROM = {TEST_FROM}`.", "",
-             "| ветка | колонок | AUC | Δ к полной |", "|---|---:|---:|---:|"]
+             "| ветка | колонок | AUC | Δ к полной | веса |",
+             "|---|---:|---:|---:|---|"]
 
-    branches, aucs = {}, {}
+    zd = np.load(DEPLOYED, allow_pickle=True)
+    dn = [str(x) for x in zd["feature_names"]]
+    if dn != names:
+        raise SystemExit(f"порядок признаков в {DEPLOYED.name} разошёлся с артефактом")
+    if len(zd["coef"]) != 1:
+        raise SystemExit(
+            f"в {DEPLOYED.name} весов {len(zd['coef'])} наборов, а ветка держит один. "
+            "Это ансамбль вложенных окон (E-191); лестница на нём не собирается — "
+            "сначала перевести бой на одиночное окно.")
+
+    branches, aucs, source = {}, {}, {}
     for name, keys in C.BRANCHES:
         cols = C.columns_for(keys, names)
         if not cols:
             print(f"  {name}: колонок не осталось, ветка пропущена", flush=True)
             continue
         j = [names.index(c) for c in cols]
-        mu, sd, coef, itc = fit(X[tr][:, j], y[tr])
+        if name == "full":
+            # ПОБИТОВАЯ КОПИЯ БОЕВЫХ ВЕСОВ. Полная ветка обязана отдавать ровно
+            # то же число, что и сегодня: лестница добавляет вердикты там, где
+            # их не было, и не имеет права трогать те, что уже есть.
+            mu, sd = zd["mu"][0].copy(), zd["sd"][0].copy()
+            coef, itc = zd["coef"][0].copy(), float(zd["intercept"][0])
+            source[name] = "боевые веса как есть"
+        else:
+            mu, sd, coef, itc = fit(X[tr][:, j], y[tr])
+            source[name] = f"обучена здесь, окно {WINDOW_DAYS} суток"
         logit = ((X[te][:, j] - mu) / sd) @ coef + itc
         a = auc(y[te], logit)
         aucs[name] = a
         branches[name] = ps.Branch(cols=cols, mu=mu, sd=sd, coef=coef, intercept=itc)
-        print(f"  {name:20s} ({len(cols):2d}): AUC {a:.4f}", flush=True)
+        print(f"  {name:20s} ({len(cols):2d}): AUC {a:.4f}  [{source[name]}]", flush=True)
 
     base = aucs["full"]
     for name, _ in C.BRANCHES:
         if name in aucs:
             lines.append(f"| `{name}` | {len(branches[name].cols)} | "
-                         f"{aucs[name]:.4f} | {aucs[name] - base:+.4f} |")
+                         f"{aucs[name]:.4f} | {aucs[name] - base:+.4f} | "
+                         f"{source[name]} |")
 
     # --- проверка 1: полная ветка воспроизводит боевой ориентир
     if abs(base - FULL_TARGET) > FULL_TOL:
         raise SystemExit(
             f"полная ветка дала {base:.4f} против ориентира {FULL_TARGET:.4f} "
-            f"(допуск {FULL_TOL}). Это не настройка регуляризации, а признак "
-            f"того, что порядок колонок или окно обучения поехали.")
+            f"(допуск {FULL_TOL}). Веса взяты боевые, поэтому расхождение здесь "
+            f"означает, что поехал порядок колонок или сам набор тестовых карт.")
 
     # --- проверка 2: сумма частичных сумм равна логиту
     b = branches["full"]

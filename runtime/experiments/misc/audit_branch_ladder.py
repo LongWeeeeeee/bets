@@ -45,6 +45,8 @@ import prematch_scorer as ps  # noqa: E402
 from ideas_batch2 import COMPACT, RICH, TEST_FROM  # noqa: E402
 from pro_features_wide import auc  # noqa: E402
 
+import json  # noqa: E402
+
 ART = ROOT / "runtime/artifacts/misc"
 HYB = ART / "map_winner_hybrid_quality_forward/hybrid_features.npz"
 BRANCHES = ART / "branch_weights.npz"
@@ -84,6 +86,13 @@ def main() -> None:
     ri = np.array([rpos[int(m)] for m in mids.tolist()])
     ts, wins = zc["ts"][ci], zc["wins"][ci].astype(int)
     heroes, accounts = zc["heroes"][ci], zc["accounts"][ci]
+    # Площадка нужна для калибровки: на офлайне модель систематически себя
+    # недооценивает (при заявленных 79.7% факт 84.1%), и одна таблица на обе
+    # площадки завышает требуемый коэффициент на офлайне.
+    meta = {int(k): v for k, v in json.load(
+        open(ART / "league_meta.json")).items()}
+    lan_of = np.array([1 if meta.get(int(l), {}).get("lan") else 0
+                       for l in zc["leagues"][ci]])
     test = ts >= TEST_FROM
     lgt = np.load(ART / "pro_draft_logit_full.npz")["logit"]
 
@@ -99,6 +108,12 @@ def main() -> None:
 
     idx = np.flatnonzero(test)
     by_branch: dict = {}
+    # Сырой дамп для калибровки по веткам: считать её надо на БОЕВЫХ значениях,
+    # а не на обучающих — корреляция обучения и боя у трети колонок 0.4-0.7.
+    dump: dict = {"branch": [], "y": [], "p": [], "lan": []}
+    # Сравнение на ОДНОЙ популяции: прежняя модель против сработавшей ветки.
+    pair: dict = {}
+    alt: dict = {"y": [], "full": [], "no_org": []}
     refused_new: Counter = Counter()
     refused_old = 0
     same, both = 0, 0
@@ -120,12 +135,32 @@ def main() -> None:
         except ps.MissingData as e:
             refused_new[str(e).split(":")[0][:45]] += 1
             continue
-        by_branch.setdefault(r.branch, {"y": [], "p": []})
+        by_branch.setdefault(r.branch, {"y": [], "p": [], "lan": []})
         by_branch[r.branch]["y"].append(int(wins[i]))
         by_branch[r.branch]["p"].append(r.probability)
+        by_branch[r.branch]["lan"].append(int(lan_of[i]))
+        dump["branch"].append(r.branch)
+        dump["y"].append(int(wins[i]))
+        dump["p"].append(float(r.probability))
+        dump["lan"].append(int(lan_of[i]))
         if p_old is not None:
             both += 1
             same += abs(p_old - r.probability) < 1e-9
+            head = pair.setdefault(r.branch, {"y": [], "old": [], "new": []})
+            head["y"].append(int(wins[i]))
+            head["old"].append(p_old)
+            head["new"].append(r.probability)
+        # На картах, где сработала полная ветка, отдельно считаем, что дала бы
+        # ветка без очных встреч: `h2h_resid` имеет корреляцию обучения и боя
+        # 0.231 и в бою ноль на 85.5% карт, поэтому вопрос «не мешает ли он»
+        # законный и его надо мерить на ОДНОЙ популяции.
+        if r.branch == "full" and "no_org" in m_new.branches:
+            b = m_new.branches["no_org"]
+            x = np.array([r.features[c] for c in b.cols])
+            lg = float(((x - b.mu) / b.sd) @ b.coef) + b.intercept
+            alt["y"].append(int(wins[i]))
+            alt["full"].append(r.probability)
+            alt["no_org"].append(1.0 / (1.0 + np.exp(-lg)))
         if (k + 1) % 5000 == 0:
             print(f"  {k+1:,}/{len(idx):,}", flush=True)
 
@@ -150,14 +185,48 @@ def main() -> None:
     lines.append(f"| **всё вместе** | {len(ally):,} | {len(ally) / n_test:.1%} | "
                  f"{auc(ally, allp):.4f} |")
     lines += ["", f"На {both:,} картах, которые считают обе модели, вердикт совпал "
-                  f"побитово у {same:,} ({same / max(both, 1):.1%}) — полная ветка "
-                  f"обязана быть тождественна прежней модели.", ""]
+                  f"побитово у {same:,} ({same / max(both, 1):.1%}). Полная ветка "
+                  f"обязана быть тождественна прежней модели — она берёт боевые "
+                  f"веса как есть; расхождение здесь означало бы, что лестница "
+                  f"молча меняет уже существующие вердикты.", "",
+              "## Прежняя модель против ветки НА ОДНОЙ ПОПУЛЯЦИИ", "",
+              "Прежняя модель на этих картах подставляла нулём то, чего нет "
+              "(`h2h_resid` при незнакомых организациях). Ветка этих колонок не "
+              "видела вовсе. Сравнение честное: одни и те же карты.", "",
+              "| ветка | карт | прежняя | ветка | Δ |", "|---|---:|---:|---:|---:|"]
+    for name in sorted(pair, key=lambda x: -len(pair[x]["y"])):
+        v = pair[name]
+        y = np.array(v["y"])
+        if not (0 < y.mean() < 1):
+            continue
+        a_old, a_new = auc(y, np.array(v["old"])), auc(y, np.array(v["new"]))
+        lines.append(f"| `{name}` | {len(y):,} | {a_old:.4f} | {a_new:.4f} | "
+                     f"{a_new - a_old:+.4f} |")
+    if alt["y"] and 0 < np.mean(alt["y"]) < 1:
+        y = np.array(alt["y"])
+        lines += ["", "## Мешают ли очные встречи там, где они есть", "",
+                  f"На {len(y):,} картах, где сработала полная ветка, полная даёт "
+                  f"{auc(y, np.array(alt['full'])):.4f}, а ветка без очных на тех же "
+                  f"картах — {auc(y, np.array(alt['no_org'])):.4f}. `h2h_resid` в бою "
+                  f"ноль на 85.5% карт при корреляции обучения и боя 0.231, поэтому "
+                  f"вопрос законный."]
+    lines.append("")
     if refused_new:
         lines += ["Оставшиеся отказы:", ""]
         for reason, cnt in refused_new.most_common():
             lines.append(f"- {reason}: {cnt:,}")
     else:
         lines.append("Отказов не осталось ни одного.")
+    np.savez_compressed(
+        ART / "audit_branch_ladder_raw.npz",
+        branch=np.array(dump["branch"], dtype="<U32"),
+        y=np.array(dump["y"], dtype=np.int64),
+        p=np.array(dump["p"], dtype=np.float64),
+        lan=np.array(dump["lan"], dtype=np.int64))
+    lines.append("")
+    lines.append("Сырые вердикты сложены в `audit_branch_ladder_raw.npz` "
+                 "(ветка, исход, вероятность, площадка) — на них снимается "
+                 "калибровка по веткам.")
     lines.append(f"\nПрогон занял {time.time() - t0:.0f} c.")
     OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines), flush=True)
