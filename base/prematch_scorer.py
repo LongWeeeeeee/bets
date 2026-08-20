@@ -224,10 +224,11 @@ class PairTable:
     таблице есть и в коде на боевой машине, которого нет в этом репозитории.
     """
 
-    __slots__ = ("_key", "_val")
+    __slots__ = ("_key", "_val", "_scalar")
     _SHIFT = 20                      # id героя < 2^20; проверяется при сборке
 
-    def __init__(self, rows: np.ndarray, nkey: int = 2) -> None:
+    def __init__(self, rows: np.ndarray, nkey: int = 2,
+                 scalar: bool = False) -> None:
         a = rows[:, 0].astype(np.int64)
         h = rows[:, 1].astype(np.int64)
         if len(rows) and (h.min() < 0 or h.max() >= (1 << self._SHIFT)
@@ -239,6 +240,7 @@ class PairTable:
         order = np.argsort(k, kind="stable")
         self._key = np.ascontiguousarray(k[order])
         self._val = np.ascontiguousarray(rows[order][:, nkey:])
+        self._scalar = scalar
 
     def _index(self, key) -> int:
         a, h = key
@@ -248,13 +250,107 @@ class PairTable:
 
     def get(self, key, default=None):
         i = self._index(key)
-        return self._val[i] if i >= 0 else default
+        if i < 0:
+            return default
+        return float(self._val[i, 0]) if self._scalar else self._val[i]
 
     def __contains__(self, key) -> bool:
         return self._index(key) >= 0
 
     def __len__(self) -> int:
         return len(self._key)
+
+
+class AccTable:
+    """Таблица «аккаунт → строка значений» на отсортированных массивах.
+
+    То же, что `PairTable`, но ключ один. Словарём на 1 553 030 аккаунтов это
+    стоило 320 МБ сверх самих данных, и ещё 225 МБ держал живым исходный массив,
+    потому что значения были видами в него.
+    """
+
+    __slots__ = ("_key", "_val")
+
+    def __init__(self, rows: np.ndarray, nkey: int = 1) -> None:
+        k = rows[:, 0].astype(np.int64)
+        order = np.argsort(k, kind="stable")
+        self._key = np.ascontiguousarray(k[order])
+        self._val = np.ascontiguousarray(rows[order][:, nkey:])
+
+    def _index(self, key) -> int:
+        k = int(key)
+        i = int(np.searchsorted(self._key, k))
+        return i if i < len(self._key) and int(self._key[i]) == k else -1
+
+    def get(self, key, default=None):
+        i = self._index(key)
+        return self._val[i] if i >= 0 else default
+
+    def __getitem__(self, key):
+        i = self._index(key)
+        if i < 0:
+            raise KeyError(key)
+        return self._val[i]
+
+    def __contains__(self, key) -> bool:
+        return self._index(key) >= 0
+
+    def __len__(self) -> int:
+        return len(self._key)
+
+
+class OrgRosters:
+    """Составы организаций и обратный указатель «аккаунт → её организации».
+
+    Словарями это стоило 296 МБ при 7 МБ данных: 151 389 замороженных множеств
+    по пять элементов плюс обратный словарь из ~757 тысяч множеств. Здесь два
+    отсортированных массива на прямую сторону и два на обратную.
+    """
+
+    __slots__ = ("_org", "_members", "_acc", "_acc_org")
+
+    def __init__(self, rows: np.ndarray) -> None:
+        if rows is None or len(rows) == 0:
+            self._org = np.zeros(0, dtype=np.int64)
+            self._members = np.zeros((0, 0), dtype=np.int64)
+            self._acc = np.zeros(0, dtype=np.int64)
+            self._acc_org = np.zeros(0, dtype=np.int64)
+            return
+        org = rows[:, 0].astype(np.int64)
+        mem = rows[:, 1:].astype(np.int64)
+        order = np.argsort(org, kind="stable")
+        self._org = np.ascontiguousarray(org[order])
+        self._members = np.ascontiguousarray(mem[order])
+        flat_a = mem.reshape(-1)
+        flat_o = np.repeat(org, mem.shape[1])
+        keep = flat_a > 0
+        fa, fo = flat_a[keep], flat_o[keep]
+        p = np.argsort(fa, kind="stable")
+        self._acc = np.ascontiguousarray(fa[p])
+        self._acc_org = np.ascontiguousarray(fo[p])
+
+    def orgs_of(self, account: int):
+        """Организации, где встречается этот аккаунт; порядок — по возрастанию id."""
+        a = int(account)
+        lo = int(np.searchsorted(self._acc, a, side="left"))
+        hi = int(np.searchsorted(self._acc, a, side="right"))
+        return self._acc_org[lo:hi]
+
+    def overlap(self, org: int, members: set) -> int:
+        """Сколько из пяти слотов организации есть в этом составе."""
+        o = int(org)
+        i = int(np.searchsorted(self._org, o))
+        if i >= len(self._org) or int(self._org[i]) != o:
+            return 0
+        return sum(1 for x in self._members[i] if int(x) in members)
+
+    def __contains__(self, org) -> bool:
+        o = int(org)
+        i = int(np.searchsorted(self._org, o))
+        return i < len(self._org) and int(self._org[i]) == o
+
+    def __len__(self) -> int:
+        return len(self._org)
 
 
 @dataclass
@@ -345,10 +441,12 @@ class PrematchModel:
         z = np.load(path)
         self.snapshot_ts = int(z["snapshot_ts"][0])
         self.mu, self.sd, self.coef, self.intercept = z["mu"], z["sd"], z["coef"], z["intercept"]
-        self.acc = {int(r[0]): r[1:] for r in z["accounts"]}
+        # 1.55 млн аккаунтов: словарём это 320 МБ сверх данных
+        self.acc = AccTable(z["accounts"])
         # 6.78 млн ячеек: словарём это стоило бы 2 005 МБ при 311 МБ данных
         self.acc_hero = PairTable(z["acc_hero"])
-        self.acc_pos = {(int(r[0]), int(r[1])): r[2] for r in z["acc_pos"]}
+        # 2.95 млн ячеек (аккаунт, позиция) со скалярным значением
+        self.acc_pos = PairTable(z["acc_pos"], scalar=True)
         self.hero_wr30 = {int(r[0]): r[1] for r in z["hero_wr30"]}
         self.vs = {(int(r[0]), int(r[1])): (r[2], r[3]) for r in z["vs_pairs"]}
         self.h2h = {(int(r[0]), int(r[1])): r[2] for r in z["h2h"]}
@@ -424,15 +522,7 @@ class PrematchModel:
         # Iron Wing = 1win = Tundra с составом Pure/bzm/33/Ari/Whitemon.
         self.team_merge = {int(a): int(b) for a, b in z["team_merge"]} if "team_merge" in z else {}
         self.h2h_org = {(int(r[0]), int(r[1])): r[2] for r in z["h2h_org"]} if "h2h_org" in z else {}
-        self.org_by_acc: dict[int, set] = {}
-        if "org_roster" in z:
-            for row in z["org_roster"]:
-                org = int(row[0])
-                for a in row[1:]:
-                    self.org_by_acc.setdefault(int(a), set()).add(org)
-            self.org_roster = {int(r[0]): frozenset(int(x) for x in r[1:]) for r in z["org_roster"]}
-        else:
-            self.org_roster = {}
+        self.org_roster = OrgRosters(z["org_roster"] if "org_roster" in z else None)
 
     def _draft_cells(self, rh: list[tuple[int, int]], dh: list[tuple[int, int]],
                      now: int) -> tuple[float, float]:
@@ -482,15 +572,24 @@ class PrematchModel:
         members = {int(a) for a in accounts if int(a) > 0}
         if len(members) < 4:
             return self.team_merge.get(tid, tid if tid > 0 else -1)
+        # ПОРЯДОК ОБХОДА ЗАФИКСИРОВАН, И НИЧЬЯ РАЗРЕШАЕТСЯ ЯВНО. Раньше состав
+        # обходился как множество, а при равном пересечении побеждал первый
+        # попавшийся — то есть исход зависел от хеш-порядка Python и мог
+        # отличаться между запусками интерпретатора. Ничьи не редкость: у 4.9%
+        # сторон несколько организаций дают одинаковое пересечение, потому что
+        # 1 084 набора состава принадлежат сразу нескольким team_id (склейка
+        # `team_merge` их не схлопнула). При равенстве берём МЕНЬШИЙ id —
+        # правило произвольное, но устойчивое и одинаковое везде.
         best, best_ov = -1, 0
         seen: set[int] = set()
-        for a in members:
-            for org in self.org_by_acc.get(a, ()):  # noqa: SIM118
+        for a in sorted(members):
+            for org_np in self.org_roster.orgs_of(a):
+                org = int(org_np)
                 if org in seen:
                     continue
                 seen.add(org)
-                ov = len(self.org_roster[org] & members)
-                if ov > best_ov:
+                ov = self.org_roster.overlap(org, members)
+                if ov > best_ov or (ov == best_ov and best_ov > 0 and org < best):
                     best, best_ov = org, ov
         if best_ov >= 4:
             return best
