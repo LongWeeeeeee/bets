@@ -428,6 +428,73 @@ class PrematchModel:
         elif len(soft) >= 2:
             notes.append(f"подозрительные позиции у {len(soft)} слотов: {soft}")
 
+    def _hero_side(self, h5: Sequence[int]) -> dict[str, float]:
+        """Величины стороны, ключуемые ГЕРОЕМ: живут без таблицы аккаунтов.
+
+        Обе выглядят игроцкими, но `hero_wr30` — это винрейт ГЕРОЕВ в про за
+        30 дней, а `hero_farm` — фарм-зависимость героя. Поэтому ветка без
+        аккаунтов их сохраняет (`prematch_components.REQUIRES`).
+        """
+        return {
+            "farm_dep": float(np.mean([self.hero_farm.get(int(h), 0.0) for h in h5])),
+            "wr30": float(np.mean([self.hero_wr30[int(h)] for h in h5])),
+        }
+
+    def _acc_side(self, a5: Sequence[int], h5: Sequence[int],
+                  fill: dict, notes: list) -> dict[str, float]:
+        """Величины стороны, ключуемые АККАУНТОМ и ячейкой (аккаунт, герой).
+
+        Вынесено из `score` без единой правки формул: сдвиг масштаба здесь
+        стоит дорого и не виден снаружи — E-166 обошёлся в 0.116 AUC на
+        забытом делении на 100. Метод зовётся, только когда снимок знает всех
+        десятерых: иначе первая же строка упала бы по KeyError, и ровно из-за
+        этого ветка без аккаунтов была недостижима.
+        """
+        A = np.array([self.acc[int(a)] for a in a5])
+        cells = [self.acc_hero.get((int(a), int(h))) for a, h in zip(a5, h5)]
+        known = [c for c in cells if c is not None]
+        fill["cells"] += len(known)
+        fill["pos"] += sum(1 for p, a in enumerate(a5, 1)
+                           if (int(a), p) in self.acc_pos)
+        if not known:
+            notes.append("ни одной ячейки (аккаунт, герой) — hero_* нейтральны")
+        hg = [c[0] if c is not None else 0.0 for c in cells]
+        # E-177: усреднять надо по ВСЕМ пяти слотам с нулём за отсутствующую
+        # ячейку — так собиралась обучающая колонка (`ideas_batch1`:
+        # `gr.append(... if c_ and ca else 0.0)`). Среднее только по
+        # существующим ячейкам давало другую величину: sd 1.48 против
+        # обучающей при корреляции 0.85.
+        gpm_rel = [c[1] if c is not None else 0.0 for c in cells]
+        lh_rel = [c[2] if c is not None else 0.0 for c in cells]
+        return {
+            "elo": A[:, 0].mean(), "games": A[:, 1].mean(), "opp_elo": A[:, 2].mean(),
+            "hero_pool": A[:, 3].mean(), "form": A[:, 4].mean(), "imp50": A[:, 5].mean(),
+            "imp30": A[:, 6].mean(), "gpm_rel_pos": A[:, 7].mean(),
+            "imp_rel_pos": A[:, 8].mean(), "gpm_ewma": A[:, 9].mean(),
+            "lh30": A[:, 10].mean(),
+            "lvl_rel_pos": A[:, 11].mean() if A.shape[1] > 11 else 0.0,
+            "kda_player": A[:, 12].mean() if A.shape[1] > 12 else 0.0,
+            # E-177: три величины, которые модель учила, а снимок не отдавал.
+            # Пока их в артефакте нет — старое поведение, чтобы прежний
+            # артефакт продолжал работать.
+            "imp_recent10": A[:, 15].mean() if A.shape[1] > 15 else A[:, 6].mean(),
+            "imp30_resid": A[:, 16].mean() if A.shape[1] > 16 else A[:, 6].mean(),
+            "lh30_resid": A[:, 17].mean() if A.shape[1] > 17 else A[:, 10].mean(),
+            "hero_games": float(np.mean([math.log1p(max(x, 0)) for x in hg])),
+            "hero_gpm_rel": float(np.mean(gpm_rel)), "lh_rel_hero": float(np.mean(lh_rel)),
+            # Отклонения от норм позиции и героя — сырые (не поминутные)
+            # величины, как в `ideas_batch5.build`; масштаб /1000 ниже.
+            # Среднее берётся по ВСЕМ пяти слотам с нулём за отсутствующую
+            # ячейку — так же, как в обучении (там ноль подставлялся ячейке
+            # без истории), а не по `known`, как у hero_gpm_rel.
+            "a_hdmg_rel_pos": A[:, 13].mean() if A.shape[1] > 13 else 0.0,
+            "a_nw_rel_pos": A[:, 14].mean() if A.shape[1] > 14 else 0.0,
+            "a_hdmg_rel_hero": float(np.mean(
+                [c[3] if (c is not None and len(c) > 3) else 0.0 for c in cells])),
+            "pos_games": float(np.mean([math.log1p(self.acc_pos.get((int(a), p), 0.0))
+                                        for p, a in enumerate(a5, 1)])),
+        }
+
     def score(self, *, radiant_accounts: Sequence[int], dire_accounts: Sequence[int],
               radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
               radiant_team_id: int, dire_team_id: int,
@@ -503,55 +570,9 @@ class PrematchModel:
         # расходиться с тем, что действительно попало в признаки.
         fill = {"cells": 0, "pos": 0}
 
-        def side(a5: Sequence[int], h5: Sequence[int]) -> dict[str, float]:
-            A = np.array([self.acc[int(a)] for a in a5])
-            cells = [self.acc_hero.get((int(a), int(h))) for a, h in zip(a5, h5)]
-            known = [c for c in cells if c is not None]
-            fill["cells"] += len(known)
-            fill["pos"] += sum(1 for p, a in enumerate(a5, 1)
-                               if (int(a), p) in self.acc_pos)
-            if not known:
-                notes.append("ни одной ячейки (аккаунт, герой) — hero_* нейтральны")
-            hg = [c[0] if c is not None else 0.0 for c in cells]
-            # E-177: усреднять надо по ВСЕМ пяти слотам с нулём за отсутствующую
-            # ячейку — так собиралась обучающая колонка (`ideas_batch1`:
-            # `gr.append(... if c_ and ca else 0.0)`). Среднее только по
-            # существующим ячейкам давало другую величину: sd 1.48 против
-            # обучающей при корреляции 0.85.
-            gpm_rel = [c[1] if c is not None else 0.0 for c in cells]
-            lh_rel = [c[2] if c is not None else 0.0 for c in cells]
-            return {
-                "elo": A[:, 0].mean(), "games": A[:, 1].mean(), "opp_elo": A[:, 2].mean(),
-                "hero_pool": A[:, 3].mean(), "form": A[:, 4].mean(), "imp50": A[:, 5].mean(),
-                "imp30": A[:, 6].mean(), "gpm_rel_pos": A[:, 7].mean(),
-                "imp_rel_pos": A[:, 8].mean(), "gpm_ewma": A[:, 9].mean(),
-                "lh30": A[:, 10].mean(),
-                "lvl_rel_pos": A[:, 11].mean() if A.shape[1] > 11 else 0.0,
-                "kda_player": A[:, 12].mean() if A.shape[1] > 12 else 0.0,
-                # E-177: три величины, которые модель учила, а снимок не отдавал.
-                # Пока их в артефакте нет — старое поведение, чтобы прежний
-                # артефакт продолжал работать.
-                "imp_recent10": A[:, 15].mean() if A.shape[1] > 15 else A[:, 6].mean(),
-                "imp30_resid": A[:, 16].mean() if A.shape[1] > 16 else A[:, 6].mean(),
-                "lh30_resid": A[:, 17].mean() if A.shape[1] > 17 else A[:, 10].mean(),
-                "farm_dep": float(np.mean([self.hero_farm.get(int(h), 0.0) for h in h5])),
-                "hero_games": float(np.mean([math.log1p(max(x, 0)) for x in hg])),
-                "hero_gpm_rel": float(np.mean(gpm_rel)), "lh_rel_hero": float(np.mean(lh_rel)),
-                # Отклонения от норм позиции и героя — сырые (не поминутные)
-                # величины, как в `ideas_batch5.build`; масштаб /1000 ниже.
-                # Среднее берётся по ВСЕМ пяти слотам с нулём за отсутствующую
-                # ячейку — так же, как в обучении (там ноль подставлялся ячейке
-                # без истории), а не по `known`, как у hero_gpm_rel.
-                "a_hdmg_rel_pos": A[:, 13].mean() if A.shape[1] > 13 else 0.0,
-                "a_nw_rel_pos": A[:, 14].mean() if A.shape[1] > 14 else 0.0,
-                "a_hdmg_rel_hero": float(np.mean(
-                    [c[3] if (c is not None and len(c) > 3) else 0.0 for c in cells])),
-                "wr30": float(np.mean([self.hero_wr30[int(h)] for h in h5])),
-                "pos_games": float(np.mean([math.log1p(self.acc_pos.get((int(a), p), 0.0))
-                                            for p, a in enumerate(a5, 1)])),
-            }
-
-        r, d = side(radiant_accounts, radiant_heroes), side(dire_accounts, dire_heroes)
+        r, d = (self._acc_side(radiant_accounts, radiant_heroes, fill, notes),
+                self._acc_side(dire_accounts, dire_heroes, fill, notes))
+        rh_, dh_ = self._hero_side(radiant_heroes), self._hero_side(dire_heroes)
         def pair_wr(a_heroes: Sequence[int], b_heroes: Sequence[int]) -> float:
             vv = [(self.vs.get((int(x), int(y)), (0.0, 0.0))) for x in a_heroes for y in b_heroes]
             if not vv:
@@ -580,7 +601,7 @@ class PrematchModel:
             # поле, что и в imp30, из-за чего две колонки из 35 были в бою
             # коллинеарны (отношение sd 99.99 против 76.04 в обучении).
             "imp_recent": (r["imp_recent10"] - d["imp_recent10"]) / 100.0,
-            "wr30": r["wr30"] - d["wr30"],
+            "wr30": rh_["wr30"] - dh_["wr30"],
             "h2h_resid": h2h,
             "gpm_rel_pos": (r["gpm_rel_pos"] - d["gpm_rel_pos"]) / 100.0,
             "vs_wr": vs_val,
@@ -594,7 +615,7 @@ class PrematchModel:
             "imp30": r["imp30_resid"] - d["imp30_resid"],
             "lvl_rel_pos": r["lvl_rel_pos"] - d["lvl_rel_pos"],
             "kda_player": r["kda_player"] - d["kda_player"],
-            "farm_dep": r["farm_dep"] - d["farm_dep"],
+            "farm_dep": rh_["farm_dep"] - dh_["farm_dep"],
         }
         if set(NEW6) & set(self.features):
             now_draft = int(now_ts) if now_ts is not None else self.snapshot_ts
