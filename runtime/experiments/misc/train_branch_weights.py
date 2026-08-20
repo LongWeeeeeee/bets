@@ -106,9 +106,35 @@ def fit(X, y):
     return mu, sd, lr.coef_[0].copy(), float(lr.intercept_[0])
 
 
+def load_extras(mids, names):
+    """Добавочные колонки коротких веток, выровненные по `mids`.
+
+    Сейчас это рейтинг организации. Он уже занулён там, где боевой путь
+    организацию не опознал бы, — обучение обязано видеть ту же дырявость, что и
+    бой, иначе получится ровно то расхождение, из-за которого у трети боевых
+    колонок корреляция обучения и боя 0.4-0.7.
+    """
+    src = ART / "org_rating.npz"
+    if not src.exists():
+        print(f"  {src.name} нет — короткие ветки без рейтинга организаций",
+              flush=True)
+        return {}
+    o = np.load(src)
+    pos = {int(m): i for i, m in enumerate(o["mids"].tolist())}
+    absent = [m for m in mids.tolist() if int(m) not in pos]
+    if absent:
+        raise SystemExit(f"в {src.name} нет {len(absent)} карт — пересобрать")
+    j = np.array([pos[int(m)] for m in mids.tolist()])
+    known = o["known"][j].astype(bool)
+    print(f"  рейтинг организаций: опознана у {known.mean():.1%} карт", flush=True)
+    return {"org_rating_diff": o["diff"][j], "org_rating_exp": o["exp"][j]}
+
+
 def main() -> None:
     t0 = time.time()
     X, y, ts, names = build_matrix()
+    mids_all = np.load(HYB, allow_pickle=True)["mids"].astype(np.int64)
+    extras = load_extras(mids_all, names)
     te = ts >= TEST_FROM
     tr = (ts < TEST_FROM) & (ts >= TEST_FROM - WINDOW_DAYS * 86400)
     if int(te.sum()) != 26016:
@@ -136,22 +162,30 @@ def main() -> None:
 
     branches, aucs, source = {}, {}, {}
     for name, keys in C.BRANCHES:
-        cols = C.columns_for(keys, names)
+        cols = [c for c in C.columns_for_branch(name, names)
+                if c in names or c in extras]
         if not cols:
             print(f"  {name}: колонок не осталось, ветка пропущена", flush=True)
             continue
-        j = [names.index(c) for c in cols]
+
+        def mat(rows):
+            return np.column_stack([X[rows][:, names.index(c)] if c in names
+                                    else extras[c][rows] for c in cols])
         if name == "full":
             # ПОБИТОВАЯ КОПИЯ БОЕВЫХ ВЕСОВ. Полная ветка обязана отдавать ровно
             # то же число, что и сегодня: лестница добавляет вердикты там, где
             # их не было, и не имеет права трогать те, что уже есть.
+            if cols != names:
+                raise SystemExit("полная ветка обязана быть ровно боевыми 35")
             mu, sd = zd["mu"][0].copy(), zd["sd"][0].copy()
             coef, itc = zd["coef"][0].copy(), float(zd["intercept"][0])
             source[name] = "боевые веса как есть"
         else:
-            mu, sd, coef, itc = fit(X[tr][:, j], y[tr])
-            source[name] = f"обучена здесь, окно {WINDOW_DAYS} суток"
-        logit = ((X[te][:, j] - mu) / sd) @ coef + itc
+            mu, sd, coef, itc = fit(mat(tr), y[tr])
+            extra_here = [c for c in cols if c not in names]
+            source[name] = (f"обучена здесь, окно {WINDOW_DAYS} суток"
+                            + (f", + {', '.join(extra_here)}" if extra_here else ""))
+        logit = ((mat(te) - mu) / sd) @ coef + itc
         a = auc(y[te], logit)
         aucs[name] = a
         branches[name] = ps.Branch(cols=cols, mu=mu, sd=sd, coef=coef, intercept=itc)
@@ -173,8 +207,7 @@ def main() -> None:
 
     # --- проверка 2: сумма частичных сумм равна логиту
     b = branches["full"]
-    jb = [names.index(c) for c in b.cols]
-    Z = (X[te][:, jb] - b.mu) / b.sd
+    Z = (X[te][:, [names.index(c) for c in b.cols]] - b.mu) / b.sd
     contrib = Z * b.coef
     parts = {}
     for k, c in enumerate(b.cols):
@@ -192,9 +225,11 @@ def main() -> None:
         lines.append(f"| {comp} | {len(cols)} | {auc(y[te], parts[comp]):.4f} |")
 
     # --- проверка 3: набор колонок совпадает с тем, по чему выбирает скорер
-    for name, keys in C.BRANCHES:
+    for name, _keys in C.BRANCHES:
         if name in branches:
-            assert branches[name].cols == C.columns_for(keys, names), name
+            want = [c for c in C.columns_for_branch(name, names)
+                    if c in names or c in extras]
+            assert branches[name].cols == want, name
 
     np.savez_compressed(OUT_NPZ, **ps.pack_branches(branches, names),
                         feature_names=np.array(names))

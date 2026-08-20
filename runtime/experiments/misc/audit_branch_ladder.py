@@ -67,6 +67,18 @@ def assemble_audit_with_branches() -> None:
     for k in zb.files:
         if k.startswith("branch_"):
             z[k] = zb[k]
+    # Добавочные входы коротких веток. Без них аудит считал бы по нулям и
+    # показывал бы «прибавки нет» там, где просто не доехала таблица.
+    need_org = any(c in ("org_rating_diff", "org_rating_exp")
+                   for c in (str(x) for x in zb["branch_cols"]))
+    if need_org:
+        # ИМЕННО обрезанный на границе теста: полный снимок знает исходы
+        # тестовых карт, и прогон показал бы выдуманную прибавку.
+        src = ART / "org_rating_snapshot_at_test.npz"
+        if not src.exists():
+            raise SystemExit(f"ветки просят рейтинг организаций, а {src.name} нет")
+        z["org_rating"] = np.load(src)["org_rating"]
+        print(f"  рейтинг организаций: {len(z['org_rating']):,} строк", flush=True)
     np.savez_compressed(AUDIT_BR, **z)
     print(f"аудит-артефакт с ветками собран: {AUDIT_BR.name}", flush=True)
 

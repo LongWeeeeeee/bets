@@ -44,6 +44,9 @@ W_KEYS = ("mu", "sd", "coef", "intercept", "ctx_mu", "ctx_sd", "feature_names")
 # `train_branch_weights.py` собирает их независимо от цепочки снимка.
 BRANCHES = Path(os.getenv("PREMATCH_BRANCHES", ART / "branch_weights.npz"))
 CALIB = Path(os.getenv("PREMATCH_BRANCH_CALIB", ART / "branch_calibration.npz"))
+# Рейтинг организаций — вход коротких веток. Ключ `org_rating`, 131 259 строк,
+# около 3 МБ: рядом с таблицей на 1.55 млн аккаунтов это ничто.
+ORGRAT = Path(os.getenv("PREMATCH_ORG_RATING", ART / "org_rating_snapshot.npz"))
 
 
 def main() -> None:
@@ -121,6 +124,15 @@ def main() -> None:
             if k.startswith("branch_"):
                 z[k] = zb[k]
         print(f"ветки лестницы: {[str(x) for x in zb['branch_names']]}")
+        need_org = any(c in ("org_rating_diff", "org_rating_exp")
+                       for c in (str(x) for x in zb["branch_cols"]))
+        if need_org:
+            if not ORGRAT.exists():
+                raise SystemExit(
+                    f"ветки просят рейтинг организаций, а {ORGRAT.name} нет — "
+                    "сначала build_org_rating.py")
+            z["org_rating"] = np.load(ORGRAT)["org_rating"]
+            print(f"рейтинг организаций: {len(z['org_rating']):,} строк")
         if CALIB.exists():
             zk = np.load(CALIB, allow_pickle=True)
             for k in zk.files:

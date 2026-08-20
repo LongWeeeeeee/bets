@@ -228,14 +228,26 @@ def pack_branches(branches: dict, features: Sequence[str]) -> dict:
     Рваные данные (у веток разное число колонок) нельзя хранить object-массивом:
     `PrematchModel.__init__` читает артефакт без `allow_pickle`, и такой ключ
     уронил бы загрузку прямо в бою. Поэтому пишутся длины и один плоский массив
-    на величину, а колонки — индексами в `features`.
+    на величину.
+
+    Колонки хранятся ИМЕНАМИ, а не индексами в `features`. Индексы работали,
+    пока ветка была подмножеством боевых 35; короткие ветки получили добавочные
+    колонки (рейтинг организации), которых в `feature_names` нет вовсе, и по
+    индексу их не адресовать. Имена заодно снимают зависимость от порядка.
+    `features` остаётся в сигнатуре для проверки: каждая колонка ветки обязана
+    быть либо боевым признаком, либо известной добавкой.
     """
-    idx = {f: i for i, f in enumerate(features)}
+    known = set(features) | set(_C.EXTRA_REQUIRES)
+    for name, b in branches.items():
+        bad = [c for c in b.cols if c not in known]
+        if bad:
+            raise ValueError(f"ветка {name!r}: колонки {bad} не боевые признаки "
+                             f"и не известные добавки")
     names, lens, cols, mu, sd, coef, itc = [], [], [], [], [], [], []
     for name, b in branches.items():
         names.append(name)
         lens.append(len(b.cols))
-        cols.extend(idx[c] for c in b.cols)
+        cols.extend(str(c) for c in b.cols)
         mu.extend(float(x) for x in b.mu)
         sd.extend(float(x) for x in b.sd)
         coef.extend(float(x) for x in b.coef)
@@ -243,7 +255,7 @@ def pack_branches(branches: dict, features: Sequence[str]) -> dict:
     return {
         "branch_names": np.array(names, dtype="<U32"),
         "branch_lens": np.array(lens, dtype=np.int64),
-        "branch_cols": np.array(cols, dtype=np.int64),
+        "branch_cols": np.array(cols, dtype="<U40"),
         "branch_mu": np.array(mu, dtype=np.float64),
         "branch_sd": np.array(sd, dtype=np.float64),
         "branch_coef": np.array(coef, dtype=np.float64),
@@ -302,7 +314,15 @@ class PrematchModel:
         self.branches: dict = {}
         if "branch_names" in z:
             lens = z["branch_lens"].astype(int)
-            cols = z["branch_cols"].astype(int)
+            raw = z["branch_cols"]
+            # Два формата. Старый хранил индексы в `feature_names` — такой
+            # артефакт лежит на боевой машине с 20.08 10:40, и читатель обязан
+            # его понимать. Новый хранит имена: короткие ветки могут иметь
+            # колонки, которых в `feature_names` нет вовсе.
+            if raw.dtype.kind in "iu":
+                cols = [self.features[int(j)] for j in raw]
+            else:
+                cols = [str(x) for x in raw]
             mu, sd, coef = z["branch_mu"], z["branch_sd"], z["branch_coef"]
             if int(lens.sum()) != len(cols):
                 raise ValueError(
@@ -312,7 +332,7 @@ class PrematchModel:
             for i, nm in enumerate(z["branch_names"]):
                 n = int(lens[i])
                 self.branches[str(nm)] = Branch(
-                    cols=[self.features[j] for j in cols[off:off + n]],
+                    cols=list(cols[off:off + n]),
                     mu=mu[off:off + n], sd=sd[off:off + n],
                     coef=coef[off:off + n],
                     intercept=float(z["branch_intercept"][i]))
@@ -321,6 +341,13 @@ class PrematchModel:
         # нет, винрейта не получают вовсе: наследовать таблицу полной ветки
         # опасно в одну сторону — короткая ветка слабее, и наследование
         # продавало бы завышенный винрейт, то есть заниженный нужный кэф.
+        # Рейтинг организаций для коротких веток: там, где снимок не знает
+        # игроков, это единственная величина о силе сторон помимо ростерного
+        # Hybrid. Ключ — организация после склейки `team_merge`.
+        self.org_rating: dict = {}
+        if "org_rating" in z:
+            self.org_rating = {int(r[0]): (float(r[1]), float(r[2]))
+                               for r in z["org_rating"]}
         self.cal: dict = {}
         if "cal_branch" in z:
             for i, nm in enumerate(z["cal_branch"]):
@@ -451,6 +478,23 @@ class PrematchModel:
                         f"{len(hard)} слотов (аккаунт, назначено, обычная): {hard}")
         elif len(soft) >= 2:
             notes.append(f"подозрительные позиции у {len(soft)} слотов: {soft}")
+
+    def _org_rating_cols(self, org_r: int, org_d: int) -> dict:
+        """Разность рейтингов организаций и ожидаемая из неё вероятность.
+
+        Обе величины — нули, если хоть одна организация не опознана или её нет
+        в снимке. Это НЕ дефолт-из-воздуха: обучающая колонка занулялась ровно
+        там же (`build_org_rating.py`), то есть модель видела ту же дырявость.
+        """
+        a = self.org_rating.get(int(org_r)) if org_r > 0 else None
+        b = self.org_rating.get(int(org_d)) if org_d > 0 else None
+        if a is None or b is None:
+            return {"org_rating_diff": 0.0, "org_rating_exp": 0.0}
+        (ra, _da), (rb, db) = a, b
+        q = math.log(10.0) / 400.0
+        g = 1.0 / math.sqrt(1.0 + 3.0 * q * q * db * db / (math.pi ** 2))
+        return {"org_rating_diff": (ra - rb) / 400.0,
+                "org_rating_exp": 1.0 / (1.0 + 10 ** (-g * (ra - rb) / 400.0)) - 0.5}
 
     def branch_winrate(self, branch: str, confidence: float) -> tuple:
         """Ожидаемый винрейт для этой уверенности НА ЭТОЙ ВЕТКЕ и откуда он взят.
@@ -752,6 +796,16 @@ class PrematchModel:
         parts: dict[str, float] = {}
         if self.branches:
             b = self.branches[branch_name]
+            if any(c in _C.EXTRA_REQUIRES for c in b.cols):
+                # Пустая таблица при обученных на ней весах — молчаливая
+                # деградация: колонки станут нулями, и никто не узнает. Один раз
+                # это уже случилось на аудите, где ключ `org_rating` не доехал.
+                if not self.org_rating:
+                    raise ValueError(
+                        f"ветка «{branch_name}» обучена с рейтингом организаций, "
+                        "а таблицы `org_rating` в артефакте нет — веса встанут "
+                        "на нули")
+                f.update(self._org_rating_cols(org_r, org_d))
             miss_cols = [c for c in b.cols if c not in f]
             if miss_cols:
                 raise MissingData(

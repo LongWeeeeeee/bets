@@ -62,6 +62,24 @@ def test_pack_and_read_round_trip(tmp_path):
     np.testing.assert_allclose(m.branches["full"].coef, [0.5, -0.5])
 
 
+def test_unknown_column_is_rejected(tmp_path):
+    """Колонка не из боевых признаков и не из известных добавок — ошибка."""
+    branches = {"full": ps.Branch(cols=["выдумка"], mu=np.zeros(1), sd=np.ones(1),
+                                  coef=np.zeros(1), intercept=0.0)}
+    with pytest.raises(ValueError, match="не боевые признаки"):
+        ps.pack_branches(branches, ["draft_logit", "elo"])
+
+
+def test_extra_columns_are_allowed(tmp_path):
+    """Добавочные колонки коротких веток в feature_names не лежат — и не должны."""
+    branches = {"no_account_no_org": ps.Branch(
+        cols=["draft_logit", "org_rating_diff"], mu=np.zeros(2), sd=np.ones(2),
+        coef=np.zeros(2), intercept=0.0)}
+    packed = ps.pack_branches(branches, ["draft_logit", "elo"])
+    m = ps.PrematchModel(_minimal_artifact(tmp_path, packed))
+    assert m.branches["no_account_no_org"].cols == ["draft_logit", "org_rating_diff"]
+
+
 def test_packed_arrays_are_not_object_dtype(tmp_path):
     """Иначе чтение упрётся в allow_pickle=False и упадёт в бою."""
     branches = {"full": ps.Branch(cols=["elo"], mu=np.zeros(1), sd=np.ones(1),
