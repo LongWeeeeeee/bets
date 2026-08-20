@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""Компоненты предматчевой модели и лестница веток по доступности данных.
+
+ЗАЧЕМ. Боевая модель бросала отказ, если снимок не знает хотя бы одного из
+десяти игроков. В сквозном аудите это 14 828 отказов из 14 952, то есть 57.5%
+тестовых карт; на тир-1 без вердикта остаётся каждый третий матч (E-195). Сам
+отказ был правильным: подставить дефолты и посчитать вероятность для десяти
+неизвестных игроков — значит выдать уверенное число из воздуха. Но вместо
+отказа можно посчитать моделью, которая этих колонок НИКОГДА НЕ ВИДЕЛА, и её
+уверенность будет честной. На тесте 26 016 карт такая ветка даёт 0.6864 против
+0.7186 у полной — и против отсутствия вердикта сейчас.
+
+ГЛАВНАЯ МЫСЛЬ: признак размечается по КЛЮЧУ ДАННЫХ, а не по смыслу. Ключ
+определяет, переживёт ли колонка отсутствие данных:
+
+    account  таблица аккаунтов артефакта: `elo`, `opp_elo` и весь блок игроков
+    hero     таблицы с ключом «герой»: `wr30` (винрейт ГЕРОЕВ за 30 дней),
+             `farm_dep` (фарм-зависимость героя), `vs_wr`, `cp_lane`,
+             `syn_pos_mean`, `draft_logit`
+    roster   пакет `ELO/`: `hybrid_strength`
+    org      история организаций: `h2h_resid`
+
+Разметка по смыслу дала бы другую границу и сломала бы лестницу: `wr30` и
+`farm_dep` выглядят «игроцкими», а на деле ключуются героем и живут без
+аккаунтов (`prematch_scorer.py`, `hero_wr30` и `hero_farm`).
+
+ИНТЕРАКЦИИ ТРЕБУЮТ ОБА КЛЮЧА. Контекст матча (`|elo|`, `|games|`) строится из
+таблицы аккаунтов, поэтому `draft_logit_x_elo_gap` без аккаунтов недоступен,
+хотя сам `draft_logit` доступен. Именно поэтому в ветке без аккаунтов остаётся
+восемь колонок, а не десять.
+
+КОМПОНЕНТЫ — это группировка ДЛЯ ОТЧЁТА. Вклад компонента считается как
+частичная сумма логита, и такое разложение точно по построению. Обучать
+компоненты НЕЗАВИСИМО пробовали: на боевой конфигурации это стоит 0.0072 AUC
+(0.7114 против 0.7186), последовательное обучение — 0.0029, а частичные суммы
+не стоят ничего. Поэтому веса подбираются совместно, а разделение живёт в коде:
+модуль на компонент со своим вычислителем и своим покрытием. Это же снимает
+расхождения обучения и боя — сегодня корреляцию 1.0000 имеют ровно два признака
+из 35, и это ровно те два, которые считаются одним кодом на обоих путях.
+"""
+from __future__ import annotations
+
+ACCOUNT, HERO, ROSTER, ORG = "account", "hero", "roster", "org"
+
+_ACC = frozenset({ACCOUNT})
+_HERO = frozenset({HERO})
+_ROSTER = frozenset({ROSTER})
+_ORG = frozenset({ORG})
+_HERO_ACC = frozenset({HERO, ACCOUNT})
+
+#: Какие ключи данных нужны каждому боевому признаку.
+REQUIRES: dict = {
+    # драфт: ключ — герой
+    "draft_logit": _HERO,
+    "wr30": _HERO,
+    "vs_wr": _HERO,
+    "cp_lane": _HERO,
+    "syn_pos_mean": _HERO,
+    "farm_dep": _HERO,
+    "draft_logit_x_elo_gap": _HERO_ACC,
+    "draft_logit_x_games_exp": _HERO_ACC,
+    # рейтинг ростера
+    "hybrid_strength": _ROSTER,
+    # очные встречи организаций
+    "h2h_resid": _ORG,
+}
+for _f in ("elo", "opp_elo", "elo_x_elo_gap", "elo_x_games_exp",
+           "games", "hero_games", "pos_games", "hero_pool", "form",
+           "hero_gpm_rel", "imp_recent", "gpm_rel_pos", "imp50", "imp_rel_pos",
+           "lh_rel_hero", "gpm_ewma", "lh30", "imp30", "lvl_rel_pos",
+           "kda_player", "a_hdmg_rel_pos", "a_hdmg_rel_hero", "a_nw_rel_pos",
+           "form_x_elo_gap", "form_x_games_exp"):
+    REQUIRES[_f] = _ACC
+del _f
+
+#: Группировка для отчёта и разложения вердикта. `hybrid_strength` показывается
+#: вместе с ELO, хотя ключ данных у него другой: для человека это одна величина
+#: «класс команды». Для лестницы важен ключ, и он задан в REQUIRES.
+COMPONENTS: dict = {
+    "elo": ("elo", "opp_elo", "hybrid_strength", "elo_x_elo_gap", "elo_x_games_exp"),
+    "draft": ("draft_logit", "wr30", "vs_wr", "cp_lane", "syn_pos_mean", "farm_dep",
+              "draft_logit_x_elo_gap", "draft_logit_x_games_exp"),
+    "players": ("games", "hero_games", "pos_games", "hero_pool", "form",
+                "hero_gpm_rel", "imp_recent", "gpm_rel_pos", "imp50",
+                "imp_rel_pos", "lh_rel_hero", "gpm_ewma", "lh30", "imp30",
+                "lvl_rel_pos", "kda_player", "a_hdmg_rel_pos",
+                "a_hdmg_rel_hero", "a_nw_rel_pos",
+                "form_x_elo_gap", "form_x_games_exp"),
+    "h2h": ("h2h_resid",),
+}
+
+_OF = {f: c for c, group in COMPONENTS.items() for f in group}
+
+#: Лестница: от самой полной ветки к самой бедной. Берётся ПЕРВАЯ, чьи ключи
+#: доступны целиком, поэтому порядок здесь и есть приоритет. Измеренное на
+#: тесте 26 016 карт качество (окно обучения 120 суток, как в бою):
+#:
+#:     full                35 колонок   0.7186
+#:     no_org              34           0.7181
+#:     pre_draft           27           0.6915
+#:     no_account           8           0.6864
+#:     no_account_no_org    7           0.6852
+#:     rating_only          1           0.6516
+#:
+#: `pre_draft` стоит ВЫШЕ `no_account` намеренно: 27 колонок при известных
+#: игроках дают больше, чем 8 при известных героях.
+BRANCHES: tuple = (
+    ("full", frozenset({ACCOUNT, HERO, ROSTER, ORG})),
+    ("no_org", frozenset({ACCOUNT, HERO, ROSTER})),
+    ("pre_draft", frozenset({ACCOUNT, ROSTER, ORG})),
+    ("no_account", frozenset({HERO, ROSTER, ORG})),
+    ("no_account_no_org", frozenset({HERO, ROSTER})),
+    ("rating_only", frozenset({ROSTER})),
+)
+
+
+def component_of(feature: str) -> str:
+    """Компонент, к которому признак относится в отчёте."""
+    return _OF[feature]
+
+
+def columns_for(keys, features) -> list:
+    """Признаки, которым хватает доступных ключей, В ПОРЯДКЕ `features`.
+
+    Порядок берётся от артефакта, а не от разметки: перепутанный порядок ставит
+    веса не на свои места, и цена такой ошибки измерена — 0.116 AUC (E-166).
+    """
+    keys = frozenset(keys)
+    return [f for f in features if REQUIRES[f] <= keys]
+
+
+def pick_branch(keys):
+    """Имя самой полной ветки, чьи ключи доступны целиком; None — если никакой.
+
+    Отказ остаётся ровно там, где нет ни рейтинга ростера, ни драфта: считать
+    победу карты не из чего, и любое число будет выдумкой.
+    """
+    keys = frozenset(keys)
+    for name, need in BRANCHES:
+        if need <= keys:
+            return name
+    return None
