@@ -237,9 +237,10 @@ class PairTable:
                 f"ключи не влезают в упаковку: аккаунты [{a.min()}, {a.max()}], "
                 f"герои [{h.min()}, {h.max()}] при сдвиге {self._SHIFT}")
         k = (a << self._SHIFT) | h
-        order = np.argsort(k, kind="stable")
+        # ключи уникальны, устойчивость не нужна и стоит вдвое дороже
+        order = np.argsort(k)
         self._key = np.ascontiguousarray(k[order])
-        self._val = np.ascontiguousarray(rows[order][:, nkey:])
+        self._val = np.ascontiguousarray(rows[order, nkey:])
         self._scalar = scalar
 
     def _index(self, key) -> int:
@@ -273,9 +274,10 @@ class AccTable:
 
     def __init__(self, rows: np.ndarray, nkey: int = 1) -> None:
         k = rows[:, 0].astype(np.int64)
-        order = np.argsort(k, kind="stable")
+        # ключи уникальны, устойчивость не нужна и стоит вдвое дороже
+        order = np.argsort(k)
         self._key = np.ascontiguousarray(k[order])
-        self._val = np.ascontiguousarray(rows[order][:, nkey:])
+        self._val = np.ascontiguousarray(rows[order, nkey:])
 
     def _index(self, key) -> int:
         k = int(key)
