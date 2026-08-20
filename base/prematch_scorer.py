@@ -497,6 +497,15 @@ class PrematchModel:
         A = np.array([self.acc[int(a)] for a in a5])
         cells = [self.acc_hero.get((int(a), int(h))) for a, h in zip(a5, h5)]
         known = [c for c in cells if c is not None]
+        # Какие ИМЕННО слоты остались без ячейки (аккаунт, герой). Добавлено на
+        # боевой машине: «вход заполнен на 80%» не отвечает на вопрос, у кого
+        # именно нет истории на герое, а без этого не отличить новичка в составе
+        # от сломанной разметки позиций.
+        side_tag = "dire" if fill.get("_second") else "rad"
+        for _p, _c in enumerate(cells, 1):
+            if _c is None:
+                fill["miss"].append(f"{side_tag}_pos{_p}")
+        fill["_second"] = True
         fill["cells"] += len(known)
         fill["pos"] += sum(1 for p, a in enumerate(a5, 1)
                            if (int(a), p) in self.acc_pos)
@@ -655,7 +664,7 @@ class PrematchModel:
         # Счётчики заполненности входа: сколько величин собрано из реальных
         # данных, а сколько заменено нулём. Считаются здесь же, чтобы не
         # расходиться с тем, что действительно попало в признаки.
-        fill = {"cells": 0, "pos": 0}
+        fill = {"cells": 0, "pos": 0, "miss": []}
         f: dict[str, float] = {}
         lg1 = lambda x: math.log1p(max(x, 0))
 
@@ -775,14 +784,15 @@ class PrematchModel:
             # там, где эти величины не спрашивались.
             cov = {"cells": float("nan"), "pos": float("nan"),
                    "h2h": h2h_known if h2h_asked else float("nan"),
-                   "filled": 1.0}
+                   "missing_cells": [], "filled": 1.0}
             wr, src = self.branch_winrate(branch_name, max(p, 1.0 - p))
             if src != "общая таблица":
                 notes.append(f"винрейт: {src}")
             return ScoreResult(p, wr, f, notes, cov, branch=branch_name,
                                missing_keys=missing_keys, parts=parts)
         cov = {"cells": fill["cells"] / 10.0, "pos": fill["pos"] / 10.0,
-               "h2h": h2h_known if h2h_asked else float("nan")}
+               "h2h": h2h_known if h2h_asked else float("nan"),
+               "missing_cells": list(fill["miss"])}
         cov["filled"] = ((fill["cells"] + fill["pos"] + (h2h_known if h2h_asked else 0.0))
                          / (21.0 if h2h_asked else 20.0))
         if cov["filled"] < 1.0:
