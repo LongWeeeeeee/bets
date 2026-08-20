@@ -317,6 +317,16 @@ class PrematchModel:
                     coef=coef[off:off + n],
                     intercept=float(z["branch_intercept"][i]))
                 off += n
+        # Калибровка «уверенность → винрейт» по веткам. Полосы, которых здесь
+        # нет, винрейта не получают вовсе: наследовать таблицу полной ветки
+        # опасно в одну сторону — короткая ветка слабее, и наследование
+        # продавало бы завышенный винрейт, то есть заниженный нужный кэф.
+        self.cal: dict = {}
+        if "cal_branch" in z:
+            for i, nm in enumerate(z["cal_branch"]):
+                self.cal.setdefault(str(nm), []).append(
+                    (int(z["cal_lo"][i]), int(z["cal_hi"][i]),
+                     float(z["cal_wr"][i]), int(z["cal_n"][i])))
         # Состояние под колонки E-168. Отклонения урона/нетворса лежат ДОПОЛНИТЕЛЬНЫМИ
         # колонками в `accounts` и `acc_hero` (см. `finalize_artifact.py`): отдельные
         # словари на 1.7 млн ячеек стоили +424 МБ RSS.
@@ -441,6 +451,26 @@ class PrematchModel:
                         f"{len(hard)} слотов (аккаунт, назначено, обычная): {hard}")
         elif len(soft) >= 2:
             notes.append(f"подозрительные позиции у {len(soft)} слотов: {soft}")
+
+    def branch_winrate(self, branch: str, confidence: float) -> tuple:
+        """Ожидаемый винрейт для этой уверенности НА ЭТОЙ ВЕТКЕ и откуда он взят.
+
+        Возвращает `nan`, если полоса ветки не откалибрована. Это не сбой: по
+        такой ветке просто нельзя выставлять автоматическую ставку — вероятность
+        показать можно, а обещать винрейт не из чего. Дефолтов здесь нет по той
+        же причине, что и во всём модуле.
+
+        Полная ветка пользуется действующей `LAN_ODDS_GRID`: она снята на
+        честных предсказаниях шести forward-окон (E-142), а не на снимке,
+        который стареет на месяцы.
+        """
+        if branch == "full" or branch not in self.cal:
+            return lan_winrate(confidence), "общая таблица"
+        pct = confidence * 100.0
+        for lo, hi, wr, n in self.cal[branch]:
+            if lo <= pct < hi:
+                return wr, f"своя таблица ветки ({n} карт в полосе)"
+        return float("nan"), "полоса ветки не откалибрована"
 
     def _hero_side(self, h5: Sequence[int]) -> dict[str, float]:
         """Величины стороны, ключуемые ГЕРОЕМ: живут без таблицы аккаунтов.
@@ -746,9 +776,11 @@ class PrematchModel:
             cov = {"cells": float("nan"), "pos": float("nan"),
                    "h2h": h2h_known if h2h_asked else float("nan"),
                    "filled": 1.0}
-            return ScoreResult(p, lan_winrate(max(p, 1.0 - p)), f, notes, cov,
-                               branch=branch_name, missing_keys=missing_keys,
-                               parts=parts)
+            wr, src = self.branch_winrate(branch_name, max(p, 1.0 - p))
+            if src != "общая таблица":
+                notes.append(f"винрейт: {src}")
+            return ScoreResult(p, wr, f, notes, cov, branch=branch_name,
+                               missing_keys=missing_keys, parts=parts)
         cov = {"cells": fill["cells"] / 10.0, "pos": fill["pos"] / 10.0,
                "h2h": h2h_known if h2h_asked else float("nan")}
         cov["filled"] = ((fill["cells"] + fill["pos"] + (h2h_known if h2h_asked else 0.0))
@@ -759,9 +791,11 @@ class PrematchModel:
                 f"{fill['cells']}/10, игр на позиции {fill['pos']}/10"
                 + (f", личные встречи {'есть' if h2h_known else 'нет'}"
                    if h2h_asked else ""))
-        return ScoreResult(p, lan_winrate(max(p, 1.0 - p)), f, notes, cov,
-                           branch=branch_name, missing_keys=missing_keys,
-                           parts=parts)
+        wr, src = self.branch_winrate(branch_name, max(p, 1.0 - p))
+        if src != "общая таблица":
+            notes.append(f"винрейт: {src}")
+        return ScoreResult(p, wr, f, notes, cov, branch=branch_name,
+                           missing_keys=missing_keys, parts=parts)
 
 
 _MODEL: Optional[PrematchModel] = None

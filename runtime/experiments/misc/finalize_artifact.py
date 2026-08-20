@@ -43,6 +43,7 @@ W_KEYS = ("mu", "sd", "coef", "intercept", "ctx_mu", "ctx_sd", "feature_names")
 # Веса веток лестницы — тоже отдельным файлом и тоже необязательные:
 # `train_branch_weights.py` собирает их независимо от цепочки снимка.
 BRANCHES = Path(os.getenv("PREMATCH_BRANCHES", ART / "branch_weights.npz"))
+CALIB = Path(os.getenv("PREMATCH_BRANCH_CALIB", ART / "branch_calibration.npz"))
 
 
 def main() -> None:
@@ -107,6 +108,14 @@ def main() -> None:
             if k.startswith("branch_"):
                 z[k] = zb[k]
         print(f"ветки лестницы: {[str(x) for x in zb['branch_names']]}")
+        if CALIB.exists():
+            zk = np.load(CALIB, allow_pickle=True)
+            for k in zk.files:
+                if k.startswith("cal_"):
+                    z[k] = zk[k]
+            print(f"калибровка веток: {len(zk['cal_branch'])} полос")
+        else:
+            print(f"{CALIB.name} нет — короткие ветки без своей таблицы винрейта")
     else:
         print(f"{BRANCHES.name} нет — артефакт без веток, скорер по-старому")
     tmp = OUT.with_suffix(".tmp.npz")
