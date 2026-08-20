@@ -86,6 +86,14 @@ class FloatStore(_Sorted):
     def keys(self) -> Iterable[int]:
         return (int(k) for k in self._keys.tolist())
 
+    def __iter__(self):
+        """`list(store)` обязан давать КЛЮЧИ, как у словаря.
+
+        Без этого Python откатывается на протокол по индексу — зовёт
+        `__getitem__(0)`, получает `KeyError` и роняет любой обход поля.
+        """
+        return self.keys()
+
     def items(self):
         return ((int(k), float(v)) for k, v in zip(self._keys.tolist(),
                                                    self._vals.tolist()))
@@ -151,6 +159,11 @@ class HashedStore:
 
     def __bool__(self) -> bool:
         return bool(self._inner)
+
+    def __iter__(self):
+        raise TypeError(
+            "ключи этого хранилища упакованы необратимым хешем и обойти их "
+            "нельзя; если обход нужен, берите словарную модель")
 
 
 class RoleStore(HashedStore):
@@ -221,6 +234,11 @@ class PairCounts:
     def __bool__(self) -> bool:
         return bool(self._inner)
 
+    def __iter__(self):
+        raise TypeError(
+            "ключ здесь — пара (игрок, организация), упакованная в число; "
+            "обойти пары нельзя, берите словарную модель")
+
 
 class StringValues(_Sorted):
     """Числовой ключ -> строка. Для `player_current_org`.
@@ -249,6 +267,12 @@ class StringValues(_Sorted):
 
     def __contains__(self, key) -> bool:
         return self._index(int(key)) >= 0
+
+    def keys(self) -> Iterable[int]:
+        return (int(k) for k in self._keys.tolist())
+
+    def __iter__(self):
+        return self.keys()
 
     def items(self):
         return ((int(k), self._names[int(v)])

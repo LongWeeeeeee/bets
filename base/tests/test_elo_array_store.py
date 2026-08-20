@@ -163,3 +163,31 @@ def test_role_store_accepts_tuple_keys():
     assert (18180970, "POSITION_1") not in s
     # Строкой тоже должно работать: так ключ выглядит в файле.
     assert s.get("18180970|POSITION_5") == 1500.0
+
+
+def test_iteration_yields_keys_like_a_dict():
+    """`list(store)` обязан давать КЛЮЧИ.
+
+    Без `__iter__` Python откатывается на протокол по индексу: зовёт
+    `__getitem__(0)`, получает `KeyError` и роняет любой обход поля. Поймано на
+    боевом пути — `list(model.player_global)` падало.
+    """
+    s = FloatStore(KEYS, VALS)
+    assert sorted(s) == sorted(KEYS.tolist())
+    assert sorted(list(s)) == sorted(s.keys())
+    assert [int(k) for k in IntStore(KEYS, np.array([1, 2, 3, 4]))] == sorted(KEYS.tolist())
+    names = ["name:aster", "name:tundra"]
+    sv = StringValues(np.array([10, 20], dtype=np.int64),
+                      np.array([0, 1], dtype=np.int64), names)
+    assert sorted(sv) == [10, 20]
+
+
+def test_hashed_stores_refuse_iteration_loudly():
+    """Ключи упакованы необратимо — молча отдать мусор нельзя."""
+    s = HashedStore(np.array([hash_key("a")], dtype=np.int64), np.array([1.0]))
+    with pytest.raises(TypeError, match="обойти"):
+        list(s)
+    p = PairCounts(np.array([PairCounts.pack(1, 0)], dtype=np.int64),
+                   np.array([1], dtype=np.int64), {"name:x": 0})
+    with pytest.raises(TypeError, match="обойти"):
+        list(p)
