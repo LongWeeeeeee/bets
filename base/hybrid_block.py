@@ -81,7 +81,20 @@ def _load() -> dict[str, Any]:
             # модель на 316 828 игроков. А процесс этот — боевой бот, который
             # ведёт ставки. Через общий загрузчик обе копии переиспользуются, и
             # если бот уже поднял снимок сам, блок не стоит вообще ничего.
-            snap = load_snapshot(SNAPSHOT)
+            # Общий загрузчик кэширует разобранный словарь и ВОЗВРАЩАЕТ КЭШ,
+            # игнорируя переданный путь. В бою путь один, и это ровно то, что
+            # нужно. Но если просят другой файл (тесты, `PANEL_HYBRID_SNAPSHOT`),
+            # кэш отдал бы чужой снимок молча — поэтому общим путём идём только
+            # когда просят ТОТ ЖЕ файл, что у пакета по умолчанию.
+            from ELO.live_team_strength import DEFAULT_SNAPSHOT_PATH
+
+            if Path(SNAPSHOT).resolve() == Path(DEFAULT_SNAPSHOT_PATH).resolve():
+                snap = load_snapshot(SNAPSHOT)
+            else:
+                import json as _json
+
+                snap = (_json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+                        if SNAPSHOT.exists() else None)
             if snap is None:
                 raise ValueError(f"снимок не найден: {SNAPSHOT}")
             model = _restore_model_from_snapshot(snap)
