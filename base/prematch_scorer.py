@@ -284,6 +284,83 @@ class PairTable:
         return len(self._key)
 
 
+class PackedTable:
+    """Таблица «кортеж целых → строка значений» на отсортированных массивах.
+
+    ЗАЧЕМ. После чистки `PairTable`/`AccTable` в модели остались словари помельче,
+    но их суммарно 1 452 177 записей при 50 МБ полезных данных, и стоят они около
+    240 МБ: `vs_pos` (374 250), `h2h` (362 112), `h2h_org` (352 193), `team_merge`
+    (167 094), `syn_pos` (150 525) и две плоские таблицы героев. У каждой записи
+    объект-кортеж ключа, кортеж значения и слот словаря — данных на порядок
+    меньше, чем обёртки вокруг них.
+
+    Ключ пакуется в одно целое по заданной ширине полей. Ширина проверяется на
+    сборке: молча склеить две разные пары в один ключ страшнее, чем упасть.
+    Замеренные диапазоны боевого артефакта — герои 1..155, позиции 1..5,
+    команды и организации 2..10 219 690, отрицательных нет.
+
+    `nested=True` — для `syn_pos`, где ключ приходит как `((герой, позиция),
+    (герой, позиция))`, а не плоской четвёркой.
+    """
+
+    __slots__ = ("_key", "_val", "_bits", "_scalar", "_nested", "_cast")
+
+    def __init__(self, rows: np.ndarray, bits: Sequence[int],
+                 scalar: bool = False, nested: bool = False,
+                 cast=float) -> None:
+        nkey = len(bits)
+        if sum(bits) > 62:
+            raise ValueError(f"упаковка {bits} не влезает в int64")
+        cols = [rows[:, i].astype(np.int64) for i in range(nkey)]
+        for i, (c, b) in enumerate(zip(cols, bits)):
+            if len(rows) and (c.min() < 0 or c.max() >= (1 << b)):
+                raise ValueError(
+                    f"поле {i} не влезает в упаковку: [{c.min()}, {c.max()}] "
+                    f"при {b} битах")
+        k = np.zeros(len(rows), dtype=np.int64)
+        for c, b in zip(cols, bits):
+            k = (k << b) | c
+        order = np.argsort(k)             # ключи уникальны, устойчивость не нужна
+        self._key = np.ascontiguousarray(k[order])
+        self._val = np.ascontiguousarray(rows[order, nkey:])
+        self._bits = tuple(bits)
+        self._scalar = scalar
+        self._nested = nested
+        # `cast` нужен для `team_merge`: там значение — идентификатор организации,
+        # и float на его месте поехал бы дальше как ключ другой таблицы.
+        self._cast = cast
+
+    def _pack(self, key) -> int:
+        if self._nested:
+            (a, b), (c, d) = key
+            parts = (a, b, c, d)
+        elif len(self._bits) == 1:
+            parts = (key,)
+        else:
+            parts = key
+        k = 0
+        for p, b in zip(parts, self._bits):
+            k = (k << b) | int(p)
+        return k
+
+    def _index(self, key) -> int:
+        k = self._pack(key)
+        i = int(np.searchsorted(self._key, k))
+        return i if i < len(self._key) and int(self._key[i]) == k else -1
+
+    def get(self, key, default=None):
+        i = self._index(key)
+        if i < 0:
+            return default
+        return self._cast(self._val[i, 0]) if self._scalar else self._val[i]
+
+    def __contains__(self, key) -> bool:
+        return self._index(key) >= 0
+
+    def __len__(self) -> int:
+        return len(self._key)
+
+
 class AccTable:
     """Таблица «аккаунт → строка значений» на отсортированных массивах.
 
@@ -472,8 +549,8 @@ class PrematchModel:
         # 2.95 млн ячеек (аккаунт, позиция) со скалярным значением
         self.acc_pos = PairTable(z["acc_pos"], scalar=True)
         self.hero_wr30 = {int(r[0]): r[1] for r in z["hero_wr30"]}
-        self.vs = {(int(r[0]), int(r[1])): (r[2], r[3]) for r in z["vs_pairs"]}
-        self.h2h = {(int(r[0]), int(r[1])): r[2] for r in z["h2h"]}
+        self.vs = PackedTable(z["vs_pairs"], (8, 8))
+        self.h2h = PackedTable(z["h2h"], (31, 31), scalar=True)
         self.hero_farm = {int(r[0]): r[1] for r in z["hero_farm"]} if "hero_farm" in z else {}
         self.ctx_mu = z["ctx_mu"] if "ctx_mu" in z else None
         self.ctx_sd = z["ctx_sd"] if "ctx_sd" in z else None
@@ -531,21 +608,29 @@ class PrematchModel:
         # Состояние под колонки E-168. Отклонения урона/нетворса лежат ДОПОЛНИТЕЛЬНЫМИ
         # колонками в `accounts` и `acc_hero` (см. `finalize_artifact.py`): отдельные
         # словари на 1.7 млн ячеек стоили +424 МБ RSS.
-        self.vs_pos = {(int(r[0]), int(r[1]), int(r[2]), int(r[3])): (r[4], r[5], r[6])
-                       for r in z["vs_pos"]} if "vs_pos" in z else {}
-        self.vs_flat = {(int(r[0]), int(r[1])): (r[2], r[3], r[4])
-                        for r in z["vs_flat"]} if "vs_flat" in z else {}
-        self.syn_pos = {((int(r[0]), int(r[1])), (int(r[2]), int(r[3]))): (r[4], r[5], r[6])
-                        for r in z["syn_pos"]} if "syn_pos" in z else {}
-        self.syn_flat = {(int(r[0]), int(r[1])): (r[2], r[3], r[4])
-                         for r in z["syn_flat"]} if "syn_flat" in z else {}
+        # Драфтовые ячейки — на массивах, а не словарями: вместе с h2h и склейкой
+        # организаций это 1 452 177 записей при 50 МБ данных, то есть около 240 МБ
+        # одних обёрток. Ширина полей взята с запасом от замеренных диапазонов
+        # боевого артефакта: герои 1..155 (8 бит), позиции 1..5 (3 бита).
+        _HP = (8, 3, 8, 3)
+        self.vs_pos = (PackedTable(z["vs_pos"], _HP)
+                       if "vs_pos" in z else {})
+        self.vs_flat = (PackedTable(z["vs_flat"], (8, 8))
+                        if "vs_flat" in z else {})
+        self.syn_pos = (PackedTable(z["syn_pos"], _HP, nested=True)
+                        if "syn_pos" in z else {})
+        self.syn_flat = (PackedTable(z["syn_flat"], (8, 8))
+                         if "syn_flat" in z else {})
 
         # Идентичность ОРГАНИЗАЦИИ, а не тега: 64 710 team_id схлопнуты в 57 608
         # организаций склейкой по составу (>=4 из 5). Нужно потому, что при
         # ребрендинге team_id новый и история личных встреч обнулялась бы —
         # Iron Wing = 1win = Tundra с составом Pure/bzm/33/Ari/Whitemon.
-        self.team_merge = {int(a): int(b) for a, b in z["team_merge"]} if "team_merge" in z else {}
-        self.h2h_org = {(int(r[0]), int(r[1])): r[2] for r in z["h2h_org"]} if "h2h_org" in z else {}
+        # 31 бит на поле: замеренный максимум id — 10 219 690, запас двухсоткратный.
+        self.team_merge = (PackedTable(z["team_merge"], (31,), scalar=True, cast=int)
+                           if "team_merge" in z else {})
+        self.h2h_org = (PackedTable(z["h2h_org"], (31, 31), scalar=True)
+                        if "h2h_org" in z else {})
         self.org_roster = OrgRosters(z["org_roster"] if "org_roster" in z else None)
 
     def _draft_cells(self, rh: list[tuple[int, int]], dh: list[tuple[int, int]],
