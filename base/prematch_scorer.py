@@ -53,6 +53,11 @@ from typing import Optional, Sequence
 
 import numpy as np
 
+try:                                   # так же, как в `win_model_veto`
+    import prematch_components as _C
+except ImportError:                    # pragma: no cover
+    from base import prematch_components as _C
+
 ARTIFACT_PATH = os.getenv(
     "PREMATCH_ARTIFACT",
     str(Path(__file__).resolve().parents[1] / "data" / "prematch_model_artifact_v3.npz"),
@@ -182,6 +187,15 @@ class ScoreResult:
     # при полном входе. Замер 15.08: полный вход только у 17.0% карт, в среднем
     # занулено 3.29 слота из 10 (E-195).
     coverage: dict[str, float] = field(default_factory=dict)
+    # Какая ветка лестницы сработала и под какие ключи данных их не было.
+    # Поле обязано попадать в журнал: 75% от восьмиколоночной ветки и 75% от
+    # полной — разные числа, и продавать их одинаково значит систематически
+    # ошибаться в требуемом коэффициенте.
+    branch: str = "full"
+    missing_keys: list[str] = field(default_factory=list)
+    # Вклад каждого компонента в логит. Сумма частей плюс сдвиг ветки равна
+    # самому логиту — разложение точное по построению, а не оценочное.
+    parts: dict[str, float] = field(default_factory=dict)
 
     @property
     def confidence(self) -> float:
@@ -510,15 +524,24 @@ class PrematchModel:
         """
         if strictness not in STRICTNESS:
             raise ValueError(f"strictness должен быть одним из {STRICTNESS}")
+        # Причины делятся на две породы. ЖЁСТКИЕ отменяют вердикт всегда:
+        # снимок протух, разметка позиций противоречит истории, вход не той
+        # формы, вызывающий сам потребовал строгости, которой данные не отвечают.
+        # МЯГКИЕ означают лишь, что под какой-то КЛЮЧ ДАННЫХ данных нет, — и это
+        # выбор ветки, а не отказ. `miss` собирается в ПРЕЖНЕМ порядке: артефакт
+        # без веток обязан вести себя ровно как раньше.
         miss: list[str] = []
+        hard: list[str] = []
         notes: list[str] = []
         if now_ts is not None and max_age_days > 0:
             age = (int(now_ts) - self.snapshot_ts) / 86400.0
             if age > max_age_days:
                 # wr30 — окно 30 дней, vs_wr — распад 45 дней; протухший снимок
                 # означает «винрейт за 30 дней, закончившихся N дней назад»
-                miss.append(f"снимок протух: собран {age:.1f} дней назад "
-                            f"при пороге {max_age_days:.0f}")
+                stale = (f"снимок протух: собран {age:.1f} дней назад "
+                         f"при пороге {max_age_days:.0f}")
+                miss.append(stale)
+                hard.append(stale)
         accs = [int(a) for a in radiant_accounts] + [int(a) for a in dire_accounts]
         hers = [int(h) for h in radiant_heroes] + [int(h) for h in dire_heroes]
         if len(accs) != 10 or len(hers) != 10:
@@ -540,17 +563,23 @@ class PrematchModel:
         if no_wr:
             miss.append(f"нет винрейта за 30 дней у героев: {sorted(set(no_wr))}")
         if not unknown and not zero:
-            self._check_positions(accs, miss, notes)
+            pos_bad: list[str] = []
+            self._check_positions(accs, pos_bad, notes)
+            miss.extend(pos_bad)
+            hard.extend(pos_bad)
         rt, dt = int(radiant_team_id), int(dire_team_id)
         if strictness in ("teams", "cells", "full") and (rt <= 0 or dt <= 0):
             miss.append("нет id одной из команд")
+            hard.append("нет id одной из команд")
         if strictness in ("cells", "full"):
             no_cell = [(a, h) for a, h in zip(accs, hers) if (a, h) not in self.acc_hero]
             if no_cell:
                 miss.append(f"игрок ещё не играл на этом герое: {no_cell}")
+                hard.append(f"игрок ещё не играл на этом герое: {no_cell}")
             no_pos = [(a, p) for p, a in enumerate(accs, 1) if (a, ((p - 1) % 5) + 1) not in self.acc_pos]
             if no_pos:
                 miss.append(f"нет игр на этой позиции: {no_pos}")
+                hard.append(f"нет игр на этой позиции: {no_pos}")
         org_r = self.resolve_org(rt, radiant_accounts)
         org_d = self.resolve_org(dt, dire_accounts)
         if self.h2h_org and org_r > 0 and org_d > 0 and org_r != org_d:
@@ -561,102 +590,165 @@ class PrematchModel:
             h2h_src, swap = self.h2h, rt > dt
         if strictness == "full" and (key is None or key not in h2h_src):
             miss.append("нет истории личных встреч этих команд")
-        if miss:
+            hard.append("нет истории личных встреч этих команд")
+        if hard:
             raise MissingData(miss)
+        if not self.branches:
+            # Артефакт без веток — прежнее поведение целиком: любая нехватка
+            # отменяет вердикт, и считается одна модель на все колонки. Так
+            # работает боевая машина, пока ей не доставлен новый артефакт.
+            if miss:
+                raise MissingData(miss)
+            keys = {_C.ACCOUNT, _C.HERO, _C.ROSTER, _C.ORG}
+            branch_name = "full"
+        else:
+            keys = set()
+            if not zero and not unknown:
+                keys.add(_C.ACCOUNT)
+            if draft_logit is not None and not no_wr:
+                keys.add(_C.HERO)
+            if hybrid_strength is not None:
+                keys.add(_C.ROSTER)
+            if key is not None and key in h2h_src:
+                keys.add(_C.ORG)
+            branch_name = _C.pick_branch(keys, have=set(self.branches))
+            if branch_name is None:
+                # Ни одной обученной ветки под этот набор ключей. Врать нечем.
+                raise MissingData(miss or ["нет ни рейтинга ростера, ни драфта"])
+        missing_keys = sorted({_C.ACCOUNT, _C.HERO, _C.ROSTER, _C.ORG} - keys)
+        if branch_name != "full":
+            notes.append(f"ветка «{branch_name}»: нет данных под ключи "
+                         f"{', '.join(missing_keys)} — уверенность считается "
+                         f"моделью, которая этих колонок не видела")
 
-        # ---- признаки; к этому месту все нужные данные есть
+        # ---- признаки; считаются только те, чьи ключи доступны
         # Счётчики заполненности входа: сколько величин собрано из реальных
         # данных, а сколько заменено нулём. Считаются здесь же, чтобы не
         # расходиться с тем, что действительно попало в признаки.
         fill = {"cells": 0, "pos": 0}
-
-        r, d = (self._acc_side(radiant_accounts, radiant_heroes, fill, notes),
-                self._acc_side(dire_accounts, dire_heroes, fill, notes))
-        rh_, dh_ = self._hero_side(radiant_heroes), self._hero_side(dire_heroes)
-        def pair_wr(a_heroes: Sequence[int], b_heroes: Sequence[int]) -> float:
-            vv = [(self.vs.get((int(x), int(y)), (0.0, 0.0))) for x in a_heroes for y in b_heroes]
-            if not vv:
-                return 0.5
-            return float(np.mean([(w + 5.0) / (g + 10.0) for w, g in vv]))
-
-        vs_val = pair_wr(radiant_heroes, dire_heroes) - pair_wr(dire_heroes, radiant_heroes)
-        h2h = float(h2h_src.get(key, 0.0)) if key else 0.0
-        if key and key not in h2h_src:
-            notes.append("организации раньше не встречались — h2h нейтрален")
-        if key and swap:
-            h2h = -h2h
+        f: dict[str, float] = {}
         lg1 = lambda x: math.log1p(max(x, 0))
-        f = {
-            "draft_logit": float(draft_logit),
-            "elo": (r["elo"] - d["elo"]) / 400.0,
-            "games": lg1(r["games"]) - lg1(d["games"]),
-            "hero_games": r["hero_games"] - d["hero_games"],
-            "pos_games": r["pos_games"] - d["pos_games"],
-            "opp_elo": (r["opp_elo"] - d["opp_elo"]) / 400.0,
-            "hero_pool": lg1(r["hero_pool"]) - lg1(d["hero_pool"]),
-            "form": r["form"] - d["form"],
-            "hero_gpm_rel": (r["hero_gpm_rel"] - d["hero_gpm_rel"]) / 100.0,
-            # train (ideas_batch1 i2_imp_recent) делит на 100; без деления live AUC −0.116.
-            # E-177: окно ДЕСЯТЬ матчей, а не тридцать — раньше сюда шло то же
-            # поле, что и в imp30, из-за чего две колонки из 35 были в бою
-            # коллинеарны (отношение sd 99.99 против 76.04 в обучении).
-            "imp_recent": (r["imp_recent10"] - d["imp_recent10"]) / 100.0,
-            "wr30": rh_["wr30"] - dh_["wr30"],
-            "h2h_resid": h2h,
-            "gpm_rel_pos": (r["gpm_rel_pos"] - d["gpm_rel_pos"]) / 100.0,
-            "vs_wr": vs_val,
-            "imp50": r["imp50"] - d["imp50"],
-            "imp_rel_pos": r["imp_rel_pos"] - d["imp_rel_pos"],
-            "lh_rel_hero": (r["lh_rel_hero"] - d["lh_rel_hero"]) / 100.0,
-            "gpm_ewma": (r["gpm_ewma"] - d["gpm_ewma"]) / 100.0,
-            # E-177: обучающие v_lh30 и v_imp30 — ОСТАТКИ против нормы позиции
-            # (`ideas_batch5b`: r = st[k] - pn[k]), а не сырые величины
-            "lh30": (r["lh30_resid"] - d["lh30_resid"]) / 100.0,
-            "imp30": r["imp30_resid"] - d["imp30_resid"],
-            "lvl_rel_pos": r["lvl_rel_pos"] - d["lvl_rel_pos"],
-            "kda_player": r["kda_player"] - d["kda_player"],
-            "farm_dep": rh_["farm_dep"] - dh_["farm_dep"],
-        }
-        if set(NEW6) & set(self.features):
-            now_draft = int(now_ts) if now_ts is not None else self.snapshot_ts
-            rh = [(int(h), p) for p, h in enumerate(radiant_heroes, 1)]
-            dh = [(int(h), p) for p, h in enumerate(dire_heroes, 1)]
-            cp_lane, syn_mean = self._draft_cells(rh, dh, now_draft)
-            new = {
-                "hybrid_strength": float(hybrid_strength or 0.0),
-                "cp_lane": cp_lane,
-                "syn_pos_mean": syn_mean,
+
+        if _C.HERO in keys:
+            rh_, dh_ = self._hero_side(radiant_heroes), self._hero_side(dire_heroes)
+
+            def pair_wr(a_heroes: Sequence[int], b_heroes: Sequence[int]) -> float:
+                vv = [(self.vs.get((int(x), int(y)), (0.0, 0.0)))
+                      for x in a_heroes for y in b_heroes]
+                if not vv:
+                    return 0.5
+                return float(np.mean([(w + 5.0) / (g + 10.0) for w, g in vv]))
+
+            f["draft_logit"] = float(draft_logit)
+            f["wr30"] = rh_["wr30"] - dh_["wr30"]
+            f["farm_dep"] = rh_["farm_dep"] - dh_["farm_dep"]
+            f["vs_wr"] = (pair_wr(radiant_heroes, dire_heroes)
+                          - pair_wr(dire_heroes, radiant_heroes))
+            if {"cp_lane", "syn_pos_mean"} & set(self.features):
+                now_draft = int(now_ts) if now_ts is not None else self.snapshot_ts
+                rh = [(int(h), pp) for pp, h in enumerate(radiant_heroes, 1)]
+                dh = [(int(h), pp) for pp, h in enumerate(dire_heroes, 1)]
+                cp_lane, syn_mean = self._draft_cells(rh, dh, now_draft)
+                f["cp_lane"], f["syn_pos_mean"] = cp_lane, syn_mean
+
+        if _C.ROSTER in keys and "hybrid_strength" in self.features:
+            f["hybrid_strength"] = float(hybrid_strength or 0.0)
+
+        if _C.ORG in keys:
+            h2h = float(h2h_src.get(key, 0.0)) if key else 0.0
+            if key and key not in h2h_src:
+                notes.append("организации раньше не встречались — h2h нейтрален")
+            if key and swap:
+                h2h = -h2h
+            f["h2h_resid"] = h2h
+
+        if _C.ACCOUNT in keys:
+            r, d = (self._acc_side(radiant_accounts, radiant_heroes, fill, notes),
+                    self._acc_side(dire_accounts, dire_heroes, fill, notes))
+            f.update({
+                "elo": (r["elo"] - d["elo"]) / 400.0,
+                "games": lg1(r["games"]) - lg1(d["games"]),
+                "hero_games": r["hero_games"] - d["hero_games"],
+                "pos_games": r["pos_games"] - d["pos_games"],
+                "opp_elo": (r["opp_elo"] - d["opp_elo"]) / 400.0,
+                "hero_pool": lg1(r["hero_pool"]) - lg1(d["hero_pool"]),
+                "form": r["form"] - d["form"],
+                "hero_gpm_rel": (r["hero_gpm_rel"] - d["hero_gpm_rel"]) / 100.0,
+                # train (ideas_batch1 i2_imp_recent) делит на 100; без деления
+                # боевой AUC −0.116. E-177: окно ДЕСЯТЬ матчей, а не тридцать —
+                # раньше сюда шло то же поле, что и в imp30, из-за чего две
+                # колонки из 35 были в бою коллинеарны.
+                "imp_recent": (r["imp_recent10"] - d["imp_recent10"]) / 100.0,
+                "gpm_rel_pos": (r["gpm_rel_pos"] - d["gpm_rel_pos"]) / 100.0,
+                "imp50": r["imp50"] - d["imp50"],
+                "imp_rel_pos": r["imp_rel_pos"] - d["imp_rel_pos"],
+                "lh_rel_hero": (r["lh_rel_hero"] - d["lh_rel_hero"]) / 100.0,
+                "gpm_ewma": (r["gpm_ewma"] - d["gpm_ewma"]) / 100.0,
+                # E-177: обучающие v_lh30 и v_imp30 — ОСТАТКИ против нормы
+                # позиции (`ideas_batch5b`: r = st[k] - pn[k]), а не сырые
+                "lh30": (r["lh30_resid"] - d["lh30_resid"]) / 100.0,
+                "imp30": r["imp30_resid"] - d["imp30_resid"],
+                "lvl_rel_pos": r["lvl_rel_pos"] - d["lvl_rel_pos"],
+                "kda_player": r["kda_player"] - d["kda_player"],
+            })
+            new6acc = {
                 # scale "raw1k" в `ideas_batch5.NEW`
                 "a_hdmg_rel_pos": (r["a_hdmg_rel_pos"] - d["a_hdmg_rel_pos"]) / 1000.0,
                 "a_hdmg_rel_hero": (r["a_hdmg_rel_hero"] - d["a_hdmg_rel_hero"]) / 1000.0,
                 "a_nw_rel_pos": (r["a_nw_rel_pos"] - d["a_nw_rel_pos"]) / 1000.0,
             }
-            # в отчёт попадает только то, что артефакт действительно использует:
-            # `hybrid_strength` с нулём рядом с реальными числами читался бы как
-            # посчитанная величина, а он в этом артефакте выключен
-            f.update({k: v for k, v in new.items() if k in self.features})
-        if self.ctx_mu is not None:
-            # контекст матча как МНОЖИТЕЛЬ антисимметричных признаков: признак
-            # уровня матча в разностной схеме тождественно нулевой (E-95 §3),
-            # а множителем законен. Нормировка берётся из артефакта — иначе
-            # веса окажутся не на своих местах.
-            ctx = np.array([abs(f["elo"]), abs(f["games"])])
-            z = (ctx - self.ctx_mu) / self.ctx_sd
-            for j, cname in enumerate(("elo_gap", "games_exp")):
-                for k in INTER_KEYS:
-                    f[f"{k}_x_{cname}"] = f[k] * float(z[j])
-        x = np.array([f[k] for k in self.features])
-        ps = []
-        for i in range(len(self.coef)):
-            z = (x - self.mu[i]) / self.sd[i]
-            ps.append(1.0 / (1.0 + math.exp(-(float(z @ self.coef[i]) + float(self.intercept[i])))))
-        p = float(np.mean(ps))
+            f.update({k: v for k, v in new6acc.items() if k in self.features})
+            if self.ctx_mu is not None:
+                # контекст матча как МНОЖИТЕЛЬ антисимметричных признаков:
+                # признак уровня матча в разностной схеме тождественно нулевой
+                # (E-95 §3), а множителем законен. Нормировка берётся из
+                # артефакта — иначе веса окажутся не на своих местах.
+                ctx = np.array([abs(f["elo"]), abs(f["games"])])
+                zc = (ctx - self.ctx_mu) / self.ctx_sd
+                for j, cname in enumerate(("elo_gap", "games_exp")):
+                    for k in INTER_KEYS:
+                        if k in f:      # без драфта интеракции драфта не бывает
+                            f[f"{k}_x_{cname}"] = f[k] * float(zc[j])
+
+        parts: dict[str, float] = {}
+        if self.branches:
+            b = self.branches[branch_name]
+            miss_cols = [c for c in b.cols if c not in f]
+            if miss_cols:
+                raise MissingData(
+                    [f"ветка «{branch_name}» требует колонок, которых нет: "
+                     f"{miss_cols} — разметка ключей разошлась с обучением"])
+            x = np.array([f[c] for c in b.cols])
+            zb = (x - b.mu) / b.sd
+            contrib = zb * b.coef
+            for c, w in zip(b.cols, contrib):
+                comp = _C.component_of(c)
+                parts[comp] = parts.get(comp, 0.0) + float(w)
+            p = 1.0 / (1.0 + math.exp(-(float(contrib.sum()) + b.intercept)))
+        else:
+            x = np.array([f[k] for k in self.features])
+            ps = []
+            for i in range(len(self.coef)):
+                zz = (x - self.mu[i]) / self.sd[i]
+                ps.append(1.0 / (1.0 + math.exp(
+                    -(float(zz @ self.coef[i]) + float(self.intercept[i])))))
+            p = float(np.mean(ps))
         # h2h входит в знаменатель, только если его вообще спрашивали: при
         # строгости `accounts` id команд не передаются (боевой вызов в
         # `win_model_veto._prematch_index`), ключа нет, и записывать это в дыры
         # неверно — заполненность тогда упиралась бы в 20/21 навсегда.
         h2h_asked = key is not None
         h2h_known = 1.0 if (h2h_asked and key in h2h_src) else 0.0
+        if _C.ACCOUNT not in keys:
+            # Ячеек и игр на позиции на короткой ветке не бывает по построению:
+            # считать их заполненность нулём значило бы пугать нулевым покрытием
+            # там, где эти величины не спрашивались.
+            cov = {"cells": float("nan"), "pos": float("nan"),
+                   "h2h": h2h_known if h2h_asked else float("nan"),
+                   "filled": 1.0}
+            return ScoreResult(p, lan_winrate(max(p, 1.0 - p)), f, notes, cov,
+                               branch=branch_name, missing_keys=missing_keys,
+                               parts=parts)
         cov = {"cells": fill["cells"] / 10.0, "pos": fill["pos"] / 10.0,
                "h2h": h2h_known if h2h_asked else float("nan")}
         cov["filled"] = ((fill["cells"] + fill["pos"] + (h2h_known if h2h_asked else 0.0))
@@ -667,7 +759,9 @@ class PrematchModel:
                 f"{fill['cells']}/10, игр на позиции {fill['pos']}/10"
                 + (f", личные встречи {'есть' if h2h_known else 'нет'}"
                    if h2h_asked else ""))
-        return ScoreResult(p, lan_winrate(max(p, 1.0 - p)), f, notes, cov)
+        return ScoreResult(p, lan_winrate(max(p, 1.0 - p)), f, notes, cov,
+                           branch=branch_name, missing_keys=missing_keys,
+                           parts=parts)
 
 
 _MODEL: Optional[PrematchModel] = None

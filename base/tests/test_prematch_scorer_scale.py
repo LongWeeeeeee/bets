@@ -24,9 +24,14 @@ def test_imp_recent_divides_by_100():
 
 
 def test_vs_wr_is_two_sided_difference():
-    text = SRC.read_text(encoding="utf-8")
-    assert (
-        "vs_val = pair_wr(radiant_heroes, dire_heroes) - pair_wr(dire_heroes, radiant_heroes)"
-        in text
-    )
+    """`vs_wr` — РАЗНОСТЬ двух сторон, а не `p − 0.5` одной.
+
+    Раньше здесь сверялась точная строка `vs_val = pair_wr(...) - pair_wr(...)`.
+    При разнесении расчёта по ключам данных величина стала присваиваться прямо
+    в словарь признаков и переехала на две строки, и тест начал падать на
+    верном коде. Проверяется сам контракт: обе ориентации есть и вычитаются.
+    """
+    text = " ".join(SRC.read_text(encoding="utf-8").split())
+    assert ("pair_wr(radiant_heroes, dire_heroes) - pair_wr(dire_heroes, radiant_heroes)"
+            in text)
     assert "float(np.mean([(w + 5.0) / (g + 10.0) for w, g in vv])) - 0.5" not in text
