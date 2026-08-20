@@ -88,6 +88,30 @@ def _load() -> dict[str, Any]:
             # когда просят ТОТ ЖЕ файл, что у пакета по умолчанию.
             from ELO.live_team_strength import DEFAULT_SNAPSHOT_PATH
 
+            # Массивная модель: те же числа, 337 МБ вместо 1116. Панель эту
+            # модель только читает, поэтому отсутствие мутаций ей безразлично.
+            if Path(SNAPSHOT).resolve() == Path(DEFAULT_SNAPSHOT_PATH).resolve():
+                try:
+                    from ELO.array_model import load_read_model
+                    from ELO.live_team_strength import (
+                        DEFAULT_RUNTIME_MODEL_STATE_PATH)
+
+                    _fast = load_read_model(Path(SNAPSHOT),
+                                            DEFAULT_RUNTIME_MODEL_STATE_PATH)
+                except Exception:  # noqa: BLE001
+                    _fast = None
+                if _fast is not None:
+                    # Имена читаются отдельно: они нужны только для MatchRecord,
+                    # но пустой словарь мешает разбору org-ключа.
+                    try:
+                        from ELO.array_model import load_team_names
+
+                        _names = load_team_names(Path(SNAPSHOT))
+                    except Exception:  # noqa: BLE001
+                        _names = {}
+                    _state.update(model=_fast, names=_names, built_ts=0)
+                    _state["loaded"] = True
+                    return _state
             if Path(SNAPSHOT).resolve() == Path(DEFAULT_SNAPSHOT_PATH).resolve():
                 # `load_live_snapshot`, а не `load_snapshot`: базовый файл
                 # пересобирается редко (на боевой машине он от 12.08), а

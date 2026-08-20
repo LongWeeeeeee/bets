@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 from pathlib import Path
 
 import numpy as np
@@ -58,7 +59,7 @@ _TIERED_COUNTS = ("roster_match_counts",)
 _TIERS = ("TIER1", "TIER2", "TIER3")
 
 
-def load_state_arrays(path: Path) -> dict:
+def load_state_arrays(path: Path, prefix: str = "model_state.") -> dict:
     """Крупные поля `model_state` — в массивные хранилища, ЗА ОДИН ПРОХОД.
 
     `ijson.parse` отдаёт поток событий с полным путём до значения, поэтому имя
@@ -85,7 +86,7 @@ def load_state_arrays(path: Path) -> dict:
             org_names.append(name)
         return s
 
-    P = "model_state."
+    P = prefix
     with open(path, "rb") as fh:
         for prefix, event, value in ijson.parse(fh):
             if event not in ("number", "string") or not prefix.startswith(P):
@@ -169,6 +170,55 @@ def load_state_arrays(path: Path) -> dict:
 _KEEP_AS_IS = ("config", "current_patch_key", "side_bias", "roster_tracker")
 
 
+def _runtime_is_valid(runtime_path: Path, snapshot_path: Path) -> bool:
+    """Рантайм годится, только если он собран ОТ ЭТОГО снимка.
+
+    Проверяются те же два поля, что и у словарного пути: отметка времени
+    базового снимка и подпись конфигурации. Без этого можно смешать состояние с
+    чужой базой и получить рейтинги, которых никогда не было.
+    """
+    import ijson
+
+    from .live_team_strength import (_snapshot_model_config_signature,
+                                     _snapshot_reference_timestamp)
+
+    if not runtime_path.exists():
+        return False
+
+    def plain(value):
+        """`ijson` отдаёт числа `Decimal`, а подпись считается по float.
+
+        Без приведения `json.dumps` внутри подписи падает, а если бы и не падал —
+        строка вышла бы другой, и рантайм всегда признавался бы чужим.
+        """
+        if isinstance(value, dict):
+            return {k: plain(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [plain(v) for v in value]
+        if isinstance(value, Decimal):
+            return float(value)
+        return value
+
+    want_ts = want_sig = None
+    with open(snapshot_path, "rb") as fh:
+        head = {k: v for k, v in ijson.kvitems(fh, "meta")}
+    want_ts = _snapshot_reference_timestamp({"meta": plain(head)})
+    with open(snapshot_path, "rb") as fh:
+        cfg = {k: v for k, v in ijson.kvitems(fh, "model_state.config")}
+    want_sig = _snapshot_model_config_signature(
+        {"model_state": {"config": plain(cfg)}})
+    got_ts = got_sig = None
+    with open(runtime_path, "rb") as fh:
+        for prefix, event, value in ijson.parse(fh):
+            if prefix == "base_reference_timestamp":
+                got_ts = int(value)
+            elif prefix == "base_model_config_signature":
+                got_sig = str(value)
+            if got_ts is not None and got_sig is not None:
+                break
+    return got_ts == want_ts and got_sig == want_sig
+
+
 def _small_parts(path: Path) -> dict:
     """Мелкие части состояния — обычным разбором: их суммарный вес незначим."""
     import ijson
@@ -181,7 +231,7 @@ def _small_parts(path: Path) -> dict:
     return out
 
 
-def build_read_model(path: Path):
+def build_read_model(path: Path, runtime_model_state_path: Path | None = None):
     """Модель для ЧТЕНИЯ: логика штатная, крупные поля — массивами.
 
     Собирается в два шага. Сначала `from_state` поднимает модель по мелким
@@ -197,7 +247,13 @@ def build_read_model(path: Path):
     from .models import HybridPlayerRosterEloModel
 
     model = HybridPlayerRosterEloModel.from_state(_small_parts(path))
-    arrays = load_state_arrays(path)
+    # Рантайм-состояние заменяет ПОЛЯ модели, но не остальной снимок: там лежит
+    # только `model_state`, а имена команд и история килов остаются базовыми.
+    src, prefix = path, "model_state."
+    if runtime_model_state_path is not None and _runtime_is_valid(
+            runtime_model_state_path, path):
+        src, prefix = runtime_model_state_path, "model_state."
+    arrays = load_state_arrays(src, prefix)
     by_name = {t.name: t for t in LeagueTier}
     for field, value in arrays.items():
         if isinstance(value, dict):
@@ -206,3 +262,64 @@ def build_read_model(path: Path):
         else:
             setattr(model, field, value)
     return model
+
+
+#: Готовые модели по (базовый снимок, рантайм-состояние) и их отметкам времени.
+#: Два слота: базовая и свежая живут рядом ровно как у словарной реализации.
+_READ_CACHE: list = []
+_READ_SLOTS = 2
+
+
+def _stamp(path: Path) -> tuple:
+    try:
+        st = path.stat()
+        return (str(path), int(st.st_mtime_ns), int(st.st_size))
+    except OSError:
+        return (str(path), 0, 0)
+
+
+def load_read_model(snapshot_path: Path, runtime_model_state_path: Path | None = None):
+    """Массивная модель с примешанным рантайм-состоянием, с кэшем по отметкам файлов.
+
+    Свежесть здесь обязательна: базовый снимок пересобирается редко (на боевой
+    машине он датирован 12.08), а рантайм обновляется после каждой завершённой
+    карты. Читать рейтинги из базового значило бы считать `hybrid_strength` по
+    данным недельной давности — ровно то, что чинили 20.08.
+
+    Кэш ключуется временем изменения и размером обоих файлов: перечитывать
+    242-мегабайтный снимок на каждый вызов дороже, чем держать модель.
+    """
+    key = (_stamp(snapshot_path),
+           _stamp(runtime_model_state_path) if runtime_model_state_path else None)
+    for i, (k, model) in enumerate(_READ_CACHE):
+        if k == key:
+            _READ_CACHE.append(_READ_CACHE.pop(i))
+            return model
+    model = build_read_model(snapshot_path, runtime_model_state_path)
+    _READ_CACHE.append((key, model))
+    del _READ_CACHE[:-_READ_SLOTS]
+    return model
+
+
+def load_team_names(snapshot_path: Path) -> dict[int, str]:
+    """id команды -> имя, потоково из `teams_by_org_key`.
+
+    Нужно только для заполнения `MatchRecord`, на числа не влияет — но пустое
+    имя мешает разбору org-ключа, поэтому подсовывать пустой словарь нельзя.
+    Читается отдельным проходом: это 7 МБ против 67 у разобранного целиком.
+    """
+    import ijson
+
+    names: dict[int, str] = {}
+    with open(snapshot_path, "rb") as fh:
+        team_id = None
+        for prefix, event, value in ijson.parse(fh):
+            if not prefix.startswith("teams_by_org_key."):
+                continue
+            tail = prefix.split(".")[-1]
+            if tail == "team_id" and event == "number":
+                team_id = int(value)
+            elif tail == "team_name" and event == "string" and team_id:
+                names[team_id] = str(value)
+                team_id = None
+    return names
