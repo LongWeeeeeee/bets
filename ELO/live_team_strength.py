@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import hashlib
 import json
 import math
@@ -51,10 +50,27 @@ DEFAULT_RUNTIME_LOCK_PATH = Path(__file__).resolve().parents[1] / "runtime" / "l
 DEFAULT_LIVE_SEGMENT_POLICY_PATH = Path(__file__).resolve().parent / "live_probability_segment_policy.json"
 
 _SNAPSHOT_CACHE: dict[str, Any] | None = None
-_MODEL_FROM_SNAPSHOT_CACHE: dict[str, Any] = {"snapshot_id": None, "model": None}
+# Кэш восстановленных моделей: ДВА слота, а не один, и ключ — состояние, из
+# которого модель строится, а не снимок-обёртка.
+#
+# Один слот с ключом `id(snapshot)` промахивался в ста процентах случаев.
+# `get_matchup_summary` намеренно строит сводку дважды — от базового снимка и от
+# мерженого с рантайм-состоянием, чтобы показать, насколько рейтинг сдвинулся за
+# турнир, — и слот на каждом шаге вытеснялся соседним. Замер: три вызова дали
+# шесть восстановлений, каждое `cache_hit=False`, по 7.5-8 секунд. Это же
+# объясняло, почему процесс жёг больше ядра непрерывно, и растило RSS с 4 ГБ до
+# 6.2: около гигабайта объектов выделялось и освобождалось на каждый запрос, а
+# арены аллокатора обратно системе не отдаются.
+#
+# Ссылка на само состояние хранится рядом с моделью НАМЕРЕННО: без неё словарь
+# мог бы освободиться, а его `id` достаться другому объекту — и кэш отдал бы
+# чужую модель.
+_MODEL_CACHE_SLOTS = 2
+_MODEL_FROM_SNAPSHOT_CACHE: list[tuple[int, Any, Any]] = []
 _RUNTIME_SNAPSHOT_CACHE: dict[str, Any] = {"base_snapshot_id": None, "runtime_signature": None, "snapshot": None}
 _LIVE_PROBABILITY_POLICY_CACHE: dict[str, Any] = {"path": None, "signature": None, "policy": None}
-_LEADERBOARD_RANK_CACHE: dict[str, Any] = {"snapshot_id": None, "rank_map": None}
+_LEADERBOARD_RANK_CACHE: dict[str, Any] = {"table_id": None, "table_ref": None,
+                                            "rank_map": None}
 
 SEGMENT_OVERALL = "overall"
 SEGMENT_TIER1_ONLY = "tier1_only"
@@ -361,16 +377,18 @@ def _coerce_player_ids(raw_player_ids: Any) -> tuple[int, ...]:
 
 
 def _restore_model_from_snapshot(snapshot: dict[str, Any]) -> HybridPlayerRosterEloModel | None:
-    snapshot_id = id(snapshot)
-    if _MODEL_FROM_SNAPSHOT_CACHE.get("snapshot_id") == snapshot_id:
-        model = _MODEL_FROM_SNAPSHOT_CACHE.get("model")
-        return model if isinstance(model, HybridPlayerRosterEloModel) else None
     raw_state = snapshot.get("model_state")
     if not isinstance(raw_state, dict):
         return None
+    state_id = id(raw_state)
+    for i, (cached_id, _state_ref, model) in enumerate(_MODEL_FROM_SNAPSHOT_CACHE):
+        if cached_id == state_id:
+            # Свежеиспользованный слот — в конец, чтобы вытеснялся давний.
+            _MODEL_FROM_SNAPSHOT_CACHE.append(_MODEL_FROM_SNAPSHOT_CACHE.pop(i))
+            return model if isinstance(model, HybridPlayerRosterEloModel) else None
     model = HybridPlayerRosterEloModel.from_state(raw_state)
-    _MODEL_FROM_SNAPSHOT_CACHE["snapshot_id"] = snapshot_id
-    _MODEL_FROM_SNAPSHOT_CACHE["model"] = model
+    _MODEL_FROM_SNAPSHOT_CACHE.append((state_id, raw_state, model))
+    del _MODEL_FROM_SNAPSHOT_CACHE[:-_MODEL_CACHE_SLOTS]
     return model
 
 
@@ -587,7 +605,13 @@ def _snapshot_with_runtime_model_state(
     merged_meta = dict(snapshot.get("meta") or {})
     merged_meta["runtime_updated_at"] = runtime_payload.get("updated_at")
     merged_snapshot["meta"] = merged_meta
-    merged_snapshot["model_state"] = copy.deepcopy(runtime_payload["model_state"])
+    # Без `copy.deepcopy`: `_load_runtime_model_payload` зовёт `_load_json_dict`,
+    # а тот делает свежий `json.load` без всякого кэша, так что `runtime_payload`
+    # — локальный объект, на который больше никто не ссылается. Копия защищала от
+    # несуществующего совладельца, а стоила 435 МБ: в момент копирования оба
+    # состояния живут разом, 870 МБ вместо 435. Именно до таких пиков дорастают
+    # арены аллокатора, которые процесс потом не отдаёт обратно.
+    merged_snapshot["model_state"] = runtime_payload["model_state"]
     _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = base_snapshot_id
     _RUNTIME_SNAPSHOT_CACHE["runtime_signature"] = signature
     _RUNTIME_SNAPSHOT_CACHE["snapshot"] = merged_snapshot
@@ -595,17 +619,24 @@ def _snapshot_with_runtime_model_state(
 
 
 def _leaderboard_rank_map(snapshot: dict[str, Any]) -> dict[str, int]:
-    snapshot_id = id(snapshot)
+    # Ключ — таблица команд, из которой карта и считается, а НЕ снимок-обёртка.
+    # Мерженый снимок делается через `dict(snapshot)`, то есть `teams_by_org_key`
+    # там буквально тот же объект и результат заведомо тот же; при ключе по
+    # снимку сортировка 59 389 команд выполнялась дважды за вызов впустую.
+    # Ссылка на таблицу хранится рядом, иначе освободившийся `id` мог бы
+    # достаться другому объекту и кэш отдал бы чужую карту.
+    teams_by_org_key = snapshot.get("teams_by_org_key")
+    table_id = id(teams_by_org_key)
     cached_rank_map = _LEADERBOARD_RANK_CACHE.get("rank_map")
     if (
-        _LEADERBOARD_RANK_CACHE.get("snapshot_id") == snapshot_id
+        _LEADERBOARD_RANK_CACHE.get("table_id") == table_id
         and isinstance(cached_rank_map, dict)
     ):
         return cached_rank_map
 
-    teams_by_org_key = snapshot.get("teams_by_org_key")
     if not isinstance(teams_by_org_key, dict):
-        _LEADERBOARD_RANK_CACHE["snapshot_id"] = snapshot_id
+        _LEADERBOARD_RANK_CACHE["table_id"] = table_id
+        _LEADERBOARD_RANK_CACHE["table_ref"] = teams_by_org_key
         _LEADERBOARD_RANK_CACHE["rank_map"] = {}
         return {}
 
@@ -620,7 +651,8 @@ def _leaderboard_rank_map(snapshot: dict[str, Any]) -> dict[str, int]:
         rows.append((str(org_key), current_strength, str(row.get("team_name") or org_key)))
     rows.sort(key=lambda item: (-item[1], item[2].casefold()))
     rank_map = {org_key: idx + 1 for idx, (org_key, _rating, _name) in enumerate(rows)}
-    _LEADERBOARD_RANK_CACHE["snapshot_id"] = snapshot_id
+    _LEADERBOARD_RANK_CACHE["table_id"] = table_id
+    _LEADERBOARD_RANK_CACHE["table_ref"] = teams_by_org_key
     _LEADERBOARD_RANK_CACHE["rank_map"] = rank_map
     return rank_map
 
@@ -1080,6 +1112,31 @@ def build_snapshot(
     global _SNAPSHOT_CACHE
     _SNAPSHOT_CACHE = snapshot
     return snapshot
+
+
+def load_live_snapshot(
+    snapshot_path: Path = DEFAULT_SNAPSHOT_PATH,
+    runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
+) -> dict[str, Any] | None:
+    """Снимок с ПРИМЕШАННЫМ рантайм-состоянием — то, что нужно живому счёту.
+
+    `load_snapshot` отдаёт базовый файл, который пересобирается редко: на боевой
+    машине он датирован 12.08, тогда как рантайм-состояние обновляется постоянно
+    (20.08 19:22 на момент правки). До этой функции мержем пользовалась одна
+    только сводка матчапа, а признак `hybrid_strength` — и в панели, и на пути
+    ставки — считался по базовому снимку, то есть по рейтингам восьмидневной
+    давности. Причём свежие лежали в том же процессе.
+
+    Обе копии переиспользуются: базовый словарь кэшируется в `_SNAPSHOT_CACHE`,
+    мерженый — в `_RUNTIME_SNAPSHOT_CACHE`, а восстановленная модель — в
+    `_MODEL_FROM_SNAPSHOT_CACHE` по состоянию, из которого построена. Второй
+    разбор 366-мегабайтного файла здесь не происходит.
+    """
+    base = load_snapshot(snapshot_path)
+    if base is None:
+        return None
+    return _snapshot_with_runtime_model_state(
+        base, runtime_model_state_path=runtime_model_state_path)
 
 
 def load_snapshot(snapshot_path: Path = DEFAULT_SNAPSHOT_PATH) -> dict[str, Any] | None:

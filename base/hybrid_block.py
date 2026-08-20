@@ -70,7 +70,7 @@ def _load() -> dict[str, Any]:
             if str(PROJECT_ROOT) not in sys.path:
                 sys.path.insert(0, str(PROJECT_ROOT))
             from ELO.live_team_strength import (_restore_model_from_snapshot,
-                                                load_snapshot)
+                                                load_live_snapshot)
 
             # Снимок берём ОБЩИМ загрузчиком пакета, а не своим `json.loads`.
             # Причина не в красоте: `live_team_strength` держит модульный кэш
@@ -89,7 +89,12 @@ def _load() -> dict[str, Any]:
             from ELO.live_team_strength import DEFAULT_SNAPSHOT_PATH
 
             if Path(SNAPSHOT).resolve() == Path(DEFAULT_SNAPSHOT_PATH).resolve():
-                snap = load_snapshot(SNAPSHOT)
+                # `load_live_snapshot`, а не `load_snapshot`: базовый файл
+                # пересобирается редко (на боевой машине он от 12.08), а
+                # рантайм-состояние обновляется постоянно. Колонка `hybrid_*`
+                # считалась по рейтингам восьмидневной давности, хотя свежие
+                # лежали в том же процессе.
+                snap = load_live_snapshot(SNAPSHOT)
             else:
                 import json as _json
 

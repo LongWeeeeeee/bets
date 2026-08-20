@@ -68,10 +68,144 @@ def g_rd(rd: float) -> float:
     return 1.0 / math.sqrt(1.0 + 3.0 * Q * Q * rd * rd / PI2)
 
 
+class _RowStore:
+    """Ключ → строка из трёх чисел, на отсортированных массивах вместо словаря.
+
+    Живой путь состояние ТОЛЬКО ЧИТАЕТ: `block()` зовёт `features(mutate=False)`,
+    а это несколько `.get()`. Словарь же стоил 480 МБ при 47 МБ полезных данных —
+    два миллиона записей, у каждой объект-ключ и список из трёх Python-float. Ровно
+    эти накладные уже вычищены в `prematch_scorer` (`PairTable`/`AccTable`), здесь
+    тот же приём.
+
+    Запись поддержана наложением: офлайн-сборщик (`advance`/`_apply`) работает как
+    прежде, его изменения ложатся в обычный словарь поверх массивов. Пока пишут
+    мало — а живое чтение не пишет вовсе, — наложение почти ничего не стоит.
+    """
+
+    __slots__ = ("_keys", "_vals", "_over")
+
+    def __init__(self, keys: np.ndarray, vals: np.ndarray) -> None:
+        order = np.argsort(keys, kind="stable")
+        self._keys = np.ascontiguousarray(keys[order])
+        self._vals = np.ascontiguousarray(vals[order])
+        self._over: dict = {}
+
+    def _lookup(self, key, default=None):
+        """Поиск по УЖЕ приведённому ключу. Отдельно от `get`, потому что у
+        парного хранилища `get` ключ пакует, и вызов одного через другой упаковал
+        бы его дважды."""
+        found = self._over.get(key, _MISSING)
+        if found is not _MISSING:
+            return found
+        i = int(np.searchsorted(self._keys, key))
+        if i < len(self._keys) and self._keys[i] == key:
+            # Кортеж обычных float, а не строка ndarray: дальше числа идут в
+            # `sum()`, и накопление в np.float64 давало другой последний разряд.
+            # Расхождение было 2.33e-15 — для вердикта пустяк, но побитовое
+            # совпадение со словарной реализацией того стоит, а цена — двадцать
+            # кортежей на карту.
+            return self._row(self._vals[i])
+        return default
+
+    @staticmethod
+    def _row(values):
+        return tuple(float(x) for x in values)
+
+    def get(self, key, default=None):
+        return self._lookup(key, default)
+
+    def __getitem__(self, key):
+        v = self.get(key, _MISSING)
+        if v is _MISSING:
+            raise KeyError(key)
+        return v
+
+    def __setitem__(self, key, value) -> None:
+        self._over[key] = value
+
+    def __contains__(self, key) -> bool:
+        return self.get(key, _MISSING) is not _MISSING
+
+    def __len__(self) -> int:
+        base = len(self._keys)
+        extra = sum(1 for k in self._over if not self._in_base(k))
+        return base + extra
+
+    def _in_base(self, key) -> bool:
+        i = int(np.searchsorted(self._keys, key))
+        return i < len(self._keys) and self._keys[i] == key
+
+    def keys(self):
+        seen = set(self._over)
+        yield from (k for k in self._keys.tolist() if k not in seen)
+        yield from self._over
+
+    def items(self):
+        for k in self.keys():
+            yield k, self.get(k)
+
+
+class _PairStore(_RowStore):
+    """То же, но ключ — пара `(аккаунт, позиция)`, упакованная в одно число.
+
+    Кортеж-ключ стоит дороже всего остального: 586 251 запись давала 586 251
+    объект-кортеж сверх самих данных. Позиций всего пять (проверено на снимке:
+    максимальный индекс 4), поэтому трёх бит хватает, и `acc << 3 | pos` не даёт
+    ни одной коллизии.
+    """
+
+    __slots__ = ()
+
+    @staticmethod
+    def pack(key) -> int:
+        acc, pos = key
+        if not 0 <= pos < 8:
+            raise ValueError(f"позиция {pos} не влезает в упаковку (нужно 0..7)")
+        return (int(acc) << 3) | int(pos)
+
+    def get(self, key, default=None):
+        return self._lookup(self.pack(key), default)
+
+    def __getitem__(self, key):
+        v = self._lookup(self.pack(key), _MISSING)
+        if v is _MISSING:
+            raise KeyError(key)
+        return v
+
+    def __setitem__(self, key, value) -> None:
+        self._over[self.pack(key)] = value
+
+    def __contains__(self, key) -> bool:
+        return self._lookup(self.pack(key), _MISSING) is not _MISSING
+
+    def keys(self):
+        for k in super().keys():
+            yield (int(k) >> 3, int(k) & 7)
+
+
+class _ScalarStore(_RowStore):
+    """Ключ → одно число. Для `ts_mu`, `ts_sig`, `ts_last`."""
+
+    __slots__ = ()
+
+    @staticmethod
+    def _row(values):
+        return float(values)
+
+
+#: Отличает «в наложении лежит None» от «ключа нет вовсе».
+_MISSING = object()
+
+
 class RatingState:
     """Состояние рейтингов: аккаунт → Glicko, (аккаунт, позиция) → поз-Glicko,
     аккаунт → TrueSkill. Одинаково используется офлайн-накоплением и живым
-    чтением, чтобы две копии формулы не разъехались."""
+    чтением, чтобы две копии формулы не разъехались.
+
+    Пустое состояние держит словари: так работает офлайн-накопление, которому
+    нужна свободная запись. Состояние, поднятое из снимка (`from_arrays`), держит
+    массивы — оно только читается, и словарь на нём стоил бы вдесятеро дороже.
+    """
 
     __slots__ = ("glicko", "pos", "ts_mu", "ts_sig", "ts_last")
 
@@ -81,6 +215,27 @@ class RatingState:
         self.ts_mu: dict[int, float] = {}
         self.ts_sig: dict[int, float] = {}
         self.ts_last: dict[int, int] = {}
+
+    @classmethod
+    def from_arrays(cls, g_keys, g_vals, p_keys, p_vals,
+                    t_keys, t_vals) -> "RatingState":
+        """Состояние на массивах: то же поведение, вдесятеро меньше памяти."""
+        st = cls()
+        st.glicko = _RowStore(np.asarray(g_keys, dtype=np.int64),
+                              np.asarray(g_vals, dtype=np.float64))
+        pk = np.asarray(p_keys, dtype=np.int64).reshape(-1, 2)
+        if len(pk) and (pk[:, 1].min() < 0 or pk[:, 1].max() > 7):
+            # Молча перепутать ячейки нельзя: при позиции вне 0..7 упаковка
+            # склеила бы разные пары в один ключ.
+            raise ValueError("позиции в снимке не влезают в упаковку")
+        packed = ((pk[:, 0] << 3) | pk[:, 1]) if len(pk) else np.zeros(0, np.int64)
+        st.pos = _PairStore(packed, np.asarray(p_vals, dtype=np.float64))
+        tk = np.asarray(t_keys, dtype=np.int64)
+        tv = np.asarray(t_vals, dtype=np.float64)
+        st.ts_mu = _ScalarStore(tk, tv[:, 0] if len(tv) else np.zeros(0))
+        st.ts_sig = _ScalarStore(tk, tv[:, 1] if len(tv) else np.zeros(0))
+        st.ts_last = _ScalarStore(tk, tv[:, 2] if len(tv) else np.zeros(0))
+        return st
 
     # ---------- чтение ----------
     def _side_glicko(self, players: list[tuple[int, int]], now: int,
@@ -112,7 +267,9 @@ class RatingState:
                 if mutate:
                     self.pos[(acc, p)] = [pr, prd, plast]
             if mutate:
-                self.glicko[acc] = [r, rd, rec[2] if rec else now]
+                # `rec is not None`, а не `rec`: со снимка на массивах запись —
+                # это строка ndarray, и её истинность неоднозначна.
+                self.glicko[acc] = [r, rd, rec[2] if rec is not None else now]
         if not rs:
             return R0, RD_MAX, R0
         return (float(sum(rs) / len(rs)),
@@ -305,15 +462,12 @@ def load_snapshot(path: Path | None = None) -> RatingState | None:
             print(f"ВНИМАНИЕ: снимок рейтингов команд старше "
                   f"{SNAPSHOT_WARN_DAYS:.0f} суток (возраст {_age:.1f}) — {p}. "
                   "Рейтинги считаются по устаревшему корпусу.", flush=True)
-    st = RatingState()
-    for k, v in zip(z["g_keys"].tolist(), z["g_vals"].tolist()):
-        st.glicko[int(k)] = [v[0], v[1], int(v[2])]
-    for k, v in zip(z["p_keys"].tolist(), z["p_vals"].tolist()):
-        st.pos[(int(k[0]), int(k[1]))] = [v[0], v[1], int(v[2])]
-    for k, v in zip(z["t_keys"].tolist(), z["t_vals"].tolist()):
-        a = int(k)
-        st.ts_mu[a], st.ts_sig[a], st.ts_last[a] = v[0], v[1], int(v[2])
-    return st
+    # Массивы кладутся как есть, без разбора в словари: `.tolist()` на этих же
+    # данных материализовывал два миллиона списков Python и стоил 480 МБ вместо
+    # 47. Живой путь состояние только читает, а офлайн-запись работает через
+    # наложение внутри хранилищ.
+    return RatingState.from_arrays(z["g_keys"], z["g_vals"], z["p_keys"],
+                                   z["p_vals"], z["t_keys"], z["t_vals"])
 
 
 def _load() -> dict[str, Any]:

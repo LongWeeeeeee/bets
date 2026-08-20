@@ -146,6 +146,7 @@ scratch/
 .codex-*/
 # модели экспериментов не коммитим — только manifest/results/audit
 data/public_draft_hero10_experiment/**/*.joblib
+data/duration_over43/**/*.joblib
 # --- служебные архивы уборки 2026-08-04 (бэкапы и артефакты прогонов не коммитим)
 base/_archive/backups/
 base/_archive/research-data/logged_bets_with_outcomes.json
@@ -164,3 +165,7 @@ runtime/artifacts/**/*.html
 # сгенерированные данные прогонов, остающиеся в корне runtime/ по ссылкам из кода
 runtime/pro_maps_metrics_2025-12-15.json
 runtime/winline_name_probe_*.txt
+
+# Архив линии букмекера — данные, копятся на боевой машине
+runtime/artifacts/misc/winline_odds_history.jsonl
+runtime/artifacts/misc/prematch_model_eval.jsonl
