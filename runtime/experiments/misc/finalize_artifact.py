@@ -104,6 +104,19 @@ def main() -> None:
                 f"{next(i for i in range(min(len(bn), len(names))) if bn[i] != names[i])}"
                 if len(bn) == len(names) else
                 f"в {BRANCHES.name} признаков {len(bn)}, а в артефакте {len(names)}")
+        # Полная ветка обязана быть побитовой копией боевых весов. Если веса
+        # переобучили, а ветки нет, `full` начнёт отдавать не то же число, что
+        # прежняя модель, — и лестница молча поедет по уже существующим картам.
+        i_full = next((i for i, x in enumerate(zb["branch_names"])
+                       if str(x) == "full"), None)
+        if i_full is not None:
+            off = int(zb["branch_lens"][:i_full].sum())
+            n_full = int(zb["branch_lens"][i_full])
+            got = zb["branch_coef"][off:off + n_full]
+            if got.shape != z["coef"][0].shape or not np.allclose(got, z["coef"][0]):
+                raise SystemExit(
+                    "веса полной ветки разошлись с боевыми: пересобрать "
+                    f"{BRANCHES.name} через train_branch_weights.py")
         for k in zb.files:
             if k.startswith("branch_"):
                 z[k] = zb[k]
