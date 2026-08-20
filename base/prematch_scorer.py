@@ -192,6 +192,51 @@ class ScoreResult:
         return self.probability > 0.5
 
 
+@dataclass
+class Branch:
+    """Веса одной ветки лестницы: свои колонки, своя нормировка, свой сдвиг.
+
+    Ветка обучается на том наборе колонок, который в бою действительно бывает
+    доступен, поэтому её уверенность честна: недостающих колонок она никогда не
+    видела и подставлять им нули не приходится.
+    """
+
+    cols: list[str]
+    mu: np.ndarray
+    sd: np.ndarray
+    coef: np.ndarray
+    intercept: float
+
+
+def pack_branches(branches: dict, features: Sequence[str]) -> dict:
+    """Ветки → плоские массивы для `np.savez`.
+
+    Рваные данные (у веток разное число колонок) нельзя хранить object-массивом:
+    `PrematchModel.__init__` читает артефакт без `allow_pickle`, и такой ключ
+    уронил бы загрузку прямо в бою. Поэтому пишутся длины и один плоский массив
+    на величину, а колонки — индексами в `features`.
+    """
+    idx = {f: i for i, f in enumerate(features)}
+    names, lens, cols, mu, sd, coef, itc = [], [], [], [], [], [], []
+    for name, b in branches.items():
+        names.append(name)
+        lens.append(len(b.cols))
+        cols.extend(idx[c] for c in b.cols)
+        mu.extend(float(x) for x in b.mu)
+        sd.extend(float(x) for x in b.sd)
+        coef.extend(float(x) for x in b.coef)
+        itc.append(float(b.intercept))
+    return {
+        "branch_names": np.array(names, dtype="<U32"),
+        "branch_lens": np.array(lens, dtype=np.int64),
+        "branch_cols": np.array(cols, dtype=np.int64),
+        "branch_mu": np.array(mu, dtype=np.float64),
+        "branch_sd": np.array(sd, dtype=np.float64),
+        "branch_coef": np.array(coef, dtype=np.float64),
+        "branch_intercept": np.array(itc, dtype=np.float64),
+    }
+
+
 def lan_winrate(confidence: float) -> float:
     """Фактический винрейт на НАСТОЯЩИХ офлайн-турнирах для этой уверенности.
 
@@ -237,6 +282,27 @@ class PrematchModel:
         # одной колонке измерена в E-166 — 0.116 AUC).
         self.features = ([str(x) for x in z["feature_names"]]
                          if "feature_names" in z else list(FEATURES))
+        # Ветки лестницы. Артефакт БЕЗ них — прежнее поведение: одна модель на
+        # все колонки и отказ при неполном входе. На боевой машине лежит именно
+        # такой, и он обязан продолжать работать до доставки нового.
+        self.branches: dict = {}
+        if "branch_names" in z:
+            lens = z["branch_lens"].astype(int)
+            cols = z["branch_cols"].astype(int)
+            mu, sd, coef = z["branch_mu"], z["branch_sd"], z["branch_coef"]
+            if int(lens.sum()) != len(cols):
+                raise ValueError(
+                    f"ветки артефакта повреждены: сумма длин {int(lens.sum())}, "
+                    f"а колонок записано {len(cols)}")
+            off = 0
+            for i, nm in enumerate(z["branch_names"]):
+                n = int(lens[i])
+                self.branches[str(nm)] = Branch(
+                    cols=[self.features[j] for j in cols[off:off + n]],
+                    mu=mu[off:off + n], sd=sd[off:off + n],
+                    coef=coef[off:off + n],
+                    intercept=float(z["branch_intercept"][i]))
+                off += n
         # Состояние под колонки E-168. Отклонения урона/нетворса лежат ДОПОЛНИТЕЛЬНЫМИ
         # колонками в `accounts` и `acc_hero` (см. `finalize_artifact.py`): отдельные
         # словари на 1.7 млн ячеек стоили +424 МБ RSS.
