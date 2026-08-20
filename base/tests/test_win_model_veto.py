@@ -17,7 +17,18 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+import draft_model_paths as P  # noqa: E402
 import win_model_veto as V  # noqa: E402
+
+
+class _StubEncoder:
+    """Ширина боевого каталога на 1.19 млн строк."""
+    n_columns = 16758
+
+
+class _StubModel:
+    """Ширина каталогов на 5.09 млн — те самые шесть пар синергии разницы."""
+    n_features_in_ = 16764
 
 
 def _block(index, **extra):
@@ -65,6 +76,133 @@ def test_win_index_fails_open_on_broken_model(monkeypatch, tmp_path):
     draft = {f"pos{i}": {"hero_id": i} for i in range(1, 6)}
     assert V.win_index(draft, {f"pos{i}": {"hero_id": i + 10} for i in range(1, 6)}) is None
     assert V.load_error() is not None
+
+
+def test_unknown_hero_refuses_instead_of_scoring_partial_draft(monkeypatch):
+    """Незнакомый герой = отказ, а не индекс по НЕПОЛНОМУ драфту.
+
+    `DraftFeatureEncoder` намеренно зануляет невиданную колонку вместо
+    исключения — для обучения это верно, но в бою давало число, посчитанное по
+    девяти героям из десяти. Замер на боевом артефакте: подмена одного героя
+    двигала индекс с +5.299 на −7.464, то есть переворачивала ЗНАК при порогах
+    вето 10/5/9/0/0, и блок ветовался в обратную сторону.
+
+    Обе дороги к незнакомому герою проверяются отдельно, потому что в коде это
+    разные ветки: id за верхней границей словаря (новый герой патча) и id
+    внутри границы, но ни разу не встреченный (незанятый слот нумерации Dota —
+    таких в боевом словаре 28 штук: 24, 115-118, 122, ... 154).
+    """
+    import numpy as np
+
+    class _Encoder:
+        # словарь на id 1..20, где 7 — незанятый слот
+        hero_lut = np.array([-1] + [-1 if i == 7 else i for i in range(1, 21)], dtype=np.int32)
+
+        def __init__(self):
+            self.calls = 0
+
+        def transform(self, heroes):
+            self.calls += 1
+            return heroes
+
+    class _Model:
+        @staticmethod
+        def predict_proba(matrix):
+            # sklearn отдаёт ndarray, и код индексирует его как [0, 1]
+            return np.array([[0.4, 0.6]])
+
+    encoder = _Encoder()
+    monkeypatch.setattr(V, "_cache", {})
+    monkeypatch.setattr(V, "_unknown_seen", set())
+    monkeypatch.setitem(V._state, "loaded", True)
+    monkeypatch.setitem(V._state, "encoder", encoder)
+    monkeypatch.setitem(V._state, "model", _Model())
+
+    def draft(ids):
+        return {f"pos{i}": {"hero_id": h} for i, h in enumerate(ids, 1)}
+
+    ours = draft([1, 2, 3, 4, 5])
+
+    # контроль: полностью знакомый драфт считается как раньше
+    assert V.win_index(ours, draft([11, 12, 13, 14, 15])) == 10.0
+    assert encoder.calls == 1
+
+    # id за верхней границей словаря — новый герой патча
+    assert V.win_index(ours, draft([11, 12, 13, 14, 999])) is None
+    # id внутри границы, но не встречавшийся — незанятый слот нумерации
+    assert V.win_index(ours, draft([11, 12, 13, 14, 7])) is None
+    # модель на незнакомом драфте не звалась вовсе
+    assert encoder.calls == 1
+
+    # отказ не должен быть молчаливым: E-195 — неполный вход прожил незамеченным
+    assert V.unknown_heroes_seen() == (7, 999)
+
+
+def test_encoder_alias_makes_veto_independent_of_launch_layout(monkeypatch):
+    """Артефакт распаковывается независимо от того, лежит ли `base/` на пути.
+
+    Энкодер сохранён joblib'ом из скрипта обучения, импортировавшего класс как
+    `draft_features`, поэтому в пикле записан модуль верхнего уровня. Прод
+    выживал только потому, что `functions.py` делает `import win_model_veto`,
+    то есть стартует с `base/` в `sys.path`. Из корня проекта тот же файл падал
+    с ModuleNotFoundError, `_load` возвращал False и вето отключалось ЦЕЛИКОМ —
+    молча и без записи в лог.
+    """
+    monkeypatch.delitem(sys.modules, "draft_features", raising=False)
+    V._alias_draft_features()
+    assert "draft_features" in sys.modules
+    assert hasattr(sys.modules["draft_features"], "DraftFeatureEncoder")
+
+
+def test_mixed_artifacts_disable_veto_instead_of_scoring(monkeypatch, tmp_path):
+    """Кодировщик и модель из разных сборок = вето выключено, причина в логе.
+
+    У панели такая сверка есть и намеренно ПАДАЕТ, у драфт-модели её не было
+    вовсе — поэтому класс ошибок «файлы из разных каталогов лежат рядом» никак
+    не проявлялся. Контракт вето другой: отказ всегда в сторону разрешения,
+    поэтому несогласованный артефакт не роняет прод, а отключает вето.
+
+    Ширины взяты боевые: 16 758 у каталога на 1.19 млн строк против 16 764 у
+    каталогов на 5.09 млн — ровно те шесть пар синергии, которым не хватило
+    поддержки на меньшем корпусе.
+    """
+    import joblib
+
+    directory = tmp_path / "смешанный-каталог"
+    directory.mkdir()
+    # классы на уровне модуля: joblib не пиклит объявленные внутри функции
+    joblib.dump(_StubEncoder(), directory / P.ENCODER_FILE)
+    joblib.dump(_StubModel(), directory / P.MODEL_FILE)
+
+    monkeypatch.setattr(V, "MODEL_DIR", directory)
+    monkeypatch.setattr(V, "_cache", {})
+    monkeypatch.setitem(V._state, "loaded", False)
+
+    draft = {f"pos{i}": {"hero_id": i} for i in range(1, 6)}
+    assert V.win_index(draft, {f"pos{i}": {"hero_id": i + 10} for i in range(1, 6)}) is None
+    assert "16758" in V.load_error() and "16764" in V.load_error()
+
+
+def test_served_model_names_the_catalog(monkeypatch):
+    """Какой логит раздаётся — должно быть видно строкой, а не выводиться.
+
+    Веса верхней предматчевой модели обучены на логите конкретного каталога, но
+    сам артефакт этого не помнит: рассинхрон E-201 стоил −0.0046 AUC и не был
+    виден ниоткуда. Отпечаток не чинит рассинхрон, но делает его заметным.
+    """
+    assert V.served_model().startswith(V.MODEL_DIR.name)
+
+
+def test_catalog_path_has_single_source_of_truth(monkeypatch):
+    """Путь к каталогу берётся из общей константы и переключается одним местом.
+
+    Раньше он был продублирован в шести файлах без общей константы, поэтому
+    смена одного не меняла остальные.
+    """
+    monkeypatch.setenv("WIN_MODEL_DIR", "/tmp/каталог-из-переменной")
+    assert P.model_dir() == Path("/tmp/каталог-из-переменной")
+    monkeypatch.delenv("WIN_MODEL_DIR")
+    assert P.model_dir().name == P.DEFAULT_CATALOG
 
 
 def test_format_output_dict_respects_veto(monkeypatch):

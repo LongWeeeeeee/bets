@@ -76,9 +76,32 @@ class TestBlockHelpers:
         got = block_from_prod_features(feats, order)
         assert got == {"prod35_0": 1.0, "prod35_1": 5.0, "prod35_2": 3.0}
 
-    def test_absent_feature_becomes_zero(self):
-        got = block_from_prod_features({}, ["a", "b"])
-        assert got == {"prod35_0": 0.0, "prod35_1": 0.0}
+    def test_absent_feature_raises(self):
+        # Раньше отсутствующее имя молча становилось нулём. На боевом вызове это
+        # недостижимо: модель индексирует свой словарь каждым именем из
+        # `self.features` (`prematch_scorer.py:562`) и упала бы раньше. Значит
+        # промах означает рассинхрон порядка, и ноль его прятал.
+        with pytest.raises(KeyError):
+            block_from_prod_features({}, ["a", "b"])
+
+    def test_order_mismatch_with_artifact_raises(self):
+        # Отпечаток из артефакта панели: на чём её учили. Смена ДЛИНЫ ловилась и
+        # раньше (сборка по именам не досчиталась бы колонки), а перестановка при
+        # той же длине — нет, и значения ложились не в свои слоты.
+        feats = {"draft_logit": 1.0, "elo": 5.0, "form": 3.0}
+        trained_on = ["draft_logit", "elo", "form"]
+        with pytest.raises(ValueError, match="слот 1"):
+            block_from_prod_features(feats, ["draft_logit", "form", "elo"],
+                                     expected=trained_on)
+        with pytest.raises(ValueError, match="разных поколений"):
+            block_from_prod_features(feats, ["draft_logit", "elo"],
+                                     expected=trained_on)
+
+    def test_matching_order_passes(self):
+        feats = {"draft_logit": 1.0, "elo": 5.0}
+        order = ["draft_logit", "elo"]
+        assert block_from_prod_features(feats, order, expected=order) == {
+            "prod35_0": 1.0, "prod35_1": 5.0}
 
     def test_matrix_block_is_positional(self):
         got = block_from_matrix("sym_", np.array([[1.5, 2.5]]))
@@ -193,3 +216,57 @@ class TestDraftMask:
     def test_length_matches_columns(self):
         cols = ("sym_0", "rating_1", "F6_x", "prod35_0")
         assert len(draft_mask(cols, ["draft_logit"])) == len(cols)
+
+
+class TestNeutralByGroup:
+    def test_missing_dict_becomes_nan_not_zero(self):
+        """Офлайн писал NaN там, где словарь молчит; ноль модель не видела."""
+        cols = ("sym_0", "kwdict_5_15_games")
+        x, present, _ = assemble(cols, {"card": {"sym_0": 1.0}, "dict": None})
+        assert x[0] == 1.0
+        assert np.isnan(x[1])
+        assert present["dict"] is False
+
+    def test_missing_priors_stay_zero(self):
+        """У приоров офлайн NaN не бывало — там нейтраль остаётся нулём."""
+        cols = ("F6_x",)
+        x, _, _ = assemble(cols, {"priors": None})
+        assert x[0] == 0.0
+
+
+class TestArtifactFingerprints:
+    """Отпечатки входа. Оба уже существовали как ЗНАЧЕНИЯ и ни разу не
+    сличались: `card_fingerprint` писался в манифест и в `status()`, а состав
+    колонок не проверялся вовсе — при загрузке сравнивалась только ширина.
+    Модели панели позиционные (`feature_names_` у `.cbm` это `['0'..'927']`),
+    поэтому перестановка колонок при той же длине шла бы молча."""
+
+    def _artifact(self, tmp_path, columns, manifest):
+        import json
+        (tmp_path / "feature_names.json").write_text(
+            json.dumps({"columns": list(columns)}), encoding="utf-8")
+        (tmp_path / "manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8")
+        return tmp_path
+
+    def test_columns_sha_is_order_sensitive(self):
+        from hero_side_tables import columns_sha
+        assert columns_sha(["a", "b"]) == columns_sha(["a", "b"])
+        assert columns_sha(["a", "b"]) != columns_sha(["b", "a"])
+
+    def test_reordered_columns_are_rejected(self, tmp_path, monkeypatch):
+        from hero_side_tables import columns_sha
+        import prematch_panel_scorer as S
+        cols = ["sym_0", "sym_1", "sym_2"]
+        d = self._artifact(tmp_path, ["sym_0", "sym_2", "sym_1"],
+                           {"columns_sha": columns_sha(cols)})
+        monkeypatch.setattr(S, "load_specs", lambda _d: (), raising=False)
+        with pytest.raises(ValueError, match="состав колонок"):
+            S.load_bundle(d)
+
+    def test_missing_fingerprint_is_not_an_error(self, tmp_path, monkeypatch):
+        # Артефакт мог быть собран до появления отпечатка — это не поломка.
+        import prematch_panel_scorer as S
+        d = self._artifact(tmp_path, ["sym_0"], {"columns": 1})
+        monkeypatch.setattr(S, "load_specs", lambda _d: (), raising=False)
+        S.load_bundle(d)   # не должно бросить

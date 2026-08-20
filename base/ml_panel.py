@@ -195,8 +195,12 @@ def render(verdicts: Sequence[ModelVerdict], highlight: Iterable[str] = ()) -> s
     lines = ["🤖 ML:"]
     for v in verdicts:
         mark = OK_MARK if v.ok else NO_MARK
+        # Заполненность округляется ВНИЗ. При округлении к ближайшему потеря
+        # двух колонок из 928 давала 99.78% и печаталась как «100%» — то есть
+        # сообщение утверждало полноту входа, которой не было. Сто процентов
+        # обязаны означать ровно сто.
         bits = [f"{v.side} {v.confidence*100:.0f}%",
-                f"зап. {v.fill*100:.0f}%"]
+                f"зап. {int(v.fill * 100)}%"]
         if v.draft_share is not None:
             # Знак обязателен: +N% — драфт за сторону вердикта, −N% — против.
             bits.append(f"драфт {v.draft_share*100:+.0f}%")

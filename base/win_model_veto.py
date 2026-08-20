@@ -1,9 +1,13 @@
 """Драфтовая ML-оценка победы: индекс в пользу стороны + вето для STAR-блоков.
 
 Модель — `radiant_win_model.joblib` из набора `public_draft_hero10_experiment`
-(дизайн hero_role_pair, 10 признаков-героев по позициям, AUC 0.610 / точность
-58.2% на паблик-тесте 296 768 карт). Обучена на паблике, применяется к любому
-драфту: живых данных не требует, доступна сразу после пиков.
+(дизайн hero_role_pair, 10 признаков-героев по позициям). Боевой каталог —
+`2026-08-15_all_public_5m_full`, обучен на всех 5 093 540 картах паблика, 16 764
+колонки. Своего честного AUC у него нет и быть не может (он видел все карты);
+оценка снизу — 0.6256 у его 80%-собрата на отложенных 1 018 708 картах против
+0.6140 у прежнего каталога на 1.19 млн карт (E-200). Обучена на паблике,
+применяется к любому драфту: живых данных не требует, доступна сразу после
+пиков.
 
 Индекс = (P(radiant) − 0.5) × 100, то есть та же шкала «в пользу стороны», что у
 драфтовых метрик: положительный — за Radiant, отрицательный — за Dire.
@@ -20,15 +24,20 @@ post_lane 42.0% против 55.5%, early_win 52.5% против 62.7%, late 53.
 from __future__ import annotations
 
 import os
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Optional
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MODEL_DIR = Path(os.getenv(
-    "WIN_MODEL_DIR",
-    str(PROJECT_ROOT / "data/public_draft_hero10_experiment/2026-08-04_all_public_v5_serv1_full"),
-))
+try:                                             # `import win_model_veto` из base/
+    import draft_model_paths as _paths
+except ImportError:                              # `from base import win_model_veto`
+    from base import draft_model_paths as _paths
+
+PROJECT_ROOT = _paths.PROJECT_ROOT
+# Значение живёт в `draft_model_paths`: раньше этот путь был продублирован в
+# шести местах без общей константы, и переключение одного не меняло остальные.
+MODEL_DIR = _paths.model_dir()
 # Вето включено по умолчанию; выключается WIN_MODEL_VETO_ENABLED=0 без деплоя.
 VETO_ENABLED = os.getenv("WIN_MODEL_VETO_ENABLED", "1") == "1"
 
@@ -68,9 +77,33 @@ def _min_index_for(section: str) -> float:
 INDEX_KEY = "ml_win_index"
 
 _lock = threading.Lock()
-_state: dict[str, Any] = {"loaded": False, "encoder": None, "model": None, "error": None}
+_state: dict[str, Any] = {"loaded": False, "encoder": None, "model": None,
+                          "error": None, "fingerprint": None}
 _cache: dict[tuple, Optional[float]] = {}
 _CACHE_LIMIT = 4096
+_unknown_seen: set[int] = set()
+
+
+def _alias_draft_features() -> None:
+    """Сделать `draft_features` видимым как модуль верхнего уровня.
+
+    Энкодер сохранён joblib'ом из скрипта обучения, который импортировал класс
+    как `draft_features`, поэтому в пикле записан именно этот путь. Прод
+    запускается с `base/` в `sys.path` (`import win_model_veto` в
+    `functions.py`) и распаковывает артефакт штатно, но из корня проекта тот же
+    файл падает с ModuleNotFoundError — `_load` тихо возвращает False, и вето
+    перестаёт срабатывать ВООБЩЕ. Псевдоним убирает зависимость боевого
+    поведения от способа запуска.
+    """
+    if "draft_features" in sys.modules:
+        return
+    for name in ("base.draft_features", "draft_features"):
+        try:
+            module = __import__(name, fromlist=["DraftFeatureEncoder"])
+        except ImportError:
+            continue
+        sys.modules.setdefault("draft_features", module)
+        return
 
 
 def _load() -> bool:
@@ -81,9 +114,17 @@ def _load() -> bool:
             return _state["model"] is not None
         try:
             import joblib  # локальный импорт: модуль обязан импортироваться без sklearn
-            encoder = joblib.load(MODEL_DIR / "win_feature_encoder.joblib")
-            model = joblib.load(MODEL_DIR / "radiant_win_model.joblib")
-            _state.update(encoder=encoder, model=model, error=None)
+            _alias_draft_features()
+            encoder = joblib.load(MODEL_DIR / _paths.ENCODER_FILE)
+            model = joblib.load(MODEL_DIR / _paths.MODEL_FILE)
+            # Сверка ширины: у панели она есть и намеренно падает, у драфта не
+            # было вовсе. Здесь контракт другой — отказ в сторону РАЗРЕШЕНИЯ, —
+            # поэтому несогласованный артефакт не роняет прод, а отключает вето
+            # и оставляет причину в `load_error()`.
+            _paths.check_width(encoder, model)
+            _paths.check_thresholds_catalog(MODEL_DIR)
+            _state.update(encoder=encoder, model=model, error=None,
+                          fingerprint=_paths.model_fingerprint(MODEL_DIR))
         except Exception as exc:                     # noqa: BLE001 — любая поломка = нет вето
             _state.update(encoder=None, model=None, error=f"{type(exc).__name__}: {exc}")
         _state["loaded"] = True
@@ -94,6 +135,18 @@ def load_error() -> Optional[str]:
     """Текст ошибки загрузки (для диагностики в логе), либо None."""
     _load()
     return _state["error"]
+
+
+def served_model() -> str:
+    """Какой каталог драфт-модели раздаётся сейчас: `имя:отпечаток`.
+
+    Для строки в лог. Веса верхней предматчевой модели обучены на логите
+    КОНКРЕТНОГО каталога, но сам артефакт этого не помнит, поэтому рассинхрон
+    E-201 (−0.0046 AUC) был не виден ниоткуда. Отпечаток не чинит рассинхрон, но
+    делает его заметным глазом.
+    """
+    _load()
+    return _state["fingerprint"] or _paths.model_fingerprint(MODEL_DIR)
 
 
 def _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[tuple]:
@@ -114,6 +167,36 @@ def _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[tupl
     return tuple(out)
 
 
+def _unknown_heroes(encoder: Any, heroes: tuple) -> tuple:
+    """Герои драфта, которых энкодер не видел в обучении.
+
+    `DraftFeatureEncoder` намеренно зануляет незнакомую колонку вместо
+    исключения — для обучения это верно (так собиралась и обучающая матрица),
+    но в бою означает, что индекс считается по НЕПОЛНОМУ драфту. Замер: подмена
+    одного героя на невиданного двигала индекс с +5.299 на −7.464, то есть
+    переворачивала знак при порогах вето 10/5/9/0/0. Докстринг модуля обещает
+    отказ в сторону разрешения, поэтому проверяем словарь явно.
+
+    Незнакомым герой становится двумя путями, и оба дают одинаковый результат:
+    id за верхней границей `hero_lut` (новый герой патча) и id внутри границы,
+    но ни разу не встреченный (незанятый слот нумерации Dota).
+    """
+    lut = getattr(encoder, "hero_lut", None)
+    if lut is None:
+        return ()
+    limit = len(lut)
+    return tuple(h for h in heroes if h >= limit or int(lut[h]) < 0)
+
+
+def unknown_heroes_seen() -> tuple:
+    """Незнакомые модели hero_id, встреченные с момента старта процесса.
+
+    Для строки в лог: молчаливый отказ без счётчика — это ровно тот режим,
+    из-за которого неполный вход прожил незамеченным (E-195).
+    """
+    return tuple(sorted(_unknown_seen))
+
+
 def win_index(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[float]:
     """(P(radiant) − 0.5) × 100 либо None, если оценить нечем."""
     heroes = _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos)
@@ -124,6 +207,13 @@ def win_index(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[float]:
         return cached
     value: Optional[float] = None
     if _load():
+        unknown = _unknown_heroes(_state["encoder"], heroes)
+        if unknown:
+            _unknown_seen.update(unknown)
+            if len(_cache) >= _CACHE_LIMIT:
+                _cache.clear()
+            _cache[heroes] = None
+            return None
         try:
             import numpy as np
             matrix = _state["encoder"].transform(np.asarray([heroes], dtype=np.int64))

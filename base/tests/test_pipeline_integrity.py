@@ -3943,7 +3943,34 @@ def test_send_message_keeps_uncertain_when_curl_fallback_fails(monkeypatch) -> N
     assert exc_info.value.delivery_uncertain is True
 
 
+def _stub_bookmaker_ready(monkeypatch) -> None:
+    """Убрать зависимость теста от состояния букмекерской подсистемы.
+
+    Четыре теста ниже проверяют ДОСТАВКУ и ЖУРНАЛИРОВАНИЕ сигнала, а не готовность
+    кэфов. Но `_deliver_and_persist_signal` сперва зовёт подготовку кэфов, и при
+    `bookmaker_ready = False` выходит РАНЬШЕ отправки:
+
+        ⏳ Отправка отложена: bookmaker odds ещё не готовы (reason=...)
+
+    Локально подготовка возвращает «готово» и тесты проходят; на serv1, где у
+    подсистемы есть живое состояние, она отвечает `current_map_unavailable`, и все
+    четыре падают — не потому что доставка сломана, а потому что до неё не дошли.
+    Проверено 19.08.2026: сама функция доставки на обеих машинах побайтово
+    идентична, различается только окружение.
+
+    Гейт при этом НЕ отключаем в фикстуре целиком: откладывать отправку без кэфов —
+    задуманное поведение прода, и у него свои тесты.
+    """
+    monkeypatch.setattr(
+        runtime,
+        "_bookmaker_prepare_message_for_delivery",
+        lambda match_key, message_text, **_kw: (message_text, True, "stubbed", None),
+        raising=False,
+    )
+
+
 def test_deliver_and_persist_signal_does_not_persist_when_send_fails(tmp_path, monkeypatch) -> None:
+    _stub_bookmaker_ready(monkeypatch)
     journal_path = tmp_path / "sent_signal_recovery.jsonl"
     add_url_calls: List[Dict[str, Any]] = []
 
@@ -3972,6 +3999,7 @@ def test_deliver_and_persist_signal_does_not_persist_when_send_fails(tmp_path, m
 
 
 def test_deliver_and_persist_signal_journals_after_persist_failure(tmp_path, monkeypatch) -> None:
+    _stub_bookmaker_ready(monkeypatch)
     journal_path = tmp_path / "sent_signal_recovery.jsonl"
     monkeypatch.setattr(runtime, "SENT_SIGNAL_JOURNAL_PATH", str(journal_path), raising=False)
     monkeypatch.setattr(runtime, "send_message", lambda *_args, **_kwargs: True)
@@ -4000,6 +4028,7 @@ def test_deliver_and_persist_signal_journals_after_persist_failure(tmp_path, mon
 
 
 def test_deliver_and_persist_signal_uses_fallback_journal_when_primary_unavailable(tmp_path, monkeypatch) -> None:
+    _stub_bookmaker_ready(monkeypatch)
     primary_path = tmp_path / "sent_signal_recovery.jsonl"
     fallback_path = tmp_path / "sent_signal_recovery_fallback.jsonl"
     monkeypatch.setattr(runtime, "SENT_SIGNAL_JOURNAL_PATH", str(primary_path), raising=False)
@@ -4115,6 +4144,7 @@ def test_set_delayed_match_persists_and_restores_queue(tmp_path, monkeypatch) ->
 
 
 def test_deliver_and_persist_signal_records_uncertain_delivery_and_blocks_retries(tmp_path, monkeypatch) -> None:
+    _stub_bookmaker_ready(monkeypatch)
     uncertain_path = tmp_path / "uncertain_signal_delivery.jsonl"
     fallback_path = tmp_path / "uncertain_signal_delivery_fallback.jsonl"
     monkeypatch.setattr(runtime, "UNCERTAIN_SIGNAL_DELIVERY_PATH", str(uncertain_path), raising=False)

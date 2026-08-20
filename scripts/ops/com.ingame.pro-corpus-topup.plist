@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ingame.pro-corpus-topup</string>
+    <!-- Ночной добор свежих про-карт в корпус.
+         Исходник: scripts/run/topup_pro_corpus.sh
+
+         Зачем расписание. `get_pros()` опрашивает каждую команду ровно один раз
+         за всё время. Когда очередь неопрошенных исчерпана — а она исчерпана,
+         все 200 647 команд отмечены, — вызов возвращает «опрошено 0», и корпус
+         перестаёт пополняться МОЛЧА: без ошибки и без ненулевого кода возврата.
+         Так корпус застыл на 12.08.2026 и обнаружилось это только 18.08 по
+         возрасту снимка. Свежие матчи уже известных команд снежный ком не
+         добирает по устройству, нужен переспрос сид-команд узким окном.
+
+         04:30, за час до пересборки снимка (05:30): снимок обязан собираться на
+         уже пополненном корпусе. Цена устаревания измерена в E-177 — до 0.04 AUC.
+
+         Ставится: bash scripts/ops/install-pro-corpus-topup.sh
+         Снять:    launchctl bootout gui/$(id -u)/com.ingame.pro-corpus-topup -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/alex/Documents/ingame/scripts/run/topup_pro_corpus.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <!-- RunAtLoad НЕ ставим: установка джобы не должна сама по себе ходить в
+         Stratz и жечь квоту. Разовый прогон — launchctl kickstart. -->
+    <key>StandardOutPath</key>
+    <string>/tmp/ingame_pro_corpus_topup.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ingame_pro_corpus_topup.err</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/alex/Documents/ingame</string>
+</dict>
+</plist>

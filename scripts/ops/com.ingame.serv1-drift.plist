@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ingame.serv1-drift</string>
+    <!-- Ежедневный сторож расхождений кода serv1 против репозитория.
+         Исходник: scripts/run/serv1_drift_watch.sh
+
+         Зачем расписание. Репозиторий и прод разошлись форком (аудит
+         19.08.2026), и обнаружилось это случайно, спустя недели. Ключевое
+         расхождение — в ядре расчёта: боевая synergy_and_counterpick принимает
+         имена команд и поднимает через них гибридную модель (AUC ~0.72), а
+         версия в main этих параметров не имеет и считает чистый драфт (~0.61).
+         Выкат main на serv1 НЕ УПАЛ БЫ и подменил модель молча.
+
+         Сторож не выравнивает машины — он только смотрит и складывает боевой
+         код в ветку serv1-prod-snapshot. На serv1 не пишет ничего.
+
+         05:00 — между добором корпуса (04:30) и пересборкой снимка (05:30).
+
+         Ставится: bash scripts/ops/install-serv1-drift.sh
+         Снять:    launchctl bootout gui/$(id -u)/com.ingame.serv1-drift -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/alex/Documents/ingame/scripts/run/serv1_drift_watch.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>5</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <!-- RunAtLoad НЕ ставим: установка джобы не должна сама по себе ходить на
+         боевой сервер. Разовый прогон — launchctl kickstart. -->
+    <key>StandardOutPath</key>
+    <string>/tmp/ingame_serv1_drift.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ingame_serv1_drift.err</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/alex/Documents/ingame</string>
+</dict>
+</plist>

@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+import time
 import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +89,19 @@ class PriorSnapshot:
     globals_: np.ndarray
     shrink: tuple[float, float, float] = (K_HERO, K_PLAYER, K_PAIR)
     built_ts: int = 0
+
+    @property
+    def age_days(self) -> float:
+        """Возраст снимка в сутках; -1, если время сборки не записано.
+
+        `built_ts` писался с самого начала, но НИ РАЗУ ни с чем не сравнивался —
+        аудит 19.08.2026 не нашёл ни одного места, где он читается. Ровно так же
+        молча протухал снимок предматчевой модели, пока в E-177 не измерили цену:
+        AUC 0.7313 на свежем против 0.6883 на снимке старше 30 суток.
+        """
+        if not self.built_ts:
+            return -1.0
+        return (time.time() - float(self.built_ts)) / 86400.0
 
     @property
     def index(self) -> dict[str, int]:
@@ -192,15 +206,24 @@ def sym_priors(heroes10: np.ndarray, accounts10: np.ndarray,
     return np.hstack([R - D, R + D])
 
 
+# Сколько суток снимок считается свежим. Не гейт: при превышении снимок ВСЁ РАВНО
+# отдаётся, но в лог уходит предупреждение — ровно как `_SNAPSHOT_WARN_DAYS` в
+# боевом `win_model_veto.py`. Жёсткий отказ здесь сделал бы поломку такой же
+# невидимой, какой она была без проверки вообще.
+SNAPSHOT_WARN_DAYS = 14.0
+_STALE_WARNED = False
+
+
 def load_snapshot(path: Path | None = None) -> PriorSnapshot | None:
     """Снимок с диска. `None`, если его нет: панель обязана молчать, а не падать."""
+    global _STALE_WARNED
     target = Path(path or DEFAULT_SNAPSHOT)
     try:
         z = np.load(target, allow_pickle=False)
     except (OSError, ValueError):
         return None
     try:
-        return PriorSnapshot(
+        snap = PriorSnapshot(
             metrics=tuple(str(x) for x in z["metrics"]),
             hero_keys=z["keys_hero"], hero_sums=z["sums_hero"],
             hero_counts=z["counts_hero"], player_keys=z["keys_player"],
@@ -209,6 +232,14 @@ def load_snapshot(path: Path | None = None) -> PriorSnapshot | None:
             built_ts=int(z["built_ts"]))
     except KeyError:
         return None
+    age = snap.age_days
+    if age > SNAPSHOT_WARN_DAYS and not _STALE_WARNED:
+        _STALE_WARNED = True
+        print(f"ВНИМАНИЕ: снимок причинных приоров старше {SNAPSHOT_WARN_DAYS:.0f} "
+              f"суток (возраст {age:.1f}) — {target}. Приоры считаются по устаревшей "
+              "статистике; цена устаревания измерена в E-177 для соседнего снимка.",
+              flush=True)
+    return snap
 
 
 def save_snapshot(path: Path, *, metrics: Iterable[str],

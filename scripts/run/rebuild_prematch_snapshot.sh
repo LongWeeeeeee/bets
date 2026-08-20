@@ -122,6 +122,51 @@ CHECK
   ssh "$SERV1" "mv /root/main/data/team_org_aliases.json.tmp \
                    /root/main/data/team_org_aliases.json"
 
+  # --- снимки предматчевой панели -----------------------------------------
+  # Панель на serv1 читает три снимка накопленного состояния, а пересобрать их
+  # там НЕЛЬЗЯ: ни сборщиков, ни про-корпуса на боевой машине нет. Значит их
+  # строит эта машина и привозит сюда же. Без этого они просто гниют: 19.08.2026
+  # при переносе провайдеров им было 7-8 суток, а порог предупреждения 14, и у
+  # `pair_priors` предупреждения нет вовсе.
+  #
+  # ОТКАЗ ЗДЕСЬ НЕ ДОЛЖЕН РОНЯТЬ ЦЕПОЧКУ. Выше едет предматчевый артефакт — это
+  # деньги; панель только показывает числа. Поэтому каждый шаг обёрнут и в
+  # худшем случае оставляет вчерашний снимок, а не срывает доставку модели.
+  panel_snapshots() {
+    $PY runtime/experiments/misc/build_prior_snapshot.py
+    $PY runtime/experiments/misc/build_rating_snapshot.py
+    $PY runtime/experiments/misc/build_pair_snapshot.py
+    for f in prior_snapshot.npz rating_snapshot.npz pair_prior_snapshot.npz; do
+      scp -q "data/$f" "$SERV1:/root/main/data/$f.tmp"
+      L=$(shasum -a 1 "data/$f" | cut -d' ' -f1)
+      R=$(ssh "$SERV1" "sha1sum /root/main/data/$f.tmp | cut -d' ' -f1")
+      if [ "$L" != "$R" ]; then
+        ssh "$SERV1" "rm -f /root/main/data/$f.tmp"
+        echo "снимок $f доехал битым ($R против $L) — оставляю прежний"
+        return 1
+      fi
+      ssh "$SERV1" "mv /root/main/data/$f.tmp /root/main/data/$f"
+      echo "снимок $f доставлен: sha1 $L"
+    done
+  }
+  if panel_snapshots; then
+    echo "снимки панели обновлены"
+  else
+    echo "ВНИМАНИЕ: снимки панели не обновились, на боевой машине остались прежние"
+  fi
+
+  # --- фактическая доходность по реальным котировкам ----------------------
+  # Только ЧТЕНИЕ с боевой машины: сводит журнал отправленных предматчевых
+  # ставок с архивом котировок Winline и считает ROI. Раньше это считалось
+  # невозможным («архив несоединим», E-103) — на деле не совпадал ключ: в
+  # архиве нет `match_id`, join идёт по (имена команд, номер карты).
+  # Разовое число тут бессмысленно, выборка мала; смысл в накоплении.
+  if $PY runtime/experiments/misc/prematch_bet_roi.py > /dev/null 2>&1; then
+    echo "доходность пересчитана: runtime/artifacts/misc/prematch_bet_roi.md"
+  else
+    echo "ВНИМАНИЕ: отчёт о доходности не собрался (не критично, читает только)"
+  fi
+
   # 8. рестарт прода и чистка map_id_check — иначе новый снимок не читается,
   #    а уже разобранные карты не переоцениваются.
   ssh "$SERV1" "systemctl restart cyberscore.service && sleep 3 && \

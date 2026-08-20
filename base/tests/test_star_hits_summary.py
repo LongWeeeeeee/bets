@@ -14,27 +14,34 @@ runtime = importlib.import_module("cyberscore_try")
 
 
 def test_max_star_wr_level_for_metric_returns_highest_level_reached() -> None:
-    # Late counterpick_1vs2: WR60=4, WR65=6, WR70=8 in the default runtime table.
+    # Пороги counterpick_1vs2 в mid_output: 2/3/4/5/6/8/12/14 -> WR60..WR95.
+    # Ожидание 4/6/8 (WR60/65/70) устарело: коммит cf6260e от 09.08.2026 опустил
+    # пороги mid_output под шкалу пересобранного late-словаря — ровно сценарий
+    # E-69, где пересборка словаря сжимает шкалу метрик. Тест тогда не обновили,
+    # и он падал до 19.08.2026. Значение -6.0 законно дотягивает до WR80.
     level = runtime._max_star_wr_level_for_metric(
         metric="counterpick_1vs2",
         value=-6.0,
         section="mid_output",
     )
-    assert level == 65
+    assert level == 80
 
     level = runtime._max_star_wr_level_for_metric(
         metric="counterpick_1vs2",
         value=-4.0,
         section="mid_output",
     )
-    assert level == 60
+    # -4.0 дотягивает до WR70 (порог 4), не до WR60 — та же причина, что выше.
+    assert level == 70
 
     level = runtime._max_star_wr_level_for_metric(
         metric="counterpick_1vs2",
         value=-3.0,
         section="mid_output",
     )
-    assert level is None
+    # -3.0 теперь дотягивает до WR65 (порог 3). Прежде порог WR60 был 4, и это
+    # значение не давало ни одного уровня — та же переоценка cf6260e.
+    assert level == 65
 
 
 def test_max_star_wr_level_ignores_disabled_support_metrics() -> None:
@@ -60,7 +67,7 @@ def test_build_star_hits_summary_block_carstensz_case_highlights_late_cp1vs2() -
     )
     assert block
     assert "⭐ Star hits (WR60+):" in block
-    assert "Late: Counterpick_1vs2 -6 (WR65)" in block
+    assert "Late: Counterpick_1vs2 -6 (WR80)" in block
     # Early and All had no hits, so their rows must not appear.
     assert "Early:" not in block
     assert "All:" not in block
@@ -123,7 +130,7 @@ def test_build_star_hits_summary_block_combines_all_three_blocks() -> None:
     assert block.startswith("⭐ Star hits (WR60+):\n")
     assert "Early: Counterpick_1vs1 +4" in block
     assert "Solo +3" in block
-    assert "Late: Counterpick_1vs2 -6 (WR65)" in block
+    assert "Late: Counterpick_1vs2 -6 (WR80)" in block
     assert "All: Counterpick_1vs1 +4" in block
     # Pure separators: block ends with a trailing newline for message composition.
     assert block.endswith("\n")

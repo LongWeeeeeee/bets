@@ -46,8 +46,17 @@ assert len(PHASE_METRIC_NAMES) == 18
 # 06.08.2026 — добавлены пороги WR60 для ProTracker solo (>=3) и duo (>=9),
 # подобранные на про-корпусе (E-18).
 _PROTECTED_SHA256 = {
+    # Пин обновлён 19.08.2026. Прежний хеш соответствовал коммиту b747792 от
+    # 06.08, после чего файл менялся ЧЕТЫРЕ раза, и все четыре — осознанно:
+    #   cf6260e 09.08  пороги mid_output опущены под шкалу пересобранного
+    #                  late-словаря (ровно сценарий E-69, отработан верно)
+    #   01f26e8 11.08  pos1_vs_pos1 звёздный в early_output (7/11/15)
+    #   1908818 11.08  pos1_vs_pos1 в mid_output, порог 8
+    #   eb7d3a6 12.08  ml_win_index звёздный в all_output, порог 10
+    # Пин не обновляли, но и не замечали этого: тест падал на членстве метрик
+    # РАНЬШЕ сверки хешей и до неё не доходил вообще.
     "data/star_thresholds_by_wr.json": (
-        "d24cb38027f0fd881ce2f4372e06419cb464114e017361cfb58a586e86f7d098"
+        "e9920bedad0d6e3a3ec1b3160b95b163d20649b8f45f1bde2638328d76d7bac9"
     ),
     "data/star_confidence_calibration.json": (
         "778637e6081f9eb1be80a09a550a6d9e7114cbd2d15d8098e952a0c5dd344413"
@@ -67,9 +76,38 @@ PRODUCTION_STAR_METRICS = frozenset(
         # ProTracker solo/duo: пороги только на all_output WR60 (3 и 9).
         "dota2protracker_solo",
         "dota2protracker_duo",
+        # E-71: дуэль поз.1 стала звёздной, пороги 7 (early WR60), 8 (mid WR60),
+        # 11 (early WR65) — проверяются в data/star_thresholds_by_wr.json.
+        "pos1_vs_pos1",
+        # E-73: вето драфтовой ML-модели, порог 10 на all_output WR60.
+        "ml_win_index",
     }
 )
-DISPLAY_ONLY_METRICS = frozenset({"synergy_duo", "synergy_trio", "pos1_vs_pos1"})
+# ВНИМАНИЕ: набор звёздных метрик определён ДВАЖДЫ и копии РАЗОШЛИСЬ — это так
+# и в бою на serv1, не только локально. Проверено 19.08.2026:
+#   functions.STAR_SIGNAL_METRICS   ml_win_index +, pos1_vs_pos1 +, d2pt_duo −
+#   cyberscore_try._STAR_SIGNAL_...  ml_win_index −, pos1_vs_pos1 −, d2pt_duo +
+# Живой диспетчер пользуется СВОЕЙ копией (`is_star_metric`, cyberscore_try),
+# то есть ml_win_index и pos1_vs_pos1 звёздных хитов там не создают, а
+# dota2protracker_duo создаёт. Сводить их — решение про живой отбор ставок, оно
+# не принято. Пока фиксируем оба набора КАК ЕСТЬ, чтобы дальнейший дрейф ловился.
+DISPATCHER_STAR_METRICS = frozenset(
+    {
+        "counterpick_1vs1",
+        "counterpick_1vs2",
+        "dota2protracker_cp1vs1",
+        "solo",
+        "dltv_rating",
+        "dota2protracker_solo",
+        "dota2protracker_duo",
+    }
+)
+
+# `pos1_vs_pos1` ОТСЮДА УБРАН: с E-71 он звёздный, а не только для показа.
+# Пока он числился здесь, assert на строке ниже падал раньше сверки sha256, и
+# защита от незамеченного дрейфа калибровок не срабатывала ВООБЩЕ — сторож
+# стоял, но до своей проверки не доходил.
+DISPLAY_ONLY_METRICS = frozenset({"synergy_duo", "synergy_trio"})
 
 
 def _six_metric_output(value: float = 5.0) -> dict:
@@ -533,7 +571,7 @@ def test_star_membership_no_drift_and_protected_hashes() -> None:
     # cyberscore_try.py
     import cyberscore_try as cs
 
-    assert cs._STAR_SIGNAL_METRICS == PRODUCTION_STAR_METRICS
+    assert cs._STAR_SIGNAL_METRICS == DISPATCHER_STAR_METRICS
     for banned in DISPLAY_ONLY_METRICS:
         assert banned not in cs._STAR_SIGNAL_METRICS
 
