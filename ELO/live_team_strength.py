@@ -1492,16 +1492,25 @@ def register_live_map_context(
             model_config_signature=base_model_config_signature,
             progress_path=progress_path,
         )
-        runtime_model_payload = _load_runtime_model_payload(
-            snapshot=snapshot,
-            runtime_model_state_path=runtime_model_state_path,
-        )
-        model_state = (
-            runtime_model_payload.get("model_state")
-            if isinstance(runtime_model_payload, dict)
-            else snapshot.get("model_state")
-        )
-        model = HybridPlayerRosterEloModel.from_state(model_state if isinstance(model_state, dict) else {})
+        # Модель строится ЛЕНИВО, при первом обращении. Раньше её собирали здесь
+        # безусловно, а нужна она только когда есть завершённая карта, которую
+        # надо провести через рейтинг: разбор 219-мегабайтного рантайм-состояния
+        # занимает 4.3 с, сборка модели ещё 2.6 с, пик 917 МБ — и всё это
+        # выбрасывалось. По логу за 21 день на 10 241 карту приходится 376
+        # применений, то есть впустую шло около 96% вызовов.
+        _model_cell: list = []
+
+        def _model() -> HybridPlayerRosterEloModel:
+            if not _model_cell:
+                payload = _load_runtime_model_payload(
+                    snapshot=snapshot,
+                    runtime_model_state_path=runtime_model_state_path,
+                )
+                state = (payload.get("model_state") if isinstance(payload, dict)
+                         else snapshot.get("model_state"))
+                _model_cell.append(HybridPlayerRosterEloModel.from_state(
+                    state if isinstance(state, dict) else {}))
+            return _model_cell[0]
 
         pending_series = progress["pending_series"]
         applied_maps = progress["applied_maps"]
@@ -1534,7 +1543,7 @@ def register_live_map_context(
                         }
                         applied_update = _build_live_applied_update(
                             snapshot=snapshot,
-                            model=model,
+                            model=_model(),
                             match=pending_match,
                             map_key=pending_map_key,
                             series_key=normalized_series_key,
@@ -1570,7 +1579,7 @@ def register_live_map_context(
                 "base_reference_timestamp": int(base_reference_timestamp),
                 "base_model_config_signature": base_model_config_signature,
                 "updated_at": int(time.time()),
-                "model_state": model.export_state(),
+                "model_state": _model().export_state(),
             }
             _write_json_atomic(runtime_model_state_path, runtime_payload)
             _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = None
@@ -1620,16 +1629,25 @@ def finalize_live_series_from_scores(
             model_config_signature=base_model_config_signature,
             progress_path=progress_path,
         )
-        runtime_model_payload = _load_runtime_model_payload(
-            snapshot=snapshot,
-            runtime_model_state_path=runtime_model_state_path,
-        )
-        model_state = (
-            runtime_model_payload.get("model_state")
-            if isinstance(runtime_model_payload, dict)
-            else snapshot.get("model_state")
-        )
-        model = HybridPlayerRosterEloModel.from_state(model_state if isinstance(model_state, dict) else {})
+        # Модель строится ЛЕНИВО, при первом обращении. Раньше её собирали здесь
+        # безусловно, а нужна она только когда есть завершённая карта, которую
+        # надо провести через рейтинг: разбор 219-мегабайтного рантайм-состояния
+        # занимает 4.3 с, сборка модели ещё 2.6 с, пик 917 МБ — и всё это
+        # выбрасывалось. По логу за 21 день на 10 241 карту приходится 376
+        # применений, то есть впустую шло около 96% вызовов.
+        _model_cell: list = []
+
+        def _model() -> HybridPlayerRosterEloModel:
+            if not _model_cell:
+                payload = _load_runtime_model_payload(
+                    snapshot=snapshot,
+                    runtime_model_state_path=runtime_model_state_path,
+                )
+                state = (payload.get("model_state") if isinstance(payload, dict)
+                         else snapshot.get("model_state"))
+                _model_cell.append(HybridPlayerRosterEloModel.from_state(
+                    state if isinstance(state, dict) else {}))
+            return _model_cell[0]
 
         pending_series = progress["pending_series"]
         applied_maps = progress["applied_maps"]
@@ -1662,7 +1680,7 @@ def finalize_live_series_from_scores(
                         }
                         applied_update = _build_live_applied_update(
                             snapshot=snapshot,
-                            model=model,
+                            model=_model(),
                             match=pending_match,
                             map_key=pending_map_key,
                             series_key=normalized_series_key,
@@ -1682,7 +1700,7 @@ def finalize_live_series_from_scores(
                 "base_reference_timestamp": int(base_reference_timestamp),
                 "base_model_config_signature": base_model_config_signature,
                 "updated_at": int(time.time()),
-                "model_state": model.export_state(),
+                "model_state": _model().export_state(),
             }
             _write_json_atomic(runtime_model_state_path, runtime_payload)
             _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = None
