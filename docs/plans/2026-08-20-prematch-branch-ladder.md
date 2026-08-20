@@ -31,7 +31,7 @@
 **Интерфейсы:**
 - Отдаёт: `REQUIRES: dict[str, frozenset[str]]`, `COMPONENTS: dict[str, tuple[str, ...]]`, `BRANCHES: tuple[tuple[str, frozenset[str]], ...]`, `columns_for(keys, features) -> list[str]`, `pick_branch(keys) -> str`, `component_of(feature) -> str`.
 
-- [ ] **Шаг 1: написать падающий тест**
+- [x] **Шаг 1: написать падающий тест**
 
 ```python
 """Разметка 35 боевых признаков по ключу данных и выбор ветки.
@@ -106,12 +106,12 @@ def test_pick_branch_returns_none_without_rating_and_draft():
     assert C.pick_branch(frozenset()) is None
 ```
 
-- [ ] **Шаг 2: убедиться, что тест падает**
+- [x] **Шаг 2: убедиться, что тест падает**
 
 Запуск: `venv_catboost/bin/python3 -m pytest base/tests/test_prematch_components.py -q`
 Ожидание: `ModuleNotFoundError: No module named 'prematch_components'`
 
-- [ ] **Шаг 3: написать модуль**
+- [x] **Шаг 3: написать модуль**
 
 ```python
 #!/usr/bin/env python3
@@ -230,12 +230,12 @@ def pick_branch(keys):
     return None
 ```
 
-- [ ] **Шаг 4: убедиться, что тест проходит**
+- [x] **Шаг 4: убедиться, что тест проходит**
 
 Запуск: `venv_catboost/bin/python3 -m pytest base/tests/test_prematch_components.py -q`
 Ожидание: 8 passed
 
-- [ ] **Шаг 5: коммит**
+- [x] **Шаг 5: коммит**
 
 ```bash
 git add base/prematch_components.py base/tests/test_prematch_components.py
@@ -254,7 +254,7 @@ git commit -m "компоненты предматчевой модели: ра�
 - Потребляет: `prematch_components.BRANCHES`, `columns_for`.
 - Отдаёт: `PrematchModel.branches: dict[str, Branch]`, где `Branch` — dataclass с полями `cols: list[str]`, `mu: np.ndarray`, `sd: np.ndarray`, `coef: np.ndarray`, `intercept: float`. Плюс функция модуля `pack_branches(branches, features) -> dict[str, np.ndarray]` для сборщика артефакта.
 
-- [ ] **Шаг 1: написать падающий тест**
+- [x] **Шаг 1: написать падающий тест**
 
 ```python
 """Ветки кладутся в артефакт плоскими массивами и читаются обратно без потерь.
@@ -328,12 +328,12 @@ def test_packed_arrays_are_not_object_dtype(tmp_path):
         assert v.dtype != object, k
 ```
 
-- [ ] **Шаг 2: убедиться, что тест падает**
+- [x] **Шаг 2: убедиться, что тест падает**
 
 Запуск: `venv_catboost/bin/python3 -m pytest base/tests/test_prematch_branch_artifact.py -q`
 Ожидание: `AttributeError: module 'prematch_scorer' has no attribute 'Branch'`
 
-- [ ] **Шаг 3: добавить `Branch`, `pack_branches` и чтение веток**
+- [x] **Шаг 3: добавить `Branch`, `pack_branches` и чтение веток**
 
 В `base/prematch_scorer.py` после класса `ScoreResult` добавить:
 
@@ -403,12 +403,12 @@ def pack_branches(branches: dict[str, Branch], features: Sequence[str]) -> dict:
                     f"а колонок записано {len(cols)}")
 ```
 
-- [ ] **Шаг 4: убедиться, что тест проходит**
+- [x] **Шаг 4: убедиться, что тест проходит**
 
 Запуск: `venv_catboost/bin/python3 -m pytest base/tests/test_prematch_branch_artifact.py -q`
 Ожидание: 3 passed
 
-- [ ] **Шаг 5: проверить, что боевой артефакт по-прежнему читается**
+- [x] **Шаг 5: проверить, что боевой артефакт по-прежнему читается**
 
 Запуск:
 ```bash
@@ -421,7 +421,7 @@ print('признаков', len(m.features), 'веток', len(m.branches), 'а�
 ```
 Ожидание: `признаков 35 веток 0 аккаунтов 1553030`
 
-- [ ] **Шаг 6: коммит**
+- [x] **Шаг 6: коммит**
 
 ```bash
 git add base/prematch_scorer.py base/tests/test_prematch_branch_artifact.py
@@ -441,7 +441,7 @@ git commit -m "артефакт: ветки лестницы плоскими м
 
 **Зачем отдельная задача.** Сейчас признаки считаются одним куском, и первая же строка блока игроков (`A = np.array([self.acc[int(a)] for a in a5])`) падает по `KeyError`, если аккаунт неизвестен. Пока расчёт не разнесён, ветка «без аккаунтов» физически недостижима.
 
-- [ ] **Шаг 1: написать тест, фиксирующий неизменность полного входа**
+- [x] **Шаг 1: написать тест, фиксирующий неизменность полного входа**
 
 ```python
 """Разнесение расчёта признаков по компонентам не меняет результат.
@@ -485,7 +485,7 @@ def test_full_input_matches_golden():
         assert r.features[k] == pytest.approx(v, abs=1e-12), k
 ```
 
-- [ ] **Шаг 2: снять эталон на нынешнем коде**
+- [x] **Шаг 2: снять эталон на нынешнем коде**
 
 Запуск:
 ```bash
@@ -570,12 +570,12 @@ if __name__ == "__main__":
 
 Ожидание: `эталон снят на карте <id>: p = 0.xxxxxx`, файл `base/tests/fixtures/prematch_score_golden.json` создан.
 
-- [ ] **Шаг 3: убедиться, что тест проходит на НЕизменённом коде**
+- [x] **Шаг 3: убедиться, что тест проходит на НЕизменённом коде**
 
 Запуск: `venv_catboost/bin/python3 -m pytest base/tests/test_prematch_feature_split.py -q`
 Ожидание: 1 passed. Это фиксация эталона: тест обязан проходить ДО рефакторинга, иначе эталон снят неверно.
 
-- [ ] **Шаг 4: разнести расчёт**
+- [x] **Шаг 4: разнести расчёт**
 
 В `base/prematch_scorer.py` вынести из `score()` три метода, ничего не меняя в формулах и порядке:
 
@@ -585,12 +585,12 @@ if __name__ == "__main__":
 
 `score()` после этого только собирает словарь из трёх кусков и добавляет интеракции. Формулы не переписывать — переносить строками.
 
-- [ ] **Шаг 5: убедиться, что эталон не сдвинулся**
+- [x] **Шаг 5: убедиться, что эталон не сдвинулся**
 
 Запуск: `venv_catboost/bin/python3 -m pytest base/tests/test_prematch_feature_split.py base/tests/test_prematch_scorer_scale.py -q`
 Ожидание: 3 passed
 
-- [ ] **Шаг 6: коммит**
+- [x] **Шаг 6: коммит**
 
 ```bash
 git add base/prematch_scorer.py base/tests/test_prematch_feature_split.py base/tests/fixtures/prematch_score_golden.json
@@ -609,7 +609,7 @@ git commit -m "скорер: расчёт признаков разнесён п
 - Потребляет: `Branch`, `prematch_components.pick_branch`, `columns_for`.
 - Отдаёт: `ScoreResult.branch: str` и `ScoreResult.missing_keys: list[str]`.
 
-- [ ] **Шаг 1: написать падающий тест**
+- [x] **Шаг 1: написать падающий тест**
 
 ```python
 """Незнакомые снимку игроки больше не отменяют вердикт.
@@ -711,12 +711,12 @@ def test_refusal_survives_when_nothing_is_available(tmp_path):
                 strictness="teams", now_ts=1700000000, max_age_days=1e9)
 ```
 
-- [ ] **Шаг 2: убедиться, что тест падает**
+- [x] **Шаг 2: убедиться, что тест падает**
 
 Запуск: `venv_catboost/bin/python3 -m pytest base/tests/test_prematch_ladder.py -q`
 Ожидание: FAIL — `MissingData: игроки неизвестны снимку` в первом тесте.
 
-- [ ] **Шаг 3: реализовать выбор ветки**
+- [x] **Шаг 3: реализовать выбор ветки**
 
 В `ScoreResult` добавить поля:
 
@@ -765,12 +765,12 @@ def test_refusal_survives_when_nothing_is_available(tmp_path):
 
 Строгость `cells`/`full` продолжает работать как раньше, но только внутри ветки `full`: на короткой ветке ячеек (аккаунт, герой) не бывает по определению.
 
-- [ ] **Шаг 4: убедиться, что тесты проходят**
+- [x] **Шаг 4: убедиться, что тесты проходят**
 
 Запуск: `venv_catboost/bin/python3 -m pytest base/tests/test_prematch_ladder.py base/tests/test_prematch_feature_split.py -q`
 Ожидание: 5 passed
 
-- [ ] **Шаг 5: коммит**
+- [x] **Шаг 5: коммит**
 
 ```bash
 git add base/prematch_scorer.py base/tests/test_prematch_ladder.py
@@ -789,13 +789,13 @@ git commit -m "скорер: лестница веток вместо отказ
 - Потребляет: `prematch_components.BRANCHES`, `columns_for`, `prematch_scorer.Branch`, `pack_branches`.
 - Отдаёт: `runtime/artifacts/misc/branch_weights.npz` с ключами `pack_branches` и отчёт `runtime/artifacts/misc/branch_weights.md`.
 
-- [ ] **Шаг 1: написать скрипт обучения**
+- [x] **Шаг 1: написать скрипт обучения**
 
 Скрипт обучает по одной логрегрессии на ветку на окне 120 суток перед `TEST_FROM`, меряет AUC каждой на тесте 26 016 и проверяет два контракта: полная ветка обязана воспроизвести монолит, а сумма частичных сумм по компонентам — сам логит полной ветки.
 
 Матрица берётся тем же кодом, что и в `audit_live_path.train_columns`, рабочий набор — из замороженного порядка `hybrid_features.npz`.
 
-- [ ] **Шаг 2: прогнать и сверить с ориентирами**
+- [x] **Шаг 2: прогнать и сверить с ориентирами**
 
 Запуск: `venv_catboost/bin/python3 runtime/experiments/misc/train_branch_weights.py`
 
@@ -812,11 +812,11 @@ git commit -m "скорер: лестница веток вместо отказ
 
 Если `full` разошлась с 0.7186 больше чем на 0.0010 — порядок колонок поехал, дальше не идти.
 
-- [ ] **Шаг 3: вкладывать ветки в артефакт**
+- [x] **Шаг 3: вкладывать ветки в артефакт**
 
 В `finalize_artifact.py` дописать шаг: прочитать `branch_weights.npz` и подмешать его ключи в выходной артефакт. Если файла нет — шаг пропускается с сообщением, артефакт собирается как раньше.
 
-- [ ] **Шаг 4: собрать артефакт и проверить чтение**
+- [x] **Шаг 4: собрать артефакт и проверить чтение**
 
 Запуск:
 ```bash
@@ -832,7 +832,7 @@ print('веток', sorted(m.branches), 'колонок в no_account', len(m.br
 ```
 Ожидание: шесть веток, `no_account` — 8 колонок.
 
-- [ ] **Шаг 5: коммит**
+- [x] **Шаг 5: коммит**
 
 ```bash
 git add runtime/experiments/misc/train_branch_weights.py runtime/experiments/misc/finalize_artifact.py
@@ -851,7 +851,7 @@ git commit -m "обучение весов по веткам лестницы и
 **Интерфейсы:**
 - Отдаёт: `PrematchModel.branch_winrate(branch: str, confidence: float, lan: bool) -> tuple[float, str]` — винрейт и пометка, своя таблица или унаследованная.
 
-- [ ] **Шаг 1: написать падающий тест**
+- [x] **Шаг 1: написать падающий тест**
 
 ```python
 def test_short_branch_does_not_borrow_the_full_table(tmp_path):
@@ -869,25 +869,25 @@ def test_branch_without_its_own_table_inherits_and_says_so(tmp_path):
     assert src == "унаследована от общей — карт не хватило"
 ```
 
-- [ ] **Шаг 2: убедиться, что тест падает**
+- [x] **Шаг 2: убедиться, что тест падает**
 
 Запуск: `venv_catboost/bin/python3 -m pytest base/tests/test_branch_calibration.py -q`
 Ожидание: `AttributeError: 'PrematchModel' object has no attribute 'branch_winrate'`
 
-- [ ] **Шаг 3: снять таблицы**
+- [x] **Шаг 3: снять таблицы**
 
 `branch_calibration.py` прогоняет тест 26 016 карт через каждую ветку, режет по полосам уверенности и по площадке (флаг `lan` из `league_meta.json`) и берёт одностороннюю нижнюю границу Уилсона 90% — то же правило, что в `venue_calibration_grid.py`: менять только вверх, минимум 60 карт в полосе. Ветки, где карт не хватило, помечаются как унаследованные.
 
-- [ ] **Шаг 4: реализовать `branch_winrate` и подключить**
+- [x] **Шаг 4: реализовать `branch_winrate` и подключить**
 
 `ScoreResult.lan_winrate` считается через `branch_winrate` сработавшей ветки; источник таблицы попадает в `notes`.
 
-- [ ] **Шаг 5: прогнать тесты**
+- [x] **Шаг 5: прогнать тесты**
 
 Запуск: `venv_catboost/bin/python3 -m pytest base/tests/test_branch_calibration.py base/tests/test_prematch_ladder.py -q`
 Ожидание: все зелёные
 
-- [ ] **Шаг 6: коммит**
+- [x] **Шаг 6: коммит**
 
 ```bash
 git add runtime/experiments/misc/branch_calibration.py base/prematch_scorer.py base/tests/test_branch_calibration.py
@@ -905,7 +905,7 @@ git commit -m "калибровка уверенности снимается п
 **Интерфейсы:**
 - Отдаёт: `ScoreResult.parts: dict[str, float]` — вклад каждого компонента в логит.
 
-- [ ] **Шаг 1: написать падающий тест**
+- [x] **Шаг 1: написать падающий тест**
 
 ```python
 def test_parts_sum_to_the_logit(tmp_path):
@@ -922,12 +922,12 @@ def test_parts_only_lists_components_present_in_the_branch(tmp_path):
     assert set(r.parts) <= {"elo", "draft", "h2h"}
 ```
 
-- [ ] **Шаг 2: убедиться, что тест падает**
+- [x] **Шаг 2: убедиться, что тест падает**
 
 Запуск: `venv_catboost/bin/python3 -m pytest base/tests/test_prematch_decomposition.py -q`
 Ожидание: `AttributeError: 'ScoreResult' object has no attribute 'parts'`
 
-- [ ] **Шаг 3: считать частичные суммы**
+- [x] **Шаг 3: считать частичные суммы**
 
 ```python
         parts: dict[str, float] = {}
@@ -935,16 +935,16 @@ def test_parts_only_lists_components_present_in_the_branch(tmp_path):
             parts[c] = parts.get(c, 0.0) + float(w)
 ```
 
-- [ ] **Шаг 4: показать разложение в панели**
+- [x] **Шаг 4: показать разложение в панели**
 
 В `base/prematch_panel_live.py` добавить строку с вкладами компонентов и именем ветки.
 
-- [ ] **Шаг 5: прогнать тесты**
+- [x] **Шаг 5: прогнать тесты**
 
 Запуск: `venv_catboost/bin/python3 -m pytest base/tests/test_prematch_decomposition.py base/tests/test_prematch_ladder.py base/tests/test_prematch_feature_split.py -q`
 Ожидание: все зелёные
 
-- [ ] **Шаг 6: коммит**
+- [x] **Шаг 6: коммит**
 
 ```bash
 git add base/prematch_scorer.py base/prematch_panel_live.py base/tests/test_prematch_decomposition.py
@@ -963,3 +963,35 @@ git commit -m "вердикт раскладывается по компонен
 - честная as-of таблица матчапа по урону и замер с бутстрапом по сериям (+0.0009 против протёкших +0.0016).
 
 Доставка на serv1 тоже вне плана: боевой код правится руками и расходится с локальным, перенос делается точечными патчами по отдельному решению.
+
+
+---
+
+## Итог выполнения (2026-08-20)
+
+Задачи 1-7 выполнены, кроме показа разложения в панели (задача 7, шаг 4): это
+правка боевого файла на serv1, а доставка вне этого плана.
+
+**Что померено на сквозном прогоне** (`audit_branch_ladder.md`, снимок обрезан
+по `TEST_FROM`, вызов повторяет боевой):
+
+| | было | стало |
+|---|---:|---:|
+| карт с вердиктом | 11 064 (42.5%) | **25 892 (99.5%)** |
+| отказы | 14 952 | 124 (только конфликт разметки позиций) |
+
+**Потерь на уже покрытых картах нет.** На 9 459 картах, где прежняя модель
+подставляла нулём отсутствующий `h2h_resid`, ветка `no_org` даёт 0.7028 против
+0.7031 — разница −0.0002. На 1 605 картах полной ветки вердикт совпадает с
+прежним ПОБИТОВО: `full` берёт боевые веса как есть.
+
+**Поправка по ходу работы.** Первая версия переобучала полную ветку. Сквозной
+прогон это поймал: совпало 0 вердиктов из 11 064. Лестница не имеет права
+менять вердикты, которые уже есть.
+
+**Калибровка.** Ветки получили свои таблицы винрейта; полоса без 60 карт не
+получает винрейта вовсе, и автоматическая ставка по ней не выставляется. У
+`no_account` в полосе 50-58% нижняя граница 0.476 — ниже монетки.
+
+Артефакт с ветками и калибровкой: `prematch_model_artifact_v3_branches.npz`.
+На serv1 НЕ доставлялся.
