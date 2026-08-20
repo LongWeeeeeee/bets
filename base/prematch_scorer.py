@@ -206,6 +206,57 @@ class ScoreResult:
         return self.probability > 0.5
 
 
+class PairTable:
+    """Таблица (аккаунт, герой) → строка значений на отсортированных массивах.
+
+    ЗАЧЕМ. Словарём эта таблица стоила 2 005 МБ при 311 МБ полезных данных —
+    замерено на боевом артефакте (6 784 232 ячейки). На каждую ячейку
+    приходились кортеж-ключ из двух Python-int, отдельный объект-представление
+    numpy и слот словаря; значения при этом были ВИДАМИ в исходный массив,
+    поэтому в памяти жили одновременно и массив, и словарь. Здесь живут ровно
+    два массива: упакованные ключи и значения.
+
+    Цена — поиск 870 нс против 52 нс у словаря. В боевом пути это десять
+    обращений на карту, то есть плюс восемь микросекунд к вердикту, который
+    считается миллисекундами.
+
+    Интерфейс намеренно повторяет словарь (`get`, `in`, `len`): обращения к
+    таблице есть и в коде на боевой машине, которого нет в этом репозитории.
+    """
+
+    __slots__ = ("_key", "_val")
+    _SHIFT = 20                      # id героя < 2^20; проверяется при сборке
+
+    def __init__(self, rows: np.ndarray, nkey: int = 2) -> None:
+        a = rows[:, 0].astype(np.int64)
+        h = rows[:, 1].astype(np.int64)
+        if len(rows) and (h.min() < 0 or h.max() >= (1 << self._SHIFT)
+                          or a.min() < 0):
+            raise ValueError(
+                f"ключи не влезают в упаковку: аккаунты [{a.min()}, {a.max()}], "
+                f"герои [{h.min()}, {h.max()}] при сдвиге {self._SHIFT}")
+        k = (a << self._SHIFT) | h
+        order = np.argsort(k, kind="stable")
+        self._key = np.ascontiguousarray(k[order])
+        self._val = np.ascontiguousarray(rows[order][:, nkey:])
+
+    def _index(self, key) -> int:
+        a, h = key
+        k = (int(a) << self._SHIFT) | int(h)
+        i = int(np.searchsorted(self._key, k))
+        return i if i < len(self._key) and int(self._key[i]) == k else -1
+
+    def get(self, key, default=None):
+        i = self._index(key)
+        return self._val[i] if i >= 0 else default
+
+    def __contains__(self, key) -> bool:
+        return self._index(key) >= 0
+
+    def __len__(self) -> int:
+        return len(self._key)
+
+
 @dataclass
 class Branch:
     """Веса одной ветки лестницы: свои колонки, своя нормировка, свой сдвиг.
@@ -295,7 +346,8 @@ class PrematchModel:
         self.snapshot_ts = int(z["snapshot_ts"][0])
         self.mu, self.sd, self.coef, self.intercept = z["mu"], z["sd"], z["coef"], z["intercept"]
         self.acc = {int(r[0]): r[1:] for r in z["accounts"]}
-        self.acc_hero = {(int(r[0]), int(r[1])): r[2:] for r in z["acc_hero"]}
+        # 6.78 млн ячеек: словарём это стоило бы 2 005 МБ при 311 МБ данных
+        self.acc_hero = PairTable(z["acc_hero"])
         self.acc_pos = {(int(r[0]), int(r[1])): r[2] for r in z["acc_pos"]}
         self.hero_wr30 = {int(r[0]): r[1] for r in z["hero_wr30"]}
         self.vs = {(int(r[0]), int(r[1])): (r[2], r[3]) for r in z["vs_pairs"]}
