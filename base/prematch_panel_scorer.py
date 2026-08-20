@@ -201,8 +201,11 @@ def assemble(columns: Sequence[str],
 DRAFT_PREFIX: tuple[str, ...] = ("sym_", "publogit_", "kwdict_", "F6_", "F8_")
 # Драфтовые имена внутри боевых 35 колонок — сопоставляются через `prod35_names`
 # из артефакта, потому что сами колонки названы позиционно.
+# `hero_pool` сюда НЕ входит: размер пула героев — свойство игрока, и в
+# предматчевой линии он лежит в кластере карьеры (E-214 §1). Два разных понятия
+# «драфт» в одном сообщении читать невозможно.
 DRAFT_PROD35: frozenset[str] = frozenset({
-    "draft_logit", "vs_wr", "cp_lane", "syn_pos_mean", "hero_pool", "wr30",
+    "draft_logit", "vs_wr", "cp_lane", "syn_pos_mean", "wr30",
     "farm_dep", "draft_logit_x_elo_gap", "draft_logit_x_games_exp"})
 
 
@@ -224,8 +227,80 @@ def draft_mask(columns: Sequence[str],
     return out
 
 
+#: Блоки для разложения. Те же три, что в строке предматчевой модели: иначе в
+#: одном сообщении жили бы два разных понятия «драфт».
+ELO_PROD35: frozenset[str] = frozenset({"elo", "opp_elo", "hybrid_strength"})
+ELO_PREFIX: tuple[str, ...] = ("rating_", "hybrid_")
+
+
+def block_of(name: str, prod35_names: Sequence[str] = ()) -> str:
+    """Блок колонки: «драфт», «ELO» или «игроки»."""
+    if name.startswith(ELO_PREFIX):
+        return "ELO"
+    if name.startswith(DRAFT_PREFIX):
+        return "драфт"
+    if name.startswith("prod35_") and prod35_names:
+        try:
+            j = int(name.split("_", 1)[1])
+        except ValueError:
+            return "игроки"
+        if 0 <= j < len(prod35_names):
+            nm = prod35_names[j]
+            if nm in ELO_PROD35:
+                return "ELO"
+            if nm in DRAFT_PROD35:
+                return "драфт"
+    return "игроки"
+
+
+def shap_values(model: Any, row: np.ndarray, n_cols: int):
+    """Вклады признаков по этой карте; None — если посчитать не вышло.
+
+    Вынесено отдельно, потому что вызов стоит около 90 мс на модель, а нужен он
+    и доле драфта, и разложению по блокам. Считать дважды — платить вдвое ни за
+    что: обе величины выводятся из одного вектора.
+    """
+    try:
+        from catboost import Pool
+
+        sv = model.get_feature_importance(Pool(row), type="ShapValues")
+    except Exception:                            # noqa: BLE001
+        return None
+    v = np.asarray(sv)[0][:-1]                   # последний элемент — базовое значение
+    return v if len(v) == n_cols else None
+
+
+def group_shares(model: Any, row: np.ndarray, columns: Sequence[str],
+                 prod35_names: Sequence[str] = (),
+                 flip: bool = False, values=None) -> dict:
+    """Доли блоков в решении по ЭТОЙ карте, знаковые.
+
+    `flip=False` — знак как у самой модели (у оконных это ориентация Radiant:
+    минус за Dire, плюс за Radiant). `flip=True` — развернуть к стороне вердикта;
+    нужно там, где сторон нет вовсе («да/нет», «≥55/≤50»).
+
+    Знаменатель — сумма модулей АГРЕГАТОВ, а не отдельных колонок: тот же, что у
+    предматчевой строки (`cyberscore_try.py`), иначе в одном сообщении жили бы
+    две шкалы. По колонкам он давал бы 21-41% в сумме — 858 драфтовых колонок
+    гасят друг друга, а их шум остаётся в знаменателе. По блокам доли дают ровно
+    100%, и знак показывает, кто тянет против.
+    """
+    v = values if values is not None else shap_values(model, row, len(columns))
+    if v is None:
+        return {}
+    out: dict = {}
+    for name, w in zip(columns, v):
+        b = block_of(name, prod35_names)
+        out[b] = out.get(b, 0.0) + float(w)
+    total = sum(abs(x) for x in out.values())
+    if total <= 0:
+        return {}
+    sign = -1.0 if flip else 1.0
+    return {k: sign * val / total for k, val in out.items()}
+
+
 def draft_share(model: Any, row: np.ndarray, mask: np.ndarray,
-                toward_positive: bool = True) -> float | None:
+                toward_positive: bool = True, values=None) -> float | None:
     """Доля драфта в решении по ЭТОЙ карте — ЗНАКОВАЯ, к стороне вердикта.
 
       +N%  драфт тянет ЗА ту сторону, которую называет модель;
@@ -240,14 +315,8 @@ def draft_share(model: Any, row: np.ndarray, mask: np.ndarray,
     служит сумма только положительных вкладов, из-за чего доли там не
     складываются; здесь это исправлено.
     """
-    try:
-        from catboost import Pool
-
-        sv = model.get_feature_importance(Pool(row), type="ShapValues")
-    except Exception:
-        return None
-    v = np.asarray(sv)[0][:-1]                  # последний элемент — базовое значение
-    if len(v) != len(mask):
+    v = values if values is not None else shap_values(model, row, len(mask))
+    if v is None:
         return None
     total = float(np.abs(v).sum())
     if total <= 0:
@@ -288,6 +357,7 @@ def score(bundle: PanelBundle,
         except Exception:
             raw = None
         share = None
+        parts: dict = {}
         # SHAP стоит ~90 мс на модель. Считаем только там, где доля драфта
         # реально показывается, иначе платим за восемь ради четырёх.
         want = draft_keys is None or s.key in draft_keys
@@ -295,9 +365,16 @@ def score(bundle: PanelBundle,
             # Сторона вердикта — та же, что выберет `evaluate`: по КАЛИБРОВАННОЙ
             # вероятности, а не по сырой. Иначе у моделей с сильной калибровкой
             # знак доли драфта разошёлся бы со стороной в той же строке.
-            share = draft_share(m, row, mask,
+            _sv = shap_values(m, row, len(bundle.columns))
+            share = draft_share(m, row, mask, values=_sv,
                                 toward_positive=s.calibrate(raw) >= 0.5)
-        v = evaluate(s, raw, present, draft_share=share, fill=fill,
+            # У оконных моделей `positive`/`negative` — это сами стороны, и SHAP
+            # уже стоит в ориентации Radiant. Разворачивать к вердикту нужно
+            # только цели без сторон («да/нет», «≥55/≤50»).
+            _sides = {str(s.positive), str(s.negative)} == {"Radiant", "Dire"}
+            parts = group_shares(m, row, bundle.columns, prod35_names, values=_sv,
+                                 flip=(not _sides) and s.calibrate(raw) < 0.5)
+        v = evaluate(s, raw, present, draft_share=share, parts=parts, fill=fill,
                      missing=missing_groups)
         if v is not None:
             out.append(v)
