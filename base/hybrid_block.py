@@ -98,9 +98,14 @@ def _load() -> dict[str, Any]:
 
                     _fast = load_read_model(Path(SNAPSHOT),
                                             DEFAULT_RUNTIME_MODEL_STATE_PATH)
-                except Exception:  # noqa: BLE001
+                except Exception as _exc:  # noqa: BLE001
                     _fast = None
+                    print(f"ВНИМАНИЕ: массивная модель не поднялась "
+                          f"({type(_exc).__name__}: {_exc}); панель считает по "
+                          "словарной, это примерно +1.3 ГБ памяти", flush=True)
                 if _fast is not None:
+                    print("[ELO] панель на МАССИВНОЙ модели (около 340 МБ)",
+                          flush=True)
                     # Имена читаются отдельно: они нужны только для MatchRecord,
                     # но пустой словарь мешает разбору org-ключа.
                     try:
