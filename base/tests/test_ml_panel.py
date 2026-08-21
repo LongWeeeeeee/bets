@@ -149,7 +149,8 @@ class TestJournal:
         assert set(row["models"][0]) == {"key", "side", "p", "confidence",
                                          "threshold", "fill", "ok", "missing",
                                          "raw", "draft_share", "parts",
-                                         "band_hit", "band_n", "odds"}
+                                         "blocked", "band_hit", "band_n",
+                                         "odds"}
 
     def test_append_writes_one_line_each(self, tmp_path):
         p = tmp_path / "j.jsonl"

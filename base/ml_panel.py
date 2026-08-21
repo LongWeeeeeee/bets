@@ -27,6 +27,13 @@
 достаточном объёме. Он лежит в артефакте рядом с калибровкой, а не в коде: смена
 порога не должна требовать деплоя.
 
+ДРАФТ ПРОТИВ. Вердикт не выставляется, когда драфтовая компонента решения
+тянет ПРОТИВ названной стороны: `draft_share` стоит в ориентации вердикта, и
+минус означает, что модель назвала сторону вопреки драфту. Ноль — это «драфту
+нечего сказать», а не возражение (E-217 §1), поэтому режется строго минус.
+Доли нет вовсе (модель вне `ML_PANEL_DRAFT_KEYS` или SHAP не посчитался) —
+запрет не срабатывает: «против» надо доказать, а не предположить.
+
 Формат журнала (JSONL, по строке на карту) заморожен: `schema` = 1. Любое
 изменение состава полей повышает номер, иначе прошлые строки станут
 непроверяемыми.
@@ -45,12 +52,18 @@ DEFAULT_ARTIFACT_DIR = Path(os.getenv(
     "ML_PANEL_DIR", str(PROJECT_ROOT / "ml-models" / "prematch_panel")))
 DEFAULT_JOURNAL = Path(os.getenv(
     "ML_PANEL_JOURNAL", str(PROJECT_ROOT / "runtime" / "ml_panel.jsonl")))
-JOURNAL_SCHEMA = 3   # +parts: разложение решения по ELO/драфту/игрокам
+JOURNAL_SCHEMA = 4   # +blocked: чем именно погашен вердикт
 OK_MARK = "🟢"
 NO_MARK = "🔴"
 # Ниже этой заполненности вердикт не выставляется вообще: предикт по половине
 # признаков — не осторожная оценка, а другой предикт.
 MIN_FILL = float(os.getenv("ML_PANEL_MIN_FILL", "0.75"))
+# Запрет «драфт против названной стороны». Выключается ML_PANEL_DRAFT_AGAINST_BLOCK=0
+# без деплоя — как и порог заполненности, это правило отбора, а не код.
+DRAFT_AGAINST_BLOCK = os.getenv(
+    "ML_PANEL_DRAFT_AGAINST_BLOCK", "1") not in ("0", "false", "False")
+#: Причина в строке и в журнале. Без неё 🔴 по драфту неотличим от 🔴 по порогу.
+BLOCK_DRAFT_AGAINST = "драфт против"
 
 
 @dataclass(frozen=True)
@@ -128,6 +141,7 @@ class ModelVerdict:
     band_hit: float | None = None       # фактическая доля попаданий полосы
     band_n: int = 0
     odds: float | None = None           # кэф безубытка
+    blocked: str | None = None          # чем погашен вердикт; None — не гасили
 
     @property
     def confidence(self) -> float:
@@ -161,11 +175,18 @@ def evaluate(spec: ModelSpec, raw: float | None, present: Mapping[str, bool],
     side = spec.positive if p >= 0.5 else spec.negative
     conf = p if p >= 0.5 else 1.0 - p
     ok = bool(conf >= spec.threshold and fill >= MIN_FILL)
+    blocked = None
+    if ok and DRAFT_AGAINST_BLOCK and draft_share is not None and draft_share < 0.0:
+        # Минус в ориентации вердикта — драфт тянет против той стороны, которую
+        # называет модель. Такой вердикт не выставляется вовсе.
+        ok = False
+        blocked = BLOCK_DRAFT_AGAINST
     band = spec.band_hit(conf)
     return ModelVerdict(key=spec.key, title=spec.title, side=side, probability=p,
                         threshold=spec.threshold, fill=fill, ok=ok,
                         missing=missing, raw=float(raw), draft_share=draft_share,
                         parts=dict(parts) if parts else None,
+                        blocked=blocked,
                         band_hit=None if band is None else band[0],
                         band_n=0 if band is None else band[1],
                         odds=spec.fair_odds(conf))
@@ -216,6 +237,8 @@ def render(verdicts: Sequence[ModelVerdict], highlight: Iterable[str] = ()) -> s
             bits.append(f"драфт {v.draft_share*100:+.0f}%")
         if v.odds is not None:
             bits.append(f"кэф от {v.odds:.2f}")
+        if v.blocked:
+            bits.append(v.blocked)
         tail = " ✅" if v.key in star else ""
         lines.append(f"{mark} {v.title}: " + " · ".join(bits) + tail)
     return "\n".join(lines)
@@ -236,6 +259,7 @@ def journal_row(map_id: Any, verdicts: Sequence[ModelVerdict], *,
                              else round(v.draft_share, 4)),
              "parts": ({k: round(x, 4) for k, x in v.parts.items()}
                        if v.parts else None),
+             "blocked": v.blocked,
              "band_hit": v.band_hit, "band_n": v.band_n,
              "odds": None if v.odds is None else round(v.odds, 4)}
             for v in verdicts
