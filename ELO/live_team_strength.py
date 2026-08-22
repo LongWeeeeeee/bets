@@ -1553,10 +1553,13 @@ def register_live_map_context(
                     # «победитель = сдвиг счёта» не срабатывает НИ РАЗУ: за прогон
                     # 0 применений этим путём против 390 аварийным подбором, и у
                     # 132 серий из 132 применена ровно одна карта. Здесь исход
-                    # берётся по match_id самой карты (в бою —
-                    # `stratz_map_result.radiant_won`), и счёт больше не нужен.
+                    # берётся снаружи: справке передаётся и ключ, и САМА запись
+                    # отложенной карты — по ключу её не опознать, потому что прод
+                    # пишет `match_id = series_id` и все карты серии несут один
+                    # номер. В бою справка спрашивает матчи КОМАНДЫ за сутки
+                    # (`stratz_map_result.series_history`), счёт больше не нужен.
                     try:
-                        looked = winner_lookup(pending_map_key)
+                        looked = winner_lookup(pending_map_key, pending_map)
                     except Exception:
                         looked = None
                     if isinstance(looked, bool):

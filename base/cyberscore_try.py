@@ -21239,14 +21239,37 @@ def _build_team_elo_matchup_summary_from_live_snapshot(
     return summary if isinstance(summary, dict) else None
 
 
-def _live_elo_winner_lookup(map_key: str):
-    """Победил ли радиант на карте с этим ключом. None — не знаем."""
+def _live_elo_winner_lookup(map_key, pending_map=None):
+    # Победил ли радиант ОТЛОЖЕННОЙ карты. None означает «не знаем».
+    #
+    # По ключу карту опознать нельзя: прод пишет `match_id = series_id`, и все
+    # карты серии несут один номер (E-224). Поэтому берутся команды из самой
+    # записи, у Stratz спрашиваются матчи КОМАНДЫ за сутки, и из них выбирается
+    # ближайшая по времени к моменту регистрации.
     try:
-        import stratz_map_result                            # noqa: PLC0415
-        return stratz_map_result.radiant_won(map_key)
+        import stratz_map_result
+        rec = (pending_map or {}).get('match_record') or {}
+        rad = int(rec.get('radiant_team_id') or 0)
+        dire = int(rec.get('dire_team_id') or 0)
+        if rad <= 0 or dire <= 0:
+            return None
+        hist = stratz_map_result.series_history(rad, dire)
+        if not hist:
+            return None
+        reg = int((pending_map or {}).get('registered_at') or 0) or int(rec.get('timestamp') or 0)
+        if not reg:
+            return None
+        best = min(hist, key=lambda m: abs(int(m['start']) - reg))
+        # Разброс шире трёх часов означает, что это другая карта: серия
+        # столько не тянется, а ошибиться картой хуже, чем не ответить.
+        if abs(int(best['start']) - reg) > 3 * 3600:
+            return None
+        won = bool(best['radiant_won'])
+        return won if int(best['radiant_team_id']) == rad else (not won)
     except Exception:
-        logger.exception("live ELO winner lookup failed for %s", map_key)
+        logger.exception('live ELO winner lookup failed for %s', map_key)
         return None
+
 
 def _register_completed_live_map_for_elo(
     *,

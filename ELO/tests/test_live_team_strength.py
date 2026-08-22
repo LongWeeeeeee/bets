@@ -1181,7 +1181,7 @@ def test_winner_lookup_applies_pending_map_when_series_score_stands_still(tmp_pa
     r2 = register_live_map_context(
         map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
         first_team_is_radiant=True, match_record=_rec(102),
-        winner_lookup=lambda key: False, **common2)
+        winner_lookup=lambda key, pm: False, **common2)
     assert r2["applied_update"] is not None
     assert r2["applied_update"]["map_key"] == "dltv.org/matches/425663.0"
     assert r2["applied_update"]["radiant_win"] is False
@@ -1198,7 +1198,7 @@ def test_winner_lookup_does_not_apply_same_match_twice(tmp_path) -> None:
     first = register_live_map_context(
         map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
         first_team_is_radiant=True, match_record=_rec(102),
-        winner_lookup=lambda key: False, **common)
+        winner_lookup=lambda key, pm: False, **common)
     assert first["applied_update"] is not None
     # та же карта 101 снова становится отложенной под ДРУГИМ ключом
     register_live_map_context(
@@ -1207,7 +1207,7 @@ def test_winner_lookup_does_not_apply_same_match_twice(tmp_path) -> None:
     again = register_live_map_context(
         map_key="dltv.org/matches/425665.0", first_team_score=0, second_team_score=0,
         first_team_is_radiant=True, match_record=_rec(103),
-        winner_lookup=lambda key: False, **common)
+        winner_lookup=lambda key, pm: False, **common)
     assert again["applied_update"] is None, "match_id 101 уже применён"
 
 
@@ -1219,7 +1219,7 @@ def test_winner_lookup_failure_is_not_a_loss(tmp_path) -> None:
     register_live_map_context(
         map_key="dltv.org/matches/425663.0", first_team_score=0, second_team_score=0,
         first_team_is_radiant=True, match_record=_rec(101), **common)
-    for lookup in (lambda key: None, lambda key: (_ for _ in ()).throw(RuntimeError("сеть"))):
+    for lookup in (lambda key: None, lambda key, pm: (_ for _ in ()).throw(RuntimeError("сеть"))):
         r = register_live_map_context(
             map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
             first_team_is_radiant=True, match_record=_rec(102),
