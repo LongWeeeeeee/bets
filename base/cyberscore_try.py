@@ -32441,6 +32441,32 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             applied_update = live_elo_registration.get("applied_update")
             if isinstance(applied_update, dict):
                 _emit_live_elo_applied_log("Live ELO updated from completed map", applied_update)
+            else:
+                # ДИАГНОСТИКА. По состоянию на 22.08.2026 этот путь не срабатывал
+                # ни разу: в `runtime/live_elo_progress.json` у 132 серий из 132
+                # применена РОВНО ОДНА карта, а в логе 0 сообщений «updated from
+                # completed map» против 390 орфанных. Логика самого пакета `ELO`
+                # исправна — тест `test_register_live_map_context_applies_previous
+                # _map_once_...` это утверждает и проходит (он не запускался
+                # из-за устаревшей фикстуры сброса кэша модели).
+                #
+                # Значит теряется вызов, и надо знать чем именно: тем, что серия
+                # видится впервые, или тем, что счёт не изменился. Строка пишет
+                # ровно это и решений не меняет.
+                logger.info(
+                    "LIVE_ELO_NOT_APPLIED series=%s map=%s scores=%s already_applied=%s",
+                    live_elo_registration.get("series_key"),
+                    live_elo_registration.get("map_key"),
+                    live_elo_registration.get("current_scores"),
+                    live_elo_registration.get("current_map_already_applied"),
+                )
+        elif live_elo_registration is None:
+            logger.info(
+                "LIVE_ELO_REGISTRATION_SKIPPED series=%s map=%s rad_ids=%d dire_ids=%d",
+                series_id, check_uniq_url,
+                sum(1 for x in radiant_account_ids if int(x or 0) > 0),
+                sum(1 for x in dire_account_ids if int(x or 0) > 0),
+            )
         _warm_draft_stats_shards(radiant_heroes_and_pos, dire_heroes_and_pos)
 
         def _run_dota2protracker_enrichment() -> Dict[str, Any]:

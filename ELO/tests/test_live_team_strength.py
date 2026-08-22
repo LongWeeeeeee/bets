@@ -194,8 +194,10 @@ def test_snapshot_pin_blocks_rebuild_on_fresh_corpus(tmp_path, monkeypatch) -> N
 
 def _reset_live_team_strength_caches() -> None:
     live_team_strength_module._SNAPSHOT_CACHE = None
-    live_team_strength_module._MODEL_FROM_SNAPSHOT_CACHE["snapshot_id"] = None
-    live_team_strength_module._MODEL_FROM_SNAPSHOT_CACHE["model"] = None
+    # Кэш модели стал LRU-СПИСКОМ кортежей (модуль, строка 69), а сброс остался
+    # словарным — из-за этого падал весь файл тестов, и регрессия живого ELO
+    # прошла незамеченной.
+    live_team_strength_module._MODEL_FROM_SNAPSHOT_CACHE.clear()
     live_team_strength_module._RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = None
     live_team_strength_module._RUNTIME_SNAPSHOT_CACHE["runtime_signature"] = None
     live_team_strength_module._RUNTIME_SNAPSHOT_CACHE["snapshot"] = None
