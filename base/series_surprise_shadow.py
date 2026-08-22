@@ -195,3 +195,45 @@ def recent_team_ids(*, within: int = 3 * 3600, store_path: Optional[Path] = None
         except Exception:
             continue
     return sorted(out)
+
+
+#: Прогресс живого ELO прод пишет на КАЖДОЙ живой карте, а не только там, где
+#: сделана ставка. Как источник «кто сейчас играет» он полнее нашего хранилища
+#: вердиктов, которое наполняется лишь на ставках.
+DEFAULT_ELO_PROGRESS_PATH = Path(
+    os.getenv("LIVE_ELO_PROGRESS",
+              str(Path(__file__).resolve().parent.parent / "runtime" / "live_elo_progress.json"))
+)
+
+
+def teams_from_elo_progress(*, path: Optional[Path] = None,
+                            within: int = 3 * 3600,
+                            now: Optional[int] = None) -> List[int]:
+    """Команды из отложенных карт прогресса живого ELO. Пусто — если файла нет."""
+    ts = int(now if now is not None else time.time())
+    try:
+        with Path(path or DEFAULT_ELO_PROGRESS_PATH).open(encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return []
+    out = set()
+    for state in (data.get("pending_series") or {}).values():
+        try:
+            if ts - int(state.get("updated_at") or 0) > within:
+                continue
+            rec = ((state.get("pending_map") or {}).get("match_record")) or {}
+            for k in ("radiant_team_id", "dire_team_id"):
+                if int(rec.get(k) or 0) > 0:
+                    out.add(int(rec[k]))
+        except Exception:
+            continue
+    return sorted(out)
+
+
+def teams_to_warm(*, store_path: Optional[Path] = None,
+                  elo_progress_path: Optional[Path] = None,
+                  now: Optional[int] = None) -> List[int]:
+    """Кого держать тёплым: живые карты плюс команды наших свежих вердиктов."""
+    a = teams_from_elo_progress(path=elo_progress_path, now=now)
+    b = recent_team_ids(store_path=store_path, now=now)
+    return sorted(set(a) | set(b))

@@ -52,6 +52,9 @@ CACHE_TTL = float(os.getenv("STRATZ_TEAM_MATCHES_TTL", "120"))
 #: Окно «вчера»: серия не растягивается дольше, а лишние сутки удорожают ответ.
 LOOKBACK_SECONDS = int(os.getenv("STRATZ_TEAM_LOOKBACK", str(30 * 3600)))
 TAKE = 25
+#: Под этим ключом в том же файле лежит перевод «id прода -> id фида». Отдельным
+#: файлом делать не стоит: связка нужна ровно там же, где кэш, и живёт столько же.
+ALIAS_KEY = "_aliases"
 MATCH_ID_RE = re.compile(r"/matches/(\d{6,})")
 _lock = threading.Lock()
 
@@ -77,6 +80,46 @@ def match_id_from_map_key(map_key: str) -> int:
     except ValueError:
         return 0
     return v if v > 8_000_000_000 else 0
+
+
+def note_team_alias(prod_team_id: int, feed_team_id: int, *,
+                    cache_path: Optional[Path] = None) -> None:
+    """Запомнить, что прод зовёт эту команду иначе, чем фид.
+
+    ЗАЧЕМ. Прод подменяет пришедший id команды словарным по имени
+    (`TEAM_ID_NAME_MISMATCH`), и до нас доезжает уже подменённый. У Stratz такого
+    id нет: 22.08.2026 по боевым `10163435` (BoomBoys) и `7554697` (Nigma)
+    возвращался НОЛЬ матчей, тогда как по пришедшим с фида `8255888` и
+    `10136357` — по шесть. Справка из-за этого не могла сработать никогда.
+    Связку знает только та точка, где происходит подмена, — оттуда её и пишем.
+    """
+    a, b = int(prod_team_id or 0), int(feed_team_id or 0)
+    if a <= 0 or b <= 0 or a == b:
+        return
+    path = Path(cache_path or DEFAULT_CACHE_PATH)
+    with _lock:
+        cache = _load(path)
+        al = cache.get(ALIAS_KEY)
+        if not isinstance(al, dict):
+            al = {}
+        if al.get(str(a)) == b:
+            return
+        al[str(a)] = b
+        cache[ALIAS_KEY] = al
+        _save(path, cache)
+
+
+def resolve_team_id(team_id: int, *, cache_path: Optional[Path] = None) -> int:
+    """id, под которым команду знает Stratz. Без записанной связки — как есть."""
+    tid = int(team_id or 0)
+    with _lock:
+        al = _load(Path(cache_path or DEFAULT_CACHE_PATH)).get(ALIAS_KEY)
+    if isinstance(al, dict):
+        try:
+            return int(al.get(str(tid), tid))
+        except Exception:
+            return tid
+    return tid
 
 
 def _load(path: Path) -> Dict[str, Any]:
@@ -134,11 +177,12 @@ def team_matches(team_id: int, *, now: Optional[int] = None,
 
     `query` вынесен параметром ради тестов: сеть в них не нужна.
     """
-    tid = int(team_id or 0)
+    path = Path(cache_path or DEFAULT_CACHE_PATH)
+    # Перевод в id фида идёт ДО запроса: спрашивать подменённый бессмысленно.
+    tid = resolve_team_id(team_id, cache_path=path)
     if tid <= 0:
         return []
     ts = int(now if now is not None else time.time())
-    path = Path(cache_path or DEFAULT_CACHE_PATH)
     key = str(tid)
     with _lock:
         cache = _load(path)
@@ -170,7 +214,7 @@ def team_matches(team_id: int, *, now: Optional[int] = None,
         cache = _load(path)
         cache[key] = {"at": ts, "matches": clean}
         for k in [k for k, v in cache.items()
-                  if ts - int((v or {}).get("at") or 0) > LOOKBACK_SECONDS]:
+                  if k != ALIAS_KEY and ts - int((v or {}).get("at") or 0) > LOOKBACK_SECONDS]:
             cache.pop(k, None)
         _save(path, cache)
     return clean
@@ -189,8 +233,14 @@ def series_history(radiant_team_id: int, dire_team_id: int, *,
     """
     ts = int(now if now is not None else time.time())
     cutoff = int(before if before is not None else ts)
-    ms = team_matches(radiant_team_id, now=ts, cache_path=cache_path, query=query)
-    pair = {int(radiant_team_id), int(dire_team_id)}
+    path = Path(cache_path or DEFAULT_CACHE_PATH)
+    # ПЕРЕВОДЯТСЯ ОБЕ СТОРОНЫ. Матчи приходят с идентификаторами Stratz, поэтому
+    # и пара для сравнения должна быть в них: первая версия правки переводила
+    # только id для запроса, и фильтр пары молча не совпадал никогда.
+    rad = resolve_team_id(radiant_team_id, cache_path=path)
+    dire = resolve_team_id(dire_team_id, cache_path=path)
+    ms = team_matches(rad, now=ts, cache_path=path, query=query)
+    pair = {int(rad), int(dire)}
     same = [m for m in ms
             if {m["radiant_team_id"], m["dire_team_id"]} == pair and m["end"] < cutoff]
     if not same:
@@ -226,7 +276,7 @@ def refresh(team_ids, *, cache_path: Optional[Path] = None,
     ts = int(now if now is not None else time.time())
     path = Path(cache_path or DEFAULT_CACHE_PATH)
     fresh = 0
-    for tid in {int(t) for t in team_ids if int(t or 0) > 0}:
+    for tid in {resolve_team_id(t, cache_path=path) for t in team_ids if int(t or 0) > 0}:
         with _lock:
             before = {int(m.get("match_id") or 0)
                       for m in (_load(path).get(str(tid)) or {}).get("matches") or []}

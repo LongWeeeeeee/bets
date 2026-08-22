@@ -214,3 +214,81 @@ def test_refresh_survives_network_failure(tmp_path: Path) -> None:
     n = smr.refresh([A], cache_path=tmp_path / "c.json", now=T0,
                     query=lambda tid, since: None)
     assert n == 0
+
+
+def test_teams_from_elo_progress(tmp_path: Path) -> None:
+    """Живые карты берутся из прогресса ELO — он пишется на каждой карте."""
+    import json as _json
+    from series_surprise_shadow import teams_from_elo_progress, teams_to_warm
+    prog = tmp_path / "live_elo_progress.json"
+    prog.write_text(_json.dumps({"pending_series": {
+        "s1": {"updated_at": T0, "pending_map": {"match_record": {
+            "radiant_team_id": 777, "dire_team_id": 888}}},
+        "old": {"updated_at": T0 - 10 * 3600, "pending_map": {"match_record": {
+            "radiant_team_id": 999, "dire_team_id": 1000}}},
+    }}), encoding="utf-8")
+    assert teams_from_elo_progress(path=prog, now=T0) == [777, 888]
+    st = _store(tmp_path)
+    observe(series_key="s", map_key="m1", radiant_team_id=A, dire_team_id=B,
+            p_radiant=0.7, store_path=st, now=T0, history_lookup=lambda *a: [])
+    assert teams_to_warm(store_path=st, elo_progress_path=prog, now=T0) == [A, B, 777, 888]
+
+
+def test_teams_from_elo_progress_missing_file(tmp_path: Path) -> None:
+    from series_surprise_shadow import teams_from_elo_progress
+    assert teams_from_elo_progress(path=tmp_path / "нет.json", now=T0) == []
+
+
+# ---------- подмена team_id проводом ----------
+
+def test_prod_team_id_is_translated_to_feed_id(tmp_path: Path) -> None:
+    """Прод подменяет id команды словарным, а Stratz знает только тот, что дал фид.
+
+    Боевой случай 22.08.2026: фид отдал BoomBoys 8255888 и Nigma 10136357, прод
+    заменил их на 10163435 и 7554697 (`TEAM_ID_NAME_MISMATCH`), и по подменённым
+    Stratz возвращает НОЛЬ матчей — справка не могла сработать никогда.
+    """
+    cache = tmp_path / "c.json"
+    seen = []
+
+    def query(tid, since):
+        seen.append(tid)
+        return [_raw(11, 600, T0, 8255888, 10136357, True)] if tid == 8255888 else []
+
+    smr.note_team_alias(10163435, 8255888, cache_path=cache)
+    got = smr.team_matches(10163435, now=T0 + 10, cache_path=cache, query=query)
+    assert seen == [8255888], "спрашивать надо id фида, а не подменённый"
+    assert [m["match_id"] for m in got] == [11]
+
+
+def test_alias_is_not_invented_when_absent(tmp_path: Path) -> None:
+    """Без записанной связки id остаётся как есть — гадать нельзя."""
+    seen = []
+    smr.team_matches(555, now=T0, cache_path=tmp_path / "c.json",
+                     query=lambda tid, since: seen.append(tid) or [])
+    assert seen == [555]
+
+
+def test_alias_survives_reload(tmp_path: Path) -> None:
+    """Связка переживает перезапуск: она на диске, а не в памяти процесса."""
+    cache = tmp_path / "c.json"
+    smr.note_team_alias(10163435, 8255888, cache_path=cache)
+    assert smr.resolve_team_id(10163435, cache_path=cache) == 8255888
+    assert smr.resolve_team_id(999, cache_path=cache) == 999
+
+
+def test_series_history_translates_both_sides(tmp_path: Path) -> None:
+    """Перевод нужен НЕ ТОЛЬКО в запросе, но и в сравнении пары команд.
+
+    Первая версия правки переводила лишь id для запроса: матчи приходили с
+    идентификаторами Stratz, а фильтр пары сравнивал их с продовыми, и история
+    выходила пустой. Ловится только тестом, где ОБЕ стороны заданы по-продовому.
+    """
+    cache = tmp_path / "c.json"
+    smr.note_team_alias(10163435, 8255888, cache_path=cache)
+    smr.note_team_alias(7554697, 10136357, cache_path=cache)
+    raw = [_raw(1, 900, T0, 8255888, 10136357, True),
+           _raw(2, 900, T0 + 4000, 10136357, 8255888, True)]
+    got = smr.series_history(10163435, 7554697, before=T0 + 9000, now=T0 + 9000,
+                             cache_path=cache, query=lambda tid, since: raw)
+    assert [m["match_id"] for m in got] == [1, 2]

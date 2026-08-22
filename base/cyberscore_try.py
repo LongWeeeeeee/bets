@@ -19223,6 +19223,17 @@ def _ensure_known_team_or_add_to_tier2(team_ids, team_name: str, match_url: str)
             candidate_ids,
             resolved_id,
         )
+        # ЗДЕСЬ И ТОЛЬКО ЗДЕСЬ известны ОБА id: пришедший с фида и словарный,
+        # на который мы его меняем. Дальше по коду едет уже подменённый, а
+        # Stratz знает команду по пришедшему: 22.08.2026 по боевым 10163435
+        # (BoomBoys) и 7554697 (Nigma) он отдавал НОЛЬ матчей, по фидовым
+        # 8255888 и 10136357 — по шесть. Без этой записи справка об исходе
+        # предыдущей карты серии не могла сработать никогда.
+        try:
+            import stratz_map_result
+            stratz_map_result.note_team_alias(resolved_id, candidate_ids[0])
+        except Exception:
+            pass
         return True, resolved_id
 
     # Проверяем каждый candidate id: если хоть один уже известен (T1/T2), берем его.
