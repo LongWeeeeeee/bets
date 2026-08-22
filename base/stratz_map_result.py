@@ -200,3 +200,93 @@ def series_history(radiant_team_id: int, dire_team_id: int, *,
     if last_series:
         same = [m for m in same if m["series_id"] == last_series]
     return same
+
+
+# ---------- фоновый прогрев ----------
+#
+# ЗАЧЕМ. Справка нужна ровно в момент вердикта по следующей карте серии, а это
+# минута-две до её старта. Если спрашивать синхронно, то в пути ставки появляется
+# сетевой вызов, и вдобавок ответа может ещё не быть: карта только что кончилась.
+# Идея alex — опрашивать карту заранее, с интервалом в полминуты, начиная примерно
+# через четверть часа после её конца. Тогда к моменту вердикта ответ уже в кэше, а
+# синхронный вызов становится обращением к диску.
+#
+# ЗАОДНО ЭТО ЗАМЕР. Через сколько Stratz отдаёт ИСХОД (не разбор), мы не знаем:
+# известна только задержка разбора — медиана 17 часов. Прогрев логирует момент
+# первого появления карты относительно её конца, и через сутки станет видно,
+# правильные ли четверть часа.
+
+REFRESH_INTERVAL = float(os.getenv("STRATZ_REFRESH_INTERVAL", "30"))
+_refresh_thread: Optional[threading.Thread] = None
+
+
+def refresh(team_ids, *, cache_path: Optional[Path] = None,
+            now: Optional[int] = None, query=_query, on_new=None) -> int:
+    """Обновить кэш по списку команд В ОБХОД TTL. Возвращает число новых карт."""
+    ts = int(now if now is not None else time.time())
+    path = Path(cache_path or DEFAULT_CACHE_PATH)
+    fresh = 0
+    for tid in {int(t) for t in team_ids if int(t or 0) > 0}:
+        with _lock:
+            before = {int(m.get("match_id") or 0)
+                      for m in (_load(path).get(str(tid)) or {}).get("matches") or []}
+        got = query(tid, ts - LOOKBACK_SECONDS)
+        if got is None:
+            continue
+        clean = []
+        for m in got:
+            try:
+                if m.get("didRadiantWin") is None or not m.get("endDateTime"):
+                    continue
+                clean.append({
+                    "match_id": int(m["id"]),
+                    "series_id": int(m.get("seriesId") or 0),
+                    "start": int(m.get("startDateTime") or 0),
+                    "end": int(m["endDateTime"]),
+                    "radiant_team_id": int(m.get("radiantTeamId") or 0),
+                    "dire_team_id": int(m.get("direTeamId") or 0),
+                    "radiant_won": bool(m["didRadiantWin"]),
+                })
+            except Exception:
+                continue
+        with _lock:
+            cache = _load(path)
+            cache[str(tid)] = {"at": ts, "matches": clean}
+            _save(path, cache)
+        for m in clean:
+            if m["match_id"] not in before:
+                fresh += 1
+                if on_new is not None:
+                    try:
+                        on_new(tid, m, ts - m["end"])
+                    except Exception:
+                        pass
+    return fresh
+
+
+def start_background_refresh(teams_provider, *, interval: Optional[float] = None,
+                             cache_path: Optional[Path] = None, on_new=None,
+                             query=_query) -> Optional[threading.Thread]:
+    """Демон, держащий кэш тёплым по командам, которые вернёт `teams_provider`.
+
+    Заводится один раз; повторный вызов возвращает уже работающий поток. Ошибки
+    гасятся целиком: прогрев не имеет права уронить боевой процесс.
+    """
+    global _refresh_thread
+    if _refresh_thread is not None and _refresh_thread.is_alive():
+        return _refresh_thread
+    step = float(interval if interval is not None else REFRESH_INTERVAL)
+
+    def loop() -> None:
+        while True:
+            try:
+                teams = list(teams_provider() or [])
+                if teams:
+                    refresh(teams, cache_path=cache_path, query=query, on_new=on_new)
+            except Exception:
+                pass
+            time.sleep(step)
+
+    _refresh_thread = threading.Thread(target=loop, name="stratz-refresh", daemon=True)
+    _refresh_thread.start()
+    return _refresh_thread

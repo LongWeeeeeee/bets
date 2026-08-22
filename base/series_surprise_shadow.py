@@ -172,3 +172,26 @@ def observe(
     except Exception:
         return {"s_sum": 0.0, "s_last": 0.0, "n_prev": 0.0}
     return surprise_from_maps(maps, verdicts, int(radiant_team_id))
+
+
+def recent_team_ids(*, within: int = 3 * 3600, store_path: Optional[Path] = None,
+                    now: Optional[int] = None) -> List[int]:
+    """Команды из свежих вердиктов — их и держит тёплыми фоновый прогрев.
+
+    Три часа выбраны с запасом на бо-5: серия столько не длится, а держать в
+    прогреве команду, которая давно доиграла, значит зря жечь квоту.
+    """
+    ts = int(now if now is not None else time.time())
+    with _lock:
+        verdicts = _load(Path(store_path or DEFAULT_STORE_PATH))["verdicts"]
+    out = set()
+    for v in verdicts:
+        try:
+            if ts - int(v.get("ts") or 0) > within:
+                continue
+            for k in ("radiant_team_id", "dire_team_id"):
+                if int(v.get(k) or 0) > 0:
+                    out.add(int(v[k]))
+        except Exception:
+            continue
+    return sorted(out)

@@ -181,3 +181,36 @@ def test_team_matches_network_failure_returns_empty(tmp_path: Path) -> None:
     got = smr.team_matches(A, now=T0, cache_path=tmp_path / "c.json",
                            query=lambda tid, since: None)
     assert got == []
+
+
+# ---------- фоновый прогрев ----------
+
+def test_recent_team_ids_from_store(tmp_path: Path) -> None:
+    from series_surprise_shadow import recent_team_ids
+    st = _store(tmp_path)
+    observe(series_key="s", map_key="m1", radiant_team_id=A, dire_team_id=B,
+            p_radiant=0.7, store_path=st, now=T0, history_lookup=lambda *a: [])
+    observe(series_key="s", map_key="m2", radiant_team_id=333, dire_team_id=444,
+            p_radiant=0.7, store_path=st, now=T0 - 10 * 3600, history_lookup=lambda *a: [])
+    got = recent_team_ids(store_path=st, now=T0)
+    assert got == [A, B], "старый вердикт греть незачем"
+
+
+def test_refresh_reports_newly_appeared_map(tmp_path: Path) -> None:
+    """Прогрев обязан сообщать о появлении карты — это и есть замер задержки."""
+    seen = []
+    raw = [_raw(11, 600, T0 - 1800, A, B, False)]
+    n = smr.refresh([A], cache_path=tmp_path / "c.json", now=T0,
+                    query=lambda tid, since: raw,
+                    on_new=lambda tid, m, delay: seen.append((tid, m["match_id"], delay)))
+    assert n == 1 and seen and seen[0][1] == 11
+    # повторный прогон той же карты новой не считает
+    n2 = smr.refresh([A], cache_path=tmp_path / "c.json", now=T0 + 30,
+                     query=lambda tid, since: raw, on_new=lambda *a: seen.append(a))
+    assert n2 == 0
+
+
+def test_refresh_survives_network_failure(tmp_path: Path) -> None:
+    n = smr.refresh([A], cache_path=tmp_path / "c.json", now=T0,
+                    query=lambda tid, since: None)
+    assert n == 0
