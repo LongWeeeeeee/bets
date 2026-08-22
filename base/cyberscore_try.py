@@ -21239,6 +21239,15 @@ def _build_team_elo_matchup_summary_from_live_snapshot(
     return summary if isinstance(summary, dict) else None
 
 
+def _live_elo_winner_lookup(map_key: str):
+    """Победил ли радиант на карте с этим ключом. None — не знаем."""
+    try:
+        import stratz_map_result                            # noqa: PLC0415
+        return stratz_map_result.radiant_won(map_key)
+    except Exception:
+        logger.exception("live ELO winner lookup failed for %s", map_key)
+        return None
+
 def _register_completed_live_map_for_elo(
     *,
     series_key: Any,
@@ -21323,6 +21332,12 @@ def _register_completed_live_map_for_elo(
             second_team_score=second_score,
             first_team_is_radiant=bool(first_team_is_radiant),
             match_record=match_record,
+            # Исход ОТЛОЖЕННОЙ карты берётся по её match_id у Stratz. Счёт серии
+            # для этого не нужен и не годится: по E-224 внутри окна наблюдения
+            # одной серии он не меняется, поэтому применений покарточным путём
+            # было ровно ноль. Справка никогда не бросает и на неизвестном исходе
+            # возвращает None — тогда всё остаётся как было.
+            winner_lookup=_live_elo_winner_lookup,
         )
     except Exception:
         logger.exception("Failed to register live ELO map context for %s", normalized_map_key)

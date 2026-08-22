@@ -1486,6 +1486,7 @@ def register_live_map_context(
     progress_path: Path = DEFAULT_RUNTIME_PROGRESS_PATH,
     runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
     runtime_lock_path: Path = DEFAULT_RUNTIME_LOCK_PATH,
+    winner_lookup: Any = None,
 ) -> dict[str, Any] | None:
     normalized_series_key = str(series_key or "").strip() or str(match_record.series_id or series_url or map_key)
     normalized_map_key = str(map_key or "").strip()
@@ -1540,11 +1541,41 @@ def register_live_map_context(
             previous_scores = previous_scores_raw if isinstance(previous_scores_raw, dict) else {"first": 0, "second": 0}
             winner_slot = _winner_slot_from_scores(previous_scores, current_scores)
             pending_map = series_state.get("pending_map")
-            if winner_slot is not None and isinstance(pending_map, dict):
+            if isinstance(pending_map, dict):
                 pending_map_key = str(pending_map.get("map_key") or "").strip()
-                if pending_map_key and pending_map_key not in applied_maps:
-                    first_radiant_pending = bool(pending_map.get("first_team_is_radiant"))
-                    radiant_won = winner_slot == ("first" if first_radiant_pending else "second")
+                first_radiant_pending = bool(pending_map.get("first_team_is_radiant"))
+                radiant_won_direct = None
+                if winner_slot is not None:
+                    radiant_won_direct = winner_slot == ("first" if first_radiant_pending else "second")
+                elif winner_lookup is not None and pending_map_key:
+                    # СЧЁТ СЕРИИ НА ЖИВОМ ПУТИ НЕ ДВИГАЕТСЯ. По E-224 внутри окна
+                    # наблюдения одной серии он неизменен, поэтому механизм
+                    # «победитель = сдвиг счёта» не срабатывает НИ РАЗУ: за прогон
+                    # 0 применений этим путём против 390 аварийным подбором, и у
+                    # 132 серий из 132 применена ровно одна карта. Здесь исход
+                    # берётся по match_id самой карты (в бою —
+                    # `stratz_map_result.radiant_won`), и счёт больше не нужен.
+                    try:
+                        looked = winner_lookup(pending_map_key)
+                    except Exception:
+                        looked = None
+                    if isinstance(looked, bool):
+                        radiant_won_direct = looked
+                        winner_slot = (("first" if first_radiant_pending else "second")
+                                       if looked else
+                                       ("second" if first_radiant_pending else "first"))
+                # ЗАЩИТА ОТ ДВОЙНОГО ПРИМЕНЕНИЯ ИДЁТ ПО match_id, А НЕ ПО КЛЮЧУ:
+                # ключ карты в проде меняется по 12 раз за одну карту, и та же
+                # карта под новым ключом прошла бы проверку «ключа нет в
+                # applied_maps» и сдвинула бы рейтинг второй раз.
+                _pm_rec = pending_map.get("match_record") if isinstance(pending_map.get("match_record"), dict) else {}
+                _pm_mid = int(_pm_rec.get("match_id") or 0)
+                _seen_mid = _pm_mid > 0 and any(
+                    int((v or {}).get("match_id") or 0) == _pm_mid
+                    for v in applied_maps.values() if isinstance(v, dict))
+                if (radiant_won_direct is not None and pending_map_key
+                        and pending_map_key not in applied_maps and not _seen_mid):
+                    radiant_won = radiant_won_direct
                     pending_match = _deserialize_match_record(
                         pending_map.get("match_record") if isinstance(pending_map.get("match_record"), dict) else {},
                         radiant_win=radiant_won,

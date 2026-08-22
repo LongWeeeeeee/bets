@@ -1117,3 +1117,111 @@ def test_live_runtime_applies_roster_change_and_uncertainty_boosts(tmp_path) -> 
     assert preview_after["radiant"]["live_base_delta"] != pytest.approx(0.0)
 
     _reset_live_team_strength_caches()
+
+
+def _live_env(tmp_path):
+    """Минимальный рантайм для двух подряд регистраций карт одной серии."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(exist_ok=True)
+    snapshot_path = tmp_path / "live_snapshot.json"
+    model = HybridPlayerRosterEloModel(HybridEloConfig())
+    snapshot_path.write_text(json.dumps({
+        "meta": {"reference_timestamp": 1771153251},
+        "teams_by_org_key": {},
+        "model_state": model.export_state(),
+    }), encoding="utf-8")
+    return dict(
+        data_dir=data_dir, snapshot_path=snapshot_path,
+        progress_path=tmp_path / "live_progress.json",
+        runtime_model_state_path=tmp_path / "live_model_state.json",
+        runtime_lock_path=tmp_path / "live_state.lock",
+        rebuild_if_missing=False,
+    )
+
+
+def _rec(match_id: int, radiant_win: bool = False):
+    return MatchRecord(
+        match_id=match_id, timestamp=1771153200, radiant_win=radiant_win,
+        radiant_team_id=1, radiant_team_name="Elegia",
+        dire_team_id=2, dire_team_name="Team Mariachi",
+        radiant_player_ids=(1, 2, 3, 4, 5), dire_player_ids=(6, 7, 8, 9, 10),
+        league_id=11, league_name="Test League", source_league_tier="TIER2",
+        series_id=425663, series_type="3", derived_league_tier=LeagueTier.TIER2,
+    )
+
+
+def test_winner_lookup_applies_pending_map_when_series_score_stands_still(tmp_path) -> None:
+    """Боевой случай E-224: счёт серии не двигается, исход берётся по match_id.
+
+    Без `winner_lookup` эта пара регистраций не даёт ни одного применения — это и
+    есть дефект, из-за которого в рейтинг попадала ровно одна карта на серию.
+    """
+    _reset_live_team_strength_caches()
+    env = _live_env(tmp_path)
+    common = dict(series_key="425663", series_url="dltv.org/matches/425663", **env)
+
+    r1 = register_live_map_context(
+        map_key="dltv.org/matches/425663.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(101), **common)
+    assert r1 is not None and r1["applied_update"] is None
+
+    # счёт ТОТ ЖЕ — старый механизм здесь молчит
+    r_silent = register_live_map_context(
+        map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(102), **common)
+    assert r_silent["applied_update"] is None, "без справки применять нечего"
+
+    _reset_live_team_strength_caches()
+    env2 = _live_env(tmp_path / "second")
+    common2 = dict(series_key="425663", series_url="dltv.org/matches/425663", **env2)
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(101), **common2)
+    r2 = register_live_map_context(
+        map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(102),
+        winner_lookup=lambda key: False, **common2)
+    assert r2["applied_update"] is not None
+    assert r2["applied_update"]["map_key"] == "dltv.org/matches/425663.0"
+    assert r2["applied_update"]["radiant_win"] is False
+
+
+def test_winner_lookup_does_not_apply_same_match_twice(tmp_path) -> None:
+    """Ключ карты меняется по 12 раз за карту — применить её дважды нельзя."""
+    _reset_live_team_strength_caches()
+    env = _live_env(tmp_path)
+    common = dict(series_key="425663", series_url="dltv.org/matches/425663", **env)
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(101), **common)
+    first = register_live_map_context(
+        map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(102),
+        winner_lookup=lambda key: False, **common)
+    assert first["applied_update"] is not None
+    # та же карта 101 снова становится отложенной под ДРУГИМ ключом
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.27", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(101), **common)
+    again = register_live_map_context(
+        map_key="dltv.org/matches/425665.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(103),
+        winner_lookup=lambda key: False, **common)
+    assert again["applied_update"] is None, "match_id 101 уже применён"
+
+
+def test_winner_lookup_failure_is_not_a_loss(tmp_path) -> None:
+    """`None` из справки означает «не знаем», а не «радиант проиграл»."""
+    _reset_live_team_strength_caches()
+    env = _live_env(tmp_path)
+    common = dict(series_key="425663", series_url="dltv.org/matches/425663", **env)
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(101), **common)
+    for lookup in (lambda key: None, lambda key: (_ for _ in ()).throw(RuntimeError("сеть"))):
+        r = register_live_map_context(
+            map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
+            first_team_is_radiant=True, match_record=_rec(102),
+            winner_lookup=lookup, **common)
+        assert r["applied_update"] is None

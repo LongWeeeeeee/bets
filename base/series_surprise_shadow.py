@@ -14,9 +14,16 @@
 
 ПОЧЕМУ СВОЙ УЧЁТ, А НЕ ЖИВОЙ ELO. Прогресс живого ELO для этого не годится:
 покарточное применение в бою не срабатывает, у 132 серий из 132 применена ровно
-одна карта. Поэтому исход предыдущей карты восстанавливается здесь самостоятельно
-— по смене счёта серии между вердиктами, тем же приёмом, что и в
-`ELO.live_team_strength.register_live_map_context`.
+одна карта (E-224). Исход предыдущей карты берётся двумя путями: по сдвигу счёта
+серии, если он есть, и — основным — запросом к Stratz по match_id самой карты
+(`stratz_map_result.radiant_won`). Второй путь именно основной, потому что счёт
+внутри окна наблюдения одной серии не меняется вовсе.
+
+ПОЧЕМУ ЗАКРЫВАЕМ ПО match_id, А НЕ ПО КЛЮЧУ. Ключ карты в проде меняется по
+12 раз ЗА одну карту (`...8958607830.10`, `.11`, … `.27`). Сравнение «ключ
+отложенной ≠ текущий ключ» срабатывало бы на каждой такой смене и клало бы одну
+и ту же карту в историю многократно. Сравнивается match_id, вырезанный из ключа:
+он у карты один.
 
 ПОЧЕМУ ОРИЕНТАЦИЯ НА РАДИАНТА. Цель модели — «победил радиант». Первая версия
 признака считалась для команды, за которую голосует модель, и на картах с выбором
@@ -32,6 +39,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from stratz_map_result import match_id_from_map_key
 
 #: Хранилище рядом с прочим рантаймом. Пишется атомарно: файл читают и другие
 #: процессы, а частичная запись выглядела бы как пустая история серии.
@@ -132,13 +141,19 @@ def observe(
     second_team_score: int,
     store_path: Optional[Path] = None,
     now: Optional[int] = None,
+    winner_lookup=None,
 ) -> Dict[str, float]:
     """Записать текущую карту и вернуть сюрприз серии ДО неё.
 
-    Исход предыдущей карты восстанавливается здесь же: если счёт серии сдвинулся
-    с прошлого вердикта, отложенная карта закрывается победителем и уходит в
-    историю. Возвращаются величины, посчитанные по истории БЕЗ текущей карты —
-    именно они доступны модели в момент решения.
+    Исход предыдущей карты восстанавливается двумя путями. Сначала по сдвигу
+    счёта серии — он бесплатный. Если счёт не сдвинулся, зовётся `winner_lookup`:
+    в бою это `stratz_map_result.radiant_won`, спрашивающий исход по match_id
+    самой карты. Второй путь нужен не как запасной, а как основной: по E-224
+    счёт внутри окна наблюдения одной серии не меняется вовсе, так что на живом
+    пути первый способ не срабатывает никогда.
+
+    Возвращаются величины, посчитанные по истории БЕЗ текущей карты — именно они
+    доступны модели в момент решения.
     """
     path = Path(store_path or DEFAULT_STORE_PATH)
     ts = int(now if now is not None else time.time())
@@ -158,11 +173,25 @@ def observe(
         history: List[Dict[str, Any]] = list(state.get("history") or [])
         pending = state.get("pending")
         slot = _winner_slot(state.get("last_scores") or cur_scores, cur_scores)
-        if slot is not None and isinstance(pending, dict) and pending.get("map_key") != mkey:
-            first_rad = bool(pending.get("first_team_is_radiant"))
-            radiant_won = slot == ("first" if first_rad else "second")
+        radiant_won = None
+        cur_mid = match_id_from_map_key(mkey)
+        pend_mid = match_id_from_map_key(str((pending or {}).get("map_key") or ""))
+        other_map = (isinstance(pending, dict)
+                     and pend_mid > 0 and cur_mid > 0 and pend_mid != cur_mid)
+        already = {int(h.get("match_id") or 0) for h in history}
+        if other_map and pend_mid not in already:
+            if slot is not None:
+                first_rad = bool(pending.get("first_team_is_radiant"))
+                radiant_won = slot == ("first" if first_rad else "second")
+            elif winner_lookup is not None:
+                try:
+                    radiant_won = winner_lookup(str(pending.get("map_key") or ""))
+                except Exception:
+                    radiant_won = None
+        if radiant_won is not None and isinstance(pending, dict):
             history.append({
                 "map_key": pending.get("map_key"),
+                "match_id": pend_mid,
                 "radiant_team_id": int(pending.get("radiant_team_id") or 0),
                 "p_radiant": pending.get("p_radiant"),
                 "radiant_won": bool(radiant_won),
