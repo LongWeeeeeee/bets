@@ -340,3 +340,52 @@ def start_background_refresh(teams_provider, *, interval: Optional[float] = None
     _refresh_thread = threading.Thread(target=loop, name="stratz-refresh", daemon=True)
     _refresh_thread.start()
     return _refresh_thread
+
+
+# ---------- подробности по игрокам ----------
+
+_PLAYERS_QUERY = (
+    "{match(id:%d){id didRadiantWin startDateTime endDateTime durationSeconds "
+    "radiantTeamId direTeamId leagueId "
+    "players{steamAccountId heroId isRadiant isVictory position kills deaths "
+    "assists numLastHits numDenies goldPerMinute networth experiencePerMinute "
+    "level heroDamage imp}}}"
+)
+#: Позиции у Stratz строками; в артефакте — числами 1..5.
+POSITION_NUM = {"POSITION_1": 1, "POSITION_2": 2, "POSITION_3": 3,
+                "POSITION_4": 4, "POSITION_5": 5}
+
+
+def match_players(match_id: int, *, query_raw=None) -> Optional[Dict[str, Any]]:
+    """Карта с построчными данными по десяти игрокам. `None` — не дозвонились.
+
+    Берётся `imp` — собственная оценка вклада Stratz. ВНИМАНИЕ: совпадает ли она
+    по шкале с колонками `imp50`/`imp30`/`imp_recent` артефакта, НЕ проверено;
+    те считаются пакетными скриптами (`ideas_batch*`) по корпусу. Пока величина
+    только СОБИРАЕТСЯ, в признаки не подставляется.
+    """
+    mid = int(match_id or 0)
+    if mid <= 0:
+        return None
+    if query_raw is not None:
+        return query_raw(mid)
+    try:
+        import requests                                     # noqa: PLC0415
+        from keys import api_to_proxy                       # noqa: PLC0415
+    except Exception:
+        return None
+    q = _PLAYERS_QUERY % mid
+    for proxy, key in list(api_to_proxy.items())[:MAX_PAIRS]:
+        try:
+            r = requests.post(
+                URL, json={"query": q}, timeout=TIMEOUT,
+                headers={"Authorization": f"Bearer {key}",
+                         "Content-Type": "application/json",
+                         "User-Agent": "STRATZ_API"},
+                proxies={"http": proxy, "https": proxy})
+            m = (r.json().get("data") or {}).get("match")
+            if isinstance(m, dict) and m.get("players"):
+                return m
+        except Exception:
+            continue
+    return None
