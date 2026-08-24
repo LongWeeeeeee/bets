@@ -76,20 +76,30 @@ class TestBlockHelpers:
         got = block_from_prod_features(feats, order)
         assert got == {"prod35_0": 1.0, "prod35_1": 5.0, "prod35_2": 3.0}
 
-    def test_absent_feature_drops_block(self):
+    def test_absent_feature_gets_column_neutral(self):
         # Ветка лестницы отдаёт ПОДМНОЖЕСТВО признаков полной модели: на
         # `no_org` нет `h2h_resid`, на `no_account` — признаков игроков, а
-        # `order` всегда полный. 24.08.2026 такой промах считали рассинхроном
-        # и роняли расчёт — панель молчала на каждой карте без h2h, и по логу
-        # это было неотличимо от «панели нет в сборке».
+        # `order` всегда полный. 24.08.2026 такой промах считали рассинхроном и
+        # роняли расчёт — панель молчала на каждой карте без h2h (боевая ветка
+        # была ровно `no_org`), и по логу это было неотличимо от «панели нет в
+        # сборке».
         #
-        # Ноль подставлять по-прежнему нельзя (он прячет потерю), но и падать
-        # нельзя: блок просто не ставится, а `assemble` спишет его 35 колонок
-        # в незаполненные — потеря видна в `fill`.
-        assert block_from_prod_features({}, ["a", "b"]) is None
+        # Пропущенный слот берёт нейтраль КОЛОНКИ из артефакта. Ноль негоден
+        # как общее правило: он нейтрален для `h2h_resid`, но не для `elo`.
         feats = {"draft_logit": 1.0, "elo": 5.0}
-        assert block_from_prod_features(feats,
-                                        ["draft_logit", "elo", "h2h_resid"]) is None
+        got = block_from_prod_features(feats, ["draft_logit", "elo", "h2h_resid"],
+                                       neutral={"prod35_2": 0.25})
+        assert got == {"prod35_0": 1.0, "prod35_1": 5.0, "prod35_2": 0.25}
+
+    def test_absent_without_neutral_falls_back_to_zero(self):
+        # Нейтрали для колонки нет — общий NEUTRAL, а не отказ.
+        got = block_from_prod_features({"elo": 5.0}, ["elo", "h2h_resid"])
+        assert got == {"prod35_0": 5.0, "prod35_1": 0.0}
+
+    def test_nothing_matched_raises(self):
+        # Не совпало НИ ОДНО имя — это чужой порядок, а не короткая ветка.
+        with pytest.raises(KeyError, match="ни одного"):
+            block_from_prod_features({"elo": 1.0}, ["a", "b"])
 
     def test_full_branch_still_builds_block(self):
         # Полная ветка отдаёт все имена — блок собирается как раньше.

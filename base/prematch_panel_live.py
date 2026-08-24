@@ -28,7 +28,8 @@
 
 ТЯЖЁЛОЕ СЧИТАЕТСЯ ОДИН РАЗ. Таблицы карточки (742 колонки) и снимок приоров
 загружаются при первом вызове и живут в процессе: на каждой карте это заняло бы
-секунды и сорвало бы live.
+секунды и сорвало бы live. Карты после среза снимка накладываются на копию
+приоров из дельты (`prematch_live_delta.prior_contribs`) и не пишутся в npz.
 """
 from __future__ import annotations
 
@@ -196,6 +197,27 @@ def status() -> dict[str, Any]:
             "dict_error": st.get("dict_error")}
 
 
+def live_prior_snapshot(snap):
+    """Копия снимка приоров плюс карты дельты после `built_ts`.
+
+    Исходный снимок в `_state` не мутируется. Ошибка накладки — как будто
+    дельты не было: панель обязана отдать вчерашние приоры, а не молчать.
+    """
+    contribs: list = []
+    try:
+        import prematch_live_delta as _D
+        contribs = list(_D.prior_contribs(int(getattr(snap, "built_ts", 0) or 0)))
+    except Exception:
+        return snap, []
+    if not contribs:
+        return snap, []
+    try:
+        from causal_priors import overlay
+        return overlay(snap, contribs), contribs
+    except Exception:
+        return snap, []
+
+
 def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
                  radiant_accounts: Sequence[int], dire_accounts: Sequence[int],
                  prod_features: Mapping[str, float] | None,
@@ -228,10 +250,12 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
             "card": block_from_matrix("sym_", sym_block(heroes10, C, B))}
         if prod_features is not None and prod_order:
             blocks["prod35"] = block_from_prod_features(
-                prod_features, prod_order, expected=bundle.prod35_order)
+                prod_features, prod_order, expected=bundle.prod35_order,
+                neutral=bundle.neutral_by_column)
         snap = st.get("snap")
         if snap is not None:
-            from causal_priors import sym_priors
+            from causal_priors import PRIOR_NAMES, sym_priors
+            snap, contribs = live_prior_snapshot(snap)
             names: list[str] = []
             vals = sym_priors(heroes10, accounts10, snap, names)
             pri = {nm: float(vals[0, j]) for j, nm in enumerate(names)}
@@ -241,11 +265,16 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
             # вычитания берутся здесь же, чтобы уменьшаемое и вычитаемое шли из
             # одного источника.
             import pair_priors
-            from causal_priors import PRIOR_NAMES
 
             jq = [PRIOR_NAMES.index(m) for m in pair_priors.SYN_METRICS]
             hp = snap.hero_priors(heroes10[0])[:, jq]
-            fblock = pair_priors.block(heroes10[0], hp)
+            pair_snap = pair_priors._load().get("snap")
+            if pair_snap is not None and contribs:
+                try:
+                    pair_snap = pair_priors.overlay(pair_snap, contribs)
+                except Exception:
+                    pass
+            fblock = pair_priors.block(heroes10[0], hp, snap=pair_snap)
             if fblock is not None:
                 blocks["pairs"] = fblock
         dblock = _dict_block(heroes10)

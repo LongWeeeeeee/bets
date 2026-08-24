@@ -381,14 +381,32 @@ def score(bundle: PanelBundle,
     return out
 
 
+_ABSENT_PROD35_REPORTED: set = set()
+
+
+def _report_absent_prod35(absent: Sequence[str]) -> None:
+    """Какие боевые признаки не пришли — по одному разу на набор имён.
+
+    Молчать нельзя: подстановка нейтрали внешне неотличима от настоящего
+    значения, а набор зависит от ветки и может смениться незаметно.
+    """
+    key = ",".join(sorted(absent))
+    if key in _ABSENT_PROD35_REPORTED:
+        return
+    _ABSENT_PROD35_REPORTED.add(key)
+    print(f"[panel] ветка не дала {len(absent)} боевых признаков "
+          f"({key}) — слоты заполнены нейтралью обучения", flush=True)
+
+
 def block_from_prod_features(features: Mapping[str, float],
                              order: Sequence[str],
-                             expected: Sequence[str] = ()
-                             ) -> dict[str, float] | None:
+                             expected: Sequence[str] = (),
+                             neutral: Mapping[str, float] | None = None
+                             ) -> dict[str, float]:
     """Боевые 35 колонок: `prod35_i` — это `order[i]` из `ScoreResult.features`.
 
-    None — ветка лестницы отдала не все признаки полной модели; блок тогда не
-    ставится, и это видно в заполненности.
+    `neutral` — нейтрали колонок из артефакта панели: ими заполняются слоты,
+    которых не дала отработавшая ветка лестницы.
 
     Имена в обучающей матрице позиционные (`prod35_0..34`), но порядок задаётся
     `feature_names` боевого артефакта, и он же лежит в `PrematchModel.features`.
@@ -411,21 +429,36 @@ def block_from_prod_features(features: Mapping[str, float],
         raise ValueError(f"порядок боевых признаков разошёлся с обучением "
                          f"панели: слот {i} сейчас {got[i]!r}, а учили на "
                          f"{exp[i]!r}")
-    absent = [nm for nm in order if nm not in features]
+    # ВЕТКА ЛЕСТНИЦЫ ОТДАЁТ ПОДМНОЖЕСТВО. `order` — признаки ПОЛНОЙ модели, а
+    # `features` приходит от ветки, которая реально отработала: на `no_org` нет
+    # `h2h_resid`, на `no_account` — признаков игроков. 24.08.2026 промах здесь
+    # считали рассинхроном и роняли весь расчёт: панель молчала на КАЖДОЙ карте
+    # без h2h (боевая ветка была именно `no_org`).
+    #
+    # Пропущенный слот получает НЕЙТРАЛЬ КОЛОНКИ — среднее обучения из артефакта,
+    # то же значение, которым `assemble` заполняет непоставленную группу. Ноль
+    # тут не годится как общее правило: он нейтрален для `h2h_resid` (остаток
+    # «команды не встречались»), но не для `elo` или `games`.
+    #
+    # Выбрасывать блок целиком — тоже нет: 35 колонок с `elo` и `draft_logit`
+    # стоят дороже одной подставленной, а `assemble` требует от поставленного
+    # блока ВСЕ его колонки, так что частичный словарь упал бы там же.
+    out: dict[str, float] = {}
+    absent: list[str] = []
+    for i, nm in enumerate(order):
+        col = f"prod35_{i}"
+        if nm in features:
+            out[col] = float(features[nm])
+            continue
+        absent.append(nm)
+        out[col] = float((neutral or {}).get(col, NEUTRAL))
+    if absent and order and len(absent) == len(order):
+        # Не совпало НИ ОДНО имя — это уже не ветка, а чужой порядок.
+        raise KeyError("боевая модель не дала ни одного из "
+                       f"{len(order)} признаков порядка — он не от этой модели")
     if absent:
-        # ВЕТКА ЛЕСТНИЦЫ ОТДАЁТ ПОДМНОЖЕСТВО. `order` — признаки ПОЛНОЙ модели,
-        # а `features` приходит от ветки, которая реально отработала: на
-        # `no_org` нет `h2h_resid`, на `no_account` — признаков игроков.
-        # 24.08.2026 промах здесь считали рассинхроном и роняли расчёт: панель
-        # молчала на КАЖДОЙ карте без h2h, и по логу это выглядело как «панели
-        # нет в сборке» — отказ никто не печатал.
-        #
-        # Частично блок отдавать нельзя: `assemble` требует от поставленного
-        # блока ВСЕ его колонки, и половинчатый словарь упал бы там же. Поэтому
-        # блок не ставится целиком — группа уходит в незаполненные, честно
-        # стоит 35 колонок из 928 в `fill`, а нейтраль подставляет `assemble`.
-        return None
-    return {f"prod35_{i}": float(features[nm]) for i, nm in enumerate(order)}
+        _report_absent_prod35(absent)
+    return out
 
 
 def block_from_matrix(prefix: str, values: np.ndarray) -> dict[str, float]:
