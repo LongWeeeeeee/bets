@@ -397,6 +397,33 @@ class RatingState:
             self.ts_last[acc] = now
 
 
+def advance_newer_than(st: RatingState, ts, accounts, wins,
+                       last_ts: int) -> tuple[int, int]:
+    """Провести compact-карты СТРОГО новее `last_ts`. Возвращает (n, newest_ts).
+
+    Эталон гибридного блока закрывается последней своей картой. Всё, что в
+    compact старше или равно этому срезу — в том числе карты, которых в
+    482k-подмножестве не было, — не проводится: иначе рейтинг получил бы
+    историю в неправильном порядке. Новее среза — можно и нужно.
+    """
+    ts_a = np.asarray(ts, dtype=np.int64)
+    acc_a = np.asarray(accounts)
+    win_a = np.asarray(wins)
+    last = int(last_ts)
+    newest = last
+    n = 0
+    if len(ts_a) == 0:
+        return n, newest
+    for i in np.argsort(ts_a, kind="mergesort"):
+        now = int(ts_a[i])
+        if now <= last:
+            continue
+        st.advance(now, [int(x) for x in acc_a[i]], bool(win_a[i]))
+        n += 1
+        newest = now
+    return n, newest
+
+
 def _ts_lists(st: RatingState, players: list[tuple[int, int]],
               now: int) -> tuple[list[int], list[float], list[float]]:
     mus, sigs, ids = [], [], []
