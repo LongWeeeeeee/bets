@@ -76,13 +76,27 @@ class TestBlockHelpers:
         got = block_from_prod_features(feats, order)
         assert got == {"prod35_0": 1.0, "prod35_1": 5.0, "prod35_2": 3.0}
 
-    def test_absent_feature_raises(self):
-        # Раньше отсутствующее имя молча становилось нулём. На боевом вызове это
-        # недостижимо: модель индексирует свой словарь каждым именем из
-        # `self.features` (`prematch_scorer.py:562`) и упала бы раньше. Значит
-        # промах означает рассинхрон порядка, и ноль его прятал.
-        with pytest.raises(KeyError):
-            block_from_prod_features({}, ["a", "b"])
+    def test_absent_feature_drops_block(self):
+        # Ветка лестницы отдаёт ПОДМНОЖЕСТВО признаков полной модели: на
+        # `no_org` нет `h2h_resid`, на `no_account` — признаков игроков, а
+        # `order` всегда полный. 24.08.2026 такой промах считали рассинхроном
+        # и роняли расчёт — панель молчала на каждой карте без h2h, и по логу
+        # это было неотличимо от «панели нет в сборке».
+        #
+        # Ноль подставлять по-прежнему нельзя (он прячет потерю), но и падать
+        # нельзя: блок просто не ставится, а `assemble` спишет его 35 колонок
+        # в незаполненные — потеря видна в `fill`.
+        assert block_from_prod_features({}, ["a", "b"]) is None
+        feats = {"draft_logit": 1.0, "elo": 5.0}
+        assert block_from_prod_features(feats,
+                                        ["draft_logit", "elo", "h2h_resid"]) is None
+
+    def test_full_branch_still_builds_block(self):
+        # Полная ветка отдаёт все имена — блок собирается как раньше.
+        feats = {"draft_logit": 1.0, "elo": 5.0, "h2h_resid": -0.5}
+        assert block_from_prod_features(
+            feats, ["draft_logit", "elo", "h2h_resid"]) == {
+                "prod35_0": 1.0, "prod35_1": 5.0, "prod35_2": -0.5}
 
     def test_order_mismatch_with_artifact_raises(self):
         # Отпечаток из артефакта панели: на чём её учили. Смена ДЛИНЫ ловилась и
