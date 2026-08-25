@@ -72,6 +72,26 @@ class TestSeriesProgress:
         _write(store, {"1": _map(1_000, rad=PUCK, dire=NEMIGA, radiant_won=False)})
         assert D.series_progress(NEMIGA, PUCK, now=2_000, store_path=store) == (1, 0)
 
+    def test_sides_may_never_swap(self, store):
+        # Чередование сторон НЕ гарантировано: в Bo5 команда может отыграть все
+        # пять карт за радиант. Сторона определяется для каждой карты отдельно.
+        _write(store, {
+            "1": _map(1_000, rad=NEMIGA, dire=PUCK, radiant_won=True),
+            "2": _map(2_000, rad=NEMIGA, dire=PUCK, radiant_won=False),
+            "3": _map(3_000, rad=NEMIGA, dire=PUCK, radiant_won=True),
+            "4": _map(4_000, rad=NEMIGA, dire=PUCK, radiant_won=False),
+        })
+        assert D.series_progress(NEMIGA, PUCK, now=5_000, store_path=store) == (2, 2)
+
+    def test_mixed_swapped_and_not(self, store):
+        # Часть карт зеркальная, часть нет — считаются одинаково верно.
+        _write(store, {
+            "1": _map(1_000, rad=NEMIGA, dire=PUCK, radiant_won=True),   # Nemiga +1
+            "2": _map(2_000, rad=PUCK, dire=NEMIGA, radiant_won=True),   # PuckChamp +1
+            "3": _map(3_000, rad=PUCK, dire=NEMIGA, radiant_won=False),  # Nemiga +1
+        })
+        assert D.series_progress(NEMIGA, PUCK, now=4_000, store_path=store) == (2, 1)
+
     def test_roster_change_of_one_still_matches(self, store):
         swapped = NEMIGA[:4] + [999999999]
         _write(store, {"1": _map(1_000, rad=swapped, dire=PUCK, radiant_won=True)})

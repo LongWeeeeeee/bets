@@ -373,9 +373,11 @@ def series_progress(radiant_accounts: Sequence[int], dire_accounts: Sequence[int
                     store_path: Optional[Path] = None) -> Tuple[int, int]:
     """Счёт серии по НАШИМ картам: (побед радианта, побед дайра).
 
-    Стороны — в ориентации ТЕКУЩЕЙ карты: между картами команды меняются
-    местами, поэтому исход прошлой карты переворачивается, если её радиант
-    сейчас играет за дайра.
+    Стороны — в ориентации ТЕКУЩЕЙ карты. Меняются они или нет, заранее
+    неизвестно: в Bo5 одна команда может отыграть все пять карт за радиант, а
+    может меняться каждую. Поэтому сторона определяется ДЛЯ КАЖДОЙ карты
+    отдельно — сопоставлением составов, — и исход переворачивается только там,
+    где радиант прошлой карты сейчас играет за дайра.
 
     ЗАЧЕМ. Номер карты и счёт берутся из `radiant_series_wins`/
     `dire_series_wins` Valve, а он их отдаёт не всегда: 25.08.2026 на второй
@@ -412,7 +414,7 @@ def series_progress(radiant_accounts: Sequence[int], dire_accounts: Sequence[int
             continue
         if (len(rad_now & past_rad) >= SERIES_ROSTER_MATCH
                 and len(dire_now & past_dire) >= SERIES_ROSTER_MATCH):
-            same_sides = True
+            same_sides = True                # та карта шла с теми же сторонами
         elif (len(rad_now & past_dire) >= SERIES_ROSTER_MATCH
               and len(dire_now & past_rad) >= SERIES_ROSTER_MATCH):
             same_sides = False               # на той карте стороны были обратные
