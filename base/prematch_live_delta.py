@@ -46,7 +46,7 @@ import threading
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 _DEFAULT_STORE_FALLBACK = (
     Path(__file__).resolve().parent.parent / "runtime" / "prematch_live_delta.json"
@@ -357,6 +357,73 @@ def prior_contribs(snapshot_ts: int, *,
             accounts=[int(p.get("acc") or 0) for p in slots],
             vr=vr, vd=vd, mask=mask))
     return out
+
+
+#: Дольше этого карты считаются разными сериями. Bo5 с паузами укладывается в
+#: восемь часов; сутки уже склеили бы утреннюю и вечернюю встречу тех же команд.
+SERIES_WINDOW_SECONDS = 8 * 3600
+#: Сколько из пяти слотов должно совпасть, чтобы считать состав тем же. Замена
+#: одного игрока в туре — обычное дело, замена двух означает другую команду.
+SERIES_ROSTER_MATCH = 4
+
+
+def series_progress(radiant_accounts: Sequence[int], dire_accounts: Sequence[int],
+                    *, now: Optional[int] = None,
+                    window: int = SERIES_WINDOW_SECONDS,
+                    store_path: Optional[Path] = None) -> Tuple[int, int]:
+    """Счёт серии по НАШИМ картам: (побед радианта, побед дайра).
+
+    Стороны — в ориентации ТЕКУЩЕЙ карты: между картами команды меняются
+    местами, поэтому исход прошлой карты переворачивается, если её радиант
+    сейчас играет за дайра.
+
+    ЗАЧЕМ. Номер карты и счёт берутся из `radiant_series_wins`/
+    `dire_series_wins` Valve, а он их отдаёт не всегда: 25.08.2026 на второй
+    карте Nemiga — PuckChamp счёт пришёл, на третьей пришли нули, и карточка
+    объявила третью карту первой со счётом 0:0. Свои завершённые карты мы
+    знаем точно, и по составам серия восстанавливается однозначно.
+
+    Команды сопоставляются по игрокам, а не по `team_id`: в дельте лежат
+    аккаунты, и они же переживают смену тега организации.
+    """
+    path = _store_path(store_path)
+    if not path.exists():
+        return 0, 0
+    rad_now = {int(a) for a in radiant_accounts if int(a or 0) > 0}
+    dire_now = {int(a) for a in dire_accounts if int(a or 0) > 0}
+    if len(rad_now) < SERIES_ROSTER_MATCH or len(dire_now) < SERIES_ROSTER_MATCH:
+        return 0, 0
+    ts = int(now if now is not None else time.time())
+    with _lock:
+        data = _load(path)
+
+    rad_wins = dire_wins = 0
+    for m in (data.get("maps") or {}).values():
+        if not isinstance(m, dict):
+            continue
+        end = int(m.get("end") or 0)
+        if end <= 0 or ts - end > int(window):
+            continue
+        players = [p for p in (m.get("players") or []) if isinstance(p, dict)]
+        rad_won = bool(m.get("radiant_won"))
+        past_rad = {int(p.get("acc") or 0) for p in players if _is_radiant(p, rad_won)}
+        past_dire = {int(p.get("acc") or 0) for p in players if not _is_radiant(p, rad_won)}
+        if len(past_rad) != 5 or len(past_dire) != 5:
+            continue
+        if (len(rad_now & past_rad) >= SERIES_ROSTER_MATCH
+                and len(dire_now & past_dire) >= SERIES_ROSTER_MATCH):
+            same_sides = True
+        elif (len(rad_now & past_dire) >= SERIES_ROSTER_MATCH
+              and len(dire_now & past_rad) >= SERIES_ROSTER_MATCH):
+            same_sides = False               # на той карте стороны были обратные
+        else:
+            continue
+        winner_is_current_radiant = rad_won if same_sides else not rad_won
+        if winner_is_current_radiant:
+            rad_wins += 1
+        else:
+            dire_wins += 1
+    return rad_wins, dire_wins
 
 
 def kills_window_contribs(snapshot_ts: int, *,

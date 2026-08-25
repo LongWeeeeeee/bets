@@ -730,6 +730,69 @@ def _winline_sourcetv_series_key(match: Any) -> str:
     return f"sourcetv:league:{league_id}|{pair}" if pair else ""
 
 
+def _winline_sourcetv_sides_accounts(payload: Any) -> Tuple[List[int], List[int]]:
+    """Аккаунты сторон из записи моста: (радиант, дайр). Пусто — не разобрали.
+
+    Мост кладёт `team_map` — {account_id: сторона}; это единственное место, где
+    состав есть до разбора драфта.
+    """
+    data = payload if isinstance(payload, dict) else {}
+    tmap = data.get("team_map")
+    rad: List[int] = []
+    dire: List[int] = []
+    if isinstance(tmap, dict):
+        for acc, side in tmap.items():
+            try:
+                acc_i = int(acc)
+            except (TypeError, ValueError):
+                continue
+            if acc_i <= 0:
+                continue
+            (rad if str(side) == "radiant" else dire).append(acc_i)
+    return rad, dire
+
+
+#: Последний счёт, восстановленный по своим картам, вместе с ключом серии.
+#: Нужен строке счёта в карточке: она получает только `live_league_data`, где
+#: составов нет, а пробрасывать их через пять точек вызова — хуже, чем
+#: запомнить одно значение рядом с ключом и сверять его.
+_LAST_DELTA_SERIES_SCORE: Dict[str, Any] = {"key": "", "score": (0, 0), "ts": 0.0}
+#: Дольше этого запомненный счёт не используется: серия к тому времени кончилась.
+_DELTA_SERIES_SCORE_TTL = 3 * 3600
+
+
+def _winline_series_score_from_delta(payload: Any) -> Tuple[int, int]:
+    """Счёт серии по нашим завершённым картам: (радиант, дайр). Fail-open."""
+    rad, dire = _winline_sourcetv_sides_accounts(payload)
+    if len(rad) < 4 or len(dire) < 4:
+        return 0, 0
+    try:
+        import prematch_live_delta
+        score = prematch_live_delta.series_progress(rad, dire)
+    except Exception:                                # noqa: BLE001
+        return 0, 0
+    if sum(score) > 0:
+        key = _winline_sourcetv_series_key(payload)
+        if key:
+            _LAST_DELTA_SERIES_SCORE.update(key=key, score=score, ts=time.time())
+    return score
+
+
+def _winline_series_score_remembered(live_league: Any) -> Optional[Tuple[int, int]]:
+    """Запомненный счёт, если он про ЭТУ серию и ещё не протух."""
+    key = _winline_sourcetv_series_key(live_league)
+    if not key or key != str(_LAST_DELTA_SERIES_SCORE.get("key") or ""):
+        return None
+    try:
+        age = time.time() - float(_LAST_DELTA_SERIES_SCORE.get("ts") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if age > _DELTA_SERIES_SCORE_TTL:
+        return None
+    score = _LAST_DELTA_SERIES_SCORE.get("score") or (0, 0)
+    return (int(score[0]), int(score[1])) if sum(score) > 0 else None
+
+
 def _winline_sourcetv_map_num(match: Any) -> Optional[int]:
     payload = match if isinstance(match, dict) else {}
 
@@ -749,6 +812,12 @@ def _winline_sourcetv_map_num(match: Any) -> Optional[int]:
         )
     except (TypeError, ValueError):
         played = 0
+    if game_number <= 0 and played <= 0:
+        # Valve отдаёт счёт серии НЕ ВСЕГДА. 25.08.2026 в серии
+        # Nemiga — PuckChamp он пришёл на второй карте и пропал на третьей:
+        # карточка объявила третью карту первой со счётом 0:0. Свои сыгранные
+        # карты мы знаем точно — считаем по ним.
+        played = sum(_winline_series_score_from_delta(payload))
     resolved = max(game_number, played + 1)
     # During the inter-map break the GC bridge can keep the completed Valve
     # match as live, with its old series_game_number and frozen game_time, while
@@ -9974,6 +10043,14 @@ def _build_series_score_line(live_league: Optional[Dict[str, Any]]) -> str:
         if r_wins is not None or d_wins is not None:
             r_wins = int(r_wins or 0)
             d_wins = int(d_wins or 0)
+            if r_wins == 0 and d_wins == 0:
+                # Valve отдаёт счёт не всегда: 25.08.2026 в серии
+                # Nemiga — PuckChamp он был на второй карте и пропал на
+                # третьей, и карточка показывала 0-0 при счёте 1:1. Свои
+                # сыгранные карты мы знаем точно.
+                remembered = _winline_series_score_remembered(live_league)
+                if remembered:
+                    return f"{remembered[0]}-{remembered[1]}\n"
             return f"{r_wins}-{d_wins}\n"
     except Exception:
         pass
