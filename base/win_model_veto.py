@@ -23,6 +23,7 @@ import math as _math
 import os
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Optional
 
@@ -165,6 +166,45 @@ _COV_SUM = 0.0
 _LAST_FILL = {"index": None, "fill": None, "elo": None,
                "draft_rank": None, "draft_share": None,
                "branch": None, "wr": None, "parts": None}
+#: Разложения ПРОШЛЫХ оценок, по индексу. Одной записи мало: карточка
+#: отложенного матча строится не в момент оценки, а когда до него дойдёт
+#: очередь, и к тому времени `_LAST_FILL` уже принадлежит другой карте. Тогда
+#: сравнение индексов не сходилось и хвост строки — `ELO модели`, `вклад`,
+#: `вход` — молча пропадал (25.08.2026: в логе `p=0.950`, а печаталась карта
+#: с 52.1%). Держим небольшую историю: карт в очереди единицы.
+_FILL_HISTORY: "OrderedDict[float, dict]" = OrderedDict()
+_FILL_HISTORY_MAX = 32
+
+
+def _remember_fill() -> None:
+    """Сложить текущее разложение в историю по его индексу."""
+    idx = _LAST_FILL.get("index")
+    if idx is None:
+        return
+    try:
+        key = round(float(idx), 6)
+    except (TypeError, ValueError):
+        return
+    _FILL_HISTORY[key] = dict(_LAST_FILL)
+    _FILL_HISTORY.move_to_end(key)
+    while len(_FILL_HISTORY) > _FILL_HISTORY_MAX:
+        _FILL_HISTORY.popitem(last=False)
+
+
+def _fill_for(index) -> dict:
+    """Разложение для ЭТОГО индекса: текущее, иначе из истории. {} — нет."""
+    try:
+        value = float(index)
+    except (TypeError, ValueError):
+        return {}
+    cur = _LAST_FILL.get("index")
+    if cur is not None:
+        try:
+            if abs(value - float(cur)) < 1e-6:
+                return _LAST_FILL
+        except (TypeError, ValueError):
+            pass
+    return _FILL_HISTORY.get(round(value, 6)) or {}
 _DRAFT_FIRST_ONLY = str(os.getenv("WIN_MODEL_DRAFT_FIRST_ONLY", "0")).strip() in ("1", "true", "yes", "on")
 # Запрет «драфт против стороны ставки». Включён по умолчанию, снимается
 # WIN_MODEL_DRAFT_AGAINST_BLOCK=0 без деплоя.
@@ -259,8 +299,9 @@ def last_model_elo(index):
     спорит с рейтингом», хотя она с ним согласна — просто с другим.
     """
     try:
-        if _LAST_FILL["index"] is not None and abs(float(index) - float(_LAST_FILL["index"])) < 1e-6:
-            v = _LAST_FILL["elo"]
+        _rec = _fill_for(index)
+        if _rec:
+            v = _rec["elo"]
             return None if v is None else float(v) * 400.0
     except (TypeError, ValueError):
         pass
@@ -270,8 +311,9 @@ def last_model_elo(index):
 def last_parts(index):
     """Разложение логита по компонентам для ЭТОГО индекса; пусто — если нет."""
     try:
-        if _LAST_FILL["index"] is not None and abs(float(index) - float(_LAST_FILL["index"])) < 1e-6:
-            return dict(_LAST_FILL.get("parts") or {})
+        _rec = _fill_for(index)
+        if _rec:
+            return dict(_rec.get("parts") or {})
     except (TypeError, ValueError):
         pass
     return {}
@@ -280,9 +322,10 @@ def last_parts(index):
 def last_draft_rank(index):
     """Место драфта среди признаков, тянущих в сторону ставки, и его вклад."""
     try:
-        if _LAST_FILL["index"] is not None and abs(float(index) - float(_LAST_FILL["index"])) < 1e-6:
-            s = _LAST_FILL.get("draft_share")
-            return (_LAST_FILL.get("draft_rank"), s) if s is not None else None
+        _rec = _fill_for(index)
+        if _rec:
+            s = _rec.get("draft_share")
+            return (_rec.get("draft_rank"), s) if s is not None else None
     except (TypeError, ValueError):
         pass
     return None
@@ -332,8 +375,9 @@ def _draft_agrees(index) -> bool:
 def last_fill(index):
     """Заполненность входа для этого индекса или None, если он не тот."""
     try:
-        if _LAST_FILL["index"] is not None and abs(float(index) - float(_LAST_FILL["index"])) < 1e-6:
-            return _LAST_FILL["fill"]
+        _rec = _fill_for(index)
+        if _rec:
+            return _rec["fill"]
     except (TypeError, ValueError):
         pass
     return None
@@ -690,6 +734,9 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
             _LAST_FILL["draft_rank"] = None
             _LAST_FILL["draft_share"] = None
             _LAST_FILL["groups"] = None
+        # Разложение собрано целиком — кладём его в историю по индексу. Карточка
+        # отложенного матча строится позже, когда `_LAST_FILL` уже чужой.
+        _remember_fill()
         _journal_eval(radiant_team=str(radiant_team_name or ""),
                       dire_team=str(dire_team_name or ""),
                       index=_idx, confidence=round(0.5 + abs(_idx) / 100.0, 4),
