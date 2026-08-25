@@ -123,6 +123,20 @@ class _RowStore:
     def __setitem__(self, key, value) -> None:
         self._over[key] = value
 
+    def overlay_clone(self) -> "_RowStore":
+        """Копия для наложения: массивы ОБЩИЕ, словарь наложения свой.
+
+        `__init__` не зовём намеренно — он сортирует ключи, а их два миллиона,
+        и платить эту цену на каждой живой карте нельзя. Массивы после сборки
+        только читаются, поэтому делить их между копиями безопасно; расходятся
+        копии ровно в `_over`, куда пишет `advance`.
+        """
+        new = object.__new__(type(self))
+        new._keys = self._keys
+        new._vals = self._vals
+        new._over = dict(self._over)
+        return new
+
     def __contains__(self, key) -> bool:
         return self.get(key, _MISSING) is not _MISSING
 
@@ -336,6 +350,21 @@ class RatingState:
         vals, _ = self._read(self._split(accounts10), now, mutate)
         return vals
 
+    def overlay_clone(self) -> "RatingState":
+        """Состояние для наложения живых карт поверх снимка.
+
+        Массивы снимка общие с исходным состоянием, расходятся только словари
+        наложения. Нужно, потому что `advance` пишет, а снимок в `_load()`
+        живёт один на процесс: провести карты прямо в нём — значит накопить их
+        дважды на следующем же вызове.
+        """
+        st = RatingState()
+        for name in RatingState.__slots__:
+            value = getattr(self, name)
+            clone = getattr(value, "overlay_clone", None)
+            setattr(st, name, clone() if clone is not None else dict(value))
+        return st
+
     # ---------- накопление ----------
     def advance(self, now: int, accounts10: Sequence[int],
                 radiant_won: bool) -> tuple[float, ...]:
@@ -424,6 +453,28 @@ def advance_newer_than(st: RatingState, ts, accounts, wins,
     return n, newest
 
 
+def overlay(snap: RatingState, maps: Sequence[tuple]) -> RatingState:
+    """Копия снимка плюс карты, сыгранные после его среза.
+
+    ЗАЧЕМ. Снимок рейтингов собирается ночью, а Glicko и TrueSkill — величины
+    накопительные: сыграл карту — сила изменилась. До этого живой путь читал
+    вчерашние числа с `mutate=False`, то есть на четвёртой карте дня показывал
+    состояние игрока до первой. Живой ELO этот разрыв закрывает с 23.08, у
+    рейтингов он оставался.
+
+    `maps` — `(ts, accounts10, radiant_won)` по ВОЗРАСТАНИЮ времени: рейтинг
+    зависит от порядка, и перестановка двух карт даёт другой ответ. Исходный
+    снимок не мутируется; ошибка на одной карте роняет всю накладку, а не
+    оставляет состояние проведённым наполовину.
+    """
+    if not maps:
+        return snap
+    st = snap.overlay_clone()
+    for ts, accounts10, radiant_won in maps:
+        st.advance(int(ts), accounts10, bool(radiant_won))
+    return st
+
+
 def _ts_lists(st: RatingState, players: list[tuple[int, int]],
               now: int) -> tuple[list[int], list[float], list[float]]:
     mus, sigs, ids = [], [], []
@@ -506,15 +557,36 @@ def _load() -> dict[str, Any]:
             _state["snap"] = load_snapshot()
             if _state["snap"] is None:
                 _state["error"] = f"снимок рейтингов не найден: {SNAPSHOT}"
+            else:
+                # Срез снимка нужен наложению живых карт: без него граница
+                # берётся нулевой и карты проводятся повторно на каждой оценке.
+                # В самом состоянии его не держим — у `RatingState` слоты.
+                _state["built_ts"] = _snapshot_built_ts()
         except Exception as exc:                     # noqa: BLE001
             _state["error"] = f"{type(exc).__name__}: {exc}"
         return _state
 
 
-def block(now_ts: int, accounts10: Sequence[int]) -> dict[str, float] | None:
-    """Шесть колонок по времени карты и десяти аккаунтам. `None` без снимка."""
-    st = _load()
-    snap: RatingState | None = st.get("snap")
+def _snapshot_built_ts(path: Path | None = None) -> int:
+    """Когда собран снимок. 0 — метки нет или файл не читается."""
+    p = Path(path or SNAPSHOT)
+    try:
+        with np.load(p, allow_pickle=False) as z:
+            return int(z["built_ts"])
+    except (OSError, ValueError, KeyError):
+        return 0
+
+
+def block(now_ts: int, accounts10: Sequence[int], *,
+          snap: RatingState | None = None) -> dict[str, float] | None:
+    """Шесть колонок по времени карты и десяти аккаунтам. `None` без снимка.
+
+    `snap` — состояние с уже наложенными живыми картами (`overlay`). Без него
+    берётся снимок из `_load()`, то есть ночной срез.
+    """
+    if snap is None:
+        st = _load()
+        snap = st.get("snap")
     if snap is None:
         return None
     try:

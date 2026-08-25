@@ -218,6 +218,39 @@ def live_prior_snapshot(snap):
         return snap, []
 
 
+def live_rating_state():
+    """Снимок рейтингов плюс карты, сыгранные после его сборки.
+
+    Glicko и TrueSkill накопительные: сыграл карту — сила изменилась. Снимок
+    же собирается ночью, поэтому на четвёртой карте дня блок отдавал состояние
+    игрока до первой. Для ELO этот разрыв закрыт, для рейтингов оставался.
+
+    None — снимка нет вовсе; тогда `team_ratings.block` сходит за ним сам и
+    вернёт то же, что и раньше. Отказ накладки тоже не молчит наружу: блок
+    просто останется на ночном срезе, как было до этой правки.
+    """
+    try:
+        import team_ratings as _R
+        st = _R._load()
+        snap = st.get("snap")
+        if snap is None:
+            return None
+        built = int(st.get("built_ts") or 0)
+        if built <= 0:
+            # Без среза граница неизвестна, и карты легли бы поверх состояния,
+            # которое их уже содержит. Молча удваивать рейтинг хуже, чем отдать
+            # ночной срез.
+            return snap
+        import prematch_live_delta as _D
+        maps = _D.rating_maps(built)
+        if not maps:
+            return snap
+        return _R.overlay(snap, maps)
+    except Exception as exc:                             # noqa: BLE001
+        _state["rating_error"] = f"{type(exc).__name__}: {exc}"
+        return None
+
+
 def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
                  radiant_accounts: Sequence[int], dire_accounts: Sequence[int],
                  prod_features: Mapping[str, float] | None,
@@ -287,13 +320,16 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
         pblock = public_kills_block.block(heroes10[0])
         if pblock is not None:
             blocks["public"] = pblock
-        # Рейтинги: чтение снимка, без накопления. Время карты нужно для роста
-        # RD по простою — оно считается от даты последнего матча игрока, а не от
-        # даты снимка, поэтому устаревание снимка тут не врёт.
+        # Рейтинги: ночной снимок ПЛЮС карты, сыгранные после его сборки.
+        # Рост RD по простою считается от даты последнего матча игрока, а не от
+        # даты снимка, поэтому устаревание тут не врёт — а вот сам рейтинг
+        # накопительный, и без накладки четвёртая карта дня читала бы силу
+        # игрока до первой.
         import team_ratings
 
         when = int(time.time()) if now_ts is None else int(now_ts)
-        rblock = team_ratings.block(when, accounts10[0])
+        rblock = team_ratings.block(when, accounts10[0],
+                                    snap=live_rating_state())
         if rblock is not None:
             blocks["rating"] = rblock
         # Гибрид: боевой пакет ELO, уже вшитый в бота. Снимок тяжёлый (366 МБ,

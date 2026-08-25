@@ -12,8 +12,9 @@
 (48.2%) выносится там, где команда уже играла сегодня.
 
 ЧТО ДЕЛАЕТ МОДУЛЬ. Копит СЫРЬЁ по завершённым картам: по каждому из десяти
-игроков герой, позиция, исход и его строчная статистика. Ничего не подставляет в
-признаки — это отдельный шаг, и он требует точных определений окон.
+игроков герой, позиция, исход и его строчная статистика. В `score()` из этого
+сырья накладываются только СЧЁТЧИКИ (`games`, `hero_games`, `pos_games`).
+Скользящие признаки по-прежнему ждут точных определений окон.
 
 ПОЧЕМУ НАКЛАДКА, А НЕ ПЕРЕСБОРКА. Артефакт весит 353 МБ и собирается по всему
 корпусу; переcобирать его после каждой карты нельзя. Дельта же мала, переживает
@@ -25,6 +26,12 @@
 задаются пакетными скриптами `ideas_batch*` по корпусу, и повторять их на глаз
 нельзя: ошибка в окне тихо испортит признак. Их досчёт — отдельная работа с
 тестом на каждый против полного пересчёта.
+
+ПРИОРЫ ПАНЕЛИ. По тем же картам считаются командные величины F6/F7/F8
+(`prior_map_metrics.map_metrics`) и накладываются на снимок причинных приоров
+в момент вердикта, без записи в npz. Итог карты (килы, винрейт, длительность)
+есть сразу. Окна 0-10/10-20/… — только когда Stratz отдал поминутный ряд;
+разбор запаздывает, поэтому неполный ряд добирается повторным запросом.
 
 ОГОВОРКА ПРО `imp`. Stratz отдаёт свою оценку вклада игрока, и она здесь
 сохраняется. Совпадает ли её шкала с колонками `imp50`/`imp30`/`imp_recent`
@@ -39,20 +46,48 @@ import threading
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
-DEFAULT_STORE_PATH = Path(
-    os.getenv("PREMATCH_LIVE_DELTA",
-              str(Path(__file__).resolve().parent.parent / "runtime" / "prematch_live_delta.json"))
+_DEFAULT_STORE_FALLBACK = (
+    Path(__file__).resolve().parent.parent / "runtime" / "prematch_live_delta.json"
 )
+#: Совместимость: тесты и вызывающие могут патчить константу. Живой путь
+#: читает `PREMATCH_LIVE_DELTA` в момент вызова, а не на импорте.
+DEFAULT_STORE_PATH = _DEFAULT_STORE_FALLBACK
+
+
+def _store_path(store_path: Optional[Path] = None) -> Path:
+    if store_path is not None:
+        return Path(store_path)
+    env = os.getenv("PREMATCH_LIVE_DELTA")
+    if env:
+        return Path(env)
+    return Path(DEFAULT_STORE_PATH)
+
+
 #: Позиции у Stratz строками, в артефакте числами.
 POSITION_NUM = {"POSITION_1": 1, "POSITION_2": 2, "POSITION_3": 3,
                 "POSITION_4": 4, "POSITION_5": 5}
 #: Дольше этого дельта не нужна: снимок пересобирают чаще, чем раз в трое суток,
 #: а если нет — накопленное всё равно перестаёт быть «сегодняшним».
 MAX_AGE_SECONDS = 3 * 86400
+#: Повторный запрос поминутного ряда: разбор Stratz запаздывает часами.
+RETRY_EVERY = 15 * 60
+RETRY_LIMIT = 1
 
 _lock = threading.Lock()
+
+
+def _int_list(v: Any) -> List[int]:
+    if not isinstance(v, list):
+        return []
+    out: List[int] = []
+    for x in v:
+        try:
+            out.append(int(x or 0))
+        except (TypeError, ValueError):
+            return []
+    return out
 
 
 def _empty() -> Dict[str, Any]:
@@ -96,10 +131,14 @@ def _row(p: Dict[str, Any], radiant_won: bool) -> Optional[Dict[str, Any]]:
     won = p.get("isVictory")
     if not isinstance(won, bool):
         won = bool(p.get("isRadiant")) == bool(radiant_won)
+    is_r = p.get("isRadiant")
+    if not isinstance(is_r, bool):
+        is_r = bool(won) == bool(radiant_won)
     num = lambda k: int(p.get(k) or 0)
     return {"acc": acc, "hero": num("heroId"),
             "pos": POSITION_NUM.get(str(p.get("position") or ""), 0),
-            "won": bool(won), "k": num("kills"), "d": num("deaths"),
+            "won": bool(won), "rad": bool(is_r),
+            "k": num("kills"), "d": num("deaths"),
             "a": num("assists"), "lh": num("numLastHits"), "dn": num("numDenies"),
             "gpm": num("goldPerMinute"), "nw": num("networth"),
             "xpm": num("experiencePerMinute"), "lvl": num("level"),
@@ -126,7 +165,7 @@ def record_map(match: Dict[str, Any], *, store_path: Optional[Path] = None,
     if not rows:
         return 0
     ts = int(now if now is not None else time.time())
-    path = Path(store_path or DEFAULT_STORE_PATH)
+    path = _store_path(store_path)
     with _lock:
         data = _load(path)
         data["maps"][str(mid)] = {
@@ -136,6 +175,10 @@ def record_map(match: Dict[str, Any], *, store_path: Optional[Path] = None,
             "league": int(match.get("leagueId") or 0),
             "radiant_won": radiant_won,
             "players": rows,
+            "rk": _int_list(match.get("radiantKills")),
+            "dk": _int_list(match.get("direKills")),
+            "nw": _int_list(match.get("radiantNetworthLeads")),
+            "xp": _int_list(match.get("radiantExperienceLeads")),
         }
         _prune(data, ts)
         _save(path, data)
@@ -159,7 +202,7 @@ def set_snapshot_ts(snapshot_ts: int, *, store_path: Optional[Path] = None,
     учитывать второй раз нельзя.
     """
     ts = int(now if now is not None else time.time())
-    path = Path(store_path or DEFAULT_STORE_PATH)
+    path = _store_path(store_path)
     with _lock:
         data = _load(path)
         before = len(data["maps"])
@@ -175,7 +218,7 @@ def player_maps(account_id: int, *, store_path: Optional[Path] = None) -> List[D
     if acc <= 0:
         return []
     with _lock:
-        data = _load(Path(store_path or DEFAULT_STORE_PATH))
+        data = _load(_store_path(store_path))
     out = []
     for mid, m in data["maps"].items():
         for r in (m.get("players") or []):
@@ -200,6 +243,214 @@ def counters(account_id: int, *, store_path: Optional[Path] = None) -> Dict[str,
         "pos_games": dict(Counter(int(r["pos"]) for r in ms if int(r["pos"]) > 0)),
         "heroes": sorted({int(r["hero"]) for r in ms if int(r["hero"]) > 0}),
     }
+
+
+def sync_to_ts(snapshot_ts: int, *, store_path: Optional[Path] = None,
+               now: Optional[int] = None) -> int:
+    """Сдвинуть границу дельты до среза модели. Нет файла — ничего не создавать.
+
+    Пишущий путь (новый артефакт) может звать это явно. `score()` только
+    читает через `extra_for_accounts` и файл не трогает.
+    """
+    path = _store_path(store_path)
+    if not path.exists():
+        return 0
+    ts = int(snapshot_ts or 0)
+    with _lock:
+        cur = int(_load(path).get("snapshot_ts") or 0)
+    if cur == ts:
+        return 0
+    return set_snapshot_ts(ts, store_path=path, now=now)
+
+
+def extra_for_accounts(account_ids: Sequence[int], snapshot_ts: int,
+                       *, store_path: Optional[Path] = None) -> Dict[int, Dict[str, Any]]:
+    """Счётчики карт ПОСЛЕ среза снимка. Нет файла — пусто, файл не создаётся.
+
+    Карты с `end <= snapshot_ts` игнорируются даже если граница в самом
+    хранилище отстала от артефакта: иначе ночная доставка удвоит games.
+    """
+    path = _store_path(store_path)
+    if not path.exists():
+        return {}
+    want = {int(a) for a in account_ids if int(a or 0) > 0}
+    if not want:
+        return {}
+    snap = int(snapshot_ts or 0)
+    with _lock:
+        data = _load(path)
+    out: Dict[int, Dict[str, Any]] = {
+        a: {"games": 0, "hero_games": Counter(), "pos_games": Counter()}
+        for a in want
+    }
+    for m in (data.get("maps") or {}).values():
+        if not isinstance(m, dict):
+            continue
+        if int(m.get("end") or 0) <= snap:
+            continue
+        for r in (m.get("players") or []):
+            acc = int((r or {}).get("acc") or 0)
+            if acc not in want:
+                continue
+            row = out[acc]
+            row["games"] += 1
+            hero = int(r.get("hero") or 0)
+            pos = int(r.get("pos") or 0)
+            if hero > 0:
+                row["hero_games"][hero] += 1
+            if pos > 0:
+                row["pos_games"][pos] += 1
+    return {a: row for a, row in out.items() if row["games"]}
+
+
+def _is_radiant(row: Dict[str, Any], radiant_won: bool) -> bool:
+    if isinstance(row.get("rad"), bool):
+        return bool(row["rad"])
+    return bool(row.get("won")) == bool(radiant_won)
+
+
+def prior_contribs(snapshot_ts: int, *,
+                   store_path: Optional[Path] = None) -> List[Any]:
+    """Карты после среза снимка приоров → `MapContrib` для накладки.
+
+    Нет файла — пусто, файл не создаётся. Карта без пяти+пяти слотов
+    пропускается: частичная пятёрка сдвинула бы другие ключи.
+    """
+    path = _store_path(store_path)
+    if not path.exists():
+        return []
+    snap = int(snapshot_ts or 0)
+    with _lock:
+        data = _load(path)
+    from causal_priors import MapContrib
+    from prior_map_metrics import map_metrics
+
+    out: List[Any] = []
+    for m in (data.get("maps") or {}).values():
+        if not isinstance(m, dict):
+            continue
+        if int(m.get("end") or 0) <= snap:
+            continue
+        players = [p for p in (m.get("players") or []) if isinstance(p, dict)]
+        rad_won = bool(m.get("radiant_won"))
+        rad = [p for p in players if _is_radiant(p, rad_won)]
+        dire = [p for p in players if not _is_radiant(p, rad_won)]
+        if len(rad) != 5 or len(dire) != 5:
+            continue
+        rad.sort(key=lambda p: int(p.get("pos") or 0))
+        dire.sort(key=lambda p: int(p.get("pos") or 0))
+        slots = rad + dire
+        try:
+            vr, vd, mask = map_metrics(
+                rad_kills=[int(p.get("k") or 0) for p in rad],
+                dire_kills=[int(p.get("k") or 0) for p in dire],
+                duration_seconds=int(m.get("dur") or 0),
+                radiant_won=rad_won,
+                rk_inc=m.get("rk") or None,
+                dk_inc=m.get("dk") or None,
+                nw=m.get("nw") or None,
+                xp=m.get("xp") or None)
+        except Exception:
+            continue
+        out.append(MapContrib(
+            heroes=[int(p.get("hero") or 0) for p in slots],
+            accounts=[int(p.get("acc") or 0) for p in slots],
+            vr=vr, vd=vd, mask=mask))
+    return out
+
+
+def rating_maps(snapshot_ts: int, *,
+                store_path: Optional[Path] = None) -> List[Any]:
+    """Карты после среза снимка рейтингов → `(ts, accounts10, radiant_won)`.
+
+    `accounts10` — пять слотов радианта по позициям, затем пять дайра: ровно
+    тот порядок, который разбирает `RatingState._split`.
+
+    Отсортировано ПО ВОЗРАСТАНИЮ времени: Glicko и TrueSkill накопительные, и
+    две карты, проведённые в обратном порядке, дают другой рейтинг. Карта без
+    пяти+пяти слотов пропускается — неполная сторона исказила бы средние
+    противника, от которых считается ожидание.
+    """
+    path = _store_path(store_path)
+    if not path.exists():
+        return []
+    snap = int(snapshot_ts or 0)
+    with _lock:
+        data = _load(path)
+
+    out: List[Any] = []
+    for m in (data.get("maps") or {}).values():
+        if not isinstance(m, dict):
+            continue
+        end = int(m.get("end") or 0)
+        if end <= snap:
+            continue
+        players = [p for p in (m.get("players") or []) if isinstance(p, dict)]
+        rad_won = bool(m.get("radiant_won"))
+        rad = [p for p in players if _is_radiant(p, rad_won)]
+        dire = [p for p in players if not _is_radiant(p, rad_won)]
+        if len(rad) != 5 or len(dire) != 5:
+            continue
+        rad.sort(key=lambda p: int(p.get("pos") or 0))
+        dire.sort(key=lambda p: int(p.get("pos") or 0))
+        accounts10 = [int(p.get("acc") or 0) for p in rad + dire]
+        if any(a <= 0 for a in accounts10):
+            # Аноним в составе: `_split` его выбросит, и сторона станет
+            # неполной уже внутри расчёта. Лучше не проводить карту вовсе.
+            continue
+        out.append((end, accounts10, rad_won))
+    out.sort(key=lambda row: row[0])
+    return out
+
+
+def retry_incomplete(*, fetch, store_path: Optional[Path] = None,
+                     now: Optional[int] = None,
+                     limit: int = RETRY_LIMIT) -> int:
+    """Дозапросить поминутный ряд у карт, записанных без него.
+
+    `fetch(match_id)` возвращает тот же dict, что `match_players`. Нет файла —
+    ничего не создавать. За раз не больше `limit` запросов.
+    """
+    path = _store_path(store_path)
+    if not path.exists():
+        return 0
+    ts = int(now if now is not None else time.time())
+    with _lock:
+        data = _load(path)
+    snap = int(data.get("snapshot_ts") or 0)
+    pending: List[int] = []
+    for mid, m in (data.get("maps") or {}).items():
+        if not isinstance(m, dict):
+            continue
+        if int(m.get("end") or 0) <= snap:
+            continue
+        if m.get("rk"):
+            continue
+        if ts - int(m.get("last_retry") or 0) < RETRY_EVERY:
+            continue
+        try:
+            pending.append(int(mid))
+        except (TypeError, ValueError):
+            continue
+    pending.sort()
+    filled = 0
+    for mid in pending[:max(int(limit), 0)]:
+        full = None
+        try:
+            full = fetch(mid)
+        except Exception:
+            full = None
+        if isinstance(full, dict) and _int_list(full.get("radiantKills")):
+            record_map(full, store_path=path, now=ts)
+            filled += 1
+            continue
+        with _lock:
+            cur = _load(path)
+            rec = (cur.get("maps") or {}).get(str(mid))
+            if isinstance(rec, dict):
+                rec["last_retry"] = ts
+                _save(path, cur)
+    return filled
 
 
 #: Боевой артефакт: из него берётся только `snapshot_ts` — граница, до которой
@@ -243,7 +494,7 @@ def sync_snapshot(*, artifact_path: Optional[Path] = None,
     if ts <= 0:
         return 0
     with _lock:
-        cur = int(_load(Path(store_path or DEFAULT_STORE_PATH)).get("snapshot_ts") or 0)
+        cur = int(_load(_store_path(store_path)).get("snapshot_ts") or 0)
     if cur == ts:
         return 0
     return set_snapshot_ts(ts, store_path=store_path, now=now)
