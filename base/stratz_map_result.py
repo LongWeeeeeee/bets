@@ -44,9 +44,18 @@ DEFAULT_CACHE_PATH = Path(
 )
 URL = "https://api.stratz.com/graphql"
 #: Запрос идёт из боевого пути ставки, поэтому цена ошибки — задержка отправки.
-#: Отсюда короткий таймаут и не больше двух пар ключ↔прокси.
+#: Отсюда короткий таймаут.
 TIMEOUT = float(os.getenv("STRATZ_MAP_RESULT_TIMEOUT", "5"))
-MAX_PAIRS = int(os.getenv("STRATZ_MAP_RESULT_MAX_PAIRS", "2"))
+#: Сколько пар ключ↔прокси перебирать. Было 2 «чтобы не тормозить ставку», но
+#: 25.08.2026 три прокси из четырёх отвечали ConnectTimeout, а живой оказалась
+#: как раз четвёртая. Перебор упирался в две мёртвые, `match_players` отдавал
+#: None, и довоз дельты стоял 13 часов — молча, потому что None здесь
+#: неотличим от «карты ещё нет у Stratz». 0 или отрицательное — все пары.
+MAX_PAIRS = int(os.getenv("STRATZ_MAP_RESULT_MAX_PAIRS", "0"))
+#: Ходить своим адресом, когда все прокси легли. Прокси нужны, чтобы квота
+#: считалась на пару, а не на один IP; постоянно ходить напрямую — значит
+#: сложить весь трафик на квоту сервера. Но молчание дороже.
+DIRECT_FALLBACK = os.getenv("STRATZ_MAP_RESULT_DIRECT", "1") not in ("0", "false", "False")
 #: Кэш живой: пока серия идёт, ответ меняется по мере доигрывания карт.
 CACHE_TTL = float(os.getenv("STRATZ_TEAM_MATCHES_TTL", "120"))
 #: Окно «вчера»: серия не растягивается дольше, а лишние сутки удорожают ответ.
@@ -145,29 +154,48 @@ def _save(path: Path, data: Dict[str, Any]) -> None:
             pass
 
 
-def _query(team_id: int, since: int) -> Optional[List[Dict[str, Any]]]:
-    """Матчи команды с момента `since`. `None` — не дозвонились."""
+def _post(query: str) -> Optional[Dict[str, Any]]:
+    """`data` из ответа Stratz. `None` — ни одна пара не дозвонилась.
+
+    Перебираются ВСЕ пары ключ↔прокси, а мёртвая пара стоит ровно `TIMEOUT`.
+    Последней, если `DIRECT_FALLBACK`, идёт попытка своим адресом: 25.08.2026
+    прокси легли все, кроме одной, и без этого запаса встал довоз.
+    """
     try:
         import requests                                     # noqa: PLC0415
         from keys import api_to_proxy                       # noqa: PLC0415
     except Exception:
         return None
-    q = _QUERY % (int(team_id), int(since), TAKE)
-    for proxy, key in list(api_to_proxy.items())[:MAX_PAIRS]:
+    headers = {"Authorization": "", "Content-Type": "application/json",
+               "User-Agent": "STRATZ_API"}
+    pairs = list(api_to_proxy.items())
+    if MAX_PAIRS > 0:
+        pairs = pairs[:MAX_PAIRS]
+    attempts = [(p, k) for p, k in pairs]
+    if DIRECT_FALLBACK and pairs:
+        attempts.append((None, pairs[0][1]))
+    for proxy, key in attempts:
         try:
-            r = requests.post(
-                URL, json={"query": q}, timeout=TIMEOUT,
-                headers={"Authorization": f"Bearer {key}",
-                         "Content-Type": "application/json",
-                         "User-Agent": "STRATZ_API"},
-                proxies={"http": proxy, "https": proxy})
-            team = ((r.json().get("data") or {}).get("team")) or {}
-            ms = team.get("matches")
-            if isinstance(ms, list):
-                return ms
+            headers["Authorization"] = f"Bearer {key}"
+            kwargs = {"proxies": {"http": proxy, "https": proxy}} if proxy else {}
+            r = requests.post(URL, json={"query": query}, timeout=TIMEOUT,
+                              headers=headers, **kwargs)
+            data = r.json().get("data")
+            if isinstance(data, dict):
+                return data
         except Exception:
-            continue                                        # следующая пара
+            continue                                        # следующая попытка
     return None
+
+
+def _query(team_id: int, since: int) -> Optional[List[Dict[str, Any]]]:
+    """Матчи команды с момента `since`. `None` — не дозвонились."""
+    data = _post(_QUERY % (int(team_id), int(since), TAKE))
+    if data is None:
+        return None
+    team = (data.get("team") or {})
+    ms = team.get("matches")
+    return ms if isinstance(ms, list) else None
 
 
 def team_matches(team_id: int, *, now: Optional[int] = None,
@@ -316,11 +344,13 @@ def refresh(team_ids, *, cache_path: Optional[Path] = None,
 
 def start_background_refresh(teams_provider, *, interval: Optional[float] = None,
                              cache_path: Optional[Path] = None, on_new=None,
-                             query=_query) -> Optional[threading.Thread]:
+                             on_tick=None, query=_query) -> Optional[threading.Thread]:
     """Демон, держащий кэш тёплым по командам, которые вернёт `teams_provider`.
 
     Заводится один раз; повторный вызов возвращает уже работающий поток. Ошибки
     гасятся целиком: прогрев не имеет права уронить боевой процесс.
+
+    `on_tick` — после каждого цикла (дозапись поминутного ряда в дельту).
     """
     global _refresh_thread
     if _refresh_thread is not None and _refresh_thread.is_alive():
@@ -335,6 +365,11 @@ def start_background_refresh(teams_provider, *, interval: Optional[float] = None
                     refresh(teams, cache_path=cache_path, query=query, on_new=on_new)
             except Exception:
                 pass
+            if on_tick is not None:
+                try:
+                    on_tick()
+                except Exception:
+                    pass
             time.sleep(step)
 
     _refresh_thread = threading.Thread(target=loop, name="stratz-refresh", daemon=True)
@@ -347,6 +382,7 @@ def start_background_refresh(teams_provider, *, interval: Optional[float] = None
 _PLAYERS_QUERY = (
     "{match(id:%d){id didRadiantWin startDateTime endDateTime durationSeconds "
     "radiantTeamId direTeamId leagueId "
+    "radiantKills direKills radiantNetworthLeads radiantExperienceLeads "
     "players{steamAccountId heroId isRadiant isVictory position kills deaths "
     "assists numLastHits numDenies goldPerMinute networth experiencePerMinute "
     "level heroDamage imp}}}"
@@ -369,23 +405,8 @@ def match_players(match_id: int, *, query_raw=None) -> Optional[Dict[str, Any]]:
         return None
     if query_raw is not None:
         return query_raw(mid)
-    try:
-        import requests                                     # noqa: PLC0415
-        from keys import api_to_proxy                       # noqa: PLC0415
-    except Exception:
+    data = _post(_PLAYERS_QUERY % mid)
+    if data is None:
         return None
-    q = _PLAYERS_QUERY % mid
-    for proxy, key in list(api_to_proxy.items())[:MAX_PAIRS]:
-        try:
-            r = requests.post(
-                URL, json={"query": q}, timeout=TIMEOUT,
-                headers={"Authorization": f"Bearer {key}",
-                         "Content-Type": "application/json",
-                         "User-Agent": "STRATZ_API"},
-                proxies={"http": proxy, "https": proxy})
-            m = (r.json().get("data") or {}).get("match")
-            if isinstance(m, dict) and m.get("players"):
-                return m
-        except Exception:
-            continue
-    return None
+    m = data.get("match")
+    return m if isinstance(m, dict) and m.get("players") else None
