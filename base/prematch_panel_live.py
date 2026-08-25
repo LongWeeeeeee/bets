@@ -159,10 +159,74 @@ def _kills_dict():
     return obj
 
 
+def live_kills_dict():
+    """Боевой словарь окон с наложенными живыми картами. None — словаря нет.
+
+    Словарь собирается офлайн и на боевой машине лежит от 05.08.2026, тогда как
+    окна килов — счётчики по драфту, и каждая сыгранная карта их двигает.
+    Накладка закрывает разрыв для карт, попавших в дельту; всё, что сыграно до
+    её среза, закрывается пересборкой словаря.
+
+    ПОЧЕМУ БЕЗ ОБЁРТКИ. Первая версия оборачивала читатель и складывала числа в
+    своём `get`. Это добавляло кадр стека на КАЖДЫЙ ключ, а
+    `calculate_kills_window_advantage` читает их десятками — на глубоком стеке
+    (в тестах ещё и gevent) предел рекурсии перестал сходиться, и в наборе
+    появилось падение, которого не было. Прирост кладётся прямо в кэш
+    `_SqliteKillsWindow`: тот сам наследует `dict`, поэтому чтение остаётся
+    одним вызовом.
+    """
+    base = _kills_dict()
+    if base is None:
+        return None
+    try:
+        import prematch_live_delta as _D
+        from explore_database import _kills_window_column_names
+        built = _kills_dict_built_ts()
+        contribs = _D.kills_window_contribs(built)
+        # Отпечаток по СОДЕРЖИМОМУ, а не по набору ключей: новая карта того же
+        # драфта ключей не добавляет, и накладка молча осталась бы от прошлой.
+        stamp = (built, len(contribs),
+                 sum(sum(v) for v in contribs.values()) if contribs else 0)
+        if _state.get("kwdict_stamp") == stamp:
+            return base                                  # уже наложено
+        # Набор карт сменился: снимаем прошлую накладку, иначе вклад ляжет
+        # поверх себя же. Ключ убирается из кэша целиком — при следующем
+        # чтении он поднимется из sqlite заново.
+        for key in _state.get("kwdict_touched") or ():
+            dict.pop(base, key, None)
+        columns = _kills_window_column_names()
+        for key, add in contribs.items():
+            row = base.get(key)
+            merged = dict(row) if isinstance(row, dict) else {c: 0 for c in columns}
+            for col, value in zip(columns, add):
+                if value:
+                    merged[col] = (merged.get(col) or 0) + value
+            dict.__setitem__(base, key, merged)
+        _state["kwdict_touched"] = set(contribs)
+        _state["kwdict_stamp"] = stamp
+        return base
+    except Exception as exc:                         # noqa: BLE001
+        _state["dict_error"] = f"{type(exc).__name__}: {exc}"
+        return base
+
+
+def _kills_dict_built_ts() -> int:
+    """Когда собран боевой словарь окон — по времени файла.
+
+    Своей метки внутри sqlite нет (в `meta` лежат backend/entries/windows), а
+    брать срез артефакта предматчевой модели нельзя: словарь старше его на
+    недели, и часть карт наложилась бы поверх уже учтённых.
+    """
+    try:
+        return int(KILLS_DB.stat().st_mtime)
+    except OSError:
+        return 0
+
+
 def _dict_block(heroes10) -> dict[str, float] | None:
     """Двенадцать колонок словаря окон. NaN там, где словарь молчит — ровно то,
     что писал офлайн-сборщик, и ровно то, что видела модель при обучении."""
-    hd = _kills_dict()
+    hd = live_kills_dict()
     if hd is None:
         return None
     try:

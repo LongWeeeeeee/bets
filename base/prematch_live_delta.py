@@ -359,6 +359,66 @@ def prior_contribs(snapshot_ts: int, *,
     return out
 
 
+def kills_window_contribs(snapshot_ts: int, *,
+                          store_path: Optional[Path] = None) -> Dict[str, Any]:
+    """Приросты словаря окон килов от карт, сыгранных после его сборки.
+
+    Ключи и накопление берутся ОФЛАЙН-ФУНКЦИЯМИ `analise_database`, а не
+    повторяются здесь: грамматика ключей (`solo`, `_vs_`, `_with_`) и раскладка
+    счётчиков (leads/draws/games/diff_sum/diff_sq_sum на окно) должны совпасть
+    с тем, на чём словарь собран, иначе живые числа поедут против обученных.
+
+    Окна считаются из ПОМИНУТНОГО ряда `rk`/`dk` — ровно того источника, что у
+    офлайна (`_kills_window_diff`). Карта без ряда пропускается: он приходит от
+    Stratz позже итога карты и добирается `retry_incomplete`.
+    """
+    path = _store_path(store_path)
+    if not path.exists():
+        return {}
+    snap = int(snapshot_ts or 0)
+    with _lock:
+        data = _load(path)
+    try:
+        from analise_database import (KILLS_WINDOWS, _add_kills_window_combinations,
+                                      _kills_window_diff)
+    except Exception:
+        return {}
+
+    out: Dict[str, Any] = {}
+    for m in (data.get("maps") or {}).values():
+        if not isinstance(m, dict):
+            continue
+        if int(m.get("end") or 0) <= snap:
+            continue
+        rk, dk = m.get("rk") or [], m.get("dk") or []
+        if not rk or not dk:
+            continue
+        players = [p for p in (m.get("players") or []) if isinstance(p, dict)]
+        rad_won = bool(m.get("radiant_won"))
+        rad = [p for p in players if _is_radiant(p, rad_won)]
+        dire = [p for p in players if not _is_radiant(p, rad_won)]
+        if len(rad) != 5 or len(dire) != 5:
+            continue
+        # `pos` в дельте — РОЛЬ из Stratz, уже 1..5 (`POSITION_NUM`), и токен
+        # словаря строится из неё же. Сдвигать нумерацию нельзя: прибавленная
+        # единица превращала `8pos1` в `8pos2`, и накладка попадала в ключ,
+        # которого в словаре нет.
+        r_by_pos = {int(p.get("pos") or 0): int(p.get("hero") or 0) for p in rad}
+        d_by_pos = {int(p.get("pos") or 0): int(p.get("hero") or 0) for p in dire}
+        if sorted(r_by_pos) != [1, 2, 3, 4, 5] or sorted(d_by_pos) != [1, 2, 3, 4, 5]:
+            # Роли не размечены (у Stratz это бывает) — ключи собрались бы
+            # с нулевой позицией и легли мимо словаря.
+            continue
+        if any(h <= 0 for h in list(r_by_pos.values()) + list(d_by_pos.values())):
+            continue
+        timeline = {"radiantKills": rk, "direKills": dk}
+        diffs = [_kills_window_diff(timeline, s, e) for s, e in KILLS_WINDOWS]
+        if all(d is None for d in diffs):
+            continue
+        _add_kills_window_combinations(r_by_pos, d_by_pos, out, diffs)
+    return out
+
+
 def rating_maps(snapshot_ts: int, *,
                 store_path: Optional[Path] = None) -> List[Any]:
     """Карты после среза снимка рейтингов → `(ts, accounts10, radiant_won)`.
