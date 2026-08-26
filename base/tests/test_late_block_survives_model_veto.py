@@ -122,3 +122,35 @@ def test_draft_for_the_side_keeps_the_late_block() -> None:
     )
     assert diag["valid"] is True
     assert diag["status"] == "ok"
+
+
+def test_format_output_dict_keeps_the_late_stars(monkeypatch) -> None:
+    """Вето не должно СНИМАТЬ звёзды с позднего блока.
+
+    Здесь вето работает иначе, чем в диагностике: оно возвращает метрикам
+    исходные значения, и до диспетчера доезжает блок без единой звезды. 26.08.2026
+    из-за этого карточка Yellow Submarine — RE.Arise показывала `late=ok(side=dire)`
+    в диагностике и ни одной звёздочки в блоке Late.
+    """
+    import functions
+
+    monkeypatch.setattr(
+        functions, "STAR_THRESHOLDS_BY_WR",
+        {60: {"mid_output": [("counterpick_1vs1", 4)], "early_output": [("counterpick_1vs1", 4)]}},
+        raising=False,
+    )
+
+    # Индекс боевой карты: он ВЫШЕ порога секции (8.0), иначе вето не сработало бы
+    # и тест проверял бы не правку, а порог.
+    late_data = {"counterpick_1vs1": -9, W.INDEX_KEY: LIVE_INDEX}
+    assert W.blocks_veto(-1, late_data, "mid_output") is True, "вето само по себе живо"
+
+    # Поздний блок: модель против — звёзды остаются.
+    late = {"mid_output": dict(late_data)}
+    assert functions.format_output_dict(late, target_wr=60, late_signal_gate_enabled=False) is True
+    assert "*" in str(late["mid_output"]["counterpick_1vs1"])
+
+    # Ранний блок при том же расхождении звёзды теряет.
+    early = {"early_output": dict(late_data)}
+    assert functions.format_output_dict(early, target_wr=60, late_signal_gate_enabled=False) is False
+    assert early["early_output"]["counterpick_1vs1"] == -9

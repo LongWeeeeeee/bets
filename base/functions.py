@@ -2375,11 +2375,32 @@ def format_output_dict(
         # Вето драфтовой ML-модели: знак блока против модели -> блок не идёт.
         # Проверяется ДО поздних гейтов, чтобы отменённый блок не считался
         # валидным ни при каких условиях. Модель недоступна -> вето не сработает.
+        #
+        # ПОЗДНИЙ блок выведен из-под этого вето решением alex (26.08.2026): при
+        # расхождении звёзд и модели late dispatch обязан состояться, а
+        # отменяется ставка МОДЕЛИ на 00-й минуте. Здесь вето не метит блок
+        # невалидным, а СНИМАЕТ звёзды — и до диспетчера доезжает пустой блок:
+        # 26.08 в паре Yellow Submarine — RE.Arise диагностика говорила
+        # `late=ok(side=dire)`, а в карточке у Late не было ни одной звёздочки.
+        # Запрет «драфт против стороны» (E-238) ниже поздний блок по-прежнему
+        # снимает: он про КОМПОНЕНТ драфта, а не про вердикт всей модели.
         if (
             block_star_count > 0
             and not block_conflict
             and block_sign is not None
+            and section != "mid_output"
             and win_model_veto.blocks_veto(block_sign, data, section)
+        ):
+            for key, original_value in starred_original_values.items():
+                data[key] = original_value
+            continue
+        # Тот же запрет по драфтовому КОМПОНЕНТУ модели: вето выше смотрит на
+        # её общий вердикт и сторону, названную вопреки драфту, пропускало.
+        if (
+            block_star_count > 0
+            and not block_conflict
+            and block_sign is not None
+            and win_model_veto.draft_veto(block_sign, data, section)
         ):
             for key, original_value in starred_original_values.items():
                 data[key] = original_value
