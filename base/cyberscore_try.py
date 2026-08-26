@@ -6525,6 +6525,24 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
             "win_model_index": block.get(win_model_veto.INDEX_KEY),
             **consistency_fields,
         }
+    # Запрет «драфт против стороны» на star-пути. До 25.08.2026 он стоял
+    # только в `model_bet`: вето выше сверяет знак блока с вердиктом ВСЕЙ
+    # модели, а драфтовый КОМПОНЕНТ внутри неё мог тянуть в другую сторону, и
+    # star-ставка на эту сторону уходила. Правило введено решением alex; замер
+    # E-238 показал, что оно срежет 49 ставок из 630 с винрейтом 0.735.
+    # Late dispatch сюда тоже попадает: он берёт готовый `selected_late_diag`,
+    # а не пересчитывает диагностику.
+    if block_sign in (-1, 1) and win_model_veto.draft_veto(block_sign, block, section):
+        return {
+            "valid": False,
+            "status": "draft_against_side",
+            "sign": block_sign,
+            "hit_metrics": hit_metrics,
+            "hit_count": len(hit_metrics),
+            "conflict_metric": None,
+            "win_model_index": block.get(win_model_veto.INDEX_KEY),
+            **consistency_fields,
+        }
     if not bool(sign_consistency.get("valid")):
         consistency_status = str(sign_consistency.get("status") or "")
         required_metric_names = set(sign_consistency.get("required_metrics") or [])
