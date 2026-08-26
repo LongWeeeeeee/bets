@@ -68,11 +68,22 @@ TOURNAMENT_TITLE_ALLOW_PHRASES = (
     'asgard',
 )
 
-# Valve ticket 19722 зарегистрирован как ``Lunar Paw``, но фактически
-# переиспользуется Asgard Championship Season 1. Разрешаем точный league_id,
-# не расширяя title-allowlist на все матчи с названием Lunar Paw.
+# Тикеты, у которых название Valve не имеет ничего общего с турниром. Сверять
+# нам приходится именно его: в sourcetv-режиме имя лиги берётся из справочника
+# OpenDota по league_id, а не с сайта площадки или букмекера.
 TOURNAMENT_LEAGUE_ID_ALLOWLIST = frozenset({
+    # Valve ticket 19722 зарегистрирован как ``Lunar Paw``, но фактически
+    # переиспользуется Asgard Championship Season 1. Разрешаем точный league_id,
+    # не расширяя title-allowlist на все матчи с названием Lunar Paw.
     19722,
+    # 26.08.2026: открытые квалификации BLAST Slam играются на площадке
+    # Challengermode и приезжают под её ЕЖЕДНЕВНЫМ тикетом
+    # 'Challengermode Daily Tournaments' — слово 'blast' сравнивать не с чем.
+    # Впущено по решению alex, чтобы ловить квал живьём. ВНИМАНИЕ: тикет общий,
+    # на нём же идут чужие ежедневки, а неизвестная команда из впущенного матча
+    # автоматически дописывается в tier2 (`_ensure_known_team_or_add_to_tier2`)
+    # и остаётся там навсегда. После квала id отсюда убрать.
+    10877,
 })
 
 

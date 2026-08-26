@@ -24,3 +24,79 @@ def _isolate_sent_signal_fingerprints(tmp_path, monkeypatch):
             if isinstance(sent_keys, set):
                 sent_keys.clear()
     yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_winline_odds_history(tmp_path, monkeypatch):
+    """Не даёт тестам писать в БОЕВОЙ архив котировок.
+
+    `WINLINE_ODDS_HISTORY_PATH` в поллере вычисляется НА ИМПОРТЕ, поэтому одной
+    переменной среды мало: если модуль уже загружен, константа в нём осталась
+    боевой. Отсюда правим и атрибут модуля.
+
+    Зачем. В архиве накопилось 463 записи с фиктивным временем (1700000000 и
+    соседние круглые числа) — это тестовые прогоны, попавшие в файл, который
+    мы собираемся джойнить с корпусом по `match_id`. Отличить их можно только
+    по неправдоподобному `wall`, то есть постфактум и вручную.
+    """
+    target = str(tmp_path / "winline_odds_history.jsonl")
+    monkeypatch.setenv("WINLINE_ODDS_HISTORY_PATH", target)
+    for name, module in list(sys.modules.items()):
+        if name.rsplit(".", 1)[-1] == "winline_current_map_odds_poller":
+            if hasattr(module, "WINLINE_ODDS_HISTORY_PATH"):
+                monkeypatch.setattr(module, "WINLINE_ODDS_HISTORY_PATH", target,
+                                    raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_live_elo_progress(tmp_path, monkeypatch):
+    """Не даёт тестам писать в БОЕВОЕ состояние живого рейтинга.
+
+    Зачем. 23.08.2026 прогон набора на serv1 затёр `pending_series` в боевом
+    `runtime/live_elo_progress.json`: там осталось три записи с ключами
+    `dltv.org/matches/test-match`, `test-integrity`, `test-shadow-every-map` и
+    ни одной настоящей серии. Сам рейтинг (`live_elo_model_state.json`) и
+    журнал `applied_maps` уцелели, но очередь отложенных карт была потеряна.
+
+    Путь в `ELO.live_team_strength` вычисляется на импорте и переменной среды
+    не читает, поэтому правится атрибут модуля; в `series_surprise_shadow` есть
+    и env, и атрибут — закрываем оба.
+    """
+    target = tmp_path / "live_elo_progress.json"
+    monkeypatch.setenv("LIVE_ELO_PROGRESS", str(target))
+    monkeypatch.setenv("SERIES_SURPRISE_STORE",
+                       str(tmp_path / "series_surprise_shadow.json"))
+    for name, module in list(sys.modules.items()):
+        leaf = name.rsplit(".", 1)[-1]
+        if leaf == "live_team_strength":
+            monkeypatch.setattr(module, "DEFAULT_RUNTIME_PROGRESS_PATH", target,
+                                raising=False)
+        elif leaf == "cyberscore_try":
+            # Путь копируется в модуль ЗНАЧЕНИЕМ на импорте (`... as
+            # _elo_live_default_progress_path`), поэтому правка исходного
+            # модуля сюда не доезжает.
+            monkeypatch.setattr(module, "_elo_live_default_progress_path", target,
+                                raising=False)
+        elif leaf == "series_surprise_shadow":
+            monkeypatch.setattr(module, "DEFAULT_ELO_PROGRESS_PATH", target,
+                                raising=False)
+            monkeypatch.setattr(module, "DEFAULT_STORE_PATH",
+                                tmp_path / "series_surprise_shadow.json",
+                                raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_prematch_eval_journal(tmp_path, monkeypatch):
+    """Не даёт тестам писать в БОЕВОЙ журнал оценок предматчевой модели.
+
+    23.08.2026 прогон набора добавил в `runtime/prematch_model_eval.jsonl`
+    четыре записи с пустыми именами команд и причиной «не передан
+    hybrid_strength». Журнал диагностический, но по нему судят о работе модели
+    в бою, и отличить тестовые строки от настоящих можно только по этим
+    пустым именам — то есть постфактум и на глаз.
+    """
+    target = str(tmp_path / "prematch_model_eval.jsonl")
+    monkeypatch.setenv("PREMATCH_EVAL_JOURNAL", target)
+    for name, module in list(sys.modules.items()):
+        if name.rsplit(".", 1)[-1] == "win_model_veto":
+            monkeypatch.setattr(module, "_EVAL_JOURNAL", target, raising=False)

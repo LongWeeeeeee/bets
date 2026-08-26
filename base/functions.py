@@ -1421,9 +1421,28 @@ def _send_message_to_chat_id(
     try:
         response.raise_for_status()
     except requests.exceptions.HTTPError as exc:
-        logger.error("Telegram send HTTP error: %s", exc)
+        # Причину отказа Telegram пишет в ТЕЛЕ ответа, в поле `description`
+        # («chat not found», «bot was blocked by the user»). Тело здесь не
+        # читалось, и наружу уходил один HTTP-статус — а
+        # `_is_terminal_telegram_chat_error` ищет именно эти слова. Классификатор
+        # стоял верный, но нужные ему слова до него не доезжали: мёртвый чат
+        # никогда не признавался терминальным, не вычищался и опрашивался при
+        # КАЖДОЙ рассылке. Замер 20.08.2026: после смены бота 09.08 двое
+        # получателей из трёх не получают ничего, в логе 319 отказов 400 и ни
+        # одной чистки; наружу это выходило только словом «partial».
+        # В обработке `getUpdates` (строка ~1477) `description` читается давно —
+        # расходился только путь отправки.
+        # Удаление обратимо: список подписчиков пополняется из `getUpdates`,
+        # поэтому человеку достаточно снова написать боту.
+        _desc = ""
+        try:
+            _desc = str((response.json() or {}).get("description") or "")
+        except Exception:                                # noqa: BLE001
+            _desc = str(getattr(response, "text", "") or "")[:200]
+        logger.error("Telegram send HTTP error: %s | %s", exc, _desc or "без описания")
         return _telegram_raise_delivery_error(
-            f"Telegram send failed: {exc}",
+            f"Telegram send failed: {exc}: {_desc}" if _desc
+            else f"Telegram send failed: {exc}",
             require_delivery=require_delivery,
             delivery_uncertain=False,
         )
@@ -2367,6 +2386,17 @@ def format_output_dict(
             and not block_conflict
             and block_sign is not None
             and win_model_veto.blocks_veto(block_sign, data, section)
+        ):
+            for key, original_value in starred_original_values.items():
+                data[key] = original_value
+            continue
+        # Тот же запрет по драфтовому КОМПОНЕНТУ модели: вето выше смотрит на
+        # её общий вердикт и сторону, названную вопреки драфту, пропускало.
+        if (
+            block_star_count > 0
+            and not block_conflict
+            and block_sign is not None
+            and win_model_veto.draft_veto(block_sign, data, section)
         ):
             for key, original_value in starred_original_values.items():
                 data[key] = original_value

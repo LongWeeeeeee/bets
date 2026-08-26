@@ -1680,6 +1680,10 @@ class _WinlineMapExtract:
     # с этой парой доказательство помещается в один файл evidence.
     card_team_order: Optional[str] = None
     card_odds: Optional[List[float]] = None
+    # Почему не сработала подстановка рынка «Матч» на решающей карте. Пусто —
+    # подстановка не требовалась. Доезжает до evidence поллера тем же полем,
+    # что и отпечаток ненайденной пары.
+    miss_fingerprint: str = ""
 
 
 _WINLINE_EVENT_BOUNDARY_RE = re.compile(
@@ -2105,11 +2109,24 @@ def _winline_match_market_winner_prices(scope: Any) -> Optional[List[float]]:
     return None
 
 
+def _winline_promotion_fingerprint(diag: Any, *, series_last_map: bool) -> str:
+    """Строка для evidence: почему рынок карты не заменён рынком «Матч».
+
+    Пусто, когда объяснять нечего. Формат намеренно короткий и машинно
+    читаемый: по нему собирается статистика отказов за прогон.
+    """
+    reasons = [str(item) for item in (diag or []) if str(item)]
+    if not reasons:
+        return "" if series_last_map else "promotion=not_decider"
+    return "promotion=" + ",".join(reasons[:4])
+
+
 def _winline_promote_last_map_match_market(
     soup: Any,
     team1: str,
     team2: str,
     map_num: int,
+    diag: Optional[List[str]] = None,
 ) -> Optional["_WinlineMapExtract"]:
     """Рынок «Матч» как рынок ПОСЛЕДНЕЙ карты серии.
 
@@ -2123,7 +2140,17 @@ def _winline_promote_last_map_match_market(
     НИ В ОДНОЙ карточке пары (приостановленный рынок карты — это не отсутствие),
     рынок «Матч» двухисходный, обе кнопки принимают ставку, а порядок сторон
     доказан по тексту карточки.
+
+    `diag` — список, куда складывается причина отказа. Без него отказ выглядит
+    в evidence так же, как отсутствие рынка: 22.08.2026 девять карт-троек
+    остались вовсе без цены, и по файлам нельзя было понять, какой именно
+    предохранитель сработал.
     """
+    def _note(reason: str) -> None:
+        """Записать, какой предохранитель остановил подстановку."""
+        if diag is not None and reason not in diag:
+            diag.append(reason)
+
     candidates: List[Tuple[int, Any, str]] = []
     for element in soup.find_all(True):
         scope_text = " ".join(element.stripped_strings)
@@ -2134,22 +2161,32 @@ def _winline_promote_last_map_match_market(
             # ничего не говорят о нашей карточке.
             continue
         if _winline_map_row_present(scope_text, map_num):
+            _note("map_row_present")
             return None
         candidates.append((len(scope_text), element, scope_text))
     if not candidates:
+        _note("no_card_scope")
         return None
     candidates.sort(key=lambda item: item[0])
     for _length, element, scope_text in candidates:
         header = _WINLINE_CARD_HEADER_MARKER_RE.search(scope_text)
-        if header is None or int(header.group()[0]) != int(map_num):
+        if header is None:
+            _note("card_header_silent")
+            continue
+        if int(header.group()[0]) != int(map_num):
             # Карточка сама пишет, какая карта идёт (`3карта`). Если она молчит
             # или идёт другая карта — подставлять матчевые кэфы нельзя.
+            _note(f"card_header_map={header.group()[0]}")
             continue
         order = _winline_team_order(scope_text, team1, team2)
         if order is None:
+            _note("team_order_unproven")
             continue
         prices = _winline_match_market_winner_prices(element)
         if not prices:
+            # Либо рынка «Матч» в карточке нет, либо он трёхисходный (Bo2 с
+            # ничьей), либо его кнопки не принимают ставку.
+            _note("match_market_unusable")
             continue
         card_prices = list(prices)
         if order == "reverse":
@@ -2214,6 +2251,7 @@ def _winline_structured_current_map_winner(
     team2: str,
     map_num: Optional[int],
     series_last_map: bool = False,
+    diag: Optional[List[str]] = None,
 ) -> Optional["_WinlineMapExtract"]:
     """Extract only the two DOM buttons of the current-map winner market.
 
@@ -2540,9 +2578,14 @@ def _winline_structured_current_map_winner(
     if series_last_map:
         # Рынка запрошенной карты в карточке нет вовсе, а карта последняя в серии:
         # победитель этой карты и победитель матча — одно событие.
-        promoted = _winline_promote_last_map_match_market(soup, team1, team2, map_num)
+        promoted = _winline_promote_last_map_match_market(
+            soup, team1, team2, map_num, diag=diag)
         if promoted is not None:
             return promoted
+    elif diag is not None:
+        # Карта не доказана как решающая — подстановка запрещена по замыслу, но
+        # в evidence это должно быть отличимо от отказавшего предохранителя.
+        diag.append("not_decider")
     return None
 
 
@@ -2717,12 +2760,14 @@ def _extract_winline_current_map_winner(
     if (not flat and not html) or map_num is None:
         return _WinlineMapExtract(reason="map", details="winline missing/invalid map_num")
 
+    promotion_diag: List[str] = []
     structured = _winline_structured_current_map_winner(
         html,
         team1,
         team2,
         map_num,
         series_last_map=series_last_map,
+        diag=promotion_diag,
     )
     if structured is not None:
         return structured
@@ -2736,6 +2781,8 @@ def _extract_winline_current_map_winner(
             map_num=map_num,
             market_kind="current_map_winner",
             details="winline structured current map winner market unavailable",
+            miss_fingerprint=_winline_promotion_fingerprint(
+                promotion_diag, series_last_map=series_last_map),
         )
 
     card_context = _winline_matched_card_context(
@@ -3868,7 +3915,7 @@ async def parse_site_in_camoufox_page_async(
                 source_name = _match_level_rejected_source(site)
             else:
                 source_name = "winline_map_rejected"
-            return _with_acq(_site_result_with_provenance(
+            negative = _with_acq(_site_result_with_provenance(
                 site=site,
                 url=url,
                 status=load_status,
@@ -3879,6 +3926,14 @@ async def parse_site_in_camoufox_page_async(
                 map_num=wl.map_num or _normalize_map_num(forced_map_num),
                 match_odds=match_diag,
             ))
+            # Отказ подстановки рынка «Матч» — единственное объяснение, которого
+            # в evidence не было: без него «рынка нет» и «подстановка отклонена»
+            # выглядели одинаково.
+            if getattr(wl, "miss_fingerprint", "") and not getattr(
+                negative, "miss_fingerprint", ""
+            ):
+                negative.miss_fingerprint = str(wl.miss_fingerprint)[:200]
+            return negative
         if map_odds:
             return _with_acq(SiteResult(
                 site=site,

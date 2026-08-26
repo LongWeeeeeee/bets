@@ -368,6 +368,10 @@ WINLINE_CURRENT_MAP_SCHEDULER_NOMINAL_S = 5.0
 # budget; retry=False below prevents duplicate queued work.
 WINLINE_CURRENT_MAP_SHARED_JOB_TIMEOUT_S = 60.0
 WINLINE_CURRENT_MAP_RECOVERY_COOLDOWN_S = 60.0
+# Сколько ошибок добычи ПОДРЯД нужно, чтобы менять маршрут и ронять
+# общую страницу. Единица означала прежнее поведение: любая одиночная
+# задержка сносила рабочий браузер и запускала петлю пересозданий.
+WINLINE_CURRENT_MAP_ERROR_STREAK_TO_ROTATE = 3
 
 
 def reset_winline_current_map_polling_state() -> None:
@@ -461,6 +465,78 @@ def _winline_source_blackout_grace_seconds() -> float:
     return value if value >= 0 else 300.0
 
 
+def _winline_next_map_wait_seconds() -> float:
+    """Сколько ждать следующую карту серии после конца предыдущей.
+
+    Замер по `runtime/winline_odds_history.jsonl` (64 пары соседних карт):
+    пауза между картами — медиана 29.8 мин, 90-й перцентиль 47.0, максимум
+    74.4. Сорок пять минут накрывают около девяти пар из десяти; дальше ждать
+    невыгодно — опрос стоит браузерного времени, а карта, скорее всего, уже не
+    состоится.
+    """
+    raw = os.getenv("WINLINE_NEXT_MAP_WAIT_S")
+    if raw is None or str(raw).strip() == "":
+        return 45 * 60.0
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return 45 * 60.0
+    return value if value >= 0 else 45 * 60.0
+
+
+def _winline_next_map_poll_interval_seconds() -> float:
+    """Такт опроса карты, которую мост ещё не подтвердил.
+
+    Обычные пять секунд здесь были бы платой ни за что: до начала карты рынка
+    нет, а пауза тянется получас — это больше трёхсот холостых заходов в
+    браузер на одну серию. Минута даёт задержку обнаружения не больше минуты
+    при паузе в тридцать.
+    """
+    raw = os.getenv("WINLINE_NEXT_MAP_POLL_INTERVAL_S")
+    if raw is None or str(raw).strip() == "":
+        return 60.0
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return 60.0
+    return value if value > 0 else 60.0
+
+
+#: Серии, чья карта доиграна, а следующая ещё не появилась в мосте:
+#: {ключ серии: {"map_num", "since", "team1", "team2"}}. Отдельно от реестра
+#: серий намеренно — реестр перезаписывается на каждой регистрации поллера и
+#: на каждом снимке моста, и ожидание в нём не пережило бы собственный запуск
+#: опроса.
+_winline_pending_next_maps: Dict[str, Dict[str, Any]] = {}
+
+
+def _winline_awaiting_next_map(series: Any, map_num: Any, now: Any = None) -> bool:
+    """Ждём ли мы именно эту карту как следующую в серии.
+
+    Карты, которой ещё нет в мосте, для реестра не существует, и предикат
+    «карта текущая» отвечал бы «нет» — поллер не стартовал бы вовсе. Между тем
+    рынок следующей карты у букмекера появляется раньше, чем карта у Valve, а
+    иногда (22.08.2026, `8959362208`) карта у Valve не появляется никогда.
+    """
+    key = str(series or "").strip()
+    if not key:
+        return False
+    with _winline_current_map_state_lock:
+        pending = _winline_pending_next_maps.get(key)
+    if not isinstance(pending, dict):
+        return False
+    try:
+        if int(pending.get("map_num")) != int(map_num):
+            return False
+        since = float(pending.get("since") or 0)
+    except (TypeError, ValueError):
+        return False
+    if since <= 0:
+        return False
+    moment = float(time.time() if now is None else now)
+    return (moment - since) < _winline_next_map_wait_seconds()
+
+
 def _winline_source_blackout_within_grace(reg: Any) -> bool:
     """Слепота источника моложе грейса — карта считается всё ещё текущей."""
     if not isinstance(reg, dict):
@@ -507,6 +583,11 @@ def _winline_current_map_is_current(**kwargs: Any) -> Any:
     reg = _winline_current_map_registry.get(series)
     if reg is None:
         return True
+    if _winline_awaiting_next_map(series, map_num):
+        # Предыдущая карта серии кончилась, эта ещё не появилась в мосте.
+        # Рынок следующей карты у букмекера открывается раньше, поэтому опрос
+        # держим до истечения окна ожидания.
+        return True
     if reg.get("active") is False:
         proven = bool(reg.get("inactive_proven"))
         if not proven and _winline_source_blackout_within_grace(reg):
@@ -519,7 +600,7 @@ def _winline_current_map_is_current(**kwargs: Any) -> Any:
         }
     if int(reg.get("map_num") or 0) != int(map_num):
         return {"current": False, "reason": "map_rollover"}
-    if str(reg.get("team1") or "") != team1 or str(reg.get("team2") or "") != team2:
+    if not _winline_same_team_pair(reg.get("team1"), reg.get("team2"), team1, team2):
         return {"current": False, "reason": "map_rollover"}
     return True
 
@@ -527,6 +608,95 @@ def _winline_current_map_is_current(**kwargs: Any) -> Any:
 def _winline_normalized_team_identity(value: Any) -> str:
     text = re.sub(r"[^0-9a-zA-Zа-яёА-ЯЁ]+", " ", str(value or "")).strip().lower()
     return " ".join(text.split())
+
+
+def _winline_same_team_pair(a1: Any, a2: Any, b1: Any, b2: Any) -> bool:
+    """Та же пара команд, НЕЗАВИСИМО от порядка.
+
+    Между картами серии команды меняются сторонами, и `team1`/`team2` в
+    идентичности карты — это radiant/dire ТЕКУЩЕЙ карты, а не постоянные роли.
+    Ключ серии это уже учитывает (`_winline_sourcetv_series_key` сортирует
+    id команд), а сравнение карты — нет, и перестановка читалась как смена
+    карты.
+
+    24.08.2026, RE ARISE — Team Lynx: опрос второй карты стартовал из ожидания
+    следующей карты, то есть в порядке ПЕРВОЙ (RE ARISE, Team Lynx). Когда
+    вторая началась с обменом сторон, предикат вернул `map_rollover`, в чат
+    ушло «🏁 карта 2 · карта завершена» — по карте, которая только началась, —
+    и через 27 секунд «🆕 карта 2» уже в обратном порядке. В истории кэфов та
+    же карта лежит под двумя ключами с зеркальными ценами (1.42/2.55 и
+    2.55/1.42).
+    """
+    left = {_winline_normalized_team_identity(a1), _winline_normalized_team_identity(a2)}
+    right = {_winline_normalized_team_identity(b1), _winline_normalized_team_identity(b2)}
+    if "" in left or "" in right:
+        # Пустое имя рушит сравнение множеств (две пустые схлопнутся в одну):
+        # без имён идентичность не проверяется, решает номер карты.
+        return True
+    return left == right
+
+
+def _winline_map_slot(series: Any, map_num: Any, team1: Any, team2: Any) -> str:
+    """Слот карты: серия + номер + пара команд БЕЗ порядка.
+
+    Канонический ключ (`series|mapN|team1|team2`) держит порядок, потому что к
+    нему привязаны цены `p1`/`p2` и подпись в чате. Для поиска «уже опрашиваем
+    ли мы эту карту» порядок только мешает — иначе на смене сторон заводится
+    второй опрос той же карты.
+    """
+    pair = "|".join(sorted((
+        _winline_normalized_team_identity(team1),
+        _winline_normalized_team_identity(team2),
+    )))
+    try:
+        n = int(map_num)
+    except (TypeError, ValueError):
+        n = map_num
+    return f"{str(series or '').strip()}|map{n}|{pair}"
+
+
+def _winline_adopt_transposed_poller(canonical: str, series: Any, map_num: Any,
+                                     team1: Any, team2: Any) -> Any:
+    """Активный опрос той же карты, заведённый в другом порядке команд.
+
+    Возвращает поллер, уже перевешенный на новый канонический ключ, либо None.
+    Вместе с ним переезжает состояние чата, причём цены МЕНЯЮТСЯ МЕСТАМИ:
+    `p1`/`p2` привязаны к подписи, и без обмена первое же сообщение после
+    усыновления показало бы стрелки движения там, где цена не менялась.
+    """
+    slot = _winline_map_slot(series, map_num, team1, team2)
+    with _winline_current_map_state_lock:
+        for key, poller in list(_winline_current_map_pollers.items()):
+            if key == canonical:
+                continue
+            ident = getattr(poller, "_identity", None)
+            if not isinstance(ident, dict):
+                continue
+            if _winline_map_slot(ident.get("series"), ident.get("map_num"),
+                                 ident.get("team1"), ident.get("team2")) != slot:
+                continue
+            if not getattr(poller, "is_active", lambda: False)():
+                continue
+            ident["team1"], ident["team2"] = str(team1 or ""), str(team2 or "")
+            try:
+                poller._canonical_key = canonical  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            _winline_current_map_pollers.pop(key, None)
+            _winline_current_map_pollers[canonical] = poller
+            prev = _winline_odds_notify_state.pop(key, None)
+            if prev:
+                prev["p1"], prev["p2"] = prev.get("p2"), prev.get("p1")
+                _winline_odds_notify_state[canonical] = prev
+            orient = _winline_odds_orientation_state.pop(key, None)
+            if orient:
+                orient["p1"], orient["p2"] = orient.get("p2"), orient.get("p1")
+                _winline_odds_orientation_state[canonical] = orient
+            logger.info(
+                "winline: карта %s сменила стороны, опрос усыновлён (%s -> %s)",
+                map_num, key, canonical)
+            return poller
+    return None
 
 
 def _winline_sourcetv_series_key(match: Any) -> str:
@@ -560,6 +730,69 @@ def _winline_sourcetv_series_key(match: Any) -> str:
     return f"sourcetv:league:{league_id}|{pair}" if pair else ""
 
 
+def _winline_sourcetv_sides_accounts(payload: Any) -> Tuple[List[int], List[int]]:
+    """Аккаунты сторон из записи моста: (радиант, дайр). Пусто — не разобрали.
+
+    Мост кладёт `team_map` — {account_id: сторона}; это единственное место, где
+    состав есть до разбора драфта.
+    """
+    data = payload if isinstance(payload, dict) else {}
+    tmap = data.get("team_map")
+    rad: List[int] = []
+    dire: List[int] = []
+    if isinstance(tmap, dict):
+        for acc, side in tmap.items():
+            try:
+                acc_i = int(acc)
+            except (TypeError, ValueError):
+                continue
+            if acc_i <= 0:
+                continue
+            (rad if str(side) == "radiant" else dire).append(acc_i)
+    return rad, dire
+
+
+#: Последний счёт, восстановленный по своим картам, вместе с ключом серии.
+#: Нужен строке счёта в карточке: она получает только `live_league_data`, где
+#: составов нет, а пробрасывать их через пять точек вызова — хуже, чем
+#: запомнить одно значение рядом с ключом и сверять его.
+_LAST_DELTA_SERIES_SCORE: Dict[str, Any] = {"key": "", "score": (0, 0), "ts": 0.0}
+#: Дольше этого запомненный счёт не используется: серия к тому времени кончилась.
+_DELTA_SERIES_SCORE_TTL = 3 * 3600
+
+
+def _winline_series_score_from_delta(payload: Any) -> Tuple[int, int]:
+    """Счёт серии по нашим завершённым картам: (радиант, дайр). Fail-open."""
+    rad, dire = _winline_sourcetv_sides_accounts(payload)
+    if len(rad) < 4 or len(dire) < 4:
+        return 0, 0
+    try:
+        import prematch_live_delta
+        score = prematch_live_delta.series_progress(rad, dire)
+    except Exception:                                # noqa: BLE001
+        return 0, 0
+    if sum(score) > 0:
+        key = _winline_sourcetv_series_key(payload)
+        if key:
+            _LAST_DELTA_SERIES_SCORE.update(key=key, score=score, ts=time.time())
+    return score
+
+
+def _winline_series_score_remembered(live_league: Any) -> Optional[Tuple[int, int]]:
+    """Запомненный счёт, если он про ЭТУ серию и ещё не протух."""
+    key = _winline_sourcetv_series_key(live_league)
+    if not key or key != str(_LAST_DELTA_SERIES_SCORE.get("key") or ""):
+        return None
+    try:
+        age = time.time() - float(_LAST_DELTA_SERIES_SCORE.get("ts") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if age > _DELTA_SERIES_SCORE_TTL:
+        return None
+    score = _LAST_DELTA_SERIES_SCORE.get("score") or (0, 0)
+    return (int(score[0]), int(score[1])) if sum(score) > 0 else None
+
+
 def _winline_sourcetv_map_num(match: Any) -> Optional[int]:
     payload = match if isinstance(match, dict) else {}
 
@@ -579,6 +812,12 @@ def _winline_sourcetv_map_num(match: Any) -> Optional[int]:
         )
     except (TypeError, ValueError):
         played = 0
+    if game_number <= 0 and played <= 0:
+        # Valve отдаёт счёт серии НЕ ВСЕГДА. 25.08.2026 в серии
+        # Nemiga — PuckChamp он пришёл на второй карте и пропал на третьей:
+        # карточка объявила третью карту первой со счётом 0:0. Свои сыгранные
+        # карты мы знаем точно — считаем по ним.
+        played = sum(_winline_series_score_from_delta(payload))
     resolved = max(game_number, played + 1)
     # During the inter-map break the GC bridge can keep the completed Valve
     # match as live, with its old series_game_number and frozen game_time, while
@@ -682,6 +921,13 @@ def _winline_series_row_last_map(row: Any, map_num: Any) -> bool:
     map_i = _winline_series_int(map_num)
     if map_i is None or not (1 <= map_i <= 5):
         return False
+    # Доказанный Bo1: победитель карты и победитель матча — одно событие, и
+    # подстановка матчевого рынка там не «на решающей карте», а тождественна.
+    # Доказательством считаем только формат от cyberscore: `series_type` = 0 у GC
+    # означает и Bo1, и отсутствие поля, а гадать здесь нельзя — подстановка на
+    # НЕрешающей карте даёт цену другого события.
+    if _winline_series_int(row.get("cyberscore_best_of")) == 1:
+        return map_i == 1
     series_type = _winline_series_int(row.get("series_type"))
     if series_type == _WINLINE_SERIES_TYPE_BO2:
         return map_i == 2
@@ -764,6 +1010,87 @@ def _winline_polling_series_key(
     return stable or str(fallback or "").strip()
 
 
+def _resolve_sourcetv_bridge_identity(matches: Any) -> Any:
+    """Дописать названия команд в записи моста по данным cyberscore.
+
+    Опрос коэффициентов заводится от записи МОСТА, а не от карточки:
+    `_reconcile_winline_sourcetv_polling` берёт имена и id оттуда и строит по ним
+    идентичность поллера. Пока Valve молчит, получается
+    `name:balu team|name:dire|map1` — поллер уходит искать на Winline команду
+    «Dire» и не находит ничего. 26.08.2026 так пропали кэфы по картам
+    Balu — PuckChamp и Synapse — Nemiga Gaming, хотя сами матчи разбирались.
+
+    Поэтому личность подставляется ЗДЕСЬ, до реконсиляции поллеров: карточка
+    получит те же имена из того же payload'а. Молча возвращает вход, если
+    подставлять нечего.
+    """
+    if not isinstance(matches, dict) or not matches:
+        return matches
+    if not SOURCETV_IDENTITY_FALLBACK:
+        return matches
+    pending = []
+    for key, payload in matches.items():
+        if not isinstance(payload, dict):
+            continue
+        radiant = payload.get("radiant_team_name")
+        dire = payload.get("dire_team_name")
+        if not (_is_placeholder_team_name(radiant) or _is_placeholder_team_name(dire)):
+            continue
+        if not _league_matches_allowlist(payload.get("league_id"), payload.get("league_name")):
+            continue
+        pending.append((key, payload))
+    if not pending:
+        return matches
+    try:
+        rows = _sourcetv_identity_rows()
+    except Exception as exc:
+        logger.warning("CyberScore identity rows unavailable: %s", exc)
+        return matches
+    if not rows:
+        return matches
+    for key, payload in pending:
+        try:
+            identity = _resolve_sourcetv_identity_from_cyberscore(
+                payload.get("match_id") or key,
+                payload.get("radiant_team_name"),
+                payload.get("dire_team_name"),
+                rows=rows,
+            )
+        except Exception as exc:
+            logger.warning("CyberScore identity for %s failed: %s", key, exc)
+            continue
+        if not identity:
+            continue
+        radiant_name, dire_name, _tournament = identity
+        if radiant_name:
+            payload["radiant_team_name"] = radiant_name
+        if dire_name:
+            payload["dire_team_name"] = dire_name
+        # Формат серии от cyberscore — единственное ДОКАЗАТЕЛЬСТВО Bo1: у GC
+        # `series_type` = 0 одинаково означает и Bo1, и «поля нет» (proto3
+        # отдаёт ноль по умолчанию), поэтому сам по себе ноль ничего не доказывает.
+        row = rows.get(int(payload.get("match_id") or key or 0)) if str(
+            payload.get("match_id") or key or ""
+        ).isdigit() else None
+        best_of = _coerce_int((row or {}).get("best_of"))
+        if best_of > 0:
+            payload["cyberscore_best_of"] = best_of
+        for name_key, id_key in (
+            ("radiant_team_name", "radiant_team_id"),
+            ("dire_team_name", "dire_team_id"),
+        ):
+            if _coerce_int(payload.get(id_key)) > 0:
+                continue
+            known_ids = _find_known_team_ids_by_name(payload.get(name_key))
+            if known_ids:
+                payload[id_key] = int(min(known_ids))
+        print(
+            f"   🔎 Личность моста из CyberScore: {payload.get('radiant_team_name')} vs "
+            f"{payload.get('dire_team_name')} (матч {key})"
+        )
+    return matches
+
+
 def _reconcile_winline_sourcetv_polling(
     matches: Any,
     *,
@@ -798,6 +1125,12 @@ def _reconcile_winline_sourcetv_polling(
             # этого поля, флаг гас до следующей регистрации поллера, и промоция
             # рынка «Матч» в рынок карты моргала внутри одной карты.
             "series_last_map": _winline_series_row_last_map(item, map_num),
+            # Счёт серии нужен, чтобы решить, БУДЕТ ЛИ следующая карта. Флага
+            # решающей карты для этого мало: он говорит «эта карта последняя»,
+            # а не «после неё серия точно продолжится».
+            "series_type": _winline_series_int(item.get("series_type")),
+            "wins": (_winline_series_int(item.get("radiant_series_wins")),
+                     _winline_series_int(item.get("dire_series_wins"))),
         }
 
     with _winline_current_map_state_lock:
@@ -814,6 +1147,8 @@ def _reconcile_winline_sourcetv_polling(
                 # гасим. При смене карты флаг не переносится.
                 payload["series_last_map"] = True
             _winline_current_map_registry[series] = payload
+            # Ожидаемая карта дошла до моста — ждать больше нечего.
+            _winline_clear_pending_next_map(series, payload["map_num"])
         for series, current in list(_winline_current_map_registry.items()):
             if not str(series).startswith("sourcetv:") or series in active:
                 continue
@@ -827,6 +1162,197 @@ def _reconcile_winline_sourcetv_polling(
             # опрос на первом же пропуске снимка.
             if was_active or current.get("inactive_since") is None:
                 current["inactive_since"] = time.time()
+            _winline_note_pending_next_map(series, current)
+    _winline_start_pending_next_map_polling()
+
+
+def _winline_apply_poll_interval(poller: Any, interval: Any) -> bool:
+    """Сменить такт уже работающего опроса. `None` — оставить как есть.
+
+    Отсутствие значения означает обычный такт: так вызывает живой путь, когда
+    карта подтвердилась мостом, и редкий такт ожидания надо снять.
+    """
+    try:
+        mod = _load_winline_current_map_poller_module()
+        default = float(getattr(mod, "POLL_INTERVAL_SECONDS", 5.0))
+    except Exception:
+        default = 5.0
+    try:
+        value = default if interval is None else float(interval)
+    except (TypeError, ValueError):
+        return False
+    if value <= 0:
+        return False
+    try:
+        if float(getattr(poller, "_poll_interval", default)) == value:
+            return False
+        poller._poll_interval = value                    # type: ignore[attr-defined]
+        return True
+    except Exception:
+        return False
+
+
+def _winline_next_map_certain(reg: Any, current_map: Any) -> bool:
+    """Состоится ли следующая карта серии ГАРАНТИРОВАННО.
+
+    Исход только что сыгранной карты нам неизвестен, поэтому годится лишь то,
+    что верно при любом её результате. В Bo3 при счёте 1:0 карта 3 будет только
+    при 1:1, а при 2:0 серия кончается — ждать её нельзя. Формально: следующая
+    карта неизбежна, когда даже победа лидера не даёт нужного числа побед,
+    то есть `max(побед) + 1 < needed`.
+
+    Цена ошибки уже заплачена: 23.08.2026 ожидание карты 3 в серии
+    Team Spirit — Team Yandex запустило опрос несуществующей карты, и его
+    завершение ушло в чат как «карта завершена».
+    """
+    if not isinstance(reg, dict):
+        return False
+    series_type = _winline_series_int(reg.get("series_type"))
+    if series_type == _WINLINE_SERIES_TYPE_BO2:
+        # В Bo2 играются обе карты независимо от исхода первой.
+        return _winline_series_int(current_map) == 1
+    needed = _WINLINE_SERIES_WINS_NEEDED.get(series_type)
+    if needed is None:
+        return False                     # формат неизвестен — не гадаем
+    wins = reg.get("wins")
+    if not isinstance(wins, (tuple, list)) or len(wins) != 2:
+        return False
+    r_wins, d_wins = _winline_series_int(wins[0]), _winline_series_int(wins[1])
+    if r_wins is None or d_wins is None:
+        return False                     # счёт нечитаем — не гадаем
+    # Счёт должен согласовываться с номером карты, иначе одно из двух неверно.
+    if r_wins + d_wins + 1 != _winline_series_int(current_map):
+        return False
+    return max(r_wins, d_wins) + 1 < needed
+
+
+def _winline_note_pending_next_map(series: Any, reg: Any, now: Any = None) -> Optional[int]:
+    """Отметить, какую карту серии ждём после ушедшей. Вернуть её номер.
+
+    Серия продолжается, пока сыгранная карта не была решающей. Ждать её у
+    Valve необязательно: рынок следующей карты Winline открывает раньше, а
+    22.08.2026 карта `8959362208` не появилась у Valve вовсе — коэффициенты по
+    ней не запрашивались ни разу, потому что опрос стартовал только от живой
+    карты в мосте.
+    """
+    key = str(series or "").strip()
+    if not key or not isinstance(reg, dict):
+        return None
+    moment = float(time.time() if now is None else now)
+    with _winline_current_map_state_lock:
+        already = _winline_pending_next_maps.get(key)
+    if isinstance(already, dict):
+        # Ожидание уже идёт. Номер не двигаем: реестр к этому моменту показывает
+        # ту самую ожидаемую карту (её записала регистрация опроса), и сдвиг
+        # означал бы перескок через карту, которую мы ещё ждём.
+        try:
+            if moment - float(already.get("since") or 0) < _winline_next_map_wait_seconds():
+                return _winline_series_int(already.get("map_num"))
+        except (TypeError, ValueError):
+            pass
+        with _winline_current_map_state_lock:
+            _winline_pending_next_maps.pop(key, None)
+        return None
+    if reg.get("series_last_map"):
+        # Решающая карта сыграна — серии дальше нет.
+        return None
+    if not reg.get("inactive_proven"):
+        # Источник просто молчит; конец карты не доказан, ждать рано.
+        return None
+    current_map = _winline_series_int(reg.get("map_num"))
+    if current_map is None or not (1 <= current_map <= 4):
+        return None
+    if not _winline_next_map_certain(reg, current_map):
+        return None
+    nxt = current_map + 1
+    with _winline_current_map_state_lock:
+        _winline_pending_next_maps[key] = {
+            "map_num": nxt,
+            "since": moment,
+            "team1": str(reg.get("team1") or "").strip(),
+            "team2": str(reg.get("team2") or "").strip(),
+        }
+    return nxt
+
+
+def _winline_clear_pending_next_map(series: Any, map_num: Any = None) -> bool:
+    """Снять ожидание: карта пришла в мост (или ушла дальше по серии)."""
+    key = str(series or "").strip()
+    if not key:
+        return False
+    with _winline_current_map_state_lock:
+        pending = _winline_pending_next_maps.get(key)
+        if not isinstance(pending, dict):
+            return False
+        if map_num is not None:
+            try:
+                if int(map_num) < int(pending.get("map_num")):
+                    return False
+            except (TypeError, ValueError):
+                return False
+        _winline_pending_next_maps.pop(key, None)
+    return True
+
+
+def _winline_start_pending_next_map_polling() -> int:
+    """Завести опрос по каждой ожидаемой карте. Вернуть, сколько заведено.
+
+    Такт редкий (`_winline_next_map_poll_interval_seconds`): до начала карты
+    рынка нет, и обычные пять секунд означали бы сотни холостых заходов в
+    браузер за одну паузу между картами.
+    """
+    started = 0
+    with _winline_current_map_state_lock:
+        pending = [(series, dict(state))
+                   for series, state in _winline_pending_next_maps.items()
+                   if isinstance(state, dict)]
+        # Поколение продюсера берём готовое. Регистрация опроса умеет назначить
+        # его сама (по `os.getpid()`), но здесь это был бы побочный эффект:
+        # смена поколения — терминальная причина для ВСЕХ живых опросов, и
+        # ожидание следующей карты гасило бы опрос текущей.
+        known_pid = _winline_current_map_service_gen.get("pid") or None
+        known_gen = _winline_current_map_service_gen.get("gen") or None
+    for series, state in pending:
+        map_num = _winline_series_int(state.get("map_num"))
+        if map_num is None or not _winline_awaiting_next_map(series, map_num):
+            continue
+        team1 = str(state.get("team1") or "").strip()
+        team2 = str(state.get("team2") or "").strip()
+        if not team1 or not team2:
+            continue
+        canonical = f"{series}|map{map_num}|{team1}|{team2}"
+        with _winline_current_map_state_lock:
+            existing = _winline_current_map_pollers.get(canonical)
+        if existing is not None and getattr(existing, "is_active", lambda: False)():
+            continue
+        outcome = ensure_winline_current_map_polling(
+            series=series,
+            map_num=map_num,
+            team1=team1,
+            team2=team2,
+            selected_side=None,
+            series_last_map=False,
+            producer_pid=known_pid,
+            producer_start_generation=known_gen,
+            update_registry=False,
+            poll_interval_seconds=_winline_next_map_poll_interval_seconds(),
+            # Перезагрузка страницы лечит застывший DOM, а здесь карта просто
+            # ещё не началась: рынка нет и после перезагрузки. Страница у всех
+            # опросов общая, поэтому ожидание не имеет права её дёргать — иначе
+            # оно ослепляет живые карты соседних матчей на десятки секунд.
+            reload_after_consecutive_misses=10 ** 9,
+        )
+        if outcome:
+            started += 1
+            try:
+                logger.info(
+                    "winline: ждём карту %d серии %s (%s vs %s), опрос раз в %.0f c",
+                    map_num, series, team1, team2,
+                    _winline_next_map_poll_interval_seconds(),
+                )
+            except Exception:
+                pass
+    return started
 
 
 def _winline_evidence_path_for_key(canonical_key: str) -> Path:
@@ -1166,6 +1692,10 @@ def _winline_fast_collect_from_payload(
         negative.market_closed = market_closed
         # Карточка найдена -> отсутствует РЫНОК; карточки нет -> матч не выставлен.
         negative.match_found = bool(card_text)
+        # Почему не сработала подстановка рынка «Матч» на решающей карте. Быстрый
+        # путь ходит в тот же парсер, поэтому объяснение обязано доезжать и здесь.
+        negative.miss_fingerprint = str(
+            getattr(extract, "miss_fingerprint", "") or "")[:200]
         negative.acquisition_mode = "dynamic_dom_fast"
         return _winline_map_site_result_to_collector_dict(
             negative,
@@ -1578,10 +2108,26 @@ def _winline_current_map_poller_collect(
             now_mono = time.monotonic()
             should_recover = False
             with _winline_current_map_state_lock:
+                streak = int(_winline_shared_page_state.get(
+                    "acquisition_error_streak", 0)) + 1
+                _winline_shared_page_state["acquisition_error_streak"] = streak
                 last_recovery = _winline_shared_page_state.get(
                     "last_acquisition_recovery_monotonic"
                 )
-                if (
+                # РАЗОВЫЙ СБОЙ НЕ СНОСИТ РАБОЧУЮ СТРАНИЦУ. Смена прокси
+                # перезапускает браузер, а вместе с ним гибнет общая открытая
+                # страница — та самая, ради которой опрос стоит 1-2 с при
+                # `браузер 0.00c`. Дальше каждый опрос платит полную навигацию,
+                # под нагрузкой не укладывается в
+                # WINLINE_CURRENT_MAP_SHARED_JOB_TIMEOUT_S, это снова считается
+                # ошибкой добычи — и петля затягивается сама.
+                # Замер 20.08.2026: обычные опросы 1.09-2.39 с при нулевом
+                # времени браузера, после первого сброса — 64.8, 131.6 и 85.4 с
+                # при времени браузера 26.5, 36.0 и 12.7 с.
+                # Кулдауна мало: он ограничивает частоту сбросов, но одиночную
+                # задержку от голода процессора всё равно принимает за поломку
+                # маршрута.
+                if streak >= WINLINE_CURRENT_MAP_ERROR_STREAK_TO_ROTATE and (
                     last_recovery is None
                     or (now_mono - float(last_recovery))
                     >= WINLINE_CURRENT_MAP_RECOVERY_COOLDOWN_S
@@ -1589,12 +2135,15 @@ def _winline_current_map_poller_collect(
                     _winline_shared_page_state[
                         "last_acquisition_recovery_monotonic"
                     ] = now_mono
+                    _winline_shared_page_state["acquisition_error_streak"] = 0
                     should_recover = True
             if should_recover:
                 _bookmaker_rotate_shared_camoufox_proxy(
                     reason="winline_acquisition_error"
                 )
         elif normalized.get("page_valid") is True:
+            with _winline_current_map_state_lock:
+                _winline_shared_page_state["acquisition_error_streak"] = 0
             _bookmaker_restore_shared_camoufox_direct_route(
                 reason="winline_valid_page"
             )
@@ -1892,6 +2441,8 @@ def ensure_winline_current_map_polling(
     is_map_current: Any = None,
     evidence_path: Any = None,
     series_last_map: Any = None,
+    match_id: Any = None,
+    update_registry: bool = True,
     **poller_kwargs: Any,
 ) -> Any:
     """Create/update exactly one poller for the exact canonical current map.
@@ -1918,18 +2469,22 @@ def ensure_winline_current_map_polling(
             return False
 
         # Register as the latest current map for this series (rollover stop for older).
-        with _winline_current_map_state_lock:
-            _winline_current_map_registry[series_s] = {
-                "map_num": map_i,
-                "team1": t1,
-                "team2": t2,
-                "active": True,
-                "inactive_reason": None,
-                "inactive_proven": False,
-                "inactive_since": None,
-                # Решающая карта: разрешает промоцию рынка «Матч» в рынок карты.
-                "series_last_map": bool(series_last_map),
-            }
+        # Опрос карты, которую мост ещё не подтвердил, реестр НЕ трогает: реестр
+        # описывает карту, идущую на самом деле, и запись туда несыгранной карты
+        # выглядела бы для опроса текущей как смена карты (`map_rollover`).
+        if update_registry:
+            with _winline_current_map_state_lock:
+                _winline_current_map_registry[series_s] = {
+                    "map_num": map_i,
+                    "team1": t1,
+                    "team2": t2,
+                    "active": True,
+                    "inactive_reason": None,
+                    "inactive_proven": False,
+                    "inactive_since": None,
+                    # Решающая карта: разрешает промоцию рынка «Матч» в рынок карты.
+                    "series_last_map": bool(series_last_map),
+                }
 
         pid = int(producer_pid) if producer_pid is not None else int(os.getpid())
         gen = (
@@ -1962,8 +2517,21 @@ def ensure_winline_current_map_polling(
 
         with _winline_current_map_state_lock:
             existing = _winline_current_map_pollers.get(canonical)
+            if existing is None:
+                # Тот же слот карты, но команды пришли в другом порядке — это
+                # смена сторон внутри серии, а не новая карта. Опрос усыновляем
+                # вместе с накопленным состоянием чата: иначе в реестре повиснут
+                # два поллера одной карты, старый закроется как «карта
+                # завершена», а новый начнёт с «🆕» (24.08.2026, RE ARISE —
+                # Team Lynx, карта 2 под двумя ключами).
+                existing = _winline_adopt_transposed_poller(
+                    canonical, series_s, map_i, t1, t2)
         if existing is not None and getattr(existing, "is_active", lambda: False)():
             # Same exact identity still active — keep; selected_side non-gating.
+            # Такт при этом обновляем: опрос ожидаемой карты идёт редко, и когда
+            # карта наконец пришла в мост, он обязан вернуться к обычной частоте,
+            # иначе движение линии на живой карте читалось бы раз в минуту.
+            _winline_apply_poll_interval(existing, poller_kwargs.get("poll_interval_seconds"))
             if evidence_path is not None:
                 try:
                     existing._evidence_path = Path(evidence_path)  # type: ignore[attr-defined]
@@ -2004,7 +2572,8 @@ def ensure_winline_current_map_polling(
             selected_side=selected_side,
             **kwargs,
         )
-        started = poller.begin(series=series_s, map_num=map_i, team1=t1, team2=t2)
+        started = poller.begin(series=series_s, map_num=map_i, team1=t1, team2=t2,
+                               match_id=match_id)
         if not started and not getattr(poller, "is_active", lambda: False)():
             return False
         try:
@@ -2279,6 +2848,13 @@ def _winline_odds_telegram_notify(
         prev = dict(_winline_odds_notify_state.get(key) or {})
 
     if is_terminal:
+        if not prev:
+            # По этой карте мы не отправили ни одной строки: рынка не было ни
+            # разу. «Карта завершена» тогда объявляет конец тому, чего чат не
+            # видел, а при опросе ещё не начавшейся карты — конец тому, чего не
+            # было вовсе (23.08.2026, «Winline · карта 3» в серии
+            # Team Spirit — Team Yandex: третьей карты не существовало).
+            return None
         # Терминал без доказанного конца карты (потолок 90 минут, молчащий фид)
         # объявляем остановкой опроса, а не финишем карты.
         kind = "terminal" if map_end_proven else "stopped"
@@ -5197,9 +5773,26 @@ def _format_win_model_line(*blocks) -> str:
         _elo = win_model_veto.last_model_elo(index)
         if _elo is not None:
             line += f" | ELO модели: {_elo:+.0f}"
+        _parts = win_model_veto.last_parts(index)
+        if _parts:
+            # Доли от суммы МОДУЛЕЙ: по модулю дают 100%, и видно, кто тянет
+            # против. Знак — в ориентации Radiant, как у `ELO модели`.
+            _tot = sum(abs(v) for v in _parts.values()) or 1.0
+            _names = (("elo", "ELO"), ("draft", "драфт"),
+                      ("players", "игроки"), ("h2h", "очные"))
+            _sh = " ".join(f"{_ru} {_parts.get(_k, 0.0)/_tot:+.0%}"
+                           for _k, _ru in _names if _k in _parts)
+            if _sh:
+                line += f" | вклад: {_sh}"
         _dr = win_model_veto.last_draft_rank(index)
-        if _dr:
-            line += f" | драфт {_dr[1]:+.0%}"
+        if _dr and not _parts:
+            # Единый знаменатель со строкой ELO: минус за Dire, плюс за Radiant.
+            # `draft_share` считается ПОСЛЕ переворота вкладов на сторону ставки,
+            # поэтому его знак означает «за выбранную сторону»; домножаем на знак
+            # стороны и получаем ориентацию Radiant, ту же, что у `ELO модели`.
+            # Внутреннюю величину не трогаем: на ней стоит гейт _DRAFT_FIRST_ONLY.
+            _draft_radiant_oriented = _dr[1] * (1.0 if index > 0 else -1.0)
+            line += f" | драфт {_draft_radiant_oriented:+.1%}"
         _fill = win_model_veto.last_fill(index)
         if _fill is not None:
             line += f" | вход {float(_fill):.0%}"
@@ -5588,6 +6181,14 @@ _STAR_SIGNAL_METRICS = frozenset({
     # обрываются до монетки, см. docs/EXPERIMENTS.md E-18.
     "dota2protracker_solo",
     "dota2protracker_duo",
+    # E-73 + коммит eb7d3a6 (12.08): драфтовая ML-модель не только запрещает
+    # блок (вето), но и делает его валидным. Порог единственный — 10 на
+    # WR60/all_output. Метрика была добавлена в functions.py и в таблицу
+    # порогов, а СЮДА нет, и `_star_thresholds_for_wr` молча выбрасывала её
+    # порог: в боевом логе строка не встречалась ни разу.
+    # Может только ДОБАВЛЯТЬ карты: вето на all_output стоит на нуле и снимает
+    # любое несогласие до оценки звёзд, поэтому конфликт знаков невозможен.
+    "ml_win_index",
 })
 _STAR_SUPPORT_METRIC_ORDER = (
     "counterpick_1vs1",
@@ -6005,6 +6606,24 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
         return {
             "valid": False,
             "status": "win_model_veto",
+            "sign": block_sign,
+            "hit_metrics": hit_metrics,
+            "hit_count": len(hit_metrics),
+            "conflict_metric": None,
+            "win_model_index": block.get(win_model_veto.INDEX_KEY),
+            **consistency_fields,
+        }
+    # Запрет «драфт против стороны» на star-пути. До 25.08.2026 он стоял
+    # только в `model_bet`: вето выше сверяет знак блока с вердиктом ВСЕЙ
+    # модели, а драфтовый КОМПОНЕНТ внутри неё мог тянуть в другую сторону, и
+    # star-ставка на эту сторону уходила. Правило введено решением alex; замер
+    # E-238 показал, что оно срежет 49 ставок из 630 с винрейтом 0.735.
+    # Late dispatch сюда тоже попадает: он берёт готовый `selected_late_diag`,
+    # а не пересчитывает диагностику.
+    if block_sign in (-1, 1) and win_model_veto.draft_veto(block_sign, block, section):
+        return {
+            "valid": False,
+            "status": "draft_against_side",
             "sign": block_sign,
             "hit_metrics": hit_metrics,
             "hit_count": len(hit_metrics),
@@ -7130,7 +7749,10 @@ def _star_match_status_from_diags(
         and all_sign in (-1, 1)
         and late_sign in (-1, 1)
     )
-    if match_tier == 2 and STAR_REQUIRE_TIER2_SAME_SIGN:
+    # Tier 3 — явно разрешённые команды открытых квалификаций: требование
+    # одинакового знака к ним применяем ТОЖЕ, иначе допуск вышел бы мягче,
+    # чем у настоящих tier2-матчей.
+    if match_tier in (2, 3) and STAR_REQUIRE_TIER2_SAME_SIGN:
         if not (
             (has_early_star and early_sign == late_sign)
             or (all_can_replace_missing_early and all_sign == late_sign)
@@ -9530,6 +10152,14 @@ def _build_series_score_line(live_league: Optional[Dict[str, Any]]) -> str:
         if r_wins is not None or d_wins is not None:
             r_wins = int(r_wins or 0)
             d_wins = int(d_wins or 0)
+            if r_wins == 0 and d_wins == 0:
+                # Valve отдаёт счёт не всегда: 25.08.2026 в серии
+                # Nemiga — PuckChamp он был на второй карте и пропал на
+                # третьей, и карточка показывала 0-0 при счёте 1:1. Свои
+                # сыгранные карты мы знаем точно.
+                remembered = _winline_series_score_remembered(live_league)
+                if remembered:
+                    return f"{remembered[0]}-{remembered[1]}\n"
             return f"{r_wins}-{d_wins}\n"
     except Exception:
         pass
@@ -19379,6 +20009,17 @@ def _ensure_known_team_or_add_to_tier2(team_ids, team_name: str, match_url: str)
             candidate_ids,
             resolved_id,
         )
+        # ЗДЕСЬ И ТОЛЬКО ЗДЕСЬ известны ОБА id: пришедший с фида и словарный,
+        # на который мы его меняем. Дальше по коду едет уже подменённый, а
+        # Stratz знает команду по пришедшему: 22.08.2026 по боевым 10163435
+        # (BoomBoys) и 7554697 (Nigma) он отдавал НОЛЬ матчей, по фидовым
+        # 8255888 и 10136357 — по шесть. Без этой записи справка об исходе
+        # предыдущей карты серии не могла сработать никогда.
+        try:
+            import stratz_map_result
+            stratz_map_result.note_team_alias(resolved_id, candidate_ids[0])
+        except Exception:
+            pass
         return True, resolved_id
 
     # Проверяем каждый candidate id: если хоть один уже известен (T1/T2), берем его.
@@ -19431,6 +20072,103 @@ def _determine_star_signal_match_tier(radiant_team_id: int, dire_team_id: int) -
     if r_tier == 2 or d_tier == 2:
         return 2
     return 1
+
+
+def _is_tier_three_team(team_ids: Any, team_name: str) -> bool:
+    """Команда есть в явном tier-3 списке — по id или по нормализованному имени."""
+    try:
+        from tier_three_teams import TIER_THREE_TEAMS
+    except Exception:
+        return False
+    candidate_ids = set(_extract_candidate_team_ids(team_ids))
+    name_key = _normalize_tier_team_name_only(team_name)
+    for alias, ids in TIER_THREE_TEAMS.items():
+        known_ids = _extract_team_ids(ids)
+        if candidate_ids and known_ids and (candidate_ids & known_ids):
+            return True
+        if name_key and _normalize_tier_team_name_only(str(alias)) == name_key:
+            return True
+    return False
+
+
+def _team_identity_missing(team_ids: Any, team_name: str) -> bool:
+    """У стороны нет ни id, ни названия — Valve не завёл команду вовсе.
+
+    Именно так приезжают открытые квалификации: `radiant=[0]`, а имя проба
+    подменяет заглушкой 'Radiant'. Отличать это от «команда с редким названием»
+    обязательно: во втором случае её нужно заводить, а не пускать безымянной.
+    """
+    if _extract_candidate_team_ids(team_ids):
+        return False
+    try:
+        from tier_three_teams import ANONYMOUS_TEAM_NAMES
+    except Exception:
+        ANONYMOUS_TEAM_NAMES = frozenset({"", "radiant", "dire"})
+    return str(team_name or "").strip().lower() in ANONYMOUS_TEAM_NAMES
+
+
+def _classify_tier_three_sides(
+    radiant_team_ids: Any,
+    radiant_team_name: str,
+    dire_team_ids: Any,
+    dire_team_name: str,
+    league_id: Any = None,
+) -> Optional[Tuple[int, int]]:
+    """(radiant_id, dire_id), если матч пускает tier-3 allowlist; иначе None.
+
+    Пускаем в двух случаях:
+
+    * лига впущена руками (`TOURNAMENT_LEAGUE_ID_ALLOWLIST`) — это открытые
+      квалификации на чужом тикете, где опознание команд заведомо неполное:
+      26.08.2026 на тикете 10877 одновременно шли одиннадцать карт квала
+      BLAST Slam, и у половины сторон Valve не отдавал ни id, ни названия.
+      Перечислять там команды руками бессмысленно — их состав меняется каждый
+      круг;
+    * либо ХОТЯ БЫ ОДНА сторона названа в `TIER_THREE_TEAMS`, а вторая — тоже в
+      нём, либо уже известна как tier1/tier2, либо безымянна. Безымянная сторона
+      сама по себе гейт не открывает: иначе правило впускало бы любой матч без
+      опознания.
+
+    Матч в обоих случаях идёт как tier 3 и БЕЗ авто-добавления команд в tier2.
+
+    None означает «правило не про этот матч» — дальше работает прежний путь,
+    поведение обычных матчей не меняется. В частности, None возвращается, когда
+    обе команды и так известны как tier1/tier2: их тир считается как раньше.
+    """
+    resolved_radiant = _resolve_known_team_id_without_side_effects(radiant_team_ids, radiant_team_name)
+    resolved_dire = _resolve_known_team_id_without_side_effects(dire_team_ids, dire_team_name)
+    if _get_team_tier(resolved_radiant) in (1, 2) and _get_team_tier(resolved_dire) in (1, 2):
+        return None
+
+    try:
+        league_admitted = int(league_id or 0) in TOURNAMENT_LEAGUE_ID_ALLOWLIST
+    except (TypeError, ValueError):
+        league_admitted = False
+    if league_admitted:
+        return int(resolved_radiant or 0), int(resolved_dire or 0)
+
+    r_listed = _is_tier_three_team(radiant_team_ids, radiant_team_name)
+    d_listed = _is_tier_three_team(dire_team_ids, dire_team_name)
+    if not (r_listed or d_listed):
+        return None
+
+    def _side_ok(listed: bool, team_ids: Any, team_name: str, other_listed: bool) -> Optional[int]:
+        resolved = _resolve_known_team_id_without_side_effects(team_ids, team_name)
+        if listed:
+            return int(resolved or 0)
+        if _get_team_tier(resolved) in (1, 2):
+            return int(resolved)
+        if other_listed and _team_identity_missing(team_ids, team_name):
+            return 0
+        return None
+
+    radiant_id = _side_ok(r_listed, radiant_team_ids, radiant_team_name, d_listed)
+    if radiant_id is None:
+        return None
+    dire_id = _side_ok(d_listed, dire_team_ids, dire_team_name, r_listed)
+    if dire_id is None:
+        return None
+    return int(radiant_id), int(dire_id)
 
 
 def _maybe_bypass_tier1_bookmaker_presence_reject(
@@ -21395,6 +22133,113 @@ def _build_team_elo_matchup_summary_from_live_snapshot(
     return summary if isinstance(summary, dict) else None
 
 
+def _ensure_stratz_warmup():
+    # Прогрев обязан работать НЕЗАВИСИМО ОТ СТАВОК. Раньше он заводился
+    # внутри теневого блока, то есть только при вердикте предматчевой модели,
+    # а их бывает по одному за часы: сбор дельты и замер задержки Stratz
+    # простаивали ровно тогда, когда карты и игрались. Эта функция зовётся из
+    # регистрации карты в ELO, а она исполняется на КАЖДОМ опросе живой карты.
+    # Заводится один раз, повторные вызовы возвращают работающий поток.
+    try:
+        import series_surprise_shadow
+        import stratz_map_result
+        stratz_map_result.start_background_refresh(
+            series_surprise_shadow.teams_to_warm, on_new=_on_new_finished_map,
+            on_tick=_live_delta_retry)
+    except Exception:
+        pass
+
+
+def _on_new_finished_map(team_id, match, delay_seconds):
+    try:
+        logger.info('STRATZ_MAP_RESOLVED team=%s match=%s series=%s через %d мин после конца',
+                    team_id, (match or {}).get('match_id'), (match or {}).get('series_id'),
+                    max(int(delay_seconds), 0) // 60)
+    except Exception:
+        pass
+    _live_delta_on_new_map(team_id, match, delay_seconds)
+
+
+def _live_delta_on_new_map(team_id, match, delay_seconds):
+    # Доигравшая карта замечена прогревом — забираем построчные данные по
+    # десяти игрокам и кладём в дельту. Снимок артефакта отстаёт на часы,
+    # и всё сыгранное за день для признаков игроков невидимо; калибровка
+    # от этого монотонно портится. Счётчики (`games`, `hero_games`,
+    # `pos_games`) `score()` накладывает сам. Приоры панели — из тех же карт
+    # в момент вердикта; поминутный ряд, если его ещё нет, добирается
+    # `_live_delta_retry`.
+    try:
+        import prematch_live_delta
+        import stratz_map_result
+        prematch_live_delta.sync_snapshot()
+        mid = int((match or {}).get('match_id') or 0)
+        if mid <= 0:
+            return
+        full = stratz_map_result.match_players(mid)
+        n = prematch_live_delta.record_map(full) if full else 0
+        logger.info(
+            'PREMATCH_DELTA_MAP match=%s team=%s игроков=%d через %d мин после конца',
+            mid, team_id, n, max(int(delay_seconds), 0) // 60)
+    except Exception:
+        logger.exception('prematch live delta failed for %s', match)
+
+
+def _live_delta_retry():
+    # Поминутный ряд появляется позже итога карты (медиана разбора ~17 ч).
+    # Без повторного запроса окна k_0_10/win_10_20 так и остались бы пустыми.
+    try:
+        import prematch_live_delta
+        import stratz_map_result
+        prematch_live_delta.retry_incomplete(fetch=stratz_map_result.match_players)
+    except Exception:
+        logger.exception('prematch live delta retry failed')
+
+
+def _live_elo_winner_lookup(map_key, pending_map=None):
+    # Победил ли радиант ОТЛОЖЕННОЙ карты. None означает «не знаем».
+    #
+    # По ключу карту опознать нельзя: прод пишет `match_id = series_id`, и все
+    # карты серии несут один номер (E-224). Поэтому берутся команды из самой
+    # записи, у Stratz спрашиваются матчи КОМАНДЫ за сутки, и из них выбирается
+    # ближайшая по времени к моменту регистрации.
+    try:
+        import stratz_map_result
+        rec = (pending_map or {}).get('match_record') or {}
+        rad = int(rec.get('radiant_team_id') or 0)
+        dire = int(rec.get('dire_team_id') or 0)
+        if rad <= 0 or dire <= 0:
+            return None
+        hist = stratz_map_result.series_history(rad, dire)
+        if not hist:
+            return None
+        # СОПОСТАВЛЕНИЕ ПО НОМЕРУ КАРТЫ, А НЕ ПО ВРЕМЕНИ. Обе прежние версии
+        # ошибались именно на времени:
+        #   * допуск в три часа накрывал три-четыре карты подряд — 23.08.2026
+        #     исход карты 1 (`8960577698`) применился к карте 2 (`8960655084`),
+        #     и рейтинг TEAM VISION упал на 14.5, хотя карту они выиграли;
+        #   * отсев «карта завершилась раньше регистрации» сломал обратное:
+        #     ключ карты в проде меняется по десятку раз, `registered_at` ползёт
+        #     вперёд вместе с ним и к концу карты оказывается ПОЗЖЕ её конца —
+        #     карта 4 той же серии так и осталась неприменённой.
+        # Номер карты у отложенной записи есть и он настоящий, у Stratz тоже.
+        # Совпадение номеров — единственный признак, который не зависит ни от
+        # churn ключей, ни от задержек публикации.
+        mid = int(rec.get('match_id') or 0)
+        if mid <= 0:
+            return None
+        best = next((m for m in hist if int(m.get('match_id') or 0) == mid), None)
+        if best is None:
+            # Карты ещё нет у Stratz (публикация идёт около 17 минут) либо это
+            # не наша серия. Молчание здесь дешевле догадки: неверный исход
+            # двигает рейтинг в обратную сторону.
+            return None
+        won = bool(best['radiant_won'])
+        return won if int(best['radiant_team_id']) == rad else (not won)
+    except Exception:
+        logger.exception('live ELO winner lookup failed for %s', map_key)
+        return None
+
+
 def _register_completed_live_map_for_elo(
     *,
     series_key: Any,
@@ -21479,6 +22324,12 @@ def _register_completed_live_map_for_elo(
             second_team_score=second_score,
             first_team_is_radiant=bool(first_team_is_radiant),
             match_record=match_record,
+            # Исход ОТЛОЖЕННОЙ карты берётся по её match_id у Stratz. Счёт
+            # серии для этого не нужен и не годится: по E-224 внутри окна
+            # наблюдения одной серии он не меняется, поэтому применений
+            # покарточным путём было ровно ноль. Справка не бросает и на
+            # неизвестном исходе возвращает None — тогда всё как было.
+            winner_lookup=_live_elo_winner_lookup,
         )
     except Exception:
         logger.exception("Failed to register live ELO map context for %s", normalized_map_key)
@@ -21760,6 +22611,26 @@ def _fetch_finished_sourcetv_series_scores(
     return prev_first, prev_second + 1
 
 
+def _sweep_orphaned_live_elo(seen_series_keys: set, reason: str = "") -> int:
+    """Применить исходы доигранных серий и записать это в лог. Вернуть сколько.
+
+    Обёртка нужна, потому что подбор зовётся из трёх мест цикла: до вердиктов,
+    после обработки и при пустом фиде. Три копии одного и того же кода уже
+    разъезжались.
+    """
+    applied = 0
+    try:
+        for update in _finalize_orphaned_live_elo_series(seen_series_keys):
+            payload = (update.get("applied_update")
+                       if isinstance(update.get("applied_update"), dict) else {})
+            _emit_live_elo_applied_log(
+                "Live ELO finalized from orphaned finished series", payload)
+            applied += 1
+    except Exception:
+        logger.exception("orphan live ELO sweep failed (%s)", reason or "-")
+    return applied
+
+
 def _finalize_orphaned_live_elo_series(seen_series_keys: set[str]) -> List[Dict[str, Any]]:
     if not ELO_LIVE_SNAPSHOT_AVAILABLE or _elo_live_finalize_series_from_scores is None:
         return []
@@ -21811,10 +22682,30 @@ def _finalize_orphaned_live_elo_series(seen_series_keys: set[str]) -> List[Dict[
         else:
             finished_scores = _fetch_finished_series_scores_from_page(series_url)
         if finished_scores is None:
-            continue
-
-        current_scores = {"first": int(finished_scores[0]), "second": int(finished_scores[1])}
-        winner_slot = _winner_slot_from_series_scores(previous_scores, current_scores)
+            # ПОСЛЕДНЯЯ КАРТА СЕРИИ ИНАЧЕ НЕ ПРИМЕНЯЕТСЯ НИКОГДА. Счёт серии
+            # после её конца брать негде: живого фида уже нет, а страница
+            # отдаёт его не всегда. Между тем исход самой карты известен —
+            # его знает Stratz по её match_id. Достраиваем счёт сами: победа
+            # прибавляется тому слоту, за которым эта карта осталась.
+            # 23.08.2026 без этого решающая карта серии Team Spirit — TEAM
+            # VISION (`8960991322`, конец 16:13) через два часа так и висела в
+            # очереди, хотя Stratz отдал её исход.
+            radiant_won = _live_elo_winner_lookup(
+                str(pending_map.get("map_key") or ""), pending_map)
+            if radiant_won is None:
+                continue
+            first_is_radiant = bool(pending_map.get("first_team_is_radiant"))
+            winner_slot = ("first" if first_is_radiant else "second") if radiant_won else (
+                "second" if first_is_radiant else "first")
+            prev_first = _coerce_int(previous_scores.get("first"))
+            prev_second = _coerce_int(previous_scores.get("second"))
+            current_scores = {
+                "first": prev_first + (1 if winner_slot == "first" else 0),
+                "second": prev_second + (1 if winner_slot == "second" else 0),
+            }
+        else:
+            current_scores = {"first": int(finished_scores[0]), "second": int(finished_scores[1])}
+            winner_slot = _winner_slot_from_series_scores(previous_scores, current_scores)
         if winner_slot is None:
             continue
 
@@ -25497,6 +26388,36 @@ def _try_dispatch_early_winner_kills_window(
         _release_signal_send_slot(match_key)
 
 
+def _prematch_late_block_conflict(
+    mid_output: Optional[Dict[str, Any]],
+    selected_star_wr: Optional[int] = None,
+) -> str:
+    """Метка конфликта ПОЗДНЕГО star-блока с моделью; пусто — конфликта нет.
+
+    Поздний блок отменяется двумя вето: `win_model_veto` — знак блока против
+    вердикта всей модели, `draft_against_side` — драфтовый компонент модели тянет
+    против стороны блока. Оба означают одно: поздние звёзды и модель смотрят в
+    разные стороны.
+    """
+    if not isinstance(mid_output, dict):
+        return ""
+    try:
+        target_wr = int(selected_star_wr or TIER_SIGNAL_MIN_THRESHOLD_TIER2)
+    except (TypeError, ValueError):
+        target_wr = TIER_SIGNAL_MIN_THRESHOLD_TIER2
+    try:
+        diag = _star_block_diagnostics(
+            raw_block=mid_output,
+            target_wr=target_wr,
+            section="mid_output",
+        )
+    except Exception as exc:
+        logger.warning("late block conflict check failed: %s", exc)
+        return ""
+    status = str((diag or {}).get("status") or "")
+    return status if status in ("win_model_veto", "draft_against_side") else ""
+
+
 def _try_dispatch_prematch_model_bet(
     *,
     match_key: str,
@@ -25520,6 +26441,12 @@ def _try_dispatch_prematch_model_bet(
     selected_star_mode: Optional[str] = None,
     json_retry_errors: Any = None,
     full_message_text: Any = None,
+    series_key: Any = None,
+    shadow_radiant_team_id: Any = None,
+    shadow_dire_team_id: Any = None,
+    shadow_first_team_is_radiant: Any = None,
+    shadow_first_team_score: Any = None,
+    shadow_second_team_score: Any = None,
 ) -> bool:
     """Ставка по предматчевой модели на 00-й минуте — её собственный сигнал.
 
@@ -25537,6 +26464,18 @@ def _try_dispatch_prematch_model_bet(
         return False
     bet = win_model_veto.model_bet(early_output, mid_output, all_output)
     if not bet:
+        return False
+    # Правило alex (26.08.2026, карта Synapse — Nemiga Gaming): ставка «на 00» не
+    # идёт, когда ПОЗДНИЙ star-блок смотрит в другую сторону и отменён вето
+    # модели. Там поздние звёзды показывали на Synapse, вето сняло блок
+    # (`late=win_model_veto(side=radiant)`), а модель тут же отправила ставку на
+    # Nemiga: два наших источника разошлись, и ставить в этот момент не на что.
+    _late_conflict = _prematch_late_block_conflict(mid_output, selected_star_wr)
+    if _late_conflict:
+        print(
+            "   ⛔ Ставка предматчевой модели отменена: поздний star-блок "
+            f"против модели ({_late_conflict}) — {match_key}"
+        )
         return False
     try:
         game_time_value = float(game_time_seconds or 0.0)
@@ -25705,6 +26644,54 @@ def _try_dispatch_prematch_model_bet(
         return False
     finally:
         _release_signal_send_slot(match_key)
+        # ТЕНЬ «сюрприза серии». Стоит В FINALLY НАМЕРЕННО: исход предыдущей
+        # карты берётся у Stratz по её match_id, а это сетевой запрос до 5 с.
+        # На пути ставки такая задержка недопустима, здесь же отправка уже
+        # состоялась. Ничего не решает — только пишет в лог накопленное
+        # расхождение прошлых карт серии с моделью рядом с живым индексом,
+        # чтобы набралась выборка, собранная ВПЕРЁД (E-223).
+        #
+        # Исход берётся ИМЕННО по match_id, а не по сдвигу счёта серии: по
+        # E-224 счёт внутри окна наблюдения одной серии не меняется вовсе.
+        try:
+            _lv = locals()
+            _sh_series, _sh_bet = _lv.get("series_key"), _lv.get("bet")
+            _sh_rad = _lv.get("shadow_radiant_team_id")
+            if _sh_series and _sh_rad and isinstance(_sh_bet, dict):
+                import series_surprise_shadow as _sss
+                import stratz_map_result as _smr
+                _p_rad = 0.5 + float(_sh_bet.get("index") or 0.0) / 100.0
+                # История серии берётся снаружи, по КОМАНДАМ за сутки: счёт
+                # серии у прода не двигается, а отдельного id карты у него нет
+                # вовсе (E-224). Группировку в серию даёт родной seriesId Stratz.
+                #
+                # ПРОГРЕВ. Справка нужна за минуту-две до старта следующей карты,
+                # и синхронный запрос там означал бы сеть в пути ставки. Демон
+                # обновляет кэш по командам из свежих вердиктов каждые полминуты,
+                # поэтому вызов ниже почти всегда попадает в диск. Заводится один
+                # раз, повторные вызовы возвращают уже работающий поток.
+                #
+                # Он же меряет: строка STRATZ_MAP_RESOLVED говорит, через сколько
+                # минут после конца карты Stratz отдал её исход. Про исход мы
+                # этого не знали — известна была только задержка РАЗБОРА.
+                _ensure_stratz_warmup()
+                _sur = _sss.observe(
+                    series_key=str(_sh_series),
+                    map_key=str(match_key or ""),
+                    radiant_team_id=int(_sh_rad or 0),
+                    dire_team_id=int(_lv.get("shadow_dire_team_id") or 0),
+                    p_radiant=min(max(_p_rad, 0.01), 0.99),
+                    history_lookup=lambda _r, _d, _n: _smr.series_history(
+                        _r, _d, before=_n, now=_n),
+                )
+                logger.info(
+                    "SERIES_SURPRISE_SHADOW map=%s series=%s index=%.2f p_rad=%.4f "
+                    "s_sum=%.4f s_last=%.4f n_prev=%d",
+                    match_key, _sh_series, float(_sh_bet.get("index") or 0.0),
+                    _p_rad, _sur["s_sum"], _sur["s_last"], int(_sur["n_prev"]),
+                )
+        except Exception:
+            logger.exception("SERIES_SURPRISE_SHADOW failed")
 
 
 def _try_dispatch_lane_adv_standalone_kills(
@@ -27115,6 +28102,36 @@ class _SharedCamoufoxSession:
         with self._lock:
             self._reset_requested = True
 
+    #: Через сколько простоя закрывается редкая вкладка. Десять минут — заведомо
+    #: больше пачки обращений (97% из них идут подряд) и заведомо меньше паузы
+    #: между матчами.
+    IDLE_PAGE_TTL_SECONDS = 600.0
+    #: Что можно закрывать по простою. Страницы букмекера сюда НЕ входят:
+    #: пересоздание стоит десятков секунд слепоты по кэфам.
+    IDLE_PAGE_PREFIXES = ("protracker:",)
+
+    def _close_idle_named_pages(self, *, keep: str = "") -> None:
+        """Закрывает редкие вкладки, к которым давно не обращались.
+
+        Зовётся из `get_or_create_page`, а не из отдельного таймера: страница
+        букмекера опрашивается каждые пару секунд, так что проверка и без того
+        происходит часто, а лезть в главный цикл ради этого не нужно.
+        """
+        now = time.monotonic()
+        used = getattr(self, "_named_page_used", None)
+        if used is None:
+            return
+        for k in [k for k in self._named_pages if k != keep]:
+            if not k.startswith(self.IDLE_PAGE_PREFIXES):
+                continue
+            if now - float(used.get(k, now)) < self.IDLE_PAGE_TTL_SECONDS:
+                continue
+            page = self._named_pages.pop(k, None)
+            used.pop(k, None)
+            if page is not None:
+                with contextlib.suppress(Exception):
+                    page.close()
+
     def get_or_create_page(self, name: str, browser: Any) -> Any:
         """Return a reusable named page. Callable only from the shared worker thread."""
         if self._worker_thread_id is None or threading.get_ident() != self._worker_thread_id:
@@ -27122,6 +28139,10 @@ class _SharedCamoufoxSession:
         key = str(name or "").strip()
         if not key:
             raise ValueError("named page requires a non-empty name")
+        if not hasattr(self, "_named_page_used"):
+            self._named_page_used = {}
+        self._named_page_used[key] = time.monotonic()
+        self._close_idle_named_pages(keep=key)
         page = self._named_pages.get(key)
         if page is not None:
             closed = bool(getattr(page, "is_closed", lambda: False)()) if callable(getattr(page, "is_closed", None)) else bool(getattr(page, "closed", False))
@@ -27142,6 +28163,9 @@ class _SharedCamoufoxSession:
             raise RuntimeError("invalidate_named_page must be called from the shared Camoufox worker thread")
         key = str(name or "").strip()
         page = self._named_pages.pop(key, None)
+        used = getattr(self, "_named_page_used", None)
+        if used is not None:
+            used.pop(key, None)
         if page is not None:
             with contextlib.suppress(Exception):
                 page.close()
@@ -29014,6 +30038,143 @@ def _extract_cyberscore_match_row(html: str, match_id: Union[int, str]) -> Optio
     return None
 
 
+_CYBERSCORE_STEAM_ROW_RE = re.compile(r'"id_steam":(\d+)')
+#: Личность матча из листинга cyberscore: сколько секунд держать один снимок.
+#: Цикл прода ~48 c, поэтому один заход в браузер обслуживает целый цикл.
+SOURCETV_IDENTITY_TTL = float(os.getenv("SOURCETV_IDENTITY_FALLBACK_TTL", "90"))
+SOURCETV_IDENTITY_FALLBACK = _env_flag("SOURCETV_IDENTITY_FALLBACK", "1")
+_sourcetv_identity_cache: Dict[str, Any] = {"at": 0.0, "rows": {}}
+
+
+def _parse_cyberscore_rows_by_steam_id(html: Any) -> Dict[int, Dict[str, Any]]:
+    """Строки листинга cyberscore, разложенные по dota match_id (`id_steam`).
+
+    Ключ `id_steam` — это ровно тот номер матча, которым живёт мост SourceTV
+    (проверено 26.08.2026 на четырёх живых картах: совпали и время, и счёт).
+    Поэтому сшивка точная, без сопоставления по названиям и героям.
+    """
+    text = str(html or "")
+    if not text:
+        return {}
+    chunks = _decode_next_flight_chunks_from_html(text)
+    blob = "\n".join(chunks) if chunks else text
+    out: Dict[int, Dict[str, Any]] = {}
+    for match in _CYBERSCORE_STEAM_ROW_RE.finditer(blob):
+        start = blob.rfind('{"id":', 0, match.start())
+        if start < 0:
+            continue
+        raw_object = _extract_balanced_json_object(blob, start)
+        if not raw_object:
+            continue
+        try:
+            row = json.loads(raw_object)
+        except Exception:
+            continue
+        if not isinstance(row, dict):
+            continue
+        try:
+            steam_id = int(row.get("id_steam") or 0)
+        except (TypeError, ValueError):
+            continue
+        if steam_id > 0:
+            out.setdefault(steam_id, row)
+    return out
+
+
+def _cyberscore_row_team_names(row: Any) -> Tuple[str, str]:
+    """Названия сторон из строки листинга (radiant, dire)."""
+    if not isinstance(row, dict):
+        return "", ""
+    radiant = row.get("team_radiant")
+    dire = row.get("team_dire")
+    radiant_name = str((radiant or {}).get("name") or "").strip() if isinstance(radiant, dict) else ""
+    dire_name = str((dire or {}).get("name") or "").strip() if isinstance(dire, dict) else ""
+    return radiant_name, dire_name
+
+
+def _is_placeholder_team_name(team_name: Any) -> bool:
+    """'Radiant'/'Dire'/пусто — это отсутствие названия, а не название."""
+    try:
+        from tier_three_teams import ANONYMOUS_TEAM_NAMES
+    except Exception:
+        ANONYMOUS_TEAM_NAMES = frozenset({"", "radiant", "dire"})
+    return str(team_name or "").strip().lower() in ANONYMOUS_TEAM_NAMES
+
+
+def _sourcetv_identity_rows(now: Optional[float] = None) -> Dict[int, Dict[str, Any]]:
+    """Снимок листинга cyberscore под сшивку личности; кэш на SOURCETV_IDENTITY_TTL."""
+    moment = float(time.time() if now is None else now)
+    if moment - float(_sourcetv_identity_cache.get("at") or 0.0) < SOURCETV_IDENTITY_TTL:
+        return _sourcetv_identity_cache.get("rows") or {}
+    _sourcetv_identity_cache["at"] = moment
+    try:
+        html = _get_cyberscore_html_via_camoufox(_build_cyberscore_combined_tier_listing_url())
+        rows = _parse_cyberscore_rows_by_steam_id(html)
+    except Exception as exc:
+        logger.warning("CyberScore identity fallback failed: %s", exc)
+        rows = {}
+    if rows:
+        _sourcetv_identity_cache["rows"] = rows
+    return _sourcetv_identity_cache.get("rows") or {}
+
+
+def _resolve_sourcetv_identity_from_cyberscore(
+    match_id: Any,
+    radiant_team_name: str,
+    dire_team_name: str,
+    rows: Optional[Dict[int, Dict[str, Any]]] = None,
+) -> Optional[Tuple[str, str, str]]:
+    """(radiant, dire, турнир) для sourcetv-карты без названий; None — не сшилось.
+
+    Valve на открытых квалификациях не отдаёт ни team_id, ни названия: карточка
+    получается «Radiant VS Dire» с дефолтным ELO 1500. Cyberscore тот же матч
+    знает по имени, и сшивается он точно — по `id_steam`.
+
+    Ориентация проверяется: если известная сторона совпала с ПРОТИВОПОЛОЖНОЙ
+    стороной cyberscore, названия меняются местами; если не совпала ни с одной —
+    строка отвергается, потому что расхождение означает, что мы поняли матч
+    по-разному, а ставка идёт на СТОРОНУ.
+    """
+    try:
+        steam_id = int(match_id or 0)
+    except (TypeError, ValueError):
+        return None
+    if steam_id <= 0:
+        return None
+    source = rows if rows is not None else _sourcetv_identity_rows()
+    row = source.get(steam_id)
+    if not isinstance(row, dict):
+        return None
+    cs_radiant, cs_dire = _cyberscore_row_team_names(row)
+    if not cs_radiant and not cs_dire:
+        return None
+    tournament = ""
+    tournament_obj = row.get("tournament")
+    if isinstance(tournament_obj, dict):
+        tournament = str(tournament_obj.get("name") or "").strip()
+
+    known_radiant = "" if _is_placeholder_team_name(radiant_team_name) else str(radiant_team_name)
+    known_dire = "" if _is_placeholder_team_name(dire_team_name) else str(dire_team_name)
+
+    def _same(left: str, right: str) -> bool:
+        left_key = _normalize_tier_team_name_only(left)
+        right_key = _normalize_tier_team_name_only(right)
+        return bool(left_key) and left_key == right_key
+
+    for known, straight, swapped in (
+        (known_radiant, cs_radiant, cs_dire),
+        (known_dire, cs_dire, cs_radiant),
+    ):
+        if not known:
+            continue
+        if _same(known, straight):
+            return cs_radiant, cs_dire, tournament
+        if _same(known, swapped):
+            return cs_dire, cs_radiant, tournament
+        return None
+    return cs_radiant, cs_dire, tournament
+
+
 def _classify_cyberscore_card_admission(
     html: str,
     match_id: str,
@@ -30082,6 +31243,9 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                 k: v for k, v in matches.items()
                 if _now - float(v.get("timestamp") or 0) < _SOURCETV_STALE_SECONDS
             }
+            # Личность — ДО реконсиляции: идентичность поллера кэфов строится из
+            # этих же имён, и «Dire» в ней означает опрос, который ничего не найдёт.
+            matches = _resolve_sourcetv_bridge_identity(matches)
             _reconcile_winline_sourcetv_polling(
                 matches,
                 authoritative=(raw_match_count == 0 or bool(matches)),
@@ -32029,6 +33193,47 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             dire_team_name_original = data.get("dire_team_name") or "Dire"
             radiant_team_ids = [data.get("radiant_team_id") or 0]
             dire_team_ids = [data.get("dire_team_id") or 0]
+            # На открытых квалификациях Valve не отдаёт ни team_id, ни названия, и
+            # карточка выходит «Radiant VS Dire» с дефолтным ELO 1500 у обеих
+            # сторон — то есть ставка на сторону, которую мы не опознали. Тот же
+            # матч у cyberscore есть по имени и сшивается точно, по `id_steam`.
+            if SOURCETV_IDENTITY_FALLBACK and (
+                _is_placeholder_team_name(radiant_team_name_original)
+                or _is_placeholder_team_name(dire_team_name_original)
+            ):
+                try:
+                    _identity = _resolve_sourcetv_identity_from_cyberscore(
+                        data.get("match_id"),
+                        radiant_team_name_original,
+                        dire_team_name_original,
+                    )
+                except Exception as _identity_exc:
+                    logger.warning("CyberScore identity fallback failed: %s", _identity_exc)
+                    _identity = None
+                if _identity:
+                    _cs_radiant, _cs_dire, _cs_tournament = _identity
+                    if _cs_radiant:
+                        radiant_team_name_original = _cs_radiant
+                    if _cs_dire:
+                        dire_team_name_original = _cs_dire
+                    # Имя даёт и id, если команда нам уже известна: без него не
+                    # поднимется ни ELO, ни тир.
+                    for _side_name, _side_ids_key in (
+                        (radiant_team_name_original, "radiant"),
+                        (dire_team_name_original, "dire"),
+                    ):
+                        _known_ids = _find_known_team_ids_by_name(_side_name)
+                        if not _known_ids:
+                            continue
+                        if _side_ids_key == "radiant" and not any(radiant_team_ids):
+                            radiant_team_ids = [int(min(_known_ids))]
+                        elif _side_ids_key == "dire" and not any(dire_team_ids):
+                            dire_team_ids = [int(min(_known_ids))]
+                    print(
+                        f"   🔎 Личность из CyberScore: {radiant_team_name_original} vs "
+                        f"{dire_team_name_original}"
+                        + (f" — {_cs_tournament}" if _cs_tournament else "")
+                    )
             league_id = data.get("league_id") or None
             series_id = data.get("series_id") or data.get("match_id")
             # GC series_type — enum (0=BO1, 1=BO3, 2=BO5), но весь downstream ожидает best_of-счётчик (1/3/5).
@@ -32481,6 +33686,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         team1=radiant_team_name_original,
                         team2=dire_team_name_original,
                         selected_side=None,
+                        match_id=(_extract_live_match_id(data)
+                                  or _extract_live_match_id(
+                                                                {"live_league_data": live_league_data})),
                         producer_pid=os.getpid(),
                         series_last_map=_winline_series_last_map(
                             bookmaker_map_num,
@@ -32508,11 +33716,50 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         # - Tier 2 матч: если хотя бы одна команда Tier 2
         # - Tier 1 матч: если обе команды Tier 1
         # - Неизвестная команда автоматически добавляется в Tier 2 без Telegram уведомления
+        try:
+            _tier_three_sides = _classify_tier_three_sides(
+                radiant_team_ids,
+                radiant_team_name_original,
+                dire_team_ids,
+                dire_team_name_original,
+                league_id=league_id,
+            )
+        except Exception as _tier_three_exc:
+            # Список — вспомогательный, отказ в нём не должен ронять разбор карты:
+            # молча возвращаемся к прежнему пути с авто-добавлением в tier2.
+            logger.warning("tier-3 allowlist failed: %s", _tier_three_exc)
+            _tier_three_sides = None
         if PIPELINE_BYPASS_TIER_GATE:
             radiant_team_id = (_coerce_int(radiant_team_ids[0]) if radiant_team_ids else 0) or 0
             dire_team_id = (_coerce_int(dire_team_ids[0]) if dire_team_ids else 0) or 0
             star_match_tier = _determine_star_signal_match_tier(radiant_team_id, dire_team_id) or 2
             print(f"   ℹ️ Tier gate bypassed by pipeline smoke-test mode (tier={star_match_tier})")
+        elif _tier_three_sides is not None:
+            # Явный tier-3 allowlist: команда названа руками, в tier2 никто не
+            # уезжает, а безымянная сторона (Valve не дал ни id, ни названия)
+            # больше не рубит матч на входе. Судим по правилам tier 2.
+            if (
+                _is_placeholder_team_name(radiant_team_name_original)
+                and _is_placeholder_team_name(dire_team_name_original)
+            ):
+                # Обе стороны безымянны и после фолбэка: ставка «на Dire» в такой
+                # карточке никого не называет, а ELO у обеих сторон дефолтное
+                # 1500. Опрос кэфов к этому моменту уже заведён и продолжается —
+                # снимаем только разбор и отправку.
+                print(
+                    "   ❌ Матч пропущен: личность не установлена "
+                    f"(ни Valve, ни CyberScore) — лига {league_id}, {check_uniq_url}"
+                )
+                print("   ℹ️ map_id_check.txt не обновлен: add_url только после send_message()")
+                return return_status
+            radiant_team_id, dire_team_id = _tier_three_sides
+            star_match_tier = 3
+            match_log(
+                f"   🧭 Tier-3 allowlist: матч допущен (лига {league_id}) "
+                f"{radiant_team_name_original or 'без названия'} [{radiant_team_id}] vs "
+                f"{dire_team_name_original or 'без названия'} [{dire_team_id}] — "
+                "пороги и правила tier 2, авто-добавления в tier2 нет"
+            )
         else:
             radiant_ok, radiant_team_id = _ensure_known_team_or_add_to_tier2(
                 radiant_team_ids,
@@ -32578,19 +33825,22 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
                 return return_status
 
+        # Tier 3 (явный allowlist команд) судится по правилам tier 2, а НЕ мягче:
+        # ветка `else` — это tier 1, и матч безымянного состава уехал бы туда.
+        # Метки порога остаются tier2-шными: применено именно правило tier 2.
         star_target_wr = (
             TIER_SIGNAL_MIN_THRESHOLD_TIER2
-            if star_match_tier == 2
+            if star_match_tier in (2, 3)
             else TIER_SIGNAL_MIN_THRESHOLD_TIER1
         )
         tier_threshold_block_status_label = (
             TIER_THRESHOLD_STATUS_TIER2_MIN60_BLOCK
-            if star_match_tier == 2
+            if star_match_tier in (2, 3)
             else TIER_THRESHOLD_STATUS_TIER1_MIN60_BLOCK
         )
         tier_threshold_block_reason_label = (
             TIER_THRESHOLD_REASON_TIER2_MIN60_BLOCK
-            if star_match_tier == 2
+            if star_match_tier in (2, 3)
             else TIER_THRESHOLD_REASON_TIER1_MIN60_BLOCK
         )
         match_log(f"   🧭 Star tier mode: tier={star_match_tier}, min_wr={star_target_wr}%")
@@ -32747,6 +33997,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 team1=radiant_team_name_original,
                 team2=dire_team_name_original,
                 selected_side=None,
+                match_id=(_extract_live_match_id(data)
+                          or _extract_live_match_id(
+                                                        {"live_league_data": live_league_data})),
                 producer_pid=os.getpid(),
                 series_last_map=_winline_series_last_map(
                     bookmaker_map_num,
@@ -32783,6 +34036,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 "   🚫 Найдены игроки из player denylist "
                 f"(radiant={skipped_player_hits['radiant']}, dire={skipped_player_hits['dire']})"
             )
+        _ensure_stratz_warmup()
         live_elo_registration = _register_completed_live_map_for_elo(
             series_key=series_id,
             series_url=series_url,
@@ -32807,6 +34061,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             applied_update = live_elo_registration.get("applied_update")
             if isinstance(applied_update, dict):
                 _emit_live_elo_applied_log("Live ELO updated from completed map", applied_update)
+            else:
+                # ДИАГНОСТИКА 22.08.2026. Этот путь не срабатывал ни разу: в
+                # runtime/live_elo_progress.json у 132 серий из 132 применена
+                # РОВНО ОДНА карта, в логе 0 сообщений «updated from completed
+                # map» против 390 орфанных. Логика пакета ELO исправна — тест
+                # test_register_live_map_context_applies_previous_map_once_...
+                # это утверждает и проходит (он не запускался из-за устаревшей
+                # фикстуры сброса кэша модели). Значит теряется вызов, и надо
+                # знать чем: серия видится впервые или счёт не изменился.
+                # Строка только пишет в лог, решений не меняет.
+                logger.info(
+                    "LIVE_ELO_NOT_APPLIED series=%s map=%s scores=%s already_applied=%s",
+                    live_elo_registration.get("series_key"),
+                    live_elo_registration.get("map_key"),
+                    live_elo_registration.get("current_scores"),
+                    live_elo_registration.get("current_map_already_applied"),
+                )
+        elif live_elo_registration is None:
+            logger.info(
+                "LIVE_ELO_REGISTRATION_SKIPPED series=%s map=%s rad_ids=%d dire_ids=%d",
+                series_id, check_uniq_url,
+                sum(1 for x in radiant_account_ids if int(x or 0) > 0),
+                sum(1 for x in dire_account_ids if int(x or 0) > 0),
+            )
         _warm_draft_stats_shards(radiant_heroes_and_pos, dire_heroes_and_pos)
 
         def _run_dota2protracker_enrichment() -> Dict[str, Any]:
@@ -32874,6 +34152,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     early_end_dict=scoped_early_end_dict,
                     radiant_team_name=radiant_team_name,
                     dire_team_name=dire_team_name,
+                    # Идентификатор карты доезжает до журнала панели. Без него
+                    # там копились записи с пустым `map_id` (805 штук к
+                    # 23.08.2026), и сверить вердикт панели с фактическим
+                    # исходом карты было нечем. На саму модель это не влияет:
+                    # из `match` она берёт только `startDateTime`, которого
+                    # здесь нет и не было.
+                    match={"match_id": _extract_live_match_id(data) or "",
+                           "map_key": check_uniq_url},
                 )
             finally:
                 if prev_wrapper_enabled is None:
@@ -33005,7 +34291,22 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # Ставка предматчевой модели идёт из этой же самой ранней ветки:
             # тут минута 00 и локальные метрики уже посчитаны, а модели больше
             # ничего не нужно — ни ProTracker, ни нетворса, ни звёзд.
+            # Значения для тени собираются заранее и под защитой: имена ниже
+            # присваиваются на условных ветках выше, а NameError в аргументе
+            # вызова упал бы ВНЕ try внутри функции и снёс бы саму ставку.
+            try:
+                _shadow_ctx = (series_id or series_url, radiant_team_id,
+                               dire_team_id, first_team_is_radiant,
+                               first_team_score, second_team_score)
+            except Exception:
+                _shadow_ctx = (None, None, None, None, None, None)
             _try_dispatch_prematch_model_bet(
+                series_key=_shadow_ctx[0],
+                shadow_radiant_team_id=_shadow_ctx[1],
+                shadow_dire_team_id=_shadow_ctx[2],
+                shadow_first_team_is_radiant=_shadow_ctx[3],
+                shadow_first_team_score=_shadow_ctx[4],
+                shadow_second_team_score=_shadow_ctx[5],
                 match_key=check_uniq_url,
                 status=status,
                 radiant_team_name=radiant_team_name_original or radiant_team_name,
@@ -39730,6 +41031,12 @@ def general(return_status=None, use_proxy=None, odds=None, bookmaker_gate_mode=N
             return None
 
     logger.info(f"\n{'='*60}\n🔄 НАЧАЛО ЦИКЛА ПРОВЕРКИ МАТЧЕЙ\n{'='*60}")
+    # ЗАПУСК ПРОГРЕВА ИМЕННО ЗДЕСЬ. Конец цикла не годится: когда живых
+    # матчей нет, цикл выходит раньше на «Live matches empty», и сбор
+    # простаивал бы ровно в паузах между сериями — а там и доигрывают
+    # предыдущие карты, ради которых всё затевалось. Начало цикла печатается
+    # всегда. Внутри идемпотентно: поток заводится один раз.
+    _ensure_stratz_warmup()  # начало цикла
 
     radiant_heroes_and_pos, dire_heroes_and_pos, radiant_team_name, dire_team_name, score, return_status = None, None, None, None, None, None
     recovered_from_journal = _safe_flush_sent_signal_journal_into_map_id_check()
@@ -39812,12 +41119,20 @@ def general(return_status=None, use_proxy=None, odds=None, bookmaker_gate_mode=N
             )
             return None
         print("⚠️ Live matches empty and no future scheduled match was parsed")
+        # Пустой фид — это ровно тот момент, когда серия доиграла. Раньше
+        # аварийный подбор стоял ниже и до него не доходило: функция выходила
+        # здесь. Из-за этого последняя карта серии не применялась, пока не
+        # начнётся следующая серия тех же команд, — а решающая карта серии
+        # самая ценная. 23.08.2026 карта `8960991322` провисела в очереди
+        # больше двух часов при том, что Stratz отдал её исход.
+        _sweep_orphaned_live_elo(set(), "фид пуст")
         return None
-    
+
     print(f'✅ Найдено активных матчей: {len(heads)}')
     
     all_statuses = []
     seen_series_keys: set[str] = set()
+    match_refs: List[str] = []
     for i in range(len(heads)):
         match_ref = f"match_index={i}"
         try:
@@ -39835,6 +41150,17 @@ def general(return_status=None, use_proxy=None, odds=None, bookmaker_gate_mode=N
                     seen_series_keys.add(f"dltv.org{path}")
         except Exception:
             match_ref = f"match_index={i}"
+        match_refs.append(match_ref)
+
+    # Исходы доигранных карт применяются ДО вердиктов, а не после цикла.
+    # 23.08.2026, серия TEAM VISION — Team Spirit: ставка на карту 2 ушла с
+    # index=+31.04 на радианта, а карта 1 (их поражение) применилась 66 строк
+    # спустя и уронила рейтинг TEAM VISION с 2070.5 до 2056.1. Модель считала
+    # вердикт по рейтингу, который на тот момент был уже неверен.
+    _sweep_orphaned_live_elo(seen_series_keys, "перед вердиктами")
+
+    for i in range(len(heads)):
+        match_ref = match_refs[i] if i < len(match_refs) else f"match_index={i}"
         try:
             answer = check_head(heads, bodies, i, maps_data)
         except Exception as exc:
@@ -39852,11 +41178,11 @@ def general(return_status=None, use_proxy=None, odds=None, bookmaker_gate_mode=N
             #     except:
             #         pass
 
-    orphan_live_elo_updates = _finalize_orphaned_live_elo_series(seen_series_keys)
-    for orphan_update in orphan_live_elo_updates:
-        applied_update = orphan_update.get("applied_update") if isinstance(orphan_update.get("applied_update"), dict) else {}
-        _emit_live_elo_applied_log("Live ELO finalized from orphaned finished series", applied_update)
-    
+    # Второй проход в конце цикла: серия могла доиграть ПРЯМО СЕЙЧАС и пропасть
+    # из фида уже после того, как мы собрали ключи. Ждать следующего цикла
+    # незачем — рейтинг должен быть готов к нему заранее.
+    _sweep_orphaned_live_elo(seen_series_keys, "конец цикла")
+
     print(f"\n{'='*60}")
     print(f"📊 ИТОГИ ЦИКЛА:")
     print(f"   Обработано матчей: {len(heads) if heads else 0}")

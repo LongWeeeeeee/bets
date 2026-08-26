@@ -217,3 +217,93 @@ def test_fast_collect_passes_series_last_map(monkeypatch) -> None:
     # Провенанс стороны доезжает до поллера в сыром виде карточки.
     assert out["card_team_order"] == "No Hoodwink|Team Lynx"
     assert out["card_odds"] == [1.42, 2.55]
+
+
+def test_fast_collect_carries_the_promotion_refusal_to_evidence(monkeypatch) -> None:
+    """Причина отказа подстановки обязана доехать до evidence поллера.
+
+    До 22.08.2026 отказ выглядел в файлах ровно как отсутствие рынка: девять
+    карт-троек остались без цены, и понять, какой предохранитель сработал, было
+    нечем.
+    """
+    series = "sourcetv:league:19719|id:9572001|id:9823272"
+    with cs._winline_current_map_state_lock:
+        cs._winline_current_map_registry[series] = {
+            "map_num": 3,
+            "team1": "TEAM VISION",
+            "team2": "Team Yandex",
+            "active": True,
+            "series_last_map": True,
+        }
+
+    class _Refused:
+        odds: list = []
+        map_num = 3
+        market_closed = False
+        market_kind = "current_map_winner"
+        promoted_from_match = False
+        p1_team = None
+        p2_team = None
+        card_team_order = None
+        card_odds = None
+        details = "winline structured current map winner market unavailable"
+        miss_fingerprint = "promotion=card_header_silent"
+
+    # Короткое замыкание быстрого пути разрешено только по ПОЛНОЙ странице:
+    # ниже порога `WINLINE_FAST_MIN_PAGE_HTML` он честно отказывается судить.
+    filler = "<div>TEAM VISION Team Yandex Матч 1.80 1.95</div>"
+    html = (
+        "<html><body>"
+        + filler * (cs.WINLINE_FAST_MIN_PAGE_HTML // len(filler) + 20)
+        + "Киберспорт winline Линия Live сейчас</body></html>"
+    )
+    monkeypatch.setitem(
+        cs.__dict__, "_bookmaker_winline_card_context",
+        lambda *_a, **_k: "TEAM VISION Team Yandex Матч 1.80 1.95")
+    monkeypatch.setitem(cs.__dict__, "_bookmaker_winline_extract",
+                        lambda *_a, **_k: _Refused())
+    monkeypatch.setitem(cs.__dict__, "_bookmaker_winline_bettable", lambda *_a, **_k: None)
+    try:
+        out = cs._winline_fast_collect_from_payload(
+            {"html": html, "url": "https://winline.ru/stavki/sport/kibersport/dota_2"},
+            series=series,
+            map_num=3,
+            team1="TEAM VISION",
+            team2="Team Yandex",
+            expected_url="https://winline.ru/stavki/sport/kibersport/dota_2",
+        )
+    finally:
+        with cs._winline_current_map_state_lock:
+            cs._winline_current_map_registry.pop(series, None)
+
+    assert out is not None
+    assert out["market_status"] == "missing"
+    assert out["miss_fingerprint"] == "promotion=card_header_silent"
+
+
+def test_proven_bo1_map_is_the_match_itself(bridge) -> None:
+    """Bo1: победитель карты и победитель матча — одно событие.
+
+    26.08.2026, квал BLAST Slam: у пары, которую Winline вообще выставил, промах
+    шёл с отпечатком `promotion=not_decider` — таблица `_WINLINE_SERIES_WINS_NEEDED`
+    знает только Bo3 и Bo5, и карта Bo1 решающей не считалась никогда. Рынок
+    карты Winline на этих матчах не выставляет, только «Матч», и подстановка не
+    срабатывала.
+    """
+    proven = _row(series_type=0, cyberscore_best_of=1)
+    assert cs._winline_series_last_map(1, "Team Lynx", "No Hoodwink", proven) is True
+    # Вторая карта в Bo1 невозможна — доказательство не распространяется на неё.
+    assert cs._winline_series_last_map(2, "Team Lynx", "No Hoodwink", proven) is False
+
+
+def test_unproven_zero_series_type_stays_non_decider(bridge) -> None:
+    """У GC `series_type` = 0 означает и Bo1, и «поля нет» — гадать нельзя."""
+    bridge({"1": _row(series_type=0)})
+    assert cs._winline_series_last_map(1, "Team Lynx", "No Hoodwink") is False
+    assert cs._winline_series_last_map(3, "Team Lynx", "No Hoodwink") is False
+
+
+def test_proof_of_a_longer_format_does_not_promote_first_map(bridge) -> None:
+    """Bo3 остаётся Bo3: первая карта решающей не становится."""
+    bo3 = _row(series_type=1, cyberscore_best_of=3, radiant_series_wins=0, dire_series_wins=0)
+    assert cs._winline_series_last_map(1, "Team Lynx", "No Hoodwink", bo3) is False

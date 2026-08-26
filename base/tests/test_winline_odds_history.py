@@ -163,20 +163,67 @@ def test_unserializable_attempt_never_raises(rec) -> None:
 
     poller._record_history(a)
 
-def test_wall_is_filled_from_production_attempt_shape(rec):
-    """Прод-attempt НЕ содержит ключа "wall" — там attempt_started_at/finished_at.
 
-    Именно поэтому метка времени была null во всех 5 315 записях архива, а
-    фикстура этого не ловила: в ней ключ "wall" был, в проде его нет (E-100).
-    Тест фиксирует прод-форму: без метки времени архив нельзя сцепить с корпусом.
+def test_miss_fields_explain_a_missing_market() -> None:
+    """У промаха в журнале должна стоять причина, а не только `missing`.
+
+    26.08.2026: по паре Nemiga Gaming — PuckChamp 359 попыток подряд дали
+    `market_status=missing` при верном ключе опроса, и по журналу нельзя было
+    отличить «карточки пары на странице нет» от «карточка есть, а строки карты
+    в ней нет».
     """
-    recorder, path = rec
-    attempt = _attempt(1.8, 2.0)
-    attempt.pop("wall")
-    attempt["attempt_started_at"] = 1755000000.0
-    attempt["attempt_finished_at"] = 1755000003.5
-    recorder._record_history(attempt)
-    rows = _lines(path)
-    assert len(rows) == 1
-    assert rows[0]["wall"] == 1755000003.5
-    assert "match_id" in rows[0]
+    fields = wl._history_miss_fields({
+        "match_found": False,
+        "page_valid": True,
+        "miss_fingerprint": "no_card_scope",
+        "parser_failure_reasons": ["a" * 200, "b", "c", "d", "e"],
+        "error": "e" * 500,
+        "acquisition_error": None,
+    })
+    assert fields["match_found"] is False
+    assert fields["page_valid"] is True
+    assert fields["miss_fingerprint"] == "no_card_scope"
+    # Журнал пишется на каждый переход — причины и текст ошибки обрезаны.
+    assert len(fields["parser_failure_reasons"]) == 4
+    assert len(fields["parser_failure_reasons"][0]) == 60
+    assert len(fields["error"]) == 160
+    assert "acquisition_error" not in fields
+
+
+def test_miss_fields_stay_empty_when_there_is_nothing_to_tell() -> None:
+    fields = wl._history_miss_fields({})
+    assert fields == {"match_found": None, "page_valid": None, "miss_fingerprint": None}
+    assert wl._history_miss_fields({"parser_failure_reasons": []}).get(
+        "parser_failure_reasons") is None
+
+
+def test_missing_attempt_carries_its_reason_into_history(rec) -> None:
+    poller, path = rec
+    attempt = _attempt(None, None, status="missing", side=None, idx=1)
+    attempt.update({
+        "match_found": False,
+        "page_valid": True,
+        "miss_fingerprint": "no_card_scope",
+        "parser_failure_reasons": ["card_not_found"],
+    })
+    poller._record_history(attempt)
+
+    row = _lines(path)[0]
+    assert row["market_status"] == "missing"
+    assert row["match_found"] is False
+    assert row["page_valid"] is True
+    assert row["miss_fingerprint"] == "no_card_scope"
+    assert row["parser_failure_reasons"] == ["card_not_found"]
+
+
+def test_open_market_record_stays_lean(rec) -> None:
+    """У открытого рынка причины промаха нет — и полей быть не должно."""
+    poller, path = rec
+    attempt = _attempt(1.8, 2.0, status="open", idx=1)
+    attempt.update({"match_found": True, "page_valid": True})
+    poller._record_history(attempt)
+
+    row = _lines(path)[0]
+    assert row["p1_odds"] == 1.8
+    for key in ("match_found", "page_valid", "miss_fingerprint", "parser_failure_reasons"):
+        assert key not in row

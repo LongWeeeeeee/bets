@@ -19,9 +19,11 @@ post_lane 42.0% против 55.5%, early_win 52.5% против 62.7%, late 53.
 """
 from __future__ import annotations
 
+import math as _math
 import os
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Optional
 
@@ -86,6 +88,14 @@ SOURCE_DRAFT = "draft"
 # Замер на 2 456 настоящих LAN-карт (forward-окна): при >=8 модель берёт 70.0%
 # на 72% потока, ставка ПРОТИВ неё окупалась бы только при кэфе выше 3.3.
 _PREMATCH_MIN_INDEX = float(os.getenv("WIN_MODEL_VETO_PREMATCH_MIN", "8"))
+# Ветки лестницы, которым разрешена САМОСТОЯТЕЛЬНАЯ ставка. Порог 8 проверялся
+# на полной модели (E-142: 1 769 карт, 72% потока, винрейт 70.0%); для коротких
+# веток такой проверки нет, а покрытие с лестницей растёт с 42.5% до 99.5% — то
+# есть поток ставок вырос бы вдвое с лишним на непроверенном. Остальные ветки
+# отдают вердикт и панель, но не ставку. Расширять список — по накопленному ROI.
+_PREMATCH_BET_BRANCHES = tuple(
+    x.strip() for x in os.getenv("WIN_MODEL_VETO_PREMATCH_BRANCHES",
+                                 "full,no_org").split(",") if x.strip())
 
 _lock = threading.Lock()
 _state: dict[str, Any] = {"loaded": False, "encoder": None, "model": None, "error": None}
@@ -154,8 +164,67 @@ _COV_SUM = 0.0
 # процентом модели. Держим вместе с индексом: если индекс в карточке другой,
 # значит оценка была не эта, и печатать чужое число нельзя.
 _LAST_FILL = {"index": None, "fill": None, "elo": None,
-               "draft_rank": None, "draft_share": None}
+               "draft_rank": None, "draft_share": None,
+               "branch": None, "wr": None, "parts": None}
+#: Разложения ПРОШЛЫХ оценок, по индексу. Одной записи мало: карточка
+#: отложенного матча строится не в момент оценки, а когда до него дойдёт
+#: очередь, и к тому времени `_LAST_FILL` уже принадлежит другой карте. Тогда
+#: сравнение индексов не сходилось и хвост строки — `ELO модели`, `вклад`,
+#: `вход` — молча пропадал (25.08.2026: в логе `p=0.950`, а печаталась карта
+#: с 52.1%). Держим небольшую историю: карт в очереди единицы.
+_FILL_HISTORY: "OrderedDict[float, dict]" = OrderedDict()
+_FILL_HISTORY_MAX = 32
+
+
+def _remember_fill() -> None:
+    """Сложить текущее разложение в историю по его индексу."""
+    idx = _LAST_FILL.get("index")
+    if idx is None:
+        return
+    try:
+        key = round(float(idx), 6)
+    except (TypeError, ValueError):
+        return
+    _FILL_HISTORY[key] = dict(_LAST_FILL)
+    _FILL_HISTORY.move_to_end(key)
+    while len(_FILL_HISTORY) > _FILL_HISTORY_MAX:
+        _FILL_HISTORY.popitem(last=False)
+
+
+def _fill_for(index) -> dict:
+    """Разложение для ЭТОГО индекса: текущее, иначе из истории. {} — нет."""
+    try:
+        value = float(index)
+    except (TypeError, ValueError):
+        return {}
+    cur = _LAST_FILL.get("index")
+    if cur is not None:
+        try:
+            if abs(value - float(cur)) < 1e-6:
+                return _LAST_FILL
+        except (TypeError, ValueError):
+            pass
+    return _FILL_HISTORY.get(round(value, 6)) or {}
 _DRAFT_FIRST_ONLY = str(os.getenv("WIN_MODEL_DRAFT_FIRST_ONLY", "0")).strip() in ("1", "true", "yes", "on")
+# Запрет «драфт против стороны ставки». Включён по умолчанию, снимается
+# WIN_MODEL_DRAFT_AGAINST_BLOCK=0 без деплоя.
+_DRAFT_AGAINST_BLOCK = str(os.getenv("WIN_MODEL_DRAFT_AGAINST_BLOCK", "1")).strip() in ("1", "true", "yes", "on")
+# Тот же запрет на STAR-пути: звёздный блок, чья сторона названа вопреки
+# драфтовому компоненту модели, ставки не даёт. До 25.08.2026 запрет стоял
+# только в `model_bet`, а `blocks_veto` сверял знак блока с вердиктом ВСЕЙ
+# модели и про компонент «драфт» не знал — карта RE ARISE 25.08 прошла именно
+# так: ставка модели была отменена, star-ставка на ту же сторону ушла.
+# Замера у правила нет (E-238: на 49 таких ставках винрейт 0.735, из них 47
+# онлайн, на LAN одна) — оно введено решением alex. Снимается
+# WIN_MODEL_STAR_DRAFT_BLOCK=0 без деплоя.
+_STAR_DRAFT_BLOCK = str(os.getenv("WIN_MODEL_STAR_DRAFT_BLOCK", "1")).strip() in ("1", "true", "yes", "on")
+#: Отказы star-запрета печатаются по одному разу на (индекс, сторона).
+_STAR_DRAFT_SEEN: set = set()
+_STAR_DRAFT_MUTE = False
+#: Отказ печатается по одному разу на индекс: `model_bet` зовётся на
+#: каждом тике диспетчера, и строка на вызов залила бы лог.
+_DRAFT_GATE_SEEN: set = set()
+_DRAFT_GATE_MUTE = False
 # Чисто драфтовые: считаются только по десяти hero_id (и позициям).
 _DRAFT_FEATURES = frozenset({
     "draft_logit", "vs_wr", "cp_lane", "syn_pos_mean", "wr30", "farm_dep",
@@ -165,7 +234,15 @@ _DRAFT_FEATURES = frozenset({
 _HERO_PLAYER_FEATURES = frozenset({
     "hero_games", "hero_gpm_rel", "lh_rel_hero", "a_hdmg_rel_hero",
 })
-_EVAL_JOURNAL = "/root/main/runtime/prematch_model_eval.jsonl"
+# Путь боевой, но вычисляемый: абсолютная константа `/root/main/...` не
+# существует нигде, кроме serv1, а тесты писали прямо в БОЕВОЙ журнал — 23.08.2026
+# прогон набора добавил туда четыре записи с пустыми именами команд и причиной
+# «не передан hybrid_strength». Журнал диагностический, но по нему судят о
+# работе модели, и чужие строки в нём — ложь.
+_EVAL_JOURNAL = os.getenv(
+    "PREMATCH_EVAL_JOURNAL",
+    str(Path(__file__).resolve().parent.parent / "runtime" / "prematch_model_eval.jsonl"),
+)
 # Панель окон: последний посчитанный набор вердиктов и готовая строка для
 # сообщения. Живёт в модуле, потому что считается там, где есть входы, а
 # показывается там, где строится карточка.
@@ -184,6 +261,24 @@ def last_panel_verdicts() -> list:
 
 def last_panel_error() -> str:
     return str(_LAST_PANEL.get("error") or "")
+
+
+# Причина молчания панели, напечатанная ОДИН раз за запуск. `last_panel_error`
+# существовал с самого начала и НИ РАЗУ никем не читался — 24.08.2026 панель
+# молчала больше часа после выкатки, и по логу это было неотличимо от «панели
+# нет в этой сборке»: отказ ложился в словарь, откуда его никто не доставал.
+# Пустой список вердиктов сюда попадает наравне с исключением: `evaluate_map`
+# возвращает `[]` и когда выключен `ML_PANEL_ENABLED`, и когда бандл не собрался,
+# то есть тишина в обоих случаях выглядит одинаково.
+_PANEL_SILENCE_REPORTED = False
+
+
+def _report_panel_silence(reason: str) -> None:
+    global _PANEL_SILENCE_REPORTED
+    if _PANEL_SILENCE_REPORTED:
+        return
+    _PANEL_SILENCE_REPORTED = True
+    print(f"[win_model] панель молчит: {reason}", flush=True)
 _EVAL_SEEN: set = set()
 
 
@@ -216,30 +311,85 @@ def last_model_elo(index):
     спорит с рейтингом», хотя она с ним согласна — просто с другим.
     """
     try:
-        if _LAST_FILL["index"] is not None and abs(float(index) - float(_LAST_FILL["index"])) < 1e-6:
-            v = _LAST_FILL["elo"]
+        _rec = _fill_for(index)
+        if _rec:
+            v = _rec["elo"]
             return None if v is None else float(v) * 400.0
     except (TypeError, ValueError):
         pass
     return None
 
 
+def last_parts(index):
+    """Разложение логита по компонентам для ЭТОГО индекса; пусто — если нет."""
+    try:
+        _rec = _fill_for(index)
+        if _rec:
+            return dict(_rec.get("parts") or {})
+    except (TypeError, ValueError):
+        pass
+    return {}
+
+
 def last_draft_rank(index):
     """Место драфта среди признаков, тянущих в сторону ставки, и его вклад."""
     try:
-        if _LAST_FILL["index"] is not None and abs(float(index) - float(_LAST_FILL["index"])) < 1e-6:
-            s = _LAST_FILL.get("draft_share")
-            return (_LAST_FILL.get("draft_rank"), s) if s is not None else None
+        _rec = _fill_for(index)
+        if _rec:
+            s = _rec.get("draft_share")
+            return (_rec.get("draft_rank"), s) if s is not None else None
     except (TypeError, ValueError):
         pass
     return None
 
 
+def _draft_agrees(index) -> bool:
+    """False, только когда драфт ДОКАЗАНО тянет против стороны ставки.
+
+    `parts` — точное разложение логита по компонентам (E-213): сумма частей
+    равна самому логиту, знак стоит в ориентации Radiant, и к стороне ставки
+    его приводит знак индекса.
+
+    Ноль и отсутствие ключа `draft` (ветка `pre_draft` считается вовсе без
+    драфтовых колонок) — это «драфту нечего сказать», а не возражение. E-217 §1:
+    карты, где драфт молчит, дают ЛУЧШИЙ винрейт 0.719, резать их нечем.
+
+    Разложения нет вовсе — запрет стоит в стороне, но не молчит: без лестницы
+    веток он не сработал бы ни разу, и узнать об этом было бы неоткуда.
+    """
+    global _DRAFT_GATE_MUTE
+    parts = last_parts(index)
+    if not parts:
+        if not _DRAFT_GATE_MUTE:
+            _DRAFT_GATE_MUTE = True
+            print("ВНИМАНИЕ: запрет «драфт против стороны» проверять нечем — "
+                  "модель не даёт разложения логита по компонентам", flush=True)
+        return True
+    try:
+        side_sign = 1.0 if float(index) > 0 else -1.0
+        toward_bet = float(parts.get("draft", 0.0)) * side_sign
+    except (TypeError, ValueError):                  # noqa: BLE001
+        return True
+    if toward_bet >= 0.0:
+        return True
+    key = round(float(index), 2)
+    if key not in _DRAFT_GATE_SEEN:
+        if len(_DRAFT_GATE_SEEN) > 20000:
+            _DRAFT_GATE_SEEN.clear()
+        _DRAFT_GATE_SEEN.add(key)
+        print(f"[win_model] ставка отменена: драфт против стороны "
+              f"({'radiant' if index > 0 else 'dire'}, индекс {index:+.2f}, "
+              f"вклад драфта {parts['draft']:+.4f} в ориентации Radiant)",
+              flush=True)
+    return False
+
+
 def last_fill(index):
     """Заполненность входа для этого индекса или None, если он не тот."""
     try:
-        if _LAST_FILL["index"] is not None and abs(float(index) - float(_LAST_FILL["index"])) < 1e-6:
-            return _LAST_FILL["fill"]
+        _rec = _fill_for(index)
+        if _rec:
+            return _rec["fill"]
     except (TypeError, ValueError):
         pass
     return None
@@ -247,6 +397,28 @@ def last_fill(index):
 _SNAPSHOT_MAX_AGE_DAYS = 30.0
 # сутки, после которых устаревание уже видно в качестве и его пора чинить
 _SNAPSHOT_WARN_DAYS = 3.0
+
+
+#: Печатать про массивную модель нужно ровно один раз: путь чтения зовётся на
+#: каждой карте, и строка на вызов залила бы лог.
+_ARRAY_MODEL_REPORTED = False
+
+
+def _report_array_model(ok: bool, detail: str) -> None:
+    """Сообщить, какая модель обслуживает путь ставки.
+
+    Отказ раньше гасился молча: процесс просто начинал есть на гигабайт больше,
+    а узнать об этом было неоткуда.
+    """
+    global _ARRAY_MODEL_REPORTED
+    if _ARRAY_MODEL_REPORTED:
+        return
+    _ARRAY_MODEL_REPORTED = True
+    if ok:
+        print("[ELO] путь ставки на МАССИВНОЙ модели (около 340 МБ)", flush=True)
+    else:
+        print(f"ВНИМАНИЕ: массивная модель не поднялась ({detail}); путь ставки "
+              "откатился на словарную, это примерно +1.3 ГБ памяти", flush=True)
 
 
 def _live_elo_model():
@@ -268,7 +440,39 @@ def _live_elo_model():
             module = importlib.import_module("ELO.live_team_strength")
         except Exception:  # noqa: BLE001
             return None
-    snapshot = getattr(module, "_SNAPSHOT_CACHE", None)
+    # Сначала пробуем МАССИВНУЮ модель: она читает то же состояние, но держит
+    # его в numpy, а не в словарях — 337 МБ против 1116. Числа совпадают
+    # побитово (сверка 1 800 вызовов на трёх тирах). Мутировать она не умеет и
+    # не должна: этот путь только читает силу состава.
+    try:
+        from ELO.array_model import load_read_model
+        from ELO.live_team_strength import (DEFAULT_RUNTIME_MODEL_STATE_PATH,
+                                            DEFAULT_SNAPSHOT_PATH)
+
+        fast = load_read_model(DEFAULT_SNAPSHOT_PATH,
+                               DEFAULT_RUNTIME_MODEL_STATE_PATH)
+        if fast is not None:
+            _report_array_model(True, "")
+            return fast
+        _report_array_model(False, "модель не построилась")
+    except Exception as _exc:  # noqa: BLE001
+        _report_array_model(False, f"{type(_exc).__name__}: {_exc}")
+
+    # `load_live_snapshot` подмешивает рантайм-состояние к базовому снимку.
+    # Базовый пересобирается редко (12.08 на момент правки), рантайм обновляется
+    # постоянно (20.08 19:22), и без мержа `hybrid_strength` считался по
+    # рейтингам восьмидневной давности. Второй копии снимка не возникает: базовый
+    # словарь берётся из того же `_SNAPSHOT_CACHE`, мерженый кэшируется отдельно.
+    snapshot = None
+    live_loader = getattr(module, "load_live_snapshot", None)
+    if live_loader is not None:
+        try:
+            snapshot = live_loader()
+        except Exception:  # noqa: BLE001
+            snapshot = None
+    if not isinstance(snapshot, dict):
+        # Запасной путь — пакет без мержа. Ведёт себя ровно как прежде.
+        snapshot = getattr(module, "_SNAPSHOT_CACHE", None)
     if not isinstance(snapshot, dict):
         # снимок ещё не читали в этом процессе. `load_snapshot` кладёт его в тот
         # же модульный кэш `_SNAPSHOT_CACHE`, поэтому копия остаётся одна.
@@ -445,7 +649,12 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
             _LAST_PANEL["error"] = None
             _mid = None
             if isinstance(match, dict):
-                for _k in ("id", "match_id", "map_id", "matchId"):
+                # `map_key` — запасной идентификатор и последний по приоритету:
+                # в режиме sourcetv прод пишет `match_id = series_id`, и он у
+                # всех карт серии один, тогда как ключ карты уникален. Без
+                # какого-либо id журнал панели бесполезен: 805 записей с пустым
+                # `map_id` невозможно сверить с фактическим исходом карты.
+                for _k in ("id", "match_id", "map_id", "matchId", "map_key"):
                     if match.get(_k):
                         _mid = match.get(_k)
                         break
@@ -456,10 +665,28 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                     extra={"radiant_team": str(radiant_team_name or ""),
                            "dire_team": str(dire_team_name or ""),
                            "ts": int(time.time())}))
+            else:
+                # Пусто — значит `evaluate_map` вышел на раннем возврате.
+                # Спрашиваем загрузчик, а не гадаем: выключена панель, не
+                # собрался бандл или отвалилась карточка героев — это три
+                # разные поломки с одинаковым внешним видом.
+                _st = getattr(_panel, "_state", {}) or {}
+                _b = _st.get("bundle")
+                _report_panel_silence(
+                    f"вердиктов нет; ENABLED={getattr(_panel, 'ENABLED', '?')}, "
+                    f"bundle={'есть' if _b is not None else 'НЕТ'}, "
+                    f"ready={getattr(_b, 'ready', '?')}, "
+                    f"ошибка загрузчика={_st.get('error')!r}, "
+                    # `last_error` — отказ САМОГО расчёта, отдельный ключ от
+                    # ошибки загрузки. Без него видно только «бандл собрался»,
+                    # а упасть может любой из блоков после него.
+                    f"ошибка расчёта={_st.get('last_error')!r}, "
+                    f"словарь окон={_st.get('dict_error')!r}")
         except Exception as _exc:                    # noqa: BLE001
             # Панель не влияет на ставку, но её отказ не должен теряться:
             # «блок просто не появился» — самый неудобный вид поломки.
             _LAST_PANEL["error"] = f"{type(_exc).__name__}: {_exc}"
+            _report_panel_silence(_LAST_PANEL["error"])
         _cov = getattr(res, "coverage", None) or {}
         if _cov:
             global _COV_N, _COV_SUM
@@ -481,6 +708,17 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
         _LAST_FILL["index"] = _idx
         _LAST_FILL["fill"] = (_cov or {}).get("filled")
         _LAST_FILL["elo"] = (getattr(res, "features", None) or {}).get("elo")
+        # Ветка лестницы и ЕЁ винрейт. Без этого ставка на короткой ветке
+        # оценивалась бы таблицей полной модели, а это разные величины.
+        _LAST_FILL["branch"] = str(getattr(res, "branch", "full") or "full")
+        # Точное разложение логита по компонентам: сумма частей равна самому
+        # логиту, поэтому доли можно печатать как состав решения, а не как оценку.
+        _LAST_FILL["parts"] = {str(k): float(v) for k, v in
+                               (getattr(res, "parts", None) or {}).items()}
+        try:
+            _LAST_FILL["wr"] = float(getattr(res, "lan_winrate", float("nan")))
+        except (TypeError, ValueError):              # noqa: BLE001
+            _LAST_FILL["wr"] = float("nan")
         _f = getattr(res, "features", None) or {}
         # Разложение логита: вклад признака = коэффициент * стандартизованное
         # значение. Усредняем по моделям ансамбля (сейчас модель одна).
@@ -508,6 +746,9 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
             _LAST_FILL["draft_rank"] = None
             _LAST_FILL["draft_share"] = None
             _LAST_FILL["groups"] = None
+        # Разложение собрано целиком — кладём его в историю по индексу. Карточка
+        # отложенного матча строится позже, когда `_LAST_FILL` уже чужой.
+        _remember_fill()
         _journal_eval(radiant_team=str(radiant_team_name or ""),
                       dire_team=str(dire_team_name or ""),
                       index=_idx, confidence=round(0.5 + abs(_idx) / 100.0, 4),
@@ -521,6 +762,12 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                       missing_cells=(_cov or {}).get("missing_cells"),
                       draft_share=_LAST_FILL.get("draft_share"),
                       groups=_LAST_FILL.get("groups"),
+                      branch=str(getattr(res, "branch", "full") or "full"),
+                      parts={k: round(float(v), 4) for k, v in
+                             (getattr(res, "parts", None) or {}).items()},
+                      wr=(None if _LAST_FILL.get("wr") is None
+                          or _LAST_FILL["wr"] != _LAST_FILL["wr"]
+                          else round(float(_LAST_FILL["wr"]), 4)),
                       bet=abs(_idx) >= _PREMATCH_MIN_INDEX,
                       reason="ok")
         return _idx
@@ -606,6 +853,60 @@ def blocks_veto(block_sign: Any, block: Any, section: str = "") -> bool:
     return int(block_sign) != model_sign
 
 
+def draft_veto(block_sign: Any, block: Any, section: str = "") -> bool:
+    """True, если драфтовый компонент модели тянет ПРОТИВ стороны блока.
+
+    Это `_draft_agrees` для star-пути: там сторона ставки задана знаком
+    индекса, здесь — знаком блока, а правило одно и то же. Вклад драфта в
+    `parts` стоит в ориентации Radiant (E-213), к стороне блока приводится
+    умножением на `block_sign`.
+
+    Молчание драфта возражением НЕ считается: ноль, отсутствие ключа `draft`
+    (ветка `pre_draft` считается вовсе без драфтовых колонок) и отсутствие
+    разложения оставляют блок в силе. E-217 §1: карты, где драфт молчит, дают
+    лучший винрейт, резать их нечем.
+
+    Порог индекса — тот же, что у `blocks_veto`: запрет работает там же, где
+    модели вообще позволено возражать, и ни на карту шире.
+    """
+    global _STAR_DRAFT_MUTE
+    if not _STAR_DRAFT_BLOCK or block_sign not in (1, -1, 1.0, -1.0):
+        return False
+    if not isinstance(block, dict):
+        return False
+    try:
+        index = float(block.get(INDEX_KEY))
+    except (TypeError, ValueError):
+        return False
+    if abs(index) < _min_index_for(section, block.get(SOURCE_KEY)):
+        return False
+    parts = last_parts(index)
+    if not parts:
+        if not _STAR_DRAFT_MUTE:
+            _STAR_DRAFT_MUTE = True
+            print("ВНИМАНИЕ: star-запрет «драфт против стороны» проверять "
+                  "нечем — модель не даёт разложения логита по компонентам",
+                  flush=True)
+        return False                                 # fail-open, как blocks_veto
+    try:
+        toward_block = float(parts.get("draft", 0.0)) * float(block_sign)
+    except (TypeError, ValueError):                  # noqa: BLE001
+        return False
+    if toward_block >= 0.0:
+        return False
+    key = (round(float(index), 2), int(block_sign))
+    if key not in _STAR_DRAFT_SEEN:
+        if len(_STAR_DRAFT_SEEN) > 20000:
+            _STAR_DRAFT_SEEN.clear()
+        _STAR_DRAFT_SEEN.add(key)
+        print(f"[win_model] star-блок отменён: драфт против стороны "
+              f"({'radiant' if block_sign > 0 else 'dire'}, секция "
+              f"{section or '?'}, индекс {index:+.2f}, вклад драфта "
+              f"{float(parts.get('draft', 0.0)):+.4f} в ориентации Radiant)",
+              flush=True)
+    return True
+
+
 def model_bet(*blocks) -> Optional[dict]:
     """Сторона и цена самостоятельной ставки по предматчевой модели.
 
@@ -616,6 +917,10 @@ def model_bet(*blocks) -> Optional[dict]:
 
     Драфтовый источник сюда не пускается: у него другая шкала и другой винрейт,
     порог 8 на ней не проверялся.
+
+    Сторона, названная ВОПРЕКИ драфту, ставки не даёт: см. `_draft_agrees`.
+    Замера у этого правила нет, оно введено решением; снимается
+    WIN_MODEL_DRAFT_AGAINST_BLOCK=0.
     """
     index = None
     for block in blocks:
@@ -634,6 +939,8 @@ def model_bet(*blocks) -> Optional[dict]:
         _dr = last_draft_rank(index)
         if not _dr or _dr[0] != 1:
             return None
+    if _DRAFT_AGAINST_BLOCK and not _draft_agrees(index):
+        return None
     confidence = (50.0 + abs(index)) / 100.0
     try:
         from base import prematch_scorer as ps
@@ -642,10 +949,35 @@ def model_bet(*blocks) -> Optional[dict]:
             import prematch_scorer as ps            # запуск из base/
         except Exception:                            # noqa: BLE001
             return None
+    # Какой веткой посчитан именно ЭТОТ индекс. Сверка по значению — тот же
+    # приём, что у `_LAST_FILL` в остальных местах модуля.
+    branch = "full"
+    wr = None
+    if _LAST_FILL.get("index") is not None:
+        try:
+            if abs(float(index) - float(_LAST_FILL["index"])) < 1e-6:
+                branch = str(_LAST_FILL.get("branch") or "full")
+                _w = _LAST_FILL.get("wr")
+                wr = float(_w) if _w is not None else None
+        except (TypeError, ValueError):              # noqa: BLE001
+            pass
+    if branch not in _PREMATCH_BET_BRANCHES:
+        return None
+    if branch == "full":
+        # БУКВАЛЬНО прежнее поведение: у ставок, которые идут и сегодня, цена
+        # не имеет права сдвинуться ни на копейку.
+        min_odds = ps.lan_min_odds(confidence)
+        expected_wr = ps.lan_expected_wr(confidence)
+    else:
+        if wr is None or wr != wr:                   # nan: полоса не откалибрована
+            return None
+        expected_wr = wr
+        min_odds = _math.ceil(100.0 / max(wr, 1e-9)) / 100.0
     return {
         "side": "radiant" if index > 0 else "dire",
         "index": index,
         "confidence": confidence,
-        "min_odds": ps.lan_min_odds(confidence),
-        "expected_wr": ps.lan_expected_wr(confidence),
+        "branch": branch,
+        "min_odds": min_odds,
+        "expected_wr": expected_wr,
     }

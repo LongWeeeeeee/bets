@@ -3950,7 +3950,29 @@ def test_send_message_keeps_uncertain_when_curl_fallback_fails(monkeypatch) -> N
     assert exc_info.value.delivery_uncertain is True
 
 
+def _stub_bookmaker_ready(monkeypatch) -> None:
+    """Убрать зависимость теста от состояния букмекерской подсистемы.
+
+    Тесты ниже проверяют ДОСТАВКУ и ЖУРНАЛИРОВАНИЕ сигнала, а не готовность кэфов.
+    Но `_deliver_and_persist_signal` сперва зовёт подготовку кэфов и при
+    `bookmaker_ready = False` выходит РАНЬШЕ отправки. На serv1, где у подсистемы
+    есть живое состояние, она отвечает `current_map_unavailable`, и тесты падали не
+    из-за поломки доставки, а не дойдя до неё. Функция доставки на обеих машинах
+    побайтово идентична (проверено 19.08.2026).
+
+    Гейт целиком НЕ отключаем: откладывать отправку без кэфов — задуманное
+    поведение прода.
+    """
+    monkeypatch.setattr(
+        runtime,
+        "_bookmaker_prepare_message_for_delivery",
+        lambda match_key, message_text, **_kw: (message_text, True, "stubbed", None),
+        raising=False,
+    )
+
+
 def test_deliver_and_persist_signal_does_not_persist_when_send_fails(tmp_path, monkeypatch) -> None:
+    _stub_bookmaker_ready(monkeypatch)
     journal_path = tmp_path / "sent_signal_recovery.jsonl"
     add_url_calls: List[Dict[str, Any]] = []
 
@@ -3979,6 +4001,7 @@ def test_deliver_and_persist_signal_does_not_persist_when_send_fails(tmp_path, m
 
 
 def test_deliver_and_persist_signal_journals_after_persist_failure(tmp_path, monkeypatch) -> None:
+    _stub_bookmaker_ready(monkeypatch)
     journal_path = tmp_path / "sent_signal_recovery.jsonl"
     monkeypatch.setattr(runtime, "SENT_SIGNAL_JOURNAL_PATH", str(journal_path), raising=False)
     monkeypatch.setattr(runtime, "send_message", lambda *_args, **_kwargs: True)
@@ -4007,6 +4030,7 @@ def test_deliver_and_persist_signal_journals_after_persist_failure(tmp_path, mon
 
 
 def test_deliver_and_persist_signal_uses_fallback_journal_when_primary_unavailable(tmp_path, monkeypatch) -> None:
+    _stub_bookmaker_ready(monkeypatch)
     primary_path = tmp_path / "sent_signal_recovery.jsonl"
     fallback_path = tmp_path / "sent_signal_recovery_fallback.jsonl"
     monkeypatch.setattr(runtime, "SENT_SIGNAL_JOURNAL_PATH", str(primary_path), raising=False)
@@ -4122,6 +4146,7 @@ def test_set_delayed_match_persists_and_restores_queue(tmp_path, monkeypatch) ->
 
 
 def test_deliver_and_persist_signal_records_uncertain_delivery_and_blocks_retries(tmp_path, monkeypatch) -> None:
+    _stub_bookmaker_ready(monkeypatch)
     uncertain_path = tmp_path / "uncertain_signal_delivery.jsonl"
     fallback_path = tmp_path / "uncertain_signal_delivery_fallback.jsonl"
     monkeypatch.setattr(runtime, "UNCERTAIN_SIGNAL_DELIVERY_PATH", str(uncertain_path), raising=False)
@@ -5972,15 +5997,15 @@ def test_format_output_dict_ignores_synergy_and_unknown_metrics(monkeypatch) -> 
         "STAR_THRESHOLDS_BY_WR",
         {
             60: {
-                "early_output": [("synergy_duo", 7), ("synergy_trio", 6), ("pos1_vs_pos1", 1)],
-                "mid_output": [("synergy_duo", 9), ("synergy_trio", 6), ("pos1_vs_pos1", 1)],
+                "early_output": [("synergy_duo", 7), ("synergy_trio", 6)],
+                "mid_output": [("synergy_duo", 9), ("synergy_trio", 6)],
             }
         },
         raising=False,
     )
     payload = {
-        "early_output": {"synergy_duo": 99, "synergy_trio": 99, "pos1_vs_pos1": 99},
-        "mid_output": {"synergy_duo": 99, "synergy_trio": 99, "pos1_vs_pos1": 99},
+        "early_output": {"synergy_duo": 99, "synergy_trio": 99},
+        "mid_output": {"synergy_duo": 99, "synergy_trio": 99},
     }
 
     has_star = functions.format_output_dict(payload, target_wr=60, late_signal_gate_enabled=False)
@@ -5988,10 +6013,8 @@ def test_format_output_dict_ignores_synergy_and_unknown_metrics(monkeypatch) -> 
     assert has_star is False
     assert payload["early_output"]["synergy_duo"] == 99
     assert payload["early_output"]["synergy_trio"] == 99
-    assert payload["early_output"]["pos1_vs_pos1"] == 99
     assert payload["mid_output"]["synergy_duo"] == 99
     assert payload["mid_output"]["synergy_trio"] == 99
-    assert payload["mid_output"]["pos1_vs_pos1"] == 99
 
 
 def test_runtime_star_thresholds_keep_only_signal_metrics(monkeypatch) -> None:

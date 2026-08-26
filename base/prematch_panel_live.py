@@ -8,11 +8,19 @@
 ЧТО ОТДАЁТСЯ ЖИВЬЁМ И ЧТО НЕТ. Замер цены недоставленного блока
 (`missing_block_cost.md`) показал, чего стоит каждый пропуск на худшей цели:
 
-    core    779 колонок  −0.048   боевые 35 и симметричный блок карточки — есть
-    priors  122          −0.092   снимок причинных приоров — есть
-    public    9          −0.027   выходы паблик-моделей — НЕТ, не сохранены
-    dict     12          −0.004   словарь окон килов — пока не подключён
-    rating    6          −0.003   Glicko/TrueSkill — не портирован, и не стоит
+    core    777 колонок  −0.048   боевые 35 и симметричный блок карточки — есть
+    priors  114          −0.092   снимок причинных приоров — есть
+    public    9          −0.027   паблик-модели — ЕСТЬ (`public_kills_block`)
+    dict     12          −0.004   словарь окон килов — есть
+    rating    6          −0.003   Glicko/TrueSkill — есть (`team_ratings`)
+    pairs     8                   парная синергия F8 — есть (`pair_priors`)
+    hybrid    2                   гибридный рейтинг — есть (`hybrid_block`)
+
+Непоставленных блоков не осталось: заполненность 100%. Сумма по группам даёт
+928 — ровно столько колонок в артефакте. Прежние 779 и 122 давали 938 и спорили
+с абзацем ниже про «17 недостающих из 928»: число 122 взято из поля `n_prior`
+артефакта и осталось с тех пор, когда F8 ещё не был отдельной группой
+(114 + 8 = 122). Проверено счётом по префиксам имён колонок 19.08.2026.
 
 Недостающее не подставляется нулями молча: блок помечается отсутствующим, его
 доля уходит в заполненность и в журнал. Заполненность считается ПО ДОЛЕ
@@ -20,7 +28,8 @@
 
 ТЯЖЁЛОЕ СЧИТАЕТСЯ ОДИН РАЗ. Таблицы карточки (742 колонки) и снимок приоров
 загружаются при первом вызове и живут в процессе: на каждой карте это заняло бы
-секунды и сорвало бы live.
+секунды и сорвало бы live. Карты после среза снимка накладываются на копию
+приоров из дельты (`prematch_live_delta.prior_contribs`) и не пишутся в npz.
 """
 from __future__ import annotations
 
@@ -32,6 +41,19 @@ from typing import Any, Mapping, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CARD_PATH = Path(os.getenv("PANEL_CARD", str(PROJECT_ROOT / "base" / "hero_features_v7.json")))
+
+
+def _manifest_card() -> str:
+    """Отпечаток карточки из манифеста панели. Пусто — артефакт собран
+    до появления отпечатка, и сверка молчит, а не падает."""
+    import json as _json
+    from prematch_panel_scorer import DEFAULT_DIR
+    try:
+        man = _json.loads((Path(DEFAULT_DIR) / "manifest.json")
+                          .read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return str(man.get("card_fingerprint") or "")
 KILLS_DB = Path(os.getenv(
     "PANEL_KILLS_DB",
     str(PROJECT_ROOT / "bets_data" / "analise_pub_matches" /
@@ -39,6 +61,9 @@ KILLS_DB = Path(os.getenv(
 BASELINES = Path(os.getenv("PANEL_BASELINES",
                            str(PROJECT_ROOT / "base" / "hero_baselines_protest.json")))
 ENABLED = os.getenv("ML_PANEL_ENABLED", "1") not in ("0", "false", "False")
+# Гибрид отключается отдельно: его снимок весит 366 МБ, а живая точность
+# замерена ниже, чем у прочих блоков (см. `verify_hybrid_block.md`).
+HYBRID_ENABLED = os.getenv("ML_PANEL_HYBRID", "1") not in ("0", "false", "False")
 # Доля драфта считается через SHAP и стоит времени. По умолчанию только для окон:
 # именно они показываются, а тотал и время в панели всё равно молчат.
 DRAFT_KEYS = tuple(os.getenv("ML_PANEL_DRAFT_KEYS",
@@ -73,9 +98,21 @@ def _load() -> dict[str, Any]:
 
             pf = PregameFeatures(baselines=BASELINES)
             C, B, _cn, _bn = hero_tables(pf)
+            card = card_fingerprint(CARD_PATH)
+            # Обещание `hero_side_tables.py:18-21` — «кладётся в артефакт при
+            # обучении и сверяется при загрузке» — не выполнялось: значение
+            # уходило в `status()` и не сличалось ни с чем (аудит 19.08.2026).
+            # Без сверки подмена карточки героев (патч баланса без
+            # переобучения) молча сдвигает смысл 742 колонок `sym_` — 80% входа.
+            want_card = _manifest_card()
+            if want_card and card != want_card:
+                raise ValueError(
+                    f"карточка героев не та, на которой училась панель: "
+                    f"сейчас {card}, в манифесте {want_card} — 742 колонки "
+                    f"`sym_` означали бы другое, панель отключена")
             _state.update(bundle=bundle, tables=(C, B),
                           snap=load_snapshot(),
-                          card=card_fingerprint(CARD_PATH),
+                          card=card,
                           loaded_ts=int(time.time()))
         except Exception as exc:                     # noqa: BLE001
             _state["error"] = f"{type(exc).__name__}: {exc}"
@@ -122,10 +159,74 @@ def _kills_dict():
     return obj
 
 
+def live_kills_dict():
+    """Боевой словарь окон с наложенными живыми картами. None — словаря нет.
+
+    Словарь собирается офлайн и на боевой машине лежит от 05.08.2026, тогда как
+    окна килов — счётчики по драфту, и каждая сыгранная карта их двигает.
+    Накладка закрывает разрыв для карт, попавших в дельту; всё, что сыграно до
+    её среза, закрывается пересборкой словаря.
+
+    ПОЧЕМУ БЕЗ ОБЁРТКИ. Первая версия оборачивала читатель и складывала числа в
+    своём `get`. Это добавляло кадр стека на КАЖДЫЙ ключ, а
+    `calculate_kills_window_advantage` читает их десятками — на глубоком стеке
+    (в тестах ещё и gevent) предел рекурсии перестал сходиться, и в наборе
+    появилось падение, которого не было. Прирост кладётся прямо в кэш
+    `_SqliteKillsWindow`: тот сам наследует `dict`, поэтому чтение остаётся
+    одним вызовом.
+    """
+    base = _kills_dict()
+    if base is None:
+        return None
+    try:
+        import prematch_live_delta as _D
+        from explore_database import _kills_window_column_names
+        built = _kills_dict_built_ts()
+        contribs = _D.kills_window_contribs(built)
+        # Отпечаток по СОДЕРЖИМОМУ, а не по набору ключей: новая карта того же
+        # драфта ключей не добавляет, и накладка молча осталась бы от прошлой.
+        stamp = (built, len(contribs),
+                 sum(sum(v) for v in contribs.values()) if contribs else 0)
+        if _state.get("kwdict_stamp") == stamp:
+            return base                                  # уже наложено
+        # Набор карт сменился: снимаем прошлую накладку, иначе вклад ляжет
+        # поверх себя же. Ключ убирается из кэша целиком — при следующем
+        # чтении он поднимется из sqlite заново.
+        for key in _state.get("kwdict_touched") or ():
+            dict.pop(base, key, None)
+        columns = _kills_window_column_names()
+        for key, add in contribs.items():
+            row = base.get(key)
+            merged = dict(row) if isinstance(row, dict) else {c: 0 for c in columns}
+            for col, value in zip(columns, add):
+                if value:
+                    merged[col] = (merged.get(col) or 0) + value
+            dict.__setitem__(base, key, merged)
+        _state["kwdict_touched"] = set(contribs)
+        _state["kwdict_stamp"] = stamp
+        return base
+    except Exception as exc:                         # noqa: BLE001
+        _state["dict_error"] = f"{type(exc).__name__}: {exc}"
+        return base
+
+
+def _kills_dict_built_ts() -> int:
+    """Когда собран боевой словарь окон — по времени файла.
+
+    Своей метки внутри sqlite нет (в `meta` лежат backend/entries/windows), а
+    брать срез артефакта предматчевой модели нельзя: словарь старше его на
+    недели, и часть карт наложилась бы поверх уже учтённых.
+    """
+    try:
+        return int(KILLS_DB.stat().st_mtime)
+    except OSError:
+        return 0
+
+
 def _dict_block(heroes10) -> dict[str, float] | None:
     """Двенадцать колонок словаря окон. NaN там, где словарь молчит — ровно то,
     что писал офлайн-сборщик, и ровно то, что видела модель при обучении."""
-    hd = _kills_dict()
+    hd = live_kills_dict()
     if hd is None:
         return None
     try:
@@ -160,10 +261,67 @@ def status() -> dict[str, Any]:
             "dict_error": st.get("dict_error")}
 
 
+def live_prior_snapshot(snap):
+    """Копия снимка приоров плюс карты дельты после `built_ts`.
+
+    Исходный снимок в `_state` не мутируется. Ошибка накладки — как будто
+    дельты не было: панель обязана отдать вчерашние приоры, а не молчать.
+    """
+    contribs: list = []
+    try:
+        import prematch_live_delta as _D
+        contribs = list(_D.prior_contribs(int(getattr(snap, "built_ts", 0) or 0)))
+    except Exception:
+        return snap, []
+    if not contribs:
+        return snap, []
+    try:
+        from causal_priors import overlay
+        return overlay(snap, contribs), contribs
+    except Exception:
+        return snap, []
+
+
+def live_rating_state():
+    """Снимок рейтингов плюс карты, сыгранные после его сборки.
+
+    Glicko и TrueSkill накопительные: сыграл карту — сила изменилась. Снимок
+    же собирается ночью, поэтому на четвёртой карте дня блок отдавал состояние
+    игрока до первой. Для ELO этот разрыв закрыт, для рейтингов оставался.
+
+    None — снимка нет вовсе; тогда `team_ratings.block` сходит за ним сам и
+    вернёт то же, что и раньше. Отказ накладки тоже не молчит наружу: блок
+    просто останется на ночном срезе, как было до этой правки.
+    """
+    try:
+        import team_ratings as _R
+        st = _R._load()
+        snap = st.get("snap")
+        if snap is None:
+            return None
+        built = int(st.get("built_ts") or 0)
+        if built <= 0:
+            # Без среза граница неизвестна, и карты легли бы поверх состояния,
+            # которое их уже содержит. Молча удваивать рейтинг хуже, чем отдать
+            # ночной срез.
+            return snap
+        import prematch_live_delta as _D
+        maps = _D.rating_maps(built)
+        if not maps:
+            return snap
+        return _R.overlay(snap, maps)
+    except Exception as exc:                             # noqa: BLE001
+        _state["rating_error"] = f"{type(exc).__name__}: {exc}"
+        return None
+
+
 def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
                  radiant_accounts: Sequence[int], dire_accounts: Sequence[int],
                  prod_features: Mapping[str, float] | None,
-                 prod_order: Sequence[str] = ()) -> list:
+                 prod_order: Sequence[str] = (),
+                 now_ts: int | None = None,
+                 team_ids: Sequence[int] | None = None,
+                 tier: str | None = None) -> list:
     """Вердикты панели по карте. Пустой список — панель не готова или выключена."""
     if not ENABLED:
         return []
@@ -188,19 +346,65 @@ def evaluate_map(radiant_heroes: Sequence[int], dire_heroes: Sequence[int],
         blocks: dict[str, Any] = {
             "card": block_from_matrix("sym_", sym_block(heroes10, C, B))}
         if prod_features is not None and prod_order:
-            blocks["prod35"] = block_from_prod_features(prod_features, prod_order)
+            blocks["prod35"] = block_from_prod_features(
+                prod_features, prod_order, expected=bundle.prod35_order,
+                neutral=bundle.neutral_by_column)
         snap = st.get("snap")
         if snap is not None:
-            from causal_priors import sym_priors
+            from causal_priors import PRIOR_NAMES, sym_priors
+            snap, contribs = live_prior_snapshot(snap)
             names: list[str] = []
             vals = sym_priors(heroes10, accounts10, snap, names)
             pri = {nm: float(vals[0, j]) for j, nm in enumerate(names)}
-            # F8 (парная синергия) в снимке отсутствует — блок отдаём как есть,
-            # а недостающие имена добьём нейтралью через отдельную группу.
             blocks["priors"] = pri
+            # F8 (парная синергия) живёт своим снимком: боевой хранит ключи по
+            # герою и аккаунту, а паре нужен ключ на ПАРУ. Одиночные приоры для
+            # вычитания берутся здесь же, чтобы уменьшаемое и вычитаемое шли из
+            # одного источника.
+            import pair_priors
+
+            jq = [PRIOR_NAMES.index(m) for m in pair_priors.SYN_METRICS]
+            hp = snap.hero_priors(heroes10[0])[:, jq]
+            pair_snap = pair_priors._load().get("snap")
+            if pair_snap is not None and contribs:
+                try:
+                    pair_snap = pair_priors.overlay(pair_snap, contribs)
+                except Exception:
+                    pass
+            fblock = pair_priors.block(heroes10[0], hp, snap=pair_snap)
+            if fblock is not None:
+                blocks["pairs"] = fblock
         dblock = _dict_block(heroes10)
         if dblock is not None:
             blocks["dict"] = dblock
+        # Паблик-логиты: чистая функция десяти hero_id, 4.6 мс, самый дорогой
+        # из пропусков (−0.027). Рецепт сверен с обучением до 3e-08.
+        import public_kills_block
+
+        pblock = public_kills_block.block(heroes10[0])
+        if pblock is not None:
+            blocks["public"] = pblock
+        # Рейтинги: ночной снимок ПЛЮС карты, сыгранные после его сборки.
+        # Рост RD по простою считается от даты последнего матча игрока, а не от
+        # даты снимка, поэтому устаревание тут не врёт — а вот сам рейтинг
+        # накопительный, и без накладки четвёртая карта дня читала бы силу
+        # игрока до первой.
+        import team_ratings
+
+        when = int(time.time()) if now_ts is None else int(now_ts)
+        rblock = team_ratings.block(when, accounts10[0],
+                                    snap=live_rating_state())
+        if rblock is not None:
+            blocks["rating"] = rblock
+        # Гибрид: боевой пакет ELO, уже вшитый в бота. Снимок тяжёлый (366 МБ,
+        # ~3.6 с), поэтому поднимается лениво и один раз на процесс.
+        if HYBRID_ENABLED:
+            import hybrid_block
+
+            hblock = hybrid_block.block(when, accounts10[0],
+                                        team_ids=team_ids, tier=tier)
+            if hblock is not None:
+                blocks["hybrid"] = hblock
         return score(bundle, blocks, prod35_names=prod_order,
                      with_draft=bool(DRAFT_KEYS), draft_keys=DRAFT_KEYS)
     except Exception as exc:                         # noqa: BLE001

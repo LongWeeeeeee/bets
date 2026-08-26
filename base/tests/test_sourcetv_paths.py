@@ -191,3 +191,129 @@ def test_stake_multiplier_requires_complete_late_core_coverage() -> None:
     assert runtime._stake_multiplier_for_signal(
         late_star_hit_metrics=["counterpick_1vs1", "counterpick_1vs2", "solo"], **common
     ) != 0.5
+
+
+def test_live_list_alone_keeps_match_under_watch_while_gc_is_dead() -> None:
+    """Матч в live-списке не снимается, даже когда ретрансляция мертва.
+
+    22.08.2026, карта 2 серии BoomBoys — Team Spirit (`8959362208`): GC отдал
+    один пустой снимок и замолчал. Пока Valve подтверждал матч в live-списке,
+    снимать его нельзя — иначе конец карты объявляется по молчанию одного из
+    двух каналов.
+    """
+    state = {"created_at": 5.0, "last_seen": 10.0, "last_api_seen": 900.0}
+    assert probe._match_drop_reason(state, in_live_list=True, now=1000.0) is None
+    # Тот же матч, но live-список его больше не подтверждает: держим ещё grace.
+    assert probe._match_drop_reason(state, in_live_list=False, now=1000.0) is None
+    assert probe._match_drop_reason(
+        state, in_live_list=False,
+        now=900.0 + probe.DROP_GRACE_SECONDS + 1) is not None
+
+
+def test_live_list_flicker_does_not_drop_a_match_with_silent_gc() -> None:
+    """Мигание live-списка при замершем GC не снимает карту.
+
+    Прежнее правило смотрело только на ответы GC: одного рефетча без матча
+    хватало, чтобы удалить запись, если ретранслятор молчал больше пяти минут.
+    """
+    state = {"created_at": 5.0, "last_seen": 100.0, "last_api_seen": 640.0}
+    assert probe._match_drop_reason(state, in_live_list=False, now=700.0) is None
+
+
+def test_ghost_match_is_dropped_by_the_lifetime_cap() -> None:
+    """Призрак, который GC отдаёт бесконечно, снимается по потолку.
+
+    `last_seen` обновляется каждым ответом GC, поэтому условие устаревания у
+    такой записи не выполняется никогда.
+    """
+    born = 1_000.0
+    state = {"created_at": born, "last_seen": 1e9, "last_api_seen": 1e9}
+    assert probe._match_drop_reason(
+        state, in_live_list=True, now=born + probe.MAX_MATCH_LIFETIME - 1) is None
+    assert probe._match_drop_reason(
+        state, in_live_list=True, now=born + probe.MAX_MATCH_LIFETIME + 1) is not None
+
+
+def test_drop_report_flags_a_map_we_never_got_data_for() -> None:
+    """Снятие карты без данных обязано быть заметно в логе, а не выглядеть как конец."""
+    lost = {"created_at": 1_000.0, "progress_count": 1, "max_game_time": 9}
+    level, text = probe._drop_report(8959362208, lost, "исчез из live-списка", now=2_800.0)
+    assert level == "warning"
+    assert "ПОТЕРЯНА" in text
+
+    played = {"created_at": 1_000.0, "progress_count": 340, "max_game_time": 2128}
+    level, text = probe._drop_report(8959222564, played, "исчез из live-списка", now=4_600.0)
+    assert level == "info"
+    assert "ПОТЕРЯНА" not in text
+    assert "35:28" in text
+
+
+def test_snapshot_counts_only_real_progress() -> None:
+    """Повтор одной и той же строки не считается обновлением."""
+    state = {}
+    row = {"game_time": 9, "radiant_score": 0, "dire_score": 0, "radiant_lead": 0}
+    probe._note_sourcetv_snapshot(state, row, now=100.0)
+    for tick in range(101, 400):
+        probe._note_sourcetv_snapshot(state, dict(row), now=float(tick))
+    assert state["progress_count"] == 1
+    assert state["max_game_time"] == 9
+
+    probe._note_sourcetv_snapshot(
+        state, {"game_time": 600, "radiant_score": 5, "dire_score": 3,
+                "radiant_lead": 2000}, now=500.0)
+    assert state["progress_count"] == 2
+    assert state["max_game_time"] == 600
+
+
+def test_status_line_marks_an_echo_of_a_dead_snapshot() -> None:
+    """Строка статуса печатается из последнего снимка — её возраст должен быть виден."""
+    state = {"last_seen": 100.0}
+    assert probe._snapshot_age_mark(state, now=100.0 + probe.GC_STALL_WARN_SECONDS - 1) == ""
+    mark = probe._snapshot_age_mark(state, now=100.0 + 900.0)
+    assert "GC молчит" in mark and "15" in mark
+
+
+def test_gc_stall_reminder_repeats_while_silence_lasts() -> None:
+    """Долгое молчание напоминает о себе, а не тонет в одной строке."""
+    sink = _LogSink()
+    state = {"last_progress_at": 100.0, "last_api_seen": 400.0, "gc_stall_logged": False}
+    assert probe._note_gc_stall(1, state, now=300.0, logger=sink) is True
+    assert probe._note_gc_stall(1, state, now=310.0, logger=sink) is False
+    assert probe._note_gc_stall(
+        1, state, now=300.0 + probe.GC_STALL_REPEAT_SECONDS + 1, logger=sink) is True
+    assert len(sink.warnings) == 2
+
+
+def test_probe_follows_a_recreated_lobby() -> None:
+    """Смена lobby_id живого матча переключает запрос к GC, а не теряет карту."""
+    target = {"lobby_id": 111, "rad": "A", "dire": "B"}
+    assert probe._adopt_new_lobby(target, {"lobby_id": 111}) is None
+    assert probe._adopt_new_lobby(target, {}) is None
+    assert probe._adopt_new_lobby(target, {"lobby_id": 222}) == (111, 222)
+    assert target["lobby_id"] == 222
+    # Прочие поля цели правка не трогает.
+    assert target["rad"] == "A" and target["dire"] == "B"
+
+
+def test_dead_broadcast_is_reported_while_the_map_is_still_running() -> None:
+    """Несостоявшаяся ретрансляция должна быть видна сразу, а не при снятии записи.
+
+    22.08.2026, карта `8959362208`: GC отдал один снимок с `game_time` 9 c и
+    нулём зрителей и замолчал. В логе это выглядело как живой матч ещё
+    пятнадцать минут, а игра тем временем шла своим ходом ещё полчаса.
+    """
+    sink = _LogSink()
+    born = 1_000.0
+    state = {"created_at": born, "progress_count": 1, "max_game_time": 9}
+    # Свежая цель: молчание в первые минуты — нормальная задержка старта.
+    assert probe._note_dead_broadcast(1, state, now=born + 60.0, logger=sink) is False
+    assert probe._note_dead_broadcast(
+        1, state, now=born + probe.DEAD_BROADCAST_AFTER + 1, logger=sink) is True
+    # Второй раз об одном и том же не сообщаем.
+    assert probe._note_dead_broadcast(1, state, now=born + 5_000.0, logger=sink) is False
+    assert len(sink.warnings) == 1
+
+    # Карта, по которой поток идёт, тревоги не вызывает.
+    alive = {"created_at": born, "progress_count": 84, "max_game_time": 1_200}
+    assert probe._note_dead_broadcast(2, alive, now=born + 5_000.0, logger=sink) is False
+    assert len(sink.warnings) == 1

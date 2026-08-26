@@ -33,7 +33,7 @@ for _o, _n in (("job_id_target", "jobid_target"), ("job_id_source", "jobid_sourc
 # прямого опроса GetLiveLeagueGames(league_id), чтобы ловить их с драфта в обход
 # count-кэпа GetLiveLeagueGames(0) на пике.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from league_keywords import league_matches_allowlist
+from league_keywords import TOURNAMENT_LEAGUE_ID_ALLOWLIST, league_matches_allowlist
 
 try:
     from sourcetv_bridge import resolve_sourcetv_matches_path
@@ -62,6 +62,12 @@ _LEAGUE_NAMES = {}          # league_id -> name (OpenDota /api/leagues)
 _LEAGUE_NAMES_FETCHED_AT = 0.0
 _LEAGUE_NAMES_TTL = 6 * 3600
 _LEAGUE_NAMES_RETRY = 600   # при пустом кэше пробуем чаще
+# Живая лига, которой нет в справочнике, — единственный случай, когда allowlist
+# сверяет ПУСТУЮ строку: слово в списке ('blast') есть, а сравнивать не с чем.
+# Тикет свежего турнира появляется у OpenDota в течение суток, поэтому такую
+# лигу догоняем внеочередным обновлением, но не чаще этого интервала.
+_LEAGUE_NAMES_MISS_RETRY = 900.0
+_LEAGUE_NAMES_LAST_MISS = 0.0
 
 # ── Авто-обнаружение keyword-лиг (адаптивный hot-set + cold-sweep) ────────────
 KW_LEAGUE_IDLE_TTL = 6 * 3600   # активная keyword-лига истекает, если не видна столько
@@ -69,6 +75,7 @@ KW_RECENT_FLOOR    = 18000      # нижняя граница "текущей э
 KW_LEGACY_CEIL     = 60000      # верхняя граница (исключаем legacy-id вроде 65xxx)
 KW_SWEEP_BATCH     = 25         # сколько кандидатов опрашивать cold-sweep'ом за рефетч
 KW_CANDIDATES_REFRESH = 1800.0  # как часто пересобирать пул кандидатов из справочника
+KW_REJECT_LOG_REPEAT = 3600.0   # как часто повторять запись об отброшенной лиге
 
 
 def _sourcetv_progress_signature(game):
@@ -94,6 +101,17 @@ def _note_sourcetv_snapshot(state, game, now=None):
     if state.get("progress_signature") != signature:
         state["progress_signature"] = signature
         state["last_progress_at"] = moment
+        # Счётчик отличает карту, по которой пришёл ОДИН пустой снимок, от
+        # карты, за которой мы действительно следили. Без него потеря карты
+        # неотличима от штатного конца: `last_progress_at` ставится и первым
+        # снимком тоже (22.08.2026, матч 8959362208).
+        state["progress_count"] = int(state.get("progress_count") or 0) + 1
+    try:
+        game_time = int((game or {}).get("game_time") or 0)
+    except (TypeError, ValueError):
+        game_time = 0
+    if game_time > int(state.get("max_game_time") or 0):
+        state["max_game_time"] = game_time
     state["last_seen"] = moment
     return float(state.get("last_progress_at") or moment)
 
@@ -102,6 +120,10 @@ def _note_sourcetv_snapshot(state, game, now=None):
 # сказать в лог. Раньше такое молчание было невидимым: строка статуса просто
 # повторялась, а запись матча тихо исчезала из моста через 300 с.
 GC_STALL_WARN_SECONDS = 120.0
+
+# Как часто повторять напоминание, пока GC продолжает молчать. Без повтора
+# получасовая тишина неотличима в логе от двухминутной.
+GC_STALL_REPEAT_SECONDS = 300.0
 
 # Как часто отбивать пульс в лог, когда живых матчей нет. Должно быть заметно
 # меньше порога watchdog'а (900 с по mtime лога), иначе тихий probe считается
@@ -135,9 +157,16 @@ def _note_gc_stall(mid, state, now=None, logger=None):
     stall = moment - progress_at
     sink = logger if logger is not None else log
     if stall >= GC_STALL_WARN_SECONDS:
-        if state.get("gc_stall_logged"):
+        try:
+            said_at = float(state.get("gc_stall_logged_at") or 0)
+        except (TypeError, ValueError):
+            said_at = 0.0
+        # Одной строки на эпизод мало: молчание длиной в полчаса выглядело в
+        # логе так же, как молчание в две минуты, и потеря карты не читалась.
+        if state.get("gc_stall_logged") and moment - said_at < GC_STALL_REPEAT_SECONDS:
             return False
         state["gc_stall_logged"] = True
+        state["gc_stall_logged_at"] = moment
         try:
             api_seen = float(state.get("last_api_seen") or 0)
         except (TypeError, ValueError):
@@ -152,9 +181,154 @@ def _note_gc_stall(mid, state, now=None, logger=None):
         return True
     if state.get("gc_stall_logged"):
         state["gc_stall_logged"] = False
+        state["gc_stall_logged_at"] = 0.0
         sink.info("матч %s: GC снова отдаёт прогресс", mid)
         return True
     return False
+
+
+#: Сколько секунд после последнего подтверждения ЛЮБЫМ каналом держать матч.
+#: Раньше решение об удалении принималось только по ответам GC, и мигание
+#: live-списка при замершей ретрансляции снимало живую карту с наблюдения.
+DROP_GRACE_SECONDS = 300.0
+
+#: Потолок жизни записи. Без него матч-призрак, который GC отдаёт бесконечно,
+#: остаётся целью навсегда: каждый ответ обновляет `last_seen`, и условие
+#: устаревания не выполняется никогда. Самая длинная карта в корпусе — 75 минут,
+#: так что три часа с запасом покрывают игру вместе с драфтом и техпаузами.
+MAX_MATCH_LIFETIME = 3 * 3600.0
+
+
+#: Сколько держать матч в наблюдении, прежде чем отсутствие содержательных
+#: данных считать не задержкой старта, а несостоявшейся ретрансляцией.
+DEAD_BROADCAST_AFTER = 300.0
+
+
+def _note_dead_broadcast(mid, state, now=None, logger=None):
+    """Один раз сказать, что ретрансляция по матчу так и не поднялась.
+
+    Отличается от `_note_gc_stall`: там речь о паузе в потоке, который шёл.
+    Здесь поток не начинался вовсе — GC отдал пустой снимок (`game_time`
+    порядка нуля, `spectators` 0) и замолчал, а матч всё это время оставался в
+    live-списке Valve. Сказать об этом в момент, а не через четверть часа при
+    снятии записи, — единственный шанс успеть с запасным источником.
+    """
+    st = state if isinstance(state, dict) else {}
+    if st.get("dead_broadcast_logged"):
+        return False
+    moment = float(time.time() if now is None else now)
+    try:
+        created = float(st.get("created_at") or 0)
+    except (TypeError, ValueError):
+        created = 0.0
+    if created <= 0 or moment - created < DEAD_BROADCAST_AFTER:
+        return False
+    if int(st.get("progress_count") or 0) > 1 or int(st.get("max_game_time") or 0) >= 120:
+        return False
+    st["dead_broadcast_logged"] = True
+    (logger if logger is not None else log).warning(
+        "матч %s: ретрансляция не поднялась — %.0f мин в наблюдении, "
+        "содержательных обновлений GC %d, игровое время %d c. Данных по карте нет",
+        mid, (moment - created) / 60.0, int(st.get("progress_count") or 0),
+        int(st.get("max_game_time") or 0))
+    return True
+
+
+def _adopt_new_lobby(target, fresh):
+    """Перевести цель на новый lobby_id. Вернуть (старый, новый) или `None`.
+
+    Запрос к GC идёт ПО lobby_id, а не по match_id. Лобби живого матча Valve
+    может пересоздать — тогда со старым номером ретрансляция замолкает
+    навсегда, хотя матч остаётся в live-списке под тем же match_id и выглядит
+    здоровым. Раньше рефетч обновлял только серийные поля, и такой матч был
+    потерян до конца карты.
+    """
+    if not isinstance(target, dict) or not isinstance(fresh, dict):
+        return None
+    new = fresh.get("lobby_id")
+    old = target.get("lobby_id")
+    if not new or new == old:
+        return None
+    target["lobby_id"] = new
+    return old, new
+
+
+def _match_drop_reason(state, *, in_live_list, now=None):
+    """Почему матч пора снять с наблюдения. `None` — держим.
+
+    Карта идёт, пока это подтверждает хотя бы один из двух независимых
+    каналов: ответ GC (`last_seen`) или live-список Valve (`last_api_seen`).
+    Пока матч в live-списке, не снимаем вообще — даже при мёртвой ретрансляции.
+    """
+    moment = float(time.time() if now is None else now)
+    st = state if isinstance(state, dict) else {}
+
+    def _f(key):
+        try:
+            return float(st.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    created = _f("created_at")
+    if created > 0 and moment - created > MAX_MATCH_LIFETIME:
+        return "потолок наблюдения"
+    if in_live_list:
+        return None
+    confirmed = max(_f("last_seen"), _f("last_api_seen"))
+    if moment - confirmed > DROP_GRACE_SECONDS:
+        return "исчез из live-списка, оба канала молчат"
+    return None
+
+
+def _drop_report(mid, state, reason, now=None):
+    """Итог по снимаемому матчу: (уровень лога, строка).
+
+    Потеря карты обязана быть видна в логе сама. 22.08.2026 карта
+    `8959362208` (Team Spirit — BoomBoys, TI) была снята обычной строкой
+    «завершён/исчез из API», хотя игра шла ещё полчаса: GC отдал один пустой
+    снимок и замолчал, а статус на экране продолжал печататься из замороженного
+    состояния. Со стороны лога потеря выглядела как штатный конец карты.
+    """
+    moment = float(time.time() if now is None else now)
+    st = state if isinstance(state, dict) else {}
+    try:
+        created = float(st.get("created_at") or 0)
+    except (TypeError, ValueError):
+        created = 0.0
+    held = (moment - created) if created > 0 else -1.0
+    progress = int(st.get("progress_count") or 0)
+    max_gt = int(st.get("max_game_time") or 0)
+    text = ("Рефетч: матч %s снимаем (%s) — держали %.0f мин, содержательных "
+            "обновлений GC %d, максимум игрового времени %d:%02d"
+            % (mid, reason, held / 60.0 if held > 0 else 0.0,
+               progress, max_gt // 60, max_gt % 60))
+    # Один снимок и часы, не дошедшие до двух минут, — это не сыгранная карта,
+    # а запись, по которой мы так и не получили данных.
+    lost = progress <= 1 and max_gt < 120 and held >= DROP_GRACE_SECONDS
+    if lost:
+        return "warning", text + " — КАРТА ПОТЕРЯНА, данных по ней не было"
+    return "info", text
+
+
+def _snapshot_age_mark(state, now=None):
+    """Пометка к строке статуса, когда она печатается из старого снимка.
+
+    Строка на экране собирается из `state["game"]` — последнего, что отдал GC.
+    Когда ретранслятор замолкает, строка продолжает печататься неизменной, и
+    матч выглядит живым сколько угодно долго. Пометка говорит, что это эхо.
+    """
+    st = state if isinstance(state, dict) else {}
+    moment = float(time.time() if now is None else now)
+    try:
+        seen = float(st.get("last_seen") or 0)
+    except (TypeError, ValueError):
+        seen = 0.0
+    if seen <= 0:
+        return ""
+    age = moment - seen
+    if age < GC_STALL_WARN_SECONDS:
+        return ""
+    return "  ⟲ GC молчит %.0f мин" % (age / 60.0)
 
 
 def _sourcetv_snapshot_timestamp(state, now=None):
@@ -208,29 +382,156 @@ def _keyword_candidate_league_ids():
             and league_matches_allowlist(lid, nm)
         ):
             out.append(lid)
-    return sorted(out)
+    # Явно разрешённые id опрашиваем всегда, вне окна «текущей эры»: тикет
+    # площадки Challengermode (10877) заведён в 2019-м и под нижнюю границу не
+    # проходит, то есть прямого опроса по нему не было бы вовсе — только
+    # надежда на широкий снимок (0), который на пике режется по числу игр.
+    out.extend(int(lid) for lid in TOURNAMENT_LEAGUE_ID_ALLOWLIST)
+    return sorted(set(out))
 
-def league_name(league_id):
-    """Название лиги по league_id; справочник кэшируется с OpenDota."""
+_LEAGUE_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "runtime", "league_names_cache.json")
+
+
+def _save_league_cache(names):
+    """Копия справочника лиг на диск — страховка от недоступности OpenDota."""
+    try:
+        os.makedirs(os.path.dirname(_LEAGUE_CACHE_PATH), exist_ok=True)
+        tmp = _LEAGUE_CACHE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({str(k): v for k, v in names.items()}, fh, ensure_ascii=False)
+        os.replace(tmp, _LEAGUE_CACHE_PATH)
+    except Exception as e:
+        log.warning("Не удалось сохранить кэш справочника лиг: %s", e)
+
+
+def _load_league_cache():
+    """Справочник лиг с диска; пусто, если копии нет или она битая."""
+    try:
+        with open(_LEAGUE_CACHE_PATH, encoding="utf-8") as fh:
+            return {int(k): str(v) for k, v in json.load(fh).items()}
+    except Exception:
+        return {}
+
+
+def _reload_league_names():
+    """Перечитать справочник лиг у OpenDota. True — если получилось."""
     global _LEAGUE_NAMES, _LEAGUE_NAMES_FETCHED_AT
     now = time.time()
+    _LEAGUE_NAMES_FETCHED_AT = now
+    try:
+        req = urllib.request.Request(
+            "https://api.opendota.com/api/leagues",
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        rows = json.load(urllib.request.urlopen(req, timeout=30))
+        _LEAGUE_NAMES = {
+            int(r["leagueid"]): str(r.get("name") or "")
+            for r in rows if r.get("leagueid")
+        }
+        log.info("Справочник лиг загружен: %d записей (OpenDota)", len(_LEAGUE_NAMES))
+        _save_league_cache(_LEAGUE_NAMES)
+        return True
+    except Exception as e:
+        # Отказ НЕ должен уводить следующую попытку на полный TTL: справочник
+        # решает, попадёт ли лига в allowlist, и шесть часов со старым списком —
+        # это шесть часов, в которые свежий турнир невидим. Повторяем через
+        # _LEAGUE_NAMES_RETRY.
+        _LEAGUE_NAMES_FETCHED_AT = now - _LEAGUE_NAMES_TTL + _LEAGUE_NAMES_RETRY
+        log.warning("Не удалось загрузить справочник лиг OpenDota: %s", e)
+        # Отказ OpenDota НЕ должен ослеплять пробу. Без имён
+        # `league_matches_allowlist` пропускает только явный список id, а в
+        # нём одна запись — отсекается всё, и выглядит это как штатное
+        # «активных матчей нет». Поэтому держим копию на диске.
+        if not _LEAGUE_NAMES:
+            cached = _load_league_cache()
+            if cached:
+                _LEAGUE_NAMES = cached
+                log.warning("Справочник лиг взят из кэша на диске: %d записей",
+                            len(_LEAGUE_NAMES))
+            else:
+                log.error("Справочник лиг НЕДОСТУПЕН и кэша нет: отбор лиг "
+                          "идёт только по явному списку id")
+        return False
+
+
+def league_name(league_id, refresh_if_missing=False):
+    """Название лиги по league_id; справочник кэшируется с OpenDota.
+
+    ``refresh_if_missing`` — для лиги, которая ИДЁТ ВЖИВУЮ прямо сейчас: её
+    отсутствие в справочнике означает не «лига чужая», а «мы про неё ничего не
+    знаем», и allowlist отказывает вслепую. Такой промах стоит внеочередного
+    обновления справочника (не чаще ``_LEAGUE_NAMES_MISS_RETRY``).
+    """
+    global _LEAGUE_NAMES_LAST_MISS
+    now = time.time()
     age = now - _LEAGUE_NAMES_FETCHED_AT
+    reloaded = False
     if (not _LEAGUE_NAMES and age > _LEAGUE_NAMES_RETRY) or age > _LEAGUE_NAMES_TTL:
-        _LEAGUE_NAMES_FETCHED_AT = now
-        try:
-            req = urllib.request.Request(
-                "https://api.opendota.com/api/leagues",
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            rows = json.load(urllib.request.urlopen(req, timeout=30))
-            _LEAGUE_NAMES = {
-                int(r["leagueid"]): str(r.get("name") or "")
-                for r in rows if r.get("leagueid")
-            }
-            log.info("Справочник лиг загружен: %d записей (OpenDota)", len(_LEAGUE_NAMES))
-        except Exception as e:
-            log.warning("Не удалось загрузить справочник лиг OpenDota: %s", e)
-    return _LEAGUE_NAMES.get(int(league_id or 0), "")
+        _reload_league_names()
+        reloaded = True
+    lid = int(league_id or 0)
+    name = _LEAGUE_NAMES.get(lid, "")
+    if name or not lid or not refresh_if_missing or reloaded:
+        return name
+    if now - _LEAGUE_NAMES_LAST_MISS < _LEAGUE_NAMES_MISS_RETRY:
+        return name
+    _LEAGUE_NAMES_LAST_MISS = now
+    _reload_league_names()
+    return _LEAGUE_NAMES.get(lid, "")
+
+
+def _league_admission(league_id, title):
+    """Почему лига прошла allowlist или не прошла: ok / no_name / not_allowed.
+
+    Разделять важно: ``not_allowed`` — осознанный отказ по названию, а
+    ``no_name`` — отказ вслепую, справочник просто не знает эту лигу, и никакое
+    слово в allowlist тут не поможет (сверять его не с чем).
+    """
+    if league_matches_allowlist(league_id, title):
+        return "ok"
+    return "no_name" if not str(title or "").strip() else "not_allowed"
+
+
+def _note_rejected_league(seen, league_id, title, now=None):
+    """Запомнить отброшенную лигу. Вернуть, сколько её игр писать в лог (0 — молчим).
+
+    Раньше отказ был невидим: игра отбрасывалась одним ``continue``, и в логе
+    это выглядело как «активных матчей нет». Разобрать жалобу «лига в allowlist
+    есть, а матчей нет» можно было только чтением кода.
+    """
+    moment = float(time.time() if now is None else now)
+    lid = int(league_id or 0)
+    # `logged=None` — «не писали ни разу»; нолём его подменять нельзя, иначе
+    # первая же запись выглядит как недавняя и в лог не попадает.
+    row = seen.setdefault(lid, {"seen": 0.0, "logged": None, "name": "", "since_log": 0, "hits": 0})
+    row["seen"] = moment
+    row["name"] = str(title or "")
+    # Счётчик отвечает на «сколько игр мы этим отказом теряем»: на платформенном
+    # тикете вроде Challengermode на одном id живут и наш квал, и чужие ежедневки.
+    row["since_log"] = int(row.get("since_log") or 0) + 1
+    row["hits"] = int(row.get("hits") or 0) + 1
+    last = row.get("logged")
+    if last is not None and moment - float(last) < KW_REJECT_LOG_REPEAT:
+        return 0
+    row["logged"] = moment
+    reported = int(row["since_log"])
+    row["since_log"] = 0
+    return reported
+
+
+def _rejected_leagues_summary(seen, now=None, window=KW_REJECT_LOG_REPEAT, limit=5):
+    """Сводка отброшенных лиг для пульса; пусто, если за окно отказов не было."""
+    moment = float(time.time() if now is None else now)
+    rows = [(lid, row) for lid, row in seen.items()
+            if moment - float(row.get("seen") or 0.0) <= window]
+    if not rows:
+        return ""
+    rows.sort(key=lambda kv: -float(kv[1].get("seen") or 0.0))
+    parts = [f"{lid} {row.get('name') or '<имени нет>'} x{int(row.get('hits') or 0)}"
+             for lid, row in rows[:limit]]
+    tail = "" if len(rows) <= limit else f" и ещё {len(rows) - limit}"
+    return "; ".join(parts) + tail
 
 
 def _build_fast_picks(rad_picks, dire_picks):
@@ -817,7 +1118,9 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                  t["lobby_id"], t["league_id"], t.get("series_id"))
 
     # per-match mutable state (last_seen: time of last GC update — used for refetch pruning;
-    # last_api_seen: time of last live-list confirmation — держит запись живой при замершем GC)
+    # last_api_seen: time of last live-list confirmation — держит запись живой при замершем GC;
+    # created_at/progress_count/max_game_time — для потолка наблюдения и отчёта при снятии)
+    _states_born_at = time.time()
     states = {
         mid: {
             "game": None,
@@ -828,6 +1131,9 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
             "last_api_seen": 0.0,
             "progress_signature": None,
             "gc_stall_logged": False,
+            "created_at": _states_born_at,
+            "progress_count": 0,
+            "max_game_time": 0,
         }
         for mid in targets
     }
@@ -1043,6 +1349,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
         last_refetch_ts = 0.0
         # авто-обнаружение keyword-лиг: активный hot-set + пул кандидатов для cold-sweep
         active_kw_leagues = {}     # league_id -> last_seen_ts (видна в (0)/прямом опросе)
+        kw_rejected = {}           # league_id -> {"seen","logged","name"} отброшенных allowlist'ом
         sweep_cursor = 0           # курсор round-robin по пулу кандидатов
         kw_candidates = _keyword_candidate_league_ids() if auto_kw_mode else []
         last_kw_refresh = time.time()
@@ -1094,11 +1401,29 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                     if not fmid or fmid in seen_fmids:
                                         continue
                                     # auto-режим: держим только НАШИ keyword-лиги
-                                    if auto_kw_mode and not league_matches_allowlist(
-                                        fg.get("league_id"),
-                                        league_name(fg.get("league_id")),
-                                    ):
-                                        continue
+                                    if auto_kw_mode:
+                                        _glid = int(fg.get("league_id") or 0)
+                                        _gname = league_name(_glid, refresh_if_missing=True)
+                                        _verdict = _league_admission(_glid, _gname)
+                                        if _verdict != "ok":
+                                            _seen_games = _note_rejected_league(
+                                                kw_rejected, _glid, _gname, _refetch_now
+                                            )
+                                            if _seen_games:
+                                                log.info(
+                                                    "Лига вне allowlist (%s): id=%s имя=%r — %s vs %s"
+                                                    " (игр с прошлой записи: %d)",
+                                                    "имени нет в справочнике OpenDota"
+                                                    if _verdict == "no_name"
+                                                    else "название не подошло",
+                                                    _glid, _gname,
+                                                    (fg.get("radiant_team") or {}).get("team_name")
+                                                    or "Radiant",
+                                                    (fg.get("dire_team") or {}).get("team_name")
+                                                    or "Dire",
+                                                    _seen_games,
+                                                )
+                                            continue
                                     seen_fmids.add(fmid)
                                     fresh_games.append(fg)
                             except Exception as _re:
@@ -1129,6 +1454,9 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                     "last_api_seen": 0.0,
                                     "progress_signature": None,
                                     "gc_stall_logged": False,
+                                    "created_at": _refetch_now,
+                                    "progress_count": 0,
+                                    "max_game_time": 0,
                                 }
                                 if ft["lobby_id"]:
                                     all_lobby_ids.append(ft["lobby_id"])
@@ -1139,16 +1467,29 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                 for _sf in ("series_id", "series_type", "radiant_series_wins",
                                             "dire_series_wins", "game_number"):
                                     targets[fmid][_sf] = fg.get(_sf)
+                                _relobbied = _adopt_new_lobby(targets[fmid], fg)
+                                if _relobbied:
+                                    log.warning("матч %d: lobby_id сменился %s → %s, "
+                                                "переключаем запрос к GC", fmid, *_relobbied)
                             # Матч в live-списке Valve — подтверждение, что карта идёт,
                             # даже когда GC замер и прогресса нет. По этой метке запись
                             # в мосте не стареет (см. _sourcetv_snapshot_timestamp).
                             states[fmid]["last_api_seen"] = _refetch_now
-                        # Прунинг: матчи, исчезнувшие из API и давно не обновлявшиеся
+                        # Прунинг: снимаем матч, только когда молчат ОБА канала
+                        # (ответы GC и live-список) либо истёк потолок наблюдения.
                         for fmid in list(targets):
-                            if fmid not in fresh_mids and _refetch_now - states[fmid].get("last_seen", 0) > 300:
-                                log.info("Рефетч: матч %d завершён/исчез из API, удаляем", fmid)
-                                del targets[fmid]
-                                del states[fmid]
+                            _note_dead_broadcast(fmid, states[fmid], now=_refetch_now)
+                            _reason = _match_drop_reason(
+                                states[fmid],
+                                in_live_list=fmid in fresh_mids,
+                                now=_refetch_now)
+                            if not _reason:
+                                continue
+                            _lvl, _msg = _drop_report(fmid, states[fmid], _reason,
+                                                      now=_refetch_now)
+                            getattr(log, _lvl)("%s", _msg)
+                            del targets[fmid]
+                            del states[fmid]
                         # Перестраиваем all_lobby_ids по актуальному набору targets
                         all_lobby_ids[:] = [_t["lobby_id"] for _t in targets.values() if _t.get("lobby_id")]
                     except Exception as _rfe:
@@ -1322,7 +1663,8 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                     side = "R" if lead >= 0 else "D"
                     rad  = (g.get("team_radiant") or "R")[:18]
                     dire = (g.get("team_dire")    or "D")[:18]
-                    print(f"  [{fmt(t_s)}] {rad} {rs}–{ds} {dire}  {side}+{abs(lead):,}g  spec={g['spectators']}")
+                    print(f"  [{fmt(t_s)}] {rad} {rs}–{ds} {dire}  {side}+{abs(lead):,}g  "
+                          f"spec={g['spectators']}{_snapshot_age_mark(st)}")
                     count += 1
                 status_lines[0] = count
                 sys.stdout.flush()
@@ -1334,7 +1676,14 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                 # логин в Steam и провал в мосте, если матч стартует в этот момент.
                 if _heartbeat_due(count, last_heartbeat_ts):
                     last_heartbeat_ts = time.time()
-                    log.info("пульс: активных матчей нет, целей %d", len(targets))
+                    # Пульс должен отличать «никто не играет» от «играют, но всё
+                    # отброшено фильтром лиг»: снаружи это одна и та же тишина.
+                    _rejected = _rejected_leagues_summary(kw_rejected, last_heartbeat_ts)
+                    log.info(
+                        "пульс: активных матчей нет, целей %d%s",
+                        len(targets),
+                        f"; вне allowlist за час: {_rejected}" if _rejected else "",
+                    )
 
             except KeyboardInterrupt:
                 _clear_status()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -71,10 +72,132 @@ def test_snapshot_builds_deduplicated_team_kills_history(tmp_path) -> None:
     ]
 
 
+def test_duplicate_map_does_not_move_ratings_twice(tmp_path) -> None:
+    """Копия карты в другом файле не должна быть вторым апдейтом рейтинга.
+
+    До правки дубль проходил и через модель, и через build_series_bundles: там он
+    считался лишней победой на карте и мог закрыть Bo3 двумя копиями одной игры.
+    """
+    players = [
+        {
+            "isRadiant": index < 5,
+            "steamAccount": {"id": index + 1},
+            "position": f"POSITION_{(index % 5) + 1}",
+        }
+        for index in range(10)
+    ]
+    raw_match = {
+        "id": 777,
+        "startDateTime": 1771153200,
+        "didRadiantWin": True,
+        "radiantTeam": {"id": 10, "name": "A"},
+        "direTeam": {"id": 20, "name": "B"},
+        "players": players,
+        "radiantKills": [2, 3, 4],
+        "direKills": [1, 1, 1],
+        "leagueId": 1,
+        "league": {"name": "Test League", "tier": "PROFESSIONAL"},
+        "series": {"id": 50, "type": "1"},
+    }
+
+    def _build(file_names: list[str]) -> dict:
+        _reset_live_team_strength_caches()
+        data_dir = tmp_path / f"data_{len(file_names)}"
+        data_dir.mkdir()
+        for name in file_names:
+            (data_dir / name).write_text(json.dumps({"777": raw_match}), encoding="utf-8")
+        return build_snapshot(
+            data_dir=data_dir,
+            snapshot_path=tmp_path / f"snapshot_{len(file_names)}.json",
+        )
+
+    single = _build(["7.41d_part001.json"])
+    duplicated = _build(["7.41d_part001.json", "combined1.json"])
+
+    assert single["meta"]["loaded_matches"] == 1
+    assert single["meta"]["duplicate_records"] == 0
+    assert duplicated["meta"]["loaded_matches"] == 1
+    assert duplicated["meta"]["duplicate_records"] == 1
+    assert duplicated["meta"]["series_groups"] == single["meta"]["series_groups"]
+    assert (
+        duplicated["teams_by_org_key"].keys() == single["teams_by_org_key"].keys()
+    )
+    for org_key, row in single["teams_by_org_key"].items():
+        assert duplicated["teams_by_org_key"][org_key]["raw_team_strength"] == pytest.approx(
+            row["raw_team_strength"]
+        )
+    assert duplicated["model_state"]["player_global"] == pytest.approx(
+        single["model_state"]["player_global"]
+    )
+
+
+def test_snapshot_pin_blocks_rebuild_on_fresh_corpus(tmp_path, monkeypatch) -> None:
+    """Пин запрещает пересборку по mtime, но не по структурным причинам."""
+    _reset_live_team_strength_caches()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    players = [
+        {
+            "isRadiant": index < 5,
+            "steamAccount": {"id": index + 1},
+            "position": f"POSITION_{(index % 5) + 1}",
+        }
+        for index in range(10)
+    ]
+    raw_match = {
+        "id": 999,
+        "startDateTime": 1771153200,
+        "didRadiantWin": True,
+        "radiantTeam": {"id": 10, "name": "A"},
+        "direTeam": {"id": 20, "name": "B"},
+        "players": players,
+        "radiantKills": [2],
+        "direKills": [1],
+        "leagueId": 1,
+        "league": {"name": "Test League", "tier": "PROFESSIONAL"},
+        "series": {"id": 50, "type": "1"},
+    }
+    (data_dir / "7.41d_part001.json").write_text(json.dumps({"999": raw_match}), encoding="utf-8")
+    snapshot_path = tmp_path / "snapshot.json"
+    build_snapshot(data_dir=data_dir, snapshot_path=snapshot_path)
+
+    # корпус пополнился уже ПОСЛЕ сборки снапшота
+    os.utime(snapshot_path, (1_600_000_000, 1_600_000_000))
+    builds: list[int] = []
+    real_build = live_team_strength_module.build_snapshot
+
+    def _counting_build(**kwargs):
+        builds.append(1)
+        return real_build(**kwargs)
+
+    monkeypatch.setattr(live_team_strength_module, "build_snapshot", _counting_build)
+
+    monkeypatch.delenv(live_team_strength_module.SNAPSHOT_PIN_ENV, raising=False)
+    _reset_live_team_strength_caches()
+    live_team_strength_module.ensure_snapshot(data_dir=data_dir, snapshot_path=snapshot_path)
+    assert builds == [1], "без пина устаревший снапшот обязан пересобираться"
+
+    monkeypatch.setenv(live_team_strength_module.SNAPSHOT_PIN_ENV, "1")
+    os.utime(snapshot_path, (1_600_000_000, 1_600_000_000))
+    _reset_live_team_strength_caches()
+    live_team_strength_module.ensure_snapshot(data_dir=data_dir, snapshot_path=snapshot_path)
+    assert builds == [1], "с пином пересборки по mtime быть не должно"
+
+    # структурная причина сильнее пина
+    broken = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    broken["model_state"] = None
+    snapshot_path.write_text(json.dumps(broken), encoding="utf-8")
+    _reset_live_team_strength_caches()
+    live_team_strength_module.ensure_snapshot(data_dir=data_dir, snapshot_path=snapshot_path)
+    assert builds == [1, 1], "снапшот без model_state обязан пересобираться и с пином"
+
+
 def _reset_live_team_strength_caches() -> None:
     live_team_strength_module._SNAPSHOT_CACHE = None
-    live_team_strength_module._MODEL_FROM_SNAPSHOT_CACHE["snapshot_id"] = None
-    live_team_strength_module._MODEL_FROM_SNAPSHOT_CACHE["model"] = None
+    # Кэш модели стал LRU-СПИСКОМ кортежей (модуль, строка 69), а сброс остался
+    # словарным — из-за этого падал весь файл тестов, и регрессия живого ELO
+    # прошла незамеченной.
+    live_team_strength_module._MODEL_FROM_SNAPSHOT_CACHE.clear()
     live_team_strength_module._RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = None
     live_team_strength_module._RUNTIME_SNAPSHOT_CACHE["runtime_signature"] = None
     live_team_strength_module._RUNTIME_SNAPSHOT_CACHE["snapshot"] = None
@@ -994,3 +1117,111 @@ def test_live_runtime_applies_roster_change_and_uncertainty_boosts(tmp_path) -> 
     assert preview_after["radiant"]["live_base_delta"] != pytest.approx(0.0)
 
     _reset_live_team_strength_caches()
+
+
+def _live_env(tmp_path):
+    """Минимальный рантайм для двух подряд регистраций карт одной серии."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(exist_ok=True)
+    snapshot_path = tmp_path / "live_snapshot.json"
+    model = HybridPlayerRosterEloModel(HybridEloConfig())
+    snapshot_path.write_text(json.dumps({
+        "meta": {"reference_timestamp": 1771153251},
+        "teams_by_org_key": {},
+        "model_state": model.export_state(),
+    }), encoding="utf-8")
+    return dict(
+        data_dir=data_dir, snapshot_path=snapshot_path,
+        progress_path=tmp_path / "live_progress.json",
+        runtime_model_state_path=tmp_path / "live_model_state.json",
+        runtime_lock_path=tmp_path / "live_state.lock",
+        rebuild_if_missing=False,
+    )
+
+
+def _rec(match_id: int, radiant_win: bool = False):
+    return MatchRecord(
+        match_id=match_id, timestamp=1771153200, radiant_win=radiant_win,
+        radiant_team_id=1, radiant_team_name="Elegia",
+        dire_team_id=2, dire_team_name="Team Mariachi",
+        radiant_player_ids=(1, 2, 3, 4, 5), dire_player_ids=(6, 7, 8, 9, 10),
+        league_id=11, league_name="Test League", source_league_tier="TIER2",
+        series_id=425663, series_type="3", derived_league_tier=LeagueTier.TIER2,
+    )
+
+
+def test_winner_lookup_applies_pending_map_when_series_score_stands_still(tmp_path) -> None:
+    """Боевой случай E-224: счёт серии не двигается, исход берётся по match_id.
+
+    Без `winner_lookup` эта пара регистраций не даёт ни одного применения — это и
+    есть дефект, из-за которого в рейтинг попадала ровно одна карта на серию.
+    """
+    _reset_live_team_strength_caches()
+    env = _live_env(tmp_path)
+    common = dict(series_key="425663", series_url="dltv.org/matches/425663", **env)
+
+    r1 = register_live_map_context(
+        map_key="dltv.org/matches/425663.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(101), **common)
+    assert r1 is not None and r1["applied_update"] is None
+
+    # счёт ТОТ ЖЕ — старый механизм здесь молчит
+    r_silent = register_live_map_context(
+        map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(102), **common)
+    assert r_silent["applied_update"] is None, "без справки применять нечего"
+
+    _reset_live_team_strength_caches()
+    env2 = _live_env(tmp_path / "second")
+    common2 = dict(series_key="425663", series_url="dltv.org/matches/425663", **env2)
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(101), **common2)
+    r2 = register_live_map_context(
+        map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(102),
+        winner_lookup=lambda key, pm: False, **common2)
+    assert r2["applied_update"] is not None
+    assert r2["applied_update"]["map_key"] == "dltv.org/matches/425663.0"
+    assert r2["applied_update"]["radiant_win"] is False
+
+
+def test_winner_lookup_does_not_apply_same_match_twice(tmp_path) -> None:
+    """Ключ карты меняется по 12 раз за карту — применить её дважды нельзя."""
+    _reset_live_team_strength_caches()
+    env = _live_env(tmp_path)
+    common = dict(series_key="425663", series_url="dltv.org/matches/425663", **env)
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(101), **common)
+    first = register_live_map_context(
+        map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(102),
+        winner_lookup=lambda key, pm: False, **common)
+    assert first["applied_update"] is not None
+    # та же карта 101 снова становится отложенной под ДРУГИМ ключом
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.27", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(101), **common)
+    again = register_live_map_context(
+        map_key="dltv.org/matches/425665.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(103),
+        winner_lookup=lambda key, pm: False, **common)
+    assert again["applied_update"] is None, "match_id 101 уже применён"
+
+
+def test_winner_lookup_failure_is_not_a_loss(tmp_path) -> None:
+    """`None` из справки означает «не знаем», а не «радиант проиграл»."""
+    _reset_live_team_strength_caches()
+    env = _live_env(tmp_path)
+    common = dict(series_key="425663", series_url="dltv.org/matches/425663", **env)
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(101), **common)
+    for lookup in (lambda key: None, lambda key, pm: (_ for _ in ()).throw(RuntimeError("сеть"))):
+        r = register_live_map_context(
+            map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
+            first_team_is_radiant=True, match_record=_rec(102),
+            winner_lookup=lookup, **common)
+        assert r["applied_update"] is None
