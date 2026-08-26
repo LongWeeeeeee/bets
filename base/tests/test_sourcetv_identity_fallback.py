@@ -213,7 +213,10 @@ def test_bridge_identity_leaves_other_leagues_and_named_teams_alone(
     assert foreign["8966484305"]["radiant_team_name"] == "Radiant"
     assert calls["n"] == 0
 
-    named = _bridge_entry(radiant_team_name="WhiteSails", dire_team_name="Team Hryvnia")
+    # Названные команды с ДОКАЗАННЫМ форматом серии — тоже повод не ходить.
+    named = _bridge_entry(
+        radiant_team_name="WhiteSails", dire_team_name="Team Hryvnia", series_type=1
+    )
     runtime._resolve_sourcetv_bridge_identity(named)
     assert calls["n"] == 0
 
@@ -234,3 +237,48 @@ def test_bridge_identity_survives_a_dead_listing(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(runtime, "_sourcetv_identity_rows", lambda *a, **kw: {})
     runtime._resolve_sourcetv_bridge_identity(matches)
     assert matches["8966484305"]["dire_team_name"] == "Dire"
+
+
+def test_named_match_still_gets_its_series_format(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Формат серии нужен и там, где Valve НАЗВАЛ команды.
+
+    26.08.2026, Klim Sani4 — Level UP: имена Valve дал, поэтому ветка личности
+    не срабатывала, `cyberscore_best_of` в запись не попадал, и карта Bo1 не
+    считалась решающей — рынок «Матч» не подставлялся, кэфы не шли, хотя
+    карточка на странице была (`match_found=true`).
+    """
+    rows = runtime._parse_cyberscore_rows_by_steam_id(
+        ROW_HTML.replace('"best_of":1', '"best_of":1')
+    )
+    monkeypatch.setattr(runtime, "_sourcetv_identity_rows", lambda *a, **kw: rows)
+    monkeypatch.setattr(runtime, "_find_known_team_ids_by_name", lambda name: set())
+    matches = _bridge_entry(
+        radiant_team_name="WhiteSails", dire_team_name="Team Hryvnia", series_type=0
+    )
+    runtime._resolve_sourcetv_bridge_identity(matches)
+    entry = matches["8966484305"]
+    assert entry["cyberscore_best_of"] == 1
+    # Названия у такой записи не трогаются — они и так настоящие.
+    assert entry["radiant_team_name"] == "WhiteSails"
+    assert entry["dire_team_name"] == "Team Hryvnia"
+
+
+def test_proven_format_is_not_asked_twice(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bo3/Bo5 от GC и уже известный формат в браузер не ходят."""
+    calls = {"n": 0}
+
+    def _rows(*_a, **_kw):
+        calls["n"] += 1
+        return runtime._parse_cyberscore_rows_by_steam_id(ROW_HTML)
+
+    monkeypatch.setattr(runtime, "_sourcetv_identity_rows", _rows)
+
+    bo3 = _bridge_entry(radiant_team_name="A", dire_team_name="B", series_type=1)
+    runtime._resolve_sourcetv_bridge_identity(bo3)
+    assert calls["n"] == 0
+
+    known = _bridge_entry(
+        radiant_team_name="A", dire_team_name="B", series_type=0, cyberscore_best_of=1
+    )
+    runtime._resolve_sourcetv_bridge_identity(known)
+    assert calls["n"] == 0

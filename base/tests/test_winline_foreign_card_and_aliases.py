@@ -313,3 +313,39 @@ def test_listing_page_without_our_card_returns_no_odds(monkeypatch):
 
     assert list(result.odds or []) == []
     assert result.market_closed is False
+
+
+# Живая страница 26.08.2026, квал BLAST Slam: у нас пара `Yellow Submarine` —
+# `RE.Arise`, Winline подписал её прошлым именем состава.
+BLAST_QUAL_PAGE_TEXT = (
+    "DOTA 2 | BLAST Slam, Qualifier YELLOW SUBMARINE 4IKIBAMBONI 1карта +12 0 0 1 2 1К "
+    "Матч 1.70 2.02 1.50 + 1.5 - 2.40 1.50 2.5 2.40 1 карта 1.70 2.02 - - - - - - "
+    "DOTA 2 | BLAST Slam, Qualifier KLIM SANI4 LEVEL UP Завтра 18:00 +9 "
+    "Матч 2.46 1.48 1.50 + 1.5 - 2.43 1.75"
+)
+
+
+def test_past_roster_name_is_found_on_the_page():
+    """У нас `RE.Arise` — на странице прошлое имя состава `4IKIBAMBONI`.
+
+    26.08.2026: замер живой страницы дал `arise` = 0 вхождений и в тексте, и в
+    html при `4ikibamboni` = 1. Карточка не находилась, кэфы по карте не шли
+    (`match_found=false`, `promotion=no_card_scope`).
+    """
+    odds, extract = _odds(BLAST_QUAL_PAGE_TEXT, "Yellow Submarine", "RE.Arise", 1)
+
+    assert odds == [1.70, 2.02], f"карточка 4IKIBAMBONI не найдена: {extract.reason!r}"
+    assert odds != [2.46, 1.48], "это соседняя карточка KLIM SANI4 — LEVEL UP"
+
+    mirrored, _ = _odds(BLAST_QUAL_PAGE_TEXT, "RE.Arise", "Yellow Submarine", 1)
+    assert mirrored == [2.02, 1.70]
+
+
+def test_without_that_alias_the_qualifier_card_is_not_found(monkeypatch):
+    """Контроль: пару держит справочник, а не случайное совпадение слов."""
+    monkeypatch.setattr(bk, "_alias_spellings", lambda _name: [])
+
+    odds, extract = _odds(BLAST_QUAL_PAGE_TEXT, "Yellow Submarine", "RE.Arise", 1)
+
+    assert odds == []
+    assert extract.reason == "no_card"
