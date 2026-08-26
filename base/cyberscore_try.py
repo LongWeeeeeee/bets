@@ -921,6 +921,13 @@ def _winline_series_row_last_map(row: Any, map_num: Any) -> bool:
     map_i = _winline_series_int(map_num)
     if map_i is None or not (1 <= map_i <= 5):
         return False
+    # Доказанный Bo1: победитель карты и победитель матча — одно событие, и
+    # подстановка матчевого рынка там не «на решающей карте», а тождественна.
+    # Доказательством считаем только формат от cyberscore: `series_type` = 0 у GC
+    # означает и Bo1, и отсутствие поля, а гадать здесь нельзя — подстановка на
+    # НЕрешающей карте даёт цену другого события.
+    if _winline_series_int(row.get("cyberscore_best_of")) == 1:
+        return map_i == 1
     series_type = _winline_series_int(row.get("series_type"))
     if series_type == _WINLINE_SERIES_TYPE_BO2:
         return map_i == 2
@@ -1059,6 +1066,15 @@ def _resolve_sourcetv_bridge_identity(matches: Any) -> Any:
             payload["radiant_team_name"] = radiant_name
         if dire_name:
             payload["dire_team_name"] = dire_name
+        # Формат серии от cyberscore — единственное ДОКАЗАТЕЛЬСТВО Bo1: у GC
+        # `series_type` = 0 одинаково означает и Bo1, и «поля нет» (proto3
+        # отдаёт ноль по умолчанию), поэтому сам по себе ноль ничего не доказывает.
+        row = rows.get(int(payload.get("match_id") or key or 0)) if str(
+            payload.get("match_id") or key or ""
+        ).isdigit() else None
+        best_of = _coerce_int((row or {}).get("best_of"))
+        if best_of > 0:
+            payload["cyberscore_best_of"] = best_of
         for name_key, id_key in (
             ("radiant_team_name", "radiant_team_id"),
             ("dire_team_name", "dire_team_id"),
