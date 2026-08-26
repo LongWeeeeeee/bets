@@ -155,3 +155,82 @@ def test_both_sides_anonymous_is_a_bet_on_nobody() -> None:
     )
     assert both_anonymous is True
     assert one_named is False
+
+
+def _bridge_entry(**over):
+    payload = {
+        "match_id": 8966484305,
+        "radiant_team_name": "Radiant",
+        "dire_team_name": "Dire",
+        "radiant_team_id": 0,
+        "dire_team_id": 0,
+        "league_id": 10877,
+        "league_name": "Challengermode Daily Tournaments",
+    }
+    payload.update(over)
+    return {"8966484305": payload}
+
+
+def test_bridge_entry_gets_names_before_the_odds_poller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Опрос кэфов заводится от записи моста — имена нужны ИМЕННО там.
+
+    26.08.2026 идентичность поллера вышла `name:balu team|name:dire|map1`: он
+    искал на Winline команду «Dire». Кэфы по картам Balu — PuckChamp и
+    Synapse — Nemiga Gaming не собрались, хотя матчи разбирались.
+    """
+    rows = runtime._parse_cyberscore_rows_by_steam_id(ROW_HTML)
+    monkeypatch.setattr(runtime, "_sourcetv_identity_rows", lambda *a, **kw: rows)
+    monkeypatch.setattr(
+        runtime, "_find_known_team_ids_by_name",
+        lambda name: {777} if str(name) == "Team Hryvnia" else set(),
+    )
+    matches = _bridge_entry()
+    runtime._resolve_sourcetv_bridge_identity(matches)
+    entry = matches["8966484305"]
+    assert entry["radiant_team_name"] == "WhiteSails"
+    assert entry["dire_team_name"] == "Team Hryvnia"
+    # Известное имя поднимает и id — без него не будет ни ELO, ни тира.
+    assert entry["dire_team_id"] == 777
+    assert entry["radiant_team_id"] == 0
+
+
+def test_bridge_identity_leaves_other_leagues_and_named_teams_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Чужая лига и уже названные команды в браузер не ходят."""
+    calls = {"n": 0}
+
+    def _rows(*_a, **_kw):
+        calls["n"] += 1
+        return runtime._parse_cyberscore_rows_by_steam_id(ROW_HTML)
+
+    monkeypatch.setattr(runtime, "_sourcetv_identity_rows", _rows)
+
+    foreign = _bridge_entry(league_id=19850, league_name="KUZYA CUP")
+    runtime._resolve_sourcetv_bridge_identity(foreign)
+    assert foreign["8966484305"]["radiant_team_name"] == "Radiant"
+    assert calls["n"] == 0
+
+    named = _bridge_entry(radiant_team_name="WhiteSails", dire_team_name="Team Hryvnia")
+    runtime._resolve_sourcetv_bridge_identity(named)
+    assert calls["n"] == 0
+
+    assert runtime._resolve_sourcetv_bridge_identity({}) == {}
+    assert runtime._resolve_sourcetv_bridge_identity(None) is None
+
+
+def test_bridge_identity_survives_a_dead_listing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Листинг недоступен — запись моста остаётся как была, без исключения."""
+    def _boom(*_a, **_kw):
+        raise RuntimeError("листинг недоступен")
+
+    monkeypatch.setattr(runtime, "_sourcetv_identity_rows", _boom)
+    matches = _bridge_entry()
+    runtime._resolve_sourcetv_bridge_identity(matches)
+    assert matches["8966484305"]["radiant_team_name"] == "Radiant"
+
+    monkeypatch.setattr(runtime, "_sourcetv_identity_rows", lambda *a, **kw: {})
+    runtime._resolve_sourcetv_bridge_identity(matches)
+    assert matches["8966484305"]["dire_team_name"] == "Dire"

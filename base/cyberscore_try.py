@@ -1003,6 +1003,78 @@ def _winline_polling_series_key(
     return stable or str(fallback or "").strip()
 
 
+def _resolve_sourcetv_bridge_identity(matches: Any) -> Any:
+    """Дописать названия команд в записи моста по данным cyberscore.
+
+    Опрос коэффициентов заводится от записи МОСТА, а не от карточки:
+    `_reconcile_winline_sourcetv_polling` берёт имена и id оттуда и строит по ним
+    идентичность поллера. Пока Valve молчит, получается
+    `name:balu team|name:dire|map1` — поллер уходит искать на Winline команду
+    «Dire» и не находит ничего. 26.08.2026 так пропали кэфы по картам
+    Balu — PuckChamp и Synapse — Nemiga Gaming, хотя сами матчи разбирались.
+
+    Поэтому личность подставляется ЗДЕСЬ, до реконсиляции поллеров: карточка
+    получит те же имена из того же payload'а. Молча возвращает вход, если
+    подставлять нечего.
+    """
+    if not isinstance(matches, dict) or not matches:
+        return matches
+    if not SOURCETV_IDENTITY_FALLBACK:
+        return matches
+    pending = []
+    for key, payload in matches.items():
+        if not isinstance(payload, dict):
+            continue
+        radiant = payload.get("radiant_team_name")
+        dire = payload.get("dire_team_name")
+        if not (_is_placeholder_team_name(radiant) or _is_placeholder_team_name(dire)):
+            continue
+        if not _league_matches_allowlist(payload.get("league_id"), payload.get("league_name")):
+            continue
+        pending.append((key, payload))
+    if not pending:
+        return matches
+    try:
+        rows = _sourcetv_identity_rows()
+    except Exception as exc:
+        logger.warning("CyberScore identity rows unavailable: %s", exc)
+        return matches
+    if not rows:
+        return matches
+    for key, payload in pending:
+        try:
+            identity = _resolve_sourcetv_identity_from_cyberscore(
+                payload.get("match_id") or key,
+                payload.get("radiant_team_name"),
+                payload.get("dire_team_name"),
+                rows=rows,
+            )
+        except Exception as exc:
+            logger.warning("CyberScore identity for %s failed: %s", key, exc)
+            continue
+        if not identity:
+            continue
+        radiant_name, dire_name, _tournament = identity
+        if radiant_name:
+            payload["radiant_team_name"] = radiant_name
+        if dire_name:
+            payload["dire_team_name"] = dire_name
+        for name_key, id_key in (
+            ("radiant_team_name", "radiant_team_id"),
+            ("dire_team_name", "dire_team_id"),
+        ):
+            if _coerce_int(payload.get(id_key)) > 0:
+                continue
+            known_ids = _find_known_team_ids_by_name(payload.get(name_key))
+            if known_ids:
+                payload[id_key] = int(min(known_ids))
+        print(
+            f"   🔎 Личность моста из CyberScore: {payload.get('radiant_team_name')} vs "
+            f"{payload.get('dire_team_name')} (матч {key})"
+        )
+    return matches
+
+
 def _reconcile_winline_sourcetv_polling(
     matches: Any,
     *,
@@ -31155,6 +31227,9 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                 k: v for k, v in matches.items()
                 if _now - float(v.get("timestamp") or 0) < _SOURCETV_STALE_SECONDS
             }
+            # Личность — ДО реконсиляции: идентичность поллера кэфов строится из
+            # этих же имён, и «Dire» в ней означает опрос, который ничего не найдёт.
+            matches = _resolve_sourcetv_bridge_identity(matches)
             _reconcile_winline_sourcetv_polling(
                 matches,
                 authoritative=(raw_match_count == 0 or bool(matches)),
