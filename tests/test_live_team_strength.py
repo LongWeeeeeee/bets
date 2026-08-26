@@ -18,8 +18,9 @@ from ELO.models import HybridPlayerRosterEloModel
 
 def _reset_live_team_strength_caches() -> None:
     live_team_strength_module._SNAPSHOT_CACHE = None
-    live_team_strength_module._MODEL_FROM_SNAPSHOT_CACHE["snapshot_id"] = None
-    live_team_strength_module._MODEL_FROM_SNAPSHOT_CACHE["model"] = None
+    # Кэш модели стал LRU-СПИСКОМ кортежей (ELO/live_team_strength.py, строка 69),
+    # а сброс здесь остался словарным — отсюда TypeError на всех трёх тестах.
+    live_team_strength_module._MODEL_FROM_SNAPSHOT_CACHE.clear()
     live_team_strength_module._RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = None
     live_team_strength_module._RUNTIME_SNAPSHOT_CACHE["runtime_signature"] = None
     live_team_strength_module._RUNTIME_SNAPSHOT_CACHE["snapshot"] = None
