@@ -164,3 +164,15 @@ runtime/artifacts/**/*.html
 # сгенерированные данные прогонов, остающиеся в корне runtime/ по ссылкам из кода
 runtime/pro_maps_metrics_2025-12-15.json
 runtime/winline_name_probe_*.txt
+
+# --- артефакты обучения и снимки состояния: в git не попадают (2026-08-26)
+# Причина: на serv1 лежало 490 МБ .npz неотслеживаемыми, один git add -A от попадания в историю.
+*.npz
+*.cbm
+*.joblib
+maps_state.json
+data/prematch_model_spec*.json
+
+# Бэкапы прод-файлов любой формы. Прежнее правило *.bak_* не ловило .bak3_ и .removed_
+*.bak*
+*.removed_*
