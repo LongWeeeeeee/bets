@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from runtime.winline_current_map_odds_poller import (  # noqa: E402
+from services.winline.winline_current_map_odds_poller import (  # noqa: E402
     _normalize_team_tokens,
     _odds_accepted,
     _teams_equivalent,

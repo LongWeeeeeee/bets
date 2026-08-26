@@ -32,7 +32,7 @@ for path in (str(BASE_DIR), str(REPO_ROOT)):
         sys.path.insert(0, path)
 
 import bookmaker_selenium_odds as bk  # noqa: E402
-from runtime.winline_current_map_odds_poller import (  # noqa: E402
+from services.winline.winline_current_map_odds_poller import (  # noqa: E402
     _odds_accepted,
     _teams_equivalent,
 )

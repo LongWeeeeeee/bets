@@ -82,7 +82,7 @@ Unit tests не требуют OpenHands package: backend fake. Дополнит
 
 ## Cutover
 
-`runtime/systemd/openhands-universal-gateway.service` по умолчанию содержит:
+`services/systemd/openhands-universal-gateway.service` по умолчанию содержит:
 
 ```ini
 Environment=OPENHANDS_BOT_SLOTS=orchestration1,orchestration2,orchestration3

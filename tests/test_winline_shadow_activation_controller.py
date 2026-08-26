@@ -1,6 +1,6 @@
 """W-CTRL: deterministic no-sleep Winline shadow activation controller.
 
-Exclusive ownership of this file + runtime/winline_shadow_activation.py.
+Exclusive ownership of this file + services/winline/winline_shadow_activation.py.
 Proves the controller (not cyberscore_try) owns:
 - stable series|mapN canonical key
 - injected seam callable (no cyberscore_try import)
@@ -25,7 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import runtime.winline_shadow_activation as act  # noqa: E402
+import services.winline.winline_shadow_activation as act  # noqa: E402
 
 
 SERIES_URL = "dltv.org/matches/999001"
@@ -113,7 +113,7 @@ def test_controller_public_symbols_exist():
 
 def test_controller_module_does_not_import_cyberscore_try():
     import ast
-    import runtime.winline_shadow_activation as mod
+    import services.winline.winline_shadow_activation as mod
 
     src = Path(mod.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)

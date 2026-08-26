@@ -197,7 +197,7 @@ TEMPO_EXPERIMENT_DIR = PROJECT_ROOT / "bets_data" / "tempo_pub_experiment"
 PRO_HEROES_DIR = PROJECT_ROOT / "pro_heroes_data"
 
 # Winline shadow activation controller (deterministic no-sleep; inject seam).
-from runtime import winline_shadow_activation as _winline_shadow_activation_mod  # noqa: E402
+from services.winline import winline_shadow_activation as _winline_shadow_activation_mod  # noqa: E402
 
 # Re-export evidence path + mutable state so activation tests can monkeypatch cs attrs.
 WINLINE_SHADOW_ACTIVATION_EVIDENCE_PATH = (
@@ -410,7 +410,7 @@ def _load_winline_current_map_poller_module():
     global _winline_current_map_poller_mod
     if _winline_current_map_poller_mod is not None:
         return _winline_current_map_poller_mod
-    poller_path = PROJECT_ROOT / "runtime" / "winline_current_map_odds_poller.py"
+    poller_path = PROJECT_ROOT / "services" / "winline" / "winline_current_map_odds_poller.py"
     if not poller_path.is_file():
         raise FileNotFoundError(f"missing winline current-map poller: {poller_path}")
     spec = importlib.util.spec_from_file_location(
@@ -28715,7 +28715,7 @@ def _run_shared_camoufox_job(
 # сбивали состояние, на которое рассчитывает быстрый съём, и попытка вместо
 # 0.05 c стоила 18 c. Плюс 72 c общего браузера за проход.
 # Проба наблюдательная: вызывалась после решения об отправке, ничего не гейтила,
-# её evidence читает только runtime/winline_shadow_event_watchdog.py.
+# её evidence читает только services/winline/winline_shadow_event_watchdog.py.
 # Вернуть можно этим флагом (env WINLINE_SHADOW_PROBE_ENABLED=1) — код и модули
 # на месте.
 WINLINE_SHADOW_PROBE_ENABLED = os.getenv(
@@ -28730,11 +28730,11 @@ WINLINE_SHADOW_PROBE_ENABLED = os.getenv(
 
 
 def _load_winline_shadow_probe_module():
-    """Load runtime/winline_shadow_probe.py once (no package install required)."""
+    """Load services/winline/winline_shadow_probe.py once (no package install required)."""
     cached = globals().get("_winline_shadow_probe_mod")
     if cached is not None:
         return cached
-    probe_path = PROJECT_ROOT / "runtime" / "winline_shadow_probe.py"
+    probe_path = PROJECT_ROOT / "services" / "winline" / "winline_shadow_probe.py"
     if not probe_path.is_file():
         raise FileNotFoundError(f"missing winline shadow probe: {probe_path}")
     spec = importlib.util.spec_from_file_location(

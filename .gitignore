@@ -67,8 +67,8 @@ map_id_check_test.txt
 ELO/output/
 
 # --- runtime/: скрап оркестраторов и прогонов.
-#     Продовые модули (anti_stall_supervisor/, winline_*.py, research-harness)
-#     остаются под контролем версий намеренно.
+#     Продовые модули отсюда эвакуированы в services/ (2026-08-26);
+#     правила ниже оставлены как явная документация того, что здесь копится.
 runtime/_quarantine_*/
 runtime/diagnostic_star_sqlite_replay_v2/
 runtime/global_metrics_integrity/
@@ -101,12 +101,13 @@ base/runtime/
 base/logged_bets_with_outcomes.json
 base/pub_late_star_comeback_table.json
 
-# --- runtime/: все подкаталоги = скрап прогонов, кроме явно нужных ---
-runtime/*/
-!runtime/anti_stall_supervisor/
-!runtime/systemd/
-!runtime/tests/
-!runtime/worker676-gateway/
+# --- runtime/: каталог целиком вне git.
+#     Прежние исключения (!runtime/anti_stall_supervisor/, !runtime/systemd/,
+#     !runtime/tests/, !runtime/worker676-gateway/) мертвы: эти каталоги вместе с
+#     winline_*.py уехали в services/ (эвакуация 2026-08-26). В runtime/ остаётся
+#     только живое состояние процессов, эксперименты и артефакты прогонов —
+#     версионировать здесь больше нечего.
+runtime/
 
 # --- runtime: живое состояние и крупные выгрузки ---
 runtime/*_state.json

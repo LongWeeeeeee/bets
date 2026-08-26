@@ -13,7 +13,8 @@ data/        # калибровки/пороги: star_thresholds_by_wr.json, st
 ml-models/   # .pkl-артефакты phase-wrapper моделей (на сервере/runtime; локально может отсутствовать)
 bets_data/   # логи ставок + public-матчи для backtest
 pro_heroes_data/, hero_dota2protracker_data/  # кэши pro-данных
-runtime/     # scratch: lock-файлы, очереди, журналы — git-ignored
+runtime/     # ТОЛЬКО живое состояние и эксперименты: lock-файлы, очереди, журналы, artifacts/ — git-ignored
+services/    # версионируемые демоны и их юниты: winline/, anti_stall_supervisor/, worker676-gateway/, systemd/, tests/
 docs/        # эта база знаний
 .opencode/   # legacy OpenCode role-prompts; не используются agent_orchestrator.py
 opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
@@ -691,7 +692,7 @@ esports/...` и обрубки в 1-2 символа поисковыми фор
 
 ## Политика перезагрузок страницы Winline (поллер текущей карты)
 
-`runtime/winline_current_map_odds_poller.py` опрашивает ОДНУ общую страницу-список.
+`services/winline/winline_current_map_odds_poller.py` опрашивает ОДНУ общую страницу-список.
 Перезагрузка стоит десятки секунд, и всё это время в DOM нет ни карточек, ни рынков,
 поэтому «рынка нет» само по себе перезагрузку больше не заказывает. Пороги (все
 переопределяются через env):
@@ -772,7 +773,7 @@ reload-политика (e647309).
 ## `base/team_name_aliases.py` — справочник написаний названий команд
 
 Данные + три функции: `alias_spellings(name)` (другие написания той же команды), `canonical_team_key(name)`
-(ключ команды с учётом справочника — им сверяет приёмку `runtime/winline_current_map_odds_poller.py`),
+(ключ команды с учётом справочника — им сверяет приёмку `services/winline/winline_current_map_odds_poller.py`),
 `fold_confusables(value)` (кириллические омоглифы → латиница, посимвольно, длина не меняется).
 Таблица `TEAM_NAME_ALIASES` пополняется руками и только подтверждёнными написаниями: `BetBoom Team` =
 `BoomBoys`/`BB Team`/`BetBoom` (SourceTV/GC против рендера Winline), `L1GA TEAM` = `L1GA`,

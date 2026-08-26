@@ -1,6 +1,6 @@
 """W-MAP-POLLER-CONTROLLER: deterministic whole-current-map Winline polling.
 
-Exclusive ownership of this file + runtime/winline_current_map_odds_poller.py.
+Exclusive ownership of this file + services/winline/winline_current_map_odds_poller.py.
 Proves a no-sleep controller:
 - inject collector / mono+wall clocks / exact-map-current predicate
 - +5s cadence from prior attempt *start*; never overlapping attempts
@@ -24,7 +24,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MODULE_PATH = REPO_ROOT / "runtime" / "winline_current_map_odds_poller.py"
+MODULE_PATH = REPO_ROOT / "services" / "winline" / "winline_current_map_odds_poller.py"
 BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))

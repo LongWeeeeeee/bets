@@ -9,7 +9,7 @@ Implement non-blocking two-mode Winline odds-polling: normal 5s cadence on watch
 ## Files Changed (T4 delta)
 | File | Change | SHA256 |
 |------|--------|--------|
-| runtime/winline_current_map_odds_poller.py | +ACCELERATED_POLL_INTERVAL_SECONDS, accelerated property, set_accelerated() | 5f3b011b... |
+| services/winline/winline_current_map_odds_poller.py | +ACCELERATED_POLL_INTERVAL_SECONDS, accelerated property, set_accelerated() | 5f3b011b... |
 | base/cyberscore_try.py | +accelerate/decelerate_winline_current_map_polling() (3 hunks; 7 pre-existing preserved) | 324cce41... |
 | base/tests/test_winline_two_mode_polling.py | NEW: 20 contract tests (REQ-01..REQ-14) | ba979368... |
 

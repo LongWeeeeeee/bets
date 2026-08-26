@@ -3,6 +3,7 @@
     "base",
     "ELO",
     "pro_heroes_data",
+    "services",
     "runtime"
   ],
   "exclude": [

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-MONITOR_PATH = Path("/root/main/runtime/winline_parser_monitor.py")
+MONITOR_PATH = Path("/root/main/services/winline/winline_parser_monitor.py")
 
 
 def _load_monitor():
