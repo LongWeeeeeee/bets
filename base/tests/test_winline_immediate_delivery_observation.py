@@ -171,9 +171,14 @@ def test_ast_immediate_odds_callers_pass_observation_and_map() -> None:
     assert len(delayed) == 1, "delayed path reference must remain exactly once"
     assert delayed[0] not in immediate_odds or not _classify_odds_enabled(delayed[0])
 
-    # Coverage contract: all 19 immediate odds-enabled real callers.
-    assert len(immediate_odds) == 19, (
-        f"expected 19 immediate odds-enabled callers, got {len(immediate_odds)}: "
+    # Coverage contract: all 20 immediate odds-enabled real callers.
+    # 20-й — `star_signal_sent_now_prematch_model`: ставка предматчевой модели
+    # на 00-й минуте (E-142). Число здесь ЗАЩИТНОЕ: оно ловит новый немедленный
+    # отправитель, который забыли обвязать observation/map, поэтому поднимать
+    # его можно только вместе с проверкой, что новый вызов проходит структурный
+    # контракт ниже (has_local_enrich / has_map / has_match_key_bind).
+    assert len(immediate_odds) == 20, (
+        f"expected 20 immediate odds-enabled callers, got {len(immediate_odds)}: "
         + ", ".join(f"L{c['lineno']}:{c['reason']}" for c in immediate_odds)
     )
 
@@ -665,7 +670,7 @@ def test_direct_local_enrich_bind_constructs_canonical_observation() -> None:
 
     # Production immediate sites must use this pattern (source-level).
     immediate = _immediate_odds_callers()
-    assert len(immediate) == 19
+    assert len(immediate) == 20   # +1: ставка предматчевой модели на 00 (E-142)
     unwired = [
         f"L{c['lineno']}:{c['reason']}"
         for c in immediate

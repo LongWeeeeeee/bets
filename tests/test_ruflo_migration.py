@@ -107,8 +107,8 @@ def test_legacy_supervisor_timer_is_retired_but_evidence_is_preserved() -> None:
     assert enabled.stdout.strip() == "disabled"
     assert active.stdout.strip() == "inactive"
     for rel in (
-        "runtime/anti_stall_supervisor/policy.json",
-        "runtime/anti_stall_supervisor/CONTRACT.json",
+        "services/anti_stall_supervisor/policy.json",
+        "services/anti_stall_supervisor/CONTRACT.json",
         "runtime/anti_stall_supervisor_var/state.json",
         "runtime/anti_stall_supervisor_var/report.json",
         "runtime/anti_stall_supervisor_var/audit.jsonl",

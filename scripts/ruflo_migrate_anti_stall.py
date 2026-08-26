@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_ROOT = ROOT / "runtime" / "anti_stall_supervisor"
+SOURCE_ROOT = ROOT / "services" / "anti_stall_supervisor"
 DEFAULT_DB = ROOT / ".swarm" / "memory.db"
 DEFAULT_MANIFEST = ROOT / ".claude-flow" / "migration" / "anti-stall-v1.json"
 NAMESPACE = "ingame-orchestration"

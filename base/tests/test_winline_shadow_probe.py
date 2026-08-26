@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MODULE_PATH = REPO_ROOT / "runtime" / "winline_shadow_probe.py"
+MODULE_PATH = REPO_ROOT / "services" / "winline" / "winline_shadow_probe.py"
 BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
@@ -49,7 +49,7 @@ FORBIDDEN_TOKENS = (
 
 
 def _load_probe_module():
-    """Load runtime/winline_shadow_probe.py without package install."""
+    """Load services/winline/winline_shadow_probe.py without package install."""
     if not MODULE_PATH.is_file():
         pytest.fail(f"missing module under test: {MODULE_PATH}")
     spec = importlib.util.spec_from_file_location("winline_shadow_probe", MODULE_PATH)

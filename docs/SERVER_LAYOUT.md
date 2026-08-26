@@ -33,8 +33,18 @@ scripts/run/            раннеры (run_dltv*.sh, restart_*.sh)
 scripts/ops/            обслуживание (opencode-switch.sh, apply-autodocs.sh, setup-protection.sh)
 scripts/legacy/         разовые утилиты анализа
 _archive/               разовое из корня репо: configs/, chats/, vendor/
-runtime/                ЖИВОЕ: очереди сигналов, локи, shadow/telegram jsonl, state демонов,
-                        winline_parser_monitor.* (на него ссылается systemd-юнит), omniroute.log
+services/               ВЕРСИОНИРУЕМЫЕ демоны и их юниты (код, не состояние):
+  winline/              winline_current_map_odds_poller.py, winline_parser_monitor.py,
+                        winline_shadow_activation.py, winline_shadow_event_watchdog.py,
+                        winline_shadow_probe.py — namespace-пакет `services.winline`
+  anti_stall_supervisor/  пакет супервизора + contracts/policy JSON + deploy/ (.service, .timer)
+  worker676-gateway/    gateway.py + тесты; деплой в /opt/worker676-gateway/
+  systemd/              каноничные копии юнитов: ruflo-orchestrator@, ruflo-universal-gateway,
+                        openhands-universal-gateway, worker676-gateway
+  tests/                тесты сервисного слоя (kanban plan lint, pwr controller)
+runtime/                ЖИВОЕ состояние и эксперименты — и больше НИЧЕГО. Версионируемого кода
+                        здесь нет: очереди сигналов, локи, shadow/telegram jsonl, state демонов,
+                        omniroute.log. Каталог целиком git-ignored (см. `.gitignore`).
   experiments/<тема>/   .py/.sh экспериментов
   artifacts/<тема>/     их результаты: json/csv/log/md/pid
   _archive/runs/        завершённые каталоги прогонов (git-ignored, ~29 ГБ)
@@ -50,19 +60,27 @@ runtime/                ЖИВОЕ: очереди сигналов, локи, s
 - его json/csv/log/pid → `runtime/artifacts/<тема>/` (одно имя-префикс на прогон);
 - отчёт по эксперименту (.md) → рядом с артефактами; в `docs/` — только сквозная документация;
 - каталог тяжёлого прогона после разбора → `runtime/_archive/runs/`;
-- бэкап прод-файла → `base/_archive/backups/` (в корне `base/` бэкапам не место).
+- бэкап прод-файла → `base/_archive/backups/` (в корне `base/` бэкапам не место);
+- долгоживущий демон, его юнит или тест к нему → `services/<сервис>/`, а НЕ в `runtime/`:
+  всё, что должно пережить уборку и приехать через git, живёт только там.
 
 **Не трогать при уборке**
 - `base/runtime/*` и `runtime/*.lock`, `runtime/delayed_signal_queue*.json`,
   `runtime/*_shadow.jsonl`, `runtime/*_telegram_sent.jsonl`, `runtime/live_elo_*`,
   `runtime/sourcetv_matches.json`, state-файлы демонов kanban/hermes;
-- `runtime/winline_parser_monitor.py|.log`, `runtime/anti_stall_supervisor/`,
-  `runtime/ruflo*/`, `runtime/worker676-gateway/` — на них ссылаются systemd-юниты;
+- `services/anti_stall_supervisor/`, `services/worker676-gateway/`, `services/systemd/`,
+  `runtime/ruflo*/` — на них ссылаются systemd-юниты;
 - `runtime/_wl_stage3/` — хардлинк-копия дерева, в ней тот же inode, что у живого прод-лога;
 - `base/keys.py` и `base/keys.py.bak_*` — файлы с ключами, пути не двигаем.
 
+`winline_parser_monitor.*` из этого списка убран. Проверка на serv1 (2026-08-26): systemd-юнита
+нет, строки в crontab нет, ссылок из `scripts/` нет, процессы не запущены — прежнее утверждение
+«на него ссылается systemd-юнит» было неверным. Скрипт переехал в `services/winline/` как обычный
+версионируемый код; живого состояния за ним не числится.
+
 Перед переносом чего-либо в `runtime/`: `lsof -n +D /root/main/runtime`, проверка pid'ов
-(`kill -0`) и `grep` имени файла по `base/`, `ELO/`, `/etc/systemd/system/`.
+(`kill -0`) и `grep` имени файла по `base/`, `ELO/`, `services/`, `scripts/`,
+`/etc/systemd/system/` и `crontab -l`.
 
 ## Бэкапы
 

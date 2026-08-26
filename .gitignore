@@ -67,8 +67,8 @@ map_id_check_test.txt
 ELO/output/
 
 # --- runtime/: скрап оркестраторов и прогонов.
-#     Продовые модули (anti_stall_supervisor/, winline_*.py, research-harness)
-#     остаются под контролем версий намеренно.
+#     Продовые модули отсюда эвакуированы в services/ (2026-08-26);
+#     правила ниже оставлены как явная документация того, что здесь копится.
 runtime/_quarantine_*/
 runtime/diagnostic_star_sqlite_replay_v2/
 runtime/global_metrics_integrity/
@@ -101,12 +101,13 @@ base/runtime/
 base/logged_bets_with_outcomes.json
 base/pub_late_star_comeback_table.json
 
-# --- runtime/: все подкаталоги = скрап прогонов, кроме явно нужных ---
-runtime/*/
-!runtime/anti_stall_supervisor/
-!runtime/systemd/
-!runtime/tests/
-!runtime/worker676-gateway/
+# --- runtime/: каталог целиком вне git.
+#     Прежние исключения (!runtime/anti_stall_supervisor/, !runtime/systemd/,
+#     !runtime/tests/, !runtime/worker676-gateway/) мертвы: эти каталоги вместе с
+#     winline_*.py уехали в services/ (эвакуация 2026-08-26). В runtime/ остаётся
+#     только живое состояние процессов, эксперименты и артефакты прогонов —
+#     версионировать здесь больше нечего.
+runtime/
 
 # --- runtime: живое состояние и крупные выгрузки ---
 runtime/*_state.json
@@ -166,6 +167,47 @@ runtime/artifacts/**/*.html
 runtime/pro_maps_metrics_2025-12-15.json
 runtime/winline_name_probe_*.txt
 
-# Архив линии букмекера — данные, копятся на боевой машине
-runtime/artifacts/misc/winline_odds_history.jsonl
-runtime/artifacts/misc/prematch_model_eval.jsonl
+# В runtime/artifacts/misc/ копится архив линии букмекера
+# (winline_odds_history.jsonl, prematch_model_eval.jsonl). Отдельные правила
+# на них больше не нужны: весь runtime/ игнорируется целиком (см. ниже).
+# --- артефакты обучения и снимки состояния: в git не попадают (2026-08-26)
+# Причина: на serv1 лежало 490 МБ .npz неотслеживаемыми, один git add -A от попадания в историю.
+*.npz
+*.cbm
+*.joblib
+maps_state.json
+data/prematch_model_spec*.json
+
+# Бэкапы прод-файлов любой формы. Прежнее правило *.bak_* не ловило .bak3_ и .removed_
+*.bak*
+*.removed_*
+
+# stderr-редиректы демонов в корне runtime/ (protect_oom.err и подобные)
+runtime/*.err
+
+# --- Локальные состояния инструментов. Раньше жили в .git/info/exclude,
+#     который git между машинами НЕ передаёт: на Маке было 70 правил, на serv1
+#     54, и один и тот же файл был невидим на одной машине и «грязным» на
+#     другой. Это и была корневая причина расхождений, которую не лечил
+#     ни pull, ни .gitignore. Сведено в общий файл 2026-08-26.
+.vscode/
+**/.claude/scheduled_tasks.lock
+**/.claude/scheduled_tasks.json
+**/.claude/routines/.state/
+**/.claude/worktrees/
+**/.claude/checkpoints/
+**/.claude/mailbox/
+**/.claude/agent-registry.json
+**/.claude/agent-memory-local
+**/.claude/first-run
+**/.claude/assistant-daemon-state.json
+.claude/hooks/codemap-reminder.sh
+
+# Черновые копии прод-файлов схемы *.baseline_* (*.bak* и *.removed_* закрыты
+# выше). По docs/SERVER_LAYOUT.md таким копиям место в base/_archive/backups/.
+*.baseline_*
+
+# Черновик без единого потребителя, закоммичен по недосмотру: семь строк,
+# целиком закомментированы, путь захардкожен под конкретную машину. Снят из
+# индекса, файл на диске остаётся.
+base/test.py

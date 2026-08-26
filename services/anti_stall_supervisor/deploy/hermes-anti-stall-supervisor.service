@@ -1,0 +1,57 @@
+[Unit]
+Description=Hermes anti-stall supervisor (bounded oneshot hygiene tick)
+Documentation=file:///root/main/services/anti_stall_supervisor
+After=local-fs.target
+# Local kanban/runtime only — no network dependency, no gateway/dispatcher coupling.
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/root/main
+# Exact entrypoint required by W5/INT contract. INT assembles the module under services/.
+ExecStart=/root/main/venv/bin/python -m services.anti_stall_supervisor --config /root/main/services/anti_stall_supervisor/config.json
+# Bound wall-clock <240s (runner deadline). No restart loop.
+TimeoutStartSec=240
+TimeoutStopSec=30
+Restart=no
+RemainAfterExit=no
+KillMode=mixed
+KillSignal=SIGTERM
+
+# --- Hardening (fail closed; no privilege escalation; no external network) ---
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+# Minimum writable surface for supervisor state/report/audit + board SQLite.
+ReadWritePaths=/root/.hermes/kanban/boards /root/main/runtime
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+# Unix domain only (local sockets); no AF_INET/AF_INET6.
+RestrictAddressFamilies=AF_UNIX
+# Minimum capability: parents /root/main/services (package) and /root/main/runtime
+# (mutable var dir) are uid 501 mode 0700; root needs
+# DAC override to traverse/read it. No other capabilities are granted.
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
+AmbientCapabilities=
+UMask=0077
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hermes-anti-stall-supervisor
+
+[Install]
+WantedBy=multi-user.target

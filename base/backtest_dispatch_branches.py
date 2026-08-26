@@ -12,7 +12,7 @@ Backtest dispatch-веток + метрик + networth (pub matches).
 
 Использование:
     python3 backtest_dispatch_branches.py --max-matches 40000 --patch 7.41 \\
-        --output ../runtime/backtest_branches_v2.json
+        --output ../data/backtest_branches_v2.json
 """
 from __future__ import annotations
 
@@ -589,7 +589,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=str(ROOT_DIR / "bets_data" / "analise_pub_matches" / "json_parts_split_from_object"),
     )
     p.add_argument("--stats-dir", default=str(DEFAULT_STATS_DIR))
-    p.add_argument("--output", default=str(ROOT_DIR / "runtime" / "backtest_branches_v2.json"))
+    p.add_argument("--output", default=str(ROOT_DIR / "data" / "backtest_branches_v2.json"))
     p.add_argument("--patch", default=None)
     p.add_argument("--start-date-time", type=int, default=DEC_15_2025_UTC)
     p.add_argument("--max-matches", type=int, default=40000)

@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MODULE_PATH = REPO_ROOT / "runtime" / "winline_current_map_odds_poller.py"
+MODULE_PATH = REPO_ROOT / "services" / "winline" / "winline_current_map_odds_poller.py"
 BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))

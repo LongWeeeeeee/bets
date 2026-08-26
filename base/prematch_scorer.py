@@ -1058,7 +1058,8 @@ class PrematchModel:
                 # train (ideas_batch1 i2_imp_recent) делит на 100; без деления
                 # боевой AUC −0.116. E-177: окно ДЕСЯТЬ матчей, а не тридцать —
                 # раньше сюда шло то же поле, что и в imp30, из-за чего две
-                # колонки из 35 были в бою коллинеарны.
+                # колонки из 35 были в бою коллинеарны (отношение sd 99.99
+                # против 76.04 в обучении).
                 "imp_recent": (r["imp_recent10"] - d["imp_recent10"]) / 100.0,
                 "gpm_rel_pos": (r["gpm_rel_pos"] - d["gpm_rel_pos"]) / 100.0,
                 "imp50": r["imp50"] - d["imp50"],
@@ -1078,6 +1079,7 @@ class PrematchModel:
                 "a_hdmg_rel_hero": (r["a_hdmg_rel_hero"] - d["a_hdmg_rel_hero"]) / 1000.0,
                 "a_nw_rel_pos": (r["a_nw_rel_pos"] - d["a_nw_rel_pos"]) / 1000.0,
             }
+            # в отчёт попадает только то, что артефакт действительно использует
             f.update({k: v for k, v in new6acc.items() if k in self.features})
             if self.ctx_mu is not None:
                 # контекст матча как МНОЖИТЕЛЬ антисимметричных признаков:

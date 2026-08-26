@@ -1,6 +1,6 @@
 """W-WATCHDOG-R4: bounded any-terminal shadow event watcher (TDD).
 
-Exclusive ownership: this file + runtime/winline_shadow_event_watchdog.py.
+Exclusive ownership: this file + services/winline/winline_shadow_event_watchdog.py.
 Covers eligibility matrix, exit codes, atomic outputs, full-byte hash identity,
 PID health/rollover, transient decode retry, empty stdout.
 """
@@ -19,9 +19,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = REPO_ROOT / "runtime" / "winline_shadow_event_watchdog.py"
-if str(REPO_ROOT / "runtime") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "runtime"))
+SCRIPT = REPO_ROOT / "services" / "winline" / "winline_shadow_event_watchdog.py"
+if str(REPO_ROOT / "services" / "winline") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "services" / "winline"))
 
 import winline_shadow_event_watchdog as wd  # noqa: E402
 

@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-MODULE_PATH = ROOT / "runtime" / "winline_current_map_odds_poller.py"
+MODULE_PATH = ROOT / "services" / "winline" / "winline_current_map_odds_poller.py"
 
 
 def _load_module():

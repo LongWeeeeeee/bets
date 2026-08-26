@@ -57,7 +57,7 @@ The custom `hermes-anti-stall-supervisor.timer` is retired.
 | periodic learning/consolidation | RuFlo local-only `consolidate` worker |
 | transient tick/PID/cooldown state | deliberately not migrated; stale execution state must not resume |
 
-Source policy/contracts remain in `runtime/anti_stall_supervisor/` as audit evidence.
+Source policy/contracts remain in `services/anti_stall_supervisor/` as audit evidence.
 Runtime reports/logs remain in `runtime/anti_stall_supervisor_var/`; neither is deleted.
 
 ## Re-run and verify migration
@@ -285,9 +285,9 @@ for file in core.py gateway.py universal-fusion-v1.json claude-flow.config.json 
   install -m 0600 "$src/$file" "$dst/$file.tmp"
   mv -f "$dst/$file.tmp" "$dst/$file"
 done
-install -m 0644 runtime/systemd/ruflo-orchestrator@.service /etc/systemd/system/ruflo-orchestrator@.service.tmp
+install -m 0644 services/systemd/ruflo-orchestrator@.service /etc/systemd/system/ruflo-orchestrator@.service.tmp
 mv -f /etc/systemd/system/ruflo-orchestrator@.service.tmp /etc/systemd/system/ruflo-orchestrator@.service
-install -m 0644 runtime/systemd/ruflo-universal-gateway.service /etc/systemd/system/ruflo-universal-gateway.service.tmp
+install -m 0644 services/systemd/ruflo-universal-gateway.service /etc/systemd/system/ruflo-universal-gateway.service.tmp
 mv -f /etc/systemd/system/ruflo-universal-gateway.service.tmp /etc/systemd/system/ruflo-universal-gateway.service
 systemctl daemon-reload
 systemctl enable --now ruflo-orchestrator@orchestration1.service \
@@ -324,7 +324,7 @@ it with the systemd and journal checks above.
 
 ### Worker676 effort
 
-`@worker676_bot` is sourced from `runtime/worker676-gateway/` and deployed to
+`@worker676_bot` is sourced from `services/worker676-gateway/` and deployed to
 `/opt/worker676-gateway/`. `MODEL_REASONING_EFFORTS` maps Fable aliases to `high`; the
 runner forwards that as `model_reasoning_effort="high"` on both new and resumed Codex
-turns. The canonical unit is `runtime/systemd/worker676-gateway.service`.
+turns. The canonical unit is `services/systemd/worker676-gateway.service`.

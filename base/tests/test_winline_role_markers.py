@@ -21,7 +21,7 @@ for _p in (BASE_DIR, REPO_ROOT):
         sys.path.insert(0, str(_p))
 
 import cyberscore_try as cs  # noqa: E402
-from runtime.winline_current_map_odds_poller import _odds_accepted  # noqa: E402
+from services.winline.winline_current_map_odds_poller import _odds_accepted  # noqa: E402
 
 TEAM1 = "Ilbirs Esports"
 TEAM2 = "Aion"
