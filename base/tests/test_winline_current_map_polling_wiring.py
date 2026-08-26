@@ -1419,8 +1419,34 @@ def test_shared_page_suppresses_duplicate_controlled_reload(monkeypatch):
 
 
 def test_acquisition_error_rotates_proxy_and_resets_shared_browser(monkeypatch):
+    """Rotation is a streak decision now, not a reflex on the first error.
+
+    serv1 replaced "any acquisition error rotates the route" with
+    ``WINLINE_CURRENT_MAP_ERROR_STREAK_TO_ROTATE`` consecutive errors.  Its
+    justification, quoted from base/cyberscore_try.py:
+
+        "РАЗОВЫЙ СБОЙ НЕ СНОСИТ РАБОЧУЮ СТРАНИЦУ. Смена прокси перезапускает
+        браузер, а вместе с ним гибнет общая открытая страница ...
+        Замер 20.08.2026: обычные опросы 1.09-2.39 с при нулевом времени
+        браузера, после первого сброса — 64.8, 131.6 и 85.4 с при времени
+        браузера 26.5, 36.0 и 12.7 с."
+
+    Asserted here: under the threshold nothing rotates, a valid page zeroes
+    the streak, the threshold-th consecutive error rotates exactly once, and
+    the recovery cooldown still rate-limits the streak that follows it.
+    """
     _clear_wiring_state()
+    # reset_winline_current_map_polling_state() clears the sibling recovery
+    # timestamp but not this counter, so pin it: the threshold assertions
+    # below must not inherit a streak from whatever ran before.
+    cs._winline_shared_page_state["acquisition_error_streak"] = 0
+    threshold = int(cs.WINLINE_CURRENT_MAP_ERROR_STREAK_TO_ROTATE)
+    assert threshold >= 2, "single-error rotation is the behaviour serv1 removed"
+    # Pin the tuned value: 3 is what the 20.08.2026 measurement bought.
+    # Retuning it is a decision, not a refactor — update this line with it.
+    assert threshold == 3
     rotations: List[str] = []
+    restores: List[str] = []
 
     class _FakeSession:
         def get_or_create_page(self, name, browser):
@@ -1445,6 +1471,26 @@ def test_acquisition_error_rotates_proxy_and_resets_shared_browser(monkeypatch):
         parser_failure_reasons = []
         details = body_text
 
+    class _ValidResult:
+        source = "Winline"
+        odds = []
+        map_num = MAP_NUM
+        market_closed = False
+        market_kind = "current_map_winner"
+        status = "ok"
+        match_found = False
+        acquisition_mode = "controlled_reload"
+        dom_signature = "stable-dom"
+        page_url = "https://winline.example/live"
+        body_text = "loaded page"
+        acquisition_error = None
+        error = None
+        load_error = None
+        parser_failure_reasons = []
+        details = body_text
+
+    next_result: Dict[str, Any] = {"cls": _FailedResult}
+
     monkeypatch.setattr(
         cs, "_run_shared_camoufox_job", lambda _label, callback, **_kwargs: callback(object())
     )
@@ -1460,13 +1506,18 @@ def test_acquisition_error_rotates_proxy_and_resets_shared_browser(monkeypatch):
     monkeypatch.setattr(
         cs,
         "_bookmaker_parse_site_in_camoufox_page",
-        lambda *_a, **_k: _FailedResult(),
+        lambda *_a, **_k: next_result["cls"](),
         raising=False,
     )
     monkeypatch.setattr(
         cs,
         "_bookmaker_rotate_shared_camoufox_proxy",
         lambda *, reason="": rotations.append(reason),
+    )
+    monkeypatch.setattr(
+        cs,
+        "_bookmaker_restore_shared_camoufox_direct_route",
+        lambda *, reason="": restores.append(reason),
     )
 
     kwargs = dict(
@@ -1475,13 +1526,49 @@ def test_acquisition_error_rotates_proxy_and_resets_shared_browser(monkeypatch):
         team1=TEAM1,
         team2=TEAM2,
     )
-    out = cs._winline_current_map_poller_collect(series="series-a", **kwargs)
-    second = cs._winline_current_map_poller_collect(series="series-b", **kwargs)
 
-    assert out["page_valid"] is False
-    assert "Timeout" in str(out["acquisition_error"])
-    assert second["page_valid"] is False
+    def _streak() -> int:
+        return int(cs._winline_shared_page_state.get("acquisition_error_streak", 0))
+
+    def _failing(series: str) -> Dict[str, Any]:
+        next_result["cls"] = _FailedResult
+        out = cs._winline_current_map_poller_collect(series=series, **kwargs)
+        assert out["page_valid"] is False
+        assert "Timeout" in str(out["acquisition_error"])
+        return out
+
+    # Below the threshold the working page survives: no route change at all.
+    for i in range(1, threshold):
+        _failing(f"series-warmup-{i}")
+        assert _streak() == i
+        assert rotations == []
+
+    # A valid page proves the route is fine and starts the streak over.
+    next_result["cls"] = _ValidResult
+    ok = cs._winline_current_map_poller_collect(series="series-ok", **kwargs)
+    assert ok["page_valid"] is True
+    assert _streak() == 0
+    assert rotations == []
+    assert restores == ["winline_valid_page"]
+
+    # Errors resume from zero, so the pre-success ones no longer count.
+    for i in range(1, threshold):
+        _failing(f"series-again-{i}")
+        assert _streak() == i
+        assert rotations == []
+
+    # The threshold-th consecutive error rotates the proxy and, through it,
+    # resets the shared browser exactly once.
+    _failing("series-rotate")
     assert rotations == ["winline_acquisition_error"]
+    assert _streak() == 0
+
+    # Recovery stays rate-limited: a fresh full streak inside
+    # WINLINE_CURRENT_MAP_RECOVERY_COOLDOWN_S does not rotate again.
+    for i in range(1, threshold + 1):
+        _failing(f"series-cooldown-{i}")
+        assert rotations == ["winline_acquisition_error"]
+    assert _streak() == threshold
 
 
 # ---------------------------------------------------------------------------

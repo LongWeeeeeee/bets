@@ -343,6 +343,10 @@ _winline_current_map_batch_context: Optional[Dict[str, Any]] = None
 _winline_shared_page_state: Dict[str, Any] = {
     "last_reload_monotonic": None,
     "last_acquisition_recovery_monotonic": None,
+    # Счётчик ошибок добычи ПОДРЯД для WINLINE_CURRENT_MAP_ERROR_STREAK_TO_ROTATE.
+    # Объявлен явно: без этого ключ появлялся только через .get(..., 0) и не
+    # переживал сброс состояния, из-за чего тесты пути ошибки зависели от порядка.
+    "acquisition_error_streak": 0,
     "selected_pinned_page_id": None,
     "selected_pinned_key": None,
 }
@@ -387,6 +391,7 @@ def reset_winline_current_map_polling_state() -> None:
         _winline_current_map_batch_context = None
         _winline_shared_page_state["last_reload_monotonic"] = None
         _winline_shared_page_state["last_acquisition_recovery_monotonic"] = None
+        _winline_shared_page_state["acquisition_error_streak"] = 0
         _winline_shared_page_state["selected_pinned_page_id"] = None
         _winline_shared_page_state["selected_pinned_key"] = None
         _winline_current_map_evidence_hashes.clear()
