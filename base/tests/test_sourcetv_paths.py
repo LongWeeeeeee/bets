@@ -1,5 +1,6 @@
 import importlib
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -318,3 +319,165 @@ def test_dead_broadcast_is_reported_while_the_map_is_still_running() -> None:
     assert probe._note_dead_broadcast(2, alive, now=born + 5_000.0, logger=sink) is False
     assert len(sink.warnings) == 1
 
+
+def test_unknown_league_is_rejected_blind_not_by_name() -> None:
+    """Отказ по пустому имени и отказ по чужому названию — разные события.
+
+    26.08.2026, вопрос alex: «не сработал allowlist для BLAST Slam, Qualifier,
+    хотя blast в allowlist точно есть». Сверяется не то название, которое видно
+    на сайте, а имя из справочника OpenDota по `league_id`; у свежего тикета его
+    нет вовсе, и allowlist отказывает вслепую — слово в списке есть, сравнивать
+    не с чем.
+    """
+    assert probe._league_admission(
+        20142, "RES Unchained - A Blast Dota Slam VIII Qualifier EU") == "ok"
+    assert probe._league_admission(20142, "") == "no_name"
+    assert probe._league_admission(20142, "   ") == "no_name"
+    assert probe._league_admission(19850, "KUZYA X ISLAM X AYATO CUP 6.3") == "not_allowed"
+    # Явный id-allowlist остаётся сильнее отсутствующего имени.
+    assert probe._league_admission(19722, "") == "ok"
+
+
+def test_rejected_league_is_written_to_log_once_per_hour() -> None:
+    """Отброшенная лига обязана читаться из лога, но не заливать его.
+
+    Возвращается число игр с прошлой записи: у платформенного тикета (10877
+    Challengermode) на одном id живут и наш квал, и чужие ежедневки, и «сколько
+    игр стоит этот отказ» — единственный способ решить, впускать ли его.
+    """
+    seen: dict = {}
+    assert probe._note_rejected_league(seen, 10877, "Challengermode", now=1_000.0) == 1
+    assert probe._note_rejected_league(seen, 10877, "Challengermode", now=1_100.0) == 0
+    assert probe._note_rejected_league(seen, 10877, "Challengermode", now=1_200.0) == 0
+    # Молчание не теряет игры: они доезжают в следующей записи.
+    assert probe._note_rejected_league(
+        seen, 10877, "Challengermode",
+        now=1_000.0 + probe.KW_REJECT_LOG_REPEAT + 1) == 3
+    assert seen[10877]["hits"] == 4
+    # Другая лига — своя запись, а не хвост чужого окна.
+    assert probe._note_rejected_league(seen, 19850, "KUZYA CUP", now=1_100.0) == 1
+    assert seen[19850]["name"] == "KUZYA CUP"
+
+
+def test_heartbeat_tells_silence_apart_from_a_filtered_out_league() -> None:
+    """«Никто не играет» и «играют, но всё отброшено» снаружи выглядят одинаково."""
+    seen: dict = {}
+    probe._note_rejected_league(seen, 20142, "", now=1_000.0)
+    probe._note_rejected_league(seen, 19850, "KUZYA CUP", now=1_010.0)
+    summary = probe._rejected_leagues_summary(seen, now=1_020.0)
+    assert "20142 <имени нет> x1" in summary
+    assert "19850 KUZYA CUP x1" in summary
+    # Протухшие отказы в пульс не попадают.
+    assert probe._rejected_leagues_summary(
+        seen, now=1_010.0 + probe.KW_REJECT_LOG_REPEAT + 1) == ""
+
+
+def test_live_league_missing_from_directory_forces_one_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Живая лига без имени догоняется внеочередным обновлением справочника.
+
+    Плановое обновление идёт раз в шесть часов, и всё это время свежий тикет
+    невидим: у него пустое имя, а значит отказ allowlist'а.
+    """
+    calls = {"n": 0}
+
+    def _fake_reload():
+        calls["n"] += 1
+        probe._LEAGUE_NAMES[20142] = "RES Unchained - A Blast Dota Slam VIII Qualifier EU"
+        return True
+
+    monkeypatch.setattr(probe, "_LEAGUE_NAMES", {19944: "EPL Masters 2026"})
+    monkeypatch.setattr(probe, "_LEAGUE_NAMES_FETCHED_AT", time.time())
+    monkeypatch.setattr(probe, "_LEAGUE_NAMES_LAST_MISS", 0.0)
+    monkeypatch.setattr(probe, "_reload_league_names", _fake_reload)
+
+    # Известная лига обновления не требует.
+    assert probe.league_name(19944, refresh_if_missing=True) == "EPL Masters 2026"
+    assert calls["n"] == 0
+    # Неизвестная — требует, и имя доезжает сразу.
+    assert probe.league_name(20142, refresh_if_missing=True).lower().startswith("res unchained")
+    assert calls["n"] == 1
+    # Повторный промах в окне тишины второго запроса не делает.
+    monkeypatch.setattr(probe, "_LEAGUE_NAMES", {})
+    assert probe.league_name(20143, refresh_if_missing=True) == ""
+    assert calls["n"] == 1
+    # Без флага плановый путь остаётся прежним.
+    assert probe.league_name(20144) == ""
+    assert calls["n"] == 1
+
+
+def test_failed_directory_refresh_retries_in_minutes_not_hours(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Сбой OpenDota не должен оставлять старый справочник на шесть часов."""
+    attempts = {"n": 0}
+
+    def _boom(*_a, **_kw):
+        attempts["n"] += 1
+        raise TimeoutError("handshake operation timed out")
+
+    monkeypatch.setattr(probe.urllib.request, "urlopen", _boom)
+    monkeypatch.setattr(probe, "_LEAGUE_NAMES", {19944: "EPL Masters 2026"})
+    monkeypatch.setattr(probe, "_LEAGUE_NAMES_FETCHED_AT", 0.0)
+
+    assert probe.league_name(19944) == "EPL Masters 2026"
+    assert attempts["n"] == 1
+    age = time.time() - probe._LEAGUE_NAMES_FETCHED_AT
+    expected = probe._LEAGUE_NAMES_TTL - probe._LEAGUE_NAMES_RETRY
+    assert expected - 5 <= age <= expected + 5
+    # В окне повтора второй попытки нет...
+    assert probe.league_name(19944) == "EPL Masters 2026"
+    assert attempts["n"] == 1
+    # ...а после него — есть, и это минуты, а не часы.
+    monkeypatch.setattr(
+        probe, "_LEAGUE_NAMES_FETCHED_AT",
+        time.time() - probe._LEAGUE_NAMES_TTL - 1,
+    )
+    assert probe.league_name(19944) == "EPL Masters 2026"
+    assert attempts["n"] == 2
+
+
+def test_scheduled_refresh_is_not_doubled_by_a_missing_league(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Плановое обновление и догон неизвестной лиги не должны идти подряд."""
+    calls = {"n": 0}
+
+    def _fake_reload():
+        calls["n"] += 1
+        return True
+
+    monkeypatch.setattr(probe, "_LEAGUE_NAMES", {})
+    # Справочник протух — сработает плановая перезагрузка...
+    monkeypatch.setattr(probe, "_LEAGUE_NAMES_FETCHED_AT",
+                        time.time() - probe._LEAGUE_NAMES_TTL - 1)
+    monkeypatch.setattr(probe, "_LEAGUE_NAMES_LAST_MISS", 0.0)
+    monkeypatch.setattr(probe, "_reload_league_names", _fake_reload)
+
+    assert probe.league_name(20142, refresh_if_missing=True) == ""
+    # ...и второй ходки за тем же файлом в ту же секунду не делаем.
+    assert calls["n"] == 1
+
+
+def test_explicit_league_ids_are_always_polled_directly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Явно разрешённый id обязан попадать в прямой опрос, даже вне окна id.
+
+    10877 (тикет площадки Challengermode, под которым приезжают открытые квалы
+    BLAST) заведён в 2019-м и ниже `KW_RECENT_FLOOR`, то есть в cold-sweep не
+    попадал бы вовсе — оставалась бы только надежда на широкий снимок (0).
+    """
+    monkeypatch.setattr(probe, "_LEAGUE_NAMES", {
+        19944: "EPL Masters 2026",
+        19850: "KUZYA X ISLAM X AYATO CUP 6.3",
+        10877: "Challengermode Daily Tournaments",
+    })
+    candidates = probe._keyword_candidate_league_ids()
+    assert 19944 in candidates            # keyword-лига текущей эры
+    assert 19850 not in candidates        # чужая лига
+    assert 10877 in candidates            # явный id ниже KW_RECENT_FLOOR
+    for lid in probe.TOURNAMENT_LEAGUE_ID_ALLOWLIST:
+        assert int(lid) in candidates
+    assert candidates == sorted(set(candidates))

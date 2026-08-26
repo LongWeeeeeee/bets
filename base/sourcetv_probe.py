@@ -33,7 +33,7 @@ for _o, _n in (("job_id_target", "jobid_target"), ("job_id_source", "jobid_sourc
 # прямого опроса GetLiveLeagueGames(league_id), чтобы ловить их с драфта в обход
 # count-кэпа GetLiveLeagueGames(0) на пике.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from league_keywords import league_matches_allowlist
+from league_keywords import TOURNAMENT_LEAGUE_ID_ALLOWLIST, league_matches_allowlist
 
 try:
     from sourcetv_bridge import resolve_sourcetv_matches_path
@@ -62,6 +62,12 @@ _LEAGUE_NAMES = {}          # league_id -> name (OpenDota /api/leagues)
 _LEAGUE_NAMES_FETCHED_AT = 0.0
 _LEAGUE_NAMES_TTL = 6 * 3600
 _LEAGUE_NAMES_RETRY = 600   # при пустом кэше пробуем чаще
+# Живая лига, которой нет в справочнике, — единственный случай, когда allowlist
+# сверяет ПУСТУЮ строку: слово в списке ('blast') есть, а сравнивать не с чем.
+# Тикет свежего турнира появляется у OpenDota в течение суток, поэтому такую
+# лигу догоняем внеочередным обновлением, но не чаще этого интервала.
+_LEAGUE_NAMES_MISS_RETRY = 900.0
+_LEAGUE_NAMES_LAST_MISS = 0.0
 
 # ── Авто-обнаружение keyword-лиг (адаптивный hot-set + cold-sweep) ────────────
 KW_LEAGUE_IDLE_TTL = 6 * 3600   # активная keyword-лига истекает, если не видна столько
@@ -69,6 +75,7 @@ KW_RECENT_FLOOR    = 18000      # нижняя граница "текущей э
 KW_LEGACY_CEIL     = 60000      # верхняя граница (исключаем legacy-id вроде 65xxx)
 KW_SWEEP_BATCH     = 25         # сколько кандидатов опрашивать cold-sweep'ом за рефетч
 KW_CANDIDATES_REFRESH = 1800.0  # как часто пересобирать пул кандидатов из справочника
+KW_REJECT_LOG_REPEAT = 3600.0   # как часто повторять запись об отброшенной лиге
 
 
 def _sourcetv_progress_signature(game):
@@ -375,7 +382,12 @@ def _keyword_candidate_league_ids():
             and league_matches_allowlist(lid, nm)
         ):
             out.append(lid)
-    return sorted(out)
+    # Явно разрешённые id опрашиваем всегда, вне окна «текущей эры»: тикет
+    # площадки Challengermode (10877) заведён в 2019-м и под нижнюю границу не
+    # проходит, то есть прямого опроса по нему не было бы вовсе — только
+    # надежда на широкий снимок (0), который на пике режется по числу игр.
+    out.extend(int(lid) for lid in TOURNAMENT_LEAGUE_ID_ALLOWLIST)
+    return sorted(set(out))
 
 _LEAGUE_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                   "runtime", "league_names_cache.json")
@@ -402,41 +414,124 @@ def _load_league_cache():
         return {}
 
 
-def league_name(league_id):
-    """Название лиги по league_id; справочник кэшируется с OpenDota."""
+def _reload_league_names():
+    """Перечитать справочник лиг у OpenDota. True — если получилось."""
     global _LEAGUE_NAMES, _LEAGUE_NAMES_FETCHED_AT
     now = time.time()
+    _LEAGUE_NAMES_FETCHED_AT = now
+    try:
+        req = urllib.request.Request(
+            "https://api.opendota.com/api/leagues",
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        rows = json.load(urllib.request.urlopen(req, timeout=30))
+        _LEAGUE_NAMES = {
+            int(r["leagueid"]): str(r.get("name") or "")
+            for r in rows if r.get("leagueid")
+        }
+        log.info("Справочник лиг загружен: %d записей (OpenDota)", len(_LEAGUE_NAMES))
+        _save_league_cache(_LEAGUE_NAMES)
+        return True
+    except Exception as e:
+        # Отказ НЕ должен уводить следующую попытку на полный TTL: справочник
+        # решает, попадёт ли лига в allowlist, и шесть часов со старым списком —
+        # это шесть часов, в которые свежий турнир невидим. Повторяем через
+        # _LEAGUE_NAMES_RETRY.
+        _LEAGUE_NAMES_FETCHED_AT = now - _LEAGUE_NAMES_TTL + _LEAGUE_NAMES_RETRY
+        log.warning("Не удалось загрузить справочник лиг OpenDota: %s", e)
+        # Отказ OpenDota НЕ должен ослеплять пробу. Без имён
+        # `league_matches_allowlist` пропускает только явный список id, а в
+        # нём одна запись — отсекается всё, и выглядит это как штатное
+        # «активных матчей нет». Поэтому держим копию на диске.
+        if not _LEAGUE_NAMES:
+            cached = _load_league_cache()
+            if cached:
+                _LEAGUE_NAMES = cached
+                log.warning("Справочник лиг взят из кэша на диске: %d записей",
+                            len(_LEAGUE_NAMES))
+            else:
+                log.error("Справочник лиг НЕДОСТУПЕН и кэша нет: отбор лиг "
+                          "идёт только по явному списку id")
+        return False
+
+
+def league_name(league_id, refresh_if_missing=False):
+    """Название лиги по league_id; справочник кэшируется с OpenDota.
+
+    ``refresh_if_missing`` — для лиги, которая ИДЁТ ВЖИВУЮ прямо сейчас: её
+    отсутствие в справочнике означает не «лига чужая», а «мы про неё ничего не
+    знаем», и allowlist отказывает вслепую. Такой промах стоит внеочередного
+    обновления справочника (не чаще ``_LEAGUE_NAMES_MISS_RETRY``).
+    """
+    global _LEAGUE_NAMES_LAST_MISS
+    now = time.time()
     age = now - _LEAGUE_NAMES_FETCHED_AT
+    reloaded = False
     if (not _LEAGUE_NAMES and age > _LEAGUE_NAMES_RETRY) or age > _LEAGUE_NAMES_TTL:
-        _LEAGUE_NAMES_FETCHED_AT = now
-        try:
-            req = urllib.request.Request(
-                "https://api.opendota.com/api/leagues",
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            rows = json.load(urllib.request.urlopen(req, timeout=30))
-            _LEAGUE_NAMES = {
-                int(r["leagueid"]): str(r.get("name") or "")
-                for r in rows if r.get("leagueid")
-            }
-            log.info("Справочник лиг загружен: %d записей (OpenDota)", len(_LEAGUE_NAMES))
-            _save_league_cache(_LEAGUE_NAMES)
-        except Exception as e:
-            log.warning("Не удалось загрузить справочник лиг OpenDota: %s", e)
-            # Отказ OpenDota НЕ должен ослеплять пробу. Без имён
-            # `league_matches_allowlist` пропускает только явный список id, а в
-            # нём одна запись — отсекается всё, и выглядит это как штатное
-            # «активных матчей нет». Поэтому держим копию на диске.
-            if not _LEAGUE_NAMES:
-                cached = _load_league_cache()
-                if cached:
-                    _LEAGUE_NAMES = cached
-                    log.warning("Справочник лиг взят из кэша на диске: %d записей",
-                                len(_LEAGUE_NAMES))
-                else:
-                    log.error("Справочник лиг НЕДОСТУПЕН и кэша нет: отбор лиг "
-                              "идёт только по явному списку id")
-    return _LEAGUE_NAMES.get(int(league_id or 0), "")
+        _reload_league_names()
+        reloaded = True
+    lid = int(league_id or 0)
+    name = _LEAGUE_NAMES.get(lid, "")
+    if name or not lid or not refresh_if_missing or reloaded:
+        return name
+    if now - _LEAGUE_NAMES_LAST_MISS < _LEAGUE_NAMES_MISS_RETRY:
+        return name
+    _LEAGUE_NAMES_LAST_MISS = now
+    _reload_league_names()
+    return _LEAGUE_NAMES.get(lid, "")
+
+
+def _league_admission(league_id, title):
+    """Почему лига прошла allowlist или не прошла: ok / no_name / not_allowed.
+
+    Разделять важно: ``not_allowed`` — осознанный отказ по названию, а
+    ``no_name`` — отказ вслепую, справочник просто не знает эту лигу, и никакое
+    слово в allowlist тут не поможет (сверять его не с чем).
+    """
+    if league_matches_allowlist(league_id, title):
+        return "ok"
+    return "no_name" if not str(title or "").strip() else "not_allowed"
+
+
+def _note_rejected_league(seen, league_id, title, now=None):
+    """Запомнить отброшенную лигу. Вернуть, сколько её игр писать в лог (0 — молчим).
+
+    Раньше отказ был невидим: игра отбрасывалась одним ``continue``, и в логе
+    это выглядело как «активных матчей нет». Разобрать жалобу «лига в allowlist
+    есть, а матчей нет» можно было только чтением кода.
+    """
+    moment = float(time.time() if now is None else now)
+    lid = int(league_id or 0)
+    # `logged=None` — «не писали ни разу»; нолём его подменять нельзя, иначе
+    # первая же запись выглядит как недавняя и в лог не попадает.
+    row = seen.setdefault(lid, {"seen": 0.0, "logged": None, "name": "", "since_log": 0, "hits": 0})
+    row["seen"] = moment
+    row["name"] = str(title or "")
+    # Счётчик отвечает на «сколько игр мы этим отказом теряем»: на платформенном
+    # тикете вроде Challengermode на одном id живут и наш квал, и чужие ежедневки.
+    row["since_log"] = int(row.get("since_log") or 0) + 1
+    row["hits"] = int(row.get("hits") or 0) + 1
+    last = row.get("logged")
+    if last is not None and moment - float(last) < KW_REJECT_LOG_REPEAT:
+        return 0
+    row["logged"] = moment
+    reported = int(row["since_log"])
+    row["since_log"] = 0
+    return reported
+
+
+def _rejected_leagues_summary(seen, now=None, window=KW_REJECT_LOG_REPEAT, limit=5):
+    """Сводка отброшенных лиг для пульса; пусто, если за окно отказов не было."""
+    moment = float(time.time() if now is None else now)
+    rows = [(lid, row) for lid, row in seen.items()
+            if moment - float(row.get("seen") or 0.0) <= window]
+    if not rows:
+        return ""
+    rows.sort(key=lambda kv: -float(kv[1].get("seen") or 0.0))
+    parts = [f"{lid} {row.get('name') or '<имени нет>'} x{int(row.get('hits') or 0)}"
+             for lid, row in rows[:limit]]
+    tail = "" if len(rows) <= limit else f" и ещё {len(rows) - limit}"
+    return "; ".join(parts) + tail
 
 
 def _build_fast_picks(rad_picks, dire_picks):
@@ -1254,6 +1349,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
         last_refetch_ts = 0.0
         # авто-обнаружение keyword-лиг: активный hot-set + пул кандидатов для cold-sweep
         active_kw_leagues = {}     # league_id -> last_seen_ts (видна в (0)/прямом опросе)
+        kw_rejected = {}           # league_id -> {"seen","logged","name"} отброшенных allowlist'ом
         sweep_cursor = 0           # курсор round-robin по пулу кандидатов
         kw_candidates = _keyword_candidate_league_ids() if auto_kw_mode else []
         last_kw_refresh = time.time()
@@ -1305,11 +1401,29 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                     if not fmid or fmid in seen_fmids:
                                         continue
                                     # auto-режим: держим только НАШИ keyword-лиги
-                                    if auto_kw_mode and not league_matches_allowlist(
-                                        fg.get("league_id"),
-                                        league_name(fg.get("league_id")),
-                                    ):
-                                        continue
+                                    if auto_kw_mode:
+                                        _glid = int(fg.get("league_id") or 0)
+                                        _gname = league_name(_glid, refresh_if_missing=True)
+                                        _verdict = _league_admission(_glid, _gname)
+                                        if _verdict != "ok":
+                                            _seen_games = _note_rejected_league(
+                                                kw_rejected, _glid, _gname, _refetch_now
+                                            )
+                                            if _seen_games:
+                                                log.info(
+                                                    "Лига вне allowlist (%s): id=%s имя=%r — %s vs %s"
+                                                    " (игр с прошлой записи: %d)",
+                                                    "имени нет в справочнике OpenDota"
+                                                    if _verdict == "no_name"
+                                                    else "название не подошло",
+                                                    _glid, _gname,
+                                                    (fg.get("radiant_team") or {}).get("team_name")
+                                                    or "Radiant",
+                                                    (fg.get("dire_team") or {}).get("team_name")
+                                                    or "Dire",
+                                                    _seen_games,
+                                                )
+                                            continue
                                     seen_fmids.add(fmid)
                                     fresh_games.append(fg)
                             except Exception as _re:
@@ -1562,7 +1676,14 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                 # логин в Steam и провал в мосте, если матч стартует в этот момент.
                 if _heartbeat_due(count, last_heartbeat_ts):
                     last_heartbeat_ts = time.time()
-                    log.info("пульс: активных матчей нет, целей %d", len(targets))
+                    # Пульс должен отличать «никто не играет» от «играют, но всё
+                    # отброшено фильтром лиг»: снаружи это одна и та же тишина.
+                    _rejected = _rejected_leagues_summary(kw_rejected, last_heartbeat_ts)
+                    log.info(
+                        "пульс: активных матчей нет, целей %d%s",
+                        len(targets),
+                        f"; вне allowlist за час: {_rejected}" if _rejected else "",
+                    )
 
             except KeyboardInterrupt:
                 _clear_status()
