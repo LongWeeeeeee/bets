@@ -6613,7 +6613,21 @@ def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: 
     # Вето драфтовой ML-модели: блок со знаком против модели не валиден ни при
     # каком составе хитов. Индекс кладёт в блок `synergy_and_counterpick`;
     # модель недоступна или индекса нет -> вето не срабатывает (fail-open).
-    if block_sign in (-1, 1) and win_model_veto.blocks_veto(block_sign, block, section):
+    #
+    # ПОЗДНИЙ блок из-под этого вето выведен решением alex (26.08.2026): при
+    # расхождении звёзд и модели late dispatch обязан состояться, а отменяется
+    # СТАВКА МОДЕЛИ на 00-й минуте (`_prematch_late_block_conflict`). До правки
+    # выходило наоборот: 26.08 в паре Yellow Submarine — RE.Arise поздний блок
+    # собрал три хита на dire (WR75/85/60), индекс модели +14.77 смотрел на
+    # radiant при пороге секции 9.0 — блок сняли, и матч ушёл в
+    # `star_signal_rejected_no_star_signal`. Запрет «драфт против стороны»
+    # (E-238) на поздний блок продолжает действовать: он про КОМПОНЕНТ драфта, а
+    # не про вердикт всей модели.
+    if (
+        block_sign in (-1, 1)
+        and section != "mid_output"
+        and win_model_veto.blocks_veto(block_sign, block, section)
+    ):
         return {
             "valid": False,
             "status": "win_model_veto",
@@ -26405,10 +26419,14 @@ def _prematch_late_block_conflict(
 ) -> str:
     """Метка конфликта ПОЗДНЕГО star-блока с моделью; пусто — конфликта нет.
 
-    Поздний блок отменяется двумя вето: `win_model_veto` — знак блока против
-    вердикта всей модели, `draft_against_side` — драфтовый компонент модели тянет
-    против стороны блока. Оба означают одно: поздние звёзды и модель смотрят в
-    разные стороны.
+    Спрашиваем вето НАПРЯМУЮ, а не по статусу диагностики: поздний блок из-под
+    `blocks_veto` выведен (late dispatch при расхождении обязан состояться), и
+    статуса `win_model_veto` у него больше не бывает. Расхождение при этом никуда
+    не делось — и ставку модели на 00-й минуте оно по-прежнему отменяет.
+
+    `blocks_veto` — знак блока против вердикта ВСЕЙ модели, `draft_veto` —
+    драфтовый компонент тянет против стороны блока. Оба означают одно: поздние
+    звёзды и модель смотрят в разные стороны.
     """
     if not isinstance(mid_output, dict):
         return ""
@@ -26422,11 +26440,20 @@ def _prematch_late_block_conflict(
             target_wr=target_wr,
             section="mid_output",
         )
+        status = str((diag or {}).get("status") or "")
+        if status in ("win_model_veto", "draft_against_side"):
+            return status
+        block_sign = (diag or {}).get("sign")
+        if block_sign not in (-1, 1):
+            return ""
+        if win_model_veto.blocks_veto(block_sign, mid_output, "mid_output"):
+            return "win_model_veto"
+        if win_model_veto.draft_veto(block_sign, mid_output, "mid_output"):
+            return "draft_against_side"
     except Exception as exc:
         logger.warning("late block conflict check failed: %s", exc)
         return ""
-    status = str((diag or {}).get("status") or "")
-    return status if status in ("win_model_veto", "draft_against_side") else ""
+    return ""
 
 
 def _try_dispatch_prematch_model_bet(
