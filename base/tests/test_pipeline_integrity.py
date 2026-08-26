@@ -3611,7 +3611,7 @@ def test_send_admin_log_tail_reports_no_matches(monkeypatch) -> None:
     ]
 
 
-def test_send_admin_log_tail_limits_to_last_three_matches(monkeypatch) -> None:
+def test_send_admin_log_tail_limits_to_last_four_matches(monkeypatch) -> None:
     entries = {
         f"m{idx}": _make_journal_entry(
             match_id=str(idx),
@@ -3631,12 +3631,17 @@ def test_send_admin_log_tail_limits_to_last_three_matches(monkeypatch) -> None:
     assert "Team5" in sent_messages[0]["message"]
     assert "Team4" in sent_messages[1]["message"]
     assert "Team3" in sent_messages[2]["message"]
-    assert "Team2" not in "".join(item["message"] for item in sent_messages)
+    assert "Team2" in sent_messages[3]["message"]      # лимит поднят до 4
+    assert "Team1" not in "".join(item["message"] for item in sent_messages)
 
 
 def test_send_admin_log_tail_groups_maps_of_same_match(monkeypatch) -> None:
-    """Maps of one series share a match_id and collapse into one slot — the
-    freshest map wins — so the snapshot never shows duplicate matches."""
+    """Каждая КАРТА — своя карточка, серия больше не схлопывается.
+
+    Прежнее поведение (склейка по match_id, свежая карта вытесняла остальные)
+    прятало вторую карту целиком: 13.08 BoomBoys map2 не появлялся в tail_log
+    вовсе, хотя в журнале был. Дубликатов при этом нет — ключ включает номер
+    карты, поэтому один и тот же матч дважды не приходит."""
     entries = {
         "map1": _make_journal_entry(
             match_id="1", updated_ts=100.0, radiant="LGD", dire="1win", map_num=1
@@ -3654,11 +3659,13 @@ def test_send_admin_log_tail_groups_maps_of_same_match(monkeypatch) -> None:
     runtime._send_admin_log_tail(line_count=100, raw_odds=False)
 
     joined = "".join(item["message"] for item in sent_messages)
-    assert len(sent_messages) == 2
+    assert len(sent_messages) == 3           # map2, other, map1 — каждая карта своя
     assert "LGD vs 1win" in sent_messages[0]["message"]
     assert "карта 2" in sent_messages[0]["message"]
     assert "FTS vs PuckChamp" in sent_messages[1]["message"]
-    assert joined.count("LGD vs 1win") == 1
+    # Обе карты серии показаны, и ровно по одному разу каждая.
+    assert joined.count("LGD vs 1win") == 2
+    assert joined.count("карта 2") == 1
 
 
 def test_send_admin_log_tail_keeps_finished_rejected_matches(monkeypatch) -> None:
@@ -3943,7 +3950,29 @@ def test_send_message_keeps_uncertain_when_curl_fallback_fails(monkeypatch) -> N
     assert exc_info.value.delivery_uncertain is True
 
 
+def _stub_bookmaker_ready(monkeypatch) -> None:
+    """Убрать зависимость теста от состояния букмекерской подсистемы.
+
+    Тесты ниже проверяют ДОСТАВКУ и ЖУРНАЛИРОВАНИЕ сигнала, а не готовность кэфов.
+    Но `_deliver_and_persist_signal` сперва зовёт подготовку кэфов и при
+    `bookmaker_ready = False` выходит РАНЬШЕ отправки. На serv1, где у подсистемы
+    есть живое состояние, она отвечает `current_map_unavailable`, и тесты падали не
+    из-за поломки доставки, а не дойдя до неё. Функция доставки на обеих машинах
+    побайтово идентична (проверено 19.08.2026).
+
+    Гейт целиком НЕ отключаем: откладывать отправку без кэфов — задуманное
+    поведение прода.
+    """
+    monkeypatch.setattr(
+        runtime,
+        "_bookmaker_prepare_message_for_delivery",
+        lambda match_key, message_text, **_kw: (message_text, True, "stubbed", None),
+        raising=False,
+    )
+
+
 def test_deliver_and_persist_signal_does_not_persist_when_send_fails(tmp_path, monkeypatch) -> None:
+    _stub_bookmaker_ready(monkeypatch)
     journal_path = tmp_path / "sent_signal_recovery.jsonl"
     add_url_calls: List[Dict[str, Any]] = []
 
@@ -3972,6 +4001,7 @@ def test_deliver_and_persist_signal_does_not_persist_when_send_fails(tmp_path, m
 
 
 def test_deliver_and_persist_signal_journals_after_persist_failure(tmp_path, monkeypatch) -> None:
+    _stub_bookmaker_ready(monkeypatch)
     journal_path = tmp_path / "sent_signal_recovery.jsonl"
     monkeypatch.setattr(runtime, "SENT_SIGNAL_JOURNAL_PATH", str(journal_path), raising=False)
     monkeypatch.setattr(runtime, "send_message", lambda *_args, **_kwargs: True)
@@ -4000,6 +4030,7 @@ def test_deliver_and_persist_signal_journals_after_persist_failure(tmp_path, mon
 
 
 def test_deliver_and_persist_signal_uses_fallback_journal_when_primary_unavailable(tmp_path, monkeypatch) -> None:
+    _stub_bookmaker_ready(monkeypatch)
     primary_path = tmp_path / "sent_signal_recovery.jsonl"
     fallback_path = tmp_path / "sent_signal_recovery_fallback.jsonl"
     monkeypatch.setattr(runtime, "SENT_SIGNAL_JOURNAL_PATH", str(primary_path), raising=False)
@@ -4115,6 +4146,7 @@ def test_set_delayed_match_persists_and_restores_queue(tmp_path, monkeypatch) ->
 
 
 def test_deliver_and_persist_signal_records_uncertain_delivery_and_blocks_retries(tmp_path, monkeypatch) -> None:
+    _stub_bookmaker_ready(monkeypatch)
     uncertain_path = tmp_path / "uncertain_signal_delivery.jsonl"
     fallback_path = tmp_path / "uncertain_signal_delivery_fallback.jsonl"
     monkeypatch.setattr(runtime, "UNCERTAIN_SIGNAL_DELIVERY_PATH", str(uncertain_path), raising=False)

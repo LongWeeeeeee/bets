@@ -191,6 +191,13 @@ SYNERGY_DUO_MIN_MATCHES = 30
 # именно те, что несут дополнительную информацию: тонкая ячейка — это редкий
 # матчап, а редкий матчап тем и ценен.
 #
+# Замер на serv1 (тот же вывод, другая нарезка; отчёт
+# runtime/artifacts/misc/thresholds_2d_sweep.md, каждый блок на своей популяции):
+#   порог      5      10     30      50     100
+#   late    54.5%  54.5%  54.8%  55.2%   54.8%
+# early при этом плоский (63.8% на всех порогах), то есть цена нулевая. Покрытие
+# карт остаётся 100%: медианная заполненность ячеек cp1vs1 при этих порогах ~100%.
+#
 # ВНИМАНИЕ при пересборке: смена порога меняет объём отбора, поэтому звёздные
 # пороги, откалиброванные на прежнем, надо перепроверить.
 COUNTERPICK_1VS1_MIN_MATCHES = 50
@@ -1431,9 +1438,28 @@ def _send_message_to_chat_id(
     try:
         response.raise_for_status()
     except requests.exceptions.HTTPError as exc:
-        logger.error("Telegram send HTTP error: %s", exc)
+        # Причину отказа Telegram пишет в ТЕЛЕ ответа, в поле `description`
+        # («chat not found», «bot was blocked by the user»). Тело здесь не
+        # читалось, и наружу уходил один HTTP-статус — а
+        # `_is_terminal_telegram_chat_error` ищет именно эти слова. Классификатор
+        # стоял верный, но нужные ему слова до него не доезжали: мёртвый чат
+        # никогда не признавался терминальным, не вычищался и опрашивался при
+        # КАЖДОЙ рассылке. Замер 20.08.2026: после смены бота 09.08 двое
+        # получателей из трёх не получают ничего, в логе 319 отказов 400 и ни
+        # одной чистки; наружу это выходило только словом «partial».
+        # В обработке `getUpdates` (строка ~1477) `description` читается давно —
+        # расходился только путь отправки.
+        # Удаление обратимо: список подписчиков пополняется из `getUpdates`,
+        # поэтому человеку достаточно снова написать боту.
+        _desc = ""
+        try:
+            _desc = str((response.json() or {}).get("description") or "")
+        except Exception:                                # noqa: BLE001
+            _desc = str(getattr(response, "text", "") or "")[:200]
+        logger.error("Telegram send HTTP error: %s | %s", exc, _desc or "без описания")
         return _telegram_raise_delivery_error(
-            f"Telegram send failed: {exc}",
+            f"Telegram send failed: {exc}: {_desc}" if _desc
+            else f"Telegram send failed: {exc}",
             require_delivery=require_delivery,
             delivery_uncertain=False,
         )
@@ -2380,6 +2406,17 @@ def format_output_dict(
             and not block_conflict
             and block_sign is not None
             and win_model_veto.blocks_veto(block_sign, data, section)
+        ):
+            for key, original_value in starred_original_values.items():
+                data[key] = original_value
+            continue
+        # Тот же запрет по драфтовому КОМПОНЕНТУ модели: вето выше смотрит на
+        # её общий вердикт и сторону, названную вопреки драфту, пропускало.
+        if (
+            block_star_count > 0
+            and not block_conflict
+            and block_sign is not None
+            and win_model_veto.draft_veto(block_sign, data, section)
         ):
             for key, original_value in starred_original_values.items():
                 data[key] = original_value
@@ -4424,7 +4461,7 @@ def _team_counterplay_traits(team_side_or_ids):
     return traits
 
 
-def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_dict, mid_dict, match=None, custom_weights=None,
+def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_dict, mid_dict, match=None, custom_weights=None, radiant_team_name=None, dire_team_name=None,
                               early_trio_threshold=SYNERGY_TRIO_MIN_MATCHES, mid_trio_threshold=SYNERGY_TRIO_MIN_MATCHES,
                               synergy_duo_use_max=False, early_position_weights=None, late_position_weights=None,
                               post_lane_dict=None, post_lane_trio_threshold=POST_LANE_SYNERGY_TRIO_MIN_MATCHES,
@@ -5201,14 +5238,20 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
     # тоже), но по ней работает вето — блок со знаком против модели отменяется.
     # Считается один раз на драфт; отказ модели даёт None и вето не включает.
     try:
-        _ml_index = win_model_veto.win_index(radiant_heroes_and_pos, dire_heroes_and_pos)
+        _ml_index, _ml_source = win_model_veto.win_index_ex(
+            radiant_heroes_and_pos, dire_heroes_and_pos,
+            radiant_team_name, dire_team_name, match
+        )
     except Exception:
-        _ml_index = None
+        _ml_index, _ml_source = None, None
     if _ml_index is not None:
         for _block_key in ('early_output', 'early_end_output', 'mid_output', 'post_lane_output'):
             _block = return_dict.get(_block_key)
             if isinstance(_block, dict):
                 _block[win_model_veto.INDEX_KEY] = _ml_index
+                # Источник обязателен рядом с индексом: шкалы предматчевой и
+                # драфтовой моделей разные, и порог вето выбирается по нему.
+                _block[win_model_veto.SOURCE_KEY] = _ml_source
     return return_dict
 
 
@@ -5435,6 +5478,9 @@ def one_match(radiant_heroes_and_pos, dire_heroes_and_pos, lane_data, early_dict
         early_dict=early_dict,
         mid_dict=late_dict,
         post_lane_dict=post_lane_dict,
+        match=match,
+        radiant_team_name=radiant_team_name,
+        dire_team_name=dire_team_name,
     )
     base_top, base_bot, base_mid = calculate_lanes(
         radiant_heroes_and_pos, dire_heroes_and_pos, structured_lane_data
@@ -6333,6 +6379,8 @@ LANE_1V1_MIN_GAMES = _lane_min_games_env("LANE_1V1_MIN_GAMES", 50)
 #   pairs4 +6.704 | 2v1/1v2 +2.853 | 2v2 +0.139 | solo +0.017 | синергия +0.015
 # В E-66 этот же слой признавался бесполезным — но там он входил РАВНЫМ членом
 # простого среднего и разбавлял четвёрку пар вместо того, чтобы её дополнять.
+# Из этой же таблицы выведено прежнее значение 1.7: 2.853/6.704 = 0.43 от блока
+# пар, блок пар несёт суммарный вес 4, отсюда 4 * 0.43 = 1.7.
 #
 # Проверка веса на honest holdout (74 784 боковых линии, словарь пересобран с
 # исключением holdout) — кривая монотонная, но плоская:
@@ -6352,6 +6400,8 @@ LANE_2V1_ENSEMBLE_MIN_GAMES = _lane_min_games_env("LANE_2V1_ENSEMBLE_MIN_GAMES",
 # Ячейка 2v2 остаётся, но её прежний вес 1.0 моделью не подтверждён: 0.139/6.704
 # = 0.02 от блока пар, то есть 4 * 0.02 = 0.08. Совпадает с кривой порога, где
 # значения 30 и 200 неразличимы, — вклад ячейки близок к нулю в обе стороны.
+# Прямая проверка на про подтверждает: 1.0, 0.08 и 0.0 дают одинаковый результат
+# до сотой доли.
 LANE_PAIR_VS_PAIR_WEIGHT = float(os.getenv("LANE_PAIR_VS_PAIR_WEIGHT", "0.08"))
 LANE_SYNERGY_MIN_GAMES = _lane_min_games_env("LANE_SYNERGY_MIN_GAMES", 30)
 LANE_SOLO_MIN_GAMES = _lane_min_games_env("LANE_SOLO_MIN_GAMES", 10)

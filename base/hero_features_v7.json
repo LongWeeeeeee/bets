@@ -3351,7 +3351,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5134,
+  "support_kill_lift": 1.031,
+  "support_kill_n": 3319,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 33.9,
+    "scepter_min_n": 71,
+    "lvl15_min": 20.7,
+    "lvl20_min": 27.6
+   }
+  },
+  "scepter_minute": 33.9,
+  "shard_minute": 0.0,
+  "level15_minute": 20.7,
+  "level20_minute": 27.6,
+  "support_kills_per_match": 5.211,
+  "support_kills_per_10min": 1.328,
+  "support_kills_early_per_match": 1.486
  },
  "10": {
   "hero_id": 10,
@@ -6630,7 +6648,23 @@
   "leash_enemy_min_level": 0,
   "leash_enemy_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4979,
+  "support_kill_lift": 0.9999,
+  "support_kill_n": 1900,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 21.1,
+    "lvl20_min": 29.2
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 21.1,
+  "level20_minute": 29.2,
+  "support_kills_per_match": 4.615,
+  "support_kills_per_10min": 1.197,
+  "support_kills_early_per_match": 0.859
  },
  "100": {
   "hero_id": 100,
@@ -10044,7 +10078,33 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5278,
+  "support_kill_lift": 1.0599,
+  "support_kill_n": 5504,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 34.7,
+    "scepter_min_n": 149,
+    "lvl15_min": 30.4,
+    "lvl20_min": 40.6
+   },
+   "5": {
+    "scepter_min": 36.6,
+    "scepter_min_n": 253,
+    "shard_min": 33.3,
+    "shard_min_n": 44,
+    "lvl15_min": 30.2,
+    "lvl20_min": 40.8
+   }
+  },
+  "scepter_minute": 34.7,
+  "shard_minute": 0.0,
+  "level15_minute": 30.4,
+  "level20_minute": 40.6,
+  "support_kills_per_match": 1.92,
+  "support_kills_per_10min": 0.482,
+  "support_kills_early_per_match": 0.914
  },
  "101": {
   "hero_id": 101,
@@ -13381,7 +13441,37 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4895,
+  "support_kill_lift": 0.9831,
+  "support_kill_n": 4298,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 27.2,
+    "scepter_min_n": 37,
+    "lvl15_min": 23.9,
+    "lvl20_min": 33.1
+   },
+   "4": {
+    "scepter_min": 35.0,
+    "scepter_min_n": 96,
+    "shard_min": 27.2,
+    "shard_min_n": 59,
+    "lvl15_min": 29.5,
+    "lvl20_min": 40.6
+   },
+   "5": {
+    "lvl15_min": 30.6,
+    "lvl20_min": 42.2
+   }
+  },
+  "scepter_minute": 35.0,
+  "shard_minute": 27.2,
+  "level15_minute": 29.5,
+  "level20_minute": 40.6,
+  "support_kills_per_match": 3.247,
+  "support_kills_per_10min": 0.819,
+  "support_kills_early_per_match": 1.498
  },
  "102": {
   "hero_id": 102,
@@ -16791,7 +16881,32 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4866,
+  "support_kill_lift": 0.9773,
+  "support_kill_n": 1159,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 21.6,
+    "lvl20_min": 29.8
+   },
+   "3": {
+    "lvl15_min": 24.9
+   },
+   "5": {
+    "scepter_min": 36.5,
+    "scepter_min_n": 33,
+    "lvl15_min": 31.0,
+    "lvl20_min": 42.3
+   }
+  },
+  "scepter_minute": 36.5,
+  "shard_minute": 0.0,
+  "level15_minute": 31.0,
+  "level20_minute": 42.3,
+  "support_kills_per_match": 2.421,
+  "support_kills_per_10min": 0.597,
+  "support_kills_early_per_match": 0.738
  },
  "103": {
   "hero_id": 103,
@@ -20172,7 +20287,22 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5066,
+  "support_kill_lift": 1.0173,
+  "support_kill_n": 381,
+  "playback_by_pos": {
+   "5": {
+    "lvl15_min": 31.6
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 31.6,
+  "level20_minute": 0.0,
+  "support_kills_per_match": 2.298,
+  "support_kills_per_10min": 0.56,
+  "support_kills_early_per_match": 1.048
  },
  "104": {
   "hero_id": 104,
@@ -23537,7 +23667,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4976,
+  "support_kill_lift": 0.9992,
+  "support_kill_n": 2472,
+  "playback_by_pos": {
+   "3": {
+    "scepter_min": 37.0,
+    "scepter_min_n": 39,
+    "lvl15_min": 25.2,
+    "lvl20_min": 34.5
+   }
+  },
+  "scepter_minute": 37.0,
+  "shard_minute": 0.0,
+  "level15_minute": 25.2,
+  "level20_minute": 34.5,
+  "support_kills_per_match": 3.942,
+  "support_kills_per_10min": 0.969,
+  "support_kills_early_per_match": 1.311
  },
  "105": {
   "hero_id": 105,
@@ -26929,7 +27077,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4877,
+  "support_kill_lift": 0.9795,
+  "support_kill_n": 5253,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 36.5,
+    "scepter_min_n": 137,
+    "lvl15_min": 29.8,
+    "lvl20_min": 40.6
+   },
+   "5": {
+    "scepter_min": 40.5,
+    "scepter_min_n": 33,
+    "lvl15_min": 30.1,
+    "lvl20_min": 42.0
+   }
+  },
+  "scepter_minute": 36.5,
+  "shard_minute": 0.0,
+  "level15_minute": 29.8,
+  "level20_minute": 40.6,
+  "support_kills_per_match": 2.601,
+  "support_kills_per_10min": 0.62,
+  "support_kills_early_per_match": 1.012
  },
  "106": {
   "hero_id": 106,
@@ -30334,7 +30506,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5377,
+  "support_kill_lift": 1.0798,
+  "support_kill_n": 13456,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 32.7,
+    "scepter_min_n": 741,
+    "shard_min": 25.9,
+    "shard_min_n": 154,
+    "lvl15_min": 22.6,
+    "lvl20_min": 31.5
+   }
+  },
+  "scepter_minute": 32.7,
+  "shard_minute": 25.9,
+  "level15_minute": 22.6,
+  "level20_minute": 31.5,
+  "support_kills_per_match": 5.514,
+  "support_kills_per_10min": 1.383,
+  "support_kills_early_per_match": 1.704
  },
  "107": {
   "hero_id": 107,
@@ -33740,7 +33932,37 @@
   "leash_enemy_min_level": 0,
   "leash_enemy_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5156,
+  "support_kill_lift": 1.0354,
+  "support_kill_n": 6973,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 40.2,
+    "scepter_min_n": 91,
+    "shard_min": 42.2,
+    "shard_min_n": 44,
+    "lvl15_min": 23.1,
+    "lvl20_min": 33.1
+   },
+   "3": {
+    "lvl15_min": 24.5,
+    "lvl20_min": 31.4
+   },
+   "4": {
+    "scepter_min": 38.4,
+    "scepter_min_n": 41,
+    "lvl15_min": 29.0,
+    "lvl20_min": 40.1
+   }
+  },
+  "scepter_minute": 38.4,
+  "shard_minute": 0.0,
+  "level15_minute": 29.0,
+  "level20_minute": 40.1,
+  "support_kills_per_match": 4.003,
+  "support_kills_per_10min": 0.994,
+  "support_kills_early_per_match": 1.413
  },
  "108": {
   "hero_id": 108,
@@ -37129,7 +37351,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4791,
+  "support_kill_lift": 0.9622,
+  "support_kill_n": 5222,
+  "playback_by_pos": {
+   "3": {
+    "scepter_min": 23.8,
+    "scepter_min_n": 899,
+    "shard_min": 28.8,
+    "shard_min_n": 102,
+    "lvl15_min": 24.0,
+    "lvl20_min": 34.0
+   }
+  },
+  "scepter_minute": 23.8,
+  "shard_minute": 28.8,
+  "level15_minute": 24.0,
+  "level20_minute": 34.0,
+  "support_kills_per_match": 2.279,
+  "support_kills_per_10min": 0.549,
+  "support_kills_early_per_match": 0.865
  },
  "109": {
   "hero_id": 109,
@@ -40424,7 +40666,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4756,
+  "support_kill_lift": 0.9551,
+  "support_kill_n": 3686,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 51.4,
+    "scepter_min_n": 46,
+    "shard_min": 24.6,
+    "shard_min_n": 58,
+    "lvl15_min": 21.5,
+    "lvl20_min": 31.0
+   }
+  },
+  "scepter_minute": 51.4,
+  "shard_minute": 24.6,
+  "level15_minute": 21.5,
+  "level20_minute": 31.0,
+  "support_kills_per_match": 3.794,
+  "support_kills_per_10min": 0.953,
+  "support_kills_early_per_match": 0.788
  },
  "11": {
   "hero_id": 11,
@@ -43730,7 +43992,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4698,
+  "support_kill_lift": 0.9435,
+  "support_kill_n": 16959,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 53.0,
+    "scepter_min_n": 39,
+    "lvl15_min": 19.7,
+    "lvl20_min": 28.6
+   },
+   "2": {
+    "scepter_min": 29.4,
+    "scepter_min_n": 151,
+    "lvl15_min": 18.9,
+    "lvl20_min": 27.7
+   }
+  },
+  "scepter_minute": 29.4,
+  "shard_minute": 0.0,
+  "level15_minute": 18.9,
+  "level20_minute": 27.7,
+  "support_kills_per_match": 4.891,
+  "support_kills_per_10min": 1.261,
+  "support_kills_early_per_match": 1.451
  },
  "110": {
   "hero_id": 110,
@@ -47145,7 +47431,39 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4907,
+  "support_kill_lift": 0.9854,
+  "support_kill_n": 5580,
+  "playback_by_pos": {
+   "2": {
+    "lvl15_min": 22.1,
+    "lvl20_min": 32.6
+   },
+   "3": {
+    "lvl15_min": 23.2,
+    "lvl20_min": 32.1
+   },
+   "4": {
+    "scepter_min": 33.5,
+    "scepter_min_n": 42,
+    "shard_min": 26.6,
+    "shard_min_n": 43,
+    "lvl15_min": 28.4,
+    "lvl20_min": 39.3
+   },
+   "5": {
+    "lvl15_min": 29.4,
+    "lvl20_min": 40.1
+   }
+  },
+  "scepter_minute": 33.5,
+  "shard_minute": 26.6,
+  "level15_minute": 28.4,
+  "level20_minute": 39.3,
+  "support_kills_per_match": 2.963,
+  "support_kills_per_10min": 0.733,
+  "support_kills_early_per_match": 1.476
  },
  "111": {
   "hero_id": 111,
@@ -50466,7 +50784,26 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4855,
+  "support_kill_lift": 0.975,
+  "support_kill_n": 1207,
+  "playback_by_pos": {
+   "4": {
+    "lvl15_min": 31.6
+   },
+   "5": {
+    "lvl15_min": 33.0,
+    "lvl20_min": 44.9
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 33.0,
+  "level20_minute": 44.9,
+  "support_kills_per_match": 1.749,
+  "support_kills_per_10min": 0.444,
+  "support_kills_early_per_match": 0.949
  },
  "112": {
   "hero_id": 112,
@@ -53887,7 +54224,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5284,
+  "support_kill_lift": 1.0612,
+  "support_kill_n": 1951,
+  "playback_by_pos": {
+   "4": {
+    "lvl15_min": 30.9,
+    "lvl20_min": 42.5
+   },
+   "5": {
+    "lvl15_min": 31.7,
+    "lvl20_min": 42.4
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 31.7,
+  "level20_minute": 42.4,
+  "support_kills_per_match": 1.799,
+  "support_kills_per_10min": 0.459,
+  "support_kills_early_per_match": 0.728
  },
  "113": {
   "hero_id": 113,
@@ -57194,7 +57551,23 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4394,
+  "support_kill_lift": 0.8824,
+  "support_kill_n": 1147,
+  "playback_by_pos": {
+   "2": {
+    "lvl15_min": 21.6,
+    "lvl20_min": 30.4
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 21.6,
+  "level20_minute": 30.4,
+  "support_kills_per_match": 4.131,
+  "support_kills_per_10min": 1.099,
+  "support_kills_early_per_match": 1.238
  },
  "114": {
   "hero_id": 114,
@@ -60633,7 +61006,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5118,
+  "support_kill_lift": 1.0279,
+  "support_kill_n": 3546,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 22.7,
+    "lvl20_min": 31.1
+   },
+   "2": {
+    "lvl15_min": 22.8,
+    "lvl20_min": 32.0
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 22.7,
+  "level20_minute": 31.1,
+  "support_kills_per_match": 5.418,
+  "support_kills_per_10min": 1.372,
+  "support_kills_early_per_match": 1.696
  },
  "119": {
   "hero_id": 119,
@@ -64012,7 +64405,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5223,
+  "support_kill_lift": 1.0488,
+  "support_kill_n": 4513,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 37.1,
+    "scepter_min_n": 53,
+    "shard_min": 27.8,
+    "shard_min_n": 53,
+    "lvl15_min": 30.5,
+    "lvl20_min": 41.6
+   },
+   "5": {
+    "lvl15_min": 30.1,
+    "lvl20_min": 40.2
+   }
+  },
+  "scepter_minute": 37.1,
+  "shard_minute": 27.8,
+  "level15_minute": 30.5,
+  "level20_minute": 41.6,
+  "support_kills_per_match": 2.709,
+  "support_kills_per_10min": 0.662,
+  "support_kills_early_per_match": 1.318
  },
  "12": {
   "hero_id": 12,
@@ -67043,7 +67460,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5044,
+  "support_kill_lift": 1.0129,
+  "support_kill_n": 3874,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 21.5,
+    "scepter_min_n": 402,
+    "shard_min": 31.4,
+    "shard_min_n": 34,
+    "lvl15_min": 21.9,
+    "lvl20_min": 30.1
+   }
+  },
+  "scepter_minute": 21.5,
+  "shard_minute": 31.4,
+  "level15_minute": 21.9,
+  "level20_minute": 30.1,
+  "support_kills_per_match": 4.285,
+  "support_kills_per_10min": 1.102,
+  "support_kills_early_per_match": 0.82
  },
  "120": {
   "hero_id": 120,
@@ -70430,7 +70867,33 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5706,
+  "support_kill_lift": 1.1459,
+  "support_kill_n": 6281,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 24.7,
+    "scepter_min_n": 500,
+    "shard_min": 26.8,
+    "shard_min_n": 72,
+    "lvl15_min": 21.8,
+    "lvl20_min": 30.7
+   },
+   "3": {
+    "scepter_min": 27.3,
+    "scepter_min_n": 153,
+    "lvl15_min": 24.0,
+    "lvl20_min": 32.2
+   }
+  },
+  "scepter_minute": 27.3,
+  "shard_minute": 0.0,
+  "level15_minute": 24.0,
+  "level20_minute": 32.2,
+  "support_kills_per_match": 4.376,
+  "support_kills_per_10min": 1.104,
+  "support_kills_early_per_match": 1.475
  },
  "121": {
   "hero_id": 121,
@@ -73544,7 +74007,35 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4945,
+  "support_kill_lift": 0.9931,
+  "support_kill_n": 3187,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 32.5,
+    "scepter_min_n": 169,
+    "shard_min": 32.3,
+    "shard_min_n": 53,
+    "lvl15_min": 30.6,
+    "lvl20_min": 41.8
+   },
+   "5": {
+    "scepter_min": 34.6,
+    "scepter_min_n": 91,
+    "shard_min": 33.3,
+    "shard_min_n": 38,
+    "lvl15_min": 30.9,
+    "lvl20_min": 41.9
+   }
+  },
+  "scepter_minute": 34.6,
+  "shard_minute": 33.3,
+  "level15_minute": 30.9,
+  "level20_minute": 41.9,
+  "support_kills_per_match": 1.938,
+  "support_kills_per_10min": 0.478,
+  "support_kills_early_per_match": 0.926
  },
  "123": {
   "hero_id": 123,
@@ -76992,7 +77483,33 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5322,
+  "support_kill_lift": 1.0688,
+  "support_kill_n": 8502,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 39.8,
+    "scepter_min_n": 101,
+    "shard_min": 29.8,
+    "shard_min_n": 123,
+    "lvl15_min": 29.6,
+    "lvl20_min": 40.5
+   },
+   "5": {
+    "shard_min": 26.7,
+    "shard_min_n": 39,
+    "lvl15_min": 30.1,
+    "lvl20_min": 40.6
+   }
+  },
+  "scepter_minute": 39.8,
+  "shard_minute": 29.8,
+  "level15_minute": 29.6,
+  "level20_minute": 40.5,
+  "support_kills_per_match": 2.554,
+  "support_kills_per_10min": 0.621,
+  "support_kills_early_per_match": 1.126
  },
  "126": {
   "hero_id": 126,
@@ -80414,7 +80931,30 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5407,
+  "support_kill_lift": 1.0858,
+  "support_kill_n": 7228,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 26.8,
+    "scepter_min_n": 484,
+    "shard_min": 20.7,
+    "shard_min_n": 52,
+    "lvl15_min": 23.2,
+    "lvl20_min": 33.2
+   },
+   "3": {
+    "lvl15_min": 24.0
+   }
+  },
+  "scepter_minute": 26.8,
+  "shard_minute": 20.7,
+  "level15_minute": 23.2,
+  "level20_minute": 33.2,
+  "support_kills_per_match": 5.156,
+  "support_kills_per_10min": 1.284,
+  "support_kills_early_per_match": 1.677
  },
  "128": {
   "hero_id": 128,
@@ -83857,7 +84397,45 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4885,
+  "support_kill_lift": 0.9809,
+  "support_kill_n": 15154,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 36.9,
+    "scepter_min_n": 32,
+    "shard_min": 15.5,
+    "shard_min_n": 43,
+    "lvl15_min": 21.6,
+    "lvl20_min": 30.7
+   },
+   "3": {
+    "lvl15_min": 23.4,
+    "lvl20_min": 31.8
+   },
+   "4": {
+    "scepter_min": 34.3,
+    "scepter_min_n": 41,
+    "shard_min": 18.9,
+    "shard_min_n": 66,
+    "lvl15_min": 29.1,
+    "lvl20_min": 39.6
+   },
+   "5": {
+    "shard_min": 17.9,
+    "shard_min_n": 39,
+    "lvl15_min": 29.0,
+    "lvl20_min": 38.2
+   }
+  },
+  "scepter_minute": 34.3,
+  "shard_minute": 18.9,
+  "level15_minute": 29.1,
+  "level20_minute": 39.6,
+  "support_kills_per_match": 4.094,
+  "support_kills_per_10min": 1.021,
+  "support_kills_early_per_match": 1.36
  },
  "129": {
   "hero_id": 129,
@@ -87236,7 +87814,30 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5491,
+  "support_kill_lift": 1.1027,
+  "support_kill_n": 3748,
+  "playback_by_pos": {
+   "2": {
+    "lvl15_min": 22.8
+   },
+   "3": {
+    "scepter_min": 37.3,
+    "scepter_min_n": 75,
+    "shard_min": 23.2,
+    "shard_min_n": 92,
+    "lvl15_min": 25.2,
+    "lvl20_min": 35.1
+   }
+  },
+  "scepter_minute": 37.3,
+  "shard_minute": 23.2,
+  "level15_minute": 25.2,
+  "level20_minute": 35.1,
+  "support_kills_per_match": 2.996,
+  "support_kills_per_10min": 0.753,
+  "support_kills_early_per_match": 0.965
  },
  "13": {
   "hero_id": 13,
@@ -90508,7 +91109,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.541,
+  "support_kill_lift": 1.0864,
+  "support_kill_n": 6274,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 37.7,
+    "scepter_min_n": 170,
+    "shard_min": 24.0,
+    "shard_min_n": 89,
+    "lvl15_min": 21.9,
+    "lvl20_min": 30.7
+   }
+  },
+  "scepter_minute": 37.7,
+  "shard_minute": 24.0,
+  "level15_minute": 21.9,
+  "level20_minute": 30.7,
+  "support_kills_per_match": 4.681,
+  "support_kills_per_10min": 1.14,
+  "support_kills_early_per_match": 1.277
  },
  "131": {
   "hero_id": 131,
@@ -93574,7 +94195,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4676,
+  "support_kill_lift": 0.939,
+  "support_kill_n": 4562,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 39.5,
+    "scepter_min_n": 90,
+    "lvl15_min": 30.7,
+    "lvl20_min": 42.5
+   },
+   "5": {
+    "scepter_min": 42.2,
+    "scepter_min_n": 82,
+    "lvl15_min": 30.8,
+    "lvl20_min": 42.0
+   }
+  },
+  "scepter_minute": 42.2,
+  "shard_minute": 0.0,
+  "level15_minute": 30.8,
+  "level20_minute": 42.0,
+  "support_kills_per_match": 1.85,
+  "support_kills_per_10min": 0.457,
+  "support_kills_early_per_match": 0.934
  },
  "135": {
   "hero_id": 135,
@@ -97035,7 +97680,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5129,
+  "support_kill_lift": 1.03,
+  "support_kill_n": 9784,
+  "playback_by_pos": {
+   "2": {
+    "lvl15_min": 21.4,
+    "lvl20_min": 29.9
+   },
+   "3": {
+    "scepter_min": 30.1,
+    "scepter_min_n": 111,
+    "shard_min": 21.9,
+    "shard_min_n": 151,
+    "lvl15_min": 22.6,
+    "lvl20_min": 31.2
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 21.4,
+  "level20_minute": 29.9,
+  "support_kills_per_match": 3.605,
+  "support_kills_per_10min": 0.914,
+  "support_kills_early_per_match": 1.359
  },
  "136": {
   "hero_id": 136,
@@ -100503,7 +101172,36 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4947,
+  "support_kill_lift": 0.9934,
+  "support_kill_n": 2345,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 20.4,
+    "scepter_min_n": 41,
+    "lvl15_min": 23.2,
+    "lvl20_min": 33.1
+   },
+   "3": {
+    "lvl15_min": 25.2,
+    "lvl20_min": 35.1
+   },
+   "4": {
+    "lvl15_min": 28.9
+   },
+   "5": {
+    "lvl15_min": 28.3,
+    "lvl20_min": 39.7
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 28.9,
+  "level20_minute": 0.0,
+  "support_kills_per_match": 3.569,
+  "support_kills_per_10min": 0.924,
+  "support_kills_early_per_match": 1.295
  },
  "137": {
   "hero_id": 137,
@@ -103863,7 +104561,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5024,
+  "support_kill_lift": 1.0089,
+  "support_kill_n": 3173,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 31.0,
+    "scepter_min_n": 100,
+    "lvl15_min": 23.3,
+    "lvl20_min": 33.1
+   },
+   "3": {
+    "scepter_min": 31.8,
+    "scepter_min_n": 157,
+    "lvl15_min": 24.1,
+    "lvl20_min": 33.9
+   }
+  },
+  "scepter_minute": 31.8,
+  "shard_minute": 0.0,
+  "level15_minute": 24.1,
+  "level20_minute": 33.9,
+  "support_kills_per_match": 4.025,
+  "support_kills_per_10min": 0.964,
+  "support_kills_early_per_match": 1.27
  },
  "138": {
   "hero_id": 138,
@@ -107293,7 +108015,23 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4562,
+  "support_kill_lift": 0.9162,
+  "support_kill_n": 3908,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 21.5,
+    "lvl20_min": 30.0
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 21.5,
+  "level20_minute": 30.0,
+  "support_kills_per_match": 4.435,
+  "support_kills_per_10min": 1.066,
+  "support_kills_early_per_match": 1.114
  },
  "14": {
   "hero_id": 14,
@@ -110750,7 +111488,45 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4943,
+  "support_kill_lift": 0.9927,
+  "support_kill_n": 5976,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 17.3,
+    "scepter_min_n": 49,
+    "lvl15_min": 22.7,
+    "lvl20_min": 31.6
+   },
+   "2": {
+    "scepter_min": 21.4,
+    "scepter_min_n": 105,
+    "lvl15_min": 23.5,
+    "lvl20_min": 32.9
+   },
+   "3": {
+    "scepter_min": 20.0,
+    "scepter_min_n": 241,
+    "lvl15_min": 24.5,
+    "lvl20_min": 34.4
+   },
+   "4": {
+    "lvl15_min": 29.3,
+    "lvl20_min": 40.1
+   },
+   "5": {
+    "lvl15_min": 29.6,
+    "lvl20_min": 40.0
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 29.3,
+  "level20_minute": 40.1,
+  "support_kills_per_match": 3.533,
+  "support_kills_per_10min": 0.889,
+  "support_kills_early_per_match": 1.568
  },
  "145": {
   "hero_id": 145,
@@ -113619,7 +114395,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5051,
+  "support_kill_lift": 1.0143,
+  "support_kill_n": 4645,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 26.3,
+    "scepter_min_n": 251,
+    "lvl15_min": 21.4,
+    "lvl20_min": 29.8
+   },
+   "2": {
+    "scepter_min": 27.1,
+    "scepter_min_n": 65,
+    "lvl15_min": 21.2,
+    "lvl20_min": 30.2
+   }
+  },
+  "scepter_minute": 26.3,
+  "shard_minute": 0.0,
+  "level15_minute": 21.4,
+  "level20_minute": 29.8,
+  "support_kills_per_match": 5.067,
+  "support_kills_per_10min": 1.287,
+  "support_kills_early_per_match": 1.276
  },
  "15": {
   "hero_id": 15,
@@ -116979,7 +117779,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4942,
+  "support_kill_lift": 0.9924,
+  "support_kill_n": 4286,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 21.7,
+    "lvl20_min": 30.2
+   },
+   "2": {
+    "lvl15_min": 21.4,
+    "lvl20_min": 30.2
+   },
+   "3": {
+    "lvl15_min": 23.2,
+    "lvl20_min": 32.2
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 21.4,
+  "level20_minute": 30.2,
+  "support_kills_per_match": 4.984,
+  "support_kills_per_10min": 1.242,
+  "support_kills_early_per_match": 1.908
  },
  "155": {
   "hero_id": 155,
@@ -120413,7 +121237,40 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5189,
+  "support_kill_lift": 1.0422,
+  "support_kill_n": 2428,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 27.1,
+    "scepter_min_n": 44,
+    "lvl15_min": 22.6,
+    "lvl20_min": 33.1
+   },
+   "3": {
+    "scepter_min": 29.2,
+    "scepter_min_n": 196,
+    "shard_min": 30.9,
+    "shard_min_n": 31,
+    "lvl15_min": 23.5,
+    "lvl20_min": 34.2
+   },
+   "4": {
+    "lvl15_min": 29.7,
+    "lvl20_min": 40.1
+   },
+   "5": {
+    "lvl15_min": 30.1
+   }
+  },
+  "scepter_minute": 29.2,
+  "shard_minute": 30.9,
+  "level15_minute": 23.5,
+  "level20_minute": 34.2,
+  "support_kills_per_match": 2.214,
+  "support_kills_per_10min": 0.556,
+  "support_kills_early_per_match": 0.905
  },
  "16": {
   "hero_id": 16,
@@ -123747,7 +124604,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5199,
+  "support_kill_lift": 1.0441,
+  "support_kill_n": 2512,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 21.5,
+    "scepter_min_n": 169,
+    "lvl15_min": 21.4,
+    "lvl20_min": 32.1
+   },
+   "3": {
+    "scepter_min": 22.5,
+    "scepter_min_n": 103,
+    "lvl15_min": 23.4,
+    "lvl20_min": 33.3
+   }
+  },
+  "scepter_minute": 22.5,
+  "shard_minute": 0.0,
+  "level15_minute": 23.4,
+  "level20_minute": 33.3,
+  "support_kills_per_match": 4.282,
+  "support_kills_per_10min": 1.029,
+  "support_kills_early_per_match": 1.108
  },
  "17": {
   "hero_id": 17,
@@ -127037,7 +127918,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5221,
+  "support_kill_lift": 1.0484,
+  "support_kill_n": 7641,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 40.0,
+    "scepter_min_n": 223,
+    "shard_min": 35.9,
+    "shard_min_n": 102,
+    "lvl15_min": 21.6,
+    "lvl20_min": 30.7
+   }
+  },
+  "scepter_minute": 40.0,
+  "shard_minute": 35.9,
+  "level15_minute": 21.6,
+  "level20_minute": 30.7,
+  "support_kills_per_match": 5.167,
+  "support_kills_per_10min": 1.291,
+  "support_kills_early_per_match": 1.404
  },
  "18": {
   "hero_id": 18,
@@ -130345,7 +131246,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.496,
+  "support_kill_lift": 0.996,
+  "support_kill_n": 4075,
+  "playback_by_pos": {
+   "1": {
+    "shard_min": 36.6,
+    "shard_min_n": 41,
+    "lvl15_min": 19.4,
+    "lvl20_min": 26.8
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 36.6,
+  "level15_minute": 19.4,
+  "level20_minute": 26.8,
+  "support_kills_per_match": 4.789,
+  "support_kills_per_10min": 1.227,
+  "support_kills_early_per_match": 0.69
  },
  "19": {
   "hero_id": 19,
@@ -133802,7 +134721,40 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5311,
+  "support_kill_lift": 1.0665,
+  "support_kill_n": 9178,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 44.0,
+    "scepter_min_n": 54,
+    "shard_min": 40.2,
+    "shard_min_n": 41,
+    "lvl15_min": 21.2,
+    "lvl20_min": 29.3
+   },
+   "2": {
+    "scepter_min": 29.1,
+    "scepter_min_n": 51,
+    "lvl15_min": 22.2,
+    "lvl20_min": 31.2
+   },
+   "3": {
+    "lvl15_min": 23.7
+   },
+   "4": {
+    "lvl15_min": 29.1,
+    "lvl20_min": 38.9
+   }
+  },
+  "scepter_minute": 29.1,
+  "shard_minute": 0.0,
+  "level15_minute": 22.2,
+  "level20_minute": 31.2,
+  "support_kills_per_match": 4.585,
+  "support_kills_per_10min": 1.162,
+  "support_kills_early_per_match": 0.905
  },
  "2": {
   "hero_id": 2,
@@ -137250,7 +138202,30 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4747,
+  "support_kill_lift": 0.9533,
+  "support_kill_n": 14260,
+  "playback_by_pos": {
+   "3": {
+    "scepter_min": 37.2,
+    "scepter_min_n": 173,
+    "shard_min": 24.2,
+    "shard_min_n": 179,
+    "lvl15_min": 23.4,
+    "lvl20_min": 33.9
+   },
+   "5": {
+    "lvl15_min": 28.7
+   }
+  },
+  "scepter_minute": 37.2,
+  "shard_minute": 24.2,
+  "level15_minute": 23.4,
+  "level20_minute": 33.9,
+  "support_kills_per_match": 4.26,
+  "support_kills_per_10min": 1.054,
+  "support_kills_early_per_match": 1.434
  },
  "20": {
   "hero_id": 20,
@@ -140704,7 +141679,43 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4855,
+  "support_kill_lift": 0.975,
+  "support_kill_n": 6768,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 22.2,
+    "scepter_min_n": 460,
+    "lvl15_min": 22.0,
+    "lvl20_min": 30.4
+   },
+   "3": {
+    "scepter_min": 22.5,
+    "scepter_min_n": 92,
+    "lvl15_min": 24.3,
+    "lvl20_min": 32.3
+   },
+   "4": {
+    "scepter_min": 37.4,
+    "scepter_min_n": 83,
+    "lvl15_min": 31.1,
+    "lvl20_min": 41.7
+   },
+   "5": {
+    "scepter_min": 36.4,
+    "scepter_min_n": 79,
+    "lvl15_min": 31.1,
+    "lvl20_min": 42.1
+   }
+  },
+  "scepter_minute": 37.4,
+  "shard_minute": 0.0,
+  "level15_minute": 31.1,
+  "level20_minute": 41.7,
+  "support_kills_per_match": 2.923,
+  "support_kills_per_10min": 0.727,
+  "support_kills_early_per_match": 1.012
  },
  "21": {
   "hero_id": 21,
@@ -144163,7 +145174,42 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4712,
+  "support_kill_lift": 0.9463,
+  "support_kill_n": 10709,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 50.7,
+    "scepter_min_n": 58,
+    "lvl15_min": 22.1,
+    "lvl20_min": 31.0
+   },
+   "2": {
+    "lvl15_min": 22.7,
+    "lvl20_min": 32.3
+   },
+   "3": {
+    "lvl15_min": 23.3,
+    "lvl20_min": 31.9
+   },
+   "4": {
+    "shard_min": 32.5,
+    "shard_min_n": 36,
+    "lvl15_min": 29.7,
+    "lvl20_min": 39.7
+   },
+   "5": {
+    "lvl15_min": 29.8
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 22.7,
+  "level20_minute": 32.3,
+  "support_kills_per_match": 4.05,
+  "support_kills_per_10min": 0.988,
+  "support_kills_early_per_match": 1.508
  },
  "22": {
   "hero_id": 22,
@@ -147593,7 +148639,39 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4931,
+  "support_kill_lift": 0.9903,
+  "support_kill_n": 7625,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 22.1,
+    "scepter_min_n": 455,
+    "shard_min": 19.4,
+    "shard_min_n": 36,
+    "lvl15_min": 21.6,
+    "lvl20_min": 30.6
+   },
+   "4": {
+    "scepter_min": 26.0,
+    "scepter_min_n": 340,
+    "lvl15_min": 28.2,
+    "lvl20_min": 37.2
+   },
+   "5": {
+    "scepter_min": 27.1,
+    "scepter_min_n": 67,
+    "lvl15_min": 28.4,
+    "lvl20_min": 37.2
+   }
+  },
+  "scepter_minute": 22.1,
+  "shard_minute": 19.4,
+  "level15_minute": 21.6,
+  "level20_minute": 30.6,
+  "support_kills_per_match": 3.723,
+  "support_kills_per_10min": 0.898,
+  "support_kills_early_per_match": 1.335
  },
  "23": {
   "hero_id": 23,
@@ -151027,7 +152105,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.507,
+  "support_kill_lift": 1.0183,
+  "support_kill_n": 2625,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 22.3,
+    "scepter_min_n": 114,
+    "lvl15_min": 21.2,
+    "lvl20_min": 31.1
+   },
+   "3": {
+    "scepter_min": 22.7,
+    "scepter_min_n": 151,
+    "lvl15_min": 23.5,
+    "lvl20_min": 34.2
+   }
+  },
+  "scepter_minute": 22.7,
+  "shard_minute": 0.0,
+  "level15_minute": 23.5,
+  "level20_minute": 34.2,
+  "support_kills_per_match": 3.295,
+  "support_kills_per_10min": 0.795,
+  "support_kills_early_per_match": 1.104
  },
  "25": {
   "hero_id": 25,
@@ -154469,7 +155571,33 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4585,
+  "support_kill_lift": 0.9207,
+  "support_kill_n": 11883,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 21.2,
+    "scepter_min_n": 41,
+    "lvl15_min": 20.0,
+    "lvl20_min": 27.9
+   },
+   "2": {
+    "scepter_min": 21.1,
+    "scepter_min_n": 681,
+    "shard_min": 34.5,
+    "shard_min_n": 87,
+    "lvl15_min": 20.1,
+    "lvl20_min": 28.9
+   }
+  },
+  "scepter_minute": 21.1,
+  "shard_minute": 34.5,
+  "level15_minute": 20.1,
+  "level20_minute": 28.9,
+  "support_kills_per_match": 4.83,
+  "support_kills_per_10min": 1.208,
+  "support_kills_early_per_match": 1.349
  },
  "26": {
   "hero_id": 26,
@@ -157917,7 +159045,39 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5058,
+  "support_kill_lift": 1.0157,
+  "support_kill_n": 7193,
+  "playback_by_pos": {
+   "2": {
+    "lvl15_min": 25.1,
+    "lvl20_min": 34.6
+   },
+   "4": {
+    "scepter_min": 39.5,
+    "scepter_min_n": 69,
+    "shard_min": 32.8,
+    "shard_min_n": 85,
+    "lvl15_min": 31.4,
+    "lvl20_min": 42.2
+   },
+   "5": {
+    "scepter_min": 43.8,
+    "scepter_min_n": 31,
+    "shard_min": 34.9,
+    "shard_min_n": 51,
+    "lvl15_min": 31.0,
+    "lvl20_min": 42.1
+   }
+  },
+  "scepter_minute": 39.5,
+  "shard_minute": 32.8,
+  "level15_minute": 31.4,
+  "level20_minute": 42.2,
+  "support_kills_per_match": 2.104,
+  "support_kills_per_10min": 0.521,
+  "support_kills_early_per_match": 0.823
  },
  "27": {
   "hero_id": 27,
@@ -160991,7 +162151,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5029,
+  "support_kill_lift": 1.0099,
+  "support_kill_n": 2096,
+  "playback_by_pos": {
+   "4": {
+    "shard_min": 29.9,
+    "shard_min_n": 41,
+    "lvl15_min": 30.9,
+    "lvl20_min": 42.5
+   },
+   "5": {
+    "shard_min": 31.3,
+    "shard_min_n": 67,
+    "lvl15_min": 31.0,
+    "lvl20_min": 42.5
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 31.3,
+  "level15_minute": 31.0,
+  "level20_minute": 42.5,
+  "support_kills_per_match": 1.476,
+  "support_kills_per_10min": 0.374,
+  "support_kills_early_per_match": 0.686
  },
  "28": {
   "hero_id": 28,
@@ -164386,7 +165570,33 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5626,
+  "support_kill_lift": 1.1299,
+  "support_kill_n": 6308,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 32.9,
+    "scepter_min_n": 93,
+    "lvl15_min": 22.9,
+    "lvl20_min": 31.9
+   },
+   "3": {
+    "scepter_min": 34.8,
+    "scepter_min_n": 196,
+    "shard_min": 19.9,
+    "shard_min_n": 31,
+    "lvl15_min": 24.9,
+    "lvl20_min": 34.6
+   }
+  },
+  "scepter_minute": 34.8,
+  "shard_minute": 19.9,
+  "level15_minute": 24.9,
+  "level20_minute": 34.6,
+  "support_kills_per_match": 3.87,
+  "support_kills_per_10min": 0.976,
+  "support_kills_early_per_match": 1.161
  },
  "29": {
   "hero_id": 29,
@@ -167843,7 +169053,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5426,
+  "support_kill_lift": 1.0896,
+  "support_kill_n": 4521,
+  "playback_by_pos": {
+   "3": {
+    "scepter_min": 26.1,
+    "scepter_min_n": 596,
+    "shard_min": 24.2,
+    "shard_min_n": 97,
+    "lvl15_min": 23.8,
+    "lvl20_min": 33.4
+   }
+  },
+  "scepter_minute": 26.1,
+  "shard_minute": 24.2,
+  "level15_minute": 23.8,
+  "level20_minute": 33.4,
+  "support_kills_per_match": 2.561,
+  "support_kills_per_10min": 0.644,
+  "support_kills_early_per_match": 0.858
  },
  "3": {
   "hero_id": 3,
@@ -170946,7 +172176,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4957,
+  "support_kill_lift": 0.9955,
+  "support_kill_n": 2447,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 35.0,
+    "scepter_min_n": 62,
+    "lvl15_min": 31.7,
+    "lvl20_min": 42.5
+   },
+   "5": {
+    "scepter_min": 36.0,
+    "scepter_min_n": 278,
+    "lvl15_min": 32.5,
+    "lvl20_min": 43.8
+   }
+  },
+  "scepter_minute": 36.0,
+  "shard_minute": 0.0,
+  "level15_minute": 32.5,
+  "level20_minute": 43.8,
+  "support_kills_per_match": 1.465,
+  "support_kills_per_10min": 0.362,
+  "support_kills_early_per_match": 0.857
  },
  "30": {
   "hero_id": 30,
@@ -174020,7 +175274,35 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.3999,
+  "support_kill_lift": 0.803,
+  "support_kill_n": 4284,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 36.4,
+    "scepter_min_n": 72,
+    "shard_min": 25.2,
+    "shard_min_n": 30,
+    "lvl15_min": 32.1,
+    "lvl20_min": 42.5
+   },
+   "5": {
+    "scepter_min": 37.5,
+    "scepter_min_n": 158,
+    "shard_min": 26.6,
+    "shard_min_n": 83,
+    "lvl15_min": 31.2,
+    "lvl20_min": 42.6
+   }
+  },
+  "scepter_minute": 37.5,
+  "shard_minute": 26.6,
+  "level15_minute": 31.2,
+  "level20_minute": 42.6,
+  "support_kills_per_match": 2.373,
+  "support_kills_per_10min": 0.58,
+  "support_kills_early_per_match": 1.284
  },
  "31": {
   "hero_id": 31,
@@ -177312,7 +178594,33 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4796,
+  "support_kill_lift": 0.9632,
+  "support_kill_n": 4929,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 36.1,
+    "scepter_min_n": 44,
+    "lvl15_min": 30.0,
+    "lvl20_min": 40.8
+   },
+   "5": {
+    "scepter_min": 38.0,
+    "scepter_min_n": 283,
+    "shard_min": 25.6,
+    "shard_min_n": 142,
+    "lvl15_min": 30.4,
+    "lvl20_min": 41.9
+   }
+  },
+  "scepter_minute": 38.0,
+  "shard_minute": 25.6,
+  "level15_minute": 30.4,
+  "level20_minute": 41.9,
+  "support_kills_per_match": 2.029,
+  "support_kills_per_10min": 0.491,
+  "support_kills_early_per_match": 0.912
  },
  "32": {
   "hero_id": 32,
@@ -180721,7 +182029,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.535,
+  "support_kill_lift": 1.0744,
+  "support_kill_n": 1671,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 22.1,
+    "lvl20_min": 29.8
+   },
+   "2": {
+    "lvl15_min": 21.0,
+    "lvl20_min": 29.2
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 22.1,
+  "level20_minute": 29.8,
+  "support_kills_per_match": 7.095,
+  "support_kills_per_10min": 1.76,
+  "support_kills_early_per_match": 2.278
  },
  "33": {
   "hero_id": 33,
@@ -184136,7 +185464,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.498,
+  "support_kill_lift": 1.0002,
+  "support_kill_n": 1538,
+  "playback_by_pos": {
+   "3": {
+    "scepter_min": 33.6,
+    "scepter_min_n": 111,
+    "lvl15_min": 25.3,
+    "lvl20_min": 37.0
+   }
+  },
+  "scepter_minute": 33.6,
+  "shard_minute": 0.0,
+  "level15_minute": 25.3,
+  "level20_minute": 37.0,
+  "support_kills_per_match": 2.775,
+  "support_kills_per_10min": 0.682,
+  "support_kills_early_per_match": 1.283
  },
  "34": {
   "hero_id": 34,
@@ -187465,7 +188811,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4645,
+  "support_kill_lift": 0.9328,
+  "support_kill_n": 1070,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 21.3,
+    "scepter_min_n": 106,
+    "lvl15_min": 19.4,
+    "lvl20_min": 27.8
+   }
+  },
+  "scepter_minute": 21.3,
+  "shard_minute": 0.0,
+  "level15_minute": 19.4,
+  "level20_minute": 27.8,
+  "support_kills_per_match": 3.428,
+  "support_kills_per_10min": 0.919,
+  "support_kills_early_per_match": 0.6
  },
  "35": {
   "hero_id": 35,
@@ -190921,7 +192285,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4964,
+  "support_kill_lift": 0.9968,
+  "support_kill_n": 5784,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 23.0,
+    "lvl20_min": 31.2
+   },
+   "2": {
+    "scepter_min": 18.7,
+    "scepter_min_n": 85,
+    "shard_min": 23.7,
+    "shard_min_n": 53,
+    "lvl15_min": 21.3,
+    "lvl20_min": 30.8
+   }
+  },
+  "scepter_minute": 18.7,
+  "shard_minute": 23.7,
+  "level15_minute": 21.3,
+  "level20_minute": 30.8,
+  "support_kills_per_match": 5.336,
+  "support_kills_per_10min": 1.349,
+  "support_kills_early_per_match": 1.418
  },
  "36": {
   "hero_id": 36,
@@ -194285,7 +195673,43 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4235,
+  "support_kill_lift": 0.8504,
+  "support_kill_n": 10735,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 37.1,
+    "scepter_min_n": 180,
+    "shard_min": 17.8,
+    "shard_min_n": 42,
+    "lvl15_min": 19.6,
+    "lvl20_min": 27.6
+   },
+   "2": {
+    "scepter_min": 36.9,
+    "scepter_min_n": 111,
+    "shard_min": 18.1,
+    "shard_min_n": 47,
+    "lvl15_min": 20.1,
+    "lvl20_min": 28.7
+   },
+   "3": {
+    "scepter_min": 39.2,
+    "scepter_min_n": 52,
+    "shard_min": 18.4,
+    "shard_min_n": 31,
+    "lvl15_min": 21.6,
+    "lvl20_min": 29.4
+   }
+  },
+  "scepter_minute": 39.2,
+  "shard_minute": 18.4,
+  "level15_minute": 21.6,
+  "level20_minute": 29.4,
+  "support_kills_per_match": 4.178,
+  "support_kills_per_10min": 1.048,
+  "support_kills_early_per_match": 1.088
  },
  "37": {
   "hero_id": 37,
@@ -197581,7 +199005,30 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4961,
+  "support_kill_lift": 0.9963,
+  "support_kill_n": 1661,
+  "playback_by_pos": {
+   "4": {
+    "lvl15_min": 30.4
+   },
+   "5": {
+    "scepter_min": 34.9,
+    "scepter_min_n": 132,
+    "shard_min": 27.9,
+    "shard_min_n": 60,
+    "lvl15_min": 30.9,
+    "lvl20_min": 42.9
+   }
+  },
+  "scepter_minute": 34.9,
+  "shard_minute": 27.9,
+  "level15_minute": 30.9,
+  "level20_minute": 42.9,
+  "support_kills_per_match": 1.753,
+  "support_kills_per_10min": 0.46,
+  "support_kills_early_per_match": 0.745
  },
  "38": {
   "hero_id": 38,
@@ -200952,7 +202399,39 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4819,
+  "support_kill_lift": 0.9677,
+  "support_kill_n": 3889,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 14.7,
+    "scepter_min_n": 39,
+    "lvl15_min": 19.6,
+    "lvl20_min": 28.1
+   },
+   "2": {
+    "scepter_min": 15.8,
+    "scepter_min_n": 89,
+    "lvl15_min": 20.7,
+    "lvl20_min": 30.4
+   },
+   "3": {
+    "scepter_min": 18.1,
+    "scepter_min_n": 181,
+    "shard_min": 36.3,
+    "shard_min_n": 37,
+    "lvl15_min": 21.8,
+    "lvl20_min": 31.4
+   }
+  },
+  "scepter_minute": 18.1,
+  "shard_minute": 36.3,
+  "level15_minute": 21.8,
+  "level20_minute": 31.4,
+  "support_kills_per_match": 3.364,
+  "support_kills_per_10min": 0.857,
+  "support_kills_early_per_match": 1.285
  },
  "39": {
   "hero_id": 39,
@@ -204400,7 +205879,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4903,
+  "support_kill_lift": 0.9846,
+  "support_kill_n": 7065,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 23.8,
+    "scepter_min_n": 526,
+    "shard_min": 32.5,
+    "shard_min_n": 103,
+    "lvl15_min": 21.8,
+    "lvl20_min": 31.0
+   }
+  },
+  "scepter_minute": 23.8,
+  "shard_minute": 32.5,
+  "level15_minute": 21.8,
+  "level20_minute": 31.0,
+  "support_kills_per_match": 5.013,
+  "support_kills_per_10min": 1.211,
+  "support_kills_early_per_match": 1.533
  },
  "4": {
   "hero_id": 4,
@@ -207748,7 +209247,23 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4161,
+  "support_kill_lift": 0.8357,
+  "support_kill_n": 1449,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 21.6,
+    "lvl20_min": 29.8
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 21.6,
+  "level20_minute": 29.8,
+  "support_kills_per_match": 4.534,
+  "support_kills_per_10min": 1.06,
+  "support_kills_early_per_match": 1.173
  },
  "40": {
   "hero_id": 40,
@@ -211180,7 +212695,29 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4919,
+  "support_kill_lift": 0.9878,
+  "support_kill_n": 1167,
+  "playback_by_pos": {
+   "4": {
+    "lvl15_min": 30.4,
+    "lvl20_min": 40.0
+   },
+   "5": {
+    "scepter_min": 33.9,
+    "scepter_min_n": 31,
+    "lvl15_min": 30.6,
+    "lvl20_min": 40.4
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 30.4,
+  "level20_minute": 40.0,
+  "support_kills_per_match": 2.072,
+  "support_kills_per_10min": 0.514,
+  "support_kills_early_per_match": 1.101
  },
  "41": {
   "hero_id": 41,
@@ -214576,7 +216113,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4963,
+  "support_kill_lift": 0.9967,
+  "support_kill_n": 4362,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 27.8,
+    "scepter_min_n": 299,
+    "shard_min": 34.6,
+    "shard_min_n": 48,
+    "lvl15_min": 22.1,
+    "lvl20_min": 29.7
+   }
+  },
+  "scepter_minute": 27.8,
+  "shard_minute": 34.6,
+  "level15_minute": 22.1,
+  "level20_minute": 29.7,
+  "support_kills_per_match": 4.132,
+  "support_kills_per_10min": 1.012,
+  "support_kills_early_per_match": 0.847
  },
  "42": {
   "hero_id": 42,
@@ -217901,7 +219458,33 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.508,
+  "support_kill_lift": 1.0202,
+  "support_kill_n": 2933,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 44.8,
+    "scepter_min_n": 44,
+    "shard_min": 28.8,
+    "shard_min_n": 43,
+    "lvl15_min": 22.7,
+    "lvl20_min": 31.4
+   },
+   "3": {
+    "scepter_min": 37.2,
+    "scepter_min_n": 32,
+    "lvl15_min": 24.8,
+    "lvl20_min": 33.9
+   }
+  },
+  "scepter_minute": 44.8,
+  "shard_minute": 28.8,
+  "level15_minute": 22.7,
+  "level20_minute": 31.4,
+  "support_kills_per_match": 4.502,
+  "support_kills_per_10min": 1.075,
+  "support_kills_early_per_match": 0.931
  },
  "43": {
   "hero_id": 43,
@@ -221351,7 +222934,33 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4922,
+  "support_kill_lift": 0.9885,
+  "support_kill_n": 3466,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 25.1,
+    "scepter_min_n": 90,
+    "shard_min": 32.2,
+    "shard_min_n": 34,
+    "lvl15_min": 22.5,
+    "lvl20_min": 33.0
+   },
+   "3": {
+    "scepter_min": 25.1,
+    "scepter_min_n": 43,
+    "lvl15_min": 23.8,
+    "lvl20_min": 33.8
+   }
+  },
+  "scepter_minute": 25.1,
+  "shard_minute": 32.2,
+  "level15_minute": 22.5,
+  "level20_minute": 33.0,
+  "support_kills_per_match": 4.141,
+  "support_kills_per_10min": 1.031,
+  "support_kills_early_per_match": 1.726
  },
  "44": {
   "hero_id": 44,
@@ -224353,7 +225962,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4939,
+  "support_kill_lift": 0.9918,
+  "support_kill_n": 3104,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 38.2,
+    "scepter_min_n": 46,
+    "shard_min": 38.9,
+    "shard_min_n": 33,
+    "lvl15_min": 21.3,
+    "lvl20_min": 28.8
+   }
+  },
+  "scepter_minute": 38.2,
+  "shard_minute": 38.9,
+  "level15_minute": 21.3,
+  "level20_minute": 28.8,
+  "support_kills_per_match": 6.361,
+  "support_kills_per_10min": 1.579,
+  "support_kills_early_per_match": 1.444
  },
  "45": {
   "hero_id": 45,
@@ -227706,7 +229335,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4767,
+  "support_kill_lift": 0.9572,
+  "support_kill_n": 621,
+  "playback_by_pos": {
+   "4": {
+    "lvl15_min": 31.1
+   },
+   "5": {
+    "lvl15_min": 31.3
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 31.3,
+  "level20_minute": 0.0,
+  "support_kills_per_match": 2.552,
+  "support_kills_per_10min": 0.608,
+  "support_kills_early_per_match": 0.862
  },
  "46": {
   "hero_id": 46,
@@ -230758,7 +232405,30 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5113,
+  "support_kill_lift": 1.0268,
+  "support_kill_n": 3548,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 46.2,
+    "scepter_min_n": 30,
+    "shard_min": 40.2,
+    "shard_min_n": 46,
+    "lvl15_min": 19.7,
+    "lvl20_min": 27.9
+   },
+   "2": {
+    "lvl15_min": 18.6
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 18.6,
+  "level20_minute": 0.0,
+  "support_kills_per_match": 5.11,
+  "support_kills_per_10min": 1.297,
+  "support_kills_early_per_match": 0.752
  },
  "47": {
   "hero_id": 47,
@@ -234207,7 +235877,37 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.444,
+  "support_kill_lift": 0.8916,
+  "support_kill_n": 5845,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 22.2,
+    "lvl20_min": 32.1
+   },
+   "2": {
+    "scepter_min": 25.7,
+    "scepter_min_n": 107,
+    "shard_min": 32.7,
+    "shard_min_n": 84,
+    "lvl15_min": 22.4,
+    "lvl20_min": 32.6
+   },
+   "3": {
+    "scepter_min": 25.5,
+    "scepter_min_n": 49,
+    "lvl15_min": 24.9,
+    "lvl20_min": 34.3
+   }
+  },
+  "scepter_minute": 25.7,
+  "shard_minute": 32.7,
+  "level15_minute": 22.4,
+  "level20_minute": 32.6,
+  "support_kills_per_match": 3.986,
+  "support_kills_per_10min": 0.969,
+  "support_kills_early_per_match": 1.492
  },
  "48": {
   "hero_id": 48,
@@ -237472,7 +239172,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4695,
+  "support_kill_lift": 0.9429,
+  "support_kill_n": 7203,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 24.3,
+    "scepter_min_n": 184,
+    "shard_min": 34.7,
+    "shard_min_n": 122,
+    "lvl15_min": 19.6,
+    "lvl20_min": 27.7
+   }
+  },
+  "scepter_minute": 24.3,
+  "shard_minute": 34.7,
+  "level15_minute": 19.6,
+  "level20_minute": 27.7,
+  "support_kills_per_match": 4.065,
+  "support_kills_per_10min": 1.045,
+  "support_kills_early_per_match": 0.915
  },
  "49": {
   "hero_id": 49,
@@ -240820,7 +242540,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4915,
+  "support_kill_lift": 0.987,
+  "support_kill_n": 1522,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 22.2,
+    "lvl20_min": 31.1
+   },
+   "2": {
+    "lvl15_min": 22.7,
+    "lvl20_min": 32.6
+   },
+   "3": {
+    "lvl15_min": 23.7,
+    "lvl20_min": 32.9
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 22.7,
+  "level20_minute": 32.6,
+  "support_kills_per_match": 3.979,
+  "support_kills_per_10min": 0.965,
+  "support_kills_early_per_match": 1.021
  },
  "5": {
   "hero_id": 5,
@@ -244154,7 +245898,30 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4749,
+  "support_kill_lift": 0.9537,
+  "support_kill_n": 1373,
+  "playback_by_pos": {
+   "4": {
+    "lvl15_min": 28.9
+   },
+   "5": {
+    "scepter_min": 36.1,
+    "scepter_min_n": 68,
+    "shard_min": 24.9,
+    "shard_min_n": 38,
+    "lvl15_min": 29.4,
+    "lvl20_min": 39.5
+   }
+  },
+  "scepter_minute": 36.1,
+  "shard_minute": 24.9,
+  "level15_minute": 29.4,
+  "level20_minute": 39.5,
+  "support_kills_per_match": 1.753,
+  "support_kills_per_10min": 0.467,
+  "support_kills_early_per_match": 0.866
  },
  "50": {
   "hero_id": 50,
@@ -247555,7 +249322,23 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5029,
+  "support_kill_lift": 1.0099,
+  "support_kill_n": 696,
+  "playback_by_pos": {
+   "5": {
+    "lvl15_min": 30.4,
+    "lvl20_min": 40.6
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 30.4,
+  "level20_minute": 40.6,
+  "support_kills_per_match": 1.446,
+  "support_kills_per_10min": 0.38,
+  "support_kills_early_per_match": 0.855
  },
  "51": {
   "hero_id": 51,
@@ -250919,7 +252702,31 @@
   "leash_enemy_min_level": 0,
   "leash_enemy_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5268,
+  "support_kill_lift": 1.058,
+  "support_kill_n": 3392,
+  "playback_by_pos": {
+   "4": {
+    "shard_min": 32.2,
+    "shard_min_n": 45,
+    "lvl15_min": 31.8,
+    "lvl20_min": 42.7
+   },
+   "5": {
+    "shard_min": 32.7,
+    "shard_min_n": 73,
+    "lvl15_min": 31.4,
+    "lvl20_min": 41.2
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 32.2,
+  "level15_minute": 31.8,
+  "level20_minute": 42.7,
+  "support_kills_per_match": 1.405,
+  "support_kills_per_10min": 0.345,
+  "support_kills_early_per_match": 0.608
  },
  "52": {
   "hero_id": 52,
@@ -254344,7 +256151,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4914,
+  "support_kill_lift": 0.9868,
+  "support_kill_n": 1972,
+  "playback_by_pos": {
+   "2": {
+    "shard_min": 38.4,
+    "shard_min_n": 34,
+    "lvl15_min": 21.6,
+    "lvl20_min": 31.1
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 38.4,
+  "level15_minute": 21.6,
+  "level20_minute": 31.1,
+  "support_kills_per_match": 4.636,
+  "support_kills_per_10min": 1.16,
+  "support_kills_early_per_match": 1.407
  },
  "53": {
   "hero_id": 53,
@@ -257799,7 +259624,38 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4894,
+  "support_kill_lift": 0.9827,
+  "support_kill_n": 5826,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 46.3,
+    "scepter_min_n": 34,
+    "shard_min": 37.9,
+    "shard_min_n": 34,
+    "lvl15_min": 20.9,
+    "lvl20_min": 28.9
+   },
+   "2": {
+    "lvl15_min": 21.6,
+    "lvl20_min": 30.1
+   },
+   "3": {
+    "lvl15_min": 23.7
+   },
+   "4": {
+    "lvl15_min": 27.6,
+    "lvl20_min": 36.7
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 23.7,
+  "level20_minute": 0.0,
+  "support_kills_per_match": 4.49,
+  "support_kills_per_10min": 1.165,
+  "support_kills_early_per_match": 1.635
  },
  "54": {
   "hero_id": 54,
@@ -261078,7 +262934,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.472,
+  "support_kill_lift": 0.9478,
+  "support_kill_n": 8477,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 30.3,
+    "scepter_min_n": 598,
+    "lvl15_min": 22.4,
+    "lvl20_min": 30.4
+   }
+  },
+  "scepter_minute": 30.3,
+  "shard_minute": 0.0,
+  "level15_minute": 22.4,
+  "level20_minute": 30.4,
+  "support_kills_per_match": 4.185,
+  "support_kills_per_10min": 1.021,
+  "support_kills_early_per_match": 0.687
  },
  "55": {
   "hero_id": 55,
@@ -264400,7 +266274,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5154,
+  "support_kill_lift": 1.035,
+  "support_kill_n": 2889,
+  "playback_by_pos": {
+   "3": {
+    "scepter_min": 31.8,
+    "scepter_min_n": 204,
+    "shard_min": 31.3,
+    "shard_min_n": 51,
+    "lvl15_min": 23.6,
+    "lvl20_min": 34.5
+   }
+  },
+  "scepter_minute": 31.8,
+  "shard_minute": 31.3,
+  "level15_minute": 23.6,
+  "level20_minute": 34.5,
+  "support_kills_per_match": 2.954,
+  "support_kills_per_10min": 0.73,
+  "support_kills_early_per_match": 0.988
  },
  "56": {
   "hero_id": 56,
@@ -267732,7 +269626,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4786,
+  "support_kill_lift": 0.9612,
+  "support_kill_n": 4354,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 31.9,
+    "scepter_min_n": 132,
+    "shard_min": 17.7,
+    "shard_min_n": 32,
+    "lvl15_min": 22.5,
+    "lvl20_min": 30.9
+   }
+  },
+  "scepter_minute": 31.9,
+  "shard_minute": 17.7,
+  "level15_minute": 22.5,
+  "level20_minute": 30.9,
+  "support_kills_per_match": 5.276,
+  "support_kills_per_10min": 1.305,
+  "support_kills_early_per_match": 1.238
  },
  "57": {
   "hero_id": 57,
@@ -271178,7 +273092,26 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4882,
+  "support_kill_lift": 0.9803,
+  "support_kill_n": 676,
+  "playback_by_pos": {
+   "3": {
+    "lvl15_min": 24.3
+   },
+   "5": {
+    "lvl15_min": 32.3,
+    "lvl20_min": 43.2
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 32.3,
+  "level20_minute": 43.2,
+  "support_kills_per_match": 1.897,
+  "support_kills_per_10min": 0.483,
+  "support_kills_early_per_match": 0.747
  },
  "58": {
   "hero_id": 58,
@@ -274591,7 +276524,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4769,
+  "support_kill_lift": 0.9577,
+  "support_kill_n": 1428,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 24.9,
+    "scepter_min_n": 43,
+    "lvl15_min": 27.6,
+    "lvl20_min": 36.8
+   },
+   "5": {
+    "scepter_min": 26.9,
+    "scepter_min_n": 87,
+    "lvl15_min": 30.2,
+    "lvl20_min": 39.6
+   }
+  },
+  "scepter_minute": 26.9,
+  "shard_minute": 0.0,
+  "level15_minute": 30.2,
+  "level20_minute": 39.6,
+  "support_kills_per_match": 2.365,
+  "support_kills_per_10min": 0.588,
+  "support_kills_early_per_match": 0.774
  },
  "59": {
   "hero_id": 59,
@@ -278045,7 +280002,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4127,
+  "support_kill_lift": 0.8287,
+  "support_kill_n": 1832,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 33.0,
+    "scepter_min_n": 67,
+    "lvl15_min": 21.3,
+    "lvl20_min": 31.4
+   }
+  },
+  "scepter_minute": 33.0,
+  "shard_minute": 0.0,
+  "level15_minute": 21.3,
+  "level20_minute": 31.4,
+  "support_kills_per_match": 3.533,
+  "support_kills_per_10min": 0.965,
+  "support_kills_early_per_match": 1.252
  },
  "6": {
   "hero_id": 6,
@@ -281383,7 +283358,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4843,
+  "support_kill_lift": 0.9726,
+  "support_kill_n": 12102,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 23.3,
+    "scepter_min_n": 579,
+    "shard_min": 35.7,
+    "shard_min_n": 186,
+    "lvl15_min": 21.8,
+    "lvl20_min": 30.5
+   }
+  },
+  "scepter_minute": 23.3,
+  "shard_minute": 35.7,
+  "level15_minute": 21.8,
+  "level20_minute": 30.5,
+  "support_kills_per_match": 4.484,
+  "support_kills_per_10min": 1.102,
+  "support_kills_early_per_match": 1.377
  },
  "60": {
   "hero_id": 60,
@@ -284792,7 +286787,30 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5641,
+  "support_kill_lift": 1.1329,
+  "support_kill_n": 7142,
+  "playback_by_pos": {
+   "2": {
+    "lvl15_min": 24.3
+   },
+   "3": {
+    "scepter_min": 32.9,
+    "scepter_min_n": 34,
+    "shard_min": 30.8,
+    "shard_min_n": 83,
+    "lvl15_min": 24.8,
+    "lvl20_min": 34.2
+   }
+  },
+  "scepter_minute": 32.9,
+  "shard_minute": 30.8,
+  "level15_minute": 24.8,
+  "level20_minute": 34.2,
+  "support_kills_per_match": 4.751,
+  "support_kills_per_10min": 1.191,
+  "support_kills_early_per_match": 1.572
  },
  "61": {
   "hero_id": 61,
@@ -287659,7 +289677,23 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.53,
+  "support_kill_lift": 1.0644,
+  "support_kill_n": 749,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 20.5,
+    "lvl20_min": 28.7
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 20.5,
+  "level20_minute": 28.7,
+  "support_kills_per_match": 4.563,
+  "support_kills_per_10min": 1.244,
+  "support_kills_early_per_match": 1.149
  },
  "62": {
   "hero_id": 62,
@@ -291072,7 +293106,23 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.538,
+  "support_kill_lift": 1.0804,
+  "support_kill_n": 500,
+  "playback_by_pos": {
+   "4": {
+    "lvl15_min": 31.0,
+    "lvl20_min": 41.2
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 31.0,
+  "level20_minute": 41.2,
+  "support_kills_per_match": 2.135,
+  "support_kills_per_10min": 0.547,
+  "support_kills_early_per_match": 1.119
  },
  "63": {
   "hero_id": 63,
@@ -294523,7 +296573,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5241,
+  "support_kill_lift": 1.0526,
+  "support_kill_n": 2610,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 22.4,
+    "lvl20_min": 30.3
+   },
+   "4": {
+    "lvl15_min": 28.7,
+    "lvl20_min": 36.9
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 22.4,
+  "level20_minute": 30.3,
+  "support_kills_per_match": 5.221,
+  "support_kills_per_10min": 1.277,
+  "support_kills_early_per_match": 1.878
  },
  "64": {
   "hero_id": 64,
@@ -297938,7 +300008,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4771,
+  "support_kill_lift": 0.9581,
+  "support_kill_n": 2247,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 35.6,
+    "scepter_min_n": 49,
+    "lvl15_min": 30.9,
+    "lvl20_min": 41.5
+   },
+   "5": {
+    "scepter_min": 37.6,
+    "scepter_min_n": 192,
+    "lvl15_min": 31.0,
+    "lvl20_min": 42.2
+   }
+  },
+  "scepter_minute": 37.6,
+  "shard_minute": 0.0,
+  "level15_minute": 31.0,
+  "level20_minute": 42.2,
+  "support_kills_per_match": 1.639,
+  "support_kills_per_10min": 0.405,
+  "support_kills_early_per_match": 0.891
  },
  "65": {
   "hero_id": 65,
@@ -301394,7 +303488,32 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4756,
+  "support_kill_lift": 0.9551,
+  "support_kill_n": 2006,
+  "playback_by_pos": {
+   "2": {
+    "lvl15_min": 22.4,
+    "lvl20_min": 31.9
+   },
+   "3": {
+    "scepter_min": 35.1,
+    "scepter_min_n": 46,
+    "lvl15_min": 23.4,
+    "lvl20_min": 33.3
+   },
+   "4": {
+    "lvl15_min": 29.1
+   }
+  },
+  "scepter_minute": 35.1,
+  "shard_minute": 0.0,
+  "level15_minute": 23.4,
+  "level20_minute": 33.3,
+  "support_kills_per_match": 3.301,
+  "support_kills_per_10min": 0.829,
+  "support_kills_early_per_match": 1.36
  },
  "66": {
   "hero_id": 66,
@@ -304195,7 +306314,22 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.0,
+  "support_kill_lift": 0.0,
+  "support_kill_n": 145,
+  "playback_by_pos": {
+   "5": {
+    "lvl15_min": 32.1
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 32.1,
+  "level20_minute": 0.0,
+  "support_kills_per_match": 1.043,
+  "support_kills_per_10min": 0.266,
+  "support_kills_early_per_match": 0.652
  },
  "67": {
   "hero_id": 67,
@@ -307453,7 +309587,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.517,
+  "support_kill_lift": 1.0382,
+  "support_kill_n": 7240,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 38.0,
+    "scepter_min_n": 82,
+    "shard_min": 45.2,
+    "shard_min_n": 54,
+    "lvl15_min": 22.6,
+    "lvl20_min": 30.3
+   }
+  },
+  "scepter_minute": 38.0,
+  "shard_minute": 45.2,
+  "level15_minute": 22.6,
+  "level20_minute": 30.3,
+  "support_kills_per_match": 5.37,
+  "support_kills_per_10min": 1.331,
+  "support_kills_early_per_match": 1.496
  },
  "68": {
   "hero_id": 68,
@@ -310773,7 +312927,26 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4712,
+  "support_kill_lift": 0.9463,
+  "support_kill_n": 1042,
+  "playback_by_pos": {
+   "4": {
+    "lvl15_min": 31.6
+   },
+   "5": {
+    "lvl15_min": 31.7,
+    "lvl20_min": 42.7
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 31.7,
+  "level20_minute": 42.7,
+  "support_kills_per_match": 1.792,
+  "support_kills_per_10min": 0.421,
+  "support_kills_early_per_match": 0.766
  },
  "69": {
   "hero_id": 69,
@@ -314198,7 +316371,33 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4227,
+  "support_kill_lift": 0.8488,
+  "support_kill_n": 5134,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 37.3,
+    "scepter_min_n": 31,
+    "lvl15_min": 21.6,
+    "lvl20_min": 30.0
+   },
+   "3": {
+    "scepter_min": 37.8,
+    "scepter_min_n": 225,
+    "shard_min": 26.2,
+    "shard_min_n": 80,
+    "lvl15_min": 23.9,
+    "lvl20_min": 33.0
+   }
+  },
+  "scepter_minute": 37.8,
+  "shard_minute": 26.2,
+  "level15_minute": 23.9,
+  "level20_minute": 33.0,
+  "support_kills_per_match": 2.981,
+  "support_kills_per_10min": 0.721,
+  "support_kills_early_per_match": 1.049
  },
  "7": {
   "hero_id": 7,
@@ -317634,7 +319833,33 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5235,
+  "support_kill_lift": 1.0512,
+  "support_kill_n": 3261,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 21.0,
+    "scepter_min_n": 114,
+    "lvl15_min": 22.1,
+    "lvl20_min": 31.4
+   },
+   "3": {
+    "lvl15_min": 24.5,
+    "lvl20_min": 34.0
+   },
+   "4": {
+    "lvl15_min": 28.6,
+    "lvl20_min": 38.3
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 28.6,
+  "level20_minute": 38.3,
+  "support_kills_per_match": 4.399,
+  "support_kills_per_10min": 1.04,
+  "support_kills_early_per_match": 1.134
  },
  "70": {
   "hero_id": 70,
@@ -320952,7 +323177,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5047,
+  "support_kill_lift": 1.0135,
+  "support_kill_n": 5655,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 30.8,
+    "scepter_min_n": 164,
+    "shard_min": 31.2,
+    "shard_min_n": 78,
+    "lvl15_min": 21.4,
+    "lvl20_min": 29.7
+   }
+  },
+  "scepter_minute": 30.8,
+  "shard_minute": 31.2,
+  "level15_minute": 21.4,
+  "level20_minute": 29.7,
+  "support_kills_per_match": 5.629,
+  "support_kills_per_10min": 1.404,
+  "support_kills_early_per_match": 1.27
  },
  "71": {
   "hero_id": 71,
@@ -324366,7 +326611,33 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5013,
+  "support_kill_lift": 1.0068,
+  "support_kill_n": 3722,
+  "playback_by_pos": {
+   "3": {
+    "lvl15_min": 25.3,
+    "lvl20_min": 34.8
+   },
+   "4": {
+    "scepter_min": 36.7,
+    "scepter_min_n": 99,
+    "lvl15_min": 29.0,
+    "lvl20_min": 38.1
+   },
+   "5": {
+    "lvl15_min": 28.7,
+    "lvl20_min": 37.3
+   }
+  },
+  "scepter_minute": 36.7,
+  "shard_minute": 0.0,
+  "level15_minute": 29.0,
+  "level20_minute": 38.1,
+  "support_kills_per_match": 2.312,
+  "support_kills_per_10min": 0.586,
+  "support_kills_early_per_match": 1.058
  },
  "72": {
   "hero_id": 72,
@@ -327780,7 +330051,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4965,
+  "support_kill_lift": 0.9971,
+  "support_kill_n": 1728,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 19.2,
+    "scepter_min_n": 153,
+    "lvl15_min": 21.2,
+    "lvl20_min": 30.3
+   }
+  },
+  "scepter_minute": 19.2,
+  "shard_minute": 0.0,
+  "level15_minute": 21.2,
+  "level20_minute": 30.3,
+  "support_kills_per_match": 3.714,
+  "support_kills_per_10min": 0.932,
+  "support_kills_early_per_match": 1.091
  },
  "73": {
   "hero_id": 73,
@@ -331234,7 +333523,29 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5131,
+  "support_kill_lift": 1.0305,
+  "support_kill_n": 1448,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 27.9,
+    "scepter_min_n": 227,
+    "lvl15_min": 20.6,
+    "lvl20_min": 28.7
+   },
+   "5": {
+    "scepter_min": 25.7,
+    "scepter_min_n": 54
+   }
+  },
+  "scepter_minute": 27.9,
+  "shard_minute": 0.0,
+  "level15_minute": 20.6,
+  "level20_minute": 28.7,
+  "support_kills_per_match": 2.925,
+  "support_kills_per_10min": 0.742,
+  "support_kills_early_per_match": 0.622
  },
  "74": {
   "hero_id": 74,
@@ -334643,7 +336954,32 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4628,
+  "support_kill_lift": 0.9294,
+  "support_kill_n": 8803,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 27.4,
+    "scepter_min_n": 459,
+    "shard_min": 22.4,
+    "shard_min_n": 160,
+    "lvl15_min": 22.1,
+    "lvl20_min": 31.6
+   },
+   "4": {
+    "scepter_min": 35.0,
+    "scepter_min_n": 30,
+    "lvl15_min": 29.2
+   }
+  },
+  "scepter_minute": 27.4,
+  "shard_minute": 22.4,
+  "level15_minute": 22.1,
+  "level20_minute": 31.6,
+  "support_kills_per_match": 4.166,
+  "support_kills_per_10min": 1.034,
+  "support_kills_early_per_match": 1.276
  },
  "75": {
   "hero_id": 75,
@@ -338023,7 +340359,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4887,
+  "support_kill_lift": 0.9815,
+  "support_kill_n": 2615,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 33.7,
+    "scepter_min_n": 51,
+    "lvl15_min": 30.9,
+    "lvl20_min": 43.5
+   },
+   "5": {
+    "scepter_min": 34.2,
+    "scepter_min_n": 130,
+    "lvl15_min": 31.6,
+    "lvl20_min": 42.4
+   }
+  },
+  "scepter_minute": 34.2,
+  "shard_minute": 0.0,
+  "level15_minute": 31.6,
+  "level20_minute": 42.4,
+  "support_kills_per_match": 1.795,
+  "support_kills_per_10min": 0.45,
+  "support_kills_early_per_match": 1.062
  },
  "76": {
   "hero_id": 76,
@@ -341345,7 +343705,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.448,
+  "support_kill_lift": 0.8996,
+  "support_kill_n": 2806,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 32.4,
+    "scepter_min_n": 75,
+    "lvl15_min": 22.8,
+    "lvl20_min": 32.8
+   }
+  },
+  "scepter_minute": 32.4,
+  "shard_minute": 0.0,
+  "level15_minute": 22.8,
+  "level20_minute": 32.8,
+  "support_kills_per_match": 4.726,
+  "support_kills_per_10min": 1.158,
+  "support_kills_early_per_match": 1.233
  },
  "77": {
   "hero_id": 77,
@@ -344694,7 +347072,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5902,
+  "support_kill_lift": 1.1853,
+  "support_kill_n": 1918,
+  "playback_by_pos": {
+   "3": {
+    "scepter_min": 33.1,
+    "scepter_min_n": 54,
+    "shard_min": 17.1,
+    "shard_min_n": 33,
+    "lvl15_min": 23.8,
+    "lvl20_min": 34.8
+   }
+  },
+  "scepter_minute": 33.1,
+  "shard_minute": 17.1,
+  "level15_minute": 23.8,
+  "level20_minute": 34.8,
+  "support_kills_per_match": 3.773,
+  "support_kills_per_10min": 0.982,
+  "support_kills_early_per_match": 0.99
  },
  "78": {
   "hero_id": 78,
@@ -348108,7 +350506,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5263,
+  "support_kill_lift": 1.057,
+  "support_kill_n": 1879,
+  "playback_by_pos": {
+   "3": {
+    "scepter_min": 20.6,
+    "scepter_min_n": 235,
+    "lvl15_min": 24.4,
+    "lvl20_min": 33.6
+   }
+  },
+  "scepter_minute": 20.6,
+  "shard_minute": 0.0,
+  "level15_minute": 24.4,
+  "level20_minute": 33.6,
+  "support_kills_per_match": 3.364,
+  "support_kills_per_10min": 0.845,
+  "support_kills_early_per_match": 1.102
  },
  "79": {
   "hero_id": 79,
@@ -351188,7 +353604,33 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4186,
+  "support_kill_lift": 0.8406,
+  "support_kill_n": 2420,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 35.9,
+    "scepter_min_n": 95,
+    "shard_min": 29.8,
+    "shard_min_n": 33,
+    "lvl15_min": 31.1,
+    "lvl20_min": 41.5
+   },
+   "5": {
+    "scepter_min": 38.5,
+    "scepter_min_n": 57,
+    "lvl15_min": 30.8,
+    "lvl20_min": 42.6
+   }
+  },
+  "scepter_minute": 38.5,
+  "shard_minute": 0.0,
+  "level15_minute": 30.8,
+  "level20_minute": 42.6,
+  "support_kills_per_match": 1.886,
+  "support_kills_per_10min": 0.458,
+  "support_kills_early_per_match": 0.998
  },
  "8": {
   "hero_id": 8,
@@ -354190,7 +356632,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4715,
+  "support_kill_lift": 0.9469,
+  "support_kill_n": 4810,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 31.5,
+    "scepter_min_n": 284,
+    "lvl15_min": 20.9,
+    "lvl20_min": 29.2
+   }
+  },
+  "scepter_minute": 31.5,
+  "shard_minute": 0.0,
+  "level15_minute": 20.9,
+  "level20_minute": 29.2,
+  "support_kills_per_match": 4.826,
+  "support_kills_per_10min": 1.207,
+  "support_kills_early_per_match": 1.213
  },
  "80": {
   "hero_id": 80,
@@ -357549,7 +360009,30 @@
   "leash_enemy_min_level": 0,
   "leash_enemy_needs_item": 0,
   "stun_self_min_level": 0,
-  "stun_self_needs_item": 0
+  "stun_self_needs_item": 0,
+  "support_kill_share": 0.478,
+  "support_kill_lift": 0.9598,
+  "support_kill_n": 2699,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 22.3,
+    "scepter_min_n": 287,
+    "shard_min": 27.9,
+    "shard_min_n": 42,
+    "lvl15_min": 21.0,
+    "lvl20_min": 32.7
+   },
+   "2": {
+    "lvl15_min": 21.6
+   }
+  },
+  "scepter_minute": 22.3,
+  "shard_minute": 27.9,
+  "level15_minute": 21.0,
+  "level20_minute": 32.7,
+  "support_kills_per_match": 3.613,
+  "support_kills_per_10min": 0.889,
+  "support_kills_early_per_match": 1.028
  },
  "81": {
   "hero_id": 81,
@@ -360951,7 +363434,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5359,
+  "support_kill_lift": 1.0761,
+  "support_kill_n": 1269,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 23.1,
+    "lvl20_min": 31.6
+   },
+   "3": {
+    "lvl15_min": 25.4,
+    "lvl20_min": 35.6
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 23.1,
+  "level20_minute": 31.6,
+  "support_kills_per_match": 5.312,
+  "support_kills_per_10min": 1.301,
+  "support_kills_early_per_match": 1.703
  },
  "82": {
   "hero_id": 82,
@@ -364243,7 +366746,30 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5115,
+  "support_kill_lift": 1.0272,
+  "support_kill_n": 868,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 25.2,
+    "scepter_min_n": 30,
+    "lvl15_min": 21.1
+   },
+   "2": {
+    "scepter_min": 23.3,
+    "scepter_min_n": 44,
+    "lvl15_min": 20.4,
+    "lvl20_min": 28.0
+   }
+  },
+  "scepter_minute": 23.3,
+  "shard_minute": 0.0,
+  "level15_minute": 20.4,
+  "level20_minute": 28.0,
+  "support_kills_per_match": 4.485,
+  "support_kills_per_10min": 1.218,
+  "support_kills_early_per_match": 1.03
  },
  "83": {
   "hero_id": 83,
@@ -367576,7 +370102,30 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5255,
+  "support_kill_lift": 1.0553,
+  "support_kill_n": 2101,
+  "playback_by_pos": {
+   "4": {
+    "lvl15_min": 31.4
+   },
+   "5": {
+    "scepter_min": 38.0,
+    "scepter_min_n": 103,
+    "shard_min": 29.9,
+    "shard_min_n": 85,
+    "lvl15_min": 31.5,
+    "lvl20_min": 42.9
+   }
+  },
+  "scepter_minute": 38.0,
+  "shard_minute": 29.9,
+  "level15_minute": 31.5,
+  "level20_minute": 42.9,
+  "support_kills_per_match": 1.095,
+  "support_kills_per_10min": 0.278,
+  "support_kills_early_per_match": 0.591
  },
  "84": {
   "hero_id": 84,
@@ -371003,7 +373552,34 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5018,
+  "support_kill_lift": 1.0078,
+  "support_kill_n": 2481,
+  "playback_by_pos": {
+   "3": {
+    "lvl15_min": 25.1
+   },
+   "4": {
+    "lvl15_min": 30.2,
+    "lvl20_min": 39.5
+   },
+   "5": {
+    "scepter_min": 33.2,
+    "scepter_min_n": 34,
+    "shard_min": 30.1,
+    "shard_min_n": 45,
+    "lvl15_min": 30.1,
+    "lvl20_min": 41.5
+   }
+  },
+  "scepter_minute": 33.2,
+  "shard_minute": 30.1,
+  "level15_minute": 30.1,
+  "level20_minute": 41.5,
+  "support_kills_per_match": 1.64,
+  "support_kills_per_10min": 0.417,
+  "support_kills_early_per_match": 0.764
  },
  "85": {
   "hero_id": 85,
@@ -374451,7 +377027,39 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5168,
+  "support_kill_lift": 1.0378,
+  "support_kill_n": 9064,
+  "playback_by_pos": {
+   "3": {
+    "scepter_min": 32.7,
+    "scepter_min_n": 142,
+    "shard_min": 31.9,
+    "shard_min_n": 40,
+    "lvl15_min": 23.8,
+    "lvl20_min": 33.6
+   },
+   "4": {
+    "lvl15_min": 28.9,
+    "lvl20_min": 39.7
+   },
+   "5": {
+    "scepter_min": 40.0,
+    "scepter_min_n": 36,
+    "shard_min": 28.5,
+    "shard_min_n": 96,
+    "lvl15_min": 30.4,
+    "lvl20_min": 41.7
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 28.9,
+  "level20_minute": 39.7,
+  "support_kills_per_match": 2.858,
+  "support_kills_per_10min": 0.71,
+  "support_kills_early_per_match": 1.399
  },
  "86": {
   "hero_id": 86,
@@ -377847,7 +380455,41 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5022,
+  "support_kill_lift": 1.0086,
+  "support_kill_n": 9235,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 24.3,
+    "scepter_min_n": 204,
+    "shard_min": 31.3,
+    "shard_min_n": 44,
+    "lvl15_min": 22.5,
+    "lvl20_min": 32.5
+   },
+   "4": {
+    "scepter_min": 37.1,
+    "scepter_min_n": 389,
+    "shard_min": 31.2,
+    "shard_min_n": 164,
+    "lvl15_min": 29.7,
+    "lvl20_min": 40.4
+   },
+   "5": {
+    "scepter_min": 34.6,
+    "scepter_min_n": 47,
+    "lvl15_min": 29.5,
+    "lvl20_min": 39.6
+   }
+  },
+  "scepter_minute": 37.1,
+  "shard_minute": 31.2,
+  "level15_minute": 29.7,
+  "level20_minute": 40.4,
+  "support_kills_per_match": 2.297,
+  "support_kills_per_10min": 0.579,
+  "support_kills_early_per_match": 0.982
  },
  "87": {
   "hero_id": 87,
@@ -381157,7 +383799,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4621,
+  "support_kill_lift": 0.928,
+  "support_kill_n": 2508,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 36.3,
+    "scepter_min_n": 59,
+    "lvl15_min": 31.4,
+    "lvl20_min": 42.9
+   },
+   "5": {
+    "scepter_min": 36.9,
+    "scepter_min_n": 333,
+    "lvl15_min": 31.0,
+    "lvl20_min": 42.5
+   }
+  },
+  "scepter_minute": 36.9,
+  "shard_minute": 0.0,
+  "level15_minute": 31.0,
+  "level20_minute": 42.5,
+  "support_kills_per_match": 1.412,
+  "support_kills_per_10min": 0.347,
+  "support_kills_early_per_match": 0.794
  },
  "88": {
   "hero_id": 88,
@@ -384580,7 +387246,30 @@
   "leash_enemy_min_level": 0,
   "leash_enemy_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4866,
+  "support_kill_lift": 0.9771,
+  "support_kill_n": 2197,
+  "playback_by_pos": {
+   "4": {
+    "scepter_min": 39.9,
+    "scepter_min_n": 69,
+    "shard_min": 33.2,
+    "shard_min_n": 33,
+    "lvl15_min": 29.9,
+    "lvl20_min": 40.5
+   },
+   "5": {
+    "lvl15_min": 30.4
+   }
+  },
+  "scepter_minute": 39.9,
+  "shard_minute": 33.2,
+  "level15_minute": 29.9,
+  "level20_minute": 40.5,
+  "support_kills_per_match": 2.545,
+  "support_kills_per_10min": 0.619,
+  "support_kills_early_per_match": 0.857
  },
  "89": {
   "hero_id": 89,
@@ -387909,7 +390598,23 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4722,
+  "support_kill_lift": 0.9483,
+  "support_kill_n": 684,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 22.2,
+    "lvl20_min": 32.0
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 22.2,
+  "level20_minute": 32.0,
+  "support_kills_per_match": 3.019,
+  "support_kills_per_10min": 0.744,
+  "support_kills_early_per_match": 0.383
  },
  "9": {
   "hero_id": 9,
@@ -391357,7 +394062,35 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.518,
+  "support_kill_lift": 1.0403,
+  "support_kill_n": 2666,
+  "playback_by_pos": {
+   "2": {
+    "lvl15_min": 22.9,
+    "lvl20_min": 32.0
+   },
+   "4": {
+    "scepter_min": 30.1,
+    "scepter_min_n": 151,
+    "lvl15_min": 29.5,
+    "lvl20_min": 40.4
+   },
+   "5": {
+    "scepter_min": 34.2,
+    "scepter_min_n": 51,
+    "lvl15_min": 29.3,
+    "lvl20_min": 41.6
+   }
+  },
+  "scepter_minute": 30.1,
+  "shard_minute": 0.0,
+  "level15_minute": 29.5,
+  "level20_minute": 40.4,
+  "support_kills_per_match": 2.964,
+  "support_kills_per_10min": 0.725,
+  "support_kills_early_per_match": 1.273
  },
  "90": {
   "hero_id": 90,
@@ -394746,7 +397479,38 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5071,
+  "support_kill_lift": 1.0183,
+  "support_kill_n": 4384,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 32.4,
+    "scepter_min_n": 143,
+    "shard_min": 32.5,
+    "shard_min_n": 55,
+    "lvl15_min": 21.0,
+    "lvl20_min": 30.8
+   },
+   "4": {
+    "scepter_min": 32.8,
+    "scepter_min_n": 133,
+    "shard_min": 27.9,
+    "shard_min_n": 32,
+    "lvl15_min": 28.8,
+    "lvl20_min": 39.6
+   },
+   "5": {
+    "lvl15_min": 27.7
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 27.7,
+  "level20_minute": 0.0,
+  "support_kills_per_match": 2.653,
+  "support_kills_per_10min": 0.677,
+  "support_kills_early_per_match": 1.111
  },
  "91": {
   "hero_id": 91,
@@ -398194,7 +400958,32 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5,
+  "support_kill_lift": 1.0041,
+  "support_kill_n": 1224,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 14.6,
+    "scepter_min_n": 82,
+    "lvl15_min": 21.1,
+    "lvl20_min": 29.1
+   },
+   "4": {
+    "lvl15_min": 28.5
+   },
+   "5": {
+    "lvl15_min": 28.1,
+    "lvl20_min": 37.8
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 28.1,
+  "level20_minute": 37.8,
+  "support_kills_per_match": 2.118,
+  "support_kills_per_10min": 0.563,
+  "support_kills_early_per_match": 0.758
  },
  "92": {
   "hero_id": 92,
@@ -401627,7 +404416,22 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5117,
+  "support_kill_lift": 1.0276,
+  "support_kill_n": 942,
+  "playback_by_pos": {
+   "3": {
+    "lvl15_min": 25.7
+   }
+  },
+  "scepter_minute": 0.0,
+  "shard_minute": 0.0,
+  "level15_minute": 25.7,
+  "level20_minute": 0.0,
+  "support_kills_per_match": 3.919,
+  "support_kills_per_10min": 1.059,
+  "support_kills_early_per_match": 1.634
  },
  "93": {
   "hero_id": 93,
@@ -405052,7 +407856,31 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5177,
+  "support_kill_lift": 1.0397,
+  "support_kill_n": 3079,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 25.1,
+    "scepter_min_n": 175,
+    "shard_min": 31.3,
+    "shard_min_n": 55,
+    "lvl15_min": 22.7,
+    "lvl20_min": 31.6
+   },
+   "2": {
+    "lvl15_min": 22.3,
+    "lvl20_min": 30.6
+   }
+  },
+  "scepter_minute": 25.1,
+  "shard_minute": 31.3,
+  "level15_minute": 22.7,
+  "level20_minute": 31.6,
+  "support_kills_per_match": 5.331,
+  "support_kills_per_10min": 1.327,
+  "support_kills_early_per_match": 1.582
  },
  "94": {
   "hero_id": 94,
@@ -408081,7 +410909,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4979,
+  "support_kill_lift": 0.9998,
+  "support_kill_n": 1874,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 40.8,
+    "scepter_min_n": 78,
+    "shard_min": 35.2,
+    "shard_min_n": 43,
+    "lvl15_min": 20.7,
+    "lvl20_min": 29.2
+   }
+  },
+  "scepter_minute": 40.8,
+  "shard_minute": 35.2,
+  "level15_minute": 20.7,
+  "level20_minute": 29.2,
+  "support_kills_per_match": 3.588,
+  "support_kills_per_10min": 0.87,
+  "support_kills_early_per_match": 0.642
  },
  "95": {
   "hero_id": 95,
@@ -411101,7 +413949,25 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.4707,
+  "support_kill_lift": 0.9453,
+  "support_kill_n": 1179,
+  "playback_by_pos": {
+   "1": {
+    "scepter_min": 27.3,
+    "scepter_min_n": 47,
+    "lvl15_min": 20.9,
+    "lvl20_min": 28.5
+   }
+  },
+  "scepter_minute": 27.3,
+  "shard_minute": 0.0,
+  "level15_minute": 20.9,
+  "level20_minute": 28.5,
+  "support_kills_per_match": 3.908,
+  "support_kills_per_10min": 1.077,
+  "support_kills_early_per_match": 1.239
  },
  "96": {
   "hero_id": 96,
@@ -414502,7 +417368,27 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5094,
+  "support_kill_lift": 1.0231,
+  "support_kill_n": 5037,
+  "playback_by_pos": {
+   "3": {
+    "scepter_min": 37.1,
+    "scepter_min_n": 288,
+    "shard_min": 31.6,
+    "shard_min_n": 115,
+    "lvl15_min": 23.9,
+    "lvl20_min": 34.0
+   }
+  },
+  "scepter_minute": 37.1,
+  "shard_minute": 31.6,
+  "level15_minute": 23.9,
+  "level20_minute": 34.0,
+  "support_kills_per_match": 2.291,
+  "support_kills_per_10min": 0.558,
+  "support_kills_early_per_match": 0.621
  },
  "97": {
   "hero_id": 97,
@@ -417966,7 +420852,38 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5213,
+  "support_kill_lift": 1.047,
+  "support_kill_n": 3257,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 20.9,
+    "lvl20_min": 28.7
+   },
+   "2": {
+    "scepter_min": 29.4,
+    "scepter_min_n": 48,
+    "lvl15_min": 22.3,
+    "lvl20_min": 32.6
+   },
+   "3": {
+    "scepter_min": 30.2,
+    "scepter_min_n": 106,
+    "lvl15_min": 24.8,
+    "lvl20_min": 34.3
+   },
+   "4": {
+    "lvl15_min": 30.4
+   }
+  },
+  "scepter_minute": 30.2,
+  "shard_minute": 0.0,
+  "level15_minute": 24.8,
+  "level20_minute": 34.3,
+  "support_kills_per_match": 2.948,
+  "support_kills_per_10min": 0.726,
+  "support_kills_early_per_match": 1.054
  },
  "98": {
   "hero_id": 98,
@@ -421341,7 +424258,33 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5131,
+  "support_kill_lift": 1.0304,
+  "support_kill_n": 5761,
+  "playback_by_pos": {
+   "2": {
+    "scepter_min": 31.9,
+    "scepter_min_n": 50,
+    "lvl15_min": 21.3,
+    "lvl20_min": 30.4
+   },
+   "3": {
+    "scepter_min": 32.1,
+    "scepter_min_n": 188,
+    "shard_min": 37.9,
+    "shard_min_n": 85,
+    "lvl15_min": 22.5,
+    "lvl20_min": 30.9
+   }
+  },
+  "scepter_minute": 32.1,
+  "shard_minute": 37.9,
+  "level15_minute": 22.5,
+  "level20_minute": 30.9,
+  "support_kills_per_match": 4.562,
+  "support_kills_per_10min": 1.128,
+  "support_kills_early_per_match": 1.068
  },
  "99": {
   "hero_id": 99,
@@ -424718,6 +427661,30 @@
   "stun_self_min_level": 0,
   "stun_self_needs_item": 0,
   "fear_self_min_level": 0,
-  "fear_self_needs_item": 0
+  "fear_self_needs_item": 0,
+  "support_kill_share": 0.5508,
+  "support_kill_lift": 1.1062,
+  "support_kill_n": 2567,
+  "playback_by_pos": {
+   "1": {
+    "lvl15_min": 21.8,
+    "lvl20_min": 30.6
+   },
+   "3": {
+    "scepter_min": 23.7,
+    "scepter_min_n": 52,
+    "shard_min": 20.0,
+    "shard_min_n": 30,
+    "lvl15_min": 22.7,
+    "lvl20_min": 31.8
+   }
+  },
+  "scepter_minute": 23.7,
+  "shard_minute": 20.0,
+  "level15_minute": 22.7,
+  "level20_minute": 31.8,
+  "support_kills_per_match": 3.983,
+  "support_kills_per_10min": 1.012,
+  "support_kills_early_per_match": 1.206
  }
 }

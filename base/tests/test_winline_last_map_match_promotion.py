@@ -216,3 +216,46 @@ def test_unknown_format_and_unknown_match_are_not_last(cyberscore):
     assert cyberscore._winline_series_last_map(1, "No Format", "Unknown Type") is False
     assert cyberscore._winline_series_last_map(1, "Team A", "Team B") is False
     assert cyberscore._winline_series_last_map(3, "Yakult Brothers", "Team B") is False
+
+
+# ── диагноз отказа ──────────────────────────────────────────────────────────
+#
+# 22.08.2026 девять карт-троек остались вовсе без цены. В evidence у них
+# `market_status=missing` и пустой `details`, а `series_last_map` скакал между
+# попытками — понять, какой из предохранителей сработал, было нечем. Теперь
+# причина отказа пишется в тот же `miss_fingerprint`, которым уже объясняется
+# ненайденная пара команд.
+
+def test_refusal_reason_is_recorded_when_the_map_is_not_the_decider():
+    """Карта не решающая — подстановка запрещена по замыслу, и это видно."""
+    extract = _extract(BO2_THREE_WAY_MATCH, "VICI GAMING", "OG", 1, False)
+    assert extract.odds == []
+    assert extract.miss_fingerprint == "promotion=not_decider"
+
+
+def test_refusal_reason_names_the_three_way_match_market():
+    """Bo2: «Матч» трёхисходный, подставлять его вместо победителя карты нельзя."""
+    extract = _extract(BO2_THREE_WAY_MATCH, "VICI GAMING", "OG", 3, True)
+    assert extract.odds == []
+    assert "promotion=" in extract.miss_fingerprint
+    assert extract.miss_fingerprint != "promotion=not_decider"
+
+
+def test_successful_promotion_leaves_no_refusal_note():
+    """Когда подстановка сработала, объяснять нечего."""
+    extract = _extract(LAST_MAP_MATCH_ONLY, "REKONIX", "YAKULT BROTHERS", 3, True)
+    assert extract.odds
+    assert not getattr(extract, "miss_fingerprint", "")
+
+
+def test_fingerprint_helper_is_compact_and_machine_readable():
+    assert bk._winline_promotion_fingerprint([], series_last_map=True) == ""
+    assert bk._winline_promotion_fingerprint(
+        [], series_last_map=False) == "promotion=not_decider"
+    assert bk._winline_promotion_fingerprint(
+        ["card_header_silent", "team_order_unproven"],
+        series_last_map=True) == "promotion=card_header_silent,team_order_unproven"
+    # Длинный список режется: строка идёт в evidence по каждой попытке.
+    many = bk._winline_promotion_fingerprint(
+        [f"r{i}" for i in range(9)], series_last_map=True)
+    assert many.count(",") == 3

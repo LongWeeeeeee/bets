@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import hashlib
 import json
 import math
@@ -51,10 +50,27 @@ DEFAULT_RUNTIME_LOCK_PATH = Path(__file__).resolve().parents[1] / "runtime" / "l
 DEFAULT_LIVE_SEGMENT_POLICY_PATH = Path(__file__).resolve().parent / "live_probability_segment_policy.json"
 
 _SNAPSHOT_CACHE: dict[str, Any] | None = None
-_MODEL_FROM_SNAPSHOT_CACHE: dict[str, Any] = {"snapshot_id": None, "model": None}
+# Кэш восстановленных моделей: ДВА слота, а не один, и ключ — состояние, из
+# которого модель строится, а не снимок-обёртка.
+#
+# Один слот с ключом `id(snapshot)` промахивался в ста процентах случаев.
+# `get_matchup_summary` намеренно строит сводку дважды — от базового снимка и от
+# мерженого с рантайм-состоянием, чтобы показать, насколько рейтинг сдвинулся за
+# турнир, — и слот на каждом шаге вытеснялся соседним. Замер: три вызова дали
+# шесть восстановлений, каждое `cache_hit=False`, по 7.5-8 секунд. Это же
+# объясняло, почему процесс жёг больше ядра непрерывно, и растило RSS с 4 ГБ до
+# 6.2: около гигабайта объектов выделялось и освобождалось на каждый запрос, а
+# арены аллокатора обратно системе не отдаются.
+#
+# Ссылка на само состояние хранится рядом с моделью НАМЕРЕННО: без неё словарь
+# мог бы освободиться, а его `id` достаться другому объекту — и кэш отдал бы
+# чужую модель.
+_MODEL_CACHE_SLOTS = 2
+_MODEL_FROM_SNAPSHOT_CACHE: list[tuple[int, Any, Any]] = []
 _RUNTIME_SNAPSHOT_CACHE: dict[str, Any] = {"base_snapshot_id": None, "runtime_signature": None, "snapshot": None}
 _LIVE_PROBABILITY_POLICY_CACHE: dict[str, Any] = {"path": None, "signature": None, "policy": None}
-_LEADERBOARD_RANK_CACHE: dict[str, Any] = {"snapshot_id": None, "rank_map": None}
+_LEADERBOARD_RANK_CACHE: dict[str, Any] = {"table_id": None, "table_ref": None,
+                                            "rank_map": None}
 
 SEGMENT_OVERALL = "overall"
 SEGMENT_TIER1_ONLY = "tier1_only"
@@ -361,16 +377,18 @@ def _coerce_player_ids(raw_player_ids: Any) -> tuple[int, ...]:
 
 
 def _restore_model_from_snapshot(snapshot: dict[str, Any]) -> HybridPlayerRosterEloModel | None:
-    snapshot_id = id(snapshot)
-    if _MODEL_FROM_SNAPSHOT_CACHE.get("snapshot_id") == snapshot_id:
-        model = _MODEL_FROM_SNAPSHOT_CACHE.get("model")
-        return model if isinstance(model, HybridPlayerRosterEloModel) else None
     raw_state = snapshot.get("model_state")
     if not isinstance(raw_state, dict):
         return None
+    state_id = id(raw_state)
+    for i, (cached_id, _state_ref, model) in enumerate(_MODEL_FROM_SNAPSHOT_CACHE):
+        if cached_id == state_id:
+            # Свежеиспользованный слот — в конец, чтобы вытеснялся давний.
+            _MODEL_FROM_SNAPSHOT_CACHE.append(_MODEL_FROM_SNAPSHOT_CACHE.pop(i))
+            return model if isinstance(model, HybridPlayerRosterEloModel) else None
     model = HybridPlayerRosterEloModel.from_state(raw_state)
-    _MODEL_FROM_SNAPSHOT_CACHE["snapshot_id"] = snapshot_id
-    _MODEL_FROM_SNAPSHOT_CACHE["model"] = model
+    _MODEL_FROM_SNAPSHOT_CACHE.append((state_id, raw_state, model))
+    del _MODEL_FROM_SNAPSHOT_CACHE[:-_MODEL_CACHE_SLOTS]
     return model
 
 
@@ -425,7 +443,24 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, ensure_ascii=False, indent=2)
+            # `ensure_ascii=True` и без отступов — не ради красоты файла, а ради
+            # памяти того, кто его читает.
+            #
+            # В названиях команд есть тринадцать эмодзи (🤡, 💢, 🐾 и прочие).
+            # Одного символа вне BMP хватает, чтобы CPython держал ВЕСЬ файл как
+            # UCS-4: замерено на боевом снимке — 365.6 МБ на диске превращаются в
+            # 1462.3 МБ строки, вчетверо. С экранированием в \uXXXX строка
+            # остаётся однобайтовой, и те же данные стоят 731 МБ вместо 1462.
+            # Разобранный словарь от этого не меняется: escape декодируется в тот
+            # же символ.
+            #
+            # Отступы — ещё 102 МБ, 27.9% файла, при 12.7 млн переводов строк.
+            # Читать снимок глазами всё равно невозможно.
+            #
+            # Той же функцией пишется рантайм-состояние (219.5 МБ), так что
+            # выигрыш достаётся обоим. Подпись конфига (`_model_config_signature`)
+            # считается отдельно и от способа записи не зависит.
+            json.dump(payload, fh, separators=(",", ":"))
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp_name, path)
@@ -587,7 +622,13 @@ def _snapshot_with_runtime_model_state(
     merged_meta = dict(snapshot.get("meta") or {})
     merged_meta["runtime_updated_at"] = runtime_payload.get("updated_at")
     merged_snapshot["meta"] = merged_meta
-    merged_snapshot["model_state"] = copy.deepcopy(runtime_payload["model_state"])
+    # Без `copy.deepcopy`: `_load_runtime_model_payload` зовёт `_load_json_dict`,
+    # а тот делает свежий `json.load` без всякого кэша, так что `runtime_payload`
+    # — локальный объект, на который больше никто не ссылается. Копия защищала от
+    # несуществующего совладельца, а стоила 435 МБ: в момент копирования оба
+    # состояния живут разом, 870 МБ вместо 435. Именно до таких пиков дорастают
+    # арены аллокатора, которые процесс потом не отдаёт обратно.
+    merged_snapshot["model_state"] = runtime_payload["model_state"]
     _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = base_snapshot_id
     _RUNTIME_SNAPSHOT_CACHE["runtime_signature"] = signature
     _RUNTIME_SNAPSHOT_CACHE["snapshot"] = merged_snapshot
@@ -595,17 +636,24 @@ def _snapshot_with_runtime_model_state(
 
 
 def _leaderboard_rank_map(snapshot: dict[str, Any]) -> dict[str, int]:
-    snapshot_id = id(snapshot)
+    # Ключ — таблица команд, из которой карта и считается, а НЕ снимок-обёртка.
+    # Мерженый снимок делается через `dict(snapshot)`, то есть `teams_by_org_key`
+    # там буквально тот же объект и результат заведомо тот же; при ключе по
+    # снимку сортировка 59 389 команд выполнялась дважды за вызов впустую.
+    # Ссылка на таблицу хранится рядом, иначе освободившийся `id` мог бы
+    # достаться другому объекту и кэш отдал бы чужую карту.
+    teams_by_org_key = snapshot.get("teams_by_org_key")
+    table_id = id(teams_by_org_key)
     cached_rank_map = _LEADERBOARD_RANK_CACHE.get("rank_map")
     if (
-        _LEADERBOARD_RANK_CACHE.get("snapshot_id") == snapshot_id
+        _LEADERBOARD_RANK_CACHE.get("table_id") == table_id
         and isinstance(cached_rank_map, dict)
     ):
         return cached_rank_map
 
-    teams_by_org_key = snapshot.get("teams_by_org_key")
     if not isinstance(teams_by_org_key, dict):
-        _LEADERBOARD_RANK_CACHE["snapshot_id"] = snapshot_id
+        _LEADERBOARD_RANK_CACHE["table_id"] = table_id
+        _LEADERBOARD_RANK_CACHE["table_ref"] = teams_by_org_key
         _LEADERBOARD_RANK_CACHE["rank_map"] = {}
         return {}
 
@@ -620,7 +668,8 @@ def _leaderboard_rank_map(snapshot: dict[str, Any]) -> dict[str, int]:
         rows.append((str(org_key), current_strength, str(row.get("team_name") or org_key)))
     rows.sort(key=lambda item: (-item[1], item[2].casefold()))
     rank_map = {org_key: idx + 1 for idx, (org_key, _rating, _name) in enumerate(rows)}
-    _LEADERBOARD_RANK_CACHE["snapshot_id"] = snapshot_id
+    _LEADERBOARD_RANK_CACHE["table_id"] = table_id
+    _LEADERBOARD_RANK_CACHE["table_ref"] = teams_by_org_key
     _LEADERBOARD_RANK_CACHE["rank_map"] = rank_map
     return rank_map
 
@@ -1082,6 +1131,31 @@ def build_snapshot(
     return snapshot
 
 
+def load_live_snapshot(
+    snapshot_path: Path = DEFAULT_SNAPSHOT_PATH,
+    runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
+) -> dict[str, Any] | None:
+    """Снимок с ПРИМЕШАННЫМ рантайм-состоянием — то, что нужно живому счёту.
+
+    `load_snapshot` отдаёт базовый файл, который пересобирается редко: на боевой
+    машине он датирован 12.08, тогда как рантайм-состояние обновляется постоянно
+    (20.08 19:22 на момент правки). До этой функции мержем пользовалась одна
+    только сводка матчапа, а признак `hybrid_strength` — и в панели, и на пути
+    ставки — считался по базовому снимку, то есть по рейтингам восьмидневной
+    давности. Причём свежие лежали в том же процессе.
+
+    Обе копии переиспользуются: базовый словарь кэшируется в `_SNAPSHOT_CACHE`,
+    мерженый — в `_RUNTIME_SNAPSHOT_CACHE`, а восстановленная модель — в
+    `_MODEL_FROM_SNAPSHOT_CACHE` по состоянию, из которого построена. Второй
+    разбор 366-мегабайтного файла здесь не происходит.
+    """
+    base = load_snapshot(snapshot_path)
+    if base is None:
+        return None
+    return _snapshot_with_runtime_model_state(
+        base, runtime_model_state_path=runtime_model_state_path)
+
+
 def load_snapshot(snapshot_path: Path = DEFAULT_SNAPSHOT_PATH) -> dict[str, Any] | None:
     global _SNAPSHOT_CACHE
     if isinstance(_SNAPSHOT_CACHE, dict):
@@ -1412,6 +1486,7 @@ def register_live_map_context(
     progress_path: Path = DEFAULT_RUNTIME_PROGRESS_PATH,
     runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
     runtime_lock_path: Path = DEFAULT_RUNTIME_LOCK_PATH,
+    winner_lookup: Any = None,
 ) -> dict[str, Any] | None:
     normalized_series_key = str(series_key or "").strip() or str(match_record.series_id or series_url or map_key)
     normalized_map_key = str(map_key or "").strip()
@@ -1435,16 +1510,25 @@ def register_live_map_context(
             model_config_signature=base_model_config_signature,
             progress_path=progress_path,
         )
-        runtime_model_payload = _load_runtime_model_payload(
-            snapshot=snapshot,
-            runtime_model_state_path=runtime_model_state_path,
-        )
-        model_state = (
-            runtime_model_payload.get("model_state")
-            if isinstance(runtime_model_payload, dict)
-            else snapshot.get("model_state")
-        )
-        model = HybridPlayerRosterEloModel.from_state(model_state if isinstance(model_state, dict) else {})
+        # Модель строится ЛЕНИВО, при первом обращении. Раньше её собирали здесь
+        # безусловно, а нужна она только когда есть завершённая карта, которую
+        # надо провести через рейтинг: разбор 219-мегабайтного рантайм-состояния
+        # занимает 4.3 с, сборка модели ещё 2.6 с, пик 917 МБ — и всё это
+        # выбрасывалось. По логу за 21 день на 10 241 карту приходится 376
+        # применений, то есть впустую шло около 96% вызовов.
+        _model_cell: list = []
+
+        def _model() -> HybridPlayerRosterEloModel:
+            if not _model_cell:
+                payload = _load_runtime_model_payload(
+                    snapshot=snapshot,
+                    runtime_model_state_path=runtime_model_state_path,
+                )
+                state = (payload.get("model_state") if isinstance(payload, dict)
+                         else snapshot.get("model_state"))
+                _model_cell.append(HybridPlayerRosterEloModel.from_state(
+                    state if isinstance(state, dict) else {}))
+            return _model_cell[0]
 
         pending_series = progress["pending_series"]
         applied_maps = progress["applied_maps"]
@@ -1457,11 +1541,44 @@ def register_live_map_context(
             previous_scores = previous_scores_raw if isinstance(previous_scores_raw, dict) else {"first": 0, "second": 0}
             winner_slot = _winner_slot_from_scores(previous_scores, current_scores)
             pending_map = series_state.get("pending_map")
-            if winner_slot is not None and isinstance(pending_map, dict):
+            if isinstance(pending_map, dict):
                 pending_map_key = str(pending_map.get("map_key") or "").strip()
-                if pending_map_key and pending_map_key not in applied_maps:
-                    first_radiant_pending = bool(pending_map.get("first_team_is_radiant"))
-                    radiant_won = winner_slot == ("first" if first_radiant_pending else "second")
+                first_radiant_pending = bool(pending_map.get("first_team_is_radiant"))
+                radiant_won_direct = None
+                if winner_slot is not None:
+                    radiant_won_direct = winner_slot == ("first" if first_radiant_pending else "second")
+                elif winner_lookup is not None and pending_map_key:
+                    # СЧЁТ СЕРИИ НА ЖИВОМ ПУТИ НЕ ДВИГАЕТСЯ. По E-224 внутри окна
+                    # наблюдения одной серии он неизменен, поэтому механизм
+                    # «победитель = сдвиг счёта» не срабатывает НИ РАЗУ: за прогон
+                    # 0 применений этим путём против 390 аварийным подбором, и у
+                    # 132 серий из 132 применена ровно одна карта. Здесь исход
+                    # берётся снаружи: справке передаётся и ключ, и САМА запись
+                    # отложенной карты — по ключу её не опознать, потому что прод
+                    # пишет `match_id = series_id` и все карты серии несут один
+                    # номер. В бою справка спрашивает матчи КОМАНДЫ за сутки
+                    # (`stratz_map_result.series_history`), счёт больше не нужен.
+                    try:
+                        looked = winner_lookup(pending_map_key, pending_map)
+                    except Exception:
+                        looked = None
+                    if isinstance(looked, bool):
+                        radiant_won_direct = looked
+                        winner_slot = (("first" if first_radiant_pending else "second")
+                                       if looked else
+                                       ("second" if first_radiant_pending else "first"))
+                # ЗАЩИТА ОТ ДВОЙНОГО ПРИМЕНЕНИЯ ИДЁТ ПО match_id, А НЕ ПО КЛЮЧУ:
+                # ключ карты в проде меняется по 12 раз за одну карту, и та же
+                # карта под новым ключом прошла бы проверку «ключа нет в
+                # applied_maps» и сдвинула бы рейтинг второй раз.
+                _pm_rec = pending_map.get("match_record") if isinstance(pending_map.get("match_record"), dict) else {}
+                _pm_mid = int(_pm_rec.get("match_id") or 0)
+                _seen_mid = _pm_mid > 0 and any(
+                    int((v or {}).get("match_id") or 0) == _pm_mid
+                    for v in applied_maps.values() if isinstance(v, dict))
+                if (radiant_won_direct is not None and pending_map_key
+                        and pending_map_key not in applied_maps and not _seen_mid):
+                    radiant_won = radiant_won_direct
                     pending_match = _deserialize_match_record(
                         pending_map.get("match_record") if isinstance(pending_map.get("match_record"), dict) else {},
                         radiant_win=radiant_won,
@@ -1477,7 +1594,7 @@ def register_live_map_context(
                         }
                         applied_update = _build_live_applied_update(
                             snapshot=snapshot,
-                            model=model,
+                            model=_model(),
                             match=pending_match,
                             map_key=pending_map_key,
                             series_key=normalized_series_key,
@@ -1513,7 +1630,7 @@ def register_live_map_context(
                 "base_reference_timestamp": int(base_reference_timestamp),
                 "base_model_config_signature": base_model_config_signature,
                 "updated_at": int(time.time()),
-                "model_state": model.export_state(),
+                "model_state": _model().export_state(),
             }
             _write_json_atomic(runtime_model_state_path, runtime_payload)
             _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = None
@@ -1563,16 +1680,25 @@ def finalize_live_series_from_scores(
             model_config_signature=base_model_config_signature,
             progress_path=progress_path,
         )
-        runtime_model_payload = _load_runtime_model_payload(
-            snapshot=snapshot,
-            runtime_model_state_path=runtime_model_state_path,
-        )
-        model_state = (
-            runtime_model_payload.get("model_state")
-            if isinstance(runtime_model_payload, dict)
-            else snapshot.get("model_state")
-        )
-        model = HybridPlayerRosterEloModel.from_state(model_state if isinstance(model_state, dict) else {})
+        # Модель строится ЛЕНИВО, при первом обращении. Раньше её собирали здесь
+        # безусловно, а нужна она только когда есть завершённая карта, которую
+        # надо провести через рейтинг: разбор 219-мегабайтного рантайм-состояния
+        # занимает 4.3 с, сборка модели ещё 2.6 с, пик 917 МБ — и всё это
+        # выбрасывалось. По логу за 21 день на 10 241 карту приходится 376
+        # применений, то есть впустую шло около 96% вызовов.
+        _model_cell: list = []
+
+        def _model() -> HybridPlayerRosterEloModel:
+            if not _model_cell:
+                payload = _load_runtime_model_payload(
+                    snapshot=snapshot,
+                    runtime_model_state_path=runtime_model_state_path,
+                )
+                state = (payload.get("model_state") if isinstance(payload, dict)
+                         else snapshot.get("model_state"))
+                _model_cell.append(HybridPlayerRosterEloModel.from_state(
+                    state if isinstance(state, dict) else {}))
+            return _model_cell[0]
 
         pending_series = progress["pending_series"]
         applied_maps = progress["applied_maps"]
@@ -1605,7 +1731,7 @@ def finalize_live_series_from_scores(
                         }
                         applied_update = _build_live_applied_update(
                             snapshot=snapshot,
-                            model=model,
+                            model=_model(),
                             match=pending_match,
                             map_key=pending_map_key,
                             series_key=normalized_series_key,
@@ -1625,7 +1751,7 @@ def finalize_live_series_from_scores(
                 "base_reference_timestamp": int(base_reference_timestamp),
                 "base_model_config_signature": base_model_config_signature,
                 "updated_at": int(time.time()),
-                "model_state": model.export_state(),
+                "model_state": _model().export_state(),
             }
             _write_json_atomic(runtime_model_state_path, runtime_payload)
             _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = None

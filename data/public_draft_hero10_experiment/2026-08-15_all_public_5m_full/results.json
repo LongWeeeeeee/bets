@@ -1,0 +1,61 @@
+{
+  "schema": {
+    "feature_count": 10,
+    "uses_ingame_or_third_party_stats": false,
+    "win_design": {
+      "kind": "hero_role_pair",
+      "signed": true,
+      "columns": 16764,
+      "pair_min_support": 30
+    },
+    "level_design": {
+      "kind": "hero_role",
+      "signed": false,
+      "columns": 762
+    }
+  },
+  "counts": {
+    "all": 5093540,
+    "train": 5093540,
+    "validation": 0,
+    "test": 0,
+    "shipped_fit_rows": 5093540
+  },
+  "selection": {
+    "win_C": 0.01,
+    "win_validation_log_loss": 0.6667374317073558,
+    "kills_over_median_C": 0.03,
+    "kills_over_median_validation_log_loss": 0.6579290057371644,
+    "kills_ridge_alpha": 1000.0,
+    "kills_validation_mae": 15.936211753991918,
+    "duration_ridge_alpha": 1000.0,
+    "duration_validation_mae": 463.59049187128164,
+    "kills_median_train": 76.0,
+    "kills_saturation_median_train": 0.49263380674344365,
+    "hyperparameters_from": "2026-08-15_all_public_5m",
+    "kills_median_all": 76.0
+  },
+  "held_out_test": false,
+  "quality": {
+    "note": "\u0421\u043e\u0431\u0441\u0442\u0432\u0435\u043d\u043d\u043e\u0433\u043e \u0447\u0435\u0441\u0442\u043d\u043e\u0433\u043e AUC \u0443 \u044d\u0442\u043e\u0433\u043e \u0430\u0440\u0442\u0435\u0444\u0430\u043a\u0442\u0430 \u043d\u0435\u0442: \u043e\u043d \u043e\u0431\u0443\u0447\u0435\u043d \u043d\u0430 \u0432\u0441\u0435\u0445 \u043a\u0430\u0440\u0442\u0430\u0445. \u041e\u0446\u0435\u043d\u043a\u0430 \u0441\u043d\u0438\u0437\u0443 \u2014 0.6256 \u0443 80%-\u043c\u043e\u0434\u0435\u043b\u0438 2026-08-15_all_public_5m \u043d\u0430 \u043e\u0442\u043b\u043e\u0436\u0435\u043d\u043d\u044b\u0445 1 018 708 \u043a\u0430\u0440\u0442\u0430\u0445.",
+    "lower_bound_auc": 0.6255766124282338,
+    "champion_auc_same_rows": 0.6139629591981799,
+    "volume_gain_measured": 0.0079,
+    "expected_extra_from_extrapolation": 0.0014
+  },
+  "split_boundaries": {
+    "train": {
+      "count": 5093540,
+      "first": {
+        "start_time": 1774310401,
+        "map_id": 8741397037
+      },
+      "last": {
+        "start_time": 1786263658,
+        "map_id": 8936770898
+      }
+    },
+    "validation": null,
+    "test": null
+  }
+}

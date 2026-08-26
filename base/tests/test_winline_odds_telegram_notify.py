@@ -76,11 +76,12 @@ def _attempt(p1, p2, status="open"):
     return {"p1_odds": p1, "p2_odds": p2, "market_status": status, "accepted": True}
 
 
-def _notify(payload, sender, clock, *, is_terminal=False):
+def _notify(payload, sender, clock, *, is_terminal=False, map_end_proven=True):
     return cs._winline_odds_telegram_notify(
         payload,
         KEY,
         is_terminal=is_terminal,
+        map_end_proven=map_end_proven,
         send_fn=sender,
         monotonic_fn=clock,
         stamp_fn=lambda: "08:57:12",
@@ -281,6 +282,44 @@ def test_terminal_reported():
 
     assert message is not None
     assert "🏁 Winline" in message and "карта завершена" in message
+
+
+def test_unproven_terminal_is_not_called_map_end(monkeypatch):
+    """Потолок опроса и молчащий фид — остановка опроса, а не конец карты."""
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, "600")
+    sender, clock = Sender(), Clock()
+    _notify(_attempt(4.00, 1.18), sender, clock)
+
+    clock.advance(1.0)
+    message = _notify(
+        _attempt(4.00, 1.18),
+        sender,
+        clock,
+        is_terminal=True,
+        map_end_proven=False,
+    )
+
+    assert message is not None
+    assert "карта завершена" not in message
+    assert "опрос остановлен" in message
+    # Служебный финал одноразовый: троттлинг цен не имеет права его съесть.
+    assert len(sender.calls) == 2
+
+
+def test_unproven_terminal_reported_once():
+    sender, clock = Sender(), Clock()
+    _notify(_attempt(4.00, 1.18), sender, clock)
+
+    clock.advance(10.0)
+    assert _notify(
+        _attempt(4.00, 1.18), sender, clock, is_terminal=True, map_end_proven=False
+    ) is not None
+
+    clock.advance(10.0)
+    assert _notify(
+        _attempt(4.00, 1.18), sender, clock, is_terminal=True, map_end_proven=False
+    ) is None
+    assert len(sender.calls) == 2
 
 
 def test_missing_odds_without_history_stay_silent():
