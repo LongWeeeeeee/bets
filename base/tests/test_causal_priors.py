@@ -16,8 +16,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from causal_priors import (  # noqa: E402
-    K_HERO, K_PLAYER, PRIOR_NAMES, PriorSnapshot, aggregate_side, load_snapshot,
-    save_snapshot, sym_priors,
+    K_HERO, K_PLAYER, PRIOR_NAMES, MapContrib, PriorSnapshot, aggregate_side,
+    load_snapshot, overlay, save_snapshot, sym_priors,
 )
 
 M = len(PRIOR_NAMES)
@@ -168,3 +168,52 @@ class TestSnapshotIO:
                       globals_=np.full(M, 3.0), built_ts=0)
         back = load_snapshot(p)
         assert back.hero_priors([1, 2, 3])[0, 0] == pytest.approx(3.0)
+
+
+def _contrib(heroes, accounts, vr, vd, mask=None):
+    msk = np.ones(M, dtype=bool) if mask is None else np.asarray(mask, dtype=bool)
+    return MapContrib(heroes=list(heroes), accounts=list(accounts),
+                      vr=np.asarray(vr, dtype=np.float32),
+                      vd=np.asarray(vd, dtype=np.float32), mask=msk)
+
+
+class TestOverlay:
+    def test_empty_contribs_leave_lookup_unchanged(self):
+        s = snap(hero={1: entry(10.0, 5.0)}, g=np.full(M, 1.0))
+        before = s.hero_priors([1])[0, 0]
+        out = overlay(s, [])
+        assert out.hero_priors([1])[0, 0] == pytest.approx(before)
+
+    def test_one_map_moves_player_own_kills(self):
+        s = snap(player={101: entry(10.0, 5.0)}, g=np.zeros(M))
+        vr, vd = np.zeros(M), np.zeros(M)
+        vr[0] = 30.0
+        vd[0] = 20.0
+        heroes = list(range(1, 11))
+        accounts = list(range(101, 111))
+        out = overlay(s, [_contrib(heroes, accounts, vr, vd)])
+        # пять слотов радианта получают Vr, снимок не мутируется
+        got = out.player_priors([101])[0, 0]
+        assert got == pytest.approx((10.0 + 30.0) / (5.0 + 1.0 + K_PLAYER))
+        assert s.player_priors([101])[0, 0] == pytest.approx(10.0 / (5.0 + K_PLAYER))
+
+    def test_masked_metric_does_not_change_count(self):
+        s = snap(hero={1: entry(10.0, 5.0)}, g=np.zeros(M))
+        vr, vd = np.full(M, 99.0), np.full(M, 99.0)
+        mask = np.zeros(M, dtype=bool)
+        mask[0] = True
+        vr[0] = 4.0
+        out = overlay(s, [_contrib(list(range(1, 11)), list(range(101, 111)),
+                                   vr, vd, mask)])
+        # own_kills сдвинулся, winrate (последняя) — нет
+        assert out.hero_priors([1])[0, 0] != pytest.approx(s.hero_priors([1])[0, 0])
+        assert out.hero_priors([1])[0, -1] == pytest.approx(s.hero_priors([1])[0, -1])
+
+    def test_unknown_account_appears_with_one_game(self):
+        s = snap(player={101: entry(10.0, 5.0)}, g=np.full(M, 2.0))
+        vr = np.zeros(M); vr[0] = 8.0
+        out = overlay(s, [_contrib(list(range(1, 11)),
+                                   [201] + list(range(102, 111)),
+                                   vr, np.zeros(M))])
+        got = out.player_priors([201])[0, 0]
+        assert got == pytest.approx((8.0 + K_PLAYER * 2.0) / (1.0 + K_PLAYER))

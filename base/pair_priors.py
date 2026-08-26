@@ -96,16 +96,51 @@ def _pair_prior(snap: dict[str, Any], keys: np.ndarray) -> np.ndarray:
     return (s + k * snap["globals"][None, :]) / (c + k)
 
 
+def overlay(snap: dict[str, Any], contribs: Sequence[Any]) -> dict[str, Any]:
+    """Копия парного снимка плюс карты после среза. Исходный dict не мутируется."""
+    from causal_priors import PRIOR_NAMES, TEAM_SLOTS, _apply_updates
+
+    keys = np.array(snap["keys"], copy=True)
+    sums = np.array(snap["sums"], copy=True, dtype=np.float64)
+    counts = np.array(snap["counts"], copy=True, dtype=np.float64)
+    jq = [PRIOR_NAMES.index(m) for m in SYN_METRICS]
+    updates: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    for c in contribs:
+        heroes = [int(h) for h in (c.heroes or [])]
+        if len(heroes) != 2 * TEAM_SLOTS:
+            continue
+        mask = np.asarray(c.mask, dtype=bool)
+        for off, vec in ((0, np.asarray(c.vr, dtype=np.float64)),
+                         (TEAM_SLOTS, np.asarray(c.vd, dtype=np.float64))):
+            for i, j in PAIRS:
+                a, b = heroes[off + i], heroes[off + j]
+                if a <= 0 or b <= 0:
+                    continue
+                pk = pair_key(a, b)
+                ds, dc = updates.get(pk, (np.zeros(2), np.zeros(2)))
+                for col, mi in enumerate(jq):
+                    if mi < len(mask) and mask[mi]:
+                        ds[col] = ds[col] + float(vec[mi])
+                        dc[col] = dc[col] + 1.0
+                updates[pk] = (ds, dc)
+    keys, sums, counts = _apply_updates(keys, sums, counts, updates)
+    return {**snap, "keys": keys, "sums": sums, "counts": counts}
+
+
 def block(heroes10: Sequence[int],
-          hero_priors: np.ndarray) -> dict[str, float] | None:
+          hero_priors: np.ndarray, *,
+          snap: dict[str, Any] | None = None) -> dict[str, float] | None:
     """Восемь колонок по десяти героям и их одиночным приорам.
 
     `hero_priors` — (10, 2) приоры тех же десяти героев ПО ТЕМ ЖЕ двум метрикам
     в порядке `SYN_METRICS`; берутся из боевого снимка, чтобы вычитаемое и
     уменьшаемое считались по одному источнику.
+
+    `snap` — уже наложенная копия снимка. Без него читается кэш процесса.
     """
-    st = _load()
-    snap = st.get("snap")
+    if snap is None:
+        st = _load()
+        snap = st.get("snap")
     if snap is None:
         return None
     try:

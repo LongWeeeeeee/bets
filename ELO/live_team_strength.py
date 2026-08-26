@@ -362,6 +362,22 @@ def _coerce_match_tier(raw_tier: Any) -> LeagueTier | None:
     return None
 
 
+def _id_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _match_id_is_series(match_id: int, series_key: str, series_id: Any = None) -> bool:
+    """sourcetv пишет match_id = series_id — это не уникальный id карты."""
+    mid = int(match_id or 0)
+    if mid <= 0:
+        return False
+    series_num = _id_int(series_key) or _id_int(series_id)
+    return series_num > 0 and mid == series_num
+
+
 def _coerce_player_ids(raw_player_ids: Any) -> tuple[int, ...]:
     if not isinstance(raw_player_ids, (list, tuple)):
         return ()
@@ -1571,11 +1587,21 @@ def register_live_map_context(
                 # ключ карты в проде меняется по 12 раз за одну карту, и та же
                 # карта под новым ключом прошла бы проверку «ключа нет в
                 # applied_maps» и сдвинула бы рейтинг второй раз.
+                # ИСКЛЮЧЕНИЕ: sourcetv пишет `match_id = series_id`. Это не id
+                # карты — после первой применённой карты дедуп глушил остальные
+                # карты серии (Vision–Spirit: одна из пяти).
                 _pm_rec = pending_map.get("match_record") if isinstance(pending_map.get("match_record"), dict) else {}
                 _pm_mid = int(_pm_rec.get("match_id") or 0)
-                _seen_mid = _pm_mid > 0 and any(
-                    int((v or {}).get("match_id") or 0) == _pm_mid
-                    for v in applied_maps.values() if isinstance(v, dict))
+                _mid_is_series = _match_id_is_series(
+                    _pm_mid, normalized_series_key, _pm_rec.get("series_id"))
+                _seen_mid = (
+                    (not _mid_is_series)
+                    and _pm_mid > 0
+                    and any(
+                        int((v or {}).get("match_id") or 0) == _pm_mid
+                        for v in applied_maps.values() if isinstance(v, dict)
+                    )
+                )
                 if (radiant_won_direct is not None and pending_map_key
                         and pending_map_key not in applied_maps and not _seen_mid):
                     radiant_won = radiant_won_direct
@@ -1611,16 +1637,46 @@ def register_live_map_context(
         if current_map_already_applied:
             pending_series.pop(normalized_series_key, None)
         else:
+            # Ключ карты в проде прыгает (.10 .11 … .65) на каждый опрос.
+            # Пока исход неизвестен, pending остаётся, если это ТА ЖЕ карта
+            # (тот же match_id или оба номера — series_id). Другой уникальный
+            # match_id — новая карта, pending сменяется.
+            pending_mid = 0
+            pending_series_id = None
+            if isinstance(series_state, dict) and isinstance(series_state.get("pending_map"), dict):
+                pending_rec = series_state["pending_map"].get("match_record")
+                if isinstance(pending_rec, dict):
+                    pending_mid = int(pending_rec.get("match_id") or 0)
+                    pending_series_id = pending_rec.get("series_id")
+            incoming_mid = int(getattr(match_record, "match_id", 0) or 0)
+            distinct_unique = (
+                incoming_mid > 0
+                and pending_mid > 0
+                and incoming_mid != pending_mid
+                and not _match_id_is_series(incoming_mid, normalized_series_key,
+                                            getattr(match_record, "series_id", None))
+                and not _match_id_is_series(pending_mid, normalized_series_key,
+                                            pending_series_id)
+            )
+            reuse_pending = (
+                applied_update is None
+                and isinstance(series_state, dict)
+                and isinstance(series_state.get("pending_map"), dict)
+                and str(series_state["pending_map"].get("map_key") or "").strip()
+                and not distinct_unique
+            )
             pending_series[normalized_series_key] = {
                 "series_key": normalized_series_key,
                 "series_url": str(series_url or ""),
                 "last_scores": current_scores,
-                "pending_map": {
-                    "map_key": normalized_map_key,
-                    "match_record": _serialize_match_record(match_record),
-                    "first_team_is_radiant": bool(first_team_is_radiant),
-                    "registered_at": int(time.time()),
-                },
+                "pending_map": (
+                    dict(series_state["pending_map"]) if reuse_pending else {
+                        "map_key": normalized_map_key,
+                        "match_record": _serialize_match_record(match_record),
+                        "first_team_is_radiant": bool(first_team_is_radiant),
+                        "registered_at": int(time.time()),
+                    }
+                ),
                 "updated_at": int(time.time()),
             }
 

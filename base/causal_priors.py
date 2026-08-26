@@ -76,6 +76,22 @@ TEAM_SLOTS = 5
 
 
 @dataclass(frozen=True)
+class MapContrib:
+    """Одна доигравшая карта: командные величины на десять слотов.
+
+    Как офлайн-накопление: все пять героев/аккаунтов радианта получают `vr`,
+    все пять дайра — `vd`. Маска отсекает метрики, которых на карте нет
+    (нет поминутного ряда — окна не идут в счётчик).
+    """
+
+    heroes: Sequence[int]
+    accounts: Sequence[int]
+    vr: np.ndarray
+    vd: np.ndarray
+    mask: np.ndarray
+
+
+@dataclass(frozen=True)
 class PriorSnapshot:
     """Накопленное состояние приоров на момент сборки."""
 
@@ -272,3 +288,86 @@ def save_snapshot(path: Path, *, metrics: Iterable[str],
              built_ts=np.int64(built_ts))
     tmp.replace(path)
     return path
+
+
+def _apply_updates(keys: np.ndarray, sums: np.ndarray, counts: np.ndarray,
+                   updates: dict[int, tuple[np.ndarray, np.ndarray]]
+                   ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Добавить дельты по ключу; неизвестный ключ дописывается."""
+    if not updates:
+        return keys, sums, counts
+    m = int(sums.shape[1]) if len(sums) else len(next(iter(updates.values()))[0])
+    if not len(keys):
+        keys = np.zeros(0, dtype=np.int64)
+        sums = np.zeros((0, m), dtype=np.float64)
+        counts = np.zeros((0, m), dtype=np.float64)
+    known = set(int(x) for x in keys.tolist())
+    extra = [k for k in updates if k not in known]
+    if extra:
+        extra_arr = np.asarray(sorted(extra), dtype=np.int64)
+        keys = np.concatenate([keys, extra_arr])
+        z = np.zeros((len(extra_arr), m), dtype=np.float64)
+        sums = np.concatenate([sums.astype(np.float64, copy=False), z])
+        counts = np.concatenate([counts.astype(np.float64, copy=False), z])
+        order = np.argsort(keys)
+        keys, sums, counts = keys[order], sums[order], counts[order]
+    else:
+        sums = np.asarray(sums, dtype=np.float64)
+        counts = np.asarray(counts, dtype=np.float64)
+    for k, (ds, dc) in updates.items():
+        pos = int(np.searchsorted(keys, k))
+        if pos >= len(keys) or int(keys[pos]) != k:
+            continue
+        sums[pos] = sums[pos] + ds
+        counts[pos] = counts[pos] + dc
+    return keys, sums, counts
+
+
+def _add_slots(keys: np.ndarray, sums: np.ndarray, counts: np.ndarray,
+               ids10: np.ndarray, vr: np.ndarray, vd: np.ndarray,
+               mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    updates: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    msk = mask.astype(np.float64)
+    zero = np.zeros_like(vr, dtype=np.float64)
+    for i, kid in enumerate(ids10.tolist()):
+        k = int(kid)
+        if k <= 0:
+            continue
+        vec = vr if i < TEAM_SLOTS else vd
+        ds, dc = updates.get(k, (zero.copy(), np.zeros_like(zero)))
+        ds = ds + np.where(mask, vec, 0.0)
+        dc = dc + msk
+        updates[k] = (ds, dc)
+    return _apply_updates(keys, sums, counts, updates)
+
+
+def overlay(snap: PriorSnapshot, contribs: Sequence[MapContrib]) -> PriorSnapshot:
+    """Копия снимка плюс карты после среза. Исходный снимок не мутируется."""
+    if not contribs:
+        return snap
+    h_keys = np.array(snap.hero_keys, copy=True)
+    h_sums = np.array(snap.hero_sums, copy=True, dtype=np.float64)
+    h_counts = np.array(snap.hero_counts, copy=True, dtype=np.float64)
+    p_keys = np.array(snap.player_keys, copy=True)
+    p_sums = np.array(snap.player_sums, copy=True, dtype=np.float64)
+    p_counts = np.array(snap.player_counts, copy=True, dtype=np.float64)
+    m = len(snap.globals_)
+    for c in contribs:
+        heroes = np.asarray(list(c.heroes), dtype=np.int64)
+        accounts = np.asarray(list(c.accounts), dtype=np.int64)
+        if heroes.shape != (2 * TEAM_SLOTS,) or accounts.shape != (2 * TEAM_SLOTS,):
+            continue
+        vr = np.asarray(c.vr, dtype=np.float64).reshape(-1)
+        vd = np.asarray(c.vd, dtype=np.float64).reshape(-1)
+        mask = np.asarray(c.mask, dtype=bool).reshape(-1)
+        if vr.shape != (m,) or vd.shape != (m,) or mask.shape != (m,):
+            continue
+        h_keys, h_sums, h_counts = _add_slots(
+            h_keys, h_sums, h_counts, heroes, vr, vd, mask)
+        p_keys, p_sums, p_counts = _add_slots(
+            p_keys, p_sums, p_counts, accounts, vr, vd, mask)
+    return PriorSnapshot(
+        metrics=snap.metrics,
+        hero_keys=h_keys, hero_sums=h_sums, hero_counts=h_counts,
+        player_keys=p_keys, player_sums=p_sums, player_counts=p_counts,
+        globals_=snap.globals_, shrink=snap.shrink, built_ts=snap.built_ts)

@@ -1225,3 +1225,52 @@ def test_winner_lookup_failure_is_not_a_loss(tmp_path) -> None:
             first_team_is_radiant=True, match_record=_rec(102),
             winner_lookup=lookup, **common)
         assert r["applied_update"] is None
+
+
+def test_series_level_match_id_does_not_block_the_next_map(tmp_path) -> None:
+    """В sourcetv `match_id = series_id`. Это не уникальный id карты.
+
+    После первой применённой карты дедуп по этому номеру глушил все остальные
+    карты серии — в бою у Vision–Spirit в рейтинг попала одна карта из пяти.
+    """
+    _reset_live_team_strength_caches()
+    env = _live_env(tmp_path)
+    common = dict(series_key="425663", series_url="dltv.org/matches/425663", **env)
+    series_mid = 425663
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(series_mid), **common)
+    first = register_live_map_context(
+        map_key="dltv.org/matches/425663.30", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(series_mid),
+        winner_lookup=lambda key, pm: False, **common)
+    assert first["applied_update"] is not None
+    second = register_live_map_context(
+        map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(series_mid),
+        winner_lookup=lambda key, pm: True, **common)
+    assert second["applied_update"] is not None, "вторая карта серии тоже должна войти"
+    assert second["applied_update"]["map_key"] == "dltv.org/matches/425663.30"
+
+
+def test_jumping_map_keys_do_not_replace_pending_until_applied(tmp_path) -> None:
+    """Один опрос — новый ключ `.10 .11 …`. Пока исход неизвестен, pending тот же."""
+    _reset_live_team_strength_caches()
+    env = _live_env(tmp_path)
+    common = dict(series_key="425663", series_url="dltv.org/matches/425663", **env)
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.10", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(101), **common)
+    for suffix in (11, 12, 27):
+        r = register_live_map_context(
+            map_key=f"dltv.org/matches/425663.{suffix}",
+            first_team_score=0, second_team_score=0,
+            first_team_is_radiant=True, match_record=_rec(101),
+            winner_lookup=lambda key, pm: None, **common)
+        assert r["applied_update"] is None
+    applied = register_live_map_context(
+        map_key="dltv.org/matches/425664.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(102),
+        winner_lookup=lambda key, pm: False, **common)
+    assert applied["applied_update"] is not None
+    assert applied["applied_update"]["map_key"] == "dltv.org/matches/425663.10"

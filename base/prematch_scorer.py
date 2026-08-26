@@ -58,6 +58,14 @@ try:                                   # так же, как в `win_model_veto`
 except ImportError:                    # pragma: no cover
     from base import prematch_components as _C
 
+try:
+    import prematch_live_delta as _DELTA
+except ImportError:                    # pragma: no cover
+    try:
+        from base import prematch_live_delta as _DELTA
+    except ImportError:                # pragma: no cover
+        _DELTA = None
+
 ARTIFACT_PATH = os.getenv(
     "PREMATCH_ARTIFACT",
     str(Path(__file__).resolve().parents[1] / "data" / "prematch_model_artifact_v3.npz"),
@@ -789,7 +797,8 @@ class PrematchModel:
         }
 
     def _acc_side(self, a5: Sequence[int], h5: Sequence[int],
-                  fill: dict, notes: list) -> dict[str, float]:
+                  fill: dict, notes: list,
+                  extra: Optional[dict] = None) -> dict[str, float]:
         """Величины стороны, ключуемые АККАУНТОМ и ячейкой (аккаунт, герой).
 
         Вынесено из `score` без единой правки формул: сдвиг масштаба здесь
@@ -797,8 +806,19 @@ class PrematchModel:
         забытом делении на 100. Метод зовётся, только когда снимок знает всех
         десятерых: иначе первая же строка упала бы по KeyError, и ровно из-за
         этого ветка без аккаунтов была недостижима.
+
+        `extra` — дозапись счётчиков после среза снимка. Накладываются только
+        `games` / `hero_games` / `pos_games`: скользящие окна из дельты не
+        воспроизводятся. Массивы снимка не мутируются.
         """
+        extra = extra or {}
         A = np.array([self.acc[int(a)] for a in a5])
+        if extra:
+            A = np.array(A, copy=True)
+            for i, a in enumerate(a5):
+                add = extra.get(int(a))
+                if add:
+                    A[i, 1] = A[i, 1] + int(add.get("games") or 0)
         cells = [self.acc_hero.get((int(a), int(h))) for a, h in zip(a5, h5)]
         known = [c for c in cells if c is not None]
         # Какие ИМЕННО слоты остались без ячейки (аккаунт, герой). Добавлено на
@@ -815,7 +835,12 @@ class PrematchModel:
                            if (int(a), p) in self.acc_pos)
         if not known:
             notes.append("ни одной ячейки (аккаунт, герой) — hero_* нейтральны")
-        hg = [c[0] if c is not None else 0.0 for c in cells]
+        hg = []
+        for a, h, c in zip(a5, h5, cells):
+            base = float(c[0]) if c is not None else 0.0
+            add = extra.get(int(a)) if extra else None
+            hero_map = (add or {}).get("hero_games") or {}
+            hg.append(base + int(hero_map.get(int(h), 0) or 0))
         # E-177: усреднять надо по ВСЕМ пяти слотам с нулём за отсутствующую
         # ячейку — так собиралась обучающая колонка (`ideas_batch1`:
         # `gr.append(... if c_ and ca else 0.0)`). Среднее только по
@@ -823,6 +848,13 @@ class PrematchModel:
         # обучающей при корреляции 0.85.
         gpm_rel = [c[1] if c is not None else 0.0 for c in cells]
         lh_rel = [c[2] if c is not None else 0.0 for c in cells]
+
+        def _pos_games(a: int, p: int) -> float:
+            base = float(self.acc_pos.get((int(a), p), 0.0))
+            add = extra.get(int(a)) if extra else None
+            pos_map = (add or {}).get("pos_games") or {}
+            return base + int(pos_map.get(p, 0) or 0)
+
         return {
             "elo": A[:, 0].mean(), "games": A[:, 1].mean(), "opp_elo": A[:, 2].mean(),
             "hero_pool": A[:, 3].mean(), "form": A[:, 4].mean(), "imp50": A[:, 5].mean(),
@@ -848,7 +880,7 @@ class PrematchModel:
             "a_nw_rel_pos": A[:, 14].mean() if A.shape[1] > 14 else 0.0,
             "a_hdmg_rel_hero": float(np.mean(
                 [c[3] if (c is not None and len(c) > 3) else 0.0 for c in cells])),
-            "pos_games": float(np.mean([math.log1p(self.acc_pos.get((int(a), p), 0.0))
+            "pos_games": float(np.mean([math.log1p(_pos_games(a, p))
                                         for p, a in enumerate(a5, 1)])),
         }
 
@@ -1006,8 +1038,14 @@ class PrematchModel:
             f["h2h_resid"] = h2h
 
         if _C.ACCOUNT in keys:
-            r, d = (self._acc_side(radiant_accounts, radiant_heroes, fill, notes),
-                    self._acc_side(dire_accounts, dire_heroes, fill, notes))
+            extra: dict = {}
+            if _DELTA is not None:
+                try:
+                    extra = _DELTA.extra_for_accounts(accs, self.snapshot_ts)
+                except Exception:
+                    extra = {}
+            r, d = (self._acc_side(radiant_accounts, radiant_heroes, fill, notes, extra),
+                    self._acc_side(dire_accounts, dire_heroes, fill, notes, extra))
             f.update({
                 "elo": (r["elo"] - d["elo"]) / 400.0,
                 "games": lg1(r["games"]) - lg1(d["games"]),

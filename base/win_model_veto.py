@@ -209,6 +209,18 @@ _DRAFT_FIRST_ONLY = str(os.getenv("WIN_MODEL_DRAFT_FIRST_ONLY", "0")).strip() in
 # Запрет «драфт против стороны ставки». Включён по умолчанию, снимается
 # WIN_MODEL_DRAFT_AGAINST_BLOCK=0 без деплоя.
 _DRAFT_AGAINST_BLOCK = str(os.getenv("WIN_MODEL_DRAFT_AGAINST_BLOCK", "1")).strip() in ("1", "true", "yes", "on")
+# Тот же запрет на STAR-пути: звёздный блок, чья сторона названа вопреки
+# драфтовому компоненту модели, ставки не даёт. До 25.08.2026 запрет стоял
+# только в `model_bet`, а `blocks_veto` сверял знак блока с вердиктом ВСЕЙ
+# модели и про компонент «драфт» не знал — карта RE ARISE 25.08 прошла именно
+# так: ставка модели была отменена, star-ставка на ту же сторону ушла.
+# Замера у правила нет (E-238: на 49 таких ставках винрейт 0.735, из них 47
+# онлайн, на LAN одна) — оно введено решением alex. Снимается
+# WIN_MODEL_STAR_DRAFT_BLOCK=0 без деплоя.
+_STAR_DRAFT_BLOCK = str(os.getenv("WIN_MODEL_STAR_DRAFT_BLOCK", "1")).strip() in ("1", "true", "yes", "on")
+#: Отказы star-запрета печатаются по одному разу на (индекс, сторона).
+_STAR_DRAFT_SEEN: set = set()
+_STAR_DRAFT_MUTE = False
 #: Отказ печатается по одному разу на индекс: `model_bet` зовётся на
 #: каждом тике диспетчера, и строка на вызов залила бы лог.
 _DRAFT_GATE_SEEN: set = set()
@@ -839,6 +851,60 @@ def blocks_veto(block_sign: Any, block: Any, section: str = "") -> bool:
     if model_sign == 0:
         return False
     return int(block_sign) != model_sign
+
+
+def draft_veto(block_sign: Any, block: Any, section: str = "") -> bool:
+    """True, если драфтовый компонент модели тянет ПРОТИВ стороны блока.
+
+    Это `_draft_agrees` для star-пути: там сторона ставки задана знаком
+    индекса, здесь — знаком блока, а правило одно и то же. Вклад драфта в
+    `parts` стоит в ориентации Radiant (E-213), к стороне блока приводится
+    умножением на `block_sign`.
+
+    Молчание драфта возражением НЕ считается: ноль, отсутствие ключа `draft`
+    (ветка `pre_draft` считается вовсе без драфтовых колонок) и отсутствие
+    разложения оставляют блок в силе. E-217 §1: карты, где драфт молчит, дают
+    лучший винрейт, резать их нечем.
+
+    Порог индекса — тот же, что у `blocks_veto`: запрет работает там же, где
+    модели вообще позволено возражать, и ни на карту шире.
+    """
+    global _STAR_DRAFT_MUTE
+    if not _STAR_DRAFT_BLOCK or block_sign not in (1, -1, 1.0, -1.0):
+        return False
+    if not isinstance(block, dict):
+        return False
+    try:
+        index = float(block.get(INDEX_KEY))
+    except (TypeError, ValueError):
+        return False
+    if abs(index) < _min_index_for(section, block.get(SOURCE_KEY)):
+        return False
+    parts = last_parts(index)
+    if not parts:
+        if not _STAR_DRAFT_MUTE:
+            _STAR_DRAFT_MUTE = True
+            print("ВНИМАНИЕ: star-запрет «драфт против стороны» проверять "
+                  "нечем — модель не даёт разложения логита по компонентам",
+                  flush=True)
+        return False                                 # fail-open, как blocks_veto
+    try:
+        toward_block = float(parts.get("draft", 0.0)) * float(block_sign)
+    except (TypeError, ValueError):                  # noqa: BLE001
+        return False
+    if toward_block >= 0.0:
+        return False
+    key = (round(float(index), 2), int(block_sign))
+    if key not in _STAR_DRAFT_SEEN:
+        if len(_STAR_DRAFT_SEEN) > 20000:
+            _STAR_DRAFT_SEEN.clear()
+        _STAR_DRAFT_SEEN.add(key)
+        print(f"[win_model] star-блок отменён: драфт против стороны "
+              f"({'radiant' if block_sign > 0 else 'dire'}, секция "
+              f"{section or '?'}, индекс {index:+.2f}, вклад драфта "
+              f"{float(parts.get('draft', 0.0)):+.4f} в ориентации Radiant)",
+              flush=True)
+    return True
 
 
 def model_bet(*blocks) -> Optional[dict]:

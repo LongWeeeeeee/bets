@@ -143,6 +143,51 @@ class TestPairArithmetic:
         for c in pair_priors.COLUMNS[:4]:
             assert got[c] == pytest.approx(0.0, abs=1e-9)
 
+    def test_overlay_moves_pair_own_kills(self):
+        key = pair_priors.pair_key(1, 2)
+        snap = {
+            "keys": np.array([key], dtype=np.int64),
+            "sums": np.array([[10.0, 1.0]], dtype=np.float64),
+            "counts": np.array([[5.0, 5.0]], dtype=np.float64),
+            "globals": np.array([0.0, 0.0], dtype=np.float64),
+            "k": 120.0,
+            "metrics": list(pair_priors.SYN_METRICS),
+            "built_ts": 0,
+        }
+        from causal_priors import PRIOR_NAMES, MapContrib
+
+        m = len(PRIOR_NAMES)
+        vr, vd = np.zeros(m), np.zeros(m)
+        mask = np.zeros(m, dtype=bool)
+        vr[PRIOR_NAMES.index("own_kills")] = 30.0
+        mask[PRIOR_NAMES.index("own_kills")] = True
+        contrib = MapContrib(
+            heroes=list(range(1, 11)), accounts=list(range(101, 111)),
+            vr=vr, vd=vd, mask=mask)
+        out = pair_priors.overlay(snap, [contrib])
+        assert out is not snap
+        pos = int(np.searchsorted(out["keys"], key))
+        assert out["sums"][pos, 0] == pytest.approx(40.0)
+        assert out["counts"][pos, 0] == pytest.approx(6.0)
+        assert snap["sums"][0, 0] == pytest.approx(10.0)
+
+    def test_block_uses_overlaid_snap(self):
+        key = pair_priors.pair_key(1, 2)
+        snap = {
+            "keys": np.array([key], dtype=np.int64),
+            "sums": np.array([[1200.0, 0.0]], dtype=np.float64),
+            "counts": np.array([[10.0, 0.0]], dtype=np.float64),
+            "globals": np.array([0.0, 0.0], dtype=np.float64),
+            "k": 120.0,
+            "metrics": list(pair_priors.SYN_METRICS),
+            "built_ts": 0,
+        }
+        hp = np.zeros((10, 2))
+        got = pair_priors.block(list(range(1, 11)), hp, snap=snap)
+        assert got is not None
+        # пара 1+2 есть только у радианта — syn0_mean_diff должен быть > 0
+        assert got["F8_pair_syn0_mean_diff"] > 0.0
+
 
 class TestHybrid:
     def test_columns_are_two_positional(self):

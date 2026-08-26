@@ -177,6 +177,44 @@ def test_a_snapshot_round_trip_keeps_the_numbers(tmp_path):
     assert back.features(NOW, ACCOUNTS) == st.features(NOW, ACCOUNTS)
 
 
+def test_advance_newer_than_skips_the_cut_and_applies_what_follows():
+    """Ночной снимок не должен второй раз проводить карту, которой закрыт эталон.
+
+    Compact-корпус шире гибридного подмножества: карты старше среза, которых
+    в эталоне не было, тоже нельзя догонять задним числом — иначе причинность
+    рейтинга поедет. Проводятся только ts > last_ts.
+    """
+    ts = np.array([NOW - 1000, NOW, NOW + 1000, NOW + 2000], dtype=np.int64)
+    accounts = np.array([ACCOUNTS, ACCOUNTS, ACCOUNTS, ACCOUNTS], dtype=np.int64)
+    wins = np.array([1, 1, 0, 1], dtype=np.int8)
+
+    cut = T.RatingState()
+    cut.advance(int(ts[1]), ACCOUNTS, True)
+    frozen = cut.features(NOW + 3000, ACCOUNTS)
+
+    skipped = T.RatingState()
+    skipped.advance(int(ts[1]), ACCOUNTS, True)
+    n0, newest0 = T.advance_newer_than(skipped, ts[:2], accounts[:2], wins[:2],
+                                       last_ts=int(ts[1]))
+    assert n0 == 0 and newest0 == int(ts[1])
+    assert skipped.features(NOW + 3000, ACCOUNTS) == frozen
+
+    moved = T.RatingState()
+    moved.advance(int(ts[1]), ACCOUNTS, True)
+    n, newest = T.advance_newer_than(moved, ts, accounts, wins, last_ts=int(ts[1]))
+    assert n == 2 and newest == int(ts[3])
+    assert moved.features(NOW + 3000, ACCOUNTS) != frozen
+
+
+def test_advance_newer_than_accepts_unsorted_maps():
+    ts = np.array([NOW + 2000, NOW - 50, NOW + 1000], dtype=np.int64)
+    accounts = np.array([ACCOUNTS, ACCOUNTS, ACCOUNTS], dtype=np.int64)
+    wins = np.array([1, 1, 0], dtype=np.int8)
+    st = T.RatingState()
+    n, newest = T.advance_newer_than(st, ts, accounts, wins, last_ts=NOW)
+    assert n == 2 and newest == NOW + 2000
+
+
 def test_empty_snapshot_is_valid():
     st = T.RatingState.from_arrays(np.zeros(0, np.int64), np.zeros((0, 3)),
                                    np.zeros((0, 2), np.int64), np.zeros((0, 3)),
