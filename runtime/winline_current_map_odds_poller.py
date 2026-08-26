@@ -316,6 +316,29 @@ WINLINE_ODDS_HISTORY_PATH = str(
 ).strip()
 
 
+def _history_miss_fields(attempt: dict) -> dict:
+    """Поля, объясняющие промах опроса, для записи истории.
+
+    `match_found=False` — карточки пары на странице не было вовсе;
+    `match_found=True` при пустых ценах — карточка есть, а рынка карты нет;
+    `page_valid=False` — страница не загрузилась, и промах вообще не про рынок.
+    Причины парсера и текст ошибки обрезаны: журнал пишется на каждый переход.
+    """
+    out = {
+        "match_found": attempt.get("match_found"),
+        "page_valid": attempt.get("page_valid"),
+        "miss_fingerprint": attempt.get("miss_fingerprint") or None,
+    }
+    reasons = attempt.get("parser_failure_reasons") or []
+    if isinstance(reasons, (list, tuple)) and reasons:
+        out["parser_failure_reasons"] = [str(r)[:60] for r in list(reasons)[:4]]
+    for key in ("error", "acquisition_error"):
+        value = attempt.get(key)
+        if value:
+            out[key] = str(value)[:160]
+    return out
+
+
 class WinlineCurrentMapOddsPoller:
     """Serial 5-second whole-map poller state machine (no sleep)."""
 
@@ -828,6 +851,9 @@ class WinlineCurrentMapOddsPoller:
             "card_team_order": result.get("card_team_order"),
             "card_odds": result.get("card_odds"),
             "miss_fingerprint": result.get("miss_fingerprint"),
+            # Найдена ли карточка пары на странице. Без этого «карточки нет» и
+            # «карточка есть, а строки карты нет» в evidence неразличимы.
+            "match_found": result.get("match_found"),
             # Возраст DOM: сколько секунд подпись страницы не менялась к моменту
             # опроса. Отличает «цена отстала» (страница замерла) от «сторона уехала».
             "dom_age_seconds": (
@@ -922,6 +948,14 @@ class WinlineCurrentMapOddsPoller:
                 "odds_promoted_from_match": attempt.get("odds_promoted_from_match"),
                 "dom_age_seconds": attempt.get("dom_age_seconds"),
             }
+            # Причина промаха — только у промахов: у открытого рынка она пустая, а
+            # запись идёт на каждый переход, и лишние поля это мегабайты в сутки.
+            # 26.08.2026: по паре Nemiga Gaming — PuckChamp 359 попыток подряд
+            # дали `market_status=missing` при верном ключе опроса, и по журналу
+            # нельзя было понять, чего именно не нашлось — карточки на странице
+            # или строки карты внутри неё.
+            if str(attempt.get("market_status") or "") != "open":
+                record.update(_history_miss_fields(attempt))
             line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
