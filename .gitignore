@@ -176,3 +176,6 @@ data/prematch_model_spec*.json
 # Бэкапы прод-файлов любой формы. Прежнее правило *.bak_* не ловило .bak3_ и .removed_
 *.bak*
 *.removed_*
+
+# stderr-редиректы демонов в корне runtime/ (protect_oom.err и подобные)
+runtime/*.err
