@@ -422,6 +422,18 @@ class WinlineCurrentMapOddsPoller:
             "team1": str(team1 or "").strip(),
             "team2": str(team2 or "").strip(),
         }
+        # Id матча в архив линии. Без него запись нельзя сцепить с корпусом:
+        # в режиме sourcetv ключ серии это `sourcetv:league:<id>` и номера карты
+        # мало (E-103: контроль «ставка на ценового фаворита» падал до 49%).
+        # Приходит из `**_extra`, отсутствие не ломает ничего — поле останется
+        # пустым ровно как раньше.
+        _mid = _extra.get("match_id") if isinstance(_extra, dict) else None
+        try:
+            _mid = int(_mid) if _mid is not None and int(_mid) > 0 else None
+        except (TypeError, ValueError):
+            _mid = None
+        if _mid:
+            identity["match_id"] = _mid
         status = _eval_map_current(self._is_map_current, identity=identity)
         if not status["current"]:
             return False
@@ -883,7 +895,17 @@ class WinlineCurrentMapOddsPoller:
 
             identity = self._identity if isinstance(self._identity, dict) else {}
             record = {
-                "wall": attempt.get("wall"),
+                # attempt не содержит ключа "wall" — там attempt_started_at /
+                # attempt_finished_at. Из-за этого метка времени была null во всех
+                # записях, и архив линии нельзя было сцепить с корпусом иначе как
+                # по номеру карты (E-100: контроль падал до 49%).
+                "wall": (
+                    attempt.get("wall")
+                    or attempt.get("attempt_finished_at")
+                    or attempt.get("attempt_started_at")
+                    or time.time()
+                ),
+                "match_id": (identity.get("match_id") or identity.get("map_id")),
                 "canonical_key": self._canonical_key,
                 "match_url": identity.get("url") or identity.get("match_url"),
                 "map_num": identity.get("map_num"),
