@@ -180,3 +180,30 @@ data/prematch_model_spec*.json
 
 # stderr-редиректы демонов в корне runtime/ (protect_oom.err и подобные)
 runtime/*.err
+
+# --- Локальные состояния инструментов. Раньше жили в .git/info/exclude,
+#     который git между машинами НЕ передаёт: на Маке было 70 правил, на serv1
+#     54, и один и тот же файл был невидим на одной машине и «грязным» на
+#     другой. Это и была корневая причина расхождений, которую не лечил
+#     ни pull, ни .gitignore. Сведено в общий файл 2026-08-26.
+.vscode/
+**/.claude/scheduled_tasks.lock
+**/.claude/scheduled_tasks.json
+**/.claude/routines/.state/
+**/.claude/worktrees/
+**/.claude/checkpoints/
+**/.claude/mailbox/
+**/.claude/agent-registry.json
+**/.claude/agent-memory-local
+**/.claude/first-run
+**/.claude/assistant-daemon-state.json
+.claude/hooks/codemap-reminder.sh
+
+# Черновые копии прод-файлов схемы *.baseline_* (*.bak* и *.removed_* закрыты
+# выше). По docs/SERVER_LAYOUT.md таким копиям место в base/_archive/backups/.
+*.baseline_*
+
+# Черновик без единого потребителя, закоммичен по недосмотру: семь строк,
+# целиком закомментированы, путь захардкожен под конкретную машину. Снят из
+# индекса, файл на диске остаётся.
+base/test.py
