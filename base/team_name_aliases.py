@@ -95,6 +95,13 @@ TEAM_NAME_ALIASES: Dict[str, Tuple[str, ...]] = {
     # ARISE = 1. Матч шёл, кэфы не приходили всю карту. Канон — официальное имя
     # (Asgard Championship S1, 05.08: `Syntax vs RE Arise`).
     "Team Syntax": ("Team Synapse",),
+    # 26.08.2026, квал BLAST Slam: у нас `RE.Arise`, на живой странице Winline та
+    # же пара подписана `YELLOW SUBMARINE 4IKIBAMBONI` — прошлое имя того же
+    # состава (подсказал alex). Замер по странице в тот момент: `arise` — 0
+    # вхождений и в тексте, и в html, `4ikibamboni` — 1. Карточка не находилась,
+    # кэфы по карте не шли ни разу (`promotion=no_card_scope`, `match_found=false`).
+    # Строка редкая, склеить ею чужую команду нельзя.
+    "RE.Arise": ("4IKIBAMBONI",),
 }
 
 
