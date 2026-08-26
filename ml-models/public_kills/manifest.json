@@ -1,0 +1,16 @@
+{
+  "models": [
+    "publogit_dur43",
+    "publogit_rad27_signed_broken",
+    "publogit_team27_dire",
+    "publogit_team27_rad",
+    "publogit_tot51",
+    "publogit_w_10_20",
+    "publogit_w_15_25",
+    "publogit_w_20_30",
+    "publogit_w_5_15"
+  ],
+  "maps": 5093540,
+  "tolerance": 0.0001,
+  "mismatched": []
+}
