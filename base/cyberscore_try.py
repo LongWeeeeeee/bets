@@ -7661,7 +7661,10 @@ def _star_match_status_from_diags(
         and all_sign in (-1, 1)
         and late_sign in (-1, 1)
     )
-    if match_tier == 2 and STAR_REQUIRE_TIER2_SAME_SIGN:
+    # Tier 3 — явно разрешённые команды открытых квалификаций: требование
+    # одинакового знака к ним применяем ТОЖЕ, иначе допуск вышел бы мягче,
+    # чем у настоящих tier2-матчей.
+    if match_tier in (2, 3) and STAR_REQUIRE_TIER2_SAME_SIGN:
         if not (
             (has_early_star and early_sign == late_sign)
             or (all_can_replace_missing_early and all_sign == late_sign)
@@ -19983,6 +19986,103 @@ def _determine_star_signal_match_tier(radiant_team_id: int, dire_team_id: int) -
     return 1
 
 
+def _is_tier_three_team(team_ids: Any, team_name: str) -> bool:
+    """Команда есть в явном tier-3 списке — по id или по нормализованному имени."""
+    try:
+        from tier_three_teams import TIER_THREE_TEAMS
+    except Exception:
+        return False
+    candidate_ids = set(_extract_candidate_team_ids(team_ids))
+    name_key = _normalize_tier_team_name_only(team_name)
+    for alias, ids in TIER_THREE_TEAMS.items():
+        known_ids = _extract_team_ids(ids)
+        if candidate_ids and known_ids and (candidate_ids & known_ids):
+            return True
+        if name_key and _normalize_tier_team_name_only(str(alias)) == name_key:
+            return True
+    return False
+
+
+def _team_identity_missing(team_ids: Any, team_name: str) -> bool:
+    """У стороны нет ни id, ни названия — Valve не завёл команду вовсе.
+
+    Именно так приезжают открытые квалификации: `radiant=[0]`, а имя проба
+    подменяет заглушкой 'Radiant'. Отличать это от «команда с редким названием»
+    обязательно: во втором случае её нужно заводить, а не пускать безымянной.
+    """
+    if _extract_candidate_team_ids(team_ids):
+        return False
+    try:
+        from tier_three_teams import ANONYMOUS_TEAM_NAMES
+    except Exception:
+        ANONYMOUS_TEAM_NAMES = frozenset({"", "radiant", "dire"})
+    return str(team_name or "").strip().lower() in ANONYMOUS_TEAM_NAMES
+
+
+def _classify_tier_three_sides(
+    radiant_team_ids: Any,
+    radiant_team_name: str,
+    dire_team_ids: Any,
+    dire_team_name: str,
+    league_id: Any = None,
+) -> Optional[Tuple[int, int]]:
+    """(radiant_id, dire_id), если матч пускает tier-3 allowlist; иначе None.
+
+    Пускаем в двух случаях:
+
+    * лига впущена руками (`TOURNAMENT_LEAGUE_ID_ALLOWLIST`) — это открытые
+      квалификации на чужом тикете, где опознание команд заведомо неполное:
+      26.08.2026 на тикете 10877 одновременно шли одиннадцать карт квала
+      BLAST Slam, и у половины сторон Valve не отдавал ни id, ни названия.
+      Перечислять там команды руками бессмысленно — их состав меняется каждый
+      круг;
+    * либо ХОТЯ БЫ ОДНА сторона названа в `TIER_THREE_TEAMS`, а вторая — тоже в
+      нём, либо уже известна как tier1/tier2, либо безымянна. Безымянная сторона
+      сама по себе гейт не открывает: иначе правило впускало бы любой матч без
+      опознания.
+
+    Матч в обоих случаях идёт как tier 3 и БЕЗ авто-добавления команд в tier2.
+
+    None означает «правило не про этот матч» — дальше работает прежний путь,
+    поведение обычных матчей не меняется. В частности, None возвращается, когда
+    обе команды и так известны как tier1/tier2: их тир считается как раньше.
+    """
+    resolved_radiant = _resolve_known_team_id_without_side_effects(radiant_team_ids, radiant_team_name)
+    resolved_dire = _resolve_known_team_id_without_side_effects(dire_team_ids, dire_team_name)
+    if _get_team_tier(resolved_radiant) in (1, 2) and _get_team_tier(resolved_dire) in (1, 2):
+        return None
+
+    try:
+        league_admitted = int(league_id or 0) in TOURNAMENT_LEAGUE_ID_ALLOWLIST
+    except (TypeError, ValueError):
+        league_admitted = False
+    if league_admitted:
+        return int(resolved_radiant or 0), int(resolved_dire or 0)
+
+    r_listed = _is_tier_three_team(radiant_team_ids, radiant_team_name)
+    d_listed = _is_tier_three_team(dire_team_ids, dire_team_name)
+    if not (r_listed or d_listed):
+        return None
+
+    def _side_ok(listed: bool, team_ids: Any, team_name: str, other_listed: bool) -> Optional[int]:
+        resolved = _resolve_known_team_id_without_side_effects(team_ids, team_name)
+        if listed:
+            return int(resolved or 0)
+        if _get_team_tier(resolved) in (1, 2):
+            return int(resolved)
+        if other_listed and _team_identity_missing(team_ids, team_name):
+            return 0
+        return None
+
+    radiant_id = _side_ok(r_listed, radiant_team_ids, radiant_team_name, d_listed)
+    if radiant_id is None:
+        return None
+    dire_id = _side_ok(d_listed, dire_team_ids, dire_team_name, r_listed)
+    if dire_id is None:
+        return None
+    return int(radiant_id), int(dire_id)
+
+
 def _maybe_bypass_tier1_bookmaker_presence_reject(
     *,
     match_key: str,
@@ -26200,6 +26300,36 @@ def _try_dispatch_early_winner_kills_window(
         _release_signal_send_slot(match_key)
 
 
+def _prematch_late_block_conflict(
+    mid_output: Optional[Dict[str, Any]],
+    selected_star_wr: Optional[int] = None,
+) -> str:
+    """Метка конфликта ПОЗДНЕГО star-блока с моделью; пусто — конфликта нет.
+
+    Поздний блок отменяется двумя вето: `win_model_veto` — знак блока против
+    вердикта всей модели, `draft_against_side` — драфтовый компонент модели тянет
+    против стороны блока. Оба означают одно: поздние звёзды и модель смотрят в
+    разные стороны.
+    """
+    if not isinstance(mid_output, dict):
+        return ""
+    try:
+        target_wr = int(selected_star_wr or TIER_SIGNAL_MIN_THRESHOLD_TIER2)
+    except (TypeError, ValueError):
+        target_wr = TIER_SIGNAL_MIN_THRESHOLD_TIER2
+    try:
+        diag = _star_block_diagnostics(
+            raw_block=mid_output,
+            target_wr=target_wr,
+            section="mid_output",
+        )
+    except Exception as exc:
+        logger.warning("late block conflict check failed: %s", exc)
+        return ""
+    status = str((diag or {}).get("status") or "")
+    return status if status in ("win_model_veto", "draft_against_side") else ""
+
+
 def _try_dispatch_prematch_model_bet(
     *,
     match_key: str,
@@ -26246,6 +26376,18 @@ def _try_dispatch_prematch_model_bet(
         return False
     bet = win_model_veto.model_bet(early_output, mid_output, all_output)
     if not bet:
+        return False
+    # Правило alex (26.08.2026, карта Synapse — Nemiga Gaming): ставка «на 00» не
+    # идёт, когда ПОЗДНИЙ star-блок смотрит в другую сторону и отменён вето
+    # модели. Там поздние звёзды показывали на Synapse, вето сняло блок
+    # (`late=win_model_veto(side=radiant)`), а модель тут же отправила ставку на
+    # Nemiga: два наших источника разошлись, и ставить в этот момент не на что.
+    _late_conflict = _prematch_late_block_conflict(mid_output, selected_star_wr)
+    if _late_conflict:
+        print(
+            "   ⛔ Ставка предматчевой модели отменена: поздний star-блок "
+            f"против модели ({_late_conflict}) — {match_key}"
+        )
         return False
     try:
         game_time_value = float(game_time_seconds or 0.0)
@@ -29808,6 +29950,143 @@ def _extract_cyberscore_match_row(html: str, match_id: Union[int, str]) -> Optio
     return None
 
 
+_CYBERSCORE_STEAM_ROW_RE = re.compile(r'"id_steam":(\d+)')
+#: Личность матча из листинга cyberscore: сколько секунд держать один снимок.
+#: Цикл прода ~48 c, поэтому один заход в браузер обслуживает целый цикл.
+SOURCETV_IDENTITY_TTL = float(os.getenv("SOURCETV_IDENTITY_FALLBACK_TTL", "90"))
+SOURCETV_IDENTITY_FALLBACK = _env_flag("SOURCETV_IDENTITY_FALLBACK", "1")
+_sourcetv_identity_cache: Dict[str, Any] = {"at": 0.0, "rows": {}}
+
+
+def _parse_cyberscore_rows_by_steam_id(html: Any) -> Dict[int, Dict[str, Any]]:
+    """Строки листинга cyberscore, разложенные по dota match_id (`id_steam`).
+
+    Ключ `id_steam` — это ровно тот номер матча, которым живёт мост SourceTV
+    (проверено 26.08.2026 на четырёх живых картах: совпали и время, и счёт).
+    Поэтому сшивка точная, без сопоставления по названиям и героям.
+    """
+    text = str(html or "")
+    if not text:
+        return {}
+    chunks = _decode_next_flight_chunks_from_html(text)
+    blob = "\n".join(chunks) if chunks else text
+    out: Dict[int, Dict[str, Any]] = {}
+    for match in _CYBERSCORE_STEAM_ROW_RE.finditer(blob):
+        start = blob.rfind('{"id":', 0, match.start())
+        if start < 0:
+            continue
+        raw_object = _extract_balanced_json_object(blob, start)
+        if not raw_object:
+            continue
+        try:
+            row = json.loads(raw_object)
+        except Exception:
+            continue
+        if not isinstance(row, dict):
+            continue
+        try:
+            steam_id = int(row.get("id_steam") or 0)
+        except (TypeError, ValueError):
+            continue
+        if steam_id > 0:
+            out.setdefault(steam_id, row)
+    return out
+
+
+def _cyberscore_row_team_names(row: Any) -> Tuple[str, str]:
+    """Названия сторон из строки листинга (radiant, dire)."""
+    if not isinstance(row, dict):
+        return "", ""
+    radiant = row.get("team_radiant")
+    dire = row.get("team_dire")
+    radiant_name = str((radiant or {}).get("name") or "").strip() if isinstance(radiant, dict) else ""
+    dire_name = str((dire or {}).get("name") or "").strip() if isinstance(dire, dict) else ""
+    return radiant_name, dire_name
+
+
+def _is_placeholder_team_name(team_name: Any) -> bool:
+    """'Radiant'/'Dire'/пусто — это отсутствие названия, а не название."""
+    try:
+        from tier_three_teams import ANONYMOUS_TEAM_NAMES
+    except Exception:
+        ANONYMOUS_TEAM_NAMES = frozenset({"", "radiant", "dire"})
+    return str(team_name or "").strip().lower() in ANONYMOUS_TEAM_NAMES
+
+
+def _sourcetv_identity_rows(now: Optional[float] = None) -> Dict[int, Dict[str, Any]]:
+    """Снимок листинга cyberscore под сшивку личности; кэш на SOURCETV_IDENTITY_TTL."""
+    moment = float(time.time() if now is None else now)
+    if moment - float(_sourcetv_identity_cache.get("at") or 0.0) < SOURCETV_IDENTITY_TTL:
+        return _sourcetv_identity_cache.get("rows") or {}
+    _sourcetv_identity_cache["at"] = moment
+    try:
+        html = _get_cyberscore_html_via_camoufox(_build_cyberscore_combined_tier_listing_url())
+        rows = _parse_cyberscore_rows_by_steam_id(html)
+    except Exception as exc:
+        logger.warning("CyberScore identity fallback failed: %s", exc)
+        rows = {}
+    if rows:
+        _sourcetv_identity_cache["rows"] = rows
+    return _sourcetv_identity_cache.get("rows") or {}
+
+
+def _resolve_sourcetv_identity_from_cyberscore(
+    match_id: Any,
+    radiant_team_name: str,
+    dire_team_name: str,
+    rows: Optional[Dict[int, Dict[str, Any]]] = None,
+) -> Optional[Tuple[str, str, str]]:
+    """(radiant, dire, турнир) для sourcetv-карты без названий; None — не сшилось.
+
+    Valve на открытых квалификациях не отдаёт ни team_id, ни названия: карточка
+    получается «Radiant VS Dire» с дефолтным ELO 1500. Cyberscore тот же матч
+    знает по имени, и сшивается он точно — по `id_steam`.
+
+    Ориентация проверяется: если известная сторона совпала с ПРОТИВОПОЛОЖНОЙ
+    стороной cyberscore, названия меняются местами; если не совпала ни с одной —
+    строка отвергается, потому что расхождение означает, что мы поняли матч
+    по-разному, а ставка идёт на СТОРОНУ.
+    """
+    try:
+        steam_id = int(match_id or 0)
+    except (TypeError, ValueError):
+        return None
+    if steam_id <= 0:
+        return None
+    source = rows if rows is not None else _sourcetv_identity_rows()
+    row = source.get(steam_id)
+    if not isinstance(row, dict):
+        return None
+    cs_radiant, cs_dire = _cyberscore_row_team_names(row)
+    if not cs_radiant and not cs_dire:
+        return None
+    tournament = ""
+    tournament_obj = row.get("tournament")
+    if isinstance(tournament_obj, dict):
+        tournament = str(tournament_obj.get("name") or "").strip()
+
+    known_radiant = "" if _is_placeholder_team_name(radiant_team_name) else str(radiant_team_name)
+    known_dire = "" if _is_placeholder_team_name(dire_team_name) else str(dire_team_name)
+
+    def _same(left: str, right: str) -> bool:
+        left_key = _normalize_tier_team_name_only(left)
+        right_key = _normalize_tier_team_name_only(right)
+        return bool(left_key) and left_key == right_key
+
+    for known, straight, swapped in (
+        (known_radiant, cs_radiant, cs_dire),
+        (known_dire, cs_dire, cs_radiant),
+    ):
+        if not known:
+            continue
+        if _same(known, straight):
+            return cs_radiant, cs_dire, tournament
+        if _same(known, swapped):
+            return cs_dire, cs_radiant, tournament
+        return None
+    return cs_radiant, cs_dire, tournament
+
+
 def _classify_cyberscore_card_admission(
     html: str,
     match_id: str,
@@ -32823,6 +33102,47 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             dire_team_name_original = data.get("dire_team_name") or "Dire"
             radiant_team_ids = [data.get("radiant_team_id") or 0]
             dire_team_ids = [data.get("dire_team_id") or 0]
+            # На открытых квалификациях Valve не отдаёт ни team_id, ни названия, и
+            # карточка выходит «Radiant VS Dire» с дефолтным ELO 1500 у обеих
+            # сторон — то есть ставка на сторону, которую мы не опознали. Тот же
+            # матч у cyberscore есть по имени и сшивается точно, по `id_steam`.
+            if SOURCETV_IDENTITY_FALLBACK and (
+                _is_placeholder_team_name(radiant_team_name_original)
+                or _is_placeholder_team_name(dire_team_name_original)
+            ):
+                try:
+                    _identity = _resolve_sourcetv_identity_from_cyberscore(
+                        data.get("match_id"),
+                        radiant_team_name_original,
+                        dire_team_name_original,
+                    )
+                except Exception as _identity_exc:
+                    logger.warning("CyberScore identity fallback failed: %s", _identity_exc)
+                    _identity = None
+                if _identity:
+                    _cs_radiant, _cs_dire, _cs_tournament = _identity
+                    if _cs_radiant:
+                        radiant_team_name_original = _cs_radiant
+                    if _cs_dire:
+                        dire_team_name_original = _cs_dire
+                    # Имя даёт и id, если команда нам уже известна: без него не
+                    # поднимется ни ELO, ни тир.
+                    for _side_name, _side_ids_key in (
+                        (radiant_team_name_original, "radiant"),
+                        (dire_team_name_original, "dire"),
+                    ):
+                        _known_ids = _find_known_team_ids_by_name(_side_name)
+                        if not _known_ids:
+                            continue
+                        if _side_ids_key == "radiant" and not any(radiant_team_ids):
+                            radiant_team_ids = [int(min(_known_ids))]
+                        elif _side_ids_key == "dire" and not any(dire_team_ids):
+                            dire_team_ids = [int(min(_known_ids))]
+                    print(
+                        f"   🔎 Личность из CyberScore: {radiant_team_name_original} vs "
+                        f"{dire_team_name_original}"
+                        + (f" — {_cs_tournament}" if _cs_tournament else "")
+                    )
             league_id = data.get("league_id") or None
             series_id = data.get("series_id") or data.get("match_id")
             # GC series_type — enum (0=BO1, 1=BO3, 2=BO5), но весь downstream ожидает best_of-счётчик (1/3/5).
@@ -33305,11 +33625,50 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
         # - Tier 2 матч: если хотя бы одна команда Tier 2
         # - Tier 1 матч: если обе команды Tier 1
         # - Неизвестная команда автоматически добавляется в Tier 2 без Telegram уведомления
+        try:
+            _tier_three_sides = _classify_tier_three_sides(
+                radiant_team_ids,
+                radiant_team_name_original,
+                dire_team_ids,
+                dire_team_name_original,
+                league_id=league_id,
+            )
+        except Exception as _tier_three_exc:
+            # Список — вспомогательный, отказ в нём не должен ронять разбор карты:
+            # молча возвращаемся к прежнему пути с авто-добавлением в tier2.
+            logger.warning("tier-3 allowlist failed: %s", _tier_three_exc)
+            _tier_three_sides = None
         if PIPELINE_BYPASS_TIER_GATE:
             radiant_team_id = (_coerce_int(radiant_team_ids[0]) if radiant_team_ids else 0) or 0
             dire_team_id = (_coerce_int(dire_team_ids[0]) if dire_team_ids else 0) or 0
             star_match_tier = _determine_star_signal_match_tier(radiant_team_id, dire_team_id) or 2
             print(f"   ℹ️ Tier gate bypassed by pipeline smoke-test mode (tier={star_match_tier})")
+        elif _tier_three_sides is not None:
+            # Явный tier-3 allowlist: команда названа руками, в tier2 никто не
+            # уезжает, а безымянная сторона (Valve не дал ни id, ни названия)
+            # больше не рубит матч на входе. Судим по правилам tier 2.
+            if (
+                _is_placeholder_team_name(radiant_team_name_original)
+                and _is_placeholder_team_name(dire_team_name_original)
+            ):
+                # Обе стороны безымянны и после фолбэка: ставка «на Dire» в такой
+                # карточке никого не называет, а ELO у обеих сторон дефолтное
+                # 1500. Опрос кэфов к этому моменту уже заведён и продолжается —
+                # снимаем только разбор и отправку.
+                print(
+                    "   ❌ Матч пропущен: личность не установлена "
+                    f"(ни Valve, ни CyberScore) — лига {league_id}, {check_uniq_url}"
+                )
+                print("   ℹ️ map_id_check.txt не обновлен: add_url только после send_message()")
+                return return_status
+            radiant_team_id, dire_team_id = _tier_three_sides
+            star_match_tier = 3
+            match_log(
+                f"   🧭 Tier-3 allowlist: матч допущен (лига {league_id}) "
+                f"{radiant_team_name_original or 'без названия'} [{radiant_team_id}] vs "
+                f"{dire_team_name_original or 'без названия'} [{dire_team_id}] — "
+                "пороги и правила tier 2, авто-добавления в tier2 нет"
+            )
         else:
             radiant_ok, radiant_team_id = _ensure_known_team_or_add_to_tier2(
                 radiant_team_ids,
@@ -33375,19 +33734,22 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
                 return return_status
 
+        # Tier 3 (явный allowlist команд) судится по правилам tier 2, а НЕ мягче:
+        # ветка `else` — это tier 1, и матч безымянного состава уехал бы туда.
+        # Метки порога остаются tier2-шными: применено именно правило tier 2.
         star_target_wr = (
             TIER_SIGNAL_MIN_THRESHOLD_TIER2
-            if star_match_tier == 2
+            if star_match_tier in (2, 3)
             else TIER_SIGNAL_MIN_THRESHOLD_TIER1
         )
         tier_threshold_block_status_label = (
             TIER_THRESHOLD_STATUS_TIER2_MIN60_BLOCK
-            if star_match_tier == 2
+            if star_match_tier in (2, 3)
             else TIER_THRESHOLD_STATUS_TIER1_MIN60_BLOCK
         )
         tier_threshold_block_reason_label = (
             TIER_THRESHOLD_REASON_TIER2_MIN60_BLOCK
-            if star_match_tier == 2
+            if star_match_tier in (2, 3)
             else TIER_THRESHOLD_REASON_TIER1_MIN60_BLOCK
         )
         match_log(f"   🧭 Star tier mode: tier={star_match_tier}, min_wr={star_target_wr}%")
