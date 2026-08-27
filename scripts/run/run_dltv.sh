@@ -4,6 +4,12 @@ cd /root/main/base
 source ../venv/bin/activate
 
 # убиваем старые
+# Служба cyberscore.service идёт под systemd с Restart=always: без остановки
+# он через RestartSec поднимет боевой экземпляр рядом с тем, что запускает
+# этот скрипт, и два бота будут работать в разных режимах одновременно.
+systemctl stop cyberscore.service 2>/dev/null || true
+sleep 1
+
 pkill -f cyberscore_try || true
 sleep 2
 
