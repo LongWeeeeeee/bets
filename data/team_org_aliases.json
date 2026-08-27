@@ -1,8 +1,4 @@
 {
- "1w": [
-  "tundra",
-  "ironwing"
- ],
  "1win": [
   "enjoy"
  ],
@@ -109,10 +105,6 @@
   "teamnextlevel",
   "innercircle"
  ],
- "ironwing": [
-  "tundra",
-  "1w"
- ],
  "kalmychataa": [
   "quantum"
  ],
@@ -128,18 +120,6 @@
  ],
  "kukuysessence": [
   "kukuys2.0"
- ],
- "l1": [
-  "l1ga",
-  "l1team"
- ],
- "l1ga": [
-  "l1",
-  "l1team"
- ],
- "l1team": [
-  "l1ga",
-  "l1"
  ],
  "lavasport": [
   "selva"
@@ -224,11 +204,17 @@
  "roar": [
   "kev"
  ],
+ "satan666": [
+  "sixcats"
+ ],
  "selva": [
   "lavasport"
  ],
  "sindikat": [
   "arbuz2.0"
+ ],
+ "sixcats": [
+  "satan666"
  ],
  "slayers": [
   "marpic",
@@ -255,10 +241,6 @@
   "youngblood",
   "REKONIX",
   "rekonix"
- ],
- "tundra": [
-  "ironwing",
-  "1w"
  ],
  "twistedminds": [
   "dudleyboys"
