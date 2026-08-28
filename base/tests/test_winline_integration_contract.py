@@ -586,7 +586,7 @@ def test_integration_production_delivery_closed_then_open_once(monkeypatch, tmp_
     monkeypatch.setattr(cs, "send_message", lambda *a, **k: send_calls.append(str(a[0] if a else "")))
     monkeypatch.setattr(cs, "add_url", lambda url, **_k: add_url_calls.append(url))
 
-    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a"
+    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%"
     ok_closed = cs._deliver_and_persist_signal(
         match_key,
         base_msg,

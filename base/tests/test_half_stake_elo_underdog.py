@@ -161,7 +161,7 @@ def test_delivery_not_blocked_without_context(monkeypatch):
 
     delivered = runtime._deliver_and_persist_signal(
         "dltv.org/matches/2.1",
-        f"{_header('Team A', 0.5)}\nTeam A VS Team B",
+        f"{_header('Team A', 0.5)}\nTeam A VS Team B\n🤖 ML-модель: Radiant 63.5%",
         add_url_reason="star_signal_sent_now",
         skip_bookmaker_prepare=True,
     )
@@ -216,6 +216,10 @@ def _prepare_all_only(monkeypatch) -> None:
 def test_dispatch_sends_half_stake_when_teams_are_even(monkeypatch) -> None:
     _prepare_all_only(monkeypatch)
     _patch_team_elo_summary(monkeypatch, radiant_wr=50.0, dire_wr=50.0)
+    # Предмет теста — x0.5/доставка, а не согласие модели: сценарий строит
+    # панель боевым кодом, артефакт модели в тестах недоступен, ML-строки не
+    # будет. Согласие с моделью проверяется в test_bet_requires_win_model.py.
+    monkeypatch.setattr(runtime, "BET_REQUIRE_WIN_MODEL", False, raising=False)
 
     result = _run_branch_scenario(monkeypatch, _all_only_half_stake_case())
 
@@ -237,6 +241,10 @@ def test_dispatch_sends_half_stake_when_block_disabled(monkeypatch) -> None:
     _prepare_all_only(monkeypatch)
     _patch_team_elo_summary(monkeypatch, radiant_wr=42.5, dire_wr=57.5)
     monkeypatch.setattr(runtime, "HALF_STAKE_ELO_UNDERDOG_BLOCK_ENABLED", False, raising=False)
+    # Предмет теста — x0.5/доставка, а не согласие модели: сценарий строит
+    # панель боевым кодом, артефакт модели в тестах недоступен, ML-строки не
+    # будет. Согласие с моделью проверяется в test_bet_requires_win_model.py.
+    monkeypatch.setattr(runtime, "BET_REQUIRE_WIN_MODEL", False, raising=False)
 
     result = _run_branch_scenario(monkeypatch, _all_only_half_stake_case())
 

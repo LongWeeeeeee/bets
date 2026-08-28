@@ -9849,6 +9849,125 @@ def _log_half_stake_elo_block_once(match_key: str, decision: Dict[str, Any]) -> 
     )
 
 
+# --- Обычная ставка не уходит без согласия ML-модели победителя -------------
+#
+# Панель обычной ставки ("СТАВКА НА <team> x<mult>") обязана нести мнение
+# предматчевой модели: по ней работает вето, и оператор принимает решение с
+# оглядкой на неё. Когда модель молчит, строка `🤖 ML-модель:` просто исчезает
+# (`_format_win_model_line`) — и молчание становится неотличимо от согласия,
+# а ставка уходит вслепую. 28.08.2026 так ушла ставка на Team Synapse: модель
+# отказалась оценивать матч ("разметка позиций противоречит истории у 3
+# слотов"), в панели строки не было, отправку это не остановило.
+#
+# Kills-хедеры множителя не несут (`_STAKE_HEADER_MULTIPLIER_RE`), поэтому под
+# гейт не попадают: модель предсказывает победителя КАРТЫ, а не килы, и
+# ML-строки у kills-панелей не бывает вовсе (28 из 28 отправок за 28.08.2026).
+#
+# Решение принимается по ФАКТИЧЕСКОМУ тексту сигнала — тем же приёмом, что и
+# запрет x0.5 выше. Причина: путей отправки много (немедленный dispatch,
+# delayed watcher, spec, pipeline, protracker), и сведены они только в
+# `_deliver_and_persist_signal`; гейт в одной точке нельзя обойти новым путём.
+BET_REQUIRE_WIN_MODEL = os.getenv("BET_REQUIRE_WIN_MODEL", "1") == "1"
+
+# "🤖 ML-модель: Radiant 63.5% | ..." — сторона, за которую высказалась модель.
+_WIN_MODEL_PANEL_RE = re.compile(
+    r"^\s*\U0001F916\s*ML-\u043c\u043e\u0434\u0435\u043b\u044c:\s*(?P<side>Radiant|Dire)\b",
+    re.M,
+)
+# "All: <team> WR≈65.0% от кэфа 1.54" из блока «Оценка WR». Одноимённый
+# заголовок секции метрик ("All:" без WR) под регексп намеренно не подходит.
+_WR_ALL_ESTIMATE_RE = re.compile(r"^\s*All:\s*(?P<team>\S.*?)\s+WR\u2248", re.M)
+# "СТАВКА НА <team> x<mult>" — имя таргета берём из самой панели, чтобы
+# сравнивать его с именем из WR-строки в одной и той же нормализации.
+_STAKE_HEADER_TEAM_RE = re.compile(
+    r"^\u0421\u0422\u0410\u0412\u041a\u0410 \u041d\u0410\s+(?P<team>.+?)\s+x\d+(?:[.,]\d+)?\s*$"
+)
+
+
+def _win_model_reject_for_delivery(
+    message_text: Optional[str],
+    stake_multiplier_context: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Причина не отправлять обычную ставку, или None если препятствий нет.
+
+    Три причины, все про согласие с моделью победителя карты:
+
+    `model_missing` — строки ML в панели нет: модель не дала оценку (отказ
+        входного гейта, недоступный артефакт, падение). Именно этот случай
+        раньше проходил молча.
+    `model_against` — сторона модели противоположна стороне ставки. Порога по
+        модулю индекса ЗДЕСЬ НЕТ: `win_model_veto.blocks_veto` с порогом 8
+        отменяет отдельный БЛОК, а это запрет самой отправки, и он строже.
+    `all_against` — блок All высказался за другую команду.
+
+    Сторона ставки для `model_against` берётся из `stake_multiplier_context`:
+    в тексте панели сторон (radiant/dire) нет, только имена. Контекст приходит
+    не со всех путей, и без него эта проверка пропускается — две другие
+    работают всегда, они опираются только на текст.
+    """
+    if not BET_REQUIRE_WIN_MODEL:
+        return None
+    text = str(message_text or "")
+    if _stake_multiplier_from_message(text) is None:
+        return None                                  # не обычная ставка
+
+    if _WIN_MODEL_PANEL_RE.search(text) is None:
+        return {"reason": "model_missing"}
+
+    ctx = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
+    target_side = str(ctx.get("target_side") or "").strip().lower()
+    model_side = _WIN_MODEL_PANEL_RE.search(text).group("side").strip().lower()
+    if target_side in ("radiant", "dire") and model_side != target_side:
+        return {
+            "reason": "model_against",
+            "model_side": model_side,
+            "target_side": target_side,
+        }
+
+    # Первую строку читаем так же, как `_stake_multiplier_from_message`:
+    # он уже подтвердил, что это заголовок обычной ставки.
+    header = _STAKE_HEADER_TEAM_RE.match(text.splitlines()[0].strip())
+    all_line = _WR_ALL_ESTIMATE_RE.search(text)
+    if header is not None and all_line is not None:
+        target_team = normalize_team_name_display(str(header.group("team") or "")).strip()
+        all_team = normalize_team_name_display(str(all_line.group("team") or "")).strip()
+        if target_team and all_team and target_team != all_team:
+            return {
+                "reason": "all_against",
+                "all_team": all_team,
+                "target_team": target_team,
+            }
+    return None
+
+
+_win_model_block_logged_lock = threading.Lock()
+_win_model_block_logged_keys: set = set()
+
+
+def _log_win_model_block_once(match_key: str, decision: Dict[str, Any]) -> None:
+    """Печатает причину блока один раз на матч (перепроверок много)."""
+    reason = str(decision.get("reason") or "")
+    log_key = f"{match_key}|{reason}"
+    with _win_model_block_logged_lock:
+        already_logged = log_key in _win_model_block_logged_keys
+        _win_model_block_logged_keys.add(log_key)
+    if already_logged:
+        return
+    if reason == "model_missing":
+        detail = "ML-модель не дала оценку (строки в панели нет)"
+    elif reason == "model_against":
+        detail = (
+            f"ML-модель против таргета (модель за {decision.get('model_side')}, "
+            f"ставка на {decision.get('target_side')})"
+        )
+    else:
+        detail = (
+            f"блок All против таргета (All за {decision.get('all_team')}, "
+            f"ставка на {decision.get('target_team')})"
+        )
+    print(f"   🚫 Ставка заблокирована: {detail} — {match_key}")
+
+
 def _blank_dota2protracker_result() -> Dict[str, Any]:
     return {
         "pro_cp1vs1_early": 0.0,
@@ -27572,6 +27691,16 @@ def _deliver_and_persist_signal(
     )
     if half_stake_block is not None:
         _log_half_stake_elo_block_once(match_key, half_stake_block)
+        return False
+    # Тот же принцип, что и у запрета x0.5: матч НЕ закрывается (add_url не
+    # зовём). Модель может стать доступна на следующей перепроверке — тогда
+    # сигнал уйдёт сам, без ручного вмешательства.
+    win_model_block = _win_model_reject_for_delivery(
+        message_text,
+        stake_multiplier_context,
+    )
+    if win_model_block is not None:
+        _log_win_model_block_once(match_key, win_model_block)
         return False
     reservation_context: Optional[Dict[str, Any]] = None
     if isinstance(bookmaker_reservation_context, dict) and bookmaker_reservation_context.get("token"):
