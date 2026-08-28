@@ -186,6 +186,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | `LATE27_DISPATCH_MIN_LATE_WR` | `65.0` | минимальный late WR для late-driven отправки на 27:00+ |
 | `HALF_STAKE_ELO_UNDERDOG_BLOCK_ENABLED` | `1` | `0` отключает запрет доставки x0.5 для ELO-андердога |
 | `HALF_STAKE_ELO_UNDERDOG_MIN_DIFF` | `50.0` | минимальная разница `opposite_rating - target_rating`, при которой x0.5 не отправляется |
+| `BET_REQUIRE_WIN_MODEL` | `1` | `0` снимает запрет отправлять обычную ставку без согласия ML-модели победителя (`_win_model_reject_for_delivery`): нет строки `🤖 ML-модель:`, сторона модели против таргета, либо блок All за другую команду. Kills-ставки не затрагивает |
 
 **Networth gate (числовые пороги — частичный список)**
 `NETWORTH_GATE_ALL_ONLY_EARLY_WINDOW_START_SECONDS` (240), `NETWORTH_GATE_ALL_ONLY_EARLY_MIN_DIFF` (800), `NETWORTH_GATE_SAME_SIGN_LANE_ADV_STALE_GRACE_SECONDS` (120), `NETWORTH_MONITOR_HOLD_SECONDS` (0). Большинство networth-порогов — модульные константы (`NETWORTH_GATE_*`, строки ~1233+), не env.

@@ -1385,7 +1385,7 @@ def test_deliver_and_persist_commits_sent_only_after_confirmed_send(monkeypatch,
         lambda key: cs._bookmaker_prefetch_lookup(key, wait_seconds=0.0),
     )
 
-    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a"
+    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%"
     obs = _fresh_current_map_observation(match_key=match_key, map_num=2)
     ok = cs._deliver_and_persist_signal(
         match_key,
@@ -1458,7 +1458,7 @@ def test_concurrent_duplicate_cannot_rollback_owner_bookmaker_reservation(monkey
         try:
             results[label] = cs._deliver_and_persist_signal(
                 match_key,
-                "СТАВКА НА team1 x1\n\nБукмекеры: n/a",
+                "СТАВКА НА team1 x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%",
                 add_url_reason=f"unit_concurrent_{label}",
                 add_url_details={"status": "ok"},
                 current_map_observation=_fresh_current_map_observation(match_key=match_key, map_num=2),
@@ -1536,7 +1536,7 @@ def test_deliver_and_persist_hard_fail_rolls_back_and_allows_retry(monkeypatch, 
         lambda key: cs._bookmaker_prefetch_lookup(key, wait_seconds=0.0),
     )
 
-    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a"
+    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%"
     with pytest.raises(cs.TelegramSendError):
         cs._deliver_and_persist_signal(
             match_key,
@@ -1944,7 +1944,7 @@ def test_delayed_production_caller_commits_sent_only_after_confirmed_delivery(
     cs._set_delayed_match(
         match_key,
         {
-            "message": "СТАВКА НА radiant x1\n\nБукмекеры: n/a",
+            "message": "СТАВКА НА radiant x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%",
             "reason": "late_only",
             "json_url": "https://dltv.org/live/delayed-delivery-9200.json",
             "target_game_time": float(cs.DELAYED_SIGNAL_TARGET_GAME_TIME),
@@ -1990,7 +1990,7 @@ def test_delayed_production_caller_commits_sent_only_after_confirmed_delivery(
     try:
         ok2 = cs._deliver_and_persist_signal(
             match_key,
-            "СТАВКА НА radiant x1\n\nБукмекеры: n/a",
+            "СТАВКА НА radiant x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%",
             add_url_reason="star_signal_sent_delayed_retry",
             add_url_details={"status": "ok", "target_side": selected_side},
             current_map_observation=_fresh_current_map_observation(match_key=match_key, map_num=2),
@@ -2000,7 +2000,7 @@ def test_delayed_production_caller_commits_sent_only_after_confirmed_delivery(
     except TypeError:
         ok2 = cs._deliver_and_persist_signal(
             match_key,
-            "СТАВКА НА radiant x1\n\nБукмекеры: n/a",
+            "СТАВКА НА radiant x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%",
             add_url_reason="star_signal_sent_delayed_retry",
             add_url_details={"status": "ok", "target_side": selected_side},
             current_map_observation=_fresh_current_map_observation(match_key=match_key, map_num=2),
@@ -2074,7 +2074,7 @@ def test_delayed_production_caller_missing_side_fails_closed(monkeypatch, tmp_pa
     cs._set_delayed_match(
         match_key,
         {
-            "message": "СТАВКА НА team1 x1\n\nБукмекеры: n/a",
+            "message": "СТАВКА НА team1 x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%",
             "reason": "late_only",
             "json_url": "https://dltv.org/live/delayed-missing-side-9201.json",
             "target_game_time": float(cs.DELAYED_SIGNAL_TARGET_GAME_TIME),
@@ -2205,7 +2205,7 @@ def test_production_closed_wait_keeps_original_deadline_and_no_reservation(
     monkeypatch.setattr(cs, "add_url", lambda url, **_k: add_url_calls.append(url))
 
     observation = _fresh_current_map_observation(match_key=match_key, map_num=2, observed_at=clock["now"])
-    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a"
+    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%"
 
     ok1 = cs._deliver_and_persist_signal(
         match_key,
@@ -2270,7 +2270,7 @@ def test_closed_then_fresh_open_sends_once_with_observation(monkeypatch, tmp_pat
     monkeypatch.setattr(cs, "send_message", lambda *a, **k: send_calls.append(str(a[0] if a else "")))
     monkeypatch.setattr(cs, "add_url", lambda url, **_k: add_url_calls.append(url))
 
-    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a"
+    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%"
     obs = _fresh_current_map_observation(match_key=match_key, map_num=2, observed_at=clock["now"])
     ok_closed = cs._deliver_and_persist_signal(
         match_key,
@@ -2336,7 +2336,7 @@ def test_terminal_skips_never_reserve_or_send(monkeypatch, tmp_path) -> None:
     send_calls: List[str] = []
     monkeypatch.setattr(cs, "send_message", lambda *a, **k: send_calls.append(str(a[0] if a else "")))
     monkeypatch.setattr(cs, "add_url", lambda *a, **k: None)
-    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a"
+    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%"
 
     cases = [
         (
@@ -2471,7 +2471,7 @@ def test_stale_open_odds_before_deadline_waits_tokenless(monkeypatch, tmp_path) 
 
     ok = cs._deliver_and_persist_signal(
         match_key,
-        "СТАВКА НА team1 x1\n\nБукмекеры: n/a",
+        "СТАВКА НА team1 x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%",
         add_url_reason="unit_stale_wait",
         current_map_observation=_fresh_current_map_observation(
             match_key=match_key,
@@ -2492,7 +2492,7 @@ def test_stale_open_odds_before_deadline_waits_tokenless(monkeypatch, tmp_path) 
     first_deadline = float(pending["deadline_at"])
     ok2 = cs._deliver_and_persist_signal(
         match_key,
-        "СТАВКА НА team1 x1\n\nБукмекеры: n/a",
+        "СТАВКА НА team1 x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%",
         add_url_reason="unit_stale_wait_2",
         current_map_observation=_fresh_current_map_observation(
             match_key=match_key,
@@ -2627,7 +2627,7 @@ def test_delayed_sender_refreshes_observation_before_delivery(monkeypatch, tmp_p
     cs._set_delayed_match(
         match_key,
         {
-            "message": "СТАВКА НА dire x1\n\nБукмекеры: n/a",
+            "message": "СТАВКА НА dire x1\n\nБукмекеры: n/a\n🤖 ML-модель: Dire 63.5%",
             "reason": "late_only",
             "json_url": "https://dltv.org/live/lifecycle-delayed-obs-9310.json",
             "target_game_time": 720.0,
@@ -3010,7 +3010,7 @@ def test_fresh_open_exact_map_happy_path_sends_once(monkeypatch, tmp_path) -> No
     )
     monkeypatch.setattr(cs, "add_url", lambda url, **_k: add_url_calls.append(url))
 
-    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a"
+    base_msg = "СТАВКА НА team1 x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%"
     obs = _fresh_current_map_observation(match_key=match_key, map_num=2, observed_at=clock["now"])
     ok = cs._deliver_and_persist_signal(
         match_key,
@@ -3601,7 +3601,8 @@ def test_selected_winline_coefficient_immediate_exact_line(
     monkeypatch.setattr(cs, "add_url", lambda *a, **k: None)
 
     obs = _fresh_current_map_observation(match_key=match_key, map_num=2)
-    base_msg = f"СТАВКА НА {selected_side} x1\n\nБукмекеры: n/a"
+    model_side = "Radiant" if selected_side in ("team1", "radiant") else "Dire"
+    base_msg = f"СТАВКА НА {selected_side} x1\n\nБукмекеры: n/a\n🤖 ML-модель: {model_side} 63.5%"
     ok = _invoke_selected_side_delivery(
         match_key=match_key,
         base_msg=base_msg,
@@ -3682,10 +3683,11 @@ def test_selected_winline_coefficient_delayed_exact_line(
         cs.monitored_matches.clear()
 
     obs = _fresh_current_map_observation(match_key=match_key, map_num=2)
+    model_side = "Radiant" if selected_side == "radiant" else "Dire"
     cs._set_delayed_match(
         match_key,
         {
-            "message": f"СТАВКА НА {selected_side} x1\n\nБукмекеры: n/a",
+            "message": f"СТАВКА НА {selected_side} x1\n\nБукмекеры: n/a\n🤖 ML-модель: {model_side} 63.5%",
             "reason": "late_only",
             "json_url": f"https://dltv.org/live/sel-winline-del-{selected_side}-9402.json",
             "target_game_time": float(cs.DELAYED_SIGNAL_TARGET_GAME_TIME),
@@ -3739,7 +3741,7 @@ def test_selected_winline_coefficient_uses_authorizing_observation_not_later_sna
     obs = _fresh_current_map_observation(match_key=match_key, map_num=2)
     ok = _invoke_selected_side_delivery(
         match_key=match_key,
-        base_msg="СТАВКА НА radiant x1\n\nБукмекеры: n/a",
+        base_msg="СТАВКА НА radiant x1\n\nБукмекеры: n/a\n🤖 ML-модель: Radiant 63.5%",
         selected_side="radiant",
         observation=obs,
         add_url_reason="unit_selected_winline_auth_obs",

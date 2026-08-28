@@ -142,7 +142,7 @@ def test_deliver_no_longer_appends_dltv_rating_footer(monkeypatch) -> None:
 
     ok = runtime._deliver_and_persist_signal(
         "dltv.org/matches/test-dltv-rating.0",
-        "СТАВКА НА Radiant x1\nRadiant VS Dire\n0-0",
+        "СТАВКА НА Radiant x1\nRadiant VS Dire\n0-0\n🤖 ML-модель: Radiant 63.5%",
         add_url_reason="unit_test_dltv_rating",
         skip_bookmaker_prepare=True,
         json_url="https://dltv.org/live/123.json",
@@ -174,7 +174,7 @@ def test_deliver_skips_dltv_rating_when_disabled(monkeypatch) -> None:
 
     runtime._deliver_and_persist_signal(
         "dltv.org/matches/test-dltv-off.0",
-        "СТАВКА НА Radiant x1\nbody",
+        "СТАВКА НА Radiant x1\nbody\n🤖 ML-модель: Radiant 63.5%",
         add_url_reason="unit_test_dltv_off",
         skip_bookmaker_prepare=True,
     )
