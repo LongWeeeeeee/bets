@@ -763,26 +763,46 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
             _LAST_FILL["draft_share"] = None
             _LAST_FILL["groups"] = None
         # Оценка late-модели по ЭТОМУ же драфту. Считается здесь, потому что
-        # карточка строится далеко отсюда и героев там уже нет. Импорт локальный:
-        # `late_win_model` сам импортирует этот модуль ради порядка героев.
+        # карточка строится далеко отсюда и героев там уже нет. Импорт локальный
+        # и в двух формах: прод зовёт модули `base/` верхним уровнем, а тесты и
+        # ручные прогоны — от корня репозитория.
+        _lwm = None
+        _late_load_error = None
         try:
-            import late_win_model as _lwm       # прод зовёт модули base/ верхним уровнем
-        except ImportError:                          # локальный запуск от корня репо
-            from base import late_win_model as _lwm
-        try:
+            try:
+                import late_win_model as _lwm
+            except ImportError:
+                from base import late_win_model as _lwm
             # Вектор строим ЗДЕСЬ: порядок героев — собственность этого модуля,
             # и late-модель обучена ровно на нём.
             _LAST_FILL["late"] = _lwm.verdict(
                 _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos))
-        except Exception:                            # noqa: BLE001 — оценка необязательна
+        except Exception as _late_exc:                # noqa: BLE001 — оценка необязательна
+            # Ни один отказ late-модели не имеет права уронить предматчевую
+            # оценку: она решает ставку, а late — только строка в карточке.
             _LAST_FILL["late"] = None
+            _late_load_error = f"{type(_late_exc).__name__}: {_late_exc}"
+        if _LAST_FILL["late"] is None and _late_load_error is None:
+            try:
+                _late_load_error = (_lwm.load_error() if _lwm is not None
+                                    else "модуль не импортирован") or "нет вектора"
+            except Exception:                        # noqa: BLE001
+                _late_load_error = "load_error() недоступен"
         # Разложение собрано целиком — кладём его в историю по индексу. Карточка
         # отложенного матча строится позже, когда `_LAST_FILL` уже чужой.
         _remember_fill()
+        # Оценка late-модели идёт В ЖУРНАЛ: без этого её молчаливый отказ
+        # (нет артефакта, незнакомый герой) неотличим от работы — строка в
+        # карточке просто не появится, и никто не узнает почему.
+        _late_rec = _LAST_FILL.get("late") or {}
         _journal_eval(radiant_team=str(radiant_team_name or ""),
                       dire_team=str(dire_team_name or ""),
                       index=_idx, confidence=round(0.5 + abs(_idx) / 100.0, 4),
                       side="radiant" if _idx > 0 else "dire",
+                      late_side=_late_rec.get("side"),
+                      late_confidence=(round(float(_late_rec["confidence"]), 4)
+                                       if _late_rec.get("confidence") is not None else None),
+                      late_error=_late_load_error,
                       model_elo=(None if _f.get("elo") is None
                                  else round(float(_f["elo"]) * 400.0, 1)),
                       draft_logit=_f.get("draft_logit"),

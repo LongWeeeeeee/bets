@@ -135,3 +135,41 @@ def test_late_disagrees_with_general_on_this_draft():
     if general is None:
         pytest.skip(f"общая драфт-модель недоступна: {wmv.load_error()}")
     assert general > 0 > late
+
+
+@pytest.mark.parametrize("hostile", ["строка", 12345, object(), {"a": 1},
+                                     ("a",) * 10, (None,) * 10, (-1,) * 10])
+def test_hostile_input_never_raises(hostile):
+    """Ни один вход не имеет права выбросить исключение наружу.
+
+    Оценка необязательная, а зовут её из `_prematch_index`, который решает
+    ставку. Исключение отсюда уронило бы боевую оценку ради строки в карточке.
+    """
+    assert lwm.verdict(hostile) is None
+    assert lwm.panel_line(hostile) is None
+    assert lwm.late_index(hostile) is None
+
+
+def test_prematch_index_isolates_late_failure():
+    """Блок late-оценки в `_prematch_index` обязан быть обёрнут в try/except.
+
+    Проверяем исходником: вызвать `_prematch_index` в тесте нельзя — он тянет
+    предматчевый скорер с ELO-снимком на несколько гигабайт.
+    """
+    source = (ROOT / "base" / "win_model_veto.py").read_text(encoding="utf-8")
+    start = source.index("_lwm = None")
+    block = source[start:source.index("_remember_fill()", start)]
+    assert "except Exception as _late_exc" in block, "отказ late-модели не изолирован"
+    assert '_LAST_FILL["late"] = None' in block, "при отказе поле обязано занулиться"
+    # Импорт тоже внутри try: если обе формы не сработают, ImportError не должен уйти наружу.
+    assert block.index("try:") < block.index("import late_win_model")
+
+
+def test_late_verdict_is_journalled():
+    """Отказ late-модели обязан быть виден в журнале оценок, а не молчать."""
+    source = (ROOT / "base" / "win_model_veto.py").read_text(encoding="utf-8")
+    start = source.index("_journal_eval(radiant_team=")
+    # вызов многострочный: берём с запасом до конца его аргументов
+    call = source[start:start + 1400]
+    for field in ("late_side=", "late_confidence=", "late_error="):
+        assert field in call, f"в журнал оценок не пишется {field}"

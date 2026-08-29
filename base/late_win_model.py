@@ -88,11 +88,18 @@ def radiant_probability(heroes: Optional[Sequence[int]]) -> Optional[float]:
     `heroes` — готовый вектор из десяти hero_id: radiant pos1-5, затем dire
     pos1-5. Строит его `win_model_veto._heroes_vector`, он же единственный
     источник порядка.
+
+    Вход не доверяем: не итерируемое, не числа, не та длина, неположительный
+    hero_id — всё это None. Функцию зовут из `_prematch_index`, который решает
+    ставку, и исключение отсюда стоило бы боевой оценки ради строки в карточке.
     """
     if not ENABLED or heroes is None:
         return None
-    heroes = tuple(heroes)
-    if len(heroes) != 10:
+    try:
+        heroes = tuple(int(h) for h in heroes)
+    except (TypeError, ValueError):                  # не итерируемое или не числа
+        return None
+    if len(heroes) != 10 or any(h <= 0 for h in heroes):
         return None
     if heroes in _cache:
         return _cache[heroes]
