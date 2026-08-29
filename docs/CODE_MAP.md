@@ -551,9 +551,29 @@ CLI: `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_duration
 
 **Отказ всегда в сторону РАЗРЕШЕНИЯ:** нет модели, незнакомый игрок, любая ошибка → None, вето не срабатывает.
 
+`last_late(index) -> dict | None` — вердикт late-модели `{side, probability, confidence}` для ЭТОГО индекса, из того же мемо `_LAST_FILL`/`_FILL_HISTORY`, что и `last_parts`/`last_fill`. Сам вердикт считается в `_prematch_index` (там ещё есть герои) и уходит в журнал оценок полями `late_side`, `late_confidence`, `late_error`.
+
 Env: `WIN_MODEL_VETO_ENABLED` (1), `WIN_MODEL_VETO_PREMATCH_MIN` (8), `WIN_MODEL_VETO_MIN_<SECTION>`, `WIN_MODEL_VETO_MIN_INDEX`, `WIN_MODEL_DIR`.
 
 В `cyberscore_try.py`: `_try_dispatch_prematch_model_bet(...)` — самостоятельная ставка на 00-й минуте на стороне модели, вызывается в трёх ветках (ранние локальные метрики, star-ветка, ветка без звёзд), идемпотентна по `match_key`. Тело сигнала берётся ГОТОВОЕ — переписывается только строка заголовка, все блоки остаются. Env: `PREMATCH_MODEL_BET_ENABLED` (1), `PREMATCH_MODEL_BET_MAX_GAME_TIME_SECONDS` (180). Строка «ML от кэфа» печатается в `_format_win_model_line` только для предматчевого источника.
+
+## `base/late_win_model.py` — оценка победы для карт, уходящих в лейт
+
+Вторая модель победы, обученная **только на картах `duration >= 36 минут`** — тот же `LATE_MIN_DURATION`, по которому собирается late-словарь (`base/analise_database.py`). Признаки — ТОЛЬКО десять `hero_id` по позициям, дизайн `hero_role_pair` signed. Нетворт, ELO, игроки и живое состояние сюда НЕ идут: в late-схеме нетворт это гейт (когда спрашивать), а не признак.
+
+Зачем (E-240, паблик-корпус 5 093 540 карт, late-популяция 3 112 619): на картах, доживших до 31-й минуты с ровным состоянием, общая модель даёт AUC 0.6003 и завышает винрейт на 3.7-5.3 п.п. (на полосе 70 заявляет 74.0%, даёт 68.8%), late-модель — 0.6211 и 72.2% на той же полосе. Перекалибровка общей модели этого не чинит: при совпадающем охвате не добавляет ничего, честности добивается втрое меньшим потоком.
+
+`radiant_probability(heroes) -> float | None`, `late_index(heroes) -> float | None` (та же шкала `(P−0.5)×100`, что у общей модели), `verdict(heroes) -> {side, probability, confidence} | None`, `panel_line(heroes) -> str | None`.
+
+`heroes` — готовый вектор из десяти `hero_id`: radiant pos1-5, затем dire pos1-5. **Строит его `win_model_veto._heroes_vector` и передаёт сюда.** Импортировать `win_model_veto` отсюда нельзя: прод зовёт `import win_model_veto` верхним уровнем (`cyberscore_try.py:67`), и `from base.win_model_veto import ...` завёл бы вторую копию модуля со своим `_LAST_FILL`.
+
+**Отказ всегда молчаливый:** нет артефакта, не встал sklearn, не итерируемый вход, не десять героев, неположительный `hero_id`, любая ошибка → None. Функцию зовут из `_prematch_index`, который решает ставку, и исключение отсюда стоило бы боевой оценки ради строки в карточке. Причина отказа видна в `runtime/prematch_model_eval.jsonl` полем `late_error`.
+
+Артефакт: `data/late_draft_win/2026-08-29_public_5m_late36/` — `late_win_model.joblib`, `late_win_feature_encoder.joblib`, `results.json` (честный AUC 0.6233 на 622 524 отложенных картах, C=0.003, 16 764 колонки). Обучение — `base/train_late_draft_win.py` (`--out`, `--min-minutes`); паблик-шарды берутся из `runtime/artifacts/kills/window_model_v2/rows_public.shard*.npz`. Артефакт `.joblib` под глобальным `.gitignore` и на serv1 доставляется отдельно.
+
+Env: `LATE_WIN_MODEL_DIR` (каталог артефакта), `LATE_WIN_MODEL_ENABLED` (1; `0` гасит строку без деплоя).
+
+В карточке: `_format_win_model_line` печатает `🕑 Late ML-модель: Dire 52.7%` строкой ПОД `🤖 ML-модель`. В `tail_log` строка приезжает внутри готового `bet_message`.
 
 ## `base/refresh_public_draft_model.py` — переобучение по патчу + ворота промоута
 
