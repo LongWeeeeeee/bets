@@ -38,10 +38,21 @@ def test_vector_order_comes_from_win_model_veto():
     assert vector == EARLY_PUSH + LATE_CARRY
 
 
-def test_no_second_copy_of_win_model_veto():
-    """Прод зовёт `import win_model_veto`; вторая копия модуля дала бы своё `_LAST_FILL`."""
-    loaded = {name for name in sys.modules if name.endswith("win_model_veto")}
-    assert len(loaded) == 1, f"загружено несколько копий: {sorted(loaded)}"
+def test_late_win_model_does_not_import_win_model_veto():
+    """`late_win_model` не имеет права импортировать `win_model_veto`.
+
+    Прод зовёт `import win_model_veto` верхним уровнем (cyberscore_try.py:67).
+    Импорт `from base.win_model_veto import ...` отсюда завёл бы ВТОРУЮ копию
+    модуля — со своим `_LAST_FILL`, своими кэшами и своей загруженной моделью.
+    Поэтому вектор героев строит `win_model_veto` и ПЕРЕДАЁТ его сюда.
+
+    Проверяем причину, а не следствие: считать копии в `sys.modules` нельзя —
+    в полном наборе их плодит сам харнесс, часть тестов ходит через `base.`.
+    """
+    source = (ROOT / "base" / "late_win_model.py").read_text(encoding="utf-8")
+    offenders = [line.strip() for line in source.splitlines()
+                 if "win_model_veto" in line and line.lstrip().startswith(("import ", "from "))]
+    assert not offenders, f"late_win_model импортирует win_model_veto: {offenders}"
 
 
 @pytest.mark.parametrize("bad", [None, (), (1, 2, 3), tuple(range(11))])
