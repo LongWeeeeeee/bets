@@ -5813,6 +5813,17 @@ def _format_win_model_line(*blocks) -> str:
             line += f" | вход {float(_fill):.0%}"
     except Exception:                                # noqa: BLE001
         pass
+    # Late-модель: тот же драфт, но обучена ТОЛЬКО на картах >= 36 минут
+    # (E-240). Показывается всегда, когда оценка есть: она предматчевая,
+    # живого состояния не требует. Нет строки — модель не загрузилась или
+    # драфт неполный, и карточка выглядит ровно как раньше.
+    try:
+        _late = win_model_veto.last_late(index)
+    except Exception:                                # noqa: BLE001
+        _late = None
+    if _late:
+        line += (f"\n\U0001F551 Late ML-\u043c\u043e\u0434\u0435\u043b\u044c: "
+                 f"{_late['side']} {float(_late['confidence']) * 100:.1f}%")
     # Блок панели окон килов. Пустая строка, если панель не готова, — карточка
     # тогда выглядит ровно как раньше.
     try:

@@ -165,7 +165,7 @@ _COV_SUM = 0.0
 # значит оценка была не эта, и печатать чужое число нельзя.
 _LAST_FILL = {"index": None, "fill": None, "elo": None,
                "draft_rank": None, "draft_share": None,
-               "branch": None, "wr": None, "parts": None}
+               "branch": None, "wr": None, "parts": None, "late": None}
 #: Разложения ПРОШЛЫХ оценок, по индексу. Одной записи мало: карточка
 #: отложенного матча строится не в момент оценки, а когда до него дойдёт
 #: очередь, и к тому времени `_LAST_FILL` уже принадлежит другой карте. Тогда
@@ -329,6 +329,22 @@ def last_parts(index):
     except (TypeError, ValueError):
         pass
     return {}
+
+
+def last_late(index):
+    """Вердикт late-модели для ЭТОГО индекса: {side, probability, confidence} или None.
+
+    Индекс держим тот же, что у общей модели: он ключ к карточке. Сама оценка
+    от него не зависит — late-модель видит только драфт.
+    """
+    try:
+        _rec = _fill_for(index)
+        if _rec:
+            _value = _rec.get("late")
+            return dict(_value) if isinstance(_value, dict) else None
+    except (TypeError, ValueError):
+        pass
+    return None
 
 
 def last_draft_rank(index):
@@ -746,6 +762,20 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
             _LAST_FILL["draft_rank"] = None
             _LAST_FILL["draft_share"] = None
             _LAST_FILL["groups"] = None
+        # Оценка late-модели по ЭТОМУ же драфту. Считается здесь, потому что
+        # карточка строится далеко отсюда и героев там уже нет. Импорт локальный:
+        # `late_win_model` сам импортирует этот модуль ради порядка героев.
+        try:
+            import late_win_model as _lwm       # прод зовёт модули base/ верхним уровнем
+        except ImportError:                          # локальный запуск от корня репо
+            from base import late_win_model as _lwm
+        try:
+            # Вектор строим ЗДЕСЬ: порядок героев — собственность этого модуля,
+            # и late-модель обучена ровно на нём.
+            _LAST_FILL["late"] = _lwm.verdict(
+                _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos))
+        except Exception:                            # noqa: BLE001 — оценка необязательна
+            _LAST_FILL["late"] = None
         # Разложение собрано целиком — кладём его в историю по индексу. Карточка
         # отложенного матча строится позже, когда `_LAST_FILL` уже чужой.
         _remember_fill()

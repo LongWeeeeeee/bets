@@ -1,0 +1,39 @@
+{
+  "experiment": "late_draft_win",
+  "version": "2026-08-29_public_5m_late36",
+  "journal": "E-240",
+  "late_min_minutes": 36,
+  "late_min_seconds": 2160,
+  "design": {
+    "kind": "hero_role_pair",
+    "signed": true,
+    "columns": 16764,
+    "pair_min_support": 30
+  },
+  "C": 0.003,
+  "selection_validation_log_loss": 0.670201,
+  "counts": {
+    "late_all": 3112619,
+    "train": 1867571,
+    "validation": 622524,
+    "test": 622524,
+    "shipped_fit_rows": 3112619
+  },
+  "base_wr_radiant": 0.506554,
+  "held_out_test": true,
+  "honest_test": {
+    "rows": 622524,
+    "positive_rate": 0.506096,
+    "auc": 0.623253,
+    "log_loss": 0.668934,
+    "brier": 0.238173,
+    "accuracy": 0.587982
+  },
+  "split_boundaries": {
+    "train_last_ts": 1781930336,
+    "validation_first_ts": 1781930341,
+    "test_first_ts": 1784038664
+  },
+  "uses_ingame_or_third_party_stats": false,
+  "note": "Только драфт: hero_id по позициям. Живого состояния и прочих признаков нет."
+}
