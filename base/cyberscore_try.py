@@ -4367,8 +4367,14 @@ ML_CONFIDENCE_SOURCE_LATE = _normalize_ml_confidence_source(
     "model_only",
 )
 DELAYED_SIGNAL_TARGET_GAME_TIME = (20 * 60) + 20
-LATE_PUB_COMEBACK_TABLE_START_SECONDS = 27 * 60
-# Спекулятивный x0.5 watcher для 27+ comeback-таблицы: пороги основной таблицы
+# Минимальная минута отправки late-ставки. Одна константа задаёт границу для
+# всех веток late-режима: гейт late27, решение по comeback-таблице,
+# target_game_time delayed-записи и immediate-ветка. 29.08.2026 сдвинута 27 → 31.
+LATE_PUB_COMEBACK_TABLE_START_MINUTE = _safe_int_env(
+    "LATE_PUB_COMEBACK_TABLE_START_MINUTE", 31
+)
+LATE_PUB_COMEBACK_TABLE_START_SECONDS = LATE_PUB_COMEBACK_TABLE_START_MINUTE * 60
+# Спекулятивный x0.5 watcher для late comeback-таблицы: пороги основной таблицы
 # умножаются на этот коэффициент (порог «глубже» → более ранний/рисковый вход),
 # отправляется ставка x0.5. Активен только при late WR >= MIN_WR, >= MIN_LATE_HITS
 # late star-хитов и если этот же контекст даёт потенциальную основную ставку
@@ -4386,6 +4392,20 @@ LATE_PUB_COMEBACK_SPECULATIVE_MIN_LATE_HITS = _safe_int_env(
 )
 LATE_PUB_COMEBACK_SPECULATIVE_STAKE = _safe_float_env(
     "LATE_PUB_COMEBACK_SPECULATIVE_STAKE", 0.5
+)
+# Снятие вето comeback-таблицы: сильная late-звезда (>= MIN_LATE_HITS хитов и
+# late WR >= MIN_LATE_WR) сама разрешает отправку на START_MINUTE и позже, не
+# дожидаясь порога нетворта. Более слабые late-сигналы (WR ниже порога) таблицу
+# по-прежнему ждут. Снятие вето НЕ открывает отправку раньше START_MINUTE.
+# Откат — LATE_PUB_TABLE_VETO_BYPASS_ENABLED=0.
+LATE_PUB_TABLE_VETO_BYPASS_ENABLED = _safe_bool_env(
+    "LATE_PUB_TABLE_VETO_BYPASS_ENABLED", True
+)
+LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_HITS = _safe_int_env(
+    "LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_HITS", 2
+)
+LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR = _safe_float_env(
+    "LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR", 70.0
 )
 # Тик delayed-watcher. sourcetv-состояние читается из локального
 # sourcetv_matches.json, который probe переписывает раз в ~2 c, поэтому тикаем
@@ -7432,7 +7452,7 @@ def _build_late27_dispatch_guard_snapshot(
     selected_early_sign: Optional[int] = None,
     all_star_hits: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Сериализуемый снимок фактов для 27+ late-гейта.
+    """Сериализуемый снимок фактов для late-гейта минимальной минуты.
 
     ``all_star_hits`` — результат ``_collect_star_hits_for_block(all_output)``;
     ``None`` означает «данные недоступны» (например, delayed-запись создана
@@ -7495,7 +7515,8 @@ def _evaluate_late27_dispatch_guard(
 ) -> Dict[str, Any]:
     """Гейт отправок на 27:00+, где сторону ставки задаёт late-звезда.
 
-    ``active`` — гейт применим (late-driven диспатч на 27+ по нужной стороне).
+    ``active`` — гейт применим (late-driven диспатч на минимальной минуте и
+    позже, по нужной стороне).
     ``blocked`` — отправлять нельзя; ``reasons`` перечисляет нарушенные условия.
     """
 
@@ -7560,6 +7581,7 @@ def _evaluate_late27_dispatch_guard(
         "active": active,
         "blocked": bool(reasons),
         "reasons": reasons,
+        "has_late_star": bool(snap.get("has_late_star")),
         "late_sign": late_sign,
         "late_wr_pct": wr_value,
         "late_hit_count": hit_count_value,
@@ -7572,7 +7594,7 @@ def _evaluate_late27_dispatch_guard(
 
 
 def _late27_dispatch_guard_reject_details(guard: Dict[str, Any]) -> Dict[str, Any]:
-    """Поля ``add_url``-details для отказа по 27+ late-гейту."""
+    """Поля ``add_url``-details для отказа по late-гейту минимальной минуты."""
 
     return {
         "dispatch_status_label": LATE27_DISPATCH_GUARD_STATUS_LABEL,
@@ -8411,6 +8433,40 @@ def _late_star_pub_table_decision(
     return result
 
 
+def _late_pub_table_veto_bypassed(
+    *,
+    late_wr_pct: Any,
+    late_star_hit_count: Any,
+    has_late_star: bool = True,
+) -> bool:
+    """Снимает ли сильная late-звезда вето comeback-таблицы.
+
+    Вызывающий обязан сам убедиться, что игровое время достигло
+    ``LATE_PUB_COMEBACK_TABLE_START_SECONDS``: снятие вето не открывает отправку
+    раньше минимальной минуты, оно только убирает требование порога нетворта на
+    ней и позже. Неизвестные late WR / hits вето не снимают.
+    """
+
+    if not LATE_PUB_TABLE_VETO_BYPASS_ENABLED or not has_late_star:
+        return False
+    try:
+        wr_value = float(late_wr_pct) if late_wr_pct is not None else None
+    except (TypeError, ValueError):
+        wr_value = None
+    if wr_value is None or not math.isfinite(wr_value):
+        return False
+    try:
+        hits_value = int(late_star_hit_count) if late_star_hit_count is not None else None
+    except (TypeError, ValueError):
+        hits_value = None
+    if hits_value is None:
+        return False
+    return bool(
+        hits_value >= int(LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_HITS)
+        and wr_value >= float(LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR)
+    )
+
+
 def _late_pre27_watcher_available_levels(signal_group: str) -> List[int]:
     group_key = str(signal_group or "").strip().lower()
     payload = late_pre27_watcher_thresholds_by_group_wr.get(group_key)
@@ -8527,12 +8583,17 @@ def _late_pre27_watcher_monitor_config(
         # Phase 1 — flat 1000 за target в окне [4:00, 20:00).
         "flat_threshold_until_minute": 20,
         "flat_threshold_value": 1000.0,
-        # Phase 2 — flat 800 за target в окне [20:00, 27:00).
+        # Phase 2 — flat 800 за target в окне [20:00, минимальная минута).
         # Watcher comeback grid (исторические медианы) намеренно не используется
-        # в этой ветке: для late star (с/без early/all) до 27:00 dispatch
-        # допустим только когда target ведёт минимум на 800.
+        # в этой ветке: для late star (с/без early/all) до минимальной минуты
+        # dispatch допустим только когда target ведёт минимум на 800.
+        # Верхняя граница ОБЯЗАНА совпадать с LATE_PUB_COMEBACK_TABLE_START_MINUTE:
+        # иначе в промежутке между концом фазы и минимальной минутой порог молча
+        # подменяется исторической сеткой (на 27-й минуте late_only это −3648…−4820
+        # против +800), то есть окно, которое должно быть закрыто, наоборот
+        # открывается на куда более слабом условии.
         "flat_phase2_from_minute": 20,
-        "flat_phase2_until_minute": 27,
+        "flat_phase2_until_minute": int(LATE_PUB_COMEBACK_TABLE_START_MINUTE),
         "flat_phase2_value": 800.0,
     }
 
@@ -9360,10 +9421,13 @@ def _late_pre27_dominance_snapshot(
         threshold_key = "threshold_17_to_19"
         status_key = "status_17_to_19"
     else:
-        # Окно [20:00, 27:00): для всех dominance-веток с late star
+        # Окно [20:00, target_game_time): для всех dominance-веток с late star
         # требуется только flat 800 за target. Старая сетка по delta_level
         # (threshold_20_to_26) намеренно не используется здесь — dispatch
-        # допустим только когда target ведёт минимум на 800 NW.
+        # допустим только когда target ведёт минимум на 800 NW. Верхняя граница
+        # окна — target_game_time (проверка выше), поэтому сдвиг минимальной
+        # минуты растягивает flat-800 сам собой; имена полей *_20_to_26
+        # исторические и границу окна не задают.
         return {
             "threshold": 800.0,
             "status_label": str(
@@ -9680,7 +9744,7 @@ def _build_stake_multiplier_context(
         "early_star_hit_count": int(early_star_hit_count) if early_star_hit_count is not None else None,
         "late_star_hit_metrics": list(late_star_hit_metrics) if late_star_hit_metrics is not None else None,
         # WR60+ star-хиты блока All (metric/value/wr_level) — нужны delayed
-        # watcher'у, чтобы перепроверить 27+ late-гейт по снимку сигнала.
+        # watcher'у, чтобы перепроверить late-гейт по снимку сигнала.
         "all_star_hits": (
             [dict(hit) for hit in all_star_hits if isinstance(hit, dict)]
             if all_star_hits is not None
@@ -13086,7 +13150,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                     }
                 )
         if late_pub_comeback_table_active:
-            # Перепроверка 27+ late-гейта по снимку сигнала (delayed-запись
+            # Перепроверка late-гейта по снимку сигнала (delayed-запись
             # могла быть создана до 27:00). Условия статичны — при блокировке
             # watcher закрываем без отправки, вместо ожидания порога таблицы.
             late27_watcher_guard = _evaluate_late27_dispatch_guard(
@@ -13119,7 +13183,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 )
                 _drop_delayed_match(match_key, reason="late27_dispatch_guard")
                 _delayed_verdict_msg = (
-                    f"⏱️ Отложенный late сигнал отменен без отправки (27+ late-гейт): {match_key} "
+                    f"⏱️ Отложенный late сигнал отменен без отправки (late-гейт): {match_key} "
                     f"({_format_late27_dispatch_guard_log(late27_watcher_guard)}, "
                     f"game_time={int(current_game_time)})"
                 )
@@ -13147,6 +13211,21 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 game_time_seconds=current_game_time,
                 target_networth_diff=monitor_target_diff,
             )
+            # Сильная late-звезда снимает вето таблицы: на минимальной минуте и
+            # позже порог нетворта перестаёт быть условием входа. До этой минуты
+            # ветка не достигается — выше стоит `continue` по target_game_time.
+            if (
+                not late_pub_comeback_table_decision.get("ready")
+                and current_game_time is not None
+                and float(current_game_time) >= float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
+                and _late_pub_table_veto_bypassed(
+                    late_wr_pct=late27_watcher_guard.get("late_wr_pct"),
+                    late_star_hit_count=late27_watcher_guard.get("late_hit_count"),
+                    has_late_star=bool(late27_watcher_guard.get("has_late_star")),
+                )
+            ):
+                late_pub_comeback_table_decision["ready"] = True
+                late_pub_comeback_table_decision["veto_bypassed"] = True
             if late_pub_comeback_table_decision.get("ready"):
                 monitor_ready = True
             elif current_game_time >= float(LATE_PUB_COMEBACK_TABLE_START_SECONDS):
@@ -13171,7 +13250,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                         updated_add_url_details["late_pub_comeback_table_threshold"] = float(
                             late_pub_comeback_table_decision.get("threshold") or 0.0
                         )
-                # ── Спекулятивный x0.5 watcher (27+) ────────────────────────
+                # ── Спекулятивный x0.5 watcher (late comeback) ──────────────
                 # Мы здесь = основной порог ещё НЕ достигнут (main not ready).
                 # Если глубокий порог (×MULT) достигнут, late WR >= MIN_WR и
                 # >= MIN_LATE_HITS late star-хитов, и спекулятив ещё не слался —
@@ -13284,13 +13363,13 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                                 payload = dict(payload)
                                 payload["speculative_half_sent"] = True
                                 print(
-                                    "⏱️ Спекулятивный x0.5 отправлен (27+ comeback "
+                                    "⏱️ Спекулятивный x0.5 отправлен (late comeback "
                                     f"×{LATE_PUB_COMEBACK_SPECULATIVE_THRESHOLD_MULT}): {match_key} "
                                     f"(min={_spec_decision.get('source_minute')}, "
                                     f"thr={int(_spec_decision.get('threshold') or 0)}, "
                                     f"diff={int(monitor_target_diff)}, "
                                     f"wr={late_pub_comeback_table_wr_level}, "
-                                    f"late_hits={_spec_late_hits})"
+                                    f"late_hits={(_spec_smc or {}).get('late_star_hit_count')})"
                                 )
                 _update_delayed_match(
                     match_key,
@@ -13827,7 +13906,14 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 and monitor_target_diff is not None
             ):
                 add_url_details["dispatch_status_label"] = NETWORTH_STATUS_LATE_PUB_TABLE_SEND
-                add_url_details["late_pub_comeback_table_reached"] = True
+                _late_pub_veto_bypassed = bool(
+                    late_pub_comeback_table_decision.get("veto_bypassed")
+                )
+                # reached=True только когда порог нетворта реально взят; при
+                # снятом вето порог не достигнут, и журнал не должен это скрывать.
+                add_url_details["late_pub_comeback_table_reached"] = not _late_pub_veto_bypassed
+                if _late_pub_veto_bypassed:
+                    add_url_details["late_pub_comeback_table_veto_bypassed"] = True
                 add_url_details["target_networth_diff"] = float(monitor_target_diff)
                 add_url_details["late_pub_comeback_table_wr_level"] = int(late_pub_comeback_table_wr_level or 0)
                 if isinstance(late_pub_comeback_table_decision, dict):
@@ -36667,7 +36753,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 else None
             )
             # WR60+ star-хиты блока All (тот же источник, что и блок
-            # «⭐ Star hits» в сообщении) — используются 27+ late-гейтом.
+            # «⭐ Star hits» в сообщении) — используются late-гейтом.
             all_star_hits_for_dispatch = _collect_star_hits_for_block(
                 s.get('all_output', {}),
                 "all_output",
@@ -36736,7 +36822,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 kills_window_ed_by_label=tier1_early_kills_window_gate.get("ed_by_label"),
                 kills_window_header_label=tier1_early_kills_strongest_window,
             )
-            # Снимок фактов для 27+ late-гейта: считается один раз здесь и
+            # Снимок фактов для late-гейта: считается один раз здесь и
             # уезжает в delayed payload вместе со stake_multiplier_context,
             # чтобы watcher перепроверил те же условия перед отправкой.
             late27_dispatch_guard_snapshot = _late27_dispatch_guard_snapshot_from_context(
@@ -37150,14 +37236,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 and not queue_late_all_no_early_monitor
                 and not queue_all_only_watcher_monitor
             ):
-                # 27+ comeback-гейт для immediate-сигналов с late-звездой
+                # Late comeback-гейт для immediate-сигналов с late-звездой
                 # (late+all / late+early одного знака). Раньше они уходили
                 # немедленно без проверки нетворта — и ставка могла улететь на
                 # команду, отстающую на десятки тысяч (напр. -26743 на 27:28).
                 # Теперь на 27:00+ такой сигнал обязан пройти comeback-таблицу:
                 # если target глубже порога — НЕ отправляем (soft, матч
                 # перепроверяется и может сработать при камбэке в пределах порога).
-                # 27+ late-гейт для immediate-веток, где сторону задаёт late
+                # Late-гейт для immediate-веток, где сторону задаёт late
                 # без поддержки валидного early того же знака (late+all).
                 # late+early одного знака сюда не попадает (см. guard.active).
                 _imm_late27_guard = _evaluate_late27_dispatch_guard(
@@ -37168,7 +37254,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
                 if _imm_late27_guard.get("blocked"):
                     _verdict_print(
-                        "   ⛔ ВЕРДИКТ: ОТКАЗ (27+ late-гейт для immediate: "
+                        "   ⛔ ВЕРДИКТ: ОТКАЗ (late-гейт для immediate: "
                         f"{_format_late27_dispatch_guard_log(_imm_late27_guard)})",
                         reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
                         kind="reject",
@@ -37203,9 +37289,14 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         game_time_seconds=current_game_time,
                         target_networth_diff=target_networth_diff,
                     )
-                    if not _imm_cb.get("ready"):
+                    _imm_cb_veto_bypassed = _late_pub_table_veto_bypassed(
+                        late_wr_pct=late27_dispatch_guard_snapshot.get("late_wr_pct"),
+                        late_star_hit_count=late27_dispatch_guard_snapshot.get("late_hit_count"),
+                        has_late_star=bool(late27_dispatch_guard_snapshot.get("has_late_star")),
+                    )
+                    if not _imm_cb.get("ready") and not _imm_cb_veto_bypassed:
                         _verdict_print(
-                            "   ⛔ ВЕРДИКТ: 27+ comeback-гейт не пройден для immediate "
+                            "   ⛔ ВЕРДИКТ: late comeback-гейт не пройден для immediate "
                             f"(target_side={dispatch_message_side}, "
                             f"target_diff={int(target_networth_diff)}, "
                             f"threshold={int(_imm_cb.get('threshold') or 0)}, "
@@ -38618,7 +38709,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         _release_signal_send_slot(check_uniq_url)
                     return return_status
                 if current_game_time >= target_game_time:
-                    # 27+ late-гейт для всех пост-target отправок (pub comeback
+                    # Late-гейт для всех пост-target отправок (pub comeback
                     # table, top25 elo-block, post-target comeback, target
                     # reached): late-driven сигнал обязан иметь >=2 late
                     # star-хитов, late WR >= порога и не иметь противоположных
@@ -38631,7 +38722,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     )
                     if _post_target_late27_guard.get("blocked"):
                         _verdict_print(
-                            "   ⛔ ВЕРДИКТ: ОТКАЗ (27+ late-гейт: "
+                            "   ⛔ ВЕРДИКТ: ОТКАЗ (late-гейт: "
                             f"{_format_late27_dispatch_guard_log(_post_target_late27_guard)})",
                             reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
                             kind="reject",
@@ -40543,7 +40634,7 @@ def _load_stats_dicts():
                         try:
                             wr_level = int(row.get("wr_level"))
                             minute = int(row.get("minute"))
-                            # Switched 27+ comeback watcher back to avg_target_networth_diff —
+                            # Switched the late comeback watcher back to avg_target_networth_diff —
                             # the piecewise-normalized median is too aggressive past min 40
                             # (e.g. WR60 min41 median=-18992 vs avg=-9922; WR60 min57 median=-288489 vs avg=-29912).
                             threshold_raw = row.get("avg_target_networth_diff")

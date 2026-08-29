@@ -6943,18 +6943,21 @@ def test_stale_duplicate_live_map_payload_is_not_added_to_map_id_check_for_later
 
 
 def test_late_star_pub_table_decision_threshold_multiplier_deepens_threshold() -> None:
-    # Спекулятивный watcher x0.5: пороги 27+ comeback-таблицы умножаются на
+    # Спекулятивный watcher x0.5: пороги late comeback-таблицы умножаются на
     # коэффициент, порог становится «глубже» → срабатывает на более глубоком
-    # дефиците, где основной (×1.0) ещё не готов.
+    # дефиците, где основной (×1.0) ещё не готов. Минута берётся от
+    # LATE_PUB_COMEBACK_TABLE_START_MINUTE: до неё решение всегда not ready.
+    start_minute = int(runtime.LATE_PUB_COMEBACK_TABLE_START_MINUTE)
+    game_time = float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS) + 5
     saved = runtime.late_pub_comeback_table_thresholds_by_wr
-    runtime.late_pub_comeback_table_thresholds_by_wr = {70: {27: -6000.0}}
+    runtime.late_pub_comeback_table_thresholds_by_wr = {70: {start_minute: -6000.0}}
     try:
         base = runtime._late_star_pub_table_decision(
-            wr_level=70, game_time_seconds=27 * 60 + 5, target_networth_diff=-7000.0
+            wr_level=70, game_time_seconds=game_time, target_networth_diff=-7000.0
         )
         spec = runtime._late_star_pub_table_decision(
             wr_level=70,
-            game_time_seconds=27 * 60 + 5,
+            game_time_seconds=game_time,
             target_networth_diff=-7000.0,
             threshold_multiplier=1.3,
         )
@@ -6965,7 +6968,7 @@ def test_late_star_pub_table_decision_threshold_multiplier_deepens_threshold() -
         assert spec["base_threshold"] == -6000.0
         too_deep = runtime._late_star_pub_table_decision(
             wr_level=70,
-            game_time_seconds=27 * 60 + 5,
+            game_time_seconds=game_time,
             target_networth_diff=-9000.0,
             threshold_multiplier=1.3,
         )

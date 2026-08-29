@@ -182,8 +182,12 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | `TEMPO_STATS_PUB_DIR` | `` | путь к pub-словарям для blend-режима |
 | `TEMPO_STATS_BLEND_PRIOR_STRENGTH` | `20` | сила pub-prior в blend (K в posterior) |
 | `TEMPO_OVER_SENT_TTL_SECONDS` | `43200` | TTL дедуп-словаря `_tempo_over_sent_urls` (12 ч) |
-| `LATE27_DISPATCH_MIN_LATE_HITS` | `2` | минимум late star-хитов для late-driven отправки на 27:00+ (`_evaluate_late27_dispatch_guard`) |
-| `LATE27_DISPATCH_MIN_LATE_WR` | `65.0` | минимальный late WR для late-driven отправки на 27:00+ |
+| `LATE_PUB_COMEBACK_TABLE_START_MINUTE` | `31` | минимальная минута отправки late-ставки; одна константа задаёт границу для гейта late27, решения по comeback-таблице, `target_game_time` delayed-записи и immediate-ветки (было 27, сдвинуто 29.08.2026) |
+| `LATE27_DISPATCH_MIN_LATE_HITS` | `2` | минимум late star-хитов для late-driven отправки на минимальной минуте и позже (`_evaluate_late27_dispatch_guard`) |
+| `LATE27_DISPATCH_MIN_LATE_WR` | `65.0` | минимальный late WR для late-driven отправки на минимальной минуте и позже |
+| `LATE_PUB_TABLE_VETO_BYPASS_ENABLED` | `1` | `0` возвращает прежнее поведение: порог нетворта из comeback-таблицы обязателен для всех late-сигналов |
+| `LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_HITS` | `2` | минимум late-хитов, при котором вето comeback-таблицы снимается |
+| `LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR` | `70.0` | минимальный late WR, при котором вето comeback-таблицы снимается (`_late_pub_table_veto_bypassed`) |
 | `HALF_STAKE_ELO_UNDERDOG_BLOCK_ENABLED` | `1` | `0` отключает запрет доставки x0.5 для ELO-андердога |
 | `HALF_STAKE_ELO_UNDERDOG_MIN_DIFF` | `50.0` | минимальная разница `opposite_rating - target_rating`, при которой x0.5 не отправляется |
 | `BET_REQUIRE_WIN_MODEL` | `1` | `0` снимает запрет отправлять обычную ставку без согласия ML-модели победителя (`_win_model_reject_for_delivery`): нет строки `🤖 ML-модель:`, сторона модели против таргета, либо блок All за другую команду. Kills-ставки не затрагивает |

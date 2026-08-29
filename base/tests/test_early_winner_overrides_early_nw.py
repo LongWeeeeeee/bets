@@ -248,4 +248,6 @@ def test_flag_off_restores_pre27_watcher_delay(monkeypatch) -> None:
     assert result.sent_messages == []
     assert result.queued_payload is not None
     assert result.queued_payload["dynamic_monitor_profile"] == runtime.LATE_PRE27_WATCHER_PROFILE
-    assert int(result.queued_payload["target_game_time"]) == 27 * 60
+    assert int(result.queued_payload["target_game_time"]) == int(
+        runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS
+    )

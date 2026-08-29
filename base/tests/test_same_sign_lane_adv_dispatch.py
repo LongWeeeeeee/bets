@@ -1259,12 +1259,22 @@ def test_late_pre27_dominance_dynamic_snapshot_uses_wr_delta_grid() -> None:
     assert float(seventeen_to_19["threshold"]) == 2500.0
 
     twenty_to_26 = runtime._dynamic_monitor_snapshot_for_payload(payload, 22 * 60)
-    # Phase 2 [20:00, 27:00): для всех веток с late star — flat 800 за target.
+    # Phase 2 [20:00, минимальная минута): для веток с late star — flat 800.
     # Старая сетка (threshold_20_to_26) больше не используется.
     assert float(twenty_to_26["threshold"]) == 800.0
 
-    after_27 = runtime._dynamic_monitor_snapshot_for_payload(payload, 27 * 60)
-    assert after_27["threshold"] is None
+    # Верхняя граница окна flat-800 — target_game_time payload'а, то есть
+    # LATE_PUB_COMEBACK_TABLE_START_SECONDS. Имена полей *_20_to_26 исторические
+    # и границу не задают: сдвиг минимальной минуты растягивает окно сам собой.
+    before_target = runtime._dynamic_monitor_snapshot_for_payload(
+        payload, float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS) - 60
+    )
+    assert float(before_target["threshold"]) == 800.0
+
+    after_target = runtime._dynamic_monitor_snapshot_for_payload(
+        payload, float(runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS)
+    )
+    assert after_target["threshold"] is None
 
 
 def test_zero_threshold_hold_can_require_confirmation() -> None:
