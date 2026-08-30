@@ -1,14 +1,11 @@
-"""Late-ставка не уходит против late-модели.
+"""Обычная ставка не уходит, если late-модель назвала сторону против target.
 
-30.08.2026, просьба владельца: «ставка на late не работает если ml late
-показывала не на таргет». Late-модель (`base/late_win_model.py`, E-240) обучена
-на картах >= 36 минут и печатается в панель отдельной строкой; до этой правки
-она была чисто информационной и на отправку не влияла.
-
-Отличие от предматчевого гейта: молчание late-модели ставку НЕ блокирует. Её
-отказ молчаливый по построению (нет артефакта, незнакомый герой, неполный
-драфт), и трактовать его как «против» значило бы гасить весь late-поток при
-пропавшем артефакте.
+30.08.2026, первая просьба: «ставка на late не работает если ml late
+показывала не на таргет» — гейт закрывал только late-driven. Уточнение того
+же дня: «запрети ставку когда Late ML-модель против target» — `late_model_against`
+действует на любую обычную ставку (early/all тоже), как предматчевый
+`model_against`. Молчание модели (`late_model_missing`) по-прежнему только
+у late-driven: у early/all строки late-модели часто нет, и это не «против».
 """
 from __future__ import annotations
 
@@ -36,6 +33,20 @@ LATE_DRIVEN_RADIANT_CTX = {
     "selected_early_sign": None,
     "all_star_hits": [],
 }
+
+# Early того же знака подтверждает сторону — это уже не «ставка на late».
+EARLY_CONFIRMED_RADIANT_CTX = dict(
+    LATE_DRIVEN_RADIANT_CTX,
+    has_selected_early_star=True,
+    selected_early_sign=1,
+)
+
+# Обычная ставка без late-звезды (early/all).
+NO_LATE_STAR_RADIANT_CTX = dict(
+    LATE_DRIVEN_RADIANT_CTX,
+    has_selected_late_star=False,
+    selected_late_sign=None,
+)
 
 
 def _panel(*, late_line: str = LATE_FOR_RADIANT,
@@ -88,27 +99,42 @@ def test_silent_late_model_blocks() -> None:
     assert decision is not None and decision["reason"] == "late_model_missing"
 
 
-def test_non_late_driven_bet_is_untouched() -> None:
-    """Early того же знака подтверждает сторону — это уже не ставка на late."""
-    ctx = dict(LATE_DRIVEN_RADIANT_CTX,
-               has_selected_early_star=True, selected_early_sign=1)
-    assert C._late_win_model_reject_for_delivery(
-        _panel(late_line=LATE_FOR_DIRE), ctx
-    ) is None
+def test_late_model_against_blocks_when_early_confirms() -> None:
+    """Early того же знака не спасает: модель назвала сторону против target."""
+    decision = C._late_win_model_reject_for_delivery(
+        _panel(late_line=LATE_FOR_DIRE), EARLY_CONFIRMED_RADIANT_CTX
+    )
+    assert decision is not None
+    assert decision["reason"] == "late_model_against"
+    assert decision["late_model_side"] == "dire"
+    assert decision["target_side"] == "radiant"
 
 
-def test_bet_without_late_star_is_untouched() -> None:
-    ctx = dict(LATE_DRIVEN_RADIANT_CTX, has_selected_late_star=False)
-    assert C._late_win_model_reject_for_delivery(
-        _panel(late_line=LATE_FOR_DIRE), ctx
-    ) is None
+def test_late_model_against_blocks_without_late_star() -> None:
+    decision = C._late_win_model_reject_for_delivery(
+        _panel(late_line=LATE_FOR_DIRE), NO_LATE_STAR_RADIANT_CTX
+    )
+    assert decision is not None and decision["reason"] == "late_model_against"
 
 
-def test_target_side_opposite_to_late_sign_is_untouched() -> None:
-    """Сторона ставки не совпадает со стороной late-звезды — не наша популяция."""
+def test_late_model_against_blocks_when_target_side_not_from_late() -> None:
+    """Сторона ставки не из late-звезды — всё равно блок, если модель против."""
     ctx = dict(LATE_DRIVEN_RADIANT_CTX, target_side="dire")
-    assert C._late_win_model_reject_for_delivery(
+    decision = C._late_win_model_reject_for_delivery(
         _panel(late_line=LATE_FOR_RADIANT), ctx
+    )
+    assert decision is not None and decision["reason"] == "late_model_against"
+    assert decision["late_model_side"] == "radiant"
+    assert decision["target_side"] == "dire"
+
+
+def test_silent_late_model_does_not_block_non_late_driven() -> None:
+    """Нет строки late-модели — early/all не режем: это не «против»."""
+    assert C._late_win_model_reject_for_delivery(
+        _panel(late_line=""), EARLY_CONFIRMED_RADIANT_CTX
+    ) is None
+    assert C._late_win_model_reject_for_delivery(
+        _panel(late_line=""), NO_LATE_STAR_RADIANT_CTX
     ) is None
 
 
@@ -159,6 +185,30 @@ def test_gate_is_actually_wired_into_delivery(monkeypatch) -> None:
     )
     assert delivered is False
     assert called == [], f"гейт пропустил late-сигнал дальше: {called}"
+
+
+def test_against_blocks_delivery_even_when_not_late_driven(monkeypatch) -> None:
+    """Дыра, из-за которой понадобилось уточнение: early-подтверждённая ставка
+    с late-моделью против target раньше проходила `_is_late_driven_context`
+    и уходила. Гейт обязан отказать в той же точке доставки.
+    """
+    called: list[str] = []
+    monkeypatch.setattr(
+        C, "_bookmaker_prepare_message_for_delivery",
+        lambda *a, **k: called.append("prepare") or ("", False, "", None),
+    )
+    monkeypatch.setattr(
+        C, "_signal_fingerprint_try_reserve",
+        lambda *a, **k: called.append("reserve") or (False, ""),
+    )
+    delivered = C._deliver_and_persist_signal(
+        "dltv.org/matches/late-gate-early.0",
+        _panel(late_line=LATE_FOR_DIRE),
+        add_url_reason="test",
+        stake_multiplier_context=EARLY_CONFIRMED_RADIANT_CTX,
+    )
+    assert delivered is False
+    assert called == [], f"гейт пропустил early-сигнал с late-моделью против: {called}"
 
 
 def test_agreeing_late_model_does_not_block_delivery(monkeypatch) -> None:
