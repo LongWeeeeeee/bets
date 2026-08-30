@@ -185,10 +185,8 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | `LATE_PUB_COMEBACK_TABLE_START_MINUTE` | `31` | минимальная минута отправки late-ставки; одна константа задаёт границу для гейта late27, решения по comeback-таблице, `target_game_time` delayed-записи и immediate-ветки (было 27, сдвинуто 29.08.2026) |
 | `LATE27_DISPATCH_MIN_LATE_HITS` | `2` | минимум late star-хитов для late-driven отправки на минимальной минуте и позже (`_evaluate_late27_dispatch_guard`) |
 | `LATE27_DISPATCH_MIN_LATE_WR` | `65.0` | минимальный late WR для late-driven отправки на минимальной минуте и позже |
-| `LATE_PUB_TABLE_VETO_BYPASS_ENABLED` | `1` | `0` возвращает прежнее поведение: порог нетворта из comeback-таблицы обязателен для всех late-сигналов |
-| `LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_HITS` | `2` | минимум late-хитов, при котором вето comeback-таблицы снимается |
-| `LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR` | `65.0` | минимальный late WR, при котором вето comeback-таблицы снимается (`_late_pub_table_veto_bypassed`). С 30.08.2026 совпадает с `LATE27_DISPATCH_MIN_LATE_WR`: таблица больше не гейтит то, что прошло late-гейт |
-| `BET_REQUIRE_LATE_WIN_MODEL` | `1` | `0` снимает запрет отправлять late-ставку против late-модели (`_late_win_model_reject_for_delivery`). Молчание late-модели ставку НЕ блокирует — только явная противоположная сторона |
+| `LATE_PUB_TABLE_GATE_WR_LEVEL` | `0` | WR-уровень comeback-таблицы, по которому берётся поминутный networth-гейт late-ставок (`_late_pub_table_gate_wr_level`). `0` = самый высокий уровень загруженной таблицы, в бою WR90 (31-я минута −8546). Уровни отличаются мягкостью: чем выше WR, тем больше отставания допускается, поэтому строжайший вариант — `60` (31-я минута −7316) |
+| `BET_REQUIRE_LATE_WIN_MODEL` | `1` | `0` снимает требование согласия late-модели для late-ставки (`_late_win_model_reject_for_delivery`). По умолчанию fail-closed: ставка идёт ТОЛЬКО когда late-модель явно назвала сторону таргета; молчание модели (`late_model_missing`) блокирует |
 | `HALF_STAKE_ELO_UNDERDOG_BLOCK_ENABLED` | `1` | `0` отключает запрет доставки x0.5 для ELO-андердога |
 | `HALF_STAKE_ELO_UNDERDOG_MIN_DIFF` | `50.0` | минимальная разница `opposite_rating - target_rating`, при которой x0.5 не отправляется |
 | `BET_REQUIRE_WIN_MODEL` | `1` | `0` снимает запрет отправлять обычную ставку без согласия ML-модели победителя (`_win_model_reject_for_delivery`): нет строки `🤖 ML-модель:`, сторона модели против таргета, либо блок All за другую команду. Kills-ставки не затрагивает |

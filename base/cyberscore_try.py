@@ -4393,20 +4393,13 @@ LATE_PUB_COMEBACK_SPECULATIVE_MIN_LATE_HITS = _safe_int_env(
 LATE_PUB_COMEBACK_SPECULATIVE_STAKE = _safe_float_env(
     "LATE_PUB_COMEBACK_SPECULATIVE_STAKE", 0.5
 )
-# Снятие вето comeback-таблицы: сильная late-звезда (>= MIN_LATE_HITS хитов и
-# late WR >= MIN_LATE_WR) сама разрешает отправку на START_MINUTE и позже, не
-# дожидаясь порога нетворта. Более слабые late-сигналы (WR ниже порога) таблицу
-# по-прежнему ждут. Снятие вето НЕ открывает отправку раньше START_MINUTE.
-# Откат — LATE_PUB_TABLE_VETO_BYPASS_ENABLED=0.
-LATE_PUB_TABLE_VETO_BYPASS_ENABLED = _safe_bool_env(
-    "LATE_PUB_TABLE_VETO_BYPASS_ENABLED", True
-)
-LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_HITS = _safe_int_env(
-    "LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_HITS", 2
-)
-LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR = _safe_float_env(
-    "LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR", 65.0
-)
+# Networth-гейт late-ставок берёт ОДИН уровень WR из comeback-таблицы, а не
+# уровень конкретного сигнала (30.08.2026). 0 = самый высокий уровень из
+# загруженной таблицы; в бою это WR90, на 31-й минуте −8546. Уровни таблицы
+# отличаются мягкостью: чем выше WR, тем БОЛЬШЕ отставания допускается
+# (31-я минута: WR60 −7316 … WR90 −8546), поэтому «самый высокий уровень» —
+# самый мягкий порог. Строжайший ставится как LATE_PUB_TABLE_GATE_WR_LEVEL=60.
+LATE_PUB_TABLE_GATE_WR_LEVEL = _safe_int_env("LATE_PUB_TABLE_GATE_WR_LEVEL", 0)
 # Тик delayed-watcher. sourcetv-состояние читается из локального
 # sourcetv_matches.json, который probe переписывает раз в ~2 c, поэтому тикаем
 # раз в секунду: задержка между "нетворт пересёк порог" и отправкой сводится к
@@ -8295,6 +8288,13 @@ def _default_late_pub_table_wr_level() -> Optional[int]:
 
 
 def _late_pub_table_wr_level_from_values(*wr_values: Any) -> Optional[int]:
+    # С 30.08.2026 networth-гейт late-ставок не зависит от WR конкретного
+    # сигнала: строка таблицы одна на всех (`_late_pub_table_gate_wr_level`).
+    # Аргументы сохранены, чтобы не трогать вызовы.
+    return _late_pub_table_gate_wr_level()
+
+
+def _late_pub_table_wr_level_from_signal_values(*wr_values: Any) -> Optional[int]:
     for value in wr_values:
         level = _late_star_pub_table_wr_level(value)
         if _late_pub_table_has_thresholds(level):
@@ -8306,6 +8306,11 @@ def _late_pub_table_wr_level_from_values(*wr_values: Any) -> Optional[int]:
 
 
 def _late_pub_table_wr_level_from_payload(payload: Optional[Dict[str, Any]]) -> Optional[int]:
+    # См. `_late_pub_table_wr_level_from_values`: уровень один на все сигналы.
+    return _late_pub_table_gate_wr_level()
+
+
+def _late_pub_table_wr_level_from_payload_signal(payload: Optional[Dict[str, Any]]) -> Optional[int]:
     if not isinstance(payload, dict):
         return _late_pub_table_wr_level_from_values()
 
@@ -8444,38 +8449,29 @@ def _late_star_pub_table_decision(
     return result
 
 
-def _late_pub_table_veto_bypassed(
-    *,
-    late_wr_pct: Any,
-    late_star_hit_count: Any,
-    has_late_star: bool = True,
-) -> bool:
-    """Снимает ли сильная late-звезда вето comeback-таблицы.
+def _late_pub_table_gate_wr_level() -> Optional[int]:
+    """Единый WR-уровень таблицы для networth-гейта late-ставок.
 
-    Вызывающий обязан сам убедиться, что игровое время достигло
-    ``LATE_PUB_COMEBACK_TABLE_START_SECONDS``: снятие вето не открывает отправку
-    раньше минимальной минуты, оно только убирает требование порога нетворта на
-    ней и позже. Неизвестные late WR / hits вето не снимают.
+    До 30.08.2026 каждый сигнал брал строку своего WR. Теперь строка одна на
+    всех: `LATE_PUB_TABLE_GATE_WR_LEVEL`, а при 0 — самый высокий уровень
+    загруженной таблицы. В тестах, где таблица подменяется одним уровнем,
+    «самый высокий» = этот уровень, и подмена работает как раньше.
     """
 
-    if not LATE_PUB_TABLE_VETO_BYPASS_ENABLED or not has_late_star:
-        return False
-    try:
-        wr_value = float(late_wr_pct) if late_wr_pct is not None else None
-    except (TypeError, ValueError):
-        wr_value = None
-    if wr_value is None or not math.isfinite(wr_value):
-        return False
-    try:
-        hits_value = int(late_star_hit_count) if late_star_hit_count is not None else None
-    except (TypeError, ValueError):
-        hits_value = None
-    if hits_value is None:
-        return False
-    return bool(
-        hits_value >= int(LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_HITS)
-        and wr_value >= float(LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR)
-    )
+    configured = int(LATE_PUB_TABLE_GATE_WR_LEVEL or 0)
+    if configured > 0 and _late_pub_table_has_thresholds(configured):
+        return configured
+    if not isinstance(late_pub_comeback_table_thresholds_by_wr, dict):
+        return None
+    levels: List[int] = []
+    for raw_level, thresholds in late_pub_comeback_table_thresholds_by_wr.items():
+        if not isinstance(thresholds, dict) or not thresholds:
+            continue
+        try:
+            levels.append(int(raw_level))
+        except (TypeError, ValueError):
+            continue
+    return max(levels) if levels else None
 
 
 def _late_pre27_watcher_available_levels(signal_group: str) -> List[int]:
@@ -10053,17 +10049,19 @@ def _late_win_model_reject_for_delivery(
 ) -> Optional[Dict[str, Any]]:
     """Причина не отправлять LATE-ставку, или None если препятствий нет.
 
-    Единственная причина — `late_model_against`: late-модель высказалась за
-    другую сторону. Порога по уверенности здесь нет: это запрет отправки, и он
-    строже отдельных блочных вето.
+    Две причины, обе про согласие late-модели со стороной ставки:
 
-    **Молчание модели ставку НЕ блокирует.** Отказ late-модели молчаливый по
-    построению (нет артефакта, незнакомый герой, неполный драфт — строки в
-    панели просто нет), и трактовать его как «против» значило бы гасить весь
-    late-поток при пропавшем артефакте. Это отличие от предматчевого гейта, где
-    `model_missing` блокирует: там модель обязательна, здесь — нет. Цена
-    решения: молчание модели не отличить от согласия по самой панели, считать
-    его надо по `runtime/prematch_model_eval.jsonl` (поля `late_side`,
+    `late_model_missing` — строки late-модели в панели нет: модель не дала
+        оценку (нет артефакта, незнакомый герой, неполный драфт, падение).
+    `late_model_against` — сторона модели противоположна стороне ставки.
+        Порога по уверенности здесь нет: это запрет отправки, и он строже
+        отдельных блочных вето.
+
+    **Молчание модели блокирует ставку** (fail-closed, 30.08.2026): late-ставка
+    уходит ТОЛЬКО когда модель явно назвала сторону таргета. Цена решения
+    названа прямо: пропажа артефакта модели гасит весь late-поток, а не
+    открывает его. Это дороже в объёме, но дешевле в убытке, и отличимо —
+    считать по `runtime/prematch_model_eval.jsonl` (поля `late_side`,
     `late_error`).
 
     Проверка идёт по ФАКТИЧЕСКОМУ тексту сигнала — тем же приёмом, что и
@@ -10083,7 +10081,7 @@ def _late_win_model_reject_for_delivery(
 
     match = _LATE_WIN_MODEL_PANEL_RE.search(text)
     if match is None:
-        return None                                  # молчание не блокирует
+        return {"reason": "late_model_missing"}
 
     ctx = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
     target_side = str(ctx.get("target_side") or "").strip().lower()
@@ -10109,11 +10107,14 @@ def _log_late_win_model_block_once(match_key: str, decision: Dict[str, Any]) -> 
         _late_win_model_block_logged_keys.add(log_key)
     if already_logged:
         return
-    print(
-        "   🚫 Late-ставка заблокирована: late-модель против таргета "
-        f"(модель за {decision.get('late_model_side')}, "
-        f"ставка на {decision.get('target_side')}) — {match_key}"
-    )
+    if str(decision.get("reason") or "") == "late_model_missing":
+        detail = "late-модель не дала оценку (строки в панели нет)"
+    else:
+        detail = (
+            f"late-модель против таргета (модель за {decision.get('late_model_side')}, "
+            f"ставка на {decision.get('target_side')})"
+        )
+    print(f"   🚫 Late-ставка заблокирована: {detail} — {match_key}")
 
 
 _win_model_block_logged_lock = threading.Lock()
@@ -13323,21 +13324,6 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 game_time_seconds=current_game_time,
                 target_networth_diff=monitor_target_diff,
             )
-            # Сильная late-звезда снимает вето таблицы: на минимальной минуте и
-            # позже порог нетворта перестаёт быть условием входа. До этой минуты
-            # ветка не достигается — выше стоит `continue` по target_game_time.
-            if (
-                not late_pub_comeback_table_decision.get("ready")
-                and current_game_time is not None
-                and float(current_game_time) >= float(LATE_PUB_COMEBACK_TABLE_START_SECONDS)
-                and _late_pub_table_veto_bypassed(
-                    late_wr_pct=late27_watcher_guard.get("late_wr_pct"),
-                    late_star_hit_count=late27_watcher_guard.get("late_hit_count"),
-                    has_late_star=bool(late27_watcher_guard.get("has_late_star")),
-                )
-            ):
-                late_pub_comeback_table_decision["ready"] = True
-                late_pub_comeback_table_decision["veto_bypassed"] = True
             if late_pub_comeback_table_decision.get("ready"):
                 monitor_ready = True
             elif current_game_time >= float(LATE_PUB_COMEBACK_TABLE_START_SECONDS):
@@ -14018,14 +14004,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                 and monitor_target_diff is not None
             ):
                 add_url_details["dispatch_status_label"] = NETWORTH_STATUS_LATE_PUB_TABLE_SEND
-                _late_pub_veto_bypassed = bool(
-                    late_pub_comeback_table_decision.get("veto_bypassed")
-                )
-                # reached=True только когда порог нетворта реально взят; при
-                # снятом вето порог не достигнут, и журнал не должен это скрывать.
-                add_url_details["late_pub_comeback_table_reached"] = not _late_pub_veto_bypassed
-                if _late_pub_veto_bypassed:
-                    add_url_details["late_pub_comeback_table_veto_bypassed"] = True
+                add_url_details["late_pub_comeback_table_reached"] = True
                 add_url_details["target_networth_diff"] = float(monitor_target_diff)
                 add_url_details["late_pub_comeback_table_wr_level"] = int(late_pub_comeback_table_wr_level or 0)
                 if isinstance(late_pub_comeback_table_decision, dict):
@@ -37411,12 +37390,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         game_time_seconds=current_game_time,
                         target_networth_diff=target_networth_diff,
                     )
-                    _imm_cb_veto_bypassed = _late_pub_table_veto_bypassed(
-                        late_wr_pct=late27_dispatch_guard_snapshot.get("late_wr_pct"),
-                        late_star_hit_count=late27_dispatch_guard_snapshot.get("late_hit_count"),
-                        has_late_star=bool(late27_dispatch_guard_snapshot.get("has_late_star")),
-                    )
-                    if not _imm_cb.get("ready") and not _imm_cb_veto_bypassed:
+                    if not _imm_cb.get("ready"):
                         _verdict_print(
                             "   ⛔ ВЕРДИКТ: late comeback-гейт не пройден для immediate "
                             f"(target_side={dispatch_message_side}, "

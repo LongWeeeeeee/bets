@@ -76,11 +76,16 @@ def test_late_model_against_target_blocks() -> None:
     assert decision["target_side"] == "radiant"
 
 
-def test_silent_late_model_does_not_block() -> None:
-    """Строки нет = модель отказала молча. Это НЕ «против», ставка идёт."""
-    assert C._late_win_model_reject_for_delivery(
+def test_silent_late_model_blocks() -> None:
+    """Строки нет = модель не назвала сторону. Late-ставка не идёт (fail-closed).
+
+    Цена решения названа прямо: пропажа артефакта модели гасит весь late-поток.
+    Это дороже в объёме, но дешевле в убытке.
+    """
+    decision = C._late_win_model_reject_for_delivery(
         _panel(late_line=""), LATE_DRIVEN_RADIANT_CTX
-    ) is None
+    )
+    assert decision is not None and decision["reason"] == "late_model_missing"
 
 
 def test_non_late_driven_bet_is_untouched() -> None:
@@ -116,6 +121,9 @@ def test_kill_switch_disables_gate(monkeypatch) -> None:
     monkeypatch.setattr(C, "BET_REQUIRE_LATE_WIN_MODEL", False)
     assert C._late_win_model_reject_for_delivery(
         _panel(late_line=LATE_FOR_DIRE), LATE_DRIVEN_RADIANT_CTX
+    ) is None
+    assert C._late_win_model_reject_for_delivery(
+        _panel(late_line=""), LATE_DRIVEN_RADIANT_CTX
     ) is None
 
 
