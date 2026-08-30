@@ -9960,7 +9960,8 @@ def _win_model_reject_for_delivery(
     return None
 
 
-# Late-ставка не уходит против late-модели (просьба владельца 30.08.2026).
+# Обычная ставка не уходит, если late-модель назвала сторону против target
+# (просьба владельца 30.08.2026, уточнение: не только late-driven).
 # Снимается без деплоя: BET_REQUIRE_LATE_WIN_MODEL=0.
 BET_REQUIRE_LATE_WIN_MODEL = os.getenv("BET_REQUIRE_LATE_WIN_MODEL", "1") == "1"
 
@@ -9989,28 +9990,23 @@ def _late_win_model_reject_for_delivery(
     message_text: Optional[str],
     stake_multiplier_context: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    """Причина не отправлять LATE-ставку, или None если препятствий нет.
+    """Причина не отправлять обычную ставку из-за late-модели, или None.
 
-    Две причины, обе про согласие late-модели со стороной ставки:
+    Две причины, популяции разные:
 
-    `late_model_missing` — строки late-модели в панели нет: модель не дала
-        оценку (нет артефакта, незнакомый герой, неполный драфт, падение).
     `late_model_against` — сторона модели противоположна стороне ставки.
-        Порога по уверенности здесь нет: это запрет отправки, и он строже
-        отдельных блочных вето.
-
-    **Молчание модели блокирует ставку** (fail-closed, 30.08.2026): late-ставка
-    уходит ТОЛЬКО когда модель явно назвала сторону таргета. Цена решения
-    названа прямо: пропажа артефакта модели гасит весь late-поток, а не
-    открывает его. Это дороже в объёме, но дешевле в убытке, и отличимо —
-    считать по `runtime/prematch_model_eval.jsonl` (поля `late_side`,
-    `late_error`).
+        Действует на ЛЮБУЮ обычную ставку (late/early/all): строка в панели
+        есть, и она называет не target. Порога по уверенности нет.
+    `late_model_missing` — строки late-модели в панели нет. Только late-driven
+        (`_is_late_driven_context`): там ставка уходит ТОЛЬКО когда модель
+        явно назвала сторону таргета. У early/all строки часто нет, и это
+        не «против» — молчание их не режет.
 
     Проверка идёт по ФАКТИЧЕСКОМУ тексту сигнала — тем же приёмом, что и
     предматчевый гейт: путей отправки много, сведены они только в
     `_deliver_and_persist_signal`, и гейт в одной точке нельзя обойти новым
     путём. Читать вердикт из `win_model_veto.last_late(index)` в момент
-    доставки нельзя: история разложений держит 32 записи, а late-ставка уходит
+    доставки нельзя: история разложений держит 32 записи, а ставка уходит
     через десятки минут после оценки.
     """
     if not BET_REQUIRE_LATE_WIN_MODEL:
@@ -10018,23 +10014,23 @@ def _late_win_model_reject_for_delivery(
     text = str(message_text or "")
     if _stake_multiplier_from_message(text) is None:
         return None                                  # не обычная ставка
-    if not _is_late_driven_context(stake_multiplier_context):
-        return None                                  # сторону задаёт не late
 
     match = _LATE_WIN_MODEL_PANEL_RE.search(text)
-    if match is None:
-        return {"reason": "late_model_missing"}
+    if match is not None:
+        ctx = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
+        target_side = str(ctx.get("target_side") or "").strip().lower()
+        late_model_side = match.group("side").strip().lower()
+        if target_side in ("radiant", "dire") and late_model_side != target_side:
+            return {
+                "reason": "late_model_against",
+                "late_model_side": late_model_side,
+                "target_side": target_side,
+            }
+        return None
 
-    ctx = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
-    target_side = str(ctx.get("target_side") or "").strip().lower()
-    late_model_side = match.group("side").strip().lower()
-    if target_side in ("radiant", "dire") and late_model_side != target_side:
-        return {
-            "reason": "late_model_against",
-            "late_model_side": late_model_side,
-            "target_side": target_side,
-        }
-    return None
+    if not _is_late_driven_context(stake_multiplier_context):
+        return None
+    return {"reason": "late_model_missing"}
 
 
 _late_win_model_block_logged_lock = threading.Lock()
@@ -10056,7 +10052,7 @@ def _log_late_win_model_block_once(match_key: str, decision: Dict[str, Any]) -> 
             f"late-модель против таргета (модель за {decision.get('late_model_side')}, "
             f"ставка на {decision.get('target_side')})"
         )
-    print(f"   🚫 Late-ставка заблокирована: {detail} — {match_key}")
+    print(f"   🚫 Ставка заблокирована late-моделью: {detail} — {match_key}")
 
 
 _win_model_block_logged_lock = threading.Lock()
@@ -27829,9 +27825,9 @@ def _deliver_and_persist_signal(
     if win_model_block is not None:
         _log_win_model_block_once(match_key, win_model_block)
         return False
-    # Late-ставка не уходит против late-модели. Матч НЕ закрывается (add_url не
-    # зовём) — вердикт зависит от драфта и не изменится, но закрывать матч здесь
-    # значило бы забрать у него другие ветки отправки.
+    # Обычная ставка не уходит, если late-модель против target. Матч НЕ
+    # закрывается (add_url не зовём) — вердикт зависит от драфта и не
+    # изменится, но закрывать матч здесь значило бы забрать другие ветки.
     late_win_model_block = _late_win_model_reject_for_delivery(
         message_text,
         stake_multiplier_context,

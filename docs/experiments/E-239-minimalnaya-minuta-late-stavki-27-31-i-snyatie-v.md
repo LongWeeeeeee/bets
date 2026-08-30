@@ -50,9 +50,9 @@ harness: "base/tests/test_late27_dispatch_guard.py"
      Late-модель — `base/late_win_model.py` (E-240, только драфт, корпус карт
      >= 36 минут); её сторона читается из панели строкой `🕑 Late ML-модель: …`
      тем же приёмом, что у предматчевого гейта, и гейт стоит в той же единой
-     точке доставки. Популяция — только late-driven ставки
-     (`_is_late_driven_context`). Fail-closed: молчание модели блокирует
-     (`late_model_missing`).
+     точке доставки. **E-241 (тот же день):** `late_model_against` действует
+     на любую обычную ставку, не только late-driven. `late_model_missing`
+     по-прежнему только у `_is_late_driven_context`.
   2d. **Условие «нет встречного WR60+ star-хита в блоке All» снято**
      (`LATE_ALLOW_OPPOSITE_ALL_HIT`, откат `=0`). Жило В ДВУХ местах: ветка
      `late` в `_star_block_combination_gate` (принималась только при пустом
