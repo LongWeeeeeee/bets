@@ -206,6 +206,80 @@ def test_empty_key_or_verdict_ignored(monkeypatch, tmp_path) -> None:
     assert not journal_path.exists()
 
 
+def test_snapshot_only_writes_analysis_without_new_verdict(monkeypatch, tmp_path) -> None:
+    """tail_log должен видеть метрики и текст ставки даже до первого вердикта."""
+    journal_path = _use_tmp_journal(monkeypatch, tmp_path)
+    key = "dltv.org/matches/8973949050.8"
+
+    runtime._record_map_verdict(
+        key,
+        verdict="parsed",
+        kind="info",
+        reason="match_parsed",
+        identity={"match_id": "8973949050", "map_num": 2, "status": "live"},
+        create_only=True,
+    )
+    runtime._flush_map_analysis_snapshot(
+        key,
+        {
+            "identity": {"score": "5 : 3"},
+            "metrics": {"early_output": {"counterpick_1vs1": 3}},
+            "star": {"has_late_star": True, "late_wr_pct": 65.0},
+            "elo": {"radiant_base_rating": 1774},
+            "bet_message": "СТАВКА НА Team Synapse x0.5\nTeam Synapse VS Inner Circle x Insanity",
+        },
+    )
+
+    entry = _load_journal(journal_path)[key]
+    assert [item["reason"] for item in entry["verdicts"]] == ["match_parsed"]
+    assert entry["metrics"]["early_output"]["counterpick_1vs1"] == 3
+    assert entry["star"]["late_wr_pct"] == 65.0
+    assert entry["elo"]["radiant_base_rating"] == 1774
+    assert "СТАВКА НА Team Synapse" in entry["bet_message"]
+    assert entry["score"] == "5 : 3"
+
+
+def test_win_model_delivery_block_records_reject_and_bet_message(
+    monkeypatch, tmp_path
+) -> None:
+    """Отказ ML на доставке обязан попасть в журнал с полным текстом ставки."""
+    journal_path = _use_tmp_journal(monkeypatch, tmp_path)
+    key = "dltv.org/matches/8973949050.8"
+    message = (
+        "СТАВКА НА Team Synapse x0.5\n"
+        "Team Synapse VS Inner Circle x Insanity\n"
+        "🤖 ML-модель: Dire 63.5% | ML от кэфа: 1.54\n"
+        "Оценка WR:\n"
+        "All: Team Synapse WR≈65.0% от кэфа 1.54\n"
+    )
+    runtime._record_map_verdict(
+        key, verdict="parsed", kind="info", reason="match_parsed", create_only=True
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_bookmaker_prepare_message_for_delivery",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("gate leaked to prepare")),
+    )
+
+    delivered = runtime._deliver_and_persist_signal(
+        key,
+        message,
+        add_url_reason="star_signal_sent_now",
+        stake_multiplier_context={
+            "target_side": "radiant",
+            "stake_team_name": "Team Synapse",
+        },
+    )
+
+    assert delivered is False
+    entry = _load_journal(journal_path)[key]
+    reject = [item for item in entry["verdicts"] if item.get("kind") == "reject"]
+    assert reject, entry["verdicts"]
+    assert reject[-1]["reason"] == "model_against"
+    assert "ML-модель против таргета" in reject[-1]["verdict"]
+    assert entry["bet_message"].startswith("СТАВКА НА Team Synapse")
+
+
 def test_record_bet_message_keeps_latest_and_never_clears(monkeypatch, tmp_path) -> None:
     """bet_message (готовый текст ставки для tail_log) заменяется свежим
     снапшотом и не затирается вызовами без него."""
