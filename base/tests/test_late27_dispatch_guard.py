@@ -72,7 +72,7 @@ def test_start_minute_and_veto_bypass_thresholds_are_pinned() -> None:
     assert runtime.LATE_PUB_COMEBACK_TABLE_START_SECONDS == 31 * 60
     assert runtime.LATE_PUB_TABLE_VETO_BYPASS_ENABLED is True
     assert runtime.LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_HITS == 2
-    assert runtime.LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR == 70.0
+    assert runtime.LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR == 65.0
 
 
 def test_opposite_sign_star_hit_metrics_filters_by_sign() -> None:
@@ -437,9 +437,10 @@ def test_delayed_watcher_keeps_sending_valid_late27_signal(monkeypatch) -> None:
 def test_veto_bypass_truth_table() -> None:
     assert runtime._late_pub_table_veto_bypassed(late_wr_pct=70.0, late_star_hit_count=2) is True
     assert runtime._late_pub_table_veto_bypassed(late_wr_pct=75.0, late_star_hit_count=3) is True
+    assert runtime._late_pub_table_veto_bypassed(late_wr_pct=65.0, late_star_hit_count=2) is True
     # Порог WR не взят.
-    assert runtime._late_pub_table_veto_bypassed(late_wr_pct=69.9, late_star_hit_count=2) is False
-    assert runtime._late_pub_table_veto_bypassed(late_wr_pct=65.0, late_star_hit_count=5) is False
+    assert runtime._late_pub_table_veto_bypassed(late_wr_pct=64.9, late_star_hit_count=2) is False
+    assert runtime._late_pub_table_veto_bypassed(late_wr_pct=60.0, late_star_hit_count=5) is False
     # Хитов мало.
     assert runtime._late_pub_table_veto_bypassed(late_wr_pct=85.0, late_star_hit_count=1) is False
     # Неизвестные данные вето не снимают.
@@ -488,9 +489,30 @@ def test_watcher_sends_when_veto_bypassed_and_threshold_not_reached(monkeypatch)
     assert details["late_pub_comeback_table_reached"] is False
 
 
-def test_watcher_waits_when_late_wr_below_bypass_threshold(monkeypatch) -> None:
-    """late WR65 + 2 хита: вето не снимается, сигнал ждёт порога таблицы."""
+def test_bypass_and_guard_wr_thresholds_coincide() -> None:
+    """С 30.08 оба порога равны 65 — таблица больше НЕ гейтит то, что прошло гейт.
 
+    Пока пороги совпадают, полосы «прошёл гейт, но ждёт таблицу» не существует:
+    любой late-сигнал с >= 2 хитами, прошедший гейт по WR, снимает вето. Если
+    порог снятия вето когда-нибудь поднимут выше гейта — эта полоса вернётся, и
+    ждущую ветку проверяет тест ниже.
+    """
+
+    assert (
+        float(runtime.LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR)
+        == float(runtime.LATE27_DISPATCH_MIN_LATE_WR)
+        == 65.0
+    )
+
+
+def test_watcher_waits_when_late_wr_below_bypass_threshold(monkeypatch) -> None:
+    """WR ниже порога снятия вето: сигнал ждёт порога таблицы.
+
+    Порог снятия вето поднят в тесте до 70, иначе при совпадающих дефолтах
+    (65 и 65) ждущей полосы не существует и проверять было бы нечего.
+    """
+
+    monkeypatch.setattr(runtime, "LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR", 70.0)
     result = _run_late27_delayed_worker(
         monkeypatch,
         _late27_watcher_payload(

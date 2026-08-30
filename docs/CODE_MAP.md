@@ -187,7 +187,8 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | `LATE27_DISPATCH_MIN_LATE_WR` | `65.0` | минимальный late WR для late-driven отправки на минимальной минуте и позже |
 | `LATE_PUB_TABLE_VETO_BYPASS_ENABLED` | `1` | `0` возвращает прежнее поведение: порог нетворта из comeback-таблицы обязателен для всех late-сигналов |
 | `LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_HITS` | `2` | минимум late-хитов, при котором вето comeback-таблицы снимается |
-| `LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR` | `70.0` | минимальный late WR, при котором вето comeback-таблицы снимается (`_late_pub_table_veto_bypassed`) |
+| `LATE_PUB_TABLE_VETO_BYPASS_MIN_LATE_WR` | `65.0` | минимальный late WR, при котором вето comeback-таблицы снимается (`_late_pub_table_veto_bypassed`). С 30.08.2026 совпадает с `LATE27_DISPATCH_MIN_LATE_WR`: таблица больше не гейтит то, что прошло late-гейт |
+| `BET_REQUIRE_LATE_WIN_MODEL` | `1` | `0` снимает запрет отправлять late-ставку против late-модели (`_late_win_model_reject_for_delivery`). Молчание late-модели ставку НЕ блокирует — только явная противоположная сторона |
 | `HALF_STAKE_ELO_UNDERDOG_BLOCK_ENABLED` | `1` | `0` отключает запрет доставки x0.5 для ELO-андердога |
 | `HALF_STAKE_ELO_UNDERDOG_MIN_DIFF` | `50.0` | минимальная разница `opposite_rating - target_rating`, при которой x0.5 не отправляется |
 | `BET_REQUIRE_WIN_MODEL` | `1` | `0` снимает запрет отправлять обычную ставку без согласия ML-модели победителя (`_win_model_reject_for_delivery`): нет строки `🤖 ML-модель:`, сторона модели против таргета, либо блок All за другую команду. Kills-ставки не затрагивает |
