@@ -1,0 +1,28 @@
+{
+  // Ingame OMC: cheap defaults. Explore stays haiku; opus only for plan/review/architecture.
+  "agents": {
+    "explore": { "model": "haiku" },
+    "executor": { "model": "sonnet" },
+    "debugger": { "model": "sonnet" },
+    "verifier": { "model": "sonnet" },
+    "testEngineer": { "model": "sonnet" },
+    "analyst": { "model": "sonnet" },
+    "critic": { "model": "sonnet" },
+    "planner": { "model": "opus" },
+    "architect": { "model": "opus" },
+    "codeReviewer": { "model": "opus" }
+  },
+  "team": {
+    "ops": {
+      "maxAgents": 6
+    },
+    "roleRouting": {
+      "explore": { "provider": "claude", "model": "LOW" },
+      "executor": { "provider": "claude", "model": "MEDIUM" },
+      "debugger": { "provider": "claude", "model": "MEDIUM" },
+      "planner": { "provider": "claude", "model": "HIGH" },
+      "architect": { "provider": "claude", "model": "HIGH" },
+      "code-reviewer": { "provider": "claude", "model": "HIGH" }
+    }
+  }
+}

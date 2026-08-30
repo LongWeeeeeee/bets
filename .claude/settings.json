@@ -1,13 +1,17 @@
 {
   "permissions": {
-    "deny": []
+    "deny": [
+      "Agent(designer)",
+      "Agent(writer)",
+      "Agent(qa-tester)"
+    ]
   },
   "hooks": {},
   "enabledPlugins": {
-    "ruflo-swarm@ruflo": true,
-    "ruflo-goals@ruflo": true,
-    "ruflo-intelligence@ruflo": true,
-    "ruflo-autopilot@ruflo": true,
-    "ruflo-agentdb@ruflo": true
+    "ruflo-swarm@ruflo": false,
+    "ruflo-goals@ruflo": false,
+    "ruflo-intelligence@ruflo": false,
+    "ruflo-autopilot@ruflo": false,
+    "ruflo-agentdb@ruflo": false
   }
 }

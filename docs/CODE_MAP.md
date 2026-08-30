@@ -897,6 +897,10 @@ Planner/Reviewer запускаются через `codex exec` в read-only san
 - `OmniRouteClient` принимает только loopback HTTP, жёстко проверяет version `3.8.46`/schema `1`, скрывает raw account IDs за hash aliases; mutations требуют 120-секундного `/confirm`.
 - Env (секреты только в service env): `SWARM_TELEGRAM_BOT_TOKEN`, `SWARM_TELEGRAM_ALLOWED_USER_ID`, `SWARM_ORCHESTRATOR_COMMAND` (JSON argv), `OMNIROUTE_MANAGEMENT_URL`, `OMNIROUTE_MANAGEMENT_KEY`, `OMNIROUTE_EXPECTED_VERSION`; optional `SWARM_CODEX_DEVICE_LOGIN_COMMAND`.
 
+### OMC (Claude Code) — горячий оркестр
+
+Маршрут ролей — `AGENTS.md` §4. Тиры моделей — `.claude/omc.jsonc` (`explore`=haiku, `executor`/`debugger`/`verifier`=sonnet, `planner`/`architect`/`code-reviewer`=opus). RuFlo-плагины выключены в `.claude/settings.json` (все `ruflo-*` = false). Проектный скилл «не спавнить консультации» — `.omc/skills/orchestrate-by-default.md`. `designer` / `writer` / `qa-tester` в `permissions.deny`.
+
 ### OpenCode profiles — legacy/альтернативный контур
 
 - `opencode.json`: Commander/plan = `opencode/grok-4.5`; role-prompts в `.opencode/agent/`.

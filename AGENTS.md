@@ -26,7 +26,7 @@
 | Camoufox / антидетект / парсинг страниц | `docs/CAMOUFOX.md` |
 | sleep-политики, расписания опроса, quiet hours | `docs/SCHEDULING.md` |
 | полного объяснения операционных правил, деплоя, примеров запуска | `docs/RUNTIME_RULES.md` |
-| RuFlo swarm/goals/intelligence/autopilot/AgentDB, миграции anti-stall | `docs/RUFLO_RUNTIME.md` |
+| RuFlo (выключен) — rollback / anti-stall archive | `docs/RUFLO_RUNTIME.md` |
 | раскладки файлов на serv1: куда класть скрипт, артефакт, бэкап, что не трогать | `docs/SERVER_LAYOUT.md` |
 | legacy opencode Plan→Worker→Review (`base/agent_workflow.py`) | `docs/MULTI_AGENT_WORKFLOW.md` |
 
@@ -42,7 +42,9 @@
 
 ## 4. Маршрутизация OMC
 
-Оркестр — oh-my-claudecode. Префикс агентов: `oh-my-claudecode:`. Не копируй каталог плагина сюда.
+Оркестр — oh-my-claudecode. Префикс: `oh-my-claudecode:`. Каталог плагина сюда не копируй.
+RuFlo выключен (все `ruflo-*` в `.claude/settings.json` = false). Не поднимай его MCP/плагины.
+`designer` / `writer` / `qa-tester` запрещены. Консультация, коммит, правка 1–2 строк — lead, не спавн.
 
 | Запрос | Куда |
 |---|---|
@@ -55,7 +57,17 @@
 | параллельные независимые куски | `/team`, не стопка one-shot |
 | жирный executor, задача кончилась или другая область | handoff → kill → новый, не compact |
 
-`/team`: teammates живут только внутри одного прогона и той же файловой нитки. После stage или когда used высокий — `.omc/handoffs/` и новый спавн. Lead сжимается; воркер после чужой задачи — нет.
+`/team`: teammates только внутри одного прогона и той же файловой нитки. Lead сжимается; воркер после чужой задачи — нет.
+
+Handoff (10–20 строк) в `.omc/handoffs/<stage>.md` перед kill:
+
+```markdown
+## Handoff: <from> → <to>
+- **Decided**:
+- **Rejected**:
+- **Files**:
+- **Remaining**:
+```
 
 ---
 
