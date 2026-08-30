@@ -9853,12 +9853,18 @@ def _log_half_stake_elo_block_once(match_key: str, decision: Dict[str, Any]) -> 
     if already_logged:
         return
     print(
-        "   🚫 x0.5 заблокирован: таргет слабее по ELO "
+        f"   🚫 {_half_stake_elo_block_detail(decision)} — {match_key}"
+    )
+
+
+def _half_stake_elo_block_detail(decision: Dict[str, Any]) -> str:
+    return (
+        "x0.5 заблокирован: таргет слабее по ELO "
         f"({decision.get('stake_team_name') or decision.get('target_side')}: "
         f"{float(decision.get('target_rating') or 0.0):.0f} vs "
         f"{float(decision.get('opposite_rating') or 0.0):.0f}, "
         f"diff={float(decision.get('elo_diff') or 0.0):.0f} >= "
-        f"{float(decision.get('min_diff') or 0.0):.0f}) — {match_key}"
+        f"{float(decision.get('min_diff') or 0.0):.0f})"
     )
 
 
@@ -10045,14 +10051,16 @@ def _log_late_win_model_block_once(match_key: str, decision: Dict[str, Any]) -> 
         _late_win_model_block_logged_keys.add(log_key)
     if already_logged:
         return
+    print(f"   🚫 Ставка заблокирована late-моделью: {_late_win_model_block_detail(decision)} — {match_key}")
+
+
+def _late_win_model_block_detail(decision: Dict[str, Any]) -> str:
     if str(decision.get("reason") or "") == "late_model_missing":
-        detail = "late-модель не дала оценку (строки в панели нет)"
-    else:
-        detail = (
-            f"late-модель против таргета (модель за {decision.get('late_model_side')}, "
-            f"ставка на {decision.get('target_side')})"
-        )
-    print(f"   🚫 Ставка заблокирована late-моделью: {detail} — {match_key}")
+        return "late-модель не дала оценку (строки в панели нет)"
+    return (
+        f"late-модель против таргета (модель за {decision.get('late_model_side')}, "
+        f"ставка на {decision.get('target_side')})"
+    )
 
 
 _win_model_block_logged_lock = threading.Lock()
@@ -10068,19 +10076,49 @@ def _log_win_model_block_once(match_key: str, decision: Dict[str, Any]) -> None:
         _win_model_block_logged_keys.add(log_key)
     if already_logged:
         return
+    print(f"   🚫 Ставка заблокирована: {_win_model_block_detail(decision)} — {match_key}")
+
+
+def _win_model_block_detail(decision: Dict[str, Any]) -> str:
+    reason = str(decision.get("reason") or "")
     if reason == "model_missing":
-        detail = "ML-модель не дала оценку (строки в панели нет)"
-    elif reason == "model_against":
-        detail = (
+        return "ML-модель не дала оценку (строки в панели нет)"
+    if reason == "model_against":
+        return (
             f"ML-модель против таргета (модель за {decision.get('model_side')}, "
             f"ставка на {decision.get('target_side')})"
         )
-    else:
-        detail = (
-            f"блок All против таргета (All за {decision.get('all_team')}, "
-            f"ставка на {decision.get('target_team')})"
-        )
-    print(f"   🚫 Ставка заблокирована: {detail} — {match_key}")
+    return (
+        f"блок All против таргета (All за {decision.get('all_team')}, "
+        f"ставка на {decision.get('target_team')})"
+    )
+
+
+def _record_delivery_gate_block(
+    match_key: str,
+    message_text: Optional[str],
+    decision: Dict[str, Any],
+    *,
+    reason: str,
+    verdict: str,
+) -> None:
+    """Записать отказ доставки в журнал вердиктов вместе с текстом ставки."""
+    dispatch: Dict[str, Any] = {}
+    target_side = decision.get("target_side")
+    if target_side:
+        dispatch["target_side"] = target_side
+    model_side = decision.get("model_side") or decision.get("late_model_side")
+    if model_side:
+        dispatch["model_side"] = model_side
+    _record_map_verdict(
+        match_key,
+        verdict=verdict,
+        kind="reject",
+        reason=reason,
+        bet_message=message_text,
+        dispatch=dispatch or None,
+        extra=decision,
+    )
 
 
 def _blank_dota2protracker_result() -> Dict[str, Any]:
@@ -27387,6 +27425,7 @@ def _record_map_verdict(
     create_only: bool = False,
     bet_message: Optional[str] = None,
     kills_window: Optional[Dict[str, Any]] = None,
+    snapshot_only: bool = False,
 ) -> None:
     """Upsert per-map verdict journal entry (1 map = 1 record).
 
@@ -27396,15 +27435,19 @@ def _record_map_verdict(
     journal). ``bet_message`` сохраняет последний собранный текст ставки
     (в формате Telegram-отправки) для показа в tail_log. ``create_only=True``
     записывает entry только если карты ещё нет в журнале (используется для
-    первичной записи при парсинге). Never raises: journaling must not break
-    the live pipeline.
+    первичной записи при парсинге). ``snapshot_only=True`` обновляет метрики и
+    текст ставки без новой строки вердикта — нужен tail_log, когда разбор уже
+    есть, а терминального send/reject/delayed ещё нет. Never raises: journaling
+    must not break the live pipeline.
     """
     try:
         if TEST_DISABLE_ADD_URL:
             return
         key = str(match_key or "").strip()
         text = str(verdict or "").strip()
-        if not key or not text:
+        if not key:
+            return
+        if not snapshot_only and not text:
             return
         now_ts = time.time()
         now_label = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -27457,23 +27500,65 @@ def _record_map_verdict(
             verdicts = entry.get("verdicts")
             if not isinstance(verdicts, list):
                 verdicts = []
-            last_item = verdicts[-1] if verdicts else None
-            is_consecutive_dup = (
-                isinstance(last_item, dict)
-                and last_item.get("kind") == verdict_item["kind"]
-                and last_item.get("reason") == verdict_item["reason"]
-                and last_item.get("verdict") == verdict_item["verdict"]
-            )
-            if not is_consecutive_dup:
-                verdicts.append(verdict_item)
-                if len(verdicts) > MAP_VERDICTS_MAX_PER_MAP:
-                    del verdicts[: len(verdicts) - MAP_VERDICTS_MAX_PER_MAP]
+            if not snapshot_only:
+                last_item = verdicts[-1] if verdicts else None
+                is_consecutive_dup = (
+                    isinstance(last_item, dict)
+                    and last_item.get("kind") == verdict_item["kind"]
+                    and last_item.get("reason") == verdict_item["reason"]
+                    and last_item.get("verdict") == verdict_item["verdict"]
+                )
+                if not is_consecutive_dup:
+                    verdicts.append(verdict_item)
+                    if len(verdicts) > MAP_VERDICTS_MAX_PER_MAP:
+                        del verdicts[: len(verdicts) - MAP_VERDICTS_MAX_PER_MAP]
             entry["verdicts"] = verdicts
             data[key] = entry
             _prune_map_verdict_journal_entries(data)
             _write_json_atomic(path, data)
     except Exception:
         logger.exception("MAP_VERDICTS: failed to record verdict for %s", match_key)
+
+
+def _flush_map_analysis_snapshot(match_key: Any, ctx: Optional[Dict[str, Any]]) -> None:
+    """Записать в журнал уже собранный разбор без новой строки вердикта.
+
+    tail_log читает metrics/star/elo/bet_message из entry. Если анализ уже
+    есть, а send/reject ещё не вызывали ``_verdict_print``, карточка иначе
+    остаётся пустой («только распаршен»).
+    """
+    if not isinstance(ctx, dict):
+        return
+
+    def _block(name: str) -> Optional[Dict[str, Any]]:
+        value = ctx.get(name)
+        return value if isinstance(value, dict) else None
+
+    metrics = _block("metrics")
+    protracker = _block("protracker")
+    star = _block("star")
+    elo = _block("elo")
+    identity = _block("identity")
+    dispatch = _block("dispatch")
+    kills_window = _block("kills_window")
+    bet_message = str(ctx.get("bet_message") or "").strip()
+    if not any((metrics, protracker, star, elo, kills_window, bet_message)):
+        return
+    _record_map_verdict(
+        match_key,
+        verdict="analysis_snapshot",
+        kind="info",
+        reason="analysis_snapshot",
+        metrics=metrics,
+        protracker=protracker,
+        star=star,
+        elo=elo,
+        identity=identity,
+        dispatch=dispatch,
+        bet_message=bet_message or None,
+        kills_window=kills_window,
+        snapshot_only=True,
+    )
 
 
 def add_url(url, reason: str = "unspecified", details: Any = None):
@@ -27814,6 +27899,13 @@ def _deliver_and_persist_signal(
     )
     if half_stake_block is not None:
         _log_half_stake_elo_block_once(match_key, half_stake_block)
+        _record_delivery_gate_block(
+            match_key,
+            message_text,
+            half_stake_block,
+            reason="half_stake_elo_underdog",
+            verdict=f"   🚫 {_half_stake_elo_block_detail(half_stake_block)} — {match_key}",
+        )
         return False
     # Тот же принцип, что и у запрета x0.5: матч НЕ закрывается (add_url не
     # зовём). Модель может стать доступна на следующей перепроверке — тогда
@@ -27824,6 +27916,16 @@ def _deliver_and_persist_signal(
     )
     if win_model_block is not None:
         _log_win_model_block_once(match_key, win_model_block)
+        _record_delivery_gate_block(
+            match_key,
+            message_text,
+            win_model_block,
+            reason=str(win_model_block.get("reason") or "model_against"),
+            verdict=(
+                f"   🚫 Ставка заблокирована: {_win_model_block_detail(win_model_block)} "
+                f"— {match_key}"
+            ),
+        )
         return False
     # Обычная ставка не уходит, если late-модель против target. Матч НЕ
     # закрывается (add_url не зовём) — вердикт зависит от драфта и не
@@ -27834,6 +27936,16 @@ def _deliver_and_persist_signal(
     )
     if late_win_model_block is not None:
         _log_late_win_model_block_once(match_key, late_win_model_block)
+        _record_delivery_gate_block(
+            match_key,
+            message_text,
+            late_win_model_block,
+            reason=str(late_win_model_block.get("reason") or "late_model_against"),
+            verdict=(
+                "   🚫 Ставка заблокирована late-моделью: "
+                f"{_late_win_model_block_detail(late_win_model_block)} — {match_key}"
+            ),
+        )
         return False
     reservation_context: Optional[Dict[str, Any]] = None
     if isinstance(bookmaker_reservation_context, dict) and bookmaker_reservation_context.get("token"):
@@ -33772,6 +33884,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 kills_window=_verdict_ctx.get("kills_window"),
             )
 
+        def _flush_analysis() -> None:
+            _flush_map_analysis_snapshot(check_uniq_url, _verdict_ctx)
+
         # Раньше строка печаталась только при включённом префетче, а под --no-odds он
         # выключен — из-за этого номер карты в логе почти не появлялся и связать
         # сигнал с картой было нечем.
@@ -34853,6 +34968,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         _verdict_ctx["kills_window"] = {"ed_by_label": _kw_ed_by_label}
         except Exception:
             pass
+        _flush_analysis()
 
         if DOTA2PROTRACKER_ENABLED and DOTA2PROTRACKER_ONLY_MODE and not PIPELINE_BYPASS_PROTRACKER_GATE:
             if not _has_valid_dota2protracker_signal(protracker_payload):
@@ -35575,6 +35691,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
             except Exception:
                 pass
+            _flush_analysis()
 
             # Isolated kills27 audit/sender: score/log every NW60 hits>=2 candidate.
             # This call cannot alter STAR validity, stake, bookmaker gates, or
@@ -35936,6 +36053,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 "dispatch_mode": dispatch_mode,
                 "game_time": game_time,
             }
+            _flush_analysis()
 
             has_any_valid_star_block = bool(
                 has_selected_early_star
@@ -36958,6 +37076,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # Готовый текст ставки (формат Telegram-отправки) — в журнал
             # вердиктов, чтобы tail_log показывал матч в том же виде.
             _verdict_ctx["bet_message"] = message_text
+            _flush_analysis()
             # Standalone "lane_adv_dict ≥ 8" kills trigger: fires in ANY
             # branch when lanes are dominated (|lane_adv_dict| ≥ 8),
             # regardless of early/late/all star presence. Uses the full
@@ -40494,6 +40613,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 )
             except Exception:
                 pass
+            _flush_analysis()
             _verdict_print(
                 "   ⚠️ ВЕРДИКТ: ОТКАЗ "
                 "(нет star-сигнала) - матч пропущен",

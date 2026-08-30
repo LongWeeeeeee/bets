@@ -4,6 +4,12 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _isolate_map_verdicts(tmp_path, monkeypatch):
+    """Не даёт тестам писать в боевой журнал вердиктов (tail_log)."""
+    monkeypatch.setenv("MAP_VERDICTS_PATH", str(tmp_path / "map_verdicts.json"))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_sent_signal_fingerprints(tmp_path, monkeypatch):
     """Изолирует межинстансный дедуп сигналов от общего state-файла.
 
