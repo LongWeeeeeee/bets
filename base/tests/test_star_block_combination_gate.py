@@ -160,14 +160,17 @@ def test_early_end_plus_late_requires_no_opposite_all_hits() -> None:
         all_hits=_hits(("dota2protracker_cp1vs1", -5)),
         all_wr_pct=60.0,
     )
-    assert with_opposite_all_hit["blocked"] is True
+    # С 30.08.2026 встречный WR60+ хит в All сам по себе ставку не отменяет:
+    # комбинация `early_end+late` им по-прежнему запрещена, но сигнал проходит
+    # как одиночный валидный `late`.
+    assert with_opposite_all_hit["blocked"] is False
+    assert "early_end+late" not in with_opposite_all_hit["accepted_combinations"]
+    assert "late" in with_opposite_all_hit["accepted_combinations"]
     assert with_opposite_all_hit["all_opposite_hit_metrics"] == ["dota2protracker_cp1vs1"]
 
 
-def test_late_below_70_is_blocked_by_opposite_all_hit() -> None:
-    """Ключевой пример: late WR65 + 2 хита, в All один встречный WR60 хит."""
-
-    gate = _evaluate(
+def _late65_with_opposite_all():
+    return _evaluate(
         target_sign=-1,
         late_hits=_hits(("solo", -4), ("counterpick_1vs1", -6)),
         late_wr_pct=65.0,
@@ -175,13 +178,35 @@ def test_late_below_70_is_blocked_by_opposite_all_hit() -> None:
         all_wr_pct=60.0,
     )
 
+
+def test_late_below_70_passes_with_opposite_all_hit() -> None:
+    """Ключевой пример: late WR65 + 2 хита, в All один встречный WR60 хит.
+
+    С 30.08.2026 такой сигнал проходит: встречный хит в All сам по себе ставку
+    на late не отменяет.
+    """
+
+    gate = _late65_with_opposite_all()
+
+    assert gate["blocked"] is False
+    assert gate["late_valid"] is True
+    assert "late" in gate["accepted_combinations"]
+    assert gate["late_allows_opposite_all"] is True
+
+
+def test_late_below_70_is_blocked_by_opposite_all_hit_with_kill_switch(monkeypatch) -> None:
+    """LATE_ALLOW_OPPOSITE_ALL_HIT=0 возвращает прежний отказ."""
+
+    monkeypatch.setattr(runtime, "LATE_ALLOW_OPPOSITE_ALL_HIT", False)
+    gate = _late65_with_opposite_all()
+
     assert gate["blocked"] is True
     assert gate["late_valid"] is True
     assert gate["late_allows_opposite_all"] is False
 
 
-def test_jenz_late70_is_blocked_by_opposite_all80() -> None:
-    gate = _evaluate(
+def _jenz_late70_gate():
+    return _evaluate(
         target_sign=-1,
         late_hits=_hits(("solo", -6), ("counterpick_1vs1", -9)),
         late_wr_pct=70.0,
@@ -189,9 +214,30 @@ def test_jenz_late70_is_blocked_by_opposite_all80() -> None:
         all_wr_pct=80.0,
     )
 
+
+def test_jenz_late70_passes_with_opposite_all80() -> None:
+    """Даже валидный All за другую команду больше не отменяет ставку на late.
+
+    Это самое широкое следствие снятия условия: раньше кейс Jenz отвергался
+    именно здесь. Ставку в такой конфигурации всё ещё может остановить
+    `_win_model_reject_for_delivery` причиной `all_against` — но это уже
+    другой гейт, на этапе доставки.
+    """
+
+    gate = _jenz_late70_gate()
+
+    assert gate["blocked"] is False
+    assert gate["accepted_combinations"] == ["late"]
+    assert gate["late_valid"] is True
+    assert gate["late_allows_opposite_all"] is True
+
+
+def test_jenz_late70_is_blocked_by_opposite_all80_with_kill_switch(monkeypatch) -> None:
+    monkeypatch.setattr(runtime, "LATE_ALLOW_OPPOSITE_ALL_HIT", False)
+    gate = _jenz_late70_gate()
+
     assert gate["blocked"] is True
     assert gate["accepted_combinations"] == []
-    assert gate["late_valid"] is True
     assert gate["all_opposite_hit_metrics"] == [
         "counterpick_1vs1",
         "counterpick_1vs2",
@@ -340,8 +386,14 @@ def test_all_blocks_wr60_single_hit_signal_is_rejected_end_to_end(monkeypatch) -
 
 
 def test_jenz_late70_opposite_all80_is_rejected_end_to_end(monkeypatch) -> None:
-    """Jenz 24:27: Late за Jenz, но валидные Early/All за FTS → отказ."""
+    """Jenz 24:27: Late за Jenz, но валидные Early/All за FTS → отказ.
 
+    Сквозная проверка прежнего правила: с 30.08.2026 она держится выключателем
+    LATE_ALLOW_OPPOSITE_ALL_HIT=0. По умолчанию такой сигнал комбинационный
+    гейт пропускает (см. `test_jenz_late70_passes_with_opposite_all80`).
+    """
+
+    monkeypatch.setattr(runtime, "LATE_ALLOW_OPPOSITE_ALL_HIT", False)
     _patch_early_late_wr(monkeypatch, early_level=80, late_level=70, all_level=80)
     case = BranchScenario(
         name="jenz_late70_opposite_all80",

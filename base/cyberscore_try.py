@@ -7201,6 +7201,12 @@ def _star_diag_target_side(diag: Dict[str, Any]) -> Optional[str]:
 STAR_COMBINATION_MIN_WR = _safe_float_env("STAR_COMBINATION_MIN_WR", 65.0)
 STAR_COMBINATION_MIN_HITS = max(1, _safe_int_env("STAR_COMBINATION_MIN_HITS", 2))
 STAR_COMBINATION_GATE_ENABLED = _env_flag("STAR_COMBINATION_GATE_ENABLED", "1")
+# С 30.08.2026 противоположный WR60+ star-хит в блоке All САМ ПО СЕБЕ ставку на
+# late не отменяет (просьба владельца). Условие жило в двух местах — в ветке
+# `late` комбинационного гейта и в late-гейте минимальной минуты — и снятие
+# только одного было бы пустышкой, поэтому переключатель один на оба.
+# Откат — LATE_ALLOW_OPPOSITE_ALL_HIT=0.
+LATE_ALLOW_OPPOSITE_ALL_HIT = _env_flag("LATE_ALLOW_OPPOSITE_ALL_HIT", "1")
 STAR_COMBINATION_GATE_REJECT_REASON = "star_signal_rejected_block_combination"
 STAR_COMBINATION_GATE_STATUS_LABEL = "block_combination_gate_no_send"
 
@@ -7319,7 +7325,7 @@ def _evaluate_star_block_combination_gate(
         accepted.append("early_end+late")
     if early_end_valid and not late_opposite_hits and not all_opposite_hits:
         accepted.append("early_end")
-    if late_valid and not all_opposite_hits:
+    if late_valid and (LATE_ALLOW_OPPOSITE_ALL_HIT or not all_opposite_hits):
         accepted.append("late")
     if all_valid:
         accepted.append("all")
@@ -7341,7 +7347,7 @@ def _evaluate_star_block_combination_gate(
         "all_valid": all_valid,
         "all_opposite_hit_metrics": all_opposite_hits,
         "late_opposite_hit_metrics": late_opposite_hits,
-        "late_allows_opposite_all": False,
+        "late_allows_opposite_all": bool(LATE_ALLOW_OPPOSITE_ALL_HIT),
         "min_wr_required": float(STAR_COMBINATION_MIN_WR),
         "min_hits_required": int(STAR_COMBINATION_MIN_HITS),
     }
@@ -7578,7 +7584,7 @@ def _evaluate_late27_dispatch_guard(
                 reasons.append("late_wr_below_min")
         elif snapshot_complete:
             reasons.append("late_wr_unknown")
-        if opposite_all_hits:
+        if opposite_all_hits and not LATE_ALLOW_OPPOSITE_ALL_HIT:
             reasons.append("all_opposite_star_hit")
 
     return {

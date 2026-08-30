@@ -1,5 +1,9 @@
-"""late-гейт минимальной минуты: late-driven отправка требует >=2 late-хитов,
-WR >= порога и отсутствия противоположных star-хитов в блоке All.
+"""late-гейт минимальной минуты: late-driven отправка требует >=2 late-хитов и
+WR >= порога.
+
+С 30.08.2026 условие «нет противоположного WR60+ star-хита в блоке All» снято
+(просьба владельца) и держится только выключателем LATE_ALLOW_OPPOSITE_ALL_HIT=0.
+Метрики встречных хитов по-прежнему считаются и пишутся в журнал.
 
 Граница задаётся ``LATE_PUB_COMEBACK_TABLE_START_SECONDS`` (31:00 с 29.08.2026,
 до этого 27:00) — тесты берут её из runtime, а не хардкодят минуту.
@@ -84,13 +88,18 @@ def test_opposite_sign_star_hit_metrics_filters_by_sign() -> None:
 
 
 def test_production_case_is_blocked() -> None:
-    """Late WR65 с одним хитом + противоположный star-хит в All → отказ."""
+    """Late WR65 с одним хитом → отказ по числу хитов.
+
+    С 30.08.2026 встречный star-хит в All отказом больше НЕ является: кейс
+    держится одним `late_hits_below_min`. Метрики встречных хитов по-прежнему
+    считаются и уезжают в журнал — просто не блокируют.
+    """
 
     guard = _evaluate(_snapshot())
 
     assert guard["active"] is True
     assert guard["blocked"] is True
-    assert guard["reasons"] == ["late_hits_below_min", "all_opposite_star_hit"]
+    assert guard["reasons"] == ["late_hits_below_min"]
     assert guard["all_opposite_hit_metrics"] == ["dota2protracker_cp1vs1"]
 
 
@@ -102,7 +111,21 @@ def test_two_hits_wr65_without_opposite_all_passes() -> None:
     assert guard["reasons"] == []
 
 
-def test_two_hits_with_opposite_all_hit_is_blocked() -> None:
+def test_two_hits_with_opposite_all_hit_passes() -> None:
+    """Снятое условие: 2 хита при встречном WR60+ в All теперь проходят."""
+
+    guard = _evaluate(_snapshot(late_hit_count=2, late_wr_pct=75.0))
+
+    assert guard["blocked"] is False
+    assert guard["reasons"] == []
+    # Факт встречного хита не потерян — он просто не отказ.
+    assert guard["all_opposite_hit_metrics"] == ["dota2protracker_cp1vs1"]
+
+
+def test_two_hits_with_opposite_all_hit_blocked_with_kill_switch(monkeypatch) -> None:
+    """LATE_ALLOW_OPPOSITE_ALL_HIT=0 возвращает прежний отказ."""
+
+    monkeypatch.setattr(runtime, "LATE_ALLOW_OPPOSITE_ALL_HIT", False)
     guard = _evaluate(_snapshot(late_hit_count=2, late_wr_pct=75.0))
 
     assert guard["blocked"] is True
@@ -196,7 +219,9 @@ def test_snapshot_from_stake_multiplier_context_roundtrip() -> None:
 
     assert guard["blocked"] is True
     assert guard["all_star_hits_known"] is True
-    assert guard["reasons"] == ["late_hits_below_min", "all_opposite_star_hit"]
+    # Встречные хиты доезжают в снимке, но отказом больше не являются.
+    assert guard["reasons"] == ["late_hits_below_min"]
+    assert guard["all_opposite_hit_metrics"] == ["dota2protracker_cp1vs1"]
 
 
 def test_legacy_context_without_all_hits_skips_all_check() -> None:
@@ -275,7 +300,8 @@ def test_late_only_27_dispatch_is_rejected_end_to_end(monkeypatch) -> None:
     details = result.add_url_calls[-1]["details"]
     assert details["dispatch_status_label"] == runtime.LATE27_DISPATCH_GUARD_STATUS_LABEL
     assert "late_hits_below_min" in details["late27_guard_reasons"]
-    assert "all_opposite_star_hit" in details["late27_guard_reasons"]
+    # Встречный хит в All отказом больше не является, но в журнал попадает.
+    assert "all_opposite_star_hit" not in details["late27_guard_reasons"]
     assert details["late27_guard_all_opposite_hit_metrics"] == ["counterpick_1vs1"]
 
 
@@ -411,7 +437,7 @@ def test_delayed_watcher_rejects_blocked_late27_signal(monkeypatch) -> None:
     assert details["dispatch_status_label"] == runtime.LATE27_DISPATCH_GUARD_STATUS_LABEL
     assert details["dispatch_mode"] == "rejected_late27_dispatch_guard_watcher"
     assert "late_hits_below_min" in details["late27_guard_reasons"]
-    assert "all_opposite_star_hit" in details["late27_guard_reasons"]
+    assert "all_opposite_star_hit" not in details["late27_guard_reasons"]
 
 
 def test_delayed_watcher_keeps_sending_valid_late27_signal(monkeypatch) -> None:

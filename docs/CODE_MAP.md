@@ -186,6 +186,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | `LATE27_DISPATCH_MIN_LATE_HITS` | `2` | минимум late star-хитов для late-driven отправки на минимальной минуте и позже (`_evaluate_late27_dispatch_guard`) |
 | `LATE27_DISPATCH_MIN_LATE_WR` | `65.0` | минимальный late WR для late-driven отправки на минимальной минуте и позже |
 | `LATE_PUB_TABLE_GATE_WR_LEVEL` | `0` | WR-уровень comeback-таблицы, по которому берётся поминутный networth-гейт late-ставок (`_late_pub_table_gate_wr_level`). `0` = самый высокий уровень загруженной таблицы, в бою WR90 (31-я минута −8546). Уровни отличаются мягкостью: чем выше WR, тем больше отставания допускается, поэтому строжайший вариант — `60` (31-я минута −7316) |
+| `LATE_ALLOW_OPPOSITE_ALL_HIT` | `1` | `0` возвращает прежнее правило: встречный WR60+ star-хит в блоке All отменяет ставку на late. Условие снято 30.08.2026 СРАЗУ В ДВУХ местах — ветка `late` в `_star_block_combination_gate` и `all_opposite_star_hit` в `_evaluate_late27_dispatch_guard`; снятие только одного было бы пустышкой |
 | `BET_REQUIRE_LATE_WIN_MODEL` | `1` | `0` снимает требование согласия late-модели для late-ставки (`_late_win_model_reject_for_delivery`). По умолчанию fail-closed: ставка идёт ТОЛЬКО когда late-модель явно назвала сторону таргета; молчание модели (`late_model_missing`) блокирует |
 | `HALF_STAKE_ELO_UNDERDOG_BLOCK_ENABLED` | `1` | `0` отключает запрет доставки x0.5 для ELO-андердога |
 | `HALF_STAKE_ELO_UNDERDOG_MIN_DIFF` | `50.0` | минимальная разница `opposite_rating - target_rating`, при которой x0.5 не отправляется |
