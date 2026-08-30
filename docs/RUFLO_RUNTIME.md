@@ -14,6 +14,10 @@ RuFlo is the durable coordination and learning substrate around the existing Her
 kanban workflow. It does **not** redesign roles, model routing, assignees, Reviewer
 gates, or production-safety rules in `AGENTS.md`.
 
+RuFlo дополняет координацию, но **не меняет роли/модели/assignee** и **не обходит Reviewer**.
+Старый `hermes-anti-stall-supervisor` выведен из эксплуатации; **не включай его systemd timer**.
+Проверенные policy/contracts — AgentDB namespace `ingame-orchestration`.
+
 Enabled project plugins:
 
 - `ruflo-swarm@ruflo`
