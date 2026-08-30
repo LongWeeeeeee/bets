@@ -213,10 +213,11 @@ runtime/*.err
 base/test.py
 
 # Операционное состояние oh-my-claudecode: планы, логи, хендоффы, память сессий.
-# По документации OMC это игнорируемые артефакты; исключение — .omc/skills/.
-.omc/*
-!.omc/skills/
-!.omc/skills/**
+# Игнор любого `.omc/`; в git только корневые проектные скиллы.
+**/.omc/**
+!/.omc/
+!/.omc/skills/
+!/.omc/skills/**
 
 # Снимки страниц от браузерных проверок (playwright MCP) — не код
 .playwright-mcp/
