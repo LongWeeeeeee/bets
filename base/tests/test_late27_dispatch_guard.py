@@ -493,6 +493,27 @@ def test_shallow_deficit_at_start_minute_is_ready(monkeypatch) -> None:
     assert decision["ready"] is True
 
 
+def test_signal_wr_level_is_not_the_gate_level(monkeypatch) -> None:
+    """WR сигнала и WR-уровень networth-гейта — РАЗНЫЕ величины.
+
+    Регрессия, от которой защищает тест: спекулятивная ветка сравнивает WR с
+    порогом LATE_PUB_COMEBACK_SPECULATIVE_MIN_WR (70). Если подставить туда
+    уровень гейта (в бою 90), сравнение станет тавтологией и спекулятив
+    останется без ограничения по WR вовсе. Здесь сигнал WR65 обязан дать 65
+    (< 70, спекулятив запрещён), а гейт — 90 (>= 70).
+    """
+
+    _patch_comeback_table(monkeypatch, GATE_TABLE)
+
+    signal_level = runtime._late_pub_table_wr_level_from_signal_values(65.0)
+    gate_level = runtime._late_pub_table_gate_wr_level()
+
+    assert signal_level == 60  # ближайший уровень с порогами в GATE_TABLE
+    assert gate_level == 90
+    assert signal_level < runtime.LATE_PUB_COMEBACK_SPECULATIVE_MIN_WR
+    assert gate_level >= runtime.LATE_PUB_COMEBACK_SPECULATIVE_MIN_WR
+
+
 UNREACHABLE_TABLE = {90: {START_MINUTE: 9000.0}}
 
 

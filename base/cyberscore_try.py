@@ -8310,70 +8310,6 @@ def _late_pub_table_wr_level_from_payload(payload: Optional[Dict[str, Any]]) -> 
     return _late_pub_table_gate_wr_level()
 
 
-def _late_pub_table_wr_level_from_payload_signal(payload: Optional[Dict[str, Any]]) -> Optional[int]:
-    if not isinstance(payload, dict):
-        return _late_pub_table_wr_level_from_values()
-
-    detail_payload = payload.get("add_url_details")
-    details = detail_payload if isinstance(detail_payload, dict) else {}
-    context_payload = payload.get("stake_multiplier_context")
-    context = context_payload if isinstance(context_payload, dict) else {}
-
-    for source in (payload, details):
-        raw_level = source.get("late_pub_comeback_table_wr_level")
-        try:
-            level = int(raw_level) if raw_level is not None else None
-        except (TypeError, ValueError):
-            level = None
-        if _late_pub_table_has_thresholds(level):
-            return level
-
-    target_side = str(
-        payload.get("networth_target_side")
-        or details.get("networth_target_side")
-        or details.get("target_side")
-        or context.get("target_side")
-        or ""
-    ).strip().lower()
-
-    side_aware_candidates: List[Any] = []
-    if target_side in {"radiant", "dire"}:
-        def _context_side(sign_value: Any) -> Optional[str]:
-            try:
-                normalized_sign = int(sign_value)
-            except (TypeError, ValueError):
-                normalized_sign = sign_value
-            return _target_side_from_sign(normalized_sign)
-
-        early_side = _context_side(context.get("selected_early_sign"))
-        late_side = _context_side(context.get("selected_late_sign"))
-        all_side = _context_side(context.get("selected_all_sign"))
-        if bool(context.get("has_selected_late_star")) and late_side == target_side:
-            side_aware_candidates.append(context.get("late_wr_pct"))
-        if bool(context.get("has_selected_early_star")) and early_side == target_side:
-            side_aware_candidates.append(context.get("early_wr_pct"))
-        if bool(context.get("has_selected_all_star")) and all_side == target_side:
-            side_aware_candidates.append(context.get("all_wr_pct"))
-
-    level = _late_pub_table_wr_level_from_values(*side_aware_candidates)
-    if level is not None:
-        return level
-
-    return _late_pub_table_wr_level_from_values(
-        context.get("late_wr_pct"),
-        details.get("late_wr_pct"),
-        payload.get("late_wr_pct"),
-        context.get("early_wr_pct"),
-        details.get("early_wr_pct"),
-        payload.get("early_wr_pct"),
-        context.get("all_wr_pct"),
-        details.get("all_wr_pct"),
-        payload.get("all_wr_pct"),
-        details.get("selected_star_wr"),
-        payload.get("selected_star_wr"),
-    )
-
-
 def _late_star_pub_table_decision(
     *,
     wr_level: Optional[int],
@@ -13376,11 +13312,19 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                         reason="main_late_stake_cancels_comeback_watcher",
                     )
                     continue
+                # WR здесь — СИГНАЛА, а не единой строки networth-гейта.
+                # `late_pub_comeback_table_wr_level` с 30.08.2026 всегда равен
+                # `_late_pub_table_gate_wr_level()` (в бою 90), и сравнение его
+                # с порогом 70 было бы тавтологией: спекулятивная ветка
+                # осталась бы без ограничения по WR вовсе.
+                _spec_signal_wr_level = _late_pub_table_wr_level_from_signal_values(
+                    late27_watcher_guard.get("late_wr_pct")
+                )
                 if (
                     not payload.get("speculative_half_sent")
                     and monitor_target_diff is not None
-                    and late_pub_comeback_table_wr_level is not None
-                    and int(late_pub_comeback_table_wr_level) >= LATE_PUB_COMEBACK_SPECULATIVE_MIN_WR
+                    and _spec_signal_wr_level is not None
+                    and int(_spec_signal_wr_level) >= LATE_PUB_COMEBACK_SPECULATIVE_MIN_WR
                 ):
                     _spec_smc = payload.get("stake_multiplier_context") or {}
                     if _late_speculative_allowed_for_context(
