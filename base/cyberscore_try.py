@@ -607,7 +607,14 @@ def _winline_current_map_is_current(**kwargs: Any) -> Any:
         return {"current": False, "reason": "map_rollover"}
     if not _winline_same_team_pair(reg.get("team1"), reg.get("team2"), team1, team2):
         return {"current": False, "reason": "map_rollover"}
-    return True
+    # ПОДТВЕРЖДЕНИЕ, а не «оснований остановить нет»: реестр видит в мосте
+    # именно эту карту этой пары. Только по такому ответу опрос имеет право
+    # продлить свой потолок и не гасить живую карту (см. `_extend_safety_ceiling`
+    # в services/winline/winline_current_map_odds_poller.py). Голое True выше —
+    # это отсутствие возражений (серии нет в реестре, грейс молчания источника,
+    # ожидание следующей карты), и продлевать потолок по нему нельзя.
+    return {"current": True, "reason": "registry_active", "proven": True,
+            "confirmed": True}
 
 
 def _winline_normalized_team_identity(value: Any) -> str:
@@ -2635,8 +2642,21 @@ WINLINE_ODDS_TELEGRAM_ENABLED_ENV = "WINLINE_ODDS_TELEGRAM_ENABLED"
 WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV = "WINLINE_ODDS_TELEGRAM_MIN_SPACING_S"
 WINLINE_ODDS_TELEGRAM_MAX_PER_MIN_ENV = "WINLINE_ODDS_TELEGRAM_MAX_PER_MIN"
 WINLINE_CURRENT_MAP_CONTINUOUS_ENV = "WINLINE_CURRENT_MAP_CONTINUOUS"
+# Сколько ждать, прежде чем объявить остановку опроса. Недоказанный терминал —
+# это «мы не знаем», а не «опрос кончился»: тот же ключ обычно заводится заново
+# за десятки секунд (реестр всё ещё видит карту), и объявление оказывается
+# ложным. 31.08.2026 такая пара ушла в чат: «⏹️ опрос остановлен» в 22:59:32 и
+# «🏁 карта завершена» в 23:04:11 по одной и той же карте 3.
+WINLINE_ODDS_STOP_NOTICE_HOLD_ENV = "WINLINE_ODDS_STOP_NOTICE_HOLD_S"
+# Победитель карты приходит из OpenDota и в момент конца карты там обычно ещё
+# отсутствует, поэтому имя догоняет отдельным сообщением.
+WINLINE_MAP_WINNER_ENABLED_ENV = "WINLINE_MAP_WINNER_ENABLED"
+WINLINE_MAP_WINNER_RETRY_ENV = "WINLINE_MAP_WINNER_RETRY_S"
+WINLINE_MAP_WINNER_WINDOW_ENV = "WINLINE_MAP_WINNER_WINDOW_S"
 
 _winline_odds_notify_state: Dict[str, Dict[str, Any]] = {}
+# key -> {match_id, map_num, team1, team2, since_mono, next_try_mono}
+_winline_pending_map_winners: Dict[str, Dict[str, Any]] = {}
 
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
@@ -2795,6 +2815,7 @@ def _winline_build_odds_message(
     prev_p1: Any,
     prev_p2: Any,
     stamp: str,
+    winner: Any = None,
 ) -> str:
     head = {
         "first": "🆕 Winline",
@@ -2802,6 +2823,7 @@ def _winline_build_odds_message(
         "closed": "🔒 Winline",
         "terminal": "🏁 Winline",
         "stopped": "⏹️ Winline",
+        "winner": "🏆 Winline",
     }.get(kind, "📊 Winline")
     map_label = f" · карта {map_num}" if map_num else ""
     lines = [f"{head}{map_label}", f"{team1} — {team2}"]
@@ -2809,6 +2831,13 @@ def _winline_build_odds_message(
         lines.append("рынок закрыт")
     elif kind == "terminal":
         lines.append("карта завершена")
+        # Победитель известен только из OpenDota и в момент конца карты там
+        # обычно ещё отсутствует. Строку пишем, когда имя есть; иначе оно
+        # догонит отдельным сообщением 🏆, а врать «победа: —» нельзя.
+        if winner:
+            lines.append(f"🏆 победа: {winner}")
+    elif kind == "winner":
+        lines.append(f"🏆 победа: {winner}" if winner else "победитель неизвестен")
     elif kind == "stopped":
         # Опрос кончился не потому, что кончилась карта: потолок безопасности или
         # молчащий источник. Писать «карта завершена» тут значит врать в чат.
@@ -2821,15 +2850,144 @@ def _winline_build_odds_message(
     return "\n".join(lines)
 
 
+def _winline_stop_notice_hold_seconds() -> float:
+    return max(0.0, _winline_env_float(WINLINE_ODDS_STOP_NOTICE_HOLD_ENV, 180.0))
+
+
+def _winline_map_winner_enabled() -> bool:
+    raw = os.getenv(WINLINE_MAP_WINNER_ENABLED_ENV)
+    if raw is None or str(raw).strip() == "":
+        return True
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _winline_note_pending_stop(key: str, mono: float, payload: Dict[str, Any]) -> None:
+    """Запомнить недоказанную остановку опроса, НЕ объявляя её в чат.
+
+    Первая запись не перетирается повторной: отсчёт идёт от момента, когда
+    опрос действительно прервался, а не от последнего терминала.
+    """
+    with _winline_current_map_state_lock:
+        state = _winline_odds_notify_state.get(key)
+        if not isinstance(state, dict):
+            return
+        if isinstance(state.get("pending_stop"), dict):
+            return
+        state["pending_stop"] = {
+            "since_mono": float(mono),
+            "p1": payload.get("p1"),
+            "p2": payload.get("p2"),
+            "status": payload.get("status"),
+        }
+
+
+def _winline_clear_pending_stop(key: str) -> bool:
+    with _winline_current_map_state_lock:
+        state = _winline_odds_notify_state.get(key)
+        if not isinstance(state, dict) or not state.get("pending_stop"):
+            return False
+        state.pop("pending_stop", None)
+        return True
+
+
+def _winline_fetch_map_winner(match_id: Any) -> Optional[Dict[str, Any]]:
+    """Исход карты из OpenDota по её Valve match_id.
+
+    Тот же источник, которым доигранные серии закрываются в живом ELO
+    (`_fetch_finished_sourcetv_series_scores`). Возвращает None, пока матча в
+    OpenDota нет, — это нормальное состояние сразу после конца карты.
+    """
+    try:
+        mid = int(match_id)
+    except (TypeError, ValueError):
+        return None
+    if mid <= 0:
+        return None
+    try:
+        resp = requests.get(f"https://api.opendota.com/api/matches/{mid}", timeout=6)
+    except Exception:
+        return None
+    if resp is None or resp.status_code != 200:
+        return None
+    try:
+        data = resp.json()
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    radiant_win = data.get("radiant_win")
+    if radiant_win is None:
+        return None
+    side = "radiant" if radiant_win else "dire"
+    team = data.get(f"{side}_team")
+    name = str((team or {}).get("name") or "").strip() if isinstance(team, dict) else ""
+    return {"radiant_win": bool(radiant_win), "side": side, "name": name or None}
+
+
+def _winline_map_winner_name(
+    key: str,
+    match_id: Any,
+    *,
+    fetch_fn: Any = None,
+) -> Optional[str]:
+    """Имя победителя карты в терминах сообщения, либо None.
+
+    Порядок команд в каноническом ключе sourcetv — это radiant/dire ИМЕННО этой
+    карты: реестр пишет их из строки моста, а усыновление при обмене сторон
+    переписывает идентичность под новый порядок. Поэтому по `radiant_win`
+    сторона переводится в имя из ключа; имя из OpenDota используется только для
+    сверки, чтобы в чате стояло то же написание, что и в шапке сообщения.
+    """
+    if not _winline_map_winner_enabled():
+        return None
+    outcome = (fetch_fn or _winline_fetch_map_winner)(match_id)
+    if not isinstance(outcome, dict):
+        return None
+    _map_num, team1, team2 = _winline_parse_canonical_key(key)
+    remote = str(outcome.get("name") or "").strip()
+    if remote:
+        for candidate in (team1, team2):
+            if candidate and _winline_normalized_team_identity(candidate) == (
+                _winline_normalized_team_identity(remote)
+            ):
+                return candidate
+    if str(key or "").startswith("sourcetv:"):
+        # Ключ sourcetv: team1 = radiant карты, team2 = dire.
+        side_name = team1 if outcome.get("radiant_win") else team2
+        if side_name:
+            return side_name
+    # Ключ не sourcetv (порядок команд не привязан к сторонам) — своё имя из
+    # OpenDota честнее, чем угаданная сторона.
+    return remote or None
+
+
+def _winline_note_pending_map_winner(key: str, mono: float, match_id: Any) -> None:
+    try:
+        mid = int(match_id)
+    except (TypeError, ValueError):
+        return
+    if mid <= 0 or not _winline_map_winner_enabled():
+        return
+    retry = max(5.0, _winline_env_float(WINLINE_MAP_WINNER_RETRY_ENV, 60.0))
+    with _winline_current_map_state_lock:
+        _winline_pending_map_winners[str(key)] = {
+            "match_id": mid,
+            "since_mono": float(mono),
+            "next_try_mono": float(mono) + retry,
+        }
+
+
 def _winline_odds_telegram_notify(
     payload: Any,
     canonical_key: Any,
     *,
     is_terminal: bool = False,
     map_end_proven: bool = True,
+    match_id: Any = None,
     send_fn: Any = None,
     monotonic_fn: Any = None,
     stamp_fn: Any = None,
+    winner_fn: Any = None,
 ) -> Optional[str]:
     """Сообщить в админ-чат об изменении кэфов текущей карты. Fail-open.
 
@@ -2863,6 +3021,13 @@ def _winline_odds_telegram_notify(
     with _winline_current_map_state_lock:
         prev = dict(_winline_odds_notify_state.get(key) or {})
 
+    if not is_terminal and prev.get("pending_stop"):
+        # Опрос по этому ключу снова присылает попытки: остановки не было.
+        # Объявлять её теперь нечего — отложенное сообщение снимаем молча.
+        _winline_clear_pending_stop(key)
+        prev.pop("pending_stop", None)
+
+    winner_name: Optional[str] = None
     if is_terminal:
         if not prev:
             # По этой карте мы не отправили ни одной строки: рынка не было ни
@@ -2871,9 +3036,22 @@ def _winline_odds_telegram_notify(
             # было вовсе (23.08.2026, «Winline · карта 3» в серии
             # Team Spirit — Team Yandex: третьей карты не существовало).
             return None
-        # Терминал без доказанного конца карты (потолок 90 минут, молчащий фид)
-        # объявляем остановкой опроса, а не финишем карты.
-        kind = "terminal" if map_end_proven else "stopped"
+        if not map_end_proven:
+            # Терминал без доказанного конца карты (потолок опроса, молчащий
+            # фид) — это «мы не знаем», а не событие. Опрос того же ключа
+            # обычно возобновляется за десятки секунд, и объявление оказалось бы
+            # ложным, поэтому оно откладывается до подтверждения молчанием
+            # (`_winline_flush_pending_stop_notices`).
+            _winline_note_pending_stop(key, mono, {"p1": p1, "p2": p2, "status": status})
+            return None
+        kind = "terminal"
+        _winline_clear_pending_stop(key)
+        prev.pop("pending_stop", None)
+        if match_id is not None:
+            try:
+                winner_name = _winline_map_winner_name(key, match_id, fetch_fn=winner_fn)
+            except Exception:
+                winner_name = None
     elif status in {"closed", "suspended"}:
         kind = "closed"
     elif not has_odds:
@@ -2912,6 +3090,7 @@ def _winline_odds_telegram_notify(
         prev_p1=prev.get("p1"),
         prev_p2=prev.get("p2"),
         stamp=stamp,
+        winner=winner_name,
     )
 
     # Кэфы Winline уходят в ОТДЕЛЬНЫЙ бот (keys.WinlineToken), ставки остаются
@@ -2944,7 +3123,161 @@ def _winline_odds_telegram_notify(
             "last_sent_mono": mono,
             "sent_mono": recent + [mono],
         }
+    if kind == "terminal" and winner_name is None and match_id is not None:
+        # Имя победителя догонит отдельным сообщением: факт конца карты важнее
+        # и задерживать его ради OpenDota нельзя.
+        _winline_note_pending_map_winner(key, mono, match_id)
     return message
+
+
+def _winline_send_lifecycle_message(message: str, send_fn: Any = None) -> bool:
+    """Отправка служебной строки о карте. Ошибка не выбрасывается наружу."""
+    sender = send_fn or send_winline_odds_message
+    try:
+        delivered = sender(
+            message,
+            admin_only=True,
+            mirror_to_vk=False,
+            silent=True,
+        )
+    except Exception as exc:
+        try:
+            logger.warning("winline lifecycle telegram notify failed: %s", exc)
+        except Exception:
+            pass
+        return False
+    return delivered is not False
+
+
+def _winline_flush_pending_stop_notices(
+    *,
+    monotonic_fn: Any = None,
+    stamp_fn: Any = None,
+    send_fn: Any = None,
+) -> List[str]:
+    """Объявить остановку опроса, если она подтвердилась.
+
+    Подтверждение — это молчание: за окно ожидания по ключу не появилось ни
+    нового опроса, ни доказанного конца карты. Без него сообщение врало бы:
+    31.08.2026 «опрос остановлен» ушло в 22:59:32, а опрос той же карты 3 уже
+    шёл снова в 23:01:10 и доложил настоящий конец в 23:04:11.
+    """
+    if not _winline_odds_notify_enabled():
+        return []
+    mono = float((monotonic_fn or time.monotonic)())
+    hold = _winline_stop_notice_hold_seconds()
+    sent: List[str] = []
+    with _winline_current_map_state_lock:
+        keys = [
+            key
+            for key, state in _winline_odds_notify_state.items()
+            if isinstance(state, dict) and isinstance(state.get("pending_stop"), dict)
+        ]
+    for key in keys:
+        with _winline_current_map_state_lock:
+            state = _winline_odds_notify_state.get(key)
+            pending = dict((state or {}).get("pending_stop") or {})
+            poller = _winline_current_map_pollers.get(key)
+            prev = dict(state or {})
+        if not pending or not isinstance(state, dict):
+            continue
+        if poller is not None and getattr(poller, "is_active", lambda: False)():
+            # Опрос по ключу снова жив — останавливаться было нечему.
+            _winline_clear_pending_stop(key)
+            continue
+        if mono - float(pending.get("since_mono") or mono) < hold:
+            continue
+        map_num, team1, team2 = _winline_parse_canonical_key(key)
+        stamp = (stamp_fn or (lambda: datetime.now().strftime("%H:%M:%S")))()
+        message = _winline_build_odds_message(
+            kind="stopped",
+            map_num=map_num,
+            team1=team1,
+            team2=team2,
+            p1=pending.get("p1"),
+            p2=pending.get("p2"),
+            prev_p1=prev.get("p1"),
+            prev_p2=prev.get("p2"),
+            stamp=stamp,
+        )
+        if not _winline_send_lifecycle_message(message, send_fn):
+            continue
+        with _winline_current_map_state_lock:
+            state = _winline_odds_notify_state.get(key)
+            if isinstance(state, dict):
+                state.pop("pending_stop", None)
+                state["kind"] = "stopped"
+                state["p1"] = pending.get("p1")
+                state["p2"] = pending.get("p2")
+                state["status"] = pending.get("status")
+                state["last_sent_mono"] = mono
+                state["sent_mono"] = list(state.get("sent_mono") or []) + [mono]
+        sent.append(message)
+    return sent
+
+
+def _winline_flush_pending_map_winners(
+    *,
+    monotonic_fn: Any = None,
+    stamp_fn: Any = None,
+    send_fn: Any = None,
+    winner_fn: Any = None,
+) -> List[str]:
+    """Догнать сообщение о конце карты именем победителя.
+
+    В момент конца карты матча в OpenDota обычно ещё нет, а задерживать ради
+    этого сам факт конца нельзя. Поэтому имя приходит отдельной строкой, когда
+    источник его отдаст; за окном ожидания попытки прекращаются молча.
+    """
+    if not _winline_odds_notify_enabled() or not _winline_map_winner_enabled():
+        return []
+    mono = float((monotonic_fn or time.monotonic)())
+    retry = max(5.0, _winline_env_float(WINLINE_MAP_WINNER_RETRY_ENV, 60.0))
+    window = max(0.0, _winline_env_float(WINLINE_MAP_WINNER_WINDOW_ENV, 1800.0))
+    sent: List[str] = []
+    with _winline_current_map_state_lock:
+        pending_items = list(_winline_pending_map_winners.items())
+    for key, pending in pending_items:
+        if not isinstance(pending, dict):
+            continue
+        if mono - float(pending.get("since_mono") or mono) > window:
+            with _winline_current_map_state_lock:
+                _winline_pending_map_winners.pop(key, None)
+            continue
+        if mono < float(pending.get("next_try_mono") or 0.0):
+            continue
+        with _winline_current_map_state_lock:
+            entry = _winline_pending_map_winners.get(key)
+            if isinstance(entry, dict):
+                entry["next_try_mono"] = mono + retry
+        try:
+            winner = _winline_map_winner_name(
+                key, pending.get("match_id"), fetch_fn=winner_fn
+            )
+        except Exception:
+            winner = None
+        if not winner:
+            continue
+        map_num, team1, team2 = _winline_parse_canonical_key(key)
+        stamp = (stamp_fn or (lambda: datetime.now().strftime("%H:%M:%S")))()
+        message = _winline_build_odds_message(
+            kind="winner",
+            map_num=map_num,
+            team1=team1,
+            team2=team2,
+            p1=None,
+            p2=None,
+            prev_p1=None,
+            prev_p2=None,
+            stamp=stamp,
+            winner=winner,
+        )
+        if not _winline_send_lifecycle_message(message, send_fn):
+            continue
+        with _winline_current_map_state_lock:
+            _winline_pending_map_winners.pop(key, None)
+        sent.append(message)
+    return sent
 
 
 def _tick_winline_current_map_polling_impl(
@@ -3022,6 +3355,14 @@ def _tick_winline_current_map_polling_impl(
                         else None
                     )
                     if isinstance(notify_payload, dict) and not from_main_loop:
+                        # Id матча у Valve: по нему победитель карты достаётся
+                        # из OpenDota. В терминале он есть, но у старого
+                        # поллера мог не записаться — тогда берём из личности.
+                        notify_match_id = (lifecycle_terminal or {}).get("match_id")
+                        if notify_match_id is None:
+                            ident = getattr(poller, "_identity", None)
+                            if isinstance(ident, dict):
+                                notify_match_id = ident.get("match_id")
                         _winline_odds_telegram_notify(
                             notify_payload,
                             key,
@@ -3032,6 +3373,7 @@ def _tick_winline_current_map_polling_impl(
                                 lifecycle_terminal
                                 and lifecycle_terminal.get("map_end_proven")
                             ),
+                            match_id=notify_match_id,
                         )
                 except Exception:
                     pass
@@ -3049,6 +3391,21 @@ def _tick_winline_current_map_polling_impl(
             with _winline_current_map_state_lock:
                 for key in dead_keys:
                     _winline_current_map_pollers.pop(key, None)
+        # Отложенные объявления живут ВНЕ поллеров: остановку опроса
+        # подтверждает именно отсутствие нового опроса, а победителя карты
+        # OpenDota отдаёт уже после того, как поллер снят.
+        if not from_main_loop:
+            flush_kwargs: Dict[str, Any] = {}
+            if callable(monotonic_fn):
+                flush_kwargs["monotonic_fn"] = monotonic_fn
+            try:
+                _winline_flush_pending_stop_notices(**flush_kwargs)
+            except Exception:
+                pass
+            try:
+                _winline_flush_pending_map_winners(**flush_kwargs)
+            except Exception:
+                pass
         return results
     except Exception as exc:
         try:

@@ -81,13 +81,13 @@ class TestPredicate:
         got = cs._winline_current_map_is_current(
             identity={"series": SERIES, "map_num": 2,
                       "team1": "RE ARISE", "team2": "Team Lynx"})
-        assert got is True
+        assert got["current"] is True and got["confirmed"] is True
 
     def test_same_order_still_current(self, registry):
         registry[SERIES] = _live()
         assert cs._winline_current_map_is_current(
             identity={"series": SERIES, "map_num": 2,
-                      "team1": "Team Lynx", "team2": "RE ARISE"}) is True
+                      "team1": "Team Lynx", "team2": "RE ARISE"})["current"] is True
 
     def test_other_teams_still_rollover(self, registry):
         registry[SERIES] = _live()
@@ -109,7 +109,7 @@ class TestPredicate:
         registry[SERIES] = _live(team2="")
         assert cs._winline_current_map_is_current(
             identity={"series": SERIES, "map_num": 2,
-                      "team1": "Team Lynx", "team2": ""}) is True
+                      "team1": "Team Lynx", "team2": ""})["current"] is True
 
 
 class TestSlot:
