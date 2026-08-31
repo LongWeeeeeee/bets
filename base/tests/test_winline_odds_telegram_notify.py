@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -64,28 +65,65 @@ class Clock:
 def _clean_state(monkeypatch):
     cs._winline_odds_notify_state.clear()
     cs._winline_odds_orientation_state.clear()
+    cs._winline_pending_map_winners.clear()
     monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_ENABLED_ENV, "1")
     monkeypatch.delenv(cs.WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, raising=False)
     monkeypatch.delenv(cs.WINLINE_ODDS_TELEGRAM_MAX_PER_MIN_ENV, raising=False)
+    monkeypatch.delenv(cs.WINLINE_ODDS_STOP_NOTICE_HOLD_ENV, raising=False)
+    monkeypatch.delenv(cs.WINLINE_MAP_WINNER_ENABLED_ENV, raising=False)
+    monkeypatch.delenv(cs.WINLINE_MAP_WINNER_RETRY_ENV, raising=False)
+    monkeypatch.delenv(cs.WINLINE_MAP_WINNER_WINDOW_ENV, raising=False)
     yield
     cs._winline_odds_notify_state.clear()
     cs._winline_odds_orientation_state.clear()
+    cs._winline_pending_map_winners.clear()
 
 
 def _attempt(p1, p2, status="open"):
     return {"p1_odds": p1, "p2_odds": p2, "market_status": status, "accepted": True}
 
 
-def _notify(payload, sender, clock, *, is_terminal=False, map_end_proven=True):
+def _notify(payload, sender, clock, *, is_terminal=False, map_end_proven=True,
+            match_id=None, winner_fn=None):
     return cs._winline_odds_telegram_notify(
         payload,
         KEY,
         is_terminal=is_terminal,
         map_end_proven=map_end_proven,
+        match_id=match_id,
         send_fn=sender,
         monotonic_fn=clock,
         stamp_fn=lambda: "08:57:12",
+        winner_fn=winner_fn,
     )
+
+
+# Окно ожидания перед объявлением остановки опроса (боевой умолчание).
+_HOLD = 180.0
+
+# Нетронутый ответ OpenDota по карте 3 того самого матча (Inner Circle x Insanity
+# — 4ikibamboni), снят 31.08.2026:
+#   curl -s https://api.opendota.com/api/matches/8976511215
+OPENDOTA_FIXTURE = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "opendota_match_8976511215_20260831.json"
+)
+
+
+def _opendota_payload():
+    return json.loads(OPENDOTA_FIXTURE.read_text(encoding="utf-8"))
+
+
+def _flush_stops(sender, clock):
+    return cs._winline_flush_pending_stop_notices(
+        monotonic_fn=clock, stamp_fn=lambda: "08:57:12", send_fn=sender)
+
+
+def _flush_winners(sender, clock, winner_fn=None):
+    return cs._winline_flush_pending_map_winners(
+        monotonic_fn=clock, stamp_fn=lambda: "08:57:12", send_fn=sender,
+        winner_fn=winner_fn)
 
 
 def test_disabled_by_default(monkeypatch):
@@ -285,23 +323,31 @@ def test_terminal_reported():
 
 
 def test_unproven_terminal_is_not_called_map_end(monkeypatch):
-    """Потолок опроса и молчащий фид — остановка опроса, а не конец карты."""
+    """Потолок опроса и молчащий фид — остановка опроса, а не конец карты.
+
+    Объявление отложено: в момент терминала мы ещё не знаем, кончился ли опрос,
+    и сообщение уходит только после подтверждения молчанием.
+    """
     monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, "600")
     sender, clock = Sender(), Clock()
     _notify(_attempt(4.00, 1.18), sender, clock)
 
     clock.advance(1.0)
-    message = _notify(
+    assert _notify(
         _attempt(4.00, 1.18),
         sender,
         clock,
         is_terminal=True,
         map_end_proven=False,
-    )
+    ) is None
+    assert len(sender.calls) == 1
 
-    assert message is not None
-    assert "карта завершена" not in message
-    assert "опрос остановлен" in message
+    clock.advance(_HOLD + 1.0)
+    sent = _flush_stops(sender, clock)
+
+    assert len(sent) == 1
+    assert "карта завершена" not in sent[0]
+    assert "опрос остановлен" in sent[0]
     # Служебный финал одноразовый: троттлинг цен не имеет права его съесть.
     assert len(sender.calls) == 2
 
@@ -313,13 +359,231 @@ def test_unproven_terminal_reported_once():
     clock.advance(10.0)
     assert _notify(
         _attempt(4.00, 1.18), sender, clock, is_terminal=True, map_end_proven=False
-    ) is not None
-
+    ) is None
     clock.advance(10.0)
     assert _notify(
         _attempt(4.00, 1.18), sender, clock, is_terminal=True, map_end_proven=False
     ) is None
+
+    clock.advance(_HOLD + 1.0)
+    assert len(_flush_stops(sender, clock)) == 1
+    clock.advance(_HOLD + 1.0)
+    assert _flush_stops(sender, clock) == []
     assert len(sender.calls) == 2
+
+
+def test_resumed_polling_never_announces_a_stop(monkeypatch):
+    """Регрессия 31.08.2026: пара «⏹️ опрос остановлен» + «🏁 карта завершена».
+
+    Опрос карты 3 (Inner Circle x Insanity — 4ikibamboni) сняли по 90-минутному
+    потолку в 22:59:32, он завёлся заново под тем же ключом в 23:01:10 и доложил
+    настоящий конец карты в 23:04:11. Остановки не было — объявлять её нечего.
+    """
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, "0")
+    sender, clock = Sender(), Clock()
+    _notify(_attempt(4.00, 1.18), sender, clock)
+
+    clock.advance(69.0)                       # потолок: терминал без доказательства
+    _notify(_attempt(4.00, 1.18), sender, clock, is_terminal=True, map_end_proven=False)
+    clock.advance(98.0)                       # новый опрос того же ключа
+    _notify(_attempt(4.10, 1.16), sender, clock)
+    clock.advance(_HOLD + 1.0)
+    _flush_stops(sender, clock)
+    clock.advance(179.0)                      # доказанный конец карты
+    _notify(_attempt(4.10, 1.16), sender, clock, is_terminal=True, map_end_proven=True)
+
+    texts = sender.messages
+    assert not any("опрос остановлен" in m for m in texts), texts
+    assert sum("карта завершена" in m for m in texts) == 1
+
+
+def test_proven_end_cancels_a_pending_stop():
+    """Доказанный конец карты снимает отложенное «опрос остановлен»."""
+    sender, clock = Sender(), Clock()
+    _notify(_attempt(4.00, 1.18), sender, clock)
+    clock.advance(10.0)
+    _notify(_attempt(4.00, 1.18), sender, clock, is_terminal=True, map_end_proven=False)
+
+    clock.advance(10.0)
+    message = _notify(
+        _attempt(4.00, 1.18), sender, clock, is_terminal=True, map_end_proven=True)
+
+    assert message is not None and "карта завершена" in message
+    clock.advance(_HOLD + 1.0)
+    assert _flush_stops(sender, clock) == []
+    assert not any("опрос остановлен" in m for m in sender.messages)
+
+
+def test_live_poller_under_the_key_cancels_the_stop_notice():
+    """Опрос по ключу снова жив — останавливаться было нечему."""
+    sender, clock = Sender(), Clock()
+    _notify(_attempt(4.00, 1.18), sender, clock)
+    clock.advance(10.0)
+    _notify(_attempt(4.00, 1.18), sender, clock, is_terminal=True, map_end_proven=False)
+
+    class _LivePoller:
+        def is_active(self):
+            return True
+
+    cs._winline_current_map_pollers[KEY] = _LivePoller()
+    try:
+        clock.advance(_HOLD + 1.0)
+        assert _flush_stops(sender, clock) == []
+    finally:
+        cs._winline_current_map_pollers.pop(KEY, None)
+    assert cs._winline_odds_notify_state[KEY].get("pending_stop") is None
+    assert len(sender.calls) == 1
+
+
+# ── победитель карты ────────────────────────────────────────────────────────
+
+# Тот самый матч из инцидента 31.08.2026: ключ sourcetv, карта 3.
+WINNER_KEY = (
+    "sourcetv:league:19944|id:10019843|id:10233067|map3|"
+    "Inner Circle x Insanity|4ikibamboni"
+)
+
+
+def _winner_notify(sender, clock, **kwargs):
+    return cs._winline_odds_telegram_notify(
+        _attempt(1.30, 3.40),
+        WINNER_KEY,
+        send_fn=sender,
+        monotonic_fn=clock,
+        stamp_fn=lambda: "23:04:11",
+        **kwargs,
+    )
+
+
+def test_fetch_map_winner_reads_the_captured_opendota_response(monkeypatch):
+    """Разбор проверяется на НЕТРОНУТОМ ответе OpenDota, а не на выжимке."""
+    payload = _opendota_payload()
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return payload
+
+    seen = {}
+
+    def _get(url, **kwargs):
+        seen["url"] = url
+        return _Resp()
+
+    monkeypatch.setattr(cs.requests, "get", _get)
+    outcome = cs._winline_fetch_map_winner(8976511215)
+
+    assert seen["url"].endswith("/api/matches/8976511215")
+    assert outcome == {
+        "radiant_win": True, "side": "radiant", "name": "Inner Circle x Insanity"}
+
+
+def test_finished_map_message_names_the_winner(monkeypatch):
+    """«Карта завершена» без имени победителя — половина новости."""
+    payload = _opendota_payload()
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return payload
+
+    monkeypatch.setattr(cs.requests, "get", lambda *_a, **_k: _Resp())
+    sender, clock = Sender(), Clock()
+    _winner_notify(sender, clock)
+
+    clock.advance(10.0)
+    message = _winner_notify(
+        sender, clock, is_terminal=True, map_end_proven=True, match_id=8976511215)
+
+    assert message is not None
+    assert "карта завершена" in message
+    assert "🏆 победа: Inner Circle x Insanity" in message
+    assert WINNER_KEY not in cs._winline_pending_map_winners
+
+
+def test_winner_side_comes_from_the_match_not_from_the_key_order(monkeypatch):
+    """Сторона решает: при победе dire в чат уходит вторая команда ключа."""
+    payload = dict(_opendota_payload())
+    payload["radiant_win"] = False
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return payload
+
+    monkeypatch.setattr(cs.requests, "get", lambda *_a, **_k: _Resp())
+    sender, clock = Sender(), Clock()
+    _winner_notify(sender, clock)
+    clock.advance(10.0)
+    message = _winner_notify(
+        sender, clock, is_terminal=True, map_end_proven=True, match_id=8976511215)
+
+    assert "🏆 победа: 4ikibamboni" in message
+
+
+def test_finish_is_not_delayed_when_opendota_has_no_match_yet():
+    """Факт конца карты важнее имени: 🏁 уходит сразу, имя догоняет отдельно."""
+    payload = _opendota_payload()
+    late = {"answered": False}
+
+    def _late_winner(match_id):
+        if not late["answered"]:
+            return None
+        return {"radiant_win": True, "side": "radiant",
+                "name": payload["radiant_team"]["name"]}
+
+    sender, clock = Sender(), Clock()
+    _winner_notify(sender, clock)
+    clock.advance(10.0)
+    message = _winner_notify(
+        sender, clock, is_terminal=True, map_end_proven=True,
+        match_id=8976511215, winner_fn=_late_winner)
+
+    assert "карта завершена" in message and "победа" not in message
+    assert cs._winline_pending_map_winners[WINNER_KEY]["match_id"] == 8976511215
+
+    clock.advance(61.0)
+    assert _flush_winners(sender, clock, winner_fn=_late_winner) == []
+
+    late["answered"] = True
+    clock.advance(61.0)
+    sent = _flush_winners(sender, clock, winner_fn=_late_winner)
+
+    assert len(sent) == 1
+    assert "🏆 Winline · карта 3" in sent[0]
+    assert "🏆 победа: Inner Circle x Insanity" in sent[0]
+    assert WINNER_KEY not in cs._winline_pending_map_winners
+
+
+def test_winner_lookup_gives_up_silently_past_the_window():
+    """За окном ожидания попытки прекращаются, лишнего сообщения нет."""
+    sender, clock = Sender(), Clock()
+    _winner_notify(sender, clock)
+    clock.advance(10.0)
+    _winner_notify(sender, clock, is_terminal=True, map_end_proven=True,
+                   match_id=8976511215, winner_fn=lambda _m: None)
+    before = len(sender.calls)
+
+    clock.advance(1801.0)
+    assert _flush_winners(sender, clock, winner_fn=lambda _m: None) == []
+    assert cs._winline_pending_map_winners == {}
+    assert len(sender.calls) == before
+
+
+def test_winner_line_can_be_switched_off(monkeypatch):
+    monkeypatch.setenv(cs.WINLINE_MAP_WINNER_ENABLED_ENV, "0")
+    sender, clock = Sender(), Clock()
+    _winner_notify(sender, clock)
+    clock.advance(10.0)
+    message = _winner_notify(
+        sender, clock, is_terminal=True, map_end_proven=True, match_id=8976511215,
+        winner_fn=lambda _m: {"radiant_win": True, "side": "radiant", "name": "X"})
+
+    assert "карта завершена" in message and "победа" not in message
+    assert cs._winline_pending_map_winners == {}
 
 
 def test_missing_odds_without_history_stay_silent():

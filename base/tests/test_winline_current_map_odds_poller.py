@@ -735,6 +735,104 @@ def test_90_minute_safety_ceiling_is_indeterminate_not_map_end_proof() -> None:
     assert term.get("map_end_proven") is not True
 
 
+def test_safety_ceiling_extends_while_the_map_is_confirmed_current() -> None:
+    """Живую карту потолок не гасит: реестр подтверждает её — опрос продолжается.
+
+    31.08.2026 (Inner Circle x Insanity — 4ikibamboni, карта 3) потолок сработал
+    ровно на 90-й минуте живой игры, опрос завёлся заново под тем же ключом, и в
+    чат ушла пара «опрос остановлен» + «карта завершена» по одной карте.
+    """
+    mod = _load_mod()
+    clock = FakeClock(mono=0.0, wall=0.0)
+    confirmed = lambda **_kw: {  # noqa: E731
+        "current": True, "reason": "registry_active", "proven": True, "confirmed": True}
+    poller, _, _ = _make_poller(mod, clock=clock, is_map_current=confirmed)
+    poller.begin(**_base_identity())
+    poller.tick()
+
+    clock.advance(90 * 60 + 0.1)
+    out = poller.tick()
+
+    assert poller.terminal() is None
+    assert poller.is_active() is True
+    assert (out or {}).get("terminal") is None
+    assert poller._ceiling_extensions == 1
+
+
+def test_safety_ceiling_still_kills_a_poller_nobody_confirms() -> None:
+    """Голое True — это «оснований остановить нет», а не подтверждение карты."""
+    mod = _load_mod()
+    clock = FakeClock(mono=0.0, wall=0.0)
+    poller, _, _ = _make_poller(mod, clock=clock, is_map_current=lambda **_kw: True)
+    poller.begin(**_base_identity())
+    poller.tick()
+
+    clock.advance(90 * 60 + 0.1)
+    out = poller.tick()
+
+    term = (out or {}).get("terminal") or {}
+    assert term.get("lifecycle_event") == "safety_ceiling"
+    assert term.get("map_end_proven") is not True
+    assert poller.is_active() is False
+
+
+def test_safety_ceiling_extension_stops_at_the_absolute_limit() -> None:
+    """Продление не бесконечно: за абсолютным пределом опрос всё же гаснет."""
+    mod = _load_mod()
+    clock = FakeClock(mono=0.0, wall=0.0)
+    confirmed = lambda **_kw: {  # noqa: E731
+        "current": True, "reason": "registry_active", "proven": True, "confirmed": True}
+    poller, _, _ = _make_poller(
+        mod,
+        clock=clock,
+        is_map_current=confirmed,
+        safety_ceiling_seconds=600.0,
+        safety_ceiling_extension_seconds=300.0,
+        safety_ceiling_max_seconds=1200.0,
+    )
+    poller.begin(**_base_identity())
+    poller.tick()
+
+    clock.advance(601.0)
+    assert (poller.tick() or {}).get("terminal") is None       # 600 -> 900
+    clock.advance(300.0)
+    assert (poller.tick() or {}).get("terminal") is None       # 900 -> 1200
+    clock.advance(300.0)
+    out = poller.tick()
+
+    term = (out or {}).get("terminal") or {}
+    assert term.get("lifecycle_event") == "safety_ceiling"
+    assert term.get("map_end_proven") is not True
+    assert term.get("ceiling_extensions") == 2
+
+
+def test_terminal_carries_match_id_for_the_winner_lookup() -> None:
+    """Победителя карты достают по match_id — он обязан быть в терминале."""
+    mod = _load_mod()
+    clock = FakeClock(mono=0.0, wall=0.0)
+    poller, _, _ = _make_poller(mod, clock=clock, is_map_current=lambda **_kw: True)
+    poller.begin(**_base_identity(), match_id=8976511215)
+    poller.tick()
+
+    clock.advance(90 * 60 + 0.1)
+    term = (poller.tick() or {}).get("terminal") or {}
+
+    assert term.get("match_id") == 8976511215
+
+
+def test_eval_map_current_marks_only_explicit_confirmation() -> None:
+    mod = _load_mod()
+    ident = _base_identity()
+    ev = lambda raw: mod._eval_map_current(lambda **_kw: raw, identity=ident)  # noqa: E731
+
+    assert ev(True) == {"current": True, "reason": None, "proven": True, "confirmed": False}
+    assert ev({"current": True})["confirmed"] is False
+    assert ev({"current": True, "confirmed": True})["confirmed"] is True
+    # «Не текущая» подтверждением быть не может, чем бы её ни пометили.
+    assert ev({"current": False, "confirmed": True})["confirmed"] is False
+    assert ev(False)["current"] is False
+
+
 # ---------------------------------------------------------------------------
 # Reload escalation
 # ---------------------------------------------------------------------------
