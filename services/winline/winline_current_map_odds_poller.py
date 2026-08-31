@@ -68,6 +68,22 @@ RELOAD_SETTLE_SECONDS = _env_float("WINLINE_CURRENT_MAP_RELOAD_SETTLE_S", 30.0)
 RELOAD_STALE_DOM_SECONDS = _env_float("WINLINE_CURRENT_MAP_RELOAD_STALE_DOM_S", 120.0)
 SAFETY_CEILING_SECONDS = 90 * 60.0  # 90 minutes; not proof map ended
 
+# Потолок существует ради опроса, который некому остановить: когда реестр не
+# знает серию, предикат отвечает «карта текущая» бесконечно. Живую карту он
+# гасить не должен. 31.08.2026, Inner Circle x Insanity — 4ikibamboni, карта 3:
+# опрос начат в 21:29:32, потолок сработал ровно на 90-й минуте (22:59:32) и
+# отправил в чат «опрос остановлен, конец карты не подтверждён», хотя карта шла
+# и кончилась в 23:04:11 — уже под вторым поллером того же ключа (attempt_index
+# сброшен с 1296 на 1 в 23:01:10, runtime/winline_odds_history.jsonl на проде).
+# Поэтому пока реестр ПОДТВЕРЖДАЕТ именно эту карту как текущую, потолок
+# продлевается шагами, а не гасит опрос; абсолютный предел всё равно остаётся.
+SAFETY_CEILING_EXTENSION_SECONDS = _env_float(
+    "WINLINE_CURRENT_MAP_CEILING_EXTENSION_S", 30 * 60.0
+)
+SAFETY_CEILING_MAX_SECONDS = _env_float(
+    "WINLINE_CURRENT_MAP_CEILING_MAX_S", 4 * 3600.0
+)
+
 PRIMARY_MARKET_NEVER_EXPOSED = "market_never_exposed"
 PRIMARY_PARSER_RESOLUTION_FAILURE = "parser_resolution_failure"
 PRIMARY_BROWSER_ACQUISITION_FAILURE = "browser_acquisition_failure"
@@ -138,10 +154,14 @@ def _eval_map_current(
             raw = is_map_current(identity)
         except TypeError:
             raw = is_map_current()
+    # `confirmed` отличает «источник ПОДТВЕРДИЛ эту карту как текущую» от
+    # «оснований остановить опрос нет». Голое True — второй случай: так предикат
+    # отвечает и когда реестр вообще не знает серии, и внутри грейса молчания
+    # источника. Продлевать потолок можно только по первому.
     if raw is True:
-        return {"current": True, "reason": None, "proven": True}
+        return {"current": True, "reason": None, "proven": True, "confirmed": False}
     if raw is False:
-        return {"current": False, "reason": "not_current", "proven": True}
+        return {"current": False, "reason": "not_current", "proven": True, "confirmed": False}
     if isinstance(raw, dict):
         current = bool(raw.get("current", False))
         reason = raw.get("reason")
@@ -158,11 +178,16 @@ def _eval_map_current(
             } or (reason is not None and reason not in {"unknown", "indeterminate"})
             if reason in {"unknown", "indeterminate"}:
                 proven = False
-        return {"current": current, "reason": reason, "proven": proven}
+        return {
+            "current": current,
+            "reason": reason,
+            "proven": proven,
+            "confirmed": bool(current and raw.get("confirmed")),
+        }
     # truthy non-dict → current
     if raw:
-        return {"current": True, "reason": None, "proven": True}
-    return {"current": False, "reason": "not_current", "proven": True}
+        return {"current": True, "reason": None, "proven": True, "confirmed": False}
+    return {"current": False, "reason": "not_current", "proven": True, "confirmed": False}
 
 
 def _is_browser_failure(result: Dict[str, Any]) -> bool:
@@ -366,6 +391,8 @@ class WinlineCurrentMapOddsPoller:
         reload_settle_seconds: float = RELOAD_SETTLE_SECONDS,
         reload_stale_dom_seconds: float = RELOAD_STALE_DOM_SECONDS,
         safety_ceiling_seconds: float = SAFETY_CEILING_SECONDS,
+        safety_ceiling_extension_seconds: float = SAFETY_CEILING_EXTENSION_SECONDS,
+        safety_ceiling_max_seconds: float = SAFETY_CEILING_MAX_SECONDS,
         continuous: bool = False,
         **_extra: Any,
     ) -> None:
@@ -381,7 +408,13 @@ class WinlineCurrentMapOddsPoller:
         self._reload_spacing = float(reload_min_spacing_seconds)
         self._reload_settle = float(reload_settle_seconds)
         self._reload_stale_dom = float(reload_stale_dom_seconds)
+        self._safety_ceiling_base = float(safety_ceiling_seconds)
         self._safety_ceiling = float(safety_ceiling_seconds)
+        self._safety_ceiling_step = max(0.0, float(safety_ceiling_extension_seconds))
+        self._safety_ceiling_max = max(
+            float(safety_ceiling_seconds), float(safety_ceiling_max_seconds)
+        )
+        self._ceiling_extensions = 0
         # Continuous mode: accepted odds stop being terminal, so the same map keeps
         # being polled and later price moves are observed. Lifecycle terminals
         # (map rollover, series end, PID generation change, safety ceiling) still stop it.
@@ -539,13 +572,14 @@ class WinlineCurrentMapOddsPoller:
             self._started_mono is not None
             and (now_mono - self._started_mono) >= self._safety_ceiling
         ):
-            return self._finalize_terminal(
-                primary_reason=PRIMARY_INDETERMINATE_MAP_LIFECYCLE,
-                lifecycle_event="safety_ceiling",
-                map_end_proven=False,
-                now_wall=now_wall,
-                now_mono=now_mono,
-            )
+            if not self._extend_safety_ceiling():
+                return self._finalize_terminal(
+                    primary_reason=PRIMARY_INDETERMINATE_MAP_LIFECYCLE,
+                    lifecycle_event="safety_ceiling",
+                    map_end_proven=False,
+                    now_wall=now_wall,
+                    now_mono=now_mono,
+                )
 
         if self._pending_generation_change:
             return self._finalize_from_lifecycle(
@@ -574,6 +608,30 @@ class WinlineCurrentMapOddsPoller:
     # Internals
     # ------------------------------------------------------------------
 
+    def _extend_safety_ceiling(self) -> bool:
+        """Продлить потолок, если карта ПОДТВЕРЖДЕНА источником как текущая.
+
+        Гасить живую карту потолок не имеет права: опрос всё равно заводится
+        заново под тем же ключом, а в чат при этом уходит ложное «опрос
+        остановлен». Продление даётся только по `confirmed` — по прямому
+        подтверждению реестра, а не по «оснований остановить нет».
+        """
+        if self._identity is None or self._safety_ceiling_step <= 0:
+            return False
+        if self._safety_ceiling >= self._safety_ceiling_max:
+            return False
+        try:
+            status = _eval_map_current(self._is_map_current, identity=self._identity)
+        except Exception:
+            return False
+        if not (status.get("current") and status.get("confirmed")):
+            return False
+        self._safety_ceiling = min(
+            self._safety_ceiling + self._safety_ceiling_step, self._safety_ceiling_max
+        )
+        self._ceiling_extensions += 1
+        return True
+
     def _reset_state(self) -> None:
         self._active = False
         self._in_flight = False
@@ -599,6 +657,8 @@ class WinlineCurrentMapOddsPoller:
         self._saw_stable_valid_page = False
         self._pending_generation_change = False
         self._lifecycle_event = None
+        self._safety_ceiling = self._safety_ceiling_base
+        self._ceiling_extensions = 0
         self._accelerated = False
         self._history_last_key = None
 
@@ -1031,6 +1091,10 @@ class WinlineCurrentMapOddsPoller:
             "map_num": self._identity["map_num"] if self._identity else None,
             "team1": self._identity["team1"] if self._identity else None,
             "team2": self._identity["team2"] if self._identity else None,
+            # Id карты у Valve: по нему и только по нему победитель карты
+            # достаётся из OpenDota после её конца.
+            "match_id": (self._identity or {}).get("match_id"),
+            "ceiling_extensions": self._ceiling_extensions,
             "attempt_count": self._attempt_index,
             "reload_count": self._reload_count,
             "attempts": list(self._attempts),
@@ -1110,6 +1174,8 @@ class WinlineCurrentMapOddsPoller:
             "map_num": self._identity["map_num"] if self._identity else None,
             "team1": self._identity["team1"] if self._identity else None,
             "team2": self._identity["team2"] if self._identity else None,
+            "match_id": (self._identity or {}).get("match_id"),
+            "ceiling_extensions": self._ceiling_extensions,
             "attempt_count": self._attempt_index,
             "reload_count": self._reload_count,
             "consecutive_misses": self._consecutive_misses,
