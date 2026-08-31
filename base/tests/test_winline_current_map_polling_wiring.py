@@ -1011,6 +1011,94 @@ def test_source_blackout_terminalizes_after_grace_without_proving_map_end(
     assert terminal.get("map_end_proven") is False
 
 
+def _incident_series_payload() -> Dict[str, Any]:
+    """Строка моста той самой серии из инцидента 31.08.2026."""
+    return {
+        "match_id": 8976511215,
+        "league_id": 19944,
+        "radiant_team_id": 10019843,
+        "dire_team_id": 10233067,
+        "radiant_team_name": "Inner Circle x Insanity",
+        "dire_team_name": "4ikibamboni",
+        "series_game_number": 3,
+    }
+
+
+def test_live_map_past_the_ceiling_says_nothing_and_keeps_polling(tmp_path, monkeypatch):
+    """Регрессия 31.08.2026: пара «⏹️ опрос остановлен» + «🏁 карта завершена».
+
+    Опрос карты 3 (Inner Circle x Insanity — 4ikibamboni) начался в 21:29:32,
+    потолок сработал ровно на 90-й минуте (22:59:32) на живой карте, опрос
+    завёлся заново под тем же ключом и доложил настоящий конец в 23:04:11.
+    Проверка идёт по ГРАНИЦЕ ДОСТАВКИ: что реально ушло в отправку телеграма.
+    """
+    _clear_wiring_state()
+    cs._winline_odds_notify_state.clear()
+    cs._winline_pending_map_winners.clear()
+    clock = FakeClock()
+    monkeypatch.setattr(cs, "DLTV_SOURCE_MODE", "sourcetv", raising=False)
+    monkeypatch.setattr(cs, "start_winline_current_map_polling_scheduler", lambda **_k: True)
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_ENABLED_ENV, "1")
+    monkeypatch.setenv(cs.WINLINE_CURRENT_MAP_CONTINUOUS_ENV, "1")
+    monkeypatch.setenv(cs.WINLINE_MAP_WINNER_ENABLED_ENV, "0")
+    sent: List[str] = []
+
+    def _send(message, **_kwargs):
+        sent.append(message)
+        return True
+
+    monkeypatch.setattr(cs, "send_winline_odds_message", _send)
+
+    payload = _incident_series_payload()
+    series = cs._winline_sourcetv_series_key(payload)
+    cs._reconcile_winline_sourcetv_polling([payload], authoritative=True)
+    cs.ensure_winline_current_map_polling(
+        series=series,
+        map_num=3,
+        team1=payload["radiant_team_name"],
+        team2=payload["dire_team_name"],
+        match_id=payload["match_id"],
+        producer_pid=1,
+        producer_start_generation="g1",
+        monotonic_fn=clock.monotonic,
+        wall_fn=clock.time,
+        collector=lambda **_k: _accepted_collector_result(
+            map_num=3,
+            team1=payload["radiant_team_name"],
+            team2=payload["dire_team_name"],
+            series=series,
+        ),
+        evidence_path=tmp_path / "incident.json",
+    )
+
+    def _tick():
+        return cs.tick_winline_current_map_polling(
+            monotonic_fn=clock.monotonic, wall_fn=clock.time)
+
+    _tick()
+    assert len(sent) == 1 and "🆕" in sent[0]
+
+    # 90-я минута живой карты: реестр всё ещё подтверждает её.
+    clock.advance(90 * 60 + 1.0)
+    _tick()
+    clock.advance(200.0)          # больше окна ожидания остановки опроса
+    _tick()
+
+    assert cs.list_winline_current_map_polling_keys(), "опрос живой карты снят"
+    assert not any("опрос остановлен" in m for m in sent), sent
+    assert not any("карта завершена" in m for m in sent), sent
+
+    # Серия исчезла из свежего снимка — вот теперь конец карты доказан.
+    cs._reconcile_winline_sourcetv_polling([], authoritative=True)
+    clock.advance(5.0)
+    _tick()
+
+    finished = [m for m in sent if "карта завершена" in m]
+    assert len(finished) == 1, sent
+    assert "🏁 Winline · карта 3" in finished[0]
+    assert not any("опрос остановлен" in m for m in sent), sent
+
+
 def test_authoritative_source_absence_terminalizes_without_grace(tmp_path, monkeypatch):
     """Доказанное исчезновение серии из свежего снимка гасит опрос сразу."""
     _clear_wiring_state()
