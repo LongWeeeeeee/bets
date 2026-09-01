@@ -1,0 +1,13 @@
+{
+  "_capture": {
+    "date": "2026-09-01",
+    "source_host": "serv1",
+    "source_path": "/root/main/runtime/prematch_model_bet_sent.jsonl",
+    "fetch_command": "ssh serv1 \"cat /root/main/runtime/prematch_model_bet_sent.jsonl\" > prematch_model_bet_sent.jsonl",
+    "note": "Two verbatim consecutive rows out of the 204-row production ledger for match dltv.org/matches/8946860406, map_num 2 (Team Liquid vs Aurora Gaming). Same map dispatched twice 72s apart because the in-memory dedup key at cyberscore_try.py:27505 (pre-fix) kept the raw match_key, and the sourcetv poller re-keys the same live map from '.0' to '.1' between polling cycles. index/confidence/teams/map_num are identical between the two rows; only game_time (sourcetv uniq-suffix driver) and ts differ."
+  },
+  "rows": [
+    {"ts": 1786799512, "match_key": "dltv.org/matches/8946860406.0", "side": "radiant", "index": 27.266, "confidence": 0.7726599999999999, "min_odds": 1.33, "expected_wr": 0.7541, "radiant_team": "Team Liquid", "dire_team": "Aurora Gaming", "map_num": 2, "game_time": -79, "model_elo": 30.960282431245563, "fill": 1.0},
+    {"ts": 1786799584, "match_key": "dltv.org/matches/8946860406.1", "side": "radiant", "index": 27.266, "confidence": 0.7726599999999999, "min_odds": 1.33, "expected_wr": 0.7541, "radiant_team": "Team Liquid", "dire_team": "Aurora Gaming", "map_num": 2, "game_time": 4, "model_elo": 30.960282431245563, "fill": 1.0}
+  ]
+}

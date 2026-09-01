@@ -27503,9 +27503,33 @@ def _try_dispatch_prematch_model_bet(
     ) or "НЕИЗВЕСТНАЯ КОМАНДА"
 
     dedup_key = str(match_key or "").strip()
+    # Дедуп по КАРТЕ, а не по сырому match_key: sourcetv-режим переиздаёт
+    # match_key с растущим `.N`-суффиксом (uniq_score) на каждом цикле опроса
+    # одной и той же живой карты, и raw `dedup_key` меняется между циклами →
+    # ставка уходит повторно (64 из 126 карт в prematch_model_bet_sent.jsonl
+    # на 01.09.2026 отправлены дважды и более, одинаковые map_num/index/
+    # команды в пределах ~70-160 с). `_skip_dispatch_for_processed_url` ниже
+    # ту же дыру не закрывает: `_is_url_processed` тоже сравнивает URL целиком
+    # без среза суффикса. Предпочитаем существующий карточный отпечаток
+    # (команды+номер карты); на sourcetv-ветке его кэш пуст, потому что
+    # `_signal_fingerprint_register` вызывается только при `not
+    # is_sourcetv_card` (.omc/decisions.md 2026-09-01) — запасной ключ тогда:
+    # URL без `.N`-суффикса + номер карты, чтобы разные карты одной серии не
+    # схлопнулись в один ключ.
+    _bet_dedup_key = _map_pair_fingerprint(match_key)
+    if not _bet_dedup_key:
+        _dedup_map_num = _bookmaker_infer_map_num(
+            live_league if isinstance(live_league, dict) else {},
+        )
+        if _dedup_map_num:
+            _bet_dedup_key = (
+                f"{_signal_fingerprint_registry_key(match_key)}|map{int(_dedup_map_num)}"
+            )
+    if not _bet_dedup_key:
+        _bet_dedup_key = dedup_key
     try:
         with _prematch_model_bet_sent_lock:
-            if dedup_key in _prematch_model_bet_sent_urls:
+            if _bet_dedup_key in _prematch_model_bet_sent_urls:
                 return False
     except Exception:
         pass
@@ -27613,7 +27637,7 @@ def _try_dispatch_prematch_model_bet(
         if delivered:
             try:
                 with _prematch_model_bet_sent_lock:
-                    _prematch_model_bet_sent_urls.add(dedup_key)
+                    _prematch_model_bet_sent_urls.add(_bet_dedup_key)
             except Exception:
                 pass
             # Журнал отправленных ставок по модели. До 15.08 его не было вовсе:
