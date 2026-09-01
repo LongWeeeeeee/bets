@@ -542,6 +542,11 @@ def _winline_awaiting_next_map(series: Any, map_num: Any, now: Any = None) -> bo
     return (moment - since) < _winline_next_map_wait_seconds()
 
 
+def _winline_bridge_is_authority() -> bool:
+    """Подтверждает ли карту мост SourceTV. В других режимах моста нет вовсе."""
+    return str(globals().get("DLTV_SOURCE_MODE") or "").strip().lower() == "sourcetv"
+
+
 def _winline_source_blackout_within_grace(reg: Any) -> bool:
     """Слепота источника моложе грейса — карта считается всё ещё текущей."""
     if not isinstance(reg, dict):
@@ -594,7 +599,10 @@ def _winline_current_map_is_current(**kwargs: Any) -> Any:
         # держим до истечения окна ожидания.
         return True
     if reg.get("active") is False:
-        proven = bool(reg.get("inactive_proven"))
+        # Умерла та карта, которую мост ПОДТВЕРЖДАЛ. Если последняя запись была
+        # выведена из доигранной предыдущей карты (`bridge_confirmed` снят), её
+        # исчезновение не доказывает конец нашей карты — она ещё не начиналась.
+        proven = bool(reg.get("inactive_proven")) and _winline_registry_confirms(reg)
         if not proven and _winline_source_blackout_within_grace(reg):
             # Источник молчит, но конец карты этим не доказан: продолжаем опрос.
             return True
@@ -603,7 +611,16 @@ def _winline_current_map_is_current(**kwargs: Any) -> Any:
             "reason": str(reg.get("inactive_reason") or "source_absent"),
             "proven": proven,
         }
-    if int(reg.get("map_num") or 0) != int(map_num):
+    reg_map = int(reg.get("map_num") or 0)
+    if reg_map != int(map_num):
+        if reg_map < int(map_num):
+            # Реестр показывает карту РАНЬШЕ нашей. Смены карты не было: наша
+            # ещё не начиналась, а предыдущая доигрывается или доигралась. Это
+            # штатное состояние перерыва — рынок следующей карты Winline уже
+            # показывает, поэтому опрос продолжаем, но подтверждением это не
+            # считается (потолок не продлевается, конец карты не доказан).
+            return {"current": True, "reason": "awaiting_map_start",
+                    "proven": True, "confirmed": False}
         return {"current": False, "reason": "map_rollover"}
     if not _winline_same_team_pair(reg.get("team1"), reg.get("team2"), team1, team2):
         return {"current": False, "reason": "map_rollover"}
@@ -614,7 +631,23 @@ def _winline_current_map_is_current(**kwargs: Any) -> Any:
     # это отсутствие возражений (серии нет в реестре, грейс молчания источника,
     # ожидание следующей карты), и продлевать потолок по нему нельзя.
     return {"current": True, "reason": "registry_active", "proven": True,
-            "confirmed": True}
+            "confirmed": _winline_registry_confirms(reg),
+            # Id матча берём у моста, а не из регистрации опроса: опрос карты 2
+            # заводится ещё в перерыве, и его исходный `match_id` — это матч
+            # карты 1. Победителя ищут по ЭТОМУ id.
+            "match_id": _winline_series_int(reg.get("match_id"))}
+
+
+def _winline_registry_confirms(reg: Any) -> bool:
+    """Запись реестра — подтверждение моста, а не наш собственный вывод.
+
+    Ключа нет у старых записей и у режимов, где моста нет вовсе: там
+    подтверждать нечему, и запись считается подтверждением — как было до
+    01.09.2026.
+    """
+    if not isinstance(reg, dict):
+        return False
+    return bool(reg.get("bridge_confirmed", True))
 
 
 def _winline_normalized_team_identity(value: Any) -> str:
@@ -831,11 +864,52 @@ def _winline_sourcetv_map_num(match: Any) -> Optional[int]:
         # карты мы знаем точно — считаем по ним.
         played = sum(_winline_series_score_from_delta(payload))
     resolved = max(game_number, played + 1)
-    # During the inter-map break the GC bridge can keep the completed Valve
-    # match as live, with its old series_game_number and frozen game_time, while
-    # explicitly clearing both draft payloads. Winline already exposes the next
-    # map then. Advance only on that strong completed-map signature; missing or
-    # transiently incomplete payloads must not roll the map forward.
+    if _winline_sourcetv_postgame_intermission(payload) and resolved < 5:
+        resolved += 1
+    return resolved if 1 <= resolved <= 5 else None
+
+
+def _winline_card_match_id(data: Any, live_league_data: Any = None) -> Any:
+    """Id матча для опроса кэфов по карточке. В перерыве между картами — None.
+
+    В перерыве карточка описывает СЛЕДУЮЩУЮ карту (номер уже сдвинут), а живой
+    у Valve всё ещё предыдущая: её id попал бы и в архив линии, и в поиск
+    победителя. Пусто честнее: мост подставит id, когда карта действительно
+    начнётся (`_winline_current_map_is_current` → `match_id`).
+    """
+    if _winline_sourcetv_postgame_intermission(data):
+        return None
+    return (
+        _extract_live_match_id(data)
+        or _extract_live_match_id({"live_league_data": live_league_data})
+    )
+
+
+def _winline_sourcetv_postgame_intermission(match: Any) -> bool:
+    """Строка моста — это ДОИГРАННАЯ предыдущая карта, а не начавшаяся новая.
+
+    During the inter-map break the GC bridge can keep the completed Valve match
+    as live, with its old series_game_number and frozen game_time, while
+    explicitly clearing both draft payloads. Winline already exposes the next
+    map then. Advance only on that strong completed-map signature; missing or
+    transiently incomplete payloads must not roll the map forward.
+
+    Признак вынесен из `_winline_sourcetv_map_num` отдельной функцией, потому
+    что номер карты — не единственное, что от него зависит. Всё, что взято из
+    ТАКОЙ строки, принадлежит ПРЕДЫДУЩЕЙ карте: и `match_id`, и доказательство
+    конца, когда строка наконец протухнет. 01.09.2026 в серии
+    PuckChamp — Klim Sani4 опрос карты 2 получил `match_id` доигранной карты 1
+    (8977252978) и вместе с ним «🏁 карта завершена · 🏆 победа: Klim Sani4»
+    в 13:07:33 — по карте, которая ещё не начиналась.
+    """
+    payload = match if isinstance(match, dict) else {}
+
+    def _payload_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(float(value))
+        except (TypeError, ValueError, OverflowError):
+            return int(default)
+
     fast_picks = payload.get("fast_picks")
     heroes = payload.get("_cyberscore_heroes_and_pos")
     draft_explicitly_cleared = bool(
@@ -852,16 +926,13 @@ def _winline_sourcetv_map_num(match: Any) -> Optional[int]:
         payload.get("dire_score"), 0
     )
     raw_series_type = _payload_int(payload.get("series_type"), -1)
-    is_postgame_intermission = bool(
+    return bool(
         str(payload.get("status") or "").strip().lower() == "live"
         and draft_explicitly_cleared
         and game_time >= 10 * 60
         and total_kills > 0
         and raw_series_type != 0
     )
-    if is_postgame_intermission and resolved < 5:
-        resolved += 1
-    return resolved if 1 <= resolved <= 5 else None
 
 
 # Bo-формат серии из моста SourceTV: сколько побед нужно для матча.
@@ -1134,11 +1205,17 @@ def _reconcile_winline_sourcetv_polling(
         map_num = _winline_sourcetv_map_num(item)
         if not series or map_num is None:
             continue
+        # Строка доигранной карты подтверждает ПРЕДЫДУЩУЮ карту, а не ту, чей
+        # номер из неё выведен. Всё, что зависит от подтверждения — id матча,
+        # продление потолка, доказательство конца — с такой строки не берётся.
+        intermission = _winline_sourcetv_postgame_intermission(item)
         active[series] = {
             "map_num": map_num,
             "team1": str(item.get("radiant_team_name") or "").strip(),
             "team2": str(item.get("dire_team_name") or "").strip(),
             "active": True,
+            "bridge_confirmed": not intermission,
+            "match_id": None if intermission else _winline_series_int(item.get("match_id")),
             "inactive_reason": None,
             "inactive_proven": False,
             "inactive_since": None,
@@ -1287,7 +1364,11 @@ def _winline_note_pending_next_map(series: Any, reg: Any, now: Any = None) -> Op
         return None
     if not _winline_next_map_certain(reg, current_map):
         return None
-    nxt = current_map + 1
+    # Номер карты в записи перерыва УЖЕ сдвинут вперёд по доигранной карте
+    # (`_winline_sourcetv_postgame_intermission`). Прибавлять к нему единицу
+    # значит ждать карту через одну и завести опрос по карте, до которой серия
+    # может не дойти. Ждём ровно ту, которую источник ещё не подтверждал.
+    nxt = current_map if not _winline_registry_confirms(reg) else current_map + 1
     with _winline_current_map_state_lock:
         _winline_pending_next_maps[key] = {
             "map_num": nxt,
@@ -2497,11 +2578,28 @@ def ensure_winline_current_map_polling(
         # выглядела бы для опроса текущей как смена карты (`map_rollover`).
         if update_registry:
             with _winline_current_map_state_lock:
+                previous = _winline_current_map_registry.get(series_s)
+                # Мост уже подтвердил ЭТУ карту — регистрация не «разподтверждает»
+                # её: иначе флаг мигал бы на каждой карточке, а с ним и право
+                # объявить конец карты.
+                keeps_bridge = bool(
+                    isinstance(previous, dict)
+                    and _winline_series_int(previous.get("map_num")) == map_i
+                    and previous.get("active") is not False
+                    and _winline_registry_confirms(previous)
+                )
                 _winline_current_map_registry[series_s] = {
                     "map_num": map_i,
                     "team1": t1,
                     "team2": t2,
                     "active": True,
+                    "match_id": (previous or {}).get("match_id") if keeps_bridge else None,
+                    # Регистрация — наш собственный вывод по карточке, а не
+                    # подтверждение моста: в режиме sourcetv карту подтверждает
+                    # только `_reconcile_winline_sourcetv_polling`, и она же
+                    # снимет флаг, если номер карты выведен из доигранной.
+                    # Там, где моста нет, подтверждать больше нечему.
+                    "bridge_confirmed": keeps_bridge or not _winline_bridge_is_authority(),
                     "inactive_reason": None,
                     "inactive_proven": False,
                     "inactive_since": None,
@@ -2657,6 +2755,46 @@ WINLINE_MAP_WINNER_WINDOW_ENV = "WINLINE_MAP_WINNER_WINDOW_S"
 _winline_odds_notify_state: Dict[str, Dict[str, Any]] = {}
 # key -> {match_id, map_num, team1, team2, since_mono, next_try_mono}
 _winline_pending_map_winners: Dict[str, Dict[str, Any]] = {}
+# series -> {match_id: map_num}. Один матч Valve — ровно одна карта серии.
+_winline_series_winner_matches: Dict[str, Dict[int, int]] = {}
+_WINLINE_WINNER_MATCH_SERIES_CAP = 500
+
+
+def _winline_claim_winner_match(key: Any, match_id: Any) -> bool:
+    """Закрепить матч за картой. Ложь — этот матч уже отдан ДРУГОЙ карте серии.
+
+    Идентичность опроса живёт дольше, чем повод её завести: опрос карты 2
+    заводится в перерыве, пока у Valve жива карта 1, и получает её `match_id`.
+    Победителя по нему искать нельзя — вернётся победитель прошлой карты
+    (01.09.2026, PuckChamp — Klim Sani4: карта 2 объявила победителем
+    Klim Sani4 по матчу 8977252978 карты 1). Проверка стоит ноль: своё же
+    прошлое сообщение мы помним, а сеть не трогаем.
+    """
+    try:
+        mid = int(match_id)
+    except (TypeError, ValueError):
+        return False
+    if mid <= 0:
+        return False
+    text = str(key or "")
+    series, _, tail = text.partition("|map")
+    try:
+        map_num = int(str(tail).split("|", 1)[0])
+    except (TypeError, ValueError):
+        map_num = 0
+    with _winline_current_map_state_lock:
+        seen = _winline_series_winner_matches.get(series)
+        if seen is None:
+            if len(_winline_series_winner_matches) >= _WINLINE_WINNER_MATCH_SERIES_CAP:
+                # Реестр служебный: держим последние серии, старые не нужны.
+                for stale in list(_winline_series_winner_matches)[:1]:
+                    _winline_series_winner_matches.pop(stale, None)
+            seen = _winline_series_winner_matches.setdefault(series, {})
+        owner = seen.get(mid)
+        if owner is not None and owner != map_num:
+            return False
+        seen[mid] = map_num
+    return True
 
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
@@ -2923,7 +3061,14 @@ def _winline_fetch_map_winner(match_id: Any) -> Optional[Dict[str, Any]]:
     side = "radiant" if radiant_win else "dire"
     team = data.get(f"{side}_team")
     name = str((team or {}).get("name") or "").strip() if isinstance(team, dict) else ""
-    return {"radiant_win": bool(radiant_win), "side": side, "name": name or None}
+    # Конец матча по данным самого источника: `start_time + duration`. По нему
+    # видно, наша ли это карта вообще (см. `_winline_map_winner_name`).
+    try:
+        ended_at = float(data.get("start_time")) + float(data.get("duration"))
+    except (TypeError, ValueError):
+        ended_at = None
+    return {"radiant_win": bool(radiant_win), "side": side, "name": name or None,
+            "ended_at": ended_at}
 
 
 def _winline_map_winner_name(
@@ -2931,6 +3076,7 @@ def _winline_map_winner_name(
     match_id: Any,
     *,
     fetch_fn: Any = None,
+    map_started_at: Any = None,
 ) -> Optional[str]:
     """Имя победителя карты в терминах сообщения, либо None.
 
@@ -2945,6 +3091,16 @@ def _winline_map_winner_name(
     outcome = (fetch_fn or _winline_fetch_map_winner)(match_id)
     if not isinstance(outcome, dict):
         return None
+    # Матч, доигранный ДО начала нашего опроса, — это прошлая карта серии.
+    # 01.09.2026 матч 8977252978 кончился в 12:43:31, опрос «карты 2» начался
+    # в 13:02:46, и его победитель ушёл в чат как победитель карты 2.
+    try:
+        if (map_started_at is not None
+                and outcome.get("ended_at") is not None
+                and float(outcome["ended_at"]) < float(map_started_at)):
+            return None
+    except (TypeError, ValueError):
+        pass
     _map_num, team1, team2 = _winline_parse_canonical_key(key)
     remote = str(outcome.get("name") or "").strip()
     if remote:
@@ -2963,7 +3119,8 @@ def _winline_map_winner_name(
     return remote or None
 
 
-def _winline_note_pending_map_winner(key: str, mono: float, match_id: Any) -> None:
+def _winline_note_pending_map_winner(key: str, mono: float, match_id: Any,
+                                     map_started_at: Any = None) -> None:
     try:
         mid = int(match_id)
     except (TypeError, ValueError):
@@ -2976,6 +3133,9 @@ def _winline_note_pending_map_winner(key: str, mono: float, match_id: Any) -> No
             "match_id": mid,
             "since_mono": float(mono),
             "next_try_mono": float(mono) + retry,
+            # Начало опроса карты едет вместе с ожиданием: догоняющее сообщение
+            # проверяет принадлежность матча так же, как основное.
+            "map_started_at": map_started_at,
         }
 
 
@@ -2985,7 +3145,9 @@ def _winline_odds_telegram_notify(
     *,
     is_terminal: bool = False,
     map_end_proven: bool = True,
+    map_confirmed_live: bool = True,
     match_id: Any = None,
+    map_started_at: Any = None,
     send_fn: Any = None,
     monotonic_fn: Any = None,
     stamp_fn: Any = None,
@@ -3030,7 +3192,18 @@ def _winline_odds_telegram_notify(
         prev.pop("pending_stop", None)
 
     winner_name: Optional[str] = None
+    winner_match_id: Any = None
     if is_terminal:
+        if not map_confirmed_live:
+            # Источник ни разу не подтвердил эту карту как идущую. Опрос был
+            # заведён под будущий номер (рынок следующей карты Winline открывает
+            # в перерыве), и его конец — это конец ОЖИДАНИЯ, а не карты.
+            # Сообщать нечего: ни «карта завершена», ни «опрос остановлен».
+            # 01.09.2026, PuckChamp — Klim Sani4: «🏁 карта 2 · 🏆 победа:
+            # Klim Sani4» в 13:07:33 — по карте, которая не начиналась, с
+            # победителем карты 1.
+            _winline_clear_pending_stop(key)
+            return None
         if not prev:
             # По этой карте мы не отправили ни одной строки: рынка не было ни
             # разу. «Карта завершена» тогда объявляет конец тому, чего чат не
@@ -3049,9 +3222,12 @@ def _winline_odds_telegram_notify(
         kind = "terminal"
         _winline_clear_pending_stop(key)
         prev.pop("pending_stop", None)
-        if match_id is not None:
+        if match_id is not None and _winline_claim_winner_match(key, match_id):
+            winner_match_id = match_id
             try:
-                winner_name = _winline_map_winner_name(key, match_id, fetch_fn=winner_fn)
+                winner_name = _winline_map_winner_name(
+                    key, match_id, fetch_fn=winner_fn,
+                    map_started_at=map_started_at)
             except Exception:
                 winner_name = None
     elif status in {"closed", "suspended"}:
@@ -3125,10 +3301,11 @@ def _winline_odds_telegram_notify(
             "last_sent_mono": mono,
             "sent_mono": recent + [mono],
         }
-    if kind == "terminal" and winner_name is None and match_id is not None:
+    if kind == "terminal" and winner_name is None and winner_match_id is not None:
         # Имя победителя догонит отдельным сообщением: факт конца карты важнее
         # и задерживать его ради OpenDota нельзя.
-        _winline_note_pending_map_winner(key, mono, match_id)
+        _winline_note_pending_map_winner(key, mono, winner_match_id,
+                                         map_started_at=map_started_at)
     return message
 
 
@@ -3258,7 +3435,8 @@ def _winline_flush_pending_map_winners(
                 entry["next_try_mono"] = mono + retry
         try:
             winner = _winline_map_winner_name(
-                key, pending.get("match_id"), fetch_fn=winner_fn
+                key, pending.get("match_id"), fetch_fn=winner_fn,
+                map_started_at=pending.get("map_started_at"),
             )
         except Exception:
             winner = None
@@ -3382,7 +3560,14 @@ def _tick_winline_current_map_polling_impl(
                                 lifecycle_terminal
                                 and lifecycle_terminal.get("map_end_proven")
                             ),
+                            # Подтверждал ли источник эту карту хоть раз. Старый
+                            # поллер поля не пишет — тогда считаем как раньше,
+                            # чтобы молчание не наступило по недостатку данных.
+                            map_confirmed_live=bool(
+                                (lifecycle_terminal or {}).get("map_confirmed_live", True)
+                            ),
                             match_id=notify_match_id,
+                            map_started_at=(lifecycle_terminal or {}).get("started_at"),
                         )
                 except Exception:
                     pass
@@ -34483,9 +34668,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                         team1=radiant_team_name_original,
                         team2=dire_team_name_original,
                         selected_side=None,
-                        match_id=(_extract_live_match_id(data)
-                                  or _extract_live_match_id(
-                                                                {"live_league_data": live_league_data})),
+                        match_id=_winline_card_match_id(data, live_league_data),
                         producer_pid=os.getpid(),
                         series_last_map=_winline_series_last_map(
                             bookmaker_map_num,
@@ -34794,9 +34977,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 team1=radiant_team_name_original,
                 team2=dire_team_name_original,
                 selected_side=None,
-                match_id=(_extract_live_match_id(data)
-                          or _extract_live_match_id(
-                                                        {"live_league_data": live_league_data})),
+                match_id=_winline_card_match_id(data, live_league_data),
                 producer_pid=os.getpid(),
                 series_last_map=_winline_series_last_map(
                     bookmaker_map_num,

@@ -96,13 +96,31 @@ class TestPredicate:
                       "team1": "Team Spirit", "team2": "Team Lynx"})
         assert isinstance(got, dict) and got["reason"] == "map_rollover"
 
-    def test_next_map_still_rollover(self, registry):
-        # Номер карты проверяется раньше пары и остаётся жёстким.
+    def test_next_map_is_awaited_not_declared_finished(self, registry):
+        """Реестр показывает карту РАНЬШЕ нашей — это перерыв, а не смена карты.
+
+        Опрос карты 3 заводится, пока в мосте ещё карта 2: рынок следующей
+        карты Winline открывает раньше. Считать это сменой карты нельзя —
+        01.09.2026 такой ответ отправил в чат «🏁 карта завершена» по карте,
+        которая не начиналась. Опрос продолжается, но подтверждением это не
+        считается.
+        """
         registry[SERIES] = _live()
         got = cs._winline_current_map_is_current(
             identity={"series": SERIES, "map_num": 3,
                       "team1": "Team Lynx", "team2": "RE ARISE"})
+        assert got["current"] is True
+        assert got["reason"] == "awaiting_map_start"
+        assert got["confirmed"] is False
+
+    def test_previous_map_is_rolled_over_by_the_next_one(self, registry):
+        """Обратный ход: мост показывает карту ПОЗЖЕ нашей — наша кончилась."""
+        registry[SERIES] = _live()
+        got = cs._winline_current_map_is_current(
+            identity={"series": SERIES, "map_num": 1,
+                      "team1": "Team Lynx", "team2": "RE ARISE"})
         assert isinstance(got, dict) and got["reason"] == "map_rollover"
+        assert got["current"] is False
 
     def test_missing_name_does_not_fabricate_match(self, registry):
         # Пустое имя схлопывает множество; тогда решает номер карты, а не пара.

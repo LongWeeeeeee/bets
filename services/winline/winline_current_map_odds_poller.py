@@ -183,6 +183,10 @@ def _eval_map_current(
             "reason": reason,
             "proven": proven,
             "confirmed": bool(current and raw.get("confirmed")),
+            # Id матча ЭТОЙ карты по мнению источника. Опрос примет его поверх
+            # того, с которым завёлся: карта 2 заводится в перерыве, когда живой
+            # у Valve ещё карта 1, и победителя по её id искать нельзя.
+            "match_id": raw.get("match_id"),
         }
     # truthy non-dict → current
     if raw:
@@ -415,6 +419,7 @@ class WinlineCurrentMapOddsPoller:
             float(safety_ceiling_seconds), float(safety_ceiling_max_seconds)
         )
         self._ceiling_extensions = 0
+        self._map_confirmed_seen = False
         # Continuous mode: accepted odds stop being terminal, so the same map keeps
         # being polled and later price moves are observed. Lifecycle terminals
         # (map rollover, series end, PID generation change, safety ceiling) still stop it.
@@ -503,6 +508,7 @@ class WinlineCurrentMapOddsPoller:
             return False
         self._reset_state()
         self._identity = identity
+        self._absorb_confirmation(status)
         self._canonical_key = make_canonical_map_key(
             identity["series"],
             identity["map_num"],
@@ -591,6 +597,7 @@ class WinlineCurrentMapOddsPoller:
 
         # Lifecycle predicate before scheduling another attempt
         status = _eval_map_current(self._is_map_current, identity=self._identity)
+        self._absorb_confirmation(status)
         if not status["current"]:
             return self._finalize_from_lifecycle(
                 lifecycle_reason=str(status.get("reason") or "not_current"),
@@ -624,6 +631,7 @@ class WinlineCurrentMapOddsPoller:
             status = _eval_map_current(self._is_map_current, identity=self._identity)
         except Exception:
             return False
+        self._absorb_confirmation(status)
         if not (status.get("current") and status.get("confirmed")):
             return False
         self._safety_ceiling = min(
@@ -631,6 +639,29 @@ class WinlineCurrentMapOddsPoller:
         )
         self._ceiling_extensions += 1
         return True
+
+    def _absorb_confirmation(self, status: Any) -> None:
+        """Запомнить, что источник ПОДТВЕРДИЛ эту карту, и чей это матч.
+
+        Флаг липкий: подтверждение карты — событие, а не состояние, и к концу
+        карты источник её уже не показывает. По нему решается, есть ли вообще о
+        чём сообщать: опрос карты, которую источник ни разу не подтвердил
+        (заведён в перерыве под будущий номер), не имеет права ни объявить её
+        завершённой, ни пожаловаться, что опрос остановлен, — карты не было.
+
+        Id матча принимаем оттуда же и только вместе с подтверждением: опрос
+        карты 2 заводится в перерыве с `match_id` доигранной карты 1, и по нему
+        01.09.2026 в чат ушёл победитель карты 1 под заголовком карты 2.
+        """
+        if not isinstance(status, dict) or not status.get("confirmed"):
+            return
+        self._map_confirmed_seen = True
+        try:
+            mid = int(status.get("match_id"))
+        except (TypeError, ValueError):
+            return
+        if mid > 0 and isinstance(self._identity, dict):
+            self._identity["match_id"] = mid
 
     def _reset_state(self) -> None:
         self._active = False
@@ -659,6 +690,7 @@ class WinlineCurrentMapOddsPoller:
         self._lifecycle_event = None
         self._safety_ceiling = self._safety_ceiling_base
         self._ceiling_extensions = 0
+        self._map_confirmed_seen = False
         self._accelerated = False
         self._history_last_key = None
 
@@ -1095,6 +1127,13 @@ class WinlineCurrentMapOddsPoller:
             # достаётся из OpenDota после её конца.
             "match_id": (self._identity or {}).get("match_id"),
             "ceiling_extensions": self._ceiling_extensions,
+            # Подтверждал ли источник эту карту хоть раз. По нему решают,
+            # есть ли о чём писать в чат: о карте, которой не было, не
+            # сообщают ни «завершена», ни «опрос остановлен».
+            "map_confirmed_live": bool(self._map_confirmed_seen),
+            # Момент начала опроса. Матч, доигранный ДО него, к этой карте
+            # отношения не имеет — по нему нельзя называть победителя.
+            "started_at": self._started_wall,
             "attempt_count": self._attempt_index,
             "reload_count": self._reload_count,
             "attempts": list(self._attempts),
@@ -1176,6 +1215,13 @@ class WinlineCurrentMapOddsPoller:
             "team2": self._identity["team2"] if self._identity else None,
             "match_id": (self._identity or {}).get("match_id"),
             "ceiling_extensions": self._ceiling_extensions,
+            # Подтверждал ли источник эту карту хоть раз. По нему решают,
+            # есть ли о чём писать в чат: о карте, которой не было, не
+            # сообщают ни «завершена», ни «опрос остановлен».
+            "map_confirmed_live": bool(self._map_confirmed_seen),
+            # Момент начала опроса. Матч, доигранный ДО него, к этой карте
+            # отношения не имеет — по нему нельзя называть победителя.
+            "started_at": self._started_wall,
             "attempt_count": self._attempt_index,
             "reload_count": self._reload_count,
             "consecutive_misses": self._consecutive_misses,

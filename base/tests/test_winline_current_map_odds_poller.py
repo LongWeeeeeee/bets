@@ -1693,3 +1693,83 @@ def test_live_dom_churn_never_triggers_stale_reload() -> None:
     modes = _drive(poller, clock, 12, step_seconds=30.0)
 
     assert "controlled_reload" not in modes, modes
+
+
+def test_terminal_says_whether_the_source_ever_confirmed_the_map() -> None:
+    """Опрос карты, которой источник ни разу не показал, это знает о себе.
+
+    01.09.2026 (PuckChamp — Klim Sani4) опрос карты 2 завёлся в перерыве, пока
+    у Valve была жива доигранная карта 1. Карта 2 не начиналась, но её опрос
+    закончился «🏁 карта завершена». Терминал обязан нести признак, по которому
+    доставка отличит конец карты от конца ожидания.
+    """
+    mod = _load_mod()
+    clock = FakeClock(mono=0.0, wall=0.0)
+    poller, _, _ = _make_poller(mod, clock=clock, is_map_current=lambda **_kw: True)
+    poller.begin(**_base_identity())
+    poller.tick()
+
+    clock.advance(90 * 60 + 0.1)
+    term = (poller.tick() or {}).get("terminal") or {}
+
+    assert term.get("map_confirmed_live") is False
+
+
+def test_confirmation_is_sticky_until_the_end_of_the_map() -> None:
+    """К концу карты источник её уже не показывает — подтверждение не гаснет."""
+    mod = _load_mod()
+    clock = FakeClock(mono=0.0, wall=0.0)
+    calls = {"n": 0}
+
+    def _next(**_kw):
+        # begin() и первый tick() видят подтверждённую карту, дальше источник
+        # её уже не показывает — так выглядит нормальный конец карты.
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return {"current": True, "reason": "registry_active",
+                    "proven": True, "confirmed": True}
+        return {"current": False, "reason": "source_absent", "proven": True}
+
+    poller, _, _ = _make_poller(mod, clock=clock, is_map_current=_next)
+    poller.begin(**_base_identity())
+    poller.tick()
+
+    clock.advance(10.0)
+    term = (poller.tick() or {}).get("terminal") or {}
+
+    assert term.get("map_confirmed_live") is True
+    assert term.get("map_end_proven") is True
+
+
+def test_match_id_is_taken_from_the_source_not_from_the_start_call() -> None:
+    """Id матча приходит с подтверждением карты, а не с заведением опроса.
+
+    Опрос следующей карты заводится по карточке ещё в перерыве, и `match_id` в
+    ней — это матч ПРЕДЫДУЩЕЙ карты (8977252978 у карты 2 серии
+    PuckChamp — Klim Sani4). По нему победителя искать нельзя.
+    """
+    mod = _load_mod()
+    clock = FakeClock(mono=0.0, wall=0.0)
+    confirmed = lambda **_kw: {  # noqa: E731
+        "current": True, "reason": "registry_active", "proven": True,
+        "confirmed": True, "match_id": 8977301111}
+    poller, _, _ = _make_poller(mod, clock=clock, is_map_current=confirmed)
+    poller.begin(**_base_identity(), match_id=8977252978)
+
+    poller.tick()
+
+    assert poller._identity.get("match_id") == 8977301111
+
+
+def test_terminal_carries_the_moment_polling_started() -> None:
+    """Матч, доигранный ДО начала опроса, к этой карте не относится."""
+    mod = _load_mod()
+    clock = FakeClock(mono=0.0, wall=1_788_257_000.0)
+    poller, _, _ = _make_poller(mod, clock=clock, is_map_current=lambda **_kw: True)
+    poller.begin(**_base_identity())
+    poller.tick()
+
+    clock.advance(90 * 60 + 0.1)
+    term = (poller.tick() or {}).get("terminal") or {}
+
+    assert term.get("started_at") == 1_788_257_000.0

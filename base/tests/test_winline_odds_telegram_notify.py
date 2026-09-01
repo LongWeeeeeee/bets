@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -66,6 +67,7 @@ def _clean_state(monkeypatch):
     cs._winline_odds_notify_state.clear()
     cs._winline_odds_orientation_state.clear()
     cs._winline_pending_map_winners.clear()
+    getattr(cs, "_winline_series_winner_matches", {}).clear()
     monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_ENABLED_ENV, "1")
     monkeypatch.delenv(cs.WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, raising=False)
     monkeypatch.delenv(cs.WINLINE_ODDS_TELEGRAM_MAX_PER_MIN_ENV, raising=False)
@@ -77,6 +79,7 @@ def _clean_state(monkeypatch):
     cs._winline_odds_notify_state.clear()
     cs._winline_odds_orientation_state.clear()
     cs._winline_pending_map_winners.clear()
+    getattr(cs, "_winline_series_winner_matches", {}).clear()
 
 
 def _attempt(p1, p2, status="open"):
@@ -84,13 +87,16 @@ def _attempt(p1, p2, status="open"):
 
 
 def _notify(payload, sender, clock, *, is_terminal=False, map_end_proven=True,
-            match_id=None, winner_fn=None):
+            match_id=None, winner_fn=None, map_confirmed_live=True,
+            map_started_at=None, key=KEY):
     return cs._winline_odds_telegram_notify(
         payload,
-        KEY,
+        key,
         is_terminal=is_terminal,
         map_end_proven=map_end_proven,
+        map_confirmed_live=map_confirmed_live,
         match_id=match_id,
+        map_started_at=map_started_at,
         send_fn=sender,
         monotonic_fn=clock,
         stamp_fn=lambda: "08:57:12",
@@ -476,7 +482,9 @@ def test_fetch_map_winner_reads_the_captured_opendota_response(monkeypatch):
 
     assert seen["url"].endswith("/api/matches/8976511215")
     assert outcome == {
-        "radiant_win": True, "side": "radiant", "name": "Inner Circle x Insanity"}
+        "radiant_win": True, "side": "radiant", "name": "Inner Circle x Insanity",
+        # Конец матча по самому ответу: по нему видно, наша ли это карта.
+        "ended_at": float(payload["start_time"] + payload["duration"])}
 
 
 def test_finished_map_message_names_the_winner(monkeypatch):
@@ -712,3 +720,132 @@ def test_main_loop_tick_never_sends(monkeypatch):
     """Backup-тик из главного цикла не должен делать блокирующую отправку:
     сеть до TELEGRAM_SEND_TIMEOUT_SECONDS не имеет права удлинять цикл ставок."""
     assert _drive_tick(monkeypatch, from_main_loop=True) == []
+
+
+# ─── Карта, которой не было ──────────────────────────────────────────────────
+# 01.09.2026, серия PuckChamp — Klim Sani4 (league 19944). Опрос «карты 2»
+# завёлся в 13:02:46 по карточке перерыва, когда у Valve была жива доигранная
+# карта 1 (match_id 8977252978, кончилась в 12:43:31). В 13:07:33 в чат ушло
+# «🏁 карта завершена · 🏆 победа: Klim Sani4» — по карте, которая не начиналась,
+# с победителем карты 1.
+INCIDENT_SERIES = "sourcetv:league:19944|id:10164236|id:10232231"
+INCIDENT_MAP1 = f"{INCIDENT_SERIES}|map1|PuckChamp|Klim Sani4"
+INCIDENT_MAP2 = f"{INCIDENT_SERIES}|map2|PuckChamp|Klim Sani4"
+INCIDENT_MATCH_ID = 8977252978
+# Нетронутый ответ OpenDota по карте 1 той серии, снят 01.09.2026:
+#   curl -s https://api.opendota.com/api/matches/8977252978
+INCIDENT_FIXTURE = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "opendota_match_8977252978_20260901.json"
+)
+
+
+def _incident_opendota():
+    return json.loads(INCIDENT_FIXTURE.read_text(encoding="utf-8"))
+
+
+def _incident_winner_fetch(calls=None):
+    """Настоящий разбор ответа OpenDota — не выдуманный словарь исхода.
+
+    Сеть подменяется, наш парсинг остаётся: тест проверяет то, что поедет в
+    прод, а не согласованность двух наших же выдумок.
+    """
+    payload = _incident_opendota()
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return payload
+
+    def _fetch(match_id):
+        if calls is not None:
+            calls.append(match_id)
+        saved = cs.requests
+        cs.requests = SimpleNamespace(get=lambda *_a, **_k: _Resp())
+        try:
+            return cs._winline_fetch_map_winner(match_id)
+        finally:
+            cs.requests = saved
+
+    return _fetch
+
+
+def test_a_map_the_source_never_confirmed_is_not_announced_at_all():
+    """Опрос ждал карту, которой не было: ни «завершена», ни «остановлен»."""
+    sender, clock = Sender(), Clock()
+    assert _notify(_attempt(5.00, 1.13), sender, clock, key=INCIDENT_MAP2)
+    assert len(sender.calls) == 1
+
+    clock.advance(287)
+    out = _notify(
+        _attempt(5.00, 1.13), sender, clock,
+        key=INCIDENT_MAP2, is_terminal=True, map_end_proven=True,
+        map_confirmed_live=False, match_id=INCIDENT_MATCH_ID,
+        winner_fn=_incident_winner_fetch(),
+    )
+
+    assert out is None
+    assert len(sender.calls) == 1, sender.messages
+
+    # И отложенного «опрос остановлен» тоже не появляется.
+    clock.advance(_HOLD + 60)
+    assert _flush_stops(sender, clock) == []
+    assert _flush_winners(sender, clock, winner_fn=_incident_winner_fetch()) == []
+    assert len(sender.calls) == 1, sender.messages
+
+
+def test_the_same_valve_match_is_never_the_winner_of_two_maps():
+    """Один матч — одна карта. Второй раз тот же id победителя не даёт."""
+    sender, clock = Sender(), Clock()
+    asked: list = []
+    fetch = _incident_winner_fetch(asked)
+
+    _notify(_attempt(6.50, 1.07), sender, clock, key=INCIDENT_MAP1)
+    clock.advance(30)
+    first = _notify(
+        _attempt(6.50, 1.07), sender, clock, key=INCIDENT_MAP1,
+        is_terminal=True, match_id=INCIDENT_MATCH_ID, winner_fn=fetch,
+    )
+    assert first is not None and "🏆 победа: Klim Sani4" in first
+
+    clock.advance(60)
+    _notify(_attempt(5.00, 1.13), sender, clock, key=INCIDENT_MAP2)
+    clock.advance(287)
+    second = _notify(
+        _attempt(5.00, 1.13), sender, clock, key=INCIDENT_MAP2,
+        is_terminal=True, match_id=INCIDENT_MATCH_ID, winner_fn=fetch,
+    )
+
+    assert second is not None, "конец карты сам по себе объявить можно"
+    assert "🏆" not in second, second
+    assert asked == [INCIDENT_MATCH_ID], "второй раз к источнику не ходим"
+    assert cs._winline_pending_map_winners == {}, "догонять чужого победителя нечем"
+
+
+def test_a_match_finished_before_polling_began_is_not_our_map():
+    """Матч кончился в 12:43:31, опрос карты начат в 13:02:46 — это не она."""
+    started_at = 1_788_257_000.0  # 01.09.2026 13:03:20 MSK
+    ended_at = 1_788_253_473 + 2338  # start_time + duration из ответа OpenDota
+    assert ended_at < started_at
+
+    winner = cs._winline_map_winner_name(
+        INCIDENT_MAP2, INCIDENT_MATCH_ID,
+        fetch_fn=_incident_winner_fetch(),
+        map_started_at=started_at,
+    )
+
+    assert winner is None
+
+
+def test_the_winner_of_the_map_that_really_played_is_still_named():
+    """Проверка на время не должна глушить нормальный случай."""
+    winner = cs._winline_map_winner_name(
+        INCIDENT_MAP1, INCIDENT_MATCH_ID,
+        fetch_fn=_incident_winner_fetch(),
+        map_started_at=1_788_253_500.0,  # опрос начат вскоре после старта карты
+    )
+
+    assert winner == "Klim Sani4"

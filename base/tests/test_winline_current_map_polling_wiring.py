@@ -941,6 +941,10 @@ def _blackout_series_payload() -> Dict[str, Any]:
 def _register_blackout_map(tmp_path, clock) -> str:
     payload = _blackout_series_payload()
     series = cs._winline_sourcetv_series_key(payload)
+    # Карта сначала ПОДТВЕРЖДЕНА мостом — как в бою: карточка сама собрана из
+    # строки моста. Иначе речь шла бы о карте, которую источник не видел, а её
+    # исчезновение ничего не доказывает.
+    cs._reconcile_winline_sourcetv_polling([payload], authoritative=True)
     cs.ensure_winline_current_map_polling(
         series=series,
         map_num=1,
@@ -2334,3 +2338,132 @@ def test_w8_main_loop_starts_scheduler_not_only_post_general_tick():
     assert "drive_winline_current_map_polling_scheduler_for_tests" in src or (
         "def start_winline_current_map_polling_scheduler" in src
     )
+
+
+def _puckchamp_row(**overrides: Dict[str, Any]) -> Dict[str, Any]:
+    """Строка моста серии PuckChamp — Klim Sani4 (инцидент 01.09.2026).
+
+    Числа взяты из захваченного ответа OpenDota по карте 1 этой серии
+    (`fixtures/opendota_match_8977252978_20260901.json`): лига 19944, id команд
+    10164236 / 10232231, Bo3, 2338 секунд, счёт 13:48. Ключ серии из таких
+    полей совпадает с продовым — `sourcetv:league:19944|id:10164236|id:10232231`.
+    """
+    row = {
+        "match_id": 8977252978,
+        "league_id": 19944,
+        "radiant_team_id": 10164236,
+        "dire_team_id": 10232231,
+        "radiant_team_name": "PuckChamp",
+        "dire_team_name": "Klim Sani4",
+        "series_game_number": 1,
+        "series_type": 1,
+        "radiant_series_wins": 0,
+        "dire_series_wins": 0,
+        "status": "live",
+        "game_time": 2338,
+        "radiant_score": 13,
+        "dire_score": 48,
+        "fast_picks": {"first_team": [{"hero_id": 80}]},
+        "_cyberscore_heroes_and_pos": {
+            "radiant": {"pos1": {"hero_id": 80}},
+            "dire": {"pos1": {"hero_id": 4}},
+        },
+    }
+    row.update(overrides)
+    return row
+
+
+def _puckchamp_intermission_row() -> Dict[str, Any]:
+    """Та же строка в перерыве: матч ещё жив у Valve, драфт уже стёрт."""
+    return _puckchamp_row(fast_picks={},
+                          _cyberscore_heroes_and_pos={"radiant": None, "dire": None})
+
+
+def test_map_that_never_started_is_never_announced_as_finished(tmp_path, monkeypatch):
+    """Регрессия 01.09.2026: «🏁 карта 2 · 🏆 победа» по карте, которой не было.
+
+    Серия PuckChamp — Klim Sani4. Карта 1 доигралась, но GC держал её матч
+    живым; по строке перерыва номер карты сдвинулся на 2, и опрос карты 2
+    завёлся ещё до её начала. Когда запись наконец ушла из моста, смерть карты 1
+    была засчитана карте 2: в 13:07:33 в чат ушло «🏁 карта завершена» с
+    победителем карты 1. Проверка идёт по ГРАНИЦЕ ДОСТАВКИ.
+    """
+    _clear_wiring_state()
+    cs._winline_odds_notify_state.clear()
+    cs._winline_pending_map_winners.clear()
+    getattr(cs, "_winline_series_winner_matches", {}).clear()
+    clock = FakeClock()
+    monkeypatch.setattr(cs, "DLTV_SOURCE_MODE", "sourcetv", raising=False)
+    monkeypatch.setattr(cs, "start_winline_current_map_polling_scheduler", lambda **_k: True)
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_ENABLED_ENV, "1")
+    monkeypatch.setenv(cs.WINLINE_CURRENT_MAP_CONTINUOUS_ENV, "1")
+    monkeypatch.setenv(cs.WINLINE_MAP_WINNER_ENABLED_ENV, "0")
+    sent: List[str] = []
+    monkeypatch.setattr(cs, "send_winline_odds_message",
+                        lambda message, **_k: (sent.append(message), True)[1])
+
+    live = _puckchamp_row()
+    series = cs._winline_sourcetv_series_key(live)
+    assert series == "sourcetv:league:19944|id:10164236|id:10232231", series
+
+    def _register(map_num: int, match_id: Any) -> None:
+        cs.ensure_winline_current_map_polling(
+            series=series,
+            map_num=map_num,
+            team1=live["radiant_team_name"],
+            team2=live["dire_team_name"],
+            match_id=match_id,
+            producer_pid=1,
+            producer_start_generation="g1",
+            monotonic_fn=clock.monotonic,
+            wall_fn=clock.time,
+            collector=lambda **_k: _accepted_collector_result(
+                map_num=map_num,
+                team1=live["radiant_team_name"],
+                team2=live["dire_team_name"],
+                series=series,
+            ),
+            evidence_path=tmp_path / f"map{map_num}.json",
+        )
+
+    def _tick():
+        return cs.tick_winline_current_map_polling(
+            monotonic_fn=clock.monotonic, wall_fn=clock.time)
+
+    # Карта 1 идёт: мост подтверждает именно её.
+    cs._reconcile_winline_sourcetv_polling([live], authoritative=True)
+    assert cs._winline_sourcetv_map_num(live) == 1
+    _register(1, live["match_id"])
+    _tick()
+
+    # Перерыв: матч карты 1 ещё в мосте, драфт стёрт, номер карты уехал на 2.
+    intermission = _puckchamp_intermission_row()
+    assert cs._winline_sourcetv_map_num(intermission) == 2
+    cs._reconcile_winline_sourcetv_polling([intermission], authoritative=True)
+    clock.advance(100.0)
+    # Ровно то, что подставляет боевой путь карточки. Запасной вариант — как
+    # было до правки (id живого матча), чтобы проверка падала на СООБЩЕНИИ, а не
+    # на отсутствии новой функции.
+    card_match_id = getattr(
+        cs, "_winline_card_match_id", lambda row, *_a: row.get("match_id"))(intermission)
+    _register(2, card_match_id)
+    _tick()
+
+    assert any("🆕 Winline · карта 2" in m for m in sent), sent
+
+    # Запись доигранной карты наконец протухла и ушла из снимка.
+    cs._reconcile_winline_sourcetv_polling([], authoritative=True)
+    clock.advance(300.0)
+    _tick()
+    clock.advance(cs._winline_stop_notice_hold_seconds() + 60.0)
+    _tick()
+    cs._winline_flush_pending_stop_notices(
+        monotonic_fn=clock.monotonic, stamp_fn=lambda: "13:07:33")
+
+    finished = [m for m in sent if "карта завершена" in m]
+    assert len(finished) == 1, sent
+    assert "🏁 Winline · карта 1" in finished[0], finished
+    assert not any("карта 2" in m and "завершена" in m for m in sent), sent
+    assert not any("опрос остановлен" in m for m in sent), sent
+    assert card_match_id is None, (
+        "id доигранной карты не должен уезжать в опрос следующей")
