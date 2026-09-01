@@ -2904,7 +2904,9 @@ def _winline_fetch_map_winner(match_id: Any) -> Optional[Dict[str, Any]]:
     if mid <= 0:
         return None
     try:
-        resp = requests.get(f"https://api.opendota.com/api/matches/{mid}", timeout=6)
+        # Вызов идёт из потока-шедулера, который ведёт опрос ВСЕХ живых карт.
+        # Таймаут здесь — это пауза в опросе линии, поэтому он короткий.
+        resp = requests.get(f"https://api.opendota.com/api/matches/{mid}", timeout=4)
     except Exception:
         return None
     if resp is None or resp.status_code != 200:
@@ -3228,6 +3230,10 @@ def _winline_flush_pending_map_winners(
     В момент конца карты матча в OpenDota обычно ещё нет, а задерживать ради
     этого сам факт конца нельзя. Поэтому имя приходит отдельной строкой, когда
     источник его отдаст; за окном ожидания попытки прекращаются молча.
+
+    За один такт делается НЕ БОЛЬШЕ одного обращения к источнику: такт ведёт
+    опрос всех живых карт, и пачка доигранных карт со стухшим OpenDota иначе
+    останавливала бы съём линии на сумму их таймаутов.
     """
     if not _winline_odds_notify_enabled() or not _winline_map_winner_enabled():
         return []
@@ -3257,7 +3263,9 @@ def _winline_flush_pending_map_winners(
         except Exception:
             winner = None
         if not winner:
-            continue
+            # Обращение к источнику уже стоило такту времени — остальные ключи
+            # подождут следующего.
+            break
         map_num, team1, team2 = _winline_parse_canonical_key(key)
         stamp = (stamp_fn or (lambda: datetime.now().strftime("%H:%M:%S")))()
         message = _winline_build_odds_message(
@@ -3277,6 +3285,7 @@ def _winline_flush_pending_map_winners(
         with _winline_current_map_state_lock:
             _winline_pending_map_winners.pop(key, None)
         sent.append(message)
+        break
     return sent
 
 
