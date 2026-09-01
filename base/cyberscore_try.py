@@ -6427,6 +6427,38 @@ def _format_win_model_line(*blocks) -> str:
     return line + "\n"
 
 
+def _late_model_side_from_blocks(*blocks) -> Optional[str]:
+    """Сторона late-модели (``radiant``/``dire``) для этой карты, либо None.
+
+    Индекс берётся точно так же, как в `_format_win_model_line`: он одинаков
+    во всех блоках и служит ключом к разложению `win_model_veto`. Возвращается
+    та же сторона, что печатается строкой «🕑 Late ML-модель», — чтобы гейт
+    доставки и late-гейт диспатча читали ОДНУ величину, а не два независимых
+    вычисления. Отказ молчаливый, как у самой модели: None — оценки нет.
+    """
+    index = None
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        raw = block.get(win_model_veto.INDEX_KEY)
+        if raw is None:
+            continue
+        try:
+            index = float(raw)
+        except (TypeError, ValueError):
+            index = None
+        if index is not None:
+            break
+    if index is None:
+        return None
+    try:
+        verdict = win_model_veto.last_late(index)
+    except Exception:                                # noqa: BLE001 — оценка необязательна
+        return None
+    side = str((verdict or {}).get("side") or "").strip().lower()
+    return side if side in ("radiant", "dire") else None
+
+
 def _build_star_hits_summary_block(
     *,
     early_output: Optional[dict],
@@ -8039,6 +8071,8 @@ def _build_late27_dispatch_guard_snapshot(
     has_selected_early_star: bool = False,
     selected_early_sign: Optional[int] = None,
     all_star_hits: Optional[List[Dict[str, Any]]] = None,
+    late_model_side: Optional[str] = None,
+    late_model_evaluated: bool = False,
 ) -> Dict[str, Any]:
     """Сериализуемый снимок фактов для late-гейта минимальной минуты.
 
@@ -8072,6 +8106,15 @@ def _build_late27_dispatch_guard_snapshot(
         "early_supports_late": early_supports_late,
         "all_star_hits_known": all_star_hits is not None,
         "all_opposite_hit_metrics": _opposite_sign_star_hit_metrics(all_star_hits, late_sign),
+        "late_model_side": (
+            str(late_model_side).strip().lower()
+            if str(late_model_side or "").strip().lower() in ("radiant", "dire")
+            else None
+        ),
+        # False = снимок собран версией кода без поля (legacy delayed-запись).
+        # Тогда молчание late-модели не считается нарушением: её просто не
+        # спрашивали, и блокировать по отсутствию данных нельзя.
+        "late_model_evaluated": bool(late_model_evaluated),
     }
 
 
@@ -8091,6 +8134,9 @@ def _late27_dispatch_guard_snapshot_from_context(
         has_selected_early_star=bool(context.get("has_selected_early_star")),
         selected_early_sign=context.get("selected_early_sign"),
         all_star_hits=all_star_hits,
+        late_model_side=context.get("late_model_side"),
+        # Ключ есть = контекст собран текущей версией `_build_stake_multiplier_context`.
+        late_model_evaluated="late_model_side" in context,
     )
 
 
@@ -8143,6 +8189,14 @@ def _evaluate_late27_dispatch_guard(
     opposite_all_hits = [
         str(metric) for metric in (snap.get("all_opposite_hit_metrics") or []) if str(metric)
     ]
+    late_model_side = str(snap.get("late_model_side") or "").strip().lower()
+    # Гейт активен только когда сторону задаёт late-звезда, поэтому при
+    # неизвестном target'е сторона таргета — это её знак.
+    guard_target_side = (
+        normalized_target_side
+        if normalized_target_side in {"radiant", "dire"}
+        else _target_side_from_sign(late_sign)
+    )
 
     # Полный снимок = создан текущей версией кода (в нём всегда есть список
     # All-хитов, пусть и пустой). Для legacy delayed-записей, где part данных
@@ -8164,6 +8218,19 @@ def _evaluate_late27_dispatch_guard(
             reasons.append("late_wr_unknown")
         if opposite_all_hits and not LATE_ALLOW_OPPOSITE_ALL_HIT:
             reasons.append("all_opposite_star_hit")
+        # Согласие с late-моделью. Ставку «на late» диспатч выпускает только
+        # когда предматчевая late-модель называет ту же сторону: у гейта
+        # доставки (`_late_win_model_reject_for_delivery`) правило уже такое,
+        # и решать иначе означало бы ставить сигнал в очередь ради отказа на
+        # выходе. Снимок без поля (legacy) не проверяем — см. `late_model_evaluated`.
+        # Блокируем ТОЛЬКО расхождение: вердикт late-модели считается по драфту
+        # и позже не изменится, поэтому отказ здесь закрывает карту заслуженно
+        # (`add_url` помечает URL обработанным). Молчание модели закрывать так
+        # нельзя: оценки может не быть временно (история разложений держит 32
+        # записи), и это случай мягкого гейта доставки, который карту не закрывает.
+        if snap.get("late_model_evaluated") and late_model_side in ("radiant", "dire"):
+            if late_model_side != guard_target_side:
+                reasons.append("late_model_against")
 
     return {
         "active": active,
@@ -8178,6 +8245,9 @@ def _evaluate_late27_dispatch_guard(
         "all_opposite_hit_metrics": opposite_all_hits,
         "all_star_hits_known": bool(snap.get("all_star_hits_known")),
         "early_supports_late": bool(snap.get("early_supports_late")),
+        "late_model_side": late_model_side or None,
+        "late_model_evaluated": bool(snap.get("late_model_evaluated")),
+        "target_side": guard_target_side,
     }
 
 
@@ -8195,6 +8265,8 @@ def _late27_dispatch_guard_reject_details(guard: Dict[str, Any]) -> Dict[str, An
         "late27_guard_all_opposite_hit_metrics": list(
             guard.get("all_opposite_hit_metrics") or []
         ),
+        "late27_guard_late_model_side": guard.get("late_model_side"),
+        "late27_guard_target_side": guard.get("target_side"),
     }
 
 
@@ -8207,7 +8279,9 @@ def _format_late27_dispatch_guard_log(guard: Dict[str, Any]) -> str:
         f"reasons={reasons}, late_hits={hit_count if hit_count is not None else 'n/a'}"
         f"(need>={guard.get('min_late_hits_required')}), "
         f"late_wr={f'{float(wr_value):.1f}' if wr_value is not None else 'n/a'}"
-        f"(need>={guard.get('min_late_wr_required')}), all_opposite={opposite}"
+        f"(need>={guard.get('min_late_wr_required')}), all_opposite={opposite}, "
+        f"late_model={guard.get('late_model_side') or 'n/a'}"
+        f"(target={guard.get('target_side') or 'n/a'})"
     )
 
 
@@ -10250,6 +10324,7 @@ def _build_stake_multiplier_context(
     synergy_confirmation_snapshot: Optional[Dict[str, Any]] = None,
     kills_window_ed_by_label: Optional[Dict[str, Any]] = None,
     kills_window_header_label: Optional[str] = None,
+    late_model_side: Optional[str] = None,
 ) -> Dict[str, Any]:
     opposite_side = "dire" if target_side == "radiant" else "radiant"
     return {
@@ -10299,6 +10374,15 @@ def _build_stake_multiplier_context(
         "kills_window_header_label": (
             str(kills_window_header_label).strip() or None
             if kills_window_header_label is not None
+            else None
+        ),
+        # Сторона late-модели на момент сборки сигнала. Едет вместе с
+        # контекстом в delayed payload: и гейт доставки, и late-гейт диспатча
+        # сравнивают таргет с ОДНОЙ оценкой, а не пересчитывают её позже, когда
+        # история разложений (32 записи) уже принадлежит другой карте.
+        "late_model_side": (
+            str(late_model_side).strip().lower()
+            if str(late_model_side or "").strip().lower() in ("radiant", "dire")
             else None
         ),
     }
@@ -10576,7 +10660,7 @@ def _late_win_model_reject_for_delivery(
 ) -> Optional[Dict[str, Any]]:
     """Причина не отправлять обычную ставку из-за late-модели, или None.
 
-    Две причины, популяции разные:
+    Три причины, популяции разные:
 
     `late_model_against` — сторона модели противоположна стороне ставки.
         Действует на ЛЮБУЮ обычную ставку (late/early/all): строка в панели
@@ -10585,6 +10669,13 @@ def _late_win_model_reject_for_delivery(
         (`_is_late_driven_context`): там ставка уходит ТОЛЬКО когда модель
         явно назвала сторону таргета. У early/all строки часто нет, и это
         не «против» — молчание их не режет.
+    `late_model_target_unknown` — модель сторону назвала, а сторону САМОЙ
+        ставки взять неоткуда: контекст не пришёл. Раньше здесь был молчаливый
+        пропуск, и гейт превращался в ничто на путях без контекста: за
+        30.08-01.09.2026 из 68 отправленных обычных ставок 4 ушли при late-модели
+        ПРОТИВ таргета, все с `star_signal_sent_now_prematch_model` — единственного
+        пути «СТАВКА НА <team> x<mult>», не передававшего `stake_multiplier_context`.
+        Гейт, который нельзя применить, обязан ЗАПРЕТИТЬ, а не промолчать.
 
     Проверка идёт по ФАКТИЧЕСКОМУ тексту сигнала — тем же приёмом, что и
     предматчевый гейт: путей отправки много, сведены они только в
@@ -10599,12 +10690,22 @@ def _late_win_model_reject_for_delivery(
     if _stake_multiplier_from_message(text) is None:
         return None                                  # не обычная ставка
 
+    ctx = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
+    target_side = str(ctx.get("target_side") or "").strip().lower()
     match = _LATE_WIN_MODEL_PANEL_RE.search(text)
-    if match is not None:
-        ctx = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
-        target_side = str(ctx.get("target_side") or "").strip().lower()
-        late_model_side = match.group("side").strip().lower()
-        if target_side in ("radiant", "dire") and late_model_side != target_side:
+    # Строка панели — первый источник, контекст — запасной: у delayed-записи
+    # текст мог быть пересобран, а сторона модели в контексте лежит с момента
+    # сборки сигнала и относится к тому же драфту.
+    late_model_side = (
+        match.group("side").strip().lower() if match is not None
+        else str(ctx.get("late_model_side") or "").strip().lower()
+    )
+    if late_model_side in ("radiant", "dire"):
+        if target_side not in ("radiant", "dire"):
+            return {"reason": "late_model_target_unknown",
+                    "late_model_side": late_model_side,
+                    "target_side": None}
+        if late_model_side != target_side:
             return {
                 "reason": "late_model_against",
                 "late_model_side": late_model_side,
@@ -10633,8 +10734,14 @@ def _log_late_win_model_block_once(match_key: str, decision: Dict[str, Any]) -> 
 
 
 def _late_win_model_block_detail(decision: Dict[str, Any]) -> str:
-    if str(decision.get("reason") or "") == "late_model_missing":
+    reason = str(decision.get("reason") or "")
+    if reason == "late_model_missing":
         return "late-модель не дала оценку (строки в панели нет)"
+    if reason == "late_model_target_unknown":
+        return (
+            f"сторона ставки неизвестна, а late-модель за "
+            f"{decision.get('late_model_side')} (контекст ставки не передан)"
+        )
     return (
         f"late-модель против таргета (модель за {decision.get('late_model_side')}, "
         f"ставка на {decision.get('target_side')})"
@@ -27476,6 +27583,21 @@ def _try_dispatch_prematch_model_bet(
                     _imm_obs["status"] = str(status or "live").lower()
                 _imm_obs.setdefault("observed_at", float(time.time()))
                 _imm_map = _rm
+        # Контекст ставки для гейтов доставки. Без него `target_side` внутри
+        # `_deliver_and_persist_signal` неизвестен, и гейт late-модели молча
+        # пропускал ставку: за 30.08-01.09.2026 из 68 отправленных обычных
+        # ставок 4 ушли при late-модели ПРОТИВ таргета, и все четыре — отсюда
+        # (единственный путь «СТАВКА НА <team> x<mult>» без контекста).
+        # Множитель тут всегда x1, поэтому ELO-гейт x0.5 контекст не трогает.
+        delivery_stake_context = {
+            "target_side": target_side,
+            "stake_team_name": target_team_name,
+            "radiant_team_name": str(radiant_team_name or ""),
+            "dire_team_name": str(dire_team_name or ""),
+            "late_model_side": _late_model_side_from_blocks(
+                early_output, mid_output, all_output,
+            ),
+        }
         delivered = _deliver_and_persist_signal(
             match_key,
             message_text,
@@ -27486,6 +27608,7 @@ def _try_dispatch_prematch_model_bet(
             add_url_details=details,
             bookmaker_decision="sent",
             defer_add_url=True,
+            stake_multiplier_context=delivery_stake_context,
         )
         if delivered:
             try:
@@ -37560,6 +37683,11 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 synergy_confirmation_snapshot=synergy_confirmation_snapshot,
                 kills_window_ed_by_label=tier1_early_kills_window_gate.get("ed_by_label"),
                 kills_window_header_label=tier1_early_kills_strongest_window,
+                late_model_side=_late_model_side_from_blocks(
+                    s.get('early_output', {}),
+                    s.get('mid_output', {}),
+                    s.get('all_output', {}),
+                ),
             )
             # Снимок фактов для late-гейта: считается один раз здесь и
             # уезжает в delayed payload вместе со stake_multiplier_context,

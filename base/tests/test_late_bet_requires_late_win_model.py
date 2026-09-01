@@ -153,11 +153,89 @@ def test_kill_switch_disables_gate(monkeypatch) -> None:
     ) is None
 
 
-def test_missing_context_does_not_block() -> None:
-    """Без контекста сторону ставки не определить — гейт молчит, а не рубит."""
-    assert C._late_win_model_reject_for_delivery(
+def test_missing_context_blocks_instead_of_passing() -> None:
+    """Без контекста сторону ставки не определить — значит ЗАПРЕТ, а не молчание.
+
+    Прежняя редакция этого теста закрепляла обратное («гейт молчит, а не рубит»),
+    и ровно этой дырой уходили ставки: единственный путь обычной ставки без
+    `stake_multiplier_context` — `star_signal_sent_now_prematch_model`, и все 4
+    отправки из 68 за 30.08-01.09.2026, где late-модель смотрела против таргета,
+    ушли именно оттуда. Гейт, который нельзя применить, обязан запретить.
+    """
+    decision = C._late_win_model_reject_for_delivery(
         _panel(late_line=LATE_FOR_DIRE), None
-    ) is None
+    )
+    assert decision is not None
+    assert decision["reason"] == "late_model_target_unknown"
+    assert decision["late_model_side"] == "dire"
+
+
+def test_late_model_side_taken_from_context_when_panel_line_missing() -> None:
+    """Текст мог быть пересобран (delayed) — сторона модели есть в контексте."""
+    ctx = dict(LATE_DRIVEN_RADIANT_CTX, late_model_side="dire")
+    decision = C._late_win_model_reject_for_delivery(_panel(late_line=""), ctx)
+    assert decision is not None
+    assert decision["reason"] == "late_model_against"
+    assert decision["late_model_side"] == "dire"
+
+
+def test_prematch_model_bet_carries_target_side_into_delivery(monkeypatch) -> None:
+    """Ставка предматчевой модели («на 00») проходит гейт со СВОЕЙ стороной.
+
+    Это единственный путь «СТАВКА НА <team> x<mult>», не передававший
+    `stake_multiplier_context`. Проверяем не «заблокировано» вообще (это дал бы
+    и fail-closed без контекста), а причину: `late_model_against` с известным
+    `target_side` доказывает, что контекст доехал до доставки.
+    """
+    panel = _panel(late_line=LATE_FOR_DIRE, header="СТАВКА НА Team Synapse x1")
+    reached: list = []
+    captured: list = []
+
+    monkeypatch.setattr(C, "PREMATCH_MODEL_BET_ENABLED", True, raising=False)
+    monkeypatch.setattr(
+        C.win_model_veto, "model_bet",
+        lambda *a, **k: {"side": "radiant", "index": 12.0, "confidence": 0.62,
+                         "min_odds": 1.5, "expected_wr": 0.70},
+    )
+    monkeypatch.setattr(C, "_prematch_late_block_conflict", lambda *a, **k: None)
+    monkeypatch.setattr(C, "_build_prematch_model_bet_message", lambda **k: panel)
+    monkeypatch.setattr(C, "_skip_dispatch_for_processed_url", lambda *a, **k: False)
+    monkeypatch.setattr(C, "_acquire_signal_send_slot", lambda *a, **k: True)
+    monkeypatch.setattr(C, "_release_signal_send_slot", lambda *a, **k: None)
+    monkeypatch.setattr(C, "_bookmaker_infer_map_num", lambda *a, **k: None)
+    monkeypatch.setattr(C, "_bookmaker_enrich_delayed_match_state", lambda *a, **k: {})
+    monkeypatch.setattr(C, "_late_model_side_from_blocks", lambda *a, **k: "dire")
+    monkeypatch.setattr(C, "_record_map_verdict", lambda *a, **k: None)
+    monkeypatch.setattr(
+        C, "_log_late_win_model_block_once",
+        lambda match_key, decision: captured.append(dict(decision)),
+    )
+    monkeypatch.setattr(
+        C, "_bookmaker_prepare_message_for_delivery",
+        lambda *a, **k: reached.append("prepare") or ("", False, "", None),
+    )
+    monkeypatch.setattr(
+        C, "_signal_fingerprint_try_reserve",
+        lambda *a, **k: reached.append("reserve") or (False, ""),
+    )
+
+    sent = C._try_dispatch_prematch_model_bet(
+        match_key="dltv.org/matches/prematch-late-gate.0",
+        status="live",
+        radiant_team_name="Team Synapse",
+        dire_team_name="Nemiga Gaming",
+        live_league={},
+        top={}, mid={}, bot={},
+        protracker_payload=None,
+        team_elo_block="",
+        game_time_seconds=0.0,
+        radiant_lead=0,
+    )
+    assert sent is False
+    assert reached == [], f"ставка предматчевой модели прошла мимо гейта: {reached}"
+    assert captured, "гейт не отработал на пути предматчевой модели"
+    assert captured[0]["reason"] == "late_model_against", captured[0]
+    assert captured[0]["target_side"] == "radiant", captured[0]
 
 
 def test_gate_is_actually_wired_into_delivery(monkeypatch) -> None:
