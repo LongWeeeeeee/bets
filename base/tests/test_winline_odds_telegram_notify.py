@@ -558,6 +558,42 @@ def test_finish_is_not_delayed_when_opendota_has_no_match_yet():
     assert WINNER_KEY not in cs._winline_pending_map_winners
 
 
+def test_winner_flush_asks_the_source_once_per_tick():
+    """Такт ведёт опрос всех живых карт: пачка таймаутов не имеет права его встать.
+
+    Три доигранные карты и молчащий OpenDota при таймауте 4 с — это 12 секунд
+    без съёма линии, если спрашивать всех в одном такте.
+    """
+    sender, clock = Sender(), Clock()
+    keys = [
+        f"sourcetv:league:19944|id:1|id:2|map{i}|Inner Circle x Insanity|4ikibamboni"
+        for i in (1, 2, 3)
+    ]
+    for i, key in enumerate(keys):
+        cs._winline_pending_map_winners[key] = {
+            "match_id": 8976511215 + i,
+            "since_mono": clock(),
+            "next_try_mono": clock(),
+        }
+
+    asked = []
+
+    def _silent(match_id):
+        asked.append(match_id)
+        return None
+
+    clock.advance(1.0)
+    assert _flush_winners(sender, clock, winner_fn=_silent) == []
+    assert len(asked) == 1, asked
+
+    # Следующий такт спрашивает следующий ключ — очередь не застревает.
+    clock.advance(1.0)
+    _flush_winners(sender, clock, winner_fn=_silent)
+    assert len(asked) == 2, asked
+    assert asked[0] != asked[1]
+    assert len(cs._winline_pending_map_winners) == 3
+
+
 def test_winner_lookup_gives_up_silently_past_the_window():
     """За окном ожидания попытки прекращаются, лишнего сообщения нет."""
     sender, clock = Sender(), Clock()
