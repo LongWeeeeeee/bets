@@ -31,11 +31,18 @@
 set -e
 cd /Users/alex/Documents/ingame
 PY=venv_catboost/bin/python3
-LOG="runtime/prematch_rebuild_$(date +%Y%m%d_%H%M).log"
+LOG="${LOG:-runtime/prematch_rebuild_$(date +%Y%m%d_%H%M).log}"
 SERV1=root@23.26.193.167
 
 run_chain() {
   echo "=== $(date '+%F %T') пересборка снимка предматчевой модели ==="
+  # Страховка от молчащего добора: 25.08–01.09.2026 launchd не запускал 04:30-джобу
+  # 8 ночей, и снимок уезжал на прод с корпусом 23.08 (sha1 не менялся). Если за
+  # 20 ч лога добора нет — добираем здесь; падение добора пересборку не останавливает.
+  if [ -z "$(find runtime -maxdepth 1 -name 'pro_topup_*.log' -mmin -1200 2>/dev/null)" ]; then
+    echo "свежего лога добора нет (>20 ч) — добираю корпус перед пересборкой"
+    bash scripts/run/topup_pro_corpus.sh || echo "добор упал (rc=$?), пересобираю на текущем корпусе"
+  fi
   # 1. выжимки корпуса (компактная и богатая)
   $PY runtime/experiments/misc/pro_corpus_extract.py
   $PY runtime/experiments/misc/pro_corpus_rich.py
@@ -179,8 +186,36 @@ CHECK
 # считает задание завершённым и убивает всю группу процессов — цепочка умирает
 # через секунду, оставляя пустой лог (проверено 14.08: лог создавался нулевого
 # размера, ни одного шага не выполнялось). В терминале, наоборот, удобнее фон.
+# Цепочка идёт в ДОЧЕРНЕМ процессе (`bash "$0" --run-chain`): так `set -e` внутри
+# неё работает как прежде, а родитель всё равно получает код выхода и шлёт итог
+# в админ-чат. В контексте `if`/`||` errexit внутри функции был бы отключён.
+if [ "${1:-}" = "--run-chain" ]; then
+  run_chain
+  exit $?
+fi
+
+notify_chain() {
+  local rc="$1"
+  if [ "$rc" -ne 0 ] || grep -qE 'ОШИБКА|ВНИМАНИЕ|Traceback|AssertionError|Connection closed|scp:' "$LOG"; then
+    { echo "⚠️ пересборка снимка: rc=$rc ($(date '+%F %T'))";
+      grep -E 'ОШИБКА|ВНИМАНИЕ|Traceback|AssertionError|Connection closed|scp:|снимку|доставка' "$LOG" | tail -8; } \
+      | $PY scripts/ops/notify_admin.py
+  else
+    { echo "✅ пересборка снимка ($(date '+%F %T'))";
+      grep -E 'проверка пройдена|доставка подтверждена|снимок .* доставлен|^active' "$LOG" | tail -5; } \
+      | $PY scripts/ops/notify_admin.py
+  fi
+}
+
+run_with_notify() {
+  local rc=0
+  if LOG="$LOG" bash "$0" --run-chain; then rc=0; else rc=$?; fi
+  notify_chain "$rc"
+  return "$rc"
+}
+
 if [ -t 1 ]; then
-  run_chain > "$LOG" 2>&1 &
+  run_with_notify > "$LOG" 2>&1 &
   PID=$!
   echo "$PID" > runtime/prematch_rebuild.pid
   echo "PID=$PID"
@@ -188,5 +223,5 @@ if [ -t 1 ]; then
   echo "проверка: kill -0 $PID && tail -3 $LOG"
 else
   echo $$ > runtime/prematch_rebuild.pid
-  run_chain > "$LOG" 2>&1
+  run_with_notify > "$LOG" 2>&1
 fi

@@ -22,7 +22,18 @@ PY=venv_catboost/bin/python3
 LOG="runtime/pro_topup_$(date +%Y%m%d_%H%M).log"
 
 run_topup() {
-  $PY runtime/experiments/misc/topup_pro_corpus.py
+  local rc=0
+  $PY runtime/experiments/misc/topup_pro_corpus.py || rc=$?
+  # Тишина ≠ успех: 25.08–01.09.2026 добор не шёл 8 ночей, и узнали об этом
+  # по возрасту снимка на проде. Одна строка в админ-чат в любом исходе.
+  if [ "$rc" -ne 0 ] || grep -qE 'ВНИМАНИЕ|Traceback|Unexpected error|Все [0-9]+ прокси' "$LOG"; then
+    { echo "⚠️ добор про-корпуса: rc=$rc ($(date '+%F %T'))";
+      grep -E 'ВНИМАНИЕ|Traceback|Unexpected error|прокси|свежайшая карта|файлов в корпусе' "$LOG" | tail -6; } \
+      | $PY scripts/ops/notify_admin.py
+  else
+    grep -E 'файлов в корпусе|свежайшая карта' "$LOG" | sed 's/^/✅ добор: /' | $PY scripts/ops/notify_admin.py
+  fi
+  return "$rc"
 }
 
 # Под launchd работать НАДО В ПЕРЕДНЕМ ПЛАНЕ: уйдя в фон и выйдя, скрипт
