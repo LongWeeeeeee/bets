@@ -1,0 +1,41 @@
+{
+  "experiment": "early_nw_draft",
+  "version": "2026-09-01_public_early_nw",
+  "journal": "E-243",
+  "target": "сторона раннего маркера по нетворту (доминатор), НЕ победа карты",
+  "population": "продовая is_early_nw_match: ряд >= 20 мин, маркер в окне 20-28",
+  "design": {
+    "kind": "hero_role_pair",
+    "signed": true,
+    "columns": 16764,
+    "pair_min_support": 30
+  },
+  "C": 0.003,
+  "selection_validation_log_loss": 0.616361,
+  "counts": {
+    "population": 3212482,
+    "train": 1927489,
+    "validation": 642496,
+    "test": 642497,
+    "shipped_fit_rows": 3212482
+  },
+  "base_radiant_share": 0.533895,
+  "held_out_test": false,
+  "shipped_on_full_corpus": true,
+  "honest_test": {
+    "rows": 642497,
+    "positive_rate": 0.532753,
+    "auc": 0.71584,
+    "log_loss": 0.616099,
+    "brier": 0.213862,
+    "accuracy": 0.658462
+  },
+  "honest_test_baseline_accuracy": 0.532753,
+  "split_boundaries": {
+    "train_last_ts": 1781901921,
+    "validation_first_ts": 1781901921,
+    "test_first_ts": 1784045620
+  },
+  "uses_ingame_or_third_party_stats": false,
+  "note": "Только драфт: hero_id по позициям, порядок win_model_veto._heroes_vector."
+}
