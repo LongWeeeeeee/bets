@@ -1,8 +1,9 @@
 # Multi-agent workflow — Plan → Worker → Review (classic opencode-orchestrator loop)
 
-> Detailed reference for the workflow summarized in `AGENTS.md`. Classic review-after-run
-> loop: Plan → Worker → Review → (ISSUES → replan → Worker → …) until APPROVE or a
-> safeguard trips.
+> Legacy opencode Plan → Worker → Review (review-after-run). Hot-core routing lives in
+> `AGENTS.md` §4 (oh-my-claudecode). This doc is the on-demand reference for
+> `base/agent_workflow.py` and `.opencode/agent/*`. Loop: Plan → Worker → Review →
+> (ISSUES → replan → Worker → …) until APPROVE or a safeguard trips.
 
 ## Roles & models
 

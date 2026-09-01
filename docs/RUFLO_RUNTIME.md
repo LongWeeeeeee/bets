@@ -14,7 +14,15 @@ RuFlo is the durable coordination and learning substrate around the existing Her
 kanban workflow. It does **not** redesign roles, model routing, assignees, Reviewer
 gates, or production-safety rules in `AGENTS.md`.
 
-Enabled project plugins:
+RuFlo дополняет координацию, но **не меняет роли/модели/assignee** и **не обходит Reviewer**.
+Старый `hermes-anti-stall-supervisor` выведен из эксплуатации; **не включай его systemd timer**.
+Проверенные policy/contracts — AgentDB namespace `ingame-orchestration`.
+
+**Выключен в Claude Code / OMC (2026-08-30).** Все пять плагинов в
+`.claude/settings.json` стоят `false`. Не включай их и не поднимай RuFlo MCP
+без явной просьбы. Файлы, AgentDB и этот док не удалять — rollback/archive.
+
+Бывшие project plugins (сейчас off):
 
 - `ruflo-swarm@ruflo`
 - `ruflo-goals@ruflo`
@@ -22,7 +30,8 @@ Enabled project plugins:
 - `ruflo-autopilot@ruflo`
 - `ruflo-agentdb@ruflo`
 
-The project MCP endpoint is `/usr/local/bin/ruflo mcp start` (`.mcp.json`).
+Project `.mcp.json` пустой (`mcpServers: {}`). CLI `/usr/local/bin/ruflo` на
+хосте может остаться; в сессии агента его нет.
 
 ## Canonical configuration
 
@@ -31,7 +40,7 @@ The project MCP endpoint is `/usr/local/bin/ruflo mcp start` (`.mcp.json`).
 | `claude-flow.config.json` | Current CLI config API (config/memory/MCP tools); mirrored from YAML |
 | `.claude-flow/config.yaml` | Canonical V3 runtime/daemon policy; kept value-equivalent to JSON |
 | `.claude/settings.json` | Claude Code project plugin enablement |
-| `.mcp.json` | Project-scoped RuFlo MCP server |
+| `.mcp.json` | пустой; RuFlo MCP в сессии агента не поднимать |
 | `.swarm/memory.db` | Durable AgentDB/sql.js state; host runtime data, git-ignored |
 | `.claude-flow/migration/anti-stall-v1.json` | Content-hash manifest for the legacy contract import |
 

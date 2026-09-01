@@ -58,7 +58,8 @@ def test_transient_execution_state_is_not_migrated() -> None:
 def test_ruflo_policy_is_bounded_and_preserves_orchestration_freeze() -> None:
     yaml_text = (ROOT / ".claude-flow/config.yaml").read_text()
     json_config = json.loads((ROOT / "claude-flow.config.json").read_text())
-    agents = (ROOT / "AGENTS.md").read_text()
+    ruflo = (ROOT / "docs/RUFLO_RUNTIME.md").read_text()
+    settings = json.loads((ROOT / ".claude/settings.json").read_text())
 
     assert "maxIterations: 3" in yaml_text
     assert "timeoutMinutes: 30" in yaml_text
@@ -69,9 +70,18 @@ def test_ruflo_policy_is_bounded_and_preserves_orchestration_freeze() -> None:
     assert json_config["memory"]["persistPath"] == ".swarm"
     assert json_config["swarm"]["strategy"] == "specialized"
     assert json_config["swarm"]["communicationProtocol"] == "message-bus"
-    assert "не меняет роли/модели/assignee" in agents
-    assert "не обходит Reviewer" in agents
-    assert "не включай его systemd timer" in agents
+    assert "не меняет роли/модели/assignee" in ruflo
+    assert "не обходит Reviewer" in ruflo
+    assert "не включай его systemd timer" in ruflo
+    ruflo_plugins = [
+        "ruflo-swarm@ruflo",
+        "ruflo-goals@ruflo",
+        "ruflo-intelligence@ruflo",
+        "ruflo-autopilot@ruflo",
+        "ruflo-agentdb@ruflo",
+    ]
+    for name in ruflo_plugins:
+        assert settings["enabledPlugins"].get(name) is False, name
 
 
 def test_json_and_yaml_config_surfaces_are_value_equivalent() -> None:

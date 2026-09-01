@@ -6193,6 +6193,17 @@ def _format_win_model_line(*blocks) -> str:
             line += f" | вход {float(_fill):.0%}"
     except Exception:                                # noqa: BLE001
         pass
+    # Early-NW модель: тот же драфт, но цель ДРУГАЯ — не победа карты, а сторона
+    # раннего перевеса по нетворту (маркер словаря early_dict, окно 20-28 минут).
+    # Стоит ВЫШЕ late-строки: раньше по игровому времени. Отказ молчаливый, как
+    # у late, — нет оценки, нет строки, карточка выглядит ровно как раньше.
+    try:
+        _early_nw = win_model_veto.last_early_nw(index)
+    except Exception:                                # noqa: BLE001
+        _early_nw = None
+    if _early_nw:
+        line += (f"\n\U0001F550 Early NW ML-модель: "
+                 f"{_early_nw['side']} {float(_early_nw['confidence']) * 100:.1f}%")
     # Late-модель: тот же драфт, но обучена ТОЛЬКО на картах >= 36 минут
     # (E-240). Показывается всегда, когда оценка есть: она предматчевая,
     # живого состояния не требует. Нет строки — модель не загрузилась или
