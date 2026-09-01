@@ -790,11 +790,37 @@ def test_a_map_the_source_never_confirmed_is_not_announced_at_all():
     assert out is None
     assert len(sender.calls) == 1, sender.messages
 
-    # И отложенного «опрос остановлен» тоже не появляется.
+    # Победителя не ищем и в догоняющем сообщении: карты не было.
+    assert _flush_winners(sender, clock, winner_fn=_incident_winner_fetch()) == []
+
+    # Честный остаток — «опрос остановлен, конец карты не подтверждён»: чат уже
+    # видел «🆕 карта 2», и оборвать нить молча нельзя. Но это НЕ «завершена» и
+    # НЕ имя победителя.
+    clock.advance(_HOLD + 60)
+    stops = _flush_stops(sender, clock)
+    assert len(stops) == 1, sender.messages
+    assert "опрос остановлен" in stops[0]
+    assert "карта завершена" not in stops[0]
+    assert "🏆" not in stops[0]
+
+
+def test_a_resumed_poll_cancels_the_stop_notice_for_an_unconfirmed_map():
+    """Если опрос той же карты возобновился — в чате не появляется ничего."""
+    sender, clock = Sender(), Clock()
+    _notify(_attempt(5.00, 1.13), sender, clock, key=INCIDENT_MAP2)
+    clock.advance(287)
+    _notify(_attempt(5.00, 1.13), sender, clock, key=INCIDENT_MAP2,
+            is_terminal=True, map_end_proven=True, map_confirmed_live=False,
+            match_id=INCIDENT_MATCH_ID, winner_fn=_incident_winner_fetch())
+
+    # Карта наконец началась — опрос по тому же ключу снова присылает кэфы.
+    clock.advance(30)
+    _notify(_attempt(4.20, 1.16), sender, clock, key=INCIDENT_MAP2)
+
     clock.advance(_HOLD + 60)
     assert _flush_stops(sender, clock) == []
-    assert _flush_winners(sender, clock, winner_fn=_incident_winner_fetch()) == []
-    assert len(sender.calls) == 1, sender.messages
+    assert not any("опрос остановлен" in m for m in sender.messages), sender.messages
+    assert not any("завершена" in m for m in sender.messages), sender.messages
 
 
 def test_the_same_valve_match_is_never_the_winner_of_two_maps():

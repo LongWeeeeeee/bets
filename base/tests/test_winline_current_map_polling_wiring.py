@@ -2463,8 +2463,12 @@ def test_map_that_never_started_is_never_announced_as_finished(tmp_path, monkeyp
     finished = [m for m in sent if "карта завершена" in m]
     assert len(finished) == 1, sent
     assert "🏁 Winline · карта 1" in finished[0], finished
+    # Ключевое: по карте 2 «завершена» не объявляется и победитель не называется.
     assert not any("карта 2" in m and "завершена" in m for m in sent), sent
-    assert not any("опрос остановлен" in m for m in sent), sent
+    assert not any("🏆" in m for m in sent), sent
+    # Честный остаток по карте 2 — «опрос остановлен», не «завершена».
+    stops = [m for m in sent if "опрос остановлен" in m]
+    assert len(stops) == 1 and "карта 2" in stops[0], sent
     assert card_match_id is None, (
         "id доигранной карты не должен уезжать в опрос следующей")
 
@@ -2490,7 +2494,97 @@ def test_intermission_row_does_not_make_us_wait_for_the_map_after_next():
     assert cs._winline_next_map_certain(registry, 2) is True, (
         "предпосылка теста: счёт и номер карты согласованы, серия продолжится")
 
+
     cs._reconcile_winline_sourcetv_polling([], authoritative=True)
 
     pending = cs._winline_pending_next_maps.get(series) or {}
     assert pending.get("map_num") == 2, pending
+
+
+def test_map_number_without_a_gc_game_number_is_not_bumped():
+    """Без номера карты у GC сдвигать нечего — иначе перескок через карту.
+
+    `series_game_number` и счёт серии — независимые поля GC. При счёте 1:0 и
+    отсутствующем номере `played + 1` уже указывает на карту 2; сдвиг делал из
+    неё карту 3 — опрос карты, до которой серия может не дойти.
+    """
+    base = _puckchamp_intermission_row()
+    base["series_game_number"] = 0
+
+    stale_score = dict(base, radiant_series_wins=0, dire_series_wins=0)
+    assert cs._winline_sourcetv_map_num(stale_score) == 1
+
+    updated_score = dict(base, radiant_series_wins=1, dire_series_wins=0)
+    assert cs._winline_sourcetv_map_num(updated_score) == 2
+
+    later = dict(base, radiant_series_wins=1, dire_series_wins=1)
+    assert cs._winline_sourcetv_map_num(later) == 3
+
+
+def test_last_map_of_a_series_is_still_announced_as_finished(tmp_path, monkeypatch):
+    """Решающую карту серии «завершена» терять нельзя.
+
+    На карте 5 номер двигать некуда (`resolved < 5` не срабатывает), поэтому
+    запись перерыва остаётся под ТЕМ ЖЕ номером с `bridge_confirmed=False`.
+    Карта при этом настоящая: её опрос видел подтверждение источника, пока она
+    шла, — и «завершена» терять нельзя. Проверка по ГРАНИЦЕ ДОСТАВКИ.
+    """
+    _clear_wiring_state()
+    cs._winline_odds_notify_state.clear()
+    cs._winline_pending_map_winners.clear()
+    getattr(cs, "_winline_series_winner_matches", {}).clear()
+    clock = FakeClock()
+    monkeypatch.setattr(cs, "DLTV_SOURCE_MODE", "sourcetv", raising=False)
+    monkeypatch.setattr(cs, "start_winline_current_map_polling_scheduler", lambda **_k: True)
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_ENABLED_ENV, "1")
+    monkeypatch.setenv(cs.WINLINE_CURRENT_MAP_CONTINUOUS_ENV, "1")
+    monkeypatch.setenv(cs.WINLINE_MAP_WINNER_ENABLED_ENV, "0")
+    sent: List[str] = []
+    monkeypatch.setattr(cs, "send_winline_odds_message",
+                        lambda message, **_k: (sent.append(message), True)[1])
+
+    # Bo5, счёт 2:2, идёт решающая карта 5: номер уже упёрся в предел серии.
+    live = _puckchamp_row(series_type=2, series_game_number=5,
+                          radiant_series_wins=2, dire_series_wins=2)
+    series = cs._winline_sourcetv_series_key(live)
+    assert cs._winline_sourcetv_map_num(live) == 5
+    cs._reconcile_winline_sourcetv_polling([live], authoritative=True)
+    cs.ensure_winline_current_map_polling(
+        series=series, map_num=5,
+        team1=live["radiant_team_name"], team2=live["dire_team_name"],
+        match_id=live["match_id"], producer_pid=1, producer_start_generation="g1",
+        monotonic_fn=clock.monotonic, wall_fn=clock.time,
+        collector=lambda **_k: _accepted_collector_result(
+            map_num=5, team1=live["radiant_team_name"],
+            team2=live["dire_team_name"], series=series),
+        evidence_path=tmp_path / "decider.json",
+    )
+
+    def _tick():
+        return cs.tick_winline_current_map_polling(
+            monotonic_fn=clock.monotonic, wall_fn=clock.time)
+
+    _tick()
+    assert any("🆕 Winline · карта 5" in m for m in sent), sent
+
+    # Карта доиграна: строка перерыва под тем же номером 5, счёт ещё не обновлён.
+    intermission = _puckchamp_row(series_type=2, series_game_number=5,
+                                  radiant_series_wins=2, dire_series_wins=2,
+                                  fast_picks={},
+                                  _cyberscore_heroes_and_pos={"radiant": None,
+                                                              "dire": None})
+    assert cs._winline_sourcetv_map_num(intermission) == 5, (
+        "предпосылка: номер решающей карты двигать некуда")
+    cs._reconcile_winline_sourcetv_polling([intermission], authoritative=True)
+    clock.advance(60.0)
+    _tick()
+
+    # Запись ушла из свежего снимка — конец карты доказан.
+    cs._reconcile_winline_sourcetv_polling([], authoritative=True)
+    clock.advance(10.0)
+    _tick()
+
+    finished = [m for m in sent if "карта завершена" in m]
+    assert len(finished) == 1, sent
+    assert "🏁 Winline · карта 5" in finished[0]
+    assert not any("опрос остановлен" in m for m in sent), sent
