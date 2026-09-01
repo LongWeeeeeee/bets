@@ -2467,3 +2467,30 @@ def test_map_that_never_started_is_never_announced_as_finished(tmp_path, monkeyp
     assert not any("опрос остановлен" in m for m in sent), sent
     assert card_match_id is None, (
         "id доигранной карты не должен уезжать в опрос следующей")
+
+
+def test_intermission_row_does_not_make_us_wait_for_the_map_after_next():
+    """Номер в строке перерыва УЖЕ сдвинут — прибавлять к нему единицу нельзя.
+
+    Bo5, счёт 1:0, строка доигранной карты 1: номер карты из неё выходит 2.
+    Ждать после неё надо карту 2 (она ещё не начиналась), а не карту 3 — иначе
+    заводится опрос карты, до которой серия может не дойти, и его конец уходит
+    в чат как конец несуществующей карты.
+    """
+    _clear_wiring_state()
+    row = _puckchamp_intermission_row()
+    row["series_type"] = 2          # Bo5
+    row["radiant_series_wins"] = 1  # карта 1 уже засчитана GC
+    series = cs._winline_sourcetv_series_key(row)
+
+    cs._reconcile_winline_sourcetv_polling([row], authoritative=True)
+    registry = cs._winline_current_map_registry[series]
+    assert registry["map_num"] == 2
+    assert registry["bridge_confirmed"] is False
+    assert cs._winline_next_map_certain(registry, 2) is True, (
+        "предпосылка теста: счёт и номер карты согласованы, серия продолжится")
+
+    cs._reconcile_winline_sourcetv_polling([], authoritative=True)
+
+    pending = cs._winline_pending_next_maps.get(series) or {}
+    assert pending.get("map_num") == 2, pending

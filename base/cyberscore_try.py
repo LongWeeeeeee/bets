@@ -865,7 +865,14 @@ def _winline_sourcetv_map_num(match: Any) -> Optional[int]:
         played = sum(_winline_series_score_from_delta(payload))
     resolved = max(game_number, played + 1)
     if _winline_sourcetv_postgame_intermission(payload) and resolved < 5:
-        resolved += 1
+        # Сдвиг нужен ровно тогда, когда счёт серии ЕЩЁ НЕ засчитал доигранную
+        # карту: `played + 1` тогда указывает на неё саму. Если GC счёт уже
+        # обновил (played == game_number), `played + 1` — это уже следующая
+        # карта, и второй сдвиг перескакивал бы через неё: в Bo5 при 1:0 строка
+        # перерыва давала карту 3 вместо 2, то есть опрос карты, до которой
+        # серия может не дойти.
+        if game_number <= 0 or played < game_number:
+            resolved += 1
     return resolved if 1 <= resolved <= 5 else None
 
 
