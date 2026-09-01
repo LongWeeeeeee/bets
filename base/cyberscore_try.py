@@ -27510,23 +27510,26 @@ def _try_dispatch_prematch_model_bet(
     # на 01.09.2026 отправлены дважды и более, одинаковые map_num/index/
     # команды в пределах ~70-160 с). `_skip_dispatch_for_processed_url` ниже
     # ту же дыру не закрывает: `_is_url_processed` тоже сравнивает URL целиком
-    # без среза суффикса. Предпочитаем существующий карточный отпечаток
-    # (команды+номер карты); на sourcetv-ветке его кэш пуст, потому что
-    # `_signal_fingerprint_register` вызывается только при `not
-    # is_sourcetv_card` (.omc/decisions.md 2026-09-01) — запасной ключ тогда:
-    # URL без `.N`-суффикса + номер карты, чтобы разные карты одной серии не
-    # схлопнулись в один ключ.
-    _bet_dedup_key = _map_pair_fingerprint(match_key)
-    if not _bet_dedup_key:
-        _dedup_map_num = _bookmaker_infer_map_num(
-            live_league if isinstance(live_league, dict) else {},
-        )
-        if _dedup_map_num:
-            _bet_dedup_key = (
-                f"{_signal_fingerprint_registry_key(match_key)}|map{int(_dedup_map_num)}"
-            )
-    if not _bet_dedup_key:
-        _bet_dedup_key = dedup_key
+    # без среза суффикса.
+    #
+    # НЕ `_map_pair_fingerprint` (команды+номер карты, БЕЗ match_id): на
+    # sourcetv-ветке `_signal_fingerprint_register` стоит ПОСЛЕ блока
+    # `if is_sourcetv_card: ... else: ...`, а не внутри его `else`, и потому
+    # вызывается всегда — кэш живой в проде. Ключ «teamA|teamB|mapN» без
+    # match_id схлопывает РАЗНЫЕ матчи одной пары команд на одном номере
+    # карты: в ledger нашёлся teamspirit|teamvision|map2 на двух разных
+    # match_id (8957272720 и 8960655084, 44 ч разницы) — второй бет молча
+    # терялся бы. Базовый URL (`_signal_fingerprint_registry_key`) несёт
+    # конкретный match_id — у Dota 2 каждая карта серии получает свой Steam
+    # match_id, поэтому он уже per-map сам по себе; номер карты добавляется
+    # как уточнение, когда он известен, но разделение матчей даёт именно
+    # match_id, а не команды.
+    _dedup_map_num = _bookmaker_infer_map_num(
+        live_league if isinstance(live_league, dict) else {},
+    )
+    _bet_dedup_key = _signal_fingerprint_registry_key(match_key)
+    if _dedup_map_num:
+        _bet_dedup_key = f"{_bet_dedup_key}|map{int(_dedup_map_num)}"
     try:
         with _prematch_model_bet_sent_lock:
             if _bet_dedup_key in _prematch_model_bet_sent_urls:
