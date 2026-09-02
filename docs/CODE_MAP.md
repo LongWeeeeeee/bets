@@ -167,7 +167,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 | `SIGNAL_WRAPPER_MODE` | `ml` |
 | `SIGNAL_WRAPPER_ENABLED` | задаётся пайплайном вокруг вызова метрик |
 | `STAR_THRESHOLD_WR_TIER1` | `60` |
-| `STAR_THRESHOLD_WR_TIER2` | `60` |
+| `STAR_THRESHOLD_WR_TIER2` | `65` | решение alex 02.09.2026 (было `60`): tier2 судится строже tier1. Пол `TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE` поднят до 65 вместе с ним, фактический порог = `max(BASE, STAR_THRESHOLD_WR_TIER2)`. Метки блока переименованы: `tier2_min65_block` / `below_tier2_min65` |
 | `STAR_LEVEL_MIN` | `60` |
 | `STAR_LEVEL_MAX` | `90` |
 | `ML_SIGNAL_MIN_WR` | `STAR_LEVEL_MIN` |

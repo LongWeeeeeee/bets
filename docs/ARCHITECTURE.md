@@ -99,7 +99,7 @@
 - **tier2**: team_id в `id_to_names.tier_two_teams` (полупро).
 - **tier3**: всё остальное.
 - Значение в dict может быть `int` или `set[ids]` (несколько Dota team_id под одним org).
-- Tier влияет на минимальный WR-порог: `STAR_THRESHOLD_WR_TIER1`/`STAR_THRESHOLD_WR_TIER2` (default 60/60), плюс `TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE` clamp для tier2.
+- Tier влияет на минимальный WR-порог: `STAR_THRESHOLD_WR_TIER1`/`STAR_THRESHOLD_WR_TIER2` (default **60/65** — tier2 судится строже, решение alex от 02.09.2026; до этого было 60/60), плюс `TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE` clamp для tier2 (тоже 65; это пол, фактический порог = `max(BASE, STAR_THRESHOLD_WR_TIER2)`). Метки блока переименованы под порог, который они реально применяют: `tier2_min65_block` / `below_tier2_min65` (прежние `tier2_min60_block` / `below_tier2_min60` удалены), у tier1 остались `tier1_min60_block` / `below_tier1_min60`. Tier 3 (явный allowlist) судится по правилам tier 2, то есть тоже по 65.
 
 ### Roster Lock (cyberscore ~12076, `ELO/roster.py`)
 Состав сравнивается с прошлым матчем org по player_id. При совпадении >=3 игроков состав продолжает ту же линию (тот же roster segment); иначе — новый segment. Используется ELO/историей команды.

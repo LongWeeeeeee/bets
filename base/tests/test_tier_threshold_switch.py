@@ -75,6 +75,17 @@ class _FakeJsonResponse:
         return self._payload
 
 
+def _valid_heroes(seed: int) -> Dict[str, Dict[str, int]]:
+    """Полный состав 5 героев: `validate_heroes_data` требует ровно 5 на сторону."""
+    return {
+        "pos1": {"hero_id": seed + 1, "account_id": seed + 101},
+        "pos2": {"hero_id": seed + 2, "account_id": seed + 102},
+        "pos3": {"hero_id": seed + 3, "account_id": seed + 103},
+        "pos4": {"hero_id": seed + 4, "account_id": seed + 104},
+        "pos5": {"hero_id": seed + 5, "account_id": seed + 105},
+    }
+
+
 def _build_heads_and_bodies():
     html = """
     <div class="head">
@@ -178,8 +189,8 @@ def _run_case(
         runtime,
         "parse_draft_and_positions",
         lambda *_args, **_kwargs: (
-            {"r1": "pos1", "r2": "pos2"},
-            {"d1": "pos1", "d2": "pos2"},
+            _valid_heroes(0),
+            _valid_heroes(100),
             None,
             "",
             [],

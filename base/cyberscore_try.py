@@ -5239,7 +5239,9 @@ LATE_PRE27_WATCHER_PROFILE = "late_pre27_watcher"
 ALL_ONLY_WATCHER_PROFILE = "all_only_watcher"
 ALL_ONLY_WATCHER_TARGET_GAME_TIME_SECONDS = 50 * 60
 TIER_SIGNAL_MIN_THRESHOLD_TIER1_BASE = 60
-TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE = 60
+# Tier2 судится строже Tier1: решение alex от 02.09.2026 — минимальный WR 65.
+# Это ПОЛ для tier2; фактический порог = max(BASE, STAR_THRESHOLD_WR_TIER2).
+TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE = 65
 ELO_UNDERDOG_GUARD_FAVORITE_EDGE_PP = 15.0
 ELO_UNDERDOG_GUARD_MIN_SIGNAL_WR = 70.0
 # x0.5-ставка на ELO-андердога запрещена: если оппонент сильнее таргета на
@@ -5252,9 +5254,9 @@ EARLY_STAR_LATE_CORE_HIGH_CONFIDENCE_WR = 70.0
 OPPOSITE_SIGNS_EARLY90_TRIGGER_WR = 90.0
 OPPOSITE_SIGNS_EARLY90_ELO_GAP_PP = 15.0
 TIER_THRESHOLD_STATUS_TIER1_MIN60_BLOCK = "tier1_min60_block"
-TIER_THRESHOLD_STATUS_TIER2_MIN60_BLOCK = "tier2_min60_block"
+TIER_THRESHOLD_STATUS_TIER2_MIN65_BLOCK = "tier2_min65_block"
 TIER_THRESHOLD_REASON_TIER1_MIN60_BLOCK = "below_tier1_min60"
-TIER_THRESHOLD_REASON_TIER2_MIN60_BLOCK = "below_tier2_min60"
+TIER_THRESHOLD_REASON_TIER2_MIN65_BLOCK = "below_tier2_min65"
 # В live-режиме late-only star должен уметь попасть в delayed очередь (по умолчанию gate выключен).
 LIVE_STAR_LATE_SIGNAL_GATE_ENABLED = _safe_bool_env("STAR_LATE_SIGNAL_GATE_ENABLED", False)
 
@@ -5463,9 +5465,9 @@ try:
 except ValueError:
     STAR_THRESHOLD_WR_TIER1 = 60
 try:
-    STAR_THRESHOLD_WR_TIER2 = int(os.getenv("STAR_THRESHOLD_WR_TIER2", "60"))
+    STAR_THRESHOLD_WR_TIER2 = int(os.getenv("STAR_THRESHOLD_WR_TIER2", "65"))
 except ValueError:
-    STAR_THRESHOLD_WR_TIER2 = 60
+    STAR_THRESHOLD_WR_TIER2 = 65
 
 TIER_SIGNAL_MIN_THRESHOLD_TIER1 = max(
     TIER_SIGNAL_MIN_THRESHOLD_TIER1_BASE,
@@ -5489,7 +5491,7 @@ STAR_REQUIRE_EARLY_WITH_LATE_SAME_SIGN = _safe_bool_env(
 )
 # Если early/late star в разных знаках, не отбрасываем сигнал, а переводим в delayed до target game_time.
 STAR_DELAY_ON_OPPOSITE_SIGNS = _safe_bool_env("STAR_DELAY_ON_OPPOSITE_SIGNS", True)
-# По умолчанию Tier2 использует тот же min WR=60; fallback до Tier1 больше не нужен.
+# Tier2 строже Tier1: min WR 65 против 60 (решение alex 02.09.2026); fallback до Tier1 не нужен.
 STAR_ALLOW_TIER2_FALLBACK_TO_TIER1 = _safe_bool_env("STAR_ALLOW_TIER2_FALLBACK_TO_TIER1", False)
 STAR_REQUIRE_TIER2_LATE_STAR = _safe_bool_env("STAR_REQUIRE_TIER2_LATE_STAR", True)
 STAR_REQUIRE_TIER2_SAME_SIGN = _safe_bool_env("STAR_REQUIRE_TIER2_SAME_SIGN", False)
@@ -35247,12 +35249,12 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             else TIER_SIGNAL_MIN_THRESHOLD_TIER1
         )
         tier_threshold_block_status_label = (
-            TIER_THRESHOLD_STATUS_TIER2_MIN60_BLOCK
+            TIER_THRESHOLD_STATUS_TIER2_MIN65_BLOCK
             if star_match_tier in (2, 3)
             else TIER_THRESHOLD_STATUS_TIER1_MIN60_BLOCK
         )
         tier_threshold_block_reason_label = (
-            TIER_THRESHOLD_REASON_TIER2_MIN60_BLOCK
+            TIER_THRESHOLD_REASON_TIER2_MIN65_BLOCK
             if star_match_tier in (2, 3)
             else TIER_THRESHOLD_REASON_TIER1_MIN60_BLOCK
         )
