@@ -27521,15 +27521,16 @@ def _try_dispatch_prematch_model_bet(
     # match_id (8957272720 и 8960655084, 44 ч разницы) — второй бет молча
     # терялся бы. Базовый URL (`_signal_fingerprint_registry_key`) несёт
     # конкретный match_id — у Dota 2 каждая карта серии получает свой Steam
-    # match_id, поэтому он уже per-map сам по себе; номер карты добавляется
-    # как уточнение, когда он известен, но разделение матчей даёт именно
-    # match_id, а не команды.
-    _dedup_map_num = _bookmaker_infer_map_num(
-        live_league if isinstance(live_league, dict) else {},
-    )
+    # match_id, поэтому он уже per-map сам по себе.
+    #
+    # Ревью d7ad05f (non-blocking): суффикс `|mapN` лишний. Он зависел от
+    # `_bookmaker_infer_map_num`, который в одном цикле опроса резолвится
+    # (номер известен из GC-счёта), а в следующем — нет: один опрос без
+    # свежего счёта серии давал ДРУГОЙ ключ для ТОЙ ЖЕ карты и снова пропускал
+    # дедуп. На боевом 206-строчном ledger serv1 у КАЖДОГО base URL — ровно
+    # один map_num, так что суффикс ничего не разделял, только плодил щели.
+    # Ключ — голый registry key.
     _bet_dedup_key = _signal_fingerprint_registry_key(match_key)
-    if _dedup_map_num:
-        _bet_dedup_key = f"{_bet_dedup_key}|map{int(_dedup_map_num)}"
     try:
         with _prematch_model_bet_sent_lock:
             if _bet_dedup_key in _prematch_model_bet_sent_urls:
