@@ -4,6 +4,25 @@
 
 > Drift fixed: ML-решение live-сигнала делает `base/signal_wrappers.py`, а не отсутствующий `src/live_predictor.py`; STAR-метрики = `{counterpick_1vs1, counterpick_1vs2, dota2protracker_cp1vs1, solo}`; ELO-gate из stake-множителя удалён. Multi-agent стек разделён: `base/agent_orchestrator.py` — реальный Codex/Cursor runtime, `base/agent_workflow.py` — тестируемая model-free state machine, `opencode.json` — другой OpenCode-контур.
 
+> **⚠ Номера строк `~NNNN` в этом файле и в `docs/CODE_MAP.md` ПРОТУХЛИ (сверено 02.09.2026).**
+> `base/cyberscore_try.py` вырос, и каждый якорь съехал на 3–14 тысяч строк. Проверенные
+> примеры: `_stake_multiplier_for_signal` указан как `~4990`, фактически **10169**;
+> `general()` указан как `~28580`, фактически **42291**. Относиться к ним надо как к
+> приблизительным: надёжный ключ — ИМЯ символа, искать grep'ом по имени, а не переходом
+> по номеру. Чинить номера поштучно бессмысленно, они снова разъедутся.
+
+> **Patch-расписание: единственный источник правды — `keys.DOTA_PATCH_EVENTS` (02.09.2026).**
+> `_PATCH_SCHEDULE` в `base/cyberscore_try.py` больше не хардкод: его строит
+> `_patch_schedule_source()` из `base/keys.py`, где minor-события наследуют метку последней
+> версии. Прежняя статическая таблица кончалась на `("2025-12-23", "7.40b")`, тогда как
+> `DOTA_PATCH_EVENTS` доходит до **7.41e (2026-07-02)** — расхождение в 8 патчей означало,
+> что `_get_patch_major_label` помечал ВСЕ текущие карты как 7.40b, и эта метка уходила в
+> фичи живой kills-модели и в выбор patch-специфичных CatBoost-артефактов
+> (`_load_kills_group_models("patch", ...)` ищет файлы вида `live_cb_kills_reg_patch_7_40b.cbm`).
+> Статическая таблица осталась только как fallback на случай недоступности `keys.py`.
+> Нумерация `patch_id` исторических записей НЕ сдвинулась (7.40b=15, 7.39=4, 7.38=0),
+> таблица выросла с 16 до 24 записей.
+
 ## Сквозной pipeline (один проход `general()` в `base/cyberscore_try.py`, ~28580)
 
 ```
@@ -36,19 +55,37 @@
         │  ├─ KILLS TIER-1 gate kills-ставки («Ранние килы»: tier1_early_kills_mode + standalone lane_adv) шлются только если ≥1 команда Tier-1 (_match_has_tier1_team; env KILLS_REQUIRE_TIER1_TEAM=1)
         │  ├─ TIER threshold    STAR_THRESHOLD_WR_TIER1/2 (min WR)
         │  ├─ STAR consistency  _star_block_sign_consistency / _star_signal_dispatch_flags
-        │  └─ DELAY/HOLD        _should_delay_star_signal ~3761 (отложить → delayed queue)
+        │  └─ DELAY/HOLD        отложить → delayed queue (see note below)
         ▼
 8. STAR DECISION + STAKE
-        │  recommendation + _stake_multiplier_for_signal(...)  ~4990  (x0.5/1/2/3)
+        │  recommendation + _stake_multiplier_for_signal(...)  ~10169  (x0.5/1/2/3)
         ▼
 9. BOOKMAKER (если --odds): prefetch lookup кэфов/presence; повторный refresh перед dispatch
-        │  _bookmaker_prefetch_lookup(match_key, wait_seconds=...)  ~7896
+        │  _bookmaker_prefetch_lookup(match_key, wait_seconds=...)  ~16252
         ▼
-10. DISPATCH            send_message(msg, mirror_to_vk=True)  functions.py:1502
-        │               → Telegram-подписчики (+ VK mirror)
+10. DISPATCH            _deliver_and_persist_signal(...) ~28788 → send_message(...) functions.py:1822
+        │               → Telegram-подписчики (+ VK mirror, если SIGNAL_SEND_ADMIN_ONLY=0)
         ▼
 11. PERSIST             map_id_check + sent_signal journal (idempotent)
 ```
+
+> **DELAY/HOLD — функция есть, гейта нет.** `_should_delay_star_signal`
+> определена в `base/cyberscore_try.py:8726` и не вызывается НИГДЕ в репозитории
+> (проверено grep'ом 02.09.2026). Отложение сигнала в delayed queue решается
+> другими ветками, а не этой функцией. Ранее этот пункт описывал её как живой
+> гейт с номером `~3761` — и то, и другое неверно.
+
+> **Клейм at-most-once пишется ДО отправки (02.09.2026).**
+> `_signal_fingerprint_try_reserve` теперь сразу пишет durable-реестр
+> (`_sent_signal_fingerprint_store_add`), а не только in-memory: раньше в файл
+> писал `_signal_fingerprint_mark_sent` ПОСЛЕ `send_message`, и kill между
+> успешной отправкой и записью оставлял доставленную ставку без следа —
+> восстановленная на рестарте delayed-очередь отправляла её повторно.
+> `_signal_fingerprint_release` (доказанная неудача) убирает ключ и из файла,
+> поэтому retry сохранён; при неуверенной доставке ключ остаётся. TTL реестра
+> 6 часов. `_flush_sent_signal_journal_into_map_id_check` больше не падает на
+> битой строке журнала — она логируется и пропускается, иначе одна обрезанная
+> строка навсегда ломала восстановление после рестарта.
 
 `general()` возвращает статус-строку, по которой main-цикл выбирает sleep:
 `None`/прочее → poll до `_POLL_CYCLE_TARGET_SECONDS` (30с); `series_finished` → fetch расписания → sleep; `__sleep_cyberscore_quiet_hours__`, `__sleep_until_schedule__`, `__sleep_wait_for_live_after_schedule__` → специальные sleep (см. `docs/SCHEDULING.md`).
@@ -79,7 +116,7 @@
 - Жёсткий инвариант: `synergy_duo`/`synergy_trio` **не** входят в `STAR_SIGNAL_METRICS`, не попадают в список STAR hits, не валидируют STAR-блок и не создают самостоятельный dispatch. Маркер `**` и x0.5 cap не меняют этот контракт.
 - STAR-hit фиксируется в `format_output_dict(...)`; знаки/консистентность блоков проверяют `_star_block_sign_consistency`, `_star_signal_dispatch_flags`, `_star_match_status_from_diags`.
 - Перед dispatch действует terminal `STAR_COMBINATION_GATE`. **С 30.08.2026 одиночный валидный Late разрешён независимо от встречных WR60+ star-хитов в All** (`LATE_ALLOW_OPPOSITE_ALL_HIT`, откат `=0`): условие снято по просьбе владельца сразу в двух местах — здесь и в late-гейте минимальной минуты, снятие только одного было бы пустышкой. Комбинации `early_end+late` и `early_end` встречные хиты в All по-прежнему запрещают. Ставку с валидным All за другую команду всё ещё может остановить `_win_model_reject_for_delivery` причиной `all_against` — это отдельный гейт на этапе доставки. Late WR, включая `70+`, не даёт исключения; валидные Late и All одного знака по-прежнему образуют допустимую комбинацию `late+all`. Отказ получает reason `star_signal_rejected_block_combination`; `FORCE_ODDS_SIGNAL_TEST=1` обходит gate.
-- **Late-гейт минимальной минуты (late-driven dispatch).** Граница задаётся `LATE_PUB_COMEBACK_TABLE_START_MINUTE` — с 29.08.2026 это **31:00** (было 27:00); одна константа двигает и гейт, и решение по comeback-таблице, и `target_game_time` delayed-записи, и immediate-ветку. Когда сторону ставки задаёт Late STAR и её НЕ подтверждает валидный Early того же знака (late-only, late+all, opposite-signs), любая отправка на `game_time >= 31:00` требует: `late_star_hit_count >= LATE27_DISPATCH_MIN_LATE_HITS` (2), `late_wr_pct >= LATE27_DISPATCH_MIN_LATE_WR` (65) и отсутствия WR60+ star-хита противоположного знака в блоке All — даже если All при этом не валидный STAR-блок. Нарушение → терминальный отказ `star_signal_rejected_late27_dispatch_guard` (label `late27_dispatch_guard_no_send`), delayed-watcher закрывается без отправки. Проверка стоит в двух точках: на входе в пост-target отправку основного пути (pub comeback table / top25 elo-block / post-target comeback / target reached) и в delayed watcher'е перед решением comeback-таблицы; снимок фактов едет в payload через `stake_multiplier_context["all_star_hits"]`. Immediate late+early одного знака под гейт не попадает; `FORCE_ODDS_SIGNAL_TEST=1` обходит его. Legacy delayed-записи без снимка All-хитов проверяются только по известным полям. **С 01.09.2026 гейт согласован с late-моделью:** снимок несёт `late_model_side` (из `stake_multiplier_context`, посчитан `_late_model_side_from_blocks` в момент сборки сигнала), и если модель называет сторону против таргета — reason `late_model_against`, отказ терминальный. Молчание модели здесь НЕ блокирует: отказ гейта зовёт `add_url` и закрывает карту, а вердикта может не быть временно (история разложений `win_model_veto` держит 32 записи) — это случай мягкого гейта доставки. Снимок без ключа `late_model_side` (legacy) проверку пропускает.
+- **Late-гейт минимальной минуты (late-driven dispatch).** Граница задаётся `LATE_PUB_COMEBACK_TABLE_START_MINUTE` — с 29.08.2026 это **31:00** (было 27:00); одна константа двигает и гейт, и решение по comeback-таблице, и `target_game_time` delayed-записи, и immediate-ветку. Когда сторону ставки задаёт Late STAR и её НЕ подтверждает валидный Early того же знака (late-only, late+all, opposite-signs), любая отправка на `game_time >= 31:00` требует: `late_star_hit_count >= LATE27_DISPATCH_MIN_LATE_HITS` (2), `late_wr_pct >= LATE27_DISPATCH_MIN_LATE_WR` (65) и отсутствия WR60+ star-хита противоположного знака в блоке All — даже если All при этом не валидный STAR-блок. Нарушение → терминальный отказ `star_signal_rejected_late27_dispatch_guard` (label `late27_dispatch_guard_no_send`), delayed-watcher закрывается без отправки. Проверка стоит в двух точках: на входе в пост-target отправку основного пути (pub comeback table / top25 elo-block / post-target comeback / target reached) и в delayed watcher'е перед решением comeback-таблицы; снимок фактов едет в payload через `stake_multiplier_context["all_star_hits"]`. Immediate late+early одного знака под гейт не попадает; `FORCE_ODDS_SIGNAL_TEST=1` обходит его. Legacy delayed-записи без снимка All-хитов проверяются только по известным полям. **С 01.09.2026 гейт согласован с late-моделью:** снимок несёт `late_model_side` (из `stake_multiplier_context`, посчитан `_late_model_side_from_blocks` в момент сборки сигнала), и если модель называет сторону против таргета — reason `late_model_against`, отказ терминальный. Молчание модели здесь НЕ блокирует: отказ гейта зовёт `add_url` и закрывает карту, а вердикта может не быть временно (история разложений `win_model_veto` держит 32 записи) — это случай мягкого гейта доставки. Снимок без ключа `late_model_side` (legacy) проверку пропускает. **С 02.09.2026 на delayed-дрейне гейт вызывается на КАЖДОМ проходе**, а не только при `late_pub_comeback_table_active`: этот флаг не выставляют lane-adv и all-only watcher'ы, а релиз у таких записей безусловный (`send_on_target_game_time` по умолчанию True), поэтому late-driven сигнал из этих очередей выходил на 31:00+ вообще без проверки. Гейт сам вычисляет `active` из снимка и при неприменимости возвращает `blocked=False`, так что безусловный вызов безопасен; ожидание порога comeback-таблицы осталось под прежним условием. Регрессионный тест — `test_delayed_release_without_comeback_watcher_is_still_guarded`.
 - Калибровка уверенности: `data/star_confidence_calibration.json` (`_load_star_confidence_calibration` ~1574).
 
 ### Lane kills@10 (`analise_database.py` → `explore_database.py` → `functions.py`)
@@ -108,7 +145,8 @@ Live-оценка использует строгую взаимоисключа
 - Любой множитель >0.5 требует **≥2 late star-hits**; иначе (включая неизвестный count) → `0.5`.
 - WR60-уровень late → всегда `0.5`.
 - Любое advisory-подтверждение `synergy_duo`/`synergy_trio` с `|index|>=9`, направленное против target, ограничивает итоговый множитель до `0.5`; veto сохраняется и для delayed watcher через `stake_multiplier_context`.
-- **ELO-gate удалён**: при ≥2 late-hits множитель зависит только от late WR: `>=85 → 3`, `>=70 → 2`, иначе `1`.
+- **ELO-gate удалён**: при ≥2 late-hits множитель зависит только от late WR: `>=85 → 3`, `>=75 → 2`, иначе `1`. Порог x2 — именно **75**, захардкожен без env (`_stake_multiplier_for_signal`, ветка `return 2`); WR в полосе [70, 75) даёт x1, а не x2. Ранее здесь было написано `>=70`.
+- **Неизвестный список late-метрик → x0.5 (02.09.2026).** Кап «x1/x2/x3 требуют попаданий по всем трём core-метрикам (`counterpick_1vs1`, `counterpick_1vs2`, `solo`)» раньше применялся только при `late_star_hit_metrics is not None`. Отсутствие списка трактуется как неполный состав, поэтому запись delayed-очереди, пережившая деплой без этого ключа, больше не может выпуститься с x1/x2/x3 — пересчёт из контекста не щедрее прямого расчёта. Полный список даёт прежние множители.
 - **Networth-гейт late-ставок: одна строка таблицы на все сигналы (30.08.2026).** Порог нетворта из comeback-таблицы обязателен — снятия вето нет. Изменилось только то, ПО КАКОЙ строке он берётся: раньше по WR конкретного сигнала, теперь по единому уровню `_late_pub_table_gate_wr_level()` (`LATE_PUB_TABLE_GATE_WR_LEVEL`, `0` = самый высокий уровень загруженной таблицы). Резолверы `_late_pub_table_wr_level_from_values` и `_late_pub_table_wr_level_from_payload` отдают этот уровень, поэтому единственной строкой пользуются и watcher, и immediate, и спекулятив. Важное свойство таблицы: чем выше WR-уровень, тем БОЛЬШЕ отставания допускается (31-я минута: WR60 −7316, WR75 −7841, WR90 −8546), то есть «самый высокий уровень» — самый мягкий порог; строжайший ставится как `LATE_PUB_TABLE_GATE_WR_LEVEL=60`.
 - **Обычная ставка не уходит против late-модели (`_late_win_model_reject_for_delivery`, 30.08.2026, E-241).** Late-модель (`base/late_win_model.py`, E-240 — обучена только на драфте карт >= 36 минут) печатается в панель строкой `🕑 Late ML-модель: <сторона> <уверенность>%`. Если строка есть и сторона модели противоположна стороне ставки, отправка запрещена для любой обычной ставки (late/early/all): reason `late_model_against`. Гейт стоит в `_deliver_and_persist_signal`, сразу после гейта предматчевой модели. Матч НЕ закрывается (`add_url` не зовём). **Молчание late-модели** (`late_model_missing`) по-прежнему только у late-driven (`_is_late_driven_context`): late-ставка уходит ТОЛЬКО когда модель явно назвала сторону таргета. У early/all отсутствие строки не «против». Откат — `BET_REQUIRE_LATE_WIN_MODEL=0`. **Третья причина, `late_model_target_unknown` (01.09.2026).** Раньше при неизвестной стороне ставки (не пришёл `stake_multiplier_context`) гейт молча пропускал — и на пути `star_signal_sent_now_prematch_model`, единственном «СТАВКА НА <team> x<mult>» без контекста, гейта не было вовсе: из 68 обычных ставок, отправленных 30.08-01.09.2026, 4 ушли при late-модели ПРОТИВ таргета, все четыре оттуда. Теперь путь передаёт контекст, а гейт при неизвестном таргете запрещает отправку. Сторона модели берётся из строки панели, а при её отсутствии — из `stake_multiplier_context["late_model_side"]` (пересобранный текст delayed-записи).
 
@@ -118,11 +156,24 @@ Live-оценка использует строгую взаимоисключа
 #### Запрет x0.5 на ELO-андердога (`_half_stake_elo_underdog_reject`)
 Множитель считается как раньше, но доставка x0.5 запрещена, если target слабее оппонента по `base_rating` минимум на `HALF_STAKE_ELO_UNDERDOG_MIN_DIFF` (default 50): `opposite_rating - target_rating >= 50`. Gate стоит в `_deliver_and_persist_signal(...)`, поэтому покрывает immediate dispatch, delayed watcher и networth/comeback-релизы. Нет рейтингов/контекста или множитель не x0.5 → не блокируем. Выключатель — `HALF_STAKE_ELO_UNDERDOG_BLOCK_ENABLED` (default on).
 
-### ML phase-wrapper (`base/signal_wrappers.py`)
-- Sklearn-модели `.pkl` в `ml-models/phase_models_early66_latebase/` (`phase_signal_wrapper_early.pkl`, `_late.pkl`).
+### ML phase-wrapper (`base/signal_wrappers.py`) — АРТЕФАКТОВ НЕТ, КОНТУР НЕАКТИВЕН
+
+> **Проверено 02.09.2026:** каталога `ml-models/phase_models_early66_latebase/`
+> НЕ существует, как и `phase_signal_wrapper_early.pkl` / `_late.pkl` ни в нём, ни
+> в `ml-models/` напрямую (`signal_wrappers.py:16-20` задаёт оба пути как
+> `DEFAULT_ML_MODEL_SET_DIR` и `LEGACY_ML_*_MODEL_PATH`).
+> `SIGNAL_WRAPPER_ENABLED` по умолчанию **False** (`signal_wrappers.py:1890`), а на
+> raw-пути `cyberscore_try.py` принудительно выставляет его в `"0"`. То есть
+> описанное ниже — код, который может работать, но сейчас не работает: при
+> отсутствии `.pkl` загрузчик возвращает `{}` и включаются эвристические гейты.
+> Файлов `data/hero_signal_wrappers.json` и `ml_wrapper_runtime_requirements.json`
+> локально тоже нет, поэтому действует `DEFAULT_CONFIG`.
+
+- Sklearn-модели `.pkl` ожидаются в `ml-models/phase_models_early66_latebase/` (`phase_signal_wrapper_early.pkl`, `_late.pkl`) — фактически отсутствуют.
 - `apply_early_signal_wrapper` / `apply_late_signal_wrapper` сдвигают STAR-индексы по предсказанной вероятности и набору gate-функций (`_apply_late_hard_carry_gate`, `_apply_early_big_ult_burden_gate`, `_apply_*_support_gap_gate`, `_apply_late_control_stability_gate`, `_apply_late_role_balance_gate`, `_apply_edge_requirements_gate` и др.).
 - Признаки: hero features из `base/hero_features_processed.json` (`HERO_FEATURES_PATH`) + edge-фичи команд + опционально cross-phase STAR-фичи.
 - Активность: `SIGNAL_WRAPPER_ENABLED` (пайплайн вокруг вызова метрик управляет env), `SIGNAL_DECISION_MODE`=ml.
+- Рассинхрон версий sklearn только печатается (`_warn_sklearn_mismatch`, один раз) и работа продолжается; битый `.pkl` молча уводит в эвристику.
 
 ### ELO live (опционально, `ELO/live_team_strength.py`)
 `register_live_map_context` / `finalize_live_series_from_scores` / `get_matchup_summary` дают live-снапшот силы команд для отображения matchup-summary. Базовый снапшот строится из `pro_heroes_data/json_parts_split_from_object`. Roster lineage продолжается только при overlap минимум 4 игроков; 3/5 уже создаёт новый локальный segment. `ELO_LIVE_SNAPSHOT_AVAILABLE` зависит от успешного импорта. На stake-решение напрямую не влияет (gate удалён).
@@ -148,6 +199,8 @@ Live-оценка использует строгую взаимоисключа
 
 Live runtime передаёт account IDs обоих текущих составов. Для target team контур берёт из ELO-снапшота только более ранние карты того же `team_id` с overlap текущего состава минимум 4/5, повторно исключает дубликаты `match_id` и ограничивает окно последними 30 подходящими картами. Текущая карта исключается по `match_id`, а data leak от будущих/одновременных карт — по `timestamp >= observed_at`. В `roster_kills` фиксируются общие и latest-patch sample/mean/median/hits/rate, но модель использует только три patch-поля.
 
+**Недовезённые признаки теперь видны в записи (02.09.2026).** Поля `imputed_feature_count` и `imputed_features` перечисляют, какие из 95 входов модели отсутствуют и заменены замороженной медианой из артефакта; хелпер `imputed_feature_names()` использует то же условие, что и цикл импутации в `predict_probability` (`_number(...) is None`), и это проверено: `predict_probability({})` совпадает с явными медианами до 1e-12. При импутации больше половины входов один раз на процесс печатается предупреждение. Повод — замер по `runtime/artifacts/odds-winline/team_kills27_shadow.jsonl` (3 222 записи): `late_synergy_trio` отсутствует в 60.0%, `early_win_synergy_trio` в 49.4%, `early_nw_synergy_trio` в 46.6%, `late_counterpick_1vs2` в 43.0%, `roster_patch_mean_edge_confident` в 30.4%; до этого деградация была видна только повторным разбором вложенного `features` во всём журнале. Ставку это не меняет — только наблюдаемость. Отдельно: при выходе нового патча `latest_patch` опустеет у всего снапшота, и обе patch-фичи станут медианой на 100% карт — теперь это видно в момент события.
+
 Опциональный изолированный sender применяет artifact probability threshold и минимальный NW WR. Ручных порогов по sample size или mean kills нет: patch-roster статистика является частью модели. Roster-проверка fail-closed только когда сам источник признаков недоступен; валидный источник без подходящих roster/patch-карт не блокирует отправку, и отсутствующие признаки обрабатывает frozen median imputer.
 
 Training перебирает `C ∈ {0.001, 0.003, 0.01, 0.03, 0.1, 0.3, 1.0}` по log loss на old chronological validation; production artifact выбрал `C=0.003`. Ставочный threshold не подбирается по profit/ROI: он фиксирован на break-even коэффициента 1.8 (`1 / 1.8 = 55.56%`). Forward outcomes не входят в fit/выбор `C`/threshold, но forward-диагностика просматривалась при feature research; это out-of-time diagnostic, а не строгий one-shot holdout.
@@ -165,5 +218,6 @@ Telegram-сообщение показывает latest-patch roster sample, с�
 ### Persistence / recovery
 - `map_id_check.txt` — обработанные URL (единый для всех режимов, `MAP_ID_CHECK_PATH`).
 - delayed-очередь (`DELAYED_QUEUE_PATH`, суффикс по режиму) — отложенные STAR-сигналы с backoff (`DELAYED_SIGNAL_RETRY_BACKOFF_*`).
-- recovery journal (`SENT_SIGNAL_JOURNAL_PATH`) — защита от двойной отправки при рестарте.
+- recovery journal (`SENT_SIGNAL_JOURNAL_PATH`) — защита от двойной отправки при рестарте. `_flush_sent_signal_journal_into_map_id_check` пропускает и логирует битую строку вместо падения всего flush'а: иначе одна обрезанная запись навсегда лишала восстановления, и уже отправленные карты переанализировались на каждом рестарте.
+- **реестр отпечатков сигналов** (`SENT_SIGNAL_FINGERPRINT_PATH`, TTL `SENT_SIGNAL_FINGERPRINT_TTL_SECONDS` = 6 ч) — межинстансный дедуп по ключу «пара команд + номер карты + нормализованный заголовок ставки». С 02.09.2026 пишется в момент РЕЗЕРВА, то есть ДО `send_message`, а не после: `_signal_fingerprint_try_reserve` → `_sent_signal_fingerprint_store_add`, при доказанной неудаче `_signal_fingerprint_release` убирает ключ и из файла. Запись атомарная (tmp + `os.replace`).
 - uncertain delivery (`UNCERTAIN_SIGNAL_DELIVERY_PATH`) — URL с неподтверждённой доставкой блокируются.

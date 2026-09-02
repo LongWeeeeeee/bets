@@ -4,6 +4,12 @@
 
 > Дерево/факты выверены по исходникам, включая текущий незакоммиченный orchestration/swarm код. Drift fixed: нет `src/live_predictor.py` и `ELO/run_series_experiment.py`; hero-getters лежат в `base/dota2protracker.py`; исполняемый `base/agent_orchestrator.py` — это отдельный Codex/Cursor контур, а не runtime из `opencode.json`.
 
+> **⚠ Числовые якоря строк в таблицах ниже ПРОТУХЛИ (сверено 02.09.2026).** `base/cyberscore_try.py`
+> вырос, и номера съехали на 3–14 тысяч строк: `_stake_multiplier_for_signal` указан как `~4990`,
+> фактически **10169**; `general()` указан как `~28580`, фактически **42291**. Надёжный ключ —
+> ИМЯ символа: искать grep'ом по имени, а не переходом по номеру. То же предупреждение стоит в
+> `docs/ARCHITECTURE.md`.
+
 ## Дерево (верхний уровень)
 
 ```
@@ -65,12 +71,12 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 | `_build_stake_multiplier_context(...)` | 5122 | контекст для множителя; сохраняет `synergy_confirmation_snapshot` и производный `synergy_opposes_target`, чтобы x0.5 cap не терялся в delayed watcher |
 | `_synergy_confirmation_snapshot_for_target(...)` | 8250 | собирает по Early/Early Winner/Late/All display-only подтверждения `synergy_duo`/`synergy_trio` с `|index|>=9` и конфликты их знака с target |
 | `_retarget_stake_context_synergy_confirmation(...)` | 8300 | при early-kills retarget пересчитывает synergy snapshot/veto относительно новой Early-side, не сохраняя решение для прежней Late-side |
-| `_evaluate_star_block_combination_gate(...)` | 5384 | terminal STAR combination gate для Early Winner/Late/All; одиночный Late блокируется при любом WR60+ star-хите противоположного знака в All независимо от Late WR; одинаковый знак Late/All разрешён |
-| `_build_late27_dispatch_guard_snapshot(...)` | 3477 | сериализуемый снимок фактов 27+ late-гейта (late знак/WR/hit count, поддержка early того же знака, WR60+ star-хиты All, сторона late-модели); уезжает в delayed payload через `stake_multiplier_context["all_star_hits"]` и `["late_model_side"]` |
+| `_evaluate_star_block_combination_gate(...)` | 5384 | terminal STAR combination gate для Early Winner/Late/All; **с 30.08.2026 одиночный валидный Late разрешён независимо от встречных WR60+ star-хитов в All** (`LATE_ALLOW_OPPOSITE_ALL_HIT`, default `1`, откат `=0`); одинаковый знак Late/All разрешён. Встречные хиты в All по-прежнему запрещают комбинации `early_end+late` и `early_end` |
+| `_build_late27_dispatch_guard_snapshot(...)` | 3477 | сериализуемый снимок фактов late-гейта минимальной минуты (late знак/WR/hit count, поддержка early того же знака, WR60+ star-хиты All, сторона late-модели); уезжает в delayed payload через `stake_multiplier_context["all_star_hits"]` и `["late_model_side"]`. Имя функции историческое (`late27`), фактическая граница — 31:00 |
 | `_late27_dispatch_guard_snapshot_from_context(smc)` | 3528 | восстановление снимка из `stake_multiplier_context` delayed-записи (legacy-записи без `all_star_hits` → неизвестные поля не блокируют) |
-| `_evaluate_late27_dispatch_guard(snapshot, *, target_side, game_time_seconds, force_odds_signal_test_active)` | 3547 | 27+ late-гейт: `{active, blocked, reasons}`; активен при late-driven диспатче (сторона = late-знак, нет валидного early того же знака) на `game_time >= 27:00`; с 01.09.2026 среди `reasons` есть `late_model_against` — сторона late-модели против таргета (молчание модели здесь не блокирует, это дело мягкого гейта доставки) |
+| `_evaluate_late27_dispatch_guard(snapshot, *, target_side, game_time_seconds, force_odds_signal_test_active)` | 3547 | late-гейт минимальной минуты: `{active, blocked, reasons}`; активен при late-driven диспатче (сторона = late-знак, нет валидного early того же знака) на `game_time >= LATE_PUB_COMEBACK_TABLE_START_MINUTE` = **31:00** (было 27:00 до 29.08.2026); с 01.09.2026 среди `reasons` есть `late_model_against` — сторона late-модели против таргета (молчание модели здесь не блокирует, это дело мягкого гейта доставки). С 02.09.2026 на delayed-дрейне вызывается на КАЖДОМ проходе, а не только при `late_pub_comeback_table_active` — этот флаг не выставляют lane-adv/all-only watcher'ы, а релиз у них безусловный |
 | `_opposite_sign_star_hit_metrics(star_hits, expected_sign)` | 3448 | WR60+ star-хиты блока со знаком против ожидаемого (вход — `_collect_star_hits_for_block`) |
-| `_should_delay_star_signal(...)` | 3761 | решение отложить STAR-сигнал |
+| `_should_delay_star_signal(...)` | 8726 | **НЕ ВЫЗЫВАЕТСЯ НИГДЕ** (проверено grep'ом 02.09.2026 — есть только определение). Функция описывает решение отложить STAR-сигнал, но отложение в delayed queue делается другими ветками. Не использовать как точку входа |
 | `_networth_monitor_hold_check(...)` | 3809 | networth-hold перед отправкой |
 | `_evaluate_kills_gate(...)` | 2555 | early-kills gate |
 | `_try_acquire_runtime_instance_lock(mode_label=...)` | 1868 | single-instance lock на режим |
@@ -579,7 +585,9 @@ CLI: `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_duration
 
 `last_late(index) -> dict | None` — вердикт late-модели `{side, probability, confidence}` для ЭТОГО индекса, из того же мемо `_LAST_FILL`/`_FILL_HISTORY`, что и `last_parts`/`last_fill`. Сам вердикт считается в `_prematch_index` (там ещё есть герои) и уходит в журнал оценок полями `late_side`, `late_confidence`, `late_error`.
 
-Env: `WIN_MODEL_VETO_ENABLED` (1), `WIN_MODEL_VETO_PREMATCH_MIN` (8), `WIN_MODEL_VETO_MIN_<SECTION>`, `WIN_MODEL_VETO_MIN_INDEX`, `WIN_MODEL_DIR`.
+Env: `WIN_MODEL_VETO_ENABLED` (1), `WIN_MODEL_VETO_PREMATCH_MIN` (8), `WIN_MODEL_VETO_MIN_<SECTION>`, `WIN_MODEL_VETO_MIN_INDEX`, `WIN_MODEL_DIR`, `WIN_MODEL_VETO_PREMATCH_BRANCHES` (`full,no_org` — какие ветки предматчевой модели имеют право на ставку), `WIN_MODEL_SNAPSHOT_MAX_AGE_DAYS` (`30` — жёсткий порог «снимок мёртв»; добавлен 02.09.2026, дефолт сознательно НЕ снижен до 3, см. E-248; за качество на 3 сутках отвечает отдельное предупреждение `_SNAPSHOT_WARN_DAYS`).
+
+С 02.09.2026 `_load()` вызывает стражи `draft_model_paths` — `check_width(encoder, model)` и `check_thresholds_catalog(MODEL_DIR)` — и печатает `model_fingerprint(MODEL_DIR)`; раньше они не вызывались нигде, и пара «кодировщик от одной сборки + модель от другой» (класс E-201) давала мусорный индекс молча. Отказ загрузки тоже печатается: `load_error()` для этой модели никто не зовёт. Направление отказа не изменилось — вето снимается (контракт «отказ всегда в сторону разрешения»), но теперь это видно в логе.
 
 В `cyberscore_try.py`: `_try_dispatch_prematch_model_bet(...)` — самостоятельная ставка на 00-й минуте на стороне модели, вызывается в трёх ветках (ранние локальные метрики, star-ветка, ветка без звёзд), идемпотентна по `match_key`. Тело сигнала берётся ГОТОВОЕ — переписывается только строка заголовка, все блоки остаются. Env: `PREMATCH_MODEL_BET_ENABLED` (1), `PREMATCH_MODEL_BET_MAX_GAME_TIME_SECONDS` (180). Строка «ML от кэфа» печатается в `_format_win_model_line` только для предматчевого источника.
 
