@@ -5395,6 +5395,12 @@ UNCERTAIN_SIGNAL_DELIVERY_FALLBACK_PATH = str(
 RUNTIME_INSTANCE_LOCK_PATH = str(
     os.getenv("RUNTIME_INSTANCE_LOCK_PATH", "runtime/cyberscore_try.instance.lock")
 ).strip() or "runtime/cyberscore_try.instance.lock"
+# Единый исход-леджер по ВСЕМ отправленным ставкам (STAR + prematch model).
+# До 02.09.2026 свой журнал был только у ставок предматчевой модели
+# (prematch_model_bet_sent.jsonl) — STAR-ставки не сверялись ни с чем.
+BET_DISPATCH_LEDGER_PATH = str(
+    os.getenv("BET_DISPATCH_LEDGER_PATH", "runtime/bet_dispatch_ledger.jsonl")
+).strip() or "runtime/bet_dispatch_ledger.jsonl"
 # Absolute path so sourcetv_probe/cyberscore agree regardless of process cwd.
 # (probe historically ran with cwd=base/ and wrote base/runtime/… while
 # cyberscore cwd=/root/main expected repo-root runtime/… — live matches were missed.)
@@ -27521,15 +27527,16 @@ def _try_dispatch_prematch_model_bet(
     # match_id (8957272720 и 8960655084, 44 ч разницы) — второй бет молча
     # терялся бы. Базовый URL (`_signal_fingerprint_registry_key`) несёт
     # конкретный match_id — у Dota 2 каждая карта серии получает свой Steam
-    # match_id, поэтому он уже per-map сам по себе; номер карты добавляется
-    # как уточнение, когда он известен, но разделение матчей даёт именно
-    # match_id, а не команды.
-    _dedup_map_num = _bookmaker_infer_map_num(
-        live_league if isinstance(live_league, dict) else {},
-    )
+    # match_id, поэтому он уже per-map сам по себе.
+    #
+    # Ревью d7ad05f (non-blocking): суффикс `|mapN` лишний. Он зависел от
+    # `_bookmaker_infer_map_num`, который в одном цикле опроса резолвится
+    # (номер известен из GC-счёта), а в следующем — нет: один опрос без
+    # свежего счёта серии давал ДРУГОЙ ключ для ТОЙ ЖЕ карты и снова пропускал
+    # дедуп. На боевом 206-строчном ledger serv1 у КАЖДОГО base URL — ровно
+    # один map_num, так что суффикс ничего не разделял, только плодил щели.
+    # Ключ — голый registry key.
     _bet_dedup_key = _signal_fingerprint_registry_key(match_key)
-    if _dedup_map_num:
-        _bet_dedup_key = f"{_bet_dedup_key}|map{int(_dedup_map_num)}"
     try:
         with _prematch_model_bet_sent_lock:
             if _bet_dedup_key in _prematch_model_bet_sent_urls:
@@ -27659,6 +27666,8 @@ def _try_dispatch_prematch_model_bet(
                     "expected_wr": float(bet.get("expected_wr") or 0.0),
                     "radiant_team": str(radiant_team_name or ""),
                     "dire_team": str(dire_team_name or ""),
+                    "radiant_tier": _get_team_tier_by_name(radiant_team_name),
+                    "dire_tier": _get_team_tier_by_name(dire_team_name),
                     "map_num": _imm_map,
                     "game_time": current_game_time_int,
                     "model_elo": win_model_veto.last_model_elo(bet.get("index")),
@@ -28594,6 +28603,170 @@ def _signal_fingerprint_mark_sent(match_key: str, message_text: Any) -> None:
             logger.exception("Failed to persist sent signal fingerprint")
 
 
+def _get_team_tier_by_name(team_name: str) -> Optional[int]:
+    """Tier по имени команды через `_find_known_team_ids_by_name` + `_get_team_tier`.
+
+    В точке доставки известны только имена (radiant/dire team name), не id —
+    id_to_names хранит tier1/tier2 по алиасам имён, поэтому резолвим id по
+    имени сначала. Пустое имя → None (не 3), чтобы не путать «неизвестное
+    имя» с «командой tier 3, потому что не нашли id».
+    """
+    name = str(team_name or "").strip()
+    if not name:
+        return None
+    ids = _find_known_team_ids_by_name(name)
+    if not ids:
+        return 3
+    return _get_team_tier(next(iter(ids)))
+
+
+def _bet_ledger_price_snapshot(match_key: str, selected_side: Any) -> Optional[Dict[str, Any]]:
+    """Лучшая попытка снять цену Winline на момент доставки.
+
+    Отдельного геттера вида `current_map_odds()`/`winline_current_map_price()`
+    в модуле и в services/winline/winline_current_map_odds_poller.py нет
+    (проверено 02.09.2026, grep по обоим именам) — опрос текущей карты живёт
+    как класс-опросник, а не публичный аксессор цены. Переиспользуем тот же
+    prefetch-снимок, из которого `_bookmaker_format_odds_block` уже строит
+    показанный в сигнале блок кэфов; wait_seconds=0.0 — не ждём, берём что
+    есть. None на любой сбой — цена необязательна для леджера.
+    """
+    try:
+        snapshot = _bookmaker_prefetch_lookup(match_key, wait_seconds=0.0)
+        if not isinstance(snapshot, dict):
+            return None
+        sites_payload = snapshot.get("sites")
+        winline = sites_payload.get("winline") if isinstance(sites_payload, dict) else None
+        odds = winline.get("odds") if isinstance(winline, dict) else None
+        if not isinstance(odds, list) or len(odds) < 2:
+            return None
+        p1 = float(odds[0])
+        p2 = float(odds[1])
+        selected_price = None
+        odds_index, _reason = _bookmaker_map_selected_side_to_odds_index(selected_side)
+        if odds_index is not None:
+            selected_price = p1 if odds_index == 0 else p2
+        return {"p1": p1, "p2": p2, "selected": selected_price}
+    except Exception:
+        return None
+
+
+def _build_bet_dispatch_ledger_entry(
+    match_key: str,
+    *,
+    message_text: str,
+    add_url_reason: str,
+    add_url_details: Optional[dict],
+    map_num: Optional[int],
+    current_map_observation: Any,
+    selected_side: Any,
+    stake_multiplier_context: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    ctx = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
+    details = add_url_details if isinstance(add_url_details, dict) else {}
+
+    base_key = _signal_fingerprint_registry_key(match_key)
+    match_id = _bookmaker_extract_match_id(base_key)
+
+    resolved_map_num = map_num
+    if resolved_map_num is None and isinstance(current_map_observation, dict):
+        try:
+            raw_map = current_map_observation.get("map_num")
+            resolved_map_num = int(raw_map) if raw_map is not None else None
+        except (TypeError, ValueError):
+            resolved_map_num = None
+
+    side = ""
+    if selected_side is not None and selected_side is not _BOOKMAKER_SELECTED_SIDE_UNSET:
+        side = str(selected_side).strip().lower()
+    if side not in ("radiant", "dire"):
+        side = str(ctx.get("target_side") or "").strip().lower()
+    if side not in ("radiant", "dire"):
+        side = None
+
+    radiant_name = str(ctx.get("radiant_team_name") or "").strip() or None
+    dire_name = str(ctx.get("dire_team_name") or "").strip() or None
+    target_name = str(ctx.get("stake_team_name") or "").strip() or None
+
+    # Star WR level: приоритет late > all > early — тот же порядок, в котором
+    # доставка доверяет источникам сигнала (см. _is_late_driven_context выше).
+    star_wr_pct = None
+    if ctx.get("has_selected_late_star"):
+        star_wr_pct = ctx.get("late_wr_pct")
+    elif ctx.get("has_selected_all_star"):
+        star_wr_pct = ctx.get("all_wr_pct")
+    elif ctx.get("has_selected_early_star"):
+        star_wr_pct = ctx.get("early_wr_pct")
+
+    stake_multiplier = ctx.get("stake_multiplier")
+    if stake_multiplier is None:
+        stake_multiplier = _stake_multiplier_from_message(message_text)
+
+    prematch_model_index = ctx.get("prematch_model_index")
+    if prematch_model_index is None:
+        prematch_model_index = details.get("prematch_model_index")
+    prematch_model_confidence = ctx.get("prematch_model_confidence")
+    if prematch_model_confidence is None:
+        prematch_model_confidence = details.get("prematch_model_confidence")
+
+    return {
+        "ts": int(time.time()),
+        "match_key": str(match_key or ""),
+        "base_key": base_key,
+        "match_id": match_id,
+        "map_num": resolved_map_num,
+        "reason": str(add_url_reason or ""),
+        "side": side,
+        "target_team_name": target_name,
+        "radiant_team_name": radiant_name,
+        "dire_team_name": dire_name,
+        "radiant_tier": _get_team_tier_by_name(radiant_name),
+        "dire_tier": _get_team_tier_by_name(dire_name),
+        "stake_multiplier": stake_multiplier,
+        "star_wr_pct": star_wr_pct,
+        "prematch_model_index": prematch_model_index,
+        "prematch_model_confidence": prematch_model_confidence,
+        "late_model_side": ctx.get("late_model_side"),
+        "game_time": details.get("game_time"),
+        "price_snapshot": _bet_ledger_price_snapshot(match_key, selected_side),
+    }
+
+
+def _record_bet_dispatch_ledger(
+    match_key: str,
+    *,
+    message_text: str,
+    add_url_reason: str,
+    add_url_details: Optional[dict],
+    map_num: Optional[int],
+    current_map_observation: Any,
+    selected_side: Any,
+    stake_multiplier_context: Optional[Dict[str, Any]],
+) -> None:
+    """Единая точка записи исход-леджера по факту УЖЕ УСПЕШНОЙ отправки.
+
+    Вызывается из `_deliver_and_persist_signal` сразу после подтверждённого
+    `send_message` — единственной точки доставки для ВСЕХ путей ставок
+    (STAR и predmatch model). Раньше свой журнал был только у ставок
+    предматчевой модели; STAR-ставки не сверялись ни с чем. Никогда не
+    бросает — потеря строки леджера не должна ронять уже отправленный сигнал.
+    """
+    try:
+        entry = _build_bet_dispatch_ledger_entry(
+            match_key,
+            message_text=message_text,
+            add_url_reason=add_url_reason,
+            add_url_details=add_url_details,
+            map_num=map_num,
+            current_map_observation=current_map_observation,
+            selected_side=selected_side,
+            stake_multiplier_context=stake_multiplier_context,
+        )
+        _append_journal_entry_to_path(Path(BET_DISPATCH_LEDGER_PATH), entry)
+    except Exception:
+        logger.exception("Failed to append bet dispatch ledger entry for %s", match_key)
+
+
 def _deliver_and_persist_signal(
     match_key: str,
     message_text: str,
@@ -28786,6 +28959,16 @@ def _deliver_and_persist_signal(
         f"reason={add_url_reason})"
     )
     _signal_fingerprint_mark_sent(match_key, message_text)
+    _record_bet_dispatch_ledger(
+        match_key,
+        message_text=message_text,
+        add_url_reason=add_url_reason,
+        add_url_details=add_url_details,
+        map_num=map_num,
+        current_map_observation=current_map_observation,
+        selected_side=selected_side,
+        stake_multiplier_context=stake_multiplier_context,
+    )
     decelerate_winline_current_map_polling(match_key)
     if bookmaker_decision:
         _log_bookmaker_source_snapshot(match_key, decision=bookmaker_decision)
