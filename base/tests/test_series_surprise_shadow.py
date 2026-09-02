@@ -19,11 +19,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import series_surprise_shadow as sss  # noqa: E402
 from series_surprise_shadow import observe, surprise_from_maps  # noqa: E402
 import stratz_map_result as smr  # noqa: E402
 
 A, B = 111, 222          # команды
 T0 = 1_700_000_000       # старт первой карты
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def _store(tmp_path: Path) -> Path:
@@ -275,6 +277,71 @@ def test_alias_survives_reload(tmp_path: Path) -> None:
     smr.note_team_alias(10163435, 8255888, cache_path=cache)
     assert smr.resolve_team_id(10163435, cache_path=cache) == 8255888
     assert smr.resolve_team_id(999, cache_path=cache) == 999
+
+
+# ---------- кэш «последний сюрприз пары» (для синхронного чтения без сети) ----
+#
+# `last_surprise` читает то, что `observe()` уже посчитал через `history_lookup`
+# (в бою — сеть Stratz, недопустимая в пути ставки) на ПРЕДЫДУЩЕЙ оценке той же
+# пары команд. Фикстура `fixtures/series_surprise_shadow_serv1_20260901.json` —
+# 14 настоящих вердиктов, снятых `scp serv1:/root/main/runtime/series_surprise_shadow.json`
+# 01.09.2026; формат ДО поля `pairs`, проверяет обратную совместимость загрузчика.
+
+def test_captured_store_loads_without_pairs_key(tmp_path: Path) -> None:
+    """Старый снимок прода (без `pairs`) читается, кэша сюрприза в нём просто нет."""
+    import shutil
+    st = tmp_path / "series_surprise_shadow.json"
+    shutil.copy(FIXTURES / "series_surprise_shadow_serv1_20260901.json", st)
+    assert sss.last_surprise(9600141, 10164236, store_path=st, now=1788168312) is None
+    got = sss.recent_team_ids(store_path=st, now=1788280974)
+    assert 10212329 in got and 9256405 in got
+
+
+def test_observe_persists_pair_surprise_for_sync_read(tmp_path: Path) -> None:
+    """`observe()` кладёт посчитанный сюрприз в стор — `last_surprise` берёт его."""
+    st = tmp_path / "series_surprise_shadow.json"
+    observe(series_key="s", map_key="m1", radiant_team_id=A, dire_team_id=B,
+            p_radiant=0.7, store_path=st, now=T0, history_lookup=lambda *a: [])
+    hist = [_map(1, T0, A, B, True)]         # радиант A с 0.7 победил
+    observe(series_key="s", map_key="m2", radiant_team_id=A, dire_team_id=B,
+            p_radiant=0.6, store_path=st, now=T0 + 3000, history_lookup=lambda *a: hist)
+    got = sss.last_surprise(A, B, store_path=st, now=T0 + 3000)
+    assert got is not None
+    assert got["n_prev"] == 1.0
+    assert got["s_sum"] == pytest.approx(0.3)        # 1.0 − 0.7
+
+
+def test_last_surprise_flips_sign_when_sides_swap(tmp_path: Path) -> None:
+    """Ориентация читается ПОД ЗАПРОС: та же карта, команды поменялись сторонами."""
+    st = tmp_path / "series_surprise_shadow.json"
+    observe(series_key="s", map_key="m1", radiant_team_id=A, dire_team_id=B,
+            p_radiant=0.7, store_path=st, now=T0, history_lookup=lambda *a: [])
+    hist = [_map(1, T0, A, B, True)]
+    observe(series_key="s", map_key="m2", radiant_team_id=A, dire_team_id=B,
+            p_radiant=0.6, store_path=st, now=T0 + 3000, history_lookup=lambda *a: hist)
+    # запрос с ДРУГИМ радиантом той же пары -> знак должен перевернуться
+    got = sss.last_surprise(B, A, store_path=st, now=T0 + 3000)
+    assert got["s_sum"] == pytest.approx(-0.3)
+
+
+def test_last_surprise_none_for_unknown_pair(tmp_path: Path) -> None:
+    st = tmp_path / "series_surprise_shadow.json"
+    observe(series_key="s", map_key="m1", radiant_team_id=A, dire_team_id=B,
+            p_radiant=0.7, store_path=st, now=T0, history_lookup=lambda *a: [])
+    assert sss.last_surprise(333, 444, store_path=st, now=T0) is None
+
+
+def test_last_surprise_expires_with_age(tmp_path: Path) -> None:
+    """Устаревшая запись (>36ч) не отдаётся — серия столько не длится."""
+    st = tmp_path / "series_surprise_shadow.json"
+    observe(series_key="s", map_key="m1", radiant_team_id=A, dire_team_id=B,
+            p_radiant=0.7, store_path=st, now=T0, history_lookup=lambda *a: [])
+    hist = [_map(1, T0, A, B, True)]
+    observe(series_key="s", map_key="m2", radiant_team_id=A, dire_team_id=B,
+            p_radiant=0.6, store_path=st, now=T0 + 3000, history_lookup=lambda *a: hist)
+    assert sss.last_surprise(A, B, store_path=st, now=T0 + 3000) is not None
+    stale_now = T0 + 3000 + sss.MAX_AGE_SECONDS + 1
+    assert sss.last_surprise(A, B, store_path=st, now=stale_now) is None
 
 
 def test_series_history_translates_both_sides(tmp_path: Path) -> None:
