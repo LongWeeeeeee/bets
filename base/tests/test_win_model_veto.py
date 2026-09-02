@@ -10,14 +10,20 @@
 """
 from __future__ import annotations
 
+import math as _math
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
+
+import pytest
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import draft_model_paths as P  # noqa: E402
+import series_surprise_shadow as SSS  # noqa: E402
 import win_model_veto as V  # noqa: E402
 
 
@@ -400,3 +406,123 @@ def test_prematch_bridge_reads_pos_keys_not_integers():
     assert captured["radiant_heroes"] == [1, 2, 3, 4, 5]
     assert captured["dire_heroes"] == [6, 7, 8, 9, 10]
     assert captured["strictness"] == "accounts"
+
+
+# ── Поправка «сюрприз серии» (s_sum, E-245-подобный аудит 22.08.2026) ─────────
+# Замер `runtime/artifacts/misc/prematch_calibration_audit.md`: на продолжениях
+# серии модель систематически завышает уверенность, вес +0.215 на боевом
+# скорере снимает часть этого перекоса (AUC +0.0123). Тесты ниже гоняют РЕАЛЬНУЮ
+# точку входа (`_prematch_index`), а не поправку в отрыве, чтобы поймать
+# рассинхрон «посчитали правильно, но забыли подключить».
+
+_SR_RAD, _SR_DIRE = 555111, 555222
+
+
+@contextmanager
+def _stubbed_prematch_scorer(probability: float):
+    """Ставит на место `prematch_scorer` заглушку, отдающую фиксированный `p`.
+
+    Тот же приём, что в `test_prematch_bridge_reads_pos_keys_not_integers`:
+    мост сперва пробует `from base import prematch_scorer`, подменять надо и
+    запись в `sys.modules`, и атрибут пакета.
+    """
+    import types
+
+    import base as _base_pkg
+
+    class _Model:
+        features = ()          # хайбрид-путь не нужен — не тянем ELO-снимок
+
+        def score(self, **_kw):
+            return types.SimpleNamespace(
+                probability=probability, lan_winrate=probability,
+                features={}, coverage={}, branch="full", parts={})
+
+    stub = types.ModuleType("prematch_scorer")
+    stub.get_model = lambda: _Model()
+    saved = {k: sys.modules.get(k) for k in ("prematch_scorer", "base.prematch_scorer")}
+    saved_attr = getattr(_base_pkg, "prematch_scorer", None)
+    sys.modules["prematch_scorer"] = stub
+    sys.modules["base.prematch_scorer"] = stub
+    _base_pkg.prematch_scorer = stub
+    saved_draft = V.win_index_draft
+    V.win_index_draft = lambda a, b: 5.0
+    try:
+        yield
+    finally:
+        V.win_index_draft = saved_draft
+        for key, mod in saved.items():
+            if mod is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = mod
+        if saved_attr is None:
+            if hasattr(_base_pkg, "prematch_scorer"):
+                delattr(_base_pkg, "prematch_scorer")
+        else:
+            _base_pkg.prematch_scorer = saved_attr
+
+
+def _heroes():
+    rad = {f"pos{i}": {"account_id": 100 + i, "hero_id": i} for i in range(1, 6)}
+    dire = {f"pos{i}": {"account_id": 200 + i, "hero_id": 5 + i} for i in range(1, 6)}
+    return rad, dire
+
+
+def _seed_series_surprise(*, radiant_won: bool, promised: float) -> None:
+    """Карта 1 радианта `_SR_RAD` обещана `promised`, реально — `radiant_won`.
+
+    `last_surprise` в проде читает БЕЗ `now=` (реальные часы), поэтому записи
+    тут кладутся близко к `time.time()`, а не к произвольной эпохе — иначе
+    собственная же отсечка `MAX_AGE_SECONDS` съела бы запись как устаревшую.
+    """
+    now = int(time.time())
+    SSS.observe(series_key="s", map_key="m1", radiant_team_id=_SR_RAD,
+                dire_team_id=_SR_DIRE, p_radiant=promised, now=now - 3000,
+                history_lookup=lambda *a: [])
+    hist = [{"match_id": 1, "series_id": 7, "start": now - 3000,
+             "end": now - 900, "radiant_team_id": _SR_RAD,
+             "dire_team_id": _SR_DIRE, "radiant_won": radiant_won}]
+    SSS.observe(series_key="s", map_key="m2", radiant_team_id=_SR_RAD,
+                dire_team_id=_SR_DIRE, p_radiant=0.5, now=now,
+                history_lookup=lambda *a: hist)
+
+
+def test_series_surprise_correction_moves_boundary_index(monkeypatch):
+    """Предыдущая карта серии: радиант выиграл против обещанных 0.7 -> s_sum=+0.3.
+
+    p=0.5 -> logit=0; поправка = 0.215*0.3 = +0.0645; индекс обязан сдвинуться
+    ровно на predicted величину, а не на произвольную.
+    """
+    monkeypatch.setattr(V, "SERIES_SURPRISE_CORRECTION_ENABLED", True)
+    _seed_series_surprise(radiant_won=True, promised=0.7)
+    rad, dire = _heroes()
+    with _stubbed_prematch_scorer(0.5):
+        idx = V._prematch_index(
+            rad, dire, match={"radiant_team_id": _SR_RAD, "dire_team_id": _SR_DIRE})
+    s_sum = 1.0 - 0.7
+    expected_logit = _math.log(0.5 / 0.5) + V.SERIES_SURPRISE_WEIGHT * s_sum
+    expected_p = 1.0 / (1.0 + _math.exp(-expected_logit))
+    expected_idx = round((expected_p - 0.5) * 100.0, 3)
+    assert idx == pytest.approx(expected_idx)
+    assert idx > 0.0, "s_sum положительный -> индекс обязан сдвинуться к радианту"
+
+
+def test_series_surprise_correction_off_by_flag_leaves_index_unchanged(monkeypatch):
+    monkeypatch.setattr(V, "SERIES_SURPRISE_CORRECTION_ENABLED", False)
+    _seed_series_surprise(radiant_won=True, promised=0.7)
+    rad, dire = _heroes()
+    with _stubbed_prematch_scorer(0.5):
+        idx = V._prematch_index(
+            rad, dire, match={"radiant_team_id": _SR_RAD, "dire_team_id": _SR_DIRE})
+    assert idx == 0.0
+
+
+def test_series_surprise_correction_needs_previous_map(monkeypatch):
+    """Без сыгранных карт серии (n_prev=0) поправка не применяется — как флаг офф."""
+    monkeypatch.setattr(V, "SERIES_SURPRISE_CORRECTION_ENABLED", True)
+    rad, dire = _heroes()
+    with _stubbed_prematch_scorer(0.5):
+        idx = V._prematch_index(
+            rad, dire, match={"radiant_team_id": _SR_RAD, "dire_team_id": _SR_DIRE})
+    assert idx == 0.0

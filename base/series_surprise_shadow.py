@@ -60,9 +60,13 @@ def _load(path: Path) -> Dict[str, Any]:
         with path.open(encoding="utf-8") as fh:
             data = json.load(fh)
     except Exception:
-        return {"verdicts": []}
+        return {"verdicts": [], "pairs": {}}
     if not isinstance(data, dict) or not isinstance(data.get("verdicts"), list):
-        return {"verdicts": []}
+        return {"verdicts": [], "pairs": {}}
+    if not isinstance(data.get("pairs"), dict):
+        # Стор старого формата (до поля `pairs`, например снятый со прода
+        # снимок) — читается как раньше, просто без кэша сюрприза пары.
+        data["pairs"] = {}
     return data
 
 
@@ -171,7 +175,73 @@ def observe(
         maps = history_lookup(int(radiant_team_id), int(dire_team_id or 0), ts) or []
     except Exception:
         return {"s_sum": 0.0, "s_last": 0.0, "n_prev": 0.0}
-    return surprise_from_maps(maps, verdicts, int(radiant_team_id))
+    result = surprise_from_maps(maps, verdicts, int(radiant_team_id))
+    # Кладём посчитанное в СТОР — `history_lookup` сходил в сеть (в бою это
+    # Stratz), а `last_surprise` ниже читает уже готовое число синхронно, без
+    # сети. Раздельная запись НАМЕРЕННО: `path` уже открывался выше под этим
+    # же `_lock`, но между тем моментом и этим прошёл сетевой поход, поэтому
+    # стор перечитывается заново, а не переиспользуется старый снимок `data`.
+    _remember_pair_surprise(path, int(radiant_team_id), int(dire_team_id or 0),
+                            result, ts)
+    return result
+
+
+def _pair_key(a: int, b: int) -> str:
+    lo, hi = (a, b) if a <= b else (b, a)
+    return f"{lo}:{hi}"
+
+
+def _remember_pair_surprise(path: Path, radiant_team_id: int, dire_team_id: int,
+                            result: Dict[str, float], ts: int) -> None:
+    """Пишет последний посчитанный сюрприз ПАРЫ в стор — источник `last_surprise`."""
+    if radiant_team_id <= 0 or dire_team_id <= 0:
+        return
+    with _lock:
+        data = _load(path)
+        data.setdefault("pairs", {})
+        data["pairs"][_pair_key(radiant_team_id, dire_team_id)] = {
+            "ts": ts,
+            "radiant_team_id": radiant_team_id,
+            "s_sum": float(result.get("s_sum") or 0.0),
+            "s_last": float(result.get("s_last") or 0.0),
+            "n_prev": float(result.get("n_prev") or 0.0),
+        }
+        _save(path, data)
+
+
+def last_surprise(radiant_team_id: int, dire_team_id: int, *,
+                  store_path: Optional[Path] = None,
+                  now: Optional[int] = None) -> Optional[Dict[str, float]]:
+    """Последний посчитанный сюрприз серии для РАДИАНТА запроса, либо None.
+
+    Читает то, что `observe()` уже посчитал через `history_lookup` (в бою —
+    сеть Stratz) на предыдущей оценке ЭТОЙ ЖЕ пары команд: сети здесь нет
+    вовсе, только диск. Ориентация возвращается к радианту ЗАПРОСА — если при
+    расчёте радиантом была вторая команда пары, знак переворачивается (та же
+    логика, что в `surprise_from_maps`/`test_orientation_flips_with_sides`).
+    Устаревшая запись (старше `MAX_AGE_SECONDS`) не отдаётся: серия столько не
+    длится, число из позавчерашней встречи тех же команд — не про эту серию.
+    """
+    rad, dire = int(radiant_team_id or 0), int(dire_team_id or 0)
+    if rad <= 0 or dire <= 0:
+        return None
+    ts = int(now if now is not None else time.time())
+    with _lock:
+        data = _load(Path(store_path or DEFAULT_STORE_PATH))
+    rec = (data.get("pairs") or {}).get(_pair_key(rad, dire))
+    if not isinstance(rec, dict):
+        return None
+    try:
+        if ts - int(rec.get("ts") or 0) > MAX_AGE_SECONDS:
+            return None
+        sign = 1.0 if int(rec.get("radiant_team_id") or 0) == rad else -1.0
+        return {
+            "s_sum": sign * float(rec["s_sum"]),
+            "s_last": sign * float(rec["s_last"]),
+            "n_prev": float(rec["n_prev"]),
+        }
+    except (TypeError, ValueError, KeyError):
+        return None
 
 
 def recent_team_ids(*, within: int = 3 * 3600, store_path: Optional[Path] = None,

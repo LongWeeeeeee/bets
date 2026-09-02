@@ -111,6 +111,24 @@ _PREMATCH_BET_BRANCHES = tuple(
     x.strip() for x in os.getenv("WIN_MODEL_VETO_PREMATCH_BRANCHES",
                                  "full,no_org").split(",") if x.strip())
 
+# --- Поправка «сюрприз серии» (s_sum) ------------------------------------------
+# Замер 22.08.2026 (`runtime/artifacts/misc/prematch_calibration_audit.md`,
+# 25 892 боевых вердикта скорера): на первых картах серии модель занижает
+# уверенность (модель − факт = −0.0108), на продолжениях — завышает (+0.0090).
+# Плоская −0.07 поправка ХУЖЕ, чем ничего. Рабочая величина — накопленный
+# `s_sum` = «победила минус обещано» по уже сыгранным картам серии для
+# РАДИАНТА текущей карты (см. `series_surprise_shadow.surprise_from_maps`);
+# вес сошёлся на двух независимых источниках вероятности: +0.215 на боевом
+# скорере (используется здесь), +0.156 на forward-модели. Прирост AUC на
+# боевом скорере +0.0123 (95% ДИ +0.0035…+0.0212).
+#
+# Снимается WIN_MODEL_VETO_ENABLED-подобным флагом ниже, без деплоя.
+SERIES_SURPRISE_WEIGHT = 0.215
+SERIES_SURPRISE_CORRECTION_ENABLED = os.getenv("SERIES_SURPRISE_CORRECTION", "1") == "1"
+# Пульс поправки: первые 20 записей подряд, дальше каждая сотая — так же, как
+# у `_STALE_WARNED`/`_HYBRID_MISS` ниже, чтобы не залить лог на бою.
+_SURPRISE_LOGGED = 0
+
 _lock = threading.Lock()
 _state: dict[str, Any] = {"loaded": False, "encoder": None, "model": None, "error": None}
 _cache: dict[tuple, Optional[float]] = {}
@@ -679,6 +697,42 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                           draft_logit=logit, hybrid_strength=hybrid,
                           strictness="accounts",
                           now_ts=_now, max_age_days=_SNAPSHOT_MAX_AGE_DAYS)
+        # --- поправка «сюрприз серии» (s_sum, см. SERIES_SURPRISE_WEIGHT выше) --
+        # Команды берутся из `match` (сети здесь нет — это НЕ history_lookup,
+        # который зовёт Stratz: читается только уже посчитанный кэш из стора
+        # `series_surprise_shadow`, пополняемый снаружи, в cyberscore_try.py,
+        # ГДЕ сетевой поход допустим). Молчание `match` без team_id — как
+        # и молчание hybrid_strength выше — не ошибка: ключей ещё может не
+        # быть у вызывающего кода, тогда поправка просто не применяется.
+        _p_corrected = res.probability
+        if SERIES_SURPRISE_CORRECTION_ENABLED and isinstance(match, dict):
+            try:
+                _sr_rad = int(match.get("radiant_team_id") or 0)
+                _sr_dire = int(match.get("dire_team_id") or 0)
+            except (TypeError, ValueError):
+                _sr_rad = _sr_dire = 0
+            if _sr_rad > 0 and _sr_dire > 0:
+                _surprise = None
+                try:
+                    try:
+                        import series_surprise_shadow as _sss
+                    except ImportError:
+                        from base import series_surprise_shadow as _sss
+                    _surprise = _sss.last_surprise(_sr_rad, _sr_dire)
+                except Exception:                    # noqa: BLE001 — поправка необязательна
+                    _surprise = None
+                if _surprise is not None and float(_surprise.get("n_prev") or 0.0) >= 1.0:
+                    _p_before = _p_corrected
+                    _s_sum = float(_surprise["s_sum"])
+                    _lg = math.log(max(_p_before, 1e-6) / max(1.0 - _p_before, 1e-6))
+                    _lg += SERIES_SURPRISE_WEIGHT * _s_sum
+                    _p_corrected = 1.0 / (1.0 + math.exp(-_lg))
+                    global _SURPRISE_LOGGED
+                    _SURPRISE_LOGGED += 1
+                    if _SURPRISE_LOGGED <= 20 or _SURPRISE_LOGGED % 100 == 0:
+                        print(f"[win_model] сюрприз серии: s_sum={_s_sum:+.4f} "
+                              f"n_prev={int(_surprise['n_prev'])} "
+                              f"p {_p_before:.4f}->{_p_corrected:.4f}", flush=True)
         # --- панель окон килов: те же входы, что у предматчевой модели ---
         _LAST_PANEL["text"] = ""
         _LAST_PANEL["verdicts"] = []
@@ -752,7 +806,7 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                       f"h2h {'есть' if _cov.get('h2h') else 'нет'}; p={res.probability:.3f}; "
                       f"средняя заполненность за {_COV_N} оценок {_COV_SUM/_COV_N:.0%}",
                       flush=True)
-        _idx = round((res.probability - 0.5) * 100.0, 3)
+        _idx = round((_p_corrected - 0.5) * 100.0, 3)
         _LAST_FILL["index"] = _idx
         _LAST_FILL["fill"] = (_cov or {}).get("filled")
         _LAST_FILL["elo"] = (getattr(res, "features", None) or {}).get("elo")
