@@ -21267,7 +21267,8 @@ def _determine_match_tier(radiant_team_id: int, dire_team_id: int) -> int:
     return 3
 
 
-_PATCH_SCHEDULE = [
+# Статический fallback: используется только если base/keys.py недоступен.
+_PATCH_SCHEDULE_STATIC = [
     ("2025-02-19", "7.38"),
     ("2025-03-05", "7.38b"),
     ("2025-03-19", "7.38b"),
@@ -21285,6 +21286,28 @@ _PATCH_SCHEDULE = [
     ("2025-12-15", "7.40"),
     ("2025-12-23", "7.40b"),
 ]
+
+# 7.38* в DOTA_PATCH_EVENTS нет, поэтому префикс остаётся статическим. Нумерация
+# patch_id совпадает со старой таблицей вплоть до 7.40b — производная часть лишь
+# продолжает её, так что исторические patch_id не разъезжаются.
+_PATCH_SCHEDULE_PRE_739 = _PATCH_SCHEDULE_STATIC[:4]
+
+
+def _patch_schedule_source():
+    try:
+        from keys import DOTA_PATCH_EVENTS
+    except Exception:
+        return list(_PATCH_SCHEDULE_STATIC)
+    rows = []
+    last_version = None
+    for event in DOTA_PATCH_EVENTS:
+        if event.get("kind") == "version":
+            last_version = event["label"]
+        rows.append((event["date"], last_version or event["label"]))
+    return _PATCH_SCHEDULE_PRE_739 + rows
+
+
+_PATCH_SCHEDULE = _patch_schedule_source()
 
 
 def _build_patch_schedule():
