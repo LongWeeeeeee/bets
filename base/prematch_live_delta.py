@@ -135,6 +135,17 @@ def _row(p: Dict[str, Any], radiant_won: bool) -> Optional[Dict[str, Any]]:
     if not isinstance(is_r, bool):
         is_r = bool(won) == bool(radiant_won)
     num = lambda k: int(p.get(k) or 0)
+    # imp НЕ приводится к нулю: 02.09.2026 замер на проде (E-250) показал 43.3%
+    # нулей в imp против 1.7% в kills — это «Stratz не отдал imp», а не значение.
+    # Фантомные нули отравили бы любую будущую накладку imp-окон (imp50/imp30/
+    # imp_recent), утягивая средние к нулю. Шкала при этом совпадает с артефактом:
+    # центры -3.4 против -4.6, разброс одиночной карты шире оконного среднего в
+    # 4.5 раза, как и должно быть.
+    imp_raw = p.get("imp")
+    try:
+        imp: Optional[int] = None if imp_raw is None else int(imp_raw)
+    except (TypeError, ValueError):
+        imp = None
     return {"acc": acc, "hero": num("heroId"),
             "pos": POSITION_NUM.get(str(p.get("position") or ""), 0),
             "won": bool(won), "rad": bool(is_r),
@@ -142,7 +153,7 @@ def _row(p: Dict[str, Any], radiant_won: bool) -> Optional[Dict[str, Any]]:
             "a": num("assists"), "lh": num("numLastHits"), "dn": num("numDenies"),
             "gpm": num("goldPerMinute"), "nw": num("networth"),
             "xpm": num("experiencePerMinute"), "lvl": num("level"),
-            "hdmg": num("heroDamage"), "imp": num("imp")}
+            "hdmg": num("heroDamage"), "imp": imp}
 
 
 def record_map(match: Dict[str, Any], *, store_path: Optional[Path] = None,
