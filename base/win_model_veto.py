@@ -124,7 +124,13 @@ _PREMATCH_BET_BRANCHES = tuple(
 #
 # Снимается WIN_MODEL_VETO_ENABLED-подобным флагом ниже, без деплоя.
 SERIES_SURPRISE_WEIGHT = 0.215
-SERIES_SURPRISE_CORRECTION_ENABLED = os.getenv("SERIES_SURPRISE_CORRECTION", "1") == "1"
+# Дефолт OFF (02.09.2026): реплей на 20 реальных ставках-продолжениях серии
+# ушёл в другую сторону — Brier 0.2258 -> 0.2288 (хуже), хотя офлайн-аудит на
+# 25 892 вердиктах скорера показывал улучшение AUC +0.0123. Живой замер на
+# 279 теневых вердиктах идёт (E-247, `series_surprise_shadow`); до его
+# результата поправка не участвует в бою. Включить обратно: SERIES_SURPRISE_
+# CORRECTION=1.
+SERIES_SURPRISE_CORRECTION_ENABLED = os.getenv("SERIES_SURPRISE_CORRECTION", "0") == "1"
 # Пульс поправки: первые 20 записей подряд, дальше каждая сотая — так же, как
 # у `_STALE_WARNED`/`_HYBRID_MISS` ниже, чтобы не залить лог на бою.
 _SURPRISE_LOGGED = 0
