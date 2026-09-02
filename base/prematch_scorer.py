@@ -550,8 +550,20 @@ class PrematchModel:
         z = np.load(path)
         self.snapshot_ts = int(z["snapshot_ts"][0])
         self.mu, self.sd, self.coef, self.intercept = z["mu"], z["sd"], z["coef"], z["intercept"]
+        # E-177: без колонок 15..17 (imp_recent10/imp30_resid/lh30_resid) `_acc_side`
+        # молча подставляет A[:,6]/A[:,10] вместо них (см. строки 869-871) — та же
+        # величина копируется под чужим именем, масштаб расходится в 100 раз.
+        # Ночная цепочка (`scripts/run/rebuild_prematch_snapshot.sh`) уже требует
+        # >= 19 колонок; здесь та же граница ловит ручные/старые артефакты при
+        # самой загрузке, а не молча портит скор.
+        _acc_raw = z["accounts"]
+        if _acc_raw.shape[1] < 19:
+            raise ValueError(
+                f"в accounts {_acc_raw.shape[1]} колонок, ожидалось >= 19 "
+                f"(артефакт устарел — собран до E-177, imp_recent10/imp30_resid/"
+                f"lh30_resid молча получат чужую колонку)")
         # 1.55 млн аккаунтов: словарём это 320 МБ сверх данных
-        self.acc = AccTable(z["accounts"])
+        self.acc = AccTable(_acc_raw)
         # 6.78 млн ячеек: словарём это стоило бы 2 005 МБ при 311 МБ данных
         self.acc_hero = PairTable(z["acc_hero"])
         # 2.95 млн ячеек (аккаунт, позиция) со скалярным значением

@@ -23,7 +23,7 @@ def _minimal_artifact(tmp_path, extra):
         "snapshot_ts": np.array([1700000000], dtype=np.int64),
         "mu": np.zeros((1, 2)), "sd": np.ones((1, 2)),
         "coef": np.zeros((1, 2)), "intercept": np.zeros(1),
-        "accounts": np.zeros((0, 14)), "acc_hero": np.zeros((0, 6)),
+        "accounts": np.zeros((0, 19)), "acc_hero": np.zeros((0, 6)),
         "acc_pos": np.zeros((0, 3)), "hero_wr30": np.zeros((0, 2)),
         "vs_pairs": np.zeros((0, 4)), "h2h": np.zeros((0, 3)),
         "hero_farm": np.zeros((0, 2)),
