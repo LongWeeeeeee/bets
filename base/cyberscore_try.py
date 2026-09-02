@@ -10280,11 +10280,15 @@ def _stake_multiplier_for_signal(
 
     # x1/x2/x3 require star hits on ALL 3 core metrics (cp1vs1, cp1vs2, solo).
     # If any of the 3 is missing from hit_metrics → cap at 0.5.
-    if late_star_hit_metrics is not None:
-        _core_metrics = set(_STAR_LATE_CORE_METRIC_ORDER)
-        _hit_set = set(late_star_hit_metrics)
-        if not _core_metrics.issubset(_hit_set):
-            return 0.5
+    #
+    # Неизвестный список (None) трактуется так же, как неполный. Иначе запись
+    # delayed-очереди, пережившая деплой, в которой `late_star_hit_count`
+    # сохранился, а список метрик ещё не сериализовался, выпускалась бы с
+    # x1/x2/x3 — пересчёт из контекста оказывался щедрее прямого расчёта.
+    _core_metrics = set(_STAR_LATE_CORE_METRIC_ORDER)
+    _hit_set = set(late_star_hit_metrics or [])
+    if not _core_metrics.issubset(_hit_set):
+        return 0.5
 
     if not has_selected_late_star or late_wr_value is None:
         return 1
