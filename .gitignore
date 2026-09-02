@@ -213,6 +213,11 @@ runtime/*.err
 # индекса, файл на диске остаётся.
 base/test.py
 
+# Динамический tier2-onboarding: живое состояние прода рядом со справочником
+# (пишет cyberscore_try через base/tier_dynamic_overlay.py). В git не попадает:
+# это состояние, а не исходник — ровно то, что раньше грязнило id_to_names.py.
+base/id_to_names_dynamic_tier2.json
+
 # Операционное состояние oh-my-claudecode: планы, логи, хендоффы, память сессий.
 # Игнор любого `.omc/`; в git только корневые проектные скиллы.
 **/.omc/**

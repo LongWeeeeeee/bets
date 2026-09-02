@@ -112,3 +112,22 @@ def _isolate_prematch_eval_journal(tmp_path, monkeypatch):
 def _isolate_prematch_live_delta(tmp_path, monkeypatch):
     """Не даёт score() читать или завести боевой runtime/prematch_live_delta.json."""
     monkeypatch.setenv("PREMATCH_LIVE_DELTA", str(tmp_path / "prematch_live_delta.json"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_tier2_dynamic_overlay(tmp_path, monkeypatch):
+    """Изолирует overlay динамического tier2-onboarding от боевого файла.
+
+    Путь читается на вызове (env `TIER2_DYNAMIC_ONBOARDING_PATH`), поэтому
+    переменной среды достаточно; флаг однократной загрузки сбрасываем, чтобы
+    каждый тест перечитывал изолированный overlay, а не кэш предыдущего.
+    """
+    monkeypatch.setenv(
+        "TIER2_DYNAMIC_ONBOARDING_PATH",
+        str(tmp_path / "id_to_names_dynamic_tier2.json"),
+    )
+    for name, module in list(sys.modules.items()):
+        if name.rsplit(".", 1)[-1] == "cyberscore_try":
+            monkeypatch.setattr(
+                module, "_dynamic_tier2_overlay_loaded", False, raising=False
+            )

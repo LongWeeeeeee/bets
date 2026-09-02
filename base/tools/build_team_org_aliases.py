@@ -70,9 +70,31 @@ def _name_index() -> dict[int, set[str]]:
     команды, и локальная копия про новые теги не знает. Именно на этом
     споткнулась первая сборка — цепочка Tundra -> Iron Wing -> 1w дала только
     `tundra <-> 1w`, потому что имени `ironwing` в локальном файле нет.
+
+    С 02.09.2026 рантайм пишет динамические записи НЕ в сам справочник, а в
+    JSON-overlay рядом с ним (`id_to_names_dynamic_tier2.json`; ночная цепочка
+    `rebuild_prematch_snapshot.sh` копирует оба файла). Overlay применяется
+    здесь поверх продовой копии — иначе новые теги снова исчезли бы из сборки.
     """
-    sys.path.insert(0, os.getenv("TEAM_NAMES_DIR", str(ROOT / "base")))
+    names_dir = os.getenv("TEAM_NAMES_DIR", str(ROOT / "base"))
+    sys.path.insert(0, names_dir)
     import id_to_names as names                      # noqa: PLC0415
+    # Модуль-загрузчик overlay живёт в РЕПОЗИТОРИИ; вставляем репозитарный base/
+    # ПОСЛЕ продовой директории, чтобы `id_to_names` резолвился оттуда.
+    if str(ROOT / "base") not in sys.path:
+        sys.path.insert(1, str(ROOT / "base"))
+    import tier_dynamic_overlay                      # noqa: PLC0415
+
+    overlay_file = tier_dynamic_overlay.overlay_path(names_dir)
+    try:
+        overlay = tier_dynamic_overlay.load_entries(overlay_file)
+    except Exception as exc:
+        print(f"overlay {overlay_file} не читается ({exc}) — собираю без него",
+              file=sys.stderr)
+        overlay = {}
+    if overlay:
+        applied = tier_dynamic_overlay.apply_entries(names, overlay)
+        print(f"overlay: {applied} ключей применено поверх tier_two_teams")
 
     out: dict[int, set[str]] = collections.defaultdict(set)
     for source in (names.tier_one_teams, names.tier_two_teams, names.rest_teams):

@@ -20697,6 +20697,45 @@ _pro_matches_df = None
 _tier_stats_cache = {}  # Cache for tier-based statistics
 _tier_autoupdate_lock = threading.Lock()
 _auto_added_tier2_ids = set()
+_dynamic_tier2_overlay_loaded = False
+
+
+def _ensure_dynamic_tier2_overlay() -> None:
+    """Однократно применяет tier2-onboarding overlay к id_to_names.tier_two_teams.
+
+    Исторически рантайм дописывал новые tier2-записи Python-блоками прямо в
+    отслеживаемый `base/id_to_names.py` (611 блоков на serv1 к 02.09.2026 —
+    вечно грязный файл и конфликты при pull). Теперь записи уезжают в JSON
+    рядом со справочником (`base/tier_dynamic_overlay.py`). Старые блоки
+    продолжают исполняться при импорте; overlay применяется поверх них.
+    Путь читается на вызове (env `TIER2_DYNAMIC_ONBOARDING_PATH`), поэтому
+    тесты изолируют его как обычные state-файлы.
+    """
+    global _dynamic_tier2_overlay_loaded
+    if _dynamic_tier2_overlay_loaded:
+        return
+    with _tier_autoupdate_lock:
+        if _dynamic_tier2_overlay_loaded:
+            return
+        try:
+            import id_to_names as _id_to_names_module
+            import tier_dynamic_overlay
+
+            overlay = tier_dynamic_overlay.overlay_path(BASE_DIR)
+            entries = tier_dynamic_overlay.load_entries(overlay)
+            if entries:
+                tier_dynamic_overlay.apply_entries(_id_to_names_module, entries)
+                logger.info(
+                    "dynamic tier2 overlay: %d ключей применено из %s",
+                    len(entries),
+                    overlay,
+                )
+        except Exception:
+            logger.exception(
+                "dynamic tier2 overlay: загрузка не удалась, работаем без overlay"
+            )
+        finally:
+            _dynamic_tier2_overlay_loaded = True
 
 
 def _get_tier_stats(df, tier: int, n_matches: int = 100, use_cache: bool = True) -> dict:
@@ -20735,6 +20774,8 @@ def _get_team_tier(team_id: int) -> int:
         team_id = int(team_id)
     except Exception:
         return 3
+
+    _ensure_dynamic_tier2_overlay()
 
     if team_id in _auto_added_tier2_ids:
         return 2
@@ -20870,6 +20911,7 @@ def _find_known_team_ids_by_name(team_name: str) -> set[int]:
     name_key = _normalize_tier_team_name_only(team_name)
     if not name_key:
         return set()
+    _ensure_dynamic_tier2_overlay()
     ids: set[int] = set()
     from id_to_names import tier_one_teams, tier_two_teams
     for alias, value in tier_one_teams.items():
@@ -20918,8 +20960,12 @@ def _normalize_tier_team_key(team_name: str, team_id: int) -> str:
 
 def _append_team_to_tier2_file(team_name: str, team_id: int) -> tuple[bool, str]:
     """
-    Добавляет неизвестную команду в Tier 2 словарь id_to_names.py.
+    Добавляет неизвестную команду в Tier 2.
     Возвращает (added, key_or_reason).
+
+    С 02.09.2026 запись уходит в JSON-overlay рядом со справочником
+    (`base/tier_dynamic_overlay.py`), а не дописывается блоком в отслеживаемый
+    `id_to_names.py`: файл на сервере вечно грязнел и конфликтовал с pull.
     """
     try:
         team_id = int(team_id)
@@ -20930,6 +20976,8 @@ def _append_team_to_tier2_file(team_name: str, team_id: int) -> tuple[bool, str]
         from id_to_names import tier_two_teams
     except Exception as e:
         return False, f"import_error:{e}"
+
+    _ensure_dynamic_tier2_overlay()
 
     if _get_team_tier(team_id) in (1, 2):
         return False, "already_known"
@@ -20968,27 +21016,13 @@ def _append_team_to_tier2_file(team_name: str, team_id: int) -> tuple[bool, str]
                     tier_two_teams[key] = {existing_id, team_id}
             _auto_added_tier2_ids.add(team_id)
 
-            id_to_names_path = _get_id_to_names_path()
-            append_block = (
-                "\n# auto-added by cyberscore_try (dynamic tier2 onboarding)\n"
-                "try:\n"
-                f"    _key = {key!r}\n"
-                f"    _team_id = {team_id}\n"
-                "    _existing = tier_two_teams.get(_key)\n"
-                "    if isinstance(_existing, set):\n"
-                "        _existing.add(_team_id)\n"
-                "    elif _existing is None:\n"
-                "        tier_two_teams[_key] = _team_id\n"
-                "    elif _existing != _team_id:\n"
-                "        try:\n"
-                "            tier_two_teams[_key] = {int(_existing), _team_id}\n"
-                "        except Exception:\n"
-                "            tier_two_teams[_key] = _team_id\n"
-                "except Exception:\n"
-                "    pass\n"
+            import tier_dynamic_overlay
+
+            added = tier_dynamic_overlay.upsert_entry(
+                tier_dynamic_overlay.overlay_path(BASE_DIR), key, team_id
             )
-            with id_to_names_path.open('a', encoding='utf-8') as f:
-                f.write(append_block)
+            if not added:
+                return False, "already_known"
             return True, key
     except Exception as e:
         return False, f"write_error:{e}"

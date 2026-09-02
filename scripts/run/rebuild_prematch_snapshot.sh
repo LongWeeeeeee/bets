@@ -72,8 +72,11 @@ run_chain() {
   # 5b. справочник написаний из цепочек ПЕРЕИМЕНОВАНИЙ (для поиска карточки у
   #     букмекера). Имена берём с прода: записи вида `tier_two_teams['ironwing']`
   #     дописывает рантайм на serv1, и локальная копия про новые теги не знает.
+  #     С 02.09.2026 рантайм пишет их в JSON-overlay рядом со справочником —
+  #     забираем оба файла (overlay на свежем проде может ещё отсутствовать).
   NAMES_DIR="$(mktemp -d)"
   scp -q "$SERV1:/root/main/base/id_to_names.py" "$NAMES_DIR/id_to_names.py"
+  scp -q "$SERV1:/root/main/base/id_to_names_dynamic_tier2.json" "$NAMES_DIR/" || true
   TEAM_NAMES_DIR="$NAMES_DIR" $PY base/tools/build_team_org_aliases.py
   rm -rf "$NAMES_DIR"
 
