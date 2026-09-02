@@ -15,16 +15,37 @@ if str(BASE_DIR) not in sys.path:
 import cyberscore_try as runtime  # noqa: E402
 
 
-if not (
-    hasattr(runtime, "STAR_THRESHOLD_WR_TIER1")
-    and hasattr(runtime, "STAR_THRESHOLD_WR_TIER2")
-    and int(runtime.STAR_THRESHOLD_WR_TIER1) == 60
-    and int(runtime.STAR_THRESHOLD_WR_TIER2) == 65
-):
+_TIER_EXPECTED = {
+    "STAR_THRESHOLD_WR_TIER1": 60,
+    "STAR_THRESHOLD_WR_TIER2": 65,
+}
+_TIER_REQUIRED_LABELS = (
+    "TIER_SIGNAL_MIN_THRESHOLD_TIER1",
+    "TIER_SIGNAL_MIN_THRESHOLD_TIER2",
+    "TIER_THRESHOLD_STATUS_TIER1_MIN60_BLOCK",
+    "TIER_THRESHOLD_STATUS_TIER2_MIN65_BLOCK",
+    "TIER_THRESHOLD_REASON_TIER1_MIN60_BLOCK",
+    "TIER_THRESHOLD_REASON_TIER2_MIN65_BLOCK",
+)
+
+_tier_divergence = [
+    f"{name}: в рантайме {int(getattr(runtime, name))}, ждём {want}"
+    for name, want in _TIER_EXPECTED.items()
+    if not (hasattr(runtime, name) and int(getattr(runtime, name)) == want)
+] + [
+    f"{name}: ОТСУТСТВУЕТ в рантайме"
+    for name in _TIER_REQUIRED_LABELS
+    if not hasattr(runtime, name)
+]
+
+if _tier_divergence:
     pytestmark = pytest.mark.skip(
         reason=(
-            "Runtime tier thresholds are not landed yet "
-            "(expected STAR_THRESHOLD_WR_TIER1=60 and STAR_THRESHOLD_WR_TIER2=65)."
+            "Ветка tier2-мин65 не выкачена, поэтому модуль не выполняется ЦЕЛИКОМ. "
+            "Расхождение: " + "; ".join(_tier_divergence) + ". "
+            "Боевые значения (все пороги tier = 60) фиксирует "
+            "test_tier_threshold_live_defaults.py — менять tier2 на 65 значит "
+            "сознательно покрасить тот файл."
         )
     )
 

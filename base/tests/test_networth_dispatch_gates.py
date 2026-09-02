@@ -35,11 +35,21 @@ REQUIRED_STATUS_CONSTS = (
     "NETWORTH_STATUS_LATE_FALLBACK_20_20_SEND",
 )
 
-if not all(hasattr(runtime, attr) for attr in REQUIRED_STATUS_CONSTS):
+_missing_status_consts = [
+    attr for attr in REQUIRED_STATUS_CONSTS if not hasattr(runtime, attr)
+]
+
+if _missing_status_consts:
     pytestmark = pytest.mark.skip(
         reason=(
-            "Runtime networth-gated status labels are not available in base/cyberscore_try.py "
-            "(dependency task b205acba)."
+            "NETWORTH-гейт НЕ ПОКРЫТ ни одним выполняющимся тестом: модуль "
+            f"пропускается ЦЕЛИКОМ ({len(_missing_status_consts)} из "
+            f"{len(REQUIRED_STATUS_CONSTS)} меток статуса отсутствуют в "
+            "base/cyberscore_try.py). Отсутствуют: "
+            + ", ".join(_missing_status_consts)
+            + ". Гейт был рефакторен и эти метки исчезли/переименованы, то есть "
+            "модуль описывает устаревший API — его надо переписать под текущие "
+            "метки, а не ждать задачу b205acba."
         )
     )
 
