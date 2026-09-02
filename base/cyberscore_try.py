@@ -401,6 +401,8 @@ def reset_winline_current_map_polling_state() -> None:
         _winline_shared_page_state["selected_pinned_key"] = None
         _winline_current_map_evidence_hashes.clear()
         _winline_odds_orientation_state.clear()
+        _winline_map_clocks.clear()
+        _winline_deferred_terminals.clear()
         _winline_current_map_scheduler_meta["tick_count"] = 0
         _winline_current_map_scheduler_meta["main_loop_tick_invocations"] = 0
         _winline_current_map_scheduler_meta["last_error"] = None
@@ -517,7 +519,20 @@ def _winline_next_map_poll_interval_seconds() -> float:
 #: серий намеренно — реестр перезаписывается на каждой регистрации поллера и
 #: на каждом снимке моста, и ожидание в нём не пережило бы собственный запуск
 #: опроса.
+#:
+#: Вторая форма записи — метка исчерпанного ожидания {"map_num", "exhausted_at"}:
+#: окно истекло, карта так и не появилась. Хранится, чтобы reconcile не взвёл
+#: ожидание заново по той же мёртвой записи реестра
+#: (`_winline_note_pending_next_map`). Снимается, когда серия снова в мосте.
 _winline_pending_next_maps: Dict[str, Dict[str, Any]] = {}
+
+#: Хронометраж карты из моста SourceTV: {ключ серии: {"game_time", "wall",
+#: "map_num", "live"}}. `game_time` — секунды от рога, `wall` — `timestamp`
+#: снимка моста: по нему хронометраж досчитывается до момента отправки.
+_winline_map_clocks: Dict[str, Dict[str, Any]] = {}
+#: Дольше этого досчитывать нельзя: снимок протух, а карта могла и кончиться —
+#: иначе «🏁 карта завершена» получила бы хронометраж позже настоящего конца.
+_WINLINE_MAP_CLOCK_EXTRAPOLATE_MAX_S = 120.0
 
 
 def _winline_awaiting_next_map(series: Any, map_num: Any, now: Any = None) -> bool:
@@ -534,6 +549,9 @@ def _winline_awaiting_next_map(series: Any, map_num: Any, now: Any = None) -> bo
     with _winline_current_map_state_lock:
         pending = _winline_pending_next_maps.get(key)
     if not isinstance(pending, dict):
+        return False
+    if pending.get("exhausted_at"):
+        # Окно ожидания уже истекло: больше не ждём, пока серия не оживёт в мосте.
         return False
     try:
         if int(pending.get("map_num")) != int(map_num):
@@ -752,6 +770,87 @@ def _winline_adopt_transposed_poller(canonical: str, series: Any, map_num: Any,
     return None
 
 
+#: Индекс «нормализованное имя команды → известные tier-id». Пересобирается
+#: не чаще раза в TTL: в словаре ~560 алиасов, а ключ серии строится на каждой
+#: строке моста на каждом проходе reconcile.
+_WINLINE_TEAM_ID_INDEX_TTL_S = 600.0
+_winline_team_id_index_cache: Dict[str, Any] = {"at": 0.0, "by_name": {}}
+#: norm_name -> канонический id строкой. Решение принимается ОДИН раз на имя:
+#: словарь tier1/2 растёт (overlay динамического onboarding'а), и смена выбора
+#: посреди серии расщепила бы ключ ровно так же, как это делал флип id у моста.
+_winline_team_id_canonical: Dict[str, str] = {}
+
+
+def _winline_known_team_ids_by_name(name_key: str) -> Any:
+    """Известные tier-id нормализованного имени. Пусто, если имя неизвестно."""
+    moment = time.time()
+    cached = _winline_team_id_index_cache
+    if moment - float(cached.get("at") or 0.0) >= _WINLINE_TEAM_ID_INDEX_TTL_S:
+        by_name: Dict[str, Any] = {}
+        try:
+            _ensure_dynamic_tier2_overlay()
+            from id_to_names import tier_one_teams, tier_two_teams
+            for source in (tier_one_teams, tier_two_teams):
+                for alias, value in dict(source).items():
+                    alias_key = _normalize_tier_team_name_only(str(alias))
+                    if not alias_key:
+                        continue
+                    by_name.setdefault(alias_key, set()).update(_extract_team_ids(value))
+        except Exception as exc:                      # noqa: BLE001
+            logger.warning("winline team-id index build failed: %s", exc)
+        cached["by_name"] = by_name
+        cached["at"] = moment
+    return (cached.get("by_name") or {}).get(name_key) or frozenset()
+
+
+def _winline_canonical_team_id(raw_id: Any, team_name: Any) -> str:
+    """team_id, приведённый к одному значению на имя команды.
+
+    Мост даёт одной команде РАЗНЫЕ id на разных картах серии: 02.09.2026
+    Yangon Galacticos шёл под 7653080 на карте 1 и под 8944230 на карте 2
+    серии с InterActive Philippines. Ключ серии строится из id, поэтому одна
+    серия расщепилась на два ключа: карту 2 одновременно опрашивали два
+    поллера (один с подтверждением моста и тактом 3.5 с, второй — сирота из
+    ожидания следующей карты с тактом 60 с и `match_id=None`), обе читали одну
+    карточку Winline с зеркальными ценами, а сирота после смерти записи реестра
+    ушёл в бесконечный зомби-цикл (`_winline_note_pending_next_map`).
+
+    Карточку Winline мы ищем по ИМЕНИ, поэтому идентичность серии тоже
+    приводится к имени. Имя-плейсхолдер («Dire», «Radiant») сводить нельзя:
+    под ним ходят разные команды, там остаётся id из моста.
+
+    Приоритет тот же, что в `_resolve_known_team_id_without_side_effects`: id из
+    моста, уже известный словарю под этим именем, остаётся собой (ключи в логах
+    и истории читаемы), а неизвестный сводится к минимальному известному.
+    """
+    text = str(raw_id or "").strip()
+    if not text or text == "0":
+        return ""
+    name = str(team_name or "").strip()
+    if not name or _is_placeholder_team_name(name):
+        return text
+    name_key = _normalize_tier_team_name_only(name)
+    if not name_key:
+        return text
+    with _winline_current_map_state_lock:
+        cached = _winline_team_id_canonical.get(name_key)
+    if cached:
+        return cached
+    try:
+        raw_value = int(text)
+    except (TypeError, ValueError):
+        return text
+    known = _winline_known_team_ids_by_name(name_key)
+    if not known:
+        canonical = text
+    elif raw_value in known:
+        canonical = text
+    else:
+        canonical = str(min(known))
+    with _winline_current_map_state_lock:
+        return _winline_team_id_canonical.setdefault(name_key, canonical)
+
+
 def _winline_sourcetv_series_key(match: Any) -> str:
     """Stable SourceTV series identity across per-map Valve match IDs."""
     payload = match if isinstance(match, dict) else {}
@@ -760,12 +859,14 @@ def _winline_sourcetv_series_key(match: Any) -> str:
         return f"sourcetv:series:{explicit}"
     league_id = str(payload.get("league_id") or "0").strip()
     team_ids = sorted(
-        str(value)
+        value
         for value in (
-            payload.get("radiant_team_id"),
-            payload.get("dire_team_id"),
+            _winline_canonical_team_id(
+                payload.get("radiant_team_id"), payload.get("radiant_team_name")),
+            _winline_canonical_team_id(
+                payload.get("dire_team_id"), payload.get("dire_team_name")),
         )
-        if str(value or "").strip() not in {"", "0"}
+        if value
     )
     if len(team_ids) == 2:
         pair = "|".join(f"id:{value}" for value in team_ids)
@@ -1205,6 +1306,51 @@ def _resolve_sourcetv_bridge_identity(matches: Any) -> Any:
     return matches
 
 
+def _winline_bridge_map_clock(item: Any, map_num: Any) -> Optional[Dict[str, Any]]:
+    """Хронометраж карты из строки моста. None — строка его не доказывает."""
+    payload = item if isinstance(item, dict) else {}
+    try:
+        game_time = float(payload.get("game_time") or 0)
+    except (TypeError, ValueError):
+        return None
+    if game_time <= 0:
+        return None
+    try:
+        wall = float(payload.get("timestamp") or 0)
+    except (TypeError, ValueError):
+        wall = 0.0
+    return {
+        "game_time": game_time,
+        "wall": wall if wall > 0 else time.time(),
+        "map_num": map_num,
+        "live": str(payload.get("status") or "").strip().lower() == "live",
+    }
+
+
+def _winline_note_map_clock(series: Any, clock: Any, *,
+                            frozen_reason: bool = False) -> None:
+    """Запомнить хронометраж карты серии; заморозить, когда карта кончилась.
+
+    Строка перерыва несёт `game_time` ДОИГРАННОЙ карты под сдвинутым номером
+    (`_winline_sourcetv_map_num`), поэтому её значение не берётся — но именно
+    она доказывает, что хронометраж больше не идёт. То же делает уход серии из
+    снимка: последний известный хронометраж остаётся для «🏁 карта завершена»,
+    а досчитывать его уже нельзя.
+    """
+    key = str(series or "").strip()
+    if not key:
+        return
+    with _winline_current_map_state_lock:
+        if isinstance(clock, dict):
+            _winline_map_clocks[key] = clock
+            return
+        if not frozen_reason:
+            return
+        previous = _winline_map_clocks.get(key)
+        if isinstance(previous, dict) and previous.get("live"):
+            _winline_map_clocks[key] = dict(previous, live=False)
+
+
 def _reconcile_winline_sourcetv_polling(
     matches: Any,
     *,
@@ -1229,6 +1375,11 @@ def _reconcile_winline_sourcetv_polling(
         # номер из неё выведен. Всё, что зависит от подтверждения — id матча,
         # продление потолка, доказательство конца — с такой строки не берётся.
         intermission = _winline_sourcetv_postgame_intermission(item)
+        _winline_note_map_clock(
+            series,
+            None if intermission else _winline_bridge_map_clock(item, map_num),
+            frozen_reason=intermission,
+        )
         active[series] = {
             "map_num": map_num,
             "team1": str(item.get("radiant_team_name") or "").strip(),
@@ -1282,6 +1433,7 @@ def _reconcile_winline_sourcetv_polling(
             # опрос на первом же пропуске снимка.
             if was_active or current.get("inactive_since") is None:
                 current["inactive_since"] = time.time()
+            _winline_note_map_clock(series, None, frozen_reason=True)
             _winline_note_pending_next_map(series, current)
     _winline_start_pending_next_map_polling()
 
@@ -1362,6 +1514,9 @@ def _winline_note_pending_next_map(series: Any, reg: Any, now: Any = None) -> Op
     with _winline_current_map_state_lock:
         already = _winline_pending_next_maps.get(key)
     if isinstance(already, dict):
+        if already.get("exhausted_at"):
+            # Окно по этой серии уже отработано и закрыто — не перезаряжаем.
+            return None
         # Ожидание уже идёт. Номер не двигаем: реестр к этому моменту показывает
         # ту самую ожидаемую карту (её записала регистрация опроса), и сдвиг
         # означал бы перескок через карту, которую мы ещё ждём.
@@ -1370,8 +1525,23 @@ def _winline_note_pending_next_map(series: Any, reg: Any, now: Any = None) -> Op
                 return _winline_series_int(already.get("map_num"))
         except (TypeError, ValueError):
             pass
+        # Окно выдержано, карта так и не появилась. Запись помечается
+        # исчерпанной, а НЕ удаляется: запись реестра этой серии заморожена на
+        # «карта N, прежний счёт, inactive_proven» и не удаляется никогда, а
+        # `_winline_next_map_certain` по замороженному счёту каждый проход
+        # отвечает «следующая карта неизбежна». После удаления следующий же
+        # reconcile взвёл бы ожидание заново, и цикл «45 минут опроса карты,
+        # которой нет → недоказанный терминал → «⏹️ опрос остановлен» в чат»
+        # шёл бы бесконечно. 02.09.2026 Yangon Galacticos — InterActive
+        # Philippines: карта 2 доиграна в 11:50, а сообщение приходило каждые
+        # ~48 минут до рестарта в 17:48 (17:25:35 = 16:37:34 + 45 мин окна
+        # + 180 с hold). Карта, начавшаяся позже окна, приходит в мост и
+        # заводится обычным путём — от живой записи, а не от замороженной.
         with _winline_current_map_state_lock:
-            _winline_pending_next_maps.pop(key, None)
+            _winline_pending_next_maps[key] = {
+                "map_num": already.get("map_num"),
+                "exhausted_at": moment,
+            }
         return None
     if reg.get("series_last_map"):
         # Решающая карта сыграна — серии дальше нет.
@@ -1408,7 +1578,10 @@ def _winline_clear_pending_next_map(series: Any, map_num: Any = None) -> bool:
         pending = _winline_pending_next_maps.get(key)
         if not isinstance(pending, dict):
             return False
-        if map_num is not None:
+        # Guard по номеру нужен живому ожиданию: запись перерыва показывает
+        # прошлую карту, и снимать по ней ожидание следующей нельзя. Исчерпанное
+        # ожидание ничего не ждёт — серия ожила в мосте, метку снимаем.
+        if map_num is not None and not pending.get("exhausted_at"):
             try:
                 if int(map_num) < int(pending.get("map_num")):
                     return False
@@ -2771,10 +2944,22 @@ WINLINE_ODDS_STOP_NOTICE_HOLD_ENV = "WINLINE_ODDS_STOP_NOTICE_HOLD_S"
 WINLINE_MAP_WINNER_ENABLED_ENV = "WINLINE_MAP_WINNER_ENABLED"
 WINLINE_MAP_WINNER_RETRY_ENV = "WINLINE_MAP_WINNER_RETRY_S"
 WINLINE_MAP_WINNER_WINDOW_ENV = "WINLINE_MAP_WINNER_WINDOW_S"
+# Журнал фактически отправленных карточек (и отказов отправки). Без него нельзя
+# задним числом сказать, что ушло в чат: оба разбора 02.09.2026 (зомби-цикл
+# Yangon Galacticos и проглоченный backup-тиком терминал Team Synapse) упирались
+# в то, что отправленные сообщения не записываются нигде.
+WINLINE_ODDS_TELEGRAM_SENT_PATH_ENV = "WINLINE_ODDS_TELEGRAM_SENT_PATH"
 
 _winline_odds_notify_state: Dict[str, Dict[str, Any]] = {}
 # key -> {match_id, map_num, team1, team2, since_mono, next_try_mono}
 _winline_pending_map_winners: Dict[str, Dict[str, Any]] = {}
+#: Терминалы, снятые backup-тиком главного цикла (он в чат не пишет):
+#: [{"key", "payload", "kwargs", "attempts"}]. Объявляет поток-шедулер
+#: (`_winline_flush_deferred_terminal_notices`).
+_winline_deferred_terminals: List[Dict[str, Any]] = []
+_WINLINE_DEFERRED_TERMINAL_CAP = 64
+_WINLINE_DEFERRED_TERMINAL_PER_TICK = 4
+_WINLINE_DEFERRED_TERMINAL_RETRIES = 3
 # series -> {match_id: map_num}. Один матч Valve — ровно одна карта серии.
 _winline_series_winner_matches: Dict[str, Dict[int, int]] = {}
 _WINLINE_WINNER_MATCH_SERIES_CAP = 500
@@ -2960,6 +3145,55 @@ def _winline_stabilize_odds_orientation(
     return payload
 
 
+def _winline_observed_wall(payload: Any) -> Optional[float]:
+    """Момент, когда кэфы были прочитаны со страницы (wall). None — неизвестен."""
+    data = payload if isinstance(payload, dict) else {}
+    for field in ("attempt_finished_at", "finished_at", "wall"):
+        try:
+            value = float(data.get(field))
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def _winline_map_clock_label(canonical_key: Any, now_wall: Any = None) -> str:
+    """Хронометраж карты «мм:сс» для строки 🕐; «—», если мост карту не видит.
+
+    Серверное время в карточке ничего не говорит о ставке: важна минута карты,
+    на которой кэф сдвинулся. Хронометраж берётся из снимка моста и
+    досчитывается до момента наблюдения, пока мост подтверждает карту живой;
+    после конца карты остаётся последнее известное значение.
+    """
+    text = str(canonical_key or "")
+    series, _, tail = text.partition("|map")
+    if not series or not tail:
+        return "—"
+    try:
+        map_num = int(str(tail).split("|", 1)[0])
+    except (TypeError, ValueError):
+        return "—"
+    moment = float(time.time() if now_wall is None else now_wall)
+    with _winline_current_map_state_lock:
+        clock = dict(_winline_map_clocks.get(series) or {})
+    if not clock or _winline_series_int(clock.get("map_num")) != map_num:
+        return "—"
+    try:
+        game_time = float(clock.get("game_time") or 0)
+        wall = float(clock.get("wall") or 0)
+    except (TypeError, ValueError):
+        return "—"
+    if game_time <= 0:
+        return "—"
+    if clock.get("live") and wall > 0:
+        age = moment - wall
+        if 0 < age <= _WINLINE_MAP_CLOCK_EXTRAPOLATE_MAX_S:
+            game_time += age
+    total = int(game_time)
+    return f"{total // 60}:{total % 60:02d}"
+
+
 def _winline_build_odds_message(
     *,
     kind: str,
@@ -2973,6 +3207,7 @@ def _winline_build_odds_message(
     stamp: str,
     winner: Any = None,
 ) -> str:
+    """Карточка кэфов в админ-чат. `stamp` — хронометраж карты («мм:сс» или «—»)."""
     head = {
         "first": "🆕 Winline",
         "change": "📊 Winline",
@@ -3276,7 +3511,10 @@ def _winline_odds_telegram_notify(
         return None
 
     map_num, team1, team2 = _winline_parse_canonical_key(key)
-    stamp = (stamp_fn or (lambda: datetime.now().strftime("%H:%M:%S")))()
+    stamp = (
+        stamp_fn() if callable(stamp_fn)
+        else _winline_map_clock_label(key, _winline_observed_wall(payload))
+    )
     message = _winline_build_odds_message(
         kind=kind,
         map_num=map_num,
@@ -3301,6 +3539,8 @@ def _winline_odds_telegram_notify(
             mirror_to_vk=False,
             silent=True,
         )
+        _winline_journal_sent_message(
+            kind=kind, key=key, message=message, delivered=delivered)
         if delivered is False:
             logger.warning("winline odds telegram notify returned delivered=false")
             return None
@@ -3309,6 +3549,8 @@ def _winline_odds_telegram_notify(
             logger.warning("winline odds telegram notify failed: %s", exc)
         except Exception:
             pass
+        _winline_journal_sent_message(
+            kind=kind, key=key, message=message, delivered=False)
         return None
 
     with _winline_current_map_state_lock:
@@ -3328,7 +3570,44 @@ def _winline_odds_telegram_notify(
     return message
 
 
-def _winline_send_lifecycle_message(message: str, send_fn: Any = None) -> bool:
+def _winline_sent_journal_path() -> Optional[Path]:
+    """Куда писать журнал отправленных карточек. `0` — журнал выключен."""
+    raw = os.getenv(WINLINE_ODDS_TELEGRAM_SENT_PATH_ENV)
+    text = str(raw or "").strip()
+    if text.lower() in {"0", "false", "no", "off"}:
+        return None
+    if text:
+        return Path(text)
+    return PROJECT_ROOT / "runtime" / "winline_telegram_sent.jsonl"
+
+
+def _winline_journal_sent_message(*, kind: str, key: Any, message: str,
+                                  delivered: Any) -> None:
+    """Записать факт отправки карточки или отказ. Fail-open, без повторов.
+
+    Доставка трактуется так же, как в уведомлении: отказом считается только
+    явный `False` от отправителя.
+    """
+    path = _winline_sent_journal_path()
+    if path is None:
+        return
+    try:
+        record = {
+            "wall": time.time(),
+            "kind": kind,
+            "canonical_key": str(key or ""),
+            "delivered": delivered is not False,
+            "message": message,
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:                               # noqa: BLE001
+        pass
+
+
+def _winline_send_lifecycle_message(message: str, send_fn: Any = None, *,
+                                    kind: str = "", key: Any = "") -> bool:
     """Отправка служебной строки о карте. Ошибка не выбрасывается наружу."""
     sender = send_fn or send_winline_odds_message
     try:
@@ -3343,8 +3622,80 @@ def _winline_send_lifecycle_message(message: str, send_fn: Any = None) -> bool:
             logger.warning("winline lifecycle telegram notify failed: %s", exc)
         except Exception:
             pass
+        _winline_journal_sent_message(
+            kind=kind, key=key, message=message, delivered=False)
         return False
+    _winline_journal_sent_message(
+        kind=kind, key=key, message=message, delivered=delivered)
     return delivered is not False
+
+
+def _winline_defer_terminal_notify(key: Any, payload: Dict[str, Any],
+                                   kwargs: Dict[str, Any]) -> None:
+    """Отложить объявление терминала до такта потока-шедулера."""
+    entry = {
+        "key": str(key or ""),
+        "payload": payload,
+        "kwargs": dict(kwargs or {}),
+        "attempts": 0,
+    }
+    with _winline_current_map_state_lock:
+        _winline_deferred_terminals.append(entry)
+        while len(_winline_deferred_terminals) > _WINLINE_DEFERRED_TERMINAL_CAP:
+            _winline_deferred_terminals.pop(0)
+
+
+def _winline_flush_deferred_terminal_notices(
+    *,
+    monotonic_fn: Any = None,
+    stamp_fn: Any = None,
+    send_fn: Any = None,
+) -> List[str]:
+    """Дообъявить концы карт, снятые backup-тиком главного цикла.
+
+    Терминал поллер отдаёт ровно один раз, поэтому снявший его такт обязан либо
+    объявить сам, либо передать объявление тому, кто имеет право писать в чат.
+    Отправка повторяется, пока сообщение не уйдёт: `delivered=false` от Telegram
+    раньше означало потерю конца карты без следа. Повтор не срабатывает, если
+    конец карты уже объявлен (дедуп по `kind == "terminal"` в состоянии чата) —
+    иначе один и тот же терминал уходил бы в чат по разу на такт.
+    """
+    if not _winline_odds_notify_enabled():
+        with _winline_current_map_state_lock:
+            _winline_deferred_terminals.clear()
+        return []
+    with _winline_current_map_state_lock:
+        budget = min(
+            len(_winline_deferred_terminals), _WINLINE_DEFERRED_TERMINAL_PER_TICK)
+    sent: List[str] = []
+    for _ in range(budget):
+        with _winline_current_map_state_lock:
+            if not _winline_deferred_terminals:
+                break
+            entry = _winline_deferred_terminals.pop(0)
+        key = str(entry.get("key") or "")
+        try:
+            message = _winline_odds_telegram_notify(
+                entry.get("payload"),
+                key,
+                monotonic_fn=monotonic_fn,
+                stamp_fn=stamp_fn,
+                send_fn=send_fn,
+                **(entry.get("kwargs") or {}),
+            )
+        except Exception:                             # noqa: BLE001
+            message = None
+        if message:
+            sent.append(message)
+            continue
+        with _winline_current_map_state_lock:
+            state = _winline_odds_notify_state.get(key)
+            announced = isinstance(state, dict) and state.get("kind") == "terminal"
+            attempts = int(entry.get("attempts") or 0)
+            if not announced and attempts < _WINLINE_DEFERRED_TERMINAL_RETRIES:
+                entry["attempts"] = attempts + 1
+                _winline_deferred_terminals.append(entry)
+    return sent
 
 
 def _winline_flush_pending_stop_notices(
@@ -3386,7 +3737,7 @@ def _winline_flush_pending_stop_notices(
         if mono - float(pending.get("since_mono") or mono) < hold:
             continue
         map_num, team1, team2 = _winline_parse_canonical_key(key)
-        stamp = (stamp_fn or (lambda: datetime.now().strftime("%H:%M:%S")))()
+        stamp = stamp_fn() if callable(stamp_fn) else _winline_map_clock_label(key)
         message = _winline_build_odds_message(
             kind="stopped",
             map_num=map_num,
@@ -3398,7 +3749,8 @@ def _winline_flush_pending_stop_notices(
             prev_p2=prev.get("p2"),
             stamp=stamp,
         )
-        if not _winline_send_lifecycle_message(message, send_fn):
+        if not _winline_send_lifecycle_message(message, send_fn,
+                                               kind="stopped", key=key):
             continue
         with _winline_current_map_state_lock:
             state = _winline_odds_notify_state.get(key)
@@ -3464,7 +3816,7 @@ def _winline_flush_pending_map_winners(
             # подождут следующего.
             break
         map_num, team1, team2 = _winline_parse_canonical_key(key)
-        stamp = (stamp_fn or (lambda: datetime.now().strftime("%H:%M:%S")))()
+        stamp = stamp_fn() if callable(stamp_fn) else _winline_map_clock_label(key)
         message = _winline_build_odds_message(
             kind="winner",
             map_num=map_num,
@@ -3477,7 +3829,8 @@ def _winline_flush_pending_map_winners(
             stamp=stamp,
             winner=winner,
         )
-        if not _winline_send_lifecycle_message(message, send_fn):
+        if not _winline_send_lifecycle_message(message, send_fn,
+                                               kind="winner", key=key):
             continue
         with _winline_current_map_state_lock:
             _winline_pending_map_winners.pop(key, None)
@@ -3560,7 +3913,7 @@ def _tick_winline_current_map_polling_impl(
                         if isinstance(terminal, dict) and not isinstance(attempt, dict)
                         else None
                     )
-                    if isinstance(notify_payload, dict) and not from_main_loop:
+                    if isinstance(notify_payload, dict):
                         # Id матча у Valve: по нему победитель карты достаётся
                         # из OpenDota. В терминале он есть, но у старого
                         # поллера мог не записаться — тогда берём из личности.
@@ -3569,25 +3922,36 @@ def _tick_winline_current_map_polling_impl(
                             ident = getattr(poller, "_identity", None)
                             if isinstance(ident, dict):
                                 notify_match_id = ident.get("match_id")
-                        _winline_odds_telegram_notify(
-                            notify_payload,
-                            key,
-                            is_terminal=lifecycle_terminal is not None,
+                        notify_kwargs: Dict[str, Any] = {
+                            "is_terminal": lifecycle_terminal is not None,
                             # «Карта завершена» — только когда конец карты доказан
                             # поллером; иначе это остановка опроса.
-                            map_end_proven=bool(
+                            "map_end_proven": bool(
                                 lifecycle_terminal
                                 and lifecycle_terminal.get("map_end_proven")
                             ),
                             # Подтверждал ли источник эту карту хоть раз. Старый
                             # поллер поля не пишет — тогда считаем как раньше,
                             # чтобы молчание не наступило по недостатку данных.
-                            map_confirmed_live=bool(
+                            "map_confirmed_live": bool(
                                 (lifecycle_terminal or {}).get("map_confirmed_live", True)
                             ),
-                            match_id=notify_match_id,
-                            map_started_at=(lifecycle_terminal or {}).get("started_at"),
-                        )
+                            "match_id": notify_match_id,
+                            "map_started_at": (lifecycle_terminal or {}).get("started_at"),
+                        }
+                        if not from_main_loop:
+                            _winline_odds_telegram_notify(
+                                notify_payload, key, **notify_kwargs)
+                        elif lifecycle_terminal is not None:
+                            # Backup-тик главного цикла в чат не пишет (блокирующая
+                            # отправка не должна удлинять цикл ставок), а терминал
+                            # поллер отдаёт ровно один раз. Без откладывания конец
+                            # карты терялся навсегда: 02.09.2026 Team Synapse —
+                            # 4ikibamboni, терминал карты 1 в 19:55:24 с
+                            # `map_end_proven=True` не объявил ничего, а в 19:55:25
+                            # ушло «🆕 карта 2».
+                            _winline_defer_terminal_notify(
+                                key, notify_payload, notify_kwargs)
                 except Exception:
                     pass
             try:
@@ -3611,6 +3975,12 @@ def _tick_winline_current_map_polling_impl(
             flush_kwargs: Dict[str, Any] = {}
             if callable(monotonic_fn):
                 flush_kwargs["monotonic_fn"] = monotonic_fn
+            # Терминалы — первыми: доказанный конец карты снимает отложенное
+            # «опрос остановлен» по тому же ключу.
+            try:
+                _winline_flush_deferred_terminal_notices(**flush_kwargs)
+            except Exception:
+                pass
             try:
                 _winline_flush_pending_stop_notices(**flush_kwargs)
             except Exception:

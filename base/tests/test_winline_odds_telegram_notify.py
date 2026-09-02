@@ -68,6 +68,8 @@ def _clean_state(monkeypatch):
     cs._winline_odds_orientation_state.clear()
     cs._winline_pending_map_winners.clear()
     getattr(cs, "_winline_series_winner_matches", {}).clear()
+    monkeypatch.setattr(cs, "_winline_map_clocks", {}, raising=False)
+    monkeypatch.setattr(cs, "_winline_deferred_terminals", [], raising=False)
     monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_ENABLED_ENV, "1")
     monkeypatch.delenv(cs.WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, raising=False)
     monkeypatch.delenv(cs.WINLINE_ODDS_TELEGRAM_MAX_PER_MIN_ENV, raising=False)
@@ -875,3 +877,322 @@ def test_the_winner_of_the_map_that_really_played_is_still_named():
     )
 
     assert winner == "Klim Sani4"
+
+
+# ─── Строка 🕐 — хронометраж карты, а не серверное время ─────────────────────
+# Серверное время в карточке ничего не говорит о ставке: важна минута карты, на
+# которой кэф сдвинулся. Хронометраж берётся из снимка моста SourceTV
+# (`game_time` + `timestamp`) и досчитывается до момента съёма кэфов.
+MAP_KEY = (
+    "sourcetv:league:18865|id:7917893|id:8944230|"
+    "map2|InterActive Philippines|Yangon Galacticos"
+)
+MAP_SERIES = MAP_KEY.partition("|map")[0]
+_OBSERVED = 1_788_365_160.0          # момент съёма кэфов (wall)
+
+
+def _bridge_clock(game_time, *, wall=_OBSERVED, map_num=2, live=True,
+                  series=MAP_SERIES):
+    cs._winline_map_clocks[series] = {
+        "game_time": game_time, "wall": wall, "map_num": map_num, "live": live,
+    }
+
+
+def _notify_live(payload, sender, clock, *, key=MAP_KEY, observed=_OBSERVED):
+    """Уведомление без подмены строки времени — так, как идёт в проде."""
+    return cs._winline_odds_telegram_notify(
+        dict(payload, attempt_finished_at=observed), key,
+        send_fn=sender, monotonic_fn=clock)
+
+
+def test_message_carries_the_map_clock_not_the_server_time():
+    sender, clock = Sender(), Clock()
+    _bridge_clock(38 * 60 + 41, wall=_OBSERVED - 12)
+
+    message = _notify_live(_attempt(1.85, 1.95), sender, clock)
+
+    # 38:41 по снимку моста + 12 с до съёма кэфов.
+    assert message is not None
+    assert message.splitlines()[-1] == "🕐 38:53"
+
+
+def test_absent_clock_is_a_dash_not_a_guess():
+    """Мост карту не видит (перерыв, неподтверждённая карта) — врать нельзя."""
+    sender, clock = Sender(), Clock()
+
+    message = _notify_live(_attempt(1.85, 1.95), sender, clock)
+
+    assert message is not None
+    assert message.splitlines()[-1] == "🕐 —"
+
+
+def test_clock_of_another_map_is_not_shown():
+    sender, clock = Sender(), Clock()
+    _bridge_clock(20 * 60, map_num=1)
+
+    message = _notify_live(_attempt(1.85, 1.95), sender, clock)
+
+    assert message.splitlines()[-1] == "🕐 —"
+
+
+def test_finished_map_clock_is_frozen():
+    """После конца карты досчёт остановлен: иначе «завершена» получила бы
+    хронометраж на минуты позже настоящего конца."""
+    sender, clock = Sender(), Clock()
+    _bridge_clock(44 * 60 + 12, wall=_OBSERVED - 600, live=False)
+
+    message = _notify_live(_attempt(1.85, 1.95), sender, clock)
+
+    assert message.splitlines()[-1] == "🕐 44:12"
+
+
+def test_stale_live_snapshot_is_not_extrapolated_past_the_cap():
+    sender, clock = Sender(), Clock()
+    _bridge_clock(44 * 60, wall=_OBSERVED - 3600, live=True)
+
+    message = _notify_live(_attempt(1.85, 1.95), sender, clock)
+
+    assert message.splitlines()[-1] == "🕐 44:00"
+
+
+def test_reconcile_takes_the_clock_from_the_bridge_and_freezes_it(monkeypatch):
+    """Полный путь: снимок моста → хронометраж в карточке → заморозка."""
+    monkeypatch.setattr(cs, "_winline_current_map_registry", {}, raising=False)
+    monkeypatch.setattr(cs, "_winline_current_map_pollers", {}, raising=False)
+    monkeypatch.setattr(cs, "_winline_pending_next_maps", {}, raising=False)
+    row = {
+        "match_id": 8978758321,
+        "league_id": 18865,
+        "radiant_team_id": 7917893,
+        "radiant_team_name": "InterActive Philippines",
+        "dire_team_id": 8944230,
+        "dire_team_name": "Yangon Galacticos",
+        "series_game_number": 2,
+        "status": "live",
+        "game_time": 927,
+        "timestamp": _OBSERVED,
+    }
+    cs._reconcile_winline_sourcetv_polling({"8978758321": row}, authoritative=True)
+    series = cs._winline_sourcetv_series_key(row)
+    key = f"{series}|map2|InterActive Philippines|Yangon Galacticos"
+
+    assert cs._winline_map_clock_label(key, _OBSERVED + 33) == "16:00"   # 927 + 33
+
+    # Карта ушла из снимка — остаётся последнее известное значение, без досчёта.
+    cs._reconcile_winline_sourcetv_polling({}, authoritative=True)
+    assert cs._winline_map_clock_label(key, _OBSERVED + 600) == "15:27"
+    # Чужая карта этой серии хронометраж не получает.
+    assert cs._winline_map_clock_label(
+        f"{series}|map3|InterActive Philippines|Yangon Galacticos",
+        _OBSERVED + 600) == "—"
+
+
+def test_intermission_row_does_not_move_the_clock_to_the_next_map(monkeypatch):
+    """Строка перерыва несёт `game_time` ДОИГРАННОЙ карты под сдвинутым номером."""
+    monkeypatch.setattr(cs, "_winline_current_map_registry", {}, raising=False)
+    monkeypatch.setattr(cs, "_winline_current_map_pollers", {}, raising=False)
+    monkeypatch.setattr(cs, "_winline_pending_next_maps", {}, raising=False)
+    base = {
+        "match_id": 8978758321,
+        "league_id": 18865,
+        "radiant_team_id": 7917893,
+        "radiant_team_name": "InterActive Philippines",
+        "dire_team_id": 8944230,
+        "dire_team_name": "Yangon Galacticos",
+        "series_game_number": 1,
+        "series_type": 1,
+        "radiant_series_wins": 0,
+        "dire_series_wins": 0,
+        "status": "live",
+        "game_time": 2338,
+        "timestamp": _OBSERVED,
+        "radiant_score": 13,
+        "dire_score": 48,
+    }
+    cs._reconcile_winline_sourcetv_polling({"live": dict(base)}, authoritative=True)
+    intermission = dict(base, fast_picks={},
+                        _cyberscore_heroes_and_pos={"radiant": None, "dire": None})
+    assert cs._winline_sourcetv_postgame_intermission(intermission) is True
+    assert cs._winline_sourcetv_map_num(intermission) == 2
+
+    cs._reconcile_winline_sourcetv_polling({"live": intermission}, authoritative=True)
+    series = cs._winline_sourcetv_series_key(base)
+
+    # Карта 2 ещё не шла: её хронометража нет, а чужой ей не приписан.
+    assert cs._winline_map_clock_label(
+        f"{series}|map2|InterActive Philippines|Yangon Galacticos",
+        _OBSERVED + 10) == "—"
+    # Карта 1 доиграна — её последнее значение заморожено, а не досчитано.
+    assert cs._winline_map_clock_label(
+        f"{series}|map1|InterActive Philippines|Yangon Galacticos",
+        _OBSERVED + 600) == "38:58"
+
+
+# ─── Терминал, снятый backup-тиком главного цикла ────────────────────────────
+# Поллер отдаёт терминал ровно один раз. Backup-тик главного цикла в чат не
+# пишет (блокирующая отправка не должна удлинять цикл ставок), поэтому снятый им
+# терминал обязан дообъявить поток-шедулер: иначе конец карты теряется навсегда.
+# 02.09.2026 Team Synapse — 4ikibamboni: терминал карты 1 в 19:55:24 с
+# `map_end_proven=True` не объявил ничего, а в 19:55:25 ушло «🆕 карта 2».
+
+class FlakySender:
+    """Отправитель, который умеет отказывать: `delivered=false` из Telegram."""
+
+    def __init__(self, deliver: bool = False):
+        self.deliver = bool(deliver)
+        self.messages = []
+        self.calls = 0
+
+    def __call__(self, message, **kwargs):
+        self.calls += 1
+        if not self.deliver:
+            return False
+        self.messages.append(message)
+        return True
+
+
+_TERMINAL_KWARGS = {
+    "is_terminal": True,
+    "map_end_proven": True,
+    "map_confirmed_live": True,
+}
+
+
+def _defer_terminal(key=MAP_KEY, payload=None):
+    cs._winline_defer_terminal_notify(
+        key,
+        payload if payload is not None else {
+            "market_status": "missing", "finished_at": _OBSERVED},
+        dict(_TERMINAL_KWARGS),
+    )
+
+
+def _flush_deferred(sender, clock):
+    return cs._winline_flush_deferred_terminal_notices(
+        monotonic_fn=clock, stamp_fn=lambda: "38:58", send_fn=sender)
+
+
+def test_deferred_terminal_is_announced_by_the_scheduler_flush():
+    sender, clock = Sender(), Clock()
+    _notify(_attempt(1.85, 1.95), sender, clock, key=MAP_KEY)   # чат видел «🆕»
+    _defer_terminal()
+
+    sent = _flush_deferred(sender, clock)
+
+    assert len(sent) == 1, sent
+    assert "🏁 Winline · карта 2" in sent[0]
+    assert "карта завершена" in sent[0]
+    assert cs._winline_deferred_terminals == []
+
+
+def test_dropped_terminal_send_is_retried_until_it_lands():
+    """`delivered=false` больше не означает потерю конца карты."""
+    sender, clock = FlakySender(), Clock()
+    _notify(_attempt(1.85, 1.95), Sender(), clock, key=MAP_KEY)
+    _defer_terminal()
+
+    assert _flush_deferred(sender, clock) == []          # Telegram отказал
+    assert len(cs._winline_deferred_terminals) == 1      # объявление не потеряно
+
+    sender.deliver = True
+    sent = _flush_deferred(sender, clock)
+
+    assert len(sent) == 1 and "карта завершена" in sent[0]
+    assert cs._winline_deferred_terminals == []
+
+
+def test_terminal_retry_is_bounded():
+    """Мёртвый получатель не должен крутить очередь вечно."""
+    sender, clock = FlakySender(), Clock()
+    _notify(_attempt(1.85, 1.95), Sender(), clock, key=MAP_KEY)
+    _defer_terminal()
+
+    for _ in range(cs._WINLINE_DEFERRED_TERMINAL_RETRIES + 2):
+        _flush_deferred(sender, clock)
+
+    assert sender.messages == []
+    assert cs._winline_deferred_terminals == []
+
+
+def test_deferred_terminal_of_a_map_nobody_saw_stays_silent():
+    """Откладывание не воскрешает объявление карты, которой в чате не было."""
+    sender, clock = FlakySender(deliver=True), Clock()
+    _defer_terminal()
+
+    for _ in range(cs._WINLINE_DEFERRED_TERMINAL_RETRIES + 2):
+        _flush_deferred(sender, clock)
+
+    assert sender.messages == []
+    assert cs._winline_deferred_terminals == []
+
+
+def test_deferred_queue_is_bounded():
+    for index in range(cs._WINLINE_DEFERRED_TERMINAL_CAP + 20):
+        cs._winline_defer_terminal_notify(
+            f"{MAP_SERIES}|map{index}|A|B", {"market_status": "missing"},
+            dict(_TERMINAL_KWARGS))
+    assert len(cs._winline_deferred_terminals) == cs._WINLINE_DEFERRED_TERMINAL_CAP
+
+
+def test_disabled_notifications_drop_the_deferred_queue(monkeypatch):
+    monkeypatch.delenv(cs.WINLINE_ODDS_TELEGRAM_ENABLED_ENV, raising=False)
+    sender, clock = FlakySender(deliver=True), Clock()
+    _defer_terminal()
+
+    assert _flush_deferred(sender, clock) == []
+    assert cs._winline_deferred_terminals == []
+    assert sender.messages == []
+
+
+# ─── Журнал отправленных карточек ────────────────────────────────────────────
+# Без него нельзя задним числом сказать, что ушло в чат: оба разбора 02.09.2026
+# (зомби-цикл Yangon Galacticos и проглоченный backup-тиком терминал Team
+# Synapse) упирались в отсутствие записи об отправке.
+
+def _journal_records(path) -> list:
+    return [json.loads(line) for line in
+            path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_sent_cards_are_journaled(monkeypatch, tmp_path):
+    journal = tmp_path / "sent.jsonl"
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_SENT_PATH_ENV, str(journal))
+    sender, clock = Sender(), Clock()
+
+    _notify(_attempt(1.85, 1.95), sender, clock, key=MAP_KEY)
+
+    records = _journal_records(journal)
+    assert len(records) == 1
+    assert records[0]["kind"] == "first"
+    assert records[0]["canonical_key"] == MAP_KEY
+    assert records[0]["delivered"] is True
+    assert "🆕 Winline · карта 2" in records[0]["message"]
+    assert records[0]["wall"] > 0
+
+
+def test_refused_send_is_journaled_as_not_delivered(monkeypatch, tmp_path):
+    """`delivered=false` от Telegram обязан остаться в журнале, а не раствориться."""
+    journal = tmp_path / "sent.jsonl"
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_SENT_PATH_ENV, str(journal))
+    flaky, clock = FlakySender(), Clock()
+
+    out = cs._winline_odds_telegram_notify(
+        _attempt(1.85, 1.95), MAP_KEY, send_fn=flaky,
+        monotonic_fn=clock, stamp_fn=lambda: "38:58")
+
+    assert out is None
+    records = _journal_records(journal)
+    assert len(records) == 1
+    assert records[0]["delivered"] is False
+    assert records[0]["kind"] == "first"
+
+
+def test_journals_can_be_switched_off(monkeypatch, tmp_path):
+    journal = tmp_path / "sent.jsonl"
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_SENT_PATH_ENV, "0")
+    sender, clock = Sender(), Clock()
+
+    _notify(_attempt(1.85, 1.95), sender, clock, key=MAP_KEY)
+
+    assert len(sender.calls) == 1
+    assert not journal.exists()

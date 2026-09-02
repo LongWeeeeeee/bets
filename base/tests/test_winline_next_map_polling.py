@@ -102,11 +102,65 @@ def test_running_wait_is_not_advanced_by_our_own_registration(registry) -> None:
     assert cs._winline_pending_next_maps[SERIES]["map_num"] == 2
 
 
-def test_expired_wait_is_dropped_and_not_renewed(registry) -> None:
+def test_expired_wait_is_marked_exhausted_and_never_rearmed(registry) -> None:
+    """Истёкшее окно закрывается меткой, а не удалением записи.
+
+    После удаления следующий же проход reconcile взводил ожидание заново по той
+    же замороженной записи реестра (серия из моста ушла навсегда, а счёт в
+    записи прежний — `_winline_next_map_certain` снова отвечал «карта
+    неизбежна»). Получался бесконечный цикл «45 минут опроса карты, которой
+    нет → недоказанный терминал → «⏹️ опрос остановлен» в чат». 02.09.2026
+    Yangon Galacticos — InterActive Philippines: карта 2 доиграна в 11:50, а
+    сообщение приходило каждые ~48 минут до рестарта в 17:48 — 8 повторов,
+    последний в 17:25:35 (16:37:34 + 45 мин окна + 180 с hold).
+    """
+    cs._winline_note_pending_next_map(SERIES, _reg(), now=2_000.0)
+    expired = 2_000.0 + 10 * 3600
+    assert cs._winline_note_pending_next_map(
+        SERIES, _reg(map_num=2, wins=(1, 0)), now=expired) is None
+
+    marker = cs._winline_pending_next_maps[SERIES]
+    assert marker["exhausted_at"] == expired
+    assert marker["map_num"] == 2
+    assert cs._winline_awaiting_next_map(SERIES, 2, now=expired) is False
+
+    # Повторные проходы reconcile ожидание не перезаряжают и метку не двигают.
+    for moment in (expired + 3_600.0, expired + 20 * 3_600.0):
+        assert cs._winline_note_pending_next_map(SERIES, _reg(), now=moment) is None
+    assert cs._winline_pending_next_maps[SERIES]["exhausted_at"] == expired
+    assert cs._winline_awaiting_next_map(SERIES, 2, now=expired + 20 * 3_600) is False
+
+
+def test_series_back_in_the_bridge_lifts_the_exhausted_marker(
+    registry, monkeypatch,
+) -> None:
+    """Серия снова в мосте — следующая её смерть может ждать карту заново."""
+    calls: list = []
+    monkeypatch.setattr(cs, "ensure_winline_current_map_polling",
+                        lambda **kw: calls.append(kw) or object())
+    live_row = {
+        "series_id": "1",
+        "radiant_team_name": "BoomBoys",
+        "dire_team_name": "Team Spirit",
+        "series_game_number": 1,
+        "series_type": 1,
+        "radiant_series_wins": 0,
+        "dire_series_wins": 0,
+    }
     cs._winline_note_pending_next_map(SERIES, _reg(), now=2_000.0)
     assert cs._winline_note_pending_next_map(
-        SERIES, _reg(map_num=2, wins=(1, 0)), now=2_000.0 + 10 * 3600) is None
+        SERIES, _reg(), now=2_000.0 + 10 * 3600) is None
+    assert cs._winline_pending_next_maps[SERIES].get("exhausted_at")
+
+    # Та же пара играет новую серию: запись в мосте снимает метку.
+    cs._reconcile_winline_sourcetv_polling({"8990000001": live_row}, authoritative=True)
     assert SERIES not in cs._winline_pending_next_maps
+
+    # И снова уходит из моста — ожидание следующей карты взводится заново.
+    cs._reconcile_winline_sourcetv_polling({}, authoritative=True)
+    pending = cs._winline_pending_next_maps[SERIES]
+    assert pending.get("since") and pending.get("map_num") == 2, pending
+    assert len(calls) == 1 and calls[0]["map_num"] == 2
 
 
 def test_decider_map_ends_the_series(registry) -> None:

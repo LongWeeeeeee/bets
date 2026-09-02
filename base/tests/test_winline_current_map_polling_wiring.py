@@ -2588,3 +2588,68 @@ def test_last_map_of_a_series_is_still_announced_as_finished(tmp_path, monkeypat
     assert len(finished) == 1, sent
     assert "🏁 Winline · карта 5" in finished[0]
     assert not any("опрос остановлен" in m for m in sent), sent
+
+
+def test_terminal_taken_by_the_main_loop_tick_is_still_announced(tmp_path, monkeypatch):
+    """Терминал отдаётся ровно один раз — съесть его backup-тиком нельзя.
+
+    Поллеры тикают два водителя: поток-шедулер (основной такт) и backup-тик
+    главного цикла после `general()`. Backup-тик в чат не пишет намеренно:
+    блокирующая отправка не должна удлинять цикл ставок. Но терминал он при
+    этом СНИМАЕТ — `tick()` возвращает его один раз, — и «🏁 карта завершена»
+    не уходит никогда: поллер уже мёртв, а нового повода сообщить не будет.
+
+    02.09.2026 Team Synapse — 4ikibamboni: карта 1 терминалилась в 19:55:24
+    (evidence: `map_end_proven=True`, `map_confirmed_live=True`,
+    `lifecycle_event=source_absent`), а в чат в 19:55:25 ушло только
+    «🆕 Winline · карта 2» — конец карты 1 объявлен не был.
+    """
+    _clear_wiring_state()
+    cs._winline_odds_notify_state.clear()
+    cs._winline_pending_map_winners.clear()
+    getattr(cs, "_winline_series_winner_matches", {}).clear()
+    clock = FakeClock()
+    monkeypatch.setattr(cs, "DLTV_SOURCE_MODE", "sourcetv", raising=False)
+    monkeypatch.setattr(cs, "start_winline_current_map_polling_scheduler", lambda **_k: True)
+    monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_ENABLED_ENV, "1")
+    monkeypatch.setenv(cs.WINLINE_CURRENT_MAP_CONTINUOUS_ENV, "1")
+    monkeypatch.setenv(cs.WINLINE_MAP_WINNER_ENABLED_ENV, "0")
+    sent: List[str] = []
+    monkeypatch.setattr(cs, "send_winline_odds_message",
+                        lambda message, **_k: (sent.append(message), True)[1])
+
+    live = _puckchamp_row()
+    series = cs._winline_sourcetv_series_key(live)
+    team1, team2 = live["radiant_team_name"], live["dire_team_name"]
+    cs._reconcile_winline_sourcetv_polling([live], authoritative=True)
+    cs.ensure_winline_current_map_polling(
+        series=series, map_num=1, team1=team1, team2=team2,
+        match_id=live["match_id"], producer_pid=1, producer_start_generation="g1",
+        monotonic_fn=clock.monotonic, wall_fn=clock.time,
+        collector=lambda **_k: _accepted_collector_result(
+            map_num=1, team1=team1, team2=team2, series=series),
+        evidence_path=tmp_path / "map1.json",
+    )
+
+    # Карта жива: такт шедулера снял кэфы, чат увидел «🆕».
+    cs.tick_winline_current_map_polling(
+        monotonic_fn=clock.monotonic, wall_fn=clock.time)
+    assert any("🆕 Winline · карта 1" in m for m in sent), sent
+
+    # Серия ушла из моста доказанно — следующий такт даёт терминал карты.
+    cs._reconcile_winline_sourcetv_polling([], authoritative=True)
+    clock.advance(10.0)
+
+    # Терминал снимает BACKUP-тик главного цикла: сам он в чат не пишет.
+    cs.tick_winline_current_map_polling(
+        monotonic_fn=clock.monotonic, wall_fn=clock.time, from_main_loop=True)
+    assert not any("карта завершена" in m for m in sent), sent
+
+    # Следующий такт шедулера обязан дообъявить конец карты.
+    clock.advance(5.0)
+    cs.tick_winline_current_map_polling(
+        monotonic_fn=clock.monotonic, wall_fn=clock.time)
+
+    finished = [m for m in sent if "карта завершена" in m]
+    assert len(finished) == 1, sent
+    assert "🏁 Winline · карта 1" in finished[0]

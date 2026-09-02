@@ -55,6 +55,18 @@ def _isolate_winline_odds_history(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_winline_sent_journal(tmp_path, monkeypatch):
+    """Не даёт тестам писать в боевой журнал отправленных карточек кэфов.
+
+    Путь читается НА ВЫЗОВЕ (`WINLINE_ODDS_TELEGRAM_SENT_PATH`), поэтому, в
+    отличие от архива котировок, достаточно переменной среды.
+    """
+    monkeypatch.setenv(
+        "WINLINE_ODDS_TELEGRAM_SENT_PATH",
+        str(tmp_path / "winline_telegram_sent.jsonl"))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_live_elo_progress(tmp_path, monkeypatch):
     """Не даёт тестам писать в БОЕВОЕ состояние живого рейтинга.
 
