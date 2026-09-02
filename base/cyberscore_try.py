@@ -113,8 +113,13 @@ warnings.filterwarnings(
 )
 
 
+# Единственный набор «истинных» значений env для всех семейств гейтов модуля.
+# Определён ДО `_env_flag`, потому что тот зовётся на импорте (строка ниже).
+_TRUE_ENV_VALUES = {"1", "true", "yes", "y", "on"}
+
+
 def _env_flag(name: str, default: str = "0") -> bool:
-    return str(os.getenv(name, default)).strip().lower() in {"1", "true", "yes", "on"}
+    return str(os.getenv(name, default)).strip().lower() in _TRUE_ENV_VALUES
 
 
 # Dota2ProTracker integration (optional)
@@ -2811,8 +2816,6 @@ def _winline_claim_winner_match(key: Any, match_id: Any) -> bool:
         seen[mid] = map_num
     return True
 
-_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
-
 
 def _winline_env_flag(name: str) -> bool:
     return str(os.getenv(name, "") or "").strip().lower() in _TRUE_ENV_VALUES
@@ -4891,7 +4894,7 @@ def _safe_bool_env(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
         return bool(default)
-    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+    return str(raw).strip().lower() in _TRUE_ENV_VALUES
 
 
 def _normalize_ml_confidence_source(raw: Any, default: str) -> str:
@@ -5673,7 +5676,7 @@ def _odds_requested_flag(raw_odds: Any) -> bool:
     if raw_odds is None:
         return _safe_bool_env("BOOKMAKER_PREFETCH_ENABLED", False)
     if isinstance(raw_odds, str):
-        return raw_odds.strip().lower() in {"1", "true", "yes", "y", "on"}
+        return raw_odds.strip().lower() in _TRUE_ENV_VALUES
     return bool(raw_odds)
 
 
@@ -29175,14 +29178,14 @@ def _camoufox_env_bool(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
     if raw is None:
         return bool(default)
-    return str(raw).strip().lower() in {"1", "true", "yes", "y", "on"}
+    return str(raw).strip().lower() in _TRUE_ENV_VALUES
 
 
 def _camoufox_parse_humanize(value: str) -> Optional[Union[bool, float]]:
     raw = str(value or "").strip().lower()
     if not raw or raw in {"0", "false", "no", "off"}:
         return None
-    if raw in {"1", "true", "yes", "on"}:
+    if raw in _TRUE_ENV_VALUES:
         return True
     try:
         return float(raw)
@@ -42374,7 +42377,7 @@ def general(return_status=None, use_proxy=None, odds=None, bookmaker_gate_mode=N
     if odds is None:
         odds = _safe_bool_env("BOOKMAKER_PREFETCH_ENABLED", False)
     if isinstance(odds, str):
-        odds_requested = odds.strip().lower() in {"1", "true", "yes", "y", "on"}
+        odds_requested = odds.strip().lower() in _TRUE_ENV_VALUES
     else:
         odds_requested = bool(odds)
     BOOKMAKER_PREFETCH_ENABLED = odds_requested and BOOKMAKER_PREFETCH_AVAILABLE
