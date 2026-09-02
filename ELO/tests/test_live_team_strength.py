@@ -1390,3 +1390,123 @@ def test_pending_queue_applies_both_maps_when_both_sides_advance_by_one(tmp_path
     assert len(both_advanced["applied_updates"]) == 2
     assert [u["match_id"] for u in both_advanced["applied_updates"]] == [301, 302]
     assert [u["winner_slot"] for u in both_advanced["applied_updates"]] == ["first", "second"]
+
+
+def _write_slim_test_snapshot(path) -> dict:
+    """Снимок в боевой раскладке разделов: meta, teams, kills-история, model_state."""
+    payload = {
+        "meta": {
+            "team_kills_history_schema_version": 2,
+            "team_kills_history_latest_patch": "7.41e",
+            "reference_timestamp": 1788295911,
+            "reference_utc": "2026-09-01T20:51:51+00:00",
+            "loaded_matches": 10,
+        },
+        "teams_by_org_key": {
+            "org:tundra": {"org_key": "org:tundra", "team_id": 8291895,
+                           "tier": "TIER1", "current_strength": 1723.2},
+        },
+        "team_kills_history_by_team_id": {
+            "8291895": [{"match_id": 1, "kills": 30, "player_ids": [1, 2, 3, 4, 5],
+                         "timestamp": 1788200000, "patch": "7.41e"}],
+        },
+        "model_state": {
+            "config": {"k_global": 24.0, "base_rating": 1500.0},
+            "player_global": {"11": 1612.5, "22": 1488.0},
+            "lineup_match_counts": {"org:tundra::lineup:abc": 3},
+        },
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return payload
+
+
+def test_streaming_load_keeps_model_state_slim(tmp_path) -> None:
+    """Главная экономия: model_state не материализуется (на проде 527 МБ из 646)."""
+    path = tmp_path / "snapshot.json"
+    written = _write_slim_test_snapshot(path)
+
+    slim = live_team_strength_module._load_snapshot_streaming(path)
+
+    assert slim is not None
+    assert slim["meta"] == written["meta"]
+    assert slim["teams_by_org_key"] == written["teams_by_org_key"]
+    assert slim["team_kills_history_by_team_id"] == written["team_kills_history_by_team_id"]
+    state = slim["model_state"]
+    assert state["config"] == written["model_state"]["config"]
+    assert state[live_team_strength_module.SLIM_MODEL_STATE_MARKER] == str(path)
+    # тяжёлых разделов состояния в памяти быть не должно
+    assert "player_global" not in state
+    assert "lineup_match_counts" not in state
+
+
+def test_full_model_state_loads_on_demand_and_replaces_slim(tmp_path) -> None:
+    path = tmp_path / "snapshot.json"
+    written = _write_slim_test_snapshot(path)
+    slim = live_team_strength_module._load_snapshot_streaming(path)
+
+    full = live_team_strength_module.full_model_state(slim)
+
+    assert full == written["model_state"]
+    # после догрузки кэш несёт полное состояние: повторный путь не streaming
+    assert slim["model_state"] is full
+    assert live_team_strength_module.full_model_state(slim) is full
+
+
+def test_from_state_rejects_slim_model_state(tmp_path) -> None:
+    """Тихая подмена состояния дала бы всем рейтинг 1500 — поэтому громко."""
+    path = tmp_path / "snapshot.json"
+    _write_slim_test_snapshot(path)
+    slim = live_team_strength_module._load_snapshot_streaming(path)
+
+    with pytest.raises(ValueError, match="slim model_state"):
+        HybridPlayerRosterEloModel.from_state(slim["model_state"])
+
+
+def test_config_signature_survives_slim_state(tmp_path) -> None:
+    """Сигнатура нужна для валидации рантайм-payload; meta её не несёт — берём из config."""
+    path = tmp_path / "snapshot.json"
+    written = _write_slim_test_snapshot(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["meta"].pop("model_config_signature", None)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    slim = live_team_strength_module._load_snapshot_streaming(path)
+
+    expected = live_team_strength_module._model_config_signature(
+        written["model_state"])
+    assert expected
+    assert live_team_strength_module._snapshot_model_config_signature(slim) == expected
+
+
+def test_streaming_load_reports_missing_model_state(tmp_path) -> None:
+    """Без model_state ключа нет вовсе — структурная пересборка снимка обязана сработать."""
+    path = tmp_path / "snapshot.json"
+    payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+    _write_slim_test_snapshot(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["model_state"]
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    slim = live_team_strength_module._load_snapshot_streaming(path)
+
+    assert slim is not None
+    assert "model_state" not in slim
+    assert live_team_strength_module.full_model_state(slim) is None
+
+
+def test_load_snapshot_serves_shadow_sections_from_slim_cache(tmp_path) -> None:
+    """kills27-shadow берёт снимок из общего кэша: meta и kills-история обязаны быть."""
+    _reset_live_team_strength_caches()
+    path = tmp_path / "snapshot.json"
+    written = _write_slim_test_snapshot(path)
+
+    snapshot = live_team_strength_module.load_snapshot(path)
+
+    try:
+        assert snapshot is not None
+        assert snapshot["meta"]["team_kills_history_schema_version"] == 2
+        assert snapshot["meta"]["team_kills_history_latest_patch"] == "7.41e"
+        assert snapshot["team_kills_history_by_team_id"] == written[
+            "team_kills_history_by_team_id"]
+        assert live_team_strength_module._snapshot_reference_timestamp(snapshot) == 1788295911
+    finally:
+        _reset_live_team_strength_caches()

@@ -393,7 +393,7 @@ def _coerce_player_ids(raw_player_ids: Any) -> tuple[int, ...]:
 
 
 def _restore_model_from_snapshot(snapshot: dict[str, Any]) -> HybridPlayerRosterEloModel | None:
-    raw_state = snapshot.get("model_state")
+    raw_state = full_model_state(snapshot)
     if not isinstance(raw_state, dict):
         return None
     state_id = id(raw_state)
@@ -1361,12 +1361,103 @@ def load_snapshot(snapshot_path: Path = DEFAULT_SNAPSHOT_PATH) -> dict[str, Any]
         return _SNAPSHOT_CACHE
     if not snapshot_path.exists():
         return None
-    with snapshot_path.open("r", encoding="utf-8") as fh:
-        snapshot = json.load(fh)
+    snapshot = _load_snapshot_streaming(snapshot_path)
+    if snapshot is None:
+        with snapshot_path.open("r", encoding="utf-8") as fh:
+            snapshot = json.load(fh)
     if not isinstance(snapshot, dict):
         return None
     _SNAPSHOT_CACHE = snapshot
     return snapshot
+
+
+#: Маркер slim-состояния: `model_state` снимка НЕ разобран, держим только
+#: `config` (нужен для `_model_config_signature`) и путь догрузки. Полное
+#: состояние возвращает `full_model_state()`.
+SLIM_MODEL_STATE_MARKER = "__slim_model_state_path__"
+
+#: Разделы снимка, которые действительно живут в памяти. Порядок — как в файле:
+#: каждый проход останавливается сразу после своего раздела, поэтому четыре
+#: прохода стоят примерно как один (замер 02.09.2026: 3.6 с на 646 МБ, ijson
+#: на бэкенде yajl2_c).
+_SNAPSHOT_STREAM_SECTIONS = (
+    ("meta", "meta"),
+    ("teams_by_org_key", "teams_by_org_key"),
+    ("team_kills_history_by_team_id", "team_kills_history_by_team_id"),
+    ("model_state.config", "config"),
+)
+
+
+def _load_snapshot_streaming(path: Path) -> dict[str, Any] | None:
+    """Разбор снимка БЕЗ материализации `model_state`.
+
+    `json.load` всего файла стоит 3.5 ГБ RSS (замер 02.09.2026: baseline 10 МБ
+    -> 3694 МБ на файле 646 МБ), и 527 МБ из этих 646 — `model_state`. Базовая
+    копия состояния на проде не нужна никому: сигнатура берётся из `meta`, оба
+    ленивых билдера модели предпочитают рантайм-payload
+    (`live_elo_model_state.json`), а путь чтения обслуживает массивная модель
+    (`ELO/array_model.py`), которая стримит состояние сама. Освобождать уже
+    разобранные словари поздно — арены glibc фрагментированы и RSS не
+    возвращают (`ELO/array_store.py:9-12`), поэтому экономит только то, что не
+    создано вовсе.
+
+    None означает «потоковая загрузка недоступна» — зовущий падает на json.load.
+    """
+    try:
+        import ijson                                  # noqa: PLC0415
+    except ImportError:
+        return None
+
+    snapshot: dict[str, Any] = {}
+    try:
+        for prefix, key in _SNAPSHOT_STREAM_SECTIONS:
+            with path.open("rb") as fh:
+                # use_float: без него ijson отдаёт Decimal, и рейтинги в
+                # `teams_by_org_key` перестают сравниваться и арифметикой
+                # отличаться от float — молча поехал бы живой путь.
+                for value in ijson.items(fh, prefix, use_float=True):
+                    if key == "config":
+                        snapshot["model_state"] = {
+                            "config": value,
+                            SLIM_MODEL_STATE_MARKER: str(path),
+                        }
+                    else:
+                        snapshot[key] = value
+                    break
+    except (OSError, ValueError):
+        return None
+    return snapshot or None
+
+
+def full_model_state(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Полный `model_state`: из кэша либо догрузка из файла для slim-снимка.
+
+    Редкий путь (свежая машина без рантайм-состояния, либо отказ
+    `_load_runtime_model_payload`), поэтому догрузка печатается: если строка
+    появилась в бою, значит живое обновление не подхватилось и процесс
+    однократно заплатит ~3 ГБ.
+    """
+    state = snapshot.get("model_state") if isinstance(snapshot, dict) else None
+    if not isinstance(state, dict):
+        return state
+    source = state.get(SLIM_MODEL_STATE_MARKER)
+    if not source:
+        return state
+    print(f"[ELO] догружаю полный model_state из снимка (редкий путь): {source}",
+          flush=True)
+    try:
+        with open(source, "r", encoding="utf-8") as fh:
+            loaded = json.load(fh)
+    except (OSError, ValueError) as exc:
+        print(f"[ELO] догрузить model_state не удалось: {exc}", flush=True)
+        return None
+    full = loaded.get("model_state") if isinstance(loaded, dict) else None
+    if not isinstance(full, dict):
+        return None
+    # Меняем slim на полный прямо в кэше: повторная догрузка не нужна, а
+    # последующие вызовы идут по обычной ветке.
+    snapshot["model_state"] = full
+    return full
 
 
 def ensure_snapshot(
@@ -1724,7 +1815,7 @@ def register_live_map_context(
                     runtime_model_state_path=runtime_model_state_path,
                 )
                 state = (payload.get("model_state") if isinstance(payload, dict)
-                         else snapshot.get("model_state"))
+                         else full_model_state(snapshot))
                 _model_cell.append(HybridPlayerRosterEloModel.from_state(
                     state if isinstance(state, dict) else {}))
             return _model_cell[0]
@@ -1893,7 +1984,7 @@ def finalize_live_series_from_scores(
                     runtime_model_state_path=runtime_model_state_path,
                 )
                 state = (payload.get("model_state") if isinstance(payload, dict)
-                         else snapshot.get("model_state"))
+                         else full_model_state(snapshot))
                 _model_cell.append(HybridPlayerRosterEloModel.from_state(
                     state if isinstance(state, dict) else {}))
             return _model_cell[0]

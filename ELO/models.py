@@ -390,6 +390,16 @@ class HybridPlayerRosterEloModel:
     @classmethod
     def from_state(cls, raw_state: dict[str, Any] | None) -> "HybridPlayerRosterEloModel":
         state = raw_state if isinstance(raw_state, dict) else {}
+        # Slim-снимок (`live_team_strength._load_snapshot_streaming`) держит из
+        # состояния только `config`. Собрать из него модель — значит получить
+        # дефолтные 1500 у каждого игрока и молча испортить рейтинги, поэтому
+        # здесь громкий отказ. Полный state догружает
+        # `live_team_strength.full_model_state()`.
+        if "__slim_model_state_path__" in state:
+            raise ValueError(
+                "from_state() получил slim model_state: нужен полный снимок "
+                "(см. live_team_strength.full_model_state)"
+            )
         raw_config = state.get("config") if isinstance(state.get("config"), dict) else {}
         default_config = HybridEloConfig()
 
