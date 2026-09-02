@@ -26569,7 +26569,18 @@ def _flush_sent_signal_journal_into_map_id_check() -> int:
             line = raw_line.strip()
             if not line:
                 continue
-            payload = orjson.loads(line)
+            try:
+                payload = orjson.loads(line)
+            except Exception as exc:
+                # Одна битая строка не должна ломать всё восстановление: иначе
+                # flush падает целиком, `_clear_journal_file` не вызывается, и
+                # отравленная строка переживает каждый рестарт.
+                logger.warning(
+                    "Skipping corrupt sent-signal journal line in %s: %s",
+                    journal_path,
+                    exc,
+                )
+                continue
             url = str((payload or {}).get("url") or "").strip()
             if not url or url in seen:
                 continue
@@ -28598,6 +28609,32 @@ def _signal_fingerprint_already_sent(match_key: str, message_text: Any) -> Optio
     return dedup_key if dedup_key in _load_sent_signal_fingerprints() else None
 
 
+def _sent_signal_fingerprint_store_write(entries: Dict[str, float]) -> None:
+    store_path = _sent_signal_fingerprint_path()
+    try:
+        tmp_path = store_path + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump(entries, f)
+        os.replace(tmp_path, store_path)
+    except Exception:
+        logger.exception("Failed to persist sent signal fingerprint")
+
+
+def _sent_signal_fingerprint_store_add(dedup_key: str) -> None:
+    """Занести ключ в durable-реестр. Вызывать под `_SENT_SIGNAL_FP_LOCK`."""
+    entries = _load_sent_signal_fingerprints()
+    entries[dedup_key] = time.time()
+    _sent_signal_fingerprint_store_write(entries)
+
+
+def _sent_signal_fingerprint_store_discard(dedup_key: str) -> None:
+    """Убрать ключ из durable-реестра. Вызывать под `_SENT_SIGNAL_FP_LOCK`."""
+    entries = _load_sent_signal_fingerprints()
+    if entries.pop(dedup_key, None) is None:
+        return
+    _sent_signal_fingerprint_store_write(entries)
+
+
 def _signal_fingerprint_try_reserve(match_key: str, message_text: Any) -> Tuple[bool, Optional[str]]:
     """Атомарно зарезервировать dedup-ключ под отправку.
 
@@ -28616,6 +28653,13 @@ def _signal_fingerprint_try_reserve(match_key: str, message_text: Any) -> Tuple[
         if dedup_key in _SENT_SIGNAL_DEDUP_KEYS or dedup_key in _load_sent_signal_fingerprints():
             return False, dedup_key
         _SENT_SIGNAL_DEDUP_KEYS.add(dedup_key)
+        # Резерв сразу durable. Раньше в файл писал только `mark_sent` ПОСЛЕ
+        # `send_message`, поэтому kill между успешной отправкой и записью
+        # оставлял доставленную ставку без следа, и восстановленная delayed-очередь
+        # отправляла её повторно. Доказанную неудачу отправки снимает
+        # `_signal_fingerprint_release`; при неуверенной доставке ключ остаётся —
+        # карту и так блокирует uncertain-delivery, прежняя семантика.
+        _sent_signal_fingerprint_store_add(dedup_key)
     return True, dedup_key
 
 
@@ -28625,6 +28669,7 @@ def _signal_fingerprint_release(dedup_key: Optional[str]) -> None:
         return
     with _SENT_SIGNAL_FP_LOCK:
         _SENT_SIGNAL_DEDUP_KEYS.discard(dedup_key)
+        _sent_signal_fingerprint_store_discard(dedup_key)
 
 
 def _signal_fingerprint_mark_sent(match_key: str, message_text: Any) -> None:
@@ -28633,16 +28678,7 @@ def _signal_fingerprint_mark_sent(match_key: str, message_text: Any) -> None:
         return
     with _SENT_SIGNAL_FP_LOCK:
         _SENT_SIGNAL_DEDUP_KEYS.add(fingerprint)
-        entries = _load_sent_signal_fingerprints()
-        entries[fingerprint] = time.time()
-        store_path = _sent_signal_fingerprint_path()
-        try:
-            tmp_path = store_path + ".tmp"
-            with open(tmp_path, "w") as f:
-                json.dump(entries, f)
-            os.replace(tmp_path, store_path)
-        except Exception:
-            logger.exception("Failed to persist sent signal fingerprint")
+        _sent_signal_fingerprint_store_add(fingerprint)
 
 
 def _get_team_tier_by_name(team_name: str) -> Optional[int]:
