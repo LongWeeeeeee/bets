@@ -35482,11 +35482,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     # Идентификатор карты доезжает до журнала панели. Без него
                     # там копились записи с пустым `map_id` (805 штук к
                     # 23.08.2026), и сверить вердикт панели с фактическим
-                    # исходом карты было нечем. На саму модель это не влияет:
-                    # из `match` она берёт только `startDateTime`, которого
-                    # здесь нет и не было.
+                    # исходом карты было нечем. `radiant_team_id`/`dire_team_id`
+                    # нужны предматчевой модели: без них `_prematch_index`
+                    # держит h2h_resid нулём даже при доступной истории встреч.
                     match={"match_id": _extract_live_match_id(data) or "",
-                           "map_key": check_uniq_url},
+                           "map_key": check_uniq_url,
+                           "radiant_team_id": radiant_team_id,
+                           "dire_team_id": dire_team_id},
                 )
             finally:
                 if prev_wrapper_enabled is None:
