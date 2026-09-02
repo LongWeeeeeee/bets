@@ -205,6 +205,22 @@ def test_catalog_path_has_single_source_of_truth(monkeypatch):
     assert P.model_dir().name == P.DEFAULT_CATALOG
 
 
+def test_veto_model_dir_follows_draft_model_paths_catalog(monkeypatch):
+    """`win_model_veto` не хранит СВОЙ каталог по умолчанию — только чужой.
+
+    До правки константа дублировала путь `draft_model_paths.DEFAULT_CATALOG`
+    буквальной строкой: смена одного места не меняла другое, и именно на этом
+    фоне прожил незамеченным рассинхрон E-201 (−0.0046 AUC).
+    """
+    monkeypatch.delenv("WIN_MODEL_DIR", raising=False)
+    monkeypatch.setattr(P, "DEFAULT_CATALOG", "другой-каталог-для-теста")
+    assert V._resolve_model_dir() == P.model_dir()
+    assert V._resolve_model_dir().name == "другой-каталог-для-теста"
+    # env-переопределение по-прежнему главнее умолчания каталога.
+    monkeypatch.setenv("WIN_MODEL_DIR", "/tmp/каталог-из-переменной")
+    assert V._resolve_model_dir() == Path("/tmp/каталог-из-переменной")
+
+
 def test_format_output_dict_respects_veto(monkeypatch):
     import functions
 

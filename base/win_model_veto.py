@@ -27,11 +27,25 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Optional
 
+try:
+    import draft_model_paths as _draft_paths
+except ImportError:                                   # запуск не из base/
+    from base import draft_model_paths as _draft_paths
+
+
+def _resolve_model_dir() -> Path:
+    """Каталог драфт-модели: единственный источник — `draft_model_paths` (E-201).
+
+    Путь дублировался здесь и ещё в пяти местах `runtime/` без общей константы,
+    и рассинхрон одной копии с боевой стоил −0.0046 AUC. `draft_model_paths`
+    заведён именно для этого; `WIN_MODEL_DIR` по-прежнему перекрывает всё —
+    сама переменная читается внутри `model_dir()`.
+    """
+    return _draft_paths.model_dir()
+
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-MODEL_DIR = Path(os.getenv(
-    "WIN_MODEL_DIR",
-    str(PROJECT_ROOT / "data/public_draft_hero10_experiment/2026-08-15_all_public_5m_full"),
-))
+MODEL_DIR = _resolve_model_dir()
 # Вето включено по умолчанию; выключается WIN_MODEL_VETO_ENABLED=0 без деплоя.
 VETO_ENABLED = os.getenv("WIN_MODEL_VETO_ENABLED", "1") == "1"
 
