@@ -3158,6 +3158,60 @@ def _winline_observed_wall(payload: Any) -> Optional[float]:
     return None
 
 
+#: Снапшот моста читает главный цикл — замер 02.09.2026 на проде: 49 чтений
+#: листинга на 147 циклов, то есть примерно раз в 90 с. Для строки 🕐 это
+#: много: хронометраж замирал на значении последнего чтения (карта 2 Team
+#: Synapse — 4ikibamboni четыре карточки подряд показывали «9:25», хотя карта
+#: шла). Поэтому в момент отправки снимок дочитывается сам, но не чаще раза в
+#: `_WINLINE_MAP_CLOCK_REFRESH_MIN_INTERVAL_S`: несколько карточек за один такт
+#: не должны читать файл по разу.
+_WINLINE_MAP_CLOCK_REFRESH_MIN_INTERVAL_S = 5.0
+#: Строка снимка старше этого не используется — та же граница свежести, что и у
+#: главного цикла при чтении `SOURCETV_MATCHES_PATH`.
+_WINLINE_MAP_CLOCK_SNAPSHOT_MAX_AGE_S = 300.0
+_winline_map_clock_refresh: Dict[str, Any] = {"at": 0.0}
+
+
+def _winline_refresh_map_clocks_from_bridge() -> None:
+    """Дочитать хронометраж живых карт из снапшота моста. Fail-open."""
+    if str(globals().get("DLTV_SOURCE_MODE") or "").strip().lower() != "sourcetv":
+        return
+    moment = time.time()
+    if (moment - float(_winline_map_clock_refresh.get("at") or 0.0)
+            < _WINLINE_MAP_CLOCK_REFRESH_MIN_INTERVAL_S):
+        return
+    _winline_map_clock_refresh["at"] = moment
+    try:
+        path = SOURCETV_MATCHES_PATH
+        if not os.path.exists(path):
+            return
+        with open(path) as fh:
+            matches = json.load(fh)
+    except Exception:                               # noqa: BLE001
+        return
+    if not isinstance(matches, dict):
+        return
+    for row in matches.values():
+        if not isinstance(row, dict):
+            continue
+        try:
+            age = moment - float(row.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= age < _WINLINE_MAP_CLOCK_SNAPSHOT_MAX_AGE_S:
+            continue
+        series = _winline_sourcetv_series_key(row)
+        map_num = _winline_sourcetv_map_num(row)
+        if not series or map_num is None:
+            continue
+        intermission = _winline_sourcetv_postgame_intermission(row)
+        _winline_note_map_clock(
+            series,
+            None if intermission else _winline_bridge_map_clock(row, map_num),
+            frozen_reason=intermission,
+        )
+
+
 def _winline_map_clock_label(canonical_key: Any, now_wall: Any = None) -> str:
     """Хронометраж карты «мм:сс» для строки 🕐; «—», если мост карту не видит.
 
@@ -3166,6 +3220,7 @@ def _winline_map_clock_label(canonical_key: Any, now_wall: Any = None) -> str:
     досчитывается до момента наблюдения, пока мост подтверждает карту живой;
     после конца карты остаётся последнее известное значение.
     """
+    _winline_refresh_map_clocks_from_bridge()
     text = str(canonical_key or "")
     series, _, tail = text.partition("|map")
     if not series or not tail:

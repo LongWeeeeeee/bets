@@ -70,6 +70,7 @@ def _clean_state(monkeypatch):
     getattr(cs, "_winline_series_winner_matches", {}).clear()
     monkeypatch.setattr(cs, "_winline_map_clocks", {}, raising=False)
     monkeypatch.setattr(cs, "_winline_deferred_terminals", [], raising=False)
+    monkeypatch.setattr(cs, "_winline_map_clock_refresh", {"at": 0.0}, raising=False)
     monkeypatch.setenv(cs.WINLINE_ODDS_TELEGRAM_ENABLED_ENV, "1")
     monkeypatch.delenv(cs.WINLINE_ODDS_TELEGRAM_MIN_SPACING_ENV, raising=False)
     monkeypatch.delenv(cs.WINLINE_ODDS_TELEGRAM_MAX_PER_MIN_ENV, raising=False)
@@ -1196,3 +1197,89 @@ def test_journals_can_be_switched_off(monkeypatch, tmp_path):
 
     assert len(sender.calls) == 1
     assert not journal.exists()
+
+
+# ─── Дочитывание снимка моста в момент отправки ──────────────────────────────
+# Главный цикл читает снапшот примерно раз в 90 с (замер 02.09.2026 на проде:
+# 49 чтений листинга на 147 циклов), и хронометраж замирал между чтениями:
+# карта 2 Team Synapse — 4ikibamboni четыре карточки подряд показывала «9:25»,
+# хотя карта шла.
+
+SYNAPSE_ROW = {
+    "match_id": 8979484553,
+    "league_id": 19944,
+    "radiant_team_id": 10212329,
+    "radiant_team_name": "Team Synapse",
+    "dire_team_id": 10233067,
+    "dire_team_name": "4ikibamboni",
+    "series_game_number": 2,
+    "series_type": 1,
+    "radiant_series_wins": 1,
+    "dire_series_wins": 0,
+    "status": "live",
+    "game_time": 742,
+    "timestamp": _OBSERVED,
+}
+
+
+def _fresh(**overrides):
+    """Строка моста со свежей меткой времени: дочитывание берет только такие."""
+    row = dict(SYNAPSE_ROW)
+    row["timestamp"] = cs.time.time()
+    row.update(overrides)
+    return row
+
+
+def _snapshot_with(monkeypatch, tmp_path, row):
+    path = tmp_path / "sourcetv_matches.json"
+    path.write_text(json.dumps({str(row["match_id"]): row}), encoding="utf-8")
+    monkeypatch.setattr(cs, "SOURCETV_MATCHES_PATH", str(path), raising=False)
+    monkeypatch.setattr(cs, "DLTV_SOURCE_MODE", "sourcetv", raising=False)
+    return path
+
+
+def _synapse_key(row) -> str:
+    return f"{cs._winline_sourcetv_series_key(row)}|map2|Team Synapse|4ikibamboni"
+
+
+def test_clock_is_refreshed_from_the_snapshot_between_reconciles(monkeypatch, tmp_path):
+    row = _fresh()
+    _snapshot_with(monkeypatch, tmp_path, row)
+    assert cs._winline_map_clocks == {}          # reconcile давно не было
+
+    assert cs._winline_map_clock_label(_synapse_key(row), row["timestamp"] + 20) == "12:42"
+
+
+def test_snapshot_refresh_is_throttled(monkeypatch, tmp_path):
+    """Несколько карточек за один такт не должны читать файл по разу."""
+    row = _fresh()
+    path = _snapshot_with(monkeypatch, tmp_path, row)
+    key = _synapse_key(row)
+    assert cs._winline_map_clock_label(key, row["timestamp"] + 20) == "12:42"
+
+    path.write_text(json.dumps({str(row["match_id"]): _fresh(game_time=60)}),
+                    encoding="utf-8")
+    # Снимок перечитан не будет: значение прежнее, досчитан новый момент.
+    assert cs._winline_map_clock_label(key, row["timestamp"] + 21) == "12:43"
+
+    cs._winline_map_clock_refresh["at"] = 0.0
+    cs._winline_map_clock_label(key, row["timestamp"] + 21)
+    # Перечитано: в состоянии новый хронометраж (60 с), а не прежний (742 с).
+    assert cs._winline_map_clocks[
+        cs._winline_sourcetv_series_key(row)]["game_time"] == 60
+
+
+def test_stale_snapshot_row_does_not_move_the_clock(monkeypatch, tmp_path):
+    _snapshot_with(monkeypatch, tmp_path,
+                   dict(SYNAPSE_ROW, timestamp=_OBSERVED - 3600))
+    key = f"{cs._winline_sourcetv_series_key(SYNAPSE_ROW)}|map2|Team Synapse|4ikibamboni"
+
+    assert cs._winline_map_clock_label(key, _OBSERVED) == "—"
+
+
+def test_snapshot_is_not_read_outside_sourcetv_mode(monkeypatch, tmp_path):
+    _snapshot_with(monkeypatch, tmp_path, SYNAPSE_ROW)
+    monkeypatch.setattr(cs, "DLTV_SOURCE_MODE", "dltv", raising=False)
+    key = f"{cs._winline_sourcetv_series_key(SYNAPSE_ROW)}|map2|Team Synapse|4ikibamboni"
+
+    assert cs._winline_map_clock_label(key, _OBSERVED) == "—"
