@@ -13,7 +13,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -690,17 +690,58 @@ def _leaderboard_rank_map(snapshot: dict[str, Any]) -> dict[str, int]:
     return rank_map
 
 
-def _winner_slot_from_scores(
+# E-224: у одной серии на живом пути применялась ровно одна карта из всех
+# сыгранных ("Live ELO updated from completed map" 101 против "finalized
+# from orphaned finished series" 638). Причина в двух местах разом:
+# `_winner_slot_from_scores` (ниже — теперь `_winner_slots_from_score_advance`)
+# признавала победителя только при сдвиге счёта РОВНО на +1 у одной стороны;
+# пропущенный опрос сдвигает его на 2 или даёт +1 обеим сторонам сразу, и
+# тогда функция отдавала None. А дальше единственный слот `pending_map`
+# перезаписывался контекстом следующей карты раньше, чем счёт успевал
+# показать исход предыдущей — так недостающая карта терялась безвозвратно.
+_MAX_PENDING_MAPS = 6
+
+
+def _winner_slots_from_score_advance(
     previous_scores: dict[str, int],
     current_scores: dict[str, int],
-) -> str | None:
+) -> list[str] | None:
+    """Winners of every map the series score advanced past, oldest first.
+
+    A jump of N on exactly one side is N wins in a row for that side (a
+    missed poll can advance the score by more than one map). A jump of
+    exactly one map on EACH side (two maps missed, one win apiece) can't be
+    told apart from the score alone, but crediting them in queue order is
+    harmless: either way each side gets exactly one win, and every ELO
+    update runs off the rating current at the moment it is applied, not off
+    which physical map produced it — order does not change the outcome.
+    Anything else (both sides advanced and at least one of them by more
+    than one map) stays genuinely ambiguous: no order is safe to infer, so
+    this returns None and callers fall back to other resolution (e.g. a
+    direct winner lookup, or the orphan sweep in cyberscore_try.py).
+    """
     delta_first = int(current_scores.get("first", 0)) - int(previous_scores.get("first", 0))
     delta_second = int(current_scores.get("second", 0)) - int(previous_scores.get("second", 0))
-    if delta_first == 1 and delta_second == 0:
-        return "first"
-    if delta_first == 0 and delta_second == 1:
-        return "second"
+    if delta_first > 0 and delta_second == 0:
+        return ["first"] * delta_first
+    if delta_second > 0 and delta_first == 0:
+        return ["second"] * delta_second
+    if delta_first == 1 and delta_second == 1:
+        return ["first", "second"]
     return None
+
+
+def _pending_maps_list(series_state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Ordered queue of unresolved map contexts, oldest first.
+
+    Reads the new `pending_maps` list; falls back to the legacy single
+    `pending_map` slot so state written before this fix still loads.
+    """
+    raw_list = series_state.get("pending_maps")
+    if isinstance(raw_list, list):
+        return [item for item in raw_list if isinstance(item, dict)]
+    legacy = series_state.get("pending_map")
+    return [legacy] if isinstance(legacy, dict) else []
 
 
 def _preview_lineup_rating_from_model(
@@ -919,6 +960,148 @@ def _build_live_applied_update(
         "elo_diff_before": float(before_summary.get("elo_diff", 0.0)),
         "elo_diff_after": float(after_summary.get("elo_diff", 0.0)),
     }
+
+
+def _apply_one_pending_map(
+    *,
+    pending_map: dict[str, Any],
+    winner_slot: str,
+    applied_maps: dict[str, Any],
+    snapshot: dict[str, Any],
+    model_getter: Callable[[], HybridPlayerRosterEloModel],
+    previous_scores: dict[str, int],
+    current_scores: dict[str, int],
+    normalized_series_key: str,
+    series_url: str,
+) -> dict[str, Any] | None:
+    """Apply one queued map context to team ratings, or return None.
+
+    None covers three cases the caller should just drop the entry for: no
+    map key, the map (or its match_id under the sourcetv `match_id ==
+    series_id` alias — ЗАЩИТА ОТ ДВОЙНОГО ПРИМЕНЕНИЯ идёт по match_id, а не
+    по ключу карты: он прыгает на каждый опрос) already sits in
+    `applied_maps`, or its stored match_record can't be rebuilt. None of
+    these will ever resolve productively by retrying.
+    """
+    pending_map_key = str(pending_map.get("map_key") or "").strip()
+    if not pending_map_key:
+        return None
+    first_radiant_pending = bool(pending_map.get("first_team_is_radiant"))
+    pm_rec = pending_map.get("match_record") if isinstance(pending_map.get("match_record"), dict) else {}
+    pm_mid = int(pm_rec.get("match_id") or 0)
+    mid_is_series = _match_id_is_series(pm_mid, normalized_series_key, pm_rec.get("series_id"))
+    seen_mid = (
+        (not mid_is_series)
+        and pm_mid > 0
+        and any(int((v or {}).get("match_id") or 0) == pm_mid for v in applied_maps.values() if isinstance(v, dict))
+    )
+    if pending_map_key in applied_maps or seen_mid:
+        return None
+    radiant_won = winner_slot == ("first" if first_radiant_pending else "second")
+    pending_match = _deserialize_match_record(pm_rec, radiant_win=radiant_won)
+    if pending_match is None:
+        return None
+    applied_maps[pending_map_key] = {
+        "series_key": normalized_series_key,
+        "series_url": str(series_url),
+        "winner_slot": winner_slot,
+        "radiant_win": bool(radiant_won),
+        "applied_at": int(time.time()),
+        "match_id": int(pending_match.match_id),
+    }
+    return _build_live_applied_update(
+        snapshot=snapshot,
+        model=model_getter(),
+        match=pending_match,
+        map_key=pending_map_key,
+        series_key=normalized_series_key,
+        series_url=str(series_url),
+        winner_slot=winner_slot,
+        radiant_win=bool(radiant_won),
+        previous_scores=previous_scores,
+        current_scores=current_scores,
+        first_team_is_radiant=first_radiant_pending,
+    )
+
+
+def _drain_pending_map_queue(
+    *,
+    pending_maps: list[dict[str, Any]],
+    previous_scores: dict[str, int],
+    current_scores: dict[str, int],
+    applied_maps: dict[str, Any],
+    snapshot: dict[str, Any],
+    model_getter: Callable[[], HybridPlayerRosterEloModel],
+    normalized_series_key: str,
+    series_url: str,
+    winner_lookup: Any = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Resolve as many queued map contexts as the observed score explains.
+
+    Returns (remaining_queue, applied_updates), applied_updates ordered
+    oldest-resolved-first (FIFO: the queued map that started first is
+    credited with the first observed win). See
+    `_winner_slots_from_score_advance` for what counts as explained by the
+    score jump. When it can't tell (both sides moved and not by exactly one
+    map each) and a `winner_lookup` was given, only the oldest queued map is
+    tried against it directly — the same single-map path `register_live_map_context`
+    always had; the live path's series score never moves within one poll
+    window (E-224), so this is the only route it resolves through, and the
+    bulk of orphan resolution still happens in cyberscore_try.py's
+    `_sweep_orphaned_live_elo`, outside this module.
+    """
+    remaining = list(pending_maps)
+    applied_updates: list[dict[str, Any]] = []
+    winner_slots = _winner_slots_from_score_advance(previous_scores, current_scores)
+    if winner_slots is not None:
+        for winner_slot in winner_slots:
+            if not remaining:
+                break
+            pending_map = remaining.pop(0)
+            update = _apply_one_pending_map(
+                pending_map=pending_map,
+                winner_slot=winner_slot,
+                applied_maps=applied_maps,
+                snapshot=snapshot,
+                model_getter=model_getter,
+                previous_scores=previous_scores,
+                current_scores=current_scores,
+                normalized_series_key=normalized_series_key,
+                series_url=series_url,
+            )
+            if update is not None:
+                applied_updates.append(update)
+        return remaining, applied_updates
+
+    if winner_lookup is not None and remaining:
+        pending_map = remaining[0]
+        pending_map_key = str(pending_map.get("map_key") or "").strip()
+        first_radiant_pending = bool(pending_map.get("first_team_is_radiant"))
+        if pending_map_key:
+            try:
+                looked = winner_lookup(pending_map_key, pending_map)
+            except Exception:
+                looked = None
+            if isinstance(looked, bool):
+                winner_slot = (
+                    ("first" if first_radiant_pending else "second") if looked
+                    else ("second" if first_radiant_pending else "first")
+                )
+                remaining.pop(0)
+                update = _apply_one_pending_map(
+                    pending_map=pending_map,
+                    winner_slot=winner_slot,
+                    applied_maps=applied_maps,
+                    snapshot=snapshot,
+                    model_getter=model_getter,
+                    previous_scores=previous_scores,
+                    current_scores=current_scores,
+                    normalized_series_key=normalized_series_key,
+                    series_url=series_url,
+                )
+                if update is not None:
+                    applied_updates.append(update)
+    return remaining, applied_updates
 
 
 def _build_snapshot_dict(
@@ -1550,133 +1733,91 @@ def register_live_map_context(
         applied_maps = progress["applied_maps"]
         series_state = pending_series.get(normalized_series_key)
         applied_update: dict[str, Any] | None = None
+        applied_updates: list[dict[str, Any]] = []
+        pending_maps_queue: list[dict[str, Any]] = []
         wrote_model_state = False
 
         if isinstance(series_state, dict):
             previous_scores_raw = series_state.get("last_scores")
             previous_scores = previous_scores_raw if isinstance(previous_scores_raw, dict) else {"first": 0, "second": 0}
-            winner_slot = _winner_slot_from_scores(previous_scores, current_scores)
-            pending_map = series_state.get("pending_map")
-            if isinstance(pending_map, dict):
-                pending_map_key = str(pending_map.get("map_key") or "").strip()
-                first_radiant_pending = bool(pending_map.get("first_team_is_radiant"))
-                radiant_won_direct = None
-                if winner_slot is not None:
-                    radiant_won_direct = winner_slot == ("first" if first_radiant_pending else "second")
-                elif winner_lookup is not None and pending_map_key:
-                    # СЧЁТ СЕРИИ НА ЖИВОМ ПУТИ НЕ ДВИГАЕТСЯ. По E-224 внутри окна
-                    # наблюдения одной серии он неизменен, поэтому механизм
-                    # «победитель = сдвиг счёта» не срабатывает НИ РАЗУ: за прогон
-                    # 0 применений этим путём против 390 аварийным подбором, и у
-                    # 132 серий из 132 применена ровно одна карта. Здесь исход
-                    # берётся снаружи: справке передаётся и ключ, и САМА запись
-                    # отложенной карты — по ключу её не опознать, потому что прод
-                    # пишет `match_id = series_id` и все карты серии несут один
-                    # номер. В бою справка спрашивает матчи КОМАНДЫ за сутки
-                    # (`stratz_map_result.series_history`), счёт больше не нужен.
-                    try:
-                        looked = winner_lookup(pending_map_key, pending_map)
-                    except Exception:
-                        looked = None
-                    if isinstance(looked, bool):
-                        radiant_won_direct = looked
-                        winner_slot = (("first" if first_radiant_pending else "second")
-                                       if looked else
-                                       ("second" if first_radiant_pending else "first"))
-                # ЗАЩИТА ОТ ДВОЙНОГО ПРИМЕНЕНИЯ ИДЁТ ПО match_id, А НЕ ПО КЛЮЧУ:
-                # ключ карты в проде меняется по 12 раз за одну карту, и та же
-                # карта под новым ключом прошла бы проверку «ключа нет в
-                # applied_maps» и сдвинула бы рейтинг второй раз.
-                # ИСКЛЮЧЕНИЕ: sourcetv пишет `match_id = series_id`. Это не id
-                # карты — после первой применённой карты дедуп глушил остальные
-                # карты серии (Vision–Spirit: одна из пяти).
-                _pm_rec = pending_map.get("match_record") if isinstance(pending_map.get("match_record"), dict) else {}
-                _pm_mid = int(_pm_rec.get("match_id") or 0)
-                _mid_is_series = _match_id_is_series(
-                    _pm_mid, normalized_series_key, _pm_rec.get("series_id"))
-                _seen_mid = (
-                    (not _mid_is_series)
-                    and _pm_mid > 0
-                    and any(
-                        int((v or {}).get("match_id") or 0) == _pm_mid
-                        for v in applied_maps.values() if isinstance(v, dict)
-                    )
-                )
-                if (radiant_won_direct is not None and pending_map_key
-                        and pending_map_key not in applied_maps and not _seen_mid):
-                    radiant_won = radiant_won_direct
-                    pending_match = _deserialize_match_record(
-                        pending_map.get("match_record") if isinstance(pending_map.get("match_record"), dict) else {},
-                        radiant_win=radiant_won,
-                    )
-                    if pending_match is not None:
-                        applied_maps[pending_map_key] = {
-                            "series_key": normalized_series_key,
-                            "series_url": str(series_state.get("series_url") or series_url),
-                            "winner_slot": winner_slot,
-                            "radiant_win": bool(radiant_won),
-                            "applied_at": int(time.time()),
-                            "match_id": int(pending_match.match_id),
-                        }
-                        applied_update = _build_live_applied_update(
-                            snapshot=snapshot,
-                            model=_model(),
-                            match=pending_match,
-                            map_key=pending_map_key,
-                            series_key=normalized_series_key,
-                            series_url=str(series_state.get("series_url") or series_url),
-                            winner_slot=winner_slot,
-                            radiant_win=bool(radiant_won),
-                            previous_scores=previous_scores,
-                            current_scores=current_scores,
-                            first_team_is_radiant=first_radiant_pending,
-                        )
-                        wrote_model_state = True
+            pending_maps_queue = _pending_maps_list(series_state)
+            # E-224: раньше единственный слот `pending_map` разбирался только на
+            # сдвиг счёта РОВНО +1 у одной стороны. Пропущенный опрос двигает
+            # его на 2 (одна карта пропущена целиком) или на +1 у ОБЕИХ сразу
+            # (две карты пропущены по одной на сторону) — тогда исход терялся.
+            # Теперь очередь хранит каждую незакрытую карту и сливает её FIFO
+            # настолько, насколько объясняет сдвиг счёта.
+            pending_maps_queue, applied_updates = _drain_pending_map_queue(
+                pending_maps=pending_maps_queue,
+                previous_scores=previous_scores,
+                current_scores=current_scores,
+                applied_maps=applied_maps,
+                snapshot=snapshot,
+                model_getter=_model,
+                normalized_series_key=normalized_series_key,
+                series_url=str(series_state.get("series_url") or series_url),
+                winner_lookup=winner_lookup,
+            )
+            if applied_updates:
+                applied_update = applied_updates[-1]
+                wrote_model_state = True
 
         current_map_already_applied = normalized_map_key in applied_maps
         if current_map_already_applied:
             pending_series.pop(normalized_series_key, None)
         else:
             # Ключ карты в проде прыгает (.10 .11 … .65) на каждый опрос.
-            # Пока исход неизвестен, pending остаётся, если это ТА ЖЕ карта
-            # (тот же match_id или оба номера — series_id). Другой уникальный
-            # match_id — новая карта, pending сменяется.
-            pending_mid = 0
-            pending_series_id = None
-            if isinstance(series_state, dict) and isinstance(series_state.get("pending_map"), dict):
-                pending_rec = series_state["pending_map"].get("match_record")
-                if isinstance(pending_rec, dict):
-                    pending_mid = int(pending_rec.get("match_id") or 0)
-                    pending_series_id = pending_rec.get("series_id")
+            # Пока исход неизвестен, самая свежая отложенная карта в очереди
+            # остаётся собой, если это ТА ЖЕ карта (тот же match_id или оба
+            # номера — series_id). Другой уникальный match_id — новая карта,
+            # она ДОБАВЛЯЕТСЯ в очередь, а не заменяет старую (раньше именно
+            # эта замена теряла карту N, не дождавшись сдвига счёта под неё).
+            tail_pending = pending_maps_queue[-1] if pending_maps_queue else None
+            tail_mid = 0
+            tail_series_id = None
+            if isinstance(tail_pending, dict):
+                tail_rec = tail_pending.get("match_record")
+                if isinstance(tail_rec, dict):
+                    tail_mid = int(tail_rec.get("match_id") or 0)
+                    tail_series_id = tail_rec.get("series_id")
             incoming_mid = int(getattr(match_record, "match_id", 0) or 0)
             distinct_unique = (
                 incoming_mid > 0
-                and pending_mid > 0
-                and incoming_mid != pending_mid
+                and tail_mid > 0
+                and incoming_mid != tail_mid
                 and not _match_id_is_series(incoming_mid, normalized_series_key,
                                             getattr(match_record, "series_id", None))
-                and not _match_id_is_series(pending_mid, normalized_series_key,
-                                            pending_series_id)
+                and not _match_id_is_series(tail_mid, normalized_series_key,
+                                            tail_series_id)
             )
-            reuse_pending = (
-                applied_update is None
-                and isinstance(series_state, dict)
-                and isinstance(series_state.get("pending_map"), dict)
-                and str(series_state["pending_map"].get("map_key") or "").strip()
+            reuse_tail = (
+                tail_pending is not None
+                and str(tail_pending.get("map_key") or "").strip()
                 and not distinct_unique
             )
+            if reuse_tail:
+                pending_maps_queue = pending_maps_queue[:-1] + [dict(tail_pending)]
+            elif len(pending_maps_queue) < _MAX_PENDING_MAPS:
+                pending_maps_queue = pending_maps_queue + [{
+                    "map_key": normalized_map_key,
+                    "match_record": _serialize_match_record(match_record),
+                    "first_team_is_radiant": bool(first_team_is_radiant),
+                    "registered_at": int(time.time()),
+                }]
+            # иначе очередь уже на пределе (≤6) — новую карту не берём, чтобы
+            # не расти безгранично; существующие карты продолжают ждать
+            # своего сдвига счёта или орфан-подбор в cyberscore_try.py.
             pending_series[normalized_series_key] = {
                 "series_key": normalized_series_key,
                 "series_url": str(series_url or ""),
                 "last_scores": current_scores,
-                "pending_map": (
-                    dict(series_state["pending_map"]) if reuse_pending else {
-                        "map_key": normalized_map_key,
-                        "match_record": _serialize_match_record(match_record),
-                        "first_team_is_radiant": bool(first_team_is_radiant),
-                        "registered_at": int(time.time()),
-                    }
-                ),
+                "pending_maps": pending_maps_queue,
+                # Legacy mirror for readers that still expect a single
+                # `pending_map` slot (base/cyberscore_try.py's orphan sweep
+                # reads this key straight from the JSON file, not through
+                # this module) — always the oldest unresolved map, which is
+                # also the one that should be resolved next.
+                "pending_map": pending_maps_queue[0] if pending_maps_queue else None,
                 "updated_at": int(time.time()),
             }
 
@@ -1695,6 +1836,7 @@ def register_live_map_context(
 
     return {
         "applied_update": applied_update,
+        "applied_updates": applied_updates,
         "series_key": normalized_series_key,
         "map_key": normalized_map_key,
         "current_scores": current_scores,
@@ -1760,45 +1902,32 @@ def finalize_live_series_from_scores(
         applied_maps = progress["applied_maps"]
         series_state = pending_series.get(normalized_series_key)
         applied_update: dict[str, Any] | None = None
+        applied_updates: list[dict[str, Any]] = []
         wrote_model_state = False
 
         if isinstance(series_state, dict):
             previous_scores_raw = series_state.get("last_scores")
             previous_scores = previous_scores_raw if isinstance(previous_scores_raw, dict) else {"first": 0, "second": 0}
-            winner_slot = _winner_slot_from_scores(previous_scores, current_scores)
-            pending_map = series_state.get("pending_map")
-            if winner_slot is not None and isinstance(pending_map, dict):
-                pending_map_key = str(pending_map.get("map_key") or "").strip()
-                if pending_map_key and pending_map_key not in applied_maps:
-                    first_radiant_pending = bool(pending_map.get("first_team_is_radiant"))
-                    radiant_won = winner_slot == ("first" if first_radiant_pending else "second")
-                    pending_match = _deserialize_match_record(
-                        pending_map.get("match_record") if isinstance(pending_map.get("match_record"), dict) else {},
-                        radiant_win=radiant_won,
-                    )
-                    if pending_match is not None:
-                        applied_maps[pending_map_key] = {
-                            "series_key": normalized_series_key,
-                            "series_url": str(series_state.get("series_url") or series_url),
-                            "winner_slot": winner_slot,
-                            "radiant_win": bool(radiant_won),
-                            "applied_at": int(time.time()),
-                            "match_id": int(pending_match.match_id),
-                        }
-                        applied_update = _build_live_applied_update(
-                            snapshot=snapshot,
-                            model=_model(),
-                            match=pending_match,
-                            map_key=pending_map_key,
-                            series_key=normalized_series_key,
-                            series_url=str(series_state.get("series_url") or series_url),
-                            winner_slot=winner_slot,
-                            radiant_win=bool(radiant_won),
-                            previous_scores=previous_scores,
-                            current_scores=current_scores,
-                            first_team_is_radiant=first_radiant_pending,
-                        )
-                        wrote_model_state = True
+            pending_maps_queue = _pending_maps_list(series_state)
+            # Same FIFO drain as register_live_map_context (E-224): the final
+            # score can explain more than one still-queued map (a missed poll,
+            # or the series simply ending two maps after the last observation).
+            # This function has no winner_lookup, so genuinely ambiguous
+            # remainders just stay unresolved below — the unconditional pop
+            # at series end already discarded them before this fix too.
+            _remaining, applied_updates = _drain_pending_map_queue(
+                pending_maps=pending_maps_queue,
+                previous_scores=previous_scores,
+                current_scores=current_scores,
+                applied_maps=applied_maps,
+                snapshot=snapshot,
+                model_getter=_model,
+                normalized_series_key=normalized_series_key,
+                series_url=str(series_state.get("series_url") or series_url),
+            )
+            if applied_updates:
+                applied_update = applied_updates[-1]
+                wrote_model_state = True
 
         pending_series.pop(normalized_series_key, None)
         _write_json_atomic(progress_path, progress)
@@ -1816,6 +1945,7 @@ def finalize_live_series_from_scores(
 
     return {
         "applied_update": applied_update,
+        "applied_updates": applied_updates,
         "series_key": normalized_series_key,
         "current_scores": current_scores,
     }
