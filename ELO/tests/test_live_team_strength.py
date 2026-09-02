@@ -1188,7 +1188,10 @@ def test_winner_lookup_applies_pending_map_when_series_score_stands_still(tmp_pa
 
 
 def test_winner_lookup_does_not_apply_same_match_twice(tmp_path) -> None:
-    """Ключ карты меняется по 12 раз за карту — применить её дважды нельзя."""
+    """Ключ карты меняется по 12 раз за карту — применить её дважды нельзя,
+    даже когда карта вернулась в очередь под новым ключом позади ещё не
+    применённой карты (E-224: очередь FIFO, а не единственный слот, который
+    раньше эту вторую карту тихо терял при перезаписи)."""
     _reset_live_team_strength_caches()
     env = _live_env(tmp_path)
     common = dict(series_key="425663", series_url="dltv.org/matches/425663", **env)
@@ -1200,7 +1203,10 @@ def test_winner_lookup_does_not_apply_same_match_twice(tmp_path) -> None:
         first_team_is_radiant=True, match_record=_rec(102),
         winner_lookup=lambda key, pm: False, **common)
     assert first["applied_update"] is not None
-    # та же карта 101 снова становится отложенной под ДРУГИМ ключом
+    assert first["applied_update"]["match_id"] == 101
+    # та же карта 101 снова становится отложенной под ДРУГИМ ключом — теперь
+    # уже второй в очереди, позади карты 102, которую единственный слот
+    # раньше как раз этой перезаписью и терял.
     register_live_map_context(
         map_key="dltv.org/matches/425663.27", first_team_score=0, second_team_score=0,
         first_team_is_radiant=True, match_record=_rec(101), **common)
@@ -1208,7 +1214,16 @@ def test_winner_lookup_does_not_apply_same_match_twice(tmp_path) -> None:
         map_key="dltv.org/matches/425665.0", first_team_score=0, second_team_score=0,
         first_team_is_radiant=True, match_record=_rec(103),
         winner_lookup=lambda key, pm: False, **common)
-    assert again["applied_update"] is None, "match_id 101 уже применён"
+    # 102 стояла в очереди первой (перед повторно зарегистрированной 101) и
+    # применяется корректно — раньше она терялась безвозвратно.
+    assert again["applied_update"] is not None
+    assert again["applied_update"]["match_id"] == 102
+    # а 101, дойдя до головы очереди под новым ключом, второй раз не применяется:
+    replay = register_live_map_context(
+        map_key="dltv.org/matches/425666.0", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(104),
+        winner_lookup=lambda key, pm: True, **common)
+    assert replay["applied_update"] is None, "match_id 101 уже применён"
 
 
 def test_winner_lookup_failure_is_not_a_loss(tmp_path) -> None:
@@ -1274,3 +1289,104 @@ def test_jumping_map_keys_do_not_replace_pending_until_applied(tmp_path) -> None
         winner_lookup=lambda key, pm: False, **common)
     assert applied["applied_update"] is not None
     assert applied["applied_update"]["map_key"] == "dltv.org/matches/425663.10"
+
+
+def test_pending_queue_applies_every_map_in_order_across_polls(tmp_path) -> None:
+    """E-224 регресс: обычный опрос по одной карте за раз не должен ничего терять.
+
+    Карты 1 и 2 регистрируются подряд, пока счёт ещё 0:0 (ровно то, что раньше
+    единственный слот `pending_map` тут же терял — вторая регистрация
+    перезаписывала первую). Дальше счёт идёт по одной карте за шаг: три сдвига
+    дают три применения в очередь-порядке с правильными победителями.
+    """
+    _reset_live_team_strength_caches()
+    env = _live_env(tmp_path)
+    common = dict(series_key="425663", series_url="dltv.org/matches/425663", **env)
+
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.map1", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(101), **common)
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.map2", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(102), **common)
+
+    r_1_0 = register_live_map_context(
+        map_key="dltv.org/matches/425663.map3", first_team_score=1, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(103), **common)
+    r_1_1 = register_live_map_context(
+        map_key="dltv.org/matches/425663.map4", first_team_score=1, second_team_score=1,
+        first_team_is_radiant=True, match_record=_rec(104), **common)
+    r_2_1 = register_live_map_context(
+        map_key="dltv.org/matches/425663.map5", first_team_score=2, second_team_score=1,
+        first_team_is_radiant=True, match_record=_rec(105), **common)
+
+    assert r_1_0["applied_update"] is not None
+    assert r_1_0["applied_update"]["match_id"] == 101
+    assert r_1_0["applied_update"]["winner_slot"] == "first"
+
+    assert r_1_1["applied_update"] is not None
+    assert r_1_1["applied_update"]["match_id"] == 102
+    assert r_1_1["applied_update"]["winner_slot"] == "second"
+
+    assert r_2_1["applied_update"] is not None
+    assert r_2_1["applied_update"]["match_id"] == 103
+    assert r_2_1["applied_update"]["winner_slot"] == "first"
+
+
+def test_pending_queue_applies_both_missed_maps_on_a_two_map_score_jump(tmp_path) -> None:
+    """E-224 «пропущенный опрос»: счёт прыгает 0:0 → 2:0 через одну сторону.
+
+    Раньше `_winner_slot_from_scores` требовала РОВНО +1 у одной стороны и
+    отдавала None на сдвиге на 2 — обе отложенные карты повисали. Теперь
+    сдвиг на N объясняет N побед подряд той же стороны, и обе применяются по
+    очереди.
+    """
+    _reset_live_team_strength_caches()
+    env = _live_env(tmp_path)
+    common = dict(series_key="425663", series_url="dltv.org/matches/425663", **env)
+
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.map1", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(201), **common)
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.map2", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(202), **common)
+
+    jumped = register_live_map_context(
+        map_key="dltv.org/matches/425663.map3", first_team_score=2, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(203), **common)
+
+    assert jumped["applied_updates"] is not None
+    assert len(jumped["applied_updates"]) == 2
+    assert [u["match_id"] for u in jumped["applied_updates"]] == [201, 202]
+    assert [u["winner_slot"] for u in jumped["applied_updates"]] == ["first", "first"]
+    assert jumped["applied_update"] == jumped["applied_updates"][-1]
+
+
+def test_pending_queue_applies_both_maps_when_both_sides_advance_by_one(tmp_path) -> None:
+    """E-224 «две карты пропущены, по одной на сторону»: счёт 0:0 → 1:1 разом.
+
+    Раньше это тоже давало None (сдвиг не (1,0)/(0,1)) и обе карты терялись.
+    Какая из двух отложенных карт кому засчиталась, по счёту не различить, но
+    порядок очереди сохраняет: обе карты применяются, по одной победе на
+    сторону.
+    """
+    _reset_live_team_strength_caches()
+    env = _live_env(tmp_path)
+    common = dict(series_key="425663", series_url="dltv.org/matches/425663", **env)
+
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.map1", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(301), **common)
+    register_live_map_context(
+        map_key="dltv.org/matches/425663.map2", first_team_score=0, second_team_score=0,
+        first_team_is_radiant=True, match_record=_rec(302), **common)
+
+    both_advanced = register_live_map_context(
+        map_key="dltv.org/matches/425663.map3", first_team_score=1, second_team_score=1,
+        first_team_is_radiant=True, match_record=_rec(303), **common)
+
+    assert both_advanced["applied_updates"] is not None
+    assert len(both_advanced["applied_updates"]) == 2
+    assert [u["match_id"] for u in both_advanced["applied_updates"]] == [301, 302]
+    assert [u["winner_slot"] for u in both_advanced["applied_updates"]] == ["first", "second"]
