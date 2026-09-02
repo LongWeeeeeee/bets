@@ -17,14 +17,21 @@
 #   start_date_time   1786147200 = 2026-08-08T00:00:00 UTC — последний собранный
 #                     файл с матчами (09.08.2026) минус сутки на перекрытие окна
 #
-# ГДЕ. На Маке: новые прокси лежат в локальном keys.py (правка 01.09 23:09), на
-# serv1 keys.py от 22.08 со старыми мёртвыми прокси; плюс обход не конкурирует за
-# ресурсы с живым пайплайном на боевой машине.
+# ГДЕ. Работает и на Mac, и на serv1 (03.09 прогон перенесён на serv1: там свой
+# keys.py, и обход не конкурирует с локальной пересборкой снимков). Пул и окно
+# раннер берёт ПО ФАКТУ машины: на serv1 пять пар уже сведены в keys.py, на Mac
+# пятая пара добавляется в раннере; start_date_time считается из собственного
+# корпуса (дата последнего собранного файла минус сутки).
 #
 # Запуск: bash scripts/run/get_pubs_full_recrawl.sh
 set -u
-cd /Users/alex/Documents/ingame
-PY=venv_catboost/bin/python3
+if [ -d /root/main/base ]; then
+  cd /root/main
+  PY=venv/bin/python3
+else
+  cd /Users/alex/Documents/ingame
+  PY=venv_catboost/bin/python3
+fi
 export PYTHONUNBUFFERED=1
 STAMP=$(date +%Y%m%d_%H%M)
 PUB=bets_data/analise_pub_matches
@@ -40,9 +47,15 @@ for f in "$CUR" "$GRAPH"; do
   fi
 done
 
+mkdir -p runtime
 LOG="runtime/get_pubs_${STAMP}_full_recrawl_5proxies.log"
-# caffeinate -i: обход идёт сутками, сон мака оборвал бы его молча.
-nohup caffeinate -i $PY runtime/experiments/pubs-rebuild/run_full_recrawl.py > "$LOG" 2>&1 &
+# caffeinate -i есть только на Mac: там обход идёт сутками и сон оборвал бы его
+# молча. На serv1 процесс и так живёт под systemd-машиной без сна.
+if command -v caffeinate >/dev/null 2>&1; then
+  nohup caffeinate -i $PY runtime/experiments/pubs-rebuild/run_full_recrawl.py > "$LOG" 2>&1 &
+else
+  nohup $PY runtime/experiments/pubs-rebuild/run_full_recrawl.py > "$LOG" 2>&1 &
+fi
 PID=$!
 echo "$PID" > runtime/get_pubs.pid
 echo "PID=$PID"
