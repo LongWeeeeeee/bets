@@ -14,7 +14,7 @@
 - **map_id_check единый для всех режимов** (`--odds`, `--no-odds`, presence и т.д.) — путь `~/.local/state/ingame/map_id_check.txt` (`MAP_ID_CHECK_PATH`). При любом перезапуске чисти его.
 - **Политика `log.txt`:** НЕ усекай лог во время тестов, проб или mid-investigation рестартов. Усекай ТОЛЬКО при bug fix (git push → production pull → restart). Логические изменения (новые пороги, dispatch-правила, твики множителей) лог НЕ чистят.
 - Перед входом live runtime в основной CyberScore/DLTV цикл: валидируй каждый live-прокси до 3 раз; мёртвые прокси немедленно убирай из in-memory live proxy pool. Не трогай маппинги API-ключей в `base/keys.py` при этом pruning.
-- После изменений в `cyberscore` live pipeline (`base/cyberscore_try.py`, `base/functions.py`, `base/dota2protracker.py`, bookmaker/live dispatch): запушь commit в `main`, подтяни код на production, убей старый процесс, очисти `map_id_check.txt`, перезапусти runtime с новым кодом.
+- После изменений в `cyberscore` live pipeline (`base/cyberscore_try.py`, `base/functions.py`, `base/dota2protracker.py`, bookmaker/live dispatch): запушь commit в `main`, подтяни код на production (`git pull --ff-only`) и перезапусти юнит по systemd-процедуре из правила выше (`systemctl stop cyberscore` → очистка `map_id_check.txt` → `systemctl start cyberscore`).
 - При удалении нерабочих прокси в `base/keys.py` убирай их только из runtime proxy constants/pools; НЕ удаляй и НЕ меняй записи `api_to_proxy` / `api_to_keys` и связанные API-ключи.
 - **Rebuild-then-replace, никогда delete-then-create.** При регенерации словаря, sqlite DB, снапшота или артефакта пиши новую версию во временный путь (`<target>.tmp`) и атомарно переименовывай поверх только после успешной сборки.
 - **Никогда не удаляй файлы, директории, бэкапы или артефакты** (локально или на сервере) без явного подтверждения пользователя.
@@ -44,40 +44,31 @@
 
 ## Запуск и деплой на сервере
 
-**Перед запуском всегда проверяй уже запущенную версию и убивай предыдущий процесс:**
+Прод-рантайм управляется systemd-юнитом `cyberscore.service` (с drop-in'ами в
+`/etc/systemd/system/cyberscore.service.d/`). Ручной запуск
+`python3 base/cyberscore_try.py` и `pkill`/`kill` по PID **запрещены**: systemd
+перезапустит убитый процесс, а параллельный ручной экземпляр получит другой
+env и другой лог — тот же класс беды, что у `sourcetv-probe.service`.
 
-```bash
-# Проверить запущенные процессы
-ps aux | grep cyberscore
-pgrep -f cyberscore
+**Перезапуск (в т.ч. после деплоя):**
 
-# Убить предыдущий процесс
-pkill -f cyberscore
-# или по PID
-kill <PID>
-```
-
-Затем очистить map_id_check для переанализа матчей:
-```bash
-rm -f ~/.local/state/ingame/map_id_check.txt
-```
-
-**Деплой изменений:**
-1. Git: `git add . && git commit -m "message" && git push origin main`
-2. На сервере: `cd /root/main && git pull origin main`
-3. Если сервер без git — rsync:
-   ```bash
-   rsync -avz --exclude='venv*' --exclude='__pycache__' --exclude='*.log' \
-     ELO/ base/ root@23.26.193.167:/root/main/
-   ```
-4. Очистить map_id_check: `rm -f ~/.local/state/ingame/map_id_check.txt`
-
-Запуск:
 ```bash
 cd /root/main
-source venv/bin/activate
-python3 base/cyberscore_try.py --no-odds
+systemctl stop cyberscore
+rm -f ~/.local/state/ingame/map_id_check.txt
+systemctl start cyberscore
+systemctl --no-pager status cyberscore
 ```
+
+Готовый скрипт: `scripts/run/restart_cyberscore.sh` (делает ровно это).
+
+**Деплой изменений:**
+1. Git: `git add <конкретные файлы> && git commit -m "message" && git push origin main`
+2. На сервере: `cd /root/main && git pull --ff-only origin main` (перед pull сверь `git diff --name-only` с входящими коммитами — `base/id_to_names.py` и `data/team_org_aliases.json` на serv1 всегда грязные)
+3. Смоук на продовском python 3.12: `venv/bin/python3 -m py_compile base/cyberscore_try.py` и import-проверка изменённых модулей (локальный venv — 3.9, не ловит 3.12-несовместимость)
+4. Перезапуск по процедуре выше (очистка `map_id_check` — обязательна)
+
+Машины сводятся только через `origin` (`github.com:LongWeeeeeee/bets`), не rsync.
 
 ### Патч Playwright-драйвера (pageError.location guard)
 

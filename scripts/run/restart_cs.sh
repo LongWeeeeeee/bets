@@ -1,7 +1,5 @@
 #!/bin/bash
-pkill -f 'python3.*cyberscore_try'
-sleep 2
-cd /root/main
-bash scripts/run/run_dltv2.sh > /tmp/dltv_restart.log 2>&1 &
-sleep 1
-ps aux | grep cyberscore_try | grep -v grep
+# Совместимость: раньше здесь был pkill + ручной nohup-запуск через run_dltv2.sh
+# (html-режим вместо продового sourcetv). Прод управляется systemd —
+# делегируем каноническому restart-скрипту (docs/RUNTIME_RULES.md:13).
+exec bash "$(cd "$(dirname "$0")" && pwd)/restart_cyberscore.sh" "$@"

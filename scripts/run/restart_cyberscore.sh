@@ -1,8 +1,12 @@
 #!/bin/bash
+# Перезапуск прода — только через systemd (docs/RUNTIME_RULES.md:13).
+# pkill/kill по PID дают второй экземпляр: systemd поднимает процесс сам.
+set -e
 cd /root/main
-pkill -f cyberscore || true
-sleep 2
+
+systemctl stop cyberscore
 rm -f ~/.local/state/ingame/map_id_check.txt
-source venv/bin/activate
-nohup python3 base/cyberscore_try.py --no-odds > cyberscore.log 2>&1 &
-echo "Started with PID $!"
+systemctl start cyberscore
+
+sleep 3
+systemctl --no-pager --lines=15 status cyberscore
