@@ -151,9 +151,21 @@ def _load() -> bool:
             import joblib  # локальный импорт: модуль обязан импортироваться без sklearn
             encoder = joblib.load(MODEL_DIR / "win_feature_encoder.joblib")
             model = joblib.load(MODEL_DIR / "radiant_win_model.joblib")
+            # Сверка ширины: кодировщик и модель из разных сборок дают мусорный
+            # индекс молча (класс E-201, −0.0046 AUC). ValueError уходит в тот же
+            # except, то есть вето снимается — по контракту модуля отказ всегда
+            # в сторону разрешения, но теперь он виден в логе.
+            _draft_paths.check_width(encoder, model)
+            _draft_paths.check_thresholds_catalog(MODEL_DIR)
             _state.update(encoder=encoder, model=model, error=None)
+            print(f"🧬 Драфт-модель вето загружена: {_draft_paths.model_fingerprint(MODEL_DIR)}",
+                  flush=True)
         except Exception as exc:                     # noqa: BLE001 — любая поломка = нет вето
             _state.update(encoder=None, model=None, error=f"{type(exc).__name__}: {exc}")
+            # `load_error()` для этой модели никто не зовёт (в отличие от late и
+            # early_nw), поэтому без печати отказ загрузки был бы невидимым.
+            print(f"⚠️ Драфт-модель вето НЕ загружена ({MODEL_DIR.name}): "
+                  f"{_state['error']} — вето предматчевой модели снято", flush=True)
         _state["loaded"] = True
     return _state["model"] is not None
 
