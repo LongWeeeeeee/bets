@@ -25792,7 +25792,7 @@ def _predict_kills_bet(
         ):
             row[key] = float("nan")
         elif row[key] is None:
-            row[key] = float("nanps")
+            row[key] = float("nan")
         elif isinstance(row[key], str) and row[key].strip().lower() == "none":
             row[key] = float("nan")
 

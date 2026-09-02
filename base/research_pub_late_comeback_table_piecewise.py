@@ -369,7 +369,11 @@ def main() -> int:
     }
 
     args.output_json.parent.mkdir(parents=True, exist_ok=True)
-    args.output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Атомарно: дефолтный путь — боевой словарь, который читает прод, поэтому
+    # обрыв записи не должен оставлять его усечённым.
+    tmp_json = args.output_json.with_name(args.output_json.name + ".tmp")
+    tmp_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_json.replace(args.output_json)
     _write_csv(args.output_csv, output_rows)
     return 0
 

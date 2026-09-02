@@ -102,9 +102,12 @@ def build_payload() -> Dict[str, object]:
 
 def main() -> None:
     payload = build_payload()
-    with OUTPUT_PATH.open("w", encoding="utf-8") as f:
+    # Атомарно: прямая запись усечёт файл на месте, и обрыв оставит словарь неполным.
+    tmp_path = OUTPUT_PATH.with_name(OUTPUT_PATH.name + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
         f.write("\n")
+    tmp_path.replace(OUTPUT_PATH)
     print(f"Wrote {OUTPUT_PATH}")
     meta = payload.get("meta") or {}
     print(json.dumps(meta, ensure_ascii=False))
