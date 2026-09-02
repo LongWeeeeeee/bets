@@ -5529,7 +5529,7 @@ def _load_star_confidence_calibration() -> Dict[str, Dict[int, float]]:
     if not isinstance(phases, dict):
         return {}
     out: Dict[str, Dict[int, float]] = {}
-    for phase in ("early", "late"):
+    for phase in ("early", "late", "all"):
         phase_map = phases.get(phase)
         if not isinstance(phase_map, dict):
             continue
@@ -5551,7 +5551,7 @@ if not (DATA_DIR / "star_thresholds_by_wr.json").exists():
     _report_missing_runtime_file("star_thresholds_by_wr.json", DATA_DIR / "star_thresholds_by_wr.json")
 if not STAR_CONFIDENCE_CALIBRATION_PATH.exists():
     _report_missing_runtime_file("star_confidence_calibration.json", STAR_CONFIDENCE_CALIBRATION_PATH)
-STAR_ODDS_USE_CALIBRATION = _safe_bool_env("STAR_ODDS_USE_CALIBRATION", False)
+STAR_ODDS_USE_CALIBRATION = _safe_bool_env("STAR_ODDS_USE_CALIBRATION", True)
 LIVE_LANE_ANALYSIS_ENABLED = _safe_bool_env("LIVE_LANE_ANALYSIS_ENABLED", True)
 
 # Fallback ladder for dynamic WR display when only base WR=60 thresholds are available.
