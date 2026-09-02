@@ -455,6 +455,28 @@ def test_delayed_watcher_keeps_sending_valid_late27_signal(monkeypatch) -> None:
     )
 
 
+def test_delayed_release_without_comeback_watcher_is_still_guarded(monkeypatch) -> None:
+    """Late-driven запись из lane-adv / all-only очереди тоже проходит гейт.
+
+    Такие записи не несут `late_pub_comeback_table_active`, а релиз у них
+    безусловный (`send_on_target_game_time` по умолчанию True). Пустая таблица
+    порогов здесь — штатная ситуация отказа загрузки, а не повод снимать гейт.
+    """
+    payload = _late27_watcher_payload(late_hit_count=1, all_star_hits=OPPOSITE_ALL_HITS)
+    payload.pop("late_pub_comeback_table_active")
+    payload.pop("late_pub_comeback_table_wr_level")
+    payload["send_on_target_game_time"] = True
+
+    result = _run_late27_delayed_worker(monkeypatch, payload, thresholds={})
+
+    assert result["deliveries"] == []
+    assert result["dropped"] == ["late27_dispatch_guard"]
+    assert result["add_url_calls"][-1]["reason"] == runtime.LATE27_DISPATCH_GUARD_REJECT_REASON
+    details = result["add_url_calls"][-1]["details"]
+    assert details["dispatch_mode"] == "rejected_late27_dispatch_guard_watcher"
+    assert "late_hits_below_min" in details["late27_guard_reasons"]
+
+
 # ── Networth-гейт late-ставок: одна строка таблицы на все сигналы ──────────
 # 30.08.2026: порог нетворта остаётся обязательным, но берётся не по WR
 # конкретного сигнала, а по единому уровню (`LATE_PUB_TABLE_GATE_WR_LEVEL`,

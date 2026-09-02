@@ -13929,63 +13929,64 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                         "networth_target_side": monitor_target_side,
                     }
                 )
-        if late_pub_comeback_table_active:
-            # Перепроверка late-гейта по снимку сигнала (delayed-запись
-            # могла быть создана до 27:00). Условия статичны — при блокировке
-            # watcher закрываем без отправки, вместо ожидания порога таблицы.
-            late27_watcher_guard = _evaluate_late27_dispatch_guard(
-                _late27_dispatch_guard_snapshot_from_context(
-                    payload.get("stake_multiplier_context")
-                ),
-                target_side=monitor_target_side,
-                game_time_seconds=current_game_time,
-                force_odds_signal_test_active=bool(FORCE_ODDS_SIGNAL_TEST),
+        # Перепроверка late-гейта на каждом проходе drain: `active` гейт считает
+        # сам из снимка, а релиз здесь безусловный (`send_on_target_game_time`
+        # по умолчанию True), поэтому ограничивать его comeback-table watcher'ем
+        # нельзя — lane-adv / all-only этот флаг не выставляют.
+        late27_watcher_guard = _evaluate_late27_dispatch_guard(
+            _late27_dispatch_guard_snapshot_from_context(
+                payload.get("stake_multiplier_context")
+            ),
+            target_side=monitor_target_side,
+            game_time_seconds=current_game_time,
+            force_odds_signal_test_active=bool(FORCE_ODDS_SIGNAL_TEST),
+        )
+        if late27_watcher_guard.get("blocked"):
+            guard_add_url_details = payload.get("add_url_details")
+            guard_add_url_details = (
+                dict(guard_add_url_details)
+                if isinstance(guard_add_url_details, dict)
+                else {}
             )
-            if late27_watcher_guard.get("blocked"):
-                guard_add_url_details = payload.get("add_url_details")
-                guard_add_url_details = (
-                    dict(guard_add_url_details)
-                    if isinstance(guard_add_url_details, dict)
-                    else {}
-                )
-                guard_add_url_details.update(
-                    _late27_dispatch_guard_reject_details(late27_watcher_guard)
-                )
-                guard_add_url_details["dispatch_mode"] = "rejected_late27_dispatch_guard_watcher"
-                guard_add_url_details["sent_game_time"] = int(current_game_time)
-                guard_add_url_details["target_side"] = monitor_target_side
-                if monitor_target_diff is not None:
-                    guard_add_url_details["target_networth_diff"] = float(monitor_target_diff)
-                add_url(
-                    match_key,
-                    reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
-                    details=guard_add_url_details,
-                )
-                _drop_delayed_match(match_key, reason="late27_dispatch_guard")
-                _delayed_verdict_msg = (
-                    f"⏱️ Отложенный late сигнал отменен без отправки (late-гейт): {match_key} "
-                    f"({_format_late27_dispatch_guard_log(late27_watcher_guard)}, "
-                    f"game_time={int(current_game_time)})"
-                )
-                print(_delayed_verdict_msg)
-                _record_map_verdict(
-                    match_key,
-                    verdict=_delayed_verdict_msg,
-                    kind="cancel",
-                    reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
-                    dispatch={
-                        "dispatch_mode": "rejected_late27_dispatch_guard_watcher",
-                        "game_time": current_game_time,
-                        "target_side": monitor_target_side,
-                        "target_networth_diff": (
-                            float(monitor_target_diff)
-                            if monitor_target_diff is not None
-                            else None
-                        ),
-                    },
-                    extra=guard_add_url_details,
-                )
-                continue
+            guard_add_url_details.update(
+                _late27_dispatch_guard_reject_details(late27_watcher_guard)
+            )
+            guard_add_url_details["dispatch_mode"] = "rejected_late27_dispatch_guard_watcher"
+            guard_add_url_details["sent_game_time"] = int(current_game_time)
+            guard_add_url_details["target_side"] = monitor_target_side
+            if monitor_target_diff is not None:
+                guard_add_url_details["target_networth_diff"] = float(monitor_target_diff)
+            add_url(
+                match_key,
+                reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
+                details=guard_add_url_details,
+            )
+            _drop_delayed_match(match_key, reason="late27_dispatch_guard")
+            _delayed_verdict_msg = (
+                f"⏱️ Отложенный late сигнал отменен без отправки (late-гейт): {match_key} "
+                f"({_format_late27_dispatch_guard_log(late27_watcher_guard)}, "
+                f"game_time={int(current_game_time)})"
+            )
+            print(_delayed_verdict_msg)
+            _record_map_verdict(
+                match_key,
+                verdict=_delayed_verdict_msg,
+                kind="cancel",
+                reason=LATE27_DISPATCH_GUARD_REJECT_REASON,
+                dispatch={
+                    "dispatch_mode": "rejected_late27_dispatch_guard_watcher",
+                    "game_time": current_game_time,
+                    "target_side": monitor_target_side,
+                    "target_networth_diff": (
+                        float(monitor_target_diff)
+                        if monitor_target_diff is not None
+                        else None
+                    ),
+                },
+                extra=guard_add_url_details,
+            )
+            continue
+        if late_pub_comeback_table_active:
             late_pub_comeback_table_decision = _late_star_pub_table_decision(
                 wr_level=late_pub_comeback_table_wr_level,
                 game_time_seconds=current_game_time,
