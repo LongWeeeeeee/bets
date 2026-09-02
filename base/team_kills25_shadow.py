@@ -111,6 +111,9 @@ _WRITE_LOCK = threading.Lock()
 _RECORDED_KEYS: set[str] = set()
 _TELEGRAM_SENT_KEYS: set[str] = set()
 _TELEGRAM_SENT_PATHS_LOADED: set[str] = set()
+# Предупреждение о массовой импутации печатается один раз на процесс: запись
+# идёт на каждого кандидата, и строка на вызов залила бы лог.
+_IMPUTED_WARNED = False
 _DLTV_MATCH_ID_RE = re.compile(r"(?:^|/)matches/(\d+)(?:\.\d+)?(?:$|[/?#])")
 
 
@@ -585,6 +588,15 @@ def predict_probability(
     return exp_score / (1.0 + exp_score)
 
 
+def imputed_feature_names(features: Mapping[str, Any]) -> list:
+    """Признаки, которые НЕ довезены и заменены замороженной медианой.
+
+    Условие совпадает с циклом импутации в `predict_probability`, поэтому счётчик
+    описывает ровно те замены, которые реально повлияли на вероятность.
+    """
+    return [name for name in FEATURE_NAMES if _number(features.get(name)) is None]
+
+
 def _json_safe(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {str(key): _json_safe(item) for key, item in value.items()}
@@ -913,6 +925,7 @@ def record_shadow_observation(
             except (TypeError, ValueError, OverflowError):
                 ml_probability = None
         elo_probability = _number(features.get("elo_target_win_prob"))
+        imputed = imputed_feature_names(features)
         record = {
             "schema_version": SCHEMA_VERSION,
             "recorded_at": int(time.time()),
@@ -945,7 +958,19 @@ def record_shadow_observation(
             ),
             "roster_kills": roster_kills,
             "features": features,
+            "imputed_feature_count": len(imputed),
+            "imputed_features": imputed,
         }
+        global _IMPUTED_WARNED
+        if not _IMPUTED_WARNED and len(imputed) * 2 >= len(FEATURE_NAMES):
+            _IMPUTED_WARNED = True
+            print(
+                f"⚠️ team_kills27: {len(imputed)} из {len(FEATURE_NAMES)} признаков "
+                f"не довезено и заменено замороженной медианой "
+                f"(первые: {', '.join(imputed[:5])}) — вероятность считается "
+                "преимущественно по медианам",
+                flush=True,
+            )
         try:
             record["telegram"] = _maybe_send_telegram_bet(record)
         except Exception as exc:
@@ -967,9 +992,11 @@ def record_shadow_observation(
 
 
 def reset_shadow_state_for_tests() -> None:
+    global _IMPUTED_WARNED
     with _WRITE_LOCK:
         _RECORDED_KEYS.clear()
         _TELEGRAM_SENT_KEYS.clear()
         _TELEGRAM_SENT_PATHS_LOADED.clear()
+    _IMPUTED_WARNED = False
     _load_artifact_cached.cache_clear()
     _load_roster_history_cached.cache_clear()
