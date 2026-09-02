@@ -1162,8 +1162,7 @@ class PrematchModel:
                    "h2h": h2h_known if h2h_asked else float("nan"),
                    "missing_cells": [], "filled": 1.0}
             wr, src = self.branch_winrate(branch_name, max(p, 1.0 - p))
-            if src != "общая таблица":
-                notes.append(f"винрейт: {src}")
+            notes.append(_branch_winrate_note(src, branch_name))
             return ScoreResult(p, wr, f, notes, cov, branch=branch_name,
                                missing_keys=missing_keys, parts=parts)
         cov = {"cells": fill["cells"] / 10.0, "pos": fill["pos"] / 10.0,
@@ -1178,10 +1177,23 @@ class PrematchModel:
                 + (f", личные встречи {'есть' if h2h_known else 'нет'}"
                    if h2h_asked else ""))
         wr, src = self.branch_winrate(branch_name, max(p, 1.0 - p))
-        if src != "общая таблица":
-            notes.append(f"винрейт: {src}")
+        notes.append(_branch_winrate_note(src, branch_name))
         return ScoreResult(p, wr, f, notes, cov, branch=branch_name,
                            missing_keys=missing_keys, parts=parts)
+
+
+def _branch_winrate_note(src: str, branch_name: str) -> str:
+    """Заметка о том, ОТКУДА взят винрейт ветки.
+
+    Наследование общей таблицы обязано быть явным: `docs/PREMATCH_COMPONENTS.md`
+    §5.3 обещает замечание в вердикте, а прежний код печатал заметку только когда
+    у ветки была СВОЯ таблица. Молчаливое наследование занижает `min_odds`,
+    который `win_model_veto` считает из этой таблицы.
+    """
+    if src == "общая таблица":
+        return (f"винрейт: общая таблица — у ветки {branch_name} нет своей "
+                "калибровки, таблица полной ветки унаследована")
+    return f"винрейт: {src}"
 
 
 _MODEL: Optional[PrematchModel] = None
