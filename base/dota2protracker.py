@@ -681,6 +681,14 @@ TOTAL_CP_1VS1 = len(CORE_POSITIONS) * len(CORE_POSITIONS)  # full 3x3 reference 
 DUO_COMBINATIONS_PER_TEAM = 3  # C(3,2) = 3 пары на команду
 DUO_VALID_THRESHOLD = 0.8  # 80% комбинаций должны быть
 PRO_POSITION_COVERAGE_THRESHOLD = 2 / 3
+# cp1vs1/duo 'scores' хранят УЖЕ взвешенные значения (diff * pair_weight), а
+# усреднение делит на len(scores) — это plain mean взвешенных величин, а не
+# настоящее Σ(diff·w)/Σw. Флаг ВЫКЛЮЧЕН по умолчанию: пороги star/тир калиброваны
+# под старое (заниженное к экстремумам) поведение, включать только после
+# отдельного замера и пересчёта порогов.
+PRO_CP_WEIGHTED_MEAN = str(
+    os.getenv("PRO_CP_WEIGHTED_MEAN", "0")
+).strip().lower() in {"1", "true", "yes", "on"}
 
 # Lane definitions for lane-specific cp1vs1
 LANE_CP1VS1_PAIRS = {
@@ -1422,6 +1430,22 @@ def _required_coverage(possible: int) -> int:
     return max(1, math.ceil(possible * PRO_POSITION_COVERAGE_THRESHOLD))
 
 
+def _protracker_weighted_mean(scores: List[float], weights: List[float]) -> float:
+    """Усреднение cp1vs1/duo 'scores' (уже diff*weight каждый элемент).
+
+    PRO_CP_WEIGHTED_MEAN=0 (умолчание, старое поведение): sum(scores)/len(scores)
+    — plain mean взвешенных величин, НЕ настоящий взвешенный средний.
+    PRO_CP_WEIGHTED_MEAN=1: sum(scores)/sum(weights) = Σ(diff·w)/Σw.
+    """
+    if not scores:
+        return 0.0
+    if PRO_CP_WEIGHTED_MEAN:
+        weight_total = sum(weights or [])
+        if weight_total:
+            return sum(scores) / weight_total
+    return sum(scores) / len(scores)
+
+
 def _merge_oriented_samples(samples: List[Tuple[Optional[float], int]]) -> Tuple[Optional[float], int]:
     """Weighted merge for the same oriented matchup/pair from multiple hero pages."""
     unique_samples: List[Tuple[float, int]] = []
@@ -1499,6 +1523,7 @@ def _calculate_cp1vs1_all_positions(
     Pair score берётся из среднего forward/reverse diff, если доступны оба.
     """
     weighted_scores = []
+    weights = []
     games_sum = 0
     matchup_count = 0
 
@@ -1522,6 +1547,7 @@ def _calculate_cp1vs1_all_positions(
             )
             if pair_diff is not None:
                 weighted_scores.append(pair_diff * pair_weight)
+                weights.append(pair_weight)
                 matchup_count += 1
                 games_sum += pair_games
                 if r_pos in rad_core_coverage:
@@ -1541,6 +1567,7 @@ def _calculate_cp1vs1_all_positions(
 
     return is_valid, {
         'scores': weighted_scores,
+        'weights': weights,
         'count': matchup_count,
         'games': games_sum,
         'radiant_core_coverage': rad_core_coverage,
@@ -1606,6 +1633,7 @@ def _calculate_duo_synergy_all_positions(
     - на каждую core-позицию должно приходиться >= 2/3 доступных союзных пар.
     """
     weighted_scores = []
+    weights = []
     matchup_count = 0
     games_sum = 0
     core_coverage = {pos: 0 for pos in CORE_POSITIONS if any(p == pos for p, _ in team_positions)}
@@ -1625,6 +1653,7 @@ def _calculate_duo_synergy_all_positions(
             )
             if diff is not None:
                 weighted_scores.append(diff * weight)
+                weights.append(weight)
                 matchup_count += 1
                 games_sum += games
                 if pos1 in core_coverage:
@@ -1638,6 +1667,7 @@ def _calculate_duo_synergy_all_positions(
 
     return is_valid, {
         'scores': weighted_scores,
+        'weights': weights,
         'count': matchup_count,
         'games': games_sum,
         'core_coverage': core_coverage,
@@ -2374,8 +2404,7 @@ def enrich_with_pro_tracker(
         }
 
         if scores:
-            # Сумма weighted scores / count
-            cp_score = sum(scores) / len(scores)
+            cp_score = _protracker_weighted_mean(scores, r_cp_data.get('weights'))
             result['pro_cp1vs1_early'] = cp_score
             result['pro_cp1vs1_late'] = cp_score
 
@@ -2434,8 +2463,8 @@ def enrich_with_pro_tracker(
         }
 
         if r_scores and d_scores:
-            r_avg = sum(r_scores) / len(r_scores)
-            d_avg = sum(d_scores) / len(d_scores)
+            r_avg = _protracker_weighted_mean(r_scores, r_duo_data.get('weights'))
+            d_avg = _protracker_weighted_mean(d_scores, d_duo_data.get('weights'))
             duo_score = r_avg - d_avg
 
             result['pro_duo_synergy_early'] = duo_score
