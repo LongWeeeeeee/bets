@@ -206,6 +206,15 @@ CHECK
   ssh "$SERV1" "systemctl restart cyberscore.service && sleep 3 && \
                 : > /root/.local/state/ingame/map_id_check.txt && \
                 systemctl is-active cyberscore.service"
+
+  # 9. свежесть источников: возраст каждого артефакта, от которого зависят
+  #    признаки и гейты (снимок, ELO, дельта, словари, кэши). Шаг НЕ фатален, но
+  #    печатает строки «ВНИМАНИЕ: свежесть ...», которые notify_chain ловит
+  #    своим grep'ом и шлёт в админ-чат. Без этого протухание молчаливо:
+  #    E-193 (8 ночей возился один и тот же артефакт) и E-249 (ELO-снимок отстал
+  #    на 22 суток, и никто не сообщил).
+  $PY scripts/ops/feature_freshness.py || true
+
   echo "=== $(date '+%F %T') готово ==="
 }
 
