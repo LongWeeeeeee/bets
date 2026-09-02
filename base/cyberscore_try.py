@@ -23373,6 +23373,23 @@ def _finalize_finished_live_series_for_elo(
     return result if isinstance(result, dict) else None
 
 
+def _applied_updates_from_result(result: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Список применённых обновлений ELO из результата register/finalize.
+
+    Предпочитает пакетный `applied_updates` (одним вызовом может примениться
+    несколько карт — серия, догоняющая очередь, или доигранные подряд карты);
+    запасной вариант — одиночный `applied_update`, чтобы старые/частичные
+    результаты не потеряли логирование.
+    """
+    if not isinstance(result, dict):
+        return []
+    updates = result.get("applied_updates")
+    if isinstance(updates, list) and updates:
+        return [u for u in updates if isinstance(u, dict)]
+    single = result.get("applied_update")
+    return [single] if isinstance(single, dict) else []
+
+
 def _emit_live_elo_applied_log(prefix: str, applied_update: Optional[Dict[str, Any]]) -> None:
     payload = applied_update if isinstance(applied_update, dict) else {}
     if not payload:
@@ -23622,11 +23639,10 @@ def _sweep_orphaned_live_elo(seen_series_keys: set, reason: str = "") -> int:
     applied = 0
     try:
         for update in _finalize_orphaned_live_elo_series(seen_series_keys):
-            payload = (update.get("applied_update")
-                       if isinstance(update.get("applied_update"), dict) else {})
-            _emit_live_elo_applied_log(
-                "Live ELO finalized from orphaned finished series", payload)
-            applied += 1
+            for payload in _applied_updates_from_result(update):
+                _emit_live_elo_applied_log(
+                    "Live ELO finalized from orphaned finished series", payload)
+                applied += 1
     except Exception:
         logger.exception("orphan live ELO sweep failed (%s)", reason or "-")
     return applied
@@ -23718,17 +23734,19 @@ def _finalize_orphaned_live_elo_series(seen_series_keys: set[str]) -> List[Dict[
         )
         if not isinstance(result, dict):
             continue
-        applied_update = result.get("applied_update") if isinstance(result.get("applied_update"), dict) else None
-        applied_map_key = str((applied_update or {}).get("map_key") or "")
-        if applied_map_key:
-            _drop_delayed_match(applied_map_key, reason="orphan_series_finished_live_elo_applied")
+        applied_updates_batch = _applied_updates_from_result(result)
+        for _orphan_update in applied_updates_batch:
+            _orphan_map_key = str(_orphan_update.get("map_key") or "")
+            if _orphan_map_key:
+                _drop_delayed_match(_orphan_map_key, reason="orphan_series_finished_live_elo_applied")
         finalized.append(
             {
                 "series_key": series_key,
                 "series_url": series_url,
                 "current_scores": current_scores,
                 "winner_slot": winner_slot,
-                "applied_update": applied_update,
+                "applied_update": applied_updates_batch[0] if applied_updates_batch else None,
+                "applied_updates": applied_updates_batch,
                 "age_seconds": age_seconds,
             }
         )
@@ -33918,8 +33936,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     second_team_score=score_values[1],
                 )
                 if isinstance(finished_finalize, dict):
-                    applied_update = finished_finalize.get("applied_update")
-                    if isinstance(applied_update, dict):
+                    for applied_update in _applied_updates_from_result(finished_finalize):
                         _emit_live_elo_applied_log("Live ELO finalized from finished series", applied_update)
                         applied_map_key = str(applied_update.get("map_key") or "")
                         if applied_map_key:
@@ -35385,9 +35402,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             match_tier=star_match_tier,
         )
         if isinstance(live_elo_registration, dict):
-            applied_update = live_elo_registration.get("applied_update")
-            if isinstance(applied_update, dict):
-                _emit_live_elo_applied_log("Live ELO updated from completed map", applied_update)
+            _live_elo_applied_batch = _applied_updates_from_result(live_elo_registration)
+            if _live_elo_applied_batch:
+                for applied_update in _live_elo_applied_batch:
+                    _emit_live_elo_applied_log("Live ELO updated from completed map", applied_update)
             else:
                 # ДИАГНОСТИКА 22.08.2026. Этот путь не срабатывал ни разу: в
                 # runtime/live_elo_progress.json у 132 серий из 132 применена
