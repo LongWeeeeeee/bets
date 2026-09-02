@@ -80,6 +80,30 @@ run_chain() {
   TEAM_NAMES_DIR="$NAMES_DIR" $PY base/tools/build_team_org_aliases.py
   rm -rf "$NAMES_DIR"
 
+  # 5c. ELO-снимок: рейтинги команд и история килов, из которой kills27-shadow
+  #     берёт ростерные выборки. До 02.09.2026 снимок собирался ВРУЧНУЮ и возился
+  #     файлом: на проде лежал срез 11.08 (569 493 матча, 242 МБ), пока локальный
+  #     корпус вырос до 1 395 282 (срез 01.09, 646 МБ) — рекомендации в Telegram
+  #     считались на ростер-истории трёхнедельной давности (E-249). Пересборка
+  #     ~11 мин; отказ НЕ рвёт цепочку (доставка предматчевого артефакта важнее),
+  #     а молчаливое протухание ловит freshness-watchdog.
+  if $PY ELO/live_team_strength.py --snapshot-path ELO/output/live_team_elo_snapshot.json; then
+    scp -q ELO/output/live_team_elo_snapshot.json \
+        "$SERV1:/root/main/ELO/output/live_team_elo_snapshot.json.tmp"
+    L=$(shasum -a 1 ELO/output/live_team_elo_snapshot.json | cut -d' ' -f1)
+    R=$(ssh "$SERV1" "sha1sum /root/main/ELO/output/live_team_elo_snapshot.json.tmp | cut -d' ' -f1")
+    if [ "$L" = "$R" ]; then
+      ssh "$SERV1" "mv /root/main/ELO/output/live_team_elo_snapshot.json.tmp \
+                       /root/main/ELO/output/live_team_elo_snapshot.json"
+      echo "ELO-снимок доставлен: sha1 $L"
+    else
+      ssh "$SERV1" "rm -f /root/main/ELO/output/live_team_elo_snapshot.json.tmp"
+      echo "ВНИМАНИЕ: ELO-снимок доехал битым ($R против $L) — на проде остался прежний"
+    fi
+  else
+    echo "ВНИМАНИЕ: ELO-снимок не пересобрался — на проде останется прежний"
+  fi
+
   # 6. проверка ПЕРЕД доставкой: артефакт обязан читаться и содержать тот же
   #    набор признаков, что и боевой. Иначе прод останется на старом файле.
   $PY - <<'CHECK'
