@@ -173,6 +173,7 @@ runtime/winline_name_probe_*.txt
 # --- артефакты обучения и снимки состояния: в git не попадают (2026-08-26)
 # Причина: на serv1 лежало 490 МБ .npz неотслеживаемыми, один git add -A от попадания в историю.
 *.npz
+!base/tests/fixtures/*.npz
 *.cbm
 *.joblib
 maps_state.json

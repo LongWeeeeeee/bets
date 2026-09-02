@@ -969,12 +969,17 @@ class PrematchModel:
                 hard.append(f"нет игр на этой позиции: {no_pos}")
         org_r = self.resolve_org(rt, radiant_accounts)
         org_d = self.resolve_org(dt, dire_accounts)
-        if self.h2h_org and org_r > 0 and org_d > 0 and org_r != org_d:
+        # Обучение шло на "сырой" командной таблице (ideas_batch2.py:203-209),
+        # поэтому она в приоритете; организационная — запасной вариант там, где
+        # team_id ещё не встречались (ребрендинг, новый тег), а не наоборот.
+        team_key = (min(rt, dt), max(rt, dt)) if rt > 0 and dt > 0 else None
+        if team_key is not None and team_key in self.h2h:
+            key, h2h_src, swap = team_key, self.h2h, rt > dt
+        elif self.h2h_org and org_r > 0 and org_d > 0 and org_r != org_d:
             key = (min(org_r, org_d), max(org_r, org_d))
             h2h_src, swap = self.h2h_org, org_r > org_d
         else:
-            key = (min(rt, dt), max(rt, dt)) if rt > 0 and dt > 0 else None
-            h2h_src, swap = self.h2h, rt > dt
+            key, h2h_src, swap = team_key, self.h2h, rt > dt
         if strictness == "full" and (key is None or key not in h2h_src):
             miss.append("нет истории личных встреч этих команд")
             hard.append("нет истории личных встреч этих команд")

@@ -615,6 +615,27 @@ def hybrid_strength_diff(radiant_heroes_and_pos, dire_heroes_and_pos,
     return (out[0] - out[1]) / 400.0
 
 
+def _match_team_id(match: Optional[dict], camel_key: str, snake_key: str) -> int:
+    """Id команды из `match`: camelCase-поле может быть dict с 'id' либо числом.
+
+    Тот же способ, что `_lc_team_id` в `base/functions.py:7508`, плюс запасной
+    снэйк-кейс-ключ — им уже пользуется поправка «сюрприз серии» ниже
+    (`match.get("radiant_team_id")`/`("dire_team_id")`).
+    """
+    if not isinstance(match, dict):
+        return 0
+    raw = match.get(camel_key)
+    if raw is None:
+        raw = match.get(snake_key)
+    if isinstance(raw, dict):
+        raw = raw.get("id")
+    try:
+        team_id = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return team_id if team_id > 0 else 0
+
+
 def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                     radiant_team_name=None, dire_team_name=None,
                     match=None) -> Optional[float]:
@@ -691,9 +712,11 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
             if _STALE_WARNED <= 3 or _STALE_WARNED % 200 == 0:
                 print(f"[win_model] снимок старше {_SNAPSHOT_WARN_DAYS} суток: "
                       f"{_age:.1f} — ночная пересборка не доехала", flush=True)
+        _rt_id = _match_team_id(match, "radiantTeam", "radiant_team_id")
+        _dt_id = _match_team_id(match, "direTeam", "dire_team_id")
         res = model.score(radiant_accounts=ra, dire_accounts=da,
                           radiant_heroes=rh, dire_heroes=dh,
-                          radiant_team_id=0, dire_team_id=0,
+                          radiant_team_id=_rt_id, dire_team_id=_dt_id,
                           draft_logit=logit, hybrid_strength=hybrid,
                           strictness="accounts",
                           now_ts=_now, max_age_days=_SNAPSHOT_MAX_AGE_DAYS)
