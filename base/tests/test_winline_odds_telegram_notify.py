@@ -605,6 +605,43 @@ def test_winner_flush_asks_the_source_once_per_tick():
     assert len(cs._winline_pending_map_winners) == 3
 
 
+def test_winner_retry_outlives_a_long_source_outage():
+    """Авария источника дольше прежнего получасового окна имя не теряет.
+
+    03.09.2026 api.opendota.com лёг (522 и таймауты соединения с прод-машины и
+    со второй независимой сети при живых winline.ru и example.com): карта 1
+    PuckChamp — Team Spirit Academy (матч 8980463789) ушла в чат как
+    «🏁 карта завершена» без строки победителя, и за окном в 30 минут попытки
+    прекратились молча — имя не пришло бы вовсе.
+    """
+    sender, clock = Sender(), Clock()
+    _winner_notify(sender, clock)
+    clock.advance(10.0)
+    _winner_notify(sender, clock, is_terminal=True, map_end_proven=True,
+                   match_id=8976511215, winner_fn=lambda _m: None)
+    assert WINNER_KEY in cs._winline_pending_map_winners
+
+    # Источник молчит 40 минут — за прежним окном здесь уже всё бы кончилось.
+    asked = []
+
+    def _silent(match_id):
+        asked.append(match_id)
+        return None
+
+    clock.advance(40 * 60.0)
+    assert _flush_winners(sender, clock, winner_fn=_silent) == []
+    assert asked == [8976511215]
+    assert WINNER_KEY in cs._winline_pending_map_winners
+
+    # И всё-таки отвечает — имя догоняет карту.
+    clock.advance(61.0)
+    sent = _flush_winners(
+        sender, clock,
+        winner_fn=lambda _m: {"radiant_win": True, "side": "radiant",
+                              "name": "Inner Circle x Insanity"})
+    assert len(sent) == 1 and "🏆 победа: Inner Circle x Insanity" in sent[0]
+
+
 def test_winner_lookup_gives_up_silently_past_the_window():
     """За окном ожидания попытки прекращаются, лишнего сообщения нет."""
     sender, clock = Sender(), Clock()
@@ -614,7 +651,7 @@ def test_winner_lookup_gives_up_silently_past_the_window():
                    match_id=8976511215, winner_fn=lambda _m: None)
     before = len(sender.calls)
 
-    clock.advance(1801.0)
+    clock.advance(10801.0)
     assert _flush_winners(sender, clock, winner_fn=lambda _m: None) == []
     assert cs._winline_pending_map_winners == {}
     assert len(sender.calls) == before

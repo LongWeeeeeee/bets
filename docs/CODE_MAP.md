@@ -833,7 +833,7 @@ OpenDota по `match_id` карты (`_winline_fetch_map_winner` → `radiant_wi
 | `WINLINE_NEXT_MAP_POLL_INTERVAL_S` | 60 | такт опроса карты, которую мост ещё не подтвердил |
 | `WINLINE_MAP_WINNER_ENABLED` | вкл | выключатель строки победителя |
 | `WINLINE_MAP_WINNER_RETRY_S` | 60 | пауза между попытками достать победителя |
-| `WINLINE_MAP_WINNER_WINDOW_S` | 1800 | окно, после которого попытки прекращаются молча |
+| `WINLINE_MAP_WINNER_WINDOW_S` | 10800 | окно повторов за победителем; за ним попытки прекращаются молча |
 | `WINLINE_ODDS_TELEGRAM_SENT_PATH` | `runtime/winline_telegram_sent.jsonl` | журнал отправленных карточек; `0` выключает |
 
 **Терминал карты объявляет тот такт, который имеет право писать в чат.** Поллеры

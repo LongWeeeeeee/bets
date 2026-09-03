@@ -3842,7 +3842,16 @@ def _winline_flush_pending_map_winners(
         return []
     mono = float((monotonic_fn or time.monotonic)())
     retry = max(5.0, _winline_env_float(WINLINE_MAP_WINNER_RETRY_ENV, 60.0))
-    window = max(0.0, _winline_env_float(WINLINE_MAP_WINNER_WINDOW_ENV, 1800.0))
+    # Окно — на аварию источника, а не на штатную задержку разбора: обычно матч
+    # появляется в OpenDota за 5-15 минут, и получаса хватало. 03.09.2026
+    # api.opendota.com лёг (522 от Cloudflare и таймауты соединения) на дольше:
+    # с прод-машины и со второй независимой сети HTTP=000 при том, что
+    # winline.ru и example.com отвечали 200 за 0.1-0.4 с. За получасовым окном
+    # попытки прекращались молча, и карта 1 PuckChamp — Team Spirit Academy
+    # (матч 8980463789) осталась без имени победителя навсегда. Обращение к
+    # источнику по-прежнему не больше одного за такт, поэтому длинное окно
+    # стоит ровно ничего лишнего.
+    window = max(0.0, _winline_env_float(WINLINE_MAP_WINNER_WINDOW_ENV, 10800.0))
     sent: List[str] = []
     with _winline_current_map_state_lock:
         pending_items = list(_winline_pending_map_winners.items())
