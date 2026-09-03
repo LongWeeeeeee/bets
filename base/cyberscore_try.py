@@ -24068,7 +24068,38 @@ def _live_elo_winner_lookup(map_key, pending_map=None):
             # двигает рейтинг в обратную сторону.
             return None
         won = bool(best['radiant_won'])
-        return won if int(best['radiant_team_id']) == rad else (not won)
+        # `series_history` отвечает В ID-ПРОСТРАНСТВЕ STRATZ: внутри она
+        # переводит обе стороны через `resolve_team_id` (связка «наш id → id
+        # Stratz» лежит в её кэше) и фильтрует пару уже по переведённым id.
+        # Сравнивать ответ с нашими СЫРЫМИ id нельзя: перевод id выглядит для
+        # такого сравнения как обмен сторонами, и верный исход инвертируется.
+        #
+        # 03.09.2026, карта 1 Pipsqueak + 4 — DYNASTY (`8980769413`): наш
+        # radiant_team_id 9872667, у Stratz та же команда 10150633
+        # (`resolve_team_id(9872667) == 10150633`, связка в
+        # `runtime/stratz_team_matches.json`), Stratz ответил radiant_won=True.
+        # Сравнение `10150633 == 9872667` не совпало → «radiant проиграл» →
+        # winner_slot=second, и в рейтинг ушло Pipsqueak + 4 1861.9 → 1849.0
+        # (−12.9), DYNASTY 1793.8 → 1804.6 (+10.8) — хотя Pipsqueak выиграл
+        # карту 28:8, а Winline закрывал рынок на 1.04 против 8.00.
+        # Инверсия сработала в ветке запаса, потому что OpenDota в тот момент
+        # лежал (авария api.opendota.com с ~15:00).
+        to_stratz = getattr(stratz_map_result, 'resolve_team_id', None)
+        rad_stratz, dire_stratz = rad, dire
+        if callable(to_stratz):
+            try:
+                rad_stratz = int(to_stratz(rad))
+                dire_stratz = int(to_stratz(dire))
+            except Exception:                       # noqa: BLE001
+                rad_stratz, dire_stratz = rad, dire
+        stratz_radiant = int(best.get('radiant_team_id') or 0)
+        if stratz_radiant in (rad, rad_stratz):
+            return won
+        if stratz_radiant in (dire, dire_stratz):
+            return not won
+        # Id не совпал ни с одной стороной ни в одном пространстве: молчание
+        # дешевле инверсии — карта подождёт следующего прохода или OpenDota.
+        return None
     except Exception:
         logger.exception('live ELO winner lookup failed for %s', map_key)
         return None
