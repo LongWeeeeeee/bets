@@ -943,19 +943,55 @@ class HybridPlayerRosterEloModel:
         )
         tiers = [LeagueTier.TIER1] if bool(getattr(self.config, "patch_local_reset_tier1_only", False)) else list(LeagueTier)
         for tier in tiers:
-            for player_id, rating in list(self.player_local[tier].items()):
-                self.player_local[tier][player_id] = (
-                    self.config.initial_rating + (float(rating) - self.config.initial_rating) * local_keep
-                )
-            for player_role_key, rating in list(self.player_role_local[tier].items()):
-                self.player_role_local[tier][player_role_key] = (
-                    self.config.initial_rating + (float(rating) - self.config.initial_rating) * local_keep
-                )
-            for roster_key, rating in list(self.roster_ratings[tier].items()):
-                self.roster_ratings[tier][roster_key] = (
-                    self.config.initial_rating + (float(rating) - self.config.initial_rating) * roster_keep
-                )
+            self._reset_tier_store(self.player_local[tier], local_keep)
+            self._reset_tier_store(self.player_role_local[tier], local_keep)
+            self._reset_tier_store(self.roster_ratings[tier], roster_keep)
         self.current_patch_key = next_patch_key
+
+    def _reset_tier_store(self, store: Any, keep: float) -> None:
+        """Сброс одного хранилища тира при смене патча.
+
+        Словарная модель перечисляет записи и перезаписывает каждую — так было
+        исторически. Overlay поверх массивов (`ELO/state_overlay.py`) перечислять
+        хешированные ключи не умеет: они упакованы необратимым blake2b. Но
+        перечисление здесь и не нужно:
+
+        * `keep == 0` — каждое значение становится `initial_rating`, то есть все
+          ключи читаются одинаково: это ленивый сброс `mark_reset`;
+        * `keep == 1` — `initial + (rating - initial) * 1 == rating`, значения не
+          меняются, делать ничего не надо (прежний код перезаписывал их теми же
+          числами).
+
+        Промежуточный `keep` лениво непредставим. Тогда нужно перечисление, и
+        если его нет — ошибка громкая: молча оставить старые значения значило бы
+        судить команды по до-патчевой форме, а снаружи это выглядит как «модель
+        чуть поехала».
+        """
+        mark_reset = getattr(store, "mark_reset", None)
+        if callable(mark_reset):
+            if keep <= 0.0:
+                mark_reset(float(self.config.initial_rating))
+                return
+            if keep >= 1.0:
+                return
+            raise TypeError(
+                "ленивый сброс тира поддерживает только keep=0 и keep=1 "
+                f"(передано {keep!r}); для промежуточного keep нужно полное "
+                "перечисление хранилища, которого у массивной модели нет"
+            )
+        if keep >= 1.0:
+            return
+        items = getattr(store, "items", None)
+        if not callable(items):
+            raise TypeError(
+                f"хранилище {type(store).__name__} нельзя ни сбросить лениво, "
+                "ни перечислить"
+            )
+        for key, rating in list(items()):
+            store[key] = (
+                self.config.initial_rating
+                + (float(rating) - self.config.initial_rating) * keep
+            )
 
     def _build_team_context(
         self,
