@@ -507,7 +507,28 @@ def _report_array_model(ok: bool, detail: str) -> None:
         return
     _ARRAY_MODEL_REPORTED = True
     if ok:
-        print("[ELO] путь ставки на МАССИВНОЙ модели (около 340 МБ)", flush=True)
+        # Число в этой строке раньше было выдуманным («около 340 МБ») и именно
+        # поэтому никто не заметил, что массивная модель стоит 1140 МБ RSS при
+        # 74 МБ данных (E-253): строка успокаивала. Теперь печатается то, что
+        # можно проверить, — есть ли свежий sidecar .npz (E-254): без него
+        # массивы собираются потоком из JSON, ~40 c и ~0.8-1.1 ГБ.
+        note = ""
+        try:
+            from ELO.array_model import _sidecar_matches, sidecar_path
+            from ELO.live_team_strength import (DEFAULT_RUNTIME_MODEL_STATE_PATH,
+                                                DEFAULT_SNAPSHOT_PATH)
+            parts = []
+            for path, label in ((DEFAULT_SNAPSHOT_PATH, "снимок"),
+                                (DEFAULT_RUNTIME_MODEL_STATE_PATH, "рантайм")):
+                if not path.exists():
+                    continue
+                fresh = _sidecar_matches(sidecar_path(path), path, "model_state.")
+                parts.append(f"{label}: {'sidecar свежий' if fresh else 'БЕЗ sidecar (потоковая сборка)'}")
+            note = f" [{'; '.join(parts)}]" if parts else ""
+        except Exception:  # noqa: BLE001  — наблюдательность не должна ломать путь ставки
+            note = ""
+        print(f"[ELO] путь ставки на МАССИВНОЙ модели (данных ~74 МБ, E-253){note}",
+              flush=True)
     else:
         print(f"ВНИМАНИЕ: массивная модель не поднялась ({detail}); путь ставки "
               "откатился на словарную, это примерно +1.3 ГБ памяти", flush=True)
