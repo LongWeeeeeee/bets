@@ -1,0 +1,72 @@
+{
+  "threshold_minutes": 43,
+  "threshold_seconds": 2580,
+  "design": {
+    "kind": "hero_role",
+    "signed": false,
+    "columns": 762
+  },
+  "C": 0.03,
+  "validation_log_loss": 0.6207644979525385,
+  "counts": {
+    "all": 5093540,
+    "train": 3056124,
+    "validation": 1018708,
+    "test": 1018708,
+    "shipped_fit_rows": 4074832
+  },
+  "split": {
+    "train_last_ts": 1781934902,
+    "validation_first_ts": 1781934906,
+    "test_first_ts": 1784051660
+  },
+  "evaluation": {
+    "rows": 1018708,
+    "positive_rate": 0.32528359451383515,
+    "log_loss": 0.6165821014488171,
+    "auc": 0.6009888510666471,
+    "accuracy": 0.675800131146511,
+    "brier": 0.21332250695242955,
+    "top_decile_rate": 0.46998134877785414,
+    "bottom_decile_rate": 0.19499361931873957
+  },
+  "shipped": {
+    "rows": 1018708,
+    "positive_rate": 0.32528359451383515,
+    "log_loss": 0.616426026528711,
+    "auc": 0.6014982851318438,
+    "accuracy": 0.6757343615638632,
+    "brier": 0.21325572201152107,
+    "top_decile_rate": 0.47095317561598116,
+    "bottom_decile_rate": 0.19473839206832236
+  },
+  "pro_transfer_test": {
+    "rows": 26016,
+    "positive_rate": 0.34098247232472323,
+    "log_loss": 0.631068967664623,
+    "auc": 0.5865521816724399,
+    "accuracy": 0.658479397293973,
+    "brier": 0.22004766327680694,
+    "top_decile_rate": 0.45674740484429066,
+    "bottom_decile_rate": 0.2103037293348712,
+    "n_all": 482486,
+    "over43_all": 0.2491036009334986
+  },
+  "pro_29_not_shipped": {
+    "note": "logistic on combat 29, not shipped (needs ratings, not draft-only)",
+    "n_train": 456470,
+    "n_test": 26016,
+    "rows": 26016,
+    "positive_rate": 0.34098247232472323,
+    "log_loss": 0.6645278491047322,
+    "auc": 0.5154070138331871,
+    "accuracy": 0.6589790897908979,
+    "brier": 0.23385327991628693,
+    "top_decile_rate": 0.3137254901960784,
+    "bottom_decile_rate": 0.25720876585928487,
+    "public_draft_for_compare": {
+      "auc": 0.6014982851318438
+    }
+  },
+  "uses_ingame_or_third_party_stats": false
+}
