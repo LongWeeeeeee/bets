@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -1331,6 +1332,61 @@ def test_early_only_signal_rejects_when_wr_below_65(monkeypatch) -> None:
     details = result.add_url_calls[-1]["details"]
     assert details["early_only_no_late_all_gate"]["min_wr_ok"] is False
     assert details["early_only_no_late_all_gate"]["early_wr_pct"] == 60.0
+
+
+def test_early_only_reject_snapshot_carries_wr_estimate_block(monkeypatch, tmp_path) -> None:
+    # Кейс PuckChamp vs Team Spirit Academy (03.09.2026): отказ
+    # star_signal_rejected_early_only_below_threshold при Early NW WR 68.24 и
+    # Early Winner WR 61.95, но в карточке tail_log не было ни того, ни другого —
+    # блок «Оценка WR:» собирался только ПОСЛЕ reject-гейтов, а ранний отказ
+    # возвращает управление раньше. Числа, по которым гейт отказал, обязаны быть
+    # видны в снапшоте ставки.
+    journal_path = tmp_path / "map_verdicts.json"
+    monkeypatch.setenv("MAP_VERDICTS_PATH", str(journal_path))
+    _patch_early_wr(monkeypatch, 68.24, early_end_wr_pct=61.95)
+
+    result = _run_branch_scenario(
+        monkeypatch,
+        BranchScenario(
+            name="puckchamp_spiritacademy_early_only_wr_block",
+            game_time_seconds=(10 * 60) + 33,
+            target_side="radiant",
+            target_networth_diff=-2305,
+            has_early_star=True,
+            early_sign=-1,
+            has_late_star=False,
+            late_sign=1,
+            has_all_star=False,
+            expected_send_calls=0,
+            raw_early_output={
+                "counterpick_1vs1": -10,
+                "counterpick_1vs2": -13,
+                "solo": -4,
+            },
+            raw_early_end_output={
+                "counterpick_1vs1": -8,
+                "counterpick_1vs2": -10,
+                "solo": -3,
+            },
+            raw_mid_output={"counterpick_1vs1": 0, "counterpick_1vs2": 4, "solo": 0},
+        ),
+        lane_output=("Top: lose 70%", "Mid: lose 66%", "Bot: win 54%"),
+    )
+
+    assert result.sent_messages == []
+    assert result.add_url_calls[-1]["reason"] == "star_signal_rejected_early_only_below_threshold"
+
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert journal
+    bet_message = str(next(iter(journal.values()))["bet_message"])
+    assert "Оценка WR:" in bet_message
+    wr_lines = [
+        line
+        for line in bet_message.splitlines()
+        if line.startswith(("Early NW:", "Early Winner:", "Late:", "All:"))
+    ]
+    assert any(line.startswith("Early NW:") and "WR≈68.2%" in line for line in wr_lines)
+    assert any(line.startswith("Early Winner:") and "WR≈62.0%" in line for line in wr_lines)
 
 
 def test_early_only_signal_rejects_when_early_winner_below_70_or_single_hit(monkeypatch) -> None:
