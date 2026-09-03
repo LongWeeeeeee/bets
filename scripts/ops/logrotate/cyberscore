@@ -1,0 +1,26 @@
+# Ротация боевого лога рантайма на serv1.
+#
+# Установлен 03.09.2026: /etc/logrotate.d/cyberscore (скопировать этот файл).
+# До этого ротации не было вовсе — лог вырос до 197.8 МБ / 2 234 957 строк, и
+# единственной его уборкой было ручное усечение при bug-fix деплое
+# (docs/RUNTIME_RULES.md:15), которое почти никогда не случается.
+#
+# copytruncate ОБЯЗАТЕЛЕН. Юнит пишет через
+#   StandardOutput=append:/root/main/base/runtime/cyberscore_sourcetv.log
+# то есть systemd держит открытый fd в режиме append. При обычной ротации
+# (create) файл переименовывается, fd остаётся указывать на переименованный
+# inode, и новый файл не появляется никогда — лог молча уходит в .1 и растёт
+# там. Цена copytruncate — окно гонки между копированием и усечением, в которое
+# может потерятьcя несколько строк; для диагностического лога это приемлемо,
+# для журнала вердиктов — нет (тот живёт в map_verdicts.json отдельно).
+#
+# Проверка без применения: logrotate -d /etc/logrotate.d/cyberscore
+/root/main/base/runtime/cyberscore_sourcetv.log {
+    size 200M
+    rotate 5
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
