@@ -543,6 +543,12 @@ _WINLINE_MAP_CLOCK_EXTRAPOLATE_MAX_S = 120.0
 #: Steam в тот же момент отдавал по лиге 19944 `wins 0:1`.
 _winline_series_wins_seen: Dict[str, Dict[str, Any]] = {}
 _winline_series_wins_baseline: Dict[str, Dict[int, Dict[str, int]]] = {}
+#: {серия: {норм. имя команды: team_id}} — последняя пара имён и id, которую видел
+#: мост. Нужна источнику победителя из Stratz: там исход лежит по id, а
+#: канонический ключ несёт имена, причём id в ключе отсортированы и не говорят,
+#: какой из них чей. Id команды от стороны не зависит, поэтому достаточно
+#: последней строки серии — даже если она уже про следующую карту.
+_winline_series_team_ids: Dict[str, Dict[str, int]] = {}
 #: Старше этого базовый счёт не используется: ключ серии — это лига и пара
 #: команд, и та же пара играет под ним снова. Сброс на первой карте с нулевым
 #: счётом закрывает обычный случай, срок — случай, когда серию начали видеть
@@ -1424,6 +1430,36 @@ def _winline_note_series_wins(series: Any, map_num: Any, wins: Dict[str, int],
             baselines[num] = {"wins": dict(wins), "at": moment}
 
 
+def _winline_note_series_row(series: Any, map_num: Any, row: Any) -> None:
+    """Запомнить из строки моста счёт серии и пару «норм. имя → team_id»."""
+    payload = row if isinstance(row, dict) else {}
+    _winline_note_series_wins(
+        series, map_num,
+        _winline_row_wins_by_team(
+            payload.get("radiant_team_name"), payload.get("dire_team_name"),
+            payload.get("radiant_series_wins"), payload.get("dire_series_wins"),
+        ),
+    )
+    ids: Dict[str, int] = {}
+    for name, raw_id in (
+        (payload.get("radiant_team_name"), payload.get("radiant_team_id")),
+        (payload.get("dire_team_name"), payload.get("dire_team_id")),
+    ):
+        text = str(name or "").strip()
+        if not text or _is_placeholder_team_name(text):
+            continue
+        try:
+            value = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            ids[_winline_normalized_team_identity(text)] = value
+    key = str(series or "").strip()
+    if key and len(ids) == 2:
+        with _winline_current_map_state_lock:
+            _winline_series_team_ids[key] = ids
+
+
 def _reconcile_winline_sourcetv_polling(
     matches: Any,
     *,
@@ -1453,13 +1489,7 @@ def _reconcile_winline_sourcetv_polling(
             None if intermission else _winline_bridge_map_clock(item, map_num),
             frozen_reason=intermission,
         )
-        _winline_note_series_wins(
-            series, map_num,
-            _winline_row_wins_by_team(
-                item.get("radiant_team_name"), item.get("dire_team_name"),
-                item.get("radiant_series_wins"), item.get("dire_series_wins"),
-            ),
-        )
+        _winline_note_series_row(series, map_num, item)
         active[series] = {
             "map_num": map_num,
             "team1": str(item.get("radiant_team_name") or "").strip(),
@@ -3027,6 +3057,10 @@ WINLINE_MAP_WINNER_WINDOW_ENV = "WINLINE_MAP_WINNER_WINDOW_S"
 # Запасной источник победителя карты — Steam WebAPI `GetLiveLeagueGames` (счёт
 # серии), тот же, откуда `sourcetv_probe` берёт `radiant_series_wins`.
 WINLINE_MAP_WINNER_STEAM_ENV = "WINLINE_MAP_WINNER_STEAM_ENABLED"
+# Третий источник — кэш Stratz (`stratz_map_result`), который уже греет живой
+# ELO. Читается ТОЛЬКО с диска, без сети: это единственный источник, знающий
+# исход ПОСЛЕДНЕЙ карты серии, когда следующего лобби нет ни в мосту, ни в Steam.
+WINLINE_MAP_WINNER_STRATZ_ENV = "WINLINE_MAP_WINNER_STRATZ_ENABLED"
 # Журнал фактически отправленных карточек (и отказов отправки). Без него нельзя
 # задним числом сказать, что ушло в чат: оба разбора 02.09.2026 (зомби-цикл
 # Yangon Galacticos и проглоченный backup-тиком терминал Team Synapse) упирались
@@ -3293,13 +3327,7 @@ def _winline_refresh_from_bridge_snapshot() -> None:
             None if intermission else _winline_bridge_map_clock(row, map_num),
             frozen_reason=intermission,
         )
-        _winline_note_series_wins(
-            series, map_num,
-            _winline_row_wins_by_team(
-                row.get("radiant_team_name"), row.get("dire_team_name"),
-                row.get("radiant_series_wins"), row.get("dire_series_wins"),
-            ),
-        )
+        _winline_note_series_row(series, map_num, row)
 
 
 def _winline_map_clock_label(canonical_key: Any, now_wall: Any = None) -> str:
@@ -3552,6 +3580,87 @@ def _winline_fetch_steam_live_series_wins(league_id: Any) -> List[Dict[str, int]
     return out
 
 
+def _winline_stratz_winner_enabled() -> bool:
+    raw = os.getenv(WINLINE_MAP_WINNER_STRATZ_ENV)
+    if raw is None or str(raw).strip() == "":
+        return True
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _winline_stratz_cache_only(*_args: Any, **_kwargs: Any) -> None:
+    """`query` для `stratz_map_result`: сеть запрещена, отдаём только кэш.
+
+    `team_matches` на None-ответ отдаёт протухший кэш и ничего не выдумывает, а
+    греет этот кэш фоновый прогрев живого ELO (он опрашивает карту с интервалом
+    в полминуты начиная примерно через четверть часа после её конца). Сетевой
+    поход Stratz идёт через пул пар ключ↔прокси, где мёртвая пара стоит ровно
+    таймаут, — в потоке-шедулере, который ведёт опрос ВСЕХ живых карт, это
+    остановило бы съём линии.
+    """
+    return None
+
+
+def _winline_winner_from_stratz(key: Any, match_id: Any) -> Optional[str]:
+    """Победитель карты из кэша Stratz. None — карты в кэше нет или id чужие.
+
+    Единственный источник, знающий исход ПОСЛЕДНЕЙ карты серии: следующего лобби
+    нет, поэтому ни снапшот моста, ни Steam счёт серии уже не покажут, а OpenDota
+    03.09.2026 лежал с ~15:00 (522 и HTTP=000 с двух независимых сетей). Карта 3
+    Pipsqueak + 4 — DYNASTY (`8980994942`, терминал 21:15:43) ушла в чат без
+    победителя именно поэтому: через полтора часа Stratz её ещё не опубликовал,
+    а больше спрашивать было некого.
+    """
+    if not _winline_stratz_winner_enabled():
+        return None
+    try:
+        mid = int(match_id)
+    except (TypeError, ValueError):
+        return None
+    if mid <= 0:
+        return None
+    _map_num, team1, team2 = _winline_parse_canonical_key(key)
+    if not team1 or not team2:
+        return None
+    series = str(key or "").partition("|map")[0]
+    with _winline_current_map_state_lock:
+        ids = dict(_winline_series_team_ids.get(series) or {})
+    id1 = ids.get(_winline_normalized_team_identity(team1))
+    id2 = ids.get(_winline_normalized_team_identity(team2))
+    if not id1 or not id2:
+        return None
+    try:
+        import stratz_map_result
+        history = stratz_map_result.series_history(
+            id1, id2, query=_winline_stratz_cache_only)
+        resolve = getattr(stratz_map_result, "resolve_team_id", None)
+    except Exception:                               # noqa: BLE001
+        return None
+    best = next((m for m in (history or []) if isinstance(m, dict)
+                 and int(m.get("match_id") or 0) == mid), None)
+    if best is None:
+        return None
+    try:
+        winner_id = int(best.get("radiant_team_id") if best.get("radiant_won")
+                        else best.get("dire_team_id"))
+    except (TypeError, ValueError):
+        return None
+    if winner_id <= 0:
+        return None
+    # Наш id и id Stratz — разные пространства: 03.09.2026 Pipsqueak + 4 значился
+    # у нас 9872667, а у Stratz 10150633 (`resolve_team_id(9872667) == 10150633`).
+    # Сравниваем в обоих; чужой id не угадываем — молчание дешевле догадки.
+    for name, our_id in ((team1, id1), (team2, id2)):
+        candidates = {int(our_id)}
+        if callable(resolve):
+            try:
+                candidates.add(int(resolve(our_id)))
+            except Exception:                       # noqa: BLE001
+                pass
+        if winner_id in candidates:
+            return name
+    return None
+
+
 def _winline_winner_from_wins_delta(
     key: Any,
     wins_before: Any,
@@ -3607,8 +3716,9 @@ def _winline_resolve_map_winner(
     fetch_fn: Any = None,
     map_started_at: Any = None,
     steam_fn: Any = None,
+    stratz_fn: Any = None,
 ) -> Optional[str]:
-    """Имя победителя карты: мост → Steam WebAPI → OpenDota.
+    """Имя победителя карты: мост → Steam WebAPI → кэш Stratz → OpenDota.
 
     OpenDota знает доигранный матч точно и по id, но он ОДИН и он отказывает:
     03.09.2026 api.opendota.com лёг (522 от Cloudflare и HTTP=000 на 12-15 с с
@@ -3619,8 +3729,9 @@ def _winline_resolve_map_winner(
     и Steam.
 
     Первые два источника бесплатны или почти бесплатны (ноль сети и один лёгкий
-    HTTP), поэтому идут первыми; OpenDota остаётся последним — только он знает
-    исход ПОСЛЕДНЕЙ карты серии, когда серия уже ушла из живых списков.
+    HTTP), поэтому идут первыми; кэш Stratz читается с диска без сети и знает
+    исход ПОСЛЕДНЕЙ карты серии, когда следующего лобби уже нет; OpenDota
+    остаётся последним — он единственный спрашивает про матч напрямую по id.
     Браузерных источников (cyberscore/dltv) в цепочке нет намеренно: браузер
     один и общий с поллером кэфов, такой запрос отнял бы время съёма линии у
     живых карт.
@@ -3651,6 +3762,11 @@ def _winline_resolve_map_winner(
         winner = _winline_winner_from_wins_delta(key, baseline, candidate)
         if winner:
             return winner
+    # Кэш Stratz: единственный источник, знающий исход ПОСЛЕДНЕЙ карты серии —
+    # следующего лобби нет, и счёту серии взяться неоткуда.
+    winner = (stratz_fn or _winline_winner_from_stratz)(key, match_id)
+    if winner:
+        return winner
     if match_id is None:
         # Спрашивать OpenDota не о чем: без id матча источника нет. Это и случай
         # матча, закреплённого за ДРУГОЙ картой серии (`_winline_claim_winner_match`).
@@ -3751,6 +3867,7 @@ def _winline_odds_telegram_notify(
     stamp_fn: Any = None,
     winner_fn: Any = None,
     steam_fn: Any = None,
+    stratz_fn: Any = None,
 ) -> Optional[str]:
     """Сообщить в админ-чат об изменении кэфов текущей карты. Fail-open.
 
@@ -3833,7 +3950,7 @@ def _winline_odds_telegram_notify(
             winner_name = _winline_resolve_map_winner(
                 key, match_id if claimed else None,
                 fetch_fn=winner_fn, map_started_at=map_started_at,
-                steam_fn=steam_fn)
+                steam_fn=steam_fn, stratz_fn=stratz_fn)
         except Exception:
             winner_name = None
     elif status in {"closed", "suspended"}:
@@ -4126,6 +4243,7 @@ def _winline_flush_pending_map_winners(
     send_fn: Any = None,
     winner_fn: Any = None,
     steam_fn: Any = None,
+    stratz_fn: Any = None,
 ) -> List[str]:
     """Догнать сообщение о конце карты именем победителя.
 
@@ -4171,7 +4289,7 @@ def _winline_flush_pending_map_winners(
             winner = _winline_resolve_map_winner(
                 key, pending.get("match_id"), fetch_fn=winner_fn,
                 map_started_at=pending.get("map_started_at"),
-                steam_fn=steam_fn,
+                steam_fn=steam_fn, stratz_fn=stratz_fn,
             )
         except Exception:
             winner = None

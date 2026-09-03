@@ -349,3 +349,195 @@ def test_pending_winner_without_match_id_still_gets_a_name() -> None:
     assert "🏆 Winline · карта 1" in sent[0]
     assert "🏆 победа: Team Spirit Academy" in sent[0]
     assert cs._winline_pending_map_winners == {}
+
+
+# ── Кэш Stratz: исход ПОСЛЕДНЕЙ карты серии ──────────────────────────────────
+# После последней карты следующего лобби нет, поэтому ни снапшот моста, ни Steam
+# счёт серии уже не покажут, а OpenDota 03.09.2026 лежал с ~15:00. Карта 3
+# Pipsqueak + 4 — DYNASTY (8980994942, терминал 21:15:47) ушла в чат без
+# победителя именно поэтому.
+
+PIPSQUEAK_SERIES = "sourcetv:league:19944|id:10225542|id:9872667"
+PIPSQUEAK_MAP3 = f"{PIPSQUEAK_SERIES}|map3|Pipsqueak + 4|DYNASTY"
+PIPSQUEAK_MATCH3 = 8980994942
+# Наши id против id Stratz: та же команда под разными номерами (боевая связка из
+# runtime/stratz_team_matches.json: resolve_team_id(9872667) == 10150633).
+PIPS_OURS, PIPS_STRATZ, DYNASTY_ID = 9872667, 10150633, 10225542
+PIPS = "pipsqueak 4"       # _winline_normalized_team_identity съедает «+»
+DYN = "dynasty"
+
+
+def _bridge_row(radiant_name, radiant_id, dire_name, dire_id, *,
+                map_num=3, wins=(0, 0), game_time=2634):
+    return {
+        "match_id": PIPSQUEAK_MATCH3,
+        "league_id": 19944,
+        "radiant_team_name": radiant_name,
+        "radiant_team_id": radiant_id,
+        "dire_team_name": dire_name,
+        "dire_team_id": dire_id,
+        "series_game_number": map_num,
+        "series_type": 1,
+        "radiant_series_wins": wins[0],
+        "dire_series_wins": wins[1],
+        "status": "live",
+        "game_time": game_time,
+        "timestamp": cs.time.time(),
+    }
+
+
+def _stratz_stub(monkeypatch, maps, aliases=None):
+    """Заглушка stratz_map_result: кэш без сети, как в бою."""
+    module = type(sys)("stratz_map_result")
+    table = {int(k): int(v) for k, v in (aliases or {}).items()}
+    seen: List[Dict[str, Any]] = []
+
+    def _series_history(rad, dire, **kwargs):
+        seen.append({"rad": rad, "dire": dire, "query": kwargs.get("query")})
+        return list(maps)
+
+    module.series_history = _series_history
+    module.resolve_team_id = lambda tid, **kw: table.get(int(tid), int(tid))
+    monkeypatch.setitem(sys.modules, "stratz_map_result", module)
+    monkeypatch.setenv(cs.WINLINE_MAP_WINNER_STRATZ_ENV, "1")
+    return seen
+
+
+def _remember_pipsqueak_ids(monkeypatch):
+    """Мост видел серию: имена и id запомнены (без этого Stratz не сопоставить)."""
+    monkeypatch.setattr(cs, "_winline_series_team_ids", {}, raising=False)
+    cs._winline_note_series_row(
+        PIPSQUEAK_SERIES, 3,
+        _bridge_row("Pipsqueak + 4", PIPS_OURS, "DYNASTY", DYNASTY_ID))
+    assert cs._winline_series_team_ids[PIPSQUEAK_SERIES] == {
+        PIPS: PIPS_OURS, DYN: DYNASTY_ID}
+
+
+def test_final_map_winner_comes_from_the_stratz_cache(monkeypatch) -> None:
+    _remember_pipsqueak_ids(monkeypatch)
+    _stratz_stub(monkeypatch, [
+        {"match_id": PIPSQUEAK_MATCH3, "series_id": 1137457,
+         "radiant_team_id": PIPS_STRATZ, "dire_team_id": DYNASTY_ID,
+         "radiant_won": True, "start": 1, "end": 2},
+    ], aliases={PIPS_OURS: PIPS_STRATZ})
+
+    assert cs._winline_winner_from_stratz(
+        PIPSQUEAK_MAP3, PIPSQUEAK_MATCH3) == "Pipsqueak + 4"
+
+
+def test_stratz_sides_are_read_from_the_answer_not_from_our_order(monkeypatch) -> None:
+    """Строны в ответе Stratz могут идти в обратном порядке — важна не сторона."""
+    _remember_pipsqueak_ids(monkeypatch)
+    _stratz_stub(monkeypatch, [
+        {"match_id": PIPSQUEAK_MATCH3, "series_id": 1137457,
+         "radiant_team_id": DYNASTY_ID, "dire_team_id": PIPS_STRATZ,
+         "radiant_won": True, "start": 1, "end": 2},
+    ], aliases={PIPS_OURS: PIPS_STRATZ})
+
+    assert cs._winline_winner_from_stratz(
+        PIPSQUEAK_MAP3, PIPSQUEAK_MATCH3) == "DYNASTY"
+
+
+def test_stratz_is_read_from_cache_without_network(monkeypatch) -> None:
+    """Сетевой поход Stratz висел бы в потоке-шедулере, который снимает линию."""
+    _remember_pipsqueak_ids(monkeypatch)
+    seen = _stratz_stub(monkeypatch, [])
+
+    cs._winline_winner_from_stratz(PIPSQUEAK_MAP3, PIPSQUEAK_MATCH3)
+
+    assert seen and callable(seen[0]["query"])
+    assert seen[0]["query"](1, 2) is None
+
+
+def test_neighbouring_map_of_the_series_is_not_ours(monkeypatch) -> None:
+    _remember_pipsqueak_ids(monkeypatch)
+    _stratz_stub(monkeypatch, [
+        {"match_id": 8980769413, "series_id": 1137457,
+         "radiant_team_id": PIPS_STRATZ, "dire_team_id": DYNASTY_ID,
+         "radiant_won": True, "start": 1, "end": 2},
+    ], aliases={PIPS_OURS: PIPS_STRATZ})
+
+    assert cs._winline_winner_from_stratz(
+        PIPSQUEAK_MAP3, PIPSQUEAK_MATCH3) is None
+
+
+def test_foreign_stratz_id_is_not_guessed(monkeypatch) -> None:
+    _remember_pipsqueak_ids(monkeypatch)
+    _stratz_stub(monkeypatch, [
+        {"match_id": PIPSQUEAK_MATCH3, "series_id": 1,
+         "radiant_team_id": 424242, "dire_team_id": 525252,
+         "radiant_won": True, "start": 1, "end": 2},
+    ])
+
+    assert cs._winline_winner_from_stratz(
+        PIPSQUEAK_MAP3, PIPSQUEAK_MATCH3) is None
+
+
+def test_stratz_needs_the_ids_the_bridge_once_showed(monkeypatch) -> None:
+    """Без пары имён и id от моста сопоставлять не с чем — молчим."""
+    monkeypatch.setattr(cs, "_winline_series_team_ids", {}, raising=False)
+    seen = _stratz_stub(monkeypatch, [
+        {"match_id": PIPSQUEAK_MATCH3, "series_id": 1,
+         "radiant_team_id": PIPS_STRATZ, "dire_team_id": DYNASTY_ID,
+         "radiant_won": True, "start": 1, "end": 2},
+    ])
+
+    assert cs._winline_winner_from_stratz(
+        PIPSQUEAK_MAP3, PIPSQUEAK_MATCH3) is None
+    assert seen == []
+
+
+def test_stratz_can_be_switched_off(monkeypatch) -> None:
+    _remember_pipsqueak_ids(monkeypatch)
+    seen = _stratz_stub(monkeypatch, [
+        {"match_id": PIPSQUEAK_MATCH3, "series_id": 1,
+         "radiant_team_id": PIPS_STRATZ, "dire_team_id": DYNASTY_ID,
+         "radiant_won": True, "start": 1, "end": 2},
+    ])
+    monkeypatch.setenv(cs.WINLINE_MAP_WINNER_STRATZ_ENV, "0")
+
+    assert cs._winline_winner_from_stratz(
+        PIPSQUEAK_MAP3, PIPSQUEAK_MATCH3) is None
+    assert seen == []
+
+
+def test_chain_falls_through_to_stratz_for_the_last_map(monkeypatch) -> None:
+    """Полный путь последней карты: мост молчит, Steam молчит, Stratz отвечает."""
+    _remember_pipsqueak_ids(monkeypatch)
+    _stratz_stub(monkeypatch, [
+        {"match_id": PIPSQUEAK_MATCH3, "series_id": 1137457,
+         "radiant_team_id": PIPS_STRATZ, "dire_team_id": DYNASTY_ID,
+         "radiant_won": True, "start": 1, "end": 2},
+    ], aliases={PIPS_OURS: PIPS_STRATZ})
+
+    winner = cs._winline_resolve_map_winner(
+        PIPSQUEAK_MAP3, PIPSQUEAK_MATCH3,
+        fetch_fn=_boom, steam_fn=lambda _league: [])
+
+    assert winner == "Pipsqueak + 4"
+
+
+def test_opendota_still_closes_the_last_map_when_stratz_is_empty(monkeypatch) -> None:
+    _remember_pipsqueak_ids(monkeypatch)
+    _stratz_stub(monkeypatch, [])
+
+    winner = cs._winline_resolve_map_winner(
+        PIPSQUEAK_MAP3, PIPSQUEAK_MATCH3,
+        fetch_fn=lambda _mid: {"radiant_win": True, "name": "Pipsqueak + 4"},
+        steam_fn=lambda _league: [])
+
+    assert winner == "Pipsqueak + 4"
+
+
+def test_bridge_row_remembers_names_with_ids(monkeypatch) -> None:
+    """Плейсхолдерные имена id-пары не дают: угадывать сторону нельзя."""
+    monkeypatch.setattr(cs, "_winline_series_team_ids", {}, raising=False)
+    cs._winline_note_series_row(
+        PIPSQUEAK_SERIES, 1, _bridge_row("Radiant", 1, "Dire", 2, map_num=1))
+    assert cs._winline_series_team_ids == {}
+
+    cs._winline_note_series_row(
+        PIPSQUEAK_SERIES, 1,
+        _bridge_row("Pipsqueak + 4", PIPS_OURS, "DYNASTY", DYNASTY_ID, map_num=1))
+    assert cs._winline_series_team_ids[PIPSQUEAK_SERIES] == {
+        PIPS: PIPS_OURS, DYN: DYNASTY_ID}

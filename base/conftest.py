@@ -62,13 +62,14 @@ def _isolate_winline_sent_journal(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _disable_winline_steam_winner(monkeypatch):
-    """Тесты не ходят в Steam WebAPI за счётом серии.
+    """Тесты не ходят в Steam WebAPI и не читают боевой кэш Stratz.
 
-    В бою источник включён; в тестах цепочка проверяется на подменённом
-    `steam_fn` / `_winline_fetch_steam_live_series_wins`, чтобы прогон не
-    зависел от сети и не дёргал боевой ключ.
+    В бою оба источника включены; в тестах цепочка проверяется на подменённых
+    `steam_fn` / `stratz_fn`, чтобы прогон не зависел от сети и не дёргал боевые
+    ключи и кэши.
     """
     monkeypatch.setenv("WINLINE_MAP_WINNER_STEAM_ENABLED", "0")
+    monkeypatch.setenv("WINLINE_MAP_WINNER_STRATZ_ENABLED", "0")
 
 
 @pytest.fixture(autouse=True)
