@@ -559,11 +559,17 @@ def _live_elo_model():
     # не должна: этот путь только читает силу состава.
     try:
         from ELO.array_model import load_read_model
-        from ELO.live_team_strength import (DEFAULT_RUNTIME_MODEL_STATE_PATH,
+        from ELO.live_team_strength import (DEFAULT_LIVE_DELTA_PATH,
+                                            DEFAULT_RUNTIME_MODEL_STATE_PATH,
                                             DEFAULT_SNAPSHOT_PATH)
 
+        # Дельта приоритетнее полного состояния: живая модель собирается из
+        # базовых массивов (sidecar .npz) и дельты, без разбора 519 МБ и без
+        # словарной модели на 2.5 млн записей (E-255). Если дельты нет,
+        # load_read_model сам уходит на прежний путь.
         fast = load_read_model(DEFAULT_SNAPSHOT_PATH,
-                               DEFAULT_RUNTIME_MODEL_STATE_PATH)
+                               DEFAULT_RUNTIME_MODEL_STATE_PATH,
+                               delta_path=DEFAULT_LIVE_DELTA_PATH)
         if fast is not None:
             _report_array_model(True, "")
             return fast

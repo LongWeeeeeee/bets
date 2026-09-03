@@ -433,17 +433,31 @@ def _stamp(path: Path) -> tuple:
         return (str(path), 0, 0)
 
 
-def load_read_model(snapshot_path: Path, runtime_model_state_path: Path | None = None):
-    """Массивная модель с примешанным рантайм-состоянием, с кэшем по отметкам файлов.
+def load_read_model(snapshot_path: Path, runtime_model_state_path: Path | None = None,
+                    delta_path: Path | None = None):
+    """Массивная модель с примешанными живыми обновлениями, с кэшем по отметкам.
 
-    Свежесть здесь обязательна: базовый снимок пересобирается редко (на боевой
-    машине он датирован 12.08), а рантайм обновляется после каждой завершённой
-    карты. Читать рейтинги из базового значило бы считать `hybrid_strength` по
-    данным недельной давности — ровно то, что чинили 20.08.
+    Свежесть здесь обязательна: базовый снимок пересобирается редко, а живые
+    обновления приходят после каждой завершённой карты. Читать рейтинги из
+    базового значило бы считать `hybrid_strength` по данным недельной давности —
+    ровно то, что чинили 20.08.
 
-    Кэш ключуется временем изменения и размером обоих файлов: перечитывать
-    242-мегабайтный снимок на каждый вызов дороже, чем держать модель.
+    Источники живых обновлений, по убыванию предпочтения:
+      1. `delta_path` — дельта поверх базовых массивов (килобайты; E-255).
+         Это основной путь: он не требует ни разбора 519 МБ, ни словарной модели.
+      2. `runtime_model_state_path` — прежнее полное состояние (519 МБ).
+         Остаётся запасным: пока дельта не собрана
+         (`ELO/convert_state_to_delta.py`), поведение прежнее.
+
+    Кэш ключуется временем изменения и размером файлов: перечитывать снимок на
+    каждый вызов дороже, чем держать модель.
     """
+    if delta_path is not None and Path(delta_path).exists():
+        reference, signature = _snapshot_meta(snapshot_path)
+        from . import state_overlay
+        if state_overlay.load_delta(delta_path, base_reference_timestamp=reference,
+                                    base_model_config_signature=signature) is not None:
+            return build_overlay_model(snapshot_path, delta_path)
     key = (_stamp(snapshot_path),
            _stamp(runtime_model_state_path) if runtime_model_state_path else None)
     for i, (k, model) in enumerate(_READ_CACHE):
@@ -454,6 +468,121 @@ def load_read_model(snapshot_path: Path, runtime_model_state_path: Path | None =
     _READ_CACHE.append((key, model))
     del _READ_CACHE[:-_READ_SLOTS]
     return model
+
+
+#: Мета снимка по отметке файла: `reference_timestamp` и подпись конфигурации.
+#: Нужны для валидации дельты и читаются потоком — meta идёт первым разделом,
+#: поэтому дальше начала файла проход не идёт.
+_META_CACHE: dict = {}
+
+
+def _snapshot_meta(snapshot_path: Path) -> tuple[int, str]:
+    """(reference_timestamp, model_config_signature) из снимка, потоково.
+
+    Сигнатура обязана считаться ТОЧНО как в `live_team_strength`: сначала
+    `meta.model_config_signature`, а если её там нет — по `model_state.config`.
+    Расхождение здесь стоило бы молчаливой заморозки живых обновлений: дельта
+    признавалась бы чужой, и рейтинги остались бы на срезе снимка.
+    """
+    key = _stamp(snapshot_path)
+    cached = _META_CACHE.get(str(snapshot_path))
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    import ijson
+
+    reference, signature, config = 0, "", None
+    try:
+        with open(snapshot_path, "rb") as fh:
+            for prefix, event, value in ijson.parse(fh, use_float=True):
+                if prefix == "meta.reference_timestamp" and event == "number":
+                    reference = int(value)
+                elif prefix == "meta.model_config_signature" and event == "string":
+                    signature = str(value)
+                elif prefix.startswith("teams_by_org_key"):
+                    break
+    except Exception:
+        pass
+    if not signature:
+        # meta сигнатуры не несёт — считаем по конфигурации состояния.
+        try:
+            with open(snapshot_path, "rb") as fh:
+                for cfg in ijson.items(fh, "model_state.config", use_float=True):
+                    config = cfg
+                    break
+        except Exception:
+            config = None
+        try:
+            from .live_team_strength import _model_config_signature
+            signature = _model_config_signature({"config": config} if config else None)
+        except Exception:
+            signature = ""
+    _META_CACHE[str(snapshot_path)] = (key, (reference, signature))
+    return reference, signature
+
+
+#: Живая модель МУТИРУЕТСЯ, поэтому кэш отдельный от read-only.
+_OVERLAY_CACHE: list = []
+_OVERLAY_SLOTS = 2
+
+
+def build_overlay_model(snapshot_path: Path, delta_path: Path | None = None):
+    """Живая модель: базовые массивы + пишущий слой + наложенная дельта.
+
+    Базовые массивы ОБЩИЕ с read-only моделью: `copy.copy` даёт свой словарь
+    атрибутов при тех же хранилищах, а `state_overlay.wrap_model` подменяет поля
+    обёртками, которые пишут в свои словари и читают из базы. Второй копии
+    массивов (74-269 МБ) не возникает, базовая модель остаётся нетронутой.
+
+    Мутирующая модель не умеет `export_state()` — и не должна: наружу уходит
+    дельта (`state_overlay.collect_changes`), а полное состояние собирается
+    ночью из снимка (`rebase_runtime_model_state.py`).
+    """
+    import copy as _copy
+
+    from . import state_overlay
+
+    key = (_stamp(snapshot_path), _stamp(delta_path) if delta_path else None)
+    for i, (k, model) in enumerate(_OVERLAY_CACHE):
+        if k == key:
+            _OVERLAY_CACHE.append(_OVERLAY_CACHE.pop(i))
+            return model
+
+    base = load_read_model(snapshot_path, None)
+    model = _copy.copy(base)
+    wrappers = state_overlay.wrap_model(model)
+    model._overlay_wrappers = wrappers
+    model._overlay_delta_path = Path(delta_path) if delta_path else None
+    model._overlay_snapshot_path = Path(snapshot_path)
+    applied = 0
+    if delta_path is not None:
+        reference, signature = _snapshot_meta(snapshot_path)
+        payload = state_overlay.load_delta(
+            Path(delta_path), base_reference_timestamp=reference,
+            base_model_config_signature=signature)
+        if payload is not None:
+            state_overlay.restore_small_parts(model, payload.get("small_parts") or {})
+            applied += state_overlay.apply_resets(model, payload.get("resets") or {})
+            applied += state_overlay.apply_changes(model, payload.get("changes") or {})
+    model._overlay_applied = applied
+    _OVERLAY_CACHE.append((key, model))
+    del _OVERLAY_CACHE[:-_OVERLAY_SLOTS]
+    return model
+
+
+def rekey_overlay_cache(model, snapshot_path: Path, delta_path: Path) -> None:
+    """Перепривязать кэш живой модели к новой отметке дельты.
+
+    После записи дельты её mtime меняется, и без перепривязки следующий вызов
+    собирал бы модель заново (0.2 c и ~0.4 ГБ) вместо того чтобы взять ту же —
+    а она и есть источник правды в рамках процесса.
+    """
+    key = (_stamp(snapshot_path), _stamp(delta_path))
+    for i, (_k, cached) in enumerate(_OVERLAY_CACHE):
+        if cached is model:
+            _OVERLAY_CACHE[i] = (key, cached)
+            return
+    _OVERLAY_CACHE.append((key, model))
+    del _OVERLAY_CACHE[:-_OVERLAY_SLOTS]
 
 
 def load_team_names(snapshot_path: Path) -> dict[int, str]:

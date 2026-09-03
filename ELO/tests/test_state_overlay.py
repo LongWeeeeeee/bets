@@ -368,3 +368,103 @@ def test_intermediate_keep_refuses_loudly_on_overlay(tmp_path) -> None:
 
     with pytest.raises(TypeError, match="keep=0 и keep=1"):
         model.process_match(_match(301))
+
+
+def _map_record(mid: int, ts: int, radiant_win: bool = True) -> MatchRecord:
+    """Карта серии. `radiant_win` обязан совпадать со сдвигом счёта.
+
+    Живой путь определяет исход по сдвигу счёта серии, а не из записи: при
+    `first_team_score` 0 -> 1 и `first_team_is_radiant=True` победителем
+    считается радиант. Эталон в тесте обязан быть согласован, иначе расхождение
+    выглядит как ошибка чисел, хотя это ошибка фикстуры.
+    """
+    return MatchRecord(
+        match_id=mid, timestamp=ts, radiant_win=radiant_win,
+        radiant_team_id=1, radiant_team_name="Elegia",
+        dire_team_id=2, dire_team_name="Team Mariachi",
+        radiant_player_ids=(1, 2, 3, 4, 5), dire_player_ids=(6, 7, 8, 9, 10),
+        league_id=11, league_name="Test League", source_league_tier="TIER2",
+        series_id=425663, series_type="3",
+        derived_league_tier=LeagueTier.TIER2,
+    )
+
+
+def test_live_maps_write_delta_not_full_state(tmp_path, monkeypatch) -> None:
+    """Сквозная проверка живого пути: дельта вместо перезаписи 519 МБ.
+
+    Закрепляет три вещи разом: полное состояние НЕ создаётся вовсе, дельта
+    несёт изменения, и числа совпадают со словарной моделью, которая применила
+    ту же карту (иначе память сэкономили бы ценой рейтингов).
+    """
+    import ELO.live_team_strength as lts
+    from ELO.config import HybridEloConfig
+
+    lts._SNAPSHOT_CACHE = None
+    lts._MODEL_FROM_SNAPSHOT_CACHE.clear()
+    lts._RUNTIME_SNAPSHOT_CACHE.update(
+        {"base_snapshot_id": None, "runtime_signature": None, "snapshot": None})
+    array_model._READ_CACHE.clear()
+    array_model._OVERLAY_CACHE.clear()
+    array_model._META_CACHE.clear()
+    lts._DELTA_MODEL_REPORTED = False
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    snapshot_path = tmp_path / "live_snapshot.json"
+    progress_path = tmp_path / "live_progress.json"
+    state_path = tmp_path / "live_model_state.json"
+    delta_path = tmp_path / "live_delta.json"
+    lock_path = tmp_path / "live_state.lock"
+    monkeypatch.setenv("LIVE_ELO_DELTA", str(delta_path))
+
+    base_state = HybridPlayerRosterEloModel(HybridEloConfig()).export_state()
+    snapshot = {"meta": {"reference_timestamp": 1771153251},
+                "teams_by_org_key": {},
+                "model_state": base_state}
+    snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+    signature = lts._model_config_signature(base_state)
+
+    # Пустая дельта = «живое состояние совпадает с базой»: этого достаточно,
+    # чтобы живой путь пошёл через overlay, а не через разбор 519 МБ.
+    state_overlay.save_delta(delta_path, base_reference_timestamp=1771153251,
+                             base_model_config_signature=signature,
+                             changes={}, resets={}, small_parts={}, updated_at=1)
+
+    common = dict(
+        series_key="425663",
+        series_url="dltv.org/matches/425663/elegia-vs-team-mariachi",
+        snapshot_path=snapshot_path, data_dir=data_dir, rebuild_if_missing=False,
+        progress_path=progress_path, runtime_model_state_path=state_path,
+        runtime_lock_path=lock_path,
+    )
+    first = lts.register_live_map_context(
+        map_key="dltv.org/matches/425663/elegia-vs-team-mariachi.0",
+        first_team_score=0, second_team_score=0, first_team_is_radiant=True,
+        match_record=_map_record(101, 1771153200), **common)
+    assert first is not None
+
+    second = lts.register_live_map_context(
+        map_key="dltv.org/matches/425663/elegia-vs-team-mariachi.1",
+        first_team_score=1, second_team_score=0, first_team_is_radiant=True,
+        match_record=_map_record(102, 1771153800), **common)
+    assert second is not None
+    assert second["applied_update"] is not None, "карта обязана примениться"
+
+    # 1. полное состояние не создавалось вовсе
+    assert state_path.exists() is False
+    # 2. дельта записана и несёт изменения игроков обеих сторон
+    payload = json.loads(delta_path.read_text(encoding="utf-8"))
+    assert payload["base_reference_timestamp"] == 1771153251
+    changes = payload["changes"]
+    assert "player_global" in changes and len(changes["player_global"]) == 10
+    assert delta_path.stat().st_size < 64 * 1024
+
+    # 3. числа совпадают со словарной моделью, применившей ту же карту
+    reference = HybridPlayerRosterEloModel.from_state(json.loads(json.dumps(base_state)))
+    reference.process_match(_map_record(101, 1771153200))
+
+    array_model._OVERLAY_CACHE.clear()
+    fresh = array_model.build_overlay_model(snapshot_path, delta_path)
+    for player in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10):
+        assert float(fresh.player_global[player]) == pytest.approx(
+            float(reference.player_global[player])), f"игрок {player} разъехался"

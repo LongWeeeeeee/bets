@@ -94,10 +94,15 @@ def _load() -> dict[str, Any]:
                 try:
                     from ELO.array_model import load_read_model
                     from ELO.live_team_strength import (
+                        DEFAULT_LIVE_DELTA_PATH,
                         DEFAULT_RUNTIME_MODEL_STATE_PATH)
 
+                    # Дельта приоритетнее полного состояния (E-255): живая
+                    # модель собирается из базовых массивов и дельты, без разбора
+                    # 519 МБ. Нет дельты — load_read_model уходит на прежний путь.
                     _fast = load_read_model(Path(SNAPSHOT),
-                                            DEFAULT_RUNTIME_MODEL_STATE_PATH)
+                                            DEFAULT_RUNTIME_MODEL_STATE_PATH,
+                                            delta_path=DEFAULT_LIVE_DELTA_PATH)
                 except Exception as _exc:  # noqa: BLE001
                     _fast = None
                     print(f"ВНИМАНИЕ: массивная модель не поднялась "

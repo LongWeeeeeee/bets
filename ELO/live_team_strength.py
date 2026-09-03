@@ -46,8 +46,17 @@ DEFAULT_DATA_DIR = (
 DEFAULT_SNAPSHOT_PATH = Path(__file__).resolve().parent / "output" / "live_team_elo_snapshot.json"
 DEFAULT_RUNTIME_PROGRESS_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_progress.json"
 DEFAULT_RUNTIME_MODEL_STATE_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_model_state.json"
+#: Живые обновления как ДЕЛЬТА поверх базовых массивов снимка (E-255).
+#: Прежнее полное состояние (`live_elo_model_state.json`, 519 МБ) перезаписывалось
+#: целиком после каждой карты ради ~70-100 изменившихся значений и требовало
+#: разбора (+1.28 ГБ) и словарной модели (+1.31 ГБ) в живом процессе.
+DEFAULT_LIVE_DELTA_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_delta.json"
 DEFAULT_RUNTIME_LOCK_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_state.lock"
 DEFAULT_LIVE_SEGMENT_POLICY_PATH = Path(__file__).resolve().parent / "live_probability_segment_policy.json"
+
+#: Маркер «живого» снимка: значение — путь к дельте. Ставится в `_snapshot_with_runtime_model_state`,
+#: читается в `_restore_model_from_snapshot`.
+LIVE_DELTA_MARKER = "__live_delta_path__"
 
 _SNAPSHOT_CACHE: dict[str, Any] | None = None
 # Кэш восстановленных моделей: ДВА слота, а не один, и ключ — состояние, из
@@ -428,6 +437,12 @@ def _array_model_for_base_snapshot(snapshot_path: Path):
 
 
 def _restore_model_from_snapshot(snapshot: dict[str, Any]) -> HybridPlayerRosterEloModel | None:
+    if isinstance(snapshot, dict) and snapshot.get(LIVE_DELTA_MARKER):
+        # Живой снимок: модель = базовые массивы + дельта. Ни разбора 519 МБ,
+        # ни словарной модели на 2.5 млн записей.
+        model = _live_overlay_model(snapshot)
+        if model is not None:
+            return model
     raw_state = snapshot.get("model_state") if isinstance(snapshot, dict) else None
     if not isinstance(raw_state, dict):
         return None
@@ -676,12 +691,112 @@ def _load_runtime_model_payload(
     return payload
 
 
+def _live_delta_path() -> Path:
+    env = os.getenv("LIVE_ELO_DELTA")
+    return Path(env).expanduser() if env else DEFAULT_LIVE_DELTA_PATH
+
+
+def _delta_is_usable(snapshot: dict[str, Any] | None, delta_path: Path) -> bool:
+    """Дельта годится, только если она собрана ОТ ЭТОГО снимка.
+
+    Те же два охранника, что у рантайм-состояния (`_load_runtime_model_payload`):
+    отметка базового снимка и подпись конфигурации. Без них обновления легли бы
+    на чужую базу, и получились бы рейтинги, которых никогда не существовало.
+    """
+    if not isinstance(snapshot, dict) or not delta_path.exists():
+        return False
+    try:
+        from . import state_overlay
+    except ImportError:
+        return False
+    payload = state_overlay.load_delta(
+        delta_path,
+        base_reference_timestamp=_snapshot_reference_timestamp(snapshot),
+        base_model_config_signature=_snapshot_model_config_signature(snapshot),
+    )
+    return payload is not None
+
+
+def _snapshot_source_path(snapshot: dict[str, Any] | None) -> Path | None:
+    """Путь к снимку, от которого загружен slim-кэш (нужен массивной модели)."""
+    if not isinstance(snapshot, dict):
+        return None
+    state = snapshot.get("model_state")
+    if not isinstance(state, dict):
+        return None
+    source = state.get(SLIM_MODEL_STATE_MARKER)
+    return Path(source) if source else None
+
+
+_DELTA_MODEL_REPORTED = False
+
+
+def _live_overlay_model(snapshot: dict[str, Any] | None):
+    """Живая модель: базовые массивы + дельта. None, если путь недоступен.
+
+    None означает «работай по-старому» (разбор рантайм-состояния и словарная
+    модель): дельты может не быть вовсе — например, до прогона
+    `ELO/convert_state_to_delta.py`. Молча потерять живые обновления было бы
+    хуже, чем заплатить прежнюю память.
+    """
+    global _DELTA_MODEL_REPORTED
+    delta_path = _live_delta_path()
+    if not _delta_is_usable(snapshot, delta_path):
+        return None
+    source = _snapshot_source_path(snapshot)
+    if source is None:
+        return None
+    try:
+        from .array_model import build_overlay_model
+        model = build_overlay_model(source, delta_path)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ELO] живая модель на дельте не поднялась ({exc}) — иду прежним путём",
+              flush=True)
+        return None
+    if not _DELTA_MODEL_REPORTED:
+        _DELTA_MODEL_REPORTED = True
+        print(f"[ELO] живая модель на ДЕЛЬТЕ: применено {getattr(model, '_overlay_applied', 0)} "
+              f"значений из {delta_path.name} поверх базовых массивов", flush=True)
+    return model
+
+
+def _save_live_delta(model, base_reference_timestamp: int,
+                     base_model_config_signature: str) -> bool:
+    """Записать живые обновления дельтой. False — если модель не overlay."""
+    wrappers = getattr(model, "_overlay_wrappers", None)
+    if not wrappers:
+        return False
+    from . import state_overlay
+    from .array_model import rekey_overlay_cache
+
+    delta_path = _live_delta_path()
+    source = getattr(model, "_overlay_snapshot_path", None) or DEFAULT_SNAPSHOT_PATH
+    state_overlay.save_delta(
+        delta_path,
+        base_reference_timestamp=int(base_reference_timestamp),
+        base_model_config_signature=str(base_model_config_signature or ""),
+        changes=state_overlay.collect_changes(wrappers),
+        resets=state_overlay.collect_resets(wrappers),
+        small_parts=state_overlay.collect_small_parts(model),
+        updated_at=int(time.time()),
+    )
+    # Отметка дельты изменилась — перепривязываем кэш, иначе следующий вызов
+    # собирал бы модель заново вместо того чтобы взять ту же.
+    rekey_overlay_cache(model, Path(source), delta_path)
+    return True
+
+
 def _snapshot_with_runtime_model_state(
     snapshot: dict[str, Any],
     *,
     runtime_model_state_path: Path,
 ) -> dict[str, Any]:
-    exists, signature = _runtime_file_signature(runtime_model_state_path)
+    delta_path = _live_delta_path()
+    delta_usable = _delta_is_usable(snapshot, delta_path)
+    if delta_usable:
+        exists, signature = _runtime_file_signature(delta_path)
+    else:
+        exists, signature = _runtime_file_signature(runtime_model_state_path)
     base_snapshot_id = id(snapshot)
     cached_snapshot = _RUNTIME_SNAPSHOT_CACHE.get("snapshot")
     if (
@@ -690,6 +805,18 @@ def _snapshot_with_runtime_model_state(
         and isinstance(cached_snapshot, dict)
     ):
         return cached_snapshot
+
+    if delta_usable:
+        # Мерж больше ничего не грузит: живое состояние — это дельта (килобайты)
+        # поверх базовых массивов, поэтому снимок только помечается путём к ней.
+        # Прежде здесь разбирался `live_elo_model_state.json` (519 МБ, +1.28 ГБ
+        # RSS) и подменялся model_state снимка.
+        tagged = dict(snapshot)
+        tagged[LIVE_DELTA_MARKER] = str(delta_path)
+        _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = base_snapshot_id
+        _RUNTIME_SNAPSHOT_CACHE["runtime_signature"] = signature
+        _RUNTIME_SNAPSHOT_CACHE["snapshot"] = tagged
+        return tagged
 
     if not exists:
         _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = base_snapshot_id
@@ -1883,6 +2010,12 @@ def register_live_map_context(
 
         def _model() -> HybridPlayerRosterEloModel:
             if not _model_cell:
+                # Сначала живая модель на дельте (базовые массивы + overlay):
+                # она не требует ни разбора 519 МБ, ни словарной модели.
+                overlay_model = _live_overlay_model(snapshot)
+                if overlay_model is not None:
+                    _model_cell.append(overlay_model)
+                    return _model_cell[0]
                 payload = _load_runtime_model_payload(
                     snapshot=snapshot,
                     runtime_model_state_path=runtime_model_state_path,
@@ -1987,13 +2120,21 @@ def register_live_map_context(
 
         _write_json_atomic(progress_path, progress)
         if wrote_model_state:
-            runtime_payload = {
-                "base_reference_timestamp": int(base_reference_timestamp),
-                "base_model_config_signature": base_model_config_signature,
-                "updated_at": int(time.time()),
-                "model_state": _model().export_state(),
-            }
-            _write_json_atomic(runtime_model_state_path, runtime_payload)
+            model = _model()
+            # Живые обновления пишутся ДЕЛЬТОЙ (килобайты) вместо полного
+            # состояния (519 МБ): обновляется ровно то же, но не переписывается
+            # целиком и не требует разбора/словарной модели на следующей карте.
+            # Если модель не overlay (дельты нет — переходный период до
+            # `ELO/convert_state_to_delta.py`), работает прежняя запись.
+            if not _save_live_delta(model, int(base_reference_timestamp),
+                                    base_model_config_signature):
+                runtime_payload = {
+                    "base_reference_timestamp": int(base_reference_timestamp),
+                    "base_model_config_signature": base_model_config_signature,
+                    "updated_at": int(time.time()),
+                    "model_state": model.export_state(),
+                }
+                _write_json_atomic(runtime_model_state_path, runtime_payload)
             _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = None
             _RUNTIME_SNAPSHOT_CACHE["runtime_signature"] = None
             _RUNTIME_SNAPSHOT_CACHE["snapshot"] = None
@@ -2052,6 +2193,12 @@ def finalize_live_series_from_scores(
 
         def _model() -> HybridPlayerRosterEloModel:
             if not _model_cell:
+                # Сначала живая модель на дельте (базовые массивы + overlay):
+                # она не требует ни разбора 519 МБ, ни словарной модели.
+                overlay_model = _live_overlay_model(snapshot)
+                if overlay_model is not None:
+                    _model_cell.append(overlay_model)
+                    return _model_cell[0]
                 payload = _load_runtime_model_payload(
                     snapshot=snapshot,
                     runtime_model_state_path=runtime_model_state_path,
@@ -2096,13 +2243,21 @@ def finalize_live_series_from_scores(
         pending_series.pop(normalized_series_key, None)
         _write_json_atomic(progress_path, progress)
         if wrote_model_state:
-            runtime_payload = {
-                "base_reference_timestamp": int(base_reference_timestamp),
-                "base_model_config_signature": base_model_config_signature,
-                "updated_at": int(time.time()),
-                "model_state": _model().export_state(),
-            }
-            _write_json_atomic(runtime_model_state_path, runtime_payload)
+            model = _model()
+            # Живые обновления пишутся ДЕЛЬТОЙ (килобайты) вместо полного
+            # состояния (519 МБ): обновляется ровно то же, но не переписывается
+            # целиком и не требует разбора/словарной модели на следующей карте.
+            # Если модель не overlay (дельты нет — переходный период до
+            # `ELO/convert_state_to_delta.py`), работает прежняя запись.
+            if not _save_live_delta(model, int(base_reference_timestamp),
+                                    base_model_config_signature):
+                runtime_payload = {
+                    "base_reference_timestamp": int(base_reference_timestamp),
+                    "base_model_config_signature": base_model_config_signature,
+                    "updated_at": int(time.time()),
+                    "model_state": model.export_state(),
+                }
+                _write_json_atomic(runtime_model_state_path, runtime_payload)
             _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = None
             _RUNTIME_SNAPSHOT_CACHE["runtime_signature"] = None
             _RUNTIME_SNAPSHOT_CACHE["snapshot"] = None
