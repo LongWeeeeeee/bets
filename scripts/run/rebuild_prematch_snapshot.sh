@@ -203,8 +203,19 @@ CHECK
 
   # 8. рестарт прода и чистка map_id_check — иначе новый снимок не читается,
   #    а уже разобранные карты не переоцениваются.
-  ssh "$SERV1" "systemctl restart cyberscore.service && sleep 3 && \
+  #    Порядок важен: СНАЧАЛА остановить, затем перебазировать рантайм-состояние
+  #    ELO на только что доставленный снимок, затем очистить map_id_check и
+  #    запустить. Без перебазировки новый процесс отклонит рантайм-состояние по
+  #    несовпавшей базе (live_team_strength.py:590-603) и уйдёт в
+  #    `full_model_state()` — разбор всего model_state, ~3 ГБ RSS, которые
+  #    процесс уже не отдаст (E-251; замер 03.09: три такие догрузки в логе, по
+  #    одной на каждую доставку снимка). Отказ перебазировки запуск НЕ
+  #    блокирует: прод в худшем случае заплатит прежние 3 ГБ однократно.
+  ssh "$SERV1" "systemctl stop cyberscore.service && \
+                { cd /root/main && venv/bin/python3 ELO/rebase_runtime_model_state.py || \
+                  echo 'ВНИМАНИЕ: перебазировка ELO-состояния не удалась'; } && \
                 : > /root/.local/state/ingame/map_id_check.txt && \
+                systemctl start cyberscore.service && sleep 3 && \
                 systemctl is-active cyberscore.service"
 
   # 9. свежесть источников: возраст каждого артефакта, от которого зависят

@@ -424,15 +424,43 @@ def _runtime_file_signature(path: Path) -> tuple[bool, int]:
     return True, int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)))
 
 
+#: Кэш разбора больших JSON по (mtime_ns, size) — тот же приём, что в
+#: `array_model.load_read_model`. `live_elo_model_state.json` весит 519 МБ, а
+#: `_load_runtime_model_payload` зовётся до трёх раз на завершённую карту
+#: (`:627` в мерже снимка и `:1722`/`:1891` в ленивых билдерах модели): без кэша
+#: это два-три разбора по ~2.5-3 ГБ временных словарей НА КАРТУ, и RSS не
+#: возвращается — арены glibc фрагментированы (E-251).
+#:
+#: Возвращать один и тот же объект безопасно: `HybridPlayerRosterEloModel.from_state`
+#: КОПИРУЕТ словари состояния в свои (`models.py:571-579, 657, 662`), а обратная
+#: запись строит НОВЫЙ payload через `export_state()` (`:1918-1922`), то есть
+#: закэшированный dict никто не мутирует. Любая запись меняет mtime/size и
+#: сбрасывает попадание.
+_JSON_DICT_CACHE: dict[str, tuple[int, int, dict[str, Any]]] = {}
+
+
 def _load_json_dict(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
+    key = str(path)
+    try:
+        stat = path.stat()
+        stamp = (int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
+                 int(stat.st_size))
+    except OSError:
+        return None
+    cached = _JSON_DICT_CACHE.get(key)
+    if cached is not None and cached[0] == stamp[0] and cached[1] == stamp[1]:
+        return cached[2]
     try:
         with path.open("r", encoding="utf-8") as fh:
             payload = json.load(fh)
     except Exception:
         return None
-    return payload if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    _JSON_DICT_CACHE[key] = (stamp[0], stamp[1], payload)
+    return payload
 
 
 def _model_config_signature(model_state: dict[str, Any] | None) -> str:
