@@ -61,6 +61,17 @@ def _isolate_winline_sent_journal(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _disable_winline_steam_winner(monkeypatch):
+    """Тесты не ходят в Steam WebAPI за счётом серии.
+
+    В бою источник включён; в тестах цепочка проверяется на подменённом
+    `steam_fn` / `_winline_fetch_steam_live_series_wins`, чтобы прогон не
+    зависел от сети и не дёргал боевой ключ.
+    """
+    monkeypatch.setenv("WINLINE_MAP_WINNER_STEAM_ENABLED", "0")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_live_elo_progress(tmp_path, monkeypatch):
     """Не даёт тестам писать в БОЕВОЕ состояние живого рейтинга.
 

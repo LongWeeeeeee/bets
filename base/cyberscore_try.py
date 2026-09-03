@@ -534,6 +534,21 @@ _winline_map_clocks: Dict[str, Dict[str, Any]] = {}
 #: иначе «🏁 карта завершена» получила бы хронометраж позже настоящего конца.
 _WINLINE_MAP_CLOCK_EXTRAPOLATE_MAX_S = 120.0
 
+#: Счёт серии по командам — из снапшота моста и из Steam WebAPI:
+#: {серия: {"map_num": N, "wins": {норм. имя: побед}}} — последнее наблюдение, и
+#: {серия: {номер карты: счёт ДО неё}} — базовый счёт, снятый, когда карта ещё
+#: не была доиграна (`sum(wins) == N - 1`). По приращению счёта победитель
+#: доигранной карты называется БЕЗ OpenDota: 03.09.2026 api.opendota.com лёг, и
+#: карта 1 PuckChamp — Team Spirit Academy ушла в чат без имени победителя, хотя
+#: Steam в тот же момент отдавал по лиге 19944 `wins 0:1`.
+_winline_series_wins_seen: Dict[str, Dict[str, Any]] = {}
+_winline_series_wins_baseline: Dict[str, Dict[int, Dict[str, int]]] = {}
+#: Старше этого базовый счёт не используется: ключ серии — это лига и пара
+#: команд, и та же пара играет под ним снова. Сброс на первой карте с нулевым
+#: счётом закрывает обычный случай, срок — случай, когда серию начали видеть
+#: не с первой карты.
+_WINLINE_SERIES_WINS_BASELINE_TTL_S = 12 * 3600.0
+
 
 def _winline_awaiting_next_map(series: Any, map_num: Any, now: Any = None) -> bool:
     """Ждём ли мы именно эту карту как следующую в серии.
@@ -1351,6 +1366,64 @@ def _winline_note_map_clock(series: Any, clock: Any, *,
             _winline_map_clocks[key] = dict(previous, live=False)
 
 
+def _winline_row_wins_by_team(radiant_name: Any, dire_name: Any,
+                              radiant_wins: Any, dire_wins: Any) -> Dict[str, int]:
+    """{нормализованное имя команды: побед в серии}. Пусто, если стороны не назвать.
+
+    Счёт держится ПО КОМАНДАМ, а не по сторонам: между картами серии команды
+    меняются сторонами, и `radiant_series_wins` следующей карты принадлежит
+    другой команде. Плейсхолдер («Radiant», «Dire») приписать некому — тогда не
+    приписываем никому.
+    """
+    out: Dict[str, int] = {}
+    for name, wins in ((radiant_name, radiant_wins), (dire_name, dire_wins)):
+        text = str(name or "").strip()
+        if not text or _is_placeholder_team_name(text):
+            return {}
+        try:
+            value = int(wins)
+        except (TypeError, ValueError):
+            return {}
+        if value < 0:
+            return {}
+        out[_winline_normalized_team_identity(text)] = value
+    return out if len(out) == 2 else {}
+
+
+def _winline_note_series_wins(series: Any, map_num: Any, wins: Dict[str, int],
+                              now: Any = None) -> None:
+    """Запомнить счёт серии: последнее наблюдение и базовый счёт до карты N.
+
+    Базовым становится только счёт, согласованный с номером карты
+    (`sum(wins) == N - 1`): строка перерыва несёт номер уже СДВИНУТЫМ, а счёт
+    ещё не обновлённым, и такой парой карту не проверить.
+
+    Ключ серии — это лига и пара команд, поэтому та же пара играет под ним и
+    следующую серию (через день-два). Базовый счёт прошлой серии к новой
+    отношения не имеет: по нему победитель сегодняшней карты 2 выводится из
+    вчерашнего счёта и может оказаться неверным. Первая карта с нулевым счётом —
+    это начало новой серии, базовые счета сбрасываются.
+    """
+    key = str(series or "").strip()
+    if not key or not wins:
+        return
+    try:
+        num = int(map_num)
+    except (TypeError, ValueError):
+        return
+    if num <= 0:
+        return
+    moment = float(time.time() if now is None else now)
+    with _winline_current_map_state_lock:
+        _winline_series_wins_seen[key] = {
+            "map_num": num, "wins": dict(wins), "at": moment}
+        baselines = _winline_series_wins_baseline.setdefault(key, {})
+        if num == 1 and sum(wins.values()) == 0:
+            baselines.clear()
+        if num not in baselines and sum(wins.values()) == num - 1:
+            baselines[num] = {"wins": dict(wins), "at": moment}
+
+
 def _reconcile_winline_sourcetv_polling(
     matches: Any,
     *,
@@ -1379,6 +1452,13 @@ def _reconcile_winline_sourcetv_polling(
             series,
             None if intermission else _winline_bridge_map_clock(item, map_num),
             frozen_reason=intermission,
+        )
+        _winline_note_series_wins(
+            series, map_num,
+            _winline_row_wins_by_team(
+                item.get("radiant_team_name"), item.get("dire_team_name"),
+                item.get("radiant_series_wins"), item.get("dire_series_wins"),
+            ),
         )
         active[series] = {
             "map_num": map_num,
@@ -2944,6 +3024,9 @@ WINLINE_ODDS_STOP_NOTICE_HOLD_ENV = "WINLINE_ODDS_STOP_NOTICE_HOLD_S"
 WINLINE_MAP_WINNER_ENABLED_ENV = "WINLINE_MAP_WINNER_ENABLED"
 WINLINE_MAP_WINNER_RETRY_ENV = "WINLINE_MAP_WINNER_RETRY_S"
 WINLINE_MAP_WINNER_WINDOW_ENV = "WINLINE_MAP_WINNER_WINDOW_S"
+# Запасной источник победителя карты — Steam WebAPI `GetLiveLeagueGames` (счёт
+# серии), тот же, откуда `sourcetv_probe` берёт `radiant_series_wins`.
+WINLINE_MAP_WINNER_STEAM_ENV = "WINLINE_MAP_WINNER_STEAM_ENABLED"
 # Журнал фактически отправленных карточек (и отказов отправки). Без него нельзя
 # задним числом сказать, что ушло в чат: оба разбора 02.09.2026 (зомби-цикл
 # Yangon Galacticos и проглоченный backup-тиком терминал Team Synapse) упирались
@@ -3172,8 +3255,8 @@ _WINLINE_MAP_CLOCK_SNAPSHOT_MAX_AGE_S = 300.0
 _winline_map_clock_refresh: Dict[str, Any] = {"at": 0.0}
 
 
-def _winline_refresh_map_clocks_from_bridge() -> None:
-    """Дочитать хронометраж живых карт из снапшота моста. Fail-open."""
+def _winline_refresh_from_bridge_snapshot() -> None:
+    """Дочитать из снапшота моста хронометраж карт и счёт серий. Fail-open."""
     if str(globals().get("DLTV_SOURCE_MODE") or "").strip().lower() != "sourcetv":
         return
     moment = time.time()
@@ -3210,6 +3293,13 @@ def _winline_refresh_map_clocks_from_bridge() -> None:
             None if intermission else _winline_bridge_map_clock(row, map_num),
             frozen_reason=intermission,
         )
+        _winline_note_series_wins(
+            series, map_num,
+            _winline_row_wins_by_team(
+                row.get("radiant_team_name"), row.get("dire_team_name"),
+                row.get("radiant_series_wins"), row.get("dire_series_wins"),
+            ),
+        )
 
 
 def _winline_map_clock_label(canonical_key: Any, now_wall: Any = None) -> str:
@@ -3220,7 +3310,7 @@ def _winline_map_clock_label(canonical_key: Any, now_wall: Any = None) -> str:
     досчитывается до момента наблюдения, пока мост подтверждает карту живой;
     после конца карты остаётся последнее известное значение.
     """
-    _winline_refresh_map_clocks_from_bridge()
+    _winline_refresh_from_bridge_snapshot()
     text = str(canonical_key or "")
     series, _, tail = text.partition("|map")
     if not series or not tail:
@@ -3379,6 +3469,196 @@ def _winline_fetch_map_winner(match_id: Any) -> Optional[Dict[str, Any]]:
             "ended_at": ended_at}
 
 
+def _winline_steam_winner_enabled() -> bool:
+    raw = os.getenv(WINLINE_MAP_WINNER_STEAM_ENV)
+    if raw is None or str(raw).strip() == "":
+        return True
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _winline_steam_league_from_key(key: Any) -> Optional[int]:
+    """league_id из ключа серии `sourcetv:league:<id>|…`. None, если лиги нет."""
+    text = str(key or "")
+    prefix = "sourcetv:league:"
+    if not text.startswith(prefix):
+        return None
+    league, _, _tail = text[len(prefix):].partition("|")
+    try:
+        value = int(league)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _winline_fetch_steam_live_series_wins(league_id: Any) -> List[Dict[str, int]]:
+    """Счета серий живых игр лиги из Steam WebAPI: [{норм. имя команды: побед}].
+
+    Тот же источник, откуда `sourcetv_probe` берёт `radiant_series_wins` /
+    `dire_series_wins` (WebAPI первично, GC-протобуф у него запасной), поэтому
+    исход доигранной карты он знает раньше и независимее OpenDota. Проверено в
+    бою 03.09.2026 во время аварии api.opendota.com: `GetLiveLeagueGames` по
+    лиге 19944 ответил 200 за 0.3 с и отдал по серии PuckChamp — Team Spirit
+    Academy `wins 0:1` при `radiant_team.team_id=10164236` и
+    `dire_team.team_id=9948367` — то есть победителя карты 1, которого не было
+    ни в чате, ни в OpenDota. `GetMatchDetails` для этого не годится: HTTP 500 и
+    на свежем, и на старом матче.
+
+    Один запрос на лигу, а не на матч: в лиге обычно одна-две живые серии, и
+    нужная выбирается по совпадению пары команд.
+    """
+    if not _winline_steam_winner_enabled():
+        return []
+    try:
+        league = int(league_id)
+    except (TypeError, ValueError):
+        return []
+    if league <= 0:
+        return []
+    try:
+        import keys
+        api_key = str(getattr(keys, "STEAM_API_KEY", "") or "").strip()
+    except Exception:                               # noqa: BLE001
+        api_key = ""
+    if not api_key:
+        return []
+    try:
+        resp = requests.get(
+            "https://api.steampowered.com/IDOTA2Match_570/GetLiveLeagueGames/v1/",
+            params={"key": api_key, "league_id": league},
+            timeout=4,
+        )
+    except Exception:                               # noqa: BLE001
+        return []
+    if resp is None or resp.status_code != 200:
+        return []
+    try:
+        games = ((resp.json() or {}).get("result") or {}).get("games") or []
+    except Exception:                               # noqa: BLE001
+        return []
+    out: List[Dict[str, int]] = []
+    for game in games:
+        if not isinstance(game, dict):
+            continue
+        radiant = game.get("radiant_team")
+        dire = game.get("dire_team")
+        wins = _winline_row_wins_by_team(
+            (radiant or {}).get("team_name") if isinstance(radiant, dict) else None,
+            (dire or {}).get("team_name") if isinstance(dire, dict) else None,
+            game.get("radiant_series_wins"),
+            game.get("dire_series_wins"),
+        )
+        if wins:
+            out.append(wins)
+    return out
+
+
+def _winline_winner_from_wins_delta(
+    key: Any,
+    wins_before: Any,
+    wins_now: Any,
+) -> Optional[str]:
+    """Победитель доигранной карты по приращению счёта серии. None — не доказано.
+
+    Доказательство узкое намеренно: счёт обязан сойтись с номером карты
+    (`sum == N`), ровно одна команда обязана прибавить одну победу, а вторая —
+    не двинуться. Всё остальное (счёт не обновился, прибавили обе, строка не про
+    нашу серию) — это «не знаем», и цепочка идёт к следующему источнику. Без
+    базового счёта читается только первая карта: 1:0 после неё.
+    """
+    map_num, team1, team2 = _winline_parse_canonical_key(key)
+    if not map_num or not team1 or not team2:
+        return None
+    now = wins_now if isinstance(wins_now, dict) else {}
+    before = wins_before if isinstance(wins_before, dict) else {}
+    ident1 = _winline_normalized_team_identity(team1)
+    ident2 = _winline_normalized_team_identity(team2)
+    if not ident1 or not ident2 or ident1 == ident2:
+        return None
+    for ident in (ident1, ident2):
+        if ident not in now:
+            return None
+    try:
+        if int(now[ident1]) + int(now[ident2]) != int(map_num):
+            return None
+    except (TypeError, ValueError):
+        return None
+    pairs = ((team1, ident1), (team2, ident2))
+    if not before:
+        if int(map_num) != 1:
+            return None
+        sole = [name for name, ident in pairs if int(now[ident]) == 1]
+        return sole[0] if len(sole) == 1 else None
+    for ident in (ident1, ident2):
+        if ident not in before:
+            return None
+    grew = [name for name, ident in pairs
+            if int(now[ident]) - int(before[ident]) == 1]
+    same = [name for name, ident in pairs
+            if int(now[ident]) == int(before[ident])]
+    if len(grew) == 1 and len(same) == 1:
+        return grew[0]
+    return None
+
+
+def _winline_resolve_map_winner(
+    key: Any,
+    match_id: Any,
+    *,
+    fetch_fn: Any = None,
+    map_started_at: Any = None,
+    steam_fn: Any = None,
+) -> Optional[str]:
+    """Имя победителя карты: мост → Steam WebAPI → OpenDota.
+
+    OpenDota знает доигранный матч точно и по id, но он ОДИН и он отказывает:
+    03.09.2026 api.opendota.com лёг (522 от Cloudflare и HTTP=000 на 12-15 с с
+    прод-машины и со второй независимой сети при том, что winline.ru отвечал 200
+    за 0.35 с, example.com за 0.08 с, www.opendota.com за 0.6 с). Карта 1
+    PuckChamp — Team Spirit Academy ушла в чат как «🏁 карта завершена» без
+    имени победителя, хотя счёт серии 0:1 в тот момент отдавал и снапшот моста,
+    и Steam.
+
+    Первые два источника бесплатны или почти бесплатны (ноль сети и один лёгкий
+    HTTP), поэтому идут первыми; OpenDota остаётся последним — только он знает
+    исход ПОСЛЕДНЕЙ карты серии, когда серия уже ушла из живых списков.
+    Браузерных источников (cyberscore/dltv) в цепочке нет намеренно: браузер
+    один и общий с поллером кэфов, такой запрос отнял бы время съёма линии у
+    живых карт.
+    """
+    if not _winline_map_winner_enabled():
+        return None
+    series, _, tail = str(key or "").partition("|map")
+    try:
+        map_num = int(str(tail).split("|", 1)[0])
+    except (TypeError, ValueError):
+        map_num = None
+    moment = time.time()
+    with _winline_current_map_state_lock:
+        seen = dict(_winline_series_wins_seen.get(series) or {})
+        entry = dict((_winline_series_wins_baseline.get(series) or {}).get(map_num) or {})
+    baseline = dict(entry.get("wins") or {})
+    try:
+        if baseline and moment - float(entry.get("at") or 0.0) > _WINLINE_SERIES_WINS_BASELINE_TTL_S:
+            # Счёт слишком старый: это могла быть ещё прошлая серия той же пары.
+            baseline = {}
+    except (TypeError, ValueError):
+        baseline = {}
+    winner = _winline_winner_from_wins_delta(key, baseline, seen.get("wins"))
+    if winner:
+        return winner
+    for candidate in (steam_fn or _winline_fetch_steam_live_series_wins)(
+            _winline_steam_league_from_key(key)):
+        winner = _winline_winner_from_wins_delta(key, baseline, candidate)
+        if winner:
+            return winner
+    if match_id is None:
+        # Спрашивать OpenDota не о чем: без id матча источника нет. Это и случай
+        # матча, закреплённого за ДРУГОЙ картой серии (`_winline_claim_winner_match`).
+        return None
+    return _winline_map_winner_name(
+        key, match_id, fetch_fn=fetch_fn, map_started_at=map_started_at)
+
+
 def _winline_map_winner_name(
     key: str,
     match_id: Any,
@@ -3429,11 +3709,21 @@ def _winline_map_winner_name(
 
 def _winline_note_pending_map_winner(key: str, mono: float, match_id: Any,
                                      map_started_at: Any = None) -> None:
-    try:
-        mid = int(match_id)
-    except (TypeError, ValueError):
-        return
-    if mid <= 0 or not _winline_map_winner_enabled():
+    """Поставить имя победителя в ожидание. `match_id` может быть None.
+
+    Без id матча OpenDota не спросить, но счёт серии из снапшота моста и из
+    Steam WebAPI отвечает и без него — поэтому ожидание всё равно имеет смысл.
+    """
+    if match_id is None:
+        mid: Optional[int] = None
+    else:
+        try:
+            mid = int(match_id)
+        except (TypeError, ValueError):
+            return
+        if mid <= 0:
+            return
+    if not _winline_map_winner_enabled():
         return
     retry = max(5.0, _winline_env_float(WINLINE_MAP_WINNER_RETRY_ENV, 60.0))
     with _winline_current_map_state_lock:
@@ -3460,6 +3750,7 @@ def _winline_odds_telegram_notify(
     monotonic_fn: Any = None,
     stamp_fn: Any = None,
     winner_fn: Any = None,
+    steam_fn: Any = None,
 ) -> Optional[str]:
     """Сообщить в админ-чат об изменении кэфов текущей карты. Fail-open.
 
@@ -3531,14 +3822,20 @@ def _winline_odds_telegram_notify(
         kind = "terminal"
         _winline_clear_pending_stop(key)
         prev.pop("pending_stop", None)
-        if match_id is not None and _winline_claim_winner_match(key, match_id):
+        # Id матча нужен только OpenDota: счёт серии из снапшота моста и из Steam
+        # отвечает и без него, поэтому опрос, который match_id не получил (заведён
+        # в перерыве), победителя всё равно может назвать. Закрепление матча за
+        # картой по-прежнему бережёт от победителя ЧУЖОЙ карты.
+        claimed = match_id is not None and _winline_claim_winner_match(key, match_id)
+        if claimed:
             winner_match_id = match_id
-            try:
-                winner_name = _winline_map_winner_name(
-                    key, match_id, fetch_fn=winner_fn,
-                    map_started_at=map_started_at)
-            except Exception:
-                winner_name = None
+        try:
+            winner_name = _winline_resolve_map_winner(
+                key, match_id if claimed else None,
+                fetch_fn=winner_fn, map_started_at=map_started_at,
+                steam_fn=steam_fn)
+        except Exception:
+            winner_name = None
     elif status in {"closed", "suspended"}:
         kind = "closed"
     elif not has_odds:
@@ -3617,9 +3914,10 @@ def _winline_odds_telegram_notify(
             "last_sent_mono": mono,
             "sent_mono": recent + [mono],
         }
-    if kind == "terminal" and winner_name is None and winner_match_id is not None:
+    if kind == "terminal" and winner_name is None and (
+            winner_match_id is not None or match_id is None):
         # Имя победителя догонит отдельным сообщением: факт конца карты важнее
-        # и задерживать его ради OpenDota нельзя.
+        # и задерживать его ради источника нельзя.
         _winline_note_pending_map_winner(key, mono, winner_match_id,
                                          map_started_at=map_started_at)
     return message
@@ -3827,6 +4125,7 @@ def _winline_flush_pending_map_winners(
     stamp_fn: Any = None,
     send_fn: Any = None,
     winner_fn: Any = None,
+    steam_fn: Any = None,
 ) -> List[str]:
     """Догнать сообщение о конце карты именем победителя.
 
@@ -3869,9 +4168,10 @@ def _winline_flush_pending_map_winners(
             if isinstance(entry, dict):
                 entry["next_try_mono"] = mono + retry
         try:
-            winner = _winline_map_winner_name(
+            winner = _winline_resolve_map_winner(
                 key, pending.get("match_id"), fetch_fn=winner_fn,
                 map_started_at=pending.get("map_started_at"),
+                steam_fn=steam_fn,
             )
         except Exception:
             winner = None
@@ -6518,6 +6818,38 @@ def _format_wr_estimate_line(
         except (TypeError, ValueError):
             pass
     return line
+
+
+def _build_wr_estimate_block(
+    *,
+    radiant_team_name: str,
+    dire_team_name: str,
+    sections: Tuple[Tuple[str, Optional[dict], Optional[dict], Optional[float]], ...],
+) -> str:
+    """Блок ``Оценка WR:`` для снапшота ставки, собранного ДО reject-гейтов.
+
+    Ранний отказ возвращает управление раньше финальной сборки сообщения, где
+    эти строки и печатаются, — без него в tail_log не видно WR блоков, то есть
+    ровно тех чисел, по которым гейт отказал. Каждая секция — кортеж
+    ``(label, block, rec, wr_pct)``; ``rec`` и ``wr_pct`` уже посчитаны
+    star-веткой, знак стороны берётся из ``block`` так же, как в fallback
+    финальной сборки.
+    """
+    lines: List[str] = []
+    for label, block, rec, wr_pct in sections:
+        if not rec:
+            continue
+        side = _target_side_from_sign(_star_block_sign(block))
+        if side == "radiant":
+            team_name = str(radiant_team_name or "Radiant")
+        elif side == "dire":
+            team_name = str(dire_team_name or "Dire")
+        else:
+            team_name = ""
+        line = _format_wr_estimate_line(label, team_name, wr_pct, rec)
+        if line:
+            lines.append(line)
+    return "Оценка WR:\n" + "\n".join(lines) + "\n" if lines else ""
 
 
 def _compose_star_metric_blocks_for_message(
@@ -37144,12 +37476,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # показывать матч в формате Telegram-отправки. Если поток дойдёт
             # до полной сборки, она перезапишет этот снапшот.
             try:
+                pre_gate_wr_block = _build_wr_estimate_block(
+                    radiant_team_name=str(
+                        radiant_team_name_original or radiant_team_name or "Radiant"
+                    ),
+                    dire_team_name=str(dire_team_name_original or dire_team_name or "Dire"),
+                    sections=(
+                        ("Early NW", early_output_log, telegram_early_rec, early_nw_display_wr_pct),
+                        (
+                            "Early Winner",
+                            early_end_output_log,
+                            telegram_early_end_rec,
+                            early_end_wr_pct,
+                        ),
+                        ("Late", mid_output_log, late_rec, late_wr_pct),
+                        ("All", all_output_log, all_rec, all_wr_pct),
+                    ),
+                )
                 _verdict_ctx["bet_message"] = (
                     f"{normalize_team_name_display(str(radiant_team_name or ''))} VS "
                     f"{normalize_team_name_display(str(dire_team_name or ''))}\n"
                     f"{series_score_line}"
                     f"{_build_lane_block(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=dota2protracker_lane_adv_line, lane_adv_dict_line=lane_adv_dict_line, lane_kills_adv=s.get('lane_kills_adv_dict'))}"
                     f"{team_elo_block}"
+                    f"{pre_gate_wr_block}"
                     f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=s.get('all_output', {}))}"
                     f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block, mix_block)}"
                 )
