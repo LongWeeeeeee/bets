@@ -214,9 +214,16 @@ CHECK
   ssh "$SERV1" "systemctl stop cyberscore.service && \
                 { cd /root/main && venv/bin/python3 ELO/rebase_runtime_model_state.py || \
                   echo 'ВНИМАНИЕ: перебазировка ELO-состояния не удалась'; } && \
+                { cd /root/main && venv/bin/python3 ELO/build_state_arrays.py || \
+                  echo 'ВНИМАНИЕ: sidecar массивов ELO не собрался'; } && \
                 : > /root/.local/state/ingame/map_id_check.txt && \
                 systemctl start cyberscore.service && sleep 3 && \
                 systemctl is-active cyberscore.service"
+  # Sidecar собирается ИМЕННО здесь, на только что доставленном снимке и при
+  # остановленном проде: сборщик платит потоковым проходом по 616 МБ (~40 c,
+  # пик ~1.8 ГБ), а живой процесс потом читает готовые массивы за 0.2 c и
+  # ~0.4 ГБ (E-254). Штамп sidecar — mtime_ns и размер источника, поэтому
+  # протухший sidecar молча игнорируется, а не отдаёт старые числа.
 
   # 9. свежесть источников: возраст каждого артефакта, от которого зависят
   #    признаки и гейты (снимок, ELO, дельта, словари, кэши). Шаг НЕ фатален, но

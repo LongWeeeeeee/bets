@@ -59,24 +59,32 @@ _TIERED_COUNTS = ("roster_match_counts",)
 _TIERS = ("TIER1", "TIER2", "TIER3")
 
 
-def load_state_arrays(path: Path, prefix: str = "model_state.") -> dict:
-    """Крупные поля `model_state` — в массивные хранилища, ЗА ОДИН ПРОХОД.
+def _empty_raw() -> dict:
+    """Сырые накопители: то, из чего потом собираются хранилища."""
+    return {
+        "flat": {},          # имя поля -> (ключи, значения)
+        "tiered": {},        # (имя поля, тир) -> (ключи, значения)
+        "org_names": [],
+        "org_index": {},
+        "cur_keys": [],
+        "cur_idx": [],
+        "pair_keys": [],
+        "pair_vals": [],
+    }
 
-    `ijson.parse` отдаёт поток событий с полным путём до значения, поэтому имя
-    поля, тир и сам ключ берутся из префикса, а промежуточные словари не
-    создаются вовсе. Проход на поле обошёлся бы в двадцать пять чтений файла.
-    """
+
+def _accumulate_state(path: Path, prefix: str, raw: dict) -> None:
+    """Один проход `ijson.parse` по `model_state` — в сырые накопители."""
     import ijson
 
-    # Сырые накопители: имя поля -> (ключи, значения).
-    flat: dict[str, tuple[list, list]] = {}
-    tiered: dict[tuple[str, str], tuple[list, list]] = {}
-    org_names: list[str] = []
-    org_index: dict[str, int] = {}
-    cur_keys: list[int] = []
-    cur_idx: list[int] = []
-    pair_keys: list[int] = []
-    pair_vals: list[int] = []
+    flat = raw["flat"]
+    tiered = raw["tiered"]
+    org_names = raw["org_names"]
+    org_index = raw["org_index"]
+    cur_keys = raw["cur_keys"]
+    cur_idx = raw["cur_idx"]
+    pair_keys = raw["pair_keys"]
+    pair_vals = raw["pair_vals"]
 
     def org_slot(name: str) -> int:
         s = org_index.get(name)
@@ -119,8 +127,21 @@ def load_state_arrays(path: Path, prefix: str = "model_state.") -> dict:
                     pair_keys.append(PairCounts.pack(int(player), org_slot(org)))
                     pair_vals.append(int(value))
 
+
+def _stores_from_raw(raw: dict) -> dict:
+    """Хранилища из сырых накопителей.
+
+    Единственное место, где решается, какое поле каким хранилищем представлять:
+    и потоковая сборка из JSON, и загрузка из sidecar-`.npz` идут через неё,
+    иначе два пути рано или поздно разъехались бы по типам или дефолтам.
+    Вход — списки ИЛИ numpy-массивы (sidecar отдаёт массивы), поэтому проверка
+    пустоты через `len()`, а не через истинность.
+    """
+    flat = raw["flat"]
+    tiered = raw["tiered"]
+
     def arr(xs, dtype):
-        return np.asarray(xs, dtype) if xs else np.zeros(0, dtype)
+        return np.asarray(xs, dtype) if len(xs) else np.zeros(0, dtype)
 
     out: dict = {}
     out["player_global"] = FloatStore(
@@ -157,11 +178,145 @@ def load_state_arrays(path: Path, prefix: str = "model_state.") -> dict:
                 per_tier[tier] = FloatStore(ka, va)
         out[name] = per_tier
 
+    org_names = [str(n) for n in raw["org_names"]]
     out["player_current_org"] = StringValues(
-        arr(cur_keys, np.int64), arr(cur_idx, np.int64), org_names)
+        arr(raw["cur_keys"], np.int64), arr(raw["cur_idx"], np.int64), org_names)
     out["player_current_org_matches"] = PairCounts(
-        arr(pair_keys, np.int64), arr(pair_vals, np.int64), org_index)
+        arr(raw["pair_keys"], np.int64), arr(raw["pair_vals"], np.int64),
+        {name: i for i, name in enumerate(org_names)})
     return out
+
+
+def load_state_arrays(path: Path, prefix: str = "model_state.") -> dict:
+    """Крупные поля `model_state` — в массивные хранилища, ЗА ОДИН ПРОХОД.
+
+    `ijson.parse` отдаёт поток событий с полным путём до значения, поэтому имя
+    поля, тир и сам ключ берутся из префикса, а промежуточные словари не
+    создаются вовсе. Проход на поле обошёлся бы в двадцать пять чтений файла.
+
+    Дорого: на боевом состоянии (519 МБ, 962 719 игроков, 1 408 197 ключей
+    lineup) проход через Python-списки стоит 1140 МБ RSS и ~60 c, хотя самих
+    данных в массивах 74 МБ (замер E-253). Поэтому рядом кладётся sidecar
+    `.npz` — см. `save_state_arrays` / `load_state_arrays_cached`.
+    """
+    raw = _empty_raw()
+    _accumulate_state(path, prefix, raw)
+    return _stores_from_raw(raw)
+
+
+#: Sidecar с готовыми массивами: `<источник>.arrays.npz`. Несжатый — сжатый npz
+#: читается только распаковкой, а здесь цель именно отдать массивы memcpy'ем.
+ARRAYS_SIDECAR_SUFFIX = ".arrays.npz"
+
+
+def sidecar_path(src: Path) -> Path:
+    return Path(str(src) + ARRAYS_SIDECAR_SUFFIX)
+
+
+def save_state_arrays(src: Path, prefix: str = "model_state.",
+                      out: Path | None = None) -> Path:
+    """Собрать sidecar-`.npz` из `model_state` (строится один раз, вне прода).
+
+    Внутри — те же сырые накопители, что использует потоковая сборка, поэтому
+    содержимое побайтово эквивалентно: хранилища из обоих путей собирает одна
+    функция `_stores_from_raw`. Плюс штамп источника (mtime_ns, размер) и
+    префикс — по ним sidecar признаётся годным или игнорируется.
+
+    Атомарно: tmp + os.replace (rebuild-then-replace).
+    """
+    import os
+
+    raw = _empty_raw()
+    _accumulate_state(Path(src), prefix, raw)
+
+    def sorted_pair(ks, vs, kdtype, vdtype):
+        """Ключи+значения, отсортированные по ключу — хранилище их не копирует.
+
+        Сортировка здесь, а не в `_Sorted.__init__`, экономит полную копию обоих
+        массивов при каждой загрузке в живом процессе (stable sort: порядок
+        равных ключей сохранён, результат побайтово тот же).
+        """
+        ka = np.asarray(ks, kdtype)
+        va = np.asarray(vs, vdtype)
+        if len(ka) > 1:
+            order = np.argsort(ka, kind="stable")
+            ka, va = ka[order], va[order]
+        return ka, va
+
+    arrays: dict[str, Any] = {}
+    for field, (ks, vs) in raw["flat"].items():
+        ka, va = sorted_pair(ks, vs, np.int64, np.float64)
+        arrays[f"flat.{field}.keys"] = ka
+        arrays[f"flat.{field}.vals"] = va
+    for (name, tier), (ks, vs) in raw["tiered"].items():
+        ka, va = sorted_pair(ks, vs, np.int64, np.float64)
+        arrays[f"tiered.{name}.{tier}.keys"] = ka
+        arrays[f"tiered.{name}.{tier}.vals"] = va
+    ck, cv = sorted_pair(raw["cur_keys"], raw["cur_idx"], np.int64, np.int64)
+    arrays["cur_keys"], arrays["cur_idx"] = ck, cv
+    pk, pv = sorted_pair(raw["pair_keys"], raw["pair_vals"], np.int64, np.int64)
+    arrays["pair_keys"], arrays["pair_vals"] = pk, pv
+    arrays["org_names"] = np.asarray([str(n) for n in raw["org_names"]], dtype="U")
+    st = Path(src).stat()
+    arrays["src_mtime_ns"] = np.int64(st.st_mtime_ns)
+    arrays["src_size"] = np.int64(st.st_size)
+    arrays["prefix"] = np.asarray(prefix, dtype="U")
+
+    out = Path(out) if out is not None else sidecar_path(src)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(out.name + ".tmp.npz")
+    with open(tmp, "wb") as fh:
+        np.savez(fh, **arrays)
+    os.replace(tmp, out)
+    return out
+
+
+def _sidecar_matches(npz: Path, src: Path, prefix: str) -> bool:
+    try:
+        st = src.stat()
+        with np.load(npz, allow_pickle=False) as z:
+            for key in ("src_mtime_ns", "src_size", "prefix"):
+                if key not in z.files:
+                    return False
+            return (int(z["src_mtime_ns"]) == int(st.st_mtime_ns)
+                    and int(z["src_size"]) == int(st.st_size)
+                    and str(z["prefix"]) == prefix)
+    except Exception:
+        return False
+
+
+def load_state_arrays_cached(path: Path, prefix: str = "model_state.") -> dict:
+    """Массивы из sidecar-`.npz`, если он свежий, иначе потоковая сборка.
+
+    Штамп sidecar'а — mtime_ns и размер источника: после ночной доставки нового
+    снимка или после записи рантайм-состояния sidecar автоматически считается
+    устаревшим, и модель собирается потоком (а затем sidecar можно пересобрать).
+    """
+    npz = sidecar_path(path)
+    if npz.exists() and _sidecar_matches(npz, path, prefix):
+        raw = _empty_raw()
+        with np.load(npz, allow_pickle=False) as z:
+            for key in z.files:
+                if key.startswith("flat."):
+                    _scope, field, what = key.split(".", 2)
+                    # СПИСОК, а не кортеж: потоковая ветка только зовёт
+                    # `.append` у вложенных списков, а здесь элемент
+                    # присваивается — `([], [])[0] = ...` упал бы.
+                    slot = raw["flat"].setdefault(field, [[], []])
+                    slot[0 if what == "keys" else 1] = z[key]
+                elif key.startswith("tiered."):
+                    _scope, name, tier, what = key.split(".", 3)
+                    slot = raw["tiered"].setdefault((name, tier), [[], []])
+                    slot[0 if what == "keys" else 1] = z[key]
+            for key in ("cur_keys", "cur_idx", "pair_keys", "pair_vals"):
+                if key in z.files:
+                    raw[key] = z[key]
+            if "org_names" in z.files:
+                names = [str(n) for n in z["org_names"]]
+                raw["org_names"] = names
+                raw["org_index"] = {n: i for i, n in enumerate(names)}
+        return _stores_from_raw(raw)
+    return load_state_arrays(path, prefix)
 
 
 #: Части `model_state`, которые остаются словарями: они мелкие либо со своей
@@ -253,7 +408,7 @@ def build_read_model(path: Path, runtime_model_state_path: Path | None = None):
     if runtime_model_state_path is not None and _runtime_is_valid(
             runtime_model_state_path, path):
         src, prefix = runtime_model_state_path, "model_state."
-    arrays = load_state_arrays(src, prefix)
+    arrays = load_state_arrays_cached(src, prefix)
     by_name = {t.name: t for t in LeagueTier}
     for field, value in arrays.items():
         if isinstance(value, dict):

@@ -50,6 +50,18 @@ class _Sorted:
     __slots__ = ("_keys", "_vals")
 
     def __init__(self, keys: np.ndarray, vals: np.ndarray) -> None:
+        keys = np.asarray(keys)
+        vals = np.asarray(vals)
+        # Sidecar `.npz` отдаёт массивы УЖЕ отсортированными (сортировка
+        # перенесена в сборку, `array_model.save_state_arrays`): argsort на
+        # 1.4 млн ключей — это полная копия обоих массивов, то есть вдвое
+        # больше памяти на время сборки хранилища. При отсортированном входе
+        # результат побайтово тот же: stable sort не переставляет равные ключи,
+        # а их порядок и так сохранён. Проверка стоит один проход по массиву.
+        if len(keys) > 1 and bool(np.all(keys[1:] >= keys[:-1])):
+            self._keys = np.ascontiguousarray(keys)
+            self._vals = np.ascontiguousarray(vals)
+            return
         order = np.argsort(keys, kind="stable")
         self._keys = np.ascontiguousarray(keys[order])
         self._vals = np.ascontiguousarray(vals[order])

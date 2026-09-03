@@ -392,10 +392,55 @@ def _coerce_player_ids(raw_player_ids: Any) -> tuple[int, ...]:
     return tuple(player_ids)
 
 
+def _array_model_for_base_snapshot(snapshot_path: Path):
+    """Массивная модель базового снимка — вместо полного `model_state`.
+
+    Slim-снимок (E-251) не держит `model_state`, и раньше это означало догрузку
+    всех 527 МБ (~1.7 ГБ RSS) плюс словарную модель поверх (~1.3 ГБ). И это НЕ
+    редкий путь: `build_matchup_summary_from_snapshot` зовёт
+    `_restore_model_from_snapshot`, а `get_matchup_summary` зовёт её дважды —
+    сначала на базовом снимке (base_summary), потом на мерженом (live_summary),
+    поэтому догрузка случалась в каждом процессе (замер 03.09: RSS прода 7.69 ГБ
+    за час работы при двух применённых картах).
+
+    Массивная модель даёт те же числа (в `array_model` заявлена побитовая сверка
+    1800 вызовов на трёх тирах), данных в ней 74 МБ, а с sidecar-`.npz`
+    (`array_model.save_state_arrays`) не тратится и минута на потоковую сборку.
+
+    Модель ТОЛЬКО для чтения: путь саммари зовёт `preview_team_strength` и
+    состояние не меняет; мутация шла бы в массивное хранилище и упала, а не
+    тихо испортила числа. Мутирующий путь (`register_live_map_context`) берёт
+    состояние из рантайм-payload и сюда не попадает.
+    """
+    try:
+        from ELO.array_model import load_read_model
+    except ImportError:
+        try:
+            from array_model import load_read_model
+        except ImportError:
+            return None
+    try:
+        return load_read_model(Path(snapshot_path), None)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ELO] массивная модель базового снимка не поднялась ({exc}) — "
+              "иду прежним путём полного model_state", flush=True)
+        return None
+
+
 def _restore_model_from_snapshot(snapshot: dict[str, Any]) -> HybridPlayerRosterEloModel | None:
-    raw_state = full_model_state(snapshot)
+    raw_state = snapshot.get("model_state") if isinstance(snapshot, dict) else None
     if not isinstance(raw_state, dict):
         return None
+    slim_source = raw_state.get(SLIM_MODEL_STATE_MARKER)
+    if slim_source:
+        model = _array_model_for_base_snapshot(Path(slim_source))
+        if model is not None:
+            return model
+        # Массивная модель недоступна (нет ijson, битый sidecar, исключение) —
+        # прежний путь с полной догрузкой, чтобы саммари не пропало молча.
+        raw_state = full_model_state(snapshot)
+        if not isinstance(raw_state, dict):
+            return None
     state_id = id(raw_state)
     for i, (cached_id, _state_ref, model) in enumerate(_MODEL_FROM_SNAPSHOT_CACHE):
         if cached_id == state_id:
