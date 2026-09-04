@@ -1320,3 +1320,120 @@ def test_snapshot_is_not_read_outside_sourcetv_mode(monkeypatch, tmp_path):
     key = f"{cs._winline_sourcetv_series_key(SYNAPSE_ROW)}|map2|Team Synapse|4ikibamboni"
 
     assert cs._winline_map_clock_label(key, _OBSERVED) == "—"
+
+
+# ─── Строка 💰 — лидер по net worth ──────────────────────────────────────────
+# Разница net worth (`radiant_lead` строки моста) называется по фактической
+# стороне, а не по порядку team1/team2 в ключе: между картами серии команды
+# меняются сторонами, и ключ карты несёт прежний порядок имён.
+def _bridge_net_worth(radiant_lead, *, radiant_name="InterActive Philippines",
+                      dire_name="Yangon Galacticos", game_time=927, wall=_OBSERVED,
+                      map_num=2, live=True, series=MAP_SERIES):
+    cs._winline_map_clocks[series] = {
+        "game_time": game_time, "wall": wall, "map_num": map_num, "live": live,
+        "radiant_lead": radiant_lead,
+        "radiant_name": radiant_name, "dire_name": dire_name,
+    }
+
+
+def test_net_worth_names_the_radiant_leader_with_grouped_gold():
+    sender, clock = Sender(), Clock()
+    _bridge_net_worth(4000)
+
+    message = _notify_live(_attempt(1.85, 1.95), sender, clock)
+
+    assert message is not None
+    assert "💰 InterActive Philippines +4 000" in message
+    # Строка net worth стоит прямо перед хронометражем, 🕐 остаётся последней.
+    assert message.splitlines()[-2] == "💰 InterActive Philippines +4 000"
+    assert message.splitlines()[-1].startswith("🕐")
+
+
+def test_net_worth_names_the_dire_leader_when_lead_negative():
+    sender, clock = Sender(), Clock()
+    _bridge_net_worth(-2500)
+
+    message = _notify_live(_attempt(1.85, 1.95), sender, clock)
+
+    assert message is not None
+    assert "💰 Yangon Galacticos +2 500" in message
+
+
+def test_net_worth_leader_follows_the_bridge_side_not_the_key_order():
+    """Ключ карты перечисляет InterActive первой, но мост видит её дайром.
+
+    Между картами стороны меняются: лидер берётся из строки моста, иначе
+    преимущество приписалось бы не той команде.
+    """
+    sender, clock = Sender(), Clock()
+    _bridge_net_worth(3000, radiant_name="Yangon Galacticos",
+                      dire_name="InterActive Philippines")
+
+    message = _notify_live(_attempt(1.85, 1.95), sender, clock)
+
+    assert message is not None
+    assert "💰 Yangon Galacticos +3 000" in message
+    assert "InterActive Philippines +" not in message
+
+
+def test_zero_net_worth_lead_shows_no_line():
+    sender, clock = Sender(), Clock()
+    _bridge_net_worth(0)
+
+    message = _notify_live(_attempt(1.85, 1.95), sender, clock)
+
+    assert message is not None
+    assert "💰" not in message
+
+
+def test_net_worth_absent_when_bridge_does_not_see_the_map():
+    sender, clock = Sender(), Clock()
+
+    message = _notify_live(_attempt(1.85, 1.95), sender, clock)
+
+    assert message is not None
+    assert "💰" not in message
+
+
+def test_net_worth_of_another_map_is_not_shown():
+    sender, clock = Sender(), Clock()
+    _bridge_net_worth(4000, map_num=1)
+
+    message = _notify_live(_attempt(1.85, 1.95), sender, clock)
+
+    assert message is not None
+    assert "💰" not in message
+
+
+def test_placeholder_leader_name_is_not_shown():
+    sender, clock = Sender(), Clock()
+    _bridge_net_worth(4000, radiant_name="Radiant", dire_name="Dire")
+
+    message = _notify_live(_attempt(1.85, 1.95), sender, clock)
+
+    assert message is not None
+    assert "💰" not in message
+
+
+def test_fmt_gold_groups_thousands_with_a_space():
+    assert cs._winline_fmt_gold(4000) == "4 000"
+    assert cs._winline_fmt_gold(23500) == "23 500"
+    assert cs._winline_fmt_gold(-2500) == "2 500"
+    assert cs._winline_fmt_gold(0) == "0"
+    assert cs._winline_fmt_gold(None) == ""
+
+
+def test_net_worth_label_reads_the_stored_bridge_row():
+    _bridge_net_worth(12345)
+    assert cs._winline_net_worth_label(MAP_KEY) == "InterActive Philippines +12 345"
+    # Пустое состояние — нет строки.
+    cs._winline_map_clocks.clear()
+    assert cs._winline_net_worth_label(MAP_KEY) == ""
+
+
+def test_net_worth_comes_from_the_bridge_snapshot(monkeypatch, tmp_path):
+    """Полный путь: `radiant_lead` строки моста → имя лидера в карточке."""
+    row = _fresh(radiant_lead=5000)
+    _snapshot_with(monkeypatch, tmp_path, row)
+
+    assert cs._winline_net_worth_label(_synapse_key(row)) == "Team Synapse +5 000"

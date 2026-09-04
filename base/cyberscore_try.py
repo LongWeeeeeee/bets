@@ -1328,7 +1328,13 @@ def _resolve_sourcetv_bridge_identity(matches: Any) -> Any:
 
 
 def _winline_bridge_map_clock(item: Any, map_num: Any) -> Optional[Dict[str, Any]]:
-    """Хронометраж карты из строки моста. None — строка его не доказывает."""
+    """Хронометраж карты из строки моста. None — строка его не доказывает.
+
+    Здесь же запоминается разница net worth (`radiant_lead` = золото Radiant
+    минус Dire, знак подтверждён в `sourcetv_probe`) и имена сторон: лидер по
+    net worth называется по фактической стороне строки моста, а не по порядку
+    team1/team2 в ключе — между картами серии команды меняются сторонами.
+    """
     payload = item if isinstance(item, dict) else {}
     try:
         game_time = float(payload.get("game_time") or 0)
@@ -1340,11 +1346,18 @@ def _winline_bridge_map_clock(item: Any, map_num: Any) -> Optional[Dict[str, Any
         wall = float(payload.get("timestamp") or 0)
     except (TypeError, ValueError):
         wall = 0.0
+    try:
+        lead = int(payload.get("radiant_lead") or 0)
+    except (TypeError, ValueError):
+        lead = 0
     return {
         "game_time": game_time,
         "wall": wall if wall > 0 else time.time(),
         "map_num": map_num,
         "live": str(payload.get("status") or "").strip().lower() == "live",
+        "radiant_lead": lead,
+        "radiant_name": str(payload.get("radiant_team_name") or "").strip(),
+        "dire_name": str(payload.get("dire_team_name") or "").strip(),
     }
 
 
@@ -3367,6 +3380,57 @@ def _winline_map_clock_label(canonical_key: Any, now_wall: Any = None) -> str:
     return f"{total // 60}:{total % 60:02d}"
 
 
+def _winline_fmt_gold(value: Any) -> str:
+    """Величина золота с разделителем тысяч пробелом: 4000 → «4 000»."""
+    try:
+        magnitude = abs(int(value))
+    except (TypeError, ValueError):
+        return ""
+    return f"{magnitude:,}".replace(",", " ")
+
+
+def _winline_net_worth_label(canonical_key: Any) -> str:
+    """Строка лидера по net worth: «<команда> +N»; пусто — мост карту не видит.
+
+    Разница берётся из `radiant_lead` строки моста (золото Radiant минус Dire) и
+    называется по фактической стороне, а не по порядку team1/team2 в ключе:
+    между картами серии команды меняются сторонами, поэтому ключ карты 2 несёт
+    тот же порядок имён, что и ключ карты 1, а стороны уже переставлены. Ничья
+    (ноль) не показывается: она ничего не говорит о преимуществе.
+    """
+    _winline_refresh_from_bridge_snapshot()
+    text = str(canonical_key or "")
+    series, _, tail = text.partition("|map")
+    if not series or not tail:
+        return ""
+    try:
+        map_num = int(str(tail).split("|", 1)[0])
+    except (TypeError, ValueError):
+        return ""
+    with _winline_current_map_state_lock:
+        clock = dict(_winline_map_clocks.get(series) or {})
+    if not clock or _winline_series_int(clock.get("map_num")) != map_num:
+        return ""
+    try:
+        lead = int(clock.get("radiant_lead") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if lead == 0:
+        return ""
+    if lead > 0:
+        name = str(clock.get("radiant_name") or "").strip()
+        magnitude = lead
+    else:
+        name = str(clock.get("dire_name") or "").strip()
+        magnitude = -lead
+    if not name or _is_placeholder_team_name(name):
+        return ""
+    gold = _winline_fmt_gold(magnitude)
+    if not gold:
+        return ""
+    return f"{name} +{gold}"
+
+
 def _winline_build_odds_message(
     *,
     kind: str,
@@ -3379,6 +3443,7 @@ def _winline_build_odds_message(
     prev_p2: Any,
     stamp: str,
     winner: Any = None,
+    net_worth: str = "",
 ) -> str:
     """Карточка кэфов в админ-чат. `stamp` — хронометраж карты («мм:сс» или «—»)."""
     head = {
@@ -3410,6 +3475,8 @@ def _winline_build_odds_message(
         lines.append(
             f"{_winline_odds_side(prev_p1, p1)}   |   {_winline_odds_side(prev_p2, p2)}"
         )
+    if net_worth:
+        lines.append(f"💰 {net_worth}")
     lines.append(f"🕐 {stamp}")
     return "\n".join(lines)
 
@@ -3995,6 +4062,7 @@ def _winline_odds_telegram_notify(
         prev_p2=prev.get("p2"),
         stamp=stamp,
         winner=winner_name,
+        net_worth=_winline_net_worth_label(key),
     )
 
     # Кэфы Winline уходят в ОТДЕЛЬНЫЙ бот (keys.WinlineToken), ставки остаются
