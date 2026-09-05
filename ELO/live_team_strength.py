@@ -1423,25 +1423,30 @@ def _build_snapshot_dict(
                 pair_key = (strong_tier.value, weak_tier.value)
                 cross_tier_counts[pair_key]["series"] += 1
                 cross_tier_counts[pair_key]["strong_wins"] += 1 if strong_team_won else 0
-        for match in bundle.all_maps:
-            model.process_match(match)
-            for is_radiant, team_id, team_name, player_ids in (
-                (True, match.radiant_team_id, match.radiant_team_name, match.radiant_player_ids),
-                (False, match.dire_team_id, match.dire_team_name, match.dire_player_ids),
-            ):
-                org_key = resolve_org_key(team_id, team_name)
-                previous = team_snapshots.get(org_key)
-                if previous is not None and match.timestamp < int(previous["timestamp"]):
-                    continue
-                team_snapshots[org_key] = {
-                    "org_key": org_key,
-                    "team_id": team_id,
-                    "team_name": team_name,
-                    "player_ids": list(player_ids),
-                    "tier": match.derived_league_tier.value,
-                    "timestamp": match.timestamp,
-                    "is_radiant_last": bool(is_radiant),
-                }
+
+    # Series bundles are ordered by their first map. Applying all maps from one
+    # bundle here would let a later map update the shared tier side bias before
+    # an intervening map in another series. `matches` is deduplicated and sorted
+    # by (timestamp, match_id), so it is the sole chronological model stream.
+    for match in matches:
+        model.process_match(match)
+        for is_radiant, team_id, team_name, player_ids in (
+            (True, match.radiant_team_id, match.radiant_team_name, match.radiant_player_ids),
+            (False, match.dire_team_id, match.dire_team_name, match.dire_player_ids),
+        ):
+            org_key = resolve_org_key(team_id, team_name)
+            previous = team_snapshots.get(org_key)
+            if previous is not None and match.timestamp < int(previous["timestamp"]):
+                continue
+            team_snapshots[org_key] = {
+                "org_key": org_key,
+                "team_id": team_id,
+                "team_name": team_name,
+                "player_ids": list(player_ids),
+                "tier": match.derived_league_tier.value,
+                "timestamp": match.timestamp,
+                "is_radiant_last": bool(is_radiant),
+            }
 
     teams_by_org_key: dict[str, dict[str, Any]] = {}
     for org_key, snapshot in team_snapshots.items():
