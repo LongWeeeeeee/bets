@@ -1017,9 +1017,9 @@ def test_live_runtime_applies_roster_change_and_uncertainty_boosts(tmp_path) -> 
     )
 
     assert preview_before is not None
-    assert preview_before["source"] == "elo_live_lineup_snapshot"
+    assert preview_before["source"] == "elo_prematch_hybrid"
     assert preview_before["radiant"]["lineup_used"] is True
-    assert preview_before["radiant"]["rating_source"] == "lineup_player_strength_cold_roster"
+    assert preview_before["radiant"]["rating_source"] == "prematch_hybrid_tier3"
     assert preview_before["radiant"]["roster_matches"] == 0
 
     live_map1 = MatchRecord(
@@ -1113,7 +1113,10 @@ def test_live_runtime_applies_roster_change_and_uncertainty_boosts(tmp_path) -> 
     assert preview_after is not None
     assert preview_after["radiant"]["lineup_used"] is True
     assert preview_after["radiant"]["roster_key"] == preview_before["radiant"]["roster_key"]
-    assert preview_after["radiant"]["roster_matches"] == 1
+    # The map updated TIER1; the shared ML/card preview reads TIER3, while
+    # its global player component still includes the just-finished map.
+    assert preview_after["radiant"]["lineup_tier"] == "TIER3"
+    assert preview_after["radiant"]["roster_matches"] == 0
     assert preview_after["radiant"]["live_base_delta"] != pytest.approx(0.0)
 
     _reset_live_team_strength_caches()

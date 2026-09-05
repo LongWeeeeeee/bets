@@ -5833,16 +5833,18 @@ def test_team_elo_block_separates_raw_team_elo_from_tier_adjusted_matchup(monkey
 
     assert "L1GA TEAM: 1511" in block
     assert "Pipsqueak+4: 1567" in block
-    assert "Raw WR≈42.0% / 58.0% (ΔELO -56)" in block
-    assert "Adj WR≈65.0% / 34.9% (ΔELO +108, tier bonus +164 TIER1_vs_TIER2)" in block
+    assert "По ELO: 42.0% / 58.0% (ΔELO -56)" in block
+    assert "Adj WR" not in block
+    assert "tier bonus" not in block
+    assert _meta["raw_diff"] == pytest.approx(-55.9)
 
 
 def test_team_elo_block_marks_current_lineup_source() -> None:
     block, meta = runtime._format_team_elo_block(
         {
-            "source": "elo_live_lineup_snapshot",
+            "source": "elo_prematch_hybrid",
             "radiant": {"rating": 1600.0, "base_rating": 1600.0, "lineup_used": True},
-            "dire": {"rating": 1500.0, "base_rating": 1500.0, "lineup_used": False},
+            "dire": {"rating": 1500.0, "base_rating": 1500.0, "lineup_used": True},
             "radiant_win_prob": 0.6401,
             "dire_win_prob": 0.3599,
             "elo_diff": 100.0,
@@ -5851,15 +5853,15 @@ def test_team_elo_block_marks_current_lineup_source() -> None:
         dire_team_name="Astini+5",
     )
 
-    assert "Командный ELO (текущий состав):" in block
+    assert "ELO состава (как в ML):" in block
     assert "L1GA TEAM: 1600" in block
     assert "Astini+5: 1500" in block
     assert isinstance(meta, dict)
     assert meta["lineup_used"] is True
-    assert meta["source"] == "elo_live_lineup_snapshot"
+    assert meta["source"] == "elo_prematch_hybrid"
 
 
-def test_team_elo_block_shows_live_delta_vs_snapshot() -> None:
+def test_team_elo_block_keeps_live_delta_in_metadata() -> None:
     block, meta = runtime._format_team_elo_block(
         {
             "source": "elo_live_lineup_snapshot",
@@ -5885,7 +5887,7 @@ def test_team_elo_block_shows_live_delta_vs_snapshot() -> None:
         dire_team_name="Spirit Academy",
     )
 
-    assert "Δ live vs snapshot: +8 / -9" in block
+    assert "Δ live vs snapshot" not in block
     assert isinstance(meta, dict)
     assert meta["radiant_live_base_delta"] == pytest.approx(8.0)
     assert meta["dire_live_base_delta"] == pytest.approx(-9.0)

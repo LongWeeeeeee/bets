@@ -87,6 +87,13 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 `from ELO.live_team_strength import finalize_live_series_from_scores, get_matchup_summary, register_live_map_context`; `ELO_LIVE_SNAPSHOT_AVAILABLE` зависит от успешного импорта. ELO даёт matchup-summary для отображения, но **в stake-множителе ELO-gate удалён** (см. ARCHITECTURE).
 `ELO/live_team_strength.py::DEFAULT_DATA_DIR` указывает на результат штатной pro-пересборки `pro_heroes_data/json_parts_split_from_object`; roster lineage в `ELO/roster.py` требует overlap минимум 4 игроков.
 
+#### Единый командный ELO (E-261)
+`ELO/models.py::prematch_lineup_summary` — общий расчёт для Telegram и признака `hybrid_strength` в предматчевой ML. Он сохраняет обучающий контракт E-173: `team_id=None`, имя команды, `TIER3`, сортировка account ID вместе с позициями, полный `team_strength`, разница сил /400. Веса и прочие признаки ML не меняются.
+
+`get_matchup_summary` принимает списки пяти account ID в порядке позиций и необязательный `timestamp`; без полных валидных составов возвращает `None`. `win_model_veto.elo_evaluation_timestamp` передаёт время начала карты из `startDateTime` в ML и все пять мест сборки Telegram-блока; при отсутствии корректной даты используется текущее время. Исторический `build_matchup_summary_from_snapshot` сохраняет прежнюю шкалу для отдельных аналитических вызовов.
+
+В Telegram остаётся один блок «ELO состава (как в ML)». Строка «ELO модели» со старым account-ELO и запасной расчёт из kills-priors удалены. Признаки `elo` K24/`opp_elo` внутри обученной модели и диагностический `last_model_elo` сохранены. Кэши снимка, модели и живых обновлений учитывают замену файлов; `hybrid_block` обновляется при изменении снимка или дельты. Предпросмотр не добавляет нулевые счётчики в состояние модели. Проверки и ограничения: [E-261](experiments/E-261-unified-live-elo-contract.md).
+
 ### Импорты из `functions`
 `send_message`, `drain_telegram_admin_commands`, `synergy_and_counterpick`, `calculate_lanes`, `calculate_lane_kills_advantage`, `format_output_dict`, `STAR_THRESHOLDS_BY_WR`, `STAR_DISABLED_METRICS`, `TelegramSendError`.
 Из `keys`: `api_to_proxy`, `BOOKMAKER_PROXY_URL`, `BOOKMAKER_PROXY_POOL`, `DLTV_PROXY_POOL`.

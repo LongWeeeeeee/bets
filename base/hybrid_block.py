@@ -55,15 +55,50 @@ _lock = threading.Lock()
 SNAPSHOT_WARN_DAYS = 14.0
 
 _state: dict[str, Any] = {"loaded": False, "model": None, "names": {},
-                          "error": None, "built_ts": 0}
+                          "error": None, "built_ts": 0, "signature": None}
+
+_UNSET = object()
+
+
+def _file_signature(path: Path) -> tuple[str, int | None, int | None, int | None]:
+    """Дешёвое тождество файла, включая atomic replace с тем же именем."""
+    file_path = Path(path)
+    resolved = str(file_path.resolve())
+    try:
+        stat = file_path.stat()
+    except OSError:
+        return (resolved, None, None, None)
+    return (resolved, int(stat.st_ino), int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _source_signature() -> tuple[tuple[str, int | None, int | None, int | None], ...]:
+    """Снимок и живые оверлеи, от которых зависит модель панели."""
+    paths = [Path(SNAPSHOT)]
+    try:
+        from ELO.live_team_strength import (DEFAULT_LIVE_DELTA_PATH,
+                                            DEFAULT_RUNTIME_MODEL_STATE_PATH,
+                                            DEFAULT_SNAPSHOT_PATH)
+        if Path(SNAPSHOT).resolve() == Path(DEFAULT_SNAPSHOT_PATH).resolve():
+            paths.extend((Path(DEFAULT_RUNTIME_MODEL_STATE_PATH),
+                          Path(DEFAULT_LIVE_DELTA_PATH)))
+    except Exception:  # noqa: BLE001 - загрузчик ниже отдаст исходную ошибку
+        pass
+    return tuple(_file_signature(path) for path in paths)
 
 
 def _load() -> dict[str, Any]:
     """Ленивая загрузка снимка и восстановление модели."""
     with _lock:
-        if _state["loaded"]:
+        signature = _source_signature()
+        # Старые тесты и потребители могли подменить готовое состояние вручную;
+        # без сохранённой сигнатуры это явный управляющий кэш, оставляем его.
+        cached_signature = _state.get("signature", _UNSET)
+        if _state["loaded"] and (
+            cached_signature is _UNSET or cached_signature == signature
+        ):
             return _state
-        _state["loaded"] = True
+        _state.update(loaded=True, model=None, names={}, error=None, built_ts=0,
+                      signature=signature)
         try:
             import sys
 
@@ -81,11 +116,9 @@ def _load() -> dict[str, Any]:
             # модель на 316 828 игроков. А процесс этот — боевой бот, который
             # ведёт ставки. Через общий загрузчик обе копии переиспользуются, и
             # если бот уже поднял снимок сам, блок не стоит вообще ничего.
-            # Общий загрузчик кэширует разобранный словарь и ВОЗВРАЩАЕТ КЭШ,
-            # игнорируя переданный путь. В бою путь один, и это ровно то, что
-            # нужно. Но если просят другой файл (тесты, `PANEL_HYBRID_SNAPSHOT`),
-            # кэш отдал бы чужой снимок молча — поэтому общим путём идём только
-            # когда просят ТОТ ЖЕ файл, что у пакета по умолчанию.
+            # Стандартный путь получает общую живую дельту. Пользовательский
+            # PANEL_HYBRID_SNAPSHOT остаётся самостоятельным снимком: чужую
+            # runtime-дельту к нему применять нельзя.
             from ELO.live_team_strength import DEFAULT_SNAPSHOT_PATH
 
             # Массивная модель: те же числа, 337 МБ вместо 1116. Панель эту
