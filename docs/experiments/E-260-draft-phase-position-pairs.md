@@ -4,7 +4,7 @@ title: "Четыре draft-модели: пары с позициями и Early
 date: "2026-09-05"
 area: ml
 status: in_progress
-corpus: "Новый публичный архив: 99 data JSON (~38.2 GB), 2 metadata JSON исключены; итоговые counts ожидаются"
+corpus: "6 638 652 публичных карты >=20 мин (24.03–04.09.2026); 1 151 356 про-карт после канонизации; Early NW no_marker 2 461 376 в паблике"
 verdict: "Обучение запущено; оценки качества пока не получены, прод не переключён"
 harness: "scripts/run/retrain_draft_phases.sh; base/build_draft_phase_corpus.py; base/train_draft_phase_models.py"
 ---
@@ -50,3 +50,11 @@ bash scripts/run/retrain_draft_phases.sh 2026-09-05_position_pairs
 - Не-LLM монитор `scripts/ops/watch_draft_phase_training.py`: пульс в `monitor.json`, журнал в `monitor.log`; `codex queue --thread 01a06fef-d6a5-71b1-8327-81dd4ac3e076 --message ...` только на DONE/FAIL/STALL/UNREACHABLE. Команда проверена по installed `--help`; нормальный прогресс не вызывает модель. Тесты монитора: `base/tests/test_draft_training_monitor.py` — 2 passed.
 - После DONE проверить четыре `model.joblib` и результаты reload, controls на тех же датах, фактические source cutoffs и калибровку. После FAIL сначала проверить `status.json`, лог и PID; не создавать второй экземпляр. Частичные сырьевые шарды переиспользуются по SHA; `--resume` переиспользует только завершённые обучения с совпадающим training identity.
 - **Prod не переключать автоматически.** Формат Early NW теперь трёхклассовый и несовместим с прежним бинарным reader; пользователь разрешил обучение, подключение в live в этот запуск не входит.
+
+## Корпуса собраны, fit начался
+
+Сборка public завершена: **6 638 652** карты, диапазон UTC **2026-03-24 00:00:01 — 2026-09-04 00:18:14**; дубли/конфликты среди принятых карт отсутствуют. Early NW: Dire **1 950 286**, Radiant **2 226 990**, no_marker **2 461 376**; все принятые публичные карты имеют пригодную для этой цели разметку. Карты no_marker учат occurrence-компонент, direction учится только на маркерах; joint accuracy нельзя напрямую сравнивать со старой conditional accuracy 65.85%.
+
+Сборка pro завершена: **1 151 356** карт после фильтров; одинаковых дублей **20 168**, конфликтующих ID исключено **2**. Early NW: unknown **856 122**, Dire **93 160**, Radiant **94 437**, no_marker **107 637**. Unknown не превращается в no_marker и исключается только из Early NW, сохраняя карты для win-целей.
+
+Обучение началось 05.09 ~16:38 MSK. Первый реальный fit (baseline Early NW occurrence, 3 983 191 train rows, 16 764 columns, C=.001) сошёлся за 89 итераций / 35.8 с. Это свидетельство работоспособности и стоимости запуска, **не результат сравнения моделей**. Итоговые quality metrics ожидаются; монитор остаётся активным.
