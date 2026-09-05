@@ -457,9 +457,9 @@ _READ_SLOTS = 2
 def _stamp(path: Path) -> tuple:
     try:
         st = path.stat()
-        return (str(path), int(st.st_mtime_ns), int(st.st_size))
+        return (str(path.resolve()), int(st.st_ino), int(st.st_mtime_ns), int(st.st_size))
     except OSError:
-        return (str(path), 0, 0)
+        return (str(path.resolve()), 0, 0, 0)
 
 
 def load_read_model(snapshot_path: Path, runtime_model_state_path: Path | None = None,

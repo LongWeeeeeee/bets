@@ -78,6 +78,71 @@ def _mean(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
+def prematch_lineup_summary(
+    model,
+    *,
+    radiant_team_name: str,
+    dire_team_name: str,
+    radiant_account_ids,
+    dire_account_ids,
+    timestamp: int,
+    radiant_positions=None,
+    dire_positions=None,
+) -> dict[str, Any] | None:
+    """The served E-173 hybrid contract, shared by ML and the live ELO card.
+
+    Accounts default to position order (1..5). Sort ids WITH their positions,
+    use names and TIER3 as in hybrid_strength_tier3.npz, and never replace a
+    cold roster's team_strength with a different rating or add a tier bonus.
+    This previews existing state; it does not apply any match outcomes.
+    """
+    sides = []
+    all_ids = []
+    for name, raw_ids, positions in (
+        (radiant_team_name, radiant_account_ids, radiant_positions),
+        (dire_team_name, dire_account_ids, dire_positions),
+    ):
+        try:
+            ids = tuple(int(a) for a in raw_ids)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not str(name or "").strip() or len(ids) != 5 or min(ids) <= 0 or len(set(ids)) != 5:
+            return None
+        roles = tuple(positions) if positions is not None else tuple(f"POSITION_{i}" for i in range(1, 6))
+        if len(roles) != 5:
+            return None
+        pairs = sorted(zip(ids, roles))
+        all_ids.extend(ids)
+        sides.append((str(name), tuple(a for a, _ in pairs), tuple(p for _, p in pairs)))
+    if len(set(all_ids)) != 10:
+        return None
+    payloads = []
+    for name, ids, roles in sides:
+        preview = model.preview_team_strength(
+            team_id=None, team_name=name, player_ids=ids, player_positions=roles,
+            tier=LeagueTier.TIER3, timestamp=max(int(timestamp), 1),
+        )
+        rating = float(preview["team_strength"])
+        if not math.isfinite(rating):
+            return None
+        payloads.append({
+            **preview, "team_name": name, "rating": rating, "base_rating": rating,
+            "rating_source": "prematch_hybrid_tier3", "lineup_used": True,
+            "lineup_player_ids": list(ids), "lineup_player_count": 5,
+            "lineup_tier": LeagueTier.TIER3.value,
+        })
+    diff = payloads[0]["rating"] - payloads[1]["rating"]
+    # 400 is the frozen ML feature scale, independent of model configuration.
+    probability = _elo_probability(max(-12000.0, min(12000.0, diff)), 400.0)
+    return {
+        "source": "elo_prematch_hybrid", "evaluation_timestamp": int(timestamp),
+        "radiant": payloads[0], "dire": payloads[1], "elo_diff": diff,
+        "hybrid_strength": diff / 400.0,
+        "radiant_win_prob": probability, "dire_win_prob": 1.0 - probability,
+        "tier_gap_bonus": 0.0, "tier_gap_key": None,
+    }
+
+
 def _build_simple_step(
     p_radiant: float,
     radiant_strength: float,
@@ -1030,7 +1095,7 @@ class HybridPlayerRosterEloModel:
 
         org_key = _team_key(team_id, team_name)
         lineup_key = self._lineup_key(org_key, player_ids)
-        lineup_matches = int(self.lineup_match_counts[lineup_key])
+        lineup_matches = int(self.lineup_match_counts.get(lineup_key, 0))
         lineup_k_multiplier = self._lineup_k_multiplier(lineup_matches, tier)
         roster_resolution = (
             self.roster_tracker.resolve(org_key, player_ids)
@@ -1038,7 +1103,7 @@ class HybridPlayerRosterEloModel:
             else self.roster_tracker.preview(org_key, player_ids)
         )
         roster_key = roster_resolution.roster_key
-        roster_matches = self.roster_match_counts[tier][roster_key]
+        roster_matches = self.roster_match_counts[tier].get(roster_key, 0)
         prior_fade = min(1.0, roster_matches / max(1, self.config.org_prior_fade_matches))
         prior_weight = self.config.cold_start_org_prior_weight * (1.0 - prior_fade)
         prior_blended_strength = (1.0 - prior_weight) * player_strength + prior_weight * org_prior_rating

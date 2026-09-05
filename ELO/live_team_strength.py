@@ -59,6 +59,10 @@ DEFAULT_LIVE_SEGMENT_POLICY_PATH = Path(__file__).resolve().parent / "live_proba
 LIVE_DELTA_MARKER = "__live_delta_path__"
 
 _SNAPSHOT_CACHE: dict[str, Any] | None = None
+# Снимок может быть заменён атомарным rename тем же процессом или другим
+# воркером. Одного глобального словаря недостаточно: тогда новый путь либо
+# новый файл по прежнему пути навсегда получал бы старый объект.
+_SNAPSHOT_CACHE_SIGNATURE: tuple[str, int, int, int] | None = None
 # Кэш восстановленных моделей: ДВА слота, а не один, и ключ — состояние, из
 # которого модель строится, а не снимок-обёртка.
 #
@@ -476,15 +480,15 @@ def _snapshot_reference_timestamp(snapshot: dict[str, Any]) -> int:
         return 0
 
 
-def _runtime_file_signature(path: Path) -> tuple[bool, int]:
+def _runtime_file_signature(path: Path) -> tuple[bool, tuple]:
     try:
         stat = path.stat()
     except FileNotFoundError:
-        return False, 0
-    return True, int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)))
+        return False, (str(path.resolve()), 0, 0, 0)
+    return True, (str(path.resolve()), int(stat.st_ino), int(stat.st_mtime_ns), int(stat.st_size))
 
 
-#: Кэш разбора больших JSON по (mtime_ns, size) — тот же приём, что в
+#: Кэш разбора больших JSON по (inode, mtime_ns, size) — тот же приём, что в
 #: `array_model.load_read_model`. `live_elo_model_state.json` весит 519 МБ, а
 #: `_load_runtime_model_payload` зовётся до трёх раз на завершённую карту
 #: (`:627` в мерже снимка и `:1722`/`:1891` в ленивых билдерах модели): без кэша
@@ -496,22 +500,21 @@ def _runtime_file_signature(path: Path) -> tuple[bool, int]:
 #: запись строит НОВЫЙ payload через `export_state()` (`:1918-1922`), то есть
 #: закэшированный dict никто не мутирует. Любая запись меняет mtime/size и
 #: сбрасывает попадание.
-_JSON_DICT_CACHE: dict[str, tuple[int, int, dict[str, Any]]] = {}
+_JSON_DICT_CACHE: dict[str, tuple[tuple, dict[str, Any]]] = {}
 
 
 def _load_json_dict(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
-    key = str(path)
+    key = str(path.resolve())
     try:
         stat = path.stat()
-        stamp = (int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000))),
-                 int(stat.st_size))
+        stamp = (int(stat.st_ino), int(stat.st_mtime_ns), int(stat.st_size))
     except OSError:
         return None
     cached = _JSON_DICT_CACHE.get(key)
-    if cached is not None and cached[0] == stamp[0] and cached[1] == stamp[1]:
-        return cached[2]
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
     try:
         with path.open("r", encoding="utf-8") as fh:
             payload = json.load(fh)
@@ -519,7 +522,7 @@ def _load_json_dict(path: Path) -> dict[str, Any] | None:
         return None
     if not isinstance(payload, dict):
         return None
-    _JSON_DICT_CACHE[key] = (stamp[0], stamp[1], payload)
+    _JSON_DICT_CACHE[key] = (stamp, payload)
     return payload
 
 
@@ -1525,8 +1528,9 @@ def build_snapshot(
         config=config or HybridEloConfig(),
     )
     _write_json_atomic(snapshot_path, snapshot)
-    global _SNAPSHOT_CACHE
+    global _SNAPSHOT_CACHE, _SNAPSHOT_CACHE_SIGNATURE
     _SNAPSHOT_CACHE = snapshot
+    _SNAPSHOT_CACHE_SIGNATURE = _snapshot_file_signature(snapshot_path)
     return snapshot
 
 
@@ -1555,19 +1559,65 @@ def load_live_snapshot(
         base, runtime_model_state_path=runtime_model_state_path)
 
 
-def load_snapshot(snapshot_path: Path = DEFAULT_SNAPSHOT_PATH) -> dict[str, Any] | None:
-    global _SNAPSHOT_CACHE
-    if isinstance(_SNAPSHOT_CACHE, dict):
-        return _SNAPSHOT_CACHE
-    if not snapshot_path.exists():
+def _snapshot_file_signature(path: Path) -> tuple[str, int, int, int] | None:
+    """Тождество снимка для кэша без чтения его большого JSON-пayload."""
+    resolved = str(Path(path).resolve())
+    try:
+        stat = Path(path).stat()
+    except OSError:
         return None
-    snapshot = _load_snapshot_streaming(snapshot_path)
+    return (resolved, int(stat.st_ino), int(stat.st_mtime_ns), int(stat.st_size))
+
+
+def _read_snapshot(path: Path) -> dict[str, Any] | None:
+    snapshot = _load_snapshot_streaming(path)
     if snapshot is None:
-        with snapshot_path.open("r", encoding="utf-8") as fh:
+        with path.open("r", encoding="utf-8") as fh:
             snapshot = json.load(fh)
-    if not isinstance(snapshot, dict):
+    return snapshot if isinstance(snapshot, dict) else None
+
+
+def load_snapshot(snapshot_path: Path = DEFAULT_SNAPSHOT_PATH) -> dict[str, Any] | None:
+    """Загружает текущий снимок, не удерживая заменённый атомарно файл в кэше."""
+    global _SNAPSHOT_CACHE, _SNAPSHOT_CACHE_SIGNATURE
+    path = Path(snapshot_path)
+    signature = _snapshot_file_signature(path)
+    if (
+        signature is not None
+        and isinstance(_SNAPSHOT_CACHE, dict)
+        and _SNAPSHOT_CACHE_SIGNATURE == signature
+    ):
+        return _SNAPSHOT_CACHE
+    if signature is None:
+        _SNAPSHOT_CACHE = None
+        _SNAPSHOT_CACHE_SIGNATURE = None
         return None
-    _SNAPSHOT_CACHE = snapshot
+
+    # Атомарная замена не даёт частичного JSON, но файл мог смениться между
+    # stat и чтением. Один повтор берёт актуальный файл; при непрерывной записи
+    # результат возвращаем, но не кэшируем под потенциально чужой сигнатурой.
+    for _attempt in range(2):
+        before = _snapshot_file_signature(path)
+        if before is None:
+            _SNAPSHOT_CACHE = None
+            _SNAPSHOT_CACHE_SIGNATURE = None
+            return None
+        try:
+            snapshot = _read_snapshot(path)
+        except (OSError, ValueError):
+            snapshot = None
+        after = _snapshot_file_signature(path)
+        if snapshot is None:
+            _SNAPSHOT_CACHE = None
+            _SNAPSHOT_CACHE_SIGNATURE = None
+            return None
+        if after == before:
+            _SNAPSHOT_CACHE = snapshot
+            _SNAPSHOT_CACHE_SIGNATURE = after
+            return snapshot
+
+    _SNAPSHOT_CACHE = None
+    _SNAPSHOT_CACHE_SIGNATURE = None
     return snapshot
 
 
@@ -1897,11 +1947,41 @@ def get_matchup_summary(
     radiant_account_ids: list[int] | tuple[int, ...] | None = None,
     dire_account_ids: list[int] | tuple[int, ...] | None = None,
     match_tier: LeagueTier | str | int | None = None,
+    timestamp: int | None = None,
     snapshot_path: Path = DEFAULT_SNAPSHOT_PATH,
     data_dir: Path = DEFAULT_DATA_DIR,
     rebuild_if_missing: bool = True,
     runtime_model_state_path: Path = DEFAULT_RUNTIME_MODEL_STATE_PATH,
 ) -> dict[str, Any] | None:
+    """Live team ELO in the same E-173 scale as ML's hybrid_strength.
+
+    match_tier is retained for caller compatibility; the trained serving
+    contract uses TIER3. Historical tier-aware reports use
+    build_matchup_summary_from_snapshot directly.
+    """
+    from ELO.models import prematch_lineup_summary
+
+    evaluation_timestamp = int(time.time()) if timestamp is None else int(timestamp)
+
+    def summarize(current_snapshot):
+        model = _restore_model_from_snapshot(current_snapshot)
+        if model is None:
+            return None
+        result = prematch_lineup_summary(
+            model, radiant_team_name=radiant_team_name, dire_team_name=dire_team_name,
+            radiant_account_ids=radiant_account_ids, dire_account_ids=dire_account_ids,
+            timestamp=evaluation_timestamp,
+        )
+        if result is not None:
+            result["reference_timestamp"] = (current_snapshot.get("meta") or {}).get("reference_timestamp")
+            ranks = _leaderboard_rank_map(current_snapshot)
+            for side, team_id in (("radiant", radiant_team_id), ("dire", dire_team_id)):
+                result[side]["team_id"] = team_id
+                org_key = resolve_org_key(team_id, result[side]["team_name"])
+                result[side]["org_key"] = org_key
+                result[side]["leaderboard_rank"] = ranks.get(org_key)
+        return result
+
     snapshot = ensure_snapshot(
         data_dir=data_dir,
         snapshot_path=snapshot_path,
@@ -1909,30 +1989,12 @@ def get_matchup_summary(
     )
     if snapshot is None:
         return None
-    base_summary = build_matchup_summary_from_snapshot(
-        snapshot,
-        radiant_team_id=radiant_team_id,
-        dire_team_id=dire_team_id,
-        radiant_team_name=radiant_team_name,
-        dire_team_name=dire_team_name,
-        radiant_account_ids=radiant_account_ids,
-        dire_account_ids=dire_account_ids,
-        match_tier=match_tier,
-    )
+    base_summary = summarize(snapshot)
     snapshot = _snapshot_with_runtime_model_state(
         snapshot,
         runtime_model_state_path=runtime_model_state_path,
     )
-    live_summary = build_matchup_summary_from_snapshot(
-        snapshot,
-        radiant_team_id=radiant_team_id,
-        dire_team_id=dire_team_id,
-        radiant_team_name=radiant_team_name,
-        dire_team_name=dire_team_name,
-        radiant_account_ids=radiant_account_ids,
-        dire_account_ids=dire_account_ids,
-        match_tier=match_tier,
-    )
+    live_summary = summarize(snapshot)
     if live_summary is None:
         return base_summary
     if base_summary is None:

@@ -7329,9 +7329,8 @@ def _format_win_model_line(*blocks) -> str:
     # известна: отсутствие пометки раньше означало и «всё заполнено», и
     # «счётчика нет» — различить было нельзя (E-195).
     try:
-        _elo = win_model_veto.last_model_elo(index)
-        if _elo is not None:
-            line += f" | ELO модели: {_elo:+.0f}"
+        # Team ELO is shown once in the shared hybrid block below. The legacy
+        # account-ELO feature remains in ML diagnostics, not as a rival rating.
         _parts = win_model_veto.last_parts(index)
         if _parts:
             # Доли от суммы МОДУЛЕЙ: по модулю дают 100%, и видно, кто тянет
@@ -24133,6 +24132,7 @@ def _build_team_elo_matchup_summary_from_live_snapshot(
     radiant_account_ids: Optional[List[int]] = None,
     dire_account_ids: Optional[List[int]] = None,
     match_tier: Optional[int] = None,
+    timestamp: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     if not ELO_LIVE_SNAPSHOT_AVAILABLE or _elo_live_get_matchup_summary is None:
         return None
@@ -24145,6 +24145,7 @@ def _build_team_elo_matchup_summary_from_live_snapshot(
             radiant_account_ids=list(radiant_account_ids or []),
             dire_account_ids=list(dire_account_ids or []),
             match_tier=match_tier,
+            timestamp=timestamp,
             rebuild_if_missing=True,
         )
     except Exception:
@@ -24886,6 +24887,7 @@ def _build_team_elo_matchup_summary(
     radiant_account_ids: Optional[List[int]] = None,
     dire_account_ids: Optional[List[int]] = None,
     match_tier: Optional[int] = None,
+    timestamp: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     summary = _build_team_elo_matchup_summary_from_live_snapshot(
         radiant_team_id=radiant_team_id,
@@ -24895,15 +24897,12 @@ def _build_team_elo_matchup_summary(
         radiant_account_ids=radiant_account_ids,
         dire_account_ids=dire_account_ids,
         match_tier=match_tier,
+        timestamp=timestamp,
     )
     if isinstance(summary, dict):
         return summary
-    return _build_team_elo_matchup_summary_from_kills_priors(
-        radiant_team_id=radiant_team_id,
-        dire_team_id=dire_team_id,
-        radiant_team_name=radiant_team_name,
-        dire_team_name=dire_team_name,
-    )
+    # A missing hybrid snapshot/lineup must not silently switch Elo systems.
+    return None
 
 
 def _elo_probability_from_ratings(radiant_rating: float, dire_rating: float) -> float:
@@ -24948,12 +24947,12 @@ def _format_team_elo_block(
     lineup_used = bool(radiant_payload.get("lineup_used")) or bool(dire_payload.get("lineup_used"))
 
     lines = [
-        "Командный ELO (текущий состав):" if lineup_used else "Командный ELO:",
+        "ELO состава (как в ML):" if summary.get("source") == "elo_prematch_hybrid" else "ELO команды:",
         f"{radiant_team_name}: {radiant_base_rating:.0f}",
         f"{dire_team_name}: {dire_base_rating:.0f}",
     ]
     # Keep output focused: omit live vs snapshot delta in user-facing message.
-    lines.append(f"ELO WR≈{raw_radiant_wr:.1f}% / {raw_dire_wr:.1f}% (ΔELO {raw_diff:+.0f})")
+    lines.append(f"По ELO: {raw_radiant_wr:.1f}% / {raw_dire_wr:.1f}% (ΔELO {raw_diff:+.0f})")
 
     return "\n".join(lines) + "\n", {
         "radiant_rating": radiant_rating,
@@ -36449,6 +36448,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 pass
         if verbose_match_log:
             _mark_verbose_match_log_done(check_uniq_url)
+        # One evaluation instant for ML and every ELO card built for this map.
+        team_elo_timestamp = win_model_veto.elo_evaluation_timestamp(data)
         radiant_account_ids = [
             int((radiant_heroes_and_pos.get(pos) or {}).get("account_id", 0) or 0)
             for pos in ("pos1", "pos2", "pos3", "pos4", "pos5")
@@ -36581,8 +36582,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     mid_dict=scoped_late_dict,
                     post_lane_dict=scoped_post_lane_dict,
                     early_end_dict=scoped_early_end_dict,
-                    radiant_team_name=radiant_team_name,
-                    dire_team_name=dire_team_name,
+                    radiant_team_name=radiant_team_name_original,
+                    dire_team_name=dire_team_name_original,
                     # Идентификатор карты доезжает до журнала панели. Без него
                     # там копились записи с пустым `map_id` (805 штук к
                     # 23.08.2026), и сверить вердикт панели с фактическим
@@ -36590,6 +36591,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     # нужны предматчевой модели: без них `_prematch_index`
                     # держит h2h_resid нулём даже при доступной истории встреч.
                     match={"match_id": _extract_live_match_id(data) or "",
+                           "startDateTime": team_elo_timestamp,
                            "map_key": check_uniq_url,
                            "radiant_team_id": radiant_team_id,
                            "dire_team_id": dire_team_id},
@@ -36685,6 +36687,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     radiant_account_ids=radiant_account_ids,
                     dire_account_ids=dire_account_ids,
                     match_tier=star_match_tier,
+                    timestamp=team_elo_timestamp,
                 )
                 early_local_elo_block, _ = _format_team_elo_block(
                     _early_elo_summary,
@@ -36835,6 +36838,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     radiant_account_ids=radiant_account_ids,
                     dire_account_ids=dire_account_ids,
                     match_tier=star_match_tier,
+                    timestamp=team_elo_timestamp,
                 )
                 early_local_elo_block, _ = _format_team_elo_block(
                     _early_elo_summary,
@@ -37666,6 +37670,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 radiant_account_ids=radiant_account_ids,
                 dire_account_ids=dire_account_ids,
                 match_tier=star_match_tier,
+                timestamp=team_elo_timestamp,
             )
             team_elo_block, team_elo_meta = _format_team_elo_block(
                 team_elo_summary,
@@ -42354,6 +42359,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 radiant_account_ids=radiant_account_ids,
                 dire_account_ids=dire_account_ids,
                 match_tier=star_match_tier,
+                timestamp=team_elo_timestamp,
             )
             tempo_over_fallback = _compute_tempo_over_fallback_payload(
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
@@ -42608,6 +42614,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     radiant_account_ids=radiant_account_ids,
                     dire_account_ids=dire_account_ids,
                     match_tier=star_match_tier,
+                    timestamp=team_elo_timestamp,
                 )
                 noskip_team_elo_block, _noskip_team_elo_meta = _format_team_elo_block(
                     noskip_team_elo_summary,

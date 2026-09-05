@@ -201,7 +201,6 @@ def _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[tupl
 # совпадают при совпадении АРГУМЕНТОВ. Порядок игроков — по возрастанию
 # account_id: так их складывает `_extract_player_slots` в ELO/data_loader, и
 # иначе поедут ролевые рейтинги.
-_HYBRID_TIER_DEFAULT = "TIER3"
 _HYBRID_MISS = 0
 _STALE_WARNED = 0
 # Заполненность входа: сколько из 21 величины собрано из реальных данных, а не
@@ -352,14 +351,11 @@ def _journal_eval(**rec) -> None:
 
 
 def last_model_elo(index):
-    """Разность рейтингов В ОЧКАХ, какой её видит МОДЕЛЬ.
+    """Legacy account-ELO difference in points, for journals/diagnostics only.
 
-    На карточке печатается живой ELO по составу (ELO/live_team_strength.py), а
-    модель смотрит на свой рейтинг игроков из pro_features_wide (K-обновление
-    по про-корпусу, колонка хранится делённой на 400). Это разные системы, и
-    они расходятся вплоть до знака: 15.08 на карте Xtreme vs Resilience карточка
-    показывала −16, а модель видела +132. Оператор из-за этого читал «модель
-    спорит с рейтингом», хотя она с ним согласна — просто с другим.
+    The frozen `elo` feature remains K24 account statistics. The Telegram team
+    Elo block now uses the shared `hybrid_strength` contract instead; this
+    diagnostic must not be presented as a second team rating on that card.
     """
     try:
         _rec = _fill_for(index)
@@ -634,6 +630,18 @@ def _slots_for_elo(side: Any) -> Optional[tuple]:
     return tuple(a for a, _ in pairs), tuple(p for _, p in pairs)
 
 
+def elo_evaluation_timestamp(match=None):
+    """Shared map timestamp for the ML feature and its Telegram ELO block."""
+    if isinstance(match, dict):
+        try:
+            timestamp = int(match.get("startDateTime") or 0)
+            if timestamp > 0:
+                return timestamp
+        except (TypeError, ValueError, OverflowError):
+            pass
+    return int(time.time())
+
+
 def hybrid_strength_diff(radiant_heroes_and_pos, dire_heroes_and_pos,
                          radiant_team_name, dire_team_name,
                          timestamp: Optional[int] = None) -> Optional[float]:
@@ -647,25 +655,18 @@ def hybrid_strength_diff(radiant_heroes_and_pos, dire_heroes_and_pos,
     dire = _slots_for_elo(dire_heroes_and_pos)
     if rad is None or dire is None:
         return None
-    try:
-        from ELO.domain import LeagueTier
-    except Exception:  # noqa: BLE001
-        return None
-    tier = getattr(LeagueTier, _HYBRID_TIER_DEFAULT, None)
-    if tier is None:
-        return None
     ts = int(timestamp or time.time())
     try:
-        out = []
-        for name, (ids, positions) in ((str(radiant_team_name), rad), (str(dire_team_name), dire)):
-            preview = model.preview_team_strength(
-                team_id=None, team_name=name, player_ids=ids,
-                player_positions=positions, tier=tier, timestamp=max(ts, 1),
-            )
-            out.append(float(preview["team_strength"]))
+        from ELO.models import prematch_lineup_summary
+
+        summary = prematch_lineup_summary(
+            model, radiant_team_name=radiant_team_name, dire_team_name=dire_team_name,
+            radiant_account_ids=rad[0], dire_account_ids=dire[0],
+            radiant_positions=rad[1], dire_positions=dire[1], timestamp=ts,
+        )
     except Exception:  # noqa: BLE001
         return None
-    return (out[0] - out[1]) / 400.0
+    return None if summary is None else summary["hybrid_strength"]
 
 
 def _match_team_id(match: Optional[dict], camel_key: str, snake_key: str) -> int:
@@ -733,12 +734,7 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
         model = ps.get_model()
         hybrid = None
         if "hybrid_strength" in getattr(model, "features", ()):
-            ts = None
-            if isinstance(match, dict):
-                try:
-                    ts = int(match.get("startDateTime") or 0) or None
-                except (TypeError, ValueError):
-                    ts = None
+            ts = elo_evaluation_timestamp(match)
             hybrid = hybrid_strength_diff(radiant_heroes_and_pos, dire_heroes_and_pos,
                                           radiant_team_name, dire_team_name, ts)
             if hybrid is None:
