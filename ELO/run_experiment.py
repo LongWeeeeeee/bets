@@ -16,7 +16,7 @@ from ELO.data_loader import load_matches
 from ELO.domain import LeagueTier
 from ELO.evaluation import run_online_evaluation
 from ELO.models import HybridPlayerRosterEloModel, SimpleTeamEloModel
-from ELO.tiering import attach_league_tiers, classify_leagues
+from ELO.tiering import attach_league_tiers_asof, classify_leagues
 
 
 def _to_json_ready(value: Any) -> Any:
@@ -56,11 +56,17 @@ def main() -> None:
     args = parser.parse_args()
 
     matches, load_summary = load_matches(args.data_dir)
+    unique = {}
+    for match in matches:
+        unique.setdefault(match.match_id, match)
+    load_summary["duplicate_records"] = len(matches) - len(unique)
+    matches = list(unique.values())
+    load_summary["loaded_matches"] = len(matches)
     if not matches:
         raise SystemExit("No valid matches were loaded.")
 
     league_info, league_summary = classify_leagues(matches)
-    attach_league_tiers(matches, league_info)
+    attach_league_tiers_asof(matches)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 

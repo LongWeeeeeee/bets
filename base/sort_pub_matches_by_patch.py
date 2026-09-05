@@ -14,50 +14,37 @@ try:
 except Exception:
     ijson = None
 
+try:
+    from base.dota_patch_calendar import PATCH_RELEASES as _CALENDAR_PATCH_RELEASES
+except ModuleNotFoundError:  # Direct invocation: python base/sort_pub_matches_by_patch.py
+    from dota_patch_calendar import PATCH_RELEASES as _CALENDAR_PATCH_RELEASES
+
 
 @dataclass(frozen=True)
 class PatchRelease:
     version: str
     release_ts: int
     release_date: str
+    release_at_utc: str
+    source_url: Optional[str]
+    time_convention: str
 
-
-PATCH_RELEASES_RAW: List[Tuple[str, str]] = [
-    ("7.40c", "2026-01-21"),
-    ("7.40b", "2025-12-23"),
-    ("7.40", "2025-12-15"),
-    ("7.39e", "2025-10-02"),
-    ("7.39d", "2025-08-05"),
-    ("7.39c", "2025-06-24"),
-    ("7.39b", "2025-05-29"),
-    ("7.39", "2025-05-21"),
-    ("7.38c", "2025-03-27"),
-    ("7.38b", "2025-03-05"),
-    ("7.38", "2025-02-19"),
-    ("7.37e", "2024-11-19"),
-    ("7.37d", "2024-10-01"),
-    ("7.37c", "2024-08-28"),
-    ("7.37b", "2024-08-14"),
-    ("7.37", "2024-07-31"),
-    ("7.36c", "2024-06-24"),
-    ("7.36b", "2024-06-05"),
-    ("7.36a", "2024-05-26"),
-    ("7.36", "2024-05-22"),
-    ("7.35d", "2024-03-21"),
-    ("7.35c", "2024-02-21"),
-]
 
 OLDER_BUCKET = "pre_7.35c"
 
-
-def _to_utc_ts(date_str: str) -> int:
-    dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    return int(dt.timestamp())
-
-
+PATCH_RELEASES_RAW: List[Tuple[str, str]] = [
+    (release.label, release.release_date) for release in _CALENDAR_PATCH_RELEASES
+]
 PATCH_RELEASES: List[PatchRelease] = [
-    PatchRelease(version=v, release_ts=_to_utc_ts(d), release_date=d)
-    for v, d in PATCH_RELEASES_RAW
+    PatchRelease(
+        version=release.label,
+        release_ts=release.release_ts,
+        release_date=release.release_date,
+        release_at_utc=release.release_at_utc,
+        source_url=release.source_url,
+        time_convention=release.time_convention,
+    )
+    for release in _CALENDAR_PATCH_RELEASES
 ]
 
 
@@ -128,8 +115,8 @@ def sort_pub_matches_by_patch(input_dir: Path, out_root: Path, clean_output: boo
     print(f"Files:      {len(src_files)}")
     print("Patch buckets:")
     for p in PATCH_RELEASES:
-        print(f"  - {p.version}: >= {p.release_date} 00:00:00 UTC")
-    print(f"  - {OLDER_BUCKET}: older than {PATCH_RELEASES[-1].release_date} UTC")
+        print(f"  - {p.version}: >= {p.release_at_utc}")
+    print(f"  - {OLDER_BUCKET}: older than {PATCH_RELEASES[-1].release_at_utc}")
 
     writers = _open_bucket_writers(out_root)
     counts: Dict[str, int] = {name: 0 for name in writers.keys()}
@@ -186,7 +173,13 @@ def sort_pub_matches_by_patch(input_dir: Path, out_root: Path, clean_output: boo
         "file_parse_errors": file_parse_errors,
         "counts_by_patch": counts,
         "patch_boundaries_utc": {
-            p.version: {"release_date": p.release_date, "release_ts": p.release_ts}
+            p.version: {
+                "release_date": p.release_date,
+                "release_at_utc": p.release_at_utc,
+                "release_ts": p.release_ts,
+                "source_url": p.source_url,
+                "time_convention": p.time_convention,
+            }
             for p in PATCH_RELEASES
         },
         "older_bucket": OLDER_BUCKET,
@@ -228,4 +221,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

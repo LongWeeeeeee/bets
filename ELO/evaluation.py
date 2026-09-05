@@ -5,6 +5,7 @@ from collections import defaultdict
 
 from ELO.config import EvaluationConfig
 from ELO.domain import LeagueTier, MatchRecord
+from ELO.replay import prepare_prediction, replay_events, result_record
 
 
 def _clip_probability(probability: float) -> float:
@@ -70,8 +71,18 @@ def run_online_evaluation(model, matches: list[MatchRecord], config: EvaluationC
     evaluation_start_idx = max(config.min_train_matches, len(matches) - evaluation_match_count)
 
     prediction_rows: list[dict] = []
-    for idx, match in enumerate(matches):
-        step = model.process_match(match)
+    idx = -1
+    skipped_results = sum(match.result_timestamp is None for match in matches)
+    last_prediction_timestamp = None
+    for event, timestamp, match in replay_events(matches):
+        if event == "result":
+            model.process_match(result_record(match, timestamp))
+            continue
+        idx += 1
+        if timestamp != last_prediction_timestamp:
+            prepare_prediction(model, timestamp)
+            last_prediction_timestamp = timestamp
+        step = model.predict_match(match)
         if idx < evaluation_start_idx:
             continue
         prediction_rows.append(
@@ -91,6 +102,7 @@ def run_online_evaluation(model, matches: list[MatchRecord], config: EvaluationC
     summary = _summarize_rows(prediction_rows, calibration_buckets=config.calibration_buckets)
     summary["evaluation_start_idx"] = evaluation_start_idx
     summary["warmup_matches"] = evaluation_start_idx
+    summary["skipped_unknown_result_time"] = skipped_results
     summary["sample_predictions"] = prediction_rows[:20]
 
     by_tier = {}

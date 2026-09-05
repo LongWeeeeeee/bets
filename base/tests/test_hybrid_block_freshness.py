@@ -34,7 +34,7 @@ def test_custom_snapshot_is_reloaded_after_atomic_replace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path = tmp_path / "custom.json"
-    _replace_json(path, {"meta": {"reference_timestamp": 1},
+    _replace_json(path, {"meta": {**lts._rating_replay_meta(), "reference_timestamp": 1},
                          "teams_by_org_key": {}})
     models = []
     monkeypatch.setattr(hybrid_block, "SNAPSHOT", path)
@@ -43,7 +43,7 @@ def test_custom_snapshot_is_reloaded_after_atomic_replace(
 
     first = hybrid_block._load()
     assert models == [1]
-    _replace_json(path, {"meta": {"reference_timestamp": 2},
+    _replace_json(path, {"meta": {**lts._rating_replay_meta(), "reference_timestamp": 2},
                          "teams_by_org_key": {}})
 
     refreshed = hybrid_block._load()
@@ -60,7 +60,7 @@ def test_missing_custom_snapshot_recovers_when_it_appears(
     monkeypatch.setattr(lts, "_restore_model_from_snapshot", lambda _snapshot: object())
 
     assert hybrid_block._load()["model"] is None
-    _replace_json(path, {"meta": {"reference_timestamp": 7},
+    _replace_json(path, {"meta": {**lts._rating_replay_meta(), "reference_timestamp": 7},
                          "teams_by_org_key": {}})
     assert hybrid_block._load()["model"] is not None
 
@@ -72,7 +72,7 @@ def test_default_path_reloads_when_live_delta_changes(
     runtime = tmp_path / "runtime.json"
     delta = tmp_path / "delta.json"
     for path in (snapshot, runtime, delta):
-        _replace_json(path, {"version": 1})
+        _replace_json(path, {"version": 1, "meta": lts._rating_replay_meta()})
     calls = []
     monkeypatch.setattr(hybrid_block, "SNAPSHOT", snapshot)
     monkeypatch.setattr(lts, "DEFAULT_SNAPSHOT_PATH", snapshot)
@@ -88,3 +88,16 @@ def test_default_path_reloads_when_live_delta_changes(
     _replace_json(delta, {"version": 2})
     assert hybrid_block._load()["model"] is not None
     assert calls == ["load", "load"]
+
+
+def test_legacy_snapshot_does_not_reach_fast_array_model(tmp_path, monkeypatch):
+    path = tmp_path / "legacy.json"
+    _replace_json(path, {"meta": {"reference_timestamp": 1}})
+    monkeypatch.setattr(hybrid_block, "SNAPSHOT", path)
+    monkeypatch.setattr(lts, "DEFAULT_SNAPSHOT_PATH", path)
+    import ELO.array_model as arrays
+    def unexpected(*args, **kwargs):
+        raise AssertionError("legacy arrays must not be served")
+    monkeypatch.setattr(arrays, "load_read_model", unexpected)
+    assert hybrid_block._load()["model"] is None
+    assert "rebuild" in hybrid_block._load()["error"]

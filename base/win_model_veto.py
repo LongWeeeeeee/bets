@@ -557,7 +557,11 @@ def _live_elo_model():
         from ELO.array_model import load_read_model
         from ELO.live_team_strength import (DEFAULT_LIVE_DELTA_PATH,
                                             DEFAULT_RUNTIME_MODEL_STATE_PATH,
-                                            DEFAULT_SNAPSHOT_PATH)
+                                            DEFAULT_SNAPSHOT_PATH, load_snapshot,
+                                            _snapshot_replay_is_current)
+
+        if not _snapshot_replay_is_current(load_snapshot(DEFAULT_SNAPSHOT_PATH)):
+            return None
 
         # Дельта приоритетнее полного состояния: живая модель собирается из
         # базовых массивов (sidecar .npz) и дельты, без разбора 519 МБ и без

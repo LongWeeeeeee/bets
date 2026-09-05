@@ -418,7 +418,7 @@ def test_live_maps_write_delta_not_full_state(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("LIVE_ELO_DELTA", str(delta_path))
 
     base_state = HybridPlayerRosterEloModel(HybridEloConfig()).export_state()
-    snapshot = {"meta": {"reference_timestamp": 1771153251},
+    snapshot = {"meta": {**lts._rating_replay_meta(), "reference_timestamp": 1771153251},
                 "teams_by_org_key": {},
                 "model_state": base_state}
     snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")

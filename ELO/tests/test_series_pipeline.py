@@ -149,7 +149,8 @@ def test_bo3_sweep_bonus_improves_next_series_prediction_for_sweep_winner() -> N
 
     first_map = MatchRecord(
         match_id=1,
-        timestamp=1,
+        timestamp=10,
+        duration_seconds=5,
         radiant_win=True,
         radiant_team_id=1,
         radiant_team_name="A",
@@ -166,7 +167,8 @@ def test_bo3_sweep_bonus_improves_next_series_prediction_for_sweep_winner() -> N
     )
     second_map = MatchRecord(
         match_id=2,
-        timestamp=2,
+        timestamp=20,
+        duration_seconds=5,
         radiant_win=False,
         radiant_team_id=2,
         radiant_team_name="B",
@@ -183,7 +185,8 @@ def test_bo3_sweep_bonus_improves_next_series_prediction_for_sweep_winner() -> N
     )
     next_series = MatchRecord(
         match_id=3,
-        timestamp=3,
+        timestamp=40,
+        duration_seconds=5,
         radiant_win=True,
         radiant_team_id=1,
         radiant_team_name="A",
@@ -229,6 +232,7 @@ def test_series_evaluation_merges_interleaved_maps_and_batches_equal_starts() ->
         return MatchRecord(
             match_id=match_id,
             timestamp=timestamp,
+            duration_seconds=1,
             radiant_win=radiant_win,
             radiant_team_id=radiant_team_id,
             radiant_team_name=f"R{radiant_team_id}",
@@ -284,11 +288,11 @@ def test_series_evaluation_merges_interleaved_maps_and_batches_equal_starts() ->
         ("process", 1),
         ("process", 2),
         ("reset", 3),
-        ("process", 3),
-        ("bonus", 2, 3),
         ("reset", 4),
+        ("process", 3),
+        ("bonus", 2, 4),
         ("process", 4),
-        ("bonus", 1, 4),
+        ("bonus", 1, 5),
     ]
     assert report["applied_bo3_sweep_bonus_count"] == 2
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-import json
 import re
 from collections import Counter
 from pathlib import Path
+from typing import Callable
+
+import ijson
 
 from ELO.domain import MatchRecord
 
@@ -47,7 +49,8 @@ def _extract_player_slots(players: list[dict], is_radiant: bool) -> tuple[tuple[
 def _parse_match(raw_match: dict, *, source_patch: str | None = None) -> MatchRecord | None:
     match_id = raw_match.get("id")
     timestamp = raw_match.get("startDateTime")
-    if not isinstance(match_id, int) or not isinstance(timestamp, int):
+    if (isinstance(match_id, bool) or not isinstance(match_id, int) or match_id <= 0
+            or isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp <= 0):
         return None
 
     players = raw_match.get("players") or []
@@ -57,6 +60,9 @@ def _parse_match(raw_match: dict, *, source_patch: str | None = None) -> MatchRe
     radiant_player_ids, radiant_player_positions = _extract_player_slots(players, is_radiant=True)
     dire_player_ids, dire_player_positions = _extract_player_slots(players, is_radiant=False)
     if len(radiant_player_ids) != 5 or len(dire_player_ids) != 5:
+        return None
+    all_players = radiant_player_ids + dire_player_ids
+    if len(set(all_players)) != 10 or any(isinstance(p, bool) or p <= 0 for p in all_players):
         return None
 
     radiant_team = raw_match.get("radiantTeam") or {}
@@ -96,31 +102,35 @@ def _parse_match(raw_match: dict, *, source_patch: str | None = None) -> MatchRe
         radiant_kills=_total_team_kills(raw_match.get("radiantKills")),
         dire_kills=_total_team_kills(raw_match.get("direKills")),
         source_patch=source_patch,
+        duration_seconds=raw_match.get("durationSeconds"),
     )
 
 
-def load_matches(data_dir: Path) -> tuple[list[MatchRecord], dict[str, int]]:
+def load_matches(
+    data_dir: Path, *, progress: Callable[[Path, int], None] | None = None,
+) -> tuple[list[MatchRecord], dict[str, int]]:
     summary: Counter[str] = Counter()
     matches: list[MatchRecord] = []
     for json_path in sorted(data_dir.glob("*.json")):
         summary["files"] += 1
         patch_match = _PATCH_FILE_RE.match(json_path.stem)
         source_patch = patch_match.group(1) if patch_match else None
-        with json_path.open("r", encoding="utf-8") as fh:
-            payload = json.load(fh)
-        if not isinstance(payload, dict):
-            continue
-        summary["raw_matches"] += len(payload)
-        for raw_match in payload.values():
-            summary["seen_matches"] += 1
-            if not isinstance(raw_match, dict):
-                summary["skipped_non_dict"] += 1
-                continue
-            match = _parse_match(raw_match, source_patch=source_patch)
-            if match is None:
-                summary["skipped_invalid"] += 1
-                continue
-            matches.append(match)
-            summary["loaded_matches"] += 1
+        # A 500MB archive expands to several GB with json.load. Keep only one
+        # raw map in memory while retaining compact MatchRecords for sorting.
+        with json_path.open("rb") as fh:
+            for _, raw_match in ijson.kvitems(fh, "", use_float=True):
+                summary["raw_matches"] += 1
+                summary["seen_matches"] += 1
+                if not isinstance(raw_match, dict):
+                    summary["skipped_non_dict"] += 1
+                    continue
+                match = _parse_match(raw_match, source_patch=source_patch)
+                if match is None:
+                    summary["skipped_invalid"] += 1
+                    continue
+                matches.append(match)
+                summary["loaded_matches"] += 1
+        if progress is not None:
+            progress(json_path, len(matches))
     matches.sort(key=lambda match: (match.timestamp, match.match_id))
     return matches, dict(summary)

@@ -22,9 +22,11 @@ from ELO.config import HybridEloConfig
 from ELO.data_loader import load_matches
 from ELO.domain import LeagueTier, MatchRecord
 from ELO.models import HybridPlayerRosterEloModel
+from ELO.replay import REPLAY_VERSION, replay_events, result_record
 from ELO.series_data import build_series_bundles
 from ELO.team_identity import resolve_org_key
-from ELO.tiering import attach_league_tiers, classify_leagues, get_known_team_tier
+from ELO.tiering import attach_league_tiers_asof, get_known_team_tier
+from base.dota_patch_calendar import PATCH_RELEASES
 
 try:
     import fcntl
@@ -536,6 +538,30 @@ def _model_config_signature(model_state: dict[str, Any] | None) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _rating_replay_meta() -> dict[str, str]:
+    calendar = [(p.label, p.release_ts) for p in PATCH_RELEASES]
+    return {"rating_replay_version": REPLAY_VERSION,
+            "rating_calendar_signature": hashlib.sha256(json.dumps(calendar).encode()).hexdigest()}
+
+
+def _snapshot_replay_is_current(snapshot: dict[str, Any] | None) -> bool:
+    meta = (snapshot or {}).get("meta") or {}
+    return all(meta.get(k) == v for k, v in _rating_replay_meta().items())
+
+
+def _rating_history_signature(matches: list[MatchRecord], config_signature: str) -> str:
+    """Identity of the exact rating base, including edits with unchanged last time."""
+    digest = hashlib.sha256(json.dumps([_rating_replay_meta(), config_signature], sort_keys=True).encode())
+    for m in matches:
+        row = [m.match_id, m.timestamp, m.result_timestamp, m.radiant_win,
+               m.radiant_team_id, m.dire_team_id, m.radiant_team_name, m.dire_team_name,
+               m.radiant_player_ids, m.dire_player_ids, m.radiant_player_positions,
+               m.dire_player_positions, m.derived_league_tier.value]
+        digest.update(json.dumps(row, separators=(",", ":")).encode())
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def _snapshot_model_config_signature(snapshot: dict[str, Any]) -> str:
     meta = snapshot.get("meta") if isinstance(snapshot.get("meta"), dict) else {}
     signature = meta.get("model_config_signature")
@@ -608,6 +634,7 @@ def _serialize_match_record(match: MatchRecord) -> dict[str, Any]:
         "series_id": match.series_id,
         "series_type": match.series_type,
         "source_patch": match.source_patch,
+        "duration_seconds": match.duration_seconds,
         "derived_league_tier": match.derived_league_tier.value,
     }
 
@@ -631,6 +658,7 @@ def _deserialize_match_record(raw: dict[str, Any], *, radiant_win: bool) -> Matc
             series_id=int(raw["series_id"]) if raw.get("series_id") is not None else None,
             series_type=(str(raw.get("series_type")) if raw.get("series_type") is not None else None),
             source_patch=(str(raw.get("source_patch")) if raw.get("source_patch") is not None else None),
+            duration_seconds=raw.get("duration_seconds"),
             derived_league_tier=tier,
         )
     except (TypeError, ValueError):
@@ -1077,6 +1105,9 @@ def _build_live_applied_update(
     first_team_is_radiant: bool,
 ) -> dict[str, Any]:
     meta = snapshot.get("meta") or {}
+    # The score change is observed now. Reusing the registration/start time
+    # would move decay and patch state backwards when parallel games finish.
+    match = result_record(match, max(match.timestamp, int(time.time())))
     before_summary = _preview_live_matchup_from_model(
         model=model,
         match=match,
@@ -1338,6 +1369,7 @@ def _build_snapshot_dict(
         empty_model_state = None
         return {
             "meta": {
+                **_rating_replay_meta(),
                 "data_dir": str(data_dir),
                 "reference_timestamp": None,
                 "reference_utc": None,
@@ -1354,8 +1386,7 @@ def _build_snapshot_dict(
             "model_state": empty_model_state,
         }
 
-    league_info, _ = classify_leagues(matches)
-    attach_league_tiers(matches, league_info)
+    attach_league_tiers_asof(matches)
     series_bundles, series_summary = build_series_bundles(matches)
 
     model = HybridPlayerRosterEloModel(config)
@@ -1370,7 +1401,8 @@ def _build_snapshot_dict(
         default=None,
     )
     latest_patch = latest_patch_match[1] if latest_patch_match else None
-    reference_timestamp = matches[-1].timestamp
+    result_times = [match.result_timestamp for match in matches if match.result_timestamp is not None]
+    reference_timestamp = max(result_times, default=matches[-1].timestamp)
     cross_tier_counts: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {"series": 0, "strong_wins": 0}
     )
@@ -1424,12 +1456,13 @@ def _build_snapshot_dict(
                 cross_tier_counts[pair_key]["series"] += 1
                 cross_tier_counts[pair_key]["strong_wins"] += 1 if strong_team_won else 0
 
-    # Series bundles are ordered by their first map. Applying all maps from one
-    # bundle here would let a later map update the shared tier side bias before
-    # an intervening map in another series. `matches` is deduplicated and sorted
-    # by (timestamp, match_id), so it is the sole chronological model stream.
+    # Update only after a result became available; never use start order as a
+    # proxy for finish order. Unknown durations are counted and never guessed.
+    for event, observed_at, match in replay_events(matches):
+        if event == "result":
+            model.process_match(result_record(match, observed_at))
+
     for match in matches:
-        model.process_match(match)
         for is_radiant, team_id, team_name, player_ids in (
             (True, match.radiant_team_id, match.radiant_team_name, match.radiant_player_ids),
             (False, match.dire_team_id, match.dire_team_name, match.dire_player_ids),
@@ -1503,11 +1536,14 @@ def _build_snapshot_dict(
             "display_decay_half_life_days": display_decay_half_life_days,
             "loaded_matches": int(load_summary.get("loaded_matches", 0)),
             "duplicate_records": int(load_summary.get("duplicate_records", 0)),
+            **_rating_replay_meta(),
+            "rating_updates": len(result_times),
+            "skipped_unknown_result_time": len(matches) - len(result_times),
             "series_groups": int(series_summary.get("all_series_groups", 0)),
             "eligible_series": int(series_summary.get("eligible_series", 0)),
             "team_count": len(teams_by_org_key),
             "tier_matchup_elo_bonus": tier_matchup_elo_bonus,
-            "model_config_signature": _model_config_signature(model_state),
+            "model_config_signature": _rating_history_signature(matches, _model_config_signature(model_state)),
             "team_kills_history_schema_version": TEAM_KILLS_HISTORY_SCHEMA_VERSION,
             "team_kills_history_matches_per_team": TEAM_KILLS_HISTORY_MATCHES_PER_TEAM,
             "team_kills_history_latest_patch": latest_patch,
@@ -1558,7 +1594,7 @@ def load_live_snapshot(
     разбор 366-мегабайтного файла здесь не происходит.
     """
     base = load_snapshot(snapshot_path)
-    if base is None:
+    if base is None or not _snapshot_replay_is_current(base):
         return None
     return _snapshot_with_runtime_model_state(
         base, runtime_model_state_path=runtime_model_state_path)
@@ -1724,6 +1760,11 @@ def ensure_snapshot(
     display_decay_half_life_days: float = DEFAULT_DISPLAY_DECAY_HALF_LIFE_DAYS,
 ) -> dict[str, Any] | None:
     snapshot = load_snapshot(snapshot_path)
+    # A code/calendar migration requires an explicit offline rebuild. Pinning
+    # cannot authorize legacy state, and a live request must not trigger a
+    # multi-GB historical rebuild as a side effect.
+    if snapshot is not None and not _snapshot_replay_is_current(snapshot):
+        return None
     snapshot_mtime = 0.0
     if snapshot_path.exists():
         try:
