@@ -375,14 +375,43 @@ def _runtime_is_valid(runtime_path: Path, snapshot_path: Path) -> bool:
 
 
 def _small_parts(path: Path) -> dict:
-    """Мелкие части состояния — обычным разбором: их суммарный вес незначим."""
+    """Мелкие части состояния, собранные без материализации крупных полей.
+
+    `ijson.kvitems` сначала строит значение каждого ключа `model_state`, в том
+    числе многомиллионных полей, и только потом возвращает его вызывающему
+    коду. Здесь сохраняемые значения собираются выборочно из событий parser-а;
+    события discarded-полей пропускаются целиком.
+    """
     import ijson
+    from ijson.common import ObjectBuilder
 
     out: dict = {}
     with open(path, "rb") as fh:
-        for key, value in ijson.kvitems(fh, "model_state"):
-            if key in _KEEP_AS_IS:
-                out[key] = value
+        active_key = None
+        builder = None
+        depth = 0
+        for prefix, event, value in ijson.parse(fh):
+            if prefix == "model_state" and event == "map_key":
+                active_key = value if value in _KEEP_AS_IS else None
+                builder = ObjectBuilder() if active_key is not None else None
+                depth = 0
+                continue
+            if active_key is None:
+                continue
+
+            builder.event(event, value)
+            if event in ("start_map", "start_array"):
+                depth += 1
+            elif event in ("end_map", "end_array"):
+                depth -= 1
+
+            # A scalar has no container depth; a container is complete when
+            # its matching end event returns depth to zero.
+            if depth == 0 and event not in ("map_key", "start_map",
+                                             "start_array"):
+                out[active_key] = builder.value
+                active_key = None
+                builder = None
     return out
 
 
