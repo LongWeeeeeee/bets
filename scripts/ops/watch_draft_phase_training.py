@@ -61,8 +61,10 @@ def main():
     while True:
         event = None
         detail = ''
+        run_pid = 'unknown'
         try:
             state = json.loads((args.run_dir/'status.json').read_text())
+            run_pid = str(state.get('pid', 'unknown'))
             if state['state'] in ('DONE', 'FAIL'):
                 event = state['state']
                 detail = state['stage']
@@ -78,7 +80,8 @@ def main():
                     event, detail = 'STALL', state['stage']
         except Exception as exc:
             event, detail = 'UNREACHABLE', str(exc)
-        if event and event not in sent:
+        event_key = f'{run_pid}:{event}'
+        if event and event_key not in sent:
             message = (f'DRAFT_PHASE_TRAINING {event}: {args.run_dir.name}; {detail}. '
                        f'Проверь {args.run_dir}/status.json и run.log, продолжи исходную задачу '
                        'до проверки четырёх моделей и итогового отчёта. Прод не переключать.')
@@ -86,14 +89,14 @@ def main():
                 queued = subprocess.run([args.codex, 'queue', '--thread', args.thread, '--message', message],
                                         capture_output=True, text=True, timeout=30)
                 if queued.returncode == 0:
-                    sent[event] = time.time()
+                    sent[event_key] = time.time()
                 print(f'{time.time():.0f} {event} queue_exit={queued.returncode} {queued.stdout} {queued.stderr}', flush=True)
             except subprocess.TimeoutExpired:
                 # Delivery is uncertain: do not blindly enqueue the same event twice.
-                sent[event] = 'delivery_uncertain'
+                sent[event_key] = 'delivery_uncertain'
                 print(f'{time.time():.0f} {event} queue timeout; delivery uncertain', flush=True)
         atomic_json(state_file, dict(pid=os.getpid(), updated_at=time.time(), last_activity=last_activity, sent=sent))
-        if event in ('DONE', 'FAIL') and event in sent:
+        if event in ('DONE', 'FAIL') and event_key in sent:
             return
         time.sleep(args.interval)
 

@@ -383,7 +383,7 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 
 `train_draft_phase_models.py` обучает четыре фазы: `early_nw` (наличие маркера + направление: 3 класса Dire/Radiant/no_marker), `late` (duration >=36 минут), `all` (duration >=20 минут), `early_win` (duration 20–34 минуты включительно). Основной opt-in дизайн `hero_role_position_pair` добавляет pair-энкодирование с минимальной поддержкой (`--pair-min-support`, default 30); role-free `hero_role_pair` остаётся baseline/control. Split chronological 60/20/20, C-grid и vocabulary выбираются по train/validation. `evaluation_model.joblib` и его метрики используют честный held-out test; `model.joblib` — отдельный full refit без held-out score. Pro корпус оценивается только по future-only строкам после test/train cutoff и с исключением shared `mid`.
 
-Артефакты пишутся в `data/draft_phase_models/<run>/<phase>/<design>/`; scratch — `runtime/artifacts/draft-cp/phase_training_scratch`. Раннер: `bash scripts/run/retrain_draft_phases.sh 2026-09-05_position_pairs` (создаётся lead). Это исследовательский offline pipeline; legacy runtime artifacts и production wrappers автоматически не переключаются.
+Артефакты пишутся в `data/draft_phase_models/<run>/<phase>/<design>/`; scratch — `runtime/artifacts/draft-cp/phase_training_scratch` (раннер задаёт отдельный scratch внутри своего run directory). Раннер: `bash scripts/run/retrain_draft_phases.sh 2026-09-05_position_pairs`. `train_early_nw_draft_win.py` / `train_late_draft_win.py` теперь вызывают этот тренер для одной фазы; `--out` сохранён, у Late допустим `--min-minutes=36`. Это offline pipeline; legacy runtime artifacts и production wrappers автоматически не переключаются.
 
 ---
 
