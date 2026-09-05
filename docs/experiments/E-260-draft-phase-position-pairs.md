@@ -5,13 +5,13 @@ date: "2026-09-05"
 area: ml
 status: full
 corpus: "6 638 652 публичных карты >=20 мин; про-архив 1 151 356 карт, forward test 189–639; Early NW no_marker 2 461 376"
-verdict: "Четыре offline модели обучены и сохранены. Public AUC: Early NW direction +0.00290, Early Win +0.00122, All +0.00058, Late -0.00048 против пар без позиций на тех же данных. Validation предпочитает позиции только для Early NW/Early Win. На новых про-картах улучшение AUC/log loss не подтверждено. Split по start_time без end-time embargo; прод не переключён."
+verdict: "Четыре модели обучены, parent prematch пересчитан, и 05.09.2026 подтверждена активация на serv1 (код ccf1873, restart 23:39:38 MSK). EarlyNW conditional direction, Late >=36 и All >=20 подключены к трём reader; EarlyWin 20..34 сохранён неактивным. Независимый pro uplift не подтверждён; историческая диагностика parent не является независимой проверкой качества."
 harness: "scripts/run/retrain_draft_phases.sh; base/build_draft_phase_corpus.py; base/train_draft_phase_models.py"
 ---
 
 # E-260 — четыре draft phase модели после исправления позиций в парах
 
-**Обучение завершено 05.09.2026 в 19:37 MSK.** `status.json`: `DONE`, `stage=complete`; `summary.json`: `complete`. Все четыре position-aware модели сохранены после refit на полном соответствующем публичном корпусе. Это завершение обучения, а не подтверждение преимущества в проде. **Прод не переключён.**
+**Обучение завершено 05.09.2026 в 19:37 MSK.** `status.json`: `DONE`, `stage=complete`; `summary.json`: `complete`. Все четыре position-aware модели сохранены после refit на полном соответствующем публичном корпусе. Активация на serv1 подтверждена: код `ccf1873`, restart `2026-09-05 23:39:38 MSK`, PID `3170124 -> 3233020`, unit active. Live model/card event после restart пока не наблюдался.
 
 ## Цели и исправления
 
@@ -32,7 +32,7 @@ harness: "scripts/run/retrain_draft_phases.sh; base/build_draft_phase_corpus.py;
 
 **Используются.** У Early NW два компонента: occurrence предсказывает `q=P(marker)` на всех корректно размеченных картах, direction — `p=P(Radiant | marker)` на картах с маркером. Выход `[q*(1-p), q*p, 1-q]` соответствует `[dire, radiant, no_marker]`. Occurrence использует признаки, инвариантные к смене сторон; direction — признаки со знаком.
 
-Публичных no_marker **2 461 376**. Если карта закончилась между 20-й и 28-й минутами, проверяется окно до её фактического окончания. Отсутствующий/неполный/нечисловой ряд NW не превращается в no_marker: такие карты исключаются только из NW-задачи и могут учить win-модели. Новый трёхклассовый объект несовместим с прежним бинарным reader; для live нужна отдельная интеграция.
+Публичных no_marker **2 461 376**. Если карта закончилась между 20-й и 28-й минутами, проверяется окно до её фактического окончания. Отсутствующий/неполный/нечисловой ряд NW не превращается в no_marker: такие карты исключаются только из NW-задачи и могут учить win-модели. Для прежнего бинарного live reader экспортирован direction-классификатор: он возвращает P(Radiant | marker). Полный трёхклассовый bundle сохранён вместе с occurrence, который пока не подключён к live-выходу.
 
 ## Данные и разбиение
 
@@ -152,7 +152,7 @@ bash scripts/run/retrain_draft_phases.sh NEW_RUN_NAME
 
 Следующие содержательные исследования: меньшие C для позиционных occurrence/Late/All на отдельном validation; отдельный выбор encoder для occurrence и direction NW; более крупная последующая pro-когорта с embargo по завершению карт и замером реального отбора. Generic pro fine-tune нельзя обещать как улучшение: предыдущие E-99/E-218 показали, что рост изолированной метрики не обязан улучшать финальный ML-стек.
 
-Подключение в live не выполнено. Помимо трёхклассового NW-контракта, замена `draft_logit` требует повторного обучения/проверки родительского prematch ML и его interactions. Эта задача завершает offline исправление, обучение и сравнение четырёх моделей.
+Подключение в live выполнено и подтверждено preflight/postflight: все 4 модели × 512 реальных draft-кейсов, `maxdelta <= 1.11e-16`; три reader wrappers совпали на 512 кейсах; parent — 35 features / 6 branches. Drop-in задаёт `WIN_MODEL_DIR`, `EARLY_NW_MODEL_DIR`, `LATE_WIN_MODEL_DIR`; `PREMATCH_ARTIFACT` unset, используется default artifact с заменёнными весами и прежним snapshot. Server SHA: `a6cf61c8a09d5d4649d4f7f9fc787b7986cb811617b70f1dd919c9cb320bae4d`; backup: `base/_archive/backups/prematch_model_artifact_v3.npz.bak_20260905_draft_phases` (old SHA `a7c1...`). Runtime PID/env и свежий log checks PASS, Traceback/load failure не обнаружены. Live model/card event пока не наблюдался.
 
 ## Fingerprints этого запуска
 
@@ -176,3 +176,45 @@ bash scripts/run/retrain_draft_phases.sh NEW_RUN_NAME
 ```
 
 Rule fingerprint обоих корпусов: `d68a26b101c733ffdbca62839d1797344c9499f2fdc1b9fe97f449d6393bd10c`. SHA отдельных raw sources сохранены в manifest.
+
+## Замена продовых моделей 05.09.2026
+
+По отдельному запросу пользователя заменены три действующих reader: Early NW — условное направление маркера, Late — победитель среди карт >=36 минут, All — победитель среди карт >=20 минут в составе prematch. Early Win (20–34 минуты) проверен и сохранён на serv1, активного reader для него нет. Калибровка и пороги оставлены прежними; предупреждение о несовпадении каталога с прежней калибровкой не подавлялось. Улучшение на pro не доказано.
+
+Parent переобучен по четырём зависимым веткам (`full`, `no_org`, `no_account`, `no_account_no_org`); `pre_draft` и `rating_only` сохранены. В frozen train: 22 193 карты после удаления shared public ID; диагностический test: 25 841. Full AUC old 0.719248 → new 0.720957, log loss 0.611572 → 0.610344. Это историческая диагностика совместимости: новый public draft видел более поздние карты, поэтому эти числа не являются независимым forward-тестом нового стека.
+
+При сборке заменены восемь массивов весов, 26 частей snapshot и calibration сохранены побайтово. Все 34 ZIP members локального и серверного артефактов идентичны; SHA ZIP-контейнеров различаются из-за metadata. Первичные предупреждения NumPy проверены независимым пересчётом old/frozen/new через non-BLAS `einsum`: метрики совпали (`maxdelta=0`), веса конечны.
+
+Активные пути на serv1:
+
+```text
+/root/main/data/draft_phase_serving/2026-09-05_position_pairs/{all,early_nw,late}
+/root/main/data/prematch_model_artifact_v3.npz
+/etc/systemd/system/cyberscore.service.d/draft-phase-models.conf
+```
+
+Согласованные локальные источники ночной сборки (`runtime/artifacts/misc/prematch_weights_win120.npz`, `branch_weights.npz`, `prematch_model_artifact_v3_hybrid.npz`) заменены атомарно и проверены против новых весов. `PREMATCH_ARTIFACT` не переопределён: ночная доставка продолжает обновлять стандартный серверный путь. SHA отдельной calibration не изменена. Резервные копии локальных источников и серверного parent лежат в `base/_archive/backups/<filename>.bak_20260905_draft_phases`; прежние три каталога моделей сохранены. Для отката необходимо восстановить согласованный набор: parent, три каталога в drop-in и локальные источники ночной сборки, затем `daemon-reload` и штатный systemd-рестарт с очисткой `map_id_check.txt`.
+
+Отчёты в `runtime/artifacts/draft-cp/2026-09-05_deploy/`: `prematch_refit.json`, `prematch_merge.json`, `local_nightly_sources.json`, `server_deployment_state.json`, `server_postflight.json`, `server_prematch_merge.json`, `server_runtime_check.json`. SHA старого parent, настройки для отката, PID и время рестарта сохранены в `server_deployment_state.json`. Логи refit/merge лежат рядом. Последняя проверка реального PID/env: 23:43 MSK, active, обе отдельные модели enabled по умолчанию, новых Traceback/load failures нет; живой model/card event ещё не наблюдался.
+
+Воспроизведение parent-refit (выходы должны быть новыми; исходные веса после активации берутся из backup):
+
+```bash
+venv_catboost/bin/python3 base/tools/refit_prematch_draft_component.py \
+  --matrix runtime/artifacts/misc/win_model_base_matrix.npz \
+  --weights base/_archive/backups/prematch_weights_win120.npz.bak_20260905_draft_phases \
+  --compact runtime/artifacts/misc/pro_corpus_compact.npz \
+  --public-corpus data/draft_phase_corpus/2026-09-05_position_pairs/public/rows.npz \
+  --draft-model data/draft_phase_serving/2026-09-05_position_pairs/all/model.joblib \
+  --output data/draft_phase_serving/RECHECK_weights.npz \
+  --report runtime/artifacts/draft-cp/2026-09-05_deploy/RECHECK_refit.json
+```
+
+Проверка активных моделей без запуска live pipeline и без отправки сообщений:
+
+```bash
+ssh serv1 '/root/main/venv/bin/python3 - /root/main/data/draft_phase_serving/2026-09-05_position_pairs /root/main/runtime/artifacts/draft-cp/2026-09-05_deploy/recheck.json /root/main/data/prematch_model_artifact_v3.npz' \
+  < runtime/experiments/draft-cp/verify_phase_deployment_20260905.py
+```
+
+**Где искать ошибку:** несовпадение прогноза — SHA файлов/ширина encoder и `verification_probe.npz`; отказ parent — `baseline_identity`, `inputs` и `rows` refit-отчёта; повреждение сборки — `output_member_sha256` merge-отчётов; старый результат после доставки — реальные env/PID процесса и singleton cache (требуется restart). Сравнение AUC parent выше нельзя использовать как доказательство будущего pro uplift. Ночная сборка должна брать новые top/branch weights одновременно, иначе рассогласуются ветки и `draft_logit`.
