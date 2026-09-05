@@ -1,3 +1,14 @@
+---
+id: E-260
+title: "Четыре draft-модели: пары с позициями и Early NW без отброса карт без маркера"
+date: "2026-09-05"
+area: ml
+status: in_progress
+corpus: "Новый публичный архив: 99 data JSON (~38.2 GB), 2 metadata JSON исключены; итоговые counts ожидаются"
+verdict: "Обучение запущено; оценки качества пока не получены, прод не переключён"
+harness: "scripts/run/retrain_draft_phases.sh; base/build_draft_phase_corpus.py; base/train_draft_phase_models.py"
+---
+
 # E-260 — draft phase position-pair corpus/model training
 
 **Статус:** IN PROGRESS (2026-09-05). Численных результатов пока нет; фактический статус и результаты добавит lead.
@@ -29,3 +40,13 @@ bash scripts/run/retrain_draft_phases.sh 2026-09-05_position_pairs
 ## Следующий шаг
 
 Дождаться завершения harness, затем внести сюда фактические counts, fingerprints, split boundaries, baseline/position-pair honest metrics и pro future-only metrics с путями к `results.json`; отдельно зафиксировать любые convergence или unknown-hero gaps.
+
+## Текущий запуск 05.09
+
+- Run: `2026-09-05_position_pairs`; runner PID **54502**, monitoring PID **56173**. Оба пережили отсоединение (PPID=1).
+- Лог: `runtime/artifacts/draft-cp/2026-09-05_position_pairs/run.log`; состояние: `status.json` рядом. Проверка: `cat runtime/artifacts/draft-cp/2026-09-05_position_pairs/status.json`.
+- Канонические корпуса: `data/draft_phase_corpus/2026-09-05_position_pairs/{public,pro}/`; модели: `data/draft_phase_models/2026-09-05_position_pairs/`.
+- Фон: `nohup` + отдельная POSIX-сессия + `disown`; при запуске дождаться status/monitor JSON до закрытия shell, иначе дочерний процесс может завершиться раньше detachment.
+- Не-LLM монитор `scripts/ops/watch_draft_phase_training.py`: пульс в `monitor.json`, журнал в `monitor.log`; `codex queue --thread 01a06fef-d6a5-71b1-8327-81dd4ac3e076 --message ...` только на DONE/FAIL/STALL/UNREACHABLE. Команда проверена по installed `--help`; нормальный прогресс не вызывает модель. Тесты монитора: `base/tests/test_draft_training_monitor.py` — 2 passed.
+- После DONE проверить четыре `model.joblib` и результаты reload, controls на тех же датах, фактические source cutoffs и калибровку. После FAIL сначала проверить `status.json`, лог и PID; не создавать второй экземпляр. Частичные сырьевые шарды переиспользуются по SHA; `--resume` переиспользует только завершённые обучения с совпадающим training identity.
+- **Prod не переключать автоматически.** Формат Early NW теперь трёхклассовый и несовместим с прежним бинарным reader; пользователь разрешил обучение, подключение в live в этот запуск не входит.
