@@ -559,9 +559,9 @@ CLI: `--input-dir` (default `bets_data/analise_pub_matches/json_parts_split_from
 
 CLI: `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_duration_over43.py`. Тесты: `base/tests/test_duration_over43.py`.
 
-## `base/prematch_scorer.py` — предматчевая модель победы (29 признаков, AUC 0.7140)
+## `base/prematch_scorer.py` — предматчевая модель победы (35 признаков по live audit)
 
-Оценка до первой минуты: 20 базовых признаков + `lvl_rel_pos` / `kda_player` / `farm_dep` + 6 колонок взаимодействий (драфт-логит, ELO и форма × |разрыв рейтингов| и опыт составов). Ансамбль из 4 окон обучения (90/180/365/730 дней).
+Оценка до первой минуты: live audit подтвердил 35 признаков. Ансамбль собирается отдельными временными окнами; default текущего `runtime/experiments/misc/build_prematch_artifact_v2.py` — 120 дней. Старые описания «29 признаков» и «4 окна 90/180/365/730 дней» относятся к прежней сборке и больше не являются контрактом.
 
 **Артефакт: `data/prematch_model_artifact_v3.npz`** (env `PREMATCH_ARTIFACT`). Именно v3, а не v2: цепочка сборки `build_prematch_artifact.py` → `_v2.py` → `add_org_identity.py`, и последний шаг добавляет опознание организации по составу. Раннер — `scripts/run/rebuild_prematch_snapshot.sh` (собирает локально, доставляет на serv1 атомарным переименованием).
 
@@ -1255,3 +1255,20 @@ venv_catboost/bin/python3 pro_heroes_data/tempo_revamp_backtest.py \
   - `damage` / `damage_taken` — урон герой→герой за карту (на два порядка плотнее убийств); `killed` / `killed_by` — матрица убийств (сверено с playback Stratz: 134 против 135 убийств, расходится одна ячейка из 43); `ability_targets` — сколько раз каждая способность применена по каждому герою; `kills_log`, `teamfights`, `position_est`, `lane_role`.
 - Лимиты: **60 запросов в минуту и 3000 в сутки НА IP** (заголовки `x-rate-limit-remaining-minute/day`). Список адресов = список квот.
 - Грабля: `socks5://` в `requests` резолвит DNS локально, и наши прокси отвечают `0x05 Connection refused`; нужен **`socks5h://`**. `curl --socks5-hostname` работает сразу, поэтому расхождение выглядит как поломка сборщика.
+
+## `base/build_draft_phase_corpus.py`, `base/train_draft_phase_models.py`, `base/draft_phase_model.py` — offline draft-phase research
+
+`build_draft_phase_corpus.py` потоково канонизирует паблик-архив в `rows.npz` с 10 героями в порядке Radiant position 1–5, Dire position 1–5. Сборка атомарна и fail-closed: source/cache fingerprint включает schema, окно Early-NW 20–28, threshold-файлы и функции разметки; одинаковые `mid` дедуплицируются, а конфликтующие payload отклоняются целиком. `manifest.json` содержит `complete`, counts, sources и chronological split indices.
+
+`train_draft_phase_models.py` обучает четыре фазы: `early_nw` (наличие маркера + направление: 3 класса Dire/Radiant/no_marker), `late` (duration >=36 минут), `all` (duration >=20 минут), `early_win` (duration 20–34 минуты включительно). Основной opt-in дизайн `hero_role_position_pair` добавляет pair-энкодирование с минимальной поддержкой (`--pair-min-support`, default 30); role-free `hero_role_pair` остаётся baseline/control. Split chronological 60/20/20, C-grid и vocabulary выбираются по train/validation. `evaluation_model.joblib` и его метрики используют честный held-out test; `model.joblib` — отдельный full refit без held-out score. Pro корпус оценивается только по future-only строкам после test/train cutoff и с исключением shared `mid`.
+
+Артефакты пишутся в `data/draft_phase_models/<run>/<phase>/<design>/`; scratch — `runtime/artifacts/draft-cp/phase_training_scratch` (раннер задаёт отдельный scratch внутри своего run directory). Раннер: `bash scripts/run/retrain_draft_phases.sh 2026-09-05_position_pairs`. `train_early_nw_draft_win.py` / `train_late_draft_win.py` теперь вызывают этот тренер для одной фазы; `--out` сохранён, у Late допустим `--min-minutes=36`. Это offline pipeline; legacy runtime artifacts и production wrappers автоматически не переключаются.
+
+
+## Подключение draft phase моделей в действующие readers
+
+`base/tools/export_draft_phase_serving.py --source DIR --corpus rows.npz --output DIR` экспортирует согласованные encoder/classifier в legacy filenames и сохраняет полный bundle. Early NW legacy-пара возвращает P(direction | marker); occurrence остаётся в bundle. Early Win хранится без активного live reader. Контроль — `manifest.json` с SHA256 и `verification_probe.npz`.
+
+`base/tools/refit_prematch_draft_component.py` принимает явные `--matrix`, `--weights`, `--compact`, `--public-corpus`, `--draft-model`, `--output`, `--report`. Пересчитывает live draft_logit и два interaction-признака, обучает только зависимые ветки; проверяет All target/classes/width, исходные нормировки, mid, сходимость. Выход содержит только веса.
+
+`base/tools/merge_prematch_weights.py --snapshot FILE --weights FILE --output NEW_FILE --report NEW_JSON --expected-snapshot-sha256 HASH` переносит ровно восемь массивов весов; остальные ZIP members и metadata сохраняются. Для live используются `WIN_MODEL_DIR`, `EARLY_NW_MODEL_DIR`, `LATE_WIN_MODEL_DIR`; согласованный parent заменяет `data/prematch_model_artifact_v3.npz` после backup. Локальные weights/branch_weights ночной сборки обновляются тем же набором. Calibration и пороги этим способом не пересчитываются; рестарт — только systemd.
