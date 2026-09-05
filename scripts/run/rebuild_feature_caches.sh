@@ -22,6 +22,29 @@
 # него драфт-логит строит rebuild_draft_logit_cache.py (та же функция
 # draft_logit(), без лестницы оценок).
 #
+# ВНИМАНИЕ: ЭТА ЦЕПОЧКА ПОКРЫВАЕТ СЕМЬ КЭШЕЙ ИЗ ДВЕНАДАТИ позиционных (E-258).
+# За её пределами остаются и блокируют рефит:
+#   undercount_retry_cache.npz (G)  — ПЕРВЫЕ 23 КОЛОНКИ ИЗ 35, включая
+#                                     draft_logit и elo; не пересобирался с 13.08
+#   ideas_batch8.npz                — cp_lane, syn_pos_mean
+#   h2h_as_served.npz               — h2h_resid, выровнен по строкам матрицы
+#   map_winner_hybrid_quality_forward/hybrid_features.npz — задаёт ПОРЯДОК СТРОК
+#                                     всей матрицы, поэтому без него остальные
+#                                     не к чему привязать
+#   hybrid_strength_tier3.npz       — keyed по mid, длина свободна, но своей эпохи
+# Итоговая проверка ниже теперь сверяет ВСЕ двенадцать и на текущем состоянии
+# честно падает с кодом 1, перечисляя, что именно не пересобрано. Раньше она
+# сверяла только свой список CACHES и печатала «разблокировано», после чего
+# win_model_matrix_cache.py падал на np.column_stack (482 486 против 1 260 895)
+# с сообщением про формы массивов, не называющим ни одного кэша.
+#
+# ОКНО. Ночной добор растит корпус КАЖДОЕ УТРО (pro_corpus_compact.npz
+# пересобирается в ~05:32), поэтому пересборка устаревает к следующему утру, а
+# доопознанные карты ВСТАВЛЯЮТСЯ в середину хвоста — последние ~150 строк кэша
+# начинают тихо указывать на соседние матчи. Значит пересборка ВСЕХ двенадцати и
+# рефит обязаны уложиться в одно окно между двумя доборами, иначе промежуточное
+# состояние хуже исходного.
+#
 # Запуск (фоном, с ожиданием других тяжёлых процессов — 16 ГБ RAM на двоих не
 # хватает, ELO-пересборка снимка ест ~7 ГБ):
 #   WAIT_PID=50833 nohup bash scripts/run/rebuild_feature_caches.sh \
@@ -82,37 +105,116 @@ step batch5       $PY $MISC/ideas_batch5.py
 step batch5b      $PY $MISC/ideas_batch5b.py
 step fulllogit    $PY $MISC/ideas_batch7c.py
 
-say "=== ПРОВЕРКА ДЛИН (кэши обязаны совпасть с корпусом)"
+say "=== ПРОВЕРКА ДЛИН: ВСЕ позиционные кэши, а не только пересобранные здесь"
 $PY - <<'CHECK'
 import sys
 from pathlib import Path
 import numpy as np
 
 ART = Path("runtime/artifacts/misc")
+HYB = ART / "map_winner_hybrid_quality_forward" / "hybrid_features.npz"
+
 zc = np.load(ART / "pro_corpus_compact.npz")
 zr = np.load(ART / "pro_corpus_rich.npz")
 n_compact = int(zc["mids"].shape[0])
+n_rich = int(zr["mids"].shape[0])
 pos = {int(m) for m in zr["mids"].tolist()}
 in_rich = sum(1 for m in zc["mids"].tolist() if int(m) in pos)
-print(f"compact строк: {n_compact:,}; из них в rich: {in_rich:,}")
+print(f"корпус: compact {n_compact:,} строк, rich {n_rich:,}, compact-в-rich {in_rich:,}")
 
-rows = {}
-for name in ("pro_features_ext", "ideas_batch1", "ideas_batch2",
-             "ideas_batch5", "ideas_batch5b"):
-    rows[name] = int(np.load(ART / f"{name}.npz")["F"].shape[0])
-for name in ("pro_draft_logit", "pro_draft_logit_full"):
-    rows[name] = int(np.load(ART / f"{name}.npz")["logit"].shape[0])
+REBUILT_HERE = {"pro_features_ext", "pro_draft_logit", "pro_draft_logit_full",
+                "ideas_batch1", "ideas_batch2", "ideas_batch5", "ideas_batch5b"}
+
+def nrows(path, key):
+    if not path.exists():
+        return None
+    return int(np.load(path, allow_pickle=True)[key].shape[0])
+
+def tag(name):
+    return "пересобран здесь" if name in REBUILT_HERE else "НЕ пересобирается этим скриптом"
+
+# ГРУППА 1 — выровнены ПОЗИЦИЕЙ по compact-корпусу после фильтра keep
+# (`keep = [mid in rich]` в undercount_next.py:110 и ideas_batch8.py:125).
+CORPUS = [("pro_features_ext", "F"), ("pro_draft_logit", "logit"),
+          ("pro_draft_logit_full", "logit"), ("ideas_batch1", "F"),
+          ("ideas_batch2", "F"), ("ideas_batch5", "F"), ("ideas_batch5b", "F"),
+          ("ideas_batch8", "F"), ("undercount_retry_cache", "G")]
+# ГРУППА 2 — выровнены по порядку строк hybrid_features; он же задаёт строки
+# матрицы (win_model_matrix_cache.py сверяет len(h2h) с len(X)).
+MATRIX = [("h2h_as_served", "value")]
+# ГРУППА 3 — keyed ПО mid, несут собственный mids, длина вправе отличаться.
+MIDKEYED = [("hybrid_strength_tier3", "value")]
 
 bad = []
-for k, v in rows.items():
-    flag = "" if v == n_compact else "  <-- РАСХОЖДЕНИЕ"
-    if v != n_compact:
-        bad.append(k)
-    print(f"  {k}: {v:,}{flag}")
+print("\n--- выровнены по корпусу (обязаны равняться compact) ---")
+for name, key in CORPUS:
+    n = nrows(ART / f"{name}.npz", key)
+    if n is None:
+        print(f"  {name:26s} ОТСУТСТВУЕТ  [{tag(name)}]")
+        bad.append(name)
+        continue
+    flag = "" if n == n_compact else "  <-- РАСХОЖДЕНИЕ"
+    if n != n_compact:
+        bad.append(name)
+    print(f"  {name:26s} {n:>10,}{flag}  [{tag(name)}]")
+
+n_hyb = nrows(HYB, "mids")
+print("\n--- задаёт порядок строк матрицы ---")
+if n_hyb is None:
+    print(f"  {'hybrid_features':26s} ОТСУТСТВУЕТ  [{tag('hybrid_features')}]")
+    bad.append("hybrid_features")
+else:
+    flag = "" if n_hyb == n_compact else "  <-- РАСХОЖДЕНИЕ"
+    if n_hyb != n_compact:
+        bad.append("hybrid_features")
+    print(f"  {'hybrid_features':26s} {n_hyb:>10,}{flag}  [{tag('hybrid_features')}]")
+
+print("\n--- выровнены по порядку строк матрицы ---")
+ref = n_hyb if n_hyb is not None else n_compact
+for name, key in MATRIX:
+    n = nrows(ART / f"{name}.npz", key)
+    if n is None:
+        print(f"  {name:26s} ОТСУТСТВУЕТ  [{tag(name)}]")
+        bad.append(name)
+        continue
+    flag = "" if n == ref else f"  <-- РАСХОЖДЕНИЕ с hybrid_features ({ref:,})"
+    if n != ref:
+        bad.append(name)
+    print(f"  {name:26s} {n:>10,}{flag}  [{tag(name)}]")
+
+print("\n--- keyed по mid, длина свободна ---")
+for name, key in MIDKEYED:
+    p = ART / f"{name}.npz"
+    if not p.exists():
+        print(f"  {name:26s} ОТСУТСТВУЕТ")
+        continue
+    z = np.load(p, allow_pickle=True)
+    if "mids" not in z.files:
+        print(f"  {name:26s} НЕТ массива mids — считать его mid-keyed нельзя")
+        bad.append(name)
+        continue
+    nv, nm = int(z[key].shape[0]), int(z["mids"].shape[0])
+    flag = "" if nv == nm else "  <-- value и mids разной длины"
+    if nv != nm:
+        bad.append(name)
+    print(f"  {name:26s} {nv:>10,} (mids {nm:,}){flag}")
+
+print()
 if bad:
-    print(f"ПРОВАЛ: не совпали с корпусом: {bad}")
+    foreign = [b for b in bad if b not in REBUILT_HERE]
+    print(f"ПРОВАЛ: не совпали {bad}")
+    if foreign:
+        print(f"Из них НЕ пересобираются этим скриптом: {foreign}")
+        print("Эта цепочка покрывает только семь кэшей из двенадцати позиционных.")
+        print("Рефит весов на таком входе НЕВОЗМОЖЕН: audit_live_path.train_columns")
+        print("берёт из undercount_retry_cache (G) ПЕРВЫЕ 23 КОЛОНКИ ИЗ 35, включая")
+        print("draft_logit и elo, и складывает их np.column_stack с пересобранными —")
+        print("поэтому падение будет на формах массивов, а не на осмысленной проверке.")
+    print("«Разблокировано» намеренно НЕ печатается: см. E-258.")
     sys.exit(1)
-print("ВСЕ КЭШИ СИНХРОННЫ С КОРПУСОМ — build_prematch_artifact без SNAPSHOT_ONLY разблокирован")
+
+print("ВСЕ ДВЕНАДЦАТЬ ПОЗИЦИОННЫХ КЭШЕЙ СИНХРОННЫ С КОРПУСОМ —")
+print("build_prematch_artifact.py БЕЗ PREMATCH_SNAPSHOT_ONLY действительно разблокирован.")
 CHECK
 
 say "=== ЦЕПОЧКА ЗАВЕРШЕНА: $LOGDIR, бэкап старых кэшей: $BK"
