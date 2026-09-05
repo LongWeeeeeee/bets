@@ -33,6 +33,15 @@ class MatchRecord:
     dire_kills: int | None = None
     source_patch: str | None = None
     derived_league_tier: LeagueTier = LeagueTier.TIER3
+    duration_seconds: int | None = None
+
+    @property
+    def result_timestamp(self) -> int | None:
+        """Earliest observed result time; unknown duration is never a start-time result."""
+        duration = self.duration_seconds
+        if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+            return None
+        return self.timestamp + duration
 
 
 @dataclass

@@ -1092,7 +1092,9 @@ Telegram: `Token`, `Chat_id`, `Chat_ids`. VK: `VK_GROUP_ID`, `VK_PEER_ID`, `VK_P
 | `live_team_strength.py` | live-снапшот силы: `register_live_map_context`, `finalize_live_series_from_scores`, `get_matchup_summary`, `DEFAULT_RUNTIME_PROGRESS_PATH`; kills-history schema v2 содержит до 100 последних карт на team ID с `match_id`, timestamp, пятью player IDs, team kills и source patch, а meta — latest patch |
 | `models.py` | ELO/рейтинговые модели |
 | `benchmark_probabilities.py` | Read-only аудит кэшированных вероятностей: `--artifact-root`, обязательный `--output`; три временных окна с 120-дневной калибровкой, exact-mid/TIER3 проверки, JSON-метрики и парные интервалы по сериям. Не обучает боевой артефакт; ограничения повторного исторического теста — E-262. |
-| `domain.py` | `LeagueTier`, `MatchRecord` (включая nullable `radiant_kills`/`dire_kills` и `source_patch`) |
+| `domain.py` | `LeagueTier`, `MatchRecord`: start `timestamp`, nullable `duration_seconds`, `result_timestamp = start + duration` только для положительной целой длительности; также kills и source patch |
+| `replay.py`, `benchmark_replay.py` | Общий поток start/result: все прогнозы на t до исходов, завершившихся в t; неизвестная длительность не обновляет рейтинг. Benchmark: обязательный `--output-dir`, опциональный `--data-dir`, отдельные `finished.npz`/`start_control.npz`, fingerprint исходников/корпуса и JSON-отчёт; боевые артефакты не заменяет. |
+| `base/dota_patch_calendar.py` | Общие даты ELO и `sort_pub_matches_by_patch.py`: 7.41–7.41e по точным Steam announcement timestamps, более ранние границы сохранены. |
 | `roster.py` | `RosterResolution`, roster-lock логика |
 | `tiering.py` | классификация tier лиг/команд |
 | `series_data.py` | группировка серий (`_series_group_key`) |
@@ -1102,9 +1104,11 @@ Telegram: `Token`, `Chat_id`, `Chat_ids`. VK: `VK_GROUP_ID`, `VK_PEER_ID`, `VK_P
 
 > Drift fixed: `ELO/run_series_experiment.py` отсутствует. Запускать offline-эксперименты через существующие модули/тесты `ELO/tests/`.
 
-`build_snapshot()` пишет JSON атомарно. `ensure_snapshot(..., rebuild_if_missing=True)` пересобирает legacy-снапшот без `team_kills_history_by_team_id` или с версией history schema не равной 2; raw-дубликаты одной карты учитываются один раз по `match_id`. `meta.team_kills_history_latest_patch` определяется по source patch самой поздней датированной карты.
+`build_snapshot()` пишет JSON атомарно. При актуальной версии replay `ensure_snapshot(..., rebuild_if_missing=True)` пересобирает снапшот без `team_kills_history_by_team_id` или с версией history schema не равной 2; raw-дубликаты одной карты учитываются один раз по `match_id`. `meta.team_kills_history_latest_patch` определяется по source patch самой поздней датированной карты.
 
-С E-262 обновления рейтингов при сборке идут глобально по `(timestamp, match_id)`, а не целыми сериями; существующему snapshot для применения исправления нужен rebuild. `run_series_online_evaluation` объединяет события начала серий и карт, прогнозирует все старты одного timestamp до обновлений и применяет sweep-бонус после последней карты. Это порядок по **старту** карты: полная доступность исходов по времени окончания пока не восстановлена. Календарь patch-reset в `models.py` всё ещё ограничен 7.40c; ограничения и сравнение формул — `docs/experiments/E-262-elo-formula-calibration-and-chronology.md`.
+С E-263 рейтинг обновляется по **окончанию** карты (`startDateTime + durationSeconds`), а в live — по времени наблюдения подтверждённого результата. `load_matches(..., progress=None)` читает raw через `ijson.kvitems` по одной карте и сохраняет длительность; невалидные/пересекающиеся account ID отбрасываются. `run_online_evaluation` и series evaluator используют `replay_events`; sweep-бонус доступен только после окончания всех наблюдаемых карт серии. `attach_league_tiers_asof` видит только прошлых участников лиги и текущую пару; справочник tier команд остаётся текущим фиксированным prior.
+
+Миграция E-263 требует явного offline `build_snapshot`: `ensure_snapshot` и `load_live_snapshot` отклоняют несовместимые `rating_replay_version`/`rating_calendar_signature` даже при pin и не запускают многогигабайтную пересборку из live-запроса. Те же проверки стоят перед быстрыми массивными путями ML/panel. После rebuild `meta.model_config_signature` содержит сильную подпись **конфига, календаря, версии replay и точной истории** (включая исходы/составы/роли/tier), поэтому старые progress/full-state/delta отклоняются даже при том же reference timestamp. Низкоуровневый `load_snapshot` остаётся доступен для чтения legacy в аудитах. Подробности — E-263.
 
 Дедуп по `match_id` делается сразу после `load_matches` в `_build_snapshot_dict` и распространяется на ВСЁ: модель, серии, kills-историю. Число отброшенных копий — в `meta.duplicate_records`.
 

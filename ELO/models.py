@@ -11,31 +11,13 @@ from ELO.domain import LeagueTier, MatchRecord, StepResult
 from ELO.roster import RosterLineageTracker
 from ELO.team_identity import resolve_org_key
 from ELO.tiering import get_known_team_tier
+from base.dota_patch_calendar import PATCH_RELEASES as _CALENDAR_PATCH_RELEASES
 
 _SECONDS_PER_DAY = 24 * 60 * 60
-_PATCH_RELEASES_RAW: tuple[tuple[str, str], ...] = (
-    ("7.40c", "2026-01-21"),
-    ("7.40b", "2025-12-23"),
-    ("7.40", "2025-12-15"),
-    ("7.39e", "2025-10-02"),
-    ("7.39d", "2025-08-05"),
-    ("7.39c", "2025-06-24"),
-    ("7.39b", "2025-05-29"),
-    ("7.39", "2025-05-21"),
-    ("7.38c", "2025-03-27"),
-    ("7.38b", "2025-03-05"),
-    ("7.38", "2025-02-19"),
-    ("7.37e", "2024-11-19"),
-    ("7.37d", "2024-10-01"),
-    ("7.37c", "2024-08-28"),
-    ("7.37b", "2024-08-14"),
-    ("7.37", "2024-07-31"),
-    ("7.36c", "2024-06-24"),
-    ("7.36b", "2024-06-05"),
-    ("7.36a", "2024-05-26"),
-    ("7.36", "2024-05-22"),
-    ("7.35d", "2024-03-21"),
-    ("7.35c", "2024-02-21"),
+# Compatibility export for existing parameter sweeps. Boundary construction
+# below uses canonical timestamps, not these date-only display values.
+_PATCH_RELEASES_RAW: tuple[tuple[str, str], ...] = tuple(
+    (release.label, release.release_date) for release in _CALENDAR_PATCH_RELEASES
 )
 
 
@@ -45,15 +27,9 @@ class _PatchRelease:
     release_ts: int
 
 
-def _patch_release_ts(date_str: str) -> int:
-    from datetime import datetime, timezone
-
-    return int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
-
-
 _PATCH_RELEASES: tuple[_PatchRelease, ...] = tuple(
-    _PatchRelease(label=label, release_ts=_patch_release_ts(date_str))
-    for label, date_str in _PATCH_RELEASES_RAW
+    _PatchRelease(label=release.label, release_ts=release.release_ts)
+    for release in _CALENDAR_PATCH_RELEASES
 )
 
 

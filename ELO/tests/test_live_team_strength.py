@@ -17,7 +17,8 @@ from ELO.live_team_strength import (
     register_live_map_context,
 )
 from ELO.models import HybridPlayerRosterEloModel
-from ELO.tiering import attach_league_tiers, classify_leagues
+from ELO.replay import result_record
+from ELO.tiering import attach_league_tiers_asof
 
 
 def test_default_data_dir_matches_pro_rebuild_output():
@@ -39,6 +40,7 @@ def test_snapshot_builds_deduplicated_team_kills_history(tmp_path) -> None:
     raw_match = {
         "id": 123,
         "startDateTime": 1771153200,
+        "durationSeconds": 300,
         "didRadiantWin": True,
         "radiantTeam": {"id": 10, "name": "A"},
         "direTeam": {"id": 20, "name": "B"},
@@ -91,6 +93,7 @@ def test_duplicate_map_does_not_move_ratings_twice(tmp_path) -> None:
     raw_match = {
         "id": 777,
         "startDateTime": 1771153200,
+        "durationSeconds": 300,
         "didRadiantWin": True,
         "radiantTeam": {"id": 10, "name": "A"},
         "direTeam": {"id": 20, "name": "B"},
@@ -161,6 +164,7 @@ def test_snapshot_model_updates_interleaved_series_in_global_chronology(tmp_path
         return {
             "id": match_id,
             "startDateTime": timestamp,
+            "durationSeconds": 300,
             "didRadiantWin": radiant_win,
             "radiantTeam": {"id": radiant_team_id, "name": f"R{radiant_team_id}"},
             "direTeam": {"id": dire_team_id, "name": f"D{dire_team_id}"},
@@ -194,11 +198,10 @@ def test_snapshot_model_updates_interleaved_series_in_global_chronology(tmp_path
         config=config,
     )
     matches, _ = load_matches(data_dir)
-    league_info, _ = classify_leagues(matches)
-    attach_league_tiers(matches, league_info)
+    attach_league_tiers_asof(matches)
     reference = HybridPlayerRosterEloModel(config)
-    for match in matches:
-        reference.process_match(match)
+    for match in sorted(matches, key=lambda m: (m.result_timestamp, m.match_id)):
+        reference.process_match(result_record(match))
 
     assert snapshot["model_state"] == reference.export_state()
     assert snapshot["model_state"]["current_patch_key"] == "7.40c"
@@ -220,6 +223,7 @@ def test_snapshot_pin_blocks_rebuild_on_fresh_corpus(tmp_path, monkeypatch) -> N
     raw_match = {
         "id": 999,
         "startDateTime": 1771153200,
+        "durationSeconds": 300,
         "didRadiantWin": True,
         "radiantTeam": {"id": 10, "name": "A"},
         "direTeam": {"id": 20, "name": "B"},
@@ -281,7 +285,7 @@ def _reset_live_team_strength_caches() -> None:
 
 def test_build_matchup_summary_from_snapshot_uses_current_strengths() -> None:
     snapshot = {
-        "meta": {"reference_timestamp": 1771153251},
+        "meta": {**live_team_strength_module._rating_replay_meta(),"reference_timestamp": 1771153251},
         "teams_by_org_key": {
             "org:lynx": {
                 "team_id": 9928636,
@@ -319,7 +323,7 @@ def test_build_matchup_summary_from_snapshot_uses_current_strengths() -> None:
 
 def test_build_matchup_summary_from_snapshot_uses_baseline_for_missing_team() -> None:
     snapshot = {
-        "meta": {"reference_timestamp": 1771153251},
+        "meta": {**live_team_strength_module._rating_replay_meta(),"reference_timestamp": 1771153251},
         "teams_by_org_key": {
             "org:1win": {
                 "team_id": 9255039,
@@ -348,7 +352,7 @@ def test_build_matchup_summary_from_snapshot_uses_baseline_for_missing_team() ->
 
 def test_build_matchup_summary_from_snapshot_applies_cross_tier_bonus() -> None:
     snapshot = {
-        "meta": {
+        "meta": {**live_team_strength_module._rating_replay_meta(),
             "reference_timestamp": 1771153251,
             "tier_matchup_elo_bonus": {
                 "TIER1_vs_TIER2": {
@@ -395,7 +399,7 @@ def test_build_matchup_summary_from_snapshot_applies_cross_tier_bonus() -> None:
 
 def test_build_matchup_summary_from_snapshot_applies_cross_tier_bonus_with_names_only() -> None:
     snapshot = {
-        "meta": {
+        "meta": {**live_team_strength_module._rating_replay_meta(),
             "reference_timestamp": 1771153251,
             "tier_matchup_elo_bonus": {
                 "TIER1_vs_TIER2": {
@@ -448,7 +452,7 @@ def test_build_matchup_summary_from_snapshot_uses_lineup_player_state_for_unseen
         model.player_local[LeagueTier.TIER2][player_id] = 1400.0
 
     snapshot = {
-        "meta": {"reference_timestamp": 1771153251},
+        "meta": {**live_team_strength_module._rating_replay_meta(),"reference_timestamp": 1771153251},
         "teams_by_org_key": {},
         "model_state": model.export_state(),
     }
@@ -480,7 +484,7 @@ def test_build_matchup_summary_from_snapshot_prefers_lineup_over_snapshot_curren
         model.player_local[LeagueTier.TIER2][player_id] = 1600.0
 
     snapshot = {
-        "meta": {"reference_timestamp": 1771153251},
+        "meta": {**live_team_strength_module._rating_replay_meta(),"reference_timestamp": 1771153251},
         "teams_by_org_key": {
             "org:l1ga": {
                 "team_id": 9303383,
@@ -523,7 +527,7 @@ def test_build_matchup_summary_from_snapshot_uses_player_strength_for_cold_roste
     model.roster_ratings[LeagueTier.TIER2][roster_resolution.roster_key] = 2200.0
 
     snapshot = {
-        "meta": {"reference_timestamp": 1771153251},
+        "meta": {**live_team_strength_module._rating_replay_meta(),"reference_timestamp": 1771153251},
         "teams_by_org_key": {
             "org:l1ga": {
                 "team_id": 9303383,
@@ -560,7 +564,7 @@ def test_build_matchup_summary_from_snapshot_applies_segment_probability_grid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     snapshot = {
-        "meta": {"reference_timestamp": 1771153251},
+        "meta": {**live_team_strength_module._rating_replay_meta(),"reference_timestamp": 1771153251},
         "teams_by_org_key": {
             "org:parivision": {
                 "team_id": 987654,
@@ -621,7 +625,7 @@ def test_build_matchup_summary_from_snapshot_keeps_direct_for_tier1_vs_tier2(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     snapshot = {
-        "meta": {"reference_timestamp": 1771153251},
+        "meta": {**live_team_strength_module._rating_replay_meta(),"reference_timestamp": 1771153251},
         "teams_by_org_key": {
             "name:tierone": {
                 "team_id": 1001,
@@ -686,7 +690,7 @@ def test_register_live_map_context_applies_previous_map_once_and_updates_runtime
 
     model = HybridPlayerRosterEloModel(HybridEloConfig())
     snapshot = {
-        "meta": {"reference_timestamp": 1771153251},
+        "meta": {**live_team_strength_module._rating_replay_meta(),"reference_timestamp": 1771153251},
         "teams_by_org_key": {},
         "model_state": model.export_state(),
     }
@@ -875,7 +879,7 @@ def test_finalize_live_series_from_scores_applies_pending_final_map_once(tmp_pat
 
     model = HybridPlayerRosterEloModel(HybridEloConfig())
     snapshot = {
-        "meta": {"reference_timestamp": 1771153251},
+        "meta": {**live_team_strength_module._rating_replay_meta(),"reference_timestamp": 1771153251},
         "teams_by_org_key": {},
         "model_state": model.export_state(),
     }
@@ -1069,7 +1073,7 @@ def test_live_runtime_applies_roster_change_and_uncertainty_boosts(tmp_path) -> 
     model.process_match(seed_match)
 
     snapshot = {
-        "meta": {"reference_timestamp": 1771153251},
+        "meta": {**live_team_strength_module._rating_replay_meta(),"reference_timestamp": 1771153251},
         "teams_by_org_key": {},
         "model_state": model.export_state(),
     }
@@ -1203,7 +1207,7 @@ def _live_env(tmp_path):
     snapshot_path = tmp_path / "live_snapshot.json"
     model = HybridPlayerRosterEloModel(HybridEloConfig())
     snapshot_path.write_text(json.dumps({
-        "meta": {"reference_timestamp": 1771153251},
+        "meta": {**live_team_strength_module._rating_replay_meta(),"reference_timestamp": 1771153251},
         "teams_by_org_key": {},
         "model_state": model.export_state(),
     }), encoding="utf-8")
@@ -1471,7 +1475,7 @@ def test_pending_queue_applies_both_maps_when_both_sides_advance_by_one(tmp_path
 def _write_slim_test_snapshot(path) -> dict:
     """Снимок в боевой раскладке разделов: meta, teams, kills-история, model_state."""
     payload = {
-        "meta": {
+        "meta": {**live_team_strength_module._rating_replay_meta(),
             "team_kills_history_schema_version": 2,
             "team_kills_history_latest_patch": "7.41e",
             "reference_timestamp": 1788295911,

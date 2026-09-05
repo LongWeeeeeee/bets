@@ -105,7 +105,10 @@ def _load() -> dict[str, Any]:
             if str(PROJECT_ROOT) not in sys.path:
                 sys.path.insert(0, str(PROJECT_ROOT))
             from ELO.live_team_strength import (_restore_model_from_snapshot,
-                                                load_live_snapshot)
+                                                load_live_snapshot, load_snapshot,
+                                                _snapshot_replay_is_current)
+            if not _snapshot_replay_is_current(load_snapshot(Path(SNAPSHOT))):
+                raise ValueError("hybrid snapshot needs offline replay/calendar rebuild")
 
             # Снимок берём ОБЩИМ загрузчиком пакета, а не своим `json.loads`.
             # Причина не в красоте: `live_team_strength` держит модульный кэш

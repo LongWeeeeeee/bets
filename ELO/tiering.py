@@ -161,3 +161,59 @@ def attach_league_tiers_time_aware(
             seen_teams_by_league[match.league_id].add(match.dire_team_id)
 
     return dict(summary)
+
+
+def attach_league_tiers_asof(matches: list[MatchRecord]) -> dict:
+    """Use only earlier league participants plus the current pair.
+
+    Team tier priors remain the fixed curated reference, not a historical
+    roster of expert assessments. Same-start peers are added after the batch.
+    """
+    seen: dict[int, set[int]] = defaultdict(set)
+    tier1_counts: dict[int, int] = defaultdict(int)
+    tier12_counts: dict[int, int] = defaultdict(int)
+    counts = defaultdict(int)
+    start = 0
+    while start < len(matches):
+        end = start + 1
+        now = matches[start].timestamp
+        while end < len(matches) and matches[end].timestamp == now:
+            end += 1
+        for match in matches[start:end]:
+            if match.league_id is None:
+                match.derived_league_tier = _source_tier_fallback(match.source_league_tier)
+            else:
+                league_id = match.league_id
+                known = seen[league_id]
+                additions = {
+                    team_id for team_id in (match.radiant_team_id, match.dire_team_id)
+                    if team_id is not None and team_id not in known
+                }
+                team_count = len(known) + len(additions)
+                tier1_count = tier1_counts[league_id] + sum(
+                    team_id in KNOWN_TIER1_IDS for team_id in additions
+                )
+                tier12_count = tier12_counts[league_id] + sum(
+                    team_id in KNOWN_TIER1_IDS or team_id in KNOWN_TIER2_IDS
+                    for team_id in additions
+                )
+                if team_count and tier1_count / team_count >= 0.60:
+                    match.derived_league_tier = LeagueTier.TIER1
+                elif team_count and tier12_count / team_count >= 0.60:
+                    match.derived_league_tier = LeagueTier.TIER2
+                else:
+                    match.derived_league_tier = _source_tier_fallback(match.source_league_tier)
+            counts[match.derived_league_tier.value] += 1
+        for match in matches[start:end]:
+            if match.league_id is not None:
+                league_id = match.league_id
+                for team_id in (match.radiant_team_id, match.dire_team_id):
+                    if team_id is None or team_id in seen[league_id]:
+                        continue
+                    seen[league_id].add(team_id)
+                    tier1_counts[league_id] += int(team_id in KNOWN_TIER1_IDS)
+                    tier12_counts[league_id] += int(
+                        team_id in KNOWN_TIER1_IDS or team_id in KNOWN_TIER2_IDS
+                    )
+        start = end
+    return dict(counts)
