@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -213,6 +214,83 @@ def test_bo3_sweep_bonus_improves_next_series_prediction_for_sweep_winner() -> N
     assert no_bonus_report["applied_bo3_sweep_bonus_count"] == 0
     assert bonus_report["applied_bo3_sweep_bonus_count"] == 1
     assert bonus_report["sample_predictions"][1]["p_radiant"] > no_bonus_report["sample_predictions"][1]["p_radiant"]
+
+
+def test_series_evaluation_merges_interleaved_maps_and_batches_equal_starts() -> None:
+    """Predictions precede all same-timestamp updates; bonus follows its final map."""
+    def match(
+        match_id: int,
+        timestamp: int,
+        series_id: int,
+        radiant_team_id: int,
+        dire_team_id: int,
+        radiant_win: bool,
+    ) -> MatchRecord:
+        return MatchRecord(
+            match_id=match_id,
+            timestamp=timestamp,
+            radiant_win=radiant_win,
+            radiant_team_id=radiant_team_id,
+            radiant_team_name=f"R{radiant_team_id}",
+            dire_team_id=dire_team_id,
+            dire_team_name=f"D{dire_team_id}",
+            radiant_player_ids=tuple(range(radiant_team_id * 10 + 1, radiant_team_id * 10 + 6)),
+            dire_player_ids=tuple(range(dire_team_id * 10 + 1, dire_team_id * 10 + 6)),
+            league_id=1,
+            league_name="L",
+            source_league_tier="PREMIUM",
+            series_id=series_id,
+            series_type="BEST_OF_THREE",
+            derived_league_tier=LeagueTier.TIER1,
+        )
+
+    # Both series start at t=1. Series 200 finishes before the delayed final
+    # map of series 100, so the old per-bundle evaluator leaked that final map.
+    first_a = match(1, 1, 100, 1, 2, True)
+    first_b = match(2, 1, 200, 3, 4, False)
+    final_b = match(3, 3, 200, 3, 4, False)
+    final_a = match(4, 4, 100, 1, 2, True)
+    bundles, _ = build_series_bundles([first_a, first_b, final_b, final_a])
+
+    class RecordingModel:
+        def __init__(self) -> None:
+            self.events: list[tuple] = []
+
+        def _maybe_apply_patch_local_reset(self, timestamp: int) -> None:
+            self.events.append(("reset", timestamp))
+
+        def predict_match(self, current_match: MatchRecord):
+            self.events.append(("predict", current_match.match_id))
+            return SimpleNamespace(p_radiant=0.5)
+
+        def process_match(self, current_match: MatchRecord) -> None:
+            self.events.append(("process", current_match.match_id))
+
+        def apply_bo3_sweep_bonus(self, *, first_map: MatchRecord, **_kwargs) -> bool:
+            self.events.append(("bonus", first_map.match_id, first_map.timestamp))
+            return True
+
+    model = RecordingModel()
+    report = run_series_online_evaluation(
+        model=model,
+        series_bundles=bundles,
+        config=EvaluationConfig(evaluation_fraction=1.0, min_train_series=0),
+    )
+
+    assert model.events == [
+        ("reset", 1),
+        ("predict", 1),
+        ("predict", 2),
+        ("process", 1),
+        ("process", 2),
+        ("reset", 3),
+        ("process", 3),
+        ("bonus", 2, 3),
+        ("reset", 4),
+        ("process", 4),
+        ("bonus", 1, 4),
+    ]
+    assert report["applied_bo3_sweep_bonus_count"] == 2
 
 
 def test_lineup_uncertainty_boost_is_high_for_new_lineup_and_decays() -> None:

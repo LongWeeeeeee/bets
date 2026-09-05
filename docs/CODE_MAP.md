@@ -1099,6 +1099,7 @@ Telegram: `Token`, `Chat_id`, `Chat_ids`. VK: `VK_GROUP_ID`, `VK_PEER_ID`, `VK_P
 |---|---|
 | `live_team_strength.py` | live-снапшот силы: `register_live_map_context`, `finalize_live_series_from_scores`, `get_matchup_summary`, `DEFAULT_RUNTIME_PROGRESS_PATH`; kills-history schema v2 содержит до 100 последних карт на team ID с `match_id`, timestamp, пятью player IDs, team kills и source patch, а meta — latest patch |
 | `models.py` | ELO/рейтинговые модели |
+| `benchmark_probabilities.py` | Read-only аудит кэшированных вероятностей: `--artifact-root`, обязательный `--output`; три временных окна с 120-дневной калибровкой, exact-mid/TIER3 проверки, JSON-метрики и парные интервалы по сериям. Не обучает боевой артефакт; ограничения повторного исторического теста — E-262. |
 | `domain.py` | `LeagueTier`, `MatchRecord` (включая nullable `radiant_kills`/`dire_kills` и `source_patch`) |
 | `roster.py` | `RosterResolution`, roster-lock логика |
 | `tiering.py` | классификация tier лиг/команд |
@@ -1110,6 +1111,8 @@ Telegram: `Token`, `Chat_id`, `Chat_ids`. VK: `VK_GROUP_ID`, `VK_PEER_ID`, `VK_P
 > Drift fixed: `ELO/run_series_experiment.py` отсутствует. Запускать offline-эксперименты через существующие модули/тесты `ELO/tests/`.
 
 `build_snapshot()` пишет JSON атомарно. `ensure_snapshot(..., rebuild_if_missing=True)` пересобирает legacy-снапшот без `team_kills_history_by_team_id` или с версией history schema не равной 2; raw-дубликаты одной карты учитываются один раз по `match_id`. `meta.team_kills_history_latest_patch` определяется по source patch самой поздней датированной карты.
+
+С E-262 обновления рейтингов при сборке идут глобально по `(timestamp, match_id)`, а не целыми сериями; существующему snapshot для применения исправления нужен rebuild. `run_series_online_evaluation` объединяет события начала серий и карт, прогнозирует все старты одного timestamp до обновлений и применяет sweep-бонус после последней карты. Это порядок по **старту** карты: полная доступность исходов по времени окончания пока не восстановлена. Календарь patch-reset в `models.py` всё ещё ограничен 7.40c; ограничения и сравнение формул — `docs/experiments/E-262-elo-formula-calibration-and-chronology.md`.
 
 Дедуп по `match_id` делается сразу после `load_matches` в `_build_snapshot_dict` и распространяется на ВСЁ: модель, серии, kills-историю. Число отброшенных копий — в `meta.duplicate_records`.
 

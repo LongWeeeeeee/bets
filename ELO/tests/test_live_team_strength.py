@@ -7,6 +7,7 @@ import pytest
 
 import ELO.live_team_strength as live_team_strength_module
 from ELO.config import HybridEloConfig
+from ELO.data_loader import load_matches
 from ELO.domain import LeagueTier, MatchRecord
 from ELO.live_team_strength import (
     build_snapshot,
@@ -16,6 +17,7 @@ from ELO.live_team_strength import (
     register_live_map_context,
 )
 from ELO.models import HybridPlayerRosterEloModel
+from ELO.tiering import attach_league_tiers, classify_leagues
 
 
 def test_default_data_dir_matches_pro_rebuild_output():
@@ -129,6 +131,77 @@ def test_duplicate_map_does_not_move_ratings_twice(tmp_path) -> None:
     assert duplicated["model_state"]["player_global"] == pytest.approx(
         single["model_state"]["player_global"]
     )
+
+
+def test_snapshot_model_updates_interleaved_series_in_global_chronology(tmp_path) -> None:
+    """A later map of an earlier series must not affect an intervening map."""
+    _reset_live_team_strength_caches()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    def raw_map(
+        match_id: int,
+        timestamp: int,
+        series_id: int,
+        series_type: str,
+        radiant_team_id: int,
+        dire_team_id: int,
+        radiant_win: bool,
+    ) -> dict:
+        def players(team_id: int, *, is_radiant: bool) -> list[dict]:
+            return [
+                {
+                    "isRadiant": is_radiant,
+                    "steamAccount": {"id": team_id * 10 + index},
+                    "position": f"POSITION_{index}",
+                }
+                for index in range(1, 6)
+            ]
+
+        return {
+            "id": match_id,
+            "startDateTime": timestamp,
+            "didRadiantWin": radiant_win,
+            "radiantTeam": {"id": radiant_team_id, "name": f"R{radiant_team_id}"},
+            "direTeam": {"id": dire_team_id, "name": f"D{dire_team_id}"},
+            "players": players(radiant_team_id, is_radiant=True) + players(dire_team_id, is_radiant=False),
+            "leagueId": 1,
+            "league": {"name": "Test League", "tier": "PROFESSIONAL"},
+            "series": {"id": series_id, "type": series_type},
+        }
+
+    raw_matches = {
+        # Series 100 crosses 7.40c. Series 200 is between its maps, so the
+        # former bundle-order path both leaked the second result into map 3 and
+        # moved the patch key backwards when it processed map 3 afterwards.
+        "1": raw_map(1, 1768867200, 100, "3", 10, 20, True),
+        "2": raw_map(2, 1769040000, 100, "3", 10, 20, True),
+        "3": raw_map(3, 1768950000, 200, "1", 30, 40, False),
+    }
+    (data_dir / "7.41d_part001.json").write_text(json.dumps(raw_matches), encoding="utf-8")
+    zero_k = {tier: 0.0 for tier in LeagueTier}
+    config = HybridEloConfig(
+        k_global_by_tier=zero_k,
+        k_local_by_tier=zero_k,
+        k_roster_by_tier=zero_k,
+        side_bias_k=3.0,
+        bo3_sweep_bonus_weight=0.0,
+    )
+
+    snapshot = build_snapshot(
+        data_dir=data_dir,
+        snapshot_path=tmp_path / "snapshot.json",
+        config=config,
+    )
+    matches, _ = load_matches(data_dir)
+    league_info, _ = classify_leagues(matches)
+    attach_league_tiers(matches, league_info)
+    reference = HybridPlayerRosterEloModel(config)
+    for match in matches:
+        reference.process_match(match)
+
+    assert snapshot["model_state"] == reference.export_state()
+    assert snapshot["model_state"]["current_patch_key"] == "7.40c"
 
 
 def test_snapshot_pin_blocks_rebuild_on_fresh_corpus(tmp_path, monkeypatch) -> None:
