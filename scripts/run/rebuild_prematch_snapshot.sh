@@ -214,6 +214,8 @@ CHECK
   ssh "$SERV1" "systemctl stop cyberscore.service && \
                 { cd /root/main && venv/bin/python3 ELO/rebase_runtime_model_state.py || \
                   echo 'ВНИМАНИЕ: перебазировка ELO-состояния не удалась'; } && \
+                { cd /root/main && venv/bin/python3 ELO/convert_state_to_delta.py --if-stale || \
+                  echo 'ВНИМАНИЕ: обновление ELO-дельты не удалось'; } && \
                 { cd /root/main && venv/bin/python3 ELO/build_state_arrays.py || \
                   echo 'ВНИМАНИЕ: sidecar массивов ELO не собрался'; } && \
                 : > /root/.local/state/ingame/map_id_check.txt && \
