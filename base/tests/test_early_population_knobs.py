@@ -39,6 +39,10 @@ def test_defaults_match_previous_hardcoded_values(monkeypatch):
     # 24 -> 20: у early NW маркер и так требует дожить до 20-й минуты.
     assert ad.EARLY_FAST_FINISH_MAX_MINUTES == 34
     assert ad.EARLY_MIN_DURATION == 20
+    # Обе ручки early_end выключены: без env быстрая ветка возвращает карту ДО
+    # гейта, а длинные карты идут через гейт и маркер окна 20-28.
+    assert ad.EARLY_END_FAST_ONLY is False
+    assert ad.EARLY_END_FAST_USE_GATE is False
 
 
 def test_short_match_is_not_early(monkeypatch):
@@ -133,3 +137,36 @@ def test_early_nw_population_takes_dominator_regardless_of_gate(monkeypatch):
     # Прежнее поведение возвращается ручкой.
     ad = _reload(monkeypatch, ANALISE_EARLY_NW_USE_GATE=1)
     assert ad.is_early_nw_match(match) == (False, None)
+
+
+def test_early_end_fast_only_drops_long_maps(monkeypatch):
+    """FAST_ONLY оставляет популяцию early_end только из быстрой ветки.
+
+    Штатно карта 45 минут проходит гейт и маркер окна 20-28; с ручкой она
+    отсекается, то есть в словаре остаются карты от EARLY_MIN_DURATION до FF.
+    """
+    leads = [0] * 9 + [100] + [1000] * 10 + [14000] * 25  # 45 минут
+    match = {"radiantNetworthLeads": leads, "didRadiantWin": True}
+    ad = _reload(monkeypatch)
+    assert ad.is_early_match(match) == (True, "radiant")
+    ad = _reload(monkeypatch, ANALISE_EARLY_END_FAST_ONLY=1)
+    assert ad.is_early_match(match) == (False, None)
+
+
+def test_early_end_fast_branch_gate_knob(monkeypatch):
+    """Гейт внутри быстрой ветки: без ручки разрыв на 10-й минуте не проверяется."""
+    leads = [0] * 9 + [4500] + [300] * 20  # 30 минут, к 10-й разрыв 4500 > 500
+    match = {"radiantNetworthLeads": leads, "didRadiantWin": False}
+    ad = _reload(monkeypatch)
+    assert ad.is_early_match(match) == (True, "dire")
+
+    ad = _reload(monkeypatch, ANALISE_EARLY_END_FAST_USE_GATE=1)
+    assert ad.is_early_match(match) == (False, None)
+    calm = {"radiantNetworthLeads": [0] * 9 + [400] + [300] * 20, "didRadiantWin": False}
+    assert ad.is_early_match(calm) == (True, "dire")
+
+    # Обе ручки вместе — популяция A/B-пересборки: 20..34 минуты и ровная 10-я.
+    ad = _reload(monkeypatch, ANALISE_EARLY_END_FAST_ONLY=1,
+                 ANALISE_EARLY_END_FAST_USE_GATE=1)
+    assert ad.is_early_match(calm) == (True, "dire")
+    assert ad.is_early_match(match) == (False, None)

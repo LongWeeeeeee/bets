@@ -737,6 +737,14 @@ EARLY_MIN_DURATION = int(os.getenv("ANALISE_EARLY_MIN_DURATION", "20"))
 EARLY_NW_USE_FAST_BRANCH = _env_bool("ANALISE_EARLY_NW_USE_FAST_BRANCH", False)
 EARLY_NW_USE_GATE = _env_bool("ANALISE_EARLY_NW_USE_GATE", False)
 
+# Популяция early_end_dict (см. `is_early_match`). Штатно гейт 10-й минуты
+# проверяется ТОЛЬКО на картах длиннее FF — быстрая ветка возвращает карту раньше.
+# Эти две ручки делают гейт измеряемым внутри быстрой ветки: FAST_ONLY отсекает
+# длинные карты вместе с маркером, FAST_USE_GATE добавляет проверку leads[9] к
+# коротким. Обе выключены, прод-правило без env не меняется.
+EARLY_END_FAST_ONLY = _env_bool("ANALISE_EARLY_END_FAST_ONLY", False)
+EARLY_END_FAST_USE_GATE = _env_bool("ANALISE_EARLY_END_FAST_USE_GATE", False)
+
 # Late: длинная игра, где networth gap не разъехался сильнее WR60 ladder.
 # Все четыре параметра правила сбора вынесены в env для A/B-пересборок словаря;
 # дефолты равны историческим значениям, поведение прода без env не меняется.
@@ -1070,7 +1078,13 @@ def is_early_match(match, n: int = 3000):
     - Early dominator = кто первым достиг 20% comeback networth threshold
       в окне 20-28 минут
     - Победитель матча для early не важен
-    
+
+    Ручки A/B-пересборки (без них правило прежнее):
+    - EARLY_END_FAST_ONLY — популяция только из быстрой ветки, длинные карты
+      отсекаются вместе с гейтом и маркером
+    - EARLY_END_FAST_USE_GATE — гейт 10-й минуты проверяется и внутри быстрой
+      ветки (штатно она возвращает карту до гейта)
+
     Args:
         match: словарь с данными матча
         n: параметр сохранен для совместимости (не используется)
@@ -1092,6 +1106,12 @@ def is_early_match(match, n: int = 3000):
         return False, None
 
     if duration <= EARLY_FAST_FINISH_MAX_MINUTES:
+        if EARLY_END_FAST_USE_GATE and ANALISE_EARLY_MINUTE10_GATE_ENABLED:
+            if duration <= EARLY_GATE_INDEX:
+                return False, None
+            gate_lead = _as_float(leads[EARLY_GATE_INDEX])
+            if gate_lead is None or abs(gate_lead) > EARLY_GATE_MAX_ABS_LEAD:
+                return False, None
         did_radiant_win = match.get('didRadiantWin')
         if did_radiant_win is None:
             win_rates = match.get('winRates') or []
@@ -1101,6 +1121,9 @@ def is_early_match(match, n: int = 3000):
         final_lead = _as_float(leads[-1]) if leads else None
         if final_lead is not None and final_lead != 0:
             return True, 'radiant' if final_lead > 0 else 'dire'
+        return False, None
+
+    if EARLY_END_FAST_ONLY:
         return False, None
 
     if ANALISE_EARLY_MINUTE10_GATE_ENABLED:
