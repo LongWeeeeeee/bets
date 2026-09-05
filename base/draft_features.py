@@ -11,6 +11,9 @@ Blocks
   counter one column per unordered cross-team hero pair; when `signed` the sign
           says which side held the lower hero index, which is what makes the
           block antisymmetric and therefore side-consistent
+  position synergy/counter (``hero_role_position_pair`` only) use the same
+          pair blocks after replacing every hero with its canonical
+          ``(role, hero)`` token.  The generic pair blocks are retained.
 
 `signed=True` is for the win target (swapping sides must flip the prediction);
 `signed=False` is for kills and duration, which are properties of the map.
@@ -26,6 +29,8 @@ import scipy.sparse as sp
 TEAM_PAIRS = tuple(combinations(range(5), 2))
 KIND_ROLE = "hero_role"
 KIND_PAIR = "hero_role_pair"
+KIND_POSITION_PAIR = "hero_role_position_pair"
+PAIR_FIT_CHUNK_ROWS = 250_000
 
 
 def _csr(cols: np.ndarray, vals: np.ndarray, ncols: int) -> sp.csr_matrix:
@@ -48,6 +53,10 @@ class DraftFeatureEncoder:
     synergy_lut: np.ndarray | None = None
     counter_lut: np.ndarray | None = None
     pair_min_support: int = 30
+    # Appended defaults deliberately keep joblib artifacts made before this
+    # mode loadable.  Access through getattr below also covers old __dict__s.
+    position_synergy_lut: np.ndarray | None = None
+    position_counter_lut: np.ndarray | None = None
 
     @property
     def n_heroes(self) -> int:
@@ -56,64 +65,114 @@ class DraftFeatureEncoder:
     @property
     def n_columns(self) -> int:
         total = self.n_heroes * 6
-        if self.kind == KIND_PAIR:
+        if self.kind in (KIND_PAIR, KIND_POSITION_PAIR):
             assert self.synergy_lut is not None and self.counter_lut is not None
             total += int(self.synergy_lut.max()) + 1 + int(self.counter_lut.max()) + 1
+        if self.kind == KIND_POSITION_PAIR:
+            synergy_lut = getattr(self, "position_synergy_lut", None)
+            counter_lut = getattr(self, "position_counter_lut", None)
+            assert synergy_lut is not None and counter_lut is not None
+            total += int(synergy_lut.max()) + 1 + int(counter_lut.max()) + 1
         return total
 
     @classmethod
     def fit(cls, heroes: np.ndarray, kind: str, signed: bool, pair_min_support: int = 30) -> "DraftFeatureEncoder":
-        if kind not in (KIND_ROLE, KIND_PAIR):
+        if kind not in (KIND_ROLE, KIND_PAIR, KIND_POSITION_PAIR):
             raise ValueError(f"unknown kind {kind!r}")
-        if heroes.ndim != 2 or heroes.shape[1] != 10:
-            raise ValueError("heroes must be (n, 10)")
-        ids = np.unique(heroes.astype(np.int64))
+        heroes = cls._validate_heroes(heroes, fitting=True)
+        if isinstance(pair_min_support, (bool, np.bool_)):
+            raise ValueError("pair_min_support must be a positive integer")
+        try:
+            parsed_min_support = int(pair_min_support)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("pair_min_support must be a positive integer") from exc
+        if parsed_min_support != pair_min_support or parsed_min_support < 1:
+            raise ValueError("pair_min_support must be a positive integer")
+        pair_min_support = parsed_min_support
+        ids = np.unique(heroes)
         if ids.size == 0:
             raise ValueError("no heroes to fit on")
         lut = np.full(int(ids.max()) + 1, -1, dtype=np.int32)
         lut[ids] = np.arange(len(ids), dtype=np.int32)
         enc = cls(kind=kind, signed=signed, hero_ids=ids, hero_lut=lut, pair_min_support=pair_min_support)
-        if kind == KIND_PAIR:
-            dense = enc._dense(heroes)
-            enc.synergy_lut = enc._pair_lut(dense, same_team=True)
-            enc.counter_lut = enc._pair_lut(dense, same_team=False)
+        if kind in (KIND_PAIR, KIND_POSITION_PAIR):
+            enc.synergy_lut = enc._pair_lut(heroes, same_team=True)
+            enc.counter_lut = enc._pair_lut(heroes, same_team=False)
+        if kind == KIND_POSITION_PAIR:
+            # No positional term clearing the support bar is valid: the
+            # generic pair blocks still carry the backed-off representation.
+            enc.position_synergy_lut = enc._pair_lut(heroes, same_team=True, position_conditioned=True)
+            enc.position_counter_lut = enc._pair_lut(heroes, same_team=False, position_conditioned=True)
         return enc
 
-    def _dense(self, heroes: np.ndarray) -> np.ndarray:
-        h = heroes.astype(np.int64)
-        inside = (h >= 0) & (h < len(self.hero_lut))
-        return np.where(inside, self.hero_lut[np.clip(h, 0, len(self.hero_lut) - 1)], -1).astype(np.int32)
-
-    def _pair_codes(self, dense: np.ndarray, same_team: bool) -> list[np.ndarray]:
-        H = self.n_heroes
-        codes = []
-        if same_team:
-            for side in (0, 5):
-                for i, j in TEAM_PAIRS:
-                    a, b = dense[:, side + i], dense[:, side + j]
-                    codes.append(np.where((a < 0) | (b < 0), -1, np.minimum(a, b) * H + np.maximum(a, b)))
-        else:
-            for i in range(5):
-                for j in range(5):
-                    a, b = dense[:, i], dense[:, 5 + j]
-                    codes.append(np.where((a < 0) | (b < 0), -1, np.minimum(a, b) * H + np.maximum(a, b)))
-        return codes
-
-    def _pair_lut(self, dense: np.ndarray, same_team: bool) -> np.ndarray:
-        flat = np.concatenate(self._pair_codes(dense, same_team))
-        flat = flat[flat >= 0]
-        uniq, counts = np.unique(flat, return_counts=True)
-        keep = uniq[counts >= self.pair_min_support]
-        lut = np.full(self.n_heroes * self.n_heroes, -1, dtype=np.int32)
-        lut[keep] = np.arange(len(keep), dtype=np.int32)
-        if not len(keep):
-            raise ValueError("no hero pair reached the support threshold")
-        return lut
-
-    def transform(self, heroes: np.ndarray) -> sp.csr_matrix:
+    @staticmethod
+    def _validate_heroes(heroes: np.ndarray, *, fitting: bool) -> np.ndarray:
         heroes = np.asarray(heroes)
         if heroes.ndim != 2 or heroes.shape[1] != 10:
             raise ValueError("heroes must be (n, 10)")
+        if heroes.dtype.kind not in "iuIf":
+            raise ValueError("heroes must contain finite integer IDs")
+        if heroes.dtype.kind == "f":
+            if not np.isfinite(heroes).all() or not np.equal(heroes, np.floor(heroes)).all():
+                raise ValueError("heroes must contain finite integer IDs")
+        heroes = heroes.astype(np.int64, copy=False)
+        if fitting and (heroes < 0).any():
+            raise ValueError("heroes to fit on must be non-negative")
+        return heroes
+
+    def _dense(self, heroes: np.ndarray) -> np.ndarray:
+        h = self._validate_heroes(heroes, fitting=False)
+        inside = (h >= 0) & (h < len(self.hero_lut))
+        return np.where(inside, self.hero_lut[np.clip(h, 0, len(self.hero_lut) - 1)], -1).astype(np.int32)
+
+    def _pair_codes(self, dense: np.ndarray, same_team: bool, position_conditioned: bool = False) -> list[np.ndarray]:
+        token_count = self.n_heroes
+        tokens = dense
+        if position_conditioned:
+            role = np.broadcast_to(np.tile(np.arange(5, dtype=np.int32), 2), dense.shape)
+            tokens = np.where(dense >= 0, role * self.n_heroes + dense, -1).astype(np.int32)
+            token_count *= 5
+        codes: list[np.ndarray] = []
+        if same_team:
+            for side in (0, 5):
+                for i, j in TEAM_PAIRS:
+                    a, b = tokens[:, side + i], tokens[:, side + j]
+                    codes.append(np.where((a < 0) | (b < 0), -1, np.minimum(a, b) * token_count + np.maximum(a, b)))
+        else:
+            for i in range(5):
+                for j in range(5):
+                    a, b = tokens[:, i], tokens[:, 5 + j]
+                    codes.append(np.where((a < 0) | (b < 0), -1, np.minimum(a, b) * token_count + np.maximum(a, b)))
+        return codes
+
+    def _pair_lut(self, heroes: np.ndarray, same_team: bool, position_conditioned: bool = False) -> np.ndarray:
+        """Count supported codes without materializing a 20*n or 25*n array."""
+        token_count = self.n_heroes * (5 if position_conditioned else 1)
+        code_space = token_count * token_count
+        counts = np.zeros(code_space, dtype=np.int64)
+        for start in range(0, len(heroes), PAIR_FIT_CHUNK_ROWS):
+            dense = self._dense(heroes[start:start + PAIR_FIT_CHUNK_ROWS])
+            for codes in self._pair_codes(dense, same_team, position_conditioned):
+                valid = codes[codes >= 0]
+                if valid.size:
+                    counts += np.bincount(valid, minlength=code_space)
+        keep = np.flatnonzero(counts >= self.pair_min_support)
+        lut = np.full(code_space, -1, dtype=np.int32)
+        lut[keep] = np.arange(len(keep), dtype=np.int32)
+        if not len(keep) and not position_conditioned:
+            raise ValueError("no hero pair reached the support threshold")
+        return lut
+
+    @staticmethod
+    def _lookup_pair_lut(codes: list[np.ndarray], lut: np.ndarray) -> np.ndarray:
+        cols = np.full((len(codes[0]), len(codes)), -1, dtype=np.int32)
+        for index, code in enumerate(codes):
+            valid = (code >= 0) & (code < len(lut))
+            cols[valid, index] = lut[code[valid]]
+        return cols
+
+    def transform(self, heroes: np.ndarray) -> sp.csr_matrix:
+        heroes = self._validate_heroes(heroes, fitting=False)
         dense = self._dense(heroes)
         n, H = len(dense), self.n_heroes
         sign = np.where(np.arange(10) < 5, 1.0, -1.0) if self.signed else np.ones(10)
@@ -121,24 +180,47 @@ class DraftFeatureEncoder:
         role = np.broadcast_to(np.tile(np.arange(5, dtype=np.int32), 2), (n, 10))
         blocks: list[tuple[np.ndarray, np.ndarray, int]] = [
             (dense.copy(), sign.copy(), H),
-            (role * H + dense, sign.copy(), 5 * H),
+            (np.where(dense >= 0, role * H + dense, -1), sign.copy(), 5 * H),
         ]
-        if self.kind == KIND_PAIR:
+        if self.kind in (KIND_PAIR, KIND_POSITION_PAIR):
             assert self.synergy_lut is not None and self.counter_lut is not None
             syn_codes = self._pair_codes(dense, same_team=True)
-            syn_cols = np.stack([np.where(c < 0, -1, self.synergy_lut[np.clip(c, 0, None)]) for c in syn_codes], 1)
+            syn_cols = self._lookup_pair_lut(syn_codes, self.synergy_lut)
             syn_sign = np.concatenate([
                 np.full((n, len(TEAM_PAIRS)), 1.0),
                 np.full((n, len(TEAM_PAIRS)), -1.0 if self.signed else 1.0),
             ], axis=1)
             blocks.append((syn_cols, syn_sign, int(self.synergy_lut.max()) + 1))
             cnt_codes = self._pair_codes(dense, same_team=False)
-            cnt_cols = np.stack([np.where(c < 0, -1, self.counter_lut[np.clip(c, 0, None)]) for c in cnt_codes], 1)
+            cnt_cols = self._lookup_pair_lut(cnt_codes, self.counter_lut)
             cnt_sign = np.stack([
                 (np.where(dense[:, i] < dense[:, 5 + j], 1.0, -1.0) if self.signed else np.ones(n))
                 for i in range(5) for j in range(5)
             ], 1)
             blocks.append((cnt_cols, cnt_sign, int(self.counter_lut.max()) + 1))
+        if self.kind == KIND_POSITION_PAIR:
+            synergy_lut = getattr(self, "position_synergy_lut", None)
+            counter_lut = getattr(self, "position_counter_lut", None)
+            assert synergy_lut is not None and counter_lut is not None
+            pos_syn_codes = self._pair_codes(dense, same_team=True, position_conditioned=True)
+            pos_syn_cols = self._lookup_pair_lut(pos_syn_codes, synergy_lut)
+            pos_syn_sign = np.concatenate([
+                np.full((n, len(TEAM_PAIRS)), 1.0),
+                np.full((n, len(TEAM_PAIRS)), -1.0 if self.signed else 1.0),
+            ], axis=1)
+            blocks.append((pos_syn_cols, pos_syn_sign, int(synergy_lut.max()) + 1))
+            pos_cnt_codes = self._pair_codes(dense, same_team=False, position_conditioned=True)
+            pos_cnt_cols = self._lookup_pair_lut(pos_cnt_codes, counter_lut)
+            pos_cnt_sign = np.stack([
+                (np.where(
+                    np.where(dense[:, i] >= 0, i * H + dense[:, i], -1)
+                    < np.where(dense[:, 5 + j] >= 0, j * H + dense[:, 5 + j], -1),
+                    1.0,
+                    -1.0,
+                ) if self.signed else np.ones(n))
+                for i in range(5) for j in range(5)
+            ], 1)
+            blocks.append((pos_cnt_cols, pos_cnt_sign, int(counter_lut.max()) + 1))
 
         mats = []
         for cols, vals, width in blocks:
