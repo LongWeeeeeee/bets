@@ -1090,12 +1090,15 @@ Telegram: `Token`, `Chat_id`, `Chat_ids`. VK: `VK_GROUP_ID`, `VK_PEER_ID`, `VK_P
 | `series_data.py` | группировка серий (`_series_group_key`) |
 | `data_loader.py`, `team_identity.py`, `config.py` | загрузка/идентичность/конфиг; loader нормализует team kills и извлекает `source_patch` из имён split-файлов вида `<patch>_part<N>.json` |
 | `live_probability_segment_policy.json` | политика сегментов вероятности |
+| `convert_state_to_delta.py` | CLI `--snapshot`, `--state`, `--delta`, `--if-stale`: перенос полного runtime-state в атомарную дельту. `--if-stale` сохраняет существующую дельту, если reference/config совпадают со снимком, даже когда full-state старее; при несовпадении базы состояния или удалениях конвертация отказывается без замены дельты. Запускается при остановленном runtime. |
 
 > Drift fixed: `ELO/run_series_experiment.py` отсутствует. Запускать offline-эксперименты через существующие модули/тесты `ELO/tests/`.
 
 `build_snapshot()` пишет JSON атомарно. `ensure_snapshot(..., rebuild_if_missing=True)` пересобирает legacy-снапшот без `team_kills_history_by_team_id` или с версией history schema не равной 2; raw-дубликаты одной карты учитываются один раз по `match_id`. `meta.team_kills_history_latest_patch` определяется по source patch самой поздней датированной карты.
 
 Дедуп по `match_id` делается сразу после `load_matches` в `_build_snapshot_dict` и распространяется на ВСЁ: модель, серии, kills-историю. Число отброшенных копий — в `meta.duplicate_records`.
+
+Ночной шаг 8 в `scripts/run/rebuild_prematch_snapshot.sh`: stop → rebase полного состояния → `convert_state_to_delta.py --if-stale` → sidecar массивов → очистка map_id_check → start. Пропуск обновления дельты после смены снимка возвращает live-путь к тяжёлому полному состоянию; ошибка подготовки выводится как предупреждение и не блокирует запуск сервиса.
 
 Env `ELO_SNAPSHOT_PIN=1` запрещает пересборку снапшота по mtime корпуса (структурные причины — нет `model_state`, устаревшая схема kills-истории — продолжают действовать). Нужен там, где снапшот собран на полном корпусе и перенесён файлом, а локальный корпус меньше: без пина ближайшее пополнение корпуса молча пересоберёт рейтинги на маленьких данных.
 

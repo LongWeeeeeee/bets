@@ -20,6 +20,7 @@
 и конвертация останавливается с перечнем.
 
 Запуск: venv/bin/python3 ELO/convert_state_to_delta.py [--state PATH] [--delta PATH]
+       venv/bin/python3 ELO/convert_state_to_delta.py --if-stale
 """
 from __future__ import annotations
 
@@ -77,24 +78,38 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--snapshot", type=Path, default=lts.DEFAULT_SNAPSHOT_PATH)
     parser.add_argument("--state", type=Path, default=lts.DEFAULT_RUNTIME_MODEL_STATE_PATH)
     parser.add_argument("--delta", type=Path, default=lts.DEFAULT_LIVE_DELTA_PATH)
+    parser.add_argument("--if-stale", action="store_true",
+                        help="собрать дельту, только если текущая не привязана "
+                             "к этому снимку")
     parser.add_argument("--force", action="store_true",
                         help="конвертировать даже если база состояния не совпадает со снимком")
     args = parser.parse_args(argv)
 
-    for path, label in ((args.snapshot, "снимок"), (args.state, "рантайм-состояние")):
-        if not path.exists():
-            print(f"ОШИБКА: {label} не найден: {path}", file=sys.stderr)
-            return 1
+    if not args.snapshot.exists():
+        print(f"ОШИБКА: снимок не найден: {args.snapshot}", file=sys.stderr)
+        return 1
 
     print(f"читаю снимок {args.snapshot} ...", flush=True)
     with args.snapshot.open(encoding="utf-8") as fh:
         snapshot = json.load(fh)
-    print(f"читаю состояние {args.state} ...", flush=True)
-    with args.state.open(encoding="utf-8") as fh:
-        state = json.load(fh)
 
     reference = lts._snapshot_reference_timestamp(snapshot)
     signature = lts._snapshot_model_config_signature(snapshot)
+    if args.if_stale and state_overlay.load_delta(
+            args.delta,
+            base_reference_timestamp=reference,
+            base_model_config_signature=signature,
+    ) is not None:
+        print(f"дельта уже совпадает со снимком ({reference}), не тронута "
+              "— живые обновления сохранены")
+        return 0
+
+    if not args.state.exists():
+        print(f"ОШИБКА: рантайм-состояние не найдено: {args.state}", file=sys.stderr)
+        return 1
+    print(f"читаю состояние {args.state} ...", flush=True)
+    with args.state.open(encoding="utf-8") as fh:
+        state = json.load(fh)
     state_reference = int(state.get("base_reference_timestamp") or 0)
     state_signature = str(state.get("base_model_config_signature") or "")
     if state_reference != reference or state_signature != signature:
