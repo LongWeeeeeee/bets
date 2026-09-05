@@ -511,10 +511,6 @@ python3 scripts/ops/experiments_index.py     # пересобрать реест
 
 <!-- END GENERATED REGISTRY -->
 
-### [E-260](experiments/E-260-draft-phase-position-pairs.md) — draft phase position-pair corpus/model training (IN PROGRESS)
-
-Новая исследовательская ветка: свежий fingerprinted/deduplicated corpus, opt-in `hero_role_position_pair`, четыре фазы и раздельные honest/full bundles. Цели и ограничения, harness, команды и известные дефекты описаны в карточке; численных результатов пока нет.
-
 ## 4a. Изменения подачи (не эксперименты)
 
 Правки, которые меняют вид сообщения, но не расчёт. Записаны здесь, чтобы при
