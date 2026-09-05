@@ -1270,3 +1270,11 @@ venv_catboost/bin/python3 pro_heroes_data/tempo_revamp_backtest.py \
   - `damage` / `damage_taken` — урон герой→герой за карту (на два порядка плотнее убийств); `killed` / `killed_by` — матрица убийств (сверено с playback Stratz: 134 против 135 убийств, расходится одна ячейка из 43); `ability_targets` — сколько раз каждая способность применена по каждому герою; `kills_log`, `teamfights`, `position_est`, `lane_role`.
 - Лимиты: **60 запросов в минуту и 3000 в сутки НА IP** (заголовки `x-rate-limit-remaining-minute/day`). Список адресов = список квот.
 - Грабля: `socks5://` в `requests` резолвит DNS локально, и наши прокси отвечают `0x05 Connection refused`; нужен **`socks5h://`**. `curl --socks5-hostname` работает сразу, поэтому расхождение выглядит как поломка сборщика.
+
+## Подключение draft phase моделей в действующие readers
+
+`base/tools/export_draft_phase_serving.py --source DIR --corpus rows.npz --output DIR` экспортирует согласованные encoder/classifier в legacy filenames и сохраняет полный bundle. Early NW legacy-пара возвращает P(direction | marker); occurrence остаётся в bundle. Early Win хранится без активного live reader. Контроль — `manifest.json` с SHA256 и `verification_probe.npz`.
+
+`base/tools/refit_prematch_draft_component.py` принимает явные `--matrix`, `--weights`, `--compact`, `--public-corpus`, `--draft-model`, `--output`, `--report`. Пересчитывает live draft_logit и два interaction-признака, обучает только зависимые ветки; проверяет All target/classes/width, исходные нормировки, mid, сходимость. Выход содержит только веса.
+
+`base/tools/merge_prematch_weights.py --snapshot FILE --weights FILE --output NEW_FILE --report NEW_JSON --expected-snapshot-sha256 HASH` переносит ровно восемь массивов весов; остальные ZIP members и metadata сохраняются. Для live используются `WIN_MODEL_DIR`, `EARLY_NW_MODEL_DIR`, `LATE_WIN_MODEL_DIR`; согласованный parent заменяет `data/prematch_model_artifact_v3.npz` после backup. Локальные weights/branch_weights ночной сборки обновляются тем же набором. Calibration и пороги этим способом не пересчитываются; рестарт — только systemd.
