@@ -5,7 +5,7 @@ date: "2026-09-05"
 area: ml
 status: full
 corpus: "6 638 652 публичных карты >=20 мин; про-архив 1 151 356 карт, forward test 189–639; Early NW no_marker 2 461 376"
-verdict: "Четыре модели обучены, parent prematch пересчитан, и 05.09.2026 подтверждена активация на serv1 (код ccf1873, restart 23:39:38 MSK). EarlyNW conditional direction, Late >=36 и All >=20 подключены к трём reader; EarlyWin 20..34 сохранён неактивным. Независимый pro uplift не подтверждён; историческая диагностика parent не является независимой проверкой качества."
+verdict: "Четыре модели обучены, parent prematch пересчитан, и 05.09.2026 подтверждена активация на serv1 (код ccf1873, restart 23:39:38 MSK). EarlyNW conditional direction, Late >=36 и All >=20 подключены к трём reader; EarlyWin 20..34 подключён отдельной строкой 06.09.2026. Независимый pro uplift не подтверждён; историческая диагностика parent не является независимой проверкой качества."
 harness: "scripts/run/retrain_draft_phases.sh; base/build_draft_phase_corpus.py; base/train_draft_phase_models.py"
 ---
 
@@ -218,3 +218,9 @@ ssh serv1 '/root/main/venv/bin/python3 - /root/main/data/draft_phase_serving/202
 ```
 
 **Где искать ошибку:** несовпадение прогноза — SHA файлов/ширина encoder и `verification_probe.npz`; отказ parent — `baseline_identity`, `inputs` и `rows` refit-отчёта; повреждение сборки — `output_member_sha256` merge-отчётов; старый результат после доставки — реальные env/PID процесса и singleton cache (требуется restart). Сравнение AUC parent выше нельзя использовать как доказательство будущего pro uplift. Ночная сборка должна брать новые top/branch weights одновременно, иначе рассогласуются ветки и `draft_logit`.
+
+## Подключение Early Win к карточке 06.09.2026
+
+По запросу пользователя добавлена `🏁 Early Win ML-модель: <сторона> <процент>` непосредственно под `🕐 Early NW ML-модель`. Reader `base/early_win_model.py` использует уже проверенный артефакт `early_win`; прогноз — победитель среди карт длительностью 20–34 минуты. Это строка отображения, без нового betting gate. Вердикт сохраняется с индексом карточки, отказ изолирован и журналируется. Текст выше о неактивном Early Win описывает состояние первого деплоя 05.09.
+
+Код на serv1: `8047fc8`; systemd restart 06.09.2026 10:19:10 MSK, PID `3339309`, active. Серверный Python: compile/import smoke PASS, `venv/bin/python3 -m pytest base/tests/test_early_win_model.py -q` — 11 passed (включая 512 реальных прогнозов, порядок строк, недоступный артефакт и изоляцию отказа). Локальная совместная проверка с Early NW: 31 passed, 5 skipped (старые артефакты отсутствуют в изолированном checkout). Отчёт: `runtime/artifacts/draft-cp/2026-09-06_early_win_panel/deployment.json`.
