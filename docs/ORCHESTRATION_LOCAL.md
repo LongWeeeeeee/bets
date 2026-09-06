@@ -17,6 +17,25 @@
 через атомарный `update <id> --claim` и указать свои файлы. Чужой claim нельзя
 перезаписывать. Один файл — один автор; claim не заменяет файловую блокировку.
 
+После каждого существенного завершённого шага, включая read-only находки,
+обновляйте issue через `bd update <id> --notes` перед долгим запуском,
+compaction, паузой или ответом пользователю; достаточно одного компактного
+текущего checkpoint, не записи после каждого вызова. В нём: workspace/branch,
+доказательства, незавершённое, точное следующее действие, живые PID/логи и
+статус рестарта, свои файлы и блокеры. Startup hook сначала показывает
+unfinished notes, затем перед правкой нужен `bd show <id> --json`. При handoff
+после checkpoint и остановки правок выполните `bd update <id> --status open
+--assignee '' --add-label handoff`; новый клиент проверяет cwd/Git/runtime,
+выполняет `bd update <id> --claim --remove-label handoff` и снимает handoff.
+Возрастом нельзя забирать активного владельца; после crash проверьте Git и логи.
+Gate проверяет свежесть после последнего наблюдаемого edit: handoff принят,
+если issue open, assignee пуст, есть label `handoff`, notes записаны, а последний
+actor совпадает с releasing session. Предыдущие версии notes сохраняются в
+Beads event data; текущую запись заменяйте компактным полным checkpoint,
+сохраняя незакрытые findings. Для SQLite board `bd history` не используется.
+Если незавершённый turn заканчивается без live writer, сохраните checkpoint и
+освободите handoff; при живом writer или background job claim сохраняется.
+
 После изменений Stop проверяет обновление задачи текущим actor, её assignee
 и новый ID события в SQLite. Обновление другой сессии не засчитывается.
 Проверка замечает прямые Edit/Write/apply_patch и явные sed/perl с `-i`;
@@ -40,12 +59,11 @@ Beads работает напрямую с SQLite и выгружает JSONL б
 
 ## Активация и проверки
 
-**Установка не означает активацию.** Read-only API Codex `hooks/list` обнаружил
-все пять регистраций в `~/.codex/hooks.json`, но вернул `trustStatus: untrusted`.
-Пользователю нужно открыть `/hooks` в Codex, просмотреть и подтвердить команды.
-Если в desktop команда недоступна, открыть Codex CLI в этом проекте и вызвать
-`/hooks` там. Затем возобновить задачу либо начать новую сессию. База доверия
-вручную не менялась. Для Claude открыть новую сессию после изменения настроек.
+**Установка не означает активацию.** Все пять регистраций в `~/.codex/hooks.json`
+проверены и после пользовательского review через Codex CLI имеют
+`trustStatus: trusted`. `/hooks` проверялся через Codex CLI; desktop execution
+остаётся не подтверждённым. Для Claude откройте новую сессию после изменения
+настроек.
 
 Проверка без вызовов модели:
 
@@ -55,6 +73,8 @@ bash ~/.claude/hooks/tests/board-gate-cases.sh
 bash ~/.claude/hooks/tests/board-gate-ownership-roots.sh
 /Users/alex/Documents/ingame/venv_catboost/bin/python3 ~/.claude/hooks/tests/test_context_cost.py
 /Users/alex/Documents/ingame/venv_catboost/bin/python3 ~/.claude/hooks/tests/test_disabled_callbacks.py
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 ~/.claude/hooks/tests/test_board_progress.py
+bash ~/.claude/hooks/tests/board-checkpoint-inject.sh
 bd daemon list
 ```
 
@@ -64,8 +84,24 @@ bd daemon list
 harness: верные DB, actor и команда claim. Это проверка обработчиков;
 автоматическое исполнение Codex после выдачи доверия ещё нужно подтвердить.
 
-Конфигурация и код сохранены в существующей локальной Git-истории
+Первичная конфигурация и код сохранены в существующей локальной Git-истории
 `~/.claude/journal-history`: до изменения `ac72119`, после `5e15fc7`.
 У истории нет remote. В прод, торговые процессы и существующий монитор ресёрча
 изменения не вносились. Снижение фактического расхода токенов новым прогоном
 ещё не измерено.
+
+Промежуточный прогресс: 6 регрессионных тестов проверяют свежесть после каждой
+правки и передачу незавершённой задачи. Startup-тест проверяет показ notes
+между Codex и Claude, отдельную blocked-задачу и ограничение размера снимка.
+Предыдущие 76 + 21 сценарий также прошли после изменения.
+
+Пример текущего checkpoint в notes:
+
+```text
+Workspace/branch: /path/to/project, branch-name
+[x] Исправлен парсер; тест parse_missing_field прошёл.
+[ ] Проверить интеграцию с потребителем.
+Files: parser.py, tests/test_parser.py
+Next: запустить интеграционный тест; затем проверить diff.
+Runtime: ничего не запущено. Blockers: нет.
+```
