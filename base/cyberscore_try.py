@@ -7367,6 +7367,14 @@ def _format_win_model_line(*blocks) -> str:
     if _early_nw:
         line += (f"\n\U0001F550 Early NW ML-модель: "
                  f"{_early_nw['side']} {float(_early_nw['confidence']) * 100:.1f}%")
+    # Display-only winner estimate for the 20–34 minute population.
+    try:
+        _early_win = win_model_veto.last_early_win(index)
+    except Exception:                                # noqa: BLE001
+        _early_win = None
+    if _early_win:
+        line += (f"\n\U0001F3C1 Early Win ML-модель: "
+                 f"{_early_win['side']} {float(_early_win['confidence']) * 100:.1f}%")
     # Late-модель: тот же драфт, но обучена ТОЛЬКО на картах >= 36 минут
     # (E-240). Показывается всегда, когда оценка есть: она предматчевая,
     # живого состояния не требует. Нет строки — модель не загрузилась или

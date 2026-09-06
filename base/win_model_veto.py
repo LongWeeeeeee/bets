@@ -215,7 +215,7 @@ _COV_SUM = 0.0
 _LAST_FILL = {"index": None, "fill": None, "elo": None,
                "draft_rank": None, "draft_share": None,
                "branch": None, "wr": None, "parts": None, "late": None,
-               "early_nw": None}
+               "early_nw": None, "early_win": None}
 #: Разложения ПРОШЛЫХ оценок, по индексу. Одной записи мало: карточка
 #: отложенного матча строится не в момент оценки, а когда до него дойдёт
 #: очередь, и к тому времени `_LAST_FILL` уже принадлежит другой карте. Тогда
@@ -409,6 +409,16 @@ def last_early_nw(index):
     except (TypeError, ValueError):
         pass
     return None
+
+
+def last_early_win(index):
+    """Display-only map-win estimate for games lasting 20–34 minutes."""
+    try:
+        rec = _fill_for(index)
+        value = rec.get("early_win") if rec else None
+        return dict(value) if isinstance(value, dict) else None
+    except (TypeError, ValueError):
+        return None
 
 
 def last_draft_rank(index):
@@ -971,6 +981,25 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                                         else "модуль не импортирован") or "нет вектора"
             except Exception:                        # noqa: BLE001
                 _early_nw_load_error = "load_error() недоступен"
+        # Display-only winner model for the 20–34 minute population.
+        _ewm = None
+        _early_win_load_error = None
+        try:
+            try:
+                import early_win_model as _ewm
+            except ImportError:
+                from base import early_win_model as _ewm
+            _LAST_FILL["early_win"] = _ewm.verdict(
+                _heroes_vector(radiant_heroes_and_pos, dire_heroes_and_pos))
+        except Exception as _early_win_exc:            # noqa: BLE001 — оценка необязательна
+            _LAST_FILL["early_win"] = None
+            _early_win_load_error = f"{type(_early_win_exc).__name__}: {_early_win_exc}"
+        if _LAST_FILL["early_win"] is None and _early_win_load_error is None:
+            try:
+                _early_win_load_error = (_ewm.load_error() if _ewm is not None
+                                        else "модуль не импортирован") or "нет вектора"
+            except Exception:                        # noqa: BLE001
+                _early_win_load_error = "load_error() недоступен"
         # Разложение собрано целиком — кладём его в историю по индексу. Карточка
         # отложенного матча строится позже, когда `_LAST_FILL` уже чужой.
         _remember_fill()
@@ -979,6 +1008,7 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
         # карточке просто не появится, и никто не узнает почему.
         _late_rec = _LAST_FILL.get("late") or {}
         _early_nw_rec = _LAST_FILL.get("early_nw") or {}
+        _early_win_rec = _LAST_FILL.get("early_win") or {}
         _journal_eval(radiant_team=str(radiant_team_name or ""),
                       dire_team=str(dire_team_name or ""),
                       index=_idx, confidence=round(0.5 + abs(_idx) / 100.0, 4),
@@ -992,6 +1022,9 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                                            if _early_nw_rec.get("confidence") is not None
                                            else None),
                       early_nw_error=_early_nw_load_error,
+                      early_win_side=_early_win_rec.get("side"),
+                      early_win_confidence=_early_win_rec.get("confidence"),
+                      early_win_error=_early_win_load_error,
                       model_elo=(None if _f.get("elo") is None
                                  else round(float(_f["elo"]) * 400.0, 1)),
                       draft_logit=_f.get("draft_logit"),
