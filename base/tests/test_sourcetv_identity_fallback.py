@@ -164,8 +164,10 @@ def _bridge_entry(**over):
         "dire_team_name": "Dire",
         "radiant_team_id": 0,
         "dire_team_id": 0,
-        "league_id": 10877,
-        "league_name": "Challengermode Daily Tournaments",
+        # Явно допущенный id: название 'Lunar Paw' не ключевое, так что запись
+        # проходит гейт `_league_matches_allowlist` строго по id.
+        "league_id": 19722,
+        "league_name": "Lunar Paw",
     }
     payload.update(over)
     return {"8966484305": payload}

@@ -135,16 +135,15 @@ def test_asgard_reused_valve_league_id_allowed_without_broad_lunar_paw_title():
     assert not lk.league_matches_allowlist(19723, "Lunar Paw")
 
 
-def test_challengermode_platform_ticket_allowed_by_id_only():
-    """Открытые квалы BLAST приезжают под ежедневным тикетом Challengermode.
+def test_challengermode_platform_ticket_is_not_admitted():
+    """Общий тикет площадки закрыт: он пускал чужие ежедневки.
 
-    26.08.2026: матчи Kinetix — Interactive Philippines и BPM ESPORTS — Satan666
-    шли под league_id 10877, а в справочнике OpenDota он называется
-    'Challengermode Daily Tournaments'. Слово 'blast' сравнивать не с чем —
-    поэтому лига впущена точным id, а не расширением keyword-списка.
+    10877 ('Challengermode Daily Tournaments') впускали точным id 26.08.2026
+    ради открытых квалификаций BLAST Slam, где слово 'blast' сравнивать не с чем.
+    Тикет ежедневный и общий: на нём же шли посторонние турниры, а неизвестная
+    команда из впущенного матча дописывалась в tier2 и оставалась там навсегда.
+    06.09.2026 id убран — тест держит закрытие, чтобы его не вернули молча.
     """
-    assert lk.league_matches_allowlist(10877, "Challengermode Daily Tournaments") is True
-    # Само название по-прежнему НЕ ключевое: чужая лига с тем же именем и другим
-    # id внутрь не попадает.
+    assert lk.league_matches_allowlist(10877, "Challengermode Daily Tournaments") is False
     assert lk.title_matches_allow_keywords("Challengermode Daily Tournaments") is False
-    assert lk.league_matches_allowlist(10878, "Challengermode Daily Tournaments") is False
+    assert 10877 not in lk.TOURNAMENT_LEAGUE_ID_ALLOWLIST

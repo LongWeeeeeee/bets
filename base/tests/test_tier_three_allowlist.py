@@ -116,24 +116,28 @@ def test_admitted_league_opens_the_gate_without_listing_every_team(
 ) -> None:
     """Лига впущена руками -> перечислять её команды не нужно.
 
-    26.08.2026 на тикете 10877 одновременно шли одиннадцать карт открытой
-    квалификации BLAST Slam ('RES Unchained 5: BLAST Slam VIII EU OQ#1'), и у
-    половины сторон Valve не отдавал ни id, ни названия: Hryvna — WhiteSails
-    приехала как `? vs WhiteSails`. Список команд там пришлось бы дописывать
-    каждый круг.
+    Правило родилось 26.08.2026: на общем тикете 10877 одновременно шли
+    одиннадцать карт открытой квалификации BLAST Slam ('RES Unchained 5:
+    BLAST Slam VIII EU OQ#1'), и у половины сторон Valve не отдавал ни id, ни
+    названия: Hryvna — WhiteSails приехала как `? vs WhiteSails`. Список команд
+    там пришлось бы дописывать каждый круг. Сам тикет с тех пор закрыт, поэтому
+    проверяем на оставшемся явно разрешённом id (19722 Asgard).
     """
     monkeypatch.setattr(runtime, "_get_team_tier", lambda tid: 3)
     # Имя намеренно не словарное: `_resolve_known_team_id_without_side_effects`
     # сперва ищет id ПО ИМЕНИ, и живая команда с боевой машины (WhiteSails уже
     # уехала в tier2 авто-добавлением) подменила бы придуманный id.
     assert runtime._classify_tier_three_sides(
-        [0], "Radiant", [9111222], "Стек Без Словаря", league_id=10877
+        [0], "Radiant", [9111222], "Стек Без Словаря", league_id=19722
     ) == (0, 9111222)
     # Обе стороны без опознания — тоже пускаем: лигу впустили сознательно.
     assert runtime._classify_tier_three_sides(
-        [0], "Radiant", [0], "Dire", league_id=10877
+        [0], "Radiant", [0], "Dire", league_id=19722
     ) == (0, 0)
-    # Лига НЕ впущена — прежнее поведение.
+    # Лига НЕ впущена — прежнее поведение. Закрытый тикет площадки теперь тут же.
+    assert runtime._classify_tier_three_sides(
+        [0], "Radiant", [9111222], "Стек Без Словаря", league_id=10877
+    ) is None
     assert runtime._classify_tier_three_sides(
         [0], "Radiant", [9111222], "Стек Без Словаря", league_id=19944
     ) is None
@@ -152,5 +156,5 @@ def test_known_teams_keep_their_own_tier_even_in_an_admitted_league(
     """
     monkeypatch.setattr(runtime, "_get_team_tier", lambda tid: 1 if int(tid or 0) else 3)
     assert runtime._classify_tier_three_sides(
-        [111], "A", [222], "B", league_id=10877
+        [111], "A", [222], "B", league_id=19722
     ) is None

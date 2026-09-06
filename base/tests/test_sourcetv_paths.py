@@ -465,9 +465,10 @@ def test_explicit_league_ids_are_always_polled_directly(
 ) -> None:
     """Явно разрешённый id обязан попадать в прямой опрос, даже вне окна id.
 
-    10877 (тикет площадки Challengermode, под которым приезжают открытые квалы
-    BLAST) заведён в 2019-м и ниже `KW_RECENT_FLOOR`, то есть в cold-sweep не
-    попадал бы вовсе — оставалась бы только надежда на широкий снимок (0).
+    Механизм важен для платформенных тикетов Valve: такой id может быть
+    заведён задолго до `KW_RECENT_FLOOR`, а название у него не ключевое — без
+    явного допуска прямого опроса не было бы вовсе, оставалась бы только
+    надежда на широкий снимок (0), который на пике режется по числу игр.
     """
     monkeypatch.setattr(probe, "_LEAGUE_NAMES", {
         19944: "EPL Masters 2026",
@@ -477,7 +478,9 @@ def test_explicit_league_ids_are_always_polled_directly(
     candidates = probe._keyword_candidate_league_ids()
     assert 19944 in candidates            # keyword-лига текущей эры
     assert 19850 not in candidates        # чужая лига
-    assert 10877 in candidates            # явный id ниже KW_RECENT_FLOOR
+    # Тикет площадки закрыт 06.09.2026: id ниже KW_RECENT_FLOOR, название не
+    # ключевое — значит в кандидатах его больше нет.
+    assert 10877 not in candidates
     for lid in probe.TOURNAMENT_LEAGUE_ID_ALLOWLIST:
         assert int(lid) in candidates
     assert candidates == sorted(set(candidates))
