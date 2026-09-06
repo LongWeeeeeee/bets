@@ -1273,7 +1273,7 @@ venv_catboost/bin/python3 pro_heroes_data/tempo_revamp_backtest.py \
 
 ## Подключение draft phase моделей в действующие readers
 
-`base/tools/export_draft_phase_serving.py --source DIR --corpus rows.npz --output DIR` экспортирует согласованные encoder/classifier в legacy filenames и сохраняет полный bundle. Early NW legacy-пара возвращает P(direction | marker); occurrence остаётся в bundle. Early Win хранится без активного live reader. Контроль — `manifest.json` с SHA256 и `verification_probe.npz`.
+`base/tools/export_draft_phase_serving.py --source DIR --corpus rows.npz --output DIR` экспортирует согласованные encoder/classifier в legacy filenames и сохраняет полный bundle. Early NW legacy-пара возвращает P(direction | marker); occurrence остаётся в bundle. Early Win подключён через `base/early_win_model.py` и `last_early_win(index)` к строке `🏁 Early Win ML-модель` сразу под Early NW. Это только отображение победителя популяции 20–34 минуты; в decision gates не участвует. `EARLY_WIN_MODEL_DIR` переопределяет каталог `data/draft_phase_serving/2026-09-05_position_pairs/early_win`, `EARLY_WIN_MODEL_ENABLED=0` выключает строку. Ошибка изолирована и записывается в `early_win_error` журнала prematch, вердикт хранится в истории индекса. Контроль — `manifest.json` с SHA256 и `verification_probe.npz`.
 
 `base/tools/refit_prematch_draft_component.py` принимает явные `--matrix`, `--weights`, `--compact`, `--public-corpus`, `--draft-model`, `--output`, `--report`. Пересчитывает live draft_logit и два interaction-признака, обучает только зависимые ветки; проверяет All target/classes/width, исходные нормировки, mid, сходимость. Выход содержит только веса.
 
