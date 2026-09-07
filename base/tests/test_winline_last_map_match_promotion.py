@@ -248,6 +248,150 @@ def test_successful_promotion_leaves_no_refusal_note():
     assert not getattr(extract, "miss_fingerprint", "")
 
 
+# ---------------------------------------------------------------------------
+# 07.09.2026 Team Synapse — MOUZ, карта 3: Winline убрал рынок карты и оставил
+# только «Матч» с прочерками (рынок снят, ставок нет). Фикстура — вырезка живого
+# DOM: pinned-бар с шапкой `3карта` + раскрытая панель `Популярные на матч /
+# Победитель - -`. Захват: serv1, собственный браузер (не shared-страница),
+# runtime/experiments/odds-winline/winline_decider_snapshot.py,
+# страница https://winline.ru/stavki/sport/kibersport/dota_2.
+# ---------------------------------------------------------------------------
+
+DECIDER_SUSPENDED = (FIXTURES / "winline_decider_match_suspended_20260907.html").read_text(
+    encoding="utf-8"
+)
+
+
+def test_suspended_match_on_decider_is_closed_not_missing():
+    """Рынка карты нет, «Матч» снят (прочерки): вердикт closed, а не missing.
+
+    Иначе снятый букмекером рынок неотличим в истории от слепоты парсера —
+    именно так карта 3 ушла в чат одним сообщением без объяснений.
+    """
+    extract = _extract(DECIDER_SUSPENDED, "Team Synapse", "MOUZ", 3, True)
+
+    assert list(extract.odds or []) == []
+    assert extract.market_closed is True
+    assert extract.reason == "closed"
+    assert extract.promoted_from_match is False
+    assert "suspended" in (extract.details or "").lower()
+    assert extract.miss_fingerprint == "promotion=match_suspended"
+
+
+def test_suspended_match_on_non_decider_stays_missing():
+    """Снятый «Матч» на НЕрешающей карте в поток карты не попадает никак."""
+    extract = _extract(DECIDER_SUSPENDED, "Team Synapse", "MOUZ", 3, False)
+
+    assert list(extract.odds or []) == []
+    assert extract.market_closed is False
+    assert extract.promoted_from_match is False
+
+
+def test_suspended_match_for_wrong_map_stays_missing():
+    """Шапка пишет `3карта`; на запрос карты 2 снятый «Матч» не подставляем."""
+    extract = _extract(DECIDER_SUSPENDED, "Team Synapse", "MOUZ", 2, True)
+
+    assert list(extract.odds or []) == []
+    assert extract.market_closed is False
+    assert extract.promoted_from_match is False
+
+
+def test_scan_reports_three_way_on_bo2_match():
+    """Скан реальной Bo2-карточки: трёхисходный «Матч» виден, цен нет."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(BO2_THREE_WAY_MATCH, "html.parser")
+    prices, three_way, suspended = bk._winline_match_market_scan(soup)
+
+    assert prices is None
+    assert three_way is True
+    assert suspended is False
+
+
+THREE_WAY_ONLY = """
+<html><body><div class="card">
+<span class="header-left__time">2карта 12'</span>
+<div>TEAM A TEAM B</div>
+<div class="match-row-label">Матч</div>
+<div class="card__coeffs">
+<span class="coefficient-button coefficient-button_generic3">5.81</span>
+<span class="coefficient-button coefficient-button_generic3">1.10</span>
+<span class="coefficient-button coefficient-button_generic3">-</span>
+</div></div></body></html>
+"""
+
+
+def test_three_way_match_veto_is_recorded_not_silent():
+    """Bo2: трёхисходный «Матч» ветирует промоцию именованной причиной."""
+    extract = _extract(THREE_WAY_ONLY, "TEAM A", "TEAM B", 2, True)
+
+    assert list(extract.odds or []) == []
+    assert extract.promoted_from_match is False
+    assert "match_market_three_way" in (extract.miss_fingerprint or "")
+
+
+THREE_WAY_THEN_VALID = """
+<html><body><div class="card">
+<span class="header-left__time">2карта 12'</span>
+<div>TEAM A TEAM B</div>
+<div class="match-row-label">Матч</div>
+<div class="card__coeffs">
+<span class="coefficient-button coefficient-button_generic3">5.81</span>
+<span class="coefficient-button coefficient-button_generic3">1.10</span>
+<span class="coefficient-button coefficient-button_generic3">-</span>
+</div>
+<div class="match-row-label">Матч</div>
+<div class="card__coeffs">
+<span class="coefficient-button coefficient-button_generic2">1.90</span>
+<span class="coefficient-button coefficient-button_generic2">1.80</span>
+</div></div></body></html>
+"""
+
+
+PANEL_MATCH_OPEN = """
+<html><body>
+<div class="pinned">EPL Masters 3карта TEAM A TEAM B 1 1 48 34</div>
+<section class="event-live-center">
+<div>DOTA 2, EPL Masters TEAM A 1 : 1 50:10 TEAM B</div>
+<div class="fast-bets__container"><div class="fast-bets__wrapper">
+<div class="fast-bets__top"><div class="fast-bets__title">Популярные на матч</div></div>
+<div class="fast-bets__bottom"><div class="bet-line bet-line--1">
+<div class="bet-line__title --last"><span class="bet-line__market-name">Победитель</span>
+<span class="bet-line__period"></span></div>
+<div class="bet-line__coefs-wrapper bet-line__coefs-wrapper--2btn">
+<div class="odd-btn">1.90</div><div class="odd-btn">1.80</div>
+</div></div></div></div></div>
+</section></body></html>
+"""
+
+
+def test_panel_match_ignored_for_wrong_map():
+    """Шапка пишет `3карта`; на запрос карты 2 панельный «Матч» не трогаем."""
+    extract = _extract(PANEL_MATCH_OPEN, "TEAM A", "TEAM B", 2, True)
+
+    assert list(extract.odds or []) == []
+    assert extract.promoted_from_match is False
+
+
+def test_panel_match_with_prices_promotes_on_decider_map3():
+    extract = _extract(PANEL_MATCH_OPEN, "TEAM A", "TEAM B", 3, True)
+
+    assert list(extract.odds or []) == [1.90, 1.80]
+    assert extract.promoted_from_match is True
+    assert extract.market_kind == "current_map_winner"
+
+
+def test_scan_does_not_abort_on_first_three_way_container():
+    """Трёхисходный контейнер не обрывает поиск: вето выносится в конце."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(THREE_WAY_THEN_VALID, "html.parser")
+    prices, three_way, _suspended = bk._winline_match_market_scan(soup)
+
+    assert prices == [1.90, 1.80]
+    assert three_way is True
+
+
 def test_fingerprint_helper_is_compact_and_machine_readable():
     assert bk._winline_promotion_fingerprint([], series_last_map=True) == ""
     assert bk._winline_promotion_fingerprint(

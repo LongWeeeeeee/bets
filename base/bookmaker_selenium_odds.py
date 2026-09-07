@@ -2076,12 +2076,77 @@ def _winline_map_row_present(text: str, map_num: int) -> bool:
     )
 
 
-def _winline_match_market_winner_prices(scope: Any) -> Optional[List[float]]:
-    """Две цены рынка «Матч» внутри карточки — только если исходов ровно два.
+def _winline_match_market_buttons_odd(container: Any) -> List[Any]:
+    """Кнопки исходов панели выбранного события (`odd-btn`)."""
+    return [
+        node
+        for node in container.find_all(
+            lambda tag: "odd-btn" in _winline_node_classes(tag)
+        )
+        if "odd-btn" in _winline_node_classes(node)
+    ]
 
-    Трёхисходный рынок (`_generic3`, с ничьей) не годится: победитель карты —
-    исход из двух. На Bo2 «Матч» рисуется именно трёхисходным.
+
+def _winline_match_market_scan(scope: Any) -> Tuple[Optional[List[float]], bool, bool]:
+    """Сканировать карточку на двухисходный рынок «Матч».
+
+    Возвращает `(prices|None, three_way, suspended)`:
+    - `three_way`: у «Матча» есть трёхисходный контейнер (`_generic3`, с ничьей).
+      Подставлять такой рынок вместо победителя карты запрещено всегда (Bo2),
+      поэтому это вето уровня страницы, а не пропуск контейнера.
+    - `suspended`: подпись «Матч» есть и кнопки исходов на месте, но ставку БК
+      не принимает (класс заморозки или прочерки вместо цен). 07.09.2026,
+      решающая карта: Winline убрал рынок карты, а «Матч» оставил с `- -`.
     """
+    three_way = False
+    suspended = False
+
+    def _readable_pair(buttons: List[Any]) -> Optional[List[float]]:
+        """Две торгуемые цены или None (заморожено/прочерки — тоже None)."""
+        if len(buttons) != 2:
+            return None
+        if any(_winline_button_is_unbettable(b) for b in buttons):
+            return None
+        prices: List[float] = []
+        for button in buttons:
+            match = re.search(
+                r"(?<!\d)([0-9]+[.,][0-9]+)(?!\d)",
+                " ".join(button.stripped_strings),
+            )
+            if not match:
+                prices = []
+                break
+            price = float(match.group(1).replace(",", "."))
+            if price <= 1.01:
+                prices = []
+                break
+            prices.append(price)
+        return prices if len(prices) == 2 else None
+
+    # Панель выбранного события: у рынка «Матч» нет подписи «Матч» — он задан
+    # обёрткой `Популярные на матч` + линией `Победитель`. Зеркально разбору
+    # карты (`Популярные на карту`), но период здесь НЕ карточный: пустой или
+    # «Матч». Линия с карточным периодом — рынок карты, не трогаем.
+    for wrapper in scope.select(".fast-bets__wrapper"):
+        title = wrapper.select_one(".fast-bets__title")
+        if title is None or " ".join(title.stripped_strings).lower() != "популярные на матч":
+            continue
+        for line in wrapper.select(".bet-line"):
+            name = line.select_one(".bet-line__market-name")
+            if name is None or " ".join(name.stripped_strings).lower() != "победитель":
+                continue
+            period = line.select_one(".bet-line__period")
+            period_text = " ".join(period.stripped_strings).lower() if period is not None else ""
+            if period_text and period_text != "матч":
+                continue
+            buttons = line.select(".bet-line__coefs-wrapper .odd-btn")
+            if len(buttons) != 2:
+                continue
+            prices = _readable_pair(list(buttons))
+            if prices is not None:
+                return prices, three_way, suspended
+            suspended = True
+
     for label in scope.find_all(True):
         if not _WINLINE_MATCH_MARKET_LABEL_RE.match(" ".join(label.stripped_strings) or ""):
             continue
@@ -2095,27 +2160,43 @@ def _winline_match_market_winner_prices(scope: Any) -> Optional[List[float]]:
                 _WINLINE_THREE_WAY_MARKET_BUTTON_CLASS in _winline_node_classes(node)
                 for node in container.find_all(True)
             ):
-                return None
-            buttons = _winline_winner_market_buttons(container)
-            if len(buttons) != 2 or any(_winline_button_is_unbettable(b) for b in buttons):
+                # Трёхисходный «Матч» (Bo2 с ничьей) — не рынок победителя
+                # карты. Фиксируем вето, но поиск не обрываем: валидный
+                # двухисходный рынок может лежать в соседней подписи, а вето
+                # выносится один раз в конце по всей карточке.
+                three_way = True
                 continue
-            prices: List[float] = []
-            for button in buttons:
-                match = re.search(
-                    r"(?<!\d)([0-9]+[.,][0-9]+)(?!\d)",
-                    " ".join(button.stripped_strings),
-                )
-                if not match:
-                    prices = []
-                    break
-                price = float(match.group(1).replace(",", "."))
-                if price <= 1.01:
-                    prices = []
-                    break
-                prices.append(price)
-            if len(prices) == 2:
-                return prices
-    return None
+            buttons = _winline_winner_market_buttons(container)
+            if buttons:
+                if len(buttons) != 2:
+                    continue
+                prices = _readable_pair(buttons)
+                if prices is not None:
+                    return prices, three_way, suspended
+                suspended = True
+                continue
+            odd_buttons = _winline_match_market_buttons_odd(container)
+            if odd_buttons:
+                # В родительский контейнер панели могут входить соседние линии —
+                # чужие кнопки приписывать «Матчу» нельзя.
+                if len(odd_buttons) != 2:
+                    continue
+                prices = _readable_pair(odd_buttons)
+                if prices is not None:
+                    return prices, three_way, suspended
+                suspended = True
+                continue
+    return None, three_way, suspended
+
+
+def _winline_match_market_winner_prices(scope: Any) -> Optional[List[float]]:
+    """Две цены рынка «Матч» внутри карточки — только если исходов ровно два.
+
+    Трёхисходный рынок (`_generic3`, с ничьей) не годится: победитель карты —
+    исход из двух. На Bo2 «Матч» рисуется именно трёхисходным.
+    """
+    prices, _, _ = _winline_match_market_scan(scope)
+    return prices
 
 
 def _winline_promotion_fingerprint(diag: Any, *, series_last_map: bool) -> str:
@@ -2177,26 +2258,61 @@ def _winline_promote_last_map_match_market(
         _note("no_card_scope")
         return None
     candidates.sort(key=lambda item: item[0])
+    # Доказательство «идёт именно карта N» — на уровне страницы, а не скопа:
+    # раскрытая панель выбранного события (`ww-feature-event-live-center-dsk`)
+    # шапки `Nкарта` не несёт by design — шапка живёт в pinned-баре и карточке
+    # ленты. 07.09.2026: панель с `Популярные на матч / Победитель - -` без
+    # склейки с pinned-баром давала вечное `card_header_silent`. Привязка цен
+    # при этом остаётся строго поскоповой (порядок сторон доказан в том же
+    # скопе, откуда взяты цены), а скоп с шапкой чужой карты исключается.
+    live_proven = any(
+        (m := _WINLINE_CARD_HEADER_MARKER_RE.search(scope_text)) is not None
+        and int(m.group()[0]) == int(map_num)
+        for _, _, scope_text in candidates
+    )
+    saw_three_way = False
+    suspended_scope_text = ""
+    pending: Optional[Tuple[List[float], str, str]] = None
     for _length, element, scope_text in candidates:
         header = _WINLINE_CARD_HEADER_MARKER_RE.search(scope_text)
-        if header is None:
-            _note("card_header_silent")
-            continue
-        if int(header.group()[0]) != int(map_num):
-            # Карточка сама пишет, какая карта идёт (`3карта`). Если она молчит
-            # или идёт другая карта — подставлять матчевые кэфы нельзя.
+        if header is not None and int(header.group()[0]) != int(map_num):
+            # Скоп чужой карты: его «Матч» к запрошенной не относится.
             _note(f"card_header_map={header.group()[0]}")
             continue
+        if header is None:
+            _note("card_header_silent")
         order = _winline_team_order(scope_text, team1, team2)
         if order is None:
             _note("team_order_unproven")
             continue
-        prices = _winline_match_market_winner_prices(element)
-        if not prices:
-            # Либо рынка «Матч» в карточке нет, либо он трёхисходный (Bo2 с
-            # ничьей), либо его кнопки не принимают ставку.
+        prices, three_way, suspended = _winline_match_market_scan(element)
+        if three_way:
+            # Трёхисходный «Матч» (Bo2 с ничьей) ветирует подстановку даже если
+            # где-то рядом затесался двухисходный контейнер. Решение
+            # откладывается до конца обхода: вето обязано победить независимо
+            # от порядка кандидатов.
+            saw_three_way = True
+        if prices:
+            if pending is None:
+                pending = (list(prices), order, scope_text)
+        elif suspended:
+            # Рынок «Матч» на месте, но БК сняла его (заморозка/прочерки):
+            # цены нет, но это доказанно закрытый рынок, а не слепота парсера.
+            suspended_scope_text = suspended_scope_text or scope_text
+        else:
+            # Либо рынка «Матч» в карточке нет вовсе, либо его разметка
+            # неизвестна.
             _note("match_market_unusable")
-            continue
+        continue
+    if not live_proven:
+        # Ни один скоп не доказал, что идёт именно карта N — приписывать ей
+        # чужой «Матч» нельзя. Причины уже в diag.
+        return None
+    if saw_three_way:
+        _note("match_market_three_way")
+        return None
+    if pending is not None:
+        prices, order, scope_text = pending
         card_prices = list(prices)
         if order == "reverse":
             prices.reverse()
@@ -2213,6 +2329,18 @@ def _winline_promote_last_map_match_market(
                 "winline last map of series: map market not offered, match winner "
                 f"promoted | {scope_text[:600]}"
             ),
+        )
+    if suspended_scope_text:
+        return _WinlineMapExtract(
+            market_closed=True,
+            reason="closed",
+            map_num=map_num,
+            market_kind="current_map_winner",
+            details=(
+                "winline last map of series: map market not offered, match winner "
+                f"suspended (not bettable) | {suspended_scope_text[:600]}"
+            ),
+            miss_fingerprint="promotion=match_suspended",
         )
     return None
 
