@@ -28,6 +28,30 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 
 ---
 
+## Offline laning ML (E-264)
+
+- `base/build_laning_corpus.py`: CLI `python -m base.build_laning_corpus
+  --source <json_dir> --output-dir <corpus_dir> --workers 2`; сохраняет
+  `rows.npz`/manifest/cache с ID, временем, длительностью, героями/аккаунтами по
+  позициям, STRATZ-классами трёх линий и необязательным **командным** NW `[10]`.
+  Final player NW не является NW10. Missing NW не исключает STRATZ-строку.
+- `base/laning_model.py`: `LaningModel.load(directory, with_history=False)` и
+  `predict_proba(heroes, history=None)`. `heroes`: `(N,10)` в порядке R1..5,D1..5;
+  результат `(N,3,5)`, линии **Radiant easy, mid, hard** = bottom,mid,top;
+  классы Dire stomp, Dire win, tie, Radiant win, Radiant stomp. History-модель
+  требует `(N,10,6)`: score/sign/log-count по игроку-позиции и игроку-герою-позиции,
+  построенные `build_history` только из карт с `end < predicted_start`.
+  Нулевой account не копит историю; финальные статы текущей карты не используются.
+- `scripts/ops/train_laning_model.py`: `--corpus`, `--output-dir`, `--train-maps`
+  (400000), `--eval-maps` (100000), `--iterations` (300), `--threads` (4).
+  Обучает `draft.cbm`/`history.cbm`, выбирает по validation, сохраняет план,
+  selection, summary и test predictions. Есть purge по окончанию на временных
+  границах. Это offline-интерфейс; live runtime не подключён.
+- `scripts/run/train_laning.sh RUN_NAME` запускает сборку и fit;
+  `scripts/ops/watch_laning_training.py --run-dir <dir> --thread <id>` наблюдает
+  DONE/FAIL/STALL/UNREACHABLE без периодических LLM-вызовов.
+- Протокол, ограничения и команды: `docs/experiments/E-264-laning-minute10.md`.
+
 ## `base/cyberscore_try.py` — ⭐ live runtime (28 997 строк)
 
 > Не читай целиком. `rg`/`grep` по имени функции + точечное чтение по диапазону.
