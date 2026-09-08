@@ -51,6 +51,23 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
   `scripts/ops/watch_laning_training.py --run-dir <dir> --thread <id>` наблюдает
   DONE/FAIL/STALL/UNREACHABLE без периодических LLM-вызовов.
 - Протокол, ограничения и команды: `docs/experiments/E-264-laning-minute10.md`.
+- E-265: `scripts/run/improve_laning.sh RUN_NAME` / `scripts/ops/improve_laning_model.py`
+  (`--corpus`, `--baseline`, `--output-dir`, `--train-maps` 800000,
+  `--small-train-maps` 400000, `--eval-maps` 100000, `--iterations` 900,
+  `--threads` 4) сравнивает два фиксированных кандидата с v1. Выбор и temperature
+  фиксируются на validation до confirmation на новых ID того же будущего периода.
+  Сохраняются `selected/history.cbm`, `selection.json`, `summary.json` и provenance.
+- `build_history(..., availability_delay_seconds=0, recent_window_seconds=None)`:
+  строгий upper `end < start-delay`; recent lower `end >= start-delay-window`.
+  С окном возвращает `(N,10,12)`: all-role3 / all-role-hero3 / recent-role3 /
+  recent-role-hero3. `lane_features(..., context=True)` добавляет полный драфт и
+  core/support history differences. V1 defaults и `(N,10,6)` сохранены.
+- `LaningModel.load` читает CBM metadata `laning_feature_set`,
+  `laning_temperature`, `laning_history_delay_seconds`, `laning_recent_window_seconds`.
+  Для `context_recent_v1` обязательны delay/window; неизвестная схема отклоняется.
+  `model.history_config` — kwargs для `build_history`; происхождение переданного
+  массива истории обязан обеспечить caller. Temperature применяется в `predict_proba`.
+  Детали проверки и ограничения: `docs/experiments/E-265-laning-v2-capacity-context-and-delayed-recent-hi.md`.
 
 ## `base/cyberscore_try.py` — ⭐ live runtime (28 997 строк)
 

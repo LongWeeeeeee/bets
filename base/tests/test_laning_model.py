@@ -25,6 +25,41 @@ def test_history_strict_completion_cutoff_and_unknown_accounts():
     assert out[3, 0] == pytest.approx(-1 / 11)
 
 
+def test_prior_history_recent_window_is_inclusive_at_lower_bound():
+    out = prior_history(np.array([7, 7, 7]), np.array([5., 10., 15.]),
+                        np.array([2., 1., -2.]), np.array([7]), np.array([15.]),
+                        recent_window_seconds=5)
+    # The 10-second result is in [query-window, query); the 15-second result is not.
+    assert out.shape == (1, 6)
+    assert out[0, 3] == pytest.approx(1 / 11)
+    assert out[0, 4] == pytest.approx(1 / 11)
+    assert out[0, 5] == pytest.approx(np.log(2))
+
+
+def test_prior_history_preserves_fractional_query_time_boundaries():
+    all_history = prior_history(np.array([3]), np.array([10]), np.array([2.]),
+                                np.array([3]), np.array([10.5]))
+    recent_history = prior_history(np.array([3]), np.array([10]), np.array([2.]),
+                                   np.array([3]), np.array([10.5]),
+                                   recent_window_seconds=0.0)
+    assert all_history[0, 2] == pytest.approx(np.log(2))
+    assert recent_history[0, 5] == 0
+
+
+def test_history_delay_changes_cutoff_but_not_future_rows():
+    corpus = {'ts': np.array([100, 1000, 2000]), 'duration': np.array([600, 600, 600]),
+              'heroes': np.tile(np.arange(1, 11), (3, 1)),
+              'accounts': np.tile(np.arange(101, 111), (3, 1)),
+              'lane_labels': np.array([[4, 1, 0], [0, 4, 4], [2, 2, 2]])}
+    plain = build_history(corpus, np.array([1]), availability_delay_seconds=0)
+    delayed = build_history(corpus, np.array([1]), availability_delay_seconds=700)
+    assert np.any(delayed != plain)
+    np.testing.assert_array_equal(
+        build_history(corpus, np.array([0, 1, 2]), availability_delay_seconds=0)[2],
+        build_history({**corpus, 'lane_labels': corpus['lane_labels'].copy()},
+                      np.array([0, 1, 2]), availability_delay_seconds=0)[2])
+
+
 def test_player_history_perspective_future_invariance_and_overlap():
     corpus = {'ts': np.array([100, 1000, 2000]), 'duration': np.array([600, 1500, 600]),
               'heroes': np.tile(np.arange(1, 11), (3, 1)),
@@ -51,6 +86,71 @@ def test_serialized_model_boundary(tmp_path):
     model.save_model(str(tmp_path / 'draft.cbm'))
     np.testing.assert_array_equal(LaningModel.load(tmp_path).predict_proba(heroes),
                                   model.predict_proba(x).reshape(10, 3, 5))
+
+
+def test_context_features_have_full_heroes_recent_history_and_differences():
+    heroes = np.arange(1, 11).reshape(1, 10)
+    history = np.zeros((1, 10, 12), dtype=float)
+    history[:, :, 6:] = 2
+    frame = lane_features(heroes, history, context=True)
+    assert frame.shape[1] == 93
+    assert [frame[f'hero_{i}'].iloc[0] for i in range(10)] == [str(i) for i in range(1, 11)]
+    assert frame['recent_history_0_0'].iloc[0] == 2
+    assert frame['context_core_diff_0'].iloc[0] == 0
+    with pytest.raises(ValueError, match='finite integers'):
+        lane_features(np.array([[1.5] + list(range(2, 11))]))
+
+
+def test_context_metadata_roundtrip_and_temperature(tmp_path):
+    from catboost import CatBoostClassifier
+    from base.laning_model import LaningModel
+    heroes = np.tile(np.arange(1, 11), (20, 1))
+    history = np.ones((20, 10, 12))
+    features = lane_features(heroes, history, context=True)
+    model = CatBoostClassifier(iterations=2, depth=2, verbose=False,
+                               allow_writing_files=False,
+                               metadata={'laning_feature_set': 'context_recent_v1',
+                                         'laning_temperature': '2',
+                                         'laning_history_delay_seconds': '3600',
+                                         'laning_recent_window_seconds': '2592000'})
+    categories = [key for key in features if not key.startswith(('history_', 'recent_history_', 'context_'))]
+    model.fit(features, np.tile(np.arange(5), 12), cat_features=categories)
+    model.save_model(str(tmp_path / 'history.cbm'))
+    loaded = LaningModel.load(tmp_path, with_history=True)
+    assert loaded.context and loaded.with_history and loaded.temperature == 2
+    assert loaded.history_config == {'availability_delay_seconds': 3600.0,
+                                     'recent_window_seconds': 2592000.0}
+    raw = model.predict_proba(features.iloc[:9]).reshape(3, 3, 5)
+    expected = raw ** 0.5
+    expected /= expected.sum(axis=-1, keepdims=True)
+    np.testing.assert_allclose(loaded.predict_proba(heroes[:3], history[:3]), expected)
+
+    unknown = CatBoostClassifier(iterations=2, depth=2, verbose=False,
+                                 allow_writing_files=False,
+                                 metadata={'laning_feature_set': 'future_v2'})
+    unknown.fit(features, np.tile(np.arange(5), 12), cat_features=categories)
+    unknown.save_model(str(tmp_path / 'unknown.cbm'))
+    (tmp_path / 'unknown.cbm').rename(tmp_path / 'draft.cbm')
+    with pytest.raises(ValueError, match='unsupported laning_feature_set'):
+        LaningModel.load(tmp_path)
+
+    missing = CatBoostClassifier(iterations=2, depth=2, verbose=False,
+                                  allow_writing_files=False,
+                                  metadata={'laning_feature_set': 'context_recent_v1'})
+    missing.fit(features, np.tile(np.arange(5), 12), cat_features=categories)
+    missing.save_model(str(tmp_path / 'draft.cbm'))
+    with pytest.raises(ValueError, match='requires history delay'):
+        LaningModel.load(tmp_path)
+
+    invalid = CatBoostClassifier(iterations=2, depth=2, verbose=False,
+                                 allow_writing_files=False,
+                                 metadata={'laning_feature_set': 'context_recent_v1',
+                                           'laning_history_delay_seconds': '-1',
+                                           'laning_recent_window_seconds': '2592000'})
+    invalid.fit(features, np.tile(np.arange(5), 12), cat_features=categories)
+    invalid.save_model(str(tmp_path / 'draft.cbm'))
+    with pytest.raises(ValueError, match='invalid laning history'):
+        LaningModel.load(tmp_path)
 
 
 def test_trainer_end_to_end_without_optional_team_networth(tmp_path):
