@@ -2226,10 +2226,10 @@ def _winline_promote_last_map_match_market(
     счёт 1:1, карта 3) в карточке единственная подпись рынка — `Матч 3.30 1.25`,
     и обе цены набраны классом двухисходного рынка.
 
-    Предохранители: подставляем только когда подписи рынка запрошенной карты нет
-    НИ В ОДНОЙ карточке пары (приостановленный рынок карты — это не отсутствие),
-    рынок «Матч» двухисходный, обе кнопки принимают ставку, а порядок сторон
-    доказан по тексту карточки.
+    Вызывается после проверки собственного рынка карты: у него нет доступной
+    пары цен. Пустая или заблокированная строка карты не запрещает открытый
+    «Матч» на доказанной решающей карте. Рынок «Матч» должен быть двухисходным,
+    обе его кнопки должны принимать ставку, порядок сторон доказан по карточке.
 
     `diag` — список, куда складывается причина отказа. Без него отказ выглядит
     в evidence так же, как отсутствие рынка: 22.08.2026 девять карт-троек
@@ -2250,9 +2250,6 @@ def _winline_promote_last_map_match_market(
             # Широкий контейнер накрывает соседние матчи: его подписи рынков
             # ничего не говорят о нашей карточке.
             continue
-        if _winline_map_row_present(scope_text, map_num):
-            _note("map_row_present")
-            return None
         candidates.append((len(scope_text), element, scope_text))
     if not candidates:
         _note("no_card_scope")
@@ -2326,7 +2323,7 @@ def _winline_promote_last_map_match_market(
             card_team_order=_winline_card_order_label(order, team1, team2),
             card_odds=card_prices,
             details=(
-                "winline last map of series: map market not offered, match winner "
+                "winline last map of series: map winner quotes unavailable, match winner "
                 f"promoted | {scope_text[:600]}"
             ),
         )
@@ -2691,6 +2688,16 @@ def _winline_structured_current_map_winner(
             market_kind="current_map_winner",
             details="winline conflicting structured winner prices",
         )
+    if series_last_map:
+        # A blank/locked map row can remain while Match is already open.
+        # On a proven decider these are the same outcome; only Match's own
+        # unlocked two-way buttons determine whether its prices are usable.
+        promoted = _winline_promote_last_map_match_market(
+            soup, team1, team2, map_num, diag=diag)
+        if promoted is not None:
+            return promoted
+    elif diag is not None:
+        diag.append("not_decider")
     if saw_unbettable_winner:
         return _WinlineMapExtract(
             market_closed=True,
@@ -2712,17 +2719,6 @@ def _winline_structured_current_map_winner(
                 )
             ),
         )
-    if series_last_map:
-        # Рынка запрошенной карты в карточке нет вовсе, а карта последняя в серии:
-        # победитель этой карты и победитель матча — одно событие.
-        promoted = _winline_promote_last_map_match_market(
-            soup, team1, team2, map_num, diag=diag)
-        if promoted is not None:
-            return promoted
-    elif diag is not None:
-        # Карта не доказана как решающая — подстановка запрещена по замыслу, но
-        # в evidence это должно быть отличимо от отказавшего предохранителя.
-        diag.append("not_decider")
     return None
 
 
@@ -2885,7 +2881,7 @@ def _extract_winline_current_map_winner(
     """Strict Winline current-map winner only.
 
     Матчевые кэфы в поток карты не подставляются НИКОГДА, кроме одного случая:
-    `series_last_map=True` и рынка карты в карточке нет вовсе. На последней карте
+    `series_last_map=True` и у рынка карты нет доступной пары цен. На последней карте
     серии победитель карты и победитель матча — одно событие, и Winline тогда
     оставляет только «Матч». Решение принимается только по DOM (`html`), потому
     что двухисходность рынка видна лишь по классам кнопок: в плоском тексте
@@ -4414,24 +4410,10 @@ async def parse_site_in_camoufox_page_async(
             team1,
             team2,
             forced_map_num=forced_map_num,
+            html=html if series_last_map else "",
+            series_last_map=series_last_map,
         )
-        if not wl.odds and series_last_map and html:
-            # Решающая карта серии: рынка карты Winline может не выставить вовсе
-            # и оставить только «Матч» — это одно и то же событие. Промоция живёт
-            # в структурном (DOM) разборе, потому что двухисходность рынка видна
-            # только по классам кнопок. Добор строго АДДИТИВНЫЙ: текстовый разбор
-            # уже отработал, промоция может лишь добавить кэфы, но не отнять.
-            promoted = _extract_winline_current_map_winner(
-                winline_card,
-                team1,
-                team2,
-                forced_map_num=forced_map_num,
-                html=html,
-                series_last_map=True,
-            )
-            if promoted.odds:
-                wl = promoted
-        if wl.odds and _winline_map_odds_bettable(
+        if wl.odds and not wl.promoted_from_match and _winline_map_odds_bettable(
             html, team1, team2, wl.map_num or forced_map_num
         ) is False:
             wl = _winline_mark_locked_as_closed(wl)

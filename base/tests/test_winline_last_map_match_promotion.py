@@ -1,4 +1,4 @@
-"""Последняя карта серии: рынка карты нет — берём победителя матча.
+"""Последняя карта серии: нет доступных кэфов карты — берём победителя матча.
 
 Наблюдение с живой страницы 02.08.2026 (снимок `winline_lastmap_20260802_214358`):
 у решающей карты Winline иногда не выставляет рынок карты вовсе. Карточка
@@ -13,12 +13,13 @@
 Подставлять трёхисходный рынок вместо победителя карты нельзя.
 
 Предохранители промоции (каждый закрыт тестом ниже): карта обязана быть последней
-в серии, подписи рынка запрошенной карты не должно быть ни в одной карточке пары,
+в серии, доступных кэфов запрошенной карты не должно быть ни в одной карточке пары,
 рынок «Матч» обязан быть двухисходным и принимать ставку, карточка обязана сама
 сообщать, что идёт именно эта карта, а порядок сторон берётся из текста карточки.
 """
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path
@@ -77,6 +78,109 @@ def test_promotion_reports_raw_card_order_and_prices():
     assert [round(x, 2) for x in (extract.card_odds or [])] == [3.30, 1.25]
     # А запрошенный порядок — обратный, и цены в нём развёрнуты.
     assert [round(x, 2) for x in (extract.odds or [])] == [1.25, 3.30]
+
+
+def _decider_with_unavailable_map(map_state="blank", match_locked=False):
+    """Mutate captured 2026-08-02 cards, not an invented DOM layout.
+
+    Reproduce the 2026-09-08 report: Match is open while the deciding-map
+    row is still present without usable quotes. The incident's earlier DOM
+    was not saved; this is a controlled mutation of the two real captures.
+    """
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(LAST_MAP_MATCH_ONLY, "html.parser")
+    other = BeautifulSoup(BO2_THREE_WAY_MATCH, "html.parser")
+    row = copy.deepcopy(other.select_one(".period-name").parent)
+    row.select_one(".period-name").string = "3 карта"
+    for button in row.select(".coefficient-button_generic2"):
+        if map_state == "blank":
+            button["class"].append("coefficient-button--is-blank")
+            button.select_one("span").string = "-"
+        elif map_state == "locked":
+            button["class"].append("coefficient-button_locked")
+    if match_locked:
+        for button in soup.select(".coefficient-button_generic2"):
+            button["class"].append("coefficient-button_locked")
+    soup.select_one(".coeffs-wrapper").append(row)
+    return str(soup)
+
+
+@pytest.mark.parametrize("map_state", ["blank", "locked"])
+def test_unavailable_deciding_map_uses_open_match(map_state):
+    extract = _extract(_decider_with_unavailable_map(map_state),
+                       "Yakult Brothers", "REKONIX", 3, True)
+    assert extract.odds == [1.25, 3.30]
+    assert extract.promoted_from_match is True
+    assert extract.market_closed is False
+
+
+@pytest.mark.parametrize("last_map,match_locked", [(False, False), (True, True)])
+def test_unavailable_map_does_not_bypass_match_safety(last_map, match_locked):
+    extract = _extract(_decider_with_unavailable_map(match_locked=match_locked),
+                       "Yakult Brothers", "REKONIX", 3, last_map)
+    assert not extract.odds
+    assert extract.promoted_from_match is False
+
+
+def test_available_deciding_map_keeps_priority_over_match():
+    extract = _extract(_decider_with_unavailable_map("open"),
+                       "Yakult Brothers", "REKONIX", 3, True)
+    assert extract.odds == [1.11, 5.87]
+    assert extract.promoted_from_match is False
+
+
+def test_unavailable_deciding_map_fast_collector_accepts_match(monkeypatch):
+    import cyberscore_try as cs
+
+    monkeypatch.setattr(cs, "_winline_registry_series_last_map", lambda _: True)
+    url = "https://winline.ru/stavki/sport/kibersport/dota_2"
+    result = cs._winline_fast_collect_from_payload(
+        {"html": _decider_with_unavailable_map(), "url": url},
+        series="test-decider", map_num=3, team1="Yakult Brothers",
+        team2="REKONIX", expected_url=url,
+    )
+    assert result is not None
+    assert result["market_status"] == "open"
+    assert [result["p1_odds"], result["p2_odds"]] == [1.25, 3.30]
+    assert result["odds_promoted_from_match"] is True
+    assert result["odds_bettable"] is True
+
+
+@pytest.mark.parametrize("map_state", ["blank", "locked"])
+def test_unavailable_deciding_map_full_collector_accepts_match(monkeypatch, map_state):
+    from bs4 import BeautifulSoup
+    from test_winline_dynamic_dom_collector import _CountingPage
+
+    html = _decider_with_unavailable_map(map_state)
+    url = "https://winline.ru/stavki/sport/kibersport/dota_2"
+    page = _CountingPage(html=html, body_text=" ".join(
+        BeautifulSoup(html, "html.parser").stripped_strings), url=url)
+    monkeypatch.setattr(bk.time, "sleep", lambda *_: None)
+    result = bk.parse_site_in_camoufox_page(
+        page, "winline", url, "Yakult Brothers", "REKONIX", mode="odds",
+        forced_map_num=3, series_last_map=True, acquisition_mode="dynamic_dom",
+    )
+    assert result.odds == [1.25, 3.30]
+    assert "match winner promoted" in result.details
+
+
+def test_nondeciding_map_full_collector_preserves_text_market(monkeypatch):
+    from test_winline_dynamic_dom_collector import _CountingPage
+
+    body = "TeamA TeamB 1 карта 1.55 2.40"
+    url = "https://winline.ru/stavki/sport/kibersport/dota_2"
+    page = _CountingPage(html=f"<html><body>{body}</body></html>",
+                         body_text=body, url=url)
+    monkeypatch.setattr(bk.time, "sleep", lambda *_: None)
+    # Exercise the final Winline-specific fallback when generic feed parsing
+    # cannot classify the row.
+    monkeypatch.setattr(bk, "_extract_map_odds_from_feed_context", lambda *_a, **_kw: [])
+    result = bk.parse_site_in_camoufox_page(
+        page, "winline", url, "TeamA", "TeamB", mode="odds",
+        forced_map_num=1, series_last_map=False, acquisition_mode="dynamic_dom",
+    )
+    assert result.odds == [1.55, 2.40]
 
 
 def test_card_order_is_independent_of_requested_order():

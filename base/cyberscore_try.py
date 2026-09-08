@@ -2146,7 +2146,11 @@ def _winline_fast_collect_from_payload(
     # Числа распарсены, но принимает ли БК ставку — видно только по классам
     # кнопок исхода. Ошибку детектора глушим: он уточняет разбор, а не правит его.
     bettable_fn = globals().get("_bookmaker_winline_bettable")
-    if callable(bettable_fn):
+    if result.promoted_from_match:
+        # The parser checked Match's own buttons. A suspended map row must
+        # not veto prices taken from the separate, open Match market.
+        result.odds_bettable = True
+    elif callable(bettable_fn):
         try:
             result.odds_bettable = bettable_fn(html, team1, team2, map_num)
         except Exception:
