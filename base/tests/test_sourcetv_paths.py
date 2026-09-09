@@ -359,6 +359,98 @@ def test_rejected_league_is_written_to_log_once_per_hour() -> None:
     assert seen[19850]["name"] == "KUZYA CUP"
 
 
+def test_platform_ticket_admitted_only_with_a_known_tier12_side(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """10877 в probe: допуск по team_id известной стороны и отказ во всех прочих случаях.
+
+    09.09.2026 (запрос alex) на общем ежедневном тикете площадки шёл открытый
+    квал BLAST Slam 'Imperial power vs ЯЧЁ123', а название Valve —
+    'Challengermode Daily Tournaments', где токена allowlist'а нет. Probe —
+    ПРОДЮСЕР моста: без допуска здесь матч не доедет до cyberscore вообще,
+    поэтому правило зеркалит `_league_admits_with_known_side` из cyberscore_try.
+    """
+    monkeypatch.setattr(probe, "_known_tier12_team_ids", lambda: {9722899})
+    qualifier = {
+        "league_id": 10877,
+        "radiant_team": {"team_name": "Imperial power", "team_id": 0},
+        "dire_team": {"team_name": "ЯЧЁ123", "team_id": 9722899},
+    }
+    assert probe._game_has_known_tier12_side(qualifier) is True
+    assert probe._league_tier_gated_admission(10877, qualifier) is True
+    # Valve не отдал сущность команды у одной из сторон — вторая всё равно тянет.
+    assert probe._side_id(qualifier, "radiant_team") == 0
+    assert probe._side_name(qualifier, "radiant_team") == "Imperial power"
+    # Обе стороны неизвестны — тикет закрыт, иначе вернулись бы чужие ежедневки.
+    strangers = {
+        "league_id": 10877,
+        "radiant_team": {"team_name": "Стек Без Словаря", "team_id": 4242},
+        "dire_team": {"team_name": "Второй Стек Без Словаря", "team_id": 4343},
+    }
+    assert probe._league_tier_gated_admission(10877, strangers) is False
+    # Та же известная сторона, но лига не гейтовая.
+    assert probe._league_tier_gated_admission(19924, qualifier) is False
+    # Нет ни сущностей команд, ни самой записи — впускать вслепую нельзя.
+    assert probe._league_tier_gated_admission(10877, {"league_id": 10877}) is False
+    assert probe._side_id({}, "dire_team") == 0
+    assert probe._side_name({}, "dire_team") == "Dire"
+
+
+def test_platform_ticket_gate_ignores_team_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Гейт сверяет team_id, а не имя: 'Team Titan' не открывает тикет.
+
+    `normalize_team_name` вычищает 'team'/'esports'/пробелы, поэтому 'Team Titan'
+    схлопывается в 'titan' — а это ключ tier2 чужой организации (9593627). На
+    общем ежедневном тикете любительский состав с таким названием реалистичен, и
+    допуск по имени утащил бы чужой team_id в ELO/Stratz/tier.
+    """
+    monkeypatch.setattr(probe, "_known_tier12_team_ids", lambda: {9593627})
+    hijack = {
+        "league_id": 10877,
+        "radiant_team": {"team_name": "Team Titan", "team_id": 4242},
+        "dire_team": {"team_name": "Стек Без Словаря", "team_id": 4343},
+    }
+    assert probe._league_tier_gated_admission(10877, hijack) is False
+
+
+def test_tier_dictionary_failure_closes_the_platform_ticket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Битый overlay закрывает условный допуск, а не роняет опрос Steam.
+
+    Справочник probe нужен только ради этого гейта: отказ чтения обязан
+    означать «тикета не видно», а не исключение внутри 60-секундного рефетча.
+    """
+    import tier_dynamic_overlay
+
+    def _broken_overlay(_path):
+        raise ValueError("overlay is not a JSON object")
+
+    monkeypatch.setattr(tier_dynamic_overlay, "load_entries", _broken_overlay)
+    assert probe._known_tier12_team_ids() == set()
+    qualifier = {
+        "league_id": 10877,
+        "radiant_team": {"team_name": "ЯЧЁ123", "team_id": 9722899},
+        "dire_team": {"team_name": "Стек Без Словаря", "team_id": 4242},
+    }
+    assert probe._league_tier_gated_admission(10877, qualifier) is False
+
+
+def test_real_dictionary_carries_the_qualifier_side() -> None:
+    """ЯЧЁ123 известна как tier2 по id 9722899 — под устаревшим ЛАТИНСКИМ ключом.
+
+    Живой фид отдаёт кириллическое 'ЯЧЁ123', а ключ tier2 — 'yache123'
+    (`base/id_to_names.py:33`); в `rest_teams` под ключом 'ячё123' лежит ДРУГОЙ
+    id (9587737). Сверка по имени здесь не нашла бы ничего, поэтому гейт держится
+    на team_id — этот тест фиксирует, что реальный словарь его отдаёт.
+    """
+    known = probe._known_tier12_team_ids()
+    assert 9722899 in known
+    assert 9587737 not in known
+
+
 def test_heartbeat_tells_silence_apart_from_a_filtered_out_league() -> None:
     """«Никто не играет» и «играют, но всё отброшено» снаружи выглядят одинаково."""
     seen: dict = {}

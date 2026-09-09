@@ -1257,7 +1257,13 @@ def _resolve_sourcetv_bridge_identity(matches: Any) -> Any:
     for key, payload in matches.items():
         if not isinstance(payload, dict):
             continue
-        if not _league_matches_allowlist(payload.get("league_id"), payload.get("league_name")):
+        if not _league_matches_allowlist(
+            payload.get("league_id"), payload.get("league_name")
+        ) and not _league_admits_with_known_side(
+            payload.get("league_id"),
+            payload.get("radiant_team_id"),
+            payload.get("dire_team_id"),
+        ):
             continue
         needs_name = (
             _is_placeholder_team_name(payload.get("radiant_team_name"))
@@ -7291,7 +7297,7 @@ def _format_star_hits_line(hits: List[Dict[str, Any]]) -> str:
     return ", ".join(parts)
 
 
-def _format_win_model_line(*blocks) -> str:
+def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     """Строка с оценкой драфтовой ML-модели для Telegram и лога.
 
     Индекс кладёт в каждый блок `synergy_and_counterpick`; он одинаков во всех,
@@ -7312,8 +7318,10 @@ def _format_win_model_line(*blocks) -> str:
                 if index is not None:
                     source = block.get(win_model_veto.SOURCE_KEY)
                     break
+    standalone_all_line = str(all_model_line or "").strip()
     if index is None:
-        return ""
+        # The standalone All model does not share the ensemble index.
+        return f"{standalone_all_line}\n" if standalone_all_line else ""
     side = "Radiant" if index > 0 else ("Dire" if index < 0 else "\u2014")
     confidence = 50.0 + abs(index)
     line = f"\U0001F916 ML-\u043c\u043e\u0434\u0435\u043b\u044c: {side} {confidence:.1f}%"
@@ -7379,6 +7387,8 @@ def _format_win_model_line(*blocks) -> str:
     if _early_win:
         line += (f"\n\U0001F3C1 Early Win ML-модель: "
                  f"{_early_win['side']} {float(_early_win['confidence']) * 100:.1f}%")
+    if standalone_all_line:
+        line += f"\n{standalone_all_line}"
     # Late-модель: тот же драфт, но обучена ТОЛЬКО на картах >= 36 минут
     # (E-240). Показывается всегда, когда оценка есть: она предматчевая,
     # живого состояния не требует. Нет строки — модель не загрузилась или
@@ -7438,6 +7448,7 @@ def _build_star_hits_summary_block(
     early_output: Optional[dict],
     mid_output: Optional[dict],
     all_output: Optional[dict],
+    all_model_line: str = "",
 ) -> str:
     """Return multi-line ``⭐ Star hits (WR60+):`` block for Telegram/log output.
 
@@ -7458,7 +7469,9 @@ def _build_star_hits_summary_block(
     all_hits = [h for h in section_all_hits if h.get("metric") not in mix_metric_names]
     mix_hits = [h for h in section_all_hits if h.get("metric") in mix_metric_names]
 
-    model_line = _format_win_model_line(early_output, mid_output, all_output)
+    model_line = _format_win_model_line(
+        early_output, mid_output, all_output, all_model_line=all_model_line
+    )
     if not any((early_hits, mid_hits, all_hits, mix_hits)):
         return model_line
 
@@ -8170,6 +8183,7 @@ def _build_lane_block(
     lane_adv_line: str = "",
     lane_adv_dict_line: str = "",
     lane_kills_adv: Any = None,
+    ml_laning_line: str = "",
 ) -> str:
     top_line = str(top or "").strip()
     mid_line = str(mid or "").strip()
@@ -8177,10 +8191,44 @@ def _build_lane_block(
     lane_adv_dict = str(lane_adv_dict_line or "").strip()
     lane_adv = str(lane_adv_line or "").strip()
     lane_kills = _build_lane_kills_adv_line(lane_kills_adv).strip()
-    lane_lines = [line for line in (top_line, mid_line, bot_line, lane_adv_dict, lane_kills, lane_adv) if line]
+    ml_laning = str(ml_laning_line or "").strip()
+    lane_lines = [line for line in (top_line, mid_line, bot_line, ml_laning, lane_adv_dict, lane_kills, lane_adv) if line]
     if not lane_lines:
         return ""
     return "Lanes:\n" + "\n".join(lane_lines) + "\n\n"
+
+
+def _build_laning_panel_lines(
+    radiant_heroes_and_pos: Any,
+    dire_heroes_and_pos: Any,
+    timestamp: Any,
+) -> Dict[str, str]:
+    """Return optional display-only ML panel strings for one parsed draft.
+
+    The serving adapter is deliberately imported and called here, rather than
+    from a formatter: one map gets one evaluation, and an unavailable model
+    cannot prevent the pre-existing card or any delivery decision.
+    """
+    empty = {"ml_laning_line": "", "all_model_line": ""}
+    try:
+        from base import laning_serving
+
+        raw = laning_serving.panel_lines(
+            radiant_heroes_and_pos,
+            dire_heroes_and_pos,
+            timestamp,
+            draft_model=win_model_veto,
+        )
+    except Exception:                               # display-only fail-open
+        return empty
+    if not isinstance(raw, dict):
+        return empty
+    for key in empty:
+        try:
+            empty[key] = str(raw.get(key) or "").strip()
+        except Exception:
+            pass
+    return empty
 
 
 def _star_block_diagnostics(raw_block: Optional[dict], target_wr: int, section: str) -> Dict[str, Any]:
@@ -12349,6 +12397,7 @@ def _build_lane_adv_standalone_kills_message(
     radiant_heroes_and_pos: Any = None,
     dire_heroes_and_pos: Any = None,
     kills_window_header_label: Any = None,
+    ml_laning_line: str = "",
 ) -> str:
     """Build the dispatch message for the standalone "lane_adv_dict ≥ 8" kills
     trigger. Used when the regular STAR signal block is empty/rejected — we
@@ -12367,6 +12416,7 @@ def _build_lane_adv_standalone_kills_message(
         lane_adv_line=_build_dota2protracker_lane_adv_line(protracker_payload),
         lane_adv_dict_line=_build_lane_dict_adv_line(top, mid, bot),
         lane_kills_adv=lane_kills_adv,
+        ml_laning_line=ml_laning_line,
     )
     live_state_block = _format_live_message_state_block(
         game_time_seconds=game_time_seconds,
@@ -12405,6 +12455,8 @@ def _build_prematch_model_bet_message(
     radiant_heroes_and_pos: Any = None,
     dire_heroes_and_pos: Any = None,
     full_message_text: Any = None,
+    ml_laning_line: str = "",
+    all_model_line: str = "",
 ) -> str:
     """Тело самостоятельной ставки предматчевой модели.
 
@@ -12442,6 +12494,7 @@ def _build_prematch_model_bet_message(
         bot,
         lane_adv_line=_build_dota2protracker_lane_adv_line(protracker_payload),
         lane_adv_dict_line=_build_lane_dict_adv_line(top, mid, bot),
+        ml_laning_line=ml_laning_line,
     )
     live_state_block = _format_live_message_state_block(
         game_time_seconds=game_time_seconds,
@@ -12456,7 +12509,7 @@ def _build_prematch_model_bet_message(
         f"{header}\n"
         f"{normalize_team_name_display(str(radiant_team_name or ''))} VS {normalize_team_name_display(str(dire_team_name or ''))}\n"
         f"{_build_series_score_line(live_league)}"
-        f"{model_line or ''}"
+        f"{model_line or all_model_line or ''}"
         f"{lane_block}"
         f"{team_elo_block or ''}"
         f"{live_state_block}"
@@ -12478,6 +12531,8 @@ def _build_early_local_kills_message(
     radiant_heroes_and_pos: Any = None,
     dire_heroes_and_pos: Any = None,
     kills_window_header_label: Any = None,
+    ml_laning_line: str = "",
+    all_model_line: str = "",
 ) -> str:
     """Build a FULL kills-bet body for the early (pre-networth-gate) release.
 
@@ -12518,6 +12573,7 @@ def _build_early_local_kills_message(
         ),
         lane_adv_dict_line=_build_lane_dict_adv_line(top, mid, bot),
         lane_kills_adv=s.get('lane_kills_adv_dict'),
+        ml_laning_line=ml_laning_line,
     )
 
     early_output_log = _decorate_star_block_for_display(
@@ -12612,6 +12668,7 @@ def _build_early_local_kills_message(
         early_output=s.get('early_output', {}),
         mid_output=s.get('mid_output', {}),
         all_output=local_all_output,
+        all_model_line=all_model_line,
     )
 
     metric_list = [
@@ -12808,6 +12865,7 @@ def _build_pipeline_probe_message(
     dire_heroes_and_pos: Dict[str, Any],
     metrics_payload: Dict[str, Any],
     protracker_payload: Optional[Dict[str, Any]],
+    ml_laning_line: str = "",
 ) -> str:
     lane_block = _build_lane_block(
         metrics_payload.get('top'),
@@ -12820,6 +12878,7 @@ def _build_pipeline_probe_message(
             metrics_payload.get('bot'),
         ),
         lane_kills_adv=metrics_payload.get('lane_kills_adv_dict'),
+        ml_laning_line=ml_laning_line,
     )
     return (
         f"{_format_signal_header(stake_team_name='PIPELINE CHECK', stake_multiplier=1)}\n"
@@ -14342,10 +14401,15 @@ def _fetch_sourcetv_delayed_match_state(json_url: str) -> Optional[Dict[str, Opt
     return _bookmaker_enrich_delayed_match_state({"game_time": game_time_value, "radiant_lead": lead_value}, payload)
 
 
-def _sourcetv_delayed_league_meta(
-    json_url: Optional[str],
-) -> Optional[Tuple[int, str]]:
-    """``(league_id, league_name)`` матча из моста по sourcetv://-URL."""
+def _sourcetv_bridge_payload(json_url: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Запись моста по sourcetv://-URL; None, если не найдена или не прочиталась.
+
+    Отдельно от ``_sourcetv_delayed_league_meta`` потому, что гейту лиг нужны ещё
+    и team_id сторон: запись моста несёт их, а кортеж ``(league_id, league_name)``
+    — нет. Расширять сам кортеж нельзя: он распаковывается в
+    ``_league_matches_allowlist(*meta)``, и лишние элементы дали бы TypeError
+    внутри drain-цикла.
+    """
     id_match = re.search(r"sourcetv://matches/(\d+)", str(json_url or ""))
     if not id_match:
         return None
@@ -14355,7 +14419,15 @@ def _sourcetv_delayed_league_meta(
     except Exception:
         return None
     payload = matches.get(id_match.group(1))
-    if not isinstance(payload, dict):
+    return payload if isinstance(payload, dict) else None
+
+
+def _sourcetv_delayed_league_meta(
+    json_url: Optional[str],
+) -> Optional[Tuple[int, str]]:
+    """``(league_id, league_name)`` матча из моста по sourcetv://-URL."""
+    payload = _sourcetv_bridge_payload(json_url)
+    if payload is None:
         return None
     try:
         league_id = int(payload.get("league_id") or 0)
@@ -14590,12 +14662,18 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
         # старым кодом). Если sourcetv-матч жив в мосте и его лига вне allowlist —
         # дропаем, чтобы мусорный турнир не ушёл по таймеру watcher'а.
         if str(payload.get("json_url") or "").startswith("sourcetv://"):
-            _gd_league_meta = _sourcetv_delayed_league_meta(payload.get("json_url"))
-            if (
-                _gd_league_meta is not None
-                and not _league_matches_allowlist(*_gd_league_meta)
+            _gd_bridge = _sourcetv_bridge_payload(payload.get("json_url"))
+            if _gd_bridge is not None and not (
+                _league_matches_allowlist(
+                    _gd_bridge.get("league_id"), _gd_bridge.get("league_name")
+                )
+                or _league_admits_with_known_side(
+                    _gd_bridge.get("league_id"),
+                    _gd_bridge.get("radiant_team_id"),
+                    _gd_bridge.get("dire_team_id"),
+                )
             ):
-                _gd_league = _gd_league_meta[1]
+                _gd_league = _gd_bridge.get("league_name")
                 _drop_delayed_match(match_key, reason="league_not_in_allowlist")
                 print(f"   🚫 Delayed дроп: лига вне allowlist ({_gd_league}) — {match_key}")
                 continue
@@ -19021,6 +19099,7 @@ from league_keywords import (  # noqa: E402
     TOURNAMENT_LEAGUE_ID_ALLOWLIST,
     TOURNAMENT_TITLE_ALLOW_KEYWORDS,
     TOURNAMENT_TITLE_ALLOW_PHRASES,
+    league_is_tier_gated as _league_is_tier_gated,
     league_matches_allowlist as _league_matches_allowlist,
     title_matches_allow_keywords as _title_matches_allow_keywords,
 )
@@ -22115,6 +22194,33 @@ def _team_identity_missing(team_ids: Any, team_name: str) -> bool:
     return str(team_name or "").strip().lower() in ANONYMOUS_TEAM_NAMES
 
 
+def _league_admits_with_known_side(
+    league_id: Any,
+    radiant_team_ids: Any,
+    dire_team_ids: Any,
+) -> bool:
+    """True, если гейтовый тикет площадки пускается по известной tier1/2 стороне.
+
+    Зеркало ``sourcetv_probe._league_tier_gated_admission``: общий ежедневный
+    тикет (10877 Challengermode) несёт и открытые квалы BLAST Slam, и чужие
+    турниры, а название Valve не содержит ни одного токена allowlist'а. Пускаем
+    только матч, где хотя бы одна сторона УЖЕ известна как tier1/tier2, — состав
+    квалов меняется каждый круг и перечислять его руками бессмысленно.
+
+    Сверяем строго team_id. По имени нельзя: ``_resolve_known_team_id_without_side_effects``
+    резолвит имя первым, а ``normalize_team_name`` вычищает 'team'/'esports'/пробелы,
+    поэтому 'Team Titan' схлопывается в 'titan' и совпадает с ключом tier2 чужой
+    организации — на общем тикете это утащило бы чужой team_id в ELO/Stratz/tier.
+    """
+    if not _league_is_tier_gated(league_id):
+        return False
+    for raw_ids in (radiant_team_ids, dire_team_ids):
+        for team_id in _extract_candidate_team_ids(raw_ids):
+            if _get_team_tier(team_id) in (1, 2):
+                return True
+    return False
+
+
 def _classify_tier_three_sides(
     radiant_team_ids: Any,
     radiant_team_name: str,
@@ -22124,7 +22230,7 @@ def _classify_tier_three_sides(
 ) -> Optional[Tuple[int, int]]:
     """(radiant_id, dire_id), если матч пускает tier-3 allowlist; иначе None.
 
-    Пускаем в двух случаях:
+    Пускаем в трёх случаях:
 
     * лига впущена руками (`TOURNAMENT_LEAGUE_ID_ALLOWLIST`) — это открытые
       квалификации на чужом тикете, где опознание команд заведомо неполное:
@@ -22132,12 +22238,16 @@ def _classify_tier_three_sides(
       BLAST Slam, и у половины сторон Valve не отдавал ни id, ни названия.
       Перечислять там команды руками бессмысленно — их состав меняется каждый
       круг;
+    * лига в `TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST` (общий ежедневный тикет
+      площадки, 06.09.2026 закрытый безусловно) И ХОТЯ БЫ ОДНА сторона уже
+      известна как tier1/tier2 по team_id. Так квалы возвращаются без возврата
+      авто-онбординга: вторая, неизвестная сторона остаётся неизвестной;
     * либо ХОТЯ БЫ ОДНА сторона названа в `TIER_THREE_TEAMS`, а вторая — тоже в
       нём, либо уже известна как tier1/tier2, либо безымянна. Безымянная сторона
       сама по себе гейт не открывает: иначе правило впускало бы любой матч без
       опознания.
 
-    Матч в обоих случаях идёт как tier 3 и БЕЗ авто-добавления команд в tier2.
+    Матч во всех случаях идёт как tier 3 и БЕЗ авто-добавления команд в tier2.
 
     None означает «правило не про этот матч» — дальше работает прежний путь,
     поведение обычных матчей не меняется. В частности, None возвращается, когда
@@ -22154,6 +22264,17 @@ def _classify_tier_three_sides(
         league_admitted = False
     if league_admitted:
         return int(resolved_radiant or 0), int(resolved_dire or 0)
+
+    if _league_admits_with_known_side(league_id, radiant_team_ids, dire_team_ids):
+        # Сырые кандидатские id, а не `resolved_*`: резолвер идёт от имени, а на
+        # общем ежедневном тикете имя совпадает с чужой организацией легче, чем
+        # находится настоящий владелец состава.
+        gated_radiant = _extract_candidate_team_ids(radiant_team_ids)
+        gated_dire = _extract_candidate_team_ids(dire_team_ids)
+        return (
+            int(gated_radiant[0]) if gated_radiant else 0,
+            int(gated_dire[0]) if gated_dire else 0,
+        )
 
     r_listed = _is_tier_three_team(radiant_team_ids, radiant_team_name)
     d_listed = _is_tier_three_team(dire_team_ids, dire_team_name)
@@ -28189,6 +28310,7 @@ def _build_early_winner_kills_window_message(
     early_end_star_sign: int,
     radiant_heroes_and_pos: Any = None,
     dire_heroes_and_pos: Any = None,
+    ml_laning_line: str = "",
 ) -> str:
     """Telegram body for Early Winner STAR + kills_window nearest-block bet."""
     header = _format_signal_header(
@@ -28224,6 +28346,7 @@ def _build_early_winner_kills_window_message(
             s.get("top"), s.get("mid"), s.get("bot")
         ),
         lane_kills_adv=s.get("lane_kills_adv_dict"),
+        ml_laning_line=ml_laning_line,
     )
     label = selected_window.get("label")
     live_state_block = _format_live_message_state_block(
@@ -28290,6 +28413,7 @@ def _try_dispatch_early_winner_kills_window(
     dire_team_id: Any = 0,
     selected_star_wr: Optional[int] = None,
     json_retry_errors: Any = None,
+    ml_laning_line: str = "",
 ) -> bool:
     """Dispatch kills bet: Early Winner STAR + |expected_diff|≥1 on nearest window.
 
@@ -28386,6 +28510,7 @@ def _try_dispatch_early_winner_kills_window(
             early_end_star_sign=int(star_sign),
             radiant_heroes_and_pos=radiant_heroes_and_pos,
             dire_heroes_and_pos=dire_heroes_and_pos,
+            ml_laning_line=ml_laning_line,
         )
         details = {
             "status": status,
@@ -28551,6 +28676,8 @@ def _try_dispatch_prematch_model_bet(
     shadow_first_team_is_radiant: Any = None,
     shadow_first_team_score: Any = None,
     shadow_second_team_score: Any = None,
+    ml_laning_line: str = "",
+    all_model_line: str = "",
 ) -> bool:
     """Ставка по предматчевой модели на 00-й минуте — её собственный сигнал.
 
@@ -28652,10 +28779,14 @@ def _try_dispatch_prematch_model_bet(
             team_elo_block=team_elo_block or "",
             game_time_seconds=game_time_seconds,
             radiant_lead=radiant_lead,
-            model_line=_format_win_model_line(early_output, mid_output, all_output),
+            model_line=_format_win_model_line(
+                early_output, mid_output, all_output, all_model_line=all_model_line
+            ),
             radiant_heroes_and_pos=radiant_heroes_and_pos,
             dire_heroes_and_pos=dire_heroes_and_pos,
             full_message_text=full_message_text,
+            ml_laning_line=ml_laning_line,
+            all_model_line=all_model_line,
         )
         try:
             current_game_time_int = int(game_time_value)
@@ -28871,6 +29002,7 @@ def _try_dispatch_lane_adv_standalone_kills(
     lane_kills_adv: Any = None,
     radiant_heroes_and_pos: Any = None,
     dire_heroes_and_pos: Any = None,
+    ml_laning_line: str = "",
 ) -> bool:
     """Standalone kills trigger по kills-window policy: ЕДИНСТВЕННЫЙ путь
     отправки ставок на килы. Только 4 валидированные AND-связки
@@ -28983,6 +29115,7 @@ def _try_dispatch_lane_adv_standalone_kills(
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
                 dire_heroes_and_pos=dire_heroes_and_pos,
                 kills_window_header_label=window_label,
+                ml_laning_line=ml_laning_line,
             )
         try:
             current_game_time_int = int(float(game_time_seconds or 0.0))
@@ -33708,6 +33841,10 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             for mid, m in matches.items():
                 if not _league_matches_allowlist(
                     m.get("league_id"), m.get("league_name")
+                ) and not _league_admits_with_known_side(
+                    m.get("league_id"),
+                    m.get("radiant_team_id"),
+                    m.get("dire_team_id"),
                 ):
                     _skipped_by_league += 1
                     continue
@@ -36462,6 +36599,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             _mark_verbose_match_log_done(check_uniq_url)
         # One evaluation instant for ML and every ELO card built for this map.
         team_elo_timestamp = win_model_veto.elo_evaluation_timestamp(data)
+        laning_panel = _build_laning_panel_lines(
+            radiant_heroes_and_pos,
+            dire_heroes_and_pos,
+            team_elo_timestamp,
+        )
+        ml_laning_line = laning_panel["ml_laning_line"]
+        all_model_line = laning_panel["all_model_line"]
         radiant_account_ids = [
             int((radiant_heroes_and_pos.get(pos) or {}).get("account_id", 0) or 0)
             for pos in ("pos1", "pos2", "pos3", "pos4", "pos5")
@@ -36735,6 +36879,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 protracker_payload=early_protracker_payload,
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
                 dire_heroes_and_pos=dire_heroes_and_pos,
+                ml_laning_line=ml_laning_line,
+                all_model_line=all_model_line,
             )
             # Ставка предматчевой модели идёт из этой же самой ранней ветки:
             # тут минута 00 и локальные метрики уже посчитаны, а модели больше
@@ -36776,6 +36922,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 selected_star_mode="prematch_model_00",
                 json_retry_errors=json_retry_errors,
                 full_message_text=early_local_body,
+                ml_laning_line=ml_laning_line,
+                all_model_line=all_model_line,
             )
             if _kills_blocked:
                 return                              # килы уже ушли или выключены
@@ -36805,6 +36953,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 dire_team_id=dire_team_id,
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
                 dire_heroes_and_pos=dire_heroes_and_pos,
+                ml_laning_line=ml_laning_line,
             )
             if sent:
                 _early_local_kills_done["sent"] = True
@@ -36876,6 +37025,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     dire_team_id=dire_team_id,
                     selected_star_wr=star_target_wr,
                     json_retry_errors=json_retry_errors,
+                    ml_laning_line=ml_laning_line,
                 )
             except Exception as _ew_exc:
                 print(f"   ⚠️ early_winner kills_window dispatch error: {_ew_exc}")
@@ -37119,6 +37269,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 dire_heroes_and_pos=dire_heroes_and_pos,
                 metrics_payload=s,
                 protracker_payload=protracker_payload,
+                ml_laning_line=ml_laning_line,
             )
             if (
                 not PIPELINE_BYPASS_PROCESSED_URL_GATE
@@ -37731,10 +37882,10 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     f"{normalize_team_name_display(str(radiant_team_name or ''))} VS "
                     f"{normalize_team_name_display(str(dire_team_name or ''))}\n"
                     f"{series_score_line}"
-                    f"{_build_lane_block(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=dota2protracker_lane_adv_line, lane_adv_dict_line=lane_adv_dict_line, lane_kills_adv=s.get('lane_kills_adv_dict'))}"
+                    f"{_build_lane_block(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=dota2protracker_lane_adv_line, lane_adv_dict_line=lane_adv_dict_line, lane_kills_adv=s.get('lane_kills_adv_dict'), ml_laning_line=ml_laning_line)}"
                     f"{team_elo_block}"
                     f"{pre_gate_wr_block}"
-                    f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=s.get('all_output', {}))}"
+                    f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=s.get('all_output', {}), all_model_line=all_model_line)}"
                     f"{_compose_star_metric_blocks_for_message(telegram_early_block, mid_block, all_block, mix_block)}"
                 )
             except Exception:
@@ -39105,6 +39256,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 lane_adv_line=dota2protracker_lane_adv_line,
                 lane_adv_dict_line=lane_adv_dict_line,
                 lane_kills_adv=s.get('lane_kills_adv_dict'),
+                ml_laning_line=ml_laning_line,
             )
 
             # Формирование сообщения
@@ -39112,6 +39264,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 early_output=s.get('early_output', {}),
                 mid_output=s.get('mid_output', {}),
                 all_output=s.get('all_output', {}),
+                all_model_line=all_model_line,
             )
             message_text = (
                 f"{_format_signal_header(stake_team_name=stake_team_name, stake_multiplier=stake_multiplier, special_header_mode=str(stake_multiplier_context.get('special_header_mode') or ''))}\n"
@@ -39162,6 +39315,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 selected_star_mode=selected_star_mode,
                 json_retry_errors=json_retry_errors,
                 full_message_text=message_text,
+                ml_laning_line=ml_laning_line,
+                all_model_line=all_model_line,
             )
             _try_dispatch_lane_adv_standalone_kills(
                 match_key=check_uniq_url,
@@ -39189,6 +39344,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 dire_team_id=dire_team_id,
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
                 dire_heroes_and_pos=dire_heroes_and_pos,
+                ml_laning_line=ml_laning_line,
             )
             current_game_time = float(game_time or 0.0)
             # Гейт допустимых комбинаций STAR-блоков: ставка на команду шлётся
@@ -42661,9 +42817,9 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     f"{normalize_team_name_display(str(radiant_team_name or ''))} VS "
                     f"{normalize_team_name_display(str(dire_team_name or ''))}\n"
                     f"{_build_series_score_line(data.get('live_league_data') or {})}"
-                    f"{_build_lane_block(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=_build_dota2protracker_lane_adv_line(s), lane_adv_dict_line=_build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot')), lane_kills_adv=s.get('lane_kills_adv_dict'))}"
+                    f"{_build_lane_block(s.get('top'), s.get('mid'), s.get('bot'), lane_adv_line=_build_dota2protracker_lane_adv_line(s), lane_adv_dict_line=_build_lane_dict_adv_line(s.get('top'), s.get('mid'), s.get('bot')), lane_kills_adv=s.get('lane_kills_adv_dict'), ml_laning_line=ml_laning_line)}"
                     f"{noskip_team_elo_block}"
-                    f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=star_base_all_output)}"
+                    f"{_build_star_hits_summary_block(early_output=s.get('early_output', {}), mid_output=s.get('mid_output', {}), all_output=star_base_all_output, all_model_line=all_model_line)}"
                     f"{_compose_star_metric_blocks_for_message(_noskip_early_block, _noskip_mid_block, _noskip_all_block, _noskip_mix_block)}"
                 )
             except Exception:
@@ -42716,6 +42872,8 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 # В no-star ветке готового заголовка нет, но полное тело со
                 # всеми блоками уже собрано для журнала вердиктов — берём его.
                 full_message_text=_verdict_ctx.get("bet_message"),
+                ml_laning_line=ml_laning_line,
+                all_model_line=all_model_line,
             )
             _try_dispatch_lane_adv_standalone_kills(
                 match_key=check_uniq_url,
@@ -42750,6 +42908,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 dire_team_id=dire_team_id,
                 radiant_heroes_and_pos=radiant_heroes_and_pos,
                 dire_heroes_and_pos=dire_heroes_and_pos,
+                ml_laning_line=ml_laning_line,
             )
 
             add_url(

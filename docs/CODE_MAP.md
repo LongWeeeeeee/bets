@@ -574,6 +574,37 @@ Liquipedia, которых у Valve нет: `attack_point`, `attack_backswing`,
 
 ---
 
+## `base/league_keywords.py` — allowlist лиг (единственный источник для ОБОИХ процессов)
+
+Читают `cyberscore_try.py` (гейт приёма матчей) и `sourcetv_probe.py` (отбор лиг для прямого
+опроса `GetLiveLeagueGames`). Определения держат в одном файле, чтобы probe и cyberscore
+фильтровали одинаково.
+
+| Символ | Что |
+|---|---|
+| `TOURNAMENT_TITLE_ALLOW_KEYWORDS` | токены названия лиги (`dreamleague`, `blast`, `pgl`, `epl`, …). Сравнение по `lower().split()`, а не по подстроке: одиночный `esports` намеренно убран — он ловил организаторов (`Being Esports`, `X Esports`). |
+| `TOURNAMENT_TITLE_ALLOW_PHRASES` | многословные фразы, сравнение по ПОДСТРОКЕ (`streamers battle`, `lunar snake`, `turbina`, `asgard`, …). Фразой, а не токеном, когда токен протащил бы чужие турниры. |
+| `TOURNAMENT_LEAGUE_ID_ALLOWLIST` | безусловный допуск точным Valve `league_id`, когда название не имеет ничего общего с турниром (19722 `Lunar Paw` → Asgard Championship). В sourcetv-режиме имя лиги берётся из справочника OpenDota по `league_id`, а не с сайта площадки или букмекера. |
+| `TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST` | УСЛОВНЫЙ допуск точным `league_id`: тикет пускается, только если хотя бы одна сторона уже известна как tier1/tier2 по team_id. Сейчас 10877 — общий ежедневный тикет Challengermode, на котором живут и открытые квалы BLAST Slam, и чужие турниры (E-267). Не должно пересекаться с безусловным множеством: пересечение делает условие мёртвым, непересечение держит тест. |
+| `title_matches_allow_keywords(title)` | True, если название прошло токен- или фразовый allowlist. |
+| `league_matches_allowlist(league_id, title)` | True для безусловно разрешённого `league_id` ИЛИ разрешённого названия. |
+| `league_is_tier_gated(league_id)` | True для тикета из `TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST`. Название намеренно не принимает. |
+
+Проверку «известна ли сторона как tier1/2» каждый процесс делает свою, и одинаковой она быть не
+может: `sourcetv_probe._known_tier12_team_ids()` читает `id_to_names` + overlay на каждый вызов
+(ленивый импорт, fail-closed), а `cyberscore_try._league_admits_with_known_side()` идёт через
+`_get_team_tier`, который применяет overlay один раз на старте и дополнительно видит
+`_auto_added_tier2_ids` в памяти процесса. Расхождение одностороннее (probe строже), поэтому
+следствие — записанная в мост строка, которую консумер сбросит, а не неверная ставка. Обе стороны
+сверяют **только team_id**: по имени нельзя, см. `docs/ARCHITECTURE.md` → «Как матч вообще попадает
+в tier 3».
+
+Тесты: `base/tests/test_league_keywords.py` (allowlist и закрытие 10877 безусловно),
+`base/tests/test_sourcetv_paths.py` (гейт в probe), `base/tests/test_tier_three_allowlist.py`
+(гейт в cyberscore и уход матча в tier 3).
+
+---
+
 ## `base/train_public_draft_hero10_experiment.py` — offline public draft experiment
 
 Обучает четыре leakage-safe модели на полном наборе public-карт (v4): `radiant_win_model.joblib`, `total_kills_over_median_model.joblib`, bounded-wrapper `total_kills_regression_model.joblib` и `duration_seconds_regression_model.joblib`; рядом кладёт два энкодера (`win_feature_encoder.joblib`, `level_feature_encoder.joblib`) и `kills_saturation_scale.joblib`. Вход — ровно 10 fixed-position hero IDs (`hero_R_1`…`hero_R_5`, `hero_D_1`…`hero_D_5`); ВСЕ колонки дизайн-матриц выводятся только из этих десяти ID (см. `base/draft_features.py`), ingame-признаки и сторонняя статистика запрещены. Киллы формируются только как сумма `radiantKills` и `direKills` и используются как target. Парсер строго отклоняет неполные драфты, повторные позиции/героев, некорректные kills и duplicate map IDs.
@@ -1180,7 +1211,7 @@ Env `ELO_SNAPSHOT_PIN=1` запрещает пересборку снапшот�
 | Модуль | Контракт |
 |---|---|
 | `base/sourcetv_bridge.py` | `resolve_sourcetv_matches_path(project_root: Path) -> Path`: единая CWD-independent резолюция bridge JSON; относительный `SOURCETV_MATCHES_PATH` привязывается к project root, default `runtime/sourcetv_matches.json`. |
-| `base/sourcetv_probe.py` | Steam GC/SourceTV producer: находит live-матчи/составы/драфт и пишет bridge JSON, который читает `cyberscore_try.py` при `DLTV_SOURCE_MODE=sourcetv`; CLI `--username`, `--password`, `--league`, `--match`, `--interval`, `--login-only`. |
+| `base/sourcetv_probe.py` | Steam GC/SourceTV producer: находит live-матчи/составы/драфт и пишет bridge JSON, который читает `cyberscore_try.py` при `DLTV_SOURCE_MODE=sourcetv`; CLI `--username`, `--password`, `--league`, `--match`, `--interval`, `--login-only`. **Первый гейт allowlist'а лиг** — отброшенный здесь матч не доезжает до моста вообще, поэтому условный допуск зеркалит консумера: `_league_admission`, `_league_tier_gated_admission`, `_note_rejected_league` (см. раздел `base/league_keywords.py`). На serv1 это systemd-юнит `sourcetv-probe.service` + watchdog `sourcetv-probe-watchdog.timer`, перезапуск только через systemctl. |
 
 ---
 
@@ -1334,4 +1365,38 @@ venv_catboost/bin/python3 pro_heroes_data/tempo_revamp_backtest.py \
 
 `base/tools/refit_prematch_draft_component.py` принимает явные `--matrix`, `--weights`, `--compact`, `--public-corpus`, `--draft-model`, `--output`, `--report`. Пересчитывает live draft_logit и два interaction-признака, обучает только зависимые ветки; проверяет All target/classes/width, исходные нормировки, mid, сходимость. Выход содержит только веса.
 
+`base/laning_serving.py:panel_lines(radiant_dict, dire_dict, timestamp, draft_model=...)`
+возвращает независимые строки `ml_laning_line` и `all_model_line` для конкретной
+карты. All читает standalone draft index из существующего `WIN_MODEL_DIR`
+(`win_index_draft`), преобразует обратно в вероятность и показывается сразу под
+Early Win; это не prematch ensemble. Новые строки передаются явно с контекстом
+карты, без восстановления по округлённому ensemble-индексу. Отказ каждой строки
+изолирован; decision gates не меняются.
+
 `base/tools/merge_prematch_weights.py --snapshot FILE --weights FILE --output NEW_FILE --report NEW_JSON --expected-snapshot-sha256 HASH` переносит ровно восемь массивов весов; остальные ZIP members и metadata сохраняются. Для live используются `WIN_MODEL_DIR`, `EARLY_NW_MODEL_DIR`, `LATE_WIN_MODEL_DIR`; согласованный parent заменяет `data/prematch_model_artifact_v3.npz` после backup. Локальные weights/branch_weights ночной сборки обновляются тем же набором. Calibration и пороги этим способом не пересчитываются; рестарт — только systemd.
+
+## Team ML Laning и история для serving (E266)
+
+`base/team_laning_model.py` — отдельная модель знака общего перевеса по золоту
+на 10-й минуте, классы `[Dire, exact tie, Radiant]`. Вход: герои `(N,10)` в порядке
+R1..5,D1..5 и causal history `(N,10,12)`; whole-draft features и per-role разности
+историй. Это не среднее исходов трёх линий E264/E265 и не All map-win.
+`scripts/ops/train_team_laning_model.py` / `scripts/run/train_team_laning.sh`
+выбирают draft/history и temperature на validation до отдельного теста,
+исключающего оба ранее просмотренных набора IDs. Протокол и ограничения — E266.
+
+`base/tools/export_laning_history.py --corpus DIR --output-dir NEW_DIR`
+экспортирует завершённый корпус в immutable mmap `.npy`: по каждой роли
+accounts/offsets/end_ts/heroes/scores. Staging публикуется атомарно после complete
+manifest с SHA256 массивов. `base/laning_history_store.py:LaningHistoryStore.history`
+принимает heroes10,accounts10,timestamp и delay/window (default3600/2592000),
+возвращает float32 `(10,12)` в порядке all-role3/all-role-hero3/recent-role3/
+recent-role-hero3. Строго `end < timestamp-delay`, нижняя граница окна включена.
+Неизвестный account0 даёт нули. Источник фиксирован; автоматического обновления нет.
+
+`LANING_MODEL_DIR` переопределяет `data/laning_models/20260909_team_nw10_v1/selected`,
+`LANING_HISTORY_DIR` — `data/laning_history/20260909_stratz_v1`;
+`LANING_MODEL_ENABLED=0` выключает строку. Lazy load сохраняет модель и mmap;
+cache256 учитывает весь драфт, аккаунты и timestamp. `ML Laning` после Top/Mid/Bot
+показывает вероятность выбранного класса золота к 10-й минуте. Равенство —
+отдельный класс; противоположная вероятность не вычисляется как `1-p`.

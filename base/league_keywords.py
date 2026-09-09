@@ -8,6 +8,14 @@
 
 Держим определения здесь, чтобы probe и cyberscore фильтровали ОДИНАКОВО
 (иначе probe мог бы тащить/опрашивать не те лиги, либо наоборот пропускать наши).
+
+Оговорка про условный допуск (`TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST`): общим
+здесь остаётся только предикат ПО ЛИГЕ. Половина «известна ли сторона как
+tier1/tier2» у процессов разная и одинаковой быть не может — probe читает
+персистентный overlay справочника на каждый вызов, а cyberscore применяет overlay
+один раз на старте и дополнительно видит `_auto_added_tier2_ids` в памяти процесса.
+Расхождение одностороннее (probe строже), поэтому его следствие — записанная в мост
+строка, которую консумер сбросит, а не неверная ставка.
 """
 
 from __future__ import annotations
@@ -78,6 +86,26 @@ TOURNAMENT_LEAGUE_ID_ALLOWLIST = frozenset({
     19722,
 })
 
+# Тикеты, которые пускаются НЕ безусловно, а только если хотя бы одна из сторон
+# уже известна как tier1/tier2 (сверка по team_id, не по имени).
+#
+# 10877 — общий ежедневный тикет площадки Challengermode: на одном league_id
+# живут и открытые квалификации BLAST Slam, и посторонние турниры, а название
+# Valve ('Challengermode Daily Tournaments') не содержит ни одного токена
+# allowlist'а. 26.08.2026 тикет впустили точным id в
+# TOURNAMENT_LEAGUE_ID_ALLOWLIST ради квалов, 06.09.2026 убрали: на нём же шли
+# чужие ежедневки, а неизвестная команда из впущенного матча дописывалась в
+# tier2 и оставалась там навсегда. Условный допуск возвращает квалы, не возвращая
+# авто-онбординг: матч с неизвестной стороной уходит в tier 3, где в tier2 никто
+# не дописывается (см. ``_classify_tier_three_sides`` в cyberscore_try.py).
+#
+# Множество НЕ должно пересекаться с TOURNAMENT_LEAGUE_ID_ALLOWLIST: безусловный
+# допуск сильнее, и запись в обоих множествах сделала бы условие мертвым.
+# Пересечение держит тест в base/tests/test_league_keywords.py.
+TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST = frozenset({
+    10877,
+})
+
 
 def title_matches_allow_keywords(title: Any) -> bool:
     """True, если название лиги/турнира проходит keyword-allowlist."""
@@ -97,3 +125,17 @@ def league_matches_allowlist(league_id: Any, title: Any) -> bool:
         normalized_id in TOURNAMENT_LEAGUE_ID_ALLOWLIST
         or title_matches_allow_keywords(title)
     )
+
+
+def league_is_tier_gated(league_id: Any) -> bool:
+    """True, если тикет пускается только при известной tier1/2 стороне.
+
+    Название намеренно не принимаем: множество задано точными league_id, а
+    проверка «лига и так разрешена по названию» при ``title=None`` соврала бы и
+    открыла гейт для тикета, который впускать не следовало. Непересечение с
+    ``TOURNAMENT_LEAGUE_ID_ALLOWLIST`` держит тест, а не этот предикат.
+    """
+    try:
+        return int(league_id or 0) in TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST
+    except (TypeError, ValueError):
+        return False

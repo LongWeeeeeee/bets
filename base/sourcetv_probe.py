@@ -33,7 +33,11 @@ for _o, _n in (("job_id_target", "jobid_target"), ("job_id_source", "jobid_sourc
 # прямого опроса GetLiveLeagueGames(league_id), чтобы ловить их с драфта в обход
 # count-кэпа GetLiveLeagueGames(0) на пике.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from league_keywords import TOURNAMENT_LEAGUE_ID_ALLOWLIST, league_matches_allowlist
+from league_keywords import (
+    TOURNAMENT_LEAGUE_ID_ALLOWLIST,
+    league_is_tier_gated,
+    league_matches_allowlist,
+)
 
 try:
     from sourcetv_bridge import resolve_sourcetv_matches_path
@@ -491,6 +495,94 @@ def _league_admission(league_id, title):
     if league_matches_allowlist(league_id, title):
         return "ok"
     return "no_name" if not str(title or "").strip() else "not_allowed"
+
+
+def _side_name(game, key):
+    """Название стороны из записи GetLiveLeagueGames ('radiant_team'/'dire_team')."""
+    fallback = "Radiant" if key == "radiant_team" else "Dire"
+    return (game.get(key) or {}).get("team_name") or fallback
+
+
+def _side_id(game, key):
+    """team_id стороны; 0, если Valve не отдал сущность команды."""
+    try:
+        return int((game.get(key) or {}).get("team_id") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+_TIER_DICT_FAILURE_LOGGED = False
+
+
+def _known_tier12_team_ids():
+    """Множество team_id, известных как tier1/tier2: справочник плюс overlay.
+
+    Импорт ленивый и под ``try``: словари probe больше ни для чего не нужны, а
+    отказ чтения обязан ЗАКРЫВАТЬ условный допуск, а не ронять опрос Steam.
+    Пересобираем на каждый вызов (записей сотни) и сознательно без глобального
+    кэша: кэш пережил бы ночную пересборку словарей и впускал бы тикет по
+    протухшему id. ``upsert_entry`` отсюда не вызываем никогда — probe справочник
+    читает, а не пишет.
+    """
+    global _TIER_DICT_FAILURE_LOGGED
+    try:
+        import id_to_names
+        import tier_dynamic_overlay
+
+        tier_dynamic_overlay.apply_entries(
+            id_to_names,
+            tier_dynamic_overlay.load_entries(tier_dynamic_overlay.overlay_path()),
+        )
+        known = set()
+        for source in (id_to_names.tier_one_teams, id_to_names.tier_two_teams):
+            for value in source.values():
+                values = value if isinstance(value, (set, frozenset, list, tuple)) else (value,)
+                for raw in values:
+                    try:
+                        team_id = int(raw)
+                    except (TypeError, ValueError):
+                        continue
+                    if team_id > 0:
+                        known.add(team_id)
+        _TIER_DICT_FAILURE_LOGGED = False
+        return known
+    except Exception as e:
+        if not _TIER_DICT_FAILURE_LOGGED:
+            _TIER_DICT_FAILURE_LOGGED = True
+            log.warning(
+                "Справочник tier1/2 не читается — условный допуск лиг закрыт: %s", e
+            )
+        return set()
+
+
+def _game_has_known_tier12_side(game):
+    """True, если хотя бы одна сторона игры уже известна как tier1/tier2.
+
+    Сверяем ТОЛЬКО team_id. Имя не используем осознанно: ``normalize_team_name``
+    вычищает 'team'/'esports'/пробелы, поэтому 'Team Titan' схлопывается в
+    'titan' и совпадает с ключом tier2 чужой организации. На общем ежедневном
+    тикете любительский состав с таким названием реалистичен, и совпадение по
+    имени утащило бы чужой team_id в ELO/Stratz/tier.
+    """
+    known = _known_tier12_team_ids()
+    if not known:
+        return False
+    return any(
+        _side_id(game, side) in known
+        for side in ("radiant_team", "dire_team")
+        if _side_id(game, side)
+    )
+
+
+def _league_tier_gated_admission(league_id, game):
+    """Условный допуск общего тикета площадки: гейтовая лига И известная сторона.
+
+    Вызывать только когда обычный allowlist уже отказал — название не принимаем,
+    unconditional-допуск сильнее и проверяется раньше.
+    """
+    if not league_is_tier_gated(league_id):
+        return False
+    return _game_has_known_tier12_side(game)
 
 
 def _note_rejected_league(seen, league_id, title, now=None):
@@ -1081,9 +1173,10 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
         games_list = []
         try:
             for g in get_live_matches(0):
+                _glid = g.get("league_id")
                 if league_matches_allowlist(
-                    g.get("league_id"), league_name(g.get("league_id"))
-                ):
+                    _glid, league_name(_glid)
+                ) or _league_tier_gated_admission(_glid, g):
                     games_list.append(g)
         except Exception as e:
             log.warning("Стартовый (0)-снимок не удался: %s", e)
@@ -1350,6 +1443,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
         # авто-обнаружение keyword-лиг: активный hot-set + пул кандидатов для cold-sweep
         active_kw_leagues = {}     # league_id -> last_seen_ts (видна в (0)/прямом опросе)
         kw_rejected = {}           # league_id -> {"seen","logged","name"} отброшенных allowlist'ом
+        gated_announced = set()    # match_id, по которым условный допуск уже написан в лог
         sweep_cursor = 0           # курсор round-robin по пулу кандидатов
         kw_candidates = _keyword_candidate_league_ids() if auto_kw_mode else []
         last_kw_refresh = time.time()
@@ -1405,22 +1499,38 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                         _glid = int(fg.get("league_id") or 0)
                                         _gname = league_name(_glid, refresh_if_missing=True)
                                         _verdict = _league_admission(_glid, _gname)
+                                        if _verdict != "ok" and _league_tier_gated_admission(_glid, fg):
+                                            _verdict = "ok"
+                                            if fmid not in gated_announced:
+                                                gated_announced.add(fmid)
+                                                log.info(
+                                                    "Тикет площадки допущен по стороне tier1/2:"
+                                                    " id=%s имя=%r — %s [%s] vs %s [%s]",
+                                                    _glid, _gname,
+                                                    _side_name(fg, "radiant_team"),
+                                                    _side_id(fg, "radiant_team"),
+                                                    _side_name(fg, "dire_team"),
+                                                    _side_id(fg, "dire_team"),
+                                                )
                                         if _verdict != "ok":
                                             _seen_games = _note_rejected_league(
                                                 kw_rejected, _glid, _gname, _refetch_now
                                             )
                                             if _seen_games:
                                                 log.info(
-                                                    "Лига вне allowlist (%s): id=%s имя=%r — %s vs %s"
+                                                    "Лига вне allowlist (%s): id=%s имя=%r"
+                                                    " — %s [%s] vs %s [%s]"
                                                     " (игр с прошлой записи: %d)",
-                                                    "имени нет в справочнике OpenDota"
+                                                    "нет стороны tier1/2 на тикете площадки"
+                                                    if league_is_tier_gated(_glid)
+                                                    else "имени нет в справочнике OpenDota"
                                                     if _verdict == "no_name"
                                                     else "название не подошло",
                                                     _glid, _gname,
-                                                    (fg.get("radiant_team") or {}).get("team_name")
-                                                    or "Radiant",
-                                                    (fg.get("dire_team") or {}).get("team_name")
-                                                    or "Dire",
+                                                    _side_name(fg, "radiant_team"),
+                                                    _side_id(fg, "radiant_team"),
+                                                    _side_name(fg, "dire_team"),
+                                                    _side_id(fg, "dire_team"),
                                                     _seen_games,
                                                 )
                                             continue
@@ -1439,6 +1549,9 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                         if _refetch_now - ts > KW_LEAGUE_IDLE_TTL]:
                                 del active_kw_leagues[_lk]
 
+                        # Условный допуск объявляется один раз на матч: чистим набор
+                        # по итогам прохода, иначе он рос бы всю жизнь процесса.
+                        gated_announced &= seen_fmids
                         fresh_mids = {int(fg["match_id"]) for fg in fresh_games}
                         for fg in fresh_games:
                             fmid = int(fg["match_id"])

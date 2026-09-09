@@ -143,7 +143,44 @@ def test_challengermode_platform_ticket_is_not_admitted():
     Тикет ежедневный и общий: на нём же шли посторонние турниры, а неизвестная
     команда из впущенного матча дописывалась в tier2 и оставалась там навсегда.
     06.09.2026 id убран — тест держит закрытие, чтобы его не вернули молча.
+
+    09.09.2026 тикет вернулся, но УСЛОВНО — через
+    `TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST` (следующий тест). Безусловный
+    допуск по-прежнему закрыт, и этот тест держит именно это.
     """
     assert lk.league_matches_allowlist(10877, "Challengermode Daily Tournaments") is False
     assert lk.title_matches_allow_keywords("Challengermode Daily Tournaments") is False
     assert 10877 not in lk.TOURNAMENT_LEAGUE_ID_ALLOWLIST
+
+
+def test_platform_ticket_is_tier_gated_not_unconditionally_allowed():
+    """10877 пускается только при известной tier1/2 стороне, а не всегда.
+
+    09.09.2026 (запрос alex): на тикете шёл открытый квал BLAST Slam
+    'Imperial power vs ЯЧЁ123', а название Valve — 'Challengermode Daily
+    Tournaments', где токена allowlist'а нет и сравнить 'blast' не с чем.
+    Возвращать безусловный допуск id нельзя: вместе с квалами он вернул бы
+    авто-онбординг чужих команд в tier2, из-за которого тикет закрыли
+    06.09.2026. Поэтому правило звучит как «хотя бы одна сторона УЖЕ известна
+    как tier1/tier2», а сам матч уходит в tier 3 без дописывания в словарь.
+    """
+    assert 10877 in lk.TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST
+    assert lk.league_is_tier_gated(10877) is True
+    assert lk.league_is_tier_gated("10877") is True
+    # Условный допуск НЕ означает безусловный: закрытие из теста выше держится.
+    assert lk.league_matches_allowlist(10877, "Challengermode Daily Tournaments") is False
+    # Множества не пересекаются: безусловный допуск сильнее, и запись в обоих
+    # сделала бы условие мёртвым.
+    assert not (
+        lk.TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST & lk.TOURNAMENT_LEAGUE_ID_ALLOWLIST
+    )
+    assert lk.league_is_tier_gated(19722) is False
+
+
+def test_tier_gated_predicate_survives_garbage_league_id():
+    """league_id приходит из чужих payload'ов: мусор не должен ни открывать гейт, ни падать."""
+    assert lk.league_is_tier_gated(None) is False
+    assert lk.league_is_tier_gated(0) is False
+    assert lk.league_is_tier_gated("") is False
+    assert lk.league_is_tier_gated("мусор") is False
+    assert lk.league_is_tier_gated([]) is False
