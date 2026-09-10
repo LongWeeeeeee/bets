@@ -17825,10 +17825,11 @@ def _winline_first_active() -> bool:
     return True
 
 
-def _winline_overview_inject_for_tests(text: str) -> None:
+def _winline_overview_inject_for_tests(text: str, html: str = "") -> None:
     """Шов для тестов: подменяет снимок, поток обновления не трогает."""
     with _winline_overview_lock:
         _winline_overview_state["text"] = str(text or "")
+        _winline_overview_state["html"] = str(html or "")
         _winline_overview_state["fetched_at"] = time.time() if text else 0.0
         _winline_overview_state["status"] = "test" if text else ""
         _winline_overview_state["error"] = ""
@@ -17850,6 +17851,25 @@ def _winline_overview_snapshot_text() -> Optional[str]:
     if not text or age > max_age:
         return None
     return text
+
+
+def _winline_overview_snapshot_html() -> str:
+    """DOM снимка для точной изоляции карточек; "" когда снимка нет/протух.
+
+    Плоский текст не делит соседние live-карточки под одним заголовком лиги
+    (10.09.2026: YS–PT и IC–kalam в одном интервале — flat-матчер отдаёт None
+    обеим, чтобы не приписать чужую строку рынка). DOM делит их точно.
+    """
+    try:
+        max_age = float(WINLINE_OVERVIEW_MAX_AGE_S)
+    except (TypeError, ValueError):
+        max_age = 300.0
+    with _winline_overview_lock:
+        html = str(_winline_overview_state.get("html") or "")
+        age = time.time() - float(_winline_overview_state.get("fetched_at") or 0.0)
+    if not html or age > max_age:
+        return ""
+    return html
 
 
 def _winline_overview_refresh_once() -> bool:
@@ -17888,6 +17908,21 @@ def _winline_overview_refresh_once() -> bool:
     text = str(result.get("text") or "")
     if not text:
         return False
+    try:
+        mod = sys.modules.get(getattr(fns[0], "__module__", "") or "")
+        feed_check = getattr(mod, "_winline_overview_payload_looks_like_feed", None)
+    except Exception:
+        feed_check = None
+    if callable(feed_check):
+        try:
+            looks_like_feed = bool(feed_check(text, result.get("html")))
+        except Exception:
+            looks_like_feed = False
+        if not looks_like_feed:
+            # Shell-съём (холодная страница, SPA не поднялось): хороший снимок
+            # не затираем, цикл придёт за лентой по бэкоффу на прогретую.
+            logger.warning("WINLINE_OVERVIEW_SHELL: no feed markers, snapshot not stored")
+            return False
     with _winline_overview_lock:
         _winline_overview_state["text"] = text[:3_000_000]
         _winline_overview_state["html"] = str(result.get("html") or "")[:1_500_000]
@@ -17984,12 +18019,19 @@ def _winline_first_join(radiant_name: Any, dire_name: Any) -> Optional[Dict[str,
     text = _winline_overview_snapshot_text()
     if not text:
         return None
+    try:
+        dom_html = _winline_overview_snapshot_html()
+    except Exception:
+        dom_html = ""
     fns = _winline_first_parser_fns()
     if fns is None:
         return None
     _, league_fn, future_fn, card_fn = fns
     try:
-        card = card_fn(text, r_team, d_team)
+        try:
+            card = card_fn(text, r_team, d_team, html=dom_html)
+        except TypeError:
+            card = card_fn(text, r_team, d_team)
     except Exception:
         return None
     if not card:
@@ -18026,6 +18068,12 @@ def _winline_player_confirm(
     букмекер: если живая карточка содержит ОБА имени (имя моста или, для
     анонимной стороны, team_key хинта), пара считается подтверждённой и hit
     несёт имена+id для downstream. Без карточки — None (прежний путь).
+
+    E-270: weak-хинт (3/5, флаг `weak`) подтверждает только в паре с ТОЧНЫМ
+    именем второй стороны из моста: карточка держит фикстуру, хинт лишь
+    выбирает среди анонимных игр. Weak+weak и weak+hint без якоря — отказ.
+    В join идёт `display` (сырое написание тега): матчер понимает
+    `Yellow Submarine`, а не нормализованный ключ.
     """
     if not isinstance(player_hint, dict):
         return None
@@ -18038,6 +18086,8 @@ def _winline_player_confirm(
         return None
     names = []
     confirmed_ids: Dict[str, int] = {}
+    bridge_named_sides = 0
+    weak_sides = 0
     for side_name, side_key in ((radiant_name, "radiant"), (dire_name, "dire")):
         text = str(side_name or "").strip()
         try:
@@ -18046,6 +18096,7 @@ def _winline_player_confirm(
             return None
         if not placeholder and text:
             names.append(text)
+            bridge_named_sides += 1
             continue
         hint = player_hint.get(side_key) if isinstance(player_hint, dict) else None
         team_key = str((hint or {}).get("team_key") or "").strip()
@@ -18058,7 +18109,10 @@ def _winline_player_confirm(
                 return None
         except Exception:
             return None
-        names.append(team_key)
+        if bool((hint or {}).get("weak")):
+            weak_sides += 1
+        display = str((hint or {}).get("display") or team_key).strip() or team_key
+        names.append(display)
         try:
             ids = [int(v) for v in ((hint or {}).get("team_ids") or [])]
         except (TypeError, ValueError):
@@ -18069,6 +18123,9 @@ def _winline_player_confirm(
     if len(names) != 2 or from_bridge:
         # from_bridge: обе стороны именованы — это уже покрывает обычный join,
         # сюда зовём только ради анонимных сторон.
+        return None
+    if weak_sides and not bridge_named_sides:
+        # Weak-хинт без якоря точным именем из моста: не на что опереться.
         return None
     hit = _winline_first_join(names[0], names[1])
     if hit is None:
@@ -18090,6 +18147,46 @@ def _winline_first_bypass_active(hit: Any) -> bool:
         return age <= float(hit.get("admission_ttl") or 0.0)
     except (TypeError, ValueError):
         return False
+
+
+def _winline_card_admits_league(hit: Any, league_id: Any) -> bool:
+    """Допуск мимо league-фильтра подтверждённой карточкой (E-270).
+
+    Поправка 10.09.2026 держится: allowlist/denylist — жёсткие границы.
+    Hit подтверждает только ВНУТРИ разрешённого механизма: GC-лига обязана
+    быть allowlist-id или гейтовым тикетом, а лига карточки — не входить в
+    title-denylist (иначе Mad Dogs и подобные мертвы здесь же, не доходя до
+    downstream-гейта). Пустая лига карточки = отказ (fail-closed: без лиги
+    нельзя доказать, что карта не из запрета).
+    """
+    if not _winline_first_bypass_active(hit):
+        return False
+    try:
+        lid = int(league_id)
+    except (TypeError, ValueError):
+        return False
+    try:
+        allowed_here = (
+            lid in TOURNAMENT_LEAGUE_ID_ALLOWLIST or bool(_league_is_tier_gated(lid))
+        )
+    except Exception:
+        return False
+    if not allowed_here:
+        return False
+    try:
+        card_league = _normalize_live_league_title(
+            (hit or {}).get("league") if isinstance(hit, dict) else ""
+        )
+    except Exception:
+        return False
+    if not card_league:
+        return False
+    try:
+        if card_league in SKIPPED_LIVE_LEAGUE_TITLES:
+            return False
+    except Exception:
+        return False
+    return True
 
 
 def _bookmaker_close_window_handles_unlocked(driver: Any, handles: List[str]) -> None:
@@ -34209,6 +34306,15 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                     m.get("league_id"),
                     m.get("radiant_team_id"),
                     m.get("dire_team_id"),
+                ) and not _winline_card_admits_league(
+                    # E-270: живая карточка подтверждает пару внутри гейтового
+                    # тикета (denylist карт проверяется внутри хелпера).
+                    _winline_player_confirm(
+                        m.get("radiant_team_name"),
+                        m.get("dire_team_name"),
+                        m.get("player_hint"),
+                    ),
+                    m.get("league_id"),
                 ):
                     _skipped_by_league += 1
                     continue

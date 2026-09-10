@@ -103,11 +103,65 @@ def test_hint_collision_disables_both(monkeypatch) -> None:
     }
 
 
-def test_threshold_three_of_five_is_not_enough(monkeypatch) -> None:
+def test_three_of_five_is_weak_only(monkeypatch) -> None:
+    """3/5 — weak-запись, а не допуск: контракт E-270 поверх замера E-267.
+
+    Замер E-267 («3/5 недостаточно») отвечал на вопрос «можно ли по составу
+    ПЕРЕИМЕНОВЫВАТЬ/ДОПУСКАТЬ в одиночку» — ответ остаётся «нет»: weak-хинт
+    один downstream не открывает (confirm требует живую карточку Winline,
+    см. test_confirm_rejects_hint_without_card). Здесь 3/5 с единственным
+    лидером едет как evidence с флагом weak + display-написанием для матчера.
+    """
     monkeypatch.setattr(
         probe, "_player_attribution_tier_index", lambda: (set(), {"alpha": {11}})
     )
-    lookup = _lookup([(1, "Alpha"), (2, "Alpha"), (3, "Alpha"), (4, "No"), (5, "No")])
+    lookup = _lookup(
+        [(1, "Alpha"), (2, "Alpha"), (3, "ALPHA"), (4, "No"), (5, "No")]
+    )
+    game = {
+        "radiant_team": None,
+        "dire_team": None,
+        "players": _players(0, [1, 2, 3, 4, 5]),
+    }
+    out = probe._player_hint_for_game(game, lookup)
+    assert out["dire"] is None
+    weak = out["radiant"]
+    assert weak["team_key"] == "alpha"
+    assert weak["players"] == 3
+    assert weak["weak"] is True
+    assert weak["display"] == "Alpha"
+    assert weak["team_ids"] == [11]
+
+
+def test_weak_requires_unique_leader(monkeypatch) -> None:
+    """3 на 3 — неразрешимая коллизия: хинта нет даже weak."""
+    monkeypatch.setattr(
+        probe,
+        "_player_attribution_tier_index",
+        lambda: (set(), {"alpha": {11}, "beta": {22}}),
+    )
+    lookup = _lookup(
+        [(1, "Alpha"), (2, "Alpha"), (3, "Alpha"), (4, "Beta"), (5, "Beta"),
+         (6, "Beta")]
+    )
+    game = {
+        "radiant_team": None,
+        "dire_team": None,
+        # Шесть записей (стендин/тренер в ростере): 3 на 3 без лидера.
+        "players": _players(0, [1, 2, 3, 4, 5, 6]),
+    }
+    assert probe._player_hint_for_game(game, lookup) == {
+        "radiant": None,
+        "dire": None,
+    }
+
+
+def test_two_of_five_is_noise(monkeypatch) -> None:
+    """2/5 (замер E-267: впускал чужую организацию) — хинта нет вообще."""
+    monkeypatch.setattr(
+        probe, "_player_attribution_tier_index", lambda: (set(), {"alpha": {11}})
+    )
+    lookup = _lookup([(1, "Alpha"), (2, "Alpha"), (3, "No"), (4, "No"), (5, "No")])
     game = {
         "radiant_team": None,
         "dire_team": None,
@@ -117,6 +171,28 @@ def test_threshold_three_of_five_is_not_enough(monkeypatch) -> None:
         "radiant": None,
         "dire": None,
     }
+
+
+def test_player_hint_admits_game_scope(monkeypatch) -> None:
+    """Транспорт в мост: хинт + гейтовый тикет — да; всё остальное — нет."""
+    monkeypatch.setattr(
+        probe, "_player_attribution_tier_index", lambda: (set(), {"alpha": {11}})
+    )
+    monkeypatch.setattr(probe, "league_is_tier_gated", lambda lid: int(lid) == 10877)
+    lookup = _lookup([(1, "Alpha"), (2, "Alpha"), (3, "Alpha"), (4, "No"), (5, "No")])
+    weak_game = {
+        "league_id": 10877,
+        "radiant_team": None,
+        "dire_team": {"team_name": "Someone", "team_id": 999},
+        "players": _players(0, [1, 2, 3, 4, 5]),
+    }
+    assert probe._player_hint_admits_game(weak_game, lookup) is True
+    other_league = dict(weak_game, league_id=19944)
+    assert probe._player_hint_admits_game(other_league, lookup) is False
+    no_hint = dict(weak_game)
+    no_hint["players"] = []
+    assert probe._player_hint_admits_game(no_hint, lookup) is False
+    assert probe._player_hint_admits_game(weak_game, None) is False
 
 
 def test_build_target_keeps_names_but_carries_hint(monkeypatch) -> None:

@@ -579,6 +579,34 @@ def _game_has_known_tier12_side(game):
 # правками), чтобы атрибуция деплоилась независимо.
 _PLAYER_ATTRIBUTION_MIN_AGREE = 4
 
+# Слабый консенсус (E-270): единственный лидер 3/5. Ниже — шум устаревших
+# тегов (замер E-267: 2/5 впустили чужую организацию); равенство с
+# преследователем (3 на 3) — неразрешимая коллизия, тоже не хинт.
+_PLAYER_ATTRIBUTION_WEAK_MIN_AGREE = 3
+
+
+def _player_hint_admits_game(game, pro_lookup) -> bool:
+    """Есть ли у игры roster-hint (strong или weak): пропуск в мост.
+
+    Только ТРАНСПОРТ (E-270): хинт сам по себе ничего не допускает
+    downstream — пару подтверждает живая карточка Winline в cyberscore, а
+    лига обязана быть гейтовым тикетом (иначе мост захламляется играми,
+    которые cyberscore всё равно уронит на league-фильтре). Без карточки
+    игра дойдёт лишь до гейтов и встанет как раньше.
+    """
+    try:
+        if not league_is_tier_gated((game or {}).get("league_id")):
+            return False
+    except Exception:
+        return False
+    try:
+        hint = _player_hint_for_game(game, pro_lookup)
+    except Exception:
+        return False
+    if not isinstance(hint, dict):
+        return False
+    return bool(hint.get("radiant") or hint.get("dire"))
+
 # Мусорные токены при нормализации тега — тот же набор, что у tier-словарей.
 _PLAYER_ATTRIBUTION_TRASH = ('team', 'flipster', 'esports', 'gaming', ' ', '.')
 
@@ -643,6 +671,12 @@ def _attribute_sides_by_players(game, pro_lookup):
     Автономная механика атрибуции (E-269): те же пороги, что замерены в E-267,
     но собственные имена/индекс — работает и деплоится независимо от чужих
     правок допуска по составу.
+
+    E-270: ниже strong-порога (4/5) пишется WEAK-запись (3/5 при единственном
+    лидере): транспорт в мост и corroboration живой карточке Winline, но НЕ
+    самостоятельный допуск — без карточки такая игра встаёт на гейтах как
+    раньше. `display` — мажоритарное сырое написание тега (матчер карточек
+    понимает `Yellow Submarine`, а не нормализованный ключ).
     """
     sides = {0: None, 1: None}
     if not pro_lookup:
@@ -653,6 +687,7 @@ def _attribute_sides_by_players(game, pro_lookup):
     for side in (0, 1):
         tags = {}
         supporters = {}
+        spellings = {}
         for player in game.get("players") or []:
             if player.get("team") != side:
                 continue
@@ -664,17 +699,29 @@ def _attribute_sides_by_players(game, pro_lookup):
             if team_key and team_key in known_names:
                 tags[team_key] = tags.get(team_key, 0) + 1
                 supporters.setdefault(team_key, []).append(int(account_id))
+                spellings.setdefault(team_key, []).append(str(row.get("team") or ""))
         if not tags:
             continue
-        team_key, count = max(tags.items(), key=lambda item: (item[1], item[0]))
-        if count < _PLAYER_ATTRIBUTION_MIN_AGREE:
+        ranked = sorted(tags.items(), key=lambda item: (item[1], item[0]), reverse=True)
+        team_key, count = ranked[0]
+        runner_up = ranked[1][1] if len(ranked) > 1 else 0
+        weak = count < _PLAYER_ATTRIBUTION_MIN_AGREE
+        if weak and not (
+            count >= _PLAYER_ATTRIBUTION_WEAK_MIN_AGREE and count > runner_up
+        ):
             continue
-        sides[side] = {
+        raw_votes = spellings.get(team_key) or [team_key]
+        display = max(set(raw_votes), key=lambda raw: (raw_votes.count(raw), raw))
+        entry = {
             "team_key": team_key,
+            "display": str(display or team_key),
             "players": int(count),
             "team_ids": sorted(known_names[team_key]),
             "account_ids": sorted(supporters.get(team_key, [])),
         }
+        if weak:
+            entry["weak"] = True
+        sides[side] = entry
     return sides
 
 
@@ -718,10 +765,13 @@ def _player_hint_for_game(game, pro_lookup):
             continue
         labeled[label] = {
             "team_key": str(hit.get("team_key") or ""),
+            "display": str(hit.get("display") or hit.get("team_key") or ""),
             "players": int(hit.get("players") or 0),
             "team_ids": sorted(int(v) for v in (hit.get("team_ids") or [])),
             "account_ids": sorted(int(v) for v in (hit.get("account_ids") or [])),
         }
+        if hit.get("weak"):
+            labeled[label]["weak"] = True
     if not labeled:
         return out
     if len(labeled) == 2 and len({v["team_key"] for v in labeled.values()}) < 2:
@@ -1342,6 +1392,15 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                     _glid, league_name(_glid)
                 ) or _league_tier_gated_admission(_glid, g):
                     games_list.append(g)
+                elif _player_hint_admits_game(g, pro_lookup):
+                    # E-270: транспорт по weak-hint (3/5) на гейтовом тикете.
+                    # Сам по себе downstream ничего не открывает: пару обязана
+                    # подтвердить живая карточка Winline в cyberscore.
+                    log.info(
+                        "Тикет площадки в мост по хинту составов: id=%s лига=%s",
+                        g.get("match_id"), _glid,
+                    )
+                    games_list.append(g)
         except Exception as e:
             log.warning("Стартовый (0)-снимок не удался: %s", e)
         log.info("auto-keyword: стартовый набор keyword-матчей: %d", len(games_list))
@@ -1664,6 +1723,11 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                         _gname = league_name(_glid, refresh_if_missing=True)
                                         _verdict = _league_admission(_glid, _gname)
                                         if _verdict != "ok" and _league_tier_gated_admission(_glid, fg):
+                                            _verdict = "ok"
+                                        elif _verdict != "ok" and _player_hint_admits_game(fg, pro_lookup):
+                                            # E-270: транспорт по weak-hint (3/5).
+                                            # Downstream пару обязана подтвердить
+                                            # живая карточка Winline в cyberscore.
                                             _verdict = "ok"
                                             if fmid not in gated_announced:
                                                 gated_announced.add(fmid)

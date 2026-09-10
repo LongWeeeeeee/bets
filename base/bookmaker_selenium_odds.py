@@ -2038,6 +2038,32 @@ def collect_winline_live_overview_in_camoufox_page(page, url: str) -> Dict[str, 
     return _run_coroutine_blocking(_collect_winline_live_overview_async(page, url))
 
 
+# Классы, на которые опирается разбор карточек ленты. Их отсутствие в DOM —
+# честный признак shell-страницы (SPA не поднялось / лента не отрендерилась),
+# а не пустой ленты: пустая лента всё равно рисует каркас с кнопками.
+_WINLINE_OVERVIEW_FEED_MARKERS = ("coefficient-button", "period-name")
+
+
+def _winline_overview_payload_looks_like_feed(text: Any, html: Any) -> bool:
+    """Есть ли в съёме признаки живой ленты (против shell-заглушки).
+
+    Холодное чтение сразу после goto отдаёт только заголовок (~150 символов,
+    измерено 10.09.2026): такой снимок обязан отклоняться, иначе он затирает
+    хороший и join никогда не срабатывает. Fail-closed: сомнение — не лента.
+    """
+    try:
+        body = " ".join(str(text or "").split())
+    except Exception:
+        return False
+    if len(body) < 500:
+        return False
+    try:
+        dom = str(html or "")
+    except Exception:
+        return False
+    return any(marker in dom for marker in _WINLINE_OVERVIEW_FEED_MARKERS)
+
+
 def _winline_map_marker_patterns(map_num: int) -> List[str]:
     n = int(map_num)
     return [

@@ -257,3 +257,240 @@ def test_known_side_filter_call_matches_def_arity() -> None:
             f"({len(node.args) + len(node.keywords)} > {n_params})"
         )
     assert checked >= 2, "call sites не найдены — тест ослеп"
+
+
+# Захват shell-снимка 10.09.2026: холодное чтение сразу после goto (SPA не
+# поднялось) — в тексте только заголовок, 149 символов, в DOM нет ни кнопок,
+# ни заголовков. Такой снимок затирал хороший, и join не срабатывал НИ РАЗУ
+# (в прод-логе ноль `лига Winline`).
+SHELL_TEXT = (
+    "Ставки на Dota 2 онлайн, сделать ставку в линии ✔️ коэффициенты на Winline "
+    "Ставки на Dota 2 онлайн, сделать ставку в линии ✔️ коэффициенты на Winline"
+)
+SHELL_HTML = "<html><head><title>Ставки на Dota 2</title></head><body></body></html>"
+FEED_HTML = (
+    '<div class="card"><span class="period-name">1К</span>'
+    '<button class="coefficient-button">2.60</button></div>'
+)
+# Живая лента всегда несёт chrome (меню лиг/дисциплин, ~3.5k в захвате
+# 10.09.2026): порог 500 лежит в пустом промежутке между shell (149) и лентой.
+FEED_TEXT = (DOTA_LIVE_CARD + " ") * 6
+
+
+def test_overview_shell_snapshot_rejected() -> None:
+    """Shell без признаков ленты отклоняется предикатом."""
+    assert (
+        odds_parser._winline_overview_payload_looks_like_feed(  # noqa: SLF001
+            SHELL_TEXT, SHELL_HTML
+        )
+        is False
+    )
+    assert (
+        odds_parser._winline_overview_payload_looks_like_feed("", "")  # noqa: SLF001
+        is False
+    )
+
+
+def test_overview_feed_snapshot_accepted() -> None:
+    """Лента с классами карточек принимается предикатом."""
+    assert (
+        odds_parser._winline_overview_payload_looks_like_feed(  # noqa: SLF001
+            FEED_TEXT, FEED_HTML
+        )
+        is True
+    )
+
+
+def _fake_overview_fns(payload: dict):
+    def fake_collect(page, url):
+        return dict(payload)
+
+    fake_collect.__module__ = "bookmaker_selenium_odds"
+    return (
+        fake_collect,
+        lambda *args, **kwargs: "",
+        lambda *args, **kwargs: False,
+        lambda *args, **kwargs: None,
+    )
+
+
+def _offline_refresh(monkeypatch, payload: dict) -> None:
+    _enable_winline_first(monkeypatch)
+    monkeypatch.setattr(runtime, "_winline_first_parser_fns", lambda: _fake_overview_fns(payload))
+    monkeypatch.setattr(
+        runtime, "_bookmaker_urls_for_mode", lambda mode: {"winline": "http://x"}
+    )
+    monkeypatch.setattr(
+        runtime, "_run_shared_camoufox_job", lambda name, job, **kw: job(object())
+    )
+    monkeypatch.setattr(
+        runtime._shared_camoufox_session,  # noqa: SLF001
+        "get_or_create_page",
+        lambda *args, **kwargs: object(),
+    )
+
+
+def test_refresh_rejects_shell_and_keeps_prior_feed(monkeypatch) -> None:
+    """Регрессия 10.09.2026: shell-съём не затирает хороший снимок.
+
+    До фикса refresh складировал любой непустой текст: холодное чтение
+    (149 символов заголовка) затирало ленту, и `_winline_first_join` никогда
+    не находил карточки в проде.
+    """
+    _offline_refresh(
+        monkeypatch,
+        {"text": SHELL_TEXT, "html": SHELL_HTML, "status": "ok", "error": ""},
+    )
+    runtime._winline_overview_inject_for_tests(FEED_TEXT)  # noqa: SLF001
+    assert runtime._winline_overview_refresh_once() is False  # noqa: SLF001
+    assert runtime._winline_overview_snapshot_text() == FEED_TEXT  # noqa: SLF001
+
+
+def test_refresh_stores_feed_snapshot(monkeypatch) -> None:
+    """Лента с признаками feed кладётся в состояние и читается join."""
+    _offline_refresh(
+        monkeypatch,
+        {"text": FEED_TEXT, "html": FEED_HTML, "status": "ok", "error": ""},
+    )
+    runtime._winline_overview_inject_for_tests("")  # noqa: SLF001
+    assert runtime._winline_overview_refresh_once() is True  # noqa: SLF001
+    assert runtime._winline_overview_snapshot_text() == FEED_TEXT  # noqa: SLF001
+
+
+# Живой захват 10.09.2026 (прогретый снимок): обе demanded-пары с кэфами.
+YS_PT_CARD = (
+    "DOTA 2 | BLAST Slam, Qualifier YELLOW SUBMARINE PLAYTIME "
+    "1карта 0 0 0 0 1К Матч 2.60 1.40 - - - - - - 1 карта 2.60 1.40 - - - - - - "
+)
+IC_KAL_CARD = (
+    "INNER CIRCLE KALMYCHATA 0 0 0 0 1К Матч 1.30 3.00 - - - - - - "
+)
+YS_PT_SNAPSHOT = "ГЛАВНАЯ LIVE DOTA 2 " + YS_PT_CARD + IC_KAL_CARD + "DOTA 2 | Mad Dogs League "
+# Две соседние live-карточки под одним заголовком лиги: плоский текст их не
+# делит (single_card_scope), DOM — делит. Разметка повторяет живую.
+YS_PT_HTML = (
+    '<div class="feed">'
+    '<div class="card"><span>YELLOW SUBMARINE</span><span>PLAYTIME</span>'
+    "<span>1карта</span>"
+    '<button class="coefficient-button">2.60</button>'
+    '<button class="coefficient-button">1.40</button></div>'
+    '<div class="card"><span>INNER CIRCLE</span><span>KALMYCHATA</span>'
+    "<span>1карта</span>"
+    '<button class="coefficient-button">1.30</button>'
+    '<button class="coefficient-button">3.00</button></div>'
+    "</div>"
+)
+
+WEAK_YS_HINT = {
+    "radiant": {
+        "team_key": "yellowsubmarine",
+        "display": "Yellow Submarine",
+        "players": 3,
+        "team_ids": [2576071],
+        "account_ids": [11, 12, 13],
+        "weak": True,
+    },
+    "dire": None,
+}
+
+
+def test_weak_confirm_with_bridge_anchor(monkeypatch) -> None:
+    """E-270: weak-хинт + точное имя второй стороны + живая карточка = hit.
+
+    Кейс 10.09.2026: GC `None vs PlayTime` (10877), составы 3/5 YS,
+    карточка Winline `YELLOW SUBMARINE PLAYTIME` с кэфами 2.60/1.40.
+    """
+    _enable_winline_first(monkeypatch)
+    runtime._winline_overview_inject_for_tests(YS_PT_SNAPSHOT, YS_PT_HTML)  # noqa: SLF001
+    hit = runtime._winline_player_confirm("Radiant", "PlayTime", WEAK_YS_HINT)  # noqa: SLF001
+    assert hit is not None
+    assert hit["confirmed_names"] == ("Yellow Submarine", "PlayTime")
+    assert hit["confirmed_ids"] == {"radiant": 2576071}
+    assert runtime._winline_first_bypass_active(hit) is True  # noqa: SLF001
+
+
+def test_weak_confirm_without_anchor_rejected(monkeypatch) -> None:
+    """Weak-хинт без якоря точным именем из моста — отказ (обе стороны хинты)."""
+    _enable_winline_first(monkeypatch)
+    runtime._winline_overview_inject_for_tests(YS_PT_SNAPSHOT, YS_PT_HTML)  # noqa: SLF001
+    hint = {
+        "radiant": dict(WEAK_YS_HINT["radiant"]),
+        "dire": {
+            "team_key": "playtime",
+            "display": "PlayTime",
+            "players": 3,
+            "team_ids": [10207983],
+            "account_ids": [21, 22, 23],
+            "weak": True,
+        },
+    }
+    assert runtime._winline_player_confirm("Radiant", "Dire", hint) is None  # noqa: SLF001
+
+
+def test_card_admits_gated_league_but_not_denied_or_foreign(monkeypatch) -> None:
+    """E-270: карточка открывает league-фильтр только внутри разрешённого."""
+    import time
+
+    _enable_winline_first(monkeypatch)
+    runtime._winline_overview_inject_for_tests(YS_PT_SNAPSHOT, YS_PT_HTML)  # noqa: SLF001
+    hit = runtime._winline_player_confirm("Radiant", "PlayTime", WEAK_YS_HINT)  # noqa: SLF001
+    assert hit is not None
+    assert runtime._winline_card_admits_league(hit, 10877) is True  # noqa: SLF001
+    assert runtime._winline_card_admits_league(hit, 17911) is False  # noqa: SLF001
+    assert runtime._winline_card_admits_league(None, 10877) is False  # noqa: SLF001
+    denied_hit = {
+        "card": "x",
+        "league": "BLAST Slam VII: China Open Qualifier 2",
+        "admitted_at": time.time(),
+        "admission_ttl": 180.0,
+    }
+    assert runtime._winline_card_admits_league(denied_hit, 10877) is False  # noqa: SLF001
+    no_league_hit = dict(denied_hit, league="")
+    assert runtime._winline_card_admits_league(no_league_hit, 10877) is False  # noqa: SLF001
+
+
+def test_weak_pair_flows_through_league_filter(monkeypatch, tmp_path) -> None:
+    """E-270 end-to-end admission: мост None–PlayTime + карточка → mock-нода.
+
+    До фикса: probe не писал такой мост, а league-фильтр ронял его даже при
+    наличии (нет известной стороны по id). Здесь — тот же каркас, что в
+    Mad-Dogs-тесте выше, но пара подтверждена и нода строится.
+    """
+    import json
+    import time
+
+    _enable_winline_first(monkeypatch)
+    runtime._winline_overview_inject_for_tests(YS_PT_SNAPSHOT, YS_PT_HTML)  # noqa: SLF001
+    bridge = {
+        "8991598414": {
+            "match_id": 8991598414,
+            "series_id": 8991598414,
+            "league_id": 10877,
+            "league_name": "",
+            "radiant_team_name": "Radiant",
+            "radiant_team_id": 0,
+            "dire_team_name": "PlayTime",
+            "dire_team_id": 10020555,
+            "radiant_score": 0,
+            "dire_score": 0,
+            "radiant_series_wins": 0,
+            "dire_series_wins": 0,
+            "series_game_number": 1,
+            "series_type": 1,
+            "game_time": 100.0,
+            "radiant_lead": 0,
+            "timestamp": time.time(),
+            "player_hint": WEAK_YS_HINT,
+        }
+    }
+    bridge_path = tmp_path / "sourcetv_matches.json"
+    bridge_path.write_text(json.dumps(bridge), encoding="utf-8")
+    monkeypatch.setattr(runtime, "SOURCETV_MATCHES_PATH", str(bridge_path))
+    monkeypatch.setattr(runtime, "DLTV_SOURCE_MODE", "sourcetv")
+    monkeypatch.setattr(
+        runtime, "_ensure_winline_overview_refresher", lambda: None
+    )
+    heads, bodies = runtime.get_heads()
+    assert len(heads) == 1 and len(bodies) == 1
+    assert "PlayTime" in bodies[0].get_text()
+    assert "Radiant" in bodies[0].get_text()
