@@ -45,6 +45,10 @@ def registry(monkeypatch):
     monkeypatch.setattr(cs, "_winline_pending_next_maps", {}, raising=False)
     monkeypatch.setattr(cs, "_winline_odds_notify_state", {}, raising=False)
     monkeypatch.setattr(cs, "_winline_odds_orientation_state", {}, raising=False)
+    monkeypatch.setattr(cs, "_winline_map_clocks", {}, raising=False)
+    monkeypatch.setattr(cs, "_winline_team_id_canonical", {}, raising=False)
+    monkeypatch.setattr(cs, "_winline_series_wins_seen", {}, raising=False)
+    monkeypatch.setattr(cs, "_winline_series_wins_baseline", {}, raising=False)
     return cs._winline_current_map_registry
 
 
@@ -128,6 +132,69 @@ class TestPredicate:
         assert cs._winline_current_map_is_current(
             identity={"series": SERIES, "map_num": 2,
                       "team1": "Team Lynx", "team2": ""})["current"] is True
+
+
+class TestPlaceholderIdentity:
+    """Плейсхолдер («Radiant»/«Dire») — отсутствие личности, а не личность.
+
+    10.09.2026, Yellow Submarine — PlayTime, карта 1: личность моста
+    подставляется `_resolve_sourcetv_bridge_identity` из листинга CyberScore,
+    но в цикле, где фолбэк промахнулся, сверка видела в реестре сырое
+    `Radiant vs PlayTime` против идентичности опроса
+    `Yellow Submarine vs PlayTime`, отвечала `map_rollover`, а `_eval_map_current`
+    считал явную причину доказанной. Каждый такой цикл уходил в админ-чат как
+
+        🏁 Winline · карта 1 / Yellow Submarine — PlayTime / карта завершена
+
+    по живой карте — и следом опрос заводился заново. Контракт: плейсхолдер
+    это wildcard, как пустое имя; решает номер карты, а не пара.
+    """
+
+    YS_SERIES = "sourcetv:league:10877|name:playtime|name:radiant"
+
+    def _ys_live(self, **overrides: Any) -> Dict[str, Any]:
+        entry = {
+            "map_num": 1,
+            "team1": "Radiant",
+            "team2": "PlayTime",
+            "active": True,
+            "bridge_confirmed": True,
+        }
+        entry.update(overrides)
+        return entry
+
+    def test_placeholder_keeps_live_map_current(self, registry):
+        registry[self.YS_SERIES] = self._ys_live()
+        got = cs._winline_current_map_is_current(
+            identity={"series": self.YS_SERIES, "map_num": 1,
+                      "team1": "Yellow Submarine", "team2": "PlayTime"})
+        assert got["current"] is True
+
+    def test_placeholder_on_poller_side_keeps_current(self, registry):
+        registry[self.YS_SERIES] = self._ys_live(
+            team1="Yellow Submarine", team2="PlayTime")
+        got = cs._winline_current_map_is_current(
+            identity={"series": self.YS_SERIES, "map_num": 1,
+                      "team1": "Radiant", "team2": "PlayTime"})
+        assert got["current"] is True
+
+    def test_real_different_pair_still_rollover(self, registry):
+        registry[self.YS_SERIES] = self._ys_live(
+            team1="Yellow Submarine", team2="PlayTime")
+        got = cs._winline_current_map_is_current(
+            identity={"series": self.YS_SERIES, "map_num": 1,
+                      "team1": "Team Spirit", "team2": "PlayTime"})
+        assert isinstance(got, dict) and got["reason"] == "map_rollover"
+
+    def test_pair_compare_treats_placeholder_as_wildcard(self):
+        assert cs._winline_same_team_pair(
+            "Radiant", "PlayTime", "Yellow Submarine", "PlayTime") is True
+        assert cs._winline_same_team_pair(
+            "Yellow Submarine", "PlayTime", "Radiant", "PlayTime") is True
+        assert cs._winline_same_team_pair(
+            "Radiant", "Dire", "Yellow Submarine", "PlayTime") is True
+        assert cs._winline_same_team_pair(
+            "Yellow Submarine", "PlayTime", "Team Spirit", "PlayTime") is False
 
 
 class TestSlot:
