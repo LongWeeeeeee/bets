@@ -5,7 +5,7 @@ date: "2026-09-09"
 area: collection
 status: full
 corpus: "захваты Winline 01.08 + 05.08.2026, 9 unit-тестов"
-verdict: "внедрено: winline-hit допускает матч мимо league-allowlist/team_id/denylist, иначе прежний путь"
+verdict: "внедрено: winline-hit внутри allowlist-лиг допускает матч мимо team_id-гейта, иначе прежний путь"
 harness: "base/tests/test_winline_first_admission.py"
 ---
 
@@ -29,10 +29,20 @@ harness: "base/tests/test_winline_first_admission.py"
   вкладке `bookmaker:winline-overview`, чтобы не сбивать вкладки поллера). Join пары
   SourceTV к снимку (`_winline_first_join`) — живой карточкой через
   `_winline_matched_card_context` + `_looks_future_context` (prematch-линия с
-  «Завтра» отклоняется), плейсхолдеры Radiant/Dire не джойнятся. Hit допускает матч
-  мимо трёх гейтов; неизвестная сторона остаётся неизвестной (id 0, tier 3 по
+  «Завтра» отклоняется), плейсхолдеры Radiant/Dire не джойнятся.
+- **Поправка 10.09.2026 (alex): league allowlist и league-denylist — ЖЁСТКИЕ
+  границы, winline-first их не обходит** (на Winline есть карты, которые мы не
+  хотим разбирать вовсе). Hit допускает матч ВНУТРИ allowlist-лиг только мимо
+  team_id-гейта; неизвестная сторона остаётся неизвестной (id 0, tier 3 по
   правилам tier 2, без авто-онбординга — зеркало tier-3 allowlist). Лига из карточки
-  (`winline_live_card_league`) — только fallback identity для логов/display.
+  (`winline_live_card_league`) — только для логов/display.
+- **Дефект, найденный поправкой:** per-card bypass был мёртв с момента внедрения —
+  штамп `admitted_at` ставил только удалённый heads-хелпер `_winline_first_maybe_admit`,
+  а team_id-гейт получал hit из `_winline_first_join` без штампа, и
+  `_winline_first_bypass_active` всегда возвращал False. Юнит-тесты смотрели только
+  heads-путь и дефект не ловили. Исправлено: штамп ставит сам join; добавлен
+  регрессионный тест `test_join_hit_activates_bypass_directly` (на hit без штампа
+  даёт False — то есть до фикса был бы красным).
 - **Харнесс:** `base/tests/test_winline_first_admission.py` (9 тестов).
 - **Запуск:** `venv_catboost/bin/python3 -m pytest base/tests/test_winline_first_admission.py -q`
   (плюс соседние winline-сюиты: 88 passed; весь `base/tests/` — зелёный кроме
@@ -57,5 +67,5 @@ harness: "base/tests/test_winline_first_admission.py"
   коллизии токена команды с названием лиги (`1w Essence` vs `1w`) возвращается "" —
   как пустой league_name у probe; (4) выборка боевого эффекта пока нулевая — смотреть
   прод-логи по маркеру `🧭 Winline-first`.
-- **Вывод:** внедрено. Откат: `WINLINE_FIRST_ENABLED=0` (или отсутствие снимка —
-  поведение совпадёт со старым автоматически).
+- **Вывод:** внедрено с поправкой 10.09.2026. Откат: `WINLINE_FIRST_ENABLED=0`
+  (или отсутствие снимка — поведение совпадёт со старым автоматически).

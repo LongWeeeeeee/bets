@@ -1,16 +1,17 @@
 """Winline-first admission: живая лента Winline разбирается ПЕРВОЙ.
 
-Контракт (заявка 09.09.2026, кейс MOUZ vs Klim Sani4):
+Контракт (заявка 09.09.2026, кейс MOUZ vs Klim Sani4; поправка 10.09.2026:
+league allowlist и league-denylist остаются ЖЁСТКИМИ границами — на Winline
+есть карты, которые мы не хотим разбирать вовсе):
 - порядок «сначала матч SourceTV, потом поиск в Winline» ронял матчи с
   неполным опознанием ДО опроса букмекера: team_id-гейт требует id ОБЕИХ
-  сторон, league-allowlist режет неизвестные лиги. Ни кэфы, ни сам матч
-  не разбирались, хотя Winline матч вёл;
+  сторон. Ни кэфы, ни сам матч не разбирались, хотя Winline матч вёл;
 - новый порядок: раз в цикл снимается общий live-снимок Winline (лиги +
-  команды), и матч SourceTV, найденный в живой карточке Winline, допускается
-  мимо league-allowlist / team_id-гейта / league-denylist. Неизвестная сторона
-  остаётся неизвестной (id 0, tier 3 по правилам tier 2, без авто-онбординга
-  в tier2 — как явный tier-3 allowlist). Нет снимка или нет совпадения —
-  прежний путь без изменений (fail-open).
+  команды), и матч SourceTV ВНУТРИ allowlist-лиг, найденный в живой карточке
+  Winline, допускается мимо team_id-гейта. Неизвестная сторона остаётся
+  неизвестной (id 0, tier 3 по правилам tier 2, без авто-онбординга в tier2 —
+  как явный tier-3 allowlist). Нет снимка или нет совпадения — прежний путь
+  без изменений (fail-open).
 
 Захваченные артефакты:
 - `base/tests/fixtures/winline_pinned_bar_shadows_card.html` (захват 01.08.2026):
@@ -124,12 +125,17 @@ def test_join_fail_open_without_snapshot(monkeypatch) -> None:
     assert runtime._winline_first_join("MOUZ", "Klim Sani4") is None  # noqa: SLF001
 
 
-def test_bypass_active_for_fresh_hit(monkeypatch) -> None:
+def test_join_hit_activates_bypass_directly(monkeypatch) -> None:
+    """Регрессия 10.09.2026: hit из join обязан сразу проходить bypass_active.
+
+    До фикса штамп `admitted_at` ставил только heads-хелпер, а per-card путь
+    (join → bypass_active на team_id-гейте) получал hit без штампа — допуск
+    был мёртв, хотя тесты смотрели только heads-путь.
+    """
     _enable_winline_first(monkeypatch)
     runtime._winline_overview_inject_for_tests(DOTA_LIVE_CARD)  # noqa: SLF001
-    hit = runtime._winline_first_maybe_admit("mid-1", "MOUZ", "Klim Sani4")  # noqa: SLF001
+    hit = runtime._winline_first_join("MOUZ", "Klim Sani4")  # noqa: SLF001
     assert hit is not None
-    assert hit["match_id"] == "mid-1"
     assert runtime._winline_first_bypass_active(hit) is True  # noqa: SLF001
     assert runtime._winline_first_bypass_active(None) is False  # noqa: SLF001
     assert runtime._winline_first_bypass_active({}) is False  # noqa: SLF001
@@ -138,7 +144,7 @@ def test_bypass_active_for_fresh_hit(monkeypatch) -> None:
 def test_bypass_expires(monkeypatch) -> None:
     _enable_winline_first(monkeypatch)
     runtime._winline_overview_inject_for_tests(DOTA_LIVE_CARD)  # noqa: SLF001
-    hit = runtime._winline_first_maybe_admit("mid-9", "MOUZ", "Klim Sani4")  # noqa: SLF001
+    hit = runtime._winline_first_join("MOUZ", "Klim Sani4")  # noqa: SLF001
     assert hit is not None
     hit["admitted_at"] -= 10_000.0
     assert runtime._winline_first_bypass_active(hit) is False  # noqa: SLF001
@@ -149,4 +155,4 @@ def test_winline_first_disabled_by_flag(monkeypatch) -> None:
     monkeypatch.setattr(runtime, "WINLINE_FIRST_ENABLED", False, raising=False)
     runtime._winline_overview_inject_for_tests(DOTA_LIVE_CARD)  # noqa: SLF001
     assert runtime._winline_first_active() is False  # noqa: SLF001
-    assert runtime._winline_first_maybe_admit("mid-1", "MOUZ", "Klim Sani4") is None  # noqa: SLF001
+    assert runtime._winline_first_join("MOUZ", "Klim Sani4") is None  # noqa: SLF001
