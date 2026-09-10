@@ -34144,7 +34144,6 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                     m.get("league_id"),
                     m.get("radiant_team_id"),
                     m.get("dire_team_id"),
-                    m.get("_gated_tier12_side"),
                 ):
                     _skipped_by_league += 1
                     continue

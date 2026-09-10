@@ -172,3 +172,88 @@ def test_winline_first_disabled_by_flag(monkeypatch) -> None:
     runtime._winline_overview_inject_for_tests(DOTA_LIVE_CARD)  # noqa: SLF001
     assert runtime._winline_first_active() is False  # noqa: SLF001
     assert runtime._winline_first_join("MOUZ", "Klim Sani4") is None  # noqa: SLF001
+
+
+def test_non_allowlisted_league_filtered_without_crash(monkeypatch, tmp_path) -> None:
+    """Регрессия 10.09.2026: arity вызова фильтра и определения обязаны совпадать.
+
+    В прод уехал вызов `_league_admits_with_known_side` с чужой строкой
+    (`_gated_tier12_side`, 4-й аргумент) без парного изменения определения —
+    главный цикл падал с TypeError на каждом не-allowlist матче. Тест едет
+    через настоящий call site (`get_heads`, SourceTV-ветка) с записью вида
+    Mad Dogs League: битый вызов роняет его TypeError, целый отдаёт ([], []).
+    """
+    import json
+    import time
+
+    bridge = {
+        "mid-268": {
+            "match_id": "mid-268",
+            "series_id": "mid-268",
+            "league_id": 17911,
+            "league_name": "Mad Dogs League",
+            "radiant_team_name": "Azure Dragons",
+            "radiant_team_id": 0,
+            "dire_team_name": "Stormriders",
+            "dire_team_id": 0,
+            "radiant_score": 0,
+            "dire_score": 0,
+            "radiant_series_wins": 0,
+            "dire_series_wins": 0,
+            "series_game_number": 1,
+            "series_type": 1,
+            "game_time": 100.0,
+            "radiant_lead": 0,
+            "timestamp": time.time(),
+        }
+    }
+    bridge_path = tmp_path / "sourcetv_matches.json"
+    bridge_path.write_text(json.dumps(bridge), encoding="utf-8")
+    monkeypatch.setattr(runtime, "SOURCETV_MATCHES_PATH", str(bridge_path))
+    monkeypatch.setattr(runtime, "DLTV_SOURCE_MODE", "sourcetv")
+    # Герметичность: прогрев снимка Winline здесь не под тестом, а его поток
+    # пережил бы тест (daemon) и дёргал бы общую Camoufox-очередь.
+    monkeypatch.setattr(
+        runtime, "_ensure_winline_overview_refresher", lambda: None
+    )
+    assert runtime._league_matches_allowlist(17911, "Mad Dogs League") is False
+    heads, bodies = runtime.get_heads()
+    assert heads == [] and bodies == []
+
+
+def test_known_side_filter_call_matches_def_arity() -> None:
+    """Tripwire 10.09.2026: ни один вызов не передаёт больше, чем принимает деф.
+
+    В прод уехал вызов `_league_admits_with_known_side` с чужой строкой
+    (4-й аргумент) без парного изменения определения — главный цикл падал с
+    `takes 3 positional arguments but 4 were given` на каждом не-allowlist
+    матче (доказано логом serv1; red показан строгой 3-арг подменой дефа:
+    битый вызов роняет TypeError). Поведенческий тест выше в этом дереве
+    битый вызов не ловит (здесь уже лежит парный 4-арг деф пира), поэтому
+    соответствие проверяется статически по исходнику: каждый позиционный
+    вызов обязан укладываться в сигнатуру. Числа не захардкожены — парная
+    правка дефа и всех вызовов остаётся зелёной.
+    """
+    import ast
+    import inspect
+    from pathlib import Path
+
+    target = "_league_admits_with_known_side"
+    n_params = len(inspect.signature(getattr(runtime, target)).parameters)
+    tree = ast.parse(Path(runtime.__file__).read_text(encoding="utf-8"))
+    checked = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = getattr(func, "attr", None) or getattr(func, "id", None)
+        if name != target:
+            continue
+        if any(isinstance(arg, ast.Starred) for arg in node.args):
+            continue
+        checked += 1
+        assert len(node.args) + len(node.keywords) <= n_params, (
+            f"вызов {target} передаёт больше аргументов, чем принимает деф "
+            f"({len(node.args) + len(node.keywords)} > {n_params})"
+        )
+    assert checked >= 2, "call sites не найдены — тест ослеп"
