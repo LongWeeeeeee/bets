@@ -248,6 +248,99 @@ def test_parse_live_clock_requires_game_time(live_payload):
     assert cs._dltv_parse_live_clock(payload) is None
 
 
+def _draft_stage_payload():
+    # NAVI–KLIM 10.09.2026: лобби тикает game_time, драфт не завершён.
+    return {
+        "match_id": 8992034384,
+        "game_time": 327,
+        "radiant_score": 0,
+        "dire_score": 0,
+        "radiant_lead": 0,
+        "is_picks_ended": None,
+        "fast_picks": {"first_team": [], "second_team": []},
+        "players": [],
+        "db": {
+            "first_team": {"id": 58, "title": "Natus Vincere"},
+            "second_team": {"id": 7031, "title": "KLIM SANI4"},
+            "scores": {"first_team": 0, "second_team": 0},
+            "series": {"slug": "natus-vincere-vs-klim-sani4-epl-masters-2"},
+        },
+    }
+
+
+def test_parse_live_clock_refuses_draft_stage():
+    assert cs._dltv_parse_live_clock(_draft_stage_payload()) is None
+
+
+def test_parse_live_clock_allows_score_without_flag():
+    payload = _draft_stage_payload()
+    payload["radiant_score"] = 1
+    clock = cs._dltv_parse_live_clock(payload)
+    assert clock is not None
+    assert clock["game_time"] == 327
+    assert clock["map_num"] == 1
+
+
+def _draft_snap():
+    return {"live": {"8992034384": 427891}, "upcoming": [{
+        "id": 427891, "status": 1,
+        "slug": "natus-vincere-vs-klim-sani4-epl-masters-2",
+    }], "results": []}
+
+
+def _no_send(message, **kwargs):
+    raise AssertionError("no draft must send on draft stage")
+
+
+def test_notify_resets_clock_on_draft_stage(
+        monkeypatch, series_snapshot):
+    _notify_env(monkeypatch, None)
+    key = "winline:league:epl masters|klim sani4|natus vincere"
+    cs._winline_map_clocks[key] = {
+        "game_time": 207.0, "wall": 0.0, "map_num": 1, "live": True,
+        "radiant_lead": 0, "radiant_name": "", "dire_name": "",
+        "source": "dltv",
+    }
+
+    def _fetch(url, timeout):
+        assert "8992034384" in url
+        return _draft_stage_payload()
+
+    ok = cs._winline_card_dltv_draft_notify(
+        league="EPL Masters", team1="Natus Vincere", team2="KLIM SANI4",
+        map_num=1, series_key=key, send_fn=_no_send,
+        snapshot=_draft_snap(), match_fetcher=_fetch,
+        bridge_live_pairs=set())
+    assert ok is False
+    assert key not in cs._winline_map_clocks
+    assert cs._winline_map_clock_label(key + "|map1|Natus Vincere|KLIM SANI4") == "—"
+
+
+def test_notify_keeps_prior_map_clock_on_draft_stage(
+        monkeypatch, series_snapshot):
+    _notify_env(monkeypatch, None)
+    key = "winline:league:epl masters|klim sani4|natus vincere"
+    frozen = {
+        "game_time": 2400.0, "wall": 0.0, "map_num": 1, "live": False,
+        "radiant_lead": 3000, "radiant_name": "Natus Vincere",
+        "dire_name": "KLIM SANI4", "source": "dltv",
+    }
+    cs._winline_map_clocks[key] = dict(frozen)
+    payload = _draft_stage_payload()
+    payload["db"]["scores"] = {"first_team": 1, "second_team": 0}
+
+    def _fetch(url, timeout):
+        return payload
+
+    ok = cs._winline_card_dltv_draft_notify(
+        league="EPL Masters", team1="Natus Vincere", team2="KLIM SANI4",
+        map_num=2, series_key=key, send_fn=_no_send,
+        snapshot=_draft_snap(), match_fetcher=_fetch,
+        bridge_live_pairs=set())
+    assert ok is False
+    assert cs._winline_map_clocks[key] == frozen
+
+
 def test_bridge_live_pairs_from_snapshot_file(tmp_path):
     import time as _time
     rows = {

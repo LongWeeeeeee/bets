@@ -18604,7 +18604,10 @@ def _dltv_parse_live_clock(payload: Any) -> Optional[Dict[str, Any]]:
     Стороны Radiant/Dire маппятся на титулы через full_stats (team_id
     игрока → id first/second_team из db). Нераспознанная сторона — «»:
     🕐 работает по game_time, а 💰 честно отсутствует (композитор требует
-    имя). Возвращает None без положительного game_time или номера карты.
+    имя). Возвращает None без положительного game_time, номера карты или
+    признаков старта игры: DLTv тикает game_time ещё в лобби/драфте
+    (is_picks_ended пуст, счёт 0–0), и это время — не время карты.
+    Стартом считается завершённый драфт либо ненулевой счёт.
     """
     try:
         if not isinstance(payload, dict):
@@ -18614,6 +18617,14 @@ def _dltv_parse_live_clock(payload: Any) -> Optional[Dict[str, Any]]:
         except (TypeError, ValueError):
             return None
         if game_time <= 0:
+            return None
+        try:
+            started = bool(payload.get("is_picks_ended")) or (
+                int(payload.get("radiant_score") or 0)
+                + int(payload.get("dire_score") or 0) > 0)
+        except (TypeError, ValueError):
+            started = bool(payload.get("is_picks_ended"))
+        if not started:
             return None
         db = payload.get("db") or {}
         titles_by_id: Dict[str, str] = {}
@@ -18836,6 +18847,39 @@ def _winline_bridge_live_pairs(
     return out
 
 
+def _winline_reset_dltv_clock(series_key: Any, map_num: Any) -> None:
+    """Убрать свои DLTv-часы карты, которая ещё не стартовала (драфт/лобби).
+
+    Удаляется только запись с тем же номером карты: замороженное время
+    доигранных карт серии остаётся для их опоздавших строк. Без номера
+    карты — обычный freeze (экстраполяция останавливается, время остаётся).
+    """
+    try:
+        key = str(series_key or "").strip()
+        if not key:
+            return
+        try:
+            want_map = int(map_num or 0)
+        except (TypeError, ValueError):
+            want_map = 0
+        with _winline_current_map_state_lock:
+            current = _winline_map_clocks.get(key)
+            if not (isinstance(current, dict)
+                    and current.get("source") == "dltv"):
+                return
+            try:
+                have_map = int(current.get("map_num") or 0)
+            except (TypeError, ValueError):
+                have_map = 0
+            if want_map and have_map == want_map:
+                _winline_map_clocks.pop(key, None)
+                print(f"📡 DLTv-live: clock reset (draft stage) {key}")
+                return
+        _winline_freeze_dltv_clock(key)
+    except Exception:
+        pass
+
+
 def _winline_freeze_dltv_clock(series_key: Any) -> None:
     """Заморозить свои DLTv-часы серии: DLTv серию больше не показывает."""
     try:
@@ -18899,6 +18943,21 @@ def _winline_card_dltv_draft_notify(
             print(f"📡 DLTv-live: clock map={clock.get('map_num')} "
                   f"t={int(clock.get('game_time') or 0)}s "
                   f"lead={clock.get('radiant_lead')} {key_base}")
+        elif key_base:
+            # Серия live, но игра не стартовала (драфт/лобби): убираем свои
+            # часы ЭТОЙ карты, чтобы лобби-время не утекало в 🕐. Часы
+            # прошлых карт серии (другой map_num) не трогаем — их
+            # замороженное время ещё нужно опоздавшим строкам карты.
+            try:
+                db = payload.get("db") or {}
+                scores = db.get("scores") or {} if isinstance(db, dict) else {}
+                current_map = int(scores.get("first_team") or 0) + int(
+                    scores.get("second_team") or 0) + 1
+            except (TypeError, ValueError):
+                current_map = 0
+            _winline_reset_dltv_clock(key_base, current_map)
+            print(f"📡 DLTv-live: clock not started (draft?) "
+                  f"match={found['match_id']}")
         draft = _dltv_parse_live_draft(payload)
         if not draft:
             print(f"📡 DLTv-live: draft not ready match={found['match_id']}")
