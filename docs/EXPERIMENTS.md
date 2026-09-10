@@ -202,7 +202,7 @@ python3 scripts/ops/experiments_index.py     # пересобрать реест
 
 <!-- BEGIN GENERATED REGISTRY -->
 
-Записей: **228**. Полный текст — в `docs/experiments/`; здесь только строка на запись, чтобы реестр можно было читать целиком.
+Записей: **229**. Полный текст — в `docs/experiments/`; здесь только строка на запись, чтобы реестр можно было читать целиком.
 
 ### ML-модели
 
@@ -279,6 +279,7 @@ python3 scripts/ops/experiments_index.py     # пересобрать реест
 | [E-264](experiments/E-264-laning-minute10.md) | Laning ML: три линии, STRATZ и причинная история игроков | 6 692 272 публичных карты из 99 шардов; fit/validation/test 400000/100000/100000 | History улучшает будущий public test: loss 1.30325 vs draft 1.32742; 95% CI прироста исключает ноль. Индивидуального NW10 нет; pro/deploy не проверены. |
 | [E-265](experiments/E-265-laning-v2-capacity-context-and-delayed-recent-hi.md) | Laning v2: capacity, полный драфт и история с задержкой | E264: 6 692 272 public-карты; fit 400k/800k, validation 100k, новый confirmation 100k IDs | Подтверждено умеренное улучшение: context_recent + temperature, loss 1.303944 → 1.294982; day95CI разницы [-0.009444,-0.008417]. Только public, не pro. |
 | [E-266](experiments/E-266-team-gold-minute10-serving.md) | Общий ML Laning: перевес команды по золоту на 10-й минуте | E264: 6 692 272 public-карты; train 800k, validation 100k, отдельный test 100k | Готова history600 + temperature0.854316: test100k accuracy63.925%, loss0.634192 против draft0.646181; day95CI разности [-0.013076,-0.010751]. Public, не pro. |
+| [E-278](experiments/E-278-phase-regularization-forward.md) | Аудит четырёх phase-моделей и более сильная регуляризация | Public E-260; 141 новая pro-карта после предыдущего cutoff | Serving SHA и 4x512 probes PASS. Обучение идёт; протокол заранее фиксирует end-time embargo, validation-only выбор и однократную проверку новых pro ID. Улучшение пока не установлено. |
 
 ### Драфт-метрики и словари
 
