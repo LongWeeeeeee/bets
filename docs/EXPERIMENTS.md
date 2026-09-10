@@ -632,3 +632,48 @@ python3 scripts/ops/experiments_index.py     # пересобрать реест
     съём может не успевать в TTL 45 с — виден бэкофф `next_retry_at`;
     (3) `log.txt` в sourcetv-режиме пуст штатно, print-маркер — в
     `base/runtime/cyberscore_sourcetv.log`.
+
+## E-272 — ложные «карта завершена» + ручной допуск + winline-токен (10.09.2026)
+
+  1. Ложные терминалы: по живой карте 1 Yellow Submarine — PlayTime в
+  админ-чат repeatedly уходили `🏁 карта завершена` (+ строка live NW-лида
+  `💰`, победителя цепочка честно не называла — 🏆-строки не было).
+  Корень: `_winline_same_team_pair` считал `Radiant vs PlayTime` в реестре
+  против `Yellow Submarine vs PlayTime` в опросе сменой карты
+  (`map_rollover` → `_eval_map_current` считает явную причину доказанной →
+  `map_end_proven=True`). Плейсхолдер — отсутствие личности, и в цикле
+  промаха фолбэка личности это убивало опрос доказанным терминалом.
+  Фикс: плейсхолдер = wildcard (как пустое имя). Параллельно найден второй
+  механизм (флэп ключа серии name:radiant ↔ name:yellow submarine + гонка
+  тика между reconcile и регистрацией) — fusion и счётчик промахов НЕ
+  внедрены (запарковано), т.к. живые матчи кончились раньше.
+  - Харнесс: `TestPlaceholderIdentity` в `test_winline_side_swap.py`
+    (red 3 → green, 15 passed).
+  2. Ручной допуск (опция C): `runtime/manual_sourcetv_admissions.json`
+  `{match_key: {radiant, dire, by, expires_at}}` — имена в плейсхолдеры,
+  id не выдумываются, просрочка мертва, лига обязана быть allowlist-id или
+  гейтовым тикетом + титул вне skipped. Файл не коммитится. Тесты:
+  `test_manual_sourcetv_admission.py` (11 green). Построен под
+  Dawn Bulls–Kalmychata (8991706137 доказан якорем Ankou ♡ 1675517497,
+  единственным в мосте), но игра кончилась до деплоя — файл не создан,
+  механизм ждёт следующего анонимного тикета.
+  3. Токен 'winline' в `TOURNAMENT_TITLE_ALLOW_KEYWORDS` (решение alex):
+  probe 15:28 отбросила Recrent–Daxak (лига 20159) — живой GC-матч шёл
+  мимо кэфов и драфта. Точечные id не масштабируются; токен покрывает все
+  лиги букмекера в обоих процессах. Проверено: ни одна команда словарей
+  'winline' не содержит. Тест `test_winline_token_admits_star_series`.
+  - GREEN в проде (serv1, ~17:45): 8991822559 Recrent Club vs Daxak Club
+    20159 в мосте с именами → драфт 5 на 5 обеих сторон → вердикт ОТКАЗ
+    (нет star-сигнала) → опрос `winline_current_map_poll:...20159...|map2`
+    идёт, карточка мэтчится (`match_found=true`), но рынка победы карты 2
+    на стороне Winline нет (`market_status=missing`,
+    `promotion=not_decider`) — цены потекут, когда Winline откроет линию.
+    Бонус: тем же токеном впущен 8991840173 Pivovar–mariachi (20165
+    Winline Mixer Cup).
+  - Где искать ошибку: (1) повтор ложных терминалов → смотреть
+    `_winline_current_map_is_current` (map_rollover при живом реестре);
+    (2) тишина по допущенной карте → `winline_odds_history.jsonl`
+    (`match_found`/`market_status`/`miss_fingerprint`); (3) `closed` в
+    парсере ставится только на найденной строке карты — это всегда
+    реальное состояние рынка, а не слепота поллера.
+  Коммиты: `d89dee4` (фикс+допуск), `29e8ceb` (тесты), `3252314` (токен).
