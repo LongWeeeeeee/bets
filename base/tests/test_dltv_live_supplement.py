@@ -100,6 +100,61 @@ def test_series_decided_count():
     assert cs._dltv_series_decided_count("A", "B", {}) is None
 
 
+class TestDecidedSticky:
+    """Липкий last-known decided: серия ушла с DLTv — гейт не fail-open.
+
+    Прод 10.09.2026, NS–VooDooSh: DLTv держал decided=1 всю карту 2, после
+    конца серии запись исчезла → decided=None → fail-open допустил фантомные
+    🆕/🏁 карты 3 при счёте 2-0. Липкое значение помнит последний известный
+    счёт пары и держит гейт закрытым, пока DLTv слеп.
+    """
+
+    def test_unknown_without_history_stays_unknown(self, monkeypatch):
+        monkeypatch.setattr(cs, "_dltv_decided_sticky", {}, raising=False)
+        assert cs._dltv_decided_effective(
+            "Natus Vincere", "Team Spirit", None) is None
+
+    def test_known_reading_holds_gate_after_series_vanishes(
+            self, monkeypatch):
+        monkeypatch.setattr(cs, "_dltv_decided_sticky", {}, raising=False)
+        assert cs._dltv_decided_effective(
+            "NS Club", "VooDooSh Club", 1) == 1
+        # Серия кончилась и ушла из series.json: гейт видит 1, а не None.
+        assert cs._dltv_decided_effective(
+            "NS Club", "VooDooSh Club", None) == 1
+        assert cs._dltv_decided_effective(
+            "VooDooSh Club", "NS Club", None) == 1
+
+    def test_sticky_takes_max_not_latest(self, monkeypatch):
+        monkeypatch.setattr(cs, "_dltv_decided_sticky", {}, raising=False)
+        assert cs._dltv_decided_effective("A", "B", 2) == 2
+        # DLTv мигнул назад (пересбор upcoming): живая карта не должна
+        # потерять гейт из-за регресса чтения.
+        assert cs._dltv_decided_effective("A", "B", 1) == 1
+        assert cs._dltv_decided_effective("A", "B", None) == 2
+
+    def test_sticky_expires(self, monkeypatch):
+        monkeypatch.setattr(cs, "_dltv_decided_sticky", {}, raising=False)
+        ttl = float(cs._DLTv_DECIDED_STICKY_TTL_S)
+        cs._dltv_decided_sticky[
+            frozenset({"ns club", "voodoosh club"})] = (
+                1, time.time() - ttl - 1.0)
+        assert cs._dltv_decided_effective(
+            "NS Club", "VooDooSh Club", None) is None
+
+    def test_unidentifiable_pair_ignored(self, monkeypatch):
+        monkeypatch.setattr(cs, "_dltv_decided_sticky", {}, raising=False)
+        assert cs._dltv_decided_effective("", "", 2) == 2
+        assert cs._dltv_decided_effective("", "", None) is None
+
+    def test_other_pairs_unaffected(self, monkeypatch):
+        monkeypatch.setattr(cs, "_dltv_decided_sticky", {}, raising=False)
+        assert cs._dltv_decided_effective(
+            "NS Club", "VooDooSh Club", 1) == 1
+        assert cs._dltv_decided_effective(
+            "Natus Vincere", "Team Spirit", None) is None
+
+
 def test_find_live_series_zero_tenacity(series_snapshot):
     found = cs._dltv_find_live_series(
         "Zero Tenacity", "Devil Kings", series_snapshot)

@@ -18505,8 +18505,10 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
                 try:
                     decided = None
                     if map_num > 1 and dltv_series is not None:
-                        decided = _dltv_series_decided_count(
-                            team1, team2, dltv_series)
+                        decided = _dltv_decided_effective(
+                            team1, team2,
+                            _dltv_series_decided_count(
+                                team1, team2, dltv_series))
                     if decided is not None and decided < map_num - 1:
                         summary["skipped_early"] = int(
                             summary.get("skipped_early") or 0) + 1
@@ -18660,6 +18662,74 @@ def _dltv_series_decided_count(team1: Any, team2: Any, snapshot: Any) -> Optiona
         return best
     except Exception:
         return None
+
+
+#: Липкий last-known decided по паре: DLTv быстро убирает доигранные серии
+#: из series.json, и гейт очерёдности карт видел None вместо счёта
+#: (прод 10.09.2026, NS–VooDooSh: decided=1 всю карту 2, после конца серии —
+#: fail-open и фантомные 🆕/🏁 карты 3 при 2-0). Пока чтение неизвестно, гейт
+#: пользуется последним известным счётом пары, но не старше TTL: следующая
+#: серия той же пары через дни обязана начинаться с чистого fail-open.
+#: Обновление — максимумом: регресс чтения (пересбор upcoming) не должен
+#: разоружать гейт живой карты. Перекос в сторону over-admit осознанный.
+_DLTv_DECIDED_STICKY_TTL_S = 6 * 3600.0
+_dltv_decided_sticky: Dict[Any, Any] = {}
+
+
+def _dltv_decided_pair_key(team1: Any, team2: Any) -> Any:
+    """Ключ липкого счёта: неупорядоченная пара идентичностей."""
+    try:
+        key = frozenset({
+            _winline_normalized_team_identity(team1),
+            _winline_normalized_team_identity(team2),
+        } - {""})
+    except Exception:
+        return None
+    return key if len(key) == 2 else None
+
+
+def _dltv_decided_effective(team1: Any, team2: Any, current: Any,
+                            now: Any = None) -> Optional[int]:
+    """Decided с липкой подложкой: известное чтение запоминается,
+    неизвестное после известного возвращается липким (в пределах TTL)."""
+    try:
+        value = None if current is None else int(current)
+    except (TypeError, ValueError):
+        value = None
+    if value is not None and value < 0:
+        value = None
+    try:
+        moment = float(time.time() if now is None else now)
+    except (TypeError, ValueError):
+        moment = time.time()
+    try:
+        key = _dltv_decided_pair_key(team1, team2)
+        if key is None:
+            return value
+        if value is not None:
+            have = 0
+            previous = _dltv_decided_sticky.get(key)
+            if (isinstance(previous, (list, tuple))
+                    and len(previous) == 2):
+                try:
+                    have = max(0, int(previous[0]))
+                except (TypeError, ValueError):
+                    have = 0
+            _dltv_decided_sticky[key] = (max(have, value), moment)
+            return value
+        previous = _dltv_decided_sticky.get(key)
+        if not (isinstance(previous, (list, tuple))
+                and len(previous) == 2):
+            return None
+        try:
+            sticky, at = int(previous[0]), float(previous[1])
+        except (TypeError, ValueError):
+            return None
+        if sticky < 0 or moment - at > _DLTv_DECIDED_STICKY_TTL_S:
+            return None
+        return sticky
+    except Exception:
+        return value
 
 
 def _dltv_http_get_json(url: str, timeout_s: float = 10.0) -> Optional[Any]:

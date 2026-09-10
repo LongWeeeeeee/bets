@@ -817,6 +817,30 @@ class TestMapOrderGate:
         assert summary.get("skipped_early", 0) == 0
         assert any(self._is_recrent_map3(kw) for kw in ensured)
 
+    def test_vanished_series_uses_sticky_decided(self, monkeypatch):
+        # Прод 10.09.2026, NS–VooDooSh: серия ушла с DLTv после карты 2 —
+        # липкий decided=1 держит гейт карты 3 закрытым вместо fail-open.
+        self._inject(self._snap())
+        monkeypatch.setattr(runtime, "_winline_current_map_pollers", {},
+                            raising=False)
+        monkeypatch.setattr(runtime, "_winline_stably_bridge_owned",
+                            set(), raising=False)
+        monkeypatch.setattr(runtime, "_dltv_decided_sticky", {}, raising=False)
+        runtime._dltv_decided_effective("RECRENT CLUB", "Daxak Club", 1)
+        ensured = []
+        monkeypatch.setattr(runtime, "ensure_winline_current_map_polling",
+                            lambda **kw: ensured.append(kw) or True,
+                            raising=False)
+        monkeypatch.setattr(runtime, "_winline_card_dltv_draft_notify",
+                            lambda **kw: "none", raising=False)
+        monkeypatch.setattr(runtime, "_dltv_live_series_snapshot",
+                            lambda: {"live": {}, "upcoming": [],
+                                     "results": []},
+                            raising=False)
+        summary = runtime._winline_sweep_cards_from_snapshot()
+        assert summary.get("skipped_early", 0) >= 1
+        assert not any(self._is_recrent_map3(kw) for kw in ensured)
+
     def test_early_map_retires_card_poller(self, monkeypatch):
         card = ("winline:league:winline star series|daxak club|recrent club"
                 "|map3|RECRENT CLUB|DAXAK CLUB")
