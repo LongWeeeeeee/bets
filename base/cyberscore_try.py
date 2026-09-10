@@ -18321,7 +18321,7 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
                         map_num=map_num,
                         series_key=series,
                         bridge_live_pairs=bridge_live_pairs,
-                    ):
+                    ) == "sent":
                         summary["dltv_draft"] = int(summary.get("dltv_draft") or 0) + 1
                 except Exception:
                     pass
@@ -18777,6 +18777,51 @@ def dltv_live_draft_for_card(
 
 
 _winline_dltv_draft_sent: Dict[str, float] = {}
+_winline_dltv_draft_seeded = False
+
+
+def _winline_dltv_draft_seed_from_journal() -> None:
+    """Подсеять дедуп из журнала отправок: пережить рестарт процесса.
+
+    In-memory `_winline_dltv_draft_sent` обнуляется рестартом — прод
+    10.09.2026 дважды отправил один драфт ZT-DK map2 (19:22 и 19:29)
+    через рестарт 19:24. Журнал уже пишет kind=dltv_draft с тем же
+    ключом: читаем его один раз за процесс. Fail-open: файл недоступен
+    или огромен — читаем хвост (ключи содержат id матча DLTv, старые
+    записи с новыми матчами не пересекаются).
+    """
+    global _winline_dltv_draft_seeded
+    try:
+        if _winline_dltv_draft_seeded:
+            return
+        _winline_dltv_draft_seeded = True
+        path = _winline_sent_journal_path()
+        if path is None:
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except (OSError, ValueError):
+            return
+        for raw in lines[-5000:]:
+            try:
+                record = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(record, dict):
+                continue
+            if str(record.get("kind") or "") != "dltv_draft":
+                continue
+            key = str(record.get("canonical_key") or "").strip()
+            if not key:
+                continue
+            try:
+                wall = float(record.get("wall") or 0.0)
+            except (TypeError, ValueError):
+                wall = 0.0
+            _winline_dltv_draft_sent.setdefault(key, wall)
+    except Exception:
+        pass
 
 
 def _winline_format_dltv_draft_message(
@@ -18931,7 +18976,7 @@ def _winline_card_dltv_draft_notify(
     snapshot: Any = None,
     match_fetcher: Any = None,
     bridge_live_pairs: Any = None,
-) -> bool:
+) -> str:
     """DLTv-подпитка карточного ряда: часы (🕐/💰) + драфт, когда мост слеп.
 
     Вызывается из sweep для допущенных priced-рядов. Часы DLTv отмечаются
@@ -18943,16 +18988,17 @@ def _winline_card_dltv_draft_notify(
     только если пару НЕ видит вживую мост (`bridge_live_pairs` — иначе
     мостовой разбор драфта главный и дубль не нужен). Fail-open: пары моста
     неизвестны — драфт разрешён.
-    Возвращает True если драфт найден и отправлен (или уже был отправлен).
+    Возвращает "sent" (отправлен сейчас), "duplicate" (уже был) или
+    "none". Счётчик sweep считает только "sent".
     """
     try:
         if not _winline_odds_notify_enabled():
-            return False
+            return "none"
         snap = (snapshot if isinstance(snapshot, dict)
                 else _dltv_live_series_snapshot())
         if not isinstance(snap, dict):
             print("📡 DLTv-live: snapshot unavailable")
-            return False
+            return "none"
         key_base = str(series_key or "").strip()
         found, payload = _dltv_fetch_live_payload(
             team1, team2, snap, match_fetcher=match_fetcher)
@@ -18960,7 +19006,7 @@ def _winline_card_dltv_draft_notify(
             if key_base:
                 _winline_freeze_dltv_clock(key_base)
             print(f"📡 DLTv-live: no live series for {team1} vs {team2}")
-            return False
+            return "none"
         clock = _dltv_parse_live_clock(payload)
         if clock and key_base:
             _winline_note_map_clock(key_base, clock)
@@ -18985,7 +19031,7 @@ def _winline_card_dltv_draft_notify(
         draft = _dltv_parse_live_draft(payload)
         if not draft:
             print(f"📡 DLTv-live: draft not ready match={found['match_id']}")
-            return False
+            return "none"
         try:
             want_map = int(map_num) if map_num is not None else 0
         except (TypeError, ValueError):
@@ -18993,7 +19039,7 @@ def _winline_card_dltv_draft_notify(
         if want_map and int(draft.get("map_num") or 0) != want_map:
             print(f"📡 DLTv-live: map mismatch dltv={draft.get('map_num')} "
                   f"card={want_map} match={found['match_id']}")
-            return False
+            return "none"
         try:
             pairs = (bridge_live_pairs if bridge_live_pairs is not None
                      else _winline_bridge_live_pairs())
@@ -19004,15 +19050,16 @@ def _winline_card_dltv_draft_notify(
             if len(pair) == 2 and frozenset(pair) in set(pairs or set()):
                 print(f"📡 DLTv-live: bridge sees {team1} vs {team2} live — "
                       "draft stays with bridge")
-                return False
+                return "none"
         except Exception:
             pass
         draft["league_slug"] = found.get("league_slug", "")
         draft["series_id"] = found.get("series_id")
         key = f"{key_base}|map{draft.get('map_num')}|{draft.get('match_id')}"
+        _winline_dltv_draft_seed_from_journal()
         with _winline_current_map_state_lock:
             if key in _winline_dltv_draft_sent:
-                return True
+                return "duplicate"
             if len(_winline_dltv_draft_sent) >= 200:
                 _winline_dltv_draft_sent.clear()
             _winline_dltv_draft_sent[key] = time.time()
@@ -19021,10 +19068,11 @@ def _winline_card_dltv_draft_notify(
         print(f"📡 DLTv-live: draft 5v5 match={found['match_id']} "
               f"map={draft.get('map_num')} t={draft.get('game_time_s')}s "
               f"league={found.get('league_slug')}")
-        return bool(_winline_send_lifecycle_message(
+        delivered = bool(_winline_send_lifecycle_message(
             message, send_fn, kind="dltv_draft", key=key))
+        return "sent" if delivered else "none"
     except Exception:
-        return False
+        return "none"
 
 
 def _winline_overview_loop() -> None:

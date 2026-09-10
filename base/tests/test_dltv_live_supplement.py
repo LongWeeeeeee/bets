@@ -149,6 +149,7 @@ def test_end_to_end_no_series_returns_none(series_snapshot, live_payload):
 def _notify_env(monkeypatch, live_payload):
     monkeypatch.setattr(cs, "_winline_odds_notify_enabled", lambda: True)
     monkeypatch.setattr(cs, "_winline_dltv_draft_sent", {})
+    monkeypatch.setattr(cs, "_winline_dltv_draft_seeded", False)
     monkeypatch.setattr(cs, "_winline_map_clocks", {})
     return lambda url, timeout: live_payload
 
@@ -200,17 +201,44 @@ def test_card_notify_sends_once_and_dedupes(
         map_num=1, series_key="winline:league:blast|zero|devil",
         send_fn=_fake_send, snapshot=series_snapshot,
         match_fetcher=match_fetcher)
-    assert ok is True
+    assert ok == "sent"
     assert len(sent) == 1
     assert "Zero Tenacity" in sent[0] and "Devil Kings" in sent[0]
-    # Повтор — дедуп, второй отправки нет, но результат True.
+    # Повтор — дедуп, второй отправки нет.
     ok2 = cs._winline_card_dltv_draft_notify(
         league="BLAST Slam 9", team1="Zero Tenacity", team2="Devil Kings",
         map_num=1, series_key="winline:league:blast|zero|devil",
         send_fn=_fake_send, snapshot=series_snapshot,
         match_fetcher=match_fetcher)
-    assert ok2 is True
+    assert ok2 == "duplicate"
     assert len(sent) == 1
+
+
+def test_dedupe_survives_restart_via_journal(
+        monkeypatch, tmp_path, series_snapshot, live_payload):
+    # Прод 10.09.2026: один драфт ZT-DK map2 ушёл дважды (19:22 и 19:29)
+    # через рестарт 19:24 — in-memory дедуп обнулился. Журнал чинит это.
+    match_fetcher = _notify_env(monkeypatch, live_payload)
+    journal = tmp_path / "winline_telegram_sent.jsonl"
+    key = "winline:league:blast|zero|devil|map1|8991962355"
+    journal.write_text(
+        json.dumps({"wall": 1.0, "kind": "dltv_draft",
+                    "canonical_key": key, "delivered": True,
+                    "message": "m"}) + "\n"
+        + json.dumps({"wall": 2.0, "kind": "first",
+                      "canonical_key": "other", "delivered": True,
+                      "message": "x"}) + "\n",
+        encoding="utf-8")
+    monkeypatch.setattr(cs, "_winline_sent_journal_path", lambda: journal)
+    sent = []
+    ok = cs._winline_card_dltv_draft_notify(
+        league="BLAST Slam 9", team1="Zero Tenacity", team2="Devil Kings",
+        map_num=1, series_key="winline:league:blast|zero|devil",
+        send_fn=lambda message, **k: sent.append(message) or True,
+        snapshot=series_snapshot, match_fetcher=match_fetcher,
+        bridge_live_pairs=set())
+    assert ok == "duplicate"
+    assert sent == []
 
 
 def test_card_notify_skips_draft_when_bridge_sees_live(
@@ -224,7 +252,7 @@ def test_card_notify_skips_draft_when_bridge_sees_live(
         send_fn=lambda message, **k: sent.append(message) or True,
         snapshot=series_snapshot, match_fetcher=match_fetcher,
         bridge_live_pairs={_norm_pair("Zero Tenacity", "Devil Kings")})
-    assert ok is False
+    assert ok == "none"
     assert sent == []
     # Часы при этом отмечаются: 🕐/💰 чинятся независимо от драфта.
     clock = cs._winline_map_clocks.get(key)
@@ -331,7 +359,7 @@ def test_notify_resets_clock_on_draft_stage(
         map_num=1, series_key=key, send_fn=_no_send,
         snapshot=_draft_snap(), match_fetcher=_fetch,
         bridge_live_pairs=set())
-    assert ok is False
+    assert ok == "none"
     assert key not in cs._winline_map_clocks
     assert cs._winline_map_clock_label(key + "|map1|Natus Vincere|KLIM SANI4") == "—"
 
@@ -357,7 +385,7 @@ def test_notify_keeps_prior_map_clock_on_draft_stage(
         map_num=2, series_key=key, send_fn=_no_send,
         snapshot=_draft_snap(), match_fetcher=_fetch,
         bridge_live_pairs=set())
-    assert ok is False
+    assert ok == "none"
     assert cs._winline_map_clocks[key] == frozen
 
 
@@ -414,7 +442,7 @@ def test_freeze_dltv_clock_on_series_gone(
         series_key=key, send_fn=lambda message, **k: True,
         snapshot=empty_snap, match_fetcher=match_fetcher,
         bridge_live_pairs=set())
-    assert ok is False
+    assert ok == "none"
     assert cs._winline_map_clocks[key]["live"] is False
 
 
@@ -424,7 +452,7 @@ def test_card_notify_respects_notify_gate(
     assert cs._winline_card_dltv_draft_notify(
         league="L", team1="Zero Tenacity", team2="Devil Kings", map_num=1,
         snapshot=series_snapshot,
-        match_fetcher=lambda url, timeout: live_payload) is False
+        match_fetcher=lambda url, timeout: live_payload) == "none"
 
 
 def test_sweep_counts_dltv_draft(monkeypatch):
@@ -440,7 +468,7 @@ def test_sweep_counts_dltv_draft(monkeypatch):
 
     def _fake_notify(**kwargs):
         calls.append(kwargs)
-        return True
+        return "sent"
 
     monkeypatch.setattr(cs, "_winline_card_dltv_draft_notify",
                         _fake_notify, raising=False)
@@ -449,6 +477,11 @@ def test_sweep_counts_dltv_draft(monkeypatch):
     assert summary.get("dltv_draft") == len(calls)
     assert all("map_num" in kw and "team1" in kw for kw in calls)
     assert all("bridge_live_pairs" in kw for kw in calls)
+    # Дедуп не считается отправкой: счётчик только за свежие "sent".
+    monkeypatch.setattr(cs, "_winline_card_dltv_draft_notify",
+                        lambda **kw: "duplicate", raising=False)
+    summary2 = cs._winline_sweep_cards_from_snapshot()
+    assert "dltv_draft" not in summary2
 
 
 def test_sweep_consults_dltv_hook_for_owned_rows(monkeypatch):
