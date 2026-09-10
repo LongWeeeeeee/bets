@@ -36,6 +36,25 @@ if str(BASE_DIR) not in sys.path:
 import bookmaker_selenium_odds as odds_parser  # noqa: E402
 import cyberscore_try as runtime  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _no_dltv_network(monkeypatch):
+    """Сеть запрещена, явные fetchers — разрешены.
+
+    Голый вызов (боевой путь sweep) возвращает None — гейт очерёдности
+    fail-open. Вызов с fetcher= пробрасывается в настоящую функцию.
+    """
+    orig = runtime._dltv_live_series_snapshot
+
+    def _shim(*, fetcher=None, force_refresh=False):
+        if fetcher is None:
+            return None
+        return orig(fetcher=fetcher, force_refresh=force_refresh)
+
+    monkeypatch.setattr(
+        runtime, "_dltv_live_series_snapshot", _shim, raising=False)
+
+
 FIXTURE_HTML = (
     Path(__file__).resolve().parent
     / "fixtures"
@@ -725,3 +744,94 @@ class TestShadowCardRetire:
         summary = runtime._winline_sweep_cards_from_snapshot()
         assert summary.get("retired_shadow", 0) == 0
         assert self.CARD in runtime._winline_current_map_pollers
+
+
+class TestMapOrderGate:
+    """Гейт очерёдности карт: first карты M — когда решены M-1 (E-277).
+
+    Прод 10.09.2026: `first` карты 4 при 2-0 (NAVI) и карты 2 при 0-0
+    (NS-VooDooSh) ушли раньше времени. DLTv знает счёт серии даже вне
+    live; серия неизвестна — fail-open.
+    """
+
+    DAXAK_SLUG = ("team-daxak-vs-team-recrent-"
+                  "winline-star-series-season-4")
+
+    def _snap(self):
+        path = (Path(__file__).resolve().parent
+                / "fixtures" / "winline_overview_snapshot_20260910.json")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _inject(self, snap):
+        runtime._winline_overview_inject_for_tests(
+            snap["text"], html=snap["html"])
+
+    def _dltv(self, first, second):
+        return {"live": {}, "upcoming": [{
+            "id": 427925, "status": 1, "slug": self.DAXAK_SLUG,
+            "series_scores": {"first_team": first, "second_team": second},
+        }], "results": []}
+
+    def _is_recrent_map3(self, kw):
+        teams = {runtime._winline_normalized_team_identity(kw.get("team1")),
+                 runtime._winline_normalized_team_identity(kw.get("team2"))}
+        try:
+            return teams == {"daxak club", "recrent club"} and int(
+                kw.get("map_num")) == 3
+        except (TypeError, ValueError):
+            return False
+
+    def test_early_map_skips_ensure(self, monkeypatch):
+        self._inject(self._snap())
+        monkeypatch.setattr(runtime, "_winline_current_map_pollers", {},
+                            raising=False)
+        monkeypatch.setattr(runtime, "_winline_stably_bridge_owned",
+                            set(), raising=False)
+        ensured = []
+        monkeypatch.setattr(runtime, "ensure_winline_current_map_polling",
+                            lambda **kw: ensured.append(kw) or True,
+                            raising=False)
+        monkeypatch.setattr(runtime, "_winline_card_dltv_draft_notify",
+                            lambda **kw: "none", raising=False)
+        monkeypatch.setattr(runtime, "_dltv_live_series_snapshot",
+                            lambda: self._dltv(0, 0), raising=False)
+        summary = runtime._winline_sweep_cards_from_snapshot()
+        assert summary.get("skipped_early", 0) >= 1
+        assert not any(self._is_recrent_map3(kw) for kw in ensured)
+
+    def test_decided_map_ensures(self, monkeypatch):
+        self._inject(self._snap())
+        monkeypatch.setattr(runtime, "_winline_current_map_pollers", {},
+                            raising=False)
+        monkeypatch.setattr(runtime, "_winline_stably_bridge_owned",
+                            set(), raising=False)
+        ensured = []
+        monkeypatch.setattr(runtime, "ensure_winline_current_map_polling",
+                            lambda **kw: ensured.append(kw) or True,
+                            raising=False)
+        monkeypatch.setattr(runtime, "_winline_card_dltv_draft_notify",
+                            lambda **kw: "none", raising=False)
+        monkeypatch.setattr(runtime, "_dltv_live_series_snapshot",
+                            lambda: self._dltv(2, 1), raising=False)
+        summary = runtime._winline_sweep_cards_from_snapshot()
+        assert summary.get("skipped_early", 0) == 0
+        assert any(self._is_recrent_map3(kw) for kw in ensured)
+
+    def test_early_map_retires_card_poller(self, monkeypatch):
+        card = ("winline:league:winline star series|daxak club|recrent club"
+                "|map3|RECRENT CLUB|DAXAK CLUB")
+        self._inject(self._snap())
+        monkeypatch.setattr(runtime, "_winline_current_map_pollers",
+                            {card: TestShadowCardRetire._Active()},
+                            raising=False)
+        monkeypatch.setattr(runtime, "_winline_stably_bridge_owned",
+                            set(), raising=False)
+        monkeypatch.setattr(runtime, "ensure_winline_current_map_polling",
+                            lambda **kw: True, raising=False)
+        monkeypatch.setattr(runtime, "_winline_card_dltv_draft_notify",
+                            lambda **kw: "none", raising=False)
+        monkeypatch.setattr(runtime, "_dltv_live_series_snapshot",
+                            lambda: self._dltv(0, 0), raising=False)
+        summary = runtime._winline_sweep_cards_from_snapshot()
+        assert summary.get("retired_early", 0) >= 1
+        assert card not in runtime._winline_current_map_pollers

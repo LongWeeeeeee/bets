@@ -18241,7 +18241,9 @@ def _winline_live_bridge_pollers_for_pair(team1: Any, team2: Any, map_num: Any) 
 _winline_stably_bridge_owned: Any = set()
 
 
-def _winline_retire_shadow_card_pollers(team1: Any, team2: Any, map_num: Any) -> int:
+def _winline_retire_shadow_card_pollers(
+    team1: Any, team2: Any, map_num: Any, *, reason: str = "shadow",
+) -> int:
     """Снять карточные опросы пары+карты, пока жив мостовой опрос.
 
     Дубль возникает системно: после рестарта sweep заводит карточные опросы
@@ -18281,7 +18283,7 @@ def _winline_retire_shadow_card_pollers(team1: Any, team2: Any, map_num: Any) ->
                 with _winline_current_map_state_lock:
                     _winline_current_map_pollers.pop(canonical, None)
                 retired += 1
-                print(f"🧹 Winline card sweep: retired shadow {canonical}")
+                print(f"🧹 Winline card sweep: retired {reason} {canonical}")
             except Exception:
                 continue
     except Exception:
@@ -18385,6 +18387,12 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
         bridge_live_pairs = _winline_bridge_live_pairs()
     except Exception:
         bridge_live_pairs = set()
+    try:
+        dltv_series = _dltv_live_series_snapshot()
+    except Exception:
+        dltv_series = None
+    if not isinstance(dltv_series, dict):
+        dltv_series = None
     for card in (cards or [])[:max_cards]:
         try:
             summary["cards"] += 1
@@ -18435,6 +18443,29 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
                         bridge_live_pairs=bridge_live_pairs,
                     ) == "sent":
                         summary["dltv_draft"] = int(summary.get("dltv_draft") or 0) + 1
+                except Exception:
+                    pass
+                # Гейт очерёдности карт (E-277): first карты M — только когда
+                # предыдущие M-1 карт решены. DLTv знает счёт серии даже вне
+                # live; серия неизвестна — fail-open как раньше. Ранние ряды
+                # не заводят опрос и снимают уже заведённые (карта 4 при 2-0,
+                # карта 2 при 0-0 — так быть не должно).
+                try:
+                    decided = None
+                    if map_num > 1 and dltv_series is not None:
+                        decided = _dltv_series_decided_count(
+                            team1, team2, dltv_series)
+                    if decided is not None and decided < map_num - 1:
+                        summary["skipped_early"] = int(
+                            summary.get("skipped_early") or 0) + 1
+                        print(f"📡 DLTv-live: map{map_num} too early "
+                              f"(decided={decided}) {team1} vs {team2}")
+                        retired = _winline_retire_shadow_card_pollers(
+                            team1, team2, map_num, reason="early")
+                        if retired:
+                            summary["retired_early"] = int(
+                                summary.get("retired_early") or 0) + retired
+                        continue
                 except Exception:
                     pass
                 if _winline_bridge_owns_card_pair(team1, team2, map_num):
@@ -18496,34 +18527,85 @@ def _dltv_slugify_team(name: Any) -> str:
         return ""
 
 
-def _dltv_parse_series_slug(slug: Any) -> Optional[Dict[str, str]]:
-    """Разбор 'home-vs-away-<league...>'. Возвращает слаги сторон и лиги."""
+def _dltv_strip_generic(tokens: Any) -> Any:
+    """Токены без родовых слов (team/club/esports/...) для сшивки названий."""
+    try:
+        generic = set(globals().get("_WINLINE_TEAM_GENERIC") or set())
+    except Exception:
+        generic = set()
+    try:
+        return frozenset(t for t in (tokens or []) if t and t not in generic)
+    except Exception:
+        return frozenset()
+
+
+def _dltv_significant_tokens(value: Any) -> Any:
+    """Значимые токены названия: lower, split по не-алфанумерике, без родовых."""
+    try:
+        tokens = re.sub(r"[^a-z0-9]+", " ", str(value or "").strip().lower()).split()
+    except Exception:
+        return frozenset()
+    return _dltv_strip_generic(tokens)
+
+
+def _dltv_match_slug_pair(slug: Any, team1: Any, team2: Any) -> Optional[Dict[str, str]]:
+    """Пара в слаге 'home-vs-away-<league>' значимыми токенами, порядок любой.
+
+    Родовые слова отбрасываются с обеих сторон: карточное «VOODOOSH CLUB»
+    совпадает с DLTv-слагом `team-voodoosh-vs-team-ns-...` (иначе точный
+    префикс `voodoosh-club-` никогда не найдётся). Хвост away отрезается
+    по самому длинному совпадению, остаток — слаг лиги.
+    """
     try:
         text = str(slug or "").strip().lower()
-        head, sep, _ = text.partition("-vs-")
-        if not sep or not head:
+        head, sep, rest = text.partition("-vs-")
+        if not sep or not head or not rest:
             return None
-        return {"raw": text, "home": head}
+        wants = [_dltv_significant_tokens(team1), _dltv_significant_tokens(team2)]
+        if any(not w for w in wants) or wants[0] == wants[1]:
+            return None
+        home = _dltv_significant_tokens(head)
+        if home not in wants:
+            return None
+        other = wants[1] if home == wants[0] else wants[0]
+        parts = [p for p in rest.split("-") if p]
+        for i in range(len(parts), 0, -1):
+            away = _dltv_strip_generic(parts[:i])
+            if away and away == other:
+                return {
+                    "home": head,
+                    "away": "-".join(parts[:i]),
+                    "league": "-".join(parts[i:]).strip("-"),
+                    "series_slug": text,
+                }
+        return None
     except Exception:
         return None
 
 
-def _dltv_match_slug_side(rest: str, want_home: str, want_away: str) -> Optional[Dict[str, str]]:
-    """Проверка slug-хвоста 'away-<league>' на обе команды (любой порядок)."""
+def _dltv_series_decided_count(team1: Any, team2: Any, snapshot: Any) -> Optional[int]:
+    """Сколько карт серии уже решено (сумма счёта) по DLTv. None — серия неизвестна.
+
+    Смотрит ВСЕ upcoming-записи (не только live): счёт там даже у
+    доигранных серий. Максимум по совпадениям — счёт только растёт.
+    """
     try:
-        for home, away in ((want_home, want_away), (want_away, want_home)):
-            if not home or not away:
+        if not isinstance(snapshot, dict):
+            return None
+        best: Optional[int] = None
+        for entry in (snapshot.get("upcoming") or []):
+            if not isinstance(entry, dict):
                 continue
-            prefix = f"{away}-"
-            if rest == away:
-                return {"first": home, "second": away, "league": ""}
-            if rest.startswith(prefix):
-                return {
-                    "first": home,
-                    "second": away,
-                    "league": rest[len(prefix):].strip("-"),
-                }
-        return None
+            if not _dltv_match_slug_pair(entry.get("slug"), team1, team2):
+                continue
+            try:
+                scores = entry.get("series_scores") or {}
+                decided = int(scores.get("first_team") or 0) + int(
+                    scores.get("second_team") or 0)
+            except (TypeError, ValueError):
+                continue
+            best = decided if best is None else max(best, decided)
+        return best
     except Exception:
         return None
 
@@ -18575,13 +18657,12 @@ def _dltv_find_live_series(
 ) -> Optional[Dict[str, Any]]:
     """Поиск live-серии DLTv по паре команд. Только status==1 (идёт сейчас).
 
-    Возвращает match_id/live-id, id серии, слаги сторон и лиги. Слаг-парсинг:
-    upcoming-запись 'zero-tenacity-vs-devil-kings-blast-slam-9-...' даёт
-    home/away и хвост лиги; live{} словарь даёт id текущего матча серии.
+    Возвращает match_id/live-id, id серии, слаги сторон и лиги.
+    Сопоставление — значимыми токенами (`_dltv_match_slug_pair`);
+    live{} словарь даёт id текущего матча серии.
     """
     try:
-        want = {_dltv_slugify_team(team1), _dltv_slugify_team(team2)} - {""}
-        if len(want) != 2 or not isinstance(snapshot, dict):
+        if not isinstance(snapshot, dict):
             return None
         live_map = snapshot.get("live") or {}
         live_series: Dict[str, Any] = {}
@@ -18605,24 +18686,16 @@ def _dltv_find_live_series(
                 continue
             if series_id not in live_series:
                 continue
-            parsed = _dltv_parse_series_slug(entry.get("slug"))
-            if not parsed:
-                continue
-            home_slug = parsed["home"]
-            rest = parsed["raw"][len(home_slug) + len("-vs-"):]
-            if home_slug not in want:
-                continue
-            other = next(iter(want - {home_slug}))
-            hit = _dltv_match_slug_side(rest, home_slug, other)
+            hit = _dltv_match_slug_pair(entry.get("slug"), team1, team2)
             if not hit:
                 continue
             return {
                 "match_id": live_series[series_id],
                 "series_id": series_id,
-                "first_slug": hit["first"],
-                "second_slug": hit["second"],
+                "first_slug": hit["home"],
+                "second_slug": hit["away"],
                 "league_slug": hit["league"],
-                "series_slug": parsed["raw"],
+                "series_slug": hit["series_slug"],
                 "started_at": entry.get("started_at"),
             }
         return None

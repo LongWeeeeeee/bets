@@ -18,6 +18,25 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import cyberscore_try as cs
 
+
+@pytest.fixture(autouse=True)
+def _no_dltv_network(monkeypatch):
+    """Сеть запрещена, явные fetchers — разрешены.
+
+    Голый вызов (боевой путь sweep) возвращает None — гейт очерёдности
+    fail-open. Вызов с fetcher= пробрасывается в настоящую функцию.
+    """
+    orig = cs._dltv_live_series_snapshot
+
+    def _shim(*, fetcher=None, force_refresh=False):
+        if fetcher is None:
+            return None
+        return orig(fetcher=fetcher, force_refresh=force_refresh)
+
+    monkeypatch.setattr(
+        cs, "_dltv_live_series_snapshot", _shim, raising=False)
+
+
 FIX_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
 
@@ -41,6 +60,43 @@ def test_slugify_teams():
     assert cs._dltv_slugify_team("Team Daxak") == "team-daxak"
     assert cs._dltv_slugify_team("  PuckChamp  ") == "puckchamp"
     assert cs._dltv_slugify_team("") == ""
+
+
+NS_SLUG = "team-voodoosh-vs-team-ns-winline-star-series-season-4"
+
+
+def test_slug_pair_strips_generic_words():
+    hit = cs._dltv_match_slug_pair(NS_SLUG, "VOODOOSH CLUB", "NS Club")
+    assert hit is not None
+    assert hit["league"] == "winline-star-series-season-4"
+
+
+def test_slug_pair_reversed_order():
+    hit = cs._dltv_match_slug_pair(NS_SLUG, "NS Club", "VOODOOSH CLUB")
+    assert hit is not None
+    assert hit["league"] == "winline-star-series-season-4"
+
+
+def test_slug_pair_rejects_strangers():
+    assert cs._dltv_match_slug_pair(
+        NS_SLUG, "Natus Vincere", "Team Spirit") is None
+    assert cs._dltv_match_slug_pair("no-vs-here", "A", "B") is None
+
+
+def test_series_decided_count():
+    snap = {"live": {}, "upcoming": [
+        {"id": 1, "status": 1, "slug": NS_SLUG,
+         "series_scores": {"first_team": 0, "second_team": 0}},
+        {"id": 2, "status": 2,
+         "slug": "zero-tenacity-vs-devil-kings-blast-slam-9",
+         "series_scores": {"first_team": 2, "second_team": 0}},
+    ], "results": []}
+    assert cs._dltv_series_decided_count("VOODOOSH CLUB", "NS Club", snap) == 0
+    assert cs._dltv_series_decided_count(
+        "Zero Tenacity", "Devil Kings", snap) == 2
+    assert cs._dltv_series_decided_count(
+        "Natus Vincere", "Team Spirit", snap) is None
+    assert cs._dltv_series_decided_count("A", "B", {}) is None
 
 
 def test_find_live_series_zero_tenacity(series_snapshot):
