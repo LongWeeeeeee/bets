@@ -636,3 +636,92 @@ class TestCardSweepFromSnapshot:
             "team1": "No Such Team", "team2": "DAXAK CLUB"})
         assert status["current"] is False
         assert status.get("proven", False) is False
+
+
+class TestShadowCardRetire:
+    """Снятие теневого карточного опроса при живом мостовом (E-276).
+
+    Дубль 10.09.2026, NAVI map2: `sourcetv:`- и `winline:league:`-опросы
+    слали одну карту вперемешку, карточный — со stale-снапшота (время шло
+    назад, кэфы противоречили). Возникает системно после рестарта: sweep
+    заводит карточные раньше, чем встают мостовые.
+    """
+
+    BRIDGE = ("sourcetv:league:20159|name:daxak club|name:recrent club"
+              "|map3|Daxak Club|RECRENT CLUB")
+    CARD = ("winline:league:winline star series|daxak club|recrent club"
+            "|map3|RECRENT CLUB|DAXAK CLUB")
+
+    class _Active:
+        def is_active(self):
+            return True
+
+    class _Idle:
+        def is_active(self):
+            return False
+
+    def _regs(self, monkeypatch, pollers):
+        monkeypatch.setattr(runtime, "_winline_current_map_pollers",
+                            dict(pollers), raising=False)
+        monkeypatch.setattr(runtime, "_winline_stably_bridge_owned",
+                            set(), raising=False)
+        monkeypatch.setattr(runtime, "ensure_winline_current_map_polling",
+                            lambda **kw: True, raising=False)
+
+    def test_retire_removes_only_card_key(self, monkeypatch):
+        other_card = "winline:league:other|x|y|map3|A|B"
+        other_map = ("winline:league:winline star series|daxak club|recrent club"
+                     "|map2|RECRENT CLUB|DAXAK CLUB")
+        monkeypatch.setattr(
+            runtime, "_winline_current_map_pollers",
+            {self.BRIDGE: self._Active(), self.CARD: self._Active(),
+             other_card: self._Active(), other_map: self._Active(),
+             "sourcetv:league:1|id:1|id:2|map2|A|B": self._Active()},
+            raising=False)
+        n = runtime._winline_retire_shadow_card_pollers(
+            "RECRENT CLUB", "Daxak Club", 3)
+        assert n == 1
+        regs = runtime._winline_current_map_pollers
+        assert self.CARD not in regs
+        assert self.BRIDGE in regs
+        assert other_card in regs and other_map in regs
+
+    def test_sweep_retires_shadow_on_stable_bridge(self, monkeypatch):
+        snap = (Path(__file__).resolve().parent
+                / "fixtures" / "winline_overview_snapshot_20260910.json")
+        data = json.loads(snap.read_text(encoding="utf-8"))
+        runtime._winline_overview_inject_for_tests(
+            data["text"], html=data["html"])
+        slot = (frozenset({"daxak club", "recrent club"}), 3)
+        self._regs(monkeypatch, {self.BRIDGE: self._Active(),
+                                 self.CARD: self._Active()})
+        monkeypatch.setattr(runtime, "_winline_stably_bridge_owned",
+                            {slot}, raising=False)
+        summary = runtime._winline_sweep_cards_from_snapshot()
+        assert summary.get("retired_shadow", 0) >= 1
+        assert self.CARD not in runtime._winline_current_map_pollers
+        assert self.BRIDGE in runtime._winline_current_map_pollers
+
+    def test_sweep_keeps_card_on_first_bridge_sight(self, monkeypatch):
+        snap = (Path(__file__).resolve().parent
+                / "fixtures" / "winline_overview_snapshot_20260910.json")
+        data = json.loads(snap.read_text(encoding="utf-8"))
+        runtime._winline_overview_inject_for_tests(
+            data["text"], html=data["html"])
+        self._regs(monkeypatch, {self.BRIDGE: self._Active(),
+                                 self.CARD: self._Active()})
+        # prev пуст: первое появление моста — тень живёт до следующего sweep.
+        summary = runtime._winline_sweep_cards_from_snapshot()
+        assert summary.get("retired_shadow", 0) == 0
+        assert self.CARD in runtime._winline_current_map_pollers
+
+    def test_sweep_keeps_card_without_bridge(self, monkeypatch):
+        snap = (Path(__file__).resolve().parent
+                / "fixtures" / "winline_overview_snapshot_20260910.json")
+        data = json.loads(snap.read_text(encoding="utf-8"))
+        runtime._winline_overview_inject_for_tests(
+            data["text"], html=data["html"])
+        self._regs(monkeypatch, {self.CARD: self._Active()})
+        summary = runtime._winline_sweep_cards_from_snapshot()
+        assert summary.get("retired_shadow", 0) == 0
+        assert self.CARD in runtime._winline_current_map_pollers

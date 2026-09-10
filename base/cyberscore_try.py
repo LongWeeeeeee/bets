@@ -18179,6 +18179,116 @@ def _winline_bridge_owns_card_pair(team1: Any, team2: Any, map_num: Any) -> bool
     return False
 
 
+def _winline_owned_slot_key(team1: Any, team2: Any, map_num: Any) -> Any:
+    """Слот (пара, карта) для трекинга владения. None — пару не опознать."""
+    try:
+        want = {
+            _winline_normalized_team_identity(team1),
+            _winline_normalized_team_identity(team2),
+        } - {""}
+        want_map = int(map_num)
+    except (TypeError, ValueError):
+        return None
+    if len(want) != 2:
+        return None
+    return (frozenset(want), want_map)
+
+
+def _winline_live_bridge_pollers_for_pair(team1: Any, team2: Any, map_num: Any) -> bool:
+    """Живой НЕ-карточный опрос пары+карты (мост). Карточные не в счёт.
+
+    `_winline_bridge_owns_card_pair` видит и сами карточные опросы —
+    для снятия тени нужно именно мостовое присутствие.
+    """
+    try:
+        slot = _winline_owned_slot_key(team1, team2, map_num)
+        if slot is None:
+            return False
+        want, want_map = slot
+        with _winline_current_map_state_lock:
+            items = list(_winline_current_map_pollers.items())
+    except Exception:
+        return False
+    for canonical, poller in items:
+        try:
+            if str(canonical or "").startswith("winline:league:"):
+                continue
+            active = bool(poller.is_active()) if poller is not None else False
+        except Exception:
+            continue
+        if not active:
+            continue
+        try:
+            match = re.match(
+                r"^(.*)\|map([1-5])\|([^|]+)\|([^|]+)$", str(canonical or ""))
+        except Exception:
+            continue
+        if not match or int(match.group(2)) != want_map:
+            continue
+        have = {
+            _winline_normalized_team_identity(match.group(3)),
+            _winline_normalized_team_identity(match.group(4)),
+        } - {""}
+        if have == want:
+            return True
+    return False
+
+
+#: Пары+карты под живым мостом на прошлом sweep. Снятие тени — только при
+#: владении два sweep подряд: мостовой опрос может мигнуть (рестарт GC,
+#: переподключение), а убийство-создание карточного по кругу даст дубли
+#: `first` в чат вместо тишины.
+_winline_stably_bridge_owned: Any = set()
+
+
+def _winline_retire_shadow_card_pollers(team1: Any, team2: Any, map_num: Any) -> int:
+    """Снять карточные опросы пары+карты, пока жив мостовой опрос.
+
+    Дубль возникает системно: после рестарта sweep заводит карточные опросы
+    раньше, чем встают мостовые, — дальше оба шлют одну карту в чат
+    (прод 10.09.2026, NAVI map2: `sourcetv:` и `winline:league:` слали
+    вперемешку, карточный — со stale-снапшота, время шло назад).
+    Снимаем только `winline:league:` ключи; мостовые, чужие пары и чужие
+    карты не трогаем. Отложенные терминалы живут вне опросов и доедут.
+    """
+    retired = 0
+    try:
+        slot = _winline_owned_slot_key(team1, team2, map_num)
+        if slot is None:
+            return 0
+        want, want_map = slot
+        with _winline_current_map_state_lock:
+            victims = [
+                canonical
+                for canonical, poller in list(_winline_current_map_pollers.items())
+                if str(canonical or "").startswith("winline:league:")
+            ]
+        for canonical in victims:
+            try:
+                match = re.match(
+                    r"^(.*)\|map([1-5])\|([^|]+)\|([^|]+)$", str(canonical or ""))
+                if not match or int(match.group(2)) != want_map:
+                    continue
+                have = {
+                    _winline_normalized_team_identity(match.group(3)),
+                    _winline_normalized_team_identity(match.group(4)),
+                } - {""}
+                if have != want:
+                    continue
+            except Exception:
+                continue
+            try:
+                with _winline_current_map_state_lock:
+                    _winline_current_map_pollers.pop(canonical, None)
+                retired += 1
+                print(f"🧹 Winline card sweep: retired shadow {canonical}")
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return retired
+
+
 def _winline_card_is_current(**kwargs: Any) -> Any:
     """Живость карточного опроса: пара видна в свежем снимке обзора.
 
@@ -18229,10 +18339,12 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
     (cap на карточку); пару+карту за АКТИВНЫМ мостовым опросом не дублируем;
     тикетные безымянные лиги без id в v1 пропускаются (им нужен мост).
     """
+    global _winline_stably_bridge_owned
     summary: Dict[str, int] = {
         "cards": 0, "ensured": 0, "skipped_prematch": 0,
         "skipped_gate": 0, "skipped_owned": 0, "skipped_rows": 0,
     }
+    owned_now: Any = set()
     try:
         if not WINLINE_CARD_SWEEP_ENABLED or not _winline_first_active():
             summary["disabled"] = 1
@@ -18327,6 +18439,19 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
                     pass
                 if _winline_bridge_owns_card_pair(team1, team2, map_num):
                     summary["skipped_owned"] += 1
+                    try:
+                        slot = _winline_owned_slot_key(team1, team2, map_num)
+                        if slot is not None and _winline_live_bridge_pollers_for_pair(
+                                team1, team2, map_num):
+                            owned_now.add(slot)
+                            if slot in _winline_stably_bridge_owned:
+                                retired = _winline_retire_shadow_card_pollers(
+                                    team1, team2, map_num)
+                                if retired:
+                                    summary["retired_shadow"] = int(
+                                        summary.get("retired_shadow") or 0) + retired
+                    except Exception:
+                        pass
                     continue
                 try:
                     ok = ensure_winline_current_map_polling(
@@ -18346,6 +18471,10 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
                     summary["ensured"] += 1
         except Exception:
             continue
+    try:
+        _winline_stably_bridge_owned = set(owned_now)
+    except Exception:
+        pass
     print(f"🧹 Winline card sweep: {summary}")
     return summary
 
