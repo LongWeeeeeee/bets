@@ -34,6 +34,12 @@ TOURNAMENT_TITLE_ALLOW_KEYWORDS = frozenset({
     'fissure', 'pgl', 'international',
     'european', 'epl', 'esl', 'cct',
     '1win',
+    # 10.09.2026, решение alex: впускать все лиги букмекера словом 'winline',
+    # а не точечными id (20159 'WINLINE Star Series Season 4' отбросила probe,
+    # Recrent–Daxak шли мимо). Проверено: ни одна команда справочников
+    # (id_to_names, tier_three, org aliases) не содержит 'winline', токен
+    # нижнего регистра ловит любое обрамление и номер сезона.
+    'winline',
 })
 
 # Многословные фразы — матч по ПОДСТРОКЕ в полном названии (не по токену),

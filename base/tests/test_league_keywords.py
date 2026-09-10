@@ -38,6 +38,21 @@ def test_non_keyword_leagues_excluded():
     assert not lk.title_matches_allow_keywords("Random Community Cup")
 
 
+def test_winline_token_admits_star_series():
+    """Токен 'winline' впускает все лиги букмекера, а не точечный id.
+
+    10.09.2026: probe отбросил Recrent Club vs Daxak Club — лига 20159
+    'WINLINE Star Series Season 4' вне allowlist, ни кэфов ни драфта не было,
+    хотя игра шла в GC. Решение alex: впускать по слову 'winline', а не по id.
+    Проверено: ни одна команда справочников не содержит 'winline' в имени,
+    токен-матчинг (не подстрока) не ловит ничего лишнего.
+    """
+    assert lk.title_matches_allow_keywords("WINLINE Star Series Season 4")
+    assert lk.title_matches_allow_keywords("Winline Dota 2 Champions League")
+    assert lk.league_matches_allowlist(20159, "WINLINE Star Series Season 4")
+    assert not lk.title_matches_allow_keywords("Ultras Dota Pro League  2025-26")
+
+
 def test_empty_and_none():
     assert not lk.title_matches_allow_keywords("")
     assert not lk.title_matches_allow_keywords(None)
