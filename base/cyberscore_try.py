@@ -18236,8 +18236,10 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
     try:
         if not WINLINE_CARD_SWEEP_ENABLED or not _winline_first_active():
             summary["disabled"] = 1
+            print(f"🧹 Winline card sweep: {summary}")
             return summary
     except Exception:
+        print(f"🧹 Winline card sweep: {summary}")
         return summary
     try:
         with _winline_overview_lock:
@@ -18245,17 +18247,21 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
             age = time.time() - float(_winline_overview_state.get("fetched_at") or 0.0)
         max_age = float(WINLINE_OVERVIEW_MAX_AGE_S)
     except (TypeError, ValueError):
+        print(f"🧹 Winline card sweep: {summary}")
         return summary
     except Exception:
+        print(f"🧹 Winline card sweep: {summary}")
         return summary
     if not html or age > max_age:
         summary["stale"] = 1
+        print(f"🧹 Winline card sweep: {summary}")
         return summary
     try:
         import bookmaker_selenium_odds as _odds_mod
         cards = _odds_mod.winline_enumerate_live_cards(html)
     except Exception:
         summary["parser_unavailable"] = 1
+        print(f"🧹 Winline card sweep: {summary}")
         return summary
     try:
         max_cards = max(1, int(WINLINE_CARD_SWEEP_MAX_CARDS))
