@@ -18324,10 +18324,411 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
                     ok = False
                 if ok:
                     summary["ensured"] += 1
+                try:
+                    if _winline_card_dltv_draft_notify(
+                        league=league,
+                        team1=team1,
+                        team2=team2,
+                        map_num=map_num,
+                        series_key=series,
+                    ):
+                        summary["dltv_draft"] = int(summary.get("dltv_draft") or 0) + 1
+                except Exception:
+                    pass
         except Exception:
             continue
     print(f"🧹 Winline card sweep: {summary}")
     return summary
+
+
+DLTV_LIVE_SERIES_URL = "https://dltv.org/live/series.json"
+DLTV_LIVE_MATCH_URL_TMPL = "https://dltv.org/live/{match_id}.json"
+DLTV_LIVE_SERIES_TTL_S = float(os.getenv("DLTV_LIVE_SERIES_TTL_S", "60") or 60)
+DLTV_LIVE_HTTP_TIMEOUT_S = float(os.getenv("DLTV_LIVE_HTTP_TIMEOUT_S", "10") or 10)
+_dltv_live_series_state: Dict[str, Any] = {"fetched_at": 0.0, "payload": None}
+_dltv_live_series_lock = threading.Lock()
+
+
+def _dltv_slugify_team(name: Any) -> str:
+    """Слаг команды как в DLTv series slug: lower, не-алфанумерик → '-'."""
+    try:
+        slug = re.sub(r"[^a-z0-9]+", "-", str(name or "").strip().lower())
+        return re.sub(r"-{2,}", "-", slug).strip("-")
+    except Exception:
+        return ""
+
+
+def _dltv_parse_series_slug(slug: Any) -> Optional[Dict[str, str]]:
+    """Разбор 'home-vs-away-<league...>'. Возвращает слаги сторон и лиги."""
+    try:
+        text = str(slug or "").strip().lower()
+        head, sep, _ = text.partition("-vs-")
+        if not sep or not head:
+            return None
+        return {"raw": text, "home": head}
+    except Exception:
+        return None
+
+
+def _dltv_match_slug_side(rest: str, want_home: str, want_away: str) -> Optional[Dict[str, str]]:
+    """Проверка slug-хвоста 'away-<league>' на обе команды (любой порядок)."""
+    try:
+        for home, away in ((want_home, want_away), (want_away, want_home)):
+            if not home or not away:
+                continue
+            prefix = f"{away}-"
+            if rest == away:
+                return {"first": home, "second": away, "league": ""}
+            if rest.startswith(prefix):
+                return {
+                    "first": home,
+                    "second": away,
+                    "league": rest[len(prefix):].strip("-"),
+                }
+        return None
+    except Exception:
+        return None
+
+
+def _dltv_http_get_json(url: str, timeout_s: float = 10.0) -> Optional[Any]:
+    """Best-effort GET JSON. Никогда не бросает исключение."""
+    try:
+        resp = requests.get(
+            url,
+            timeout=max(2.0, float(timeout_s)),
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        if int(getattr(resp, "status_code", 0) or 0) != 200:
+            return None
+        return json.loads(resp.text or "")
+    except Exception:
+        return None
+
+
+def _dltv_live_series_snapshot(
+    *,
+    fetcher: Any = None,
+    force_refresh: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Кэшированный снимок dltv series.json (live+upcoming). TTL 60с."""
+    try:
+        now = time.time()
+        with _dltv_live_series_lock:
+            cached = _dltv_live_series_state.get("payload")
+            age = now - float(_dltv_live_series_state.get("fetched_at") or 0.0)
+        if cached is not None and not force_refresh and age < DLTV_LIVE_SERIES_TTL_S:
+            return cached if isinstance(cached, dict) else None
+        fetch = fetcher if callable(fetcher) else _dltv_http_get_json
+        payload = fetch(DLTV_LIVE_SERIES_URL, DLTV_LIVE_HTTP_TIMEOUT_S)
+        if not isinstance(payload, dict):
+            return cached if isinstance(cached, dict) else None
+        with _dltv_live_series_lock:
+            _dltv_live_series_state["payload"] = payload
+            _dltv_live_series_state["fetched_at"] = now
+        return payload
+    except Exception:
+        return None
+
+
+def _dltv_find_live_series(
+    team1: Any,
+    team2: Any,
+    snapshot: Any,
+) -> Optional[Dict[str, Any]]:
+    """Поиск live-серии DLTv по паре команд. Только status==1 (идёт сейчас).
+
+    Возвращает match_id/live-id, id серии, слаги сторон и лиги. Слаг-парсинг:
+    upcoming-запись 'zero-tenacity-vs-devil-kings-blast-slam-9-...' даёт
+    home/away и хвост лиги; live{} словарь даёт id текущего матча серии.
+    """
+    try:
+        want = {_dltv_slugify_team(team1), _dltv_slugify_team(team2)} - {""}
+        if len(want) != 2 or not isinstance(snapshot, dict):
+            return None
+        live_map = snapshot.get("live") or {}
+        live_series: Dict[str, Any] = {}
+        if isinstance(live_map, dict):
+            for match_id, series_id in live_map.items():
+                try:
+                    live_series[str(int(series_id))] = str(match_id)
+                except (TypeError, ValueError):
+                    continue
+        for entry in (snapshot.get("upcoming") or []):
+            if not isinstance(entry, dict):
+                continue
+            try:
+                if int(entry.get("status") or 0) != 1:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            try:
+                series_id = str(int(entry.get("id")))
+            except (TypeError, ValueError):
+                continue
+            if series_id not in live_series:
+                continue
+            parsed = _dltv_parse_series_slug(entry.get("slug"))
+            if not parsed:
+                continue
+            home_slug = parsed["home"]
+            rest = parsed["raw"][len(home_slug) + len("-vs-"):]
+            if home_slug not in want:
+                continue
+            other = next(iter(want - {home_slug}))
+            hit = _dltv_match_slug_side(rest, home_slug, other)
+            if not hit:
+                continue
+            return {
+                "match_id": live_series[series_id],
+                "series_id": series_id,
+                "first_slug": hit["first"],
+                "second_slug": hit["second"],
+                "league_slug": hit["league"],
+                "series_slug": parsed["raw"],
+                "started_at": entry.get("started_at"),
+            }
+        return None
+    except Exception:
+        return None
+
+
+def _dltv_hero_name(hero_id: Any) -> str:
+    """Ленивое имя героя по id (HERO_ID_TO_NAME заполняется к рантайму)."""
+    try:
+        table = globals().get("HERO_ID_TO_NAME") or {}
+        name = str(table.get(str(hero_id)) or table.get(int(hero_id)) or "").strip()
+        if name:
+            return name
+    except Exception:
+        pass
+    try:
+        return f"Unknown({int(hero_id)})"
+    except (TypeError, ValueError):
+        return "Unknown(?)"
+
+
+def _dltv_parse_live_draft(payload: Any) -> Optional[Dict[str, Any]]:
+    """Разбор live/<id>.json: драфт 5v5 из fast_picks + счёт/время/номер карты.
+
+    Номер текущей карты выводится из счёта серии (db.scores): сумма+1.
+    Ростер-доказательство: ники игроков fast_picks + account_id из players.
+    Возвращает None пока пики не завершены или состав неполный 5v5.
+    """
+    try:
+        if not isinstance(payload, dict):
+            return None
+        if not payload.get("is_picks_ended"):
+            return None
+        fast = payload.get("fast_picks") or {}
+        if not isinstance(fast, dict):
+            return None
+        db = payload.get("db") or {}
+        titles = {}
+        if isinstance(db, dict):
+            for key in ("first_team", "second_team"):
+                team = db.get(key) or {}
+                if isinstance(team, dict):
+                    titles[key] = str(team.get("title") or "").strip()
+        accounts: Dict[int, int] = {}
+        try:
+            for player in (payload.get("players") or []):
+                if isinstance(player, dict):
+                    accounts[int(player.get("hero_id") or 0)] = int(
+                        player.get("account_id") or 0)
+        except (TypeError, ValueError):
+            pass
+        sides: Dict[str, Any] = {}
+        for key in ("first_team", "second_team"):
+            picks = fast.get(key) or []
+            if not isinstance(picks, list) or len(picks) != 5:
+                return None
+            heroes = []
+            for pick in picks:
+                if not isinstance(pick, dict):
+                    return None
+                try:
+                    hero_id = int(pick.get("hero_id") or 0)
+                except (TypeError, ValueError):
+                    return None
+                if hero_id <= 0:
+                    return None
+                player = pick.get("player") or {}
+                nick = str(player.get("title") or "").strip() if isinstance(
+                    player, dict) else ""
+                heroes.append({
+                    "hero_id": hero_id,
+                    "hero": _dltv_hero_name(hero_id),
+                    "player": nick,
+                    "account_id": accounts.get(hero_id, 0),
+                })
+            if any(not h["hero_id"] for h in heroes):
+                return None
+            sides[key] = {"title": titles.get(key, ""), "heroes": heroes}
+        try:
+            scores = (db.get("scores") or {}) if isinstance(db, dict) else {}
+            map_num = int(scores.get("first_team") or 0) + int(
+                scores.get("second_team") or 0) + 1
+        except (TypeError, ValueError):
+            map_num = 0
+        try:
+            game_time = int(payload.get("game_time") or 0)
+        except (TypeError, ValueError):
+            game_time = 0
+        return {
+            "source": "dltv",
+            "match_id": payload.get("match_id"),
+            "map_num": map_num,
+            "game_time_s": game_time,
+            "score": [payload.get("radiant_score"), payload.get("dire_score")],
+            "series_slug": (db.get("series") or {}).get("slug") if isinstance(
+                db.get("series"), dict) else None,
+            "first": sides["first_team"],
+            "second": sides["second_team"],
+        }
+    except Exception:
+        return None
+
+
+def dltv_live_draft_for_card(
+    team1: Any,
+    team2: Any,
+    map_num: Any = None,
+    *,
+    snapshot_fetcher: Any = None,
+    match_fetcher: Any = None,
+    snapshot: Any = None,
+) -> Optional[Dict[str, Any]]:
+    """DLTv-фолбэк для карточки Winline без моста: live-драфт 5v5 с ростерами.
+
+    Условия выдачи: обе команды найдены в live-серии DLTv (status==1),
+    пики завершены, составы полные 5v5 с hero_id>0; при заданном map_num
+    номер текущей карты серии (счёт серии+1) обязан совпасть — иначе None
+    (чужой драфт к чужой карте не клеим). Гейты лиг не затрагиваются:
+    карточка уже допущена по титулу Winline, DLTv лишь добирает драфт.
+    """
+    try:
+        snap = snapshot if isinstance(snapshot, dict) else _dltv_live_series_snapshot(
+            fetcher=snapshot_fetcher)
+        if not isinstance(snap, dict):
+            print("📡 DLTv-live: snapshot unavailable")
+            return None
+        found = _dltv_find_live_series(team1, team2, snap)
+        if not found:
+            print(f"📡 DLTv-live: no live series for {team1} vs {team2}")
+            return None
+        fetch = match_fetcher if callable(match_fetcher) else _dltv_http_get_json
+        payload = fetch(
+            DLTV_LIVE_MATCH_URL_TMPL.format(match_id=found["match_id"]),
+            DLTV_LIVE_HTTP_TIMEOUT_S,
+        )
+        draft = _dltv_parse_live_draft(payload)
+        if not draft:
+            print(f"📡 DLTv-live: draft not ready match={found['match_id']}")
+            return None
+        try:
+            want_map = int(map_num) if map_num is not None else 0
+        except (TypeError, ValueError):
+            want_map = 0
+        if want_map and int(draft.get("map_num") or 0) != want_map:
+            print(f"📡 DLTv-live: map mismatch dltv={draft.get('map_num')} "
+                  f"card={want_map} match={found['match_id']}")
+            return None
+        draft["league_slug"] = found.get("league_slug", "")
+        draft["series_id"] = found.get("series_id")
+        print(f"📡 DLTv-live: draft 5v5 match={found['match_id']} "
+              f"map={draft.get('map_num')} t={draft.get('game_time_s')}s "
+              f"league={found.get('league_slug')}")
+        return draft
+    except Exception:
+        return None
+
+
+_winline_dltv_draft_sent: Dict[str, float] = {}
+
+
+def _winline_format_dltv_draft_message(
+    *,
+    league: Any,
+    team1: Any,
+    team2: Any,
+    draft: Dict[str, Any],
+) -> str:
+    """Текст уведомления о DLTv-драфте. Стороны — только титулы DLTv."""
+    try:
+        game_s = int(draft.get("game_time_s") or 0)
+        clock = f"{game_s // 60}:{game_s % 60:02d}"
+    except (TypeError, ValueError):
+        clock = "—"
+    try:
+        score = draft.get("score") or [None, None]
+        score_s = f"{score[0]}–{score[1]}"
+    except Exception:
+        score_s = "—"
+    league_s = str(draft.get("league_slug") or league or "").replace("-", " ").strip()
+    try:
+        map_num = int(draft.get("map_num") or 0)
+    except (TypeError, ValueError):
+        map_num = 0
+    lines = [
+        f"📡 DLTv · карта {map_num} — драфт 5v5" if map_num else "📡 DLTv — драфт 5v5",
+        f"{team1} — {team2}".strip(" —"),
+        f"{league_s} · {clock} · счёт {score_s}".strip(" ·"),
+    ]
+    for key in ("first", "second"):
+        side = draft.get(key) or {}
+        title = str(side.get("title") or "").strip() or "?"
+        picks = []
+        for hero in (side.get("heroes") or []):
+            if not isinstance(hero, dict):
+                continue
+            nick = str(hero.get("player") or "").strip()
+            picks.append(f"{hero.get('hero') or '?'} ({nick})" if nick else str(
+                hero.get("hero") or "?"))
+        lines.append(f"{title}: " + ", ".join(picks))
+    lines.append(f"match {draft.get('match_id')} · без моста (источник DLTv)")
+    return "\n".join(line for line in lines if line)
+
+
+def _winline_card_dltv_draft_notify(
+    *,
+    league: Any,
+    team1: Any,
+    team2: Any,
+    map_num: Any,
+    series_key: Any = "",
+    send_fn: Any = None,
+    snapshot: Any = None,
+    match_fetcher: Any = None,
+) -> bool:
+    """DLTv-драфт для карточного ряда без моста. Один драфт — одно сообщение.
+
+    Вызывается из sweep для допущенных priced-рядов, которыми не владеет
+    мостовой опрос. Дедуп по (series, карта, dltv match_id) в памяти.
+    Возвращает True если драфт найден и отправлен (или уже был отправлен).
+    """
+    try:
+        if not _winline_odds_notify_enabled():
+            return False
+        if _winline_bridge_owns_card_pair(team1, team2, map_num):
+            return False
+        draft = dltv_live_draft_for_card(
+            team1, team2, map_num,
+            snapshot=snapshot, match_fetcher=match_fetcher)
+        if not draft:
+            return False
+        key = f"{series_key}|map{draft.get('map_num')}|{draft.get('match_id')}"
+        with _winline_current_map_state_lock:
+            if key in _winline_dltv_draft_sent:
+                return True
+            if len(_winline_dltv_draft_sent) >= 200:
+                _winline_dltv_draft_sent.clear()
+            _winline_dltv_draft_sent[key] = time.time()
+        message = _winline_format_dltv_draft_message(
+            league=league, team1=team1, team2=team2, draft=draft)
+        return bool(_winline_send_lifecycle_message(
+            message, send_fn, kind="dltv_draft", key=key))
+    except Exception:
+        return False
 
 
 def _winline_overview_loop() -> None:
