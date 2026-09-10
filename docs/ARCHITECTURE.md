@@ -228,6 +228,8 @@ Telegram-сообщение показывает latest-patch roster sample, с�
 
 Winline-first admission (E-268, 09.09.2026; поправка 10.09.2026): порядок «сначала матч SourceTV, потом поиск в Winline» ронял матчи с неполным опознанием до опроса букмекера. Теперь раз в цикл снимается общий live-снимок ленты Winline (фоновая нить, цикл его не ждёт), и пара SourceTV внутри allowlist-лиг, найденная в живой карточке, допускается мимо team_id-гейта — неизвестная сторона остаётся неизвестной (id 0, tier 3 по правилам tier 2, без онбординга). League allowlist и denylist — жёсткие границы, winline-first их не обходит. Работает и под --no-odds (зависит от Camoufox-сессии, не от prefetch; бэкофф при недоступности). Нет снимка или совпадения — прежний путь (fail-open, kill-switch `WINLINE_FIRST_ENABLED=0`).
 
+Подтверждение анонимных карт по игрокам (E-269, 10.09.2026): probe пишет в мост evidence-only `player_hint` (консенсус составов 4/5 среди известных tier1/2-игроков, коллизии гаснут, имён/id не трогает); cyberscore на drop-path team_id-гейта подтверждает пару живой карточкой Winline (имена моста или ключи хинта) — переименование/допуск только при двойном подтверждении (составы + букмекер). Хинт без карточки ничего не меняет. Рядом с текстом снимка хранится capped DOM (задел под перечисление карточек для кэфов серий вообще без GC).
+
 ### Telegram dispatch + VK mirror (`functions.py`)
 `send_message(...)` шлёт всем подписчикам Telegram-бота (или admin при `admin_only`), при `mirror_to_vk=True` дублирует в VK (если `VK_GROUP_TOKEN`/`VK_GROUP_ID`/peer ids заданы). `require_delivery=True` бросает `TelegramSendError` при жёстком фейле (используется для idempotent-журналирования и retry delayed-очереди).
 

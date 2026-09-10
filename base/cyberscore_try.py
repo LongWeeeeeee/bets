@@ -17761,6 +17761,7 @@ WINLINE_OVERVIEW_JOB_TIMEOUT_S = _safe_float_env("WINLINE_OVERVIEW_JOB_TIMEOUT_S
 _winline_overview_lock = threading.Lock()
 _winline_overview_state: Dict[str, Any] = {
     "text": "",
+    "html": "",
     "fetched_at": 0.0,
     "status": "",
     "error": "",
@@ -17889,6 +17890,7 @@ def _winline_overview_refresh_once() -> bool:
         return False
     with _winline_overview_lock:
         _winline_overview_state["text"] = text[:3_000_000]
+        _winline_overview_state["html"] = str(result.get("html") or "")[:1_500_000]
         _winline_overview_state["fetched_at"] = time.time()
         _winline_overview_state["status"] = str(result.get("status") or "ok")
         _winline_overview_state["error"] = str(result.get("error") or "")
@@ -18012,6 +18014,69 @@ def _winline_first_join(radiant_name: Any, dire_name: Any) -> Optional[Dict[str,
         "admitted_at": time.monotonic(),
         "admission_ttl": max(10.0, ttl),
     }
+
+
+def _winline_player_confirm(
+    radiant_name: Any, dire_name: Any, player_hint: Any
+) -> Optional[Dict[str, Any]]:
+    """Подтверждение анонимной пары живой карточкой Winline: hit или None.
+
+    probe пишет в мост только EVIDENCE (`player_hint`: team_key по составам
+    4/5, без переименований — решение E-267), а подтверждает пару здесь
+    букмекер: если живая карточка содержит ОБА имени (имя моста или, для
+    анонимной стороны, team_key хинта), пара считается подтверждённой и hit
+    несёт имена+id для downstream. Без карточки — None (прежний путь).
+    """
+    if not isinstance(player_hint, dict):
+        return None
+    try:
+        from_bridge = (
+            not _is_placeholder_team_name(radiant_name)
+            and not _is_placeholder_team_name(dire_name)
+        )
+    except Exception:
+        return None
+    names = []
+    confirmed_ids: Dict[str, int] = {}
+    for side_name, side_key in ((radiant_name, "radiant"), (dire_name, "dire")):
+        text = str(side_name or "").strip()
+        try:
+            placeholder = bool(_is_placeholder_team_name(side_name))
+        except Exception:
+            return None
+        if not placeholder and text:
+            names.append(text)
+            continue
+        hint = player_hint.get(side_key) if isinstance(player_hint, dict) else None
+        team_key = str((hint or {}).get("team_key") or "").strip()
+        if not team_key:
+            return None
+        try:
+            if bool(_is_placeholder_team_name(team_key)):
+                # Тег уровня "radiant"/"dire" в справочнике — в join ему делать
+                # нечего: такое слово есть в любом dota-тексте (ложный хит).
+                return None
+        except Exception:
+            return None
+        names.append(team_key)
+        try:
+            ids = [int(v) for v in ((hint or {}).get("team_ids") or [])]
+        except (TypeError, ValueError):
+            return None
+        if not ids:
+            return None
+        confirmed_ids[side_key] = max(ids)
+    if len(names) != 2 or from_bridge:
+        # from_bridge: обе стороны именованы — это уже покрывает обычный join,
+        # сюда зовём только ради анонимных сторон.
+        return None
+    hit = _winline_first_join(names[0], names[1])
+    if hit is None:
+        return None
+    hit["confirmed_names"] = (names[0], names[1])
+    hit["confirmed_ids"] = confirmed_ids
+    hit["player_evidence"] = player_hint
+    return hit
 
 
 def _winline_first_bypass_active(hit: Any) -> bool:
@@ -36205,9 +36270,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
 
         match_log(f"   🆔 Candidate team IDs: radiant={radiant_team_ids}, dire={dire_team_ids}")
+        _player_attr = data.get("player_hint") if isinstance(data, dict) else None
+        if isinstance(_player_attr, dict) and (_player_attr.get("radiant") or _player_attr.get("dire")):
+            match_log(f"   🧬 Player hint (probe, составы 4/5): {_player_attr}")
         # Winline-first: join к живому снимку Winline идёт ДО гейтов — только на
         # drop-path (когда id неполные), уже допущенные матчи join не тратят.
         winline_first_hit = None
+        player_confirmed_hit = None
         if (
             is_sourcetv_card
             and (not radiant_team_ids or not dire_team_ids)
@@ -36217,11 +36286,21 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             winline_first_hit = _winline_first_join(
                 radiant_team_name_original, dire_team_name_original
             )
+            if not _winline_first_bypass_active(winline_first_hit):
+                # Анонимные карты: подтверждение по игрокам (E-269). Хинт пишет
+                # probe (составы 4/5, без переименований), подтверждает пару
+                # живая карточка Winline — только тогда даём имена/id дальше.
+                player_confirmed_hit = _winline_player_confirm(
+                    radiant_team_name_original,
+                    dire_team_name_original,
+                    data.get("player_hint") if isinstance(data, dict) else None,
+                )
         if (
             not SIGNAL_MINIMAL_ODDS_ONLY_MODE
             and not PIPELINE_BYPASS_TIER_GATE
             and (not radiant_team_ids or not dire_team_ids)
             and not _winline_first_bypass_active(winline_first_hit)
+            and not _winline_first_bypass_active(player_confirmed_hit)
         ):
             print(f"   ❌ Отсутствуют team_id для команд")
             print(f"   ❌ Матч пропущен (нет team_id)")
@@ -36233,6 +36312,25 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 "   🧭 Winline-first: матч идёт без полного team_id "
                 f"(лига Winline: {winline_first_hit.get('league') or 'unknown'}) — "
                 "неизвестная сторона без онбординга, суд по правилам tier 2"
+            )
+        if _winline_first_bypass_active(player_confirmed_hit) and (
+            not radiant_team_ids or not dire_team_ids
+        ):
+            _confirmed_names = player_confirmed_hit.get("confirmed_names") or (None, None)
+            _confirmed_ids = player_confirmed_hit.get("confirmed_ids") or {}
+            if _confirmed_ids.get("radiant") and not radiant_team_ids:
+                radiant_team_ids = [int(_confirmed_ids["radiant"])]
+            if _confirmed_ids.get("dire") and not dire_team_ids:
+                dire_team_ids = [int(_confirmed_ids["dire"])]
+            if _confirmed_names[0]:
+                radiant_team_name_original = str(_confirmed_names[0])
+            if _confirmed_names[1]:
+                dire_team_name_original = str(_confirmed_names[1])
+            print(
+                "   🧬 Player-confirmed: анонимная пара подтверждена составами "
+                f"({_confirmed_names[0]} vs {_confirmed_names[1]}) и живой "
+                f"карточкой Winline (лига: {player_confirmed_hit.get('league') or 'unknown'}) — "
+                "идём обычным путём, evidence в player_hint"
             )
         # Extract league_id if available
         if not is_sourcetv_card:

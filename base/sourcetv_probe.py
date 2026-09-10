@@ -572,6 +572,164 @@ def _game_has_known_tier12_side(game):
         for side in ("radiant_team", "dire_team")
         if _side_id(game, side)
     )
+# Сколько игроков стороны должны нести тег ОДНОЙ организации tier1/2, чтобы
+# анонимную карту можно было подтвердить по составу (E-269). Порог 4/5 —
+# замер E-267 на девяти живых играх тикета 10877: ниже впускает чужие
+# организации по устаревшим тегам. Имя собственное (не общее с чужими
+# правками), чтобы атрибуция деплоилась независимо.
+_PLAYER_ATTRIBUTION_MIN_AGREE = 4
+
+# Мусорные токены при нормализации тега — тот же набор, что у tier-словарей.
+_PLAYER_ATTRIBUTION_TRASH = ('team', 'flipster', 'esports', 'gaming', ' ', '.')
+
+_PLAYER_ATTRIBUTION_INDEX_FAILURE_LOGGED = False
+
+
+def _normalize_attribution_tag(team_name):
+    """Нормализованный тег организации для сверки со справочником tier1/2."""
+    value = str(team_name or "")
+    for trash in _PLAYER_ATTRIBUTION_TRASH:
+        value = value.lower().replace(trash, '')
+    return value
+
+
+def _player_attribution_tier_index():
+    """(множество team_id, {нормализованное имя: {team_id}}) tier1/tier2.
+
+    Собственный индекс атрибуции (E-269), независимый от чужих правок:
+    деплоится и работает без них. Overlay применяется как в
+    `_known_tier12_team_ids` (свежие сущности нужны и здесь); свежие команды
+    overlay почти не имеют устоявшихся pro-тегов, так что на консенсус это
+    почти не влияет, но display-резолв их видит.
+    """
+    global _PLAYER_ATTRIBUTION_INDEX_FAILURE_LOGGED
+    try:
+        import id_to_names
+        import tier_dynamic_overlay
+
+        tier_dynamic_overlay.apply_entries(
+            id_to_names,
+            tier_dynamic_overlay.load_entries(tier_dynamic_overlay.overlay_path()),
+        )
+        known_ids = set()
+        known_names = {}
+        for source in (id_to_names.tier_one_teams, id_to_names.tier_two_teams):
+            for key, value in source.items():
+                values = value if isinstance(value, (set, frozenset, list, tuple)) else (value,)
+                ids = set()
+                for raw in values:
+                    try:
+                        team_id = int(raw)
+                    except (TypeError, ValueError):
+                        continue
+                    if team_id > 0:
+                        ids.add(team_id)
+                        known_ids.add(team_id)
+                if ids:
+                    name_key = _normalize_attribution_tag(key) or str(key)
+                    known_names.setdefault(name_key, set()).update(ids)
+        _PLAYER_ATTRIBUTION_INDEX_FAILURE_LOGGED = False
+        return known_ids, known_names
+    except Exception as e:
+        if not _PLAYER_ATTRIBUTION_INDEX_FAILURE_LOGGED:
+            _PLAYER_ATTRIBUTION_INDEX_FAILURE_LOGGED = True
+            log.warning("Справочник tier1/2 для атрибуции не читается: %s", e)
+        return set(), {}
+
+
+def _attribute_sides_by_players(game, pro_lookup):
+    """Консенсус составов по сторонам: {0: {...}|None, 1: {...}|None}.
+
+    Автономная механика атрибуции (E-269): те же пороги, что замерены в E-267,
+    но собственные имена/индекс — работает и деплоится независимо от чужих
+    правок допуска по составу.
+    """
+    sides = {0: None, 1: None}
+    if not pro_lookup:
+        return sides
+    _known_ids, known_names = _player_attribution_tier_index()
+    if not known_names:
+        return sides
+    for side in (0, 1):
+        tags = {}
+        supporters = {}
+        for player in game.get("players") or []:
+            if player.get("team") != side:
+                continue
+            account_id = player.get("account_id")
+            row = pro_lookup.get(int(account_id)) if account_id else None
+            if not isinstance(row, dict):
+                continue
+            team_key = _normalize_attribution_tag(row.get("team"))
+            if team_key and team_key in known_names:
+                tags[team_key] = tags.get(team_key, 0) + 1
+                supporters.setdefault(team_key, []).append(int(account_id))
+        if not tags:
+            continue
+        team_key, count = max(tags.items(), key=lambda item: (item[1], item[0]))
+        if count < _PLAYER_ATTRIBUTION_MIN_AGREE:
+            continue
+        sides[side] = {
+            "team_key": team_key,
+            "players": int(count),
+            "team_ids": sorted(known_names[team_key]),
+            "account_ids": sorted(supporters.get(team_key, [])),
+        }
+    return sides
+
+
+_ANONYMOUS_SIDE_NAMES = frozenset({"", "radiant", "dire"})
+
+
+def _is_anonymous_side(name: object, team_id: object) -> bool:
+    """Сторона без опознания: Valve не отдал сущность (id 0) и имя — плейсхолдер.
+
+    Именованная, но неизвестная сторона (стек без id) — НЕ анонимная: её имя
+    авторитетнее любых тегов, хинт по составу ей не пишется.
+    """
+    try:
+        if int(team_id or 0):
+            return False
+    except (TypeError, ValueError):
+        pass
+    return str(name or "").strip().lower() in _ANONYMOUS_SIDE_NAMES
+
+
+def _player_hint_for_game(game, pro_lookup):
+    """Подсказка по составам для анонимных сторон: {"radiant": {...}|None, ...}.
+
+    Только EVIDENCE, не identity: имена/id в мост НЕ пишутся (решение пира,
+    E-267 — теги устаревают, переименовывать по ним нельзя). Подтверждение
+    пары делает cyberscore живой карточкой Winline; без неё хинт — лишь лог.
+    Хинт ставится только анонимным сторонам; коллизия (обе стороны в один
+    тег) гасит обе.
+    """
+    out = {"radiant": None, "dire": None}
+    if not pro_lookup:
+        return out
+    sides = _attribute_sides_by_players(game, pro_lookup)
+    labeled = {}
+    for side, label in ((0, "radiant"), (1, "dire")):
+        hit = sides.get(side)
+        if hit is None:
+            continue
+        entity = game.get("radiant_team" if side == 0 else "dire_team") or {}
+        if not _is_anonymous_side(entity.get("team_name"), entity.get("team_id")):
+            continue
+        labeled[label] = {
+            "team_key": str(hit.get("team_key") or ""),
+            "players": int(hit.get("players") or 0),
+            "team_ids": sorted(int(v) for v in (hit.get("team_ids") or [])),
+            "account_ids": sorted(int(v) for v in (hit.get("account_ids") or [])),
+        }
+    if not labeled:
+        return out
+    if len(labeled) == 2 and len({v["team_key"] for v in labeled.values()}) < 2:
+        return out
+    out.update(labeled)
+    return out
+
+
 
 
 def _league_tier_gated_admission(league_id, game):
@@ -1094,7 +1252,7 @@ def print_heroes(g, pos_map):
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-def _build_target(g, league_ids):
+def _build_target(g, league_ids, pro_lookup=None):
     """Собирает target-dict из записи GetLiveLeagueGames. Используется при старте и при рефетче."""
     lid     = g.get("lobby_id")
     tmap    = {p["account_id"]: ("radiant" if p.get("team") == 0 else "dire")
@@ -1108,6 +1266,11 @@ def _build_target(g, league_ids):
         aid = p.get("account_id")
         if aid and p.get("team") in (0, 1):
             side_tid[aid] = rad_id if p["team"] == 0 else dire_id
+    # Подсказка по составам для анонимных сторон (E-269): ТОЛЬКО evidence,
+    # имена/id НЕ трогаем (решение пира, E-267 — теги устаревают). Подтвердит
+    # пару cyberscore живой карточкой Winline; сами rad/dire/id остаются
+    # как отдал Valve (плейсхолдеры), side_tid — тоже.
+    player_hint = _player_hint_for_game(g, pro_lookup)
     return {
         "lobby_id":  lid,
         "team_map":  tmap,
@@ -1116,6 +1279,7 @@ def _build_target(g, league_ids):
         "rad_id":    rad_id,
         "dire_id":   dire_id,
         "side_tid":  side_tid,
+        "player_hint": player_hint,
         "league_id": int(g.get("league_id") or league_ids[0]),
         # Серийный контекст из WebAPI (достовернее GC getattr; обновляется при рефетче)
         "series_id":           g.get("series_id"),
@@ -1202,7 +1366,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
     all_lobby_ids = []
     for g in games_list:
         mid = int(g["match_id"])
-        t = _build_target(g, league_ids)
+        t = _build_target(g, league_ids, pro_lookup)
         targets[mid] = t
         if t["lobby_id"]:
             all_lobby_ids.append(t["lobby_id"])
@@ -1556,7 +1720,7 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                         for fg in fresh_games:
                             fmid = int(fg["match_id"])
                             if fmid not in targets:
-                                ft = _build_target(fg, league_ids)
+                                ft = _build_target(fg, league_ids, pro_lookup)
                                 targets[fmid] = ft
                                 states[fmid] = {
                                     "game": None,
@@ -1716,6 +1880,10 @@ def run(username, password, league_ids, match_id=None, interval=2.0, login_only=
                                 "dire_team_name": t["dire"],
                                 "radiant_team_id": int(t["rad_id"]) if t.get("rad_id") else 0,
                                 "dire_team_id": int(t["dire_id"]) if t.get("dire_id") else 0,
+                                # Подсказка по составам для анонимных сторон (E-269):
+                                # только evidence (team_key 4/5 + supporters),
+                                # имена/id НЕ переписываются (решение E-267).
+                                "player_hint": t.get("player_hint"),
                                 "league_id": int(t.get("league_id") or league_ids[0]),
                                 # league_name из справочника OpenDota (GC названий не даёт)
                                 "league_name": league_name(t.get("league_id") or league_ids[0]),

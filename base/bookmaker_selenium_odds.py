@@ -2026,6 +2026,9 @@ async def _collect_winline_live_overview_async(
         "error": str(load_error or ""),
         "text": text,
         "html_len": len(html or ""),
+        # Сырой DOM для будущего перечисления карточек (E-269: кэфы без GC).
+        # Отдельно от text: join ходит по тексту, а перечисление — по элементам.
+        "html": str(html or "")[:1_500_000],
         "page_url": str((diag or {}).get("page_url") or url or ""),
     }
 
