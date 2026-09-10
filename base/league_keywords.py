@@ -106,6 +106,28 @@ TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST = frozenset({
     10877,
 })
 
+# Сколько игроков стороны должны нести тег ОДНОЙ организации tier1/tier2, чтобы
+# анонимную карту гейтового тикета можно было опознать по составу.
+#
+# Нужно, потому что на открытых квалах Valve часто не отдаёт ни team_id, ни
+# team_name: 09.09.2026 так пришёл PuckChamp vs Inner Circle x Insanity
+# (match_id 8990081932, обе стороны `None`). Тогда остаётся состав — OpenDota
+# proPlayers несёт team_name на каждый account_id.
+#
+# Порог выбран замером на девяти живых играх тикета 10877 (09.09.2026):
+# >=1 впустил бы 7 из 9, включая карту с тремя РАЗНЫМИ одиночными тегами;
+# >=2 — 5 из 9, и среди них 'Radiant vs PlayTime' по двум устаревшим тегам LGD
+# (tier1), то есть чужую организацию; >=3 — 4 из 9; >=4 — 2 из 9, и оба опознаны
+# верно (PuckChamp 4/5, BALU 5/5). Замер — docs/experiments/E-267-*.md.
+#
+# Константа общая: probe по ней опознаёт сторону, cyberscore по ней же
+# ПЕРЕПРОВЕРЯЕТ решение, пришедшее полем `_gated_tier12_side` из записи моста.
+# Теги OpenDota — устаревшая привязка игрока к организации, поэтому опознание
+# отвечает только на вопрос «здесь есть команда tier1/2». Названия сторон из него
+# НЕ строятся: имена и team_id downstream достаёт с карточки CyberScore
+# `_resolve_sourcetv_bridge_identity`.
+GATED_TICKET_MIN_TIER12_PLAYERS = 4
+
 
 def title_matches_allow_keywords(title: Any) -> bool:
     """True, если название лиги/турнира проходит keyword-allowlist."""
