@@ -725,6 +725,18 @@ def _winline_same_team_pair(a1: Any, a2: Any, b1: Any, b2: Any) -> bool:
         # Пустое имя рушит сравнение множеств (две пустые схлопнутся в одну):
         # без имён идентичность не проверяется, решает номер карты.
         return True
+    if (
+        _is_placeholder_team_name(a1)
+        or _is_placeholder_team_name(a2)
+        or _is_placeholder_team_name(b1)
+        or _is_placeholder_team_name(b2)
+    ):
+        # Плейсхолдер («Radiant»/«Dire») — отсутствие личности, а не личность:
+        # личность моста подставляется фолбэком не в каждом цикле, и сырое имя
+        # из реестра против опознанного в опросе — не смена карты
+        # (10.09.2026, Yellow Submarine — PlayTime: ложные «карта завершена»
+        # по живой карте 1 в каждом цикле промаха фолбэка).
+        return True
     return left == right
 
 
@@ -1235,6 +1247,116 @@ def _winline_polling_series_key(
     return stable or str(fallback or "").strip()
 
 
+#: Разовый допуск анонимной карты по глазному подтверждению (опция C).
+#: Файл живого состояния рантайма, в репозиторий не коммитится, читается
+#: каждый цикл (кэш по mtime). Формат:
+#: {"<bridge_match_key>": {"radiant": "...", "dire": "...",
+#:   "by": "<кто подтвердил>", "expires_at": <unix ts>}}.
+#: Имена подставляются ТОЛЬКО в стороны-плейсхолдеры (правду GC не трогаем),
+#: id не выдумываются, просрочка мертва, deny-гейты не обходятся.
+MANUAL_SOURCETV_ADMISSION_ENV = "MANUAL_SOURCETV_ADMISSION_PATH"
+_manual_sourcetv_admissions_cache: Dict[str, Any] = {}
+
+
+def _manual_sourcetv_admission_path() -> Path:
+    raw = str(os.getenv(MANUAL_SOURCETV_ADMISSION_ENV) or "").strip()
+    if raw:
+        return Path(raw)
+    return PROJECT_ROOT / "runtime" / "manual_sourcetv_admissions.json"
+
+
+def _manual_sourcetv_admission_for(match_key: Any, item: Any) -> Optional[Dict[str, Any]]:
+    """Активная ручная запись допуска под ключ моста или None."""
+    try:
+        key = str(match_key or "").strip()
+    except Exception:
+        return None
+    if not key:
+        return None
+    try:
+        path = _manual_sourcetv_admission_path()
+        try:
+            mtime = path.stat().st_mtime if path.is_file() else None
+        except Exception:
+            mtime = None
+        cached = _manual_sourcetv_admissions_cache
+        if mtime is None or cached.get("path") != str(path) or cached.get("mtime") != mtime:
+            raw = path.read_text(encoding="utf-8") if mtime is not None else ""
+            try:
+                data = json.loads(raw) if raw else {}
+            except Exception:
+                data = {}
+            cached.clear()
+            cached.update(path=str(path), mtime=mtime, data=data if isinstance(data, dict) else {})
+        entry = (cached.get("data") or {}).get(key)
+    except Exception:
+        return None
+    if not isinstance(entry, dict):
+        return None
+    try:
+        if float(entry.get("expires_at") or 0) <= time.time():
+            return None
+    except (TypeError, ValueError):
+        return None
+    radiant = str(entry.get("radiant") or "").strip()
+    dire = str(entry.get("dire") or "").strip()
+    if not radiant or not dire:
+        return None
+    try:
+        if _is_placeholder_team_name(radiant) or _is_placeholder_team_name(dire):
+            return None
+    except Exception:
+        return None
+    # Жёсткие границы держатся и здесь (зеркало E-270): лига обязана быть
+    # allowlist-id или гейтовым тикетом, скипнутые титулы не впускаются.
+    payload = item if isinstance(item, dict) else {}
+    try:
+        lid = int(payload.get("league_id") or entry.get("league_id") or 0)
+    except (TypeError, ValueError):
+        return None
+    try:
+        league_ok = bool(
+            _league_matches_allowlist(lid, payload.get("league_name"))
+            or _league_is_tier_gated(lid)
+        )
+    except Exception:
+        return None
+    if not league_ok:
+        return None
+    try:
+        if _normalize_live_league_title(payload.get("league_name")) in SKIPPED_LIVE_LEAGUE_TITLES:
+            return None
+    except Exception:
+        return None
+    return {
+        "radiant": radiant,
+        "dire": dire,
+        "by": str(entry.get("by") or "?"),
+        "league_id": lid,
+    }
+
+
+def _sourcetv_league_gate_skip(m: Any) -> bool:
+    """True — матч пропустить league-фильтром. Чистая экстракция условия гейта."""
+    item = m if isinstance(m, dict) else {}
+    return bool(
+        not _league_matches_allowlist(
+            item.get("league_id"), item.get("league_name")
+        ) and not _league_admits_with_known_side(
+            item.get("league_id"),
+            item.get("radiant_team_id"),
+            item.get("dire_team_id"),
+        ) and not _winline_card_admits_league(
+            _winline_player_confirm(
+                item.get("radiant_team_name"),
+                item.get("dire_team_name"),
+                item.get("player_hint"),
+            ),
+            item.get("league_id"),
+        )
+    )
+
+
 def _resolve_sourcetv_bridge_identity(matches: Any) -> Any:
     """Дописать названия команд и формат серии в записи моста по данным cyberscore.
 
@@ -1251,6 +1373,26 @@ def _resolve_sourcetv_bridge_identity(matches: Any) -> Any:
     """
     if not isinstance(matches, dict) or not matches:
         return matches
+    # Ручной допуск — раньше всех фолбэков и независимо от их флага: имена
+    # подтверждены глазами, а не выведены. Заполняет только плейсхолдеры.
+    for key, payload in matches.items():
+        if not isinstance(payload, dict):
+            continue
+        try:
+            hit = _manual_sourcetv_admission_for(key, payload)
+        except Exception:
+            continue
+        if hit is None:
+            continue
+        if _is_placeholder_team_name(payload.get("radiant_team_name")):
+            payload["radiant_team_name"] = hit["radiant"]
+        if _is_placeholder_team_name(payload.get("dire_team_name")):
+            payload["dire_team_name"] = hit["dire"]
+        payload["_manual_identity"] = {"by": hit.get("by") or "?", "at": time.time()}
+        print(
+            f"   🔧 MANUAL identity {key}: {payload.get('radiant_team_name')} vs "
+            f"{payload.get('dire_team_name')} (by={hit.get('by') or '?'})"
+        )
     if not SOURCETV_IDENTITY_FALLBACK:
         return matches
     pending = []
@@ -34367,22 +34509,20 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             _skipped_by_league = 0
             _ensure_winline_overview_refresher()
             for mid, m in matches.items():
-                if not _league_matches_allowlist(
-                    m.get("league_id"), m.get("league_name")
-                ) and not _league_admits_with_known_side(
-                    m.get("league_id"),
-                    m.get("radiant_team_id"),
-                    m.get("dire_team_id"),
-                ) and not _winline_card_admits_league(
-                    # E-270: живая карточка подтверждает пару внутри гейтового
-                    # тикета (denylist карт проверяется внутри хелпера).
-                    _winline_player_confirm(
-                        m.get("radiant_team_name"),
-                        m.get("dire_team_name"),
-                        m.get("player_hint"),
-                    ),
-                    m.get("league_id"),
-                ):
+                # Ручной допуск (опция C): запись подтверждена глазами, deny-гейты
+                # проверены внутри `_manual_sourcetv_admission_for`. Общий
+                # allowlist/denylist остальных матчей не меняется.
+                try:
+                    manual_hit = _manual_sourcetv_admission_for(mid, m)
+                except Exception:
+                    manual_hit = None
+                if manual_hit is not None:
+                    print(
+                        f"   🔧 MANUAL admission {mid}: "
+                        f"{manual_hit.get('radiant')} vs {manual_hit.get('dire')} "
+                        f"(by={manual_hit.get('by') or '?'})"
+                    )
+                elif _sourcetv_league_gate_skip(m):
                     _skipped_by_league += 1
                     continue
                 # Строим mock ноду в exact формате который кушает check_head и _extract_live_listing_context
