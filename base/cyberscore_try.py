@@ -17796,10 +17796,14 @@ def _winline_first_parser_fns() -> Optional[tuple]:
 
 
 def _winline_first_active() -> bool:
-    """Включён ли winline-first допуск в текущей конфигурации."""
+    """Включён ли winline-first допуск в текущей конфигурации.
+
+    Осознанно НЕ зависит от BOOKMAKER_PREFETCH_ENABLED: прод идёт с --no-odds
+    (prefetch OFF), но инпроцессный опрос Winline через общую Camoufox-сессию
+    там жив — обзор пользуется той же сессией напрямую и fail-open, когда её
+    нет (откат — по бэкоффу в `_winline_overview_loop`, а не по флагу).
+    """
     if not WINLINE_FIRST_ENABLED:
-        return False
-    if not globals().get("BOOKMAKER_PREFETCH_ENABLED"):
         return False
     if bool(globals().get("PURE_DLTV_MODE")):
         return False
@@ -17808,7 +17812,16 @@ def _winline_first_active() -> bool:
             return False
     except Exception:
         return False
-    return _winline_first_parser_fns() is not None
+    if _winline_first_parser_fns() is None:
+        return False
+    try:
+        if not bool(globals().get("BOOKMAKER_CAMOUFOX_ENABLED")):
+            return False
+        if not bool(globals().get("BOOKMAKER_CAMOUFOX_IMPORTED")):
+            return False
+    except Exception:
+        return False
+    return True
 
 
 def _winline_overview_inject_for_tests(text: str) -> None:
@@ -17883,18 +17896,32 @@ def _winline_overview_refresh_once() -> bool:
 
 
 def _winline_overview_loop() -> None:
+    # Бэкофф consecutive-промахов: без сессии/страницы поток не должен висеть
+    # на 60-секундных таймаутах впритык (они же конкурируют с поллером за
+    # общую Camoufox-очередь). Успех сбрасывает счётчик.
+    consecutive_fails = 0
     while True:
         try:
-            due = False
             with _winline_overview_lock:
                 age = time.time() - float(_winline_overview_state.get("fetched_at") or 0.0)
+                next_retry_at = float(_winline_overview_state.get("next_retry_at") or 0.0)
             try:
                 ttl = float(WINLINE_OVERVIEW_TTL_S)
             except (TypeError, ValueError):
                 ttl = 45.0
-            due = age >= max(10.0, ttl)
+            now = time.time()
+            due = age >= max(10.0, ttl) and now >= next_retry_at
             if due:
-                _winline_overview_refresh_once()
+                ok = _winline_overview_refresh_once()
+                if ok:
+                    consecutive_fails = 0
+                    with _winline_overview_lock:
+                        _winline_overview_state["next_retry_at"] = 0.0
+                else:
+                    consecutive_fails += 1
+                    backoff = min(300.0, 10.0 * (2.0 ** min(consecutive_fails, 5)))
+                    with _winline_overview_lock:
+                        _winline_overview_state["next_retry_at"] = time.time() + backoff
         except Exception as exc:
             logger.warning("WINLINE_OVERVIEW_LOOP_FAILED: %s", exc)
         time.sleep(5.0)

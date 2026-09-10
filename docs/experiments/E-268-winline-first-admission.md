@@ -67,5 +67,14 @@ harness: "base/tests/test_winline_first_admission.py"
   коллизии токена команды с названием лиги (`1w Essence` vs `1w`) возвращается "" —
   как пустой league_name у probe; (4) выборка боевого эффекта пока нулевая — смотреть
   прод-логи по маркеру `🧭 Winline-first`.
-- **Вывод:** внедрено с поправкой 10.09.2026. Откат: `WINLINE_FIRST_ENABLED=0`
+- **Дефект №2 (найден на деплое 10.09.2026): допуск был dormant в проде.**
+  `_winline_first_active` требовал включённый `BOOKMAKER_PREFETCH_ENABLED`,
+  а прод идёт с `--no-odds` (`Odds pipeline: OFF`, проверено в логе юнита).
+  При этом инпроцессный опрос Winline через общую Camoufox-сессию в `--no-odds`
+  жив (177 строк `Winline polling active` в `cyberscore_sourcetv.log`) — обзор
+  пользуется той же сессией. Исправлено: active() зависит от Camoufox-флагов,
+  а не от prefetch; в поток обновления добавлен бэкофф consecutive-промахов
+  (10·2^n с, потолок 300 с), чтобы без сессии не конкурировать с поллером.
+  Регрессионный тест `test_prod_no_odds_shape_stays_active`.
+- **Вывод:** внедрено с поправками 10.09.2026. Откат: `WINLINE_FIRST_ENABLED=0`
   (или отсутствие снимка — поведение совпадёт со старым автоматически).

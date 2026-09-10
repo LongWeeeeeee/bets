@@ -54,13 +54,29 @@ DOTA_PREMATCH_CARD = (
 
 def _enable_winline_first(monkeypatch) -> None:
     monkeypatch.setattr(runtime, "WINLINE_FIRST_ENABLED", True, raising=False)
-    monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", True, raising=False)
     monkeypatch.setattr(runtime, "PURE_DLTV_MODE", False, raising=False)
     monkeypatch.setattr(
         runtime, "BOOKMAKER_PREFETCH_GATE_MODE", "odds", raising=False
     )
+    monkeypatch.setattr(runtime, "BOOKMAKER_CAMOUFOX_ENABLED", True, raising=False)
+    monkeypatch.setattr(runtime, "BOOKMAKER_CAMOUFOX_IMPORTED", True, raising=False)
     runtime._winline_first_parser_fns_cache = None  # noqa: SLF001
     runtime._winline_overview_inject_for_tests("")  # noqa: SLF001
+
+
+def test_prod_no_odds_shape_stays_active(monkeypatch) -> None:
+    """Прод идёт с --no-odds (prefetch OFF): допуск обязан работать и там.
+
+    Регрессия 10.09.2026: `_winline_first_active` требовал включённый
+    prefetch, и весь winline-first был dormant именно в прод-режиме.
+    """
+    _enable_winline_first(monkeypatch)
+    monkeypatch.setattr(runtime, "BOOKMAKER_PREFETCH_ENABLED", False, raising=False)
+    runtime._winline_overview_inject_for_tests(DOTA_LIVE_CARD)  # noqa: SLF001
+    assert runtime._winline_first_active() is True  # noqa: SLF001
+    hit = runtime._winline_first_join("MOUZ", "Klim Sani4")  # noqa: SLF001
+    assert hit is not None
+    assert runtime._winline_first_bypass_active(hit) is True  # noqa: SLF001
 
 
 def _captured_page_text() -> str:
