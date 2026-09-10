@@ -346,6 +346,37 @@ def test_refresh_rejects_shell_and_keeps_prior_feed(monkeypatch) -> None:
     assert runtime._winline_overview_snapshot_text() == FEED_TEXT  # noqa: SLF001
 
 
+class _FakeSettlePage:
+    """Дабл страницы: скрипт ответов evaluate, подсчёт опросов."""
+
+    def __init__(self, script) -> None:
+        self._script = list(script)
+        self.calls = 0
+
+    def evaluate(self, js):
+        self.calls += 1
+        return self._script[min(self.calls - 1, len(self._script) - 1)]
+
+
+def test_settle_waits_for_feed_markers() -> None:
+    """Settle опрашивает DOM, пока не появятся маркеры карточек."""
+    import asyncio
+
+    page = _FakeSettlePage([False, False, True])
+    assert asyncio.run(odds_parser._settle_winline_overview_feed(page, timeout_s=30)) is True
+    assert page.calls == 3
+
+
+def test_settle_times_out_without_markers() -> None:
+    """Без маркеров — быстрый False, дальше решает предикат shell/feed."""
+    import asyncio
+
+    page = _FakeSettlePage([False])
+    assert asyncio.run(odds_parser._settle_winline_overview_feed(page, timeout_s=0.01)) is False
+    # Детерминировано: первый опрос раньше дедлайна, второй — после sleep(2).
+    assert page.calls == 2
+
+
 def test_refresh_stores_feed_snapshot(monkeypatch) -> None:
     """Лента с признаками feed кладётся в состояние и читается join."""
     _offline_refresh(

@@ -1263,6 +1263,7 @@ def _resolve_sourcetv_bridge_identity(matches: Any) -> Any:
             payload.get("league_id"),
             payload.get("radiant_team_id"),
             payload.get("dire_team_id"),
+            payload.get("_gated_tier12_side"),
         ):
             continue
         needs_name = (
@@ -14671,6 +14672,7 @@ def _drain_due_delayed_signals_once(only_match_key: Optional[str] = None) -> Non
                     _gd_bridge.get("league_id"),
                     _gd_bridge.get("radiant_team_id"),
                     _gd_bridge.get("dire_team_id"),
+                    _gd_bridge.get("_gated_tier12_side"),
                 )
             ):
                 _gd_league = _gd_bridge.get("league_name")
@@ -17921,7 +17923,11 @@ def _winline_overview_refresh_once() -> bool:
         if not looks_like_feed:
             # Shell-съём (холодная страница, SPA не поднялось): хороший снимок
             # не затираем, цикл придёт за лентой по бэкоффу на прогретую.
-            logger.warning("WINLINE_OVERVIEW_SHELL: no feed markers, snapshot not stored")
+            # print, а не logger: прод читает print-лог, logger в файл не идёт.
+            print(
+                "🧭 WINLINE_OVERVIEW_SHELL: no feed markers "
+                f"(text={len(text)}), snapshot not stored"
+            )
             return False
     with _winline_overview_lock:
         _winline_overview_state["text"] = text[:3_000_000]
@@ -17929,6 +17935,11 @@ def _winline_overview_refresh_once() -> bool:
         _winline_overview_state["fetched_at"] = time.time()
         _winline_overview_state["status"] = str(result.get("status") or "ok")
         _winline_overview_state["error"] = str(result.get("error") or "")
+    # print, а не logger: прод читает print-лог. Одна строка на съём (~45 c+).
+    print(
+        "🧭 Winline overview: feed "
+        f"{len(text)} chars / html {len(str(result.get('html') or ''))}"
+    )
     return True
 
 
@@ -19552,6 +19563,7 @@ CYBERSCORE_EXTRA_NAME_TIERS: List[int] = _parse_csv_int_list(
 # для прямого опроса GetLiveLeagueGames). Имена реэкспортируются для обратной
 # совместимости (используются в admission и sourcetv league filter ниже).
 from league_keywords import (  # noqa: E402
+    GATED_TICKET_MIN_TIER12_PLAYERS,
     TOURNAMENT_LEAGUE_ID_ALLOWLIST,
     TOURNAMENT_TITLE_ALLOW_KEYWORDS,
     TOURNAMENT_TITLE_ALLOW_PHRASES,
@@ -21808,17 +21820,19 @@ def _admin_tail_format_journal_match(
     return "\n".join(lines).strip()
 
 
-def _collect_admin_tail_last_matches(*, line_count: int = 100) -> List[Dict[str, Any]]:
-    """The N most recent matches per the verdict journal (map_verdicts.json).
+def _collect_admin_tail_match_pool() -> List[Dict[str, Any]]:
+    """Все карты пула журнала вердиктов (`map_verdicts.json`), от свежих к старым.
 
-    The journal is the source of truth: one entry per map with all draft
-    metrics and accumulating verdicts. Entries are grouped by match_id (the
-    freshest map of the series wins), so one series never produces duplicate
-    slots. Live matches get their delayed-watcher payload attached from
-    ``monitored_matches``. Every press returns a fresh snapshot — no
-    seen-state.
+    Журнал — источник правды: одна запись на карту, со всеми драфт-метриками и
+    накапливающимися вердиктами. Записи группируются по личности КАРТЫ
+    (match_id + номер карты), поэтому серия даёт по карточке на каждую карту, а
+    не одну на серию. Живые матчи дополнительно получают payload delayed-watcher'а
+    из ``monitored_matches``.
+
+    На страницы пул режет ``_send_admin_log_tail``: размер страницы —
+    ``_ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT``, глубина — весь пул
+    (``_ADMIN_TAIL_LOG_JOURNAL_POOL_LIMIT`` свежих записей журнала).
     """
-    del line_count  # параметр сохранён для совместимости сигнатуры вызова
     journal = _load_map_verdict_journal()
     try:
         entries = sorted(
@@ -21931,25 +21945,47 @@ def _collect_admin_tail_last_matches(*, line_count: int = 100) -> List[Dict[str,
                 "payload": watcher_by_match_id.get(base_id),
             }
         )
-        if len(candidates) >= _ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT:
-            break
     return candidates
 
 
+# Курсор листания tail_log. Живёт в памяти процесса: повторное нажатие команды
+# показывает СЛЕДУЮЩУЮ четвёрку старше, а не пересылает ту же. Рестарт прода
+# сбрасывает курсор на первую страницу — это осознанно: после рестарта смотреть
+# хочется живое, а не то место, где остановились до него.
+_admin_tail_page = 0
+
+
 def _send_admin_log_tail(*, line_count: int = 100, raw_odds: Any = None) -> None:
-    """Snapshot of the last N matches from the verdict journal.
+    """Одна страница журнала вердиктов: четыре карты за нажатие.
 
     Метрики видны сразу после парсинга матча, вердикты накапливаются по ходу
-    (в delayed watcher → отправлен/отменён/отказано). Повторное нажатие
-    tail_log пересылает свежее состояние тех же матчей.
+    (в delayed watcher → отправлен/отменён/отказано).
+
+    Первое нажатие отдаёт четыре самые свежие карты, каждое следующее — четыре
+    карты старше (5–8, 9–12, …), после конца пула курсор возвращается к началу.
+    Размер страницы ``_ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT``, глубина пула —
+    ``_ADMIN_TAIL_LOG_JOURNAL_POOL_LIMIT`` свежих записей журнала.
     """
-    matches = _collect_admin_tail_last_matches(line_count=line_count)
-    if not matches:
+    global _admin_tail_page
+    del line_count  # параметр сохранён для совместимости сигнатуры вызова
+    pool = _collect_admin_tail_match_pool()
+    if not pool:
+        _admin_tail_page = 0
         send_message("tail_log: матчей пока нет", admin_only=True, mirror_to_vk=False)
         return
-    total = len(matches)
-    for idx, candidate in enumerate(matches, start=1):
+    page_size = max(1, int(_ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT))
+    pages = -(-len(pool) // page_size)          # ceil, без импорта math
+    page = _admin_tail_page % pages
+    matches = pool[page * page_size:(page + 1) * page_size]
+    if not matches:
+        page, matches = 0, pool[:page_size]
+    _admin_tail_page = page + 1
+    total = len(pool)
+    for offset, candidate in enumerate(matches):
+        idx = page * page_size + offset + 1
         message = _admin_tail_format_journal_match(idx, total, candidate)
+        if pages > 1:
+            message = f"[страница {page + 1}/{pages}] {message}"
         for chunk_idx, chunk in enumerate(_split_telegram_text_chunks(message), start=1):
             prefix = ""
             if chunk_idx > 1:
@@ -22650,10 +22686,35 @@ def _team_identity_missing(team_ids: Any, team_name: str) -> bool:
     return str(team_name or "").strip().lower() in ANONYMOUS_TEAM_NAMES
 
 
+def _roster_gated_side_is_valid(gated_side: Any) -> bool:
+    """Перепроверяет опознанную probe'ом по составу сторону.
+
+    Поле `_gated_tier12_side` приходит из записи моста, а мост — файл на диске:
+    он может пережить рестарт с другим порогом или остаться от старой версии
+    probe. Поэтому решению не верим на слово, а повторяем проверку своим
+    справочником: тот же порог консенсуса и принадлежность tier1/2 — либо по
+    team_id из поля, либо по нормализованному ключу имени.
+    """
+    if not isinstance(gated_side, dict):
+        return False
+    try:
+        players = int(gated_side.get("players") or 0)
+    except (TypeError, ValueError):
+        return False
+    if players < GATED_TICKET_MIN_TIER12_PLAYERS:
+        return False
+    for team_id in _extract_candidate_team_ids(gated_side.get("team_ids")):
+        if _get_team_tier(team_id) in (1, 2):
+            return True
+    team_key = str(gated_side.get("team_key") or "").strip()
+    return bool(team_key) and bool(_find_known_team_ids_by_name(team_key))
+
+
 def _league_admits_with_known_side(
     league_id: Any,
     radiant_team_ids: Any,
     dire_team_ids: Any,
+    gated_side: Any = None,
 ) -> bool:
     """True, если гейтовый тикет площадки пускается по известной tier1/2 стороне.
 
@@ -22663,10 +22724,16 @@ def _league_admits_with_known_side(
     только матч, где хотя бы одна сторона УЖЕ известна как tier1/tier2, — состав
     квалов меняется каждый круг и перечислять его руками бессмысленно.
 
-    Сверяем строго team_id. По имени нельзя: ``_resolve_known_team_id_without_side_effects``
-    резолвит имя первым, а ``normalize_team_name`` вычищает 'team'/'esports'/пробелы,
-    поэтому 'Team Titan' схлопывается в 'titan' и совпадает с ключом tier2 чужой
-    организации — на общем тикете это утащило бы чужой team_id в ELO/Stratz/tier.
+    Сторону ищем сначала по team_id. Если Valve не отдал сущность команды (обе
+    стороны ``None`` — на открытых квалах это обычное дело, 09.09.2026 так пришёл
+    PuckChamp vs Inner Circle x Insanity), остаётся опознание по составу: его
+    probe кладёт в запись моста полем ``_gated_tier12_side``.
+
+    По team_id сверяем строго. По имени команды — нельзя:
+    ``_resolve_known_team_id_without_side_effects`` резолвит имя первым, а
+    ``normalize_team_name`` вычищает 'team'/'esports'/пробелы, поэтому 'Team
+    Titan' схлопывается в 'titan' и совпадает с ключом tier2 чужой организации —
+    на общем тикете это утащило бы чужой team_id в ELO/Stratz/tier.
     """
     if not _league_is_tier_gated(league_id):
         return False
@@ -22674,7 +22741,7 @@ def _league_admits_with_known_side(
         for team_id in _extract_candidate_team_ids(raw_ids):
             if _get_team_tier(team_id) in (1, 2):
                 return True
-    return False
+    return _roster_gated_side_is_valid(gated_side)
 
 
 def _classify_tier_three_sides(

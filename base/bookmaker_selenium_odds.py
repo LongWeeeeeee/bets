@@ -958,6 +958,13 @@ async def _load_site_render_payload_camoufox_async(
     # адресованы окну, а лента Winline скроллится внутренним контейнером. Режимы
     # acquisition — это Winline, для остальных букмекеров поведение не меняется.
     if mode and navigated:
+        if mode == "dynamic_dom":
+            # Холодная страница: SPA поднимает ленту ~20-30 c (замер 10.09.2026:
+            # мгновенное чтение отдаёт shell из 149 символов). Ждём маркеры
+            # карточек ограниченно; не дождались — читаем что есть, отсев shell
+            # делает предикат в refresh (fail-open к прежнему пути).
+            with contextlib.suppress(Exception):
+                await _settle_winline_overview_feed(page)
         with contextlib.suppress(Exception):
             await _sweep_camoufox_feed(page, force=True)
 
@@ -2042,6 +2049,44 @@ def collect_winline_live_overview_in_camoufox_page(page, url: str) -> Dict[str, 
 # честный признак shell-страницы (SPA не поднялось / лента не отрендерилась),
 # а не пустой ленты: пустая лента всё равно рисует каркас с кнопками.
 _WINLINE_OVERVIEW_FEED_MARKERS = ("coefficient-button", "period-name")
+
+# Сколько ждём ленту на холодной странице после goto (режим dynamic_dom).
+# Замер 10.09.2026: мгновенное чтение — shell (149 символов), через ~30 c —
+# живая лента (4-6k текста). Опрос лёгкий (один includes в DOM), не скролл.
+WINLINE_OVERVIEW_SETTLE_SECONDS = 24.0
+WINLINE_OVERVIEW_SETTLE_POLL_SECONDS = 2.0
+
+
+async def _settle_winline_overview_feed(page, timeout_s=None) -> bool:
+    """Ждать маркеры карточек ленты на холодной странице; True если дождались.
+
+    Чистое чтение DOM (без скроллов и кликов): вызывается до sweep, чтобы
+    прокрутка уже работала по существующему контейнеру. Любая ошибка —
+    False (читаем что есть, дальше решает предикат shell/feed).
+    """
+    try:
+        budget = float(timeout_s if timeout_s is not None else WINLINE_OVERVIEW_SETTLE_SECONDS)
+    except (TypeError, ValueError):
+        budget = 24.0
+    marker = _WINLINE_OVERVIEW_FEED_MARKERS[0]
+    deadline = time.time() + max(0.0, budget)
+    while True:
+        try:
+            settled = bool(
+                await _maybe_await(
+                    page.evaluate(
+                        "() => (document && document.body && "
+                        f"document.body.innerHTML || '').includes('{marker}')"
+                    )
+                )
+            )
+        except Exception:
+            settled = False
+        if settled:
+            return True
+        if time.time() >= deadline:
+            return False
+        time.sleep(WINLINE_OVERVIEW_SETTLE_POLL_SECONDS)
 
 
 def _winline_overview_payload_looks_like_feed(text: Any, html: Any) -> bool:
