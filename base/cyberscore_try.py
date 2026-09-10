@@ -18789,9 +18789,11 @@ def _winline_format_dltv_draft_message(
     """Текст уведомления о DLTv-драфте. Стороны — только титулы DLTv."""
     try:
         game_s = int(draft.get("game_time_s") or 0)
-        clock = f"{game_s // 60}:{game_s % 60:02d}"
     except (TypeError, ValueError):
-        clock = "—"
+        game_s = 0
+    # DLTv до горна отдаёт отрицательный обратный отсчёт лобби — это не
+    # время карты: показываем только положительное, иначе «—».
+    clock = f"{game_s // 60}:{game_s % 60:02d}" if game_s > 0 else "—"
     try:
         score = draft.get("score") or [None, None]
         score_s = f"{score[0]}–{score[1]}"

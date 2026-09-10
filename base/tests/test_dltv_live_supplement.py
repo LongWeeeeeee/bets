@@ -160,6 +160,18 @@ def _norm_pair(a, b):
     })
 
 
+def test_format_dltv_draft_message_negative_lobby_clock(live_payload):
+    # Прод 10.09.2026, ZT-DK map2: game_time_s=-112 до горна → «—», не -1:52.
+    draft = cs._dltv_parse_live_draft(live_payload)
+    draft["league_slug"] = "blast-slam-9-europe-open-qualifier-2"
+    draft["game_time_s"] = -112
+    text = cs._winline_format_dltv_draft_message(
+        league="BLAST Slam 9", team1="Zero Tenacity",
+        team2="Devil Kings", draft=draft)
+    assert "-1:52" not in text
+    assert "· — ·" in text
+
+
 def test_format_dltv_draft_message(series_snapshot, live_payload):
     draft = cs._dltv_parse_live_draft(live_payload)
     draft["league_slug"] = "blast-slam-9-europe-open-qualifier-2"
