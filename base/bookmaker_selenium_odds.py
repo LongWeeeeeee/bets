@@ -1969,6 +1969,130 @@ _WINLINE_DISCIPLINE_CHUNK_RE = re.compile(
 )
 
 
+def _winline_class_contains(*names: str):
+    """Предикат класса для BeautifulSoup: Angular-суффиксы игнорируются."""
+
+    def _match(value: Any) -> bool:
+        if not value:
+            return False
+        classes = value if isinstance(value, list) else str(value).split()
+        return any(name in classes for name in names)
+
+    return _match
+
+
+def winline_enumerate_live_cards(html: str) -> List[Dict[str, Any]]:
+    """Все карточки событий обзора Winline: лига, пара, live-флаг, ряды карт.
+
+    Чистая функция поверх захваченного HTML (структура Angular Winline:
+    `block-tournament-header__title` → `DOTA 2 | <лига>`,
+    `ww-feature-block-event-dsk#eventId-<id>` → `card--live`,
+    `body-left__names .name` → пара, `match-row-label`/`period-name` →
+    ряды `Матч`/`N карта`, цены — десятичная точка в теле ряда).
+    Нужна sweep кэфов без моста: какие карточки вообще есть в эфире.
+    Гейты (allow/deny лиг) — дело рантайма, парсер перечисляет всё.
+    """
+    cards: List[Dict[str, Any]] = []
+    try:
+        soup = BeautifulSoup(str(html or ""), "html.parser")
+    except Exception:
+        return cards
+    current_league = ""
+    try:
+        walker = list(soup.descendants)
+    except Exception:
+        return cards
+    for node in walker:
+        name = getattr(node, "name", None)
+        if name in {"span", "div"}:
+            try:
+                classes = node.get("class") or []
+            except Exception:
+                classes = []
+            if any("block-tournament-header__title" in str(c) for c in classes):
+                try:
+                    title = node.get_text(" ", strip=True)
+                except Exception:
+                    title = ""
+                match = re.match(r"DOTA\s*2\s*\|\s*(.+)", str(title or "").strip())
+                current_league = match.group(1).strip() if match else ""
+                continue
+        node_id = ""
+        try:
+            node_id = str(getattr(node, "get", lambda *a, **k: "")("id") or "")
+        except Exception:
+            node_id = ""
+        event_match = re.fullmatch(r"eventId-(\d+)", node_id)
+        if name is not None and event_match:
+            event_id = event_match.group(1)
+            try:
+                names = [
+                    el.get_text(" ", strip=True)
+                    for el in node.select(".body-left__names .name")
+                ]
+            except Exception:
+                names = []
+            names = [str(n or "").strip() for n in names if str(n or "").strip()][:2]
+            live = False
+            try:
+                live = node.select_one(".card--live") is not None
+            except Exception:
+                live = False
+            header_map: Optional[int] = None
+            try:
+                time_el = node.select_one(".header-left__time")
+                time_text = time_el.get_text(" ", strip=True) if time_el else ""
+                header_hit = re.search(r"(\d+)\s*карта", str(time_text or ""))
+                header_map = int(header_hit.group(1)) if header_hit else None
+            except Exception:
+                header_map = None
+            rows: List[Dict[str, Any]] = []
+            try:
+                labels = node.select(".match-row-label, .period-name")
+            except Exception:
+                labels = []
+            for label_el in labels:
+                try:
+                    label = label_el.get_text(" ", strip=True)
+                except Exception:
+                    continue
+                map_hit = re.search(r"(\d+)\s*карта", str(label or ""))
+                kind = "map" if map_hit else ("match" if "матч" in str(label or "").lower() else "")
+                if not kind:
+                    continue
+                map_num = int(map_hit.group(1)) if map_hit else None
+                body = None
+                try:
+                    body = label_el.find_parent(
+                        attrs={"class": _winline_class_contains("card__body")})
+                except Exception:
+                    body = None
+                try:
+                    body_text = body.get_text(" ", strip=True) if body is not None else ""
+                except Exception:
+                    body_text = ""
+                has_prices = bool(re.search(r"\d+\.\d+", str(body_text or "")))
+                dup = next(
+                    (r for r in rows
+                     if r["kind"] == kind and r["map_num"] == map_num), None)
+                if dup is not None:
+                    dup["has_prices"] = bool(dup["has_prices"] or has_prices)
+                else:
+                    rows.append(
+                        {"kind": kind, "map_num": map_num, "has_prices": has_prices})
+            if len(names) == 2:
+                cards.append({
+                    "event_id": event_id,
+                    "league": current_league,
+                    "team1": names[0],
+                    "team2": names[1],
+                    "live": bool(live),
+                    "header_map": header_map,
+                    "rows": rows,
+                })
+    return cards
+
+
 def winline_live_card_league(page_text: str, team1: str, team2: str) -> str:
     """Название лиги из живой ленты Winline (best-effort fallback identity).
 

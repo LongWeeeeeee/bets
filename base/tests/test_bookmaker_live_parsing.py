@@ -179,3 +179,56 @@ def test_run_presence_sites_parallel_preserves_site_order_and_quits_drivers(monk
     # Singleton presence driver is intentionally long-lived (reused across calls);
     # production does not quit after one presence batch.
     assert created[0].quit_called is False
+
+def _load_overview_snapshot() -> dict:
+    """Захваченный прод-дамп обзора Winline.
+
+    Захват: serv1, 10.09.2026 ~18:13 MSK, runtime/winline_overview_snapshot.json
+    (feed 4191 chars / html 526829; 8 карточек, 4 live). Полный файл без обрезки.
+    """
+    import json as _json
+
+    path = Path(__file__).resolve().parent / "fixtures" / "winline_overview_snapshot_20260910.json"
+    return _json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_winline_enumerate_live_cards() -> None:
+    snap = _load_overview_snapshot()
+    cards = odds_parser.winline_enumerate_live_cards(snap["html"])
+    live = [c for c in cards if c["live"]]
+    assert len(cards) == 8
+    assert len(live) == 4
+    by_event = {c["event_id"]: c for c in cards}
+    recrent = by_event["16659473"]
+    assert recrent["league"] == "WINLINE Star Series"
+    assert recrent["team1"] == "RECRENT CLUB"
+    assert recrent["team2"] == "DAXAK CLUB"
+    assert recrent["live"] is True
+    zero_ten = by_event["16674794"]
+    assert (zero_ten["team1"], zero_ten["team2"]) == ("ZERO TENACITY", "DEVIL KINGS")
+    assert zero_ten["league"] == "BLAST Slam, Qualifier"
+    cyber = by_event["16674833"]
+    assert (cyber["team1"], cyber["team2"]) == ("CYBER NOVA", "DAWN BULLS")
+
+
+def test_winline_enumerate_marks_prematch_and_mad_dogs() -> None:
+    snap = _load_overview_snapshot()
+    by_event = {c["event_id"]: c for c in odds_parser.winline_enumerate_live_cards(snap["html"])}
+    navi = by_event["16674853"]
+    assert navi["live"] is False
+    assert (navi["team1"], navi["team2"]) == ("NATUS VINCERE", "KLIM SANI4")
+    assert navi["league"] == "EPL Masters"
+    # Mad Dogs перечисляется (гейт deny — дело рантайма, а не парсера).
+    peace = by_event["16674209"]
+    assert peace["live"] is True
+    assert peace["league"] == "Mad Dogs League"
+    assert (peace["team1"], peace["team2"]) == ("PEACEKEEPERS", "STORMRIDERS")
+
+
+def test_winline_enumerate_map_rows_with_prices() -> None:
+    snap = _load_overview_snapshot()
+    by_event = {c["event_id"]: c for c in odds_parser.winline_enumerate_live_cards(snap["html"])}
+    rows = {r["map_num"]: r["has_prices"]
+            for r in by_event["16659473"]["rows"] if r["kind"] == "map"}
+    assert rows.get(3) is True
+    assert by_event["16659473"]["header_map"] == 2
