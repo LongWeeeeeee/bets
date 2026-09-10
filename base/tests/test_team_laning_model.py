@@ -28,7 +28,7 @@ def test_target_and_feature_contract_excludes_same_map_outcomes():
         team_features(heroes, history[:, :, :6])
 
 
-def test_metadata_autoload_and_temperature_roundtrip(tmp_path):
+def test_metadata_autoload_and_temperature_roundtrip(tmp_path, monkeypatch):
     from catboost import CatBoostClassifier
 
     heroes = np.vstack([np.roll(np.arange(1, 11), row % 10) for row in range(18)])
@@ -49,6 +49,15 @@ def test_metadata_autoload_and_temperature_roundtrip(tmp_path):
                                temperature_scale(raw, 2))
     with pytest.raises(ValueError, match="requires causal history"):
         loaded.predict_proba(heroes[:1])
+    from base import laning_history_store, laning_serving
+    monkeypatch.setattr(laning_history_store, "LaningHistoryStore", lambda path:
+        SimpleNamespace(manifest={"max_end_ts": 0},
+                        history=lambda *a, **kw: history[0]))
+    monkeypatch.setattr(laning_serving, "ENABLED", True)
+    service = laning_serving.LaningService(tmp_path, tmp_path)
+    np.testing.assert_allclose(service.predict(heroes[0], np.arange(101, 111), 10000),
+                               loaded.predict_proba(heroes[:1], history[:1])[0])
+    assert service.error is None
 
 
 def _write_baselines(root, corpus, v1_rows, v2_rows):

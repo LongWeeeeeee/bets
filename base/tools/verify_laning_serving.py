@@ -48,7 +48,7 @@ def verify(args):
     for row, heroes in enumerate(probe['heroes']):
         accounts, timestamp = probe['accounts'][row], probe['ts'][row]
         history = service.history_store.history(heroes, accounts, timestamp)
-        history_delta = max(history_delta, float(np.max(np.abs(history - probe['hc'][row]))))
+        history_delta = max(history_delta, float(np.max(np.abs(history - probe['history'][row]))))
         started = time.monotonic()
         probability = service.predict(heroes, accounts, timestamp)
         latencies.append(time.monotonic() - started)

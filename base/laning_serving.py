@@ -40,7 +40,7 @@ class LaningService:
             except ImportError:
                 from base.team_laning_model import TeamLaningModel
                 from base.laning_history_store import LaningHistoryStore
-            model = TeamLaningModel.load(self.model_dir / "team.cbm")
+            model = TeamLaningModel.load(self.model_dir)
             history = LaningHistoryStore(self.history_dir)
             self.model, self.history_store = model, history
             digest = hashlib.sha256((self.model_dir / "team.cbm").read_bytes()).hexdigest()

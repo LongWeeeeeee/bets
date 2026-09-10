@@ -5,7 +5,7 @@ date: "2026-09-09"
 area: ml
 status: full
 corpus: "E264: 6 692 272 public-карты; train 800k, validation 100k, отдельный test 100k"
-verdict: "Подготовка; результат обучения и проверки ещё не получен."
+verdict: "Готова history600 + temperature0.854316: test100k accuracy63.925%, loss0.634192 против draft0.646181; day95CI разности [-0.013076,-0.010751]. Public, не pro."
 harness: "scripts/ops/train_team_laning_model.py; scripts/run/train_team_laning.sh"
 ---
 
@@ -53,7 +53,7 @@ echo $!
 
 Модель/прогнозы/план: `data/laning_models/20260909_team_nw10_v1/`.
 Статус/лог: `runtime/artifacts/laning/20260909_team_nw10_v1/`.
-Полный fit пока не запущен; итоговые числа появятся после проверки.
+Полный fit завершён 10.09.2026 за ~4 минуты: draft600 деревьев — 27с, history600 — 130с. Train800k / validation100k / новый test100k; все цели конечны. Оба fit дошли до лимита деревьев; это не доказательство насыщения модели.
 
 ## Serving
 
@@ -86,4 +86,25 @@ causal cutoff. Кэш учитывает героев, аккаунты и times
 
 ## Результат и проверки
 
-В работе. Deployment и systemd restart ещё не выполнены.
+Выбрана history по validation loss0.634053 против draft0.645459; температура
+0.8543161738 выбрана только на validation. Selection записан до теста; исходные
+хеши feature/trainer совпали после завершения. Новые настройки по тесту не подбирались.
+
+| Модель | Test log loss | Accuracy3 | Brier sum |
+|---|---:|---:|---:|
+| Частоты train | 0.693905 | 52.320% | 0.499124 |
+| Только драфт | 0.646181 | 62.620% | 0.453328 |
+| Драфт + история | 0.635137 | 63.925% | 0.443269 |
+| Выбранная + calibration | 0.634192 | 63.925% | 0.442428 |
+
+В тесте 47 659 Dire / 21 exact tie / 52 320 Radiant, 22 дня. Независимый
+пересчёт всех loss/accuracy из NPZ совпал. Direction AUC без точных равенств
+0.693230; top-label ECE10=0.002507. Дополнительный paired day-bootstrap5000:
+selected-minus-draft loss=-0.011989,95CI[-0.013076,-0.010751]. Против частот train
+основной bootstrap2000 дал loss=-0.059712,95CI[-0.061448,-0.057681].
+
+Выбранный `team.cbm` SHA256:
+`c02aa53f2d3119ed9b310dd9886b4dc39db61aac04c3386c9837a673565002ce`.
+32 профильных теста прошли; mmap на 64 случайных картах (7 680 значений) побитно совпал с обучающей историей, SHA256 всех 25 файлов проверены локально и на serv1. Deployment выбранной модели и systemd restart ещё не выполнены. Loader загружается однократно: после ошибки загрузки нужен рестарт с исправленным комплектом артефактов. Integrity проверяется отдельным preflight `base/tools/verify_laning_serving.py` до рестарта; штатный mmap loader не сканирует 750 MB при каждом старте.
+
+Actual local serving:64 frozen probe rows, history delta0, probability delta1.11e-16; All512 probes delta<=4.99e-6 (rounding existing index). Медианная latency4.8ms,max15.6ms. Reports: `runtime/artifacts/laning/20260909_team_nw10_v1/{history_audit,independent_metrics,local_serving_audit}.json`.
