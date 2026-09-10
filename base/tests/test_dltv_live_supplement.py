@@ -148,10 +148,16 @@ def test_end_to_end_no_series_returns_none(series_snapshot, live_payload):
 
 def _notify_env(monkeypatch, live_payload):
     monkeypatch.setattr(cs, "_winline_odds_notify_enabled", lambda: True)
-    monkeypatch.setattr(
-        cs, "_winline_bridge_owns_card_pair", lambda *a, **k: False)
     monkeypatch.setattr(cs, "_winline_dltv_draft_sent", {})
+    monkeypatch.setattr(cs, "_winline_map_clocks", {})
     return lambda url, timeout: live_payload
+
+
+def _norm_pair(a, b):
+    return frozenset({
+        cs._winline_normalized_team_identity(a),
+        cs._winline_normalized_team_identity(b),
+    })
 
 
 def test_format_dltv_draft_message(series_snapshot, live_payload):
@@ -195,18 +201,108 @@ def test_card_notify_sends_once_and_dedupes(
     assert len(sent) == 1
 
 
-def test_card_notify_skips_when_bridge_owns(
+def test_card_notify_skips_draft_when_bridge_sees_live(
         monkeypatch, series_snapshot, live_payload):
-    _notify_env(monkeypatch, live_payload)
-    monkeypatch.setattr(
-        cs, "_winline_bridge_owns_card_pair", lambda *a, **k: True)
+    match_fetcher = _notify_env(monkeypatch, live_payload)
     sent = []
-    assert cs._winline_card_dltv_draft_notify(
+    key = "winline:league:blast|devil kings|zero tenacity"
+    ok = cs._winline_card_dltv_draft_notify(
         league="L", team1="Zero Tenacity", team2="Devil Kings", map_num=1,
+        series_key=key,
         send_fn=lambda message, **k: sent.append(message) or True,
-        snapshot=series_snapshot,
-        match_fetcher=lambda url, timeout: live_payload) is False
+        snapshot=series_snapshot, match_fetcher=match_fetcher,
+        bridge_live_pairs={_norm_pair("Zero Tenacity", "Devil Kings")})
+    assert ok is False
     assert sent == []
+    # Часы при этом отмечаются: 🕐/💰 чинятся независимо от драфта.
+    clock = cs._winline_map_clocks.get(key)
+    assert isinstance(clock, dict) and clock.get("source") == "dltv"
+    assert clock.get("map_num") == 1
+    assert clock.get("game_time") == 828
+
+
+def test_parse_live_clock_names_and_lead(live_payload):
+    clock = cs._dltv_parse_live_clock(live_payload)
+    assert clock is not None
+    assert clock["map_num"] == 1
+    assert clock["game_time"] == 828
+    assert clock["live"] is True
+    assert clock["radiant_name"] == "Zero Tenacity"
+    assert clock["dire_name"] == "Devil Kings"
+    assert isinstance(clock["radiant_lead"], int)
+
+
+def test_parse_live_clock_unmapped_sides_keep_time(live_payload):
+    payload = copy.deepcopy(live_payload)
+    payload["db"]["first_team"]["id"] = 424242
+    clock = cs._dltv_parse_live_clock(payload)
+    assert clock is not None
+    assert clock["game_time"] == 828
+    assert clock["radiant_name"] == ""
+    assert clock["dire_name"] == "Devil Kings"
+
+
+def test_parse_live_clock_requires_game_time(live_payload):
+    payload = copy.deepcopy(live_payload)
+    payload["game_time"] = 0
+    assert cs._dltv_parse_live_clock(payload) is None
+
+
+def test_bridge_live_pairs_from_snapshot_file(tmp_path):
+    import time as _time
+    rows = {
+        "live_named": {
+            "status": "live", "timestamp": _time.time() - 10,
+            "game_time": 500.0,
+            "radiant_team_name": "Zero Tenacity",
+            "dire_team_name": "Devil Kings",
+        },
+        "stale": {
+            "status": "live", "timestamp": _time.time() - 900,
+            "game_time": 500.0,
+            "radiant_team_name": "A", "dire_team_name": "B",
+        },
+        "anonymous": {
+            "status": "live", "timestamp": _time.time() - 10,
+            "game_time": 500.0,
+            "radiant_team_name": "Zero Tenacity",
+            "dire_team_name": "Dire",
+        },
+        "prematch": {
+            "status": "draft", "timestamp": _time.time() - 10,
+            "game_time": 0.0,
+            "radiant_team_name": "C", "dire_team_name": "D",
+        },
+    }
+    path = tmp_path / "sourcetv_matches.json"
+    path.write_text(json.dumps(rows), encoding="utf-8")
+    pairs = cs._winline_bridge_live_pairs(path=str(path))
+    assert _norm_pair("Zero Tenacity", "Devil Kings") in pairs
+    assert len(pairs) == 1
+
+
+def test_bridge_live_pairs_missing_file_returns_empty(tmp_path):
+    assert cs._winline_bridge_live_pairs(
+        path=str(tmp_path / "absent.json")) == set()
+
+
+def test_freeze_dltv_clock_on_series_gone(
+        monkeypatch, series_snapshot, live_payload):
+    match_fetcher = _notify_env(monkeypatch, live_payload)
+    key = "winline:league:blast|devil kings|zero tenacity"
+    cs._winline_map_clocks[key] = {
+        "game_time": 800.0, "wall": 0.0, "map_num": 1, "live": True,
+        "radiant_lead": 0, "radiant_name": "", "dire_name": "",
+        "source": "dltv",
+    }
+    empty_snap = {"live": {}, "upcoming": [], "results": []}
+    ok = cs._winline_card_dltv_draft_notify(
+        league="L", team1="Zero Tenacity", team2="Devil Kings", map_num=1,
+        series_key=key, send_fn=lambda message, **k: True,
+        snapshot=empty_snap, match_fetcher=match_fetcher,
+        bridge_live_pairs=set())
+    assert ok is False
+    assert cs._winline_map_clocks[key]["live"] is False
 
 
 def test_card_notify_respects_notify_gate(
@@ -239,3 +335,4 @@ def test_sweep_counts_dltv_draft(monkeypatch):
     assert calls, "sweep must consult DLTv-draft hook for priced rows"
     assert summary.get("dltv_draft") == len(calls)
     assert all("map_num" in kw and "team1" in kw for kw in calls)
+    assert all("bridge_live_pairs" in kw for kw in calls)

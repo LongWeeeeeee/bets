@@ -18269,6 +18269,10 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
         poll_interval = max(5.0, float(WINLINE_CARD_SWEEP_POLL_INTERVAL_S))
     except (TypeError, ValueError):
         max_cards, rows_cap, poll_interval = 6, 2, 60.0
+    try:
+        bridge_live_pairs = _winline_bridge_live_pairs()
+    except Exception:
+        bridge_live_pairs = set()
     for card in (cards or [])[:max_cards]:
         try:
             summary["cards"] += 1
@@ -18331,6 +18335,7 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
                         team2=team2,
                         map_num=map_num,
                         series_key=series,
+                        bridge_live_pairs=bridge_live_pairs,
                     ):
                         summary["dltv_draft"] = int(summary.get("dltv_draft") or 0) + 1
                 except Exception:
@@ -18589,6 +18594,101 @@ def _dltv_parse_live_draft(payload: Any) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _dltv_parse_live_clock(payload: Any) -> Optional[Dict[str, Any]]:
+    """Хронометраж + net worth из live/<id>.json в форме часов моста.
+
+    Стороны Radiant/Dire маппятся на титулы через full_stats (team_id
+    игрока → id first/second_team из db). Нераспознанная сторона — «»:
+    🕐 работает по game_time, а 💰 честно отсутствует (композитор требует
+    имя). Возвращает None без положительного game_time или номера карты.
+    """
+    try:
+        if not isinstance(payload, dict):
+            return None
+        try:
+            game_time = float(payload.get("game_time") or 0)
+        except (TypeError, ValueError):
+            return None
+        if game_time <= 0:
+            return None
+        db = payload.get("db") or {}
+        titles_by_id: Dict[str, str] = {}
+        if isinstance(db, dict):
+            for key in ("first_team", "second_team"):
+                team = db.get(key) or {}
+                if isinstance(team, dict):
+                    try:
+                        titles_by_id[str(int(team.get("id")))] = str(
+                            team.get("title") or "").strip()
+                    except (TypeError, ValueError):
+                        continue
+        try:
+            scores = (db.get("scores") or {}) if isinstance(db, dict) else {}
+            map_num = int(scores.get("first_team") or 0) + int(
+                scores.get("second_team") or 0) + 1
+        except (TypeError, ValueError):
+            return None
+        if map_num <= 0:
+            return None
+        names = {"radiant": "", "dire": ""}
+        try:
+            full = payload.get("full_stats") or {}
+            for side in ("radiant", "dire"):
+                block = full.get(side) or {} if isinstance(full, dict) else {}
+                players = block.get("players") or [] if isinstance(
+                    block, dict) else []
+                seen = set()
+                for entry in players:
+                    player = (entry or {}).get("player") or {}
+                    try:
+                        seen.add(str(int(player.get("team_id"))))
+                    except (TypeError, ValueError):
+                        continue
+                if len(seen) == 1:
+                    names[side] = titles_by_id.get(next(iter(seen)), "")
+        except Exception:
+            pass
+        try:
+            lead = int(payload.get("radiant_lead") or 0)
+        except (TypeError, ValueError):
+            lead = 0
+        return {
+            "game_time": game_time,
+            "wall": time.time(),
+            "map_num": map_num,
+            "live": True,
+            "radiant_lead": lead,
+            "radiant_name": names["radiant"],
+            "dire_name": names["dire"],
+            "source": "dltv",
+        }
+    except Exception:
+        return None
+
+
+def _dltv_fetch_live_payload(
+    team1: Any,
+    team2: Any,
+    snapshot: Any,
+    match_fetcher: Any = None,
+) -> Any:
+    """Общая выборка (found, payload) для часов и драфта. Один HTTP на матч."""
+    try:
+        found = _dltv_find_live_series(team1, team2, snapshot)
+        if not found:
+            return None, None
+        fetch = match_fetcher if callable(match_fetcher) else _dltv_http_get_json
+        payload = fetch(
+            DLTV_LIVE_MATCH_URL_TMPL.format(match_id=found["match_id"]),
+            DLTV_LIVE_HTTP_TIMEOUT_S,
+        )
+        if not isinstance(payload, dict):
+            return found, None
+        return found, payload
+    except Exception:
+        return None, None
+
+
 def dltv_live_draft_for_card(
     team1: Any,
     team2: Any,
@@ -18612,15 +18712,11 @@ def dltv_live_draft_for_card(
         if not isinstance(snap, dict):
             print("📡 DLTv-live: snapshot unavailable")
             return None
-        found = _dltv_find_live_series(team1, team2, snap)
+        found, payload = _dltv_fetch_live_payload(
+            team1, team2, snap, match_fetcher=match_fetcher)
         if not found:
             print(f"📡 DLTv-live: no live series for {team1} vs {team2}")
             return None
-        fetch = match_fetcher if callable(match_fetcher) else _dltv_http_get_json
-        payload = fetch(
-            DLTV_LIVE_MATCH_URL_TMPL.format(match_id=found["match_id"]),
-            DLTV_LIVE_HTTP_TIMEOUT_S,
-        )
         draft = _dltv_parse_live_draft(payload)
         if not draft:
             print(f"📡 DLTv-live: draft not ready match={found['match_id']}")
@@ -18689,6 +18785,69 @@ def _winline_format_dltv_draft_message(
     return "\n".join(line for line in lines if line)
 
 
+def _winline_bridge_live_pairs(
+    *,
+    path: Any = None,
+    now: Any = None,
+    max_age_s: float = 300.0,
+) -> Any:
+    """Пары команд, которые мост видит вживую прямо сейчас.
+
+    Читает тот же SOURCETV_MATCHES_PATH, что и `_winline_refresh_from_bridge_snapshot`:
+    свежий status=live ряд с game_time>0 и не-плейсхолдерными именами сторон.
+    Fail-open пустым множеством: мост не распознан — DLTv-фолбэк разрешён
+    (правило «бери с DLTv, если мост не видит»).
+    """
+    out = set()
+    try:
+        moment = float(time.time() if now is None else now)
+        with open(str(path or SOURCETV_MATCHES_PATH), encoding="utf-8") as fh:
+            matches = json.load(fh)
+        if not isinstance(matches, dict):
+            return out
+        for row in matches.values():
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("status") or "").strip().lower() != "live":
+                continue
+            try:
+                age = moment - float(row.get("timestamp") or 0)
+                game_time = float(row.get("game_time") or 0)
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= age < max_age_s or game_time <= 0:
+                continue
+            radiant = row.get("radiant_team_name")
+            dire = row.get("dire_team_name")
+            if _is_placeholder_team_name(radiant) or _is_placeholder_team_name(dire):
+                continue
+            names = {
+                _winline_normalized_team_identity(radiant),
+                _winline_normalized_team_identity(dire),
+            } - {""}
+            if len(names) == 2:
+                out.add(frozenset(names))
+    except Exception:
+        pass
+    return out
+
+
+def _winline_freeze_dltv_clock(series_key: Any) -> None:
+    """Заморозить свои DLTv-часы серии: DLTv серию больше не показывает."""
+    try:
+        key = str(series_key or "").strip()
+        if not key:
+            return
+        with _winline_current_map_state_lock:
+            current = _winline_map_clocks.get(key)
+            if (isinstance(current, dict) and current.get("source") == "dltv"
+                    and current.get("live")):
+                _winline_note_map_clock(key, None, frozen_reason=True)
+                print(f"📡 DLTv-live: clock frozen {key}")
+    except Exception:
+        pass
+
+
 def _winline_card_dltv_draft_notify(
     *,
     league: Any,
@@ -18699,24 +18858,71 @@ def _winline_card_dltv_draft_notify(
     send_fn: Any = None,
     snapshot: Any = None,
     match_fetcher: Any = None,
+    bridge_live_pairs: Any = None,
 ) -> bool:
-    """DLTv-драфт для карточного ряда без моста. Один драфт — одно сообщение.
+    """DLTv-подпитка карточного ряда: часы (🕐/💰) + драфт, когда мост слеп.
 
-    Вызывается из sweep для допущенных priced-рядов, которыми не владеет
-    мостовой опрос. Дедуп по (series, карта, dltv match_id) в памяти.
+    Вызывается из sweep для допущенных priced-рядов. Часы DLTv отмечаются
+    под карточным ключом серии всегда, когда DLTv показывает матч: мост
+    пишет в свой `sourcetv:`-неймспейс, пересечения нет, композитор
+    `_winline_build_odds_message` подхватывает 🕐/💰 без правок. Уход серии
+    из DLTv-live замораживает наши часы (экстраполяция останавливается).
+    Драфт 5v5 отправляется один раз на (series, карта, dltv match_id), но
+    только если пару НЕ видит вживую мост (`bridge_live_pairs` — иначе
+    мостовой разбор драфта главный и дубль не нужен). Fail-open: пары моста
+    неизвестны — драфт разрешён.
     Возвращает True если драфт найден и отправлен (или уже был отправлен).
     """
     try:
         if not _winline_odds_notify_enabled():
             return False
-        if _winline_bridge_owns_card_pair(team1, team2, map_num):
+        snap = (snapshot if isinstance(snapshot, dict)
+                else _dltv_live_series_snapshot())
+        if not isinstance(snap, dict):
+            print("📡 DLTv-live: snapshot unavailable")
             return False
-        draft = dltv_live_draft_for_card(
-            team1, team2, map_num,
-            snapshot=snapshot, match_fetcher=match_fetcher)
+        key_base = str(series_key or "").strip()
+        found, payload = _dltv_fetch_live_payload(
+            team1, team2, snap, match_fetcher=match_fetcher)
+        if not found or not isinstance(payload, dict):
+            if key_base:
+                _winline_freeze_dltv_clock(key_base)
+            print(f"📡 DLTv-live: no live series for {team1} vs {team2}")
+            return False
+        clock = _dltv_parse_live_clock(payload)
+        if clock and key_base:
+            _winline_note_map_clock(key_base, clock)
+            print(f"📡 DLTv-live: clock map={clock.get('map_num')} "
+                  f"t={int(clock.get('game_time') or 0)}s "
+                  f"lead={clock.get('radiant_lead')} {key_base}")
+        draft = _dltv_parse_live_draft(payload)
         if not draft:
+            print(f"📡 DLTv-live: draft not ready match={found['match_id']}")
             return False
-        key = f"{series_key}|map{draft.get('map_num')}|{draft.get('match_id')}"
+        try:
+            want_map = int(map_num) if map_num is not None else 0
+        except (TypeError, ValueError):
+            want_map = 0
+        if want_map and int(draft.get("map_num") or 0) != want_map:
+            print(f"📡 DLTv-live: map mismatch dltv={draft.get('map_num')} "
+                  f"card={want_map} match={found['match_id']}")
+            return False
+        try:
+            pairs = (bridge_live_pairs if bridge_live_pairs is not None
+                     else _winline_bridge_live_pairs())
+            pair = {
+                _winline_normalized_team_identity(team1),
+                _winline_normalized_team_identity(team2),
+            } - {""}
+            if len(pair) == 2 and frozenset(pair) in set(pairs or set()):
+                print(f"📡 DLTv-live: bridge sees {team1} vs {team2} live — "
+                      "draft stays with bridge")
+                return False
+        except Exception:
+            pass
+        draft["league_slug"] = found.get("league_slug", "")
+        draft["series_id"] = found.get("series_id")
+        key = f"{key_base}|map{draft.get('map_num')}|{draft.get('match_id')}"
         with _winline_current_map_state_lock:
             if key in _winline_dltv_draft_sent:
                 return True
@@ -18725,6 +18931,9 @@ def _winline_card_dltv_draft_notify(
             _winline_dltv_draft_sent[key] = time.time()
         message = _winline_format_dltv_draft_message(
             league=league, team1=team1, team2=team2, draft=draft)
+        print(f"📡 DLTv-live: draft 5v5 match={found['match_id']} "
+              f"map={draft.get('map_num')} t={draft.get('game_time_s')}s "
+              f"league={found.get('league_slug')}")
         return bool(_winline_send_lifecycle_message(
             message, send_fn, kind="dltv_draft", key=key))
     except Exception:
