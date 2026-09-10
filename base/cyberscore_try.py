@@ -17733,6 +17733,279 @@ def _bookmaker_presence_gate_resolution(match_key: str) -> Tuple[str, Optional[d
     return "reject", snapshot
 
 
+# ---------------------------------------------------------------------------
+# Winline-first admission (заявка 09.09.2026, кейс MOUZ vs Klim Sani4).
+#
+# Старый порядок «сначала разбираем матч SourceTV, потом ищем его в Winline»
+# ронял матчи с неполным опознанием ДО опроса букмекера: team_id-гейт требует
+# id обеих сторон, league-allowlist режет неизвестные лиги — и ни кэфы, ни сам
+# матч не разбирались, хотя Winline матч вёл в лайве.
+#
+# Новый порядок: раз в цикл снимается общий live-снимок Winline (лиги +
+# команды, одно чтение DOM без кликов на отдельной именованной вкладке), и
+# матч SourceTV, найденный в живой карточке снимка, допускается мимо
+# league-allowlist / team_id-гейта / league-denylist. Неизвестная сторона
+# остаётся неизвестной (id 0, tier 3 по правилам tier 2, без авто-онбординга —
+# как явный tier-3 allowlist). Нет снимка или нет совпадения — прежний путь
+# без изменений (fail-open: допуск только ДОБАВЛЯЕТ матчи, никогда не режет).
+# ---------------------------------------------------------------------------
+WINLINE_FIRST_ENABLED = _env_flag("WINLINE_FIRST_ENABLED", "1")
+WINLINE_OVERVIEW_TTL_S = _safe_float_env("WINLINE_OVERVIEW_TTL_S", 45.0)
+WINLINE_OVERVIEW_MAX_AGE_S = _safe_float_env("WINLINE_OVERVIEW_MAX_AGE_S", 300.0)
+WINLINE_FIRST_ADMISSION_TTL_S = _safe_float_env("WINLINE_FIRST_ADMISSION_TTL_S", 180.0)
+WINLINE_OVERVIEW_PAGE_NAME = "bookmaker:winline-overview"
+WINLINE_OVERVIEW_JOB_TIMEOUT_S = _safe_float_env("WINLINE_OVERVIEW_JOB_TIMEOUT_S", 60.0)
+
+_winline_overview_lock = threading.Lock()
+_winline_overview_state: Dict[str, Any] = {
+    "text": "",
+    "fetched_at": 0.0,
+    "status": "",
+    "error": "",
+}
+_winline_overview_thread: Any = None
+_winline_first_parser_fns_cache: Any = None
+
+
+def _winline_first_parser_fns() -> Optional[tuple]:
+    """(collect, league, future, card_context) из bookmaker-модуля или None.
+
+    Резолвится лениво через getattr, чтобы отсутствие новых имён в устаревшем
+    модуле роняло только winline-first (fail-open), а не весь prefetch-импорт.
+    """
+    global _winline_first_parser_fns_cache
+    if _winline_first_parser_fns_cache is not None:
+        return _winline_first_parser_fns_cache or None
+    triple: Optional[tuple] = None
+    try:
+        extract_fn = globals().get("_bookmaker_winline_extract")
+        mod = sys.modules.get(getattr(extract_fn, "__module__", "") or "")
+        card_fn = globals().get("_bookmaker_winline_card_context")
+        if mod is not None and callable(card_fn):
+            collect = getattr(mod, "collect_winline_live_overview_in_camoufox_page", None)
+            league_fn = getattr(mod, "winline_live_card_league", None)
+            future_fn = getattr(mod, "_looks_future_context", None)
+            if callable(collect) and callable(league_fn) and callable(future_fn):
+                triple = (collect, league_fn, future_fn, card_fn)
+    except Exception:
+        triple = None
+    _winline_first_parser_fns_cache = triple or False
+    return triple
+
+
+def _winline_first_active() -> bool:
+    """Включён ли winline-first допуск в текущей конфигурации."""
+    if not WINLINE_FIRST_ENABLED:
+        return False
+    if not globals().get("BOOKMAKER_PREFETCH_ENABLED"):
+        return False
+    if bool(globals().get("PURE_DLTV_MODE")):
+        return False
+    try:
+        if "winline" not in _bookmaker_effective_sites_for_mode():
+            return False
+    except Exception:
+        return False
+    return _winline_first_parser_fns() is not None
+
+
+def _winline_overview_inject_for_tests(text: str) -> None:
+    """Шов для тестов: подменяет снимок, поток обновления не трогает."""
+    with _winline_overview_lock:
+        _winline_overview_state["text"] = str(text or "")
+        _winline_overview_state["fetched_at"] = time.time() if text else 0.0
+        _winline_overview_state["status"] = "test" if text else ""
+        _winline_overview_state["error"] = ""
+
+
+def _winline_overview_snapshot_text() -> Optional[str]:
+    """Неблокирующее чтение снимка; None когда снимка нет или он протух.
+
+    Поток обновления здесь НЕ стартует (иначе его поднимали бы и тесты через
+    шов инъекции): его запускает прод-путь SourceTV до первого join.
+    """
+    try:
+        max_age = float(WINLINE_OVERVIEW_MAX_AGE_S)
+    except (TypeError, ValueError):
+        max_age = 300.0
+    with _winline_overview_lock:
+        text = str(_winline_overview_state.get("text") or "")
+        age = time.time() - float(_winline_overview_state.get("fetched_at") or 0.0)
+    if not text or age > max_age:
+        return None
+    return text
+
+
+def _winline_overview_refresh_once() -> bool:
+    """Один съём ленты Winline через общую Camoufox-сессию. Fail-open: False."""
+    fns = _winline_first_parser_fns()
+    if fns is None:
+        return False
+    collect = fns[0]
+    try:
+        urls = _bookmaker_urls_for_mode(globals().get("BOOKMAKER_PREFETCH_MODE") or "live")
+        url = str((urls or {}).get("winline") or "").strip()
+    except Exception:
+        url = ""
+    if not url:
+        try:
+            url = str(((_BOOKMAKER_URLS_MAP or {}).get("live") or {}).get("winline") or "")
+        except Exception:
+            url = ""
+    if not url:
+        return False
+
+    def _job(browser: Any) -> Dict[str, Any]:
+        session = _shared_camoufox_session
+        page = session.get_or_create_page(WINLINE_OVERVIEW_PAGE_NAME, browser)
+        return collect(page, url)
+
+    try:
+        result = _run_shared_camoufox_job(
+            "winline-overview", _job, timeout=float(WINLINE_OVERVIEW_JOB_TIMEOUT_S)
+        )
+    except Exception as exc:
+        logger.warning("WINLINE_OVERVIEW_REFRESH_FAILED: %s", exc)
+        return False
+    if not isinstance(result, dict):
+        return False
+    text = str(result.get("text") or "")
+    if not text:
+        return False
+    with _winline_overview_lock:
+        _winline_overview_state["text"] = text[:3_000_000]
+        _winline_overview_state["fetched_at"] = time.time()
+        _winline_overview_state["status"] = str(result.get("status") or "ok")
+        _winline_overview_state["error"] = str(result.get("error") or "")
+    return True
+
+
+def _winline_overview_loop() -> None:
+    while True:
+        try:
+            due = False
+            with _winline_overview_lock:
+                age = time.time() - float(_winline_overview_state.get("fetched_at") or 0.0)
+            try:
+                ttl = float(WINLINE_OVERVIEW_TTL_S)
+            except (TypeError, ValueError):
+                ttl = 45.0
+            due = age >= max(10.0, ttl)
+            if due:
+                _winline_overview_refresh_once()
+        except Exception as exc:
+            logger.warning("WINLINE_OVERVIEW_LOOP_FAILED: %s", exc)
+        time.sleep(5.0)
+
+
+def _ensure_winline_overview_refresher() -> None:
+    """Фоновый съём снимка; цикл general() никогда не ждёт страницу."""
+    global _winline_overview_thread
+    if not _winline_first_active():
+        return
+    try:
+        alive = bool(_winline_overview_thread is not None and _winline_overview_thread.is_alive())
+    except Exception:
+        alive = False
+    if alive:
+        return
+    with _winline_overview_lock:
+        try:
+            alive = bool(
+                _winline_overview_thread is not None and _winline_overview_thread.is_alive()
+            )
+        except Exception:
+            alive = False
+        if alive:
+            return
+        thread = threading.Thread(
+            target=_winline_overview_loop,
+            name="winline-overview",
+            daemon=True,
+        )
+        _winline_overview_thread = thread
+    try:
+        thread.start()
+    except Exception as exc:
+        logger.warning("WINLINE_OVERVIEW_THREAD_START_FAILED: %s", exc)
+
+
+def _winline_first_join(radiant_name: Any, dire_name: Any) -> Optional[Dict[str, Any]]:
+    """Join пары SourceTV к живому снимку Winline: {"card", "league"} или None.
+
+    Допуск дают только живые карточки (prematch-линия с "Завтра" отклоняется
+    тем же `_looks_future_context`, что сторожит фид). Стороны-плейсхолдеры
+    ("Radiant"/"Dire") не джойнятся: такие токены есть в любом dota-тексте.
+    """
+    r_team = str(radiant_name or "").strip()
+    d_team = str(dire_name or "").strip()
+    if not r_team or not d_team:
+        return None
+    try:
+        if _is_placeholder_team_name(r_team) or _is_placeholder_team_name(d_team):
+            return None
+    except Exception:
+        return None
+    if not _winline_first_active():
+        return None
+    text = _winline_overview_snapshot_text()
+    if not text:
+        return None
+    fns = _winline_first_parser_fns()
+    if fns is None:
+        return None
+    _, league_fn, future_fn, card_fn = fns
+    try:
+        card = card_fn(text, r_team, d_team)
+    except Exception:
+        return None
+    if not card:
+        return None
+    try:
+        if bool(future_fn(card)):
+            return None
+    except Exception:
+        return None
+    try:
+        # Лига берётся из страницы (контекст карточки начинается с команд).
+        league = str(league_fn(text, r_team, d_team) or "")
+    except Exception:
+        league = ""
+    return {"card": card, "league": league}
+
+
+def _winline_first_maybe_admit(
+    match_id: Any,
+    radiant_name: Any,
+    dire_name: Any,
+) -> Optional[Dict[str, Any]]:
+    """Winline-first допуск на этапе heads: hit {"card","league","match_id"} или None."""
+    hit = _winline_first_join(radiant_name, dire_name)
+    if hit is None:
+        return None
+    try:
+        ttl = float(WINLINE_FIRST_ADMISSION_TTL_S)
+    except (TypeError, ValueError):
+        ttl = 180.0
+    hit["match_id"] = str(match_id or "").strip()
+    hit["admitted_at"] = time.monotonic()
+    hit["admission_ttl"] = max(10.0, ttl)
+    return hit
+
+
+def _winline_first_bypass_active(hit: Any) -> bool:
+    """Свеж ли допуск этого матча (проверка на гейтах внутри check_head)."""
+    if not isinstance(hit, dict):
+        return False
+    if not _winline_first_active():
+        return False
+    try:
+        age = time.monotonic() - float(hit.get("admitted_at") or 0.0)
+        return age <= float(hit.get("admission_ttl") or 0.0)
+    except (TypeError, ValueError):
+        return False
+
+
 def _bookmaker_close_window_handles_unlocked(driver: Any, handles: List[str]) -> None:
     valid_handles = [str(handle or "").strip() for handle in handles if str(handle or "").strip()]
     if driver is None or not valid_handles:
@@ -33837,17 +34110,41 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
             # Allowlist лиг: обрабатываем только известные tier-турниры
             # (TOURNAMENT_TITLE_ALLOW_KEYWORDS, токен-матчинг по словам названия).
             # league_name приходит из probe (справочник OpenDota); пустое имя → матч пропускается.
+            # Winline-first: пару, найденную в живой карточке снимка Winline, допускаем
+            # мимо allowlist — снимок разбирается РАНЬШЕ sourcetv-гейтов, и живой рынок
+            # доказывает, что матч реальный и ставочный (кейс MOUZ vs Klim Sani4).
             _skipped_by_league = 0
+            _winline_first_hits = 0
+            _ensure_winline_overview_refresher()
             for mid, m in matches.items():
-                if not _league_matches_allowlist(
-                    m.get("league_id"), m.get("league_name")
-                ) and not _league_admits_with_known_side(
-                    m.get("league_id"),
-                    m.get("radiant_team_id"),
-                    m.get("dire_team_id"),
-                ):
-                    _skipped_by_league += 1
-                    continue
+                _league_ok = bool(
+                    _league_matches_allowlist(m.get("league_id"), m.get("league_name"))
+                    or _league_admits_with_known_side(
+                        m.get("league_id"),
+                        m.get("radiant_team_id"),
+                        m.get("dire_team_id"),
+                        m.get("_gated_tier12_side"),
+                    )
+                )
+                _wf_hit = None
+                if not _league_ok:
+                    _wf_hit = _winline_first_maybe_admit(
+                        mid, m.get("radiant_team_name"), m.get("dire_team_name")
+                    )
+                    if _wf_hit is None:
+                        _skipped_by_league += 1
+                        continue
+                    _winline_first_hits += 1
+                    print(
+                        "   🧭 Winline-first: "
+                        f"{m.get('radiant_team_name')} vs {m.get('dire_team_name')} "
+                        "допущен по живой карточке Winline"
+                        + (
+                            f" (лига: {_wf_hit.get('league')})"
+                            if _wf_hit.get("league")
+                            else ""
+                        )
+                    )
                 # Строим mock ноду в exact формате который кушает check_head и _extract_live_listing_context
                 # { "layout": "match_card_v2", "source": "sourcetv", "status": "live", "uniq_score": 0, "href": "/matches/mid" }
                 attrs_head = {
@@ -33863,6 +34160,9 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
                 rs = m.get("radiant_score", 0)
                 ds = m.get("dire_score", 0)
                 lname = m.get("league_name") or ""  # нет league_name → пустая строка (probe пишет "")
+                if not lname and _wf_hit is not None:
+                    # Winline-first: лига из живой карточки как fallback identity.
+                    lname = str(_wf_hit.get("league") or "")
 
                 # mock a tag
                 mock_a = MockTag(attrs={"href": f"/matches/{mid}"})
@@ -33879,6 +34179,8 @@ def get_heads(response=None, MAX_RETRIES=5, RETRY_DELAY=5, ip_address="46.229.21
 
             if _skipped_by_league:
                 print(f"   🚫 SourceTV league filter: пропущено {_skipped_by_league} матчей вне allowlist лиг")
+            if _winline_first_hits:
+                print(f"   🧭 Winline-first: допущено {_winline_first_hits} матчей по живой ленте Winline")
 
             return heads, bodies
 
@@ -35906,14 +36208,35 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
 
         match_log(f"   🆔 Candidate team IDs: radiant={radiant_team_ids}, dire={dire_team_ids}")
+        # Winline-first: join к живому снимку Winline идёт ДО гейтов — только на
+        # drop-path (когда id неполные), уже допущенные матчи join не тратят.
+        winline_first_hit = None
+        if (
+            is_sourcetv_card
+            and (not radiant_team_ids or not dire_team_ids)
+            and not SIGNAL_MINIMAL_ODDS_ONLY_MODE
+            and not PIPELINE_BYPASS_TIER_GATE
+        ):
+            winline_first_hit = _winline_first_join(
+                radiant_team_name_original, dire_team_name_original
+            )
         if (
             not SIGNAL_MINIMAL_ODDS_ONLY_MODE
             and not PIPELINE_BYPASS_TIER_GATE
             and (not radiant_team_ids or not dire_team_ids)
+            and not _winline_first_bypass_active(winline_first_hit)
         ):
             print(f"   ❌ Отсутствуют team_id для команд")
             print(f"   ❌ Матч пропущен (нет team_id)")
             return return_status
+        if _winline_first_bypass_active(winline_first_hit) and (
+            not radiant_team_ids or not dire_team_ids
+        ):
+            print(
+                "   🧭 Winline-first: матч идёт без полного team_id "
+                f"(лига Winline: {winline_first_hit.get('league') or 'unknown'}) — "
+                "неизвестная сторона без онбординга, суд по правилам tier 2"
+            )
         # Extract league_id if available
         if not is_sourcetv_card:
             league_id = live_league_data.get('league_id')
@@ -35940,6 +36263,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             not SIGNAL_MINIMAL_ODDS_ONLY_MODE
             and not PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE
             and league_name_normalized in SKIPPED_LIVE_LEAGUE_TITLES
+            and not _winline_first_bypass_active(winline_first_hit)
         ):
             print(
                 f"   🚫 Матч пропущен: лига в denylist ({league_name or 'unknown league'})"
@@ -35954,7 +36278,16 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 },
             )
             return return_status
-        
+        if (
+            not SIGNAL_MINIMAL_ODDS_ONLY_MODE
+            and not PIPELINE_BYPASS_LEAGUE_DENYLIST_GATE
+            and league_name_normalized in SKIPPED_LIVE_LEAGUE_TITLES
+            and _winline_first_bypass_active(winline_first_hit)
+        ):
+            print(
+                "   🧭 Winline-first: лига в denylist, но матч ведёт Winline — идём дальше"
+            )
+
         # Debug: print available keys in live_league_data
         lld_keys = list(live_league_data.keys())
         match_log(f"   📋 live_league_data keys: {lld_keys}")
@@ -36336,6 +36669,30 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             star_match_tier = 3
             match_log(
                 f"   🧭 Tier-3 allowlist: матч допущен (лига {league_id}) "
+                f"{radiant_team_name_original or 'без названия'} [{radiant_team_id}] vs "
+                f"{dire_team_name_original or 'без названия'} [{dire_team_id}] — "
+                "пороги и правила tier 2, авто-добавления в tier2 нет"
+            )
+        elif _winline_first_bypass_active(winline_first_hit):
+            # Winline-first: живая карточка Winline есть, полного опознания нет.
+            # Как tier-3 allowlist: неизвестная сторона остаётся неизвестной
+            # (id 0), в tier2 никто не уезжает, суд по правилам tier 2.
+            if (
+                _is_placeholder_team_name(radiant_team_name_original)
+                and _is_placeholder_team_name(dire_team_name_original)
+            ):
+                print(
+                    "   ❌ Матч пропущен: личность не установлена "
+                    f"(ни Valve, ни CyberScore) — лига {league_id}, {check_uniq_url}"
+                )
+                print("   ℹ️ map_id_check.txt не обновлен: add_url только после send_message()")
+                return return_status
+            radiant_team_id = (_coerce_int(radiant_team_ids[0]) if radiant_team_ids else 0) or 0
+            dire_team_id = (_coerce_int(dire_team_ids[0]) if dire_team_ids else 0) or 0
+            star_match_tier = 3
+            match_log(
+                f"   🧭 Winline-first: матч допущен по живой карточке Winline "
+                f"(лига: {winline_first_hit.get('league') or league_id}) "
                 f"{radiant_team_name_original or 'без названия'} [{radiant_team_id}] vs "
                 f"{dire_team_name_original or 'без названия'} [{dire_team_id}] — "
                 "пороги и правила tier 2, авто-добавления в tier2 нет"

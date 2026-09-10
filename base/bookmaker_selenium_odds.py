@@ -1955,6 +1955,86 @@ def _winline_team_order(text: str, team1: str, team2: str) -> Optional[str]:
     return "direct" if i1 < i2 else "reverse"
 
 
+_WINLINE_DISCIPLINE_CHUNK_RE = re.compile(
+    r"(?:dota\s*2|counter[-\s]*strike(?:\s*2)?|cs(?:\s*2)?|lol|"
+    r"valorant|mobile\s+legends|king\s+of\s+glory)\s*[|,]\s*",
+    re.I,
+)
+
+
+def winline_live_card_league(page_text: str, team1: str, team2: str) -> str:
+    """Название лиги из живой ленты Winline (best-effort fallback identity).
+
+    Контекст matched-карточки по конвенции парсера начинается с блока команд,
+    поэтому лига берётся из СТРАНИЦЫ: текст между ближайшим заголовком
+    дисциплины (`DOTA 2 | ...`) перед парой команд и началом самой пары (то
+    правило ближайшей пары, что и `_winline_matched_card_context`).
+    Возвращает "" когда лигу выделить нельзя — в частности, когда токен
+    команды входит в название лиги (`1w Essence` vs команда `1w`): там
+    позиционно не отличить лигу от команды, и честный "" повторяет
+    сегодняшнее поведение probe (пустой league_name, решение по league_id).
+    """
+    if not page_text or not team1 or not team2:
+        return ""
+    flat = " ".join(str(page_text).split())
+    if not flat:
+        return ""
+    low = flat.lower()
+    pos1 = _find_positions_with_fallback(low, str(team1))
+    pos2 = _find_positions_with_fallback(low, str(team2))
+    if not pos1 or not pos2:
+        return ""
+    best_dist = min(abs(i1 - i2) for i1 in pos1 for i2 in pos2)
+    pair_start = min(
+        min(i1, i2) for i1 in pos1 for i2 in pos2 if abs(i1 - i2) == best_dist
+    )
+    header_end: Optional[int] = None
+    for match in _WINLINE_DISCIPLINE_CHUNK_RE.finditer(flat):
+        if match.end() <= pair_start:
+            header_end = match.end()
+        else:
+            break
+    if header_end is None:
+        return ""
+    return re.sub(r"\s+", " ", flat[header_end:pair_start]).strip(" |,\u2014\u2013-\t")
+
+
+async def _collect_winline_live_overview_async(
+    page,
+    url: str,
+) -> Dict[str, Any]:
+    """One-shot read of the Winline live feed: leagues + team cards, no clicks.
+
+    Только чтение DOM (acquisition_mode="dynamic_dom": goto лишь когда вкладка
+    пустая/чужая — чтобы не сбивать состояние именованных страниц поллера).
+    Возвращает {"status", "error", "text", "page_url"}; text — единый текст
+    страницы, по которому join ищет карточки уже известными именами команд.
+    """
+    _, load_error, html, visible, body_text, diag = (
+        await _load_site_render_payload_camoufox_async(
+            page,
+            url,
+            acquisition_mode="dynamic_dom",
+        )
+    )
+    text = " ".join(str(body_text or visible or "").split())
+    status = "ok" if text else "empty"
+    if load_error and status == "ok":
+        status = "partial_load"
+    return {
+        "status": status,
+        "error": str(load_error or ""),
+        "text": text,
+        "html_len": len(html or ""),
+        "page_url": str((diag or {}).get("page_url") or url or ""),
+    }
+
+
+def collect_winline_live_overview_in_camoufox_page(page, url: str) -> Dict[str, Any]:
+    """Синхронная обёртка над _collect_winline_live_overview_async."""
+    return _run_coroutine_blocking(_collect_winline_live_overview_async(page, url))
+
+
 def _winline_map_marker_patterns(map_num: int) -> List[str]:
     n = int(map_num)
     return [
