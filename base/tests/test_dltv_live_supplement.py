@@ -272,6 +272,14 @@ def test_parse_live_clock_refuses_draft_stage():
     assert cs._dltv_parse_live_clock(_draft_stage_payload()) is None
 
 
+def test_parse_live_clock_distrusts_picks_flag_alone():
+    # Прод 10.09.2026: is_picks_ended=True, fast_picks пусты, 0–0.
+    payload = _draft_stage_payload()
+    payload["is_picks_ended"] = True
+    payload["game_time"] = 447
+    assert cs._dltv_parse_live_clock(payload) is None
+
+
 def test_parse_live_clock_allows_score_without_flag():
     payload = _draft_stage_payload()
     payload["radiant_score"] = 1

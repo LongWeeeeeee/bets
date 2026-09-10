@@ -18605,9 +18605,11 @@ def _dltv_parse_live_clock(payload: Any) -> Optional[Dict[str, Any]]:
     игрока → id first/second_team из db). Нераспознанная сторона — «»:
     🕐 работает по game_time, а 💰 честно отсутствует (композитор требует
     имя). Возвращает None без положительного game_time, номера карты или
-    признаков старта игры: DLTv тикает game_time ещё в лобби/драфте
-    (is_picks_ended пуст, счёт 0–0), и это время — не время карты.
-    Стартом считается завершённый драфт либо ненулевой счёт.
+    признаков старта игры: DLTv тикает game_time ещё в лобби/драфте, при
+    этом `is_picks_ended` может уже стоять, а пиков и голов нет, — и это
+    время не время карты. Стартом считаются полные пики 5v5 либо
+    ненулевой счёт (флагу в одиночку не верим: прод 10.09.2026, NAVI map1
+    t=447s при пустых fast_picks и 0–0).
     """
     try:
         if not isinstance(payload, dict):
@@ -18619,12 +18621,11 @@ def _dltv_parse_live_clock(payload: Any) -> Optional[Dict[str, Any]]:
         if game_time <= 0:
             return None
         try:
-            started = bool(payload.get("is_picks_ended")) or (
-                int(payload.get("radiant_score") or 0)
-                + int(payload.get("dire_score") or 0) > 0)
+            score = (int(payload.get("radiant_score") or 0)
+                     + int(payload.get("dire_score") or 0))
         except (TypeError, ValueError):
-            started = bool(payload.get("is_picks_ended"))
-        if not started:
+            score = 0
+        if score <= 0 and not _dltv_live_picks_ready(payload):
             return None
         db = payload.get("db") or {}
         titles_by_id: Dict[str, str] = {}
@@ -18679,6 +18680,27 @@ def _dltv_parse_live_clock(payload: Any) -> Optional[Dict[str, Any]]:
         }
     except Exception:
         return None
+
+
+def _dltv_live_picks_ready(payload: Any) -> bool:
+    """Полные пики 5v5 с hero_id>0 в fast_picks. Пусто в драфте — False."""
+    try:
+        fast = (payload or {}).get("fast_picks") or {}
+        if not isinstance(fast, dict):
+            return False
+        for key in ("first_team", "second_team"):
+            picks = fast.get(key) or []
+            if not isinstance(picks, list) or len(picks) != 5:
+                return False
+            for pick in picks:
+                try:
+                    if int((pick or {}).get("hero_id") or 0) <= 0:
+                        return False
+                except (TypeError, ValueError):
+                    return False
+        return True
+    except Exception:
+        return False
 
 
 def _dltv_fetch_live_payload(
