@@ -12,6 +12,7 @@ import copy
 import json
 import os
 import sys
+import time
 
 import pytest
 
@@ -311,7 +312,7 @@ def test_card_notify_skips_draft_when_bridge_sees_live(
     assert ok == "none"
     assert sent == []
     # Часы при этом отмечаются: 🕐/💰 чинятся независимо от драфта.
-    clock = cs._winline_map_clocks.get(key)
+    clock = cs._winline_map_clocks.get(cs._winline_clock_key(key, 1))
     assert isinstance(clock, dict) and clock.get("source") == "dltv"
     assert clock.get("map_num") == 1
     assert clock.get("game_time") == 828
@@ -400,7 +401,8 @@ def test_notify_resets_clock_on_draft_stage(
         monkeypatch, series_snapshot):
     _notify_env(monkeypatch, None)
     key = "winline:league:epl masters|klim sani4|natus vincere"
-    cs._winline_map_clocks[key] = {
+    store = cs._winline_clock_key(key, 1)
+    cs._winline_map_clocks[store] = {
         "game_time": 207.0, "wall": 0.0, "map_num": 1, "live": True,
         "radiant_lead": 0, "radiant_name": "", "dire_name": "",
         "source": "dltv",
@@ -416,7 +418,7 @@ def test_notify_resets_clock_on_draft_stage(
         snapshot=_draft_snap(), match_fetcher=_fetch,
         bridge_live_pairs=set())
     assert ok == "none"
-    assert key not in cs._winline_map_clocks
+    assert store not in cs._winline_map_clocks
     assert cs._winline_map_clock_label(key + "|map1|Natus Vincere|KLIM SANI4") == "—"
 
 
@@ -429,7 +431,8 @@ def test_notify_keeps_prior_map_clock_on_draft_stage(
         "radiant_lead": 3000, "radiant_name": "Natus Vincere",
         "dire_name": "KLIM SANI4", "source": "dltv",
     }
-    cs._winline_map_clocks[key] = dict(frozen)
+    store = cs._winline_clock_key(key, 1)
+    cs._winline_map_clocks[store] = dict(frozen)
     payload = _draft_stage_payload()
     payload["db"]["scores"] = {"first_team": 1, "second_team": 0}
 
@@ -442,7 +445,7 @@ def test_notify_keeps_prior_map_clock_on_draft_stage(
         snapshot=_draft_snap(), match_fetcher=_fetch,
         bridge_live_pairs=set())
     assert ok == "none"
-    assert cs._winline_map_clocks[key] == frozen
+    assert cs._winline_map_clocks[store] == frozen
 
 
 def test_bridge_live_pairs_from_snapshot_file(tmp_path):
@@ -487,7 +490,8 @@ def test_freeze_dltv_clock_on_series_gone(
         monkeypatch, series_snapshot, live_payload):
     match_fetcher = _notify_env(monkeypatch, live_payload)
     key = "winline:league:blast|devil kings|zero tenacity"
-    cs._winline_map_clocks[key] = {
+    store = cs._winline_clock_key(key, 1)
+    cs._winline_map_clocks[store] = {
         "game_time": 800.0, "wall": 0.0, "map_num": 1, "live": True,
         "radiant_lead": 0, "radiant_name": "", "dire_name": "",
         "source": "dltv",
@@ -499,7 +503,7 @@ def test_freeze_dltv_clock_on_series_gone(
         snapshot=empty_snap, match_fetcher=match_fetcher,
         bridge_live_pairs=set())
     assert ok == "none"
-    assert cs._winline_map_clocks[key]["live"] is False
+    assert cs._winline_map_clocks[store]["live"] is False
 
 
 def test_card_notify_respects_notify_gate(
@@ -538,6 +542,99 @@ def test_sweep_counts_dltv_draft(monkeypatch):
                         lambda **kw: "duplicate", raising=False)
     summary2 = cs._winline_sweep_cards_from_snapshot()
     assert "dltv_draft" not in summary2
+
+
+class _ActivePoller:
+    def is_active(self):
+        return True
+
+
+def _mkclock(map_num, game_time, wall, live=True, source=None):
+    clock = {"game_time": game_time, "wall": wall, "map_num": map_num,
+             "live": live, "radiant_lead": 1000,
+             "radiant_name": "Zero Tenacity", "dire_name": "Devil Kings"}
+    if source is not None:
+        clock["source"] = source
+    return clock
+
+
+def test_clock_key_derivation():
+    assert cs._winline_clock_key("s", 2) == "s|map2"
+    assert cs._winline_clock_key("s", 0) == "s"
+    assert cs._winline_clock_key("", 2) == ""
+
+
+def test_per_map_clocks_coexist(monkeypatch):
+    _notify_env(monkeypatch, None)
+    key = "winline:league:t|a|b"
+    cs._winline_note_map_clock(key, _mkclock(1, 2400.0, 0.0, live=False))
+    cs._winline_note_map_clock(key, _mkclock(2, 300.0, time.time(), live=True))
+    assert cs._winline_map_clock_label(key + "|map1|A|B") == "40:00"
+    assert cs._winline_map_clock_label(key + "|map2|A|B") == "5:00"
+
+
+def test_cross_note_fills_bridge_gap(
+        monkeypatch, series_snapshot, live_payload):
+    # Кейс пользователя: bridge-сообщение 🕐 —, DLTv-часы под card-ключом.
+    match_fetcher = _notify_env(monkeypatch, live_payload)
+    card_key = "winline:league:epl|x|y"
+    bridge_key = "sourcetv:league:1|id:1|id:2"
+    canonical = bridge_key + "|map1|Zero Tenacity|Devil Kings"
+    assert cs._winline_map_clock_label(canonical) == "—"  # RED
+    monkeypatch.setattr(cs, "_winline_current_map_pollers",
+                        {canonical: _ActivePoller()}, raising=False)
+    cs._winline_card_dltv_draft_notify(
+        league="E", team1="Zero Tenacity", team2="Devil Kings", map_num=1,
+        series_key=card_key, send_fn=lambda message, **k: True,
+        snapshot=series_snapshot, match_fetcher=match_fetcher,
+        bridge_live_pairs=set())
+    assert cs._winline_map_clock_label(canonical) == "13:48"  # GREEN
+
+
+def test_cross_note_skips_fresh_bridge(monkeypatch):
+    _notify_env(monkeypatch, None)
+    bkey = "sourcetv:league:1|id:1|id:2"
+    canon = bkey + "|map1|Zero Tenacity|Devil Kings"
+    fresh = _mkclock(1, 800.0, time.time(), live=True)
+    cs._winline_map_clocks[cs._winline_clock_key(bkey, 1)] = dict(fresh)
+    monkeypatch.setattr(cs, "_winline_current_map_pollers",
+                        {canon: _ActivePoller()}, raising=False)
+    n = cs._winline_note_dltv_clock_bridges(
+        "Zero Tenacity", "Devil Kings",
+        _mkclock(1, 810.0, time.time(), live=True, source="dltv"))
+    assert n == 0
+    assert cs._winline_map_clocks[cs._winline_clock_key(bkey, 1)] == fresh
+
+
+def test_cross_note_replaces_stale_live_bridge(monkeypatch):
+    _notify_env(monkeypatch, None)
+    bkey = "sourcetv:league:1|id:1|id:2"
+    canon = bkey + "|map1|Zero Tenacity|Devil Kings"
+    stale = _mkclock(1, 800.0, time.time() - 600.0, live=True)
+    cs._winline_map_clocks[cs._winline_clock_key(bkey, 1)] = dict(stale)
+    monkeypatch.setattr(cs, "_winline_current_map_pollers",
+                        {canon: _ActivePoller()}, raising=False)
+    n = cs._winline_note_dltv_clock_bridges(
+        "Zero Tenacity", "Devil Kings",
+        _mkclock(1, 900.0, time.time(), live=True, source="dltv"))
+    assert n == 1
+    assert cs._winline_map_clocks[
+        cs._winline_clock_key(bkey, 1)]["game_time"] == 900.0
+
+
+def test_cross_note_keeps_frozen_bridge(monkeypatch):
+    _notify_env(monkeypatch, None)
+    bkey = "sourcetv:league:1|id:1|id:2"
+    canon = bkey + "|map1|Zero Tenacity|Devil Kings"
+    frozen = _mkclock(1, 2400.0, time.time() - 600.0, live=False)
+    cs._winline_map_clocks[cs._winline_clock_key(bkey, 1)] = dict(frozen)
+    monkeypatch.setattr(cs, "_winline_current_map_pollers",
+                        {canon: _ActivePoller()}, raising=False)
+    n = cs._winline_note_dltv_clock_bridges(
+        "Zero Tenacity", "Devil Kings",
+        _mkclock(1, 900.0, time.time(), live=True, source="dltv"))
+    assert n == 0
+    assert cs._winline_map_clocks[cs._winline_clock_key(bkey, 1)] == frozen
 
 
 def test_sweep_consults_dltv_hook_for_owned_rows(monkeypatch):

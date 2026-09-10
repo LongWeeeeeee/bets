@@ -1303,7 +1303,8 @@ def test_snapshot_refresh_is_throttled(monkeypatch, tmp_path):
     cs._winline_map_clock_label(key, row["timestamp"] + 21)
     # Перечитано: в состоянии новый хронометраж (60 с), а не прежний (742 с).
     assert cs._winline_map_clocks[
-        cs._winline_sourcetv_series_key(row)]["game_time"] == 60
+        cs._winline_clock_key(
+            cs._winline_sourcetv_series_key(row), 2)]["game_time"] == 60
 
 
 def test_stale_snapshot_row_does_not_move_the_clock(monkeypatch, tmp_path):

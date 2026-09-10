@@ -1510,8 +1510,35 @@ def _winline_bridge_map_clock(item: Any, map_num: Any) -> Optional[Dict[str, Any
     }
 
 
+def _winline_clock_key(series: Any, map_num: Any) -> str:
+    """Ключ часов: серия + номер карты. Одна запись на серию затирала карты
+    друг другом (замерший map1 + живой map2): теперь карты изолированы.
+    map_num<=0 — legacy голый ключ серии (таких часов продюсеры не дают)."""
+    base = str(series or "").strip()
+    try:
+        number = int(map_num or 0)
+    except (TypeError, ValueError):
+        number = 0
+    if not base:
+        return ""
+    return f"{base}|map{number}" if number > 0 else base
+
+
+def _winline_freeze_clock_entry(store: str) -> bool:
+    """Заморозить одну запись часов. True если была живой и замерла."""
+    try:
+        previous = _winline_map_clocks.get(store)
+        if isinstance(previous, dict) and previous.get("live"):
+            _winline_map_clocks[store] = dict(previous, live=False)
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _winline_note_map_clock(series: Any, clock: Any, *,
-                            frozen_reason: bool = False) -> None:
+                            frozen_reason: bool = False,
+                            map_num: Any = None) -> None:
     """Запомнить хронометраж карты серии; заморозить, когда карта кончилась.
 
     Строка перерыва несёт `game_time` ДОИГРАННОЙ карты под сдвинутым номером
@@ -1519,19 +1546,39 @@ def _winline_note_map_clock(series: Any, clock: Any, *,
     она доказывает, что хронометраж больше не идёт. То же делает уход серии из
     снимка: последний известный хронометраж остаётся для «🏁 карта завершена»,
     а досчитывать его уже нельзя.
+
+    Номер карты берётся из самих часов (`map_num`): запись лежит под
+    per-map ключом (`_winline_clock_key`), часы разных карт не затирают
+    друг друга. Заморозка без часов целится в карту `map_num`, а без него —
+    во все живые записи серии.
     """
     key = str(series or "").strip()
     if not key:
         return
+    try:
+        clock_map = int((clock or {}).get("map_num") or 0) if isinstance(
+            clock, dict) else 0
+    except (TypeError, ValueError):
+        clock_map = 0
+    if map_num is None:
+        map_num = clock_map
+    try:
+        want_map = int(map_num or 0)
+    except (TypeError, ValueError):
+        want_map = 0
     with _winline_current_map_state_lock:
         if isinstance(clock, dict):
-            _winline_map_clocks[key] = clock
+            _winline_map_clocks[_winline_clock_key(key, want_map)] = clock
             return
         if not frozen_reason:
             return
-        previous = _winline_map_clocks.get(key)
-        if isinstance(previous, dict) and previous.get("live"):
-            _winline_map_clocks[key] = dict(previous, live=False)
+        if want_map > 0:
+            _winline_freeze_clock_entry(_winline_clock_key(key, want_map))
+            return
+        prefix = key + "|map"
+        for store in [k for k in _winline_map_clocks
+                      if k == key or k.startswith(prefix)]:
+            _winline_freeze_clock_entry(store)
 
 
 def _winline_row_wins_by_team(radiant_name: Any, dire_name: Any,
@@ -3492,6 +3539,7 @@ def _winline_refresh_from_bridge_snapshot() -> None:
             series,
             None if intermission else _winline_bridge_map_clock(row, map_num),
             frozen_reason=intermission,
+            map_num=map_num,
         )
         _winline_note_series_row(series, map_num, row)
 
@@ -3515,7 +3563,9 @@ def _winline_map_clock_label(canonical_key: Any, now_wall: Any = None) -> str:
         return "—"
     moment = float(time.time() if now_wall is None else now_wall)
     with _winline_current_map_state_lock:
-        clock = dict(_winline_map_clocks.get(series) or {})
+        clock = dict(
+            _winline_map_clocks.get(_winline_clock_key(series, map_num))
+            or _winline_map_clocks.get(series) or {})
     if not clock or _winline_series_int(clock.get("map_num")) != map_num:
         return "—"
     try:
@@ -3561,7 +3611,9 @@ def _winline_net_worth_label(canonical_key: Any) -> str:
     except (TypeError, ValueError):
         return ""
     with _winline_current_map_state_lock:
-        clock = dict(_winline_map_clocks.get(series) or {})
+        clock = dict(
+            _winline_map_clocks.get(_winline_clock_key(series, map_num))
+            or _winline_map_clocks.get(series) or {})
     if not clock or _winline_series_int(clock.get("map_num")) != map_num:
         return ""
     try:
@@ -19134,7 +19186,7 @@ def _winline_reset_dltv_clock(series_key: Any, map_num: Any) -> None:
         except (TypeError, ValueError):
             want_map = 0
         with _winline_current_map_state_lock:
-            current = _winline_map_clocks.get(key)
+            current = _winline_map_clocks.get(_winline_clock_key(key, want_map))
             if not (isinstance(current, dict)
                     and current.get("source") == "dltv"):
                 return
@@ -19143,28 +19195,148 @@ def _winline_reset_dltv_clock(series_key: Any, map_num: Any) -> None:
             except (TypeError, ValueError):
                 have_map = 0
             if want_map and have_map == want_map:
-                _winline_map_clocks.pop(key, None)
+                _winline_map_clocks.pop(_winline_clock_key(key, want_map), None)
                 print(f"📡 DLTv-live: clock reset (draft stage) {key}")
                 return
-        _winline_freeze_dltv_clock(key)
+        _winline_freeze_dltv_clock(key, want_map or None)
     except Exception:
         pass
 
 
-def _winline_freeze_dltv_clock(series_key: Any) -> None:
-    """Заморозить свои DLTv-часы серии: DLTv серию больше не показывает."""
+#: DLTv-часы отмечаются под чужой (мостовой) ключ серии, только если
+#: тамошняя запись старше этого: живой мостовой хронометраж обновляется
+#: листингом примерно раз в 90 с — всё, что старше, мёртвая запись молча
+#: умершего лобби, а не данные.
+_DLTv_CROSSNOTE_STALE_S = 180.0
+
+
+def _winline_freeze_dltv_clock(series_key: Any, map_num: Any = None) -> None:
+    """Заморозить свои DLTv-часы: DLTv серию больше не показывает.
+
+    Без номера карты — все живые DLTv-записи серии (мостовые не трогаем).
+    """
     try:
         key = str(series_key or "").strip()
         if not key:
             return
+        try:
+            want_map = int(map_num) if map_num is not None else 0
+        except (TypeError, ValueError):
+            want_map = 0
         with _winline_current_map_state_lock:
-            current = _winline_map_clocks.get(key)
-            if (isinstance(current, dict) and current.get("source") == "dltv"
-                    and current.get("live")):
-                _winline_note_map_clock(key, None, frozen_reason=True)
-                print(f"📡 DLTv-live: clock frozen {key}")
+            if want_map > 0:
+                candidates = [_winline_clock_key(key, want_map)]
+            else:
+                prefix = key + "|map"
+                candidates = [k for k in _winline_map_clocks
+                              if k == key or k.startswith(prefix)]
+            for store in candidates:
+                current = _winline_map_clocks.get(store)
+                if (isinstance(current, dict)
+                        and current.get("source") == "dltv"
+                        and current.get("live")):
+                    _winline_map_clocks[store] = dict(current, live=False)
+                    print(f"📡 DLTv-live: clock frozen {store}")
     except Exception:
         pass
+
+
+def _winline_bridge_series_for_pair(team1: Any, team2: Any,
+                                    map_num: Any) -> Any:
+    """Ключи серий живых НЕ-карточных опросов пары+карты (мост)."""
+    out = []
+    try:
+        slot = _winline_owned_slot_key(team1, team2, map_num)
+        if slot is None:
+            return out
+        want, want_map = slot
+        with _winline_current_map_state_lock:
+            items = list(_winline_current_map_pollers.items())
+    except Exception:
+        return out
+    for canonical, poller in items:
+        try:
+            text = str(canonical or "")
+            if text.startswith("winline:league:"):
+                continue
+            active = bool(poller.is_active()) if poller is not None else False
+        except Exception:
+            continue
+        if not active:
+            continue
+        try:
+            match = re.match(
+                r"^(.*)\|map([1-5])\|([^|]+)\|([^|]+)$", text)
+        except Exception:
+            continue
+        if not match or int(match.group(2)) != want_map:
+            continue
+        have = {
+            _winline_normalized_team_identity(match.group(3)),
+            _winline_normalized_team_identity(match.group(4)),
+        } - {""}
+        if have == want:
+            series = str(match.group(1)).strip()
+            if series and series not in out:
+                out.append(series)
+    return out
+
+
+def _winline_note_dltv_clock_bridges(team1: Any, team2: Any,
+                                     clock: Any) -> int:
+    """Дубль DLTv-часов под мостовые ключи серии: мостовой опрос читает
+    только свой неймспейс, и без дубля его 🕐/💰 молчат при слепом GC.
+
+    Арбитраж: пусто → пишем; своя DLTv-запись → обновляем; замороженная
+    мостовая стоит (конец карты видел мост — ему виднее); живая мостовая
+    старше `_DLTv_CROSSNOTE_STALE_S` → мёртвая запись, берём DLTv;
+    свежая живая мостовая главнее. Возвращает число затронутых серий.
+    """
+    touched = 0
+    try:
+        if not isinstance(clock, dict):
+            return 0
+        try:
+            map_num = int(clock.get("map_num") or 0)
+        except (TypeError, ValueError):
+            return 0
+        if map_num <= 0:
+            return 0
+        try:
+            clock_wall = float(clock.get("wall") or 0)
+        except (TypeError, ValueError):
+            clock_wall = 0.0
+        moment = time.time()
+        for series in (_winline_bridge_series_for_pair(
+                team1, team2, map_num) or []):
+            store = _winline_clock_key(series, map_num)
+            try:
+                with _winline_current_map_state_lock:
+                    existing = _winline_map_clocks.get(store)
+                    if existing is None:
+                        _winline_map_clocks[store] = clock
+                    elif not isinstance(existing, dict):
+                        continue
+                    elif existing.get("source") == "dltv":
+                        _winline_map_clocks[store] = clock
+                    elif not existing.get("live"):
+                        continue
+                    else:
+                        try:
+                            age = moment - float(existing.get("wall") or 0)
+                        except (TypeError, ValueError):
+                            age = float("inf")
+                        if age > _DLTv_CROSSNOTE_STALE_S and clock_wall > 0:
+                            _winline_map_clocks[store] = clock
+                        else:
+                            continue
+            except Exception:
+                continue
+            touched += 1
+            print(f"📡 DLTv-live: clock bridged map={map_num} {store}")
+    except Exception:
+        pass
+    return touched
 
 
 def _winline_card_dltv_draft_notify(
@@ -19215,6 +19387,10 @@ def _winline_card_dltv_draft_notify(
             print(f"📡 DLTv-live: clock map={clock.get('map_num')} "
                   f"t={int(clock.get('game_time') or 0)}s "
                   f"lead={clock.get('radiant_lead')} {key_base}")
+            try:
+                _winline_note_dltv_clock_bridges(team1, team2, clock)
+            except Exception:
+                pass
         elif key_base:
             # Серия live, но игра не стартовала (драфт/лобби): убираем свои
             # часы ЭТОЙ карты, чтобы лобби-время не утекало в 🕐. Часы
