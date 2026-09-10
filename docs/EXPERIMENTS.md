@@ -594,3 +594,41 @@ python3 scripts/ops/experiments_index.py     # пересобрать реест
     харнесс — при смене вёрстки Winline сначала снять живой дамп в момент
     заморозки; (4) частоту fail-open (`odds_bettable=None`) измерить нечем:
     вердикт не пишется ни в один лог.
+
+## E-271 — ожидание гидрации Winline-обзора перед снимком (10.09.2026)
+
+  Холодный shell (149 символов без маркеров карточек) intermittently
+  перезаписывал хороший feed-снимок: съём делался сразу после загрузки
+  страницы, до гидрации лиг. В прод-журнале это выглядело как флип-флоп
+  `WINLINE_OVERVIEW_SHELL: no feed markers` между успешными съёмами, и
+  winline-first допуск для PlayTime–Yellow Submarine оставался без свежего
+  снимка.
+  Теперь `_refresh_overview_cards` ждёт готовности DOM до 10 с
+  (`WINLINE_OVERVIEW_SETTLE_SECONDS`, опрос каждые 2 с,
+  `WINLINE_OVERVIEW_SETTLE_POLL_SECONDS`) по маркерам карточек ленты, и
+  только потом снимает текст/html. Плюс однострочный print-проб
+  `🧭 Winline overview: feed …` на каждый успешный съём (прод читает
+  print-лог). Коммиты `5fd814d` (+ пропущенная зависимость E-267
+  `GATED_TICKET_MIN_TIER12_PLAYERS` в `37cb6c0` — cyberscore уже ссылался
+  на неё, первый рестарт упал с ImportError, второй зелёный).
+  - **Харнесс:** `base/tests/test_winline_first_admission.py`
+    (`test_settle_waits_for_feed_markers` — 3 опроса до маркеров,
+    `test_settle_times_out_without_markers` — быстрый False, решает
+    предикат shell/feed); 22 passed. Полный `base/tests` не гонялся в этом
+    ходу (прошлый замер: 78 падений, идентичных HEAD).
+  - **RED до правки:** прод-лог знал только `WINLINE_OVERVIEW_SHELL`,
+    ни одного `feed`-снимка за всю историю лога.
+  - **GREEN после (прод, serv1, 10.09 ~15:3x MSK):**
+    `🧭 Winline overview: feed 4100 chars / html 526741`, далее на серии
+    8991598414 (Radiant vs PlayTime, тикет 10877)
+    `🧬 Player hint … team_key 'yellowsubmarine' … weak True` и
+    `TEAM_ID_NAME_MISMATCH name=PlayTime … resolved_id=10207983` —
+    анонимная сторона опознана как Yellow Submarine по составу, карта
+    допущена по E-270.
+  - **Где искать ошибку:** (1) если снова только SHELL без feed — сначала
+    смотреть, доходит ли settle до маркеров (таймаут vs редизайн классов
+    Winline: маркеры — `_WINLINE_OVERVIEW_FEED_MARKERS`); (2) общая
+    Camoufox-очередь: обзор конкурирует с поллером, при забитой очереди
+    съём может не успевать в TTL 45 с — виден бэкофф `next_retry_at`;
+    (3) `log.txt` в sourcetv-режиме пуст штатно, print-маркер — в
+    `base/runtime/cyberscore_sourcetv.log`.
