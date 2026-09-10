@@ -23,6 +23,7 @@ league allowlist и league-denylist остаются ЖЁСТКИМИ грани
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -525,3 +526,22 @@ def test_weak_pair_flows_through_league_filter(monkeypatch, tmp_path) -> None:
     assert len(heads) == 1 and len(bodies) == 1
     assert "PlayTime" in bodies[0].get_text()
     assert "Radiant" in bodies[0].get_text()
+
+
+class TestOverviewSnapshotPersist:
+    """Сброс успешного feed-снимка на диск (разработка перечислителя карт)."""
+
+    def test_snapshot_persisted(self, tmp_path, monkeypatch):
+        monkeypatch.setenv(
+            "WINLINE_OVERVIEW_SNAPSHOT_PATH", str(tmp_path / "snap.json"))
+        assert runtime._winline_overview_persist_snapshot(
+            "FEEDTEXT", "<html>H</html>") is True
+        data = json.loads((tmp_path / "snap.json").read_text(encoding="utf-8"))
+        assert data["text"] == "FEEDTEXT"
+        assert "<html>" in data["html"]
+        assert data["wall"] > 0
+
+    def test_snapshot_fail_open(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("WINLINE_OVERVIEW_SNAPSHOT_PATH",
+                           "/nonexistent-dir-xyz-abc/snap.json")
+        assert runtime._winline_overview_persist_snapshot("t", "h") is False

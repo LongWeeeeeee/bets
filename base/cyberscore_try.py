@@ -18077,12 +18077,44 @@ def _winline_overview_refresh_once() -> bool:
         _winline_overview_state["fetched_at"] = time.time()
         _winline_overview_state["status"] = str(result.get("status") or "ok")
         _winline_overview_state["error"] = str(result.get("error") or "")
+    _winline_overview_persist_snapshot(
+        text, str(result.get("html") or ""))
     # print, а не logger: прод читает print-лог. Одна строка на съём (~45 c+).
     print(
         "🧭 Winline overview: feed "
         f"{len(text)} chars / html {len(str(result.get('html') or ''))}"
     )
     return True
+
+
+WINLINE_OVERVIEW_SNAPSHOT_ENV = "WINLINE_OVERVIEW_SNAPSHOT_PATH"
+
+
+def _winline_overview_snapshot_path() -> Path:
+    raw = str(os.getenv(WINLINE_OVERVIEW_SNAPSHOT_ENV) or "").strip()
+    if raw:
+        return Path(raw)
+    return PROJECT_ROOT / "runtime" / "winline_overview_snapshot.json"
+
+
+def _winline_overview_persist_snapshot(text: Any, html: Any) -> bool:
+    """Сброс успешного feed-снимка на диск (перезапись, fail-open).
+
+    Нужно разработке перечислителя live-карточек поверх снимка
+    (кэфы без моста): структура обзора видна только на реальном дампе.
+    Пишет каждый успешный съём (~45 c+, ~1.5 МБ) — для SSD пренебрежимо.
+    """
+    try:
+        payload = {
+            "wall": time.time(),
+            "text": str(text or "")[:3_000_000],
+            "html": str(html or "")[:1_500_000],
+        }
+        _winline_overview_snapshot_path().write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return True
+    except Exception:
+        return False
 
 
 def _winline_overview_loop() -> None:
