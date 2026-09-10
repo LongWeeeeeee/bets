@@ -704,3 +704,32 @@ python3 scripts/ops/experiments_index.py     # пересобрать реест
     опрос при найденной карточке — `winline_odds_history.jsonl`
     (`match_found`/`market_status`/`miss_fingerprint`).
   Коммиты: перечислитель + `1705a73` (sweep) + observability-fix.
+
+## E-274 — DLTv-live драфт для карточек без моста (10.09.2026)
+
+  Мост молчит (GC stale: «Zero Tenacity 35–33 Dire, GC молчит 5 мин»),
+  а игра идёт на DLTv live: `series.json` (live dict + upcoming status==1
+  со слагом `zero-tenacity-vs-devil-kings-blast-slam-9-...`) +
+  `live/<match_id>.json` (`fast_picks.first/second_team`: 5 hero_id + ники,
+  `players`: account_id — это и есть roster-proof; `db.scores` даёт номер
+  текущей карты = сумма+1). Новый контур в sweep: для допущенных
+  priced-рядов, которыми НЕ владеет мост, `dltv_live_draft_for_card`
+  (слаг-матч обеих команд в любом порядке, пики завершены, 5v5 полные,
+  номер карты обязан совпасть — иначе None) → одно дедуплицированное
+  📡-уведомление `(series, карта, dltv match_id)` через
+  `_winline_send_lifecycle_message`. Гейты лиг не затрагиваются: карточка
+  уже допущена по титулу Winline, DLTv лишь добирает драфт.
+  - Харнесс: `dltv_series_snapshot_20260910.json` (3 live-серии) +
+    `dltv_live_8991962355_20260910.json` (ZT-DK map1, 10–9, 828s) + 16 тестов
+    (поиск в обе стороны, Daxak-RECRENT 8991822559, отказ при map-mismatch,
+    дедуп, skip при владении мостом, счётчик sweep `dltv_draft`).
+  - GREEN в проде: прямой вызов с serv1 —
+    `📡 DLTv-live: draft 5v5 match=8991962355 map=1 t=1153s
+    league=blast-slam-9-europe-open-qualifier-2`; в живом сервисе хук
+    корректно skipped (все 4 ряда забрал мост после рестарта:
+    `skipped_owned: 4`, кэфы ZT-DK текут через мост).
+  - Где искать ошибку: тишина 📡 при bridgeless-ряде — строки `📡 DLTv-live`
+    (`snapshot unavailable` = сеть/DDoS DLTv с serv1; `no live series` =
+    слаг не сматчился; `map mismatch` = не та карта серии; `draft not ready`
+    = пики не завершены); ложный драфт исключён map_num-гейтом.
+  Коммиты: `710e7a1`.
