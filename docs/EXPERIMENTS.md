@@ -733,3 +733,31 @@ python3 scripts/ops/experiments_index.py     # пересобрать реест
     слаг не сматчился; `map mismatch` = не та карта серии; `draft not ready`
     = пики не завершены); ложный драфт исключён map_num-гейтом.
   Коммиты: `710e7a1`.
+
+## E-275 — DLTv-часы в кэфах + драфт при слепом мосте (10.09.2026)
+
+  Жалоба: «не распаршено, в кэфах нет нетворса и времени (🕐 —)».
+  Корень 🕐: часы лежат в `_winline_map_clocks` под ключом серии, мост
+  пишет в `sourcetv:`-неймспейс, а карточки читают `winline:league:` —
+  пересечения нет структурно, карточные сообщения всегда показывали «—».
+  Фикс без правок композитора: sweep отмечает DLTv-часы
+  (`_dltv_parse_live_clock`: game_time, radiant_lead, Radiant/Dire→титулы
+  через full_stats team_id→db id; нераспознанная сторона — «», тогда 🕐
+  есть, а 💰 честно нет) под карточным ключом; уход серии из DLTv-live
+  замораживает часы. Гейт драфта уточнён: отправляем, если пару НЕ видит
+  вживую мост (`_winline_bridge_live_pairs`: свежий status=live ряд,
+  game_time>0, именованные стороны; stale/анонимный мост — не видит).
+  Хук переставлен до `skipped_owned`-continue: раньше owned-ряды до него
+  не доходили вообще (поймано на прод-верификации: ноль 📡-строк).
+  - Харнесс: 23 теста; red→green через реальный
+    `_winline_build_odds_message`: было `stamp='—', networth=''`, стало
+    `20:14` + `Zero Tenacity +5 942` на живом захвате ZT-DK.
+  - GREEN в проде: `📡 clock map=1 t=2154s lead=23037` (CN-DB),
+    `🕐 3:44` в доставленном `first` NAVI–KLIM; guards живьём:
+    `map mismatch dltv=1 card=2`, `draft not ready` (пики идут),
+    `bridge sees ... live — draft stays with bridge`.
+  - ZT-DK map1 к моменту фикса ушла из DLTv-live (карта кончилась) —
+    map2 подхватится автоматически; ROSTIKFACEKID–YBN не матчится
+    (DLTv-слаг `team-ybicanoobov`: аббревиатура YBN + аффиксы —
+    нужен alias-слой, не делаем наугад).
+  Коммиты: `c865019` (часы+гейт), `2950ac5` (хук для owned-рядов).
