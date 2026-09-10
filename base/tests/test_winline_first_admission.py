@@ -545,3 +545,94 @@ class TestOverviewSnapshotPersist:
         monkeypatch.setenv("WINLINE_OVERVIEW_SNAPSHOT_PATH",
                            "/nonexistent-dir-xyz-abc/snap.json")
         assert runtime._winline_overview_persist_snapshot("t", "h") is False
+
+
+class TestCardSweepFromSnapshot:
+    """Sweep кэфов без моста: live-карточки гейтовых лиг из снимка обзора.
+
+    Фикстура — тот же захваченный дамп 10.09.2026 (8 карточек, 4 live).
+    Правила: live + allow-title + не prematch + priced-ряды (cap 2);
+    пару+карту за активным мостовым опросом не дублируем; Mad Dogs —
+    пропуск на гейте; жизненный цикл — только по снимку (терминалу
+    «карта завершена» здесь взяться не из чего: proven всегда False).
+    """
+
+    def _snap(self):
+        path = (Path(__file__).resolve().parent
+                / "fixtures" / "winline_overview_snapshot_20260910.json")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _inject(self, snap):
+        runtime._winline_overview_inject_for_tests(
+            snap["text"], html=snap["html"])
+
+    def test_sweep_ensures_gated_live_cards(self, monkeypatch):
+        snap = self._snap()
+        self._inject(snap)
+        ensured = []
+
+        def _fake_ensure(**kwargs):
+            ensured.append((kwargs["series"], kwargs["map_num"],
+                            kwargs["team1"], kwargs["team2"]))
+            return True
+
+        monkeypatch.setattr(runtime, "ensure_winline_current_map_polling",
+                            _fake_ensure, raising=False)
+        monkeypatch.setattr(runtime, "_winline_current_map_pollers", {},
+                            raising=False)
+        summary = runtime._winline_sweep_cards_from_snapshot()
+        keys = {(s, m) for s, m, _, _ in ensured}
+        leagues = {s.split("|")[0] for s, _, _, _ in ensured}
+        # Star Series + BLAST-квалифа opрашиваются, Mad Dogs — нет.
+        assert any("star series" in str(s) for s, _, _, _ in ensured)
+        assert not any("mad dogs" in str(s).lower()
+                       for s, _, _, _ in ensured)
+        # Только priced map-ряды, prematch-карточки не заводят опросы.
+        assert summary["ensured"] == len(ensured) > 0
+        # Итерация capped (первые 6 из 8: 4 live + 2 prematch), Mad Dogs —
+        # пропуск на гейте.
+        assert summary["cards"] == 6
+        assert summary["skipped_prematch"] >= 2
+        assert summary["skipped_gate"] >= 1
+
+    def test_sweep_skips_bridge_owned_pair_map(self, monkeypatch):
+        snap = self._snap()
+        self._inject(snap)
+        ensured = []
+
+        class _Active:
+            def is_active(self):
+                return True
+
+        monkeypatch.setattr(
+            runtime, "_winline_current_map_pollers",
+            {"sourcetv:league:20159|name:daxak club|name:recrent club"
+             "|map3|Daxak Club|RECRENT CLUB": _Active()},
+            raising=False)
+        monkeypatch.setattr(runtime, "ensure_winline_current_map_polling",
+                            lambda **kw: ensured.append(kw) or True,
+                            raising=False)
+        summary = runtime._winline_sweep_cards_from_snapshot()
+        recrent_maps = {kw["map_num"] for kw in ensured
+                        if "RECRENT" in str(kw["team1"]).upper()}
+        assert 3 not in recrent_maps
+        assert summary["skipped_owned"] >= 1
+
+    def test_card_predicate_confirms_present_card(self):
+        snap = self._snap()
+        runtime._winline_overview_inject_for_tests(
+            snap["text"], html=snap["html"])
+        status = runtime._winline_card_is_current(**{
+            "series": "winline:league:test", "map_num": 3,
+            "team1": "RECRENT CLUB", "team2": "DAXAK CLUB"})
+        assert status["current"] is True and status["confirmed"] is True
+
+    def test_card_predicate_misses_gone_card(self):
+        snap = self._snap()
+        runtime._winline_overview_inject_for_tests(
+            snap["text"], html=snap["html"])
+        status = runtime._winline_card_is_current(**{
+            "series": "winline:league:test", "map_num": 1,
+            "team1": "No Such Team", "team2": "DAXAK CLUB"})
+        assert status["current"] is False
+        assert status.get("proven", False) is False

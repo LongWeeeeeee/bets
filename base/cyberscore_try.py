@@ -18117,6 +18117,213 @@ def _winline_overview_persist_snapshot(text: Any, html: Any) -> bool:
         return False
 
 
+WINLINE_CARD_SWEEP_ENABLED = _env_flag("WINLINE_CARD_SWEEP_ENABLED", "1")
+WINLINE_CARD_SWEEP_MAX_CARDS = int(os.getenv("WINLINE_CARD_SWEEP_MAX_CARDS", "6") or 6)
+WINLINE_CARD_SWEEP_ROWS_PER_CARD = int(os.getenv("WINLINE_CARD_SWEEP_ROWS_PER_CARD", "2") or 2)
+WINLINE_CARD_SWEEP_POLL_INTERVAL_S = float(
+    os.getenv("WINLINE_CARD_SWEEP_POLL_INTERVAL_S", "60") or 60)
+
+
+def _winline_card_series_key(league: Any, team1: Any, team2: Any) -> str:
+    """Ключ серии карточного опроса: титул лиги + нормализованная пара."""
+    try:
+        title = re.sub(r"\s+", " ", str(league or "")).strip().lower()
+        pair = sorted([
+            _winline_normalized_team_identity(team1),
+            _winline_normalized_team_identity(team2),
+        ])
+        if not title or not pair[0] or not pair[1]:
+            return ""
+        return f"winline:league:{title}|{pair[0]}|{pair[1]}"
+    except Exception:
+        return ""
+
+
+def _winline_bridge_owns_card_pair(team1: Any, team2: Any, map_num: Any) -> bool:
+    """Пара+карта уже опрашивается живым мостовым опросом — не дублируем."""
+    try:
+        want = {
+            _winline_normalized_team_identity(team1),
+            _winline_normalized_team_identity(team2),
+        } - {""}
+        want_map = int(map_num)
+    except (TypeError, ValueError):
+        return False
+    if len(want) != 2:
+        return False
+    try:
+        with _winline_current_map_state_lock:
+            items = list(_winline_current_map_pollers.items())
+    except Exception:
+        return False
+    for canonical, poller in items:
+        try:
+            active = bool(poller.is_active()) if poller is not None else False
+        except Exception:
+            active = False
+        if not active:
+            continue
+        try:
+            match = re.match(
+                r"^(.*)\|map([1-5])\|([^|]+)\|([^|]+)$", str(canonical or ""))
+        except Exception:
+            continue
+        if not match or int(match.group(2)) != want_map:
+            continue
+        have = {
+            _winline_normalized_team_identity(match.group(3)),
+            _winline_normalized_team_identity(match.group(4)),
+        } - {""}
+        if have == want:
+            return True
+    return False
+
+
+def _winline_card_is_current(**kwargs: Any) -> Any:
+    """Живость карточного опроса: пара видна в свежем снимке обзора.
+
+    Снимок протух — fail-open True (не наша смерть решать). Пары нет в
+    свежем снимке — current False БЕЗ proven: карточка может вернуться,
+    а ложному «карта завершена» здесь взяться не из чего by design.
+    Подтверждённая карточка несёт confirmed (потолок продлевается,
+    match_id не принимаем — его неоткуда взять, остаётся None).
+    """
+    identity = kwargs.get("identity")
+    if not isinstance(identity, dict):
+        identity = kwargs
+    try:
+        map_num = int(identity.get("map_num"))
+    except (TypeError, ValueError):
+        map_num = None
+    try:
+        max_age = float(WINLINE_OVERVIEW_MAX_AGE_S)
+    except (TypeError, ValueError):
+        max_age = 300.0
+    try:
+        with _winline_overview_lock:
+            text = str(_winline_overview_state.get("text") or "")
+            age = time.time() - float(_winline_overview_state.get("fetched_at") or 0.0)
+    except Exception:
+        return True
+    if age > max_age:
+        return True
+    try:
+        flat = re.sub(r"\s+", " ", text).strip().lower()
+        names = [
+            re.sub(r"\s+", " ", str(identity.get("team1") or "")).strip().lower(),
+            re.sub(r"\s+", " ", str(identity.get("team2") or "")).strip().lower(),
+        ]
+    except Exception:
+        return True
+    if all(name and name in flat for name in names):
+        return {"current": True, "confirmed": True, "map_num": map_num}
+    return {"current": False, "reason": "card_absent", "map_num": map_num}
+
+
+def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
+    """Кэфы без моста: завести опросы priced-map-рядов live-карточек.
+
+    Источник — свежий снимок обзора в памяти (браузера не трогает).
+    Правила (согласованы 10.09.2026): только live-карточки лиг, проходящих
+    allow-title (denylist/skip-титулы не обходятся); только map-ряды с ценами
+    (cap на карточку); пару+карту за АКТИВНЫМ мостовым опросом не дублируем;
+    тикетные безымянные лиги без id в v1 пропускаются (им нужен мост).
+    """
+    summary: Dict[str, int] = {
+        "cards": 0, "ensured": 0, "skipped_prematch": 0,
+        "skipped_gate": 0, "skipped_owned": 0, "skipped_rows": 0,
+    }
+    try:
+        if not WINLINE_CARD_SWEEP_ENABLED or not _winline_first_active():
+            summary["disabled"] = 1
+            return summary
+    except Exception:
+        return summary
+    try:
+        with _winline_overview_lock:
+            html = str(_winline_overview_state.get("html") or "")
+            age = time.time() - float(_winline_overview_state.get("fetched_at") or 0.0)
+        max_age = float(WINLINE_OVERVIEW_MAX_AGE_S)
+    except (TypeError, ValueError):
+        return summary
+    except Exception:
+        return summary
+    if not html or age > max_age:
+        summary["stale"] = 1
+        return summary
+    try:
+        import bookmaker_selenium_odds as _odds_mod
+        cards = _odds_mod.winline_enumerate_live_cards(html)
+    except Exception:
+        summary["parser_unavailable"] = 1
+        return summary
+    try:
+        max_cards = max(1, int(WINLINE_CARD_SWEEP_MAX_CARDS))
+        rows_cap = max(1, int(WINLINE_CARD_SWEEP_ROWS_PER_CARD))
+        poll_interval = max(5.0, float(WINLINE_CARD_SWEEP_POLL_INTERVAL_S))
+    except (TypeError, ValueError):
+        max_cards, rows_cap, poll_interval = 6, 2, 60.0
+    for card in (cards or [])[:max_cards]:
+        try:
+            summary["cards"] += 1
+            if not isinstance(card, dict) or not card.get("live"):
+                summary["skipped_prematch"] += 1
+                continue
+            league = str(card.get("league") or "")
+            try:
+                gated = bool(_league_matches_allowlist(0, league))
+                skipped_title = (
+                    _normalize_live_league_title(league) in SKIPPED_LIVE_LEAGUE_TITLES
+                )
+            except Exception:
+                gated, skipped_title = False, True
+            if not gated or skipped_title:
+                summary["skipped_gate"] += 1
+                continue
+            team1 = str(card.get("team1") or "").strip()
+            team2 = str(card.get("team2") or "").strip()
+            if not team1 or not team2:
+                summary["skipped_rows"] += 1
+                continue
+            priced = [r for r in (card.get("rows") or [])
+                      if isinstance(r, dict) and r.get("kind") == "map"
+                      and r.get("map_num") and r.get("has_prices")][:rows_cap]
+            if not priced:
+                summary["skipped_rows"] += 1
+                continue
+            for row in priced:
+                try:
+                    map_num = int(row.get("map_num"))
+                except (TypeError, ValueError):
+                    continue
+                if _winline_bridge_owns_card_pair(team1, team2, map_num):
+                    summary["skipped_owned"] += 1
+                    continue
+                series = _winline_card_series_key(league, team1, team2)
+                if not series:
+                    continue
+                try:
+                    ok = ensure_winline_current_map_polling(
+                        series=series,
+                        map_num=map_num,
+                        team1=team1,
+                        team2=team2,
+                        selected_side=None,
+                        is_map_current=_winline_card_is_current,
+                        match_id=None,
+                        update_registry=False,
+                        poll_interval_seconds=poll_interval,
+                    )
+                except Exception:
+                    ok = False
+                if ok:
+                    summary["ensured"] += 1
+        except Exception:
+            continue
+    print(f"🧹 Winline card sweep: {summary}")
+    return summary
+
+
 def _winline_overview_loop() -> None:
     # Бэкофф consecutive-промахов: без сессии/страницы поток не должен висеть
     # на 60-секундных таймаутах впритык (они же конкурируют с поллером за
@@ -18139,6 +18346,12 @@ def _winline_overview_loop() -> None:
                     consecutive_fails = 0
                     with _winline_overview_lock:
                         _winline_overview_state["next_retry_at"] = 0.0
+                    # Кэфы без моста: свежий снимок уже в памяти, браузер
+                    # не трогаем. Ошибки sweep глушим — это довесок, а не ядро.
+                    try:
+                        _winline_sweep_cards_from_snapshot()
+                    except Exception:
+                        pass
                 else:
                     consecutive_fails += 1
                     backoff = min(300.0, 10.0 * (2.0 ** min(consecutive_fails, 5)))
