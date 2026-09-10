@@ -18306,11 +18306,27 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
                     map_num = int(row.get("map_num"))
                 except (TypeError, ValueError):
                     continue
-                if _winline_bridge_owns_card_pair(team1, team2, map_num):
-                    summary["skipped_owned"] += 1
-                    continue
                 series = _winline_card_series_key(league, team1, team2)
                 if not series:
+                    continue
+                # DLTv-подпитка идёт для ВСЕХ priced-рядов, включая owned:
+                # часы (🕐/💰) чинятся и под мостовыми опросами (у них
+                # карточный ключ серии), а драфт внутри сам проверяет,
+                # видит ли пару вживую мост. Поэтому вызов — до continue.
+                try:
+                    if _winline_card_dltv_draft_notify(
+                        league=league,
+                        team1=team1,
+                        team2=team2,
+                        map_num=map_num,
+                        series_key=series,
+                        bridge_live_pairs=bridge_live_pairs,
+                    ):
+                        summary["dltv_draft"] = int(summary.get("dltv_draft") or 0) + 1
+                except Exception:
+                    pass
+                if _winline_bridge_owns_card_pair(team1, team2, map_num):
+                    summary["skipped_owned"] += 1
                     continue
                 try:
                     ok = ensure_winline_current_map_polling(
@@ -18328,18 +18344,6 @@ def _winline_sweep_cards_from_snapshot() -> Dict[str, int]:
                     ok = False
                 if ok:
                     summary["ensured"] += 1
-                try:
-                    if _winline_card_dltv_draft_notify(
-                        league=league,
-                        team1=team1,
-                        team2=team2,
-                        map_num=map_num,
-                        series_key=series,
-                        bridge_live_pairs=bridge_live_pairs,
-                    ):
-                        summary["dltv_draft"] = int(summary.get("dltv_draft") or 0) + 1
-                except Exception:
-                    pass
         except Exception:
             continue
     print(f"🧹 Winline card sweep: {summary}")

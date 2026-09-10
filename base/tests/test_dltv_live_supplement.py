@@ -336,3 +336,38 @@ def test_sweep_counts_dltv_draft(monkeypatch):
     assert summary.get("dltv_draft") == len(calls)
     assert all("map_num" in kw and "team1" in kw for kw in calls)
     assert all("bridge_live_pairs" in kw for kw in calls)
+
+
+def test_sweep_consults_dltv_hook_for_owned_rows(monkeypatch):
+    """Хук достижим и для owned-рядов: часы чинятся и под мостом."""
+    from pathlib import Path
+    snap_path = (Path(__file__).resolve().parent / "fixtures"
+                 / "winline_overview_snapshot_20260910.json")
+    snap = json.loads(snap_path.read_text(encoding="utf-8"))
+    cs._winline_overview_inject_for_tests(snap["text"], html=snap["html"])
+
+    class _Active:
+        def is_active(self):
+            return True
+
+    monkeypatch.setattr(
+        cs, "_winline_current_map_pollers",
+        {"sourcetv:league:20159|name:daxak club|name:recrent club"
+         "|map3|Daxak Club|RECRENT CLUB": _Active()},
+        raising=False)
+    monkeypatch.setattr(cs, "ensure_winline_current_map_polling",
+                        lambda **kw: True, raising=False)
+    calls = []
+    monkeypatch.setattr(cs, "_winline_card_dltv_draft_notify",
+                        lambda **kw: calls.append(kw) or False,
+                        raising=False)
+    summary = cs._winline_sweep_cards_from_snapshot()
+    owned_calls = [
+        kw for kw in calls
+        if {cs._winline_normalized_team_identity(kw["team1"]),
+            cs._winline_normalized_team_identity(kw["team2"])}
+        == {"daxak club", "recrent club"}
+        and int(kw["map_num"]) == 3
+    ]
+    assert owned_calls, "owned map3 must still reach the DLTv hook"
+    assert summary["skipped_owned"] >= 1
