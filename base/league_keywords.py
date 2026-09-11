@@ -34,12 +34,6 @@ TOURNAMENT_TITLE_ALLOW_KEYWORDS = frozenset({
     'fissure', 'pgl', 'international',
     'european', 'epl', 'esl', 'cct',
     '1win',
-    # 10.09.2026, решение alex: впускать все лиги букмекера словом 'winline',
-    # а не точечными id (20159 'WINLINE Star Series Season 4' отбросила probe,
-    # Recrent–Daxak шли мимо). Проверено: ни одна команда справочников
-    # (id_to_names, tier_three, org aliases) не содержит 'winline', токен
-    # нижнего регистра ловит любое обрамление и номер сезона.
-    'winline',
 })
 
 # Многословные фразы — матч по ПОДСТРОКЕ в полном названии (не по токену),
@@ -80,6 +74,12 @@ TOURNAMENT_TITLE_ALLOW_PHRASES = (
     # текста карточки cyberscore. Ловит 'Asgard Championship Season N' при
     # любом обрамлении и номере сезона.
     'asgard',
+    # 11.09.2026, решение alex: вместо общего токена 'winline' (10.09.2026,
+    # впускал ВСЕ лиги букмекера, включая 'Winline Super Mixer') — только две
+    # фразы. Фразой, а не токеном: токен 'winline' протащил бы Super Mixer.
+    # Фразы ловят сезоны и обрамление при любом номере сезона.
+    'winline star series',
+    'winline insight',
 )
 
 # Тикеты, у которых название Valve не имеет ничего общего с турниром. Сверять

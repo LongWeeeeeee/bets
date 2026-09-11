@@ -38,18 +38,23 @@ def test_non_keyword_leagues_excluded():
     assert not lk.title_matches_allow_keywords("Random Community Cup")
 
 
-def test_winline_token_admits_star_series():
-    """Токен 'winline' впускает все лиги букмекера, а не точечный id.
+def test_winline_only_star_series_and_insight_pass():
+    """Только 'Winline Star Series' и 'Winline Insight', общий 'winline' закрыт.
 
     10.09.2026: probe отбросил Recrent Club vs Daxak Club — лига 20159
-    'WINLINE Star Series Season 4' вне allowlist, ни кэфов ни драфта не было,
-    хотя игра шла в GC. Решение alex: впускать по слову 'winline', а не по id.
-    Проверено: ни одна команда справочников не содержит 'winline' в имени,
-    токен-матчинг (не подстрока) не ловит ничего лишнего.
+    'WINLINE Star Series Season 4' вне allowlist; впускали общим токеном
+    'winline'. 11.09.2026, решение alex: общий токен впускал и посторонний
+    'Winline Super Mixer' — вместо токена только две фразы.
     """
     assert lk.title_matches_allow_keywords("WINLINE Star Series Season 4")
-    assert lk.title_matches_allow_keywords("Winline Dota 2 Champions League")
+    assert lk.title_matches_allow_keywords("WINLINE Star Series Season 5")
+    assert lk.title_matches_allow_keywords("Winline Insight Season 1")
     assert lk.league_matches_allowlist(20159, "WINLINE Star Series Season 4")
+    # Общий токен закрыт: Super Mixer и прочие лиги букмекера не проходят.
+    assert not lk.title_matches_allow_keywords("Winline Super Mixer Season 3")
+    assert not lk.title_matches_allow_keywords("Winline Super Mixer")
+    assert not lk.title_matches_allow_keywords("Winline Dota 2 Champions League")
+    assert not lk.league_matches_allowlist(99999, "Winline Super Mixer Season 3")
     assert not lk.title_matches_allow_keywords("Ultras Dota Pro League  2025-26")
 
 
