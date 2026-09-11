@@ -135,6 +135,8 @@ opencode*.json  # профили OpenCode; не конфиг Codex/Cursor swarm
 
 В Telegram остаётся один блок «ELO состава (как в ML)». Строка «ELO модели» со старым account-ELO и запасной расчёт из kills-priors удалены. Признаки `elo` K24/`opp_elo` внутри обученной модели и диагностический `last_model_elo` сохранены. Кэши снимка, модели и живых обновлений учитывают замену файлов; `hybrid_block` обновляется при изменении снимка или дельты. Предпросмотр не добавляет нулевые счётчики в состояние модели. Проверки и ограничения: [E-261](experiments/E-261-unified-live-elo-contract.md).
 
+Живые результаты и ожидающие карты сохраняются при смене ELO-среза через `rebase_runtime_model_state` и replayable progress; CLI принимает `--snapshot`, `--state`, `--progress`. Точное покрытие свежих результатов хранится в `meta.recent_completed_match_ids`/`recent_completed_match_ids_coverage_since`; неоднозначный перенос останавливается до записи. Ночная цепочка заменяет подготовленный снимок только после успешной перебазировки. Контракт и инцидент: [сохранение живых результатов](elo-live-rebase.md).
+
 ### Импорты из `functions`
 `send_message`, `drain_telegram_admin_commands`, `synergy_and_counterpick`, `calculate_lanes`, `calculate_lane_kills_advantage`, `format_output_dict`, `STAR_THRESHOLDS_BY_WR`, `STAR_DISABLED_METRICS`, `TelegramSendError`.
 Из `keys`: `api_to_proxy`, `BOOKMAKER_PROXY_URL`, `BOOKMAKER_PROXY_POOL`, `DLTV_PROXY_POOL`.

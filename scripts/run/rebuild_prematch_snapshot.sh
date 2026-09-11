@@ -35,6 +35,7 @@ LOG="${LOG:-runtime/prematch_rebuild_$(date +%Y%m%d_%H%M).log}"
 SERV1=root@23.26.193.167
 
 run_chain() {
+  ELO_SNAPSHOT_STAGED=0
   echo "=== $(date '+%F %T') пересборка снимка предматчевой модели ==="
   # Страховка от молчащего добора: 25.08–01.09.2026 launchd не запускал 04:30-джобу
   # 8 ночей, и снимок уезжал на прод с корпусом 23.08 (sha1 не менялся). Если за
@@ -93,9 +94,8 @@ run_chain() {
     L=$(shasum -a 1 ELO/output/live_team_elo_snapshot.json | cut -d' ' -f1)
     R=$(ssh "$SERV1" "sha1sum /root/main/ELO/output/live_team_elo_snapshot.json.tmp | cut -d' ' -f1")
     if [ "$L" = "$R" ]; then
-      ssh "$SERV1" "mv /root/main/ELO/output/live_team_elo_snapshot.json.tmp \
-                       /root/main/ELO/output/live_team_elo_snapshot.json"
-      echo "ELO-снимок доставлен: sha1 $L"
+      ELO_SNAPSHOT_STAGED=1
+      echo "ELO-снимок подготовлен: sha1 $L; замена после сохранения живых результатов"
     else
       ssh "$SERV1" "rm -f /root/main/ELO/output/live_team_elo_snapshot.json.tmp"
       echo "ВНИМАНИЕ: ELO-снимок доехал битым ($R против $L) — на проде остался прежний"
@@ -203,24 +203,43 @@ CHECK
 
   # 8. рестарт прода и чистка map_id_check — иначе новый снимок не читается,
   #    а уже разобранные карты не переоцениваются.
-  #    Порядок важен: СНАЧАЛА остановить, затем перебазировать рантайм-состояние
-  #    ELO на только что доставленный снимок, затем очистить map_id_check и
-  #    запустить. Без перебазировки новый процесс отклонит рантайм-состояние по
-  #    несовпавшей базе (live_team_strength.py:590-603) и уйдёт в
-  #    `full_model_state()` — разбор всего model_state, ~3 ГБ RSS, которые
-  #    процесс уже не отдаст (E-251; замер 03.09: три такие догрузки в логе, по
-  #    одной на каждую доставку снимка). Отказ перебазировки запуск НЕ
-  #    блокирует: прод в худшем случае заплатит прежние 3 ГБ однократно.
-  ssh "$SERV1" "systemctl stop cyberscore.service && \
-                { cd /root/main && venv/bin/python3 ELO/rebase_runtime_model_state.py || \
-                  echo 'ВНИМАНИЕ: перебазировка ELO-состояния не удалась'; } && \
-                { cd /root/main && venv/bin/python3 ELO/convert_state_to_delta.py --if-stale || \
-                  echo 'ВНИМАНИЕ: обновление ELO-дельты не удалось'; } && \
-                { cd /root/main && venv/bin/python3 ELO/build_state_arrays.py || \
-                  echo 'ВНИМАНИЕ: sidecar массивов ELO не собрался'; } && \
-                : > /root/.local/state/ingame/map_id_check.txt && \
-                systemctl start cyberscore.service && sleep 3 && \
-                systemctl is-active cyberscore.service"
+  #    Живые результаты после среза должны пережить замену базы. Новый снимок
+  #    остаётся .tmp, пока перебазировка не проверит и не сохранит их. При
+  #    отказе прод возвращается на прежний снимок, а цепочка сообщает ошибку.
+  ssh "$SERV1" bash -s -- "$ELO_SNAPSHOT_STAGED" <<'ELO_REBASE_REMOTE'
+set -e
+cd /root/main
+snapshot=ELO/output/live_team_elo_snapshot.json
+staged_snapshot="$snapshot"
+if [ "$1" = 1 ]; then
+  staged_snapshot="$snapshot.tmp"
+fi
+systemctl stop cyberscore.service
+if venv/bin/python3 ELO/rebase_runtime_model_state.py --snapshot "$staged_snapshot"; then
+  :
+else
+  rebase_status=$?
+  if [ "$rebase_status" -ne 1 ]; then
+    echo 'ОШИБКА: целостность runtime ELO не подтверждена; сервис оставлен остановленным'
+    exit "$rebase_status"
+  fi
+  echo 'ОШИБКА: перебазировка ELO отклонена; новый снимок не установлен'
+  : > /root/.local/state/ingame/map_id_check.txt
+  systemctl start cyberscore.service
+  exit 1
+fi
+if [ "$1" = 1 ]; then
+  mv "$staged_snapshot" "$snapshot"
+fi
+venv/bin/python3 ELO/convert_state_to_delta.py --if-stale || \
+  echo 'ВНИМАНИЕ: обновление ELO-дельты не удалось; сохранено полное состояние'
+venv/bin/python3 ELO/build_state_arrays.py || \
+  echo 'ВНИМАНИЕ: sidecar массивов ELO не собрался'
+: > /root/.local/state/ingame/map_id_check.txt
+systemctl start cyberscore.service
+sleep 3
+systemctl is-active cyberscore.service
+ELO_REBASE_REMOTE
   # Sidecar собирается ИМЕННО здесь, на только что доставленном снимке и при
   # остановленном проде: сборщик платит потоковым проходом по 616 МБ (~40 c,
   # пик ~1.8 ГБ), а живой процесс потом читает готовые массивы за 0.2 c и

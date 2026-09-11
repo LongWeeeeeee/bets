@@ -11,11 +11,10 @@
 одной на каждую доставку снимка, и RSS процесса 6.42 ГБ при slim-загрузке,
 которая стоит 0.83 ГБ (E-251).
 
-ЧТО ДЕЛАЕТ. Берёт `model_state` из снимка и пишет рантайм-файл с новыми
-`base_reference_timestamp` / `base_model_config_signature`, атомарно (tmp +
-os.replace). Накопленные живые обновления при этом сбрасываются — ровно то же
-самое рантайм делает при смене базы сам (`:566-573`: progress.appled_maps
-обнуляется), только здесь это происходит ДО старта процесса и вне его памяти.
+ЧТО ДЕЛАЕТ. Берёт `model_state` из снимка и перебирает сохранённый live-ledger:
+результаты, которых снимок точно ещё не содержит, накладываются на новую базу;
+покрытые снимком не применяются второй раз. Неоднозначное пересечение или
+старый ledger без полного контекста останавливают перебазировку до записи.
 
 GUARD. Если база УЖЕ совпадает со снимком, файл не трогается вовсе: иначе
 перебазировка выбросила бы живые обновления рейтингов, накопленные с момента
@@ -25,17 +24,17 @@ GUARD. Если база УЖЕ совпадает со снимком, файл
 КОГДА ЗАПУСКАТЬ. На боевой машине между `systemctl stop` и `systemctl start`
 (ночная цепочка, шаг 8): процесс разбора кратковременный и ест ~4 ГБ, при
 остановленном проде это безопасно, при работающем — конкурирует с ним за память.
-Отказ инструмента НЕ должен блокировать запуск прода: цепочка зовёт его через
-`||`, и тогда прод просто заплатит прежние ~3 ГБ однократно.
+Код возврата `1` означает отказ до записи либо полный rollback — старая база
+может быть запущена. Код `2` означает, что rollback не доказан: promotion
+снимка и запуск сервиса надо оставить остановленными до ручной проверки.
 
-Запуск: venv/bin/python3 ELO/rebase_runtime_model_state.py [--snapshot PATH] [--state PATH] [--force]
+Запуск: venv/bin/python3 ELO/rebase_runtime_model_state.py [--snapshot PATH] [--state PATH] [--progress PATH] [--force]
 """
 from __future__ import annotations
 
 import argparse
 import json
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -47,52 +46,47 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--snapshot", type=Path, default=lts.DEFAULT_SNAPSHOT_PATH)
     parser.add_argument("--state", type=Path, default=lts.DEFAULT_RUNTIME_MODEL_STATE_PATH)
+    parser.add_argument("--progress", type=Path, default=lts.DEFAULT_RUNTIME_PROGRESS_PATH)
     parser.add_argument("--force", action="store_true",
                         help="перебазировать даже если база уже совпадает "
-                             "(сбросит живые обновления рейтингов)")
+                             "(пересобрать из снимка и live-ledger)")
     args = parser.parse_args(argv)
 
     if not args.snapshot.exists():
         print(f"ОШИБКА: снимок не найден: {args.snapshot}", file=sys.stderr)
         return 1
 
-    reference = None
-    signature = None
-    existing = lts._load_json_dict(args.state) if args.state.exists() else None
-    if isinstance(existing, dict):
-        try:
-            reference = int(existing.get("base_reference_timestamp") or 0)
-        except (TypeError, ValueError):
-            reference = None
-        signature = str(existing.get("base_model_config_signature") or "")
-
     with args.snapshot.open("r", encoding="utf-8") as fh:
         snapshot = json.load(fh)
     want_reference = lts._snapshot_reference_timestamp(snapshot)
     want_signature = lts._snapshot_model_config_signature(snapshot)
-    state = snapshot.get("model_state")
-    if not isinstance(state, dict):
-        print("ОШИБКА: в снимке нет model_state — перебазировать не на что",
-              file=sys.stderr)
+    try:
+        changed = lts.rebase_runtime_model_state(
+            snapshot=snapshot,
+            runtime_model_state_path=args.state,
+            progress_path=args.progress,
+            force=args.force,
+            create_if_absent=True,
+        )
+    except lts.RuntimeRebaseRollbackError as exc:
+        print(f"ОШИБКА: {exc}", file=sys.stderr)
+        return 2
+    except lts.RuntimeRebaseError as exc:
+        print(f"ОШИБКА: {exc}", file=sys.stderr)
         return 1
+    except OSError as exc:
+        print(f"ОШИБКА: частичная запись runtime state/progress ({exc}); "
+              "повторите перебазировку до promotion снимка", file=sys.stderr)
+        return 2
 
-    if not args.force and reference == want_reference and signature == want_signature:
-        print(f"база уже совпадает ({want_reference}), рантайм-состояние не тронуто "
+    if not changed:
+        print(f"база уже совпадает ({want_reference}), рантайм-состояние и progress не тронуто "
               f"— живые обновления сохранены")
         return 0
 
-    payload = {
-        "base_reference_timestamp": int(want_reference),
-        "base_model_config_signature": str(want_signature),
-        "updated_at": int(time.time()),
-        "model_state": state,
-    }
-    lts._write_json_atomic(args.state, payload)
     print(f"перебазировано: {args.state}")
-    print(f"  база была: {reference} / {str(signature)[:12]}…")
     print(f"  база стала: {want_reference} / {want_signature[:12]}…")
-    print(f"  разделов model_state: {len(state)}, размер файла "
-          f"{args.state.stat().st_size / 1048576:.0f} МБ")
+    print(f"  размер файла: {args.state.stat().st_size / 1048576:.0f} МБ")
     return 0
 
 

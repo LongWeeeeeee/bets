@@ -48,6 +48,12 @@ DEFAULT_DATA_DIR = (
 DEFAULT_SNAPSHOT_PATH = Path(__file__).resolve().parent / "output" / "live_team_elo_snapshot.json"
 DEFAULT_RUNTIME_PROGRESS_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_progress.json"
 DEFAULT_RUNTIME_MODEL_STATE_PATH = Path(__file__).resolve().parents[1] / "runtime" / "live_elo_model_state.json"
+
+# A rebase needs to know whether a just-finished live map is already part of a
+# newly-built snapshot.  Keeping every historical id would make the snapshot
+# needlessly large; this bounded, exact tail covers the only interval in which
+# a stopped live process can overlap the next rebuild.
+SNAPSHOT_RECENT_RESULT_COVERAGE_SECONDS = 7 * SECONDS_PER_DAY
 #: Живые обновления как ДЕЛЬТА поверх базовых массивов снимка (E-255).
 #: Прежнее полное состояние (`live_elo_model_state.json`, 519 МБ) перезаписывалось
 #: целиком после каждой карты ради ~70-100 изменившихся значений и требовало
@@ -407,6 +413,21 @@ def _coerce_player_ids(raw_player_ids: Any) -> tuple[int, ...]:
     return tuple(player_ids)
 
 
+def _coerce_player_positions(raw_positions: Any) -> tuple[str | None, ...]:
+    if not isinstance(raw_positions, (list, tuple)):
+        return ()
+    return tuple(str(position) if position is not None else None for position in raw_positions)
+
+
+def _coerce_optional_int(raw: Any) -> int | None:
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _array_model_for_base_snapshot(snapshot_path: Path):
     """Массивная модель базового снимка — вместо полного `model_state`.
 
@@ -628,6 +649,10 @@ def _serialize_match_record(match: MatchRecord) -> dict[str, Any]:
         "dire_team_name": str(match.dire_team_name),
         "radiant_player_ids": [int(player_id) for player_id in match.radiant_player_ids],
         "dire_player_ids": [int(player_id) for player_id in match.dire_player_ids],
+        "radiant_player_positions": list(match.radiant_player_positions),
+        "dire_player_positions": list(match.dire_player_positions),
+        "radiant_kills": match.radiant_kills,
+        "dire_kills": match.dire_kills,
         "league_id": match.league_id,
         "league_name": str(match.league_name),
         "source_league_tier": match.source_league_tier,
@@ -658,6 +683,10 @@ def _deserialize_match_record(raw: dict[str, Any], *, radiant_win: bool) -> Matc
             series_id=int(raw["series_id"]) if raw.get("series_id") is not None else None,
             series_type=(str(raw.get("series_type")) if raw.get("series_type") is not None else None),
             source_patch=(str(raw.get("source_patch")) if raw.get("source_patch") is not None else None),
+            radiant_player_positions=_coerce_player_positions(raw.get("radiant_player_positions")),
+            dire_player_positions=_coerce_player_positions(raw.get("dire_player_positions")),
+            radiant_kills=_coerce_optional_int(raw.get("radiant_kills")),
+            dire_kills=_coerce_optional_int(raw.get("dire_kills")),
             duration_seconds=raw.get("duration_seconds"),
             derived_league_tier=tier,
         )
@@ -720,6 +749,434 @@ def _load_runtime_model_payload(
     if not isinstance(payload.get("model_state"), dict):
         return None
     return payload
+
+
+class RuntimeRebaseError(ValueError):
+    """A live ELO overlay cannot be safely carried onto a new base."""
+
+
+class RuntimeRebaseRollbackError(RuntimeRebaseError):
+    """A failed rebase could not prove restoration of every changed artifact."""
+
+
+def _payload_base(payload: dict[str, Any] | None) -> tuple[int, str]:
+    if not isinstance(payload, dict):
+        return 0, ""
+    try:
+        reference = int(payload.get("base_reference_timestamp") or 0)
+    except (TypeError, ValueError):
+        reference = 0
+    return reference, str(payload.get("base_model_config_signature") or "")
+
+
+def _progress_has_outstanding_work(payload: dict[str, Any] | None) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    return bool(payload.get("pending_series")) or bool(payload.get("applied_maps"))
+
+
+def _snapshot_recent_completed_ids(snapshot: dict[str, Any]) -> tuple[int, set[int]] | None:
+    meta = snapshot.get("meta") if isinstance(snapshot.get("meta"), dict) else {}
+    try:
+        coverage_since = int(meta.get("recent_completed_match_ids_coverage_since"))
+    except (TypeError, ValueError):
+        return None
+    raw_ids = meta.get("recent_completed_match_ids")
+    if not isinstance(raw_ids, list):
+        return None
+    try:
+        return coverage_since, {int(match_id) for match_id in raw_ids}
+    except (TypeError, ValueError):
+        return None
+
+
+def _snapshot_covered_tombstone(
+    match_id: int,
+    *,
+    snapshot_reference: int,
+    match: MatchRecord | None = None,
+) -> dict[str, Any]:
+    """Keep a bounded proof that a live map was already in a snapshot."""
+    tombstone: dict[str, Any] = {
+        "match_id": int(match_id),
+        "snapshot_covered": True,
+        "snapshot_covered_reference": int(snapshot_reference),
+    }
+    if match is not None and match.result_timestamp is not None:
+        tombstone["snapshot_covered_result_timestamp"] = int(match.result_timestamp)
+    return tombstone
+
+
+def _applied_entry_for_rebase(
+    raw: Any,
+    *,
+    snapshot_reference: int,
+    recent_completed_ids: tuple[int, set[int]] | None,
+) -> tuple[str, MatchRecord | None, int | None]:
+    """Classify an old live result as covered, replayable, or unsafe.
+
+    `result_timestamp` is when live ELO processed a result, rather than proof
+    of when the upstream corpus learned it.  We therefore use only an actual
+    source finish (when available), a start after the snapshot cutoff, or the
+    snapshot's bounded exact id coverage to decide membership.
+    """
+    if not isinstance(raw, dict):
+        raise RuntimeRebaseError("некорректная запись применённой live-карты")
+    match_id = _coerce_optional_int(raw.get("match_id"))
+    if raw.get("snapshot_covered") is True:
+        if match_id is None:
+            raise RuntimeRebaseError("snapshot tombstone не содержит match_id")
+        covered_reference = _coerce_optional_int(raw.get("snapshot_covered_reference"))
+        if covered_reference is None:
+            raise RuntimeRebaseError("snapshot tombstone не содержит reference покрытия")
+        if snapshot_reference < covered_reference:
+            raise RuntimeRebaseError(
+                f"snapshot tombstone {match_id} новее текущего cutoff; "
+                "перебазировка отменена"
+            )
+        result_timestamp = _coerce_optional_int(raw.get("snapshot_covered_result_timestamp"))
+        retention_origin = result_timestamp if result_timestamp is not None else covered_reference
+        if snapshot_reference > retention_origin + SNAPSHOT_RECENT_RESULT_COVERAGE_SECONDS:
+            return "expired", None, None
+        if recent_completed_ids is None or match_id not in recent_completed_ids[1]:
+            raise RuntimeRebaseError(
+                f"snapshot tombstone {match_id} не подтверждён новым снимком; "
+                "перебазировка отменена"
+            )
+        return "tombstone", None, None
+    # Exact snapshot membership is sufficient even for an old compact ledger
+    # entry that predates full replay context.
+    if (match_id is not None and recent_completed_ids is not None
+            and match_id in recent_completed_ids[1]):
+        covered_match = None
+        if isinstance(raw.get("radiant_win"), bool) and isinstance(raw.get("match_record"), dict):
+            covered_match = _deserialize_match_record(raw["match_record"], radiant_win=raw["radiant_win"])
+        return "covered", covered_match, None
+    radiant_win = raw.get("radiant_win")
+    record_raw = raw.get("match_record")
+    if not isinstance(radiant_win, bool) or not isinstance(record_raw, dict):
+        raise RuntimeRebaseError(
+            "post-cutoff live-карта не содержит полного match_record/outcome; "
+            "перебазировка отменена"
+        )
+    match = _deserialize_match_record(record_raw, radiant_win=radiant_win)
+    if match is None:
+        raise RuntimeRebaseError("post-cutoff live-карта содержит неразбираемый match_record")
+    result_timestamp = _coerce_optional_int(raw.get("result_timestamp"))
+    if result_timestamp is None:
+        # `applied_at` was the old name of the model event timestamp.  It is
+        # valid only together with the now-required full replay context.
+        result_timestamp = _coerce_optional_int(raw.get("applied_at"))
+    if result_timestamp is None or result_timestamp < match.timestamp:
+        raise RuntimeRebaseError("post-cutoff live-карта не содержит корректный result timestamp")
+
+    def _replay() -> tuple[str, MatchRecord, int]:
+        if result_timestamp <= snapshot_reference:
+            raise RuntimeRebaseError(
+                f"live-карта {match.match_id} отсутствует в snapshot, но её result timestamp "
+                f"({result_timestamp}) не позже cutoff ({snapshot_reference}); "
+                "перебазировка отменена без изменения порядка ELO-событий"
+            )
+        return "replay", match, result_timestamp
+
+    source_result_timestamp = match.result_timestamp
+    if source_result_timestamp is not None and source_result_timestamp > snapshot_reference:
+        return _replay()
+    if match.timestamp > snapshot_reference:
+        return _replay()
+
+    if recent_completed_ids is not None:
+        coverage_since, completed_ids = recent_completed_ids
+        # Positive membership is exact even when live context had no map
+        # duration (the common score-observation path).
+        if match.match_id in completed_ids:
+            return "covered", match, result_timestamp
+        if (source_result_timestamp is not None
+                and coverage_since <= source_result_timestamp <= snapshot_reference):
+            return _replay()
+
+    raise RuntimeRebaseError(
+        f"live-карта {match.match_id} пересекает cutoff {snapshot_reference}, "
+        "а снимок не доказывает её membership; перебазировка отменена"
+    )
+
+
+def _pending_entry_for_rebase(
+    pending_map: Any,
+    *,
+    snapshot_reference: int,
+    recent_completed_ids: tuple[int, set[int]] | None,
+) -> tuple[str, MatchRecord]:
+    if not isinstance(pending_map, dict):
+        raise RuntimeRebaseError("некорректная pending live-карта")
+    record_raw = pending_map.get("match_record")
+    if not isinstance(record_raw, dict):
+        raise RuntimeRebaseError("pending live-карта не содержит полного match_record")
+    # The eventual winner is unknown, but all fields relevant to membership
+    # are independent of it.
+    match = _deserialize_match_record(record_raw, radiant_win=False)
+    if match is None:
+        raise RuntimeRebaseError("pending live-карта содержит неразбираемый match_record")
+    source_result_timestamp = match.result_timestamp
+    if source_result_timestamp is not None and source_result_timestamp > snapshot_reference:
+        return "pending", match
+    if match.timestamp > snapshot_reference:
+        return "pending", match
+    if recent_completed_ids is not None:
+        coverage_since, completed_ids = recent_completed_ids
+        if match.match_id in completed_ids:
+            return "covered", match
+        if (source_result_timestamp is not None
+                and coverage_since <= source_result_timestamp <= snapshot_reference):
+            return "pending", match
+    raise RuntimeRebaseError(
+        f"pending live-карта {match.match_id} пересекает cutoff {snapshot_reference}, "
+        "а снимок не доказывает её membership; перебазировка отменена"
+    )
+
+
+def rebase_runtime_model_state(
+    *,
+    snapshot: dict[str, Any],
+    runtime_model_state_path: Path,
+    progress_path: Path,
+    force: bool = False,
+    create_if_absent: bool = False,
+) -> bool:
+    """Carry a compatible live ledger onto `snapshot`, atomically per file.
+
+    Validation and replay happen before either runtime file is replaced.  If a
+    later atomic replace fails, rerunning is safe: the staged state is rebuilt
+    from the snapshot and the still-old progress ledger, never trusted as an
+    overlay by itself.
+    """
+    want_reference = _snapshot_reference_timestamp(snapshot)
+    want_signature = _snapshot_model_config_signature(snapshot)
+    progress_payload = _load_json_dict(progress_path)
+    progress_base = _payload_base(progress_payload)
+    want_base = (want_reference, want_signature)
+    pending_overlay_commit = (
+        progress_payload.get("pending_overlay_commit")
+        if isinstance(progress_payload, dict) else None
+    )
+    # This function is called from every live registration.  Progress is a
+    # tiny ledger, whereas the compatibility full-state may be hundreds of MB;
+    # a current ledger also proves the overlay belongs to this base, so never
+    # parse the full-state on the steady delta path.
+    if not create_if_absent:
+        if not isinstance(progress_payload, dict):
+            if runtime_model_state_path.exists():
+                raise RuntimeRebaseError(
+                    "runtime model_state есть, но progress отсутствует; "
+                    "live rebase без ledger небезопасен"
+                )
+            return False
+        if progress_base == want_base and not isinstance(pending_overlay_commit, dict):
+            return False
+
+    state_payload = _load_json_dict(runtime_model_state_path)
+    # First observation of a map has no live result or overlay yet.  Do not
+    # materialize a full runtime state merely because no runtime files exist.
+    if (not create_if_absent
+            and not isinstance(state_payload, dict)
+            and not isinstance(progress_payload, dict)):
+        return False
+    state_base = _payload_base(state_payload)
+
+    if not force and not isinstance(pending_overlay_commit, dict) and state_base == want_base and (
+        not isinstance(progress_payload, dict) or progress_base == want_base
+    ):
+        return False
+
+    # The old full state supplied only its base header.  Do not retain its
+    # large dictionaries while replaying and serializing the replacement.
+    del state_payload
+    has_work = _progress_has_outstanding_work(progress_payload)
+    if has_work and progress_base[1] != want_signature:
+        raise RuntimeRebaseError(
+            "подпись базового снимка изменилась при незавершённой live-работе; "
+            "перебазировка отменена"
+        )
+
+    base_state = full_model_state(snapshot)
+    if not isinstance(base_state, dict):
+        raise RuntimeRebaseError("в новом снимке нет model_state для перебазировки")
+    recent_completed_ids = _snapshot_recent_completed_ids(snapshot)
+    old_applied = (progress_payload or {}).get("applied_maps") if isinstance(progress_payload, dict) else {}
+    old_pending = (progress_payload or {}).get("pending_series") if isinstance(progress_payload, dict) else {}
+    if not isinstance(old_applied, dict) or not isinstance(old_pending, dict):
+        raise RuntimeRebaseError("runtime progress имеет некорректную структуру")
+    if isinstance(pending_overlay_commit, dict):
+        intended = pending_overlay_commit.get("entries")
+        if not isinstance(intended, dict) or not intended:
+            raise RuntimeRebaseError("pending overlay commit не содержит intended entries")
+        for map_key, entry in intended.items():
+            if old_applied.get(str(map_key)) != entry:
+                raise RuntimeRebaseError("pending overlay commit расходится с applied_maps")
+
+    replay_rows: list[tuple[int, int, str, dict[str, Any], MatchRecord]] = []
+    rebased_applied: dict[str, Any] = {}
+    for insertion_order, (map_key, raw) in enumerate(old_applied.items()):
+        action, match, result_timestamp = _applied_entry_for_rebase(
+            raw,
+            snapshot_reference=want_reference,
+            recent_completed_ids=recent_completed_ids,
+        )
+        if action == "tombstone":
+            rebased_applied[str(map_key)] = dict(raw)
+        elif action == "covered":
+            match_id = _coerce_optional_int((raw or {}).get("match_id"))
+            if match_id is None and match is not None:
+                match_id = int(match.match_id)
+            if match_id is None:
+                raise RuntimeRebaseError("covered live-карта не содержит match_id для tombstone")
+            rebased_applied[str(map_key)] = _snapshot_covered_tombstone(
+                match_id, snapshot_reference=want_reference, match=match
+            )
+        elif action == "replay":
+            assert match is not None and result_timestamp is not None
+            replay_rows.append((result_timestamp, insertion_order, str(map_key), dict(raw), match))
+
+    # A pending map that the snapshot now definitely includes becomes a
+    # tombstone in applied_maps.  This prevents a later score observation from
+    # applying the already-snapshotted result, even though its winner was not
+    # known while it was pending.
+    rebased_pending: dict[str, Any] = {}
+    for series_key, series_state in old_pending.items():
+        if not isinstance(series_state, dict):
+            raise RuntimeRebaseError("runtime progress содержит некорректную pending series")
+        pending_maps = _pending_maps_list(series_state)
+        retained: list[dict[str, Any]] = []
+        covered_maps: list[tuple[str, MatchRecord]] = []
+        for pending_map in pending_maps:
+            action, match = _pending_entry_for_rebase(
+                pending_map,
+                snapshot_reference=want_reference,
+                recent_completed_ids=recent_completed_ids,
+            )
+            if action == "pending":
+                retained.append(pending_map)
+            else:
+                map_key = str(pending_map.get("map_key") or "").strip()
+                if not map_key:
+                    raise RuntimeRebaseError("covered pending live-карта не содержит map_key")
+                covered_maps.append((map_key, match))
+        if covered_maps and retained:
+            raise RuntimeRebaseError(
+                f"pending series {series_key} одновременно содержит covered и retained maps; "
+                "перебазировка отменена"
+            )
+        for map_key, match in covered_maps:
+            rebased_applied[map_key] = _snapshot_covered_tombstone(
+                int(match.match_id), snapshot_reference=want_reference, match=match
+            )
+        if retained:
+            copied = dict(series_state)
+            copied["pending_maps"] = retained
+            copied["pending_map"] = retained[0]
+            rebased_pending[str(series_key)] = copied
+
+    model = HybridPlayerRosterEloModel.from_state(base_state) if replay_rows else None
+    for result_timestamp, _order, map_key, raw, match in sorted(replay_rows):
+        assert model is not None
+        model.process_match(result_record(match, result_timestamp))
+        copied = dict(raw)
+        copied["result_timestamp"] = int(result_timestamp)
+        copied["applied_at"] = int(result_timestamp)
+        copied["match_record"] = _serialize_match_record(match)
+        rebased_applied[map_key] = copied
+
+    rebased_progress = {
+        "base_reference_timestamp": want_reference,
+        "base_model_config_signature": want_signature,
+        "pending_series": rebased_pending,
+        "applied_maps": rebased_applied,
+    }
+    rebased_state = {
+        "base_reference_timestamp": want_reference,
+        "base_model_config_signature": want_signature,
+        "updated_at": int(time.time()),
+        "model_state": model.export_state() if model is not None else base_state,
+    }
+
+    # All validation above precedes writes.  Each replacement is atomic.  The
+    # marker-recovery path has a third artifact, the live delta: invalidate a
+    # compatible delta before clearing the marker, and preserve byte-exact
+    # originals for a failed transaction.  We never delete a newly created
+    # artifact during rollback; inability to restore absence is an unsafe
+    # outcome and the caller must keep the service stopped.
+    def _original_bytes(path: Path) -> bytes | None:
+        try:
+            return path.read_bytes() if path.exists() else None
+        except OSError as exc:
+            raise RuntimeRebaseError(f"не удалось сохранить {path.name} перед rebase") from exc
+
+    def _restore_bytes(path: Path, original: bytes | None) -> None:
+        if original is None:
+            if path.exists():
+                raise RuntimeRebaseRollbackError(
+                    f"нечем восстановить исходное отсутствие {path.name} без удаления"
+                )
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(original)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_name, path)
+        finally:
+            if os.path.exists(tmp_name):
+                try:
+                    os.remove(tmp_name)
+                except FileNotFoundError:
+                    pass
+
+    originals: list[tuple[Path, bytes | None]] = [
+        (runtime_model_state_path, _original_bytes(runtime_model_state_path)),
+        (progress_path, _original_bytes(progress_path)),
+    ]
+    delta_path: Path | None = None
+    if isinstance(pending_overlay_commit, dict):
+        candidate_delta_path = _live_delta_path()
+        if _delta_is_usable(snapshot, candidate_delta_path):
+            delta_path = candidate_delta_path
+            originals.append((delta_path, _original_bytes(delta_path)))
+
+    try:
+        if delta_path is not None:
+            # A same-base delta could otherwise mask this freshly rebuilt full
+            # state.  Deliberately make it incompatible before clearing the
+            # marker; the next scheduled delta conversion restores lean mode.
+            from . import state_overlay
+            state_overlay.save_delta(
+                delta_path,
+                base_reference_timestamp=0,
+                base_model_config_signature="",
+                changes={}, resets={}, small_parts={}, updated_at=int(time.time()),
+            )
+        _write_json_atomic(runtime_model_state_path, rebased_state)
+        if isinstance(progress_payload, dict) or has_work:
+            _write_json_atomic(progress_path, rebased_progress)
+    except Exception as exc:
+        rollback_errors: list[str] = []
+        for path, original in originals:
+            try:
+                _restore_bytes(path, original)
+            except Exception as rollback_exc:  # noqa: BLE001
+                rollback_errors.append(f"{path.name}: {rollback_exc}")
+        if rollback_errors:
+            raise RuntimeRebaseRollbackError(
+                "ошибка записи rebase и rollback не завершился: " + "; ".join(rollback_errors)
+            ) from exc
+        raise RuntimeRebaseError(
+            "ошибка записи rebase; прежние runtime state/progress восстановлены"
+        ) from exc
+    _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = None
+    _RUNTIME_SNAPSHOT_CACHE["runtime_signature"] = None
+    _RUNTIME_SNAPSHOT_CACHE["snapshot"] = None
+    return True
 
 
 def _live_delta_path() -> Path:
@@ -1103,11 +1560,17 @@ def _build_live_applied_update(
     previous_scores: dict[str, int],
     current_scores: dict[str, int],
     first_team_is_radiant: bool,
+    result_timestamp: int | None = None,
 ) -> dict[str, Any]:
     meta = snapshot.get("meta") or {}
     # The score change is observed now. Reusing the registration/start time
     # would move decay and patch state backwards when parallel games finish.
-    match = result_record(match, max(match.timestamp, int(time.time())))
+    applied_result_timestamp = (
+        int(result_timestamp)
+        if result_timestamp is not None
+        else max(match.timestamp, int(time.time()))
+    )
+    match = result_record(match, applied_result_timestamp)
     before_summary = _preview_live_matchup_from_model(
         model=model,
         match=match,
@@ -1235,13 +1698,20 @@ def _apply_one_pending_map(
     pending_match = _deserialize_match_record(pm_rec, radiant_win=radiant_won)
     if pending_match is None:
         return None
+    # This is the timestamp used by `process_match`, not an inferred source
+    # finish.  Rebase persists it separately from the original record so it
+    # can replay the identical live event without pretending it proves
+    # snapshot membership.
+    applied_result_timestamp = max(pending_match.timestamp, int(time.time()))
     applied_maps[pending_map_key] = {
         "series_key": normalized_series_key,
         "series_url": str(series_url),
         "winner_slot": winner_slot,
         "radiant_win": bool(radiant_won),
-        "applied_at": int(time.time()),
+        "applied_at": applied_result_timestamp,
+        "result_timestamp": applied_result_timestamp,
         "match_id": int(pending_match.match_id),
+        "match_record": _serialize_match_record(pending_match),
     }
     return _build_live_applied_update(
         snapshot=snapshot,
@@ -1255,6 +1725,7 @@ def _apply_one_pending_map(
         previous_scores=previous_scores,
         current_scores=current_scores,
         first_team_is_radiant=first_radiant_pending,
+        result_timestamp=applied_result_timestamp,
     )
 
 
@@ -1403,6 +1874,15 @@ def _build_snapshot_dict(
     latest_patch = latest_patch_match[1] if latest_patch_match else None
     result_times = [match.result_timestamp for match in matches if match.result_timestamp is not None]
     reference_timestamp = max(result_times, default=matches[-1].timestamp)
+    recent_result_coverage_since = max(
+        0, reference_timestamp - SNAPSHOT_RECENT_RESULT_COVERAGE_SECONDS
+    )
+    recent_completed_match_ids = sorted({
+        int(match.match_id)
+        for match in matches
+        if match.result_timestamp is not None
+        and recent_result_coverage_since <= match.result_timestamp <= reference_timestamp
+    })
     cross_tier_counts: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {"series": 0, "strong_wins": 0}
     )
@@ -1532,6 +2012,11 @@ def _build_snapshot_dict(
             "data_dir": str(data_dir),
             "reference_timestamp": reference_timestamp,
             "reference_utc": _timestamp_to_iso(reference_timestamp),
+            # Exact membership proof for the recent overlap between a stopped
+            # live runtime and its replacement snapshot.  A timestamp alone
+            # cannot prove that a delayed upstream result made this rebuild.
+            "recent_completed_match_ids": recent_completed_match_ids,
+            "recent_completed_match_ids_coverage_since": recent_result_coverage_since,
             "active_cutoff_days": active_cutoff_days,
             "display_decay_half_life_days": display_decay_half_life_days,
             "loaded_matches": int(load_summary.get("loaded_matches", 0)),
@@ -2103,6 +2588,15 @@ def register_live_map_context(
     current_scores = {"first": int(first_team_score), "second": int(second_team_score)}
 
     with _runtime_file_lock(runtime_lock_path):
+        try:
+            rebase_runtime_model_state(
+                snapshot=snapshot,
+                runtime_model_state_path=runtime_model_state_path,
+                progress_path=progress_path,
+            )
+        except RuntimeRebaseError as exc:
+            print(f"[ELO] live rebase отменён: {exc}", flush=True)
+            return None
         progress = _load_runtime_progress(
             base_reference_timestamp=base_reference_timestamp,
             model_config_signature=base_model_config_signature,
@@ -2169,7 +2663,19 @@ def register_live_map_context(
 
         current_map_already_applied = normalized_map_key in applied_maps
         if current_map_already_applied:
-            pending_series.pop(normalized_series_key, None)
+            # Score movement above may already have drained part of the queue;
+            # persist what remains when this exact volatile map_key repeats.
+            if pending_maps_queue:
+                pending_series[normalized_series_key] = {
+                    "series_key": normalized_series_key,
+                    "series_url": str((series_state or {}).get("series_url") or series_url),
+                    "last_scores": current_scores,
+                    "pending_maps": pending_maps_queue,
+                    "pending_map": pending_maps_queue[0],
+                    "updated_at": int(time.time()),
+                }
+            else:
+                pending_series.pop(normalized_series_key, None)
         else:
             # Ключ карты в проде прыгает (.10 .11 … .65) на каждый опрос.
             # Пока исход неизвестен, самая свежая отложенная карта в очереди
@@ -2212,6 +2718,10 @@ def register_live_map_context(
             # иначе очередь уже на пределе (≤6) — новую карту не берём, чтобы
             # не расти безгранично; существующие карты продолжают ждать
             # своего сдвига счёта или орфан-подбор в cyberscore_try.py.
+            # A previous map can therefore be seen under a NEW key behind a
+            # still-pending map.  Keep FIFO order; `_apply_one_pending_map`
+            # drops it by exact match_id when it reaches the head, so it never
+            # changes ELO twice.
             pending_series[normalized_series_key] = {
                 "series_key": normalized_series_key,
                 "series_url": str(series_url or ""),
@@ -2226,8 +2736,22 @@ def register_live_map_context(
                 "updated_at": int(time.time()),
             }
 
-        _write_json_atomic(progress_path, progress)
         if wrote_model_state:
+            intended_entries = {
+                str(update["map_key"]): dict(applied_maps[str(update["map_key"])])
+                for update in applied_updates
+                if isinstance(update, dict) and str(update.get("map_key") or "") in applied_maps
+            }
+            if not intended_entries:
+                raise RuntimeRebaseError("live result не сформировал intended ledger entry")
+            # Commit the complete replay intent before model/delta persistence.
+            # A crash at any following point is recovered from this marker by
+            # rebuilding from snapshot + ledger, never by trusting one side.
+            progress["pending_overlay_commit"] = {
+                "entries": intended_entries,
+                "created_at": int(time.time()),
+            }
+            _write_json_atomic(progress_path, progress)
             model = _model()
             # Живые обновления пишутся ДЕЛЬТОЙ (килобайты) вместо полного
             # состояния (519 МБ): обновляется ровно то же, но не переписывается
@@ -2243,9 +2767,13 @@ def register_live_map_context(
                     "model_state": model.export_state(),
                 }
                 _write_json_atomic(runtime_model_state_path, runtime_payload)
+            progress.pop("pending_overlay_commit", None)
+            _write_json_atomic(progress_path, progress)
             _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = None
             _RUNTIME_SNAPSHOT_CACHE["runtime_signature"] = None
             _RUNTIME_SNAPSHOT_CACHE["snapshot"] = None
+        else:
+            _write_json_atomic(progress_path, progress)
 
     return {
         "applied_update": applied_update,
@@ -2286,6 +2814,15 @@ def finalize_live_series_from_scores(
     current_scores = {"first": int(first_team_score), "second": int(second_team_score)}
 
     with _runtime_file_lock(runtime_lock_path):
+        try:
+            rebase_runtime_model_state(
+                snapshot=snapshot,
+                runtime_model_state_path=runtime_model_state_path,
+                progress_path=progress_path,
+            )
+        except RuntimeRebaseError as exc:
+            print(f"[ELO] live rebase отменён: {exc}", flush=True)
+            return None
         progress = _load_runtime_progress(
             base_reference_timestamp=base_reference_timestamp,
             model_config_signature=base_model_config_signature,
@@ -2349,8 +2886,19 @@ def finalize_live_series_from_scores(
                 wrote_model_state = True
 
         pending_series.pop(normalized_series_key, None)
-        _write_json_atomic(progress_path, progress)
         if wrote_model_state:
+            intended_entries = {
+                str(update["map_key"]): dict(applied_maps[str(update["map_key"])])
+                for update in applied_updates
+                if isinstance(update, dict) and str(update.get("map_key") or "") in applied_maps
+            }
+            if not intended_entries:
+                raise RuntimeRebaseError("live result не сформировал intended ledger entry")
+            progress["pending_overlay_commit"] = {
+                "entries": intended_entries,
+                "created_at": int(time.time()),
+            }
+            _write_json_atomic(progress_path, progress)
             model = _model()
             # Живые обновления пишутся ДЕЛЬТОЙ (килобайты) вместо полного
             # состояния (519 МБ): обновляется ровно то же, но не переписывается
@@ -2366,9 +2914,13 @@ def finalize_live_series_from_scores(
                     "model_state": model.export_state(),
                 }
                 _write_json_atomic(runtime_model_state_path, runtime_payload)
+            progress.pop("pending_overlay_commit", None)
+            _write_json_atomic(progress_path, progress)
             _RUNTIME_SNAPSHOT_CACHE["base_snapshot_id"] = None
             _RUNTIME_SNAPSHOT_CACHE["runtime_signature"] = None
             _RUNTIME_SNAPSHOT_CACHE["snapshot"] = None
+        else:
+            _write_json_atomic(progress_path, progress)
 
     return {
         "applied_update": applied_update,
