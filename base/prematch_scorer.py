@@ -49,6 +49,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import itertools
 import math
 import os
@@ -198,6 +199,27 @@ def lan_expected_wr(confidence: float) -> float:
     """Фактический винрейт на LAN для этой уверенности."""
     pct = max(50, min(99, int(round(confidence * 100))))
     return LAN_ODDS_GRID[pct][0]
+
+
+def branch_bet_quote(branch: str, confidence: float, branch_wr=None) -> Optional[dict]:
+    """One price contract for the card and betting path; never applies gates.
+
+    Full uses the existing pointwise LAN grid. Other branches use their own
+    recorded interval WR, with the same upward rounding as the betting path.
+    The cumulative ``lan_winrate`` is deliberately not used for full prices.
+    """
+    if not math.isfinite(confidence) or not 0.5 <= confidence <= 1.0:
+        return None
+    if branch == "full":
+        return {"expected_wr": lan_expected_wr(confidence),
+                "min_odds": lan_min_odds(confidence)}
+    try:
+        wr = float(branch_wr)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(wr) or not 0.0 < wr < 1.0:
+        return None
+    return {"expected_wr": wr, "min_odds": math.ceil(100.0 / wr) / 100.0}
 
 
 class MissingData(Exception):
@@ -553,6 +575,18 @@ def veto_error_rate(confidence: float) -> tuple[float, float]:
 class PrematchModel:
     def __init__(self, path: str | os.PathLike[str] = ARTIFACT_PATH) -> None:
         z = np.load(path)
+        # Hash the descriptor NumPy actually opened, not a second path lookup:
+        # an atomic nightly replacement must not label old weights as new ones.
+        stream = z.zip.fp
+        position = stream.tell()
+        digest = hashlib.sha256()
+        try:
+            stream.seek(0)
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        finally:
+            stream.seek(position)
+        self.artifact_sha256 = digest.hexdigest()
         self.snapshot_ts = int(z["snapshot_ts"][0])
         self.mu, self.sd, self.coef, self.intercept = z["mu"], z["sd"], z["coef"], z["intercept"]
         # E-177: без колонок 15..17 (imp_recent10/imp30_resid/lh30_resid) `_acc_side`

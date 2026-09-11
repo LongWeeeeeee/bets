@@ -10,8 +10,8 @@
 - идентификатор берётся из `match` по первому непустому ключу;
 - `map_key` стоит последним запасным: в режиме sourcetv прод пишет
   `match_id = series_id`, один на всю серию, а ключ карты уникален;
-- на саму модель `match` влияет только через `startDateTime`, поэтому передача
-  идентификатора ничего в оценке не меняет.
+- журнал прогнозов использует только явный Dota match_id для привязки исхода;
+  серийный URL остаётся диагностическим map_key.
 """
 from __future__ import annotations
 
@@ -68,10 +68,11 @@ def test_identifier_picks_the_first_non_empty_key() -> None:
     assert picked == ["dltv.org/matches/8960655084.0", 8960655084, None]
 
 
-def test_match_affects_only_the_evaluation_moment() -> None:
-    """Передача идентификатора не меняет оценку: из `match` читается лишь время."""
-    used = [line for line in VETO_SOURCE.splitlines()
-            if "match.get(" in line and "_k" not in line]
-    assert used, "чтение match исчезло — проверить, что оценка не поехала"
-    assert all("startDateTime" in line for line in used), (
-        f"из match читается что-то кроме startDateTime: {used}")
+def test_prediction_context_uses_only_explicit_map_id() -> None:
+    """Series URLs cannot become real match IDs in the outcome join."""
+    assert wmv._prediction_context({"id": 123, "map_key": "series/123.2"})["match_id"] is None
+    context = wmv._prediction_context({"match_id": 8992864996, "map_key": "series/123.2",
+                                       "game_time": -79, "startDateTime": 1789000000})
+    assert context == {"match_id": "8992864996", "map_key": "series/123.2",
+                       "game_time": -79, "elo_evaluation_timestamp": 1789000000}
+    assert wmv._prediction_context({"match_id": True})["match_id"] is None

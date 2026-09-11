@@ -370,7 +370,10 @@ def test_prematch_bridge_reads_pos_keys_not_integers():
 
     import base as _base_pkg
 
+    from base import prematch_scorer as real_scorer
     stub = types.ModuleType("prematch_scorer")
+    stub.branch_bet_quote = real_scorer.branch_bet_quote
+    stub.LAN_ODDS_GRID = real_scorer.LAN_ODDS_GRID
     stub.get_model = lambda: _Model()
     # Мост сперва пробует `from base import prematch_scorer`, поэтому подменять
     # надо и запись в sys.modules, и атрибут пакета — иначе подхватится живой
@@ -438,7 +441,10 @@ def _stubbed_prematch_scorer(probability: float):
                 probability=probability, lan_winrate=probability,
                 features={}, coverage={}, branch="full", parts={})
 
+    from base import prematch_scorer as real_scorer
     stub = types.ModuleType("prematch_scorer")
+    stub.branch_bet_quote = real_scorer.branch_bet_quote
+    stub.LAN_ODDS_GRID = real_scorer.LAN_ODDS_GRID
     stub.get_model = lambda: _Model()
     saved = {k: sys.modules.get(k) for k in ("prematch_scorer", "base.prematch_scorer")}
     saved_attr = getattr(_base_pkg, "prematch_scorer", None)

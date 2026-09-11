@@ -193,6 +193,18 @@ def record_map(match: Dict[str, Any], *, store_path: Optional[Path] = None,
         }
         _prune(data, ts)
         _save(path, data)
+    # Canonical completed player-result cache path; audit persistence is
+    # best-effort and cannot affect delta persistence.
+    if (isinstance(match.get("didRadiantWin"), bool)
+            and match.get("id") and match.get("startDateTime")
+            and match.get("endDateTime")):
+        try:
+            from prematch_prediction_journal import record_outcome
+            record_outcome(match.get("id"), match.get("didRadiantWin"),
+                           match.get("startDateTime"), match.get("endDateTime"),
+                           "stratz_player_result_cache")
+        except Exception:
+            pass
     return len(rows)
 
 

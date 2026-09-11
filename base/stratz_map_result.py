@@ -216,12 +216,18 @@ def team_matches(team_id: int, *, now: Optional[int] = None,
         cache = _load(path)
         hit = cache.get(key)
         if isinstance(hit, dict) and ts - int(hit.get("at") or 0) < CACHE_TTL:
-            return list(hit.get("matches") or [])
+            matches = list(hit.get("matches") or [])
+            for match in matches:
+                _journal_result(match, "stratz_team_result_cache")
+            return matches
     got = query(tid, ts - LOOKBACK_SECONDS)
     if got is None:
         with _lock:                                         # отдаём протухшее,
             hit = _load(path).get(key)                      # но не выдумываем
-        return list((hit or {}).get("matches") or []) if isinstance(hit, dict) else []
+        matches = list((hit or {}).get("matches") or []) if isinstance(hit, dict) else []
+        for match in matches:
+            _journal_result(match, "stratz_team_result_cache_stale")
+        return matches
     clean = []
     for m in got:
         try:
@@ -245,6 +251,8 @@ def team_matches(team_id: int, *, now: Optional[int] = None,
                   if k != ALIAS_KEY and ts - int((v or {}).get("at") or 0) > LOOKBACK_SECONDS]:
             cache.pop(k, None)
         _save(path, cache)
+    for match in clean:
+        _journal_result(match, "stratz_team_result_api")
     return clean
 
 
@@ -331,6 +339,8 @@ def refresh(team_ids, *, cache_path: Optional[Path] = None,
             cache = _load(path)
             cache[str(tid)] = {"at": ts, "matches": clean}
             _save(path, cache)
+        for match in clean:
+            _journal_result(match, "stratz_team_result_refresh")
         for m in clean:
             if m["match_id"] not in before:
                 fresh += 1
@@ -387,6 +397,22 @@ _PLAYERS_QUERY = (
     "assists numLastHits numDenies goldPerMinute networth experiencePerMinute "
     "level heroDamage imp}}}"
 )
+
+
+def _journal_result(row: Dict[str, Any], source: str) -> None:
+    """Persist a completed result without making the Stratz path fragile."""
+    if not isinstance(row, dict):
+        return
+    winner = row.get("radiant_won", row.get("didRadiantWin"))
+    if not isinstance(winner, bool):
+        return
+    try:
+        from prematch_prediction_journal import record_outcome
+        record_outcome(row.get("match_id") or row.get("id"), winner,
+                       row.get("start") or row.get("startDateTime"),
+                       row.get("end") or row.get("endDateTime"), source)
+    except Exception:
+        pass
 #: Позиции у Stratz строками; в артефакте — числами 1..5.
 POSITION_NUM = {"POSITION_1": 1, "POSITION_2": 2, "POSITION_3": 3,
                 "POSITION_4": 4, "POSITION_5": 5}
@@ -404,9 +430,15 @@ def match_players(match_id: int, *, query_raw=None) -> Optional[Dict[str, Any]]:
     if mid <= 0:
         return None
     if query_raw is not None:
-        return query_raw(mid)
+        result = query_raw(mid)
+        if isinstance(result, dict):
+            _journal_result(result, "stratz_player_result")
+        return result
     data = _post(_PLAYERS_QUERY % mid)
     if data is None:
         return None
     m = data.get("match")
-    return m if isinstance(m, dict) and m.get("players") else None
+    if isinstance(m, dict) and m.get("players"):
+        _journal_result(m, "stratz_player_result")
+        return m
+    return None

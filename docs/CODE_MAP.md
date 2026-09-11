@@ -1404,3 +1404,13 @@ recent-role-hero3. Строго `end < timestamp-delay`, нижняя грани
 cache256 учитывает весь драфт, аккаунты и timestamp. `ML Laning` после Top/Mid/Bot
 показывает вероятность выбранного класса золота к 10-й минуте. Равенство —
 отдельный класс; противоположная вероятность не вычисляется как `1-p`.
+
+
+## Предматчевая оценка: ветка, цена и исход (11.09.2026)
+
+`base/win_model_veto.py:win_prediction_ex` возвращает индекс, источник и снимок
+метаданных карты; `base/functions.py` прикладывает его как `ml_win_details`.
+`base/prematch_scorer.py:branch_bet_quote` задаёт общий контракт цены для
+карточки и ставки. `base/prematch_prediction_journal.py` сохраняет все прогнозы
+и завершённые исходы STRATZ. Поля, env и ограничения аудита описаны в
+[ml-prediction-contract.md](ml-prediction-contract.md).

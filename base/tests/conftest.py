@@ -127,6 +127,8 @@ def _isolate_prematch_eval_journal(tmp_path, monkeypatch):
     """
     target = str(tmp_path / "prematch_model_eval.jsonl")
     monkeypatch.setenv("PREMATCH_EVAL_JOURNAL", target)
+    monkeypatch.setenv("PREMATCH_OUTCOME_JOURNAL",
+                       str(tmp_path / "prematch_model_outcomes.jsonl"))
     for name, module in list(sys.modules.items()):
         if name.rsplit(".", 1)[-1] == "win_model_veto":
             monkeypatch.setattr(module, "_EVAL_JOURNAL", target, raising=False)

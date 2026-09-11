@@ -64,7 +64,10 @@ def _recording_prematch_scorer(monkeypatch):
     import base as _base_pkg
 
     model = _RecordingModel()
+    from base import prematch_scorer as real_scorer
     stub = types.ModuleType("prematch_scorer")
+    stub.branch_bet_quote = real_scorer.branch_bet_quote
+    stub.LAN_ODDS_GRID = real_scorer.LAN_ODDS_GRID
     stub.get_model = lambda: model
     saved = {k: sys.modules.get(k) for k in ("prematch_scorer", "base.prematch_scorer")}
     saved_attr = getattr(_base_pkg, "prematch_scorer", None)

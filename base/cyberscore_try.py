@@ -7502,6 +7502,7 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     """
     index = None
     source = None
+    details = {}
     for block in blocks:
         if isinstance(block, dict):
             raw = block.get(win_model_veto.INDEX_KEY)
@@ -7512,6 +7513,8 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
                     index = None
                 if index is not None:
                     source = block.get(win_model_veto.SOURCE_KEY)
+                    get_details = getattr(win_model_veto, "prediction_details", None)
+                    details = get_details(block) if get_details else {}
                     break
     standalone_all_line = str(all_model_line or "").strip()
     if index is None:
@@ -7520,25 +7523,20 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     side = "Radiant" if index > 0 else ("Dire" if index < 0 else "\u2014")
     confidence = 50.0 + abs(index)
     line = f"\U0001F916 ML-\u043c\u043e\u0434\u0435\u043b\u044c: {side} {confidence:.1f}%"
-    # \u00abML \u043e\u0442 \u043a\u044d\u0444\u0430\u00bb \u2014 \u043c\u0438\u043d\u0438\u043c\u0430\u043b\u044c\u043d\u044b\u0439 \u043a\u043e\u044d\u0444\u0444\u0438\u0446\u0438\u0435\u043d\u0442, \u043f\u0440\u0438 \u043a\u043e\u0442\u043e\u0440\u043e\u043c \u0441\u0442\u0430\u0432\u043a\u0430 \u043f\u043e \u043c\u043e\u0434\u0435\u043b\u0438
-    # \u043e\u043a\u0443\u043f\u0430\u0435\u0442\u0441\u044f. \u0421\u0447\u0438\u0442\u0430\u0435\u0442\u0441\u044f \u041d\u0415 \u043e\u0442 \u0441\u0430\u043c\u043e\u0439 \u0443\u0432\u0435\u0440\u0435\u043d\u043d\u043e\u0441\u0442\u0438, \u0430 \u043e\u0442 \u0444\u0430\u043a\u0442\u0438\u0447\u0435\u0441\u043a\u043e\u0433\u043e \u0432\u0438\u043d\u0440\u0435\u0439\u0442\u0430
-    # \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u043e\u0441\u044b \u043d\u0430 \u043d\u0430\u0441\u0442\u043e\u044f\u0449\u0438\u0445 \u043e\u0444\u043b\u0430\u0439\u043d-\u0442\u0443\u0440\u043d\u0438\u0440\u0430\u0445 (prematch_scorer.LAN_ODDS_GRID):
-    # \u043c\u043e\u0434\u0435\u043b\u044c \u043f\u0435\u0440\u0435\u043e\u0446\u0435\u043d\u0438\u0432\u0430\u0435\u0442 \u0441\u0435\u0431\u044f, \u0438 \u0431\u0440\u0430\u0442\u044c \u0435\u0451 \u043f\u0440\u043e\u0446\u0435\u043d\u0442 \u0437\u0430 \u0432\u0435\u0440\u043e\u044f\u0442\u043d\u043e\u0441\u0442\u044c \u0437\u043d\u0430\u0447\u0438\u043b\u043e \u0431\u044b
-    # \u0437\u0430\u043d\u0438\u0436\u0430\u0442\u044c \u0442\u0440\u0435\u0431\u0443\u0435\u043c\u0443\u044e \u0446\u0435\u043d\u0443. \u0422\u043e\u043b\u044c\u043a\u043e \u043f\u0440\u0435\u0434\u043c\u0430\u0442\u0447\u0435\u0432\u044b\u0439 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a \u2014 \u0434\u0440\u0430\u0444\u0442\u043e\u0432\u0430\u044f \u0448\u043a\u0430\u043b\u0430
-    # \u043d\u0430 LAN \u043d\u0435 \u043c\u0435\u0440\u044f\u043b\u0430\u0441\u044c.
     if str(source or "") == win_model_veto.SOURCE_PREMATCH:
-        try:
-            from base import prematch_scorer as _ps
-            line += f" | ML \u043e\u0442 \u043a\u044d\u0444\u0430: {_ps.lan_min_odds(confidence / 100.0):.2f}"
-        except Exception:                            # noqa: BLE001
-            pass
-    # Доля входа, собранная из реальных данных. Печатается ВСЕГДА, когда
-    # известна: отсутствие пометки раньше означало и «всё заполнено», и
-    # «счётчика нет» — различить было нельзя (E-195).
+        line += " (оценка)"
+        calibration = details.get("calibration") or {}
+        wr = calibration.get("expected_wr")
+        odds = calibration.get("min_odds")
+        if wr is not None and odds is not None:
+            line += (f" | исторический WR: {float(wr):.1%}"
+                     f" | ML от кэфа: {float(odds):.2f}")
+        else:
+            line += " | исторический WR: нет данных"
     try:
         # Team ELO is shown once in the shared hybrid block below. The legacy
         # account-ELO feature remains in ML diagnostics, not as a rival rating.
-        _parts = win_model_veto.last_parts(index)
+        _parts = details.get("parts") if details else win_model_veto.last_parts(index)
         if _parts:
             # Доли от суммы МОДУЛЕЙ: по модулю дают 100%, и видно, кто тянет
             # против. Знак — в ориентации Radiant, как у `ELO модели`.
@@ -7549,7 +7547,11 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
                            for _k, _ru in _names if _k in _parts)
             if _sh:
                 line += f" | вклад: {_sh}"
-        _dr = win_model_veto.last_draft_rank(index)
+        if details:
+            _dr = ((details.get("draft_rank"), details["draft_share"])
+                   if details.get("draft_share") is not None else None)
+        else:
+            _dr = win_model_veto.last_draft_rank(index)
         if _dr and not _parts:
             # Единый знаменатель со строкой ELO: минус за Dire, плюс за Radiant.
             # `draft_share` считается ПОСЛЕ переворота вкладов на сторону ставки,
@@ -7558,9 +7560,8 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
             # Внутреннюю величину не трогаем: на ней стоит гейт _DRAFT_FIRST_ONLY.
             _draft_radiant_oriented = _dr[1] * (1.0 if index > 0 else -1.0)
             line += f" | драфт {_draft_radiant_oriented:+.1%}"
-        _fill = win_model_veto.last_fill(index)
-        if _fill is not None:
-            line += f" | вход {float(_fill):.0%}"
+        if details:
+            line += " | вход: " + win_model_veto.prediction_input_text(details)
     except Exception:                                # noqa: BLE001
         pass
     # Early-NW модель: тот же драфт, но цель ДРУГАЯ — не победа карты, а сторона
@@ -7568,7 +7569,7 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     # Стоит ВЫШЕ late-строки: раньше по игровому времени. Отказ молчаливый, как
     # у late, — нет оценки, нет строки, карточка выглядит ровно как раньше.
     try:
-        _early_nw = win_model_veto.last_early_nw(index)
+        _early_nw = details.get("early_nw") if details else win_model_veto.last_early_nw(index)
     except Exception:                                # noqa: BLE001
         _early_nw = None
     if _early_nw:
@@ -7576,7 +7577,7 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
                  f"{_early_nw['side']} {float(_early_nw['confidence']) * 100:.1f}%")
     # Display-only winner estimate for the 20–34 minute population.
     try:
-        _early_win = win_model_veto.last_early_win(index)
+        _early_win = details.get("early_win") if details else win_model_veto.last_early_win(index)
     except Exception:                                # noqa: BLE001
         _early_win = None
     if _early_win:
@@ -7589,7 +7590,7 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     # живого состояния не требует. Нет строки — модель не загрузилась или
     # драфт неполный, и карточка выглядит ровно как раньше.
     try:
-        _late = win_model_veto.last_late(index)
+        _late = details.get("late") if details else win_model_veto.last_late(index)
     except Exception:                                # noqa: BLE001
         _late = None
     if _late:
@@ -7598,7 +7599,7 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
     # Блок панели окон килов. Пустая строка, если панель не готова, — карточка
     # тогда выглядит ровно как раньше.
     try:
-        _panel_text = win_model_veto.last_panel_text()
+        _panel_text = details.get("panel_text", "") if details else win_model_veto.last_panel_text()
     except Exception:                                # noqa: BLE001
         _panel_text = ""
     if _panel_text:
@@ -7631,7 +7632,9 @@ def _late_model_side_from_blocks(*blocks) -> Optional[str]:
     if index is None:
         return None
     try:
-        verdict = win_model_veto.last_late(index)
+        get_details = getattr(win_model_veto, "prediction_details", None)
+        details = get_details(block) if get_details else {}
+        verdict = details.get("late") if details else win_model_veto.last_late(index)
     except Exception:                                # noqa: BLE001 — оценка необязательна
         return None
     side = str((verdict or {}).get("side") or "").strip().lower()
@@ -38947,6 +38950,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     # держит h2h_resid нулём даже при доступной истории встреч.
                     match={"match_id": _extract_live_match_id(data) or "",
                            "startDateTime": team_elo_timestamp,
+                           "game_time": game_time,
                            "map_key": check_uniq_url,
                            "radiant_team_id": radiant_team_id,
                            "dire_team_id": dire_team_id},

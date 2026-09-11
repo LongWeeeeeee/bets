@@ -19,6 +19,9 @@ post_lane 42.0% против 55.5%, early_win 52.5% против 62.7%, late 53.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 import math as _math
 import os
 import threading
@@ -98,6 +101,7 @@ INDEX_KEY = "ml_win_index"
 SOURCE_KEY = "ml_win_index_src"
 SOURCE_PREMATCH = "prematch"
 SOURCE_DRAFT = "draft"
+DETAILS_KEY = "ml_win_details"
 # Порог предматчевой модели: |индекс| >= 8 -> вето на ставку против неё.
 # Замер на 2 456 настоящих LAN-карт (forward-окна): при >=8 модель берёт 70.0%
 # на 72% потока, ставка ПРОТИВ неё окупалась бы только при кэфе выше 3.3.
@@ -329,25 +333,69 @@ def _report_panel_silence(reason: str) -> None:
         return
     _PANEL_SILENCE_REPORTED = True
     print(f"[win_model] панель молчит: {reason}", flush=True)
-_EVAL_SEEN: set = set()
 
 
 def _journal_eval(**rec) -> None:
-    """Одна строка на оценку. Дедуп в памяти: за матч снимок не меняется."""
+    """Persist exact-map evaluations, including branches that cannot send bets."""
     try:
-        key = (rec.get("radiant_team"), rec.get("dire_team"),
-               round(float(rec.get("index") or 0.0), 2), rec.get("reason"))
-        if key in _EVAL_SEEN:
-            return
-        if len(_EVAL_SEEN) > 20000:
-            _EVAL_SEEN.clear()
-        _EVAL_SEEN.add(key)
-        import json as _json, time as _time
-        rec["ts"] = int(_time.time())
-        with open(_EVAL_JOURNAL, "a", encoding="utf-8") as f:
-            f.write(_json.dumps(rec, ensure_ascii=False) + chr(10))
+        try:
+            from base.prematch_prediction_journal import record_prediction
+        except ImportError:
+            from prematch_prediction_journal import record_prediction
+        record_prediction(rec, path=_EVAL_JOURNAL)
     except Exception:                                # noqa: BLE001
-        pass
+        # No model decision depends on journal availability. The journal module
+        # reports I/O failures itself, without logging credentials or payloads.
+        return
+
+
+def _prediction_context(match) -> dict:
+    """Only explicit real map IDs are eligible for outcome joins."""
+    data = match if isinstance(match, dict) else {}
+    raw = data.get("match_id")
+    try:
+        mid = int(raw) if not isinstance(raw, bool) else 0
+    except (TypeError, ValueError):
+        mid = 0
+    return {"match_id": str(mid) if mid > 0 else None,
+            "map_key": data.get("map_key"),
+            "game_time": data.get("game_time"),
+            "elo_evaluation_timestamp": data.get("startDateTime")}
+
+
+def last_prediction_details(index) -> dict:
+    """Freeze a prediction with its block before another map can reuse index."""
+    return copy.deepcopy(_fill_for(index))
+
+
+def prediction_details(block) -> dict:
+    """Prefer block-owned metadata; legacy blocks can still use index history."""
+    if not isinstance(block, dict):
+        return {}
+    details = block.get(DETAILS_KEY)
+    if isinstance(details, dict):
+        try:
+            if abs(float(details.get("index")) - float(block.get(INDEX_KEY))) < 1e-6:
+                return details
+        except (TypeError, ValueError):
+            pass
+        return {}
+    return _fill_for(block.get(INDEX_KEY))
+
+
+def prediction_input_text(details) -> str:
+    """Coverage is relative to the selected model, not all possible inputs."""
+    branch = details.get("branch")
+    labels = {"full": "полная модель", "no_org": "без очных",
+              "pre_draft": "без драфта", "no_account": "без статистики игроков",
+              "no_account_no_org": "без статистики игроков и очных",
+              "rating_only": "только рейтинг команды"}
+    label = labels.get(branch, "состав данных неизвестен")
+    if branch in ("full", "no_org", "pre_draft"):
+        fill = details.get("fill")
+        if isinstance(fill, (float, int)) and _math.isfinite(fill):
+            label += f", заполнено {fill:.0%}"
+    return label
 
 
 def last_model_elo(index):
@@ -433,7 +481,7 @@ def last_draft_rank(index):
     return None
 
 
-def _draft_agrees(index) -> bool:
+def _draft_agrees(index, details=None) -> bool:
     """False, только когда драфт ДОКАЗАНО тянет против стороны ставки.
 
     `parts` — точное разложение логита по компонентам (E-213): сумма частей
@@ -448,7 +496,7 @@ def _draft_agrees(index) -> bool:
     веток он не сработал бы ни разу, и узнать об этом было бы неоткуда.
     """
     global _DRAFT_GATE_MUTE
-    parts = last_parts(index)
+    parts = (details.get("parts") or {}) if details is not None else last_parts(index)
     if not parts:
         if not _DRAFT_GATE_MUTE:
             _DRAFT_GATE_MUTE = True
@@ -714,6 +762,7 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
     (неизвестный игрок, протухший снимок, сломанные позиции) даёт None: молча
     подставлять дефолты нельзя, это и есть источник вранья.
     """
+    context = _prediction_context(match)
     try:
         from base import prematch_scorer as ps
     except Exception:                                # noqa: BLE001
@@ -837,11 +886,8 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
             _LAST_PANEL["error"] = None
             _mid = None
             if isinstance(match, dict):
-                # `map_key` — запасной идентификатор и последний по приоритету:
-                # в режиме sourcetv прод пишет `match_id = series_id`, и он у
-                # всех карт серии один, тогда как ключ карты уникален. Без
-                # какого-либо id журнал панели бесполезен: 805 записей с пустым
-                # `map_id` невозможно сверить с фактическим исходом карты.
+                # The live bridge passes the Dota match ID. map_key is only
+                # a diagnostic fallback for callers without that ID.
                 for _k in ("id", "match_id", "map_id", "matchId", "map_key"):
                     if match.get(_k):
                         _mid = match.get(_k)
@@ -908,6 +954,30 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
         except (TypeError, ValueError):              # noqa: BLE001
             _LAST_FILL["wr"] = float("nan")
         _f = getattr(res, "features", None) or {}
+        _branch = _LAST_FILL["branch"]
+        _branch_obj = (getattr(model, "branches", None) or {}).get(_branch)
+        _cols = list(_branch_obj.cols if _branch_obj is not None else getattr(model, "features", ()))
+        _cal_table = (getattr(model, "cal", None) or {}).get(_branch)
+        _cal_source = ("lan_point_grid" if _branch == "full" else
+                       "branch_table" if _cal_table else "unavailable")
+        _quote = (ps.branch_bet_quote(_branch, 0.5 + abs(_idx) / 100.0,
+                                     _LAST_FILL.get("wr"))
+                  if _cal_source != "unavailable" else None)
+        _table = ps.LAN_ODDS_GRID if _branch == "full" else _cal_table
+        _calibration = dict(_quote or {}, source=_cal_source,
+                            table_sha256=hashlib.sha256(
+                                json.dumps(_table, sort_keys=True).encode()).hexdigest(),
+                            input_confidence=(0.5 + abs(_idx) / 100.0 if _branch == "full"
+                                              else max(res.probability, 1 - res.probability)))
+        _LAST_FILL.update(context)
+        _LAST_FILL.update({"raw_probability": float(res.probability),
+                           "probability": float(_p_corrected),
+                           "artifact_sha256": getattr(model, "artifact_sha256", None),
+                           "snapshot_ts": getattr(model, "snapshot_ts", None),
+                           "feature_names": _cols,
+                           "features": {k: float(_f[k]) for k in _cols if k in _f},
+                           "missing_keys": list(getattr(res, "missing_keys", None) or []),
+                           "calibration": _calibration})
         # Разложение логита: вклад признака = коэффициент * стандартизованное
         # значение. Усредняем по моделям ансамбля (сейчас модель одна).
         try:
@@ -1002,6 +1072,7 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                 _early_win_load_error = "load_error() недоступен"
         # Разложение собрано целиком — кладём его в историю по индексу. Карточка
         # отложенного матча строится позже, когда `_LAST_FILL` уже чужой.
+        _LAST_FILL["panel_text"] = str(_LAST_PANEL.get("text") or "")
         _remember_fill()
         # Оценка late-модели идёт В ЖУРНАЛ: без этого её молчаливый отказ
         # (нет артефакта, незнакомый герой) неотличим от работы — строка в
@@ -1011,6 +1082,14 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
         _early_win_rec = _LAST_FILL.get("early_win") or {}
         _journal_eval(radiant_team=str(radiant_team_name or ""),
                       dire_team=str(dire_team_name or ""),
+                      **context,
+                      raw_probability=_LAST_FILL["raw_probability"],
+                      probability=_LAST_FILL["probability"],
+                      artifact_sha256=_LAST_FILL["artifact_sha256"],
+                      snapshot_ts=_LAST_FILL["snapshot_ts"],
+                      feature_names=_cols, features=_LAST_FILL["features"],
+                      missing_keys=_LAST_FILL["missing_keys"],
+                      calibration=_calibration,
                       index=_idx, confidence=round(0.5 + abs(_idx) / 100.0, 4),
                       side="radiant" if _idx > 0 else "dire",
                       late_side=_late_rec.get("side"),
@@ -1048,18 +1127,14 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
         # «модель отказала» от «индекс не дотянул до порога ставки».
         _journal_eval(radiant_team=str(radiant_team_name or ""),
                       dire_team=str(dire_team_name or ""), index=0.0,
+                      **context,
                       bet=False, reason=str(_exc)[:300] or type(_exc).__name__)
         return None
 
 
-def win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
+def _win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
                  radiant_team_name=None, dire_team_name=None, match=None):
-    """(индекс, источник). Предматчевая модель приоритетна, драфтовая — запасная.
-
-    Имена команд и `match` нужны только Hybrid-рейтингу: по имени резолвится
-    ключ организации (`resolve_org_key`), по `startDateTime` — момент оценки.
-    Без них предматчевая модель отказывает штатно и работает драфтовая.
-    """
+    """Return the pre-match estimate and source, or (None, None)."""
     value = _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                             radiant_team_name, dire_team_name, match)
     if value is not None:
@@ -1070,6 +1145,25 @@ def win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
     # Под общим ключом индекса она выглядела как та же величина, и по ней
     # срабатывало вето. Лучше молчание, чем число не от той модели.
     return None, None
+
+
+_PREDICTION_LOCK = threading.RLock()
+
+
+def win_prediction_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
+                      radiant_team_name=None, dire_team_name=None, match=None):
+    """Return index, source and a card-owned snapshot atomically."""
+    with _PREDICTION_LOCK:
+        index, source = _win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
+                                      radiant_team_name, dire_team_name, match)
+        return index, source, last_prediction_details(index) if index is not None else {}
+
+
+def win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
+                 radiant_team_name=None, dire_team_name=None, match=None):
+    """Compatibility pair; production cards use win_prediction_ex."""
+    return win_prediction_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
+                             radiant_team_name, dire_team_name, match)[:2]
 
 
 def win_index(radiant_heroes_and_pos, dire_heroes_and_pos) -> Optional[float]:
@@ -1152,7 +1246,7 @@ def draft_veto(block_sign: Any, block: Any, section: str = "") -> bool:
         return False
     if abs(index) < _min_index_for(section, block.get(SOURCE_KEY)):
         return False
-    parts = last_parts(index)
+    parts = prediction_details(block).get("parts") or {}
     if not parts:
         if not _STAR_DRAFT_MUTE:
             _STAR_DRAFT_MUTE = True
@@ -1195,6 +1289,7 @@ def model_bet(*blocks) -> Optional[dict]:
     WIN_MODEL_DRAFT_AGAINST_BLOCK=0.
     """
     index = None
+    details = {}
     for block in blocks:
         if not isinstance(block, dict):
             continue
@@ -1204,14 +1299,14 @@ def model_bet(*blocks) -> Optional[dict]:
             index = float(block.get(INDEX_KEY))
         except (TypeError, ValueError):
             continue
+        details = prediction_details(block)
         break
     if index is None or abs(index) < _PREMATCH_MIN_INDEX:
         return None
     if _DRAFT_FIRST_ONLY:
-        _dr = last_draft_rank(index)
-        if not _dr or _dr[0] != 1:
+        if details.get("draft_rank") != 1:
             return None
-    if _DRAFT_AGAINST_BLOCK and not _draft_agrees(index):
+    if _DRAFT_AGAINST_BLOCK and not _draft_agrees(index, details):
         return None
     confidence = (50.0 + abs(index)) / 100.0
     try:
@@ -1221,35 +1316,23 @@ def model_bet(*blocks) -> Optional[dict]:
             import prematch_scorer as ps            # запуск из base/
         except Exception:                            # noqa: BLE001
             return None
-    # Какой веткой посчитан именно ЭТОТ индекс. Сверка по значению — тот же
-    # приём, что у `_LAST_FILL` в остальных местах модуля.
-    branch = "full"
-    wr = None
-    if _LAST_FILL.get("index") is not None:
-        try:
-            if abs(float(index) - float(_LAST_FILL["index"])) < 1e-6:
-                branch = str(_LAST_FILL.get("branch") or "full")
-                _w = _LAST_FILL.get("wr")
-                wr = float(_w) if _w is not None else None
-        except (TypeError, ValueError):              # noqa: BLE001
-            pass
+    branch = str(details.get("branch") or "full")
+    wr = details.get("wr")
     if branch not in _PREMATCH_BET_BRANCHES:
         return None
-    if branch == "full":
-        # БУКВАЛЬНО прежнее поведение: у ставок, которые идут и сегодня, цена
-        # не имеет права сдвинуться ни на копейку.
-        min_odds = ps.lan_min_odds(confidence)
-        expected_wr = ps.lan_expected_wr(confidence)
-    else:
-        if wr is None or wr != wr:                   # nan: полоса не откалибрована
+    if DETAILS_KEY in block:
+        quote = details.get("calibration") or {}
+        if quote.get("expected_wr") is None or quote.get("min_odds") is None:
             return None
-        expected_wr = wr
-        min_odds = _math.ceil(100.0 / max(wr, 1e-9)) / 100.0
+    else:
+        quote = ps.branch_bet_quote(branch, confidence, wr)
+        if quote is None:
+            return None
     return {
         "side": "radiant" if index > 0 else "dire",
         "index": index,
         "confidence": confidence,
         "branch": branch,
-        "min_odds": min_odds,
-        "expected_wr": expected_wr,
+        "min_odds": quote["min_odds"],
+        "expected_wr": quote["expected_wr"],
     }
