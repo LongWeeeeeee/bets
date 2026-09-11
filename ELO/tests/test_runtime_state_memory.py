@@ -260,6 +260,38 @@ def _applied_entry(record: MatchRecord, *, observed_at: int) -> dict:
     }
 
 
+def test_pending_result_uses_one_timestamp_for_progress_and_model(monkeypatch) -> None:
+    """Clock rollover must not make the replay ledger one second stale (E-255)."""
+    record = _live_record(9050, start=1_010, duration=None)
+    pending_map = {
+        "map_key": "dltv.org/matches/9050.0",
+        "match_record": lts._serialize_match_record(record),
+        "first_team_is_radiant": True,
+    }
+    model = HybridPlayerRosterEloModel(HybridEloConfig())
+    applied_maps: dict = {}
+    ticks = iter((2_000, 2_001))
+    monkeypatch.setattr(lts.time, "time", lambda: next(ticks))
+
+    update = lts._apply_one_pending_map(
+        pending_map=pending_map,
+        winner_slot="first",
+        applied_maps=applied_maps,
+        snapshot={"meta": {}},
+        model_getter=lambda: model,
+        previous_scores={"first": 0, "second": 0},
+        current_scores={"first": 1, "second": 0},
+        normalized_series_key="9050",
+        series_url="dltv.org/matches/9050",
+    )
+
+    assert update is not None
+    entry = applied_maps["dltv.org/matches/9050.0"]
+    assert entry["applied_at"] == entry["result_timestamp"] == 2_000
+    assert {model.player_global_last_seen_ts[player_id] for player_id in range(1, 11)} == {2_000}
+    assert set(model.roster_last_seen_ts[LeagueTier.TIER2].values()) == {2_000}
+
+
 def test_rebase_replays_post_snapshot_live_result_once_and_keeps_pending(tmp_path) -> None:
     snapshot_path, snapshot = _ledger_snapshot(tmp_path)
     state_path = tmp_path / "state.json"
