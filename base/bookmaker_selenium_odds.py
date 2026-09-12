@@ -27,6 +27,7 @@ import os
 import re
 import shutil
 import time
+from functools import lru_cache
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -203,15 +204,21 @@ def _norm(s: str) -> str:
 
 
 def _team_name_search_variants(team: str) -> List[str]:
+    raw = str(team or "").strip()
+    return list(_cached_team_name_search_variants(raw, tuple(_alias_spellings(raw))))
+
+
+@lru_cache(maxsize=512)
+def _cached_team_name_search_variants(team: str, aliases: Tuple[str, ...]) -> Tuple[str, ...]:
     """DOM lookup variants for punctuation, CamelCase and known bookmaker spellings."""
     raw = str(team or "").strip()
     if not raw:
-        return []
+        return ()
     out: List[str] = []
     seen = set()
     # Букмекер пишет ту же команду по-своему (`BoomBoys` -> `BB TEAM`), поэтому
     # известные написания ищем наравне с нашим названием.
-    for name in [raw] + list(_alias_spellings(raw)):
+    for name in [raw] + list(aliases):
         # SourceTV may emit `_PowerRangers`, while Winline renders
         # `POWER RANGERS`. This is one identity with different typography.
         camel_spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
@@ -221,7 +228,7 @@ def _team_name_search_variants(team: str) -> List[str]:
                 continue
             seen.add(normalized)
             out.append(normalized)
-    return out
+    return tuple(out)
 
 
 # Родовые слова: их наличие ничего не говорит о том, ЧТО это за команда.
@@ -825,6 +832,7 @@ async def _load_site_render_payload_camoufox_async(
     initial_wait_seconds: float = 7.0,
     scroll_wait_seconds: float = 2.0,
     acquisition_mode: Optional[str] = None,
+    defer_visible_text: bool = False,
 ) -> Tuple[str, str, str, str, str, Dict[str, Any]]:
     """Load or re-read page content for Camoufox parsers.
 
@@ -975,7 +983,7 @@ async def _load_site_render_payload_camoufox_async(
         html = await _maybe_await(page.content()) or ""
     except Exception:
         html = ""
-    if html:
+    if html and not defer_visible_text:
         try:
             soup = BeautifulSoup(html, "html.parser")
             visible = " ".join(soup.stripped_strings)
@@ -1806,6 +1814,22 @@ def _winline_market_row_re(map_num: int) -> "re.Pattern[str]":
     )
 
 
+class _WinlineDOMSnapshot:
+    """Read-only parse and text index owned by one acquired DOM payload."""
+
+    def __init__(self, html: str):
+        self.html = html
+        self.soup = BeautifulSoup(html, "html.parser")
+        self.elements = self.soup.find_all(True)
+        self._texts: Dict[int, str] = {}
+
+    def text(self, node: Any) -> str:
+        key = id(node)
+        if key not in self._texts:
+            self._texts[key] = " ".join(node.stripped_strings)
+        return self._texts[key]
+
+
 def _winline_matched_card_context(
     text: str,
     team1: str,
@@ -1813,15 +1837,17 @@ def _winline_matched_card_context(
     *,
     html: str = "",
     map_num: Optional[int] = None,
+    _snapshot: Optional[_WinlineDOMSnapshot] = None,
 ) -> Optional[str]:
     """Return only the Winline event segment containing both requested teams."""
     if html:
         try:
-            soup = BeautifulSoup(html, "html.parser")
+            snapshot = _snapshot if _snapshot is not None and _snapshot.html == html else _WinlineDOMSnapshot(html)
+            soup = snapshot.soup
             market_re = _winline_market_row_re(map_num) if map_num else None
             candidates: List[Tuple[int, Any, str]] = []
-            for element in soup.find_all(True):
-                card_text = " ".join(element.stripped_strings)
+            for element in snapshot.elements:
+                card_text = snapshot.text(element)
                 if not card_text or not _text_matches_teams(card_text, team1, team2):
                     continue
                 candidates.append((len(card_text), element, card_text))
@@ -1845,7 +1871,7 @@ def _winline_matched_card_context(
                     # one price-bearing child subtree means we swallowed a neighbour.
                     node = element
                     while node is not None:
-                        node_text = " ".join(node.stripped_strings)
+                        node_text = snapshot.text(node)
                         if market_re is not None:
                             hit = bool(market_re.search(node_text))
                         else:
@@ -2146,6 +2172,7 @@ async def _collect_winline_live_overview_async(
             page,
             url,
             acquisition_mode="dynamic_dom",
+            defer_visible_text=True,
         )
     )
     text = " ".join(str(body_text or visible or "").split())
@@ -2153,20 +2180,38 @@ async def _collect_winline_live_overview_async(
     if load_error and status == "ok":
         status = "partial_load"
     return {
+        "_deferred_visible_text": not bool(text),
         "status": status,
         "error": str(load_error or ""),
         "text": text,
         "html_len": len(html or ""),
         # Сырой DOM для будущего перечисления карточек (E-269: кэфы без GC).
         # Отдельно от text: join ходит по тексту, а перечисление — по элементам.
-        "html": str(html or "")[:1_500_000],
+        "html": str(html or ""),
         "page_url": str((diag or {}).get("page_url") or url or ""),
     }
 
 
 def collect_winline_live_overview_in_camoufox_page(page, url: str) -> Dict[str, Any]:
     """Синхронная обёртка над _collect_winline_live_overview_async."""
+    return _winline_finalize_overview(collect_winline_live_overview_raw(page, url))
+
+
+def collect_winline_live_overview_raw(page, url: str) -> Dict[str, Any]:
+    """Browser I/O only; caller finalizes any HTML text fallback outside the worker."""
     return _run_coroutine_blocking(_collect_winline_live_overview_async(page, url))
+
+
+def _winline_finalize_overview(payload: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(payload)
+    if payload.pop("_deferred_visible_text", False) and not payload.get("text"):
+        try:
+            payload["text"] = " ".join(BeautifulSoup(payload.get("html") or "", "html.parser").stripped_strings)
+        except Exception:
+            payload["text"] = ""
+        payload["status"] = ("partial_load" if payload.get("error") else "ok") if payload["text"] else "empty"
+    payload["html"] = str(payload.get("html") or "")[:1_500_000]
+    return payload
 
 
 # Классы, на которые опирается разбор карточек ленты. Их отсутствие в DOM —
@@ -2664,6 +2709,7 @@ def _winline_structured_current_map_winner(
     map_num: Optional[int],
     series_last_map: bool = False,
     diag: Optional[List[str]] = None,
+    _snapshot: Optional[_WinlineDOMSnapshot] = None,
 ) -> Optional["_WinlineMapExtract"]:
     """Extract only the two DOM buttons of the current-map winner market.
 
@@ -2678,7 +2724,8 @@ def _winline_structured_current_map_winner(
     if not html or not team1 or not team2 or map_num is None:
         return None
     try:
-        soup = BeautifulSoup(html, "html.parser")
+        snapshot = _snapshot if _snapshot is not None and _snapshot.html == html else _WinlineDOMSnapshot(html)
+        soup = snapshot.soup
     except Exception:
         return None
 
@@ -2690,7 +2737,7 @@ def _winline_structured_current_map_winner(
     glued_label_re = re.compile(rf"^{int(map_num)}\s*карта$", re.I)
 
     def _is_map_market_label(node: Any) -> bool:
-        text = " ".join(node.stripped_strings)
+        text = snapshot.text(node)
         if exact_label_re.fullmatch(text):
             return True
         # Слитную подпись принимаем только у настоящей строки рынка, опознаваемой
@@ -2714,7 +2761,7 @@ def _winline_structured_current_map_winner(
         nonlocal saw_unbettable_winner
         prices: List[float] = []
         for node in container.find_all(["div", "span"], recursive=False):
-            token = " ".join(node.stripped_strings)
+            token = snapshot.text(node)
             match = re.fullmatch(r"\s*([0-9]+[.,][0-9]+)\s*", token)
             if not match:
                 continue
@@ -2747,7 +2794,7 @@ def _winline_structured_current_map_winner(
         "ww-feature-event-live-center-dsk, .event-live-center"
     )
     for root in expanded_roots:
-        scope_text = " ".join(root.stripped_strings)
+        scope_text = snapshot.text(root)
         if not _text_matches_teams(scope_text, team1, team2):
             continue
         order = _winline_team_order(scope_text, team1, team2)
@@ -2755,14 +2802,14 @@ def _winline_structured_current_map_winner(
             continue
         for wrapper in root.select(".fast-bets__wrapper"):
             title = wrapper.select_one(".fast-bets__title")
-            if title is None or " ".join(title.stripped_strings).lower() != "популярные на карту":
+            if title is None or snapshot.text(title).lower() != "популярные на карту":
                 continue
             for line in wrapper.select(".bet-line"):
                 name = line.select_one(".bet-line__market-name")
                 period = line.select_one(".bet-line__period")
                 if name is None or period is None:
                     continue
-                if " ".join(name.stripped_strings).lower() != "победитель":
+                if snapshot.text(name).lower() != "победитель":
                     continue
                 if not _is_map_market_label(period):
                     continue
@@ -2776,7 +2823,7 @@ def _winline_structured_current_map_winner(
                     continue
                 prices: List[float] = []
                 for button in buttons:
-                    button_text = " ".join(button.stripped_strings)
+                    button_text = snapshot.text(button)
                     match = re.search(
                         r"(?<!\d)([0-9]+[.,][0-9]+)(?!\d)",
                         button_text,
@@ -2805,7 +2852,7 @@ def _winline_structured_current_map_winner(
             for title in top_markets.find_all(
                 lambda tag: (
                     tag.name in {"div", "span"}
-                    and " ".join(tag.stripped_strings).lower()
+                    and snapshot.text(tag).lower()
                     == "популярные на карту"
                 )
             ):
@@ -2816,7 +2863,7 @@ def _winline_structured_current_map_winner(
                 for name in group.find_all(
                     lambda tag: (
                         tag.name in {"div", "span"}
-                        and " ".join(tag.stripped_strings).lower() == "победитель"
+                        and snapshot.text(tag).lower() == "победитель"
                     )
                 ):
                     meta = name.parent
@@ -2824,7 +2871,7 @@ def _winline_structured_current_map_winner(
                     if meta is None or row is None:
                         continue
                     periods = [
-                        " ".join(node.stripped_strings)
+                        snapshot.text(node)
                         for node in meta.find_all(["div", "span"], recursive=False)
                     ]
                     if not any(exact_label_re.fullmatch(value) for value in periods):
@@ -2845,7 +2892,7 @@ def _winline_structured_current_map_winner(
     # ww-feature-event-market-dsk child is the winner market. Keeping the
     # component boundary is essential: later siblings are handicap and total.
     for event_scope in soup.select("ww-feature-block-event-dsk"):
-        scope_text = " ".join(event_scope.stripped_strings)
+        scope_text = snapshot.text(event_scope)
         if not _text_matches_teams(scope_text, team1, team2):
             continue
         order = _winline_team_order(scope_text, team1, team2)
@@ -2886,7 +2933,7 @@ def _winline_structured_current_map_winner(
         event_scope = None
         node = label.parent
         while node is not None:
-            scope_text = " ".join(node.stripped_strings)
+            scope_text = snapshot.text(node)
             if _text_matches_teams(scope_text, team1, team2):
                 if _winline_single_card_scope(scope_text):
                     event_scope = node
@@ -2895,7 +2942,7 @@ def _winline_structured_current_map_winner(
         if event_scope is None:
             continue
 
-        scope_text = " ".join(event_scope.stripped_strings)
+        scope_text = snapshot.text(event_scope)
         order = _winline_team_order(scope_text, team1, team2)
         if order is None:
             continue
@@ -2921,7 +2968,7 @@ def _winline_structured_current_map_winner(
 
         prices: List[float] = []
         for button in buttons:
-            button_text = " ".join(button.stripped_strings)
+            button_text = snapshot.text(button)
             match = re.search(r"(?<!\d)([0-9]+[.,][0-9]+)(?!\d)", button_text)
             if not match:
                 prices = []
@@ -3005,6 +3052,7 @@ def _winline_map_odds_bettable(
     team1: str,
     team2: str,
     map_num: Optional[int],
+    _snapshot: Optional[_WinlineDOMSnapshot] = None,
 ) -> Optional[bool]:
     """Можно ли реально поставить на исход рынка карты `map_num`.
 
@@ -3017,7 +3065,8 @@ def _winline_map_odds_bettable(
     if not html or map_num is None:
         return None
     try:
-        soup = BeautifulSoup(html, "html.parser")
+        snapshot = _snapshot if _snapshot is not None and _snapshot.html == html else _WinlineDOMSnapshot(html)
+        soup = snapshot.soup
     except Exception:
         return None
 
@@ -3030,8 +3079,8 @@ def _winline_map_odds_bettable(
     # Сужаемся до карточки нужного матча, иначе поймаем метку '1 карта' соседа.
     if team1 and team2:
         scopes = []
-        for element in soup.find_all(True):
-            card_text = " ".join(element.stripped_strings)
+        for element in snapshot.elements:
+            card_text = snapshot.text(element)
             if not card_text or not _text_matches_teams(card_text, team1, team2):
                 continue
             if not _winline_single_card_scope(card_text):
@@ -3040,7 +3089,7 @@ def _winline_map_odds_bettable(
                 # доказанной карточкой целевого события.
                 continue
             if not any(
-                _labels_this_map(" ".join(label.stripped_strings))
+                _labels_this_map(snapshot.text(label))
                 for label in element.find_all(
                     lambda tag: (
                         _WINLINE_PERIOD_NAME_CLASS in _winline_node_classes(tag)
@@ -3071,7 +3120,7 @@ def _winline_map_odds_bettable(
         for label in root.find_all(
             lambda tag: _WINLINE_PERIOD_NAME_CLASS in _winline_node_classes(tag)
         ):
-            if not _labels_this_map(" ".join(label.stripped_strings)):
+            if not _labels_this_map(snapshot.text(label)):
                 continue
             # Кнопки лежат в соседнем `card__coeffs`; при смене вёрстки
             # поднимаемся к общему родителю, но не выше карточки.
@@ -3155,6 +3204,7 @@ def _extract_winline_current_map_winner(
     *,
     html: str = "",
     series_last_map: bool = False,
+    _snapshot: Optional[_WinlineDOMSnapshot] = None,
 ) -> _WinlineMapExtract:
     """Strict Winline current-map winner only.
 
@@ -3179,6 +3229,7 @@ def _extract_winline_current_map_winner(
         map_num,
         series_last_map=series_last_map,
         diag=promotion_diag,
+        _snapshot=_snapshot,
     )
     if structured is not None:
         return structured

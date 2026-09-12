@@ -588,7 +588,7 @@ def test_collector_routes_through_shared_camoufox_job_and_named_page(tmp_path, m
             "timeout": cs.WINLINE_CURRENT_MAP_SHARED_JOB_TIMEOUT_S,
             "retry": False,
         }
-    ]
+    ] * 2  # raw DOM read, then full-parser fallback
     # Production Winline acquisition can legitimately take 35-40s because the
     # listing and candidate-match navigations are separately bounded.  The
     # outer future must not discard that successful result.
@@ -1329,7 +1329,7 @@ def test_initial_goto_uses_fast_dom_when_named_page_is_already_healthy(monkeypat
         lambda _mode: {"winline": "https://winline.example/live"},
         raising=False,
     )
-    monkeypatch.setattr(cs, "_winline_fast_collect", lambda *_a, **_k: dict(expected))
+    monkeypatch.setattr(cs, "_winline_fast_collect_from_payload", lambda *_a, **_k: dict(expected))
     monkeypatch.setattr(
         cs,
         "_bookmaker_parse_site_in_camoufox_page",
@@ -1415,7 +1415,7 @@ def test_missing_pinned_event_is_selected_then_fast_dom_reparsed(monkeypatch):
     )
     monkeypatch.setattr(
         cs,
-        "_winline_fast_collect",
+        "_winline_fast_collect_from_payload",
         lambda *_a, **_k: fast_results.pop(0),
     )
     monkeypatch.setattr(
@@ -1494,7 +1494,7 @@ def test_shared_page_suppresses_duplicate_controlled_reload(monkeypatch, batch_e
         lambda _mode: {"winline": "https://winline.example/live"},
         raising=False,
     )
-    monkeypatch.setattr(cs, "_winline_fast_collect", lambda *_a, **_k: None)
+    monkeypatch.setattr(cs, "_winline_fast_snapshot", lambda *_a, **_k: None)
     monkeypatch.setattr(
         cs, "_bookmaker_parse_site_in_camoufox_page", _fake_parse, raising=False
     )
@@ -1503,7 +1503,7 @@ def test_shared_page_suppresses_duplicate_controlled_reload(monkeypatch, batch_e
             "payload": {"html": "cached page before recovery"},
         })
         monkeypatch.setattr(cs, "_winline_fast_collect_from_payload",
-                            lambda *_a, **_k: _missing_collector_result())
+                            lambda payload, **_k: _missing_collector_result() if payload else None)
 
     kwargs = dict(
         acquisition_mode="controlled_reload",
@@ -1547,9 +1547,9 @@ def test_failed_reload_does_not_cache_old_dom_for_next_map(monkeypatch):
                         lambda _mode: {"winline": "https://winline.example/live"})
     monkeypatch.setattr(cs, "_run_shared_camoufox_job",
                         lambda _label, callback, **_kw: callback(object()))
-    monkeypatch.setattr(cs, "_winline_fast_collect", lambda *_a, **_k: None)
+    monkeypatch.setattr(cs, "_winline_fast_snapshot", lambda *_a, **_k: None)
     monkeypatch.setattr(cs, "_winline_fast_collect_from_payload",
-                        lambda *_a, **_k: _accepted_collector_result())
+                        lambda payload, **_k: _accepted_collector_result() if payload else None)
     monkeypatch.setattr(cs, "_bookmaker_parse_site_in_camoufox_page", parse)
     monkeypatch.setattr(cs, "_winline_map_site_result_to_collector_dict",
                         lambda result, **_kw: result)
@@ -1650,7 +1650,7 @@ def test_acquisition_error_rotates_proxy_and_resets_shared_browser(monkeypatch):
         lambda _mode: {"winline": "https://winline.example/live"},
         raising=False,
     )
-    monkeypatch.setattr(cs, "_winline_fast_collect", lambda *_a, **_k: None)
+    monkeypatch.setattr(cs, "_winline_fast_snapshot", lambda *_a, **_k: None)
     monkeypatch.setattr(
         cs,
         "_bookmaker_parse_site_in_camoufox_page",
@@ -2354,6 +2354,7 @@ def test_w8_scheduler_serializes_camoufox_max_concurrency_one(tmp_path, monkeypa
 
 def test_w8_finite_odds_terminalizes_and_send_spy_zero(tmp_path, monkeypatch):
     _clear_wiring_state()
+    monkeypatch.setattr(cs, "start_winline_current_map_polling_scheduler", lambda **_k: True)
     clock = FakeClock()
     send_spy: List[Any] = []
     monkeypatch.setattr(cs, "send_message", lambda m, **_k: send_spy.append(m))

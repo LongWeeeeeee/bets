@@ -357,6 +357,7 @@ _winline_shared_page_state: Dict[str, Any] = {
 }
 _winline_odds_orientation_state: Dict[str, Dict[str, float]] = {}
 _winline_current_map_scheduler_stop = threading.Event()
+_winline_current_map_scheduler_wake = threading.Event()
 _winline_current_map_scheduler_thread: Optional[threading.Thread] = None
 _winline_current_map_scheduler_meta: Dict[str, Any] = {
     "interval_s": 1.0,
@@ -1777,7 +1778,14 @@ def _winline_apply_poll_interval(poller: Any, interval: Any) -> bool:
     try:
         if float(getattr(poller, "_poll_interval", default)) == value:
             return False
+        old_interval = float(getattr(poller, "_poll_interval", default))
         poller._poll_interval = value                    # type: ignore[attr-defined]
+        if value < old_interval:
+            due = getattr(poller, "_next_poll_mono", None)
+            if due is not None:
+                mono = getattr(poller, "_mono", None) or time.monotonic
+                poller._next_poll_mono = min(float(due), float(mono()) + value)
+            _winline_current_map_scheduler_wake.set()
         return True
     except Exception:
         return False
@@ -2160,6 +2168,14 @@ class _WinlineFastResult:
         self.match_found = True
 
 
+def _winline_fast_snapshot(page: Any) -> Optional[Dict[str, Any]]:
+    """Read plain DOM data while on the shared browser thread."""
+    try:
+        return page.evaluate(_WINLINE_FAST_CARD_JS, {"maxHtml": WINLINE_FAST_CARD_MAX_HTML})
+    except Exception:
+        return None
+
+
 def _winline_fast_collect(
     page: Any,
     *,
@@ -2170,16 +2186,10 @@ def _winline_fast_collect(
     expected_url: str,
 ) -> Optional[Dict[str, Any]]:
     """Быстрый съём карточки. None — значит откатываемся на полный разбор."""
-    try:
-        payload = page.evaluate(
-            _WINLINE_FAST_CARD_JS,
-            {"maxHtml": WINLINE_FAST_CARD_MAX_HTML},
-        )
-    except Exception:
-        return None
+    payload = _winline_fast_snapshot(page)
     context = globals().get("_winline_current_map_batch_context")
     if isinstance(context, dict) and isinstance(payload, dict):
-        context["payload"] = dict(payload)
+        context["payload"] = payload
     return _winline_fast_collect_from_payload(
         payload,
         series=series,
@@ -2264,7 +2274,11 @@ def _winline_fast_collect_from_payload(
     ):
         return None
     try:
-        card = card_ctx("", team1, team2, html=html, map_num=map_num)
+        snapshot = payload.get("_parsed_dom")
+        if snapshot is None or snapshot.html != html:
+            snapshot = _bookmaker_winline_dom_snapshot(html)
+            payload["_parsed_dom"] = snapshot
+        card = card_ctx("", team1, team2, html=html, map_num=map_num, _snapshot=snapshot)
         extract = extract_fn(
             card or "",
             team1,
@@ -2275,6 +2289,7 @@ def _winline_fast_collect_from_payload(
             # тогда её победитель — это рынок «Матч» (промоция внутри парсера,
             # только по DOM и только при двухисходном рынке).
             series_last_map=_winline_registry_series_last_map(series),
+            _snapshot=snapshot,
         )
     except Exception:
         return None
@@ -2350,7 +2365,7 @@ def _winline_fast_collect_from_payload(
         result.odds_bettable = True
     elif callable(bettable_fn):
         try:
-            result.odds_bettable = bettable_fn(html, team1, team2, map_num)
+            result.odds_bettable = bettable_fn(html, team1, team2, map_num, _snapshot=snapshot)
         except Exception:
             result.odds_bettable = None
     return _winline_map_site_result_to_collector_dict(
@@ -2640,7 +2655,7 @@ def _winline_current_map_poller_collect(
             batched["reload_attempted"] = False
             return batched
 
-    def _job(browser):
+    def _job(browser, *, full_parse=False, select_pinned=False):
         session = _shared_camoufox_session
         page = session.get_or_create_page("bookmaker:winline", browser)
         effective_mode = mode
@@ -2655,53 +2670,17 @@ def _winline_current_map_poller_collect(
             if last_reload is not None and (now_mono - float(last_reload)) < 60.0:
                 effective_mode = "dynamic_dom"
 
-        if effective_mode in {"dynamic_dom", "initial_goto"}:
-            # Страница уже на нужном URL — пробуем снять только карточку.
-            # initial_goto is also eligible: after a prior timeout the named page
-            # can still be healthy and already on the live URL.  Fast validation
-            # avoids a 20-45s full parser recovery in that common case.
-            fast = _winline_fast_collect(
-                page,
-                series=series_s,
-                map_num=resolved_map,
-                team1=t1,
-                team2=t2,
-                expected_url=urls["winline"],
-            )
-            if fast is not None:
-                pinned_key = f"{series_s}|map{resolved_map}|{t1}|{t2}"
-                should_select_pinned = bool(
-                    fast.get("match_found") is True
-                    and str(fast.get("market_status") or "").lower() == "missing"
-                )
-                if (
-                    should_select_pinned
-                    and _winline_select_matching_pinned_card(
-                        page,
-                        team1=t1,
-                        team2=t2,
-                    )
-                ):
-                    with _winline_current_map_state_lock:
-                        _winline_shared_page_state["selected_pinned_page_id"] = id(page)
-                        _winline_shared_page_state["selected_pinned_key"] = pinned_key
-                    refreshed = _winline_fast_collect(
-                        page,
-                        series=series_s,
-                        map_num=resolved_map,
-                        team1=t1,
-                        team2=t2,
-                        expected_url=urls["winline"],
-                    )
-                    if refreshed is not None:
-                        fast = refreshed
-                if fast.get("page_valid") is True:
-                    _bookmaker_restore_shared_camoufox_direct_route(
-                        reason="winline_valid_page"
-                    )
-                fast["acquisition_mode_echo"] = effective_mode
-                fast["reload_attempted"] = False
-                return fast
+        if select_pinned:
+            if not _winline_select_matching_pinned_card(page, team1=t1, team2=t2):
+                return None
+            with _winline_current_map_state_lock:
+                _winline_shared_page_state["selected_pinned_page_id"] = id(page)
+                _winline_shared_page_state["selected_pinned_key"] = f"{series_s}|map{resolved_map}|{t1}|{t2}"
+            if isinstance(batch_context, dict):
+                batch_context["payload"] = None
+        if not full_parse and effective_mode in {"dynamic_dom", "initial_goto"}:
+            # Only browser I/O here; parsing runs after releasing the shared worker.
+            return {"fast_payload": _winline_fast_snapshot(page), "effective_mode": effective_mode}
         if effective_mode == "controlled_reload" and isinstance(batch_context, dict):
             # Later cards must not reuse the snapshot taken before this reload.
             batch_context["payload"] = None
@@ -2789,17 +2768,48 @@ def _winline_current_map_poller_collect(
                     batch_context["payload"] = snapshot
         return normalized
 
-    try:
+    def _submit(**job_kwargs):
         return _run_shared_camoufox_job(
             f"winline_current_map_poll:{series_s}|map{resolved_map}",
-            _job,
+            lambda browser: _job(browser, **job_kwargs),
             timeout=WINLINE_CURRENT_MAP_SHARED_JOB_TIMEOUT_S,
-            # A timed-out callback keeps occupying the single shared worker.
-            # Retrying immediately queues a duplicate behind it and doubles the
-            # outage for every other active match.
             retry=False,
             reset_on_error=True,
         )
+
+    def _parse_fast(acquired):
+        payload = acquired.get("fast_payload")
+        if isinstance(batch_context, dict) and isinstance(payload, dict):
+            batch_context["payload"] = payload
+        return _winline_fast_collect_from_payload(
+            payload, series=series_s, map_num=resolved_map,
+            team1=t1, team2=t2, expected_url=urls["winline"],
+        )
+
+    try:
+        acquired = _submit()
+        if not isinstance(acquired, dict) or "fast_payload" not in acquired:
+            return acquired
+        fast = _parse_fast(acquired)
+        if fast is None:
+            if isinstance(batch_context, dict):
+                batch_context["payload"] = None
+            return _submit(full_parse=True)
+        if fast.get("match_found") is True and fast.get("market_status") == "missing":
+            refreshed = _submit(select_pinned=True)
+            if isinstance(refreshed, dict) and "fast_payload" in refreshed:
+                parsed = _parse_fast(refreshed)
+                if parsed is not None:
+                    fast = parsed
+                else:
+                    if isinstance(batch_context, dict):
+                        batch_context["payload"] = None
+                    return _submit(full_parse=True)
+        if fast.get("page_valid") is True:
+            _bookmaker_restore_shared_camoufox_direct_route(reason="winline_valid_page")
+        fast["acquisition_mode_echo"] = acquired["effective_mode"]
+        fast["reload_attempted"] = False
+        return fast
     except Exception as exc:
         return {
             "market_status": "error",
@@ -2818,7 +2828,7 @@ def _winline_current_map_poller_collect(
 
 def _winline_scheduler_sleep(seconds: float, *, stop_event: Optional[threading.Event] = None) -> None:
     """Interruptible short sleep used only by the dedicated scheduler thread."""
-    ev = stop_event if stop_event is not None else _winline_current_map_scheduler_stop
+    ev = stop_event if stop_event is not None else _winline_current_map_scheduler_wake
     try:
         delay = max(0.0, float(seconds))
     except (TypeError, ValueError):
@@ -2829,12 +2839,30 @@ def _winline_scheduler_sleep(seconds: float, *, stop_event: Optional[threading.E
     ev.wait(timeout=delay)
 
 
+def _winline_scheduler_delay() -> float:
+    """Nearest poll deadline, capped to keep lifecycle checks responsive."""
+    meta = _winline_current_map_scheduler_meta
+    maximum = max(0.05, float(meta.get("interval_s") or WINLINE_CURRENT_MAP_SCHEDULER_INTERVAL_S))
+    if _winline_current_map_tick_lock.locked():
+        return maximum
+    with _winline_current_map_state_lock:
+        delays = [maximum]
+        for poller in _winline_current_map_pollers.values():
+            if not poller.is_active() or getattr(poller, "_in_flight", False):
+                continue
+            mono = getattr(poller, "_mono", None) or meta.get("monotonic_fn") or time.monotonic
+            due = getattr(poller, "_next_poll_mono", None)
+            if due is not None:
+                delays.append(max(0.0, float(due) - float(mono())))
+        return min(delays)
+
+
 def _winline_current_map_scheduler_loop() -> None:
     """Process-local due checker independent of blocking general()."""
     meta = _winline_current_map_scheduler_meta
     while not _winline_current_map_scheduler_stop.is_set():
-        interval = float(meta.get("interval_s") or WINLINE_CURRENT_MAP_SCHEDULER_INTERVAL_S)
-        _winline_scheduler_sleep(interval)
+        _winline_current_map_scheduler_wake.clear()
+        _winline_scheduler_sleep(_winline_scheduler_delay())
         if _winline_current_map_scheduler_stop.is_set():
             break
         try:
@@ -2897,6 +2925,7 @@ def start_winline_current_map_polling_scheduler(
                     _winline_current_map_scheduler_meta["wall_fn"] = wall_fn
                 if interval_s is not None:
                     _winline_current_map_scheduler_meta["interval_s"] = max(0.05, float(interval_s))
+                    _winline_current_map_scheduler_wake.set()
                 _winline_current_map_scheduler_meta["started"] = True
                 return True
         if thr is not None and thr.is_alive() and force_restart:
@@ -2953,6 +2982,7 @@ def stop_winline_current_map_polling_scheduler(*, join_timeout_s: float = 1.0) -
     """Stop dedicated scheduler thread (idempotent, thread-safe)."""
     global _winline_current_map_scheduler_thread
     _winline_current_map_scheduler_stop.set()
+    _winline_current_map_scheduler_wake.set()
     thr = None
     with _winline_current_map_state_lock:
         thr = _winline_current_map_scheduler_thread
@@ -3239,6 +3269,7 @@ def ensure_winline_current_map_polling(
             pass
         with _winline_current_map_state_lock:
             _winline_current_map_pollers[canonical] = poller
+            _winline_current_map_scheduler_wake.set()
 
         # Ensure independent 5s scheduler is running (idempotent).
         try:
@@ -4616,6 +4647,7 @@ def _tick_winline_current_map_polling_impl(
 ) -> List[Dict[str, Any]]:
     """Drive all active pollers once (no sleep). Safe to call every main-loop cycle."""
     results: List[Dict[str, Any]] = []
+    latest_evidence: Optional[Dict[str, Any]] = None
     # Telegram-отправка блокирующая (до TELEGRAM_SEND_TIMEOUT_SECONDS). На backup-тике
     # из главного цикла её не делаем: пусть уведомляет выделенный поток-шедулер,
     # чтобы никакая сетевая задержка не удлиняла цикл отправки ставок.
@@ -4659,16 +4691,15 @@ def _tick_winline_current_map_polling_impl(
                 try:
                     attempt = out.get("attempt") if isinstance(out, dict) else None
                     terminal = out.get("terminal") if isinstance(out, dict) else None
-                    payload = terminal or attempt or (out if isinstance(out, dict) else None)
+                    payload = terminal or attempt
+                    if payload is None and isinstance(out, dict) and out.get("status") not in {"not_due", "in_flight"}:
+                        payload = out
                     if isinstance(payload, dict):
                         payload = _winline_stabilize_odds_orientation(payload, key)
                         epath = getattr(poller, "_evidence_path", None)
                         _winline_write_current_map_evidence(payload, path=epath)
                         if not bool(getattr(poller, "_evidence_is_custom", False)):
-                            _winline_write_current_map_evidence(
-                                payload,
-                                path=WINLINE_CURRENT_MAP_POLLING_EVIDENCE_PATH,
-                            )
+                            latest_evidence = payload
                 except Exception:
                     pass
                 try:
@@ -4735,6 +4766,10 @@ def _tick_winline_current_map_polling_impl(
             with _winline_current_map_state_lock:
                 for key in dead_keys:
                     _winline_current_map_pollers.pop(key, None)
+        if latest_evidence is not None:
+            _winline_write_current_map_evidence(
+                latest_evidence, path=WINLINE_CURRENT_MAP_POLLING_EVIDENCE_PATH,
+            )
         # Отложенные объявления живут ВНЕ поллеров: остановку опроса
         # подтверждает именно отсутствие нового опроса, а победителя карты
         # OpenDota отдаёт уже после того, как поллер снят.
@@ -4822,6 +4857,7 @@ def accelerate_winline_current_map_polling(match_key: str) -> bool:
                 identity = getattr(poller, "_identity", None)
                 if identity and str(identity.get("series") or "") == series_s:
                     poller.set_accelerated(True)
+                    _winline_current_map_scheduler_wake.set()
                     return True
         return False
     except Exception:
@@ -5027,6 +5063,7 @@ try:
             _probe_presence_site_in_current_tab as _bookmaker_probe_presence_site_in_current_tab,
             parse_site as _bookmaker_parse_site,
             parse_site_in_camoufox_page as _bookmaker_parse_site_in_camoufox_page,
+            _WinlineDOMSnapshot as _bookmaker_winline_dom_snapshot,
             _winline_matched_card_context as _bookmaker_winline_card_context,
             _extract_winline_current_map_winner as _bookmaker_winline_extract,
             _text_matches_teams as _bookmaker_text_matches_teams,
@@ -5045,6 +5082,7 @@ try:
             _probe_presence_site_in_current_tab as _bookmaker_probe_presence_site_in_current_tab,
             parse_site as _bookmaker_parse_site,
             parse_site_in_camoufox_page as _bookmaker_parse_site_in_camoufox_page,
+            _WinlineDOMSnapshot as _bookmaker_winline_dom_snapshot,
             _winline_matched_card_context as _bookmaker_winline_card_context,
             _extract_winline_current_map_winner as _bookmaker_winline_extract,
             _text_matches_teams as _bookmaker_text_matches_teams,
@@ -18717,7 +18755,7 @@ def _winline_first_parser_fns() -> Optional[tuple]:
         mod = sys.modules.get(getattr(extract_fn, "__module__", "") or "")
         card_fn = globals().get("_bookmaker_winline_card_context")
         if mod is not None and callable(card_fn):
-            collect = getattr(mod, "collect_winline_live_overview_in_camoufox_page", None)
+            collect = getattr(mod, "collect_winline_live_overview_raw", None)
             league_fn = getattr(mod, "winline_live_card_league", None)
             future_fn = getattr(mod, "_looks_future_context", None)
             if callable(collect) and callable(league_fn) and callable(future_fn):
@@ -18837,6 +18875,10 @@ def _winline_overview_refresh_once() -> bool:
         return False
     if not isinstance(result, dict):
         return False
+    mod = sys.modules.get(getattr(fns[0], "__module__", "") or "")
+    finalize = getattr(mod, "_winline_finalize_overview", None)
+    if callable(finalize):
+        result = finalize(result)
     text = str(result.get("text") or "")
     if not text:
         return False

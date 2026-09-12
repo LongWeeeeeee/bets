@@ -480,6 +480,8 @@ class WinlineCurrentMapOddsPoller:
         return self._accelerated
 
     def set_accelerated(self, enabled: bool) -> None:
+        if enabled and not self._accelerated:
+            self._next_poll_mono = min(self._next_poll_mono, float(self._mono()) + float(self._accelerated_interval))
         self._accelerated = bool(enabled)
 
     def begin(
