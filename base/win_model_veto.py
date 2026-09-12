@@ -921,6 +921,17 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
             # «блок просто не появился» — самый неудобный вид поломки.
             _LAST_PANEL["error"] = f"{type(_exc).__name__}: {_exc}"
             _report_panel_silence(_LAST_PANEL["error"])
+        # Full-threshold E281 forecasts are informational and independent of
+        # panel verdicts, highlights and win/dispatch thresholds.
+        try:
+            from kills_transfer_serving import forecast_text as _kills_text
+            _kills_mid = next((match.get(k) for k in ("id", "match_id", "map_id", "matchId")
+                               if isinstance(match, dict) and match.get(k)), 0)
+            _kills_block = _kills_text(rh, dh, ra, da, (_rt_id, _dt_id),
+                                       elo_evaluation_timestamp(match), _kills_mid)
+            _LAST_PANEL["text"] = "\n".join(filter(None, (_LAST_PANEL["text"], _kills_block)))
+        except Exception as _exc:                    # noqa: BLE001
+            _report_panel_silence(f"E281 kills: {type(_exc).__name__}: {_exc}")
         _cov = getattr(res, "coverage", None) or {}
         if _cov:
             global _COV_N, _COV_SUM

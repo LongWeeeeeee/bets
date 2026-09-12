@@ -662,6 +662,20 @@ CLI: `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_duration
 
 ## `base/win_model_veto.py` — индекс победы + вето и ставка по модели
 
+`base/kills_transfer_serving.py` добавляет в снимок `panel_text` три информационные
+вероятности E-281: Radiant ≥30, Dire ≥30, карта ≥55. Модель стороны считается
+в двух ориентациях; Dire не равен `1 − Radiant`. Тотал усредняется по ориентациям
+до калибровки. Блок не участвует в verdicts, подсветке, порогах или dispatch.
+Источник — SHA-256-проверенный `data/kills_transfer_serving` (override:
+`KILLS_TRANSFER_BUNDLE`); загрузка кэшируется до рестарта. История игроков и
+команд заморожена в bundle, её дата показана в тексте; автоматического обновления
+нет. При расчёте используются только карты с `end < start` запрашиваемой карты,
+её собственный ID исключается. Ошибка оставляет основной прогноз рабочим и
+пишется как `E281 kills` через диагностику панели. Сборка нового каталога:
+`base/build_kills_serving.py --candidate <E281-output> --pro-rows <extraction-dir>
+--output <new-directory>`; активация артефакта и рестарт выполняются отдельно.
+Преимущество E-281 по точности пока не подтверждено: [E-281](experiments/E-281-kills-relative-public-transfer.md).
+
 Индекс = `(P(radiant) − 0.5) × 100`. Кладётся в блоки `synergy_and_counterpick` под `INDEX_KEY = "ml_win_index"`, источник — рядом под `SOURCE_KEY = "ml_win_index_src"` (`"prematch"` / `"draft"`). Источник обязателен: шкалы двух моделей разные, и порог вето выбирается по нему.
 
 `win_index_ex(rad, dire) -> (значение, источник)` — предматчевая модель приоритетна, драфтовая запасная. `win_index(rad, dire)` — совместимость (только значение). `win_index_draft(rad, dire)` — прежний путь через паблик-модель.
