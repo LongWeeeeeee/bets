@@ -19,7 +19,13 @@ Rules implemented (owner decisions, 12.09.2026 — see
   configured ``ML_DISPATCH_WIN_MODELS`` (default ``late,all,early_win``)
   favors ``S`` at >= threshold. ``S`` is vetoed if Late or All (always
   checked, independent of the win-models config) favors the *other*
-  side at >= threshold.
+  side at >= threshold. Vetoes are resolved PER SIDE FIRST, conflict
+  SECOND (owner correction 12.09.2026, "правка 0"): a side is a real
+  candidate only if it has support AND is not vetoed; if exactly one
+  side survives that check, it is backed (the other side's rejection is
+  reported as ``veto``, not ``conflict``) even though, before veto was
+  applied, both sides had raw model support. Only when BOTH sides still
+  have support after their own veto check is it a genuine ``conflict``.
 - Kills markets (only when ``U`` exists): Early NW and/or Early Win at
   >= threshold for ``U`` (optionally AND All at >= threshold for ``U``
   when ``ML_DISPATCH_KILLS_REQUIRE_ALL=1``) produce up to two decisions,
@@ -49,19 +55,22 @@ for the stage-2 owner to confirm before wiring into ``cyberscore_try``):
 
 1. "Support" for a side is computed only from models present in
    ``cfg.win_models``; "veto" is *always* computed from Late/All
-   regardless of that config. Under the *default* config (which
-   includes Late and All as win-voting models too) any Late/All veto of
-   one side necessarily also counts as *support* for the other side
-   (a single model can only ever vote for one side), which is exactly
-   what makes it a genuine conflict rather than a plain veto. A pure
-   "veto" outcome (support blocked, no conflict) therefore only shows
-   up when the vetoing model has been excluded from ``win_models`` by
-   config — see the "conflict" vs "veto" tests below, which exercise
-   both branches deliberately with different ``win_models`` configs.
-2. The market-level ``conflict`` skip check runs *before* per-side veto
-   resolution: if both sides have configured-model support, that is a
-   conflict outright (one ``Skipped(market="win", side=None,
-   reason="conflict")``), independent of any veto detail.
+   regardless of that config.
+2. Order of resolution (owner correction 12.09.2026, "правка 0"): for
+   EACH side independently, veto is applied first — a side "survives"
+   only if it has support AND no Late/All veto against it. The
+   market-level ``conflict`` skip (one ``Skipped(market="win",
+   side=None, reason="conflict")``) fires only when BOTH sides survive
+   their own veto check. Example from the plan: Late backs Radiant at
+   0.62 and Early Win backs Dire at 0.65 under the default
+   ``win_models`` (which counts Late as support for Radiant too) — Dire
+   is vetoed by Late (a veto model favoring Radiant), so only Radiant
+   survives, and the bet goes on Radiant with a plain ``veto`` Skipped
+   for Dire, NOT a ``conflict``. A genuine ``conflict`` needs both
+   sides to have support from a NON-vetoed model, e.g. two models
+   outside Late/All disagreeing with no Late/All verdict present at
+   all — see the "conflict" vs "veto" tests below, which exercise both
+   branches deliberately with different ``win_models`` configs.
 3. ``prematch_index`` is carried on ``Ctx`` for logging only (per the
    plan, the 35-feature prematch model is explicitly not applied to
    ML-dispatch decisions); ``evaluate`` never reads it.
@@ -259,7 +268,19 @@ def _evaluate_win(ctx: Ctx, cfg: Config) -> Tuple[List[Decision], List[Skipped]]
             and ctx.model(name).confidence >= cfg.min_conf
         ]
 
-    if support["Radiant"] and support["Dire"]:
+    # Veto is resolved per side FIRST, conflict SECOND (правка 0): a side
+    # only "survives" if it has support AND no Late/All veto against it.
+    vetoers = {}
+    for side in SIDES:
+        vetoers[side] = [
+            name for name in VETO_MODELS
+            if ctx.model(name) is not None
+            and ctx.model(name).side == _other_side(side)
+            and ctx.model(name).confidence >= cfg.min_conf
+        ]
+    survives = {side: bool(support[side]) and not vetoers[side] for side in SIDES}
+
+    if survives["Radiant"] and survives["Dire"]:
         detail = (
             f"Radiant<-{support['Radiant']} Dire<-{support['Dire']}"
         )
@@ -274,15 +295,9 @@ def _evaluate_win(ctx: Ctx, cfg: Config) -> Tuple[List[Decision], List[Skipped]]
                                     f"no configured win model >= {cfg.min_conf} for {side}"))
             continue
 
-        vetoers = [
-            name for name in VETO_MODELS
-            if ctx.model(name) is not None
-            and ctx.model(name).side == _other_side(side)
-            and ctx.model(name).confidence >= cfg.min_conf
-        ]
-        if vetoers:
+        if vetoers[side]:
             skipped.append(Skipped("win", side, REASON_VETO,
-                                    f"vetoed by {vetoers} favoring {_other_side(side)}"))
+                                    f"vetoed by {vetoers[side]} favoring {_other_side(side)}"))
             continue
 
         key = _dedup_key(ctx, "win", side)

@@ -112,15 +112,34 @@ def test_all_veto_blocks_a_lone_early_win_candidate():
     assert radiant_skip.reason == md.REASON_VETO
 
 
-def test_conflict_when_both_sides_have_default_model_support():
-    # Default win_models includes late/all as support sources too, so a
-    # late-vs-early_win disagreement produces support for BOTH sides at
-    # once -> conflict, not a single veto (see module docstring point 1-2).
+def test_veto_wins_over_conflict_when_one_side_is_vetoed():
+    # Owner's example (plan, "правка 0"): Late confirms Radiant at 0.62,
+    # Early Win confirms Dire at 0.65 -- under the default win_models
+    # (which counts Late as support for Radiant too) this used to be a
+    # conflict, but veto is now resolved PER SIDE FIRST: Late (a veto
+    # model) vetoes Dire, only Radiant survives -> bet on Radiant, not a
+    # conflict (see module docstring design decision 2).
     ctx = base_ctx(
-        late=ModelVerdict("Radiant", 0.65),
+        late=ModelVerdict("Radiant", 0.62),
         early_win=ModelVerdict("Dire", 0.65),
     )
     result = evaluate(ctx, cfg())
+    win = [d for d in result.decisions if d.market == "win"]
+    assert len(win) == 1
+    assert win[0].target_side == "Radiant"
+    assert not any(s.market == "win" and s.reason == md.REASON_CONFLICT for s in result.skipped)
+    dire_skip = next(s for s in result.skipped if s.market == "win" and s.side == "Dire")
+    assert dire_skip.reason == md.REASON_VETO
+
+
+def test_conflict_when_both_sides_survive_veto():
+    # Genuine conflict: both sides have support and NEITHER is vetoed,
+    # because late/all (the only veto models) never voted at all here.
+    ctx = base_ctx(
+        early_win=ModelVerdict("Radiant", 0.65),
+        early_nw=ModelVerdict("Dire", 0.65),
+    )
+    result = evaluate(ctx, cfg(win_models=("early_win", "early_nw")))
     assert result.decisions == []
     conflict = [s for s in result.skipped if s.market == "win" and s.reason == md.REASON_CONFLICT]
     assert len(conflict) == 1
