@@ -94,6 +94,39 @@ shared Camoufox умирает с `TimeoutError`. Odds/ProTracker paths **не**
 
 Применяется на следующем пересоздании драйвера — рестарт рантайма НЕ нужен.
 
+### Переключение DISPATCH_MODE (ML-диспатч, план `swirling-giggling-kurzweil.md`)
+
+Три режима: `star` (default, старые словарные пути) | `shadow` (ML-диспатч
+только логирует в `runtime/ml_dispatch_decisions.jsonl`, ставки идут STAR) |
+`ml` (ML — единственный путь ставок; STAR-сообщения режутся гейтом
+`_dispatch_mode_reject_for_delivery`, см. `docs/CODE_MAP.md` →
+`base/ml_dispatch.py`). Включение/переключение/откат — через systemd drop-in,
+НЕ правкой кода:
+
+```bash
+# на serv1
+cat > /etc/systemd/system/cyberscore.service.d/dispatch.conf <<'EOF'
+[Service]
+Environment=DISPATCH_MODE=shadow
+EOF
+systemctl daemon-reload
+scripts/run/restart_cyberscore.sh   # рестарт + чистка map_id_check.txt
+```
+
+Откат — заменить значение на `star` (или удалить drop-in) и повторить те же
+три команды. Правка логики ставки = рестарт прода + чистка `map_id_check.txt`
+в том же ходу (общее правило выше) — переключение режима того же класса.
+
+Что смотреть после рестарта:
+- строка `[dispatch] unknown DISPATCH_MODE=...` в логе означает опечатку в
+  drop-in — процесс тихо откатился на `star`;
+- рост `runtime/ml_dispatch_decisions.jsonl` (новая строка на карту при смене
+  вердиктов/решения/фазы тайминга, не на каждый тик) подтверждает, что
+  `_ml_dispatch_tick` реально считает вердикты в `shadow`/`ml`;
+- в `ml` — отказы `star_dispatch_disabled` в логе (`_log_dispatch_mode_block_once`)
+  подтверждают, что старые STAR-ставки действительно режутся, а не проходят
+  тихо мимо гейта.
+
 ---
 
 ## Tips для агента

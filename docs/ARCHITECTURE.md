@@ -103,7 +103,7 @@
 - Tier влияет на минимальный WR-порог: `STAR_THRESHOLD_WR_TIER1`/`STAR_THRESHOLD_WR_TIER2` (default **60/65** — tier2 судится строже, решение alex от 02.09.2026; до этого было 60/60), плюс `TIER_SIGNAL_MIN_THRESHOLD_TIER2_BASE` clamp для tier2 (тоже 65; это пол, фактический порог = `max(BASE, STAR_THRESHOLD_WR_TIER2)`). Метки блока переименованы под порог, который они реально применяют: `tier2_min65_block` / `below_tier2_min65` (прежние `tier2_min60_block` / `below_tier2_min60` удалены), у tier1 остались `tier1_min60_block` / `below_tier1_min60`. Tier 3 (явный allowlist) судится по правилам tier 2, то есть тоже по 65.
 - **Как матч вообще попадает в tier 3** (`_classify_tier_three_sides`, cyberscore ~22172; результат читает `check_head` ~36245). Три способа, и во всех трёх неизвестная сторона **не** онбордится в tier2:
   1. лига впущена руками точным id — `TOURNAMENT_LEAGUE_ID_ALLOWLIST` (сейчас только 19722 `Lunar Paw` → Asgard);
-  2. лига в `TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST` (сейчас 10877) **и хотя бы одна сторона уже известна как tier1/tier2**. Это общий ежедневный тикет площадки Challengermode, на котором живут и открытые квалы BLAST Slam, и чужие турниры, а название Valve (`Challengermode Daily Tournaments`) не содержит ни одного токена allowlist'а. 26.08.2026 тикет впускали безусловно, 06.09.2026 закрыли из-за авто-онбординга чужих команд, 09.09.2026 вернули условно (E-267);
+  2. лига в `TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST` (сейчас 10877) **и хотя бы одна сторона уже известна как tier1/tier2**. Это общий ежедневный тикет площадки Challengermode, на котором живут и открытые квалы BLAST Slam, и чужие турниры, а название Valve (`Challengermode Daily Tournaments`) не содержит ни одного токена allowlist'а. 26.08.2026 тикет впускали безусловно, 06.09.2026 закрыли из-за авто-онбординга чужих команд, 09.09.2026 вернули условно (E-267). На открытых квалах Valve часто не отдаёт ни `team_id`, ни `team_name` — обе стороны приходят как `None`, — поэтому сторону дополнительно опознаём по составу: теги игроков из OpenDota `proPlayers` с порогом консенсуса `GATED_TICKET_MIN_TIER12_PLAYERS` (4 из 5). Теги отвечают ТОЛЬКО на вопрос «есть ли здесь команда tier1/2»: имена сторон из них не строятся, потому что тег OpenDota устаревает. Настоящие имена и team_id достаёт `_resolve_sourcetv_bridge_identity` с карточки CyberScore по ТОЧНОМУ Valve `match_id` (`id_steam`), без сопоставления по названиям;
   3. хотя бы одна сторона названа руками в `TIER_THREE_TEAMS` (`base/tier_three_teams.py`), а вторая — тоже в нём, либо известна как tier1/tier2, либо безымянна.
   В способах 2 и 3 сверка идёт **по team_id, не по имени**: `normalize_team_name` вычищает `team`/`esports`/пробелы, поэтому `Team Titan` схлопывается в `titan` — ключ tier2 настоящей организации, и допуск по имени утащил бы чужой team_id в ELO/Stratz/tier. По той же причине tier-3 ветка возвращает сырые кандидатские id, а не результат `_resolve_known_team_id_without_side_effects` (он резолвит имя первым).
 
@@ -241,3 +241,63 @@ Winline-first admission (E-268, 09.09.2026; поправка 10.09.2026): пор
 - recovery journal (`SENT_SIGNAL_JOURNAL_PATH`) — защита от двойной отправки при рестарте. `_flush_sent_signal_journal_into_map_id_check` пропускает и логирует битую строку вместо падения всего flush'а: иначе одна обрезанная запись навсегда лишала восстановления, и уже отправленные карты переанализировались на каждом рестарте.
 - **реестр отпечатков сигналов** (`SENT_SIGNAL_FINGERPRINT_PATH`, TTL `SENT_SIGNAL_FINGERPRINT_TTL_SECONDS` = 6 ч) — межинстансный дедуп по ключу «пара команд + номер карты + нормализованный заголовок ставки». С 02.09.2026 пишется в момент РЕЗЕРВА, то есть ДО `send_message`, а не после: `_signal_fingerprint_try_reserve` → `_sent_signal_fingerprint_store_add`, при доказанной неудаче `_signal_fingerprint_release` убирает ключ и из файла. Запись атомарная (tmp + `os.replace`).
 - uncertain delivery (`UNCERTAIN_SIGNAL_DELIVERY_PATH`) — URL с неподтверждённой доставкой блокируются.
+
+### ML-диспатч (`base/ml_dispatch.py` + `cyberscore_try.py`, план `swirling-giggling-kurzweil.md`)
+
+Параллельный поток решения о ставке, идущий РЯДОМ со словарными STAR-путями
+(п.7-8 pipeline выше), не заменяя их код — переключается режимом `DISPATCH_MODE`.
+
+```
+1. ВХОДЫ           team_elo_meta (ELO_r/ELO_d) + early_output/mid_output/all_output
+   (тот же тик,    (Early NW/Early Win/Late пары через win_model_veto.last_*)
+   что STAR)       + laning_serving.verdicts(...) (All=win_index_draft, ML Laning=lane)
+        ▼
+2. Ctx             _ml_dispatch_tick собирает base_url/map_num, ELO, пять
+                   ModelVerdict, kills_windows_open (_ml_dispatch_open_kills_windows),
+                   already_sent из персистентного SentLedger
+        ▼
+3. EVALUATE        ml_dispatch.evaluate(ctx, cfg) — чистая функция:
+                   underdog U/F по ELO-диффу (порог ML_DISPATCH_UNDERDOG_MIN_DIFF),
+                   win-маркет (поддержка/вето по правилу «правка 0»),
+                   kills-маркеты (только при наличии U), тайминг (lane 00 vs 600с)
+        ▼
+4. ЛОГ             _ml_dispatch_record_decisions → runtime/ml_dispatch_decisions.jsonl
+   (ВСЕГДА,        (append, дедуп новой строки по sha256(dedup_view), не на
+   shadow И ml)    каждый тик) — verdicts, decisions, skipped, elo_diff, mode
+        ▼
+5. РЕЖИМ-ГЕЙТ      dispatch_mode()=="ml"? иначе (star/shadow) — шаг 6 не выполняется,
+                   STAR-пути шлют как раньше без вмешательства
+        ▼ (только ml)
+6. ДОСТАВКА        _ml_dispatch_deliver_decision по каждому Decision с timing=="now":
+                   строит сообщение (win → _build_prematch_model_bet_message,
+                   kills_window/kills_total → _format_signal_header + компоновка
+                   поверх существующего тела карты), stake_multiplier_context =
+                   {"origin":"ml_dispatch", ...}, шлёт через
+                   _deliver_and_persist_signal, при успехе — SentLedger.add+save
+        ▼
+7. ГЕЙТ РЕЖИМА     _dispatch_mode_reject_for_delivery — ПЕРВЫЙ гейт в
+   (для STAR)      _deliver_and_persist_signal: в DISPATCH_MODE=ml режет любое
+                   «СТАВКА НА …» от STAR-путей (origin != "ml_dispatch"),
+                   reason=star_dispatch_disabled, ТЕРМИНАЛЬНО дропает delayed-запись
+```
+
+**Правила владельца (12.09.2026, зафиксированы докстрингом `ml_dispatch.py`):**
+порог `ML_DISPATCH_MIN_CONF=0.60` на все пять моделей; андердог = сторона с
+ELO ниже на `>=ML_DISPATCH_UNDERDOG_MIN_DIFF` (50); win-ставка идёт при
+поддержке хотя бы одной из `ML_DISPATCH_WIN_MODELS` (default `late,all,early_win`)
+и при отсутствии вето Late/All за другую сторону (вето разрешается ПОСЛЕ
+поддержки, по каждой стороне отдельно — конфликт только если обе стороны
+пережили свою вето-проверку); kills-маркеты только при наличии U, через
+Early NW/Early Win (+опционально All); тайминг win-маркета — "00" при
+подтверждении ML Laning, иначе ждать `ML_DISPATCH_TIMING_SECONDS` (600с);
+предматчевая 35-признаковая модель (`prematch_index`) НЕ применяется к
+ml_dispatch-решениям, несётся в `Ctx` только для лога.
+
+**Сосуществование со STAR:** в `star`/`shadow` ml_dispatch только читает и
+логирует, ничего не отправляет и не блокирует. В `ml` STAR-пути продолжают
+СЧИТАТЬ (панельные ★-строки Early NW/Early Win/Late/All/ML Laning остаются
+живыми и подсвечиваются при `>=0.60`), но их фактические ставки режутся на
+доставке; предматчевый/late гейты (`_win_model_reject_for_delivery`,
+`_late_win_model_reject_for_delivery`) явно пропускают
+`origin=="ml_dispatch"` без повторной проверки — вето уже применено внутри
+`ml_dispatch.evaluate`.

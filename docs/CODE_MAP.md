@@ -312,8 +312,8 @@ Dota2ProTracker подгружается динамически (`importlib`) �
 |---|---|
 | `MAP_ID_CHECK_PATH` | `~/.local/state/ingame/map_id_check.txt` (единый для всех режимов) |
 | `TIER2_DYNAMIC_ONBOARDING_PATH` | `<base>/id_to_names_dynamic_tier2.json` — JSON-overlay динамического tier2-onboarding'а: `_append_team_to_tier2_file` пишет сюда через `base/tier_dynamic_overlay.py` (атомарно), читатели применяют поверх `id_to_names.tier_two_teams`. До 02.09.2026 рантайм дописывал Python-блоки прямо в отслеживаемый `id_to_names.py` (611 блоков на serv1 — вечно грязный файл, конфликты при pull). Legacy-блоки переносятся в overlay `base/tools/migrate_tier2_onboarding.py` ПЕРЕД любой очисткой файла; ночная цепочка `rebuild_prematch_snapshot.sh` копирует с прода оба файла для `build_team_org_aliases.py` |
-| `MAP_VERDICTS_PATH` | `~/.local/state/ingame/map_verdicts.json` — журнал вердиктов карт (1 карта = 1 запись: identity + последний снапшот metrics/protracker/star/elo + блок kills_window (expected_diff по окнам киллов) + массив verdicts с dispatch-инфо). Первичная запись создаётся сразу при парсинге карты (`_record_map_verdict(..., create_only=True)`). Снапшот разбора (`metrics`/`bet_message`) дописывается по ходу анализа (`_flush_map_analysis_snapshot`) и при любом отказе доставки (`_deliver_and_persist_signal`). Журнал — источник правды для Telegram-команды `tail_log` (`_send_admin_log_tail`): 3 последних матча, сгруппированных по match_id (последняя карта серии); тело — последний собранный текст ставки `bet_message` (формат Telegram-отправки, собирается и в star-, и в no-star ветке отказа; fallback — читаемый preview), плюс история вердиктов и текущий статус (в delayed watcher / отправлен / отменён / отказано / распаршен без вердикта). Блок `kills_window` копится в entry для аналитики, но в `tail_log` не выводится |
-| `SOURCETV_MATCHES_PATH` | `{PROJECT_ROOT}/runtime/sourcetv_matches.json` — мост live-матчей между `sourcetv_probe.py` и `cyberscore_try.py` (абсолютный путь; не зависит от cwd) |
+| `MAP_VERDICTS_PATH` | `~/.local/state/ingame/map_verdicts.json` — журнал вердиктов карт (1 карта = 1 запись: identity + последний снапшот metrics/protracker/star/elo + блок kills_window (expected_diff по окнам киллов) + массив verdicts с dispatch-инфо). Первичная запись создаётся сразу при парсинге карты (`_record_map_verdict(..., create_only=True)`). Снапшот разбора (`metrics`/`bet_message`) дописывается по ходу анализа (`_flush_map_analysis_snapshot`) и при любом отказе доставки (`_deliver_and_persist_signal`). Журнал — источник правды для Telegram-команды `tail_log` (`_send_admin_log_tail`): пул — `_ADMIN_TAIL_LOG_JOURNAL_POOL_LIMIT` (100) свежих записей журнала, каждая КАРТА — отдельная карточка (группировка по match_id + номер карты, не по серии), показывается по `_ADMIN_TAIL_LOG_LAST_MATCHES_LIMIT` (4) за нажатие. Повторное нажатие отдаёт СЛЕДУЮЩУЮ четвёрку старше (5–8, 9–12, …), после конца пула курсор возвращается к первой странице; курсор `_admin_tail_page` живёт в памяти процесса и сбрасывается рестартом. Когда страница в пуле одна, поведение прежнее — тот же свежий снимок на каждое нажатие. Тело — последний собранный текст ставки `bet_message` (формат Telegram-отправки, собирается и в star-, и в no-star ветке отказа; fallback — читаемый preview), плюс история вердиктов и текущий статус (в delayed watcher / отправлен / отменён / отказано / распаршен без вердикта). Блок `kills_window` копится в entry для аналитики, но в `tail_log` не выводится |
+| `SOURCETV_MATCHES_PATH` | `{PROJECT_ROOT}/runtime/sourcetv_matches.json` — мост live-матчей между `sourcetv_probe.py` и `cyberscore_try.py` (абсолютный путь; не зависит от cwd). Служебное поле `_gated_tier12_side` несёт сторону, опознанную probe'ом по тегам игроков (`{side, team_key, players, team_ids}`), когда Valve не отдал ни `team_id`, ни `team_name`; консумер его ПЕРЕПРОВЕРЯЕТ своим справочником в `_roster_gated_side_is_valid`, а не верит на слово. Поле отвечает только на вопрос «есть ли здесь команда tier1/2» — имена сторон из него не строятся |
 | `RUNTIME_INSTANCE_LOCK_PATH` | `runtime/cyberscore_try.instance.lock` |
 | `DELAYED_QUEUE_PATH` | `runtime/delayed_signal_queue.json` (суффиксируется режимом) |
 | `SENT_SIGNAL_JOURNAL_PATH` | `runtime/sent_signal_recovery.jsonl` |
@@ -591,6 +591,7 @@ Liquipedia, которых у Valve нет: `attack_point`, `attack_backswing`,
 | `title_matches_allow_keywords(title)` | True, если название прошло токен- или фразовый allowlist. |
 | `league_matches_allowlist(league_id, title)` | True для безусловно разрешённого `league_id` ИЛИ разрешённого названия. |
 | `league_is_tier_gated(league_id)` | True для тикета из `TOURNAMENT_LEAGUE_ID_TIER_GATED_ALLOWLIST`. Название намеренно не принимает. |
+| `GATED_TICKET_MIN_TIER12_PLAYERS` | сколько игроков стороны должны нести тег ОДНОЙ организации tier1/tier2, чтобы опознать АНОНИМНУЮ карту гейтового тикета по составу (сейчас 4 из 5). Порог выбран замером на девяти живых играх тикета: 1 → 7 из 9, 2 → 5 из 9 включая чужой LGD (tier1) по двум устаревшим тегам, 3 → 4 из 9, 4 → 2 из 9 и оба верно (E-267). Константа общая: probe по ней опознаёт, cyberscore по ней же перепроверяет поле `_gated_tier12_side` из моста. |
 
 Проверку «известна ли сторона как tier1/2» каждый процесс делает свою, и одинаковой она быть не
 может: `sourcetv_probe._known_tier12_team_ids()` читает `id_to_names` + overlay на каждый вызов
@@ -1414,3 +1415,136 @@ cache256 учитывает весь драфт, аккаунты и timestamp. 
 карточки и ставки. `base/prematch_prediction_journal.py` сохраняет все прогнозы
 и завершённые исходы STRATZ. Поля, env и ограничения аудита описаны в
 [ml-prediction-contract.md](ml-prediction-contract.md).
+
+
+## `base/ml_dispatch.py` (457 строк) — ML-диспатч, чистый решатель (E-282/E-283, план `swirling-giggling-kurzweil.md`)
+
+Заменяет словарные STAR-пути пятью модельными вердиктами (Early NW, Early Win,
+Late, All, ML Laning). Модуль ничего не импортирует из `cyberscore_try.py`, не
+имеет побочных эффектов кроме опционального персистентного дедуп-реестра
+(`SentLedger`) — `evaluate()` сам никогда не трогает диск.
+
+**API:**
+- `Ctx` (`dataclass`) — снимок одного тика карты: `match_key, base_url,
+  map_num, game_time, radiant_team, dire_team, heroes, elo_radiant,
+  elo_dire, early_nw, early_win, late, all, lane` (каждый — `ModelVerdict|None`),
+  `prematch_index` (только для лога, не используется в правилах),
+  `kills_windows_open: List[str]`, `already_sent: Optional[Set[Tuple]]`.
+- `ModelVerdict(side, confidence)` — сторона "Radiant"/"Dire" (никогда "tie").
+- `Config.from_env(env=None)` — читает env ПРИ КАЖДОМ ВЫЗОВЕ (не кэширует), чтобы
+  тесты и systemd drop-in применялись без перезагрузки модуля.
+- `evaluate(ctx, cfg) -> EvalResult(decisions, skipped, underdog_side, elo_diff, mode_hint)`
+  — чистая функция, идемпотентна на неизменном `ctx.already_sent`.
+- `Decision(market, target_side, target_team, rule, models_for, models_against,
+  timing, expected_wr, min_odds, reasons)` — `market` ∈ `win|kills_window|kills_total`,
+  `timing` ∈ `now|wait_600`.
+- `Skipped(market, side, reason, detail)` — причины: `conflict`, `veto`,
+  `model_missing`, `below_threshold`, `dedup`, `no_underdog`.
+- `SentLedger(path)` — rebuild-then-replace JSON `[[base_url, map_num, market, side], ...]`.
+
+**Env `ML_DISPATCH_*` (default):**
+
+| Переменная | Default | Смысл |
+|---|---|---|
+| `ML_DISPATCH_MIN_CONF` | `0.60` | порог уверенности для всех пяти моделей (тот же порог красит ★ в панели) |
+| `ML_DISPATCH_UNDERDOG_MIN_DIFF` | `50.0` | минимальная разница ELO для деления на андердога (U) / фаворита (F); при `\|elo_r-elo_d\|<diff` `underdog_side=None` |
+| `ML_DISPATCH_WIN_MODELS` | `late,all,early_win` | какие модели считаются "поддержкой" win-маркета; Late/All всегда вето-модели независимо от этого списка |
+| `ML_DISPATCH_KILLS_REQUIRE_ALL` | `0` | `=1` требует ещё и `all>=порог` за андердога для kills-решений |
+| `ML_DISPATCH_TIMING_SECONDS` | `600.0` | если ML Laning не подтвердил таргет на 00, ждать это игровое время для win-маркета |
+| `ML_DISPATCH_MIN_ODDS_MARGIN` | `0.0` | запас в `min_odds = 1/(expected_wr-margin)`; известный нулевой пол цены, флаг существует, чтобы позже ужесточить |
+| `ML_DISPATCH_SENT_PATH` | `runtime/ml_dispatch_sent.json` | путь дедуп-реестра (относительно ROOT, если не абсолютный) |
+| `ML_DISPATCH_LOG_PATH` (читается в `cyberscore_try.py`) | `runtime/ml_dispatch_decisions.jsonl` | путь лога решений |
+
+**Правила (решения владельца 12.09.2026):**
+- Win-маркет (×1): сторона `S` подтверждена, если хотя бы одна из
+  `ML_DISPATCH_WIN_MODELS` даёт `S` при `>=min_conf`; `S` ветируется, если Late
+  ИЛИ All (всегда проверяются, вне зависимости от `win_models`) дают *другую*
+  сторону при `>=min_conf`. Вето разрешается ПО КАЖДОЙ СТОРОНЕ ОТДЕЛЬНО раньше
+  конфликта («правка 0»): сторона — реальный кандидат только если есть
+  поддержка И нет вето; если после этого выжила ровно одна сторона — ставка
+  идёт на неё (отказ другой стороны это `veto`, не `conflict`), даже если до
+  вето обе стороны формально имели поддержку. `conflict` — только когда ОБЕ
+  стороны пережили свою вето-проверку.
+- Kills-маркеты (только при наличии U): Early NW и/или Early Win `>=min_conf`
+  за U (плюс опционально All при `ML_DISPATCH_KILLS_REQUIRE_ALL=1`) дают до
+  двух решений — `kills_window` (только если открыто окно
+  `ctx.kills_windows_open`, дедлайн окна `band_start-120`, lead `band_start-180`)
+  и `kills_total`, максимум по одному каждого на карту.
+- Тайминг: win-маркет смотрит на `ctx.lane` — если ML Laning подтверждает
+  таргет `>=min_conf`, `timing="now"` (ставка на "00"); иначе `timing="now"`
+  только при `game_time >= ML_DISPATCH_TIMING_SECONDS` (600с), иначе `wait_600`.
+  Kills-решения всегда `timing="now"` (фильтрацию по окну делает `Ctx.kills_windows_open`).
+- `expected_wr` = максимум уверенности среди моделей "за"; `min_odds =
+  round(1/(expected_wr-margin), 2)`.
+- Дедуп персистентный, ключ `(base_url, map_num, market, side)`; `evaluate()`
+  только читает `ctx.already_sent`, запись в `SentLedger` — забота вызывающего
+  кода (`_ml_dispatch_deliver_decision` в `cyberscore_try.py`).
+
+Runtime-файлы: `runtime/ml_dispatch_decisions.jsonl` (append-only, ключи `ts,
+match_key, base_url, map_num, game_time, teams, heroes, elo_r, elo_d, elo_diff,
+underdog_side, verdicts{early_nw,early_win,late,all,lane}, prematch_index,
+decisions, skipped, delivered, mode`; дедуп новой строки по sha256 от
+`dedup_view`, не по каждому тику) и `runtime/ml_dispatch_sent.json` (дедуп-реестр,
+ключ `base_url|map_num|market|side` сериализован как список кортежей).
+
+`base/laning_serving.py:verdicts(radiant_dict, dire_dict, timestamp,
+draft_model=...)` — экспортирует те же два вердикта, что печатает
+`panel_lines` (для `Ctx.all`/`Ctx.lane`): `{"all": {"side","confidence"}|None,
+"lane": {"side","confidence","p_tie"}|None}`. `all` = `draft_model.win_index_draft`
+(тот же индекс, что печатает "🌐 All ML-модель", НЕ 35-признаковая предматчевая
+модель); `lane` = ML Laning team-модель, сторона — та из Radiant/Dire, у
+которой выше собственная не-tie вероятность (в отличие от печатаемой строки,
+которая может показать "Равенство", если оно argmax).
+
+### `cyberscore_try.py` — DISPATCH_MODE и ml_dispatch-интеграция
+
+`dispatch_mode()` (~11747) читает `DISPATCH_MODE` из env при КАЖДОМ вызове:
+`star` (default) | `shadow` | `ml`; неизвестное значение → warning в лог +
+откат на `star`.
+- **star** — старое поведение, `_ml_dispatch_tick` возвращает управление сразу
+  (ничего не логирует).
+- **shadow** — `_ml_dispatch_tick` считает все пять вердиктов, пишет решение в
+  `runtime/ml_dispatch_decisions.jsonl`, но ничего не отправляет; STAR-пути
+  шлют ставки как раньше.
+- **ml** — STAR-пути продолжают ВЫЧИСЛЯТЬ ставки (код не удалён), но их
+  сообщения режутся гейтом `_dispatch_mode_reject_for_delivery` (~11760) в
+  `_deliver_and_persist_signal` (ПЕРВЫЙ гейт перед всеми остальными): любой
+  текст, начинающийся с «СТАВКА НА », блокируется с причиной
+  `star_dispatch_disabled`, если `stake_multiplier_context.origin !=
+  "ml_dispatch"`. Отказ ТЕРМИНАЛЕН для delayed-очереди — режим не сменится на
+  следующей перепроверке того же сигнала (только рестартом), поэтому сразу
+  `_drop_delayed_match(match_key, reason="star_dispatch_disabled")`. Откат —
+  просто вернуть `DISPATCH_MODE=star` (или `shadow`) и рестартовать процесс.
+  Параллельно `_ml_dispatch_tick` в `ml` доставляет свои `Decision`ы с
+  `timing=="now"` через тот же `_deliver_and_persist_signal`
+  (`stake_multiplier_context={"origin":"ml_dispatch", ...}`), поэтому
+  `_win_model_reject_for_delivery` и `_late_win_model_reject_for_delivery`
+  выходят пустым `None` для `origin=="ml_dispatch"` сразу — вето
+  Late/All `>=0.60` против таргета уже применено внутри `ml_dispatch.evaluate`
+  ДО появления `Decision`, повторная проверка предматчевой/late-модели здесь
+  избыточна.
+
+`_ml_dispatch_tick(...)` (~12052) — один тик одной карты: собирает `Ctx` (ELO
+из `team_elo_meta`, пять вердиктов из `early_output/mid_output/all_output` +
+`laning_serving.verdicts`, открытые kills-окна из
+`_ml_dispatch_open_kills_windows(game_time)`), зовёт `ml_dispatch.evaluate`,
+пишет строку в лог решений (`_ml_dispatch_record_decisions`, дедуп по хешу от
+`dedup_view`, не на каждый тик) и — только в `mode=="ml"` — доставляет через
+`_ml_dispatch_deliver_decision` решения с `timing=="now"`. Own try/except:
+исключение целиком проглатывается и логируется, тик карты никогда не падает
+из-за этого пути. Единственная точка вызова — сразу после
+`_try_dispatch_prematch_model_bet(...)` в основном цикле (~39674..39713),
+живёт РЯДОМ, не заменяет.
+
+★-суффикс в панели: `_format_win_model_line` (~7571-7614) добавляет " ★" к
+строкам Early NW/Early Win/Late, когда их confidence `>= ML_DISPATCH_MIN_CONF`
+(читается инлайново, а не через хелпер — функция гоняется тестами в
+изолированном `exec()` без остального модуля); `laning_serving.panel_lines`
+делает то же для All/ML Laning по тому же порогу. Информационная подсветка,
+не гейт — ставки по ★ не идут напрямую, ml_dispatch считает те же вердикты
+заново.
+
+`_format_signal_header(..., special_header_mode="kills_total")` (~11654) —
+новый заголовок для `market="kills_total"` из ml_dispatch: `"СТАВКА НА Тотал
+килов {team} БОЛЬШЕ"` (без множителя и без окна, в отличие от
+`early_kills`/`kills_from`).
