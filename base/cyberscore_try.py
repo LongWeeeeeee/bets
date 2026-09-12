@@ -12575,13 +12575,20 @@ def _ml_dispatch_reserved_odds_from_message(message_text: Optional[str]) -> Opti
 def _ml_dispatch_min_odds_reject_for_delivery(
     message_text: Optional[str],
     stake_multiplier_context: Optional[Dict[str, Any]],
+    match_key: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Ценовой пол ML-ставки (дефект 3, план ml-диспатча): никто не читал
     ``stake_multiplier_context["calibration"]`` — ML-ставка на победу уходила
     бы без пола по кэфу. Применяется только к origin=="ml_dispatch" и
     ml_market=="win" (у kills_window/kills_total рынка на килы нет — см.
     план). Кэф неизвестен -> поведение как у существующего
-    ``BOOKMAKER_BLOCK_WITHOUT_ODDS`` (свой режим не изобретаем).
+    ``BOOKMAKER_BLOCK_WITHOUT_ODDS`` (свой режим не изобретаем), то есть
+    блок ТОЛЬКО пока odds-гейт вообще активен (``BOOKMAKER_PREFETCH_ENABLED``
+    и ``BOOKMAKER_PREFETCH_GATE_MODE == "odds"``). При выключенном пайплайне
+    (`--no-odds`, прод 12.09.2026) общий путь возвращает
+    ``ready=True, reason="disabled"`` и отправляет без кэфа — пол здесь
+    обязан вести себя так же, иначе каждая ML-ставка на победу молча
+    режется «кэф неизвестен» (45 строк за 90 минут после включения ``ml``).
     """
     ctx = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
     if str(ctx.get("origin") or "") != "ml_dispatch":
@@ -12599,12 +12606,35 @@ def _ml_dispatch_min_odds_reject_for_delivery(
         return None
     price = _ml_dispatch_reserved_odds_from_message(message_text)
     if price is None:
-        if BOOKMAKER_BLOCK_WITHOUT_ODDS:
+        odds_gate_active = bool(BOOKMAKER_PREFETCH_ENABLED) and BOOKMAKER_PREFETCH_GATE_MODE == "odds"
+        if odds_gate_active and BOOKMAKER_BLOCK_WITHOUT_ODDS:
             return {"reason": "ml_min_odds_below_floor", "min_odds": min_odds, "price": None}
+        if not odds_gate_active:
+            _log_ml_dispatch_min_odds_not_applied_once(match_key, min_odds)
         return None
     if price < min_odds:
         return {"reason": "ml_min_odds_below_floor", "min_odds": min_odds, "price": price}
     return None
+
+
+_ml_dispatch_min_odds_not_applied_logged_lock = threading.Lock()
+_ml_dispatch_min_odds_not_applied_logged_keys: set = set()
+
+
+def _log_ml_dispatch_min_odds_not_applied_once(match_key: Optional[str], min_odds: float) -> None:
+    """Один раз на матч: пол по кэфу пропущен, потому что odds-пайплайн
+    выключен — чтобы ML-ставка без «Кэф Winline» не выглядела как молчаливый
+    обход пола."""
+    log_key = f"{match_key}|min_odds_not_applied"
+    with _ml_dispatch_min_odds_not_applied_logged_lock:
+        already_logged = log_key in _ml_dispatch_min_odds_not_applied_logged_keys
+        _ml_dispatch_min_odds_not_applied_logged_keys.add(log_key)
+    if already_logged:
+        return
+    print(
+        f"   ℹ️ ML-пол по кэфу не применён: odds pipeline OFF "
+        f"(пол {float(min_odds):.2f}, кэф не резервируется) — {match_key}"
+    )
 
 
 _ml_dispatch_min_odds_block_logged_lock = threading.Lock()
@@ -32964,6 +32994,7 @@ def _deliver_and_persist_signal(
     ml_min_odds_block = _ml_dispatch_min_odds_reject_for_delivery(
         message_text,
         stake_multiplier_context,
+        match_key=match_key,
     )
     if ml_min_odds_block is not None:
         if reservation_context is not None:

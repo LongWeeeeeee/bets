@@ -240,6 +240,26 @@ All / Late имеет ★ — сигнал посылается; сделай и
 (`_dispatch_mode_reject_for_delivery`), идут только `origin=ml_dispatch`;
 откат — `DISPATCH_MODE=shadow|star` + рестарт.
 
+**Addendum 12.09 18:40 MSK — первые 90 минут `ml`.** 3 карты, 8 тиков
+(`mode=ml`). Два win-решения — `8995259364` m1 (Radiant по late 0.64, пол
+1.56) и `8995387004` m1 (Dire по early_nw 0.60, пол 1.66) — оба
+`delivered=blocked`: 45 строк «🚫 ML-ставка заблокирована: кэф неизвестен».
+Причина: прод идёт с `--no-odds` (`BOOKMAKER_PREFETCH_ENABLED=False`),
+`_bookmaker_prepare_message_for_delivery` возвращает `ready=True,
+reason="disabled"` и общий путь отправляет БЕЗ «Кэф Winline», а ML-пол при
+`price is None` смотрел только `BOOKMAKER_BLOCK_WITHOUT_ODDS` (default True)
+— был строже общего пути и резал каждую ML-ставку на победу. Kills-рынки
+пол не проверяют — два kills-сигнала по `8995387004` ушли
+(`send_message OK reason=ml_dispatch`, ledger `ml_dispatch_sent.json`).
+Правка: при неизвестном кэфе блок только если odds-гейт активен
+(`BOOKMAKER_PREFETCH_ENABLED and BOOKMAKER_PREFETCH_GATE_MODE=="odds"`);
+при выключенном пайплайне — пропуск с одноразовой строкой
+«ℹ️ ML-пол по кэфу не применён: odds pipeline OFF». Известный кэф ниже пола
+по-прежнему режется. Тест
+`test_ml_min_odds_unknown_price_passes_when_odds_pipeline_off` (red до
+правки). Следствие для владельца: пока прод без odds-пайплайна, у ML-ставок
+на победу пола по цене НЕТ вообще — это тот же «нулевой пол», что у STAR.
+
 **Где искать ошибку после включения.** Сигнала нет при ★ → смотреть
 `runtime/ml_dispatch_decisions.jsonl`: `decisions[].timing=="wait_600"` (до
 600 с игрового времени без подтверждения Lane), `delivered[].status=="blocked"`

@@ -370,6 +370,10 @@ def test_ml_min_odds_not_applied_to_kills_market() -> None:
 
 def test_ml_min_odds_unknown_price_follows_bookmaker_block_without_odds(monkeypatch) -> None:
     text = "СТАВКА НА Team Synapse x1\n"  # no "Кэф Winline:" line at all
+    # Odds gate ACTIVE (pipeline on, gate mode "odds"): unknown price mirrors
+    # BOOKMAKER_BLOCK_WITHOUT_ODDS exactly like the general delivery path.
+    monkeypatch.setattr(C, "BOOKMAKER_PREFETCH_ENABLED", True)
+    monkeypatch.setattr(C, "BOOKMAKER_PREFETCH_GATE_MODE", "odds")
     monkeypatch.setattr(C, "BOOKMAKER_BLOCK_WITHOUT_ODDS", True)
     decision = C._ml_dispatch_min_odds_reject_for_delivery(text, ML_WIN_CTX)
     assert decision is not None
@@ -378,3 +382,33 @@ def test_ml_min_odds_unknown_price_follows_bookmaker_block_without_odds(monkeypa
 
     monkeypatch.setattr(C, "BOOKMAKER_BLOCK_WITHOUT_ODDS", False)
     assert C._ml_dispatch_min_odds_reject_for_delivery(text, ML_WIN_CTX) is None
+
+
+def test_ml_min_odds_unknown_price_passes_when_odds_pipeline_off(monkeypatch, capsys) -> None:
+    # Prod 12.09.2026: cyberscore_try.py runs with --no-odds, so
+    # _bookmaker_prepare_message_for_delivery returns ready=True/"disabled"
+    # and the general path sends WITHOUT "Кэф Winline". The ML floor must
+    # not be stricter than that path: 8995259364 m1 (win Radiant, floor
+    # 1.56) and 8995387004 m1 (win Dire, floor 1.66) were blocked 45 times
+    # with "кэф неизвестен" while BOOKMAKER_BLOCK_WITHOUT_ODDS stayed at
+    # its default True.
+    text = "СТАВКА НА Dawn Bulls x1\n"
+    monkeypatch.setattr(C, "BOOKMAKER_PREFETCH_ENABLED", False)
+    monkeypatch.setattr(C, "BOOKMAKER_PREFETCH_GATE_MODE", "odds")
+    monkeypatch.setattr(C, "BOOKMAKER_BLOCK_WITHOUT_ODDS", True)
+    assert C._ml_dispatch_min_odds_reject_for_delivery(
+        text, ML_WIN_CTX, match_key="dltv.org/matches/8995259364.5",
+    ) is None
+    out = capsys.readouterr().out
+    assert "ML-пол по кэфу не применён" in out and "8995259364.5" in out
+
+    # Gate mode other than "odds" also means no reserved price ever appears.
+    monkeypatch.setattr(C, "BOOKMAKER_PREFETCH_ENABLED", True)
+    monkeypatch.setattr(C, "BOOKMAKER_PREFETCH_GATE_MODE", "off")
+    assert C._ml_dispatch_min_odds_reject_for_delivery(text, ML_WIN_CTX) is None
+
+    # A KNOWN price below the floor is still rejected regardless of pipeline state.
+    monkeypatch.setattr(C, "BOOKMAKER_PREFETCH_ENABLED", False)
+    below = "СТАВКА НА Dawn Bulls x1\nКэф Winline: 1.40\n"
+    decision = C._ml_dispatch_min_odds_reject_for_delivery(below, ML_WIN_CTX)
+    assert decision is not None and decision["price"] == 1.40
