@@ -12247,6 +12247,50 @@ def _ml_dispatch_tick(
         logger.exception("_ml_dispatch_tick failed for %s", match_key)
 
 
+_ml_dispatch_tick_cycle_guard_lock = threading.Lock()
+_ml_dispatch_tick_last_cycle_key: Dict[str, Tuple[Any, Any]] = {}
+
+
+def _ml_dispatch_tick_once_per_cycle(
+    *,
+    match_key: str,
+    live_league: Optional[Dict[str, Any]],
+    game_time_seconds: Any,
+    **kwargs: Any,
+) -> None:
+    """Обёртка над `_ml_dispatch_tick` для нескольких мест диспетчера, видящих
+    один и тот же игровой тик (ранняя local-ветка, star-ветка, no-star-ветка —
+    дефект 1 плана ml-диспатча): не больше одной РЕАЛЬНОЙ оценки пяти моделей
+    на (match_key, map_num, game_time) за цикл. Повторный вызов и без этой
+    защиты безопасен (лог решений дедуплицирует по хешу, доставка —
+    SentLedger), но лишняя оценка на каждый вызов не нужна. `_ml_dispatch_tick`
+    сам по себе (см. test_dispatch_mode_gate.py) поведения не меняет — это
+    отдельная обёртка, используемая только на call-сайтах.
+    """
+    try:
+        map_num_raw = _bookmaker_infer_map_num(
+            live_league if isinstance(live_league, dict) else {}, score_text="",
+        )
+        map_num_key = int(map_num_raw) if map_num_raw is not None else None
+    except (TypeError, ValueError):
+        map_num_key = None
+    try:
+        gt_key = round(float(game_time_seconds), 3) if game_time_seconds is not None else None
+    except (TypeError, ValueError):
+        gt_key = None
+    cycle_key = (map_num_key, gt_key)
+    with _ml_dispatch_tick_cycle_guard_lock:
+        if _ml_dispatch_tick_last_cycle_key.get(match_key) == cycle_key:
+            return
+        _ml_dispatch_tick_last_cycle_key[match_key] = cycle_key
+    _ml_dispatch_tick(
+        match_key=match_key,
+        live_league=live_league,
+        game_time_seconds=game_time_seconds,
+        **kwargs,
+    )
+
+
 def _half_stake_elo_underdog_reject_for_delivery(
     message_text: Optional[str],
     stake_multiplier_context: Optional[Dict[str, Any]],
@@ -39567,12 +39611,64 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             )
             if not isinstance(local_metrics, dict):
                 return
+
+            def _ml_dispatch_tick_coverage_call() -> None:
+                # Дефект покрытия (план ml-диспатча, этап 2): ниже — ДВА ранних
+                # return (горизонт kills-window policy 18 мин, lane_adv_dict ещё
+                # не посчитан), которые раньше уносили с собой и оценку пяти
+                # ML-моделей. Она нужна КАЖДЫЙ цикл, независимо от килов —
+                # покрывающий вызов здесь, до обоих return. Обычный богатый
+                # вызов ниже (после lanes/ProTracker/тела сообщения) выполнится
+                # следом на нормальном цикле и просто победит защиту «раз за
+                # цикл» первым, раз возврата не случилось.
+                try:
+                    _cov_elo_summary = _build_team_elo_matchup_summary(
+                        radiant_team_id=radiant_team_id,
+                        dire_team_id=dire_team_id,
+                        radiant_team_name=radiant_team_name_original,
+                        dire_team_name=dire_team_name_original,
+                        radiant_account_ids=radiant_account_ids,
+                        dire_account_ids=dire_account_ids,
+                        match_tier=star_match_tier,
+                        timestamp=team_elo_timestamp,
+                    )
+                    _cov_elo_block, _cov_elo_meta = _format_team_elo_block(
+                        _cov_elo_summary,
+                        radiant_team_name=radiant_team_name_original,
+                        dire_team_name=dire_team_name_original,
+                    )
+                except Exception:
+                    _cov_elo_block, _cov_elo_meta = "", None
+                _ml_dispatch_tick_once_per_cycle(
+                    match_key=check_uniq_url,
+                    radiant_team_name=radiant_team_name_original or radiant_team_name,
+                    dire_team_name=dire_team_name_original or dire_team_name,
+                    live_league=data.get('live_league_data') or {},
+                    top=local_metrics.get('top'),
+                    mid=local_metrics.get('mid'),
+                    bot=local_metrics.get('bot'),
+                    protracker_payload=protracker_payload,
+                    team_elo_block=_cov_elo_block,
+                    team_elo_meta=_cov_elo_meta,
+                    game_time_seconds=game_time,
+                    radiant_lead=lead,
+                    early_output=local_metrics.get('early_output'),
+                    mid_output=local_metrics.get('mid_output'),
+                    all_output=local_metrics.get('all_output'),
+                    radiant_heroes_and_pos=radiant_heroes_and_pos,
+                    dire_heroes_and_pos=dire_heroes_and_pos,
+                    ml_laning_line=ml_laning_line,
+                    all_model_line=all_model_line,
+                    laning_timestamp=team_elo_timestamp,
+                )
+
             try:
                 _gt_local = float(game_time or 0.0)
             except (TypeError, ValueError):
                 _gt_local = 0.0
             # Kills-window policy полосы доходят до 16:00 (связка 20-30).
             if _gt_local >= float(KILLS_WINDOW_POLICY_HORIZON_SECONDS):
+                _ml_dispatch_tick_coverage_call()
                 return
             # Lanes are not computed inside _run_local_dictionary_metrics — do it
             # here so lane_adv_dict is available before ProTracker.
@@ -39594,11 +39690,13 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                     local_metrics.setdefault('bot', "")
                     local_metrics.setdefault('mid', "")
             except Exception:
+                _ml_dispatch_tick_coverage_call()
                 return
             local_lane_adv_dict_value = _lane_dict_adv_value(
                 local_metrics.get('top'), local_metrics.get('mid'), local_metrics.get('bot')
             )
             if local_lane_adv_dict_value is None:
+                _ml_dispatch_tick_coverage_call()
                 return
             # Early-star sign from the LOCAL early block (no ProTracker needed)
             # so the opposite-early-star >=12 threshold rule is honoured.
@@ -39710,7 +39808,7 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
             # пишет решение в лог; в ml — доставляет timing=="now" решения тем
             # же _deliver_and_persist_signal. Не влияет на STAR-путь выше —
             # own try/except внутри, тик карты не падает из-за нового пути.
-            _ml_dispatch_tick(
+            _ml_dispatch_tick_once_per_cycle(
                 match_key=check_uniq_url,
                 radiant_team_name=radiant_team_name_original or radiant_team_name,
                 dire_team_name=dire_team_name_original or dire_team_name,
@@ -42129,6 +42227,32 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 full_message_text=message_text,
                 ml_laning_line=ml_laning_line,
                 all_model_line=all_model_line,
+            )
+            # ML-диспатч (этап 2 плана, дефект покрытия): star-ветка раньше не
+            # вызывала тик вовсе. Дубль с ранней local-веткой безопасен —
+            # гасится защитой «раз за цикл» внутри `_ml_dispatch_tick_once_per_cycle`.
+            _ml_dispatch_tick_once_per_cycle(
+                match_key=check_uniq_url,
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=data.get('live_league_data') or {},
+                top=s.get('top'),
+                mid=s.get('mid'),
+                bot=s.get('bot'),
+                protracker_payload=s,
+                team_elo_block=team_elo_block,
+                team_elo_meta=team_elo_meta,
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                early_output=s.get('early_output'),
+                mid_output=s.get('mid_output'),
+                all_output=s.get('all_output'),
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
+                full_message_text=message_text,
+                ml_laning_line=ml_laning_line,
+                all_model_line=all_model_line,
+                laning_timestamp=team_elo_timestamp,
             )
             _try_dispatch_lane_adv_standalone_kills(
                 match_key=check_uniq_url,
@@ -45686,6 +45810,32 @@ def check_head(heads, bodies, i, maps_data, return_status=None):
                 full_message_text=_verdict_ctx.get("bet_message"),
                 ml_laning_line=ml_laning_line,
                 all_model_line=all_model_line,
+            )
+            # ML-диспатч (этап 2 плана, дефект покрытия): no-star ветка раньше
+            # не вызывала тик вовсе. Дубль с ранней local-веткой безопасен —
+            # гасится защитой «раз за цикл» внутри `_ml_dispatch_tick_once_per_cycle`.
+            _ml_dispatch_tick_once_per_cycle(
+                match_key=check_uniq_url,
+                radiant_team_name=radiant_team_name_original or radiant_team_name,
+                dire_team_name=dire_team_name_original or dire_team_name,
+                live_league=data.get('live_league_data') or {},
+                top=s.get('top'),
+                mid=s.get('mid'),
+                bot=s.get('bot'),
+                protracker_payload=s,
+                team_elo_block=noskip_team_elo_block,
+                team_elo_meta=locals().get("_noskip_team_elo_meta"),
+                game_time_seconds=game_time,
+                radiant_lead=lead,
+                early_output=s.get('early_output'),
+                mid_output=s.get('mid_output'),
+                all_output=s.get('all_output'),
+                radiant_heroes_and_pos=radiant_heroes_and_pos,
+                dire_heroes_and_pos=dire_heroes_and_pos,
+                full_message_text=_verdict_ctx.get("bet_message"),
+                ml_laning_line=ml_laning_line,
+                all_model_line=all_model_line,
+                laning_timestamp=team_elo_timestamp,
             )
             _try_dispatch_lane_adv_standalone_kills(
                 match_key=check_uniq_url,
