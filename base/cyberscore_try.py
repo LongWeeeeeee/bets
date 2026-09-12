@@ -11707,6 +11707,73 @@ def _half_stake_elo_underdog_reject(
     }
 
 
+# --- Режим диспатча: star (словарные пути, как сейчас) | shadow (ML логирует,
+# ставки идут STAR-путями) | ml (ML — единственный путь ставок, см. план
+# swirling-giggling-kurzweil.md, этап 2). Читается ФУНКЦИЕЙ при каждом
+# вызове (не модульной константой), чтобы тесты и systemd env-override не
+# требовали перезагрузки модуля.
+_DISPATCH_MODE_VALUES = ("star", "shadow", "ml")
+
+
+def dispatch_mode() -> str:
+    """Текущий режим диспатча из env DISPATCH_MODE (default "star").
+
+    Неизвестное значение -> "star" + warning в лог (не молчим: потерять
+    диспатч незаметно хуже, чем упасть обратно на проверенный путь).
+    """
+    raw = str(os.getenv("DISPATCH_MODE", "star") or "star").strip().lower()
+    if raw not in _DISPATCH_MODE_VALUES:
+        logger.warning("[dispatch] unknown DISPATCH_MODE=%r, falling back to star", raw)
+        return "star"
+    return raw
+
+
+def _dispatch_mode_reject_for_delivery(
+    message_text: Optional[str],
+    stake_multiplier_context: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Причина 'star_dispatch_disabled', или None если препятствий нет.
+
+    В режиме `ml` старые словарные STAR-пути не удаляются и продолжают
+    вычислять свои ставки, но их сообщения режутся здесь: любой текст,
+    начинающийся с «СТАВКА НА » (после strip — это покрывает и обычные
+    ставки «x<mult>», и kills-хедеры, у которых множителя в тексте нет,
+    см. `_STAKE_HEADER_MULTIPLIER_RE`), блокируется, если контекст
+    ставки не несёт `origin == "ml_dispatch"`. Информационные панели без
+    этого префикса не трогаются. Гейт должен идти ПЕРВЫМ в
+    `_deliver_and_persist_signal` — раньше любых других гейтов, которые
+    сами по себе рассчитаны на предматчевую/late-модель, а не на режим.
+    """
+    if dispatch_mode() != "ml":
+        return None
+    text = str(message_text or "").strip()
+    if not text.startswith("СТАВКА НА "):
+        return None
+    ctx = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
+    if str(ctx.get("origin") or "") == "ml_dispatch":
+        return None
+    return {"reason": "star_dispatch_disabled"}
+
+
+_dispatch_mode_block_logged_lock = threading.Lock()
+_dispatch_mode_block_logged_keys: set = set()
+
+
+def _log_dispatch_mode_block_once(match_key: str, decision: Dict[str, Any]) -> None:
+    """Печатает причину блока режима один раз на матч (перепроверок много)."""
+    log_key = f"{match_key}|{decision.get('reason')}"
+    with _dispatch_mode_block_logged_lock:
+        already_logged = log_key in _dispatch_mode_block_logged_keys
+        _dispatch_mode_block_logged_keys.add(log_key)
+    if already_logged:
+        return
+    print(f"   🚫 {_dispatch_mode_block_detail(decision)} — {match_key}")
+
+
+def _dispatch_mode_block_detail(decision: Dict[str, Any]) -> str:
+    return "STAR-ставка заблокирована: DISPATCH_MODE=ml, origin != ml_dispatch"
+
+
 def _half_stake_elo_underdog_reject_for_delivery(
     message_text: Optional[str],
     stake_multiplier_context: Optional[Dict[str, Any]],
@@ -11817,6 +11884,12 @@ def _win_model_reject_for_delivery(
     не со всех путей, и без него эта проверка пропускается — две другие
     работают всегда, они опираются только на текст.
     """
+    ctx_origin = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
+    if str(ctx_origin.get("origin") or "") == "ml_dispatch":
+        # Вето 0.60 (Late/All против таргета) уже применено в ml_dispatch.evaluate
+        # ДО того, как Decision вообще появился; повторная проверка предматчевой
+        # ML-модели здесь для ml-ставок избыточна и её не касается.
+        return None
     if not BET_REQUIRE_WIN_MODEL:
         return None
     text = str(message_text or "")
@@ -11908,6 +11981,10 @@ def _late_win_model_reject_for_delivery(
     доставки нельзя: история разложений держит 32 записи, а ставка уходит
     через десятки минут после оценки.
     """
+    ctx_origin = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
+    if str(ctx_origin.get("origin") or "") == "ml_dispatch":
+        # Вето 0.60 (Late/All против таргета) уже применено в ml_dispatch.evaluate.
+        return None
     if not BET_REQUIRE_LATE_WIN_MODEL:
         return None
     text = str(message_text or "")
@@ -32151,6 +32228,30 @@ def _deliver_and_persist_signal(
     bookmaker prepare. Minimal odds-only may preflight and hand an explicit reservation
     context so delivery reuses ownership without a second prepare.
     """
+    # Гейт режима — ПЕРВЫМ, раньше любых модельных гейтов: в DISPATCH_MODE=ml
+    # старые словарные STAR-пути продолжают вычислять ставки, но их сообщения
+    # не должны уходить вовсе. В отличие от остальных гейтов ниже, этот отказ
+    # ТЕРМИНАЛЕН для delayed-очереди — режим не поменяется на следующей
+    # перепроверке того же сигнала (только рестартом), поэтому ретраить
+    # часами нечего; см. `_drop_delayed_match` ниже.
+    dispatch_mode_block = _dispatch_mode_reject_for_delivery(
+        message_text,
+        stake_multiplier_context,
+    )
+    if dispatch_mode_block is not None:
+        _log_dispatch_mode_block_once(match_key, dispatch_mode_block)
+        _record_delivery_gate_block(
+            match_key,
+            message_text,
+            dispatch_mode_block,
+            reason="star_dispatch_disabled",
+            verdict=f"   🚫 {_dispatch_mode_block_detail(dispatch_mode_block)} — {match_key}",
+        )
+        try:
+            _drop_delayed_match(match_key, reason="star_dispatch_disabled")
+        except Exception:
+            logger.exception("_drop_delayed_match failed after star_dispatch_disabled for %s", match_key)
+        return False
     # Единая точка запрета x0.5 на ELO-андердога: перекрывает немедленный
     # dispatch, delayed watcher'ы и спекулятивный x0.5. Матч НЕ закрывается
     # (add_url не зовём) — если сигнал позже дорастёт до x1+, он уйдёт.
@@ -46087,6 +46188,7 @@ if __name__ == "__main__":
     )
     if PURE_DLTV_MODE:
         print("🔇 Pure DLTV mode: all bookmaker prefetch/presence checks disabled")
+    print(f"[dispatch] mode={dispatch_mode()}")
     runtime_mode_label = _runtime_instance_mode_label(args.odds)
     if not _try_acquire_runtime_instance_lock(mode_label=runtime_mode_label):
         raise SystemExit(0)
