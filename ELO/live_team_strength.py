@@ -92,6 +92,9 @@ _RUNTIME_SNAPSHOT_CACHE: dict[str, Any] = {"base_snapshot_id": None, "runtime_si
 _LIVE_PROBABILITY_POLICY_CACHE: dict[str, Any] = {"path": None, "signature": None, "policy": None}
 _LEADERBOARD_RANK_CACHE: dict[str, Any] = {"table_id": None, "table_ref": None,
                                             "rank_map": None}
+# Валидная delta может быть десятки мегабайт (в том числе из roster_tracker),
+# поэтому удерживаем только её file identity и результат guard-проверки.
+_DELTA_USABILITY_CACHE: dict[str, Any] = {"key": None, "usable": False}
 
 SEGMENT_OVERALL = "overall"
 SEGMENT_TIER1_ONLY = "tier1_only"
@@ -1191,18 +1194,32 @@ def _delta_is_usable(snapshot: dict[str, Any] | None, delta_path: Path) -> bool:
     отметка базового снимка и подпись конфигурации. Без них обновления легли бы
     на чужую базу, и получились бы рейтинги, которых никогда не существовало.
     """
-    if not isinstance(snapshot, dict) or not delta_path.exists():
+    if not isinstance(snapshot, dict):
         return False
     try:
         from . import state_overlay
     except ImportError:
         return False
+    reference = _snapshot_reference_timestamp(snapshot)
+    signature = _snapshot_model_config_signature(snapshot)
+    before = _snapshot_file_signature(delta_path)
+    # Не кешируем отсутствие: файл мог появиться сразу после этой проверки.
+    if before is None:
+        return False
+    key = (before, int(reference), str(signature or ""))
+    if _DELTA_USABILITY_CACHE.get("key") == key:
+        return bool(_DELTA_USABILITY_CACHE.get("usable"))
     payload = state_overlay.load_delta(
         delta_path,
-        base_reference_timestamp=_snapshot_reference_timestamp(snapshot),
-        base_model_config_signature=_snapshot_model_config_signature(snapshot),
+        base_reference_timestamp=reference,
+        base_model_config_signature=signature,
     )
-    return payload is not None
+    # Atomic replace во время JSON-разбора нельзя признать валидным под старой
+    # отметкой; отрицательные результаты намеренно не держим в кеше.
+    if payload is None or before != _snapshot_file_signature(delta_path):
+        return False
+    _DELTA_USABILITY_CACHE.update({"key": key, "usable": True})
+    return True
 
 
 def _snapshot_source_path(snapshot: dict[str, Any] | None) -> Path | None:

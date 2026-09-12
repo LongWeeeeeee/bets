@@ -481,12 +481,19 @@ def load_read_model(snapshot_path: Path, runtime_model_state_path: Path | None =
     Кэш ключуется временем изменения и размером файлов: перечитывать снимок на
     каждый вызов дороже, чем держать модель.
     """
-    if delta_path is not None and Path(delta_path).exists():
-        reference, signature = _snapshot_meta(snapshot_path)
-        from . import state_overlay
-        if state_overlay.load_delta(delta_path, base_reference_timestamp=reference,
-                                    base_model_config_signature=signature) is not None:
-            return build_overlay_model(snapshot_path, delta_path)
+    if delta_path is not None:
+        delta_path = Path(delta_path)
+        overlay_key = _overlay_key(snapshot_path, delta_path)
+        cached = _take_overlay_cache(overlay_key)
+        if cached is not None:
+            return cached
+        validated = _load_valid_delta(snapshot_path, delta_path, overlay_key)
+        if validated is not None:
+            stable_key, payload = validated
+            model = _build_overlay_model(snapshot_path, delta_path, payload=payload,
+                                         key=stable_key, delta_is_valid=True)
+            if model is not None:
+                return model
     key = (_stamp(snapshot_path),
            _stamp(runtime_model_state_path) if runtime_model_state_path else None)
     for i, (k, model) in enumerate(_READ_CACHE):
@@ -554,6 +561,41 @@ _OVERLAY_CACHE: list = []
 _OVERLAY_SLOTS = 2
 
 
+def _overlay_key(snapshot_path: Path, delta_path: Path | None) -> tuple:
+    return (_stamp(snapshot_path), _stamp(delta_path) if delta_path else None)
+
+
+def _take_overlay_cache(key: tuple):
+    for i, (cached_key, model) in enumerate(_OVERLAY_CACHE):
+        if cached_key == key:
+            _OVERLAY_CACHE.append(_OVERLAY_CACHE.pop(i))
+            return model
+    return None
+
+
+def _remember_overlay_cache(key: tuple, model, snapshot_path: Path,
+                          delta_path: Path | None) -> bool:
+    """Запомнить модель, только если файлы не сменились во время сборки."""
+    if key != _overlay_key(snapshot_path, delta_path):
+        return False
+    _OVERLAY_CACHE.append((key, model))
+    del _OVERLAY_CACHE[:-_OVERLAY_SLOTS]
+    return True
+
+
+def _load_valid_delta(snapshot_path: Path, delta_path: Path, key: tuple):
+    """Валидированная дельта с устойчивой отметкой файлов, иначе None."""
+    from . import state_overlay
+
+    reference, signature = _snapshot_meta(snapshot_path)
+    payload = state_overlay.load_delta(
+        delta_path, base_reference_timestamp=reference,
+        base_model_config_signature=signature)
+    if payload is None or key != _overlay_key(snapshot_path, delta_path):
+        return None
+    return key, payload
+
+
 def build_overlay_model(snapshot_path: Path, delta_path: Path | None = None):
     """Живая модель: базовые массивы + пишущий слой + наложенная дельта.
 
@@ -566,35 +608,61 @@ def build_overlay_model(snapshot_path: Path, delta_path: Path | None = None):
     дельта (`state_overlay.collect_changes`), а полное состояние собирается
     ночью из снимка (`rebase_runtime_model_state.py`).
     """
+    model = _build_overlay_model(snapshot_path, delta_path)
+    if model is not None:
+        return model
+    # Снимок успел смениться между проверкой дельты и сборкой массивов. Базовая
+    # overlay-модель здесь была бы опасна: её затем можно записать как delta от
+    # уже нового снимка. Живой caller поймает исключение и пойдёт прежним путём.
+    raise RuntimeError("снимок сменился во время сборки overlay-модели")
+
+
+def _build_overlay_model(snapshot_path: Path, delta_path: Path | None = None,
+                         *, payload=None, key: tuple | None = None,
+                         delta_is_valid: bool = False):
+    """Внутренняя сборка; `payload` передаётся только после проверки guard'ов."""
     import copy as _copy
 
     from . import state_overlay
 
-    key = (_stamp(snapshot_path), _stamp(delta_path) if delta_path else None)
-    for i, (k, model) in enumerate(_OVERLAY_CACHE):
-        if k == key:
-            _OVERLAY_CACHE.append(_OVERLAY_CACHE.pop(i))
-            return model
+    delta_path = Path(delta_path) if delta_path is not None else None
+    key = key or _overlay_key(snapshot_path, delta_path)
+    cached = _take_overlay_cache(key)
+    if cached is not None:
+        return cached
+    if delta_path is not None and not delta_is_valid:
+        validated = _load_valid_delta(snapshot_path, delta_path, key)
+        if validated is not None:
+            key, payload = validated
+            delta_is_valid = True
+            cached = _take_overlay_cache(key)
+            if cached is not None:
+                return cached
 
     base = load_read_model(snapshot_path, None)
+    if delta_is_valid and key != _overlay_key(snapshot_path, delta_path):
+        return None
     model = _copy.copy(base)
     wrappers = state_overlay.wrap_model(model)
     model._overlay_wrappers = wrappers
     model._overlay_delta_path = Path(delta_path) if delta_path else None
     model._overlay_snapshot_path = Path(snapshot_path)
     applied = 0
-    if delta_path is not None:
-        reference, signature = _snapshot_meta(snapshot_path)
-        payload = state_overlay.load_delta(
-            Path(delta_path), base_reference_timestamp=reference,
-            base_model_config_signature=signature)
-        if payload is not None:
-            state_overlay.restore_small_parts(model, payload.get("small_parts") or {})
-            applied += state_overlay.apply_resets(model, payload.get("resets") or {})
-            applied += state_overlay.apply_changes(model, payload.get("changes") or {})
+    if payload is not None:
+        state_overlay.restore_small_parts(model, payload.get("small_parts") or {})
+        applied += state_overlay.apply_resets(model, payload.get("resets") or {})
+        applied += state_overlay.apply_changes(model, payload.get("changes") or {})
+    if delta_is_valid and key != _overlay_key(snapshot_path, delta_path):
+        return None
     model._overlay_applied = applied
-    _OVERLAY_CACHE.append((key, model))
-    del _OVERLAY_CACHE[:-_OVERLAY_SLOTS]
+    # Чужая/битая дельта даёт допустимую базовую overlay-модель для прямого
+    # вызова, но не может стать доказательством для read-only пути.
+    model._overlay_delta_cache_eligible = bool(delta_path is not None and delta_is_valid)
+    model._overlay_validated_snapshot_stamp = key[0] if delta_is_valid else None
+    if delta_path is None or model._overlay_delta_cache_eligible:
+        if not _remember_overlay_cache(key, model, snapshot_path, delta_path):
+            model._overlay_delta_cache_eligible = False
+            model._overlay_validated_snapshot_stamp = None
     return model
 
 
@@ -605,13 +673,20 @@ def rekey_overlay_cache(model, snapshot_path: Path, delta_path: Path) -> None:
     собирал бы модель заново (0.2 c и ~0.4 ГБ) вместо того чтобы взять ту же —
     а она и есть источник правды в рамках процесса.
     """
-    key = (_stamp(snapshot_path), _stamp(delta_path))
+    if not getattr(model, "_overlay_delta_cache_eligible", False):
+        return
+    key = _overlay_key(snapshot_path, delta_path)
+    if getattr(model, "_overlay_validated_snapshot_stamp", None) != key[0]:
+        return
     for i, (_k, cached) in enumerate(_OVERLAY_CACHE):
         if cached is model:
+            if key != _overlay_key(snapshot_path, delta_path):
+                return
             _OVERLAY_CACHE[i] = (key, cached)
+            model._overlay_validated_snapshot_stamp = key[0]
             return
-    _OVERLAY_CACHE.append((key, model))
-    del _OVERLAY_CACHE[:-_OVERLAY_SLOTS]
+    if _remember_overlay_cache(key, model, snapshot_path, delta_path):
+        model._overlay_validated_snapshot_stamp = key[0]
 
 
 def load_team_names(snapshot_path: Path) -> dict[int, str]:
