@@ -228,6 +228,13 @@ _LAST_FILL = {"index": None, "fill": None, "elo": None,
 #: с 52.1%). Держим небольшую историю: карт в очереди единицы.
 _FILL_HISTORY: "OrderedDict[float, dict]" = OrderedDict()
 _FILL_HISTORY_MAX = 32
+#: Последний отказ `_prematch_index`: {"reason", "details", "position_mismatch"}
+#: или {}. Читается `win_prediction_ex` ПОД ТЕМ ЖЕ `_PREDICTION_LOCK`, которым
+#: защищён сам вызов, — гонки нет, в отличие от `_LAST_FILL`, к которому лезут
+#: отдельным вызовом снаружи. Очищается в начале каждого `_prematch_index`,
+#: иначе ранний `return None` (нет героев/аккаунтов, до какого-либо raise)
+#: отдал бы отказ ЧУЖОЙ, предыдущей карты (owner 12.09.2026 20:10 MSK).
+_LAST_REFUSAL: dict = {}
 
 
 def _remember_fill() -> None:
@@ -763,6 +770,7 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
     подставлять дефолты нельзя, это и есть источник вранья.
     """
     context = _prediction_context(match)
+    _LAST_REFUSAL.clear()
     try:
         from base import prematch_scorer as ps
     except Exception:                                # noqa: BLE001
@@ -1144,6 +1152,20 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
                       dire_team=str(dire_team_name or ""), index=0.0,
                       **context,
                       bet=False, reason=str(_exc)[:300] or type(_exc).__name__)
+        # Отказ доступен снаружи через `win_prediction_ex`: панель и
+        # ml_dispatch всё равно хотят Early NW/Early Win/Late/All и текст
+        # предупреждения (owner 12.09.2026 20:10 MSK). Само предупреждение и
+        # fallback-вердикты строятся снаружи (laning_serving), здесь только
+        # то, что нельзя восстановить позже, — причина и структурная деталь.
+        try:
+            _LAST_REFUSAL.update({
+                "reason": str(_exc) or type(_exc).__name__,
+                "details": list(getattr(_exc, "details", None) or []),
+                "position_mismatch": dict(getattr(_exc, "extra", None) or {}).get(
+                    "position_mismatch"),
+            })
+        except Exception:                        # noqa: BLE001 — карточка важнее
+            pass
         return None
 
 
@@ -1167,11 +1189,18 @@ _PREDICTION_LOCK = threading.RLock()
 
 def win_prediction_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
                       radiant_team_name=None, dire_team_name=None, match=None):
-    """Return index, source and a card-owned snapshot atomically."""
+    """Return index, source and a card-owned snapshot atomically.
+
+    On refusal (``index is None``) the third element is the ``_LAST_REFUSAL``
+    snapshot instead of ``{}`` — read under the SAME lock that just produced
+    it, so it always belongs to THIS call, never a concurrent one.
+    """
     with _PREDICTION_LOCK:
         index, source = _win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos,
                                       radiant_team_name, dire_team_name, match)
-        return index, source, last_prediction_details(index) if index is not None else {}
+        if index is not None:
+            return index, source, last_prediction_details(index)
+        return index, source, dict(_LAST_REFUSAL)
 
 
 def win_index_ex(radiant_heroes_and_pos, dire_heroes_and_pos,

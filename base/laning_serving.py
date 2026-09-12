@@ -190,3 +190,114 @@ def verdicts(radiant_dict, dire_dict, timestamp, *, draft_model):
     except Exception:
         pass
     return result
+
+
+def fallback_verdicts(radiant_dict, dire_dict, *, draft_model):
+    """Early NW / Early Win / Late verdicts from heroes alone.
+
+    Used when the 35-feature prematch model refuses (owner decision
+    12.09.2026 20:10 MSK: "даже при отказе предматчевой модели я хочу видеть
+    all late early nw early win"). Reuses the SAME heroes vector as ``all``
+    above (``draft_model._heroes_vector``) — the standalone All line and this
+    fallback are never out of sync. Each of the three sibling modules keeps
+    its own by-heroes cache internally, so calling this every tick for the
+    same map costs no extra joblib work. Fail-soft per model: one broken
+    bundle (missing artifact, *_MODEL_ENABLED=0, encoder mismatch) never
+    blocks the other two, mirroring their own ``verdict()`` contract.
+    """
+    result = {"early_nw": None, "early_win": None, "late": None}
+    try:
+        heroes = draft_model._heroes_vector(radiant_dict, dire_dict)
+    except Exception:
+        heroes = None
+    if heroes is None:
+        return result
+    try:
+        try:
+            import early_nw_win_model as _enwm
+        except ImportError:
+            from base import early_nw_win_model as _enwm
+        result["early_nw"] = _enwm.verdict(heroes)
+    except Exception:
+        result["early_nw"] = None
+    try:
+        try:
+            import early_win_model as _ewm
+        except ImportError:
+            from base import early_win_model as _ewm
+        result["early_win"] = _ewm.verdict(heroes)
+    except Exception:
+        result["early_win"] = None
+    try:
+        try:
+            import late_win_model as _lwm
+        except ImportError:
+            from base import late_win_model as _lwm
+        result["late"] = _lwm.verdict(heroes)
+    except Exception:
+        result["late"] = None
+    return result
+
+
+def refusal_warning_line(refusal, radiant_dict, dire_dict):
+    """``⚠️ ...`` line for a refused prematch call, or "" if nothing to say.
+
+    ``refusal`` is the dict ``win_model_veto.win_prediction_ex`` returns as
+    the third element when its index is None: ``{"reason": str, "details":
+    [str, ...], "position_mismatch": [(account_id, assigned_pos, usual_pos),
+    ...] | None}`` (see ``win_model_veto._LAST_REFUSAL``). Hero names come
+    from the existing hero registry getter (``dota2protracker.get_hero_name``);
+    there is no account_id -> player-nickname resolver anywhere in this
+    codebase (``base/id_to_names.py`` only maps team name -> team_id), so the
+    raw account_id is printed on its own — the documented "else the account
+    id" fallback.
+    """
+    if not isinstance(refusal, dict):
+        return ""
+    reason = str(refusal.get("reason") or "").strip()
+    if not reason:
+        return ""
+    mismatch = refusal.get("position_mismatch")
+    if mismatch:
+        acc_to_hero = {}
+        for side in (radiant_dict, dire_dict):
+            if not isinstance(side, dict):
+                continue
+            for i in range(1, 6):
+                entry = side.get(f"pos{i}")
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    acc = int(entry.get("account_id") or 0)
+                    hero = int(entry.get("hero_id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if acc > 0:
+                    acc_to_hero[acc] = hero
+        try:
+            try:
+                from base import dota2protracker as _d2pt
+            except ImportError:
+                import dota2protracker as _d2pt
+        except Exception:
+            _d2pt = None
+        parts = []
+        for item in mismatch:
+            try:
+                acc, assigned, usual = int(item[0]), int(item[1]), int(item[2])
+            except (TypeError, ValueError, IndexError):
+                continue
+            hero_name = ""
+            hero_id = acc_to_hero.get(acc)
+            if hero_id and _d2pt is not None:
+                try:
+                    hero_name = _d2pt.get_hero_name(hero_id) or ""
+                except Exception:
+                    hero_name = ""
+            label = (f"{acc} {hero_name} p{assigned} (обычно p{usual})" if hero_name
+                     else f"{acc} p{assigned} (обычно p{usual})")
+            parts.append(label)
+        if parts:
+            return ("⚠️ Позиции не соответствуют истории (предматчевая модель "
+                    "отказала): " + "; ".join(parts))
+    return f"⚠️ Предматчевая модель отказала: {reason}"

@@ -7568,8 +7568,60 @@ def _format_win_model_line(*blocks, all_model_line: str = "") -> str:
                     break
     standalone_all_line = str(all_model_line or "").strip()
     if index is None:
-        # The standalone All model does not share the ensemble index.
-        return f"{standalone_all_line}\n" if standalone_all_line else ""
+        # Owner decision 12.09.2026 20:10 MSK: even when the 35-feature
+        # prematch model refuses, still show Early NW/Early Win/All/Late from
+        # the same heroes/positions (functions.py stuffs a fallback dict
+        # under DETAILS_KEY, built by laning_serving.fallback_verdicts) plus
+        # a warning naming the refusal reason. Guarded in its own try/except:
+        # this function is exec()-tested in isolation (test_early_win_model.py,
+        # test_laning_panel.py) against SimpleNamespace fakes that have no
+        # DETAILS_KEY attribute at all — that must fall through unchanged to
+        # the plain "no ensemble index" return below.
+        _fb_details = {}
+        try:
+            _fb_key = win_model_veto.DETAILS_KEY
+            for _fb_block in blocks:
+                if isinstance(_fb_block, dict):
+                    _fb_candidate = _fb_block.get(_fb_key)
+                    if isinstance(_fb_candidate, dict) and _fb_candidate.get("refusal_reason"):
+                        _fb_details = _fb_candidate
+                        break
+        except Exception:                            # noqa: BLE001
+            _fb_details = {}
+        if not _fb_details:
+            # The standalone All model does not share the ensemble index.
+            return f"{standalone_all_line}\n" if standalone_all_line else ""
+        try:
+            _fb_star_min_conf = float(os.getenv("ML_DISPATCH_MIN_CONF", "0.60"))
+        except Exception:                            # noqa: BLE001
+            _fb_star_min_conf = 0.60
+        _fb_lines = []
+        _fb_early_nw = _fb_details.get("early_nw")
+        if _fb_early_nw:
+            _fb_c = float(_fb_early_nw["confidence"])
+            _fb_star = " ★" if _fb_c >= _fb_star_min_conf else ""
+            _fb_lines.append(f"\U0001F550 Early NW ML-модель: "
+                             f"{_fb_early_nw['side']} {_fb_c * 100:.1f}%{_fb_star}")
+        _fb_early_win = _fb_details.get("early_win")
+        if _fb_early_win:
+            _fb_c = float(_fb_early_win["confidence"])
+            _fb_star = " ★" if _fb_c >= _fb_star_min_conf else ""
+            _fb_lines.append(f"\U0001F3C1 Early Win ML-модель: "
+                             f"{_fb_early_win['side']} {_fb_c * 100:.1f}%{_fb_star}")
+        if standalone_all_line:
+            _fb_lines.append(standalone_all_line)
+        _fb_late = _fb_details.get("late")
+        if _fb_late:
+            _fb_c = float(_fb_late["confidence"])
+            _fb_star = " ★" if _fb_c >= _fb_star_min_conf else ""
+            _fb_lines.append(f"\U0001F551 Late ML-модель: "
+                             f"{_fb_late['side']} {_fb_c * 100:.1f}%{_fb_star}")
+        _fb_warning = str(_fb_details.get("refusal_warning_line") or "").strip()
+        if _fb_warning:
+            _fb_lines.append(_fb_warning)
+        if not _fb_lines:
+            return f"{standalone_all_line}\n" if standalone_all_line else ""
+        return "\n".join(_fb_lines) + "\n"
     side = "Radiant" if index > 0 else ("Dire" if index < 0 else "\u2014")
     confidence = 50.0 + abs(index)
     line = f"\U0001F916 ML-\u043c\u043e\u0434\u0435\u043b\u044c: {side} {confidence:.1f}%"
@@ -11912,7 +11964,15 @@ def _ml_dispatch_open_kills_windows(game_time: Optional[float]) -> List[str]:
 
 
 def _ml_dispatch_extract_index_details(*blocks) -> Tuple[Optional[float], Dict[str, Any]]:
-    """Тот же приём, что `_format_win_model_line`: первый блок с индексом."""
+    """Тот же приём, что `_format_win_model_line`: первый блок с индексом.
+
+    Отказ предматчевой модели больше не значит «вердиктов нет»: functions.py
+    кладёт в те же блоки DETAILS_KEY-словарь с fallback-вердиктами
+    early_nw/early_win/late (те же героя, что у `all`) и предупреждением,
+    если героев/позиций хватило. Он помечен ключом ``refusal_reason``, и его
+    читает ОТСЮДА и `_format_win_model_line` — одна оценка на панель и на
+    ml_dispatch (owner 12.09.2026 20:10 MSK), см. docs/CODE_MAP.md.
+    """
     for block in blocks:
         if isinstance(block, dict):
             raw = block.get(win_model_veto.INDEX_KEY)
@@ -11925,6 +11985,11 @@ def _ml_dispatch_extract_index_details(*blocks) -> Tuple[Optional[float], Dict[s
                     get_details = getattr(win_model_veto, "prediction_details", None)
                     details = get_details(block) if get_details else {}
                     return index, (details or {})
+    for block in blocks:
+        if isinstance(block, dict):
+            candidate = block.get(win_model_veto.DETAILS_KEY)
+            if isinstance(candidate, dict) and candidate.get("refusal_reason"):
+                return None, candidate
     return None, {}
 
 

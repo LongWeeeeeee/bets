@@ -225,9 +225,14 @@ def branch_bet_quote(branch: str, confidence: float, branch_wr=None) -> Optional
 class MissingData(Exception):
     """Данных не хватает — анализ не отдаём. `details` перечисляет чего именно."""
 
-    def __init__(self, details: list[str]) -> None:
+    def __init__(self, details: list[str], extra: Optional[dict] = None) -> None:
         super().__init__("; ".join(details))
         self.details = details
+        # Структурированный довесок для случаев, где строки `details` мало —
+        # сейчас только сломанные позиции (аккаунт, назначенная, обычная),
+        # нужные снаружи для предупреждения в карточке (owner 12.09.2026
+        # 20:10 MSK). Пусто для всех остальных причин отказа.
+        self.extra = dict(extra or {})
 
 
 @dataclass
@@ -763,7 +768,8 @@ class PrematchModel:
             return best
         return self.team_merge.get(tid, tid if tid > 0 else -1)
 
-    def _check_positions(self, accs: Sequence[int], miss: list[str], notes: list[str]) -> None:
+    def _check_positions(self, accs: Sequence[int], miss: list[str], notes: list[str],
+                         hard_slots: Optional[list] = None) -> None:
         """Ловит сломанную разметку позиций.
 
         Модель ждёт героев и аккаунтов В ПОРЯДКЕ ПОЗИЦИЙ 1..5. Если резолвер
@@ -795,6 +801,8 @@ class PrematchModel:
         if len(hard) >= 3:
             miss.append("разметка позиций противоречит истории у "
                         f"{len(hard)} слотов (аккаунт, назначено, обычная): {hard}")
+            if hard_slots is not None:
+                hard_slots.extend(hard)
         elif len(soft) >= 2:
             notes.append(f"подозрительные позиции у {len(soft)} слотов: {soft}")
 
@@ -988,9 +996,10 @@ class PrematchModel:
         no_wr = [h for h in hers if h not in self.hero_wr30]
         if no_wr:
             miss.append(f"нет винрейта за 30 дней у героев: {sorted(set(no_wr))}")
+        position_hard_slots: list = []
         if not unknown and not zero:
             pos_bad: list[str] = []
-            self._check_positions(accs, pos_bad, notes)
+            self._check_positions(accs, pos_bad, notes, position_hard_slots)
             miss.extend(pos_bad)
             hard.extend(pos_bad)
         rt, dt = int(radiant_team_id), int(dire_team_id)
@@ -1023,7 +1032,10 @@ class PrematchModel:
             miss.append("нет истории личных встреч этих команд")
             hard.append("нет истории личных встреч этих команд")
         if hard:
-            raise MissingData(miss)
+            raise MissingData(
+                miss,
+                extra={"position_mismatch": position_hard_slots} if position_hard_slots else None,
+            )
         if not self.branches:
             # Артефакт без веток — прежнее поведение целиком: любая нехватка
             # отменяет вердикт, и считается одна модель на все колонки. Так

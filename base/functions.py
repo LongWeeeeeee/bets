@@ -5262,6 +5262,37 @@ def synergy_and_counterpick(radiant_heroes_and_pos, dire_heroes_and_pos, early_d
                 # драфтовой моделей разные, и порог вето выбирается по нему.
                 _block[win_model_veto.SOURCE_KEY] = _ml_source
                 _block[win_model_veto.DETAILS_KEY] = _ml_details
+    elif isinstance(_ml_details, dict) and _ml_details.get("reason"):
+        # Предматчевая модель отказала, но героев/позиций хватило, чтобы их
+        # знал сам отказ (`win_model_veto._LAST_REFUSAL`). Owner 12.09.2026
+        # 20:10 MSK: «даже при отказе... хочу видеть all late early nw early
+        # win», «пиши в сообщении о том что позиции несоответствуют». Кладём
+        # ОДИН fallback-словарь под тем же DETAILS_KEY, что и обычная оценка —
+        # его читают И `_format_win_model_line` (панель), И
+        # `_ml_dispatch_extract_index_details` (тик диспатча): одна оценка на
+        # оба потребителя, см. docs/CODE_MAP.md.
+        try:
+            from base import laning_serving as _laning_serving
+        except ImportError:
+            import laning_serving as _laning_serving
+        try:
+            _fallback = _laning_serving.fallback_verdicts(
+                radiant_heroes_and_pos, dire_heroes_and_pos, draft_model=win_model_veto)
+        except Exception:
+            _fallback = {}
+        try:
+            _warning = _laning_serving.refusal_warning_line(
+                _ml_details, radiant_heroes_and_pos, dire_heroes_and_pos)
+        except Exception:
+            _warning = ""
+        _fallback_details = dict(_fallback or {})
+        _fallback_details["refusal_reason"] = _ml_details.get("reason")
+        _fallback_details["refusal_details"] = _ml_details.get("details")
+        _fallback_details["refusal_warning_line"] = _warning
+        for _block_key in ('early_output', 'early_end_output', 'mid_output', 'post_lane_output'):
+            _block = return_dict.get(_block_key)
+            if isinstance(_block, dict):
+                _block[win_model_veto.DETAILS_KEY] = _fallback_details
     return return_dict
 
 
