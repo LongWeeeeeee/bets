@@ -1607,3 +1607,78 @@ draft_model=...)` — экспортирует те же два вердикта
 новый заголовок для `market="kills_total"` из ml_dispatch: `"СТАВКА НА Тотал
 килов {team} БОЛЬШЕ"` (без множителя и без окна, в отличие от
 `early_kills`/`kills_from`).
+
+### Fallback-вердикты при отказе предматчевой модели (owner 12.09.2026 20:10 MSK)
+
+Раньше отказ 35-признаковой предматчевой модели (`win_model_veto._prematch_index`
+бросает исключение — protухший снимок, неизвестные игроки, **жёсткое вето
+позиций** `prematch_scorer.Model._check_positions`: >=3 слотов, где реальная
+доля игр на назначенной позиции <5%, а доминирующая позиция >50%) давал
+`ml_win_index=None` и Early NW/Early Win/Late/предупреждение пропадали из
+панели и ml_dispatch целиком — оставался только `🌐 All ML-модель` (у него
+отдельный вход, `laning_serving.panel_lines`/`verdicts` не зависят от
+предматчевой модели). Owner-решение: показывать все четыре строки и текст
+причины отказа даже тогда.
+
+**Единая оценка на панель и на ml_dispatch:**
+1. `base/prematch_scorer.py:MissingData(details, extra=None)` — `extra` несёт
+   структурные данные сверх текста; сейчас единственный ключ —
+   `position_mismatch` (список `(account_id, назначенная_позиция,
+   обычная_позиция)`), который кладёт `Model.score()` (~1025) при жёстком
+   позиционном вето, читая его из `_check_positions(..., hard_slots=...)`.
+2. `base/win_model_veto.py:_LAST_REFUSAL` — снимок последнего отказа
+   `_prematch_index` (`{"reason", "details", "position_mismatch"}`), чистится
+   в начале КАЖДОГО вызова (иначе ранний `return None` без исключения отдал
+   бы отказ чужой предыдущей карты) и заполняется в `except`-ветке
+   (~1140-1157). `win_prediction_ex` (~1168) возвращает его третьим элементом
+   АТОМАРНО под тем же `_PREDICTION_LOCK`, которым защищён сам вызов — не
+   отдельным вызовом снаружи, как у `_LAST_FILL` (там это и раньше было
+   источником гонки, задокументированной рядом).
+3. `base/functions.py` (~5249-5290, единственный вызывающий
+   `win_prediction_ex`) — на отказе (`_ml_index is None`, но
+   `_ml_details.get("reason")` есть) зовёт
+   `laning_serving.fallback_verdicts(radiant_heroes_and_pos,
+   dire_heroes_and_pos, draft_model=win_model_veto)` и
+   `laning_serving.refusal_warning_line(_ml_details, radiant_heroes_and_pos,
+   dire_heroes_and_pos)`, кладёт результат В ТЕ ЖЕ четыре блока
+   (`early_output, early_end_output, mid_output, post_lane_output`) под ТЕМ
+   ЖЕ `win_model_veto.DETAILS_KEY`, что и обычная оценка, но БЕЗ
+   `INDEX_KEY`/`SOURCE_KEY` (индекса нет). Маркер fallback-словаря —
+   ключ `refusal_reason`.
+4. `base/laning_serving.py:fallback_verdicts(radiant_dict, dire_dict, *,
+   draft_model)` — Early NW/Early Win/Late из ТОГО ЖЕ вектора героев, что и
+   `🌐 All` (`draft_model._heroes_vector`), вызовом `early_nw_win_model.verdict
+   / early_win_model.verdict / late_win_model.verdict` напрямую (та же
+   сигнатура, что зовёт `win_model_veto._prematch_index` на успешном пути).
+   Каждый из трёх модулей кэширует по вектору героев сам, лишнего кэша здесь
+   нет. Fail-soft на каждую модель отдельно — одна сломанная не гасит
+   остальные две.
+5. `base/laning_serving.py:refusal_warning_line(refusal, radiant_dict,
+   dire_dict)` — строка `⚠️ Позиции не соответствуют истории (предматчевая
+   модель отказала): {account_id} {hero_name} p{assigned} (обычно
+   p{usual}); ...` при `refusal["position_mismatch"]`, иначе `⚠️
+   Предматчевая модель отказала: {reason}`. Имя героя — `dota2protracker.
+   get_hero_name`; имени игрока НЕТ НИГДЕ в кодовой базе
+   (`base/id_to_names.py` — только team_name -> team_id), поэтому печатается
+   голый `account_id`.
+6. `base/cyberscore_try.py:_format_win_model_line` (~7545) — при `index is
+   None` ищет среди блоков `DETAILS_KEY`-словарь с `refusal_reason` (в
+   try/except: функция гоняется тестами в изолированном `exec()` против
+   `SimpleNamespace`-заглушек без атрибута `DETAILS_KEY`, что обязано молча
+   уйти на прежнюю ветку "нет индекса"). Печатает `🕐 Early NW`, `🏁 Early
+   Win`, `🌐 All` (`all_model_line`, как раньше), `🕑 Late`, затем строку
+   предупреждения — тем же ★-порогом `ML_DISPATCH_MIN_CONF`, что и обычная
+   ветка.
+7. `base/cyberscore_try.py:_ml_dispatch_extract_index_details` (~12023) — если
+   ни у одного блока нет `INDEX_KEY`, ищет тот же `DETAILS_KEY`-маркер и
+   возвращает `(None, fallback_details)` вместо `(None, {})`. Дальше код
+   `_ml_dispatch_tick` (~12172-12181, не менялся) читает
+   `details.get("early_nw"/"early_win"/"late")` как обычно — правило владельца
+   «хоть одна ★ → сигнал» (`ML_DISPATCH_WIN_MODELS`) работает на отказанных
+   картах без отдельного кода пути.
+
+Доставленное сообщение: `_ml_dispatch_deliver_decision` (win-маркет, ~12034)
+зовёт `_format_win_model_line` заново на тех же блоках — предупреждение
+попадает в `model_line`, `_build_prematch_model_bet_message` вставляет его в
+тело перед `_deliver_and_persist_signal`. Тесты:
+`base/tests/test_prematch_refusal_fallback.py`.

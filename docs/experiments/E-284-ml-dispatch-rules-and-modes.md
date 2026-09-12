@@ -267,3 +267,60 @@ reason="disabled"` и общий путь отправляет БЕЗ «Кэф W
 `cyberscore_sourcetv.log`, allowlist лиг, `BOOKMAKER_BLOCK_WITHOUT_ODDS`),
 `skipped[].reason=="veto"` (Late/All за другую сторону), `dedup`
 (`runtime/ml_dispatch_sent.json`).
+
+**Addendum 12.09 20:10 MSK — четыре ML-строки при отказе предматчевой модели +
+предупреждение о позициях.** Owner (дословно): «даже при отказе предматчевой
+модели я хочу видеть all late early nw early win. Просто пиши в сообщении о
+том что позиции несоответствуют». До правки отказ `win_model_veto._prematch_index`
+(протухший снимок, неизвестные игроки, жёсткое позиционное вето
+`prematch_scorer.Model._check_positions` — >=3 слотов с долей игр на
+назначенной позиции <5% при доминирующей позиции >50%) обнулял
+`ml_win_index`, и Early NW/Early Win/Late пропадали из панели и ml_dispatch
+целиком — виден оставался только `🌐 All` (у него отдельный по входу
+`laning_serving.panel_lines`/`verdicts`). Пример-триггер: карта
+dltv.org/matches/8995525359.0 (map 2, VooDooSh Club vs Stariy_Bog Club,
+`runtime/prematch_model_eval.jsonl` 12.09.2026) — отказ «разметка позиций
+противоречит истории у 3 слотов (аккаунт, назначено, обычная):
+[(118325938, 4, 5), (91535476, 5, 2), (161839895, 3, 4)]», решения
+`runtime/ml_dispatch_decisions.jsonl` 19:22:48 показали `early_nw=None
+early_win=None late=None all=Radiant 0.622`.
+
+Правка (single source of truth, подробности `docs/CODE_MAP.md` раздел
+«Fallback-вердикты при отказе предматчевой модели»):
+`prematch_scorer.MissingData` несёт структурный `extra["position_mismatch"]`;
+`win_model_veto._LAST_REFUSAL` — снимок отказа, отдаётся `win_prediction_ex`
+третьим элементом под тем же `_PREDICTION_LOCK`; `functions.py` на отказе
+кладёт `laning_serving.fallback_verdicts` (Early NW/Early Win/Late из ТОГО ЖЕ
+вектора героев, что `🌐 All`) и `laning_serving.refusal_warning_line` под
+ТЕМ ЖЕ `DETAILS_KEY`, что обычная оценка, маркер — `refusal_reason`;
+`_format_win_model_line` и `_ml_dispatch_extract_index_details` читают ОДИН
+и тот же словарь — панель и `_ml_dispatch_tick` (правило «хоть одна ★ →
+сигнал») видят одинаковые вердикты без отдельного кода пути. Имени игрока по
+`account_id` в кодовой базе нет нигде (`base/id_to_names.py` — только
+team_name -> team_id), поэтому предупреждение печатает голый `account_id`
+рядом с именем героя.
+
+Harness: `venv_catboost/bin/python3 -m pytest base/tests/test_ml_dispatch.py
+base/tests/test_dispatch_mode_gate.py base/tests/test_laning_panel.py
+base/tests/test_early_win_model.py base/tests/test_early_nw_win_model.py
+base/tests/test_prematch_refusal_fallback.py -q -p no:cacheprovider -W ignore`
+— red 13/126 (новый тестовый файл против `git apply -R` на diff пяти
+изменённых модулей), green 126/126 после. `py_compile` пяти модулей — чисто.
+`base/tests/test_win_model_veto.py`/`test_prematch_scorer_scale.py`: те же
+3 неродственных провала (`_alias_draft_features`/`served_model` отсутствуют
+в модуле), что и на базовой ветке до этой правки — не новые.
+
+**Где искать ошибку.** Панель без четырёх строк на отказанной карте — смотреть
+`runtime/prematch_model_eval.jsonl` (`reason`, `bet=false`) и проверить, что
+у блока `early_output`/`mid_output` есть `ml_win_details["refusal_reason"]`
+(лог `[win_model]` не пишется на это отдельно — состояние только в блоке).
+Предупреждение не появилось в тексте, но fallback-вердикты есть — значит
+`refusal["position_mismatch"]` пуст (не позиционный отказ, генерическая
+строка `⚠️ Предматчевая модель отказала: <reason>` ожидаема) или
+`radiant_heroes_and_pos`/`dire_heroes_and_pos` не содержат нужный
+`account_id` в `posN` (герой не резолвится, имя не печатается — это не баг,
+контракт «иначе account_id»). ml_dispatch не подхватил ★ на отказанной карте
+— смотреть `runtime/ml_dispatch_decisions.jsonl` `prematch_index=null` и
+`verdicts.early_nw/early_win/late` — если там `null`, а в блоке `ml_win_details`
+вердикт есть, разрыв в `_ml_dispatch_extract_index_details` (маркер
+`refusal_reason` отсутствует или блоки переданы не те).
