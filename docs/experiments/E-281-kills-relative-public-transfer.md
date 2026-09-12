@@ -6,7 +6,7 @@ area: ml
 status: running
 corpus: "Raw STRATZ public 7.41: только завершившиеся до 01.06.2026; pro: январь-сентябрь 2026"
 verdict: "Аудит: существующие цели исключают середину 51-54/26-29, side-модель обучена только на Radiant, deaths отсутствуют в основных F6/F7 приорах. Новый причинный перенос проверяется; улучшение ещё не установлено."
-harness: "base/kills_transfer_data.py, base/kills_relative_profiles.py; план runtime/artifacts/kills/relative_transfer/extract_plan.json"
+harness: "base/train_kills_transfer.py, base/kills_transfer_data.py; план runtime/artifacts/kills/relative_transfer/extract_plan.json"
 ---
 
 # E-281. Относительные профили героев и их команд
@@ -41,13 +41,32 @@ harness: "base/kills_transfer_data.py, base/kills_relative_profiles.py; план
 Разделение по завершению матча; серия не должна пересекать train/val/test.
 Гиперпараметры выбираются только на валидации, затем тест читается один раз.
 Общий target стороны обучается в двух ориентациях, обе остаются в одном split.
-Основные цели включают всю середину: total≥55 и side≥30. Сравнение с прежними
-крайними целями приводится отдельно, без смешивания популяций.
+Основные цели включают всю середину: total≥55 и side≥30. Сравнение с текущей
+панелью пока не установлено: её полный исторический набор признаков здесь
+не воспроизведён. Результат против внутренних baseline этого не доказывает.
+
+Публичное предобучение: Ridge на героях, ролях и парах. Цель total — отношение
+киллов к среднему завершившихся карт за предыдущие 28 дней, зафиксированному
+на начало недели; одинаковая причинная нормировка в train и validation.
+Цель стороны — разность долей киллов. Холодный период исключается; доли и
+профили не используют итог текущего pro-матча.
+
+На про сравниваются пять вариантов: только pro-истории, public draft,
+относительные public-профили, те же профили без признаков смертей и абсолютные
+public-профили как контроль. Все используют недавние завершившиеся истории
+игроков и команд. Профили хранят поддержку и покрытие, неизвестный герой
+получает нейтральное отклонение от роли и нулевую поддержку.
+
+Августовская валидация разделена на три последовательные части: ранняя
+остановка, калибровка и выбор варианта/глубины. Серии на границах исключаются.
+CatBoost: depth 4/6, максимум 800 итераций; выбор по калиброванному log loss.
+Отчёт содержит AUC, log loss, Brier, accuracy и интервал разницы log loss с
+двумя внутренними baseline, bootstrap по дням. Две стороны карты группируются.
 
 ## Воспроизведение
 
 ```sh
-/Users/alex/Documents/ingame/venv_catboost/bin/python3 -m pytest base/tests/test_kills_relative_profiles.py -q
+/Users/alex/Documents/ingame/venv_catboost/bin/python3 -m pytest base/tests/test_kills_relative_profiles.py base/tests/test_kills_transfer_features.py -q
 /Users/alex/Documents/ingame/venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources preflight --plan runtime/artifacts/kills/relative_transfer/extract_plan.json
 /Users/alex/Documents/ingame/venv_catboost/bin/python3 .orchestra/runtime/orchestra.py resources run --plan runtime/artifacts/kills/relative_transfer/extract_plan.json --background
 ```
@@ -56,6 +75,32 @@ harness: "base/kills_transfer_data.py, base/kills_relative_profiles.py; план
 контрольную точку; повторный запуск проверяет SHA и использует готовый результат.
 Результаты обучений, exact run IDs и проверки будут дописаны после завершения.
 Production runtime и активные артефакты панели не изменяются этим экспериментом.
+
+После extraction создать training manifest с SHA полученных summary/chunk NPZ,
+исходников `kills_*`, `train_kills_transfer.py`, `draft_features.py` и версиями
+зависимостей. Worker argv:
+
+```sh
+{python} base/train_kills_transfer.py --public-rows <public-output-dir> --pro-rows <pro-output-dir> --output-dir {output_dir} --threads {threads}
+```
+
+Это argv для общего executor, а не разрешение обходить resource preflight.
+
+## Текущий результат, 12.09.2026
+
+- Полные extraction/training ещё не запускались. Preflight проверил входные
+  SHA/dependencies, но отказал по CPU: local load 15.6 при 10 CPU, reserve 50%.
+  В resources.json включён только local; чужой aitrading sweep уже использует
+  восемь workers. Его процессы не менялись. Повторное наблюдение load 12.4
+  также не даёт свободного бюджета. Нужны свободные ресурсы или явное исключение.
+- 14 регрессионных тестов прошли, включая небольшой сквозной корпус:
+  public pretraining, все пять вариантов двух целей, сохранение/загрузка и
+  совпадение воспроизведённых test predictions. Это техническая проверка,
+  не оценка качества на реальных матчах.
+- Независимая проверка выявила и после исправления подтвердила два места:
+  одну причинную нормировку public train/validation и независимые части pro
+  early stopping/calibration/selection.
+- Улучшение точности и готовность замены production-моделей **не установлены**.
 
 ## Где искать ошибку
 
