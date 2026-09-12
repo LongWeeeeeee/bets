@@ -930,8 +930,12 @@ def _prematch_index(radiant_heroes_and_pos, dire_heroes_and_pos,
             _kills_block = _kills_text(rh, dh, ra, da, (_rt_id, _dt_id),
                                        elo_evaluation_timestamp(match), _kills_mid)
             _LAST_PANEL["text"] = "\n".join(filter(None, (_LAST_PANEL["text"], _kills_block)))
+            _LAST_PANEL["kills_error"] = None
         except Exception as _exc:                    # noqa: BLE001
-            _report_panel_silence(f"E281 kills: {type(_exc).__name__}: {_exc}")
+            _kills_error = f"E281 kills: {type(_exc).__name__}: {_exc}"
+            if _LAST_PANEL.get("kills_error") != _kills_error:
+                print(f"[kills_transfer] {_kills_error}", flush=True)
+            _LAST_PANEL["kills_error"] = _kills_error
         _cov = getattr(res, "coverage", None) or {}
         if _cov:
             global _COV_N, _COV_SUM

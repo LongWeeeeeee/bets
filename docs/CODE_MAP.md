@@ -671,7 +671,7 @@ CLI: `/Users/alex/Documents/ingame/venv_catboost/bin/python3 base/train_duration
 команд заморожена в bundle, её дата показана в тексте; автоматического обновления
 нет. При расчёте используются только карты с `end < start` запрашиваемой карты,
 её собственный ID исключается. Ошибка оставляет основной прогноз рабочим и
-пишется как `E281 kills` через диагностику панели. Сборка нового каталога:
+пишется как `[kills_transfer] E281 kills` при изменении ошибки. Сборка нового каталога:
 `base/build_kills_serving.py --candidate <E281-output> --pro-rows <extraction-dir>
 --output <new-directory>`; активация артефакта и рестарт выполняются отдельно.
 Преимущество E-281 по точности пока не подтверждено: [E-281](experiments/E-281-kills-relative-public-transfer.md).

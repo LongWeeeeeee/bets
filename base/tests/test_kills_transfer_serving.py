@@ -51,7 +51,7 @@ def test_render_preserves_three_independent_probabilities():
     assert "история до 11.09.2026" in text
 
 
-def test_betting_adapter_appends_text_without_modifying_verdicts(monkeypatch):
+def test_betting_adapter_appends_text_without_modifying_verdicts(monkeypatch, capsys):
     import kills_transfer_serving
     tree = ast.parse((Path(__file__).resolve().parents[1] / "win_model_veto.py").read_text())
     adapter = next(node for node in ast.walk(tree) if isinstance(node, ast.Try)
@@ -82,4 +82,7 @@ def test_betting_adapter_appends_text_without_modifying_verdicts(monkeypatch):
     monkeypatch.setattr(kills_transfer_serving, "forecast_text", fail)
     exec(code, scope)
     assert panel["text"] == before and panel["verdicts"] == ["unchanged"]
-    assert "E281 kills" in errors[0]
+    assert "E281 kills" in panel["kills_error"]
+    assert "[kills_transfer] E281 kills" in capsys.readouterr().out
+    exec(code, scope)
+    assert capsys.readouterr().out == ""
