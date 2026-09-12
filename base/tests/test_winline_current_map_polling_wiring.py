@@ -74,6 +74,30 @@ class FakeClock:
         self.wall += seconds
 
 
+@pytest.fixture(autouse=True)
+def _notification_worker_isolation(monkeypatch):
+    assert cs.stop_winline_notification_worker(join_timeout_s=2)
+    cs._winline_notification_queue.clear()
+    cs._winline_notification_aliases.clear()
+    monkeypatch.setattr(cs, "_winline_start_notification_worker", lambda: None)
+    yield
+    cs._winline_notification_queue.clear()
+
+
+@pytest.fixture
+def _drain_notifications(monkeypatch):
+    # These tests cover lifecycle payloads/delivery, while the separate dispatch
+    # suite covers real thread scheduling. Drain explicitly after scheduler ticks.
+    original = cs.tick_winline_current_map_polling
+    def tick(**kwargs):
+        result = original(**kwargs)
+        if not kwargs.get("from_main_loop"):
+            while cs._winline_notification_queue:
+                cs._winline_process_notification(cs._winline_notification_queue.pop(0))
+        return result
+    monkeypatch.setattr(cs, "tick_winline_current_map_polling", tick)
+
+
 def _clear_wiring_state() -> None:
     for name in (
         "reset_winline_current_map_polling_state",
@@ -1028,7 +1052,7 @@ def _incident_series_payload() -> Dict[str, Any]:
     }
 
 
-def test_live_map_past_the_ceiling_says_nothing_and_keeps_polling(tmp_path, monkeypatch):
+def test_live_map_past_the_ceiling_says_nothing_and_keeps_polling(tmp_path, monkeypatch, _drain_notifications):
     """Регрессия 31.08.2026: пара «⏹️ опрос остановлен» + «🏁 карта завершена».
 
     Опрос карты 3 (Inner Circle x Insanity — 4ikibamboni) начался в 21:29:32,
@@ -2436,7 +2460,7 @@ def _puckchamp_intermission_row() -> Dict[str, Any]:
                           _cyberscore_heroes_and_pos={"radiant": None, "dire": None})
 
 
-def test_map_that_never_started_is_never_announced_as_finished(tmp_path, monkeypatch):
+def test_map_that_never_started_is_never_announced_as_finished(tmp_path, monkeypatch, _drain_notifications):
     """Регрессия 01.09.2026: «🏁 карта 2 · 🏆 победа» по карте, которой не было.
 
     Серия PuckChamp — Klim Sani4. Карта 1 доигралась, но GC держал её матч
@@ -2578,7 +2602,7 @@ def test_map_number_without_a_gc_game_number_is_not_bumped():
     assert cs._winline_sourcetv_map_num(later) == 3
 
 
-def test_last_map_of_a_series_is_still_announced_as_finished(tmp_path, monkeypatch):
+def test_last_map_of_a_series_is_still_announced_as_finished(tmp_path, monkeypatch, _drain_notifications):
     """Решающую карту серии «завершена» терять нельзя.
 
     На карте 5 номер двигать некуда (`resolved < 5` не срабатывает), поэтому
@@ -2647,7 +2671,7 @@ def test_last_map_of_a_series_is_still_announced_as_finished(tmp_path, monkeypat
     assert not any("опрос остановлен" in m for m in sent), sent
 
 
-def test_terminal_taken_by_the_main_loop_tick_is_still_announced(tmp_path, monkeypatch):
+def test_terminal_taken_by_the_main_loop_tick_is_still_announced(tmp_path, monkeypatch, _drain_notifications):
     """Терминал отдаётся ровно один раз — съесть его backup-тиком нельзя.
 
     Поллеры тикают два водителя: поток-шедулер (основной такт) и backup-тик

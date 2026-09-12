@@ -64,6 +64,10 @@ class Clock:
 
 @pytest.fixture(autouse=True)
 def _clean_state(monkeypatch):
+    assert cs.stop_winline_notification_worker(join_timeout_s=1.0)
+    cs._winline_notification_queue.clear()
+    cs._winline_notification_aliases.clear()
+    monkeypatch.setattr(cs, "_winline_start_notification_worker", lambda: None)
     cs._winline_odds_notify_state.clear()
     cs._winline_odds_orientation_state.clear()
     cs._winline_pending_map_winners.clear()
@@ -748,6 +752,8 @@ def _drive_tick(monkeypatch, *, from_main_loop):
         cs.tick_winline_current_map_polling(from_main_loop=from_main_loop)
     finally:
         cs._winline_current_map_pollers.pop(KEY, None)
+    while cs._winline_notification_queue:
+        cs._winline_process_notification(cs._winline_notification_queue.pop(0))
     return seen
 
 

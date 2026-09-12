@@ -261,7 +261,12 @@ def _fallback_search_tokens(team: str) -> List[str]:
     символа искать нельзя: 31.07.2026 `L1GA TEAM` искалось словом `team`, ловило
     `TEAM VOODOOSH` из соседней карточки, и кэфы возвращались от чужого матча.
     """
-    variants = _team_name_search_variants(team)
+    return _fallback_search_tokens_from_variants(_team_name_search_variants(team))
+
+
+def _fallback_search_tokens_from_variants(variants: Iterable[str]) -> List[str]:
+    """Fallback tokens for an already prepared immutable spelling plan."""
+    variants = tuple(variants)
     if not variants:
         return []
     seen = set(variants)  # полные написания ищутся до токенов, дублировать нечего
@@ -321,6 +326,23 @@ def _find_positions_with_fallback(low: str, team: str) -> List[int]:
         if direct:
             return direct
     for token in _fallback_search_tokens(team):
+        positions = _literal_team_positions(low, token)
+        if positions:
+            return positions
+    return []
+
+
+def _find_positions_with_prepared_terms(
+    low: str,
+    variants: Iterable[str],
+    fallback_tokens: Iterable[str],
+) -> List[int]:
+    """Exact fallback lookup using a previously captured team spelling plan."""
+    for variant in variants:
+        direct = _literal_team_positions(low, variant)
+        if direct:
+            return direct
+    for token in fallback_tokens:
         positions = _literal_team_positions(low, token)
         if positions:
             return positions
@@ -603,6 +625,15 @@ ACQUISITION_MODES = frozenset({"initial_goto", "dynamic_dom", "controlled_reload
 _ACQUISITION_ERROR_MAX = 300
 _DOM_SIGNATURE_MAX = 64
 _PAGE_URL_DIAG_MAX = 500
+_COMPLETE_DOM_WITH_BODY_TEXT_JS = """() => {
+  const body = document && document.body;
+  const root = document && document.documentElement;
+  return {
+    html: root ? root.outerHTML : '',
+    bodyText: body ? String(body.innerText || '') : '',
+    url: String((window.location && window.location.href) || ''),
+  };
+}"""
 # Current-map polling shares one browser worker across every live match. A
 # default Playwright navigation timeout (60s) therefore blocks every following
 # match. Keep bounded Winline acquisition below the monitor's 30s ceiling;
@@ -833,6 +864,7 @@ async def _load_site_render_payload_camoufox_async(
     scroll_wait_seconds: float = 2.0,
     acquisition_mode: Optional[str] = None,
     defer_visible_text: bool = False,
+    combined_dom_read: bool = False,
 ) -> Tuple[str, str, str, str, str, Dict[str, Any]]:
     """Load or re-read page content for Camoufox parsers.
 
@@ -979,19 +1011,37 @@ async def _load_site_render_payload_camoufox_async(
     html = ""
     visible = ""
     body_text = ""
-    try:
-        html = await _maybe_await(page.content()) or ""
-    except Exception:
-        html = ""
+    combined_page_url = ""
+    combined_ok = False
+    if combined_dom_read:
+        try:
+            combined = await _maybe_await(page.evaluate(_COMPLETE_DOM_WITH_BODY_TEXT_JS))
+            if (
+                isinstance(combined, dict)
+                and isinstance(combined.get("html"), str)
+                and combined.get("html")
+                and isinstance(combined.get("bodyText"), str)
+            ):
+                html = combined["html"]
+                body_text = combined["bodyText"]
+                combined_page_url = str(combined.get("url") or "")
+                combined_ok = True
+        except Exception:
+            pass
+    if not combined_ok:
+        try:
+            html = await _maybe_await(page.content()) or ""
+        except Exception:
+            html = ""
+        body_text = await _camoufox_body_text(page)
     if html and not defer_visible_text:
         try:
             soup = BeautifulSoup(html, "html.parser")
             visible = " ".join(soup.stripped_strings)
         except Exception:
             visible = ""
-    body_text = await _camoufox_body_text(page)
 
-    page_url = _page_current_url(page) or str(url or "")
+    page_url = combined_page_url or _page_current_url(page) or str(url or "")
     if len(page_url) > _PAGE_URL_DIAG_MAX:
         page_url = page_url[:_PAGE_URL_DIAG_MAX]
     sig_source = body_text or visible or html or ""
@@ -1463,12 +1513,14 @@ def _snippet_by_teams(
     team2: str,
     radius: int = 900,
     max_team_distance: int = 1200,
+    _positions_lookup=None,
 ) -> Optional[str]:
     low = text.lower()
     t1 = str(team1 or "")
     t2 = str(team2 or "")
-    pos1 = _find_positions_with_fallback(low, t1)
-    pos2 = _find_positions_with_fallback(low, t2)
+    positions_lookup = _positions_lookup or _find_positions_with_fallback
+    pos1 = positions_lookup(low, t1)
+    pos2 = positions_lookup(low, t2)
     if not pos1 or not pos2:
         return None
 
@@ -1493,8 +1545,8 @@ def _snippet_by_teams(
     low_sn = sn.lower()
     # Проверяем теми же правилами, что и поиск позиций: подстрока без границ
     # слова принимала `DOWN` внутри `countdown` и склеивала чужие карточки.
-    has_t1 = bool(_find_positions_with_fallback(low_sn, t1))
-    has_t2 = bool(_find_positions_with_fallback(low_sn, t2))
+    has_t1 = bool(positions_lookup(low_sn, t1))
+    has_t2 = bool(positions_lookup(low_sn, t2))
     if not has_t1 or not has_t2:
         return None
     return sn
@@ -1822,12 +1874,54 @@ class _WinlineDOMSnapshot:
         self.soup = BeautifulSoup(html, "html.parser")
         self.elements = self.soup.find_all(True)
         self._texts: Dict[int, str] = {}
+        # Team aliases are mutable runtime configuration.  A DOM is not: freeze
+        # the spelling/fallback plan on first use so every parser pass over this
+        # snapshot applies the same card proof and side orientation.
+        self._team_search_plans: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {}
+        self._team_match_results: Dict[Tuple[str, str, str], bool] = {}
 
     def text(self, node: Any) -> str:
         key = id(node)
         if key not in self._texts:
             self._texts[key] = " ".join(node.stripped_strings)
         return self._texts[key]
+
+    def _team_search_plan(self, team: str) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
+        raw = str(team or "")
+        cached = self._team_search_plans.get(raw)
+        if cached is None:
+            variants = tuple(_team_name_search_variants(raw))
+            cached = (variants, tuple(_fallback_search_tokens_from_variants(variants)))
+            self._team_search_plans[raw] = cached
+        return cached
+
+    def find_positions(self, low: str, team: str) -> List[int]:
+        variants, fallback_tokens = self._team_search_plan(team)
+        return _find_positions_with_prepared_terms(low, variants, fallback_tokens)
+
+    def first_index(self, low: str, team: str) -> int:
+        positions = self.find_positions(low, team)
+        return min(positions) if positions else -1
+
+    def text_matches_teams(self, text: str, team1: str, team2: str) -> bool:
+        # The ordered team key intentionally preserves direct/reverse semantics.
+        # Text values are retained by this immutable snapshot, so an exact text
+        # key cannot be confused with a recycled Python object id.
+        key = (str(text or ""), str(team1 or ""), str(team2 or ""))
+        cached = self._team_match_results.get(key)
+        if cached is None:
+            cached = bool(
+                _snippet_by_teams(
+                    text or "",
+                    team1 or "",
+                    team2 or "",
+                    radius=260,
+                    max_team_distance=2500,
+                    _positions_lookup=self.find_positions,
+                )
+            )
+            self._team_match_results[key] = cached
+        return cached
 
 
 def _winline_matched_card_context(
@@ -1848,7 +1942,7 @@ def _winline_matched_card_context(
             candidates: List[Tuple[int, Any, str]] = []
             for element in snapshot.elements:
                 card_text = snapshot.text(element)
-                if not card_text or not _text_matches_teams(card_text, team1, team2):
+                if not card_text or not snapshot.text_matches_teams(card_text, team1, team2):
                     continue
                 candidates.append((len(card_text), element, card_text))
             if candidates:
@@ -1974,13 +2068,23 @@ def _winline_strip_discipline_header(text: str) -> str:
     return rest
 
 
-def _winline_team_order(text: str, team1: str, team2: str) -> Optional[str]:
+def _winline_team_order(
+    text: str,
+    team1: str,
+    team2: str,
+    *,
+    _snapshot: Optional[_WinlineDOMSnapshot] = None,
+) -> Optional[str]:
     """Return 'direct', 'reverse', or None when order is ambiguous."""
     if not text or not team1 or not team2:
         return None
     low = _winline_strip_discipline_header(text).lower()
-    i1 = _first_index_with_fallback(low, team1)
-    i2 = _first_index_with_fallback(low, team2)
+    if _snapshot is not None:
+        i1 = _snapshot.first_index(low, team1)
+        i2 = _snapshot.first_index(low, team2)
+    else:
+        i1 = _first_index_with_fallback(low, team1)
+        i2 = _first_index_with_fallback(low, team2)
     if i1 == -1 or i2 == -1:
         return None
     if i1 == i2:
@@ -2173,6 +2277,7 @@ async def _collect_winline_live_overview_async(
             url,
             acquisition_mode="dynamic_dom",
             defer_visible_text=True,
+            combined_dom_read=True,
         )
     )
     text = " ".join(str(body_text or visible or "").split())
@@ -2540,6 +2645,7 @@ def _winline_promote_last_map_match_market(
     team2: str,
     map_num: int,
     diag: Optional[List[str]] = None,
+    _snapshot: Optional[_WinlineDOMSnapshot] = None,
 ) -> Optional["_WinlineMapExtract"]:
     """Рынок «Матч» как рынок ПОСЛЕДНЕЙ карты серии.
 
@@ -2566,8 +2672,17 @@ def _winline_promote_last_map_match_market(
 
     candidates: List[Tuple[int, Any, str]] = []
     for element in soup.find_all(True):
-        scope_text = " ".join(element.stripped_strings)
-        if not scope_text or not _text_matches_teams(scope_text, team1, team2):
+        scope_text = (
+            _snapshot.text(element)
+            if _snapshot is not None
+            else " ".join(element.stripped_strings)
+        )
+        matches_teams = (
+            _snapshot.text_matches_teams(scope_text, team1, team2)
+            if _snapshot is not None
+            else _text_matches_teams(scope_text, team1, team2)
+        )
+        if not scope_text or not matches_teams:
             continue
         if not _winline_single_card_scope(scope_text):
             # Широкий контейнер накрывает соседние матчи: его подписи рынков
@@ -2601,7 +2716,7 @@ def _winline_promote_last_map_match_market(
             continue
         if header is None:
             _note("card_header_silent")
-        order = _winline_team_order(scope_text, team1, team2)
+        order = _winline_team_order(scope_text, team1, team2, _snapshot=_snapshot)
         if order is None:
             _note("team_order_unproven")
             continue
@@ -2795,9 +2910,9 @@ def _winline_structured_current_map_winner(
     )
     for root in expanded_roots:
         scope_text = snapshot.text(root)
-        if not _text_matches_teams(scope_text, team1, team2):
+        if not snapshot.text_matches_teams(scope_text, team1, team2):
             continue
-        order = _winline_team_order(scope_text, team1, team2)
+        order = _winline_team_order(scope_text, team1, team2, _snapshot=snapshot)
         if order is None:
             continue
         for wrapper in root.select(".fast-bets__wrapper"):
@@ -2893,9 +3008,9 @@ def _winline_structured_current_map_winner(
     # component boundary is essential: later siblings are handicap and total.
     for event_scope in soup.select("ww-feature-block-event-dsk"):
         scope_text = snapshot.text(event_scope)
-        if not _text_matches_teams(scope_text, team1, team2):
+        if not snapshot.text_matches_teams(scope_text, team1, team2):
             continue
-        order = _winline_team_order(scope_text, team1, team2)
+        order = _winline_team_order(scope_text, team1, team2, _snapshot=snapshot)
         if order is None:
             continue
         for label in event_scope.find_all(
@@ -2934,7 +3049,7 @@ def _winline_structured_current_map_winner(
         node = label.parent
         while node is not None:
             scope_text = snapshot.text(node)
-            if _text_matches_teams(scope_text, team1, team2):
+            if snapshot.text_matches_teams(scope_text, team1, team2):
                 if _winline_single_card_scope(scope_text):
                     event_scope = node
                 break
@@ -2943,7 +3058,7 @@ def _winline_structured_current_map_winner(
             continue
 
         scope_text = snapshot.text(event_scope)
-        order = _winline_team_order(scope_text, team1, team2)
+        order = _winline_team_order(scope_text, team1, team2, _snapshot=snapshot)
         if order is None:
             continue
         saw_requested_row = True
@@ -3018,7 +3133,7 @@ def _winline_structured_current_map_winner(
         # On a proven decider these are the same outcome; only Match's own
         # unlocked two-way buttons determine whether its prices are usable.
         promoted = _winline_promote_last_map_match_market(
-            soup, team1, team2, map_num, diag=diag)
+            soup, team1, team2, map_num, diag=diag, _snapshot=snapshot)
         if promoted is not None:
             return promoted
     elif diag is not None:
@@ -3081,7 +3196,7 @@ def _winline_map_odds_bettable(
         scopes = []
         for element in snapshot.elements:
             card_text = snapshot.text(element)
-            if not card_text or not _text_matches_teams(card_text, team1, team2):
+            if not card_text or not snapshot.text_matches_teams(card_text, team1, team2):
                 continue
             if not _winline_single_card_scope(card_text):
                 # Общий feed/tournament ancestor содержит нужные команды, но

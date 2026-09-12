@@ -390,6 +390,8 @@ def reset_winline_current_map_polling_state() -> None:
     global _winline_current_map_service_gen, _winline_current_map_poller_collect_impl
     global _winline_current_map_batch_context
     stop_winline_current_map_polling_scheduler(join_timeout_s=0.2)
+    if not stop_winline_notification_worker(join_timeout_s=0.2):
+        raise RuntimeError("Winline notification sender is still running")
     with _winline_current_map_state_lock:
         _winline_current_map_pollers = {}
         _winline_current_map_registry = {}
@@ -404,6 +406,8 @@ def reset_winline_current_map_polling_state() -> None:
         _winline_odds_orientation_state.clear()
         _winline_map_clocks.clear()
         _winline_deferred_terminals.clear()
+        _winline_notification_queue.clear()
+        _winline_notification_aliases.clear()
         _winline_current_map_scheduler_meta["tick_count"] = 0
         _winline_current_map_scheduler_meta["main_loop_tick_invocations"] = 0
         _winline_current_map_scheduler_meta["last_error"] = None
@@ -793,6 +797,7 @@ def _winline_adopt_transposed_poller(canonical: str, series: Any, map_num: Any,
             if prev:
                 prev["p1"], prev["p2"] = prev.get("p2"), prev.get("p1")
                 _winline_odds_notify_state[canonical] = prev
+            _winline_adopt_notification_key(key, canonical)
             orient = _winline_odds_orientation_state.pop(key, None)
             if orient:
                 orient["p1"], orient["p2"] = orient.get("p2"), orient.get("p1")
@@ -2200,6 +2205,15 @@ def _winline_fast_collect(
     )
 
 
+_WINLINE_PINNED_CARD_SNAPSHOT_JS = """() => Array.from(
+  document.querySelectorAll('ww-pinned-card')
+).slice(0, 20).map((card, index) => ({
+  index,
+  text: String(card.innerText || ''),
+  selected: Boolean(card.querySelector('.new-card--selected')),
+}))"""
+
+
 def _winline_select_matching_pinned_card(
     page: Any,
     *,
@@ -2215,6 +2229,54 @@ def _winline_select_matching_pinned_card(
     matcher = globals().get("_bookmaker_text_matches_teams")
     if not callable(matcher):
         return False
+
+    # One browser RPC obtains the same visible text and selected marker as the
+    # former per-card locator loop.  The decision stays in the proven Python
+    # matcher; JavaScript only batches a DOM read.
+    try:
+        raw_cards = page.evaluate(_WINLINE_PINNED_CARD_SNAPSHOT_JS)
+    except Exception:
+        raw_cards = None
+    if isinstance(raw_cards, list):
+        for entry in raw_cards[:20]:
+            if not isinstance(entry, dict):
+                raw_cards = None
+                break
+            try:
+                index = int(entry.get("index"))
+            except (TypeError, ValueError):
+                raw_cards = None
+                break
+            if index < 0 or not matcher(str(entry.get("text") or ""), team1, team2):
+                continue
+            if bool(entry.get("selected")):
+                return False
+            try:
+                # Angular may reorder pinned cards after the batch read.  Read
+                # the live card again before clicking: an unmatched replacement
+                # is a safe recovery miss, never a click on its neighbour.
+                card = page.locator("ww-pinned-card").nth(index)
+                live_text = str(card.inner_text(timeout=1000) or "")
+                if not matcher(live_text, team1, team2):
+                    return False
+                try:
+                    if int(card.locator(".new-card--selected").count()) > 0:
+                        return False
+                except Exception:
+                    # Keep the established fallback for sparse test doubles and
+                    # transient nodes which cannot expose descendant locators.
+                    pass
+                card.click(timeout=3000)
+                with contextlib.suppress(Exception):
+                    page.wait_for_timeout(800)
+                return True
+            except Exception:
+                return False
+        if raw_cards is not None:
+            return False
+
+    # Unsupported/malformed evaluate result: retain the prior locator-by-locator
+    # recovery path rather than turning a browser capability gap into an odds gap.
     try:
         cards = page.locator("ww-pinned-card")
         count = min(20, int(cards.count()))
@@ -3338,6 +3400,186 @@ _winline_series_winner_matches: Dict[str, Dict[int, int]] = {}
 _WINLINE_WINNER_MATCH_SERIES_CAP = 500
 
 
+# Ordinary observations coalesce under pressure. Lifecycle entries and the last
+# quote needed to introduce a terminal map may exceed this soft cap.
+_WINLINE_NOTIFICATION_SOFT_CAP = 256
+_winline_notification_queue: List[Dict[str, Any]] = []
+_winline_notification_aliases: Dict[str, Tuple[str, bool]] = {}
+_winline_notification_thread: Any = None
+_winline_notification_stop = threading.Event()
+_winline_notification_wake = threading.Event()
+_winline_notification_inflight: Any = None
+
+
+def _winline_resolve_notification_key(key: str) -> Tuple[str, bool]:
+    """Called under the state lock; aliases always point straight to live keys."""
+    return _winline_notification_aliases.get(key, (key, False))
+
+
+def _winline_adopt_notification_key(old: str, new: str) -> None:
+    # Compose parity instead of chaining aliases (including A -> B -> A).
+    for alias, (target, flipped) in list(_winline_notification_aliases.items()):
+        if target == old:
+            _winline_notification_aliases[alias] = (new, not flipped)
+    _winline_notification_aliases.pop(new, None)
+    _winline_notification_aliases[old] = (new, True)
+    pending = _winline_pending_map_winners.pop(old, None)
+    if pending is not None:
+        pending["team1"], pending["team2"] = pending.get("team2"), pending.get("team1")
+        _winline_pending_map_winners[new] = pending
+    state = _winline_odds_notify_state.get(new) or {}
+    stop = state.get("pending_stop")
+    if isinstance(stop, dict):
+        stop["p1"], stop["p2"] = stop.get("p2"), stop.get("p1")
+
+
+def _winline_notification_entry_key(entry: Dict[str, Any]) -> str:
+    return _winline_resolve_notification_key(entry["key"])[0]
+
+
+def _winline_enqueue_notification(payload: Dict[str, Any], key: str, **kwargs: Any) -> None:
+    if not _winline_odds_notify_enabled():
+        return
+    if not kwargs.get("is_terminal") and payload.get("odds_bettable") is False:
+        # Frozen observations are silent. They must not coalesce away the last
+        # sendable quote needed to introduce this map before its terminal.
+        return
+    # The poller owns orientation. Replaying an old queued snapshot must never
+    # move its latest orientation state backwards.
+    entry = {"key": key, "payload": copy.deepcopy({
+        k: v for k, v in payload.items() if k != "attempts"
+    }), "kwargs": dict(kwargs)}
+    with _winline_current_map_state_lock:
+        canonical = _winline_notification_entry_key(entry)
+        terminal = bool(kwargs.get("is_terminal"))
+        if terminal:
+            candidates = _winline_notification_queue + ([_winline_notification_inflight]
+                if _winline_notification_inflight else [])
+            if any(e["kwargs"].get("is_terminal") and
+                   bool(e["kwargs"].get("map_end_proven", True)) == bool(kwargs.get("map_end_proven", True)) and
+                   bool(e["kwargs"].get("map_confirmed_live", True)) == bool(kwargs.get("map_confirmed_live", True)) and
+                   _winline_notification_entry_key(e) == canonical for e in candidates):
+                return
+        else:
+            # Preserve status transitions and terminal barriers; move a fresher
+            # replaceable price to the tail rather than changing its chronology.
+            for index in range(len(_winline_notification_queue) - 1, -1, -1):
+                previous = _winline_notification_queue[index]
+                if previous.get("maintenance") or previous["kwargs"].get("is_terminal"):
+                    break
+                if _winline_notification_entry_key(previous) == canonical:
+                    if previous["payload"].get("market_status") == payload.get("market_status"):
+                        _winline_notification_queue.pop(index)
+                    break
+        _winline_notification_queue.append(entry)
+        while len(_winline_notification_queue) > _WINLINE_NOTIFICATION_SOFT_CAP:
+            removable = None
+            for index, candidate in enumerate(_winline_notification_queue):
+                if candidate.get("maintenance") or candidate["kwargs"].get("is_terminal"):
+                    continue
+                candidate_key = _winline_notification_entry_key(candidate)
+                introduces_map = (candidate["payload"].get("p1_odds") is not None
+                    and candidate["payload"].get("p2_odds") is not None
+                    and not _winline_odds_notify_state.get(candidate_key)
+                    and any(e["kwargs"].get("is_terminal") and
+                            _winline_notification_entry_key(e) == candidate_key
+                            for e in _winline_notification_queue[index + 1:]))
+                if not introduces_map:
+                    removable = index
+                    break
+            if removable is None:
+                break
+            _winline_notification_queue.pop(removable)
+        _winline_start_notification_worker()
+        _winline_notification_wake.set()
+
+
+def _winline_process_notification(entry: Dict[str, Any]) -> None:
+    # Global FIFO barrier: complete bounded terminal retries before taking the
+    # next entry, so a new map cannot overtake the previous map's end.
+    for attempt in range(_WINLINE_DEFERRED_TERMINAL_RETRIES + 1):
+        with _winline_current_map_state_lock:
+            key, flipped = _winline_resolve_notification_key(entry["key"])
+            payload = dict(entry["payload"])
+            if flipped:
+                payload["p1_odds"], payload["p2_odds"] = payload.get("p2_odds"), payload.get("p1_odds")
+        try:
+            _winline_odds_telegram_notify(payload, key, already_oriented=True, **entry["kwargs"])
+        except Exception:
+            logger.exception("winline queued notification failed")
+        with _winline_current_map_state_lock:
+            key = _winline_notification_entry_key(entry)
+            state = _winline_odds_notify_state.get(key) or {}
+            retry = (entry["kwargs"].get("is_terminal")
+                     and entry["kwargs"].get("map_end_proven", True)
+                     and entry["kwargs"].get("map_confirmed_live", True)
+                     and bool(state) and state.get("kind") != "terminal")
+        if not retry or attempt == _WINLINE_DEFERRED_TERMINAL_RETRIES:
+            return
+        if _winline_notification_stop.wait(1.0):
+            return
+
+
+def _winline_notification_worker_loop() -> None:
+    global _winline_notification_inflight
+    next_maintenance = 0.0
+    while not _winline_notification_stop.is_set():
+        _winline_notification_wake.clear()
+        with _winline_current_map_state_lock:
+            if time.monotonic() >= next_maintenance:
+                # A due maintenance marker joins FIFO instead of overtaking
+                # terminals or starving forever behind continuously arriving odds.
+                if not any(e.get("maintenance") for e in _winline_notification_queue):
+                    _winline_notification_queue.append({
+                        "key": "", "payload": {}, "kwargs": {}, "maintenance": True})
+                next_maintenance = time.monotonic() + 1.0
+            entry = _winline_notification_queue.pop(0) if _winline_notification_queue else None
+            _winline_notification_inflight = entry
+        try:
+            if entry is not None and entry.get("maintenance"):
+                for flush in (_winline_flush_deferred_terminal_notices,
+                              _winline_flush_pending_stop_notices,
+                              _winline_flush_pending_map_winners):
+                    if _winline_notification_stop.is_set():
+                        break
+                    flush()
+            elif entry is not None:
+                _winline_process_notification(entry)
+        except Exception:
+            logger.exception("winline notification worker failed")
+        finally:
+            with _winline_current_map_state_lock:
+                _winline_notification_inflight = None
+        if entry is None:
+            _winline_notification_wake.wait(max(0.01, next_maintenance - time.monotonic()))
+
+
+def _winline_start_notification_worker() -> None:
+    global _winline_notification_thread
+    if not _winline_odds_notify_enabled():
+        return
+    with _winline_current_map_state_lock:
+        if _winline_notification_thread is not None and _winline_notification_thread.is_alive():
+            return
+        _winline_notification_stop.clear()
+        _winline_notification_thread = threading.Thread(
+            target=_winline_notification_worker_loop, name="winline-notifications", daemon=True)
+        _winline_notification_thread.start()
+
+
+def stop_winline_notification_worker(*, join_timeout_s: float = 1.0) -> bool:
+    with _winline_current_map_state_lock:
+        worker = _winline_notification_thread
+        _winline_notification_stop.set()
+        _winline_notification_wake.set()
+    if worker is not None and worker is not threading.current_thread():
+        worker.join(timeout=max(0.0, join_timeout_s))
+    return worker is None or not worker.is_alive()
+
+
+atexit.register(stop_winline_notification_worker)
+
+
 def _winline_claim_winner_match(key: Any, match_id: Any) -> bool:
     """Закрепить матч за картой. Ложь — этот матч уже отдан ДРУГОЙ карте серии.
 
@@ -4173,6 +4415,7 @@ def _winline_odds_telegram_notify(
     canonical_key: Any,
     *,
     is_terminal: bool = False,
+    already_oriented: bool = False,
     map_end_proven: bool = True,
     map_confirmed_live: bool = True,
     match_id: Any = None,
@@ -4199,7 +4442,13 @@ def _winline_odds_telegram_notify(
     key = str(canonical_key or "")
     if not key:
         return None
-    payload = _winline_stabilize_odds_orientation(payload, key)
+    with _winline_current_map_state_lock:
+        key, flipped = _winline_resolve_notification_key(key)
+        if flipped:
+            payload = dict(payload)
+            payload["p1_odds"], payload["p2_odds"] = payload.get("p2_odds"), payload.get("p1_odds")
+    if not already_oriented:
+        payload = _winline_stabilize_odds_orientation(payload, key)
 
     # Замороженный рынок: число на странице есть, но принять ставку по нему
     # нельзя. Молчим — состояние не трогаем, поэтому после разморозки первое же
@@ -4339,6 +4588,11 @@ def _winline_odds_telegram_notify(
         return None
 
     with _winline_current_map_state_lock:
+        # Adoption can happen while HTTP is blocked. Commit only to the current
+        # key and translate the delivered prices to its current side order.
+        key, flipped = _winline_resolve_notification_key(key)
+        if flipped:
+            p1, p2 = p2, p1
         _winline_odds_notify_state[key] = {
             "p1": p1,
             "p2": p2,
@@ -4539,6 +4793,9 @@ def _winline_flush_pending_stop_notices(
                                                kind="stopped", key=key):
             continue
         with _winline_current_map_state_lock:
+            key, flipped = _winline_resolve_notification_key(key)
+            if flipped:
+                pending["p1"], pending["p2"] = pending.get("p2"), pending.get("p1")
             state = _winline_odds_notify_state.get(key)
             if isinstance(state, dict):
                 state.pop("pending_stop", None)
@@ -4631,6 +4888,7 @@ def _winline_flush_pending_map_winners(
                                                kind="winner", key=key):
             continue
         with _winline_current_map_state_lock:
+            key = _winline_resolve_notification_key(key)[0]
             _winline_pending_map_winners.pop(key, None)
         sent.append(message)
         break
@@ -4737,19 +4995,9 @@ def _tick_winline_current_map_polling_impl(
                             "match_id": notify_match_id,
                             "map_started_at": (lifecycle_terminal or {}).get("started_at"),
                         }
-                        if not from_main_loop:
-                            _winline_odds_telegram_notify(
+                        if not from_main_loop or lifecycle_terminal is not None:
+                            _winline_enqueue_notification(
                                 notify_payload, key, **notify_kwargs)
-                        elif lifecycle_terminal is not None:
-                            # Backup-тик главного цикла в чат не пишет (блокирующая
-                            # отправка не должна удлинять цикл ставок), а терминал
-                            # поллер отдаёт ровно один раз. Без откладывания конец
-                            # карты терялся навсегда: 02.09.2026 Team Synapse —
-                            # 4ikibamboni, терминал карты 1 в 19:55:24 с
-                            # `map_end_proven=True` не объявил ничего, а в 19:55:25
-                            # ушло «🆕 карта 2».
-                            _winline_defer_terminal_notify(
-                                key, notify_payload, notify_kwargs)
                 except Exception:
                     pass
             try:
@@ -4770,27 +5018,8 @@ def _tick_winline_current_map_polling_impl(
             _winline_write_current_map_evidence(
                 latest_evidence, path=WINLINE_CURRENT_MAP_POLLING_EVIDENCE_PATH,
             )
-        # Отложенные объявления живут ВНЕ поллеров: остановку опроса
-        # подтверждает именно отсутствие нового опроса, а победителя карты
-        # OpenDota отдаёт уже после того, как поллер снят.
-        if not from_main_loop:
-            flush_kwargs: Dict[str, Any] = {}
-            if callable(monotonic_fn):
-                flush_kwargs["monotonic_fn"] = monotonic_fn
-            # Терминалы — первыми: доказанный конец карты снимает отложенное
-            # «опрос остановлен» по тому же ключу.
-            try:
-                _winline_flush_deferred_terminal_notices(**flush_kwargs)
-            except Exception:
-                pass
-            try:
-                _winline_flush_pending_stop_notices(**flush_kwargs)
-            except Exception:
-                pass
-            try:
-                _winline_flush_pending_map_winners(**flush_kwargs)
-            except Exception:
-                pass
+        # The sender owns deferred lifecycle work, including during quiet ticks.
+        _winline_start_notification_worker()
         return results
     except Exception as exc:
         try:
