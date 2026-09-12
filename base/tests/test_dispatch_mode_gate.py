@@ -246,3 +246,86 @@ def test_ml_dispatch_tick_ml_mode_delivers_once_then_dedups(monkeypatch) -> None
     assert len(logged) == 2
     assert logged[0]["delivered"][0]["status"] == "delivered"
     assert logged[1]["decisions"] == []  # second tick: dedup skip, no repeat decision
+
+
+# --- Defect 1: once-per-cycle guard around _ml_dispatch_tick -----------------
+
+def test_ml_dispatch_tick_once_per_cycle_skips_same_game_time(monkeypatch) -> None:
+    calls: list = []
+    monkeypatch.setattr(C, "_ml_dispatch_tick", lambda **kw: calls.append(kw))
+    monkeypatch.setattr(C, "_ml_dispatch_tick_last_cycle_key", {})
+    common = dict(
+        radiant_team_name="A", dire_team_name="B", top="", mid="", bot="",
+        protracker_payload=None, team_elo_block="", team_elo_meta=None, radiant_lead=0,
+    )
+    C._ml_dispatch_tick_once_per_cycle(match_key="m1", live_league={}, game_time_seconds=650.0, **common)
+    C._ml_dispatch_tick_once_per_cycle(match_key="m1", live_league={}, game_time_seconds=650.0, **common)
+    assert len(calls) == 1  # same (match_key, map_num, game_time) -- second call is a no-op
+
+    C._ml_dispatch_tick_once_per_cycle(match_key="m1", live_league={}, game_time_seconds=700.0, **common)
+    assert len(calls) == 2  # game_time moved on -- real call again
+
+
+# --- Defect 2: _ml_dispatch_open_kills_windows uses real window specs -------
+
+def test_kills_windows_open_at_game_time_zero_all_four_nearest_first() -> None:
+    assert C._ml_dispatch_open_kills_windows(0.0) == ["5_15", "10_20", "15_25", "20_30"]
+
+
+def test_kills_windows_open_at_200_nearest_is_10_20() -> None:
+    windows = C._ml_dispatch_open_kills_windows(200.0)
+    assert windows[0] == "10_20"
+    assert "5_15" not in windows
+
+
+def test_kills_windows_open_at_500_nearest_is_15_25() -> None:
+    windows = C._ml_dispatch_open_kills_windows(500.0)
+    assert windows[0] == "15_25"
+    assert "10_20" not in windows
+
+
+def test_kills_windows_open_at_1100_none_open() -> None:
+    assert C._ml_dispatch_open_kills_windows(1100.0) == []
+
+
+# --- Defect 3: min-odds floor gate for ML win bets --------------------------
+
+ML_WIN_CTX = {
+    "origin": "ml_dispatch",
+    "ml_market": "win",
+    "calibration": {"expected_wr": 0.60, "min_odds": 1.67},
+}
+ML_KILLS_CTX = {
+    "origin": "ml_dispatch",
+    "ml_market": "kills_window",
+    "calibration": {"expected_wr": 0.60, "min_odds": 1.67},
+}
+
+
+def test_ml_min_odds_reject_when_price_below_floor() -> None:
+    text = "СТАВКА НА Team Synapse x1\nКэф Winline: 1.55\n"
+    decision = C._ml_dispatch_min_odds_reject_for_delivery(text, ML_WIN_CTX)
+    assert decision is not None
+    assert decision["reason"] == "ml_min_odds_below_floor"
+
+
+def test_ml_min_odds_passes_when_price_above_floor() -> None:
+    text = "СТАВКА НА Team Synapse x1\nКэф Winline: 1.80\n"
+    assert C._ml_dispatch_min_odds_reject_for_delivery(text, ML_WIN_CTX) is None
+
+
+def test_ml_min_odds_not_applied_to_kills_market() -> None:
+    text = "СТАВКА НА Ранние килы 10-20 Team Synapse\nКэф Winline: 1.10\n"
+    assert C._ml_dispatch_min_odds_reject_for_delivery(text, ML_KILLS_CTX) is None
+
+
+def test_ml_min_odds_unknown_price_follows_bookmaker_block_without_odds(monkeypatch) -> None:
+    text = "СТАВКА НА Team Synapse x1\n"  # no "Кэф Winline:" line at all
+    monkeypatch.setattr(C, "BOOKMAKER_BLOCK_WITHOUT_ODDS", True)
+    decision = C._ml_dispatch_min_odds_reject_for_delivery(text, ML_WIN_CTX)
+    assert decision is not None
+    assert decision["reason"] == "ml_min_odds_below_floor"
+    assert decision["price"] is None
+
+    monkeypatch.setattr(C, "BOOKMAKER_BLOCK_WITHOUT_ODDS", False)
+    assert C._ml_dispatch_min_odds_reject_for_delivery(text, ML_WIN_CTX) is None

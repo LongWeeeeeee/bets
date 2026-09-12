@@ -12543,6 +12543,88 @@ def _late_win_model_reject_for_delivery(
     return {"reason": "late_model_missing"}
 
 
+_ML_DISPATCH_RESERVED_ODDS_RE = re.compile(r"Кэф Winline:\s*([0-9]+(?:\.[0-9]+)?)")
+
+
+def _ml_dispatch_reserved_odds_from_message(message_text: Optional[str]) -> Optional[float]:
+    """Кэф, зарезервированный на сторону ставки к моменту гейта: строка
+    "Кэф Winline: X.XX" уже вписана в ``message_text`` результатом
+    ``_bookmaker_prepare_message_for_delivery`` (тот сам не возвращает число —
+    только готовый текст, см. ``_bookmaker_format_odds_block``).
+    """
+    if not isinstance(message_text, str):
+        return None
+    match = _ML_DISPATCH_RESERVED_ODDS_RE.search(message_text)
+    if not match:
+        return None
+    try:
+        value = float(match.group(1))
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value > 0 else None
+
+
+def _ml_dispatch_min_odds_reject_for_delivery(
+    message_text: Optional[str],
+    stake_multiplier_context: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Ценовой пол ML-ставки (дефект 3, план ml-диспатча): никто не читал
+    ``stake_multiplier_context["calibration"]`` — ML-ставка на победу уходила
+    бы без пола по кэфу. Применяется только к origin=="ml_dispatch" и
+    ml_market=="win" (у kills_window/kills_total рынка на килы нет — см.
+    план). Кэф неизвестен -> поведение как у существующего
+    ``BOOKMAKER_BLOCK_WITHOUT_ODDS`` (свой режим не изобретаем).
+    """
+    ctx = stake_multiplier_context if isinstance(stake_multiplier_context, dict) else {}
+    if str(ctx.get("origin") or "") != "ml_dispatch":
+        return None
+    if str(ctx.get("ml_market") or "") != "win":
+        return None
+    calibration = ctx.get("calibration")
+    if not isinstance(calibration, dict):
+        return None
+    try:
+        min_odds = float(calibration.get("min_odds"))
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(min_odds) or min_odds <= 0:
+        return None
+    price = _ml_dispatch_reserved_odds_from_message(message_text)
+    if price is None:
+        if BOOKMAKER_BLOCK_WITHOUT_ODDS:
+            return {"reason": "ml_min_odds_below_floor", "min_odds": min_odds, "price": None}
+        return None
+    if price < min_odds:
+        return {"reason": "ml_min_odds_below_floor", "min_odds": min_odds, "price": price}
+    return None
+
+
+_ml_dispatch_min_odds_block_logged_lock = threading.Lock()
+_ml_dispatch_min_odds_block_logged_keys: set = set()
+
+
+def _log_ml_dispatch_min_odds_block_once(match_key: str, decision: Dict[str, Any]) -> None:
+    """Печатает причину блока ценового пола ML-ставки один раз на матч."""
+    log_key = f"{match_key}|{decision.get('reason')}"
+    with _ml_dispatch_min_odds_block_logged_lock:
+        already_logged = log_key in _ml_dispatch_min_odds_block_logged_keys
+        _ml_dispatch_min_odds_block_logged_keys.add(log_key)
+    if already_logged:
+        return
+    print(f"   🚫 {_ml_dispatch_min_odds_block_detail(decision)} — {match_key}")
+
+
+def _ml_dispatch_min_odds_block_detail(decision: Dict[str, Any]) -> str:
+    price = decision.get("price")
+    min_odds = decision.get("min_odds")
+    if price is None:
+        return f"ML-ставка заблокирована: кэф неизвестен (пол {float(min_odds):.2f})"
+    return (
+        f"ML-ставка ниже ценового пола (кэф {float(price):.2f} < "
+        f"{float(min_odds):.2f})"
+    )
+
+
 _late_win_model_block_logged_lock = threading.Lock()
 _late_win_model_block_logged_keys: set = set()
 
@@ -32866,6 +32948,29 @@ def _deliver_and_persist_signal(
                 f"— отправляю без кэфов: {match_key}"
             )
             reservation_context = None
+    # Ценовой пол ML-ставки (дефект 3, план ml-диспатча): ПОСЛЕ резервирования
+    # кэфа, чтобы прочитать уже зарезервированную сторону из message_text
+    # ("Кэф Winline: X.XX", результат `_bookmaker_prepare_message_for_delivery`
+    # выше). Только origin=="ml_dispatch" и ml_market=="win" — у kills-рынков
+    # цены нет вовсе.
+    ml_min_odds_block = _ml_dispatch_min_odds_reject_for_delivery(
+        message_text,
+        stake_multiplier_context,
+    )
+    if ml_min_odds_block is not None:
+        if reservation_context is not None:
+            _bookmaker_rollback_odds_delivery(
+                match_key, reservation_context=reservation_context
+            )
+        _log_ml_dispatch_min_odds_block_once(match_key, ml_min_odds_block)
+        _record_delivery_gate_block(
+            match_key,
+            message_text,
+            ml_min_odds_block,
+            reason="ml_min_odds_below_floor",
+            verdict=f"   {_ml_dispatch_min_odds_block_detail(ml_min_odds_block)} — {match_key}",
+        )
+        return False
     # Варнинг о неуверенных позициях sourcetv добавляется в текст основного
     # сигнала (не отдельным сообщением).
     pos_warning = _SOURCETV_POS_WARNING_BY_KEY.get(_signal_fingerprint_registry_key(match_key))
