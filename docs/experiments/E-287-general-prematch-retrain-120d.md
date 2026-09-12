@@ -5,16 +5,17 @@ date: "2026-09-12"
 area: model
 status: full
 corpus: "17 604 цели, пригодны 15 243; full fit 15 205, no_org fit 7 614; исторический test 38 карт / 28 серий"
-verdict: "Кандидат переобучен и проверен: routed log loss 0.64119 против 0.68433, accuracy 26/38 против 22/38. Paired delta -0.04314 CI [-0.09441;+0.01716]: устойчивый uplift не доказан на повторно изученном test. NPZ и независимый optimizer PASS, четыре fallback сохранены. Калибровка и новая prospective проверка pending; в прод не установлен."
+verdict: "Кандидат переобучен и проверен: routed log loss 0.64119 против 0.68433, accuracy 26/38 против 22/38. Paired delta -0.04314 CI [-0.09441;+0.01716]: устойчивый uplift не доказан на повторно изученном test. По отдельному запросу установи веса установлены на serv1 с сохранением истории и четырёх fallback. Калибровка и новая prospective проверка pending."
 harness: "runtime/experiments/misc/general_ml_retrain_20260912.py; base/tools/retrain_prematch_general.py; base/prematch_history_replay.py"
 ---
 
 # E-287 — переобучение общей prematch ML
 
 Запрос пользователя: «переобучи». Продолжение E-286, задача `ingame-gr3t`.
-Цель — обучить отдельный кандидат общей модели на расширенном корпусе,
-сохранив формат 35 признаков и текущий компонент All. Это не активация
-кандидата, не проверка прибыльности и не завершение будущего протокола E-286.
+Цель этапа обучения — получить отдельный кандидат общей модели на расширенном
+корпусе, сохранив формат 35 признаков и текущий компонент All. Последующая
+активация по отдельному запросу описана ниже; проверка прибыльности и будущий
+протокол E-286 не завершены.
 
 ## Зафиксированный протокол
 
@@ -143,7 +144,82 @@ Baseline немного отличается от E-286: здесь исполь
 Это weights-only пакет, без snapshot history и без валидированной калибровки.
 Новый будущий период отмечен временем выпуска в manifest; сбор/проверка
 новых карт ещё не выполнены. Замороженный future-протокол E-286 не изменён.
-Push, deployment, restart, включение collector/heartbeat не выполнялись.
+На этапе обучения push, deployment, restart и включение collector/heartbeat
+не выполнялись. Последующая установка по отдельному запросу описана ниже.
+
+## Установка по запросу «установи», 12.09.2026
+
+Пользователь отдельно разрешил установку после сообщения о незавершённых
+калибровке и prospective проверке. Это эксплуатационная активация;
+научный вывод о неопределённости улучшения остаётся прежним. Исходный
+candidate manifest сохранён как паспорт результата обучения.
+
+Веса прежнего production-артефакта точно совпали с training parent. SHA
+боевого All backbone `b96f32d55acfb8e9edba1c61899f423b3d82b6e115c95fe5141e41350c53c340`
+совпал с зависимостью обучения. Serving-код на Mac и serv1 совпал по SHA;
+исходники production при установке не менялись (server HEAD `90ac74e`).
+
+Использован существующий `base/tools/merge_prematch_weights.py`:
+
+```bash
+# serv1, cwd=/root/main; output/report должны ещё не существовать
+venv/bin/python3 base/tools/merge_prematch_weights.py \
+  --snapshot data/prematch_model_artifact_v3.npz \
+  --weights runtime/artifacts/misc/general_ml_deploy_20260912/prematch_weights.npz \
+  --output runtime/artifacts/misc/general_ml_deploy_20260912/prematch_model_artifact_v3.npz \
+  --report runtime/artifacts/misc/general_ml_deploy_20260912/merge_report.json \
+  --expected-snapshot-sha256 efa6af3dec01c74e2574ffc03a9ab7ca17e62eaf7ba2dc981484c0e734b7b0e0
+venv/bin/python3 -m pytest base/tests/test_merge_prematch_weights.py -q
+```
+
+Слияние PASS: заменены 8 весовых массивов, 26 остальных NPZ members сохранены
+по SHA. Изменены только `full` и `no_org`; четыре fallback-ветки, context
+scaling, layout и история не изменились. Snapshot timestamp `1789168030`,
+1 553 161 аккаунт. Старый SHA полного артефакта:
+`efa6af3dec01c74e2574ffc03a9ab7ca17e62eaf7ba2dc981484c0e734b7b0e0`;
+новый: `0b6a602794e945243b76371e87155a775714afbc6235a6be984765e4448e2f5a`.
+
+На серверном Python 3.12.3 прошли 3 regression tests merger, `py_compile`
+и загрузка настоящего `PrematchModel`. На 38 исторических контрольных
+векторах расчёт через загруженные ветки совпал с обучением:
+максимальное отличие вероятности `1.1102230246251565e-16`.
+Независимый read-only review promotion-механизма не выявил блокеров.
+
+Перед атомарной заменой сохранены и проверены резервные копии:
+
+- serv1: `base/_archive/backups/general_ml_deploy_20260912/prematch_model_artifact_v3.npz.before`
+  и `map_id_check.txt.before`;
+- Mac: `base/_archive/backups/general_ml_deploy_20260912/prematch_weights_win120.npz.before`
+  и `branch_weights.npz.before`.
+
+На Mac оба канонических входа ночной сборки
+`runtime/artifacts/misc/prematch_weights_win120.npz` и `branch_weights.npz`
+атомарно заменены проверенным candidate NPZ (SHA `361b48af…`).
+`finalize_artifact.py` читает top-level веса из первого и `branch_*` из второго;
+планировщик не задаёт альтернативных `PREMATCH_WEIGHTS`/`PREMATCH_BRANCHES`.
+Полная ночная пересборка для проверки не запускалась.
+
+Production NPZ заменён атомарно 17:58:15 UTC. Выполнен штатный
+`bash scripts/run/restart_cyberscore.sh`, exit 0: очищен единый `map_id_check`,
+сервис стартовал в 17:58:21 UTC, PID `1074274`, `active/running`, `NRestarts=0`.
+Логи не усекались, ELO snapshot/delta не заменялись, новых collectors или
+heartbeat не создавалось. Прогрев завершён, основной цикл работает и
+подтвердил загрузку 0 ранее проверенных карт из единого `map_id_check`.
+Первый live-прогноз с новым SHA пока **не наблюдался**: в 18:03 UTC
+SourceTV выдавал пустой `{}`. Файл обновлялся, отдельный
+`sourcetv-probe.service` был `active/running`, PID `800161`, `NRestarts=0`;
+его не перезапускали. Итоговый receipt `post_deploy_status.json` имеет статус
+`INSTALLED_SERVER_CHECKS_PASSED_LIVE_INPUT_PENDING`. Установка и серверный
+loader/арифметика проверены; фактическая live inference ждёт входной карты.
+
+Receipts и контрольный fixture: `runtime/artifacts/misc/general_ml_deploy_20260912/`
+(копии merge/server smoke/backup/install/restart/runtime evidence с serv1).
+Калибровочные таблицы сохранены; они не проверены для новых весов.
+При откате сначала проверить текущий SHA и остановить параллельную установку.
+Если snapshot уже обновлён ночной сборкой, прежние веса следует сливать с
+новой историей тем же merger, а не возвращать устаревший полный snapshot.
+Также восстановить оба Mac canonical inputs из проверенных backup через
+`.tmp` и atomic replace, затем выполнить штатный restart.
 
 ## Где искать ошибку
 
