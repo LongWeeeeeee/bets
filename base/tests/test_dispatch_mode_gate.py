@@ -248,6 +248,38 @@ def test_ml_dispatch_tick_ml_mode_delivers_once_then_dedups(monkeypatch) -> None
     assert logged[1]["decisions"] == []  # second tick: dedup skip, no repeat decision
 
 
+# --- _ml_dispatch_record_decisions: dedup keyed by base_url, not match_key --
+
+def test_ml_dispatch_record_decisions_dedups_by_base_url_across_match_key_suffixes(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(C, "_ml_dispatch_decisions_log_last_fingerprint", {})
+    log_path = tmp_path / "ml_dispatch_decisions.jsonl"
+    monkeypatch.setattr(C, "_ml_dispatch_decisions_log_path", lambda: log_path)
+
+    dedup_view = {"decisions": [("win", "Radiant", "now")]}
+    base_record = {
+        "match_key": "dltv.org/matches/8994944191.50",
+        "base_url": "dltv.org/matches/8994944191",
+        "map_num": 1,
+    }
+    C._ml_dispatch_record_decisions(dict(base_record), dedup_view=dedup_view)
+    # Same base_url/map_num/verdicts, but match_key suffix moved on (next tick) --
+    # must NOT write a second line.
+    C._ml_dispatch_record_decisions(
+        dict(base_record, match_key="dltv.org/matches/8994944191.53"),
+        dedup_view=dedup_view,
+    )
+    lines = log_path.read_text().splitlines()
+    assert len(lines) == 1
+
+    # Verdicts/decisions actually changed -- must write again.
+    C._ml_dispatch_record_decisions(
+        dict(base_record, match_key="dltv.org/matches/8994944191.61"),
+        dedup_view={"decisions": [("win", "Dire", "now")]},
+    )
+    lines = log_path.read_text().splitlines()
+    assert len(lines) == 2
+
+
 # --- Defect 1: once-per-cycle guard around _ml_dispatch_tick -----------------
 
 def test_ml_dispatch_tick_once_per_cycle_skips_same_game_time(monkeypatch) -> None:
@@ -264,6 +296,23 @@ def test_ml_dispatch_tick_once_per_cycle_skips_same_game_time(monkeypatch) -> No
 
     C._ml_dispatch_tick_once_per_cycle(match_key="m1", live_league={}, game_time_seconds=700.0, **common)
     assert len(calls) == 2  # game_time moved on -- real call again
+
+
+def test_ml_dispatch_tick_once_per_cycle_keys_by_base_url_not_raw_match_key(monkeypatch) -> None:
+    # sourcetv match_key grows a numeric suffix every tick; the cycle guard
+    # must key on base_url so it still catches the repeat.
+    calls: list = []
+    monkeypatch.setattr(C, "_ml_dispatch_tick", lambda **kw: calls.append(kw))
+    monkeypatch.setattr(C, "_ml_dispatch_tick_last_cycle_key", {})
+    common = dict(
+        radiant_team_name="A", dire_team_name="B", top="", mid="", bot="",
+        protracker_payload=None, team_elo_block="", team_elo_meta=None, radiant_lead=0,
+    )
+    C._ml_dispatch_tick_once_per_cycle(
+        match_key="dltv.org/matches/8994944191.50", live_league={}, game_time_seconds=650.0, **common)
+    C._ml_dispatch_tick_once_per_cycle(
+        match_key="dltv.org/matches/8994944191.53", live_league={}, game_time_seconds=650.0, **common)
+    assert len(calls) == 1  # same base_url/map_num/game_time despite differing match_key suffix
 
 
 # --- Defect 2: _ml_dispatch_open_kills_windows uses real window specs -------

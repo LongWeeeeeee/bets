@@ -11924,9 +11924,14 @@ def _ml_dispatch_decisions_log_path() -> Path:
 def _ml_dispatch_record_decisions(record: Dict[str, Any], *, dedup_view: Dict[str, Any]) -> None:
     """Строка в runtime/ml_dispatch_decisions.jsonl, новая только при
     изменении вердиктов/решения/фазы тайминга (дедуп по хешу на карту).
+
+    Ключ дедупа — ``base_url|map_num``, а не ``match_key``: у sourcetv-веток
+    ``match_key`` меняет числовой суффикс на каждом тике (`.50`, `.51`, `.53`
+    ...), из-за чего дедуп по ``match_key`` не срабатывал вовсе и лог писал
+    строку раз в тик. ``base_url`` стабилен на всю карту.
     """
     try:
-        scope = f"{record.get('match_key')}|{record.get('map_num')}"
+        scope = f"{record.get('base_url') or record.get('match_key')}|{record.get('map_num')}"
         digest = hashlib.sha256(
             json.dumps(dedup_view, sort_keys=True, default=str, ensure_ascii=False).encode("utf-8")
         ).hexdigest()
@@ -12268,12 +12273,15 @@ def _ml_dispatch_tick_once_per_cycle(
     """Обёртка над `_ml_dispatch_tick` для нескольких мест диспетчера, видящих
     один и тот же игровой тик (ранняя local-ветка, star-ветка, no-star-ветка —
     дефект 1 плана ml-диспатча): не больше одной РЕАЛЬНОЙ оценки пяти моделей
-    на (match_key, map_num, game_time) за цикл. Повторный вызов и без этой
-    защиты безопасен (лог решений дедуплицирует по хешу, доставка —
-    SentLedger), но лишняя оценка на каждый вызов не нужна. `_ml_dispatch_tick`
-    сам по себе (см. test_dispatch_mode_gate.py) поведения не меняет — это
-    отдельная обёртка, используемая только на call-сайтах.
+    на (base_url, map_num, game_time) за цикл. Ключ — ``base_url``, а не
+    ``match_key``: последний меняет числовой суффикс на каждом тике у
+    sourcetv-веток, из-за чего дедуп по нему не срабатывал бы вовсе. Повторный
+    вызов и без этой защиты безопасен (лог решений дедуплицирует по хешу,
+    доставка — SentLedger), но лишняя оценка на каждый вызов не нужна.
+    `_ml_dispatch_tick` сам по себе (см. test_dispatch_mode_gate.py) поведения
+    не меняет — это отдельная обёртка, используемая только на call-сайтах.
     """
+    base_url_key = _signal_fingerprint_registry_key(match_key)
     try:
         map_num_raw = _bookmaker_infer_map_num(
             live_league if isinstance(live_league, dict) else {}, score_text="",
@@ -12287,9 +12295,9 @@ def _ml_dispatch_tick_once_per_cycle(
         gt_key = None
     cycle_key = (map_num_key, gt_key)
     with _ml_dispatch_tick_cycle_guard_lock:
-        if _ml_dispatch_tick_last_cycle_key.get(match_key) == cycle_key:
+        if _ml_dispatch_tick_last_cycle_key.get(base_url_key) == cycle_key:
             return
-        _ml_dispatch_tick_last_cycle_key[match_key] = cycle_key
+        _ml_dispatch_tick_last_cycle_key[base_url_key] = cycle_key
     _ml_dispatch_tick(
         match_key=match_key,
         live_league=live_league,
